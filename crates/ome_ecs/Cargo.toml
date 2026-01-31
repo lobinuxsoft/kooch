@@ -1,0 +1,14 @@
+[package]
+name = "ome_ecs"
+description = "GPU-driven Entity Component System"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ome_core.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+tracing.workspace = true

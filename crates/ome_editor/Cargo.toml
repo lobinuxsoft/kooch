@@ -1,0 +1,16 @@
+[package]
+name = "ome_editor"
+description = "Standalone editor application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ome_core.workspace = true
+ome_ecs.workspace = true
+ome_editor_core.workspace = true
+eframe.workspace = true
+egui.workspace = true
+tracing.workspace = true
