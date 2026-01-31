@@ -1,10 +1,10 @@
-# OhMyGameEngine
+# OhMyEngine
 
 A GPU-driven game engine written in Rust, featuring SDF-based rendering and compute-first architecture.
 
 ## Overview
 
-OhMyGameEngine (OME) is an experimental game engine that leverages modern GPU capabilities for rendering, physics, and entity management. Instead of traditional rasterization, it uses **Signed Distance Fields (SDF)** and **ray marching** for rendering.
+OhMyEngine (OME) is an experimental game engine that leverages modern GPU capabilities for rendering, physics, and entity management. Instead of traditional rasterization, it uses **Signed Distance Fields (SDF)** and **ray marching** for rendering.
 
 ## Features
 
