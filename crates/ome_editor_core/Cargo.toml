@@ -1,0 +1,15 @@
+[package]
+name = "ome_editor_core"
+description = "Embedded editor overlay (debug visualization, inspector)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ome_core.workspace = true
+ome_ecs.workspace = true
+egui.workspace = true
+wgpu.workspace = true
+tracing.workspace = true

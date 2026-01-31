@@ -1,0 +1,66 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ome_core",
+    "crates/ome_ecs",
+    "crates/ome_window",
+    "crates/ome_input",
+    "crates/ome_sdf",
+    "crates/ome_lighting",
+    "crates/ome_render",
+    "crates/ome_physics",
+    "crates/ome_gravity",
+    "crates/ome_world",
+    "crates/ome_audio",
+    "crates/ome_scripting",
+    "crates/ome_editor_core",
+    "crates/ome_editor",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lobinuxsoft/oh_my_engine"
+authors = ["lobinuxsoft"]
+
+[workspace.dependencies]
+# GPU
+wgpu = "23"
+# Windowing
+winit = "0.30"
+# Math
+glam = { version = "0.29", features = ["bytemuck"] }
+# Utils
+bytemuck = { version = "1.21", features = ["derive"] }
+pollster = "0.4"
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Window handle
+raw-window-handle = "0.6"
+# Audio
+kira = "0.9"
+# Input
+gilrs = "0.11"
+# Scripting
+rhai = "1.21"
+# Editor UI
+egui = "0.30"
+eframe = "0.30"
+
+# Internal crates
+ome_core = { path = "crates/ome_core" }
+ome_ecs = { path = "crates/ome_ecs" }
+ome_window = { path = "crates/ome_window" }
+ome_input = { path = "crates/ome_input" }
+ome_sdf = { path = "crates/ome_sdf" }
+ome_lighting = { path = "crates/ome_lighting" }
+ome_render = { path = "crates/ome_render" }
+ome_physics = { path = "crates/ome_physics" }
+ome_gravity = { path = "crates/ome_gravity" }
+ome_world = { path = "crates/ome_world" }
+ome_audio = { path = "crates/ome_audio" }
+ome_scripting = { path = "crates/ome_scripting" }
+ome_editor_core = { path = "crates/ome_editor_core" }
+ome_editor = { path = "crates/ome_editor" }
