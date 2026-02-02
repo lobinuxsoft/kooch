@@ -64,3 +64,10 @@ ome_audio = { path = "crates/ome_audio" }
 ome_scripting = { path = "crates/ome_scripting" }
 ome_editor_core = { path = "crates/ome_editor_core" }
 ome_editor = { path = "crates/ome_editor" }
+
+[[example]]
+name = "minimal"
+path = "examples/minimal.rs"
+
+[dev-dependencies]
+ome_core.workspace = true
