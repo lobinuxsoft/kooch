@@ -1,33 +1,59 @@
 # OhMyEngine
 
-A GPU-driven game engine written in Rust, featuring SDF-based rendering and compute-first architecture.
+A hybrid CPU-GPU game engine written in Rust, featuring SDF-based rendering and compute-first architecture.
 
 ## Overview
 
-OhMyEngine (OME) is an experimental game engine that leverages modern GPU capabilities for rendering, physics, and entity management. Instead of traditional rasterization, it uses **Signed Distance Fields (SDF)** and **ray marching** for rendering.
+OhMyEngine (OME) is an experimental game engine that leverages modern GPU capabilities for rendering and physics, while keeping gameplay logic on CPU for flexibility. Instead of traditional rasterization, it uses **Signed Distance Fields (SDF)** and **ray marching** for rendering.
 
 ## Features
 
-- **GPU-Driven ECS**: Entity Component System designed to run on the GPU
+- **Hybrid ECS**: CPU handles gameplay logic (quests, inventory, AI), GPU handles physics and rendering
 - **SDF Rendering**: Ray marching renderer using Signed Distance Fields
 - **Multi-Gravity System**: Mario Galaxy-style gravity fields
+- **Batched Physics Queries**: Raycasts/overlaps queued on CPU, executed in batch on GPU
 - **Spatial Audio**: 3D audio with kira backend
 - **Hot-Reload Scripting**: Rhai scripting integration
 - **Integrated Editor**: Built-in editor overlay and standalone editor
+
+## Hybrid Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         CPU SIDE                                │
+├─────────────────────────────────────────────────────────────────┤
+│  • Entity management (spawn/despawn, generational IDs)          │
+│  • Gameplay logic (quests, inventory, dialogs, AI)              │
+│  • Scripting (Rhai)                                             │
+│  • Input processing                                             │
+│  • Audio triggers                                               │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ Sync once per frame
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                         GPU SIDE                                │
+├─────────────────────────────────────────────────────────────────┤
+│  • Physics simulation (velocity, collisions, gravity)           │
+│  • Batched physics queries (raycast, overlap)                   │
+│  • Particle systems                                             │
+│  • Transform hierarchy                                          │
+│  • Ray marching rendering                                       │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## Architecture
 
 ```
 oh_my_engine/
 ├── crates/
-│   ├── ome_core         # App, Plugin system, GPU context (wgpu)
-│   ├── ome_ecs          # GPU-driven Entity Component System
+│   ├── ome_core         # App, Plugin system, Schedule, Resources
+│   ├── ome_ecs          # Hybrid ECS (CPU gameplay + GPU physics data)
 │   ├── ome_window       # Windowing (winit)
 │   ├── ome_input        # Keyboard, mouse, gamepad (gilrs)
 │   ├── ome_sdf          # SDF primitives and operations
 │   ├── ome_lighting     # Point, spot, directional, area lights
 │   ├── ome_render       # Ray marching renderer
-│   ├── ome_physics      # GPU physics + SDF collision
+│   ├── ome_physics      # GPU physics + batched queries
 │   ├── ome_gravity      # Multi-gravity system
 │   ├── ome_world        # Hierarchical coordinates, streaming
 │   ├── ome_audio        # Spatial audio (kira)
