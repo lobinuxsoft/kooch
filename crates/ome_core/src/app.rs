@@ -219,8 +219,7 @@ mod tests {
             counter_clone.fetch_add(1, Ordering::SeqCst);
         });
 
-        app.schedule_mut()
-            .run_stage(Stage::Update, app.resources_mut());
+        app.schedule.run_stage(Stage::Update, &mut app.resources);
 
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
