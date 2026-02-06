@@ -64,3 +64,18 @@ ome_audio = { path = "crates/ome_audio" }
 ome_scripting = { path = "crates/ome_scripting" }
 ome_editor_core = { path = "crates/ome_editor_core" }
 ome_editor = { path = "crates/ome_editor" }
+
+[package]
+name = "oh_my_engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ome_core.workspace = true
+ome_window.workspace = true
+tracing.workspace = true
+
+[[example]]
+name = "window"
+path = "examples/window.rs"
