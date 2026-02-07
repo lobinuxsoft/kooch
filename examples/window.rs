@@ -1,4 +1,4 @@
-//! Minimal example: open a window with WindowPlugin.
+//! Minimal example: open a window with WindowPlugin and GPU context.
 //!
 //! Run with: cargo run --example window
 
@@ -9,6 +9,16 @@ fn startup(resources: &mut Resources) {
     if let Some(handle) = resources.get::<WindowHandle>() {
         let (w, h) = handle.inner_size();
         tracing::info!("Window ready: {}x{}", w, h);
+    }
+
+    if let Some(gpu) = resources.get::<GpuContext>() {
+        let info = gpu.adapter_info();
+        tracing::info!(
+            name = info.name,
+            backend = ?info.backend,
+            driver = info.driver,
+            "GPU initialized"
+        );
     }
 }
 

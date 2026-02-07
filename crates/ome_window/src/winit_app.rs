@@ -13,6 +13,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use ome_core::app::App;
 use ome_core::event::{AppExit, Events};
+use ome_core::gpu::GpuContext;
 use ome_core::time::Time;
 
 use crate::event::{WindowCloseRequested, WindowResized};
@@ -124,6 +125,18 @@ impl ApplicationHandler for WinitApp {
             .resources
             .insert(WindowHandle::new(Arc::clone(&window)));
 
+        let size = window.inner_size();
+        match GpuContext::new(Arc::clone(&window), size.width, size.height) {
+            Ok(gpu) => {
+                self.app.resources.insert(gpu);
+            }
+            Err(e) => {
+                tracing::error!("Failed to initialize GPU: {e}");
+                event_loop.exit();
+                return;
+            }
+        }
+
         if !self.startup_complete {
             self.app.schedule.run_startup(&mut self.app.resources);
             self.startup_complete = true;
@@ -156,6 +169,9 @@ impl ApplicationHandler for WinitApp {
             }
 
             WindowEvent::Resized(size) => {
+                if let Some(gpu) = self.app.resources.get_mut::<GpuContext>() {
+                    gpu.resize(size.width, size.height);
+                }
                 if let Some(events) = self.app.resources.get_mut::<Events<WindowResized>>() {
                     events.send(WindowResized {
                         width: size.width,
