@@ -6,6 +6,7 @@
 
 pub use crate::app::App;
 pub use crate::event::{AppExit, EventReader, EventRegistry, Events};
+pub use crate::gpu::{GpuContext, GpuError};
 pub use crate::plugin::{CorePlugin, MinimalPlugins, Plugin, PluginGroup, PluginGroupBuilder};
 pub use crate::resource::Resources;
 pub use crate::runner::{default_runner, run_for_frames, run_once, Runner};

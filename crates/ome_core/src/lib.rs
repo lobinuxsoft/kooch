@@ -44,6 +44,7 @@
 
 pub mod app;
 pub mod event;
+pub mod gpu;
 pub mod plugin;
 pub mod prelude;
 pub mod resource;
