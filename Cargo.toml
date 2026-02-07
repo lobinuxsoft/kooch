@@ -74,8 +74,15 @@ license.workspace = true
 [dependencies]
 ome_core.workspace = true
 ome_window.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true
 tracing.workspace = true
 
 [[example]]
 name = "window"
 path = "examples/window.rs"
+
+[[example]]
+name = "compute_vector_add"
+path = "examples/compute_vector_add.rs"
