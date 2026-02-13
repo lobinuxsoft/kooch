@@ -1,8 +1,13 @@
-//! ome_render - Ray marching renderer for oh_my_engine
+//! ome_render — clear-color renderer for oh_my_engine.
 //!
-//! Provides ray marching with SDF, camera system, soft shadows, and lighting integration.
+//! Provides [`RenderPlugin`] which clears the screen with a solid
+//! [`ClearColor`] each frame, verifying the full GPU pipeline works.
 
-/// Placeholder for future implementation
-pub fn init() {
-    tracing::info!("ome_render initialized");
-}
+pub mod clear_color;
+pub mod fps;
+pub mod plugin;
+mod systems;
+
+pub use clear_color::ClearColor;
+pub use fps::FpsTracker;
+pub use plugin::RenderPlugin;
