@@ -184,15 +184,6 @@ impl ApplicationHandler for WinitApp {
             WindowEvent::RedrawRequested => {
                 self.tick_frame();
 
-                // Present the surface frame so the compositor shows the window.
-                // Without this, Wayland compositors won't display the window
-                // because wgpu owns the surface but nothing is being presented.
-                if let Some(gpu) = self.app.resources.get::<GpuContext>()
-                    && let Ok(frame) = gpu.surface().get_current_texture()
-                {
-                    frame.present();
-                }
-
                 if self.should_exit() {
                     event_loop.exit();
                     return;
