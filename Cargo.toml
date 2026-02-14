@@ -72,17 +72,48 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# Always present
 ome_core.workspace = true
-ome_window.workspace = true
-ome_render.workspace = true
+ome_ecs.workspace = true
+
+# Optional (controlled by features)
+ome_window = { workspace = true, optional = true }
+ome_render = { workspace = true, optional = true }
+ome_input = { workspace = true, optional = true }
+ome_audio = { workspace = true, optional = true }
+ome_sdf = { workspace = true, optional = true }
+ome_lighting = { workspace = true, optional = true }
+ome_physics = { workspace = true, optional = true }
+ome_gravity = { workspace = true, optional = true }
+ome_world = { workspace = true, optional = true }
+ome_scripting = { workspace = true, optional = true }
+ome_editor_core = { workspace = true, optional = true }
+ome_editor = { workspace = true, optional = true }
+
+# External (used by examples)
 wgpu.workspace = true
 bytemuck.workspace = true
 pollster.workspace = true
 tracing.workspace = true
 
+[features]
+default = ["window", "render"]
+window = ["dep:ome_window"]
+render = ["dep:ome_render", "window"]
+input = ["dep:ome_input", "window"]
+audio = ["dep:ome_audio"]
+sdf = ["dep:ome_sdf"]
+lighting = ["dep:ome_lighting"]
+physics = ["dep:ome_physics"]
+gravity = ["dep:ome_gravity"]
+world = ["dep:ome_world"]
+scripting = ["dep:ome_scripting"]
+editor = ["dep:ome_editor", "dep:ome_editor_core"]
+
 [[example]]
 name = "window"
 path = "examples/window.rs"
+required-features = ["window"]
 
 [[example]]
 name = "compute_vector_add"
@@ -91,3 +122,4 @@ path = "examples/compute_vector_add.rs"
 [[example]]
 name = "clear_color"
 path = "examples/clear_color.rs"
+required-features = ["render"]
