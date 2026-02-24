@@ -54,6 +54,9 @@ pub mod schedule;
 pub mod stage;
 pub mod time;
 
+#[cfg(feature = "dynamic")]
+pub mod dynamic;
+
 /// Initializes the tracing subscriber for logging.
 ///
 /// Call this early in your application (before creating the App) if you

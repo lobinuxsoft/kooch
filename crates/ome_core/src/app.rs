@@ -10,6 +10,9 @@ use crate::runner::{default_runner, Runner};
 use crate::schedule::Schedule;
 use crate::stage::Stage;
 
+#[cfg(feature = "dynamic")]
+use std::path::Path;
+
 /// The central application struct that orchestrates the engine.
 ///
 /// Use the builder pattern to configure the app, then call `run()` to
@@ -149,6 +152,48 @@ impl App {
 
         let runner = self.runner.take().unwrap_or(default_runner);
         runner(self);
+    }
+
+    /// Loads a dynamic plugin from a shared library.
+    ///
+    /// The plugin is verified for ABI compatibility, instantiated, and
+    /// registered like any static plugin. The library is kept alive for
+    /// the lifetime of the application.
+    ///
+    /// # Safety
+    ///
+    /// Loading a shared library executes arbitrary code. Only load plugins
+    /// you trust.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PluginLoadError`](crate::dynamic::PluginLoadError) if the
+    /// library can't be loaded or the plugin is incompatible.
+    #[cfg(feature = "dynamic")]
+    pub unsafe fn load_plugin(
+        &mut self,
+        path: &Path,
+    ) -> Result<&mut Self, crate::dynamic::PluginLoadError> {
+        // Ensure we have a PluginLoader resource to keep libraries alive.
+        if !self.resources.contains::<crate::dynamic::PluginLoader>() {
+            self.resources
+                .insert(crate::dynamic::PluginLoader::new());
+        }
+
+        // Remove the loader, load the plugin, re-insert.
+        let mut loader = self
+            .resources
+            .remove::<crate::dynamic::PluginLoader>()
+            .unwrap();
+
+        let plugin = unsafe { loader.load(path)? };
+
+        self.resources.insert(loader);
+
+        let wrapper = crate::dynamic::DynamicPlugin::new(plugin);
+        self.add_plugin(wrapper);
+
+        Ok(self)
     }
 
     /// Returns a reference to the resources.

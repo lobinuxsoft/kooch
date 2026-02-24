@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/ome_core",
     "crates/ome_ecs",
+    "crates/ome_plugin_api",
     "crates/ome_window",
     "crates/ome_input",
     "crates/ome_sdf",
@@ -15,6 +16,7 @@ members = [
     "crates/ome_scripting",
     "crates/ome_editor_core",
     "crates/ome_editor",
+    "examples/example_plugin",
 ]
 
 [workspace.package]
@@ -48,6 +50,9 @@ rhai = "1.21"
 # Editor UI
 egui = "0.30"
 eframe = "0.30"
+# Dynamic plugins
+stabby = "72.1"
+libloading = "0.8"
 
 # Internal crates
 ome_core = { path = "crates/ome_core" }
@@ -64,6 +69,7 @@ ome_audio = { path = "crates/ome_audio" }
 ome_scripting = { path = "crates/ome_scripting" }
 ome_editor_core = { path = "crates/ome_editor_core" }
 ome_editor = { path = "crates/ome_editor" }
+ome_plugin_api = { path = "crates/ome_plugin_api" }
 
 [package]
 name = "oh_my_engine"
@@ -89,6 +95,7 @@ ome_world = { workspace = true, optional = true }
 ome_scripting = { workspace = true, optional = true }
 ome_editor_core = { workspace = true, optional = true }
 ome_editor = { workspace = true, optional = true }
+ome_plugin_api = { workspace = true, optional = true }
 
 # External (used by examples)
 wgpu.workspace = true
@@ -109,6 +116,7 @@ gravity = ["dep:ome_gravity"]
 world = ["dep:ome_world"]
 scripting = ["dep:ome_scripting"]
 editor = ["dep:ome_editor", "dep:ome_editor_core"]
+dynamic = ["ome_core/dynamic", "ome_ecs/dynamic", "dep:ome_plugin_api"]
 
 [[example]]
 name = "window"
@@ -123,3 +131,8 @@ path = "examples/compute_vector_add.rs"
 name = "clear_color"
 path = "examples/clear_color.rs"
 required-features = ["render"]
+
+[[example]]
+name = "dynamic_plugin"
+path = "examples/dynamic_plugin.rs"
+required-features = ["dynamic"]
