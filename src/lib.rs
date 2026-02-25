@@ -25,6 +25,10 @@
 pub use ome_core;
 pub use ome_ecs;
 
+// Dynamic plugin API (optional)
+#[cfg(feature = "dynamic")]
+pub use ome_plugin_api;
+
 // Conditional re-exports
 #[cfg(feature = "window")]
 pub use ome_window;
@@ -64,6 +68,8 @@ pub mod prelude {
     pub use ome_window::{WindowCloseRequested, WindowHandle, WindowPlugin, WindowResized};
     #[cfg(feature = "render")]
     pub use ome_render::{ClearColor, RenderPlugin};
+    #[cfg(feature = "dynamic")]
+    pub use ome_plugin_api::prelude as plugin_api;
 }
 
 /// Default set of plugins for a windowed application.

@@ -1,0 +1,15 @@
+[package]
+name = "example_plugin"
+description = "Example dynamic plugin for OhMyEngine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ome_plugin_api.workspace = true
+stabby.workspace = true

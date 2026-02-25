@@ -88,6 +88,38 @@ impl Resources {
     pub fn clear(&mut self) {
         self.storage.clear();
     }
+
+    /// Returns an immutable raw pointer to the resource with the given `TypeId`.
+    ///
+    /// Returns null if the type is not stored.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure the pointer is cast to the correct concrete type
+    /// and not used after the resource is removed or mutably accessed.
+    pub fn get_ptr_by_id(&self, type_id: TypeId) -> *const () {
+        self.storage
+            .get(&type_id)
+            .map_or(std::ptr::null(), |boxed| {
+                boxed.as_ref() as *const dyn Any as *const ()
+            })
+    }
+
+    /// Returns a mutable raw pointer to the resource with the given `TypeId`.
+    ///
+    /// Returns null if the type is not stored.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure the pointer is cast to the correct concrete type,
+    /// not aliased, and not used after the resource is removed.
+    pub fn get_mut_ptr_by_id(&mut self, type_id: TypeId) -> *mut () {
+        self.storage
+            .get_mut(&type_id)
+            .map_or(std::ptr::null_mut(), |boxed| {
+                boxed.as_mut() as *mut dyn Any as *mut ()
+            })
+    }
 }
 
 #[cfg(test)]
@@ -158,5 +190,40 @@ mod tests {
 
         resources.insert("hello".to_string());
         assert_eq!(resources.len(), 2);
+    }
+
+    #[test]
+    fn get_ptr_by_id() {
+        let mut resources = Resources::new();
+        resources.insert(42_i32);
+
+        let ptr = resources.get_ptr_by_id(TypeId::of::<i32>());
+        assert!(!ptr.is_null());
+
+        let value = unsafe { &*(ptr as *const i32) };
+        assert_eq!(*value, 42);
+
+        // Missing type returns null.
+        let null_ptr = resources.get_ptr_by_id(TypeId::of::<f64>());
+        assert!(null_ptr.is_null());
+    }
+
+    #[test]
+    fn get_mut_ptr_by_id() {
+        let mut resources = Resources::new();
+        resources.insert(10_i32);
+
+        let ptr = resources.get_mut_ptr_by_id(TypeId::of::<i32>());
+        assert!(!ptr.is_null());
+
+        unsafe {
+            *(ptr as *mut i32) = 99;
+        }
+
+        assert_eq!(resources.get::<i32>(), Some(&99));
+
+        // Missing type returns null.
+        let null_ptr = resources.get_mut_ptr_by_id(TypeId::of::<f64>());
+        assert!(null_ptr.is_null());
     }
 }
