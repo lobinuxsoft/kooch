@@ -5,20 +5,31 @@ use ome_core::plugin::Plugin;
 use ome_core::stage::Stage;
 
 use crate::allocator::EntityAllocator;
+use crate::component::registry::ComponentRegistry;
+use crate::component::{component_despawn_cleanup_system, component_gpu_sync_system};
 #[cfg(feature = "dynamic")]
 use crate::entity::Entity;
 use crate::gpu_sync::entity_gpu_sync_system;
 
-/// Plugin that bootstraps the entity system.
+/// Plugin that bootstraps the entity and component systems.
 ///
-/// Inserts a default [`EntityAllocator`] and registers
-/// [`entity_gpu_sync_system`] in [`Stage::GpuSync`].
+/// Inserts [`EntityAllocator`] and [`ComponentRegistry`], then registers
+/// the GPU sync systems in [`Stage::GpuSync`] in the correct order:
+///
+/// 1. `component_despawn_cleanup_system` — remove despawned entities from storages
+/// 2. `entity_gpu_sync_system` — sync alive mask to GPU
+/// 3. `component_gpu_sync_system` — upload dirty component data to GPU
 pub struct EcsPlugin;
 
 impl Plugin for EcsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(EntityAllocator::new());
+        app.insert_resource(ComponentRegistry::new());
+
+        // Order within a stage is insertion order — these three MUST stay in this sequence.
+        app.add_system(Stage::GpuSync, component_despawn_cleanup_system);
         app.add_system(Stage::GpuSync, entity_gpu_sync_system);
+        app.add_system(Stage::GpuSync, component_gpu_sync_system);
 
         #[cfg(feature = "dynamic")]
         {
@@ -54,10 +65,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plugin_registers_allocator() {
+    fn plugin_registers_allocator_and_registry() {
         let mut app = App::new();
         app.add_plugin(EcsPlugin);
 
         assert!(app.resources().get::<EntityAllocator>().is_some());
+        assert!(app.resources().get::<ComponentRegistry>().is_some());
     }
 }

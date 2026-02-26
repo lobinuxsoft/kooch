@@ -26,6 +26,8 @@ pub struct EntityAllocator {
     alive_count: u32,
     /// Slot indices whose alive state changed since the last GPU sync.
     pending_sync: Vec<u32>,
+    /// Entities despawned since the last cleanup (for component removal).
+    pending_despawn: Vec<Entity>,
 }
 
 impl EntityAllocator {
@@ -51,6 +53,7 @@ impl EntityAllocator {
             free_list,
             alive_count: 0,
             pending_sync: Vec::new(),
+            pending_despawn: Vec::new(),
         }
     }
 
@@ -106,6 +109,7 @@ impl EntityAllocator {
         self.alive_count -= 1;
         self.free_list.push_back(entity.index());
         self.pending_sync.push(entity.index());
+        self.pending_despawn.push(entity);
 
         true
     }
@@ -144,6 +148,14 @@ impl EntityAllocator {
     /// need their `alive_mask` value updated.
     pub fn take_pending_sync(&mut self) -> Vec<u32> {
         std::mem::take(&mut self.pending_sync)
+    }
+
+    /// Drains and returns entities despawned since the last call.
+    ///
+    /// The component cleanup system calls this to remove despawned
+    /// entities from all component storages.
+    pub fn take_pending_despawn(&mut self) -> Vec<Entity> {
+        std::mem::take(&mut self.pending_despawn)
     }
 
     // -- private --
@@ -294,6 +306,30 @@ mod tests {
         assert!(alloc.take_pending_sync().is_empty());
 
         let _ = b; // suppress unused warning
+    }
+
+    #[test]
+    fn pending_despawn_tracks_despawned_entities() {
+        let mut alloc = EntityAllocator::with_capacity(4);
+        let a = alloc.spawn();
+        let b = alloc.spawn();
+
+        // No despawns yet.
+        assert!(alloc.take_pending_despawn().is_empty());
+
+        alloc.despawn(a);
+        let despawned = alloc.take_pending_despawn();
+        assert_eq!(despawned.len(), 1);
+        assert_eq!(despawned[0], a);
+
+        // Drained — empty now.
+        assert!(alloc.take_pending_despawn().is_empty());
+
+        // Stale despawn does NOT add to pending_despawn.
+        alloc.despawn(a);
+        assert!(alloc.take_pending_despawn().is_empty());
+
+        let _ = b;
     }
 
     #[test]
