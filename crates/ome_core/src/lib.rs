@@ -43,6 +43,7 @@
 //! ```
 
 pub mod app;
+pub mod buffer;
 pub mod compute;
 pub mod event;
 pub mod gpu;
