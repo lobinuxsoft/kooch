@@ -317,4 +317,139 @@ mod tests {
         any_storage.remove_entity(e);
         assert_eq!(storage.len(), 0);
     }
+
+    // -- GPU integration tests (require hardware) --
+
+    fn create_headless_device() -> (wgpu::Device, wgpu::Queue) {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
+            ..Default::default()
+        });
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .expect("no GPU adapter");
+
+        pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("test_device"),
+                ..Default::default()
+            },
+            None,
+        ))
+        .expect("failed to create device")
+    }
+
+    fn readback_buffer<T: bytemuck::Pod>(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gpu_buf: &GpuBuffer<T>,
+        count: usize,
+    ) -> Vec<T> {
+        use ome_core::buffer::StagingBuffer;
+
+        let byte_size = (count * std::mem::size_of::<T>()) as u64;
+        let staging = StagingBuffer::new(device, byte_size);
+        staging.read_buffer(device, queue, gpu_buf.buffer())
+    }
+
+    #[test]
+    #[ignore] // Requires GPU hardware.
+    fn sync_gpu_creates_buffer_and_uploads() {
+        let (device, queue) = create_headless_device();
+        let mut storage = GpuComponentStorage::<TestTransform>::new("test_sync");
+
+        let e0 = entity(0);
+        let e1 = entity(1);
+        let v0 = TestTransform { x: 1.0, y: 2.0, z: 3.0, _pad: 0.0 };
+        let v1 = TestTransform { x: 4.0, y: 5.0, z: 6.0, _pad: 0.0 };
+
+        storage.insert(e0, v0);
+        storage.insert(e1, v1);
+
+        assert!(storage.gpu_buffer().is_none());
+
+        // First sync — creates buffer.
+        storage.sync_gpu(&device, &queue, 4);
+        assert!(storage.gpu_buffer().is_some());
+
+        let data = readback_buffer(&device, &queue, storage.gpu_buffer().unwrap(), 4);
+        assert_eq!(data[0], v0);
+        assert_eq!(data[1], v1);
+        assert_eq!(data[2], TestTransform::zeroed());
+        assert_eq!(data[3], TestTransform::zeroed());
+    }
+
+    #[test]
+    #[ignore] // Requires GPU hardware.
+    fn sync_gpu_partial_dirty_upload() {
+        let (device, queue) = create_headless_device();
+        let mut storage = GpuComponentStorage::<TestTransform>::new("test_dirty");
+
+        let v0 = TestTransform { x: 1.0, y: 0.0, z: 0.0, _pad: 0.0 };
+        storage.insert(entity(0), v0);
+        storage.insert(entity(1), v0);
+        storage.insert(entity(2), v0);
+
+        // Initial sync.
+        storage.sync_gpu(&device, &queue, 4);
+
+        // Modify only entity 1.
+        let v_new = TestTransform { x: 99.0, y: 0.0, z: 0.0, _pad: 0.0 };
+        *storage.get_mut(entity(1)).unwrap() = v_new;
+
+        // Partial sync — only dirty range uploaded.
+        storage.sync_gpu(&device, &queue, 4);
+
+        let data = readback_buffer(&device, &queue, storage.gpu_buffer().unwrap(), 4);
+        assert_eq!(data[0], v0);
+        assert_eq!(data[1], v_new);
+        assert_eq!(data[2], v0);
+    }
+
+    #[test]
+    #[ignore] // Requires GPU hardware.
+    fn sync_gpu_grow_re_uploads_all() {
+        let (device, queue) = create_headless_device();
+        let mut storage = GpuComponentStorage::<TestTransform>::new("test_grow");
+
+        let v0 = TestTransform { x: 1.0, y: 2.0, z: 3.0, _pad: 0.0 };
+        storage.insert(entity(0), v0);
+
+        // Initial sync with capacity 2.
+        storage.sync_gpu(&device, &queue, 2);
+        assert_eq!(storage.gpu_buffer().unwrap().capacity(), 2);
+
+        // Grow to capacity 8 — should re-upload everything.
+        storage.sync_gpu(&device, &queue, 8);
+        assert_eq!(storage.gpu_buffer().unwrap().capacity(), 8);
+
+        let data = readback_buffer(&device, &queue, storage.gpu_buffer().unwrap(), 8);
+        assert_eq!(data[0], v0);
+        // Rest should be zeroed.
+        for i in 1..8 {
+            assert_eq!(data[i], TestTransform::zeroed());
+        }
+    }
+
+    #[test]
+    #[ignore] // Requires GPU hardware.
+    fn sync_gpu_remove_zeros_on_gpu() {
+        let (device, queue) = create_headless_device();
+        let mut storage = GpuComponentStorage::<TestTransform>::new("test_remove_gpu");
+
+        let v0 = TestTransform { x: 42.0, y: 0.0, z: 0.0, _pad: 0.0 };
+        storage.insert(entity(0), v0);
+        storage.sync_gpu(&device, &queue, 2);
+
+        // Remove and sync — slot 0 should be zeroed on GPU.
+        storage.remove(entity(0));
+        storage.sync_gpu(&device, &queue, 2);
+
+        let data = readback_buffer(&device, &queue, storage.gpu_buffer().unwrap(), 2);
+        assert_eq!(data[0], TestTransform::zeroed());
+    }
 }
