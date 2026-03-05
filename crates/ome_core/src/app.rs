@@ -9,6 +9,7 @@ use crate::resource::Resources;
 use crate::runner::{default_runner, Runner};
 use crate::schedule::Schedule;
 use crate::stage::Stage;
+use crate::system::{GpuSystem, System};
 
 #[cfg(feature = "dynamic")]
 use std::path::Path;
@@ -101,12 +102,27 @@ impl App {
         self
     }
 
-    /// Adds a system to run at the specified stage.
+    /// Adds a closure as a CPU system at the specified stage.
     pub fn add_system<F>(&mut self, stage: Stage, system: F) -> &mut Self
     where
         F: FnMut(&mut Resources) + Send + Sync + 'static,
     {
         self.schedule.add_system(stage, system);
+        self
+    }
+
+    /// Adds a struct implementing [`System`] at the specified stage.
+    pub fn add_cpu_system(&mut self, stage: Stage, system: impl System) -> &mut Self {
+        self.schedule.add_cpu_system(stage, system);
+        self
+    }
+
+    /// Adds a [`GpuSystem`] at the specified stage.
+    ///
+    /// GPU systems are lazily initialized when `GpuContext` first becomes
+    /// available. If no GPU is present, they are silently skipped.
+    pub fn add_gpu_system(&mut self, stage: Stage, system: impl GpuSystem) -> &mut Self {
+        self.schedule.add_gpu_system(stage, system);
         self
     }
 
