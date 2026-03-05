@@ -9,15 +9,21 @@
 //! - [`ComponentRegistry`] — type-erased registry of component storages.
 //! - [`GpuComponentStorage`] — dense GPU-backed component storage.
 //! - [`ComponentStorage`] — CPU-only `HashMap`-backed component storage.
+//! - [`Archetype`] — entity group sharing the same component set.
+//! - [`ArchetypeRegistry`] — archetype index with transition caching.
 //! - [`EcsPlugin`] — one-liner integration into [`App`](ome_core::app::App).
 
 pub mod allocator;
+pub mod archetype;
+pub mod archetype_registry;
 pub mod component;
 pub mod entity;
 pub mod gpu_sync;
 pub mod plugin;
 
 pub use allocator::EntityAllocator;
+pub use archetype::{Archetype, ArchetypeId};
+pub use archetype_registry::ArchetypeRegistry;
 pub use component::{
     Component, ComponentRegistry, ComponentStorage, GpuComponent, GpuComponentStorage,
 };
