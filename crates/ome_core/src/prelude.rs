@@ -13,6 +13,7 @@ pub use crate::resource::Resources;
 pub use crate::runner::{default_runner, run_for_frames, run_once, Runner};
 pub use crate::schedule::{Schedule, SystemFn};
 pub use crate::stage::Stage;
+pub use crate::system::{FunctionSystem, GpuSystem, System};
 pub use crate::time::Time;
 
 #[cfg(feature = "dynamic")]
