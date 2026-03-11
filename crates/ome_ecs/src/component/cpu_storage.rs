@@ -95,6 +95,24 @@ impl<T: Component> AnyStorage for ComponentStorage<T> {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
+    fn contains_entity(&self, entity: Entity) -> bool {
+        self.data.contains_key(&entity)
+    }
+
+    fn get_ptr(&self, entity: Entity) -> Option<*const u8> {
+        self.data.get(&entity).map(|v| v as *const T as *const u8)
+    }
+
+    fn get_mut_ptr(&mut self, entity: Entity) -> Option<*mut u8> {
+        self.data
+            .get_mut(&entity)
+            .map(|v| v as *mut T as *mut u8)
+    }
+
+    fn is_mutable(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

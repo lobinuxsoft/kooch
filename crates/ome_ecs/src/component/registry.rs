@@ -5,6 +5,7 @@
 //! all storages, sync all GPU storages).
 
 use std::any::TypeId;
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
 
 use wgpu::{Device, Queue};
@@ -19,9 +20,19 @@ use super::traits::{AnyStorage, Component, GpuComponent};
 ///
 /// Stores one [`GpuComponentStorage<T>`] or [`ComponentStorage<T>`] per
 /// registered component type, keyed by `TypeId`.
+///
+/// Uses [`UnsafeCell`] internally to allow the query system to borrow
+/// multiple storages simultaneously. Safety is enforced at the query
+/// level through runtime access tracking.
 pub struct ComponentRegistry {
-    storages: HashMap<TypeId, Box<dyn AnyStorage>>,
+    storages: HashMap<TypeId, UnsafeCell<Box<dyn AnyStorage>>>,
 }
+
+// SAFETY: All public methods either take `&mut self` (exclusive access) or
+// `&self` for read-only operations. The query system uses `UnsafeCell` access
+// with runtime borrow checking to ensure no aliasing violations.
+unsafe impl Send for ComponentRegistry {}
+unsafe impl Sync for ComponentRegistry {}
 
 impl ComponentRegistry {
     /// Creates an empty registry.
@@ -38,7 +49,7 @@ impl ComponentRegistry {
     pub fn register_gpu<T: GpuComponent>(&mut self, label: &str) {
         self.storages
             .entry(TypeId::of::<T>())
-            .or_insert_with(|| Box::new(GpuComponentStorage::<T>::new(label)));
+            .or_insert_with(|| UnsafeCell::new(Box::new(GpuComponentStorage::<T>::new(label))));
     }
 
     /// Registers a CPU-only component type.
@@ -47,41 +58,49 @@ impl ComponentRegistry {
     pub fn register_cpu<T: Component>(&mut self) {
         self.storages
             .entry(TypeId::of::<T>())
-            .or_insert_with(|| Box::new(ComponentStorage::<T>::new()));
+            .or_insert_with(|| UnsafeCell::new(Box::new(ComponentStorage::<T>::new())));
     }
 
     /// Returns an immutable reference to a GPU component storage.
     pub fn get_gpu<T: GpuComponent>(&self) -> Option<&GpuComponentStorage<T>> {
-        self.storages
-            .get(&TypeId::of::<T>())
-            .and_then(|s| s.as_any().downcast_ref())
+        self.storages.get(&TypeId::of::<T>()).and_then(|cell| {
+            // SAFETY: No mutable references exist (we have &self, not via query).
+            let storage = unsafe { &*cell.get() };
+            storage.as_any().downcast_ref()
+        })
     }
 
     /// Returns a mutable reference to a GPU component storage.
     pub fn get_gpu_mut<T: GpuComponent>(&mut self) -> Option<&mut GpuComponentStorage<T>> {
-        self.storages
-            .get_mut(&TypeId::of::<T>())
-            .and_then(|s| s.as_any_mut().downcast_mut())
+        self.storages.get_mut(&TypeId::of::<T>()).and_then(|cell| {
+            // SAFETY: We have &mut self, so exclusive access is guaranteed.
+            let storage = cell.get_mut();
+            storage.as_any_mut().downcast_mut()
+        })
     }
 
     /// Returns an immutable reference to a CPU component storage.
     pub fn get_cpu<T: Component>(&self) -> Option<&ComponentStorage<T>> {
-        self.storages
-            .get(&TypeId::of::<T>())
-            .and_then(|s| s.as_any().downcast_ref())
+        self.storages.get(&TypeId::of::<T>()).and_then(|cell| {
+            // SAFETY: No mutable references exist (we have &self, not via query).
+            let storage = unsafe { &*cell.get() };
+            storage.as_any().downcast_ref()
+        })
     }
 
     /// Returns a mutable reference to a CPU component storage.
     pub fn get_cpu_mut<T: Component>(&mut self) -> Option<&mut ComponentStorage<T>> {
-        self.storages
-            .get_mut(&TypeId::of::<T>())
-            .and_then(|s| s.as_any_mut().downcast_mut())
+        self.storages.get_mut(&TypeId::of::<T>()).and_then(|cell| {
+            // SAFETY: We have &mut self, so exclusive access is guaranteed.
+            let storage = cell.get_mut();
+            storage.as_any_mut().downcast_mut()
+        })
     }
 
     /// Removes `entity` from all registered storages.
     pub fn remove_entity(&mut self, entity: Entity) {
-        for storage in self.storages.values_mut() {
-            storage.remove_entity(entity);
+        for cell in self.storages.values_mut() {
+            cell.get_mut().remove_entity(entity);
         }
     }
 
@@ -90,9 +109,38 @@ impl ComponentRegistry {
     /// CPU-only storages have a no-op `sync_gpu` so this is safe to call
     /// on the entire registry.
     pub fn sync_all_gpu(&mut self, device: &Device, queue: &Queue, capacity: u32) {
-        for storage in self.storages.values_mut() {
-            storage.sync_gpu(device, queue, capacity);
+        for cell in self.storages.values_mut() {
+            cell.get_mut().sync_gpu(device, queue, capacity);
         }
+    }
+
+    /// Returns `true` if a storage is registered for the given `TypeId`.
+    pub fn contains_type(&self, type_id: &TypeId) -> bool {
+        self.storages.contains_key(type_id)
+    }
+
+    /// Returns an immutable reference to the type-erased storage for the given `TypeId`.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure no mutable reference to the same `TypeId` storage
+    /// is active (i.e. no concurrent `storage_mut` call for the same type).
+    pub(crate) unsafe fn storage(&self, type_id: &TypeId) -> Option<&dyn AnyStorage> {
+        self.storages
+            .get(type_id)
+            .map(|cell| unsafe { &**cell.get() })
+    }
+
+    /// Returns a mutable reference to the type-erased storage for the given `TypeId`.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure no other reference (mutable or immutable) to the
+    /// same `TypeId` storage is active.
+    pub(crate) unsafe fn storage_mut(&self, type_id: &TypeId) -> Option<&mut dyn AnyStorage> {
+        self.storages
+            .get(type_id)
+            .map(|cell| unsafe { &mut **cell.get() })
     }
 }
 
@@ -239,5 +287,14 @@ mod tests {
 
         assert_eq!(registry.get_gpu::<Position>().unwrap().len(), 2);
         assert_eq!(registry.get_cpu::<Name>().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn contains_type_check() {
+        let mut registry = ComponentRegistry::new();
+        assert!(!registry.contains_type(&TypeId::of::<Position>()));
+
+        registry.register_gpu::<Position>("position");
+        assert!(registry.contains_type(&TypeId::of::<Position>()));
     }
 }

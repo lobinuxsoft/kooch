@@ -10,6 +10,7 @@ use crate::component::{component_despawn_cleanup_system, component_gpu_sync_syst
 #[cfg(feature = "dynamic")]
 use crate::entity::Entity;
 use crate::gpu_sync::entity_gpu_sync_system;
+use crate::query::AccessTracker;
 
 /// Plugin that bootstraps the entity and component systems.
 ///
@@ -25,6 +26,7 @@ impl Plugin for EcsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(EntityAllocator::new());
         app.insert_resource(ComponentRegistry::new());
+        app.insert_resource(AccessTracker::new());
 
         // Order within a stage is insertion order — these three MUST stay in this sequence.
         app.add_system(Stage::GpuSync, component_despawn_cleanup_system);
@@ -71,5 +73,6 @@ mod tests {
 
         assert!(app.resources().get::<EntityAllocator>().is_some());
         assert!(app.resources().get::<ComponentRegistry>().is_some());
+        assert!(app.resources().get::<AccessTracker>().is_some());
     }
 }

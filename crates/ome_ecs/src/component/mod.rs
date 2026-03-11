@@ -7,7 +7,7 @@
 pub mod cpu_storage;
 pub mod gpu_storage;
 pub mod registry;
-mod traits;
+pub(crate) mod traits;
 
 pub use cpu_storage::ComponentStorage;
 pub use gpu_storage::GpuComponentStorage;
