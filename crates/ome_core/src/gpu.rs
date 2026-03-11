@@ -125,10 +125,13 @@ impl GpuContext {
 
         let surface_caps = surface.get_capabilities(&adapter);
 
+        // Prefer non-sRGB format (e.g., Bgra8Unorm) since egui and most
+        // renderers handle gamma correction in the shader. sRGB surfaces
+        // double-apply gamma.
         let format = surface_caps
             .formats
             .iter()
-            .find(|f| f.is_srgb())
+            .find(|f| !f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 

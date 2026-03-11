@@ -26,6 +26,7 @@ use super::traits::{AnyStorage, Component, GpuComponent};
 /// level through runtime access tracking.
 pub struct ComponentRegistry {
     storages: HashMap<TypeId, UnsafeCell<Box<dyn AnyStorage>>>,
+    type_names: HashMap<TypeId, &'static str>,
 }
 
 // SAFETY: All public methods either take `&mut self` (exclusive access) or
@@ -39,6 +40,7 @@ impl ComponentRegistry {
     pub fn new() -> Self {
         Self {
             storages: HashMap::new(),
+            type_names: HashMap::new(),
         }
     }
 
@@ -47,18 +49,26 @@ impl ComponentRegistry {
     /// `label` is used as the GPU buffer debug label.
     /// Does nothing if the type is already registered.
     pub fn register_gpu<T: GpuComponent>(&mut self, label: &str) {
+        let type_id = TypeId::of::<T>();
         self.storages
-            .entry(TypeId::of::<T>())
+            .entry(type_id)
             .or_insert_with(|| UnsafeCell::new(Box::new(GpuComponentStorage::<T>::new(label))));
+        self.type_names
+            .entry(type_id)
+            .or_insert_with(|| std::any::type_name::<T>());
     }
 
     /// Registers a CPU-only component type.
     ///
     /// Does nothing if the type is already registered.
     pub fn register_cpu<T: Component>(&mut self) {
+        let type_id = TypeId::of::<T>();
         self.storages
-            .entry(TypeId::of::<T>())
+            .entry(type_id)
             .or_insert_with(|| UnsafeCell::new(Box::new(ComponentStorage::<T>::new())));
+        self.type_names
+            .entry(type_id)
+            .or_insert_with(|| std::any::type_name::<T>());
     }
 
     /// Returns an immutable reference to a GPU component storage.
@@ -126,6 +136,11 @@ impl ComponentRegistry {
     /// Returns `true` if a storage is registered for the given `TypeId`.
     pub fn contains_type(&self, type_id: &TypeId) -> bool {
         self.storages.contains_key(type_id)
+    }
+
+    /// Returns the human-readable type name for a registered component.
+    pub fn component_name(&self, type_id: &TypeId) -> Option<&'static str> {
+        self.type_names.get(type_id).copied()
     }
 
     /// Returns an immutable reference to the type-erased storage for the given `TypeId`.
