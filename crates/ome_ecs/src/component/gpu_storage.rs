@@ -142,6 +142,24 @@ impl<T: GpuComponent> AnyStorage for GpuComponentStorage<T> {
         self.remove(entity);
     }
 
+    fn contains_entity(&self, entity: Entity) -> bool {
+        self.contains(entity)
+    }
+
+    fn get_ptr(&self, entity: Entity) -> Option<*const u8> {
+        self.get(entity).map(|v| v as *const T as *const u8)
+    }
+
+    fn get_mut_ptr(&mut self, _entity: Entity) -> Option<*mut u8> {
+        // GPU components are read-only from CPU side in query context.
+        // Mutations go through GpuComponentStorage::get_mut() which tracks dirty state.
+        None
+    }
+
+    fn is_mutable(&self) -> bool {
+        false
+    }
+
     fn sync_gpu(&mut self, device: &Device, queue: &Queue, capacity: u32) {
         // 1. Resize CPU vecs to match allocator capacity.
         self.ensure_capacity(capacity);
