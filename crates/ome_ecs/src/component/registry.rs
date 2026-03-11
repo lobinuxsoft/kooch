@@ -104,6 +104,15 @@ impl ComponentRegistry {
         }
     }
 
+    /// Removes a single component from `entity` by `TypeId`.
+    ///
+    /// Does nothing if the type is not registered or the entity doesn't have it.
+    pub fn remove_component(&mut self, entity: Entity, type_id: &TypeId) {
+        if let Some(cell) = self.storages.get_mut(type_id) {
+            cell.get_mut().remove_entity(entity);
+        }
+    }
+
     /// Syncs all GPU-backed storages to the GPU.
     ///
     /// CPU-only storages have a no-op `sync_gpu` so this is safe to call

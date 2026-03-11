@@ -17,6 +17,7 @@
 pub mod allocator;
 pub mod archetype;
 pub mod archetype_registry;
+pub mod commands;
 pub mod component;
 pub mod entity;
 pub mod gpu_sync;
@@ -26,6 +27,7 @@ pub mod query;
 pub use allocator::EntityAllocator;
 pub use archetype::{Archetype, ArchetypeId};
 pub use archetype_registry::ArchetypeRegistry;
+pub use commands::Commands;
 pub use component::{
     Component, ComponentRegistry, ComponentStorage, GpuComponent, GpuComponentStorage,
 };
