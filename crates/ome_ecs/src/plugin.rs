@@ -5,6 +5,8 @@ use ome_core::plugin::Plugin;
 use ome_core::stage::Stage;
 
 use crate::allocator::EntityAllocator;
+use crate::archetype_registry::ArchetypeRegistry;
+use crate::commands::{Commands, commands_apply_system};
 use crate::component::registry::ComponentRegistry;
 use crate::component::{component_despawn_cleanup_system, component_gpu_sync_system};
 #[cfg(feature = "dynamic")]
@@ -26,9 +28,16 @@ impl Plugin for EcsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(EntityAllocator::new());
         app.insert_resource(ComponentRegistry::new());
+        app.insert_resource(ArchetypeRegistry::new());
         app.insert_resource(AccessTracker::new());
+        app.insert_resource(Commands::new());
 
-        // Order within a stage is insertion order — these three MUST stay in this sequence.
+        // Order within a stage is insertion order — these MUST stay in this sequence.
+        // 1. Apply deferred commands (spawn/despawn/insert/remove).
+        // 2. Clean up despawned entities from component storages.
+        // 3. Sync entity alive mask to GPU.
+        // 4. Upload dirty component data to GPU.
+        app.add_system(Stage::GpuSync, commands_apply_system);
         app.add_system(Stage::GpuSync, component_despawn_cleanup_system);
         app.add_system(Stage::GpuSync, entity_gpu_sync_system);
         app.add_system(Stage::GpuSync, component_gpu_sync_system);

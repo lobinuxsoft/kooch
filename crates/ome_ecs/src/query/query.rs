@@ -33,6 +33,7 @@ use super::filter::QueryFilter;
 pub struct Query<'w, Q: WorldQuery, F: QueryFilter = ()> {
     fetch: Q::Fetch<'w>,
     matched_archetypes: Vec<&'w Archetype>,
+    archetypes: &'w ArchetypeRegistry,
     tracker: &'w AccessTracker,
     _released: bool,
     _marker: PhantomData<F>,
@@ -85,6 +86,7 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
         Self {
             fetch,
             matched_archetypes,
+            archetypes,
             tracker,
             _released: false,
             _marker: PhantomData,
@@ -104,8 +106,16 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
 
     /// Fetches the component data for a single entity.
     ///
-    /// Returns `None` if the entity doesn't have the required components.
+    /// Returns `None` if the entity doesn't have the required components
+    /// or if its archetype doesn't match the query filter.
     pub fn get(&self, entity: Entity) -> Option<Q::Item<'w>> {
+        // Check the entity's archetype passes the filter.
+        let arch_id = self.archetypes.entity_archetype(entity)?;
+        let arch = self.archetypes.get(arch_id)?;
+        if !F::matches_archetype(arch) {
+            return None;
+        }
+
         // SAFETY: Borrows are tracked; the entity is validated per-storage.
         unsafe { Q::fetch(&self.fetch, entity) }
     }
