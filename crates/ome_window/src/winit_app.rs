@@ -14,6 +14,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use ome_core::app::App;
 use ome_core::event::{AppExit, Events};
 use ome_core::gpu::GpuContext;
+use ome_core::raw_event::RawEventHandler;
 use ome_core::time::Time;
 
 use crate::event::{WindowCloseRequested, WindowResized};
@@ -152,6 +153,17 @@ impl ApplicationHandler for WinitApp {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Forward events to registered handler (e.g., egui overlay).
+        if let Some(window) = self.window.clone() {
+            if let Some(handler) = self
+                .app
+                .resources
+                .get_mut::<Box<dyn RawEventHandler>>()
+            {
+                handler.on_event(&*window, &event);
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 tracing::info!("Window close requested");

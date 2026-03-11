@@ -49,6 +49,7 @@ pub mod event;
 pub mod gpu;
 pub mod plugin;
 pub mod prelude;
+pub mod raw_event;
 pub mod resource;
 pub mod runner;
 pub mod schedule;
