@@ -27,6 +27,7 @@ pub mod gpu_sync;
 pub mod plugin;
 pub mod query;
 pub mod reflect;
+pub mod scene;
 pub mod transform;
 
 pub use allocator::EntityAllocator;
@@ -42,4 +43,7 @@ pub use plugin::EcsPlugin;
 pub use query::{AccessTracker, Query, QueryFilter, With, Without, WorldQuery};
 pub use ome_ecs_macros::Reflect;
 pub use reflect::{FieldKind, FieldMeta, Reflect, ReflectError, ReflectValue};
+pub use scene::{
+    ComponentDescription, EntityDescription, SceneDocument, SceneError, sync_scene_to_ecs,
+};
 pub use transform::Transform;

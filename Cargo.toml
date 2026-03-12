@@ -33,7 +33,7 @@ wgpu = "23"
 # Windowing
 winit = "0.30"
 # Math
-glam = { version = "0.29", features = ["bytemuck"] }
+glam = { version = "0.29", features = ["bytemuck", "serde"] }
 # Utils
 bytemuck = { version = "1.21", features = ["derive"] }
 encase = { version = "0.10", features = ["glam"] }
@@ -55,6 +55,11 @@ egui-winit = { version = "0.30", default-features = false }
 egui-wgpu = "0.30"
 egui_dock = "0.15"
 eframe = { version = "0.30", default-features = false, features = ["default_fonts", "glow", "wgpu"] }
+# Serialization
+serde = { version = "1", features = ["derive"] }
+ron = "0.8"
+# File dialogs
+rfd = "0.15"
 # Dynamic plugins
 stabby = "72.1"
 libloading = "0.8"

@@ -52,7 +52,7 @@ pub enum FieldKind {
 }
 
 /// Type-erased value for getting and setting reflected fields.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ReflectValue {
     F32(f32),
     F64(f64),
