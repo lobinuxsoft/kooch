@@ -16,6 +16,7 @@
 //!     .run();
 //! ```
 
+pub mod icons;
 mod overlay;
 
 use ome_core::app::App;

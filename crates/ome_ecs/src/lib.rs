@@ -14,6 +14,9 @@
 //! - [`Query`] — type-safe queries with runtime borrow checking.
 //! - [`EcsPlugin`] — one-liner integration into [`App`](ome_core::app::App).
 
+// Allow the derive macro to use `::ome_ecs::reflect::` paths from any crate.
+extern crate self as ome_ecs;
+
 pub mod allocator;
 pub mod archetype;
 pub mod archetype_registry;
@@ -23,6 +26,8 @@ pub mod entity;
 pub mod gpu_sync;
 pub mod plugin;
 pub mod query;
+pub mod reflect;
+pub mod transform;
 
 pub use allocator::EntityAllocator;
 pub use archetype::{Archetype, ArchetypeId};
@@ -35,3 +40,6 @@ pub use entity::Entity;
 pub use gpu_sync::{EntityGpuState, entity_gpu_sync_system};
 pub use plugin::EcsPlugin;
 pub use query::{AccessTracker, Query, QueryFilter, With, Without, WorldQuery};
+pub use ome_ecs_macros::Reflect;
+pub use reflect::{FieldKind, FieldMeta, Reflect, ReflectError, ReflectValue};
+pub use transform::Transform;

@@ -5,42 +5,68 @@
 //!
 //! Run with: cargo run --example editor --features editor
 
+use glam::{Quat, Vec3};
 use ome_core::prelude::*;
 use ome_ecs::commands::Commands;
 use ome_ecs::component::Component;
-use ome_ecs::EcsPlugin;
+use ome_ecs::transform::Transform;
+use ome_ecs::{EcsPlugin, Reflect};
 use ome_editor_core::EditorPlugin;
 use ome_window::WindowPlugin;
 
-struct Health(pub u32);
+// ---------------------------------------------------------------------------
+// Demo components
+// ---------------------------------------------------------------------------
+
+#[derive(Default, Reflect)]
+struct Health {
+    pub hp: u32,
+    pub max_hp: u32,
+}
 impl Component for Health {}
 
-struct Name(pub String);
+#[derive(Default, Reflect)]
+struct Name {
+    pub value: String,
+}
 impl Component for Name {}
 
+/// Marker/tag component — zero fields.
+#[derive(Default, Reflect)]
 struct Marker;
 impl Component for Marker {}
+
+// ---------------------------------------------------------------------------
+// Demo setup
+// ---------------------------------------------------------------------------
 
 fn spawn_demo_entities(resources: &mut Resources) {
     let mut commands = resources.remove::<Commands>().expect("Commands not found");
 
-    // Player entity with Health + Name.
+    // Player entity.
     commands
         .spawn(resources)
-        .insert(Health(100))
-        .insert(Name("Player".into()));
+        .insert_reflected(Health { hp: 100, max_hp: 100 })
+        .insert_reflected(Name { value: "Player".into() })
+        .insert_reflected(Transform::from_position(Vec3::ZERO));
 
-    // Enemy entities with Health.
+    // Enemy entities.
     commands
         .spawn(resources)
-        .insert(Health(50))
-        .insert(Name("Goblin".into()))
-        .insert(Marker);
+        .insert_reflected(Health { hp: 50, max_hp: 50 })
+        .insert_reflected(Name { value: "Goblin".into() })
+        .insert_reflected(Transform::from_position(Vec3::new(5.0, 0.0, 3.0)))
+        .insert_reflected(Marker);
 
     commands
         .spawn(resources)
-        .insert(Health(200))
-        .insert(Name("Dragon".into()));
+        .insert_reflected(Health { hp: 200, max_hp: 200 })
+        .insert_reflected(Name { value: "Dragon".into() })
+        .insert_reflected(Transform::new(
+            Vec3::new(-10.0, 5.0, 0.0),
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_4),
+            Vec3::new(3.0, 3.0, 3.0),
+        ));
 
     // Empty entity (no components).
     commands.spawn(resources);
