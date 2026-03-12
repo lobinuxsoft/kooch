@@ -18,6 +18,9 @@ pub const CUBE: &str = "\u{e1da}";
 /// Plus icon — used for spawn/add buttons.
 pub const PLUS: &str = "\u{e3d4}";
 
+/// Minus icon — used for remove buttons.
+pub const MINUS: &str = "\u{e3d0}";
+
 /// Trash icon — used for despawn/delete buttons.
 pub const TRASH: &str = "\u{e4a6}";
 

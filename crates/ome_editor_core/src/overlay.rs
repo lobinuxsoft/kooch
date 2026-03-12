@@ -953,6 +953,46 @@ fn draw_world_content(
                             }
                         },
                     );
+
+                    // Multi-select: remove shared component from all selected.
+                    // Collect components present in ALL selected entities.
+                    let selected_infos: Vec<&EntityDisplayInfo> = entities
+                        .iter()
+                        .filter(|e| selected.contains(&e.entity))
+                        .collect();
+
+                    if !selected_infos.is_empty() {
+                        let mut shared: Vec<(TypeId, String)> = selected_infos[0]
+                            .components
+                            .iter()
+                            .filter(|c| {
+                                selected_infos[1..].iter().all(|info| {
+                                    info.components.iter().any(|ic| ic.type_id == c.type_id)
+                                })
+                            })
+                            .map(|c| (c.type_id, c.short_name.clone()))
+                            .collect();
+                        shared.sort_by(|a, b| a.1.cmp(&b.1));
+
+                        if !shared.is_empty() {
+                            ui.menu_button(
+                                format!("{} Remove Component from all", icons::MINUS),
+                                |ui| {
+                                    for (type_id, name) in &shared {
+                                        if ui.selectable_label(false, name).clicked() {
+                                            for &entity in selected.iter() {
+                                                actions.push(EditorAction::RemoveComponent {
+                                                    entity,
+                                                    type_id: *type_id,
+                                                });
+                                            }
+                                            ui.close_menu();
+                                        }
+                                    }
+                                },
+                            );
+                        }
+                    }
                 }
             });
         }
