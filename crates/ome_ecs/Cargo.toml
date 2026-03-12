@@ -11,6 +11,7 @@ authors.workspace = true
 ome_core.workspace = true
 wgpu.workspace = true
 bytemuck.workspace = true
+glam.workspace = true
 tracing.workspace = true
 
 # Dynamic plugin support (optional)

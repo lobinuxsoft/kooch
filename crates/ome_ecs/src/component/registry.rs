@@ -11,6 +11,9 @@ use std::collections::HashMap;
 use wgpu::{Device, Queue};
 
 use crate::entity::Entity;
+use crate::reflect::{
+    FieldMeta, Reflect, ReflectAccessor, ReflectError, ReflectValue, TypedReflectAccessor,
+};
 
 use super::cpu_storage::ComponentStorage;
 use super::gpu_storage::GpuComponentStorage;
@@ -27,6 +30,7 @@ use super::traits::{AnyStorage, Component, GpuComponent};
 pub struct ComponentRegistry {
     storages: HashMap<TypeId, UnsafeCell<Box<dyn AnyStorage>>>,
     type_names: HashMap<TypeId, &'static str>,
+    reflectors: HashMap<TypeId, Box<dyn ReflectAccessor>>,
 }
 
 // SAFETY: All public methods either take `&mut self` (exclusive access) or
@@ -41,6 +45,7 @@ impl ComponentRegistry {
         Self {
             storages: HashMap::new(),
             type_names: HashMap::new(),
+            reflectors: HashMap::new(),
         }
     }
 
@@ -142,6 +147,86 @@ impl ComponentRegistry {
     pub fn component_name(&self, type_id: &TypeId) -> Option<&'static str> {
         self.type_names.get(type_id).copied()
     }
+
+    // -- Reflected registration -------------------------------------------------
+
+    /// Registers a CPU-only component with reflection support.
+    ///
+    /// The component must implement both [`Component`] and [`Reflect`].
+    /// Does nothing if the type is already registered.
+    pub fn register_cpu_reflected<T: Component + Reflect>(&mut self) {
+        self.register_cpu::<T>();
+        self.reflectors
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| Box::new(TypedReflectAccessor::<T>::new()));
+    }
+
+    /// Registers a GPU-backed component with reflection support.
+    ///
+    /// The component must implement both [`GpuComponent`] and [`Reflect`].
+    /// Does nothing if the type is already registered.
+    pub fn register_gpu_reflected<T: GpuComponent + Reflect>(&mut self, label: &str) {
+        self.register_gpu::<T>(label);
+        self.reflectors
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| Box::new(TypedReflectAccessor::<T>::new()));
+    }
+
+    // -- Reflection API -------------------------------------------------------
+
+    /// Returns `true` if a reflection accessor is registered for `type_id`.
+    pub fn has_reflector(&self, type_id: &TypeId) -> bool {
+        self.reflectors.contains_key(type_id)
+    }
+
+    /// Returns field metadata for a reflected component type.
+    pub fn reflect_field_metas(&self, type_id: &TypeId) -> Option<&'static [FieldMeta]> {
+        self.reflectors.get(type_id).map(|r| r.fields())
+    }
+
+    /// Reads all reflected field values for a component on an entity.
+    ///
+    /// Returns `None` if the component type has no reflector, no storage,
+    /// or the entity does not have the component.
+    pub fn reflect_get_fields(
+        &self,
+        type_id: &TypeId,
+        entity: Entity,
+    ) -> Option<Vec<(String, ReflectValue)>> {
+        let accessor = self.reflectors.get(type_id)?;
+        let storage = self.storages.get(type_id)?;
+        // SAFETY: We have &self and no mutable references are active.
+        let storage_ref = unsafe { &**storage.get() };
+        accessor.get_fields(storage_ref, entity)
+    }
+
+    /// Sets a single reflected field on a component for an entity.
+    pub fn reflect_set_field(
+        &mut self,
+        type_id: &TypeId,
+        entity: Entity,
+        field: &str,
+        value: ReflectValue,
+    ) -> Result<(), ReflectError> {
+        let accessor = self
+            .reflectors
+            .get(type_id)
+            .ok_or(ReflectError::ComponentNotFound)?;
+        let storage = self
+            .storages
+            .get(type_id)
+            .ok_or(ReflectError::ComponentNotFound)?;
+        // SAFETY: We have &mut self, so exclusive access is guaranteed.
+        let storage_mut = unsafe { &mut **storage.get() };
+        accessor.set_field(storage_mut, entity, field, value)
+    }
+
+    /// Returns all `TypeId`s that have a registered reflector.
+    pub fn reflected_type_ids(&self) -> Vec<TypeId> {
+        self.reflectors.keys().copied().collect()
+    }
+
+    // -- Type-erased storage access -------------------------------------------
 
     /// Returns an immutable reference to the type-erased storage for the given `TypeId`.
     ///

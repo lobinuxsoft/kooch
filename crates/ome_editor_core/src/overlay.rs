@@ -3,7 +3,7 @@
 //! Contains the [`EditorOverlay`] resource (egui context + renderer),
 //! winit event forwarding, and the render system that draws the overlay.
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::sync::{Arc, Mutex};
 
 use egui_wgpu::ScreenDescriptor;
@@ -18,6 +18,7 @@ use ome_ecs::archetype_registry::ArchetypeRegistry;
 use ome_ecs::commands::Commands;
 use ome_ecs::component::ComponentRegistry;
 use ome_ecs::entity::Entity;
+use ome_ecs::reflect::ReflectValue;
 use ome_window::WindowHandle;
 
 /// Shared egui-winit state for event forwarding between the
@@ -62,9 +63,17 @@ impl RawEventHandler for EguiEventHandler {
 // Entity display data (gathered before egui frame)
 // ---------------------------------------------------------------------------
 
+/// Display data for a single component on an entity.
+struct ComponentDisplayInfo {
+    type_id: TypeId,
+    short_name: String,
+    /// Reflected field values, if the component implements `Reflect`.
+    fields: Option<Vec<(String, ReflectValue)>>,
+}
+
 struct EntityDisplayInfo {
     entity: Entity,
-    component_names: Vec<&'static str>,
+    components: Vec<ComponentDisplayInfo>,
 }
 
 fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo> {
@@ -76,14 +85,28 @@ fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo> {
     let mut entities = Vec::new();
     for archetype in archetypes.iter_matching(&[]) {
         for &entity in archetype.entities() {
-            let names: Vec<&'static str> = archetype
+            let comps: Vec<ComponentDisplayInfo> = archetype
                 .components()
                 .iter()
-                .filter_map(|tid| components.and_then(|c| c.component_name(tid)))
+                .filter_map(|tid| {
+                    let registry = components.as_ref()?;
+                    let full_name = registry.component_name(tid)?;
+                    let short_name = full_name
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or(full_name)
+                        .to_owned();
+                    let fields = registry.reflect_get_fields(tid, entity);
+                    Some(ComponentDisplayInfo {
+                        type_id: *tid,
+                        short_name,
+                        fields,
+                    })
+                })
                 .collect();
             entities.push(EntityDisplayInfo {
                 entity,
-                component_names: names,
+                components: comps,
             });
         }
     }
@@ -98,6 +121,12 @@ fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo> {
 enum EditorAction {
     Spawn,
     Despawn(Entity),
+    SetField {
+        entity: Entity,
+        type_id: TypeId,
+        field: String,
+        value: ReflectValue,
+    },
 }
 
 fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
@@ -123,6 +152,20 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
                 }
                 if let Some(components) = resources.get_mut::<ComponentRegistry>() {
                     components.remove_entity(*entity);
+                }
+            }
+            EditorAction::SetField {
+                entity,
+                type_id,
+                field,
+                value,
+            } => {
+                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                    if let Err(e) =
+                        registry.reflect_set_field(type_id, *entity, field, value.clone())
+                    {
+                        tracing::warn!("failed to set field '{field}': {e}");
+                    }
                 }
             }
         }
@@ -229,7 +272,7 @@ pub fn editor_render_system(resources: &mut Resources) {
         }
 
         if show_inspector {
-            draw_inspector(ctx, &entities, selected);
+            draw_inspector(ctx, &entities, selected, &mut actions);
         }
     });
 
@@ -392,7 +435,7 @@ fn draw_hierarchy(
                         "Entity {}:{}  [{}]",
                         info.entity.index(),
                         info.entity.generation(),
-                        info.component_names.len()
+                        info.components.len()
                     );
                     let is_selected = *selected == Some(info.entity);
                     if ui.selectable_label(is_selected, &label).clicked() {
@@ -411,6 +454,7 @@ fn draw_inspector(
     ctx: &egui::Context,
     entities: &[EntityDisplayInfo],
     selected: Option<Entity>,
+    actions: &mut Vec<EditorAction>,
 ) {
     egui::SidePanel::right("inspector")
         .default_width(280.0)
@@ -436,13 +480,190 @@ fn draw_inspector(
             ui.separator();
 
             ui.heading("Components");
-            if info.component_names.is_empty() {
+            if info.components.is_empty() {
                 ui.weak("(none)");
-            } else {
-                for name in &info.component_names {
-                    let short = name.rsplit("::").next().unwrap_or(name);
-                    ui.label(format!("  \u{2022} {}", short));
+                return;
+            }
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for comp in &info.components {
+                    let id = ui.make_persistent_id(format!(
+                        "comp_{}_{:?}",
+                        entity.index(),
+                        comp.type_id
+                    ));
+                    egui::collapsing_header::CollapsingState::load_with_default_open(
+                        ui.ctx(),
+                        id,
+                        true,
+                    )
+                    .show_header(ui, |ui| {
+                        ui.strong(&comp.short_name);
+                    })
+                    .body(|ui| {
+                        if let Some(fields) = &comp.fields {
+                            if fields.is_empty() {
+                                ui.weak("(no fields)");
+                            } else {
+                                draw_reflected_fields(
+                                    ui, entity, comp.type_id, fields, actions,
+                                );
+                            }
+                        } else {
+                            ui.weak("(no reflection)");
+                        }
+                    });
                 }
+            });
+        });
+}
+
+/// Renders editable widgets for reflected component fields.
+fn draw_reflected_fields(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    type_id: TypeId,
+    fields: &[(String, ReflectValue)],
+    actions: &mut Vec<EditorAction>,
+) {
+    egui::Grid::new(format!("fields_{:?}_{}", type_id, entity.index()))
+        .num_columns(2)
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            for (name, value) in fields {
+                ui.label(name);
+                if let Some(new_value) = draw_value_widget(ui, value) {
+                    actions.push(EditorAction::SetField {
+                        entity,
+                        type_id,
+                        field: name.clone(),
+                        value: new_value,
+                    });
+                }
+                ui.end_row();
             }
         });
+}
+
+/// Draws an editable widget for a single reflected value.
+/// Returns `Some(new_value)` if the user modified it.
+fn draw_value_widget(ui: &mut egui::Ui, value: &ReflectValue) -> Option<ReflectValue> {
+    match value {
+        ReflectValue::F32(v) => {
+            let mut val = *v;
+            let resp = ui.add(egui::DragValue::new(&mut val).speed(0.1));
+            resp.changed().then_some(ReflectValue::F32(val))
+        }
+        ReflectValue::F64(v) => {
+            let mut val = *v as f32;
+            let resp = ui.add(egui::DragValue::new(&mut val).speed(0.1));
+            resp.changed().then_some(ReflectValue::F64(val as f64))
+        }
+        ReflectValue::U8(v) => {
+            let mut val = *v as i64;
+            let resp = ui.add(egui::DragValue::new(&mut val).range(0..=u8::MAX as i64));
+            resp.changed().then_some(ReflectValue::U8(val as u8))
+        }
+        ReflectValue::U16(v) => {
+            let mut val = *v as i64;
+            let resp = ui.add(egui::DragValue::new(&mut val).range(0..=u16::MAX as i64));
+            resp.changed().then_some(ReflectValue::U16(val as u16))
+        }
+        ReflectValue::U32(v) => {
+            let mut val = *v as i64;
+            let resp = ui.add(egui::DragValue::new(&mut val).range(0..=u32::MAX as i64));
+            resp.changed().then_some(ReflectValue::U32(val as u32))
+        }
+        ReflectValue::U64(v) => {
+            let mut val = *v as i64;
+            let resp = ui.add(egui::DragValue::new(&mut val));
+            resp.changed()
+                .then_some(ReflectValue::U64(val.max(0) as u64))
+        }
+        ReflectValue::I8(v) => {
+            let mut val = *v as i64;
+            let resp = ui.add(
+                egui::DragValue::new(&mut val).range(i8::MIN as i64..=i8::MAX as i64),
+            );
+            resp.changed().then_some(ReflectValue::I8(val as i8))
+        }
+        ReflectValue::I16(v) => {
+            let mut val = *v as i64;
+            let resp = ui.add(
+                egui::DragValue::new(&mut val).range(i16::MIN as i64..=i16::MAX as i64),
+            );
+            resp.changed().then_some(ReflectValue::I16(val as i16))
+        }
+        ReflectValue::I32(v) => {
+            let mut val = *v;
+            let resp = ui.add(egui::DragValue::new(&mut val));
+            resp.changed().then_some(ReflectValue::I32(val))
+        }
+        ReflectValue::I64(v) => {
+            let mut val = *v;
+            let resp = ui.add(egui::DragValue::new(&mut val));
+            resp.changed().then_some(ReflectValue::I64(val))
+        }
+        ReflectValue::Bool(v) => {
+            let mut val = *v;
+            let resp = ui.checkbox(&mut val, "");
+            resp.changed().then_some(ReflectValue::Bool(val))
+        }
+        ReflectValue::String(v) => {
+            let mut val = v.clone();
+            let resp = ui.text_edit_singleline(&mut val);
+            resp.changed().then_some(ReflectValue::String(val))
+        }
+        ReflectValue::Vec2(v) => {
+            let mut x = v.x;
+            let mut y = v.y;
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.label("x");
+                changed |= ui.add(egui::DragValue::new(&mut x).speed(0.1)).changed();
+                ui.label("y");
+                changed |= ui.add(egui::DragValue::new(&mut y).speed(0.1)).changed();
+            });
+            changed.then_some(ReflectValue::Vec2(glam::Vec2::new(x, y)))
+        }
+        ReflectValue::Vec3(v) => {
+            let mut x = v.x;
+            let mut y = v.y;
+            let mut z = v.z;
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.label("x");
+                changed |= ui.add(egui::DragValue::new(&mut x).speed(0.1)).changed();
+                ui.label("y");
+                changed |= ui.add(egui::DragValue::new(&mut y).speed(0.1)).changed();
+                ui.label("z");
+                changed |= ui.add(egui::DragValue::new(&mut z).speed(0.1)).changed();
+            });
+            changed.then_some(ReflectValue::Vec3(glam::Vec3::new(x, y, z)))
+        }
+        ReflectValue::Vec4(v) => {
+            let mut vals = [v.x, v.y, v.z, v.w];
+            let labels = ["x", "y", "z", "w"];
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                for (i, label) in labels.iter().enumerate() {
+                    ui.label(*label);
+                    changed |= ui
+                        .add(egui::DragValue::new(&mut vals[i]).speed(0.1))
+                        .changed();
+                }
+            });
+            changed.then_some(ReflectValue::Vec4(glam::Vec4::new(
+                vals[0], vals[1], vals[2], vals[3],
+            )))
+        }
+        ReflectValue::Quat(v) => {
+            ui.label(format!("({:.2}, {:.2}, {:.2}, {:.2})", v.x, v.y, v.z, v.w));
+            None
+        }
+        ReflectValue::Mat4(_) => {
+            ui.label("[Mat4]");
+            None
+        }
+    }
 }

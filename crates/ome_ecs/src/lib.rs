@@ -23,6 +23,7 @@ pub mod entity;
 pub mod gpu_sync;
 pub mod plugin;
 pub mod query;
+pub mod reflect;
 
 pub use allocator::EntityAllocator;
 pub use archetype::{Archetype, ArchetypeId};
@@ -35,3 +36,4 @@ pub use entity::Entity;
 pub use gpu_sync::{EntityGpuState, entity_gpu_sync_system};
 pub use plugin::EcsPlugin;
 pub use query::{AccessTracker, Query, QueryFilter, With, Without, WorldQuery};
+pub use reflect::{FieldKind, FieldMeta, Reflect, ReflectError, ReflectValue};
