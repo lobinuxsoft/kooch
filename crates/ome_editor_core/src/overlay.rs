@@ -103,6 +103,8 @@ pub struct EditorOverlay {
     renderer: egui_wgpu::Renderer,
     dock_state: DockState<EditorTab>,
     selected_entities: Vec<Entity>,
+    /// Anchor index for Shift+Click range selection in the World panel.
+    last_clicked_index: Option<usize>,
 }
 
 /// Forwards raw winit events to egui for input processing.
@@ -298,8 +300,39 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
                     Some(c) => c,
                     None => return,
                 };
-                commands.spawn(resources);
+                let entity = commands.spawn(resources).id();
                 resources.insert(commands);
+
+                // Auto-add Name and Transform defaults for editor-spawned entities.
+                let default_components: Vec<TypeId> = resources
+                    .get::<ComponentRegistry>()
+                    .map(|reg| {
+                        reg.reflected_type_names()
+                            .into_iter()
+                            .filter(|(_, name)| {
+                                let short = name.rsplit("::").next().unwrap_or(name);
+                                short == "Name" || short == "Transform"
+                            })
+                            .map(|(tid, _)| tid)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                for type_id in &default_components {
+                    let mut inserted = false;
+                    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                        inserted = registry.insert_default_reflected(type_id, entity);
+                    }
+                    if inserted {
+                        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
+                            if let Some(current) = archetypes.entity_archetype(entity) {
+                                let new_arch =
+                                    archetypes.archetype_after_add_dynamic(current, *type_id);
+                                archetypes.register_entity(entity, new_arch);
+                            }
+                        }
+                    }
+                }
             }
             EditorAction::Despawn(entity) => {
                 if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
@@ -413,6 +446,7 @@ struct EditorTabViewer<'a> {
     entity_count: usize,
     archetype_count: usize,
     active_archetype_count: usize,
+    last_clicked_index: &'a mut Option<usize>,
 }
 
 impl<'a> TabViewer for EditorTabViewer<'a> {
@@ -433,6 +467,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.entity_count,
                 self.archetype_count,
                 self.active_archetype_count,
+                self.last_clicked_index,
             ),
             EditorTab::View => draw_view_content(ui),
             EditorTab::Inspector => draw_inspector_content(
@@ -488,6 +523,7 @@ pub fn editor_startup_system(resources: &mut Resources) {
         renderer,
         dock_state: default_dock_state(),
         selected_entities: Vec::new(),
+        last_clicked_index: None,
     };
 
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });
@@ -533,6 +569,7 @@ pub fn editor_render_system(resources: &mut Resources) {
 
     // 5. Run egui UI with dock layout.
     let mut selected = std::mem::take(&mut overlay.selected_entities);
+    let mut last_clicked_index = overlay.last_clicked_index.take();
     let mut actions: Vec<EditorAction> = Vec::new();
 
     let full_output = overlay.ctx.run(raw_input, |ctx| {
@@ -548,6 +585,7 @@ pub fn editor_render_system(resources: &mut Resources) {
             entity_count,
             archetype_count,
             active_archetype_count,
+            last_clicked_index: &mut last_clicked_index,
         };
 
         DockArea::new(&mut overlay.dock_state)
@@ -556,6 +594,7 @@ pub fn editor_render_system(resources: &mut Resources) {
     });
 
     overlay.selected_entities = selected;
+    overlay.last_clicked_index = last_clicked_index;
 
     // 6. Handle platform output (cursor icon, clipboard, etc.).
     {
@@ -691,6 +730,7 @@ fn draw_world_content(
     entity_count: usize,
     archetype_count: usize,
     active_archetype_count: usize,
+    last_clicked_index: &mut Option<usize>,
 ) {
     ui.label(format!(
         "{} entities, {} archetypes ({} active)",
@@ -717,32 +757,123 @@ fn draw_world_content(
     });
     ui.separator();
 
+    // Delete/Suprimir: despawn selected entities.
+    let kb_delete = ui.input(|i| i.key_pressed(egui::Key::Delete));
+    if kb_delete && !selected.is_empty() {
+        for entity in selected.drain(..) {
+            actions.push(EditorAction::Despawn(entity));
+        }
+        *last_clicked_index = None;
+    }
+
+    // Keyboard navigation: Ctrl+A to select all.
+    let kb_select_all = ui.input(|i| {
+        i.modifiers.command && i.key_pressed(egui::Key::A)
+    });
+    if kb_select_all && !entities.is_empty() {
+        selected.clear();
+        selected.extend(entities.iter().map(|e| e.entity));
+        *last_clicked_index = Some(entities.len() - 1);
+    }
+
+    // Keyboard navigation: Arrow Up/Down.
+    let kb_up = ui.input(|i| i.key_pressed(egui::Key::ArrowUp));
+    let kb_down = ui.input(|i| i.key_pressed(egui::Key::ArrowDown));
+    let kb_shift = ui.input(|i| i.modifiers.shift);
+
+    if (kb_up || kb_down) && !entities.is_empty() {
+        let current_idx = last_clicked_index.unwrap_or(0);
+        let new_idx = if kb_up {
+            current_idx.saturating_sub(1)
+        } else {
+            (current_idx + 1).min(entities.len() - 1)
+        };
+
+        if kb_shift {
+            // Extend selection to include the new index.
+            let entity = entities[new_idx].entity;
+            if !selected.contains(&entity) {
+                selected.push(entity);
+            }
+        } else {
+            // Move selection to the new index.
+            selected.clear();
+            selected.push(entities[new_idx].entity);
+        }
+        *last_clicked_index = Some(new_idx);
+    }
+
     egui::ScrollArea::vertical().show(ui, |ui| {
-        for info in entities {
-            let label = format!(
-                "{} Entity {}:{}  [{}]",
-                icons::CUBE,
-                info.entity.index(),
-                info.entity.generation(),
-                info.components.len()
-            );
+        for (idx, info) in entities.iter().enumerate() {
+            // If the entity has a Name component with a non-empty value,
+            // display that instead of the raw index:generation.
+            let display_name = info
+                .components
+                .iter()
+                .find(|c| c.short_name == "Name")
+                .and_then(|c| c.fields.as_ref())
+                .and_then(|fields| {
+                    fields.iter().find_map(|(name, val)| {
+                        if name == "value" {
+                            if let ReflectValue::String(s) = val {
+                                if !s.is_empty() {
+                                    return Some(s.clone());
+                                }
+                            }
+                        }
+                        None
+                    })
+                });
+
+            let label = if let Some(name) = &display_name {
+                format!(
+                    "{} {}  [{}]",
+                    icons::CUBE,
+                    name,
+                    info.components.len()
+                )
+            } else {
+                format!(
+                    "{} Entity {}:{}  [{}]",
+                    icons::CUBE,
+                    info.entity.index(),
+                    info.entity.generation(),
+                    info.components.len()
+                )
+            };
             let is_selected = selected.contains(&info.entity);
             let resp = ui.selectable_label(is_selected, &label);
 
-            // Left click: select (Ctrl+Click for multi-select).
             if resp.clicked() {
                 let modifiers = ui.input(|i| i.modifiers);
-                if modifiers.ctrl || modifiers.command {
-                    // Toggle in selection.
+                if modifiers.shift {
+                    // Shift+Click: range selection from anchor to current.
+                    let anchor = last_clicked_index.unwrap_or(0);
+                    let range_start = anchor.min(idx);
+                    let range_end = anchor.max(idx);
+                    if !modifiers.ctrl && !modifiers.command {
+                        selected.clear();
+                    }
+                    for i in range_start..=range_end {
+                        let entity = entities[i].entity;
+                        if !selected.contains(&entity) {
+                            selected.push(entity);
+                        }
+                    }
+                    // Don't update anchor on Shift+Click — keep the original.
+                } else if modifiers.ctrl || modifiers.command {
+                    // Ctrl+Click: toggle individual item.
                     if is_selected {
                         selected.retain(|e| *e != info.entity);
                     } else {
                         selected.push(info.entity);
                     }
+                    *last_clicked_index = Some(idx);
                 } else {
-                    // Replace selection.
+                    // Plain click: replace selection.
                     selected.clear();
                     selected.push(info.entity);
+                    *last_clicked_index = Some(idx);
                 }
             }
 
@@ -869,12 +1000,40 @@ fn draw_inspector_content(
         return;
     };
 
-    ui.label(format!(
-        "{} Entity  index: {}  generation: {}",
-        icons::CUBE,
-        entity.index(),
-        entity.generation()
-    ));
+    let entity_name = info
+        .components
+        .iter()
+        .find(|c| c.short_name == "Name")
+        .and_then(|c| c.fields.as_ref())
+        .and_then(|fields| {
+            fields.iter().find_map(|(name, val)| {
+                if name == "value" {
+                    if let ReflectValue::String(s) = val {
+                        if !s.is_empty() {
+                            return Some(s.clone());
+                        }
+                    }
+                }
+                None
+            })
+        });
+
+    if let Some(name) = &entity_name {
+        ui.label(format!(
+            "{} {}  ({}:{})",
+            icons::CUBE,
+            name,
+            entity.index(),
+            entity.generation()
+        ));
+    } else {
+        ui.label(format!(
+            "{} Entity  index: {}  generation: {}",
+            icons::CUBE,
+            entity.index(),
+            entity.generation()
+        ));
+    }
     ui.separator();
 
     // "Add Component" dropdown.
