@@ -114,6 +114,31 @@ fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo> {
     entities
 }
 
+/// Available reflected component types for "Add Component".
+struct ReflectedTypeInfo {
+    type_id: TypeId,
+    short_name: String,
+}
+
+fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedTypeInfo> {
+    let Some(registry) = resources.get::<ComponentRegistry>() else {
+        return Vec::new();
+    };
+    let mut types: Vec<ReflectedTypeInfo> = registry
+        .reflected_type_names()
+        .into_iter()
+        .map(|(tid, name)| {
+            let short = name.rsplit("::").next().unwrap_or(name).to_owned();
+            ReflectedTypeInfo {
+                type_id: tid,
+                short_name: short,
+            }
+        })
+        .collect();
+    types.sort_by(|a, b| a.short_name.cmp(&b.short_name));
+    types
+}
+
 // ---------------------------------------------------------------------------
 // Editor actions (collected during UI, applied after render)
 // ---------------------------------------------------------------------------
@@ -126,6 +151,10 @@ enum EditorAction {
         type_id: TypeId,
         field: String,
         value: ReflectValue,
+    },
+    AddComponent {
+        entity: Entity,
+        type_id: TypeId,
     },
 }
 
@@ -165,6 +194,22 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
                         registry.reflect_set_field(type_id, *entity, field, value.clone())
                     {
                         tracing::warn!("failed to set field '{field}': {e}");
+                    }
+                }
+            }
+            EditorAction::AddComponent { entity, type_id } => {
+                let mut inserted = false;
+                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                    inserted = registry.insert_default_reflected(type_id, *entity);
+                }
+                if inserted {
+                    // Update archetype to include the new component.
+                    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
+                        if let Some(current) = archetypes.entity_archetype(*entity) {
+                            let new_arch =
+                                archetypes.archetype_after_add_dynamic(current, *type_id);
+                            archetypes.register_entity(*entity, new_arch);
+                        }
                     }
                 }
             }
@@ -224,6 +269,7 @@ pub fn editor_startup_system(resources: &mut Resources) {
 pub fn editor_render_system(resources: &mut Resources) {
     // 1. Gather ECS data before borrowing overlay.
     let entities = gather_entity_data(resources);
+    let reflected_types = gather_reflected_types(resources);
     let entity_count = entities.len();
     let archetype_count = resources
         .get::<ArchetypeRegistry>()
@@ -272,7 +318,7 @@ pub fn editor_render_system(resources: &mut Resources) {
         }
 
         if show_inspector {
-            draw_inspector(ctx, &entities, selected, &mut actions);
+            draw_inspector(ctx, &entities, selected, &reflected_types, &mut actions);
         }
     });
 
@@ -454,6 +500,7 @@ fn draw_inspector(
     ctx: &egui::Context,
     entities: &[EntityDisplayInfo],
     selected: Option<Entity>,
+    reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
 ) {
     egui::SidePanel::right("inspector")
@@ -478,6 +525,33 @@ fn draw_inspector(
                 entity.generation()
             ));
             ui.separator();
+
+            // "Add Component" dropdown — show only types not already on entity.
+            let existing: std::collections::HashSet<TypeId> =
+                info.components.iter().map(|c| c.type_id).collect();
+            let available: Vec<&ReflectedTypeInfo> = reflected_types
+                .iter()
+                .filter(|t| !existing.contains(&t.type_id))
+                .collect();
+
+            if !available.is_empty() {
+                egui::ComboBox::from_label("Add Component")
+                    .selected_text("Select...")
+                    .show_ui(ui, |ui| {
+                        for type_info in &available {
+                            if ui
+                                .selectable_label(false, &type_info.short_name)
+                                .clicked()
+                            {
+                                actions.push(EditorAction::AddComponent {
+                                    entity,
+                                    type_id: type_info.type_id,
+                                });
+                            }
+                        }
+                    });
+                ui.separator();
+            }
 
             ui.heading("Components");
             if info.components.is_empty() {

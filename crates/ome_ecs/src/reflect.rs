@@ -228,7 +228,9 @@ pub trait Reflect: Send + Sync + 'static {
 // ReflectAccessor — type-erased bridge
 // ---------------------------------------------------------------------------
 
-use crate::component::traits::AnyStorage;
+use crate::component::cpu_storage::ComponentStorage;
+use crate::component::gpu_storage::GpuComponentStorage;
+use crate::component::traits::{AnyStorage, Component, GpuComponent};
 use crate::entity::Entity;
 
 /// Type-erased adapter connecting [`AnyStorage`] with [`Reflect`].
@@ -258,25 +260,56 @@ pub(crate) trait ReflectAccessor: Send + Sync {
         value: ReflectValue,
     ) -> Result<(), ReflectError>;
 
-    /// Creates a boxed default instance as raw bytes (for spawning).
-    ///
-    /// Returns `(data_ptr, size, drop_fn)` — caller is responsible for
-    /// inserting into the appropriate storage.
+    /// Creates a boxed default instance (for spawning).
     fn default_value(&self) -> Box<dyn std::any::Any + Send + Sync>;
+
+    /// Inserts a default instance into the storage for the given entity.
+    ///
+    /// Returns `true` if inserted successfully.
+    fn insert_default_into(&self, storage: &mut dyn AnyStorage, entity: Entity) -> bool;
 }
 
 /// Concrete [`ReflectAccessor`] for a component type `T: Reflect`.
 ///
 /// Handles the unsafe downcast from `*const u8` / `*mut u8` to `&T` / `&mut T`
 /// internally, keeping the public API safe.
+///
+/// Stores a closure for inserting defaults, since the insert strategy
+/// differs between CPU and GPU storages.
 pub(crate) struct TypedReflectAccessor<T: Reflect> {
+    inserter: Box<dyn Fn(&mut dyn AnyStorage, Entity) -> bool + Send + Sync>,
     _marker: std::marker::PhantomData<T>,
 }
 
-impl<T: Reflect> TypedReflectAccessor<T> {
-    /// Creates a new accessor for type `T`.
-    pub(crate) fn new() -> Self {
+impl<T: Component + Reflect> TypedReflectAccessor<T> {
+    /// Creates an accessor for a CPU component.
+    pub(crate) fn new_cpu() -> Self {
         Self {
+            inserter: Box::new(|storage, entity| {
+                if let Some(cpu) = storage.as_any_mut().downcast_mut::<ComponentStorage<T>>() {
+                    cpu.insert(entity, T::reflect_default());
+                    true
+                } else {
+                    false
+                }
+            }),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: GpuComponent + Reflect> TypedReflectAccessor<T> {
+    /// Creates an accessor for a GPU component.
+    pub(crate) fn new_gpu() -> Self {
+        Self {
+            inserter: Box::new(|storage, entity| {
+                if let Some(gpu) = storage.as_any_mut().downcast_mut::<GpuComponentStorage<T>>() {
+                    gpu.insert(entity, T::reflect_default());
+                    true
+                } else {
+                    false
+                }
+            }),
             _marker: std::marker::PhantomData,
         }
     }
@@ -284,9 +317,6 @@ impl<T: Reflect> TypedReflectAccessor<T> {
 
 impl<T: Reflect> ReflectAccessor for TypedReflectAccessor<T> {
     fn fields(&self) -> &'static [FieldMeta] {
-        // We need an instance to call reflect_fields (it's &self).
-        // Use reflect_default to get one. The result is static so this is
-        // only done once conceptually — the slice itself is 'static.
         T::reflect_default().reflect_fields()
     }
 
@@ -332,6 +362,10 @@ impl<T: Reflect> ReflectAccessor for TypedReflectAccessor<T> {
 
     fn default_value(&self) -> Box<dyn std::any::Any + Send + Sync> {
         Box::new(T::reflect_default())
+    }
+
+    fn insert_default_into(&self, storage: &mut dyn AnyStorage, entity: Entity) -> bool {
+        (self.inserter)(storage, entity)
     }
 }
 
@@ -584,7 +618,7 @@ mod tests {
 
     #[test]
     fn accessor_fields_returns_metadata() {
-        let accessor = TypedReflectAccessor::<Health>::new();
+        let accessor = TypedReflectAccessor::<Health>::new_cpu();
         let fields = accessor.fields();
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[0].name, "hp");
@@ -599,7 +633,7 @@ mod tests {
         let e = Entity::new(0, 0);
         storage.insert(e, Health { hp: 42, max_hp: 100 });
 
-        let accessor = TypedReflectAccessor::<Health>::new();
+        let accessor = TypedReflectAccessor::<Health>::new_cpu();
         let fields = accessor.get_fields(&storage, e).unwrap();
 
         assert_eq!(fields.len(), 2);
@@ -615,7 +649,7 @@ mod tests {
         let storage = ComponentStorage::<Health>::new();
         let e = Entity::new(99, 0);
 
-        let accessor = TypedReflectAccessor::<Health>::new();
+        let accessor = TypedReflectAccessor::<Health>::new_cpu();
         assert!(accessor.get_fields(&storage, e).is_none());
     }
 
@@ -628,7 +662,7 @@ mod tests {
         let e = Entity::new(0, 0);
         storage.insert(e, Health { hp: 50, max_hp: 100 });
 
-        let accessor = TypedReflectAccessor::<Health>::new();
+        let accessor = TypedReflectAccessor::<Health>::new_cpu();
         accessor
             .set_field(&mut storage, e, "hp", ReflectValue::U32(75))
             .unwrap();
@@ -645,7 +679,7 @@ mod tests {
         let e = Entity::new(0, 0);
         storage.insert(e, Position::reflect_default());
 
-        let accessor = TypedReflectAccessor::<Position>::new();
+        let accessor = TypedReflectAccessor::<Position>::new_gpu();
         let err = accessor
             .set_field(&mut storage, e, "x", ReflectValue::F32(5.0))
             .unwrap_err();
@@ -654,7 +688,7 @@ mod tests {
 
     #[test]
     fn accessor_default_value() {
-        let accessor = TypedReflectAccessor::<Health>::new();
+        let accessor = TypedReflectAccessor::<Health>::new_cpu();
         let boxed = accessor.default_value();
         let health = boxed.downcast::<Health>().unwrap();
         assert_eq!(health.hp, 100);

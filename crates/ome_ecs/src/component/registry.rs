@@ -158,7 +158,7 @@ impl ComponentRegistry {
         self.register_cpu::<T>();
         self.reflectors
             .entry(TypeId::of::<T>())
-            .or_insert_with(|| Box::new(TypedReflectAccessor::<T>::new()));
+            .or_insert_with(|| Box::new(TypedReflectAccessor::<T>::new_cpu()));
     }
 
     /// Registers a GPU-backed component with reflection support.
@@ -169,7 +169,7 @@ impl ComponentRegistry {
         self.register_gpu::<T>(label);
         self.reflectors
             .entry(TypeId::of::<T>())
-            .or_insert_with(|| Box::new(TypedReflectAccessor::<T>::new()));
+            .or_insert_with(|| Box::new(TypedReflectAccessor::<T>::new_gpu()));
     }
 
     // -- Reflection API -------------------------------------------------------
@@ -224,6 +224,32 @@ impl ComponentRegistry {
     /// Returns all `TypeId`s that have a registered reflector.
     pub fn reflected_type_ids(&self) -> Vec<TypeId> {
         self.reflectors.keys().copied().collect()
+    }
+
+    /// Returns all reflected types with their human-readable names.
+    pub fn reflected_type_names(&self) -> Vec<(TypeId, &'static str)> {
+        self.reflectors
+            .keys()
+            .filter_map(|tid| {
+                self.type_names.get(tid).map(|name| (*tid, *name))
+            })
+            .collect()
+    }
+
+    /// Inserts a default reflected component for an entity.
+    ///
+    /// Returns `true` if the component was inserted successfully.
+    /// Returns `false` if the type has no reflector, no storage, or insert failed.
+    pub fn insert_default_reflected(&mut self, type_id: &TypeId, entity: Entity) -> bool {
+        let Some(accessor) = self.reflectors.get(type_id) else {
+            return false;
+        };
+        let Some(cell) = self.storages.get(type_id) else {
+            return false;
+        };
+        // SAFETY: We have &mut self, exclusive access guaranteed.
+        let storage = unsafe { &mut **cell.get() };
+        accessor.insert_default_into(storage, entity)
     }
 
     // -- Type-erased storage access -------------------------------------------
