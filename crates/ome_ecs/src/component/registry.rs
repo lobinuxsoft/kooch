@@ -226,6 +226,14 @@ impl ComponentRegistry {
         self.reflectors.keys().copied().collect()
     }
 
+    /// Returns all registered component types with their human-readable names.
+    pub fn all_type_names(&self) -> Vec<(TypeId, &'static str)> {
+        self.type_names
+            .iter()
+            .map(|(tid, name)| (*tid, *name))
+            .collect()
+    }
+
     /// Returns all reflected types with their human-readable names.
     pub fn reflected_type_names(&self) -> Vec<(TypeId, &'static str)> {
         self.reflectors

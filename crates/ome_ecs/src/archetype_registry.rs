@@ -161,6 +161,33 @@ impl ArchetypeRegistry {
     pub fn archetype_count(&self) -> usize {
         self.archetypes.len()
     }
+
+    /// Removes empty archetypes (except `EMPTY`) and invalidates
+    /// transition cache entries that reference them.
+    ///
+    /// Call periodically or after batch entity operations to avoid
+    /// unbounded archetype accumulation.
+    pub fn gc_empty_archetypes(&mut self) -> usize {
+        let to_remove: Vec<ArchetypeId> = self
+            .archetypes
+            .iter()
+            .filter(|(id, arch)| **id != ArchetypeId::EMPTY && arch.len() == 0)
+            .map(|(&id, _)| id)
+            .collect();
+
+        let count = to_remove.len();
+        for id in &to_remove {
+            self.archetypes.remove(id);
+        }
+
+        // Purge transition cache entries that reference removed archetypes.
+        self.add_transitions
+            .retain(|&(src, _), dst| !to_remove.contains(&src) && !to_remove.contains(dst));
+        self.remove_transitions
+            .retain(|&(src, _), dst| !to_remove.contains(&src) && !to_remove.contains(dst));
+
+        count
+    }
 }
 
 impl Default for ArchetypeRegistry {
@@ -402,5 +429,59 @@ mod tests {
         }
 
         assert_eq!(reg.get(arch).unwrap().len(), 100);
+    }
+
+    #[test]
+    fn gc_removes_empty_archetypes() {
+        let mut reg = ArchetypeRegistry::new();
+        let e = entity(0);
+
+        // Create chain: EMPTY → +Pos → +Vel → -Pos (leaves (Pos) and (Pos,Vel) empty).
+        reg.register_entity(e, ArchetypeId::EMPTY);
+        let pos = reg.archetype_after_add::<Position>(ArchetypeId::EMPTY);
+        reg.register_entity(e, pos);
+        let pos_vel = reg.archetype_after_add::<Velocity>(pos);
+        reg.register_entity(e, pos_vel);
+        let vel_only = reg.archetype_after_remove::<Position>(pos_vel);
+        reg.register_entity(e, vel_only);
+
+        // 4 archetypes: EMPTY, (Pos), (Pos,Vel), (Vel).
+        assert_eq!(reg.archetype_count(), 4);
+
+        // GC should remove (Pos) and (Pos,Vel) — both empty.
+        let removed = reg.gc_empty_archetypes();
+        assert_eq!(removed, 2);
+        assert_eq!(reg.archetype_count(), 2); // EMPTY + (Vel)
+
+        // EMPTY is preserved even though it has 0 entities.
+        assert!(reg.get(ArchetypeId::EMPTY).is_some());
+        // (Vel) still has the entity.
+        assert_eq!(reg.get(vel_only).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn gc_preserves_empty_archetype() {
+        let mut reg = ArchetypeRegistry::new();
+        // EMPTY has 0 entities but should never be removed.
+        let removed = reg.gc_empty_archetypes();
+        assert_eq!(removed, 0);
+        assert_eq!(reg.archetype_count(), 1);
+    }
+
+    #[test]
+    fn gc_invalidates_transition_cache() {
+        let mut reg = ArchetypeRegistry::new();
+
+        // Build transitions: EMPTY +Pos → (Pos), (Pos) +Vel → (Pos,Vel).
+        let pos = reg.archetype_after_add::<Position>(ArchetypeId::EMPTY);
+        let _pos_vel = reg.archetype_after_add::<Velocity>(pos);
+
+        // No entities — GC removes both.
+        reg.gc_empty_archetypes();
+        assert_eq!(reg.archetype_count(), 1);
+
+        // Transitions are rebuilt on demand — should still work.
+        let pos2 = reg.archetype_after_add::<Position>(ArchetypeId::EMPTY);
+        assert!(reg.get(pos2).is_some());
     }
 }

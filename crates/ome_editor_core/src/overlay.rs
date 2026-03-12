@@ -1,11 +1,14 @@
 //! Editor overlay state and systems.
 //!
 //! Contains the [`EditorOverlay`] resource (egui context + renderer),
-//! winit event forwarding, and the render system that draws the overlay.
+//! winit event forwarding, dockable panel layout, and the render system
+//! that draws the overlay.
 
 use std::any::{Any, TypeId};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
+use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use egui_wgpu::ScreenDescriptor;
 use winit::event::WindowEvent;
 use winit::window::Window;
@@ -19,29 +22,90 @@ use ome_ecs::commands::Commands;
 use ome_ecs::component::ComponentRegistry;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::ReflectValue;
-use ome_window::WindowHandle;
+
+use crate::icons;
 
 /// Shared egui-winit state for event forwarding between the
 /// window event handler and the render system.
 type SharedWinitState = Arc<Mutex<egui_winit::State>>;
 
+// ---------------------------------------------------------------------------
+// Dock tabs
+// ---------------------------------------------------------------------------
+
+/// Identifiers for each dockable editor tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum EditorTab {
+    World,
+    View,
+    Inspector,
+    Archetypes,
+    Components,
+}
+
+/// All tab variants, used for the Window menu.
+const ALL_TABS: &[EditorTab] = &[
+    EditorTab::World,
+    EditorTab::View,
+    EditorTab::Inspector,
+    EditorTab::Archetypes,
+    EditorTab::Components,
+];
+
+impl EditorTab {
+    /// Returns the display label with icon.
+    fn label(&self) -> String {
+        match self {
+            Self::World => format!("{} World", icons::GLOBE),
+            Self::View => format!("{} View", icons::EYE),
+            Self::Inspector => format!("{} Inspector", icons::SLIDERS),
+            Self::Archetypes => format!("{} Archetypes", icons::TREE_STRUCTURE),
+            Self::Components => format!("{} Components", icons::LIST_BULLETS),
+        }
+    }
+}
+
+impl std::fmt::Display for EditorTab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label())
+    }
+}
+
+/// Creates the default 3-panel dock layout: World | View | Inspector.
+fn default_dock_state() -> DockState<EditorTab> {
+    let mut state = DockState::new(vec![EditorTab::View]);
+
+    let surface = state.main_surface_mut();
+    surface.split_left(NodeIndex::root(), 0.2, vec![EditorTab::World]);
+
+    let surface = state.main_surface_mut();
+    surface.split_right(NodeIndex::root(), 0.7, vec![EditorTab::Inspector]);
+
+    state
+}
+
+/// Returns `true` if the given tab exists anywhere in the dock state.
+fn dock_has_tab(dock_state: &DockState<EditorTab>, tab: &EditorTab) -> bool {
+    dock_state.iter_all_tabs().any(|(_, t)| t == tab)
+}
+
+// ---------------------------------------------------------------------------
+// Editor overlay resource
+// ---------------------------------------------------------------------------
+
 /// Editor overlay state, stored as a resource.
 ///
 /// Holds the egui context, winit integration state, wgpu renderer,
-/// and UI state (selection, panel visibility).
+/// dock layout, and UI state (entity selection).
 pub struct EditorOverlay {
     ctx: egui::Context,
     winit_state: SharedWinitState,
     renderer: egui_wgpu::Renderer,
-    selected_entity: Option<Entity>,
-    show_hierarchy: bool,
-    show_inspector: bool,
+    dock_state: DockState<EditorTab>,
+    selected_entities: Vec<Entity>,
 }
 
 /// Forwards raw winit events to egui for input processing.
-///
-/// Stored as `Box<dyn RawEventHandler>` in resources. Called by
-/// `WinitApp::window_event` before the frame tick.
 struct EguiEventHandler {
     winit_state: SharedWinitState,
 }
@@ -60,14 +124,13 @@ impl RawEventHandler for EguiEventHandler {
 }
 
 // ---------------------------------------------------------------------------
-// Entity display data (gathered before egui frame)
+// Display data (gathered before egui frame)
 // ---------------------------------------------------------------------------
 
 /// Display data for a single component on an entity.
 struct ComponentDisplayInfo {
     type_id: TypeId,
     short_name: String,
-    /// Reflected field values, if the component implements `Reflect`.
     fields: Option<Vec<(String, ReflectValue)>>,
 }
 
@@ -114,6 +177,71 @@ fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo> {
     entities
 }
 
+/// Display data for a single archetype.
+struct ArchetypeDisplayInfo {
+    id_short: String,
+    entity_count: usize,
+    component_names: Vec<String>,
+}
+
+fn gather_archetype_data(resources: &Resources) -> Vec<ArchetypeDisplayInfo> {
+    let Some(archetypes) = resources.get::<ArchetypeRegistry>() else {
+        return Vec::new();
+    };
+    let components = resources.get::<ComponentRegistry>();
+
+    let mut result = Vec::new();
+    for archetype in archetypes.iter_matching(&[]) {
+        let comp_names: Vec<String> = archetype
+            .components()
+            .iter()
+            .map(|tid| {
+                components
+                    .as_ref()
+                    .and_then(|r| r.component_name(tid))
+                    .map(|name| name.rsplit("::").next().unwrap_or(name).to_owned())
+                    .unwrap_or_else(|| format!("{:?}", tid))
+            })
+            .collect();
+
+        result.push(ArchetypeDisplayInfo {
+            id_short: format!("{:?}", archetype.id()),
+            entity_count: archetype.len(),
+            component_names: comp_names,
+        });
+    }
+    result.sort_by(|a, b| b.entity_count.cmp(&a.entity_count));
+    result
+}
+
+/// Display data for a registered component type.
+struct ComponentTypeInfo {
+    #[allow(dead_code)]
+    type_id: TypeId,
+    short_name: String,
+    has_reflection: bool,
+}
+
+fn gather_component_types(resources: &Resources) -> Vec<ComponentTypeInfo> {
+    let Some(registry) = resources.get::<ComponentRegistry>() else {
+        return Vec::new();
+    };
+    let mut types: Vec<ComponentTypeInfo> = registry
+        .all_type_names()
+        .into_iter()
+        .map(|(tid, name)| {
+            let short = name.rsplit("::").next().unwrap_or(name).to_owned();
+            ComponentTypeInfo {
+                type_id: tid,
+                short_name: short,
+                has_reflection: registry.has_reflector(&tid),
+            }
+        })
+        .collect();
+    types.sort_by(|a, b| a.short_name.cmp(&b.short_name));
+    types
+}
+
 /// Available reflected component types for "Add Component".
 struct ReflectedTypeInfo {
     type_id: TypeId,
@@ -156,6 +284,10 @@ enum EditorAction {
         entity: Entity,
         type_id: TypeId,
     },
+    RemoveComponent {
+        entity: Entity,
+        type_id: TypeId,
+    },
 }
 
 fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
@@ -167,12 +299,9 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
                     None => return,
                 };
                 commands.spawn(resources);
-                // Builder drops here → commits to queue.
-                // Will be applied next frame by commands_apply_system.
                 resources.insert(commands);
             }
             EditorAction::Despawn(entity) => {
-                // Immediate despawn via allocator + archetype cleanup.
                 if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
                     alloc.despawn(*entity);
                 }
@@ -203,7 +332,6 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
                     inserted = registry.insert_default_reflected(type_id, *entity);
                 }
                 if inserted {
-                    // Update archetype to include the new component.
                     if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
                         if let Some(current) = archetypes.entity_archetype(*entity) {
                             let new_arch =
@@ -213,7 +341,114 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
                     }
                 }
             }
+            EditorAction::RemoveComponent { entity, type_id } => {
+                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                    registry.remove_component(*entity, type_id);
+                }
+                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
+                    if let Some(current) = archetypes.entity_archetype(*entity) {
+                        let new_arch =
+                            archetypes.archetype_after_remove_dynamic(current, *type_id);
+                        archetypes.register_entity(*entity, new_arch);
+                    }
+                }
+            }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Font configuration
+// ---------------------------------------------------------------------------
+
+fn configure_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    fonts.font_data.insert(
+        "firacode".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/fonts/FiraCode-Regular.ttf"
+        ))),
+    );
+
+    fonts.font_data.insert(
+        "phosphor".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/fonts/Phosphor.ttf"
+        ))),
+    );
+
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        family.insert(0, "firacode".to_owned());
+        family.push("phosphor".to_owned());
+    }
+
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+        family.insert(0, "firacode".to_owned());
+        family.push("phosphor".to_owned());
+    }
+
+    ctx.set_fonts(fonts);
+}
+
+fn configure_style(ctx: &egui::Context) {
+    let mut style = (*ctx.style()).clone();
+    style.visuals.window_rounding = egui::Rounding::same(6.0);
+    style.visuals.menu_rounding = egui::Rounding::same(4.0);
+    style.spacing.item_spacing = egui::vec2(6.0, 4.0);
+    ctx.set_style(style);
+}
+
+// ---------------------------------------------------------------------------
+// Tab viewer (egui_dock)
+// ---------------------------------------------------------------------------
+
+struct EditorTabViewer<'a> {
+    entities: &'a [EntityDisplayInfo],
+    archetypes: &'a [ArchetypeDisplayInfo],
+    component_types: &'a [ComponentTypeInfo],
+    selected: &'a mut Vec<Entity>,
+    reflected_types: &'a [ReflectedTypeInfo],
+    actions: &'a mut Vec<EditorAction>,
+    entity_count: usize,
+    archetype_count: usize,
+    active_archetype_count: usize,
+}
+
+impl<'a> TabViewer for EditorTabViewer<'a> {
+    type Tab = EditorTab;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        tab.to_string().into()
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        match tab {
+            EditorTab::World => draw_world_content(
+                ui,
+                self.entities,
+                self.selected,
+                self.reflected_types,
+                self.actions,
+                self.entity_count,
+                self.archetype_count,
+                self.active_archetype_count,
+            ),
+            EditorTab::View => draw_view_content(ui),
+            EditorTab::Inspector => draw_inspector_content(
+                ui,
+                self.entities,
+                self.selected,
+                self.reflected_types,
+                self.actions,
+            ),
+            EditorTab::Archetypes => draw_archetypes_content(ui, self.archetypes),
+            EditorTab::Components => draw_components_content(ui, self.component_types),
+        }
+    }
+
+    fn closeable(&mut self, _tab: &mut Self::Tab) -> bool {
+        true
     }
 }
 
@@ -221,17 +456,21 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
 // Systems
 // ---------------------------------------------------------------------------
 
-/// Startup system: creates the egui context, winit state, and wgpu renderer.
+/// Startup system: creates the egui context, winit state, wgpu renderer,
+/// and configures fonts and dock layout.
 pub fn editor_startup_system(resources: &mut Resources) {
     let gpu = resources
         .get::<GpuContext>()
         .expect("GpuContext not found — add WindowPlugin before EditorPlugin");
     let window_handle = resources
-        .get::<WindowHandle>()
+        .get::<ome_window::WindowHandle>()
         .expect("WindowHandle not found — add WindowPlugin before EditorPlugin");
     let window = window_handle.window();
 
     let ctx = egui::Context::default();
+    configure_fonts(&ctx);
+    configure_style(&ctx);
+
     let winit_state = Arc::new(Mutex::new(egui_winit::State::new(
         ctx.clone(),
         egui::ViewportId::ROOT,
@@ -241,21 +480,14 @@ pub fn editor_startup_system(resources: &mut Resources) {
         None,
     )));
 
-    let renderer = egui_wgpu::Renderer::new(
-        gpu.device(),
-        gpu.format(),
-        None,
-        1,
-        false,
-    );
+    let renderer = egui_wgpu::Renderer::new(gpu.device(), gpu.format(), None, 1, false);
 
     let overlay = EditorOverlay {
         ctx,
         winit_state: Arc::clone(&winit_state),
         renderer,
-        selected_entity: None,
-        show_hierarchy: true,
-        show_inspector: true,
+        dock_state: default_dock_state(),
+        selected_entities: Vec::new(),
     };
 
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });
@@ -269,21 +501,23 @@ pub fn editor_startup_system(resources: &mut Resources) {
 pub fn editor_render_system(resources: &mut Resources) {
     // 1. Gather ECS data before borrowing overlay.
     let entities = gather_entity_data(resources);
+    let archetype_data = gather_archetype_data(resources);
+    let component_types = gather_component_types(resources);
     let reflected_types = gather_reflected_types(resources);
     let entity_count = entities.len();
     let archetype_count = resources
         .get::<ArchetypeRegistry>()
         .map_or(0, |a| a.archetype_count());
+    let active_archetype_count = archetype_data.iter().filter(|a| a.entity_count > 0).count();
 
     // 2. Clone window Arc.
     let window = resources
-        .get::<WindowHandle>()
+        .get::<ome_window::WindowHandle>()
         .expect("WindowHandle not found")
         .window()
         .clone();
 
-    // 3. Remove GpuContext and EditorOverlay to avoid borrow conflicts
-    //    (same pattern as Schedule::run_gpu_batch).
+    // 3. Remove GpuContext and EditorOverlay to avoid borrow conflicts.
     let gpu = resources
         .remove::<GpuContext>()
         .expect("GpuContext not found");
@@ -297,34 +531,31 @@ pub fn editor_render_system(resources: &mut Resources) {
         state.take_egui_input(&window)
     };
 
-    // 5. Run egui UI.
-    let mut selected = overlay.selected_entity;
-    let mut show_hierarchy = overlay.show_hierarchy;
-    let mut show_inspector = overlay.show_inspector;
+    // 5. Run egui UI with dock layout.
+    let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut actions: Vec<EditorAction> = Vec::new();
 
     let full_output = overlay.ctx.run(raw_input, |ctx| {
-        draw_menu_bar(ctx, &mut show_hierarchy, &mut show_inspector);
+        draw_menu_bar(ctx, &mut overlay.dock_state);
 
-        if show_hierarchy {
-            draw_hierarchy(
-                ctx,
-                &entities,
-                &mut selected,
-                &mut actions,
-                entity_count,
-                archetype_count,
-            );
-        }
+        let mut tab_viewer = EditorTabViewer {
+            entities: &entities,
+            archetypes: &archetype_data,
+            component_types: &component_types,
+            selected: &mut selected,
+            reflected_types: &reflected_types,
+            actions: &mut actions,
+            entity_count,
+            archetype_count,
+            active_archetype_count,
+        };
 
-        if show_inspector {
-            draw_inspector(ctx, &entities, selected, &reflected_types, &mut actions);
-        }
+        DockArea::new(&mut overlay.dock_state)
+            .style(egui_dock::Style::from_egui(ctx.style().as_ref()))
+            .show(ctx, &mut tab_viewer);
     });
 
-    overlay.selected_entity = selected;
-    overlay.show_hierarchy = show_hierarchy;
-    overlay.show_inspector = show_inspector;
+    overlay.selected_entities = selected;
 
     // 6. Handle platform output (cursor icon, clipboard, etc.).
     {
@@ -396,9 +627,6 @@ pub fn editor_render_system(resources: &mut Resources) {
             ..Default::default()
         });
 
-        // forget_lifetime converts RenderPass<'encoder> → RenderPass<'static>
-        // as required by egui-wgpu. Safe because the pass is dropped before
-        // encoder.finish() below.
         let mut render_pass = render_pass.forget_lifetime();
         overlay
             .renderer
@@ -418,9 +646,14 @@ pub fn editor_render_system(resources: &mut Resources) {
     resources.insert(gpu);
     resources.insert(overlay);
 
-    // 10. Apply deferred editor actions (spawn/despawn).
+    // 10. Apply deferred editor actions.
     if !actions.is_empty() {
         apply_actions(resources, &actions);
+
+        // GC empty archetypes after structural changes.
+        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
+            archetypes.gc_empty_archetypes();
+        }
     }
 }
 
@@ -428,168 +661,381 @@ pub fn editor_render_system(resources: &mut Resources) {
 // UI drawing functions
 // ---------------------------------------------------------------------------
 
-fn draw_menu_bar(
-    ctx: &egui::Context,
-    show_hierarchy: &mut bool,
-    show_inspector: &mut bool,
-) {
+fn draw_menu_bar(ctx: &egui::Context, dock_state: &mut DockState<EditorTab>) {
     egui::TopBottomPanel::top("editor_menu").show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
-            ui.menu_button("View", |ui| {
-                ui.checkbox(show_hierarchy, "Hierarchy");
-                ui.checkbox(show_inspector, "Inspector");
+            ui.menu_button("Window", |ui| {
+                for &tab in ALL_TABS {
+                    let is_open = dock_has_tab(dock_state, &tab);
+                    if ui.selectable_label(is_open, tab.label()).clicked() {
+                        if is_open {
+                            dock_state.retain_tabs(|t| *t != tab);
+                        } else {
+                            dock_state.add_window(vec![tab]);
+                        }
+                        ui.close_menu();
+                    }
+                }
             });
         });
     });
 }
 
-fn draw_hierarchy(
-    ctx: &egui::Context,
+/// Content of the "World" tab — entity hierarchy list with context menu.
+fn draw_world_content(
+    ui: &mut egui::Ui,
     entities: &[EntityDisplayInfo],
-    selected: &mut Option<Entity>,
+    selected: &mut Vec<Entity>,
+    reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
     entity_count: usize,
     archetype_count: usize,
+    active_archetype_count: usize,
 ) {
-    egui::SidePanel::left("hierarchy")
-        .default_width(220.0)
-        .show(ctx, |ui| {
-            ui.heading("Entities");
-            ui.label(format!(
-                "{} entities, {} archetypes",
-                entity_count, archetype_count
-            ));
-            ui.separator();
+    ui.label(format!(
+        "{} entities, {} archetypes ({} active)",
+        entity_count, archetype_count, active_archetype_count,
+    ));
+    ui.separator();
 
-            ui.horizontal(|ui| {
-                if ui.button("Spawn").clicked() {
-                    actions.push(EditorAction::Spawn);
+    ui.horizontal(|ui| {
+        if ui.button(format!("{} Spawn", icons::PLUS)).clicked() {
+            actions.push(EditorAction::Spawn);
+        }
+        let can_despawn = !selected.is_empty();
+        if ui
+            .add_enabled(
+                can_despawn,
+                egui::Button::new(format!("{} Despawn", icons::TRASH)),
+            )
+            .clicked()
+        {
+            for entity in selected.drain(..) {
+                actions.push(EditorAction::Despawn(entity));
+            }
+        }
+    });
+    ui.separator();
+
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        for info in entities {
+            let label = format!(
+                "{} Entity {}:{}  [{}]",
+                icons::CUBE,
+                info.entity.index(),
+                info.entity.generation(),
+                info.components.len()
+            );
+            let is_selected = selected.contains(&info.entity);
+            let resp = ui.selectable_label(is_selected, &label);
+
+            // Left click: select (Ctrl+Click for multi-select).
+            if resp.clicked() {
+                let modifiers = ui.input(|i| i.modifiers);
+                if modifiers.ctrl || modifiers.command {
+                    // Toggle in selection.
+                    if is_selected {
+                        selected.retain(|e| *e != info.entity);
+                    } else {
+                        selected.push(info.entity);
+                    }
+                } else {
+                    // Replace selection.
+                    selected.clear();
+                    selected.push(info.entity);
                 }
-                let can_despawn = selected.is_some();
-                if ui.add_enabled(can_despawn, egui::Button::new("Despawn")).clicked() {
-                    if let Some(entity) = *selected {
+            }
+
+            // Right click: context menu.
+            resp.context_menu(|ui| {
+                // Ensure the right-clicked entity is selected.
+                if !selected.contains(&info.entity) {
+                    selected.clear();
+                    selected.push(info.entity);
+                }
+
+                let count = selected.len();
+                let label = if count == 1 {
+                    format!("{} Despawn", icons::TRASH)
+                } else {
+                    format!("{} Despawn {} entities", icons::TRASH, count)
+                };
+
+                if ui.button(label).clicked() {
+                    for entity in selected.drain(..) {
                         actions.push(EditorAction::Despawn(entity));
-                        *selected = None;
                     }
+                    ui.close_menu();
                 }
-            });
-            ui.separator();
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for info in entities {
-                    let label = format!(
-                        "Entity {}:{}  [{}]",
-                        info.entity.index(),
-                        info.entity.generation(),
-                        info.components.len()
-                    );
-                    let is_selected = *selected == Some(info.entity);
-                    if ui.selectable_label(is_selected, &label).clicked() {
-                        *selected = if is_selected {
-                            None
-                        } else {
-                            Some(info.entity)
-                        };
+                // Add Component submenu (only for single entity).
+                if selected.len() == 1 {
+                    let entity = selected[0];
+                    let existing: HashSet<TypeId> = entities
+                        .iter()
+                        .find(|e| e.entity == entity)
+                        .map(|e| e.components.iter().map(|c| c.type_id).collect())
+                        .unwrap_or_default();
+
+                    let available: Vec<&ReflectedTypeInfo> = reflected_types
+                        .iter()
+                        .filter(|t| !existing.contains(&t.type_id))
+                        .collect();
+
+                    if !available.is_empty() {
+                        ui.menu_button(
+                            format!("{} Add Component", icons::PLUS),
+                            |ui| {
+                                for type_info in &available {
+                                    if ui
+                                        .selectable_label(false, &type_info.short_name)
+                                        .clicked()
+                                    {
+                                        actions.push(EditorAction::AddComponent {
+                                            entity,
+                                            type_id: type_info.type_id,
+                                        });
+                                        ui.close_menu();
+                                    }
+                                }
+                            },
+                        );
                     }
+                } else if selected.len() > 1 {
+                    // Multi-select: add component to all selected.
+                    ui.menu_button(
+                        format!("{} Add Component to all", icons::PLUS),
+                        |ui| {
+                            for type_info in reflected_types {
+                                if ui
+                                    .selectable_label(false, &type_info.short_name)
+                                    .clicked()
+                                {
+                                    for &entity in selected.iter() {
+                                        actions.push(EditorAction::AddComponent {
+                                            entity,
+                                            type_id: type_info.type_id,
+                                        });
+                                    }
+                                    ui.close_menu();
+                                }
+                            }
+                        },
+                    );
                 }
             });
-        });
+        }
+    });
 }
 
-fn draw_inspector(
-    ctx: &egui::Context,
+/// Content of the "View" tab — placeholder viewport.
+fn draw_view_content(ui: &mut egui::Ui) {
+    ui.centered_and_justified(|ui| {
+        ui.weak("Viewport — scene rendering will go here");
+    });
+}
+
+/// Content of the "Inspector" tab — component details for selected entities.
+fn draw_inspector_content(
+    ui: &mut egui::Ui,
     entities: &[EntityDisplayInfo],
-    selected: Option<Entity>,
+    selected: &[Entity],
     reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
 ) {
-    egui::SidePanel::right("inspector")
-        .default_width(280.0)
-        .show(ctx, |ui| {
-            ui.heading("Inspector");
-            ui.separator();
+    if selected.is_empty() {
+        ui.weak("No entity selected");
+        return;
+    }
 
-            let Some(entity) = selected else {
-                ui.label("No entity selected");
-                return;
-            };
-
-            let Some(info) = entities.iter().find(|e| e.entity == entity) else {
-                ui.label("Entity not found (despawned?)");
-                return;
-            };
-
+    if selected.len() > 1 {
+        ui.label(format!("{} entities selected", selected.len()));
+        ui.separator();
+        for &entity in selected {
             ui.label(format!(
-                "Entity  index: {}  generation: {}",
+                "{} Entity {}:{}",
+                icons::CUBE,
                 entity.index(),
                 entity.generation()
             ));
-            ui.separator();
+        }
+        return;
+    }
 
-            // "Add Component" dropdown — show only types not already on entity.
-            let existing: std::collections::HashSet<TypeId> =
-                info.components.iter().map(|c| c.type_id).collect();
-            let available: Vec<&ReflectedTypeInfo> = reflected_types
-                .iter()
-                .filter(|t| !existing.contains(&t.type_id))
-                .collect();
+    // Single entity selected — show full inspector.
+    let entity = selected[0];
+    let Some(info) = entities.iter().find(|e| e.entity == entity) else {
+        ui.weak("Entity not found (despawned?)");
+        return;
+    };
 
-            if !available.is_empty() {
-                egui::ComboBox::from_label("Add Component")
-                    .selected_text("Select...")
-                    .show_ui(ui, |ui| {
-                        for type_info in &available {
-                            if ui
-                                .selectable_label(false, &type_info.short_name)
-                                .clicked()
-                            {
-                                actions.push(EditorAction::AddComponent {
-                                    entity,
-                                    type_id: type_info.type_id,
-                                });
-                            }
-                        }
-                    });
-                ui.separator();
-            }
+    ui.label(format!(
+        "{} Entity  index: {}  generation: {}",
+        icons::CUBE,
+        entity.index(),
+        entity.generation()
+    ));
+    ui.separator();
 
-            ui.heading("Components");
-            if info.components.is_empty() {
-                ui.weak("(none)");
-                return;
-            }
+    // "Add Component" dropdown.
+    let existing: HashSet<TypeId> = info.components.iter().map(|c| c.type_id).collect();
+    let available: Vec<&ReflectedTypeInfo> = reflected_types
+        .iter()
+        .filter(|t| !existing.contains(&t.type_id))
+        .collect();
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for comp in &info.components {
-                    let id = ui.make_persistent_id(format!(
-                        "comp_{}_{:?}",
-                        entity.index(),
-                        comp.type_id
-                    ));
-                    egui::collapsing_header::CollapsingState::load_with_default_open(
-                        ui.ctx(),
-                        id,
-                        true,
-                    )
-                    .show_header(ui, |ui| {
-                        ui.strong(&comp.short_name);
-                    })
-                    .body(|ui| {
-                        if let Some(fields) = &comp.fields {
-                            if fields.is_empty() {
-                                ui.weak("(no fields)");
-                            } else {
-                                draw_reflected_fields(
-                                    ui, entity, comp.type_id, fields, actions,
-                                );
-                            }
-                        } else {
-                            ui.weak("(no reflection)");
-                        }
-                    });
+    if !available.is_empty() {
+        egui::ComboBox::from_label(format!("{} Add Component", icons::PLUS))
+            .selected_text("Select...")
+            .show_ui(ui, |ui| {
+                for type_info in &available {
+                    if ui.selectable_label(false, &type_info.short_name).clicked() {
+                        actions.push(EditorAction::AddComponent {
+                            entity,
+                            type_id: type_info.type_id,
+                        });
+                    }
                 }
             });
-        });
+        ui.separator();
+    }
+
+    if info.components.is_empty() {
+        ui.weak("(no components)");
+        return;
+    }
+
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        for comp in &info.components {
+            let id = ui.make_persistent_id(format!(
+                "comp_{}_{:?}",
+                entity.index(),
+                comp.type_id
+            ));
+            egui::collapsing_header::CollapsingState::load_with_default_open(
+                ui.ctx(),
+                id,
+                true,
+            )
+            .show_header(ui, |ui| {
+                ui.strong(format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name));
+                if ui
+                    .small_button(icons::X)
+                    .on_hover_text("Remove component")
+                    .clicked()
+                {
+                    actions.push(EditorAction::RemoveComponent {
+                        entity,
+                        type_id: comp.type_id,
+                    });
+                }
+            })
+            .body(|ui| {
+                if let Some(fields) = &comp.fields {
+                    if fields.is_empty() {
+                        ui.weak("(no fields)");
+                    } else {
+                        draw_reflected_fields(ui, entity, comp.type_id, fields, actions);
+                    }
+                } else {
+                    ui.weak("(no reflection)");
+                }
+            });
+        }
+    });
+}
+
+/// Content of the "Archetypes" tab.
+fn draw_archetypes_content(ui: &mut egui::Ui, archetypes: &[ArchetypeDisplayInfo]) {
+    let active = archetypes.iter().filter(|a| a.entity_count > 0).count();
+    ui.label(format!(
+        "{} archetypes ({} active, {} empty)",
+        archetypes.len(),
+        active,
+        archetypes.len() - active,
+    ));
+    ui.separator();
+
+    if archetypes.is_empty() {
+        ui.weak("(none)");
+        return;
+    }
+
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        for (i, arch) in archetypes.iter().enumerate() {
+            let header = if arch.component_names.is_empty() {
+                format!(
+                    "{} Empty  —  {} entities",
+                    icons::STACK, arch.entity_count,
+                )
+            } else {
+                format!(
+                    "{} [{}]  —  {} entities",
+                    icons::STACK,
+                    arch.component_names.join(", "),
+                    arch.entity_count,
+                )
+            };
+
+            // Dim empty archetypes.
+            let is_empty = arch.entity_count == 0;
+
+            let id = ui.make_persistent_id(format!("arch_{}", i));
+            egui::collapsing_header::CollapsingState::load_with_default_open(
+                ui.ctx(),
+                id,
+                false,
+            )
+            .show_header(ui, |ui| {
+                if is_empty {
+                    ui.weak(header);
+                } else {
+                    ui.label(header);
+                }
+            })
+            .body(|ui| {
+                ui.label(format!("ID: {}", arch.id_short));
+                ui.label(format!("Entities: {}", arch.entity_count));
+                if arch.component_names.is_empty() {
+                    ui.weak("No components (empty archetype)");
+                } else {
+                    ui.label("Components:");
+                    for name in &arch.component_names {
+                        ui.label(format!("  {} {}", icons::PUZZLE_PIECE, name));
+                    }
+                }
+            });
+        }
+    });
+}
+
+/// Content of the "Components" tab — lists all registered component types.
+fn draw_components_content(ui: &mut egui::Ui, component_types: &[ComponentTypeInfo]) {
+    let reflected = component_types.iter().filter(|c| c.has_reflection).count();
+    ui.label(format!(
+        "{} component types ({} with reflection)",
+        component_types.len(),
+        reflected,
+    ));
+    ui.separator();
+
+    if component_types.is_empty() {
+        ui.weak("(none)");
+        return;
+    }
+
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        for comp in component_types {
+            ui.horizontal(|ui| {
+                ui.label(format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name));
+                if comp.has_reflection {
+                    ui.weak("(reflected)");
+                } else {
+                    ui.weak("(opaque)");
+                }
+            });
+        }
+    });
 }
 
 /// Renders editable widgets for reflected component fields.
@@ -732,8 +1178,32 @@ fn draw_value_widget(ui: &mut egui::Ui, value: &ReflectValue) -> Option<ReflectV
             )))
         }
         ReflectValue::Quat(v) => {
-            ui.label(format!("({:.2}, {:.2}, {:.2}, {:.2})", v.x, v.y, v.z, v.w));
-            None
+            // Display as Euler angles (degrees) for intuitive editing.
+            let (rx, ry, rz) = v.to_euler(glam::EulerRot::XYZ);
+            let mut dx = rx.to_degrees() + 0.0; // eliminate -0.0
+            let mut dy = ry.to_degrees() + 0.0;
+            let mut dz = rz.to_degrees() + 0.0;
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.label("x");
+                changed |= ui
+                    .add(egui::DragValue::new(&mut dx).speed(0.5).suffix("°"))
+                    .changed();
+                ui.label("y");
+                changed |= ui
+                    .add(egui::DragValue::new(&mut dy).speed(0.5).suffix("°"))
+                    .changed();
+                ui.label("z");
+                changed |= ui
+                    .add(egui::DragValue::new(&mut dz).speed(0.5).suffix("°"))
+                    .changed();
+            });
+            changed.then_some(ReflectValue::Quat(glam::Quat::from_euler(
+                glam::EulerRot::XYZ,
+                dx.to_radians(),
+                dy.to_radians(),
+                dz.to_radians(),
+            )))
         }
         ReflectValue::Mat4(_) => {
             ui.label("[Mat4]");

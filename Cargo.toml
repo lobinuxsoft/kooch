@@ -14,6 +14,7 @@ members = [
     "crates/ome_world",
     "crates/ome_audio",
     "crates/ome_scripting",
+    "crates/ome_ecs_macros",
     "crates/ome_editor_core",
     "crates/ome_editor",
     "examples/example_plugin",
@@ -52,6 +53,7 @@ rhai = "1.21"
 egui = "0.30"
 egui-winit = { version = "0.30", default-features = false }
 egui-wgpu = "0.30"
+egui_dock = "0.15"
 eframe = { version = "0.30", default-features = false, features = ["default_fonts", "glow", "wgpu"] }
 # Dynamic plugins
 stabby = "72.1"
@@ -60,6 +62,7 @@ libloading = "0.8"
 # Internal crates
 ome_core = { path = "crates/ome_core" }
 ome_ecs = { path = "crates/ome_ecs" }
+ome_ecs_macros = { path = "crates/ome_ecs_macros" }
 ome_window = { path = "crates/ome_window" }
 ome_input = { path = "crates/ome_input" }
 ome_sdf = { path = "crates/ome_sdf" }
@@ -102,6 +105,7 @@ ome_plugin_api = { workspace = true, optional = true }
 
 # External (used by examples)
 wgpu.workspace = true
+glam.workspace = true
 bytemuck.workspace = true
 pollster.workspace = true
 tracing.workspace = true
