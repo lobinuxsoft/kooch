@@ -226,6 +226,16 @@ impl ComponentRegistry {
         self.reflectors.keys().copied().collect()
     }
 
+    /// Looks up a `TypeId` by its full type name string.
+    ///
+    /// Linear scan of the `type_names` map. Only called at scene load time.
+    pub fn type_id_by_name(&self, name: &str) -> Option<TypeId> {
+        self.type_names
+            .iter()
+            .find(|(_, n)| **n == name)
+            .map(|(tid, _)| *tid)
+    }
+
     /// Returns all registered component types with their human-readable names.
     pub fn all_type_names(&self) -> Vec<(TypeId, &'static str)> {
         self.type_names

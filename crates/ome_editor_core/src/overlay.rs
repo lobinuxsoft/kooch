@@ -290,6 +290,8 @@ enum EditorAction {
         entity: Entity,
         type_id: TypeId,
     },
+    SaveScene,
+    OpenScene,
 }
 
 fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
@@ -383,6 +385,38 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
                         let new_arch =
                             archetypes.archetype_after_remove_dynamic(current, *type_id);
                         archetypes.register_entity(*entity, new_arch);
+                    }
+                }
+            }
+            EditorAction::SaveScene => {
+                let path = rfd::FileDialog::new()
+                    .add_filter("OME Scene", &["ome_scene"])
+                    .save_file();
+                if let Some(path) = path {
+                    let doc = ome_ecs::SceneDocument::from_ecs(resources);
+                    if let Err(e) = doc.save(&path) {
+                        tracing::error!("failed to save scene: {e}");
+                    } else {
+                        tracing::info!("scene saved to {}", path.display());
+                    }
+                }
+            }
+            EditorAction::OpenScene => {
+                let path = rfd::FileDialog::new()
+                    .add_filter("OME Scene", &["ome_scene"])
+                    .pick_file();
+                if let Some(path) = path {
+                    match ome_ecs::SceneDocument::load(&path) {
+                        Ok(doc) => {
+                            if let Err(e) = ome_ecs::sync_scene_to_ecs(&doc, resources) {
+                                tracing::error!("failed to sync scene to ECS: {e}");
+                            } else {
+                                tracing::info!("scene loaded from {}", path.display());
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("failed to load scene: {e}");
+                        }
                     }
                 }
             }
@@ -573,7 +607,7 @@ pub fn editor_render_system(resources: &mut Resources) {
     let mut actions: Vec<EditorAction> = Vec::new();
 
     let full_output = overlay.ctx.run(raw_input, |ctx| {
-        draw_menu_bar(ctx, &mut overlay.dock_state);
+        draw_menu_bar(ctx, &mut overlay.dock_state, &mut actions);
 
         let mut tab_viewer = EditorTabViewer {
             entities: &entities,
@@ -687,7 +721,19 @@ pub fn editor_render_system(resources: &mut Resources) {
 
     // 10. Apply deferred editor actions.
     if !actions.is_empty() {
+        let has_open_scene = actions
+            .iter()
+            .any(|a| matches!(a, EditorAction::OpenScene));
+
         apply_actions(resources, &actions);
+
+        // Clear editor selection when a new scene is loaded.
+        if has_open_scene {
+            if let Some(overlay) = resources.get_mut::<EditorOverlay>() {
+                overlay.selected_entities.clear();
+                overlay.last_clicked_index = None;
+            }
+        }
 
         // GC empty archetypes after structural changes.
         if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
@@ -700,9 +746,23 @@ pub fn editor_render_system(resources: &mut Resources) {
 // UI drawing functions
 // ---------------------------------------------------------------------------
 
-fn draw_menu_bar(ctx: &egui::Context, dock_state: &mut DockState<EditorTab>) {
+fn draw_menu_bar(
+    ctx: &egui::Context,
+    dock_state: &mut DockState<EditorTab>,
+    actions: &mut Vec<EditorAction>,
+) {
     egui::TopBottomPanel::top("editor_menu").show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
+            ui.menu_button("File", |ui| {
+                if ui.button("Save Scene...").clicked() {
+                    actions.push(EditorAction::SaveScene);
+                    ui.close_menu();
+                }
+                if ui.button("Open Scene...").clicked() {
+                    actions.push(EditorAction::OpenScene);
+                    ui.close_menu();
+                }
+            });
             ui.menu_button("Window", |ui| {
                 for &tab in ALL_TABS {
                     let is_open = dock_has_tab(dock_state, &tab);
