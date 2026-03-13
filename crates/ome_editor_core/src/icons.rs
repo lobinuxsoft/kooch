@@ -44,3 +44,9 @@ pub const STACK: &str = "\u{e466}";
 
 /// List bullets icon — used for Components tab.
 pub const LIST_BULLETS: &str = "\u{e2f2}";
+
+/// Play icon — filled triangle (classic media control).
+pub const PLAY: &str = "\u{25b6}";
+
+/// Stop icon — filled square (classic media control).
+pub const STOP: &str = "\u{25a0}";
