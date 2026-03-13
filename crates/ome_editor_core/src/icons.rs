@@ -45,8 +45,26 @@ pub const STACK: &str = "\u{e466}";
 /// List bullets icon — used for Components tab.
 pub const LIST_BULLETS: &str = "\u{e2f2}";
 
+/// Folder open icon — used for "Open Project" button.
+pub const FOLDER_OPEN: &str = "\u{e244}";
+
+/// Folder plus icon — used for "New Project" button.
+pub const FOLDER_PLUS: &str = "\u{e246}";
+
 /// Play icon — filled triangle (classic media control).
 pub const PLAY: &str = "\u{25b6}";
 
 /// Stop icon — filled square (classic media control).
 pub const STOP: &str = "\u{25a0}";
+
+/// Gear icon — used for compiling/building status.
+pub const GEAR: &str = "\u{e268}";
+
+/// Arrow left icon — used for "Back" button.
+pub const ARROW_LEFT: &str = "\u{e0b4}";
+
+/// Rocket icon — used for launching projects.
+pub const ROCKET: &str = "\u{e3f4}";
+
+/// Terminal icon — used for output console.
+pub const TERMINAL: &str = "\u{e49a}";

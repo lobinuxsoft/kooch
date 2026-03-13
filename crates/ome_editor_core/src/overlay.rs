@@ -6,6 +6,7 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
@@ -13,6 +14,7 @@ use egui_wgpu::ScreenDescriptor;
 use winit::event::WindowEvent;
 use winit::window::Window;
 
+use ome_core::event::{AppExit, Events};
 use ome_core::gpu::GpuContext;
 use ome_core::raw_event::RawEventHandler;
 use ome_core::resource::Resources;
@@ -24,7 +26,9 @@ use ome_ecs::entity::Entity;
 use ome_ecs::reflect::ReflectValue;
 
 use crate::icons;
+use crate::launch_screen::{self, LaunchAction};
 use crate::play_state::PlayState;
+use crate::project_state::ProjectState;
 
 /// Shared egui-winit state for event forwarding between the
 /// window event handler and the render system.
@@ -295,6 +299,15 @@ enum EditorAction {
     OpenScene,
     Play,
     Stop,
+    OpenProject(PathBuf),
+    CreateProject {
+        name: String,
+        parent_path: PathBuf,
+    },
+    CloseProject,
+    RemoveRecent(PathBuf),
+    LaunchProject(PathBuf),
+    CancelLaunch,
 }
 
 fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
@@ -392,9 +405,15 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
                 }
             }
             EditorAction::SaveScene => {
-                let path = rfd::FileDialog::new()
-                    .add_filter("OME Scene", &["ome_scene"])
-                    .save_file();
+                let scenes_dir = resources
+                    .get::<ProjectState>()
+                    .and_then(|ps| ps.active_project.as_ref().map(|p| p.root_path.join("scenes")));
+                let mut dialog = rfd::FileDialog::new()
+                    .add_filter("OME Scene", &["ome_scene"]);
+                if let Some(ref dir) = scenes_dir {
+                    dialog = dialog.set_directory(dir);
+                }
+                let path = dialog.save_file();
                 if let Some(path) = path {
                     let doc = ome_ecs::SceneDocument::from_ecs(resources);
                     if let Err(e) = doc.save(&path) {
@@ -405,9 +424,15 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
                 }
             }
             EditorAction::OpenScene => {
-                let path = rfd::FileDialog::new()
-                    .add_filter("OME Scene", &["ome_scene"])
-                    .pick_file();
+                let scenes_dir = resources
+                    .get::<ProjectState>()
+                    .and_then(|ps| ps.active_project.as_ref().map(|p| p.root_path.join("scenes")));
+                let mut dialog = rfd::FileDialog::new()
+                    .add_filter("OME Scene", &["ome_scene"]);
+                if let Some(ref dir) = scenes_dir {
+                    dialog = dialog.set_directory(dir);
+                }
+                let path = dialog.pick_file();
                 if let Some(path) = path {
                     match ome_ecs::SceneDocument::load(&path) {
                         Ok(doc) => {
@@ -429,7 +454,11 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
                 if let Err(e) = doc.save(&scene_path) {
                     tracing::error!("failed to save play scene: {e}");
                 } else if let Some(play_state) = resources.get_mut::<PlayState>() {
-                    if let Err(e) = play_state.launch(&scene_path) {
+                    // In project mode, use current_exe() to avoid recompilation.
+                    let exe = is_project_binary()
+                        .then(|| std::env::current_exe().ok())
+                        .flatten();
+                    if let Err(e) = play_state.launch(&scene_path, exe.as_deref()) {
                         tracing::error!("failed to launch game: {e}");
                     }
                 }
@@ -439,8 +468,180 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
                     play_state.stop();
                 }
             }
+            EditorAction::OpenProject(path) => {
+                // Remove ProjectState to avoid borrow conflicts with resources.
+                let mut ps = match resources.remove::<ProjectState>() {
+                    Some(ps) => ps,
+                    None => continue,
+                };
+                match ps.open_project(path) {
+                    Ok(()) => {
+                        let title = ps
+                            .active_project
+                            .as_ref()
+                            .map(|p| p.manifest.name.clone())
+                            .unwrap_or_default();
+                        tracing::info!("opened project: {title}");
+
+                        // Set window title.
+                        if let Some(wh) = resources.get::<ome_window::WindowHandle>() {
+                            let _ = wh
+                                .window()
+                                .set_title(&format!("{title} — Oh My Engine"));
+                        }
+
+                        // Load main_scene if present.
+                        let main_scene_path = ps.active_project.as_ref().and_then(|p| {
+                            p.manifest
+                                .main_scene
+                                .as_ref()
+                                .map(|s| p.root_path.join(s))
+                        });
+                        if let Some(scene_path) = main_scene_path {
+                            if scene_path.exists() {
+                                match ome_ecs::SceneDocument::load(&scene_path) {
+                                    Ok(doc) => {
+                                        if let Err(e) =
+                                            ome_ecs::sync_scene_to_ecs(&doc, resources)
+                                        {
+                                            tracing::error!(
+                                                "failed to sync main scene: {e}"
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("failed to load main scene: {e}");
+                                    }
+                                }
+                            }
+                        }
+
+                        ps.show_new_project_form = false;
+                    }
+                    Err(e) => {
+                        tracing::error!("failed to open project: {e}");
+                        ps.new_project_form.error =
+                            Some(format!("Failed to open project: {e}"));
+                    }
+                }
+                resources.insert(ps);
+            }
+            EditorAction::CreateProject { name, parent_path } => {
+                let engine_root = resources
+                    .get::<ProjectState>()
+                    .and_then(|ps| ps.engine_root.clone());
+
+                let Some(engine_root) = engine_root else {
+                    tracing::error!("engine_root not set — cannot create project crate");
+                    if let Some(ps) = resources.get_mut::<ProjectState>() {
+                        ps.new_project_form.error =
+                            Some("Engine root not configured".to_owned());
+                    }
+                    continue;
+                };
+
+                match crate::project::create_project(name, parent_path, &engine_root) {
+                    Ok(root) => {
+                        tracing::info!("created project: {name}");
+                        // Add to recents and launch the project binary.
+                        if let Some(ps) = resources.get_mut::<ProjectState>() {
+                            ps.editor_config.add_recent(name, &root);
+                            if let Err(e) = ps.editor_config.save() {
+                                tracing::warn!("failed to save editor config: {e}");
+                            }
+                            ps.show_new_project_form = false;
+                            ps.spawn_launcher(&root);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("failed to create project: {e}");
+                        if let Some(ps) = resources.get_mut::<ProjectState>() {
+                            ps.new_project_form.error =
+                                Some(format!("Failed to create project: {e}"));
+                        }
+                    }
+                }
+            }
+            EditorAction::CloseProject => {
+                // Despawn all entities.
+                let all_entities: Vec<Entity> = resources
+                    .get::<ArchetypeRegistry>()
+                    .map(|archetypes| {
+                        archetypes
+                            .iter_matching(&[])
+                            .flat_map(|a| a.entities().to_vec())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                for entity in &all_entities {
+                    if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
+                        alloc.despawn(*entity);
+                    }
+                    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
+                        archetypes.unregister_entity(*entity);
+                    }
+                    if let Some(components) = resources.get_mut::<ComponentRegistry>() {
+                        components.remove_entity(*entity);
+                    }
+                }
+
+                // Clear selection.
+                if let Some(overlay) = resources.get_mut::<EditorOverlay>() {
+                    overlay.selected_entities.clear();
+                    overlay.last_clicked_index = None;
+                }
+
+                // Close project and reset title.
+                if let Some(ps) = resources.get_mut::<ProjectState>() {
+                    ps.close_project();
+                }
+                if let Some(wh) = resources.get::<ome_window::WindowHandle>() {
+                    let _ = wh.window().set_title("Oh My Engine");
+                }
+            }
+            EditorAction::RemoveRecent(path) => {
+                if let Some(ps) = resources.get_mut::<ProjectState>() {
+                    ps.editor_config.remove_recent(path);
+                    if let Err(e) = ps.editor_config.save() {
+                        tracing::warn!("failed to save editor config: {e}");
+                    }
+                }
+            }
+            EditorAction::LaunchProject(path) => {
+                if let Some(ps) = resources.get_mut::<ProjectState>() {
+                    // Add to recents before launching.
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    ps.editor_config.add_recent(&name, path);
+                    if let Err(e) = ps.editor_config.save() {
+                        tracing::warn!("failed to save editor config: {e}");
+                    }
+                    ps.spawn_launcher(path);
+                }
+            }
+            EditorAction::CancelLaunch => {
+                if let Some(ps) = resources.get_mut::<ProjectState>() {
+                    ps.kill_launcher();
+                }
+            }
         }
     }
+}
+
+/// Returns `true` if the current binary is a project binary
+/// (has a `project.ome` next to the `Cargo.toml` in `CARGO_MANIFEST_DIR`).
+fn is_project_binary() -> bool {
+    // In project binaries, CARGO_MANIFEST_DIR is set at compile time.
+    // Check if project.ome exists alongside it.
+    option_env!("CARGO_MANIFEST_DIR")
+        .map(|dir| {
+            let p = std::path::Path::new(dir);
+            p.join("project.ome").exists()
+        })
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -599,16 +800,50 @@ pub fn editor_render_system(resources: &mut Resources) {
         false
     };
 
-    // 1. Gather ECS data before borrowing overlay.
-    let entities = gather_entity_data(resources);
-    let archetype_data = gather_archetype_data(resources);
-    let component_types = gather_component_types(resources);
-    let reflected_types = gather_reflected_types(resources);
-    let entity_count = entities.len();
-    let archetype_count = resources
-        .get::<ArchetypeRegistry>()
-        .map_or(0, |a| a.archetype_count());
-    let active_archetype_count = archetype_data.iter().filter(|a| a.entity_count > 0).count();
+    // Poll launcher process (compile + run project binary).
+    if let Some(ps) = resources.get_mut::<ProjectState>() {
+        ps.poll_launcher();
+    }
+
+    // If the project binary was launched, close the launcher.
+    let launched = resources
+        .get::<ProjectState>()
+        .and_then(|ps| ps.launcher_status())
+        .is_some_and(|s| *s == crate::project_state::LauncherStatus::Launched);
+    if launched {
+        if let Some(events) = resources.get_mut::<Events<AppExit>>() {
+            events.send(AppExit);
+        }
+        return;
+    }
+
+    // Check if a project is loaded to decide between launch screen and editor.
+    let project_loaded = resources
+        .get::<ProjectState>()
+        .map_or(false, |ps| ps.is_project_loaded());
+
+    // 1. Gather ECS data only when a project is loaded.
+    let (entities, archetype_data, component_types, reflected_types);
+    let (entity_count, archetype_count, active_archetype_count);
+    if project_loaded {
+        entities = gather_entity_data(resources);
+        archetype_data = gather_archetype_data(resources);
+        component_types = gather_component_types(resources);
+        reflected_types = gather_reflected_types(resources);
+        entity_count = entities.len();
+        archetype_count = resources
+            .get::<ArchetypeRegistry>()
+            .map_or(0, |a| a.archetype_count());
+        active_archetype_count = archetype_data.iter().filter(|a| a.entity_count > 0).count();
+    } else {
+        entities = Vec::new();
+        archetype_data = Vec::new();
+        component_types = Vec::new();
+        reflected_types = Vec::new();
+        entity_count = 0;
+        archetype_count = 0;
+        active_archetype_count = 0;
+    }
 
     // 2. Clone window Arc.
     let window = resources
@@ -617,13 +852,14 @@ pub fn editor_render_system(resources: &mut Resources) {
         .window()
         .clone();
 
-    // 3. Remove GpuContext and EditorOverlay to avoid borrow conflicts.
+    // 3. Remove GpuContext, EditorOverlay, and ProjectState to avoid borrow conflicts.
     let gpu = resources
         .remove::<GpuContext>()
         .expect("GpuContext not found");
     let mut overlay = resources
         .remove::<EditorOverlay>()
         .expect("EditorOverlay not found");
+    let mut project_state = resources.remove::<ProjectState>();
 
     // 4. Take accumulated egui input from winit events.
     let raw_input = {
@@ -631,30 +867,55 @@ pub fn editor_render_system(resources: &mut Resources) {
         state.take_egui_input(&window)
     };
 
-    // 5. Run egui UI with dock layout.
+    // 5. Run egui UI — launch screen or editor depending on project state.
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut last_clicked_index = overlay.last_clicked_index.take();
     let mut actions: Vec<EditorAction> = Vec::new();
 
     let full_output = overlay.ctx.run(raw_input, |ctx| {
-        draw_menu_bar(ctx, &mut overlay.dock_state, &mut actions, is_playing);
+        if project_loaded {
+            // --- Normal editor UI ---
+            draw_menu_bar(ctx, &mut overlay.dock_state, &mut actions, is_playing);
 
-        let mut tab_viewer = EditorTabViewer {
-            entities: &entities,
-            archetypes: &archetype_data,
-            component_types: &component_types,
-            selected: &mut selected,
-            reflected_types: &reflected_types,
-            actions: &mut actions,
-            entity_count,
-            archetype_count,
-            active_archetype_count,
-            last_clicked_index: &mut last_clicked_index,
-        };
+            let mut tab_viewer = EditorTabViewer {
+                entities: &entities,
+                archetypes: &archetype_data,
+                component_types: &component_types,
+                selected: &mut selected,
+                reflected_types: &reflected_types,
+                actions: &mut actions,
+                entity_count,
+                archetype_count,
+                active_archetype_count,
+                last_clicked_index: &mut last_clicked_index,
+            };
 
-        DockArea::new(&mut overlay.dock_state)
-            .style(egui_dock::Style::from_egui(ctx.style().as_ref()))
-            .show(ctx, &mut tab_viewer);
+            DockArea::new(&mut overlay.dock_state)
+                .style(egui_dock::Style::from_egui(ctx.style().as_ref()))
+                .show(ctx, &mut tab_viewer);
+        } else if let Some(ref mut ps) = project_state {
+            // --- Launch screen ---
+            let launch_actions = launch_screen::draw_launch_screen(ctx, ps);
+            for la in launch_actions {
+                match la {
+                    LaunchAction::OpenProject(path) => {
+                        actions.push(EditorAction::OpenProject(path));
+                    }
+                    LaunchAction::CreateProject { name, parent_path } => {
+                        actions.push(EditorAction::CreateProject { name, parent_path });
+                    }
+                    LaunchAction::RemoveRecent(path) => {
+                        actions.push(EditorAction::RemoveRecent(path));
+                    }
+                    LaunchAction::LaunchProject(path) => {
+                        actions.push(EditorAction::LaunchProject(path));
+                    }
+                    LaunchAction::CancelLaunch => {
+                        actions.push(EditorAction::CancelLaunch);
+                    }
+                }
+            }
+        }
     });
 
     overlay.selected_entities = selected;
@@ -703,6 +964,9 @@ pub fn editor_render_system(resources: &mut Resources) {
             tracing::warn!("Failed to acquire surface texture: {e}");
             resources.insert(gpu);
             resources.insert(overlay);
+            if let Some(ps) = project_state {
+                resources.insert(ps);
+            }
             return;
         }
     };
@@ -748,6 +1012,9 @@ pub fn editor_render_system(resources: &mut Resources) {
     // 9. Restore resources.
     resources.insert(gpu);
     resources.insert(overlay);
+    if let Some(ps) = project_state {
+        resources.insert(ps);
+    }
 
     // 10. Apply deferred editor actions.
     if !actions.is_empty() {
@@ -791,6 +1058,11 @@ fn draw_menu_bar(
                 }
                 if ui.button("Open Scene...").clicked() {
                     actions.push(EditorAction::OpenScene);
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Close Project").clicked() {
+                    actions.push(EditorAction::CloseProject);
                     ui.close_menu();
                 }
             });

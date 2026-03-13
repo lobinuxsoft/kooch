@@ -20,3 +20,6 @@ winit.workspace = true
 wgpu.workspace = true
 tracing.workspace = true
 rfd.workspace = true
+dirs.workspace = true
+serde.workspace = true
+ron.workspace = true
