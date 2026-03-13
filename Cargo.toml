@@ -150,6 +150,11 @@ path = "examples/editor.rs"
 required-features = ["editor"]
 
 [[example]]
+name = "game_runner"
+path = "examples/game_runner.rs"
+required-features = ["window"]
+
+[[example]]
 name = "dynamic_plugin"
 path = "examples/dynamic_plugin.rs"
 required-features = ["dynamic"]

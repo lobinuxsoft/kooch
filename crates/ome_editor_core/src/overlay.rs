@@ -24,6 +24,7 @@ use ome_ecs::entity::Entity;
 use ome_ecs::reflect::ReflectValue;
 
 use crate::icons;
+use crate::play_state::PlayState;
 
 /// Shared egui-winit state for event forwarding between the
 /// window event handler and the render system.
@@ -292,6 +293,8 @@ enum EditorAction {
     },
     SaveScene,
     OpenScene,
+    Play,
+    Stop,
 }
 
 fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
@@ -418,6 +421,22 @@ fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
                             tracing::error!("failed to load scene: {e}");
                         }
                     }
+                }
+            }
+            EditorAction::Play => {
+                let doc = ome_ecs::SceneDocument::from_ecs(resources);
+                let scene_path = std::env::temp_dir().join("ome_play_scene.ome_scene");
+                if let Err(e) = doc.save(&scene_path) {
+                    tracing::error!("failed to save play scene: {e}");
+                } else if let Some(play_state) = resources.get_mut::<PlayState>() {
+                    if let Err(e) = play_state.launch(&scene_path) {
+                        tracing::error!("failed to launch game: {e}");
+                    }
+                }
+            }
+            EditorAction::Stop => {
+                if let Some(play_state) = resources.get_mut::<PlayState>() {
+                    play_state.stop();
                 }
             }
         }
@@ -569,6 +588,17 @@ pub fn editor_startup_system(resources: &mut Resources) {
 
 /// Render system: runs egui UI and renders the overlay to the surface.
 pub fn editor_render_system(resources: &mut Resources) {
+    // 0. Poll game process state.
+    let is_playing = if let Some(play_state) = resources.get_mut::<PlayState>() {
+        play_state.poll();
+        for line in play_state.drain_output() {
+            tracing::info!("[game] {line}");
+        }
+        play_state.is_playing()
+    } else {
+        false
+    };
+
     // 1. Gather ECS data before borrowing overlay.
     let entities = gather_entity_data(resources);
     let archetype_data = gather_archetype_data(resources);
@@ -607,7 +637,7 @@ pub fn editor_render_system(resources: &mut Resources) {
     let mut actions: Vec<EditorAction> = Vec::new();
 
     let full_output = overlay.ctx.run(raw_input, |ctx| {
-        draw_menu_bar(ctx, &mut overlay.dock_state, &mut actions);
+        draw_menu_bar(ctx, &mut overlay.dock_state, &mut actions, is_playing);
 
         let mut tab_viewer = EditorTabViewer {
             entities: &entities,
@@ -750,6 +780,7 @@ fn draw_menu_bar(
     ctx: &egui::Context,
     dock_state: &mut DockState<EditorTab>,
     actions: &mut Vec<EditorAction>,
+    is_playing: bool,
 ) {
     egui::TopBottomPanel::top("editor_menu").show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
@@ -776,6 +807,36 @@ fn draw_menu_bar(
                     }
                 }
             });
+
+            // Push Play/Stop buttons to the center of the remaining space.
+            let available = ui.available_width();
+            let button_width = 70.0;
+            let total_buttons = button_width * 2.0 + ui.spacing().item_spacing.x;
+            let offset = (available - total_buttons) / 2.0;
+            if offset > 0.0 {
+                ui.add_space(offset);
+            }
+
+            if ui
+                .add_enabled(
+                    !is_playing,
+                    egui::Button::new(format!("{} Play", icons::PLAY))
+                        .min_size(egui::vec2(button_width, 0.0)),
+                )
+                .clicked()
+            {
+                actions.push(EditorAction::Play);
+            }
+            if ui
+                .add_enabled(
+                    is_playing,
+                    egui::Button::new(format!("{} Stop", icons::STOP))
+                        .min_size(egui::vec2(button_width, 0.0)),
+                )
+                .clicked()
+            {
+                actions.push(EditorAction::Stop);
+            }
         });
     });
 }
