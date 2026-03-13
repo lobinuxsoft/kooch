@@ -12,7 +12,9 @@ use crate::component::{component_despawn_cleanup_system, component_gpu_sync_syst
 #[cfg(feature = "dynamic")]
 use crate::entity::Entity;
 use crate::gpu_sync::entity_gpu_sync_system;
+use crate::name::Name;
 use crate::query::AccessTracker;
+use crate::transform::Transform;
 
 /// Plugin that bootstraps the entity and component systems.
 ///
@@ -24,6 +26,14 @@ use crate::query::AccessTracker;
 /// 3. `component_gpu_sync_system` — upload dirty component data to GPU
 pub struct EcsPlugin;
 
+/// Registers built-in engine components (Transform, Name).
+fn register_builtin_components(resources: &mut ome_core::resource::Resources) {
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu_reflected::<Transform>();
+        registry.register_cpu_reflected::<Name>();
+    }
+}
+
 impl Plugin for EcsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(EntityAllocator::new());
@@ -31,6 +41,9 @@ impl Plugin for EcsPlugin {
         app.insert_resource(ArchetypeRegistry::new());
         app.insert_resource(AccessTracker::new());
         app.insert_resource(Commands::new());
+
+        // Register built-in components before user startup systems.
+        app.add_system(Stage::Startup, register_builtin_components);
 
         // Order within a stage is insertion order — these MUST stay in this sequence.
         // 1. Apply deferred commands (spawn/despawn/insert/remove).

@@ -39,10 +39,14 @@ impl PlayState {
 
     /// Launches the game process with the given scene file.
     ///
-    /// The scene must already be saved to `scene_path` before calling this.
-    /// Spawns `cargo run --example game_runner -- --scene <path>` and
-    /// captures stdout/stderr via background reader threads.
-    pub fn launch(&mut self, scene_path: &Path) -> Result<(), PlayError> {
+    /// When `exe_path` is `Some`, the given binary is launched directly
+    /// with `--play --scene <path>` (project mode, no recompilation).
+    /// When `None`, falls back to `cargo run --example game_runner`.
+    pub fn launch(
+        &mut self,
+        scene_path: &Path,
+        exe_path: Option<&Path>,
+    ) -> Result<(), PlayError> {
         if self.is_playing() {
             return Err(PlayError::AlreadyPlaying);
         }
@@ -52,13 +56,23 @@ impl PlayState {
             out.clear();
         }
 
-        let mut child = Command::new("cargo")
-            .args(["run", "--example", "game_runner", "--", "--scene"])
-            .arg(scene_path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| PlayError::Spawn(e.to_string()))?;
+        let mut child = if let Some(exe) = exe_path {
+            Command::new(exe)
+                .args(["--play", "--scene"])
+                .arg(scene_path)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| PlayError::Spawn(e.to_string()))?
+        } else {
+            Command::new("cargo")
+                .args(["run", "--example", "game_runner", "--", "--scene"])
+                .arg(scene_path)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| PlayError::Spawn(e.to_string()))?
+        };
 
         // Spawn reader threads for stdout/stderr.
         if let Some(stdout) = child.stdout.take() {

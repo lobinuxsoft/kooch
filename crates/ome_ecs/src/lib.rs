@@ -28,6 +28,7 @@ pub mod plugin;
 pub mod query;
 pub mod reflect;
 pub mod scene;
+pub mod name;
 pub mod transform;
 
 pub use allocator::EntityAllocator;
@@ -46,4 +47,5 @@ pub use reflect::{FieldKind, FieldMeta, Reflect, ReflectError, ReflectValue};
 pub use scene::{
     ComponentDescription, EntityDescription, SceneDocument, SceneError, sync_scene_to_ecs,
 };
+pub use name::Name;
 pub use transform::Transform;
