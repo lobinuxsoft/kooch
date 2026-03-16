@@ -21,13 +21,19 @@ pub mod launch_screen;
 pub mod play_state;
 pub mod project;
 pub mod project_state;
-mod overlay;
+pub(crate) mod actions;
+pub(crate) mod menu_bar;
+pub(crate) mod panels;
+pub(crate) mod queries;
+pub(crate) mod state;
+pub(crate) mod style;
+pub(crate) mod systems;
 
 use ome_core::app::App;
 use ome_core::plugin::Plugin;
 use ome_core::stage::Stage;
 
-pub use overlay::EditorOverlay;
+pub use state::EditorOverlay;
 pub use play_state::PlayState;
 pub use project::{EditorConfig, ProjectManifest};
 pub use project_state::ProjectState;
@@ -46,8 +52,8 @@ impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(PlayState::new());
         app.insert_resource(project_state::ProjectState::new());
-        app.add_system(Stage::Startup, overlay::editor_startup_system);
-        app.add_system(Stage::Render, overlay::editor_render_system);
+        app.add_system(Stage::Startup, systems::editor_startup_system);
+        app.add_system(Stage::Render, systems::editor_render_system);
     }
 
     fn name(&self) -> &str {
