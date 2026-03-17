@@ -190,13 +190,26 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
                 let scene_path = std::env::temp_dir().join("ome_play_scene.ome_scene");
                 if let Err(e) = doc.save(&scene_path) {
                     tracing::error!("failed to save play scene: {e}");
-                } else if let Some(play_state) = resources.get_mut::<PlayState>() {
+                } else {
                     // In project mode, use current_exe() to avoid recompilation.
-                    let exe = is_project_binary()
+                    // Detect via explicit flag OR runtime check (exe inside project target/).
+                    let is_project = resources
+                        .get::<ProjectState>()
+                        .is_some_and(|ps| {
+                            if ps.is_project_binary {
+                                return true;
+                            }
+                            let Some(project) = &ps.active_project else { return false };
+                            let Ok(exe) = std::env::current_exe() else { return false };
+                            exe.starts_with(project.root_path.join("target"))
+                        });
+                    let exe = is_project
                         .then(|| std::env::current_exe().ok())
                         .flatten();
-                    if let Err(e) = play_state.launch(&scene_path, exe.as_deref()) {
-                        tracing::error!("failed to launch game: {e}");
+                    if let Some(play_state) = resources.get_mut::<PlayState>() {
+                        if let Err(e) = play_state.launch(&scene_path, exe.as_deref()) {
+                            tracing::error!("failed to launch game: {e}");
+                        }
                     }
                 }
             }
@@ -368,15 +381,3 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
     }
 }
 
-/// Returns `true` if the current binary is a project binary
-/// (has a `project.ome` next to the `Cargo.toml` in `CARGO_MANIFEST_DIR`).
-pub(crate) fn is_project_binary() -> bool {
-    // In project binaries, CARGO_MANIFEST_DIR is set at compile time.
-    // Check if project.ome exists alongside it.
-    option_env!("CARGO_MANIFEST_DIR")
-        .map(|dir| {
-            let p = std::path::Path::new(dir);
-            p.join("project.ome").exists()
-        })
-        .unwrap_or(false)
-}

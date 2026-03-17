@@ -214,6 +214,7 @@ fn load_scene(resources: &mut Resources) {{
 fn auto_open_project(resources: &mut Resources) {{
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     if let Some(ps) = resources.get_mut::<ProjectState>() {{
+        ps.is_project_binary = true;
         let _ = ps.open_project(&root);
     }}
 }}
