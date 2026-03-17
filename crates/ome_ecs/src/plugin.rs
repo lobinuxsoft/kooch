@@ -12,6 +12,9 @@ use crate::component::{component_despawn_cleanup_system, component_gpu_sync_syst
 #[cfg(feature = "dynamic")]
 use crate::entity::Entity;
 use crate::gpu_sync::entity_gpu_sync_system;
+use crate::hierarchy::{
+    Children, GlobalTransform, Parent, hierarchy_sync_system, transform_propagation_system,
+};
 use crate::name::Name;
 use crate::query::AccessTracker;
 use crate::transform::Transform;
@@ -31,6 +34,9 @@ fn register_builtin_components(resources: &mut ome_core::resource::Resources) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<Transform>();
         registry.register_cpu_reflected::<Name>();
+        registry.register_cpu_reflected::<Parent>();
+        registry.register_cpu_reflected::<Children>();
+        registry.register_cpu_reflected::<GlobalTransform>();
     }
 }
 
@@ -50,6 +56,10 @@ impl Plugin for EcsPlugin {
         // 2. Clean up despawned entities from component storages.
         // 3. Sync entity alive mask to GPU.
         // 4. Upload dirty component data to GPU.
+        // Hierarchy sync and transform propagation run before GPU sync.
+        app.add_system(Stage::PostUpdate, hierarchy_sync_system);
+        app.add_system(Stage::PostUpdate, transform_propagation_system);
+
         app.add_system(Stage::GpuSync, commands_apply_system);
         app.add_system(Stage::GpuSync, component_despawn_cleanup_system);
         app.add_system(Stage::GpuSync, entity_gpu_sync_system);

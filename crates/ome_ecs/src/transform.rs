@@ -2,7 +2,7 @@
 //!
 //! Fundamental spatial component for all entities that exist in 3D space.
 
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
 
 use crate::component::Component;
 
@@ -17,11 +17,21 @@ use crate::Reflect;
 /// - `position`: origin `(0, 0, 0)`
 /// - `rotation`: identity (no rotation)
 /// - `scale`: uniform `(1, 1, 1)`
-#[derive(Debug, Clone, Copy, Default, Reflect)]
+#[derive(Debug, Clone, Copy, Reflect)]
 pub struct Transform {
     pub position: Vec3,
     pub rotation: Quat,
     pub scale: Vec3,
+}
+
+impl Default for Transform {
+    fn default() -> Self {
+        Self {
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        }
+    }
 }
 
 impl Component for Transform {}
@@ -42,5 +52,10 @@ impl Transform {
             rotation,
             scale,
         }
+    }
+
+    /// Computes the local-space 4x4 matrix (scale × rotation × translation).
+    pub fn to_matrix(&self) -> Mat4 {
+        Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.position)
     }
 }
