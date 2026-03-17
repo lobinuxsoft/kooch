@@ -141,11 +141,9 @@ pub(crate) fn draw_world_content(
             let is_selected = selected.contains(&info.entity);
 
             // Indent based on hierarchy depth.
-            let indent = info.depth as f32 * 16.0;
-            let resp = ui.horizontal(|ui| {
-                ui.add_space(indent);
-                ui.selectable_label(is_selected, &label)
-            }).inner;
+            let indent_str = "  ".repeat(info.depth);
+            let indented_label = format!("{indent_str}{label}");
+            let resp = ui.selectable_label(is_selected, &indented_label);
 
             if resp.clicked() {
                 let modifiers = ui.input(|i| i.modifiers);
