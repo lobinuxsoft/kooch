@@ -232,6 +232,9 @@ pub struct ProjectState {
     pub launcher_process: Option<LauncherProcess>,
     /// Accumulated output lines from the launcher process for display.
     pub launcher_output: Vec<String>,
+    /// `true` when running as a compiled project binary (handles `--play`).
+    /// Set by the project's `main.rs` at startup.
+    pub is_project_binary: bool,
 }
 
 impl ProjectState {
@@ -245,6 +248,7 @@ impl ProjectState {
             engine_root: None,
             launcher_process: None,
             launcher_output: Vec::new(),
+            is_project_binary: false,
         }
     }
 
