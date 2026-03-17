@@ -71,9 +71,14 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
     }
 
     // Third pass: sort in tree order (roots first, then DFS children) with depth.
+    // Treat entities as roots if they have no parent OR if their parent
+    // doesn't exist in the entity list (e.g. Parent with Entity::INVALID).
     let roots: Vec<ome_ecs::Entity> = flat
         .iter()
-        .filter(|e| e.parent.is_none())
+        .filter(|e| match e.parent {
+            None => true,
+            Some(p) => !entity_idx_map.contains_key(&p),
+        })
         .map(|e| e.entity)
         .collect();
 
@@ -168,12 +173,22 @@ pub(crate) fn gather_component_types(resources: &Resources) -> Vec<ComponentType
 }
 
 pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedTypeInfo> {
+    use ome_ecs::hierarchy::{Children, GlobalTransform, Parent};
+
+    // Hierarchy components are system-managed, not user-addable.
+    let hidden = [
+        std::any::TypeId::of::<Parent>(),
+        std::any::TypeId::of::<Children>(),
+        std::any::TypeId::of::<GlobalTransform>(),
+    ];
+
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
     };
     let mut types: Vec<ReflectedTypeInfo> = registry
         .reflected_type_names()
         .into_iter()
+        .filter(|(tid, _)| !hidden.contains(tid))
         .map(|(tid, name)| {
             let short = name.rsplit("::").next().unwrap_or(name).to_owned();
             ReflectedTypeInfo {
