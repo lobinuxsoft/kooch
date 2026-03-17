@@ -33,6 +33,9 @@ pub struct SceneDocument {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EntityDescription {
     pub name: String,
+    /// Parent entity name (for hierarchy reconstruction on load).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
     pub components: Vec<ComponentDescription>,
 }
 
@@ -136,8 +139,24 @@ impl SceneDocument {
     ///
     /// Iterates all archetypes/entities and captures reflected component
     /// fields. Entities without any reflected components are skipped.
+    ///
+    /// Hierarchy components (`Parent`, `Children`, `GlobalTransform`) are
+    /// excluded from the component list. Instead, parent relationships are
+    /// stored as an entity name reference in `EntityDescription::parent`.
     pub fn from_ecs(resources: &Resources) -> Self {
+        use crate::hierarchy::{Children, GlobalTransform, Parent};
+
+        // Type IDs of hierarchy components to skip during serialization.
+        let skip_types = [
+            std::any::TypeId::of::<Parent>(),
+            std::any::TypeId::of::<Children>(),
+            std::any::TypeId::of::<GlobalTransform>(),
+        ];
+
         let mut entities = Vec::new();
+        // Map entity → index for parent name lookup.
+        let mut entity_to_idx: std::collections::HashMap<crate::entity::Entity, usize> =
+            std::collections::HashMap::new();
 
         let archetypes = resources.get::<ArchetypeRegistry>();
         let components = resources.get::<ComponentRegistry>();
@@ -148,6 +167,11 @@ impl SceneDocument {
                     let mut comp_descs = Vec::new();
 
                     for &type_id in archetype.components() {
+                        // Skip hierarchy components.
+                        if skip_types.contains(&type_id) {
+                            continue;
+                        }
+
                         let Some(type_name) = components.component_name(&type_id) else {
                             continue;
                         };
@@ -195,10 +219,24 @@ impl SceneDocument {
                         })
                         .unwrap_or_else(|| format!("Entity {}", entity.index()));
 
+                    let idx = entities.len();
+                    entity_to_idx.insert(entity, idx);
                     entities.push(EntityDescription {
                         name: display_name,
+                        parent: None, // Filled in second pass.
                         components: comp_descs,
                     });
+                }
+            }
+
+            // Second pass: resolve parent names.
+            if let Some(parent_storage) = components.get_cpu::<Parent>() {
+                for (&entity, idx) in &entity_to_idx {
+                    if let Some(parent_comp) = parent_storage.get(entity) {
+                        if let Some(&parent_idx) = entity_to_idx.get(&parent_comp.entity) {
+                            entities[*idx].parent = Some(entities[parent_idx].name.clone());
+                        }
+                    }
                 }
             }
         }
@@ -223,14 +261,22 @@ impl SceneDocument {
 ///
 /// All existing entities are despawned. For each entity in the document,
 /// a new entity is spawned, and its components are inserted via reflection.
+/// Hierarchy relationships are reconstructed from `EntityDescription::parent`.
 pub fn sync_scene_to_ecs(
     scene: &SceneDocument,
     resources: &mut Resources,
 ) -> Result<(), SceneError> {
+    use crate::hierarchy::Parent;
+
     // 1. Despawn all existing entities.
     despawn_all(resources);
 
-    // 2. Rebuild from the scene document.
+    // 2. First pass: spawn entities and insert components.
+    // Track name → Entity for parent resolution.
+    let mut name_to_entity: std::collections::HashMap<String, crate::entity::Entity> =
+        std::collections::HashMap::new();
+    let mut spawned_order: Vec<(crate::entity::Entity, Option<String>)> = Vec::new();
+
     for entity_desc in &scene.entities {
         // Spawn a fresh entity.
         let entity = {
@@ -241,6 +287,9 @@ pub fn sync_scene_to_ecs(
             resources.insert(commands);
             entity
         };
+
+        name_to_entity.insert(entity_desc.name.clone(), entity);
+        spawned_order.push((entity, entity_desc.parent.clone()));
 
         for comp_desc in &entity_desc.components {
             // Look up the TypeId by full type name.
@@ -283,6 +332,20 @@ pub fn sync_scene_to_ecs(
                         field_name,
                         value.clone(),
                     )?;
+                }
+            }
+        }
+    }
+
+    // 3. Second pass: establish hierarchy from parent names.
+    for (entity, parent_name) in &spawned_order {
+        if let Some(parent_name) = parent_name {
+            if let Some(&parent_entity) = name_to_entity.get(parent_name) {
+                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                    registry.register_cpu_reflected::<Parent>();
+                    if let Some(storage) = registry.get_cpu_mut::<Parent>() {
+                        storage.insert(*entity, Parent { entity: parent_entity });
+                    }
                 }
             }
         }
@@ -426,6 +489,7 @@ mod tests {
             entities: vec![
                 EntityDescription {
                     name: "Player".into(),
+                    parent: None,
                     components: vec![ComponentDescription {
                         type_name: "ome_ecs::transform::Transform".into(),
                         fields: vec![
@@ -440,6 +504,7 @@ mod tests {
                 },
                 EntityDescription {
                     name: "Enemy".into(),
+                    parent: None,
                     components: vec![ComponentDescription {
                         type_name: "test::Health".into(),
                         fields: vec![
@@ -519,6 +584,7 @@ mod tests {
             version: "0.1.0".into(),
             entities: vec![EntityDescription {
                 name: "Hero".into(),
+                parent: None,
                 components: vec![ComponentDescription {
                     type_name: std::any::type_name::<Health>().to_owned(),
                     fields: vec![
