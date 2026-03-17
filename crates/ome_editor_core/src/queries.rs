@@ -10,12 +10,18 @@ use crate::state::{
 };
 
 pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo> {
+    use ome_ecs::hierarchy::Parent;
+    use std::collections::HashMap;
+
     let Some(archetypes) = resources.get::<ArchetypeRegistry>() else {
         return Vec::new();
     };
     let components = resources.get::<ComponentRegistry>();
 
-    let mut entities = Vec::new();
+    // First pass: gather all entities with their components.
+    let mut flat: Vec<EntityDisplayInfo> = Vec::new();
+    let mut entity_idx_map: HashMap<ome_ecs::Entity, usize> = HashMap::new();
+
     for archetype in archetypes.iter_matching(&[]) {
         for &entity in archetype.entities() {
             let comps: Vec<ComponentDisplayInfo> = archetype
@@ -37,14 +43,78 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                     })
                 })
                 .collect();
-            entities.push(EntityDisplayInfo {
+
+            let idx = flat.len();
+            entity_idx_map.insert(entity, idx);
+            flat.push(EntityDisplayInfo {
                 entity,
                 components: comps,
+                parent: None,
+                children: Vec::new(),
+                depth: 0,
             });
         }
     }
-    entities.sort_by_key(|e| e.entity.index());
-    entities
+
+    // Second pass: populate parent/children from hierarchy components.
+    if let Some(registry) = components.as_ref() {
+        if let Some(parent_storage) = registry.get_cpu::<Parent>() {
+            for (child_entity, parent_comp) in parent_storage.iter() {
+                if let Some(&child_idx) = entity_idx_map.get(child_entity) {
+                    flat[child_idx].parent = Some(parent_comp.entity);
+                }
+                if let Some(&parent_idx) = entity_idx_map.get(&parent_comp.entity) {
+                    flat[parent_idx].children.push(*child_entity);
+                }
+            }
+        }
+    }
+
+    // Third pass: sort in tree order (roots first, then DFS children) with depth.
+    let roots: Vec<ome_ecs::Entity> = flat
+        .iter()
+        .filter(|e| e.parent.is_none())
+        .map(|e| e.entity)
+        .collect();
+
+    let mut sorted: Vec<EntityDisplayInfo> = Vec::with_capacity(flat.len());
+    let mut stack: Vec<(ome_ecs::Entity, usize)> = Vec::new();
+
+    // Sort roots by index for stable ordering.
+    let mut sorted_roots = roots;
+    sorted_roots.sort_by_key(|e| e.index());
+
+    // Push roots in reverse so first root is processed first.
+    for &root in sorted_roots.iter().rev() {
+        stack.push((root, 0));
+    }
+
+    while let Some((entity, depth)) = stack.pop() {
+        if let Some(&idx) = entity_idx_map.get(&entity) {
+            let mut info = std::mem::replace(
+                &mut flat[idx],
+                EntityDisplayInfo {
+                    entity: ome_ecs::Entity::INVALID,
+                    components: Vec::new(),
+                    parent: None,
+                    children: Vec::new(),
+                    depth: 0,
+                },
+            );
+            info.depth = depth;
+
+            // Push children in reverse for correct DFS order.
+            let mut children = info.children.clone();
+            children.sort_by_key(|e| e.index());
+            for &child in children.iter().rev() {
+                stack.push((child, depth + 1));
+            }
+
+            sorted.push(info);
+        }
+    }
+
+    sorted
 }
 
 pub(crate) fn gather_archetype_data(resources: &Resources) -> Vec<ArchetypeDisplayInfo> {

@@ -125,6 +125,12 @@ pub(crate) struct ComponentDisplayInfo {
 pub(crate) struct EntityDisplayInfo {
     pub(crate) entity: Entity,
     pub(crate) components: Vec<ComponentDisplayInfo>,
+    /// Parent entity, if any.
+    pub(crate) parent: Option<Entity>,
+    /// Direct child entities.
+    pub(crate) children: Vec<Entity>,
+    /// Depth in the hierarchy tree (0 = root).
+    pub(crate) depth: usize,
 }
 
 /// Display data for a single archetype.

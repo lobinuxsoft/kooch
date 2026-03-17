@@ -115,24 +115,37 @@ pub(crate) fn draw_world_content(
                     })
                 });
 
+            let has_children = !info.children.is_empty();
+            let icon = if has_children {
+                icons::TREE_STRUCTURE
+            } else {
+                icons::CUBE
+            };
+
             let label = if let Some(name) = &display_name {
                 format!(
                     "{} {}  [{}]",
-                    icons::CUBE,
+                    icon,
                     name,
                     info.components.len()
                 )
             } else {
                 format!(
                     "{} Entity {}:{}  [{}]",
-                    icons::CUBE,
+                    icon,
                     info.entity.index(),
                     info.entity.generation(),
                     info.components.len()
                 )
             };
             let is_selected = selected.contains(&info.entity);
-            let resp = ui.selectable_label(is_selected, &label);
+
+            // Indent based on hierarchy depth.
+            let indent = info.depth as f32 * 16.0;
+            let resp = ui.horizontal(|ui| {
+                ui.add_space(indent);
+                ui.selectable_label(is_selected, &label)
+            }).inner;
 
             if resp.clicked() {
                 let modifiers = ui.input(|i| i.modifiers);
