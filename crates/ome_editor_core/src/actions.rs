@@ -192,9 +192,17 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
                     tracing::error!("failed to save play scene: {e}");
                 } else {
                     // In project mode, use current_exe() to avoid recompilation.
+                    // Detect via explicit flag OR runtime check (exe inside project target/).
                     let is_project = resources
                         .get::<ProjectState>()
-                        .is_some_and(|ps| ps.is_project_binary);
+                        .is_some_and(|ps| {
+                            if ps.is_project_binary {
+                                return true;
+                            }
+                            let Some(project) = &ps.active_project else { return false };
+                            let Ok(exe) = std::env::current_exe() else { return false };
+                            exe.starts_with(project.root_path.join("target"))
+                        });
                     let exe = is_project
                         .then(|| std::env::current_exe().ok())
                         .flatten();
