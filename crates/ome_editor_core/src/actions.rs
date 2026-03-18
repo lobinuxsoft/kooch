@@ -9,6 +9,7 @@ use ome_ecs::archetype_registry::ArchetypeRegistry;
 use ome_ecs::commands::Commands;
 use ome_ecs::component::ComponentRegistry;
 use ome_ecs::entity::Entity;
+use ome_ecs::hierarchy::Parent;
 use ome_ecs::reflect::ReflectValue;
 
 use crate::play_state::PlayState;
@@ -42,6 +43,10 @@ pub(crate) enum EditorAction {
         parent_path: PathBuf,
     },
     CloseProject,
+    Reparent {
+        entity: Entity,
+        new_parent: Option<Entity>,
+    },
     RemoveRecent(PathBuf),
     LaunchProject(PathBuf),
     CancelLaunch,
@@ -348,6 +353,51 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
                 }
                 if let Some(wh) = resources.get::<ome_window::WindowHandle>() {
                     let _ = wh.window().set_title("Oh My Engine");
+                }
+            }
+            EditorAction::Reparent { entity, new_parent } => {
+                match new_parent {
+                    Some(parent) => {
+                        let mut needs_archetype_add = false;
+                        if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                            let has_parent = registry
+                                .get_cpu::<Parent>()
+                                .is_some_and(|s| s.contains(*entity));
+                            if has_parent {
+                                if let Some(storage) = registry.get_cpu_mut::<Parent>() {
+                                    if let Some(p) = storage.get_mut(*entity) {
+                                        p.entity = *parent;
+                                    }
+                                }
+                            } else if let Some(storage) = registry.get_cpu_mut::<Parent>() {
+                                storage.insert(*entity, Parent { entity: *parent });
+                                needs_archetype_add = true;
+                            }
+                        }
+                        if needs_archetype_add {
+                            let parent_tid = TypeId::of::<Parent>();
+                            if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
+                                if let Some(current) = archetypes.entity_archetype(*entity) {
+                                    let new_arch = archetypes
+                                        .archetype_after_add_dynamic(current, parent_tid);
+                                    archetypes.register_entity(*entity, new_arch);
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        let parent_tid = TypeId::of::<Parent>();
+                        if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                            registry.remove_component(*entity, &parent_tid);
+                        }
+                        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
+                            if let Some(current) = archetypes.entity_archetype(*entity) {
+                                let new_arch = archetypes
+                                    .archetype_after_remove_dynamic(current, parent_tid);
+                                archetypes.register_entity(*entity, new_arch);
+                            }
+                        }
+                    }
                 }
             }
             EditorAction::RemoveRecent(path) => {

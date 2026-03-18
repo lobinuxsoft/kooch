@@ -3,12 +3,34 @@
 use std::any::TypeId;
 use std::collections::HashSet;
 
+use egui::NumExt as _;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::ReflectValue;
 
 use crate::actions::EditorAction;
 use crate::icons;
 use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
+
+/// Walks up from `entity` through the parent chain looking for `ancestor`.
+/// Returns `true` if `entity` is a descendant of `ancestor` (cycle prevention).
+fn is_descendant(entity: Entity, ancestor: Entity, entities: &[EntityDisplayInfo]) -> bool {
+    let mut current = entity;
+    loop {
+        let parent = entities
+            .iter()
+            .find(|e| e.entity == current)
+            .and_then(|e| e.parent);
+        match parent {
+            Some(p) => {
+                if p == ancestor {
+                    return true;
+                }
+                current = p;
+            }
+            None => return false,
+        }
+    }
+}
 
 /// Content of the "World" tab — entity hierarchy list with context menu.
 pub(crate) fn draw_world_content(
@@ -143,7 +165,75 @@ pub(crate) fn draw_world_content(
             // Indent based on hierarchy depth.
             let indent_str = "  ".repeat(info.depth);
             let indented_label = format!("{indent_str}{label}");
-            let resp = ui.selectable_label(is_selected, &indented_label);
+
+            // Check if this entity is the one being dragged.
+            let being_dragged = egui::DragAndDrop::payload::<Entity>(ui.ctx())
+                .is_some_and(|p| *p == info.entity);
+
+            // Custom selectable label with click + drag sensing (single widget
+            // avoids the drag overlay stealing click events from selection).
+            let button_padding = ui.spacing().button_padding;
+            let total_extra = button_padding + button_padding;
+            let wrap_width = ui.available_width() - total_extra.x;
+            let text: egui::WidgetText = indented_label.as_str().into();
+            let galley = text.into_galley(ui, None, wrap_width, egui::TextStyle::Button);
+            let mut desired_size = total_extra + galley.size();
+            desired_size.y = desired_size.y.at_least(ui.spacing().interact_size.y);
+            let (rect, resp) =
+                ui.allocate_at_least(desired_size, egui::Sense::click_and_drag());
+
+            if ui.is_rect_visible(rect) {
+                let text_pos = ui
+                    .layout()
+                    .align_size_within_rect(galley.size(), rect.shrink2(button_padding))
+                    .min;
+                let visuals = ui.style().interact_selectable(&resp, is_selected);
+                if is_selected
+                    || resp.hovered()
+                    || resp.highlighted()
+                    || resp.has_focus()
+                {
+                    let r = rect.expand(visuals.expansion);
+                    ui.painter()
+                        .rect(r, visuals.rounding, visuals.bg_fill, visuals.bg_stroke);
+                }
+                let mut text_color = visuals.text_color();
+                if being_dragged {
+                    text_color = egui::Color32::from_rgba_unmultiplied(
+                        text_color.r(),
+                        text_color.g(),
+                        text_color.b(),
+                        80,
+                    );
+                }
+                ui.painter().galley(text_pos, galley, text_color);
+            }
+
+            // Single response handles both click and drag.
+            resp.dnd_set_drag_payload(info.entity);
+
+            // Drop target: highlight valid targets and push reparent action on release.
+            if !being_dragged {
+                if let Some(dragged) = resp.dnd_hover_payload::<Entity>() {
+                    let d = *dragged;
+                    if d != info.entity && !is_descendant(info.entity, d, entities) {
+                        ui.painter().rect_filled(
+                            resp.rect,
+                            2.0,
+                            egui::Color32::from_rgba_unmultiplied(60, 130, 230, 40),
+                        );
+                    }
+                }
+                if let Some(dragged) = resp.dnd_release_payload::<Entity>() {
+                    let d = *dragged;
+                    if d != info.entity && !is_descendant(info.entity, d, entities) {
+                        actions.push(EditorAction::Reparent {
+                            entity: d,
+                            new_parent: Some(info.entity),
+                        });
+                    }
+                }
+            }
 
             if resp.clicked() {
                 let modifiers = ui.input(|i| i.modifiers);
@@ -296,6 +386,26 @@ pub(crate) fn draw_world_content(
                     }
                 }
             });
+        }
+
+        // Empty space drop target — drop here to unparent an entity.
+        let remaining = ui.available_rect_before_wrap();
+        let empty_resp = ui.allocate_rect(remaining, egui::Sense::hover());
+        if empty_resp.dnd_hover_payload::<Entity>().is_some() {
+            ui.painter().rect_filled(
+                remaining,
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(100, 100, 100, 20),
+            );
+        }
+        if let Some(dragged) = empty_resp.dnd_release_payload::<Entity>() {
+            let d = *dragged;
+            if entities.iter().any(|e| e.entity == d && e.parent.is_some()) {
+                actions.push(EditorAction::Reparent {
+                    entity: d,
+                    new_parent: None,
+                });
+            }
         }
     });
 }
