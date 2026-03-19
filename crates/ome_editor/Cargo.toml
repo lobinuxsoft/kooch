@@ -11,6 +11,5 @@ authors.workspace = true
 ome_core.workspace = true
 ome_ecs.workspace = true
 ome_editor_core.workspace = true
-eframe.workspace = true
-egui.workspace = true
+ome_window.workspace = true
 tracing.workspace = true

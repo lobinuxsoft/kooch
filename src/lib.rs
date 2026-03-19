@@ -52,8 +52,6 @@ pub use ome_world;
 pub use ome_scripting;
 #[cfg(feature = "editor")]
 pub use ome_editor_core;
-#[cfg(feature = "editor")]
-pub use ome_editor;
 
 /// Convenient re-exports for common usage.
 ///
