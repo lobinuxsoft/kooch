@@ -28,6 +28,7 @@ pub(crate) mod queries;
 pub(crate) mod state;
 pub(crate) mod style;
 pub(crate) mod systems;
+pub(crate) mod undo;
 
 use ome_core::app::App;
 use ome_core::plugin::Plugin;
@@ -52,6 +53,7 @@ impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(PlayState::new());
         app.insert_resource(project_state::ProjectState::new());
+        app.insert_resource(undo::UndoStack::new());
         app.add_system(Stage::Startup, systems::editor_startup_system);
         app.add_system(Stage::Render, systems::editor_render_system);
     }

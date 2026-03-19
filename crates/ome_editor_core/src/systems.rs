@@ -15,6 +15,7 @@ use ome_ecs::entity::Entity;
 use crate::actions::{apply_actions, EditorAction};
 use crate::launch_screen::{self, LaunchAction};
 use crate::menu_bar::draw_menu_bar;
+use crate::undo::UndoStack;
 use crate::panels::archetypes::draw_archetypes_content;
 use crate::panels::components::draw_components_content;
 use crate::panels::inspector::draw_inspector_content;
@@ -197,7 +198,7 @@ pub fn editor_render_system(resources: &mut Resources) {
         .window()
         .clone();
 
-    // 3. Remove GpuContext, EditorOverlay, and ProjectState to avoid borrow conflicts.
+    // 3. Remove GpuContext, EditorOverlay, ProjectState, and UndoStack to avoid borrow conflicts.
     let gpu = resources
         .remove::<GpuContext>()
         .expect("GpuContext not found");
@@ -205,6 +206,15 @@ pub fn editor_render_system(resources: &mut Resources) {
         .remove::<EditorOverlay>()
         .expect("EditorOverlay not found");
     let mut project_state = resources.remove::<ProjectState>();
+    let mut undo_stack = resources
+        .remove::<UndoStack>()
+        .unwrap_or_else(UndoStack::new);
+
+    // Capture undo/redo state for the menu bar (before any actions this frame).
+    let can_undo = undo_stack.can_undo();
+    let can_redo = undo_stack.can_redo();
+    let undo_desc = undo_stack.undo_description().map(String::from);
+    let redo_desc = undo_stack.redo_description().map(String::from);
 
     // 4. Take accumulated egui input from winit events.
     let raw_input = {
@@ -220,7 +230,16 @@ pub fn editor_render_system(resources: &mut Resources) {
     let full_output = overlay.ctx.run(raw_input, |ctx| {
         if project_loaded {
             // --- Normal editor UI ---
-            draw_menu_bar(ctx, &mut overlay.dock_state, &mut actions, is_playing);
+            draw_menu_bar(
+                ctx,
+                &mut overlay.dock_state,
+                &mut actions,
+                is_playing,
+                can_undo,
+                can_redo,
+                undo_desc.as_deref(),
+                redo_desc.as_deref(),
+            );
 
             let mut tab_viewer = EditorTabViewer {
                 entities: &entities,
@@ -309,6 +328,7 @@ pub fn editor_render_system(resources: &mut Resources) {
             tracing::warn!("Failed to acquire surface texture: {e}");
             resources.insert(gpu);
             resources.insert(overlay);
+            resources.insert(undo_stack);
             if let Some(ps) = project_state {
                 resources.insert(ps);
             }
@@ -354,7 +374,7 @@ pub fn editor_render_system(resources: &mut Resources) {
         overlay.renderer.free_texture(id);
     }
 
-    // 9. Restore resources.
+    // 9. Restore resources (except UndoStack — needed for apply_actions).
     resources.insert(gpu);
     resources.insert(overlay);
     if let Some(ps) = project_state {
@@ -367,7 +387,7 @@ pub fn editor_render_system(resources: &mut Resources) {
             .iter()
             .any(|a| matches!(a, EditorAction::OpenScene));
 
-        apply_actions(resources, &actions);
+        apply_actions(resources, &actions, &mut undo_stack);
 
         // Clear editor selection when a new scene is loaded.
         if has_open_scene {
@@ -382,4 +402,7 @@ pub fn editor_render_system(resources: &mut Resources) {
             archetypes.gc_empty_archetypes();
         }
     }
+
+    // Restore UndoStack.
+    resources.insert(undo_stack);
 }

@@ -107,7 +107,6 @@ ome_gravity = { workspace = true, optional = true }
 ome_world = { workspace = true, optional = true }
 ome_scripting = { workspace = true, optional = true }
 ome_editor_core = { workspace = true, optional = true }
-ome_editor = { workspace = true, optional = true }
 ome_plugin_api = { workspace = true, optional = true }
 
 # External (used by examples)
@@ -129,7 +128,7 @@ physics = ["dep:ome_physics"]
 gravity = ["dep:ome_gravity"]
 world = ["dep:ome_world"]
 scripting = ["dep:ome_scripting"]
-editor = ["dep:ome_editor", "dep:ome_editor_core"]
+editor = ["dep:ome_editor_core"]
 dynamic = ["ome_core/dynamic", "ome_ecs/dynamic", "dep:ome_plugin_api"]
 
 [[example]]
@@ -145,11 +144,6 @@ path = "examples/compute_vector_add.rs"
 name = "clear_color"
 path = "examples/clear_color.rs"
 required-features = ["render"]
-
-[[example]]
-name = "editor"
-path = "examples/editor.rs"
-required-features = ["editor"]
 
 [[example]]
 name = "game_runner"
