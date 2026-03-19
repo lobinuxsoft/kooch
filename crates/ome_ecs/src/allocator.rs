@@ -158,6 +158,41 @@ impl EntityAllocator {
         std::mem::take(&mut self.pending_despawn)
     }
 
+    /// Attempts to revive a previously despawned entity at its original slot.
+    ///
+    /// This is used by the undo system to restore an entity after a despawn
+    /// has been undone, preserving the original `Entity` handle so that any
+    /// references to it remain valid.
+    ///
+    /// Returns `true` if the entity was successfully revived. Returns `false`
+    /// if the slot has been reused (generation advanced beyond +1) or the
+    /// entity is still alive.
+    pub fn revive(&mut self, entity: Entity) -> bool {
+        let idx = entity.index() as usize;
+
+        if idx >= self.generations.len() {
+            return false;
+        }
+
+        // The entity must be dead and its generation must be exactly +1
+        // from what the handle holds (meaning no other entity has reused
+        // this slot since the despawn).
+        if self.alive[idx] || self.generations[idx] != entity.generation().wrapping_add(1) {
+            return false;
+        }
+
+        // Decrement generation back to the original value.
+        self.generations[idx] = entity.generation();
+        self.alive[idx] = true;
+        self.alive_count += 1;
+        self.pending_sync.push(entity.index());
+
+        // Remove the slot from the free-list.
+        self.free_list.retain(|&slot| slot != entity.index());
+
+        true
+    }
+
     // -- private --
 
     /// Doubles the capacity, pushing new indices onto the free-list.
@@ -345,5 +380,58 @@ mod tests {
     fn total_slots() {
         let alloc = EntityAllocator::with_capacity(16);
         assert_eq!(alloc.total_slots(), 16);
+    }
+
+    #[test]
+    fn revive_restores_despawned_entity() {
+        let mut alloc = EntityAllocator::with_capacity(4);
+        let e = alloc.spawn();
+        assert!(alloc.is_alive(e));
+
+        alloc.despawn(e);
+        assert!(!alloc.is_alive(e));
+
+        assert!(alloc.revive(e));
+        assert!(alloc.is_alive(e));
+        assert_eq!(alloc.alive_count(), 1);
+    }
+
+    #[test]
+    fn revive_fails_if_slot_reused() {
+        let mut alloc = EntityAllocator::with_capacity(1);
+        let e = alloc.spawn(); // idx 0, gen 0
+
+        alloc.despawn(e); // gen → 1
+        let _e2 = alloc.spawn(); // reuses idx 0, gen 1
+        alloc.despawn(_e2); // gen → 2
+
+        // Original entity's slot has been reused, generation advanced past +1.
+        assert!(!alloc.revive(e));
+    }
+
+    #[test]
+    fn revive_fails_if_still_alive() {
+        let mut alloc = EntityAllocator::with_capacity(4);
+        let e = alloc.spawn();
+
+        // Entity is still alive — revive should return false.
+        assert!(!alloc.revive(e));
+    }
+
+    #[test]
+    fn revive_removes_slot_from_free_list() {
+        let mut alloc = EntityAllocator::with_capacity(4);
+        let e = alloc.spawn(); // idx 0
+
+        alloc.despawn(e);
+        assert!(alloc.revive(e));
+
+        // Spawn 3 more entities — should use indices 1, 2, 3 (not 0).
+        let a = alloc.spawn();
+        let b = alloc.spawn();
+        let c = alloc.spawn();
+        assert_eq!(a.index(), 1);
+        assert_eq!(b.index(), 2);
+        assert_eq!(c.index(), 3);
     }
 }

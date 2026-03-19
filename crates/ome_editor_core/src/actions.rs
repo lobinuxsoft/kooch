@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use ome_core::resource::Resources;
 use ome_ecs::allocator::EntityAllocator;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
-use ome_ecs::commands::Commands;
 use ome_ecs::component::ComponentRegistry;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::ReflectValue;
@@ -14,6 +13,10 @@ use ome_ecs::reflect::ReflectValue;
 use crate::play_state::PlayState;
 use crate::project_state::ProjectState;
 use crate::state::EditorOverlay;
+use crate::undo::{
+    AddComponentCommand, CompoundCommand, DespawnCommand, EditorCommand, RemoveComponentCommand,
+    SetFieldCommand, SpawnCommand, UndoStack,
+};
 
 pub(crate) enum EditorAction {
     Spawn,
@@ -32,6 +35,8 @@ pub(crate) enum EditorAction {
         entity: Entity,
         type_id: TypeId,
     },
+    Undo,
+    Redo,
     SaveScene,
     OpenScene,
     Play,
@@ -47,100 +52,124 @@ pub(crate) enum EditorAction {
     CancelLaunch,
 }
 
-pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction]) {
-    for action in actions {
+/// Converts an action into an undoable command, capturing before-state.
+///
+/// Returns `None` for non-ECS actions (scene I/O, play, project management).
+fn action_to_command(
+    action: &EditorAction,
+    resources: &Resources,
+) -> Option<Box<dyn EditorCommand>> {
+    match action {
+        EditorAction::Spawn => Some(Box::new(SpawnCommand::new())),
+        EditorAction::Despawn(entity) => Some(Box::new(DespawnCommand::new(resources, *entity))),
+        EditorAction::SetField {
+            entity,
+            type_id,
+            field,
+            value,
+        } => {
+            if let Some(cmd) =
+                SetFieldCommand::new(resources, *entity, *type_id, field.clone(), value.clone())
+            {
+                Some(Box::new(cmd))
+            } else {
+                tracing::warn!("failed to create SetFieldCommand for '{field}'");
+                None
+            }
+        }
+        EditorAction::AddComponent { entity, type_id } => {
+            Some(Box::new(AddComponentCommand::new(*entity, *type_id)))
+        }
+        EditorAction::RemoveComponent { entity, type_id } => {
+            Some(Box::new(RemoveComponentCommand::new(resources, *entity, *type_id)))
+        }
+        _ => None,
+    }
+}
+
+/// Returns a description for a group of same-variant actions.
+fn batch_description(actions: &[EditorAction]) -> String {
+    let count = actions.len();
+    match actions.first() {
+        Some(EditorAction::Spawn) => format!("Spawn {count} Entities"),
+        Some(EditorAction::Despawn(_)) => format!("Despawn {count} Entities"),
+        Some(EditorAction::SetField { .. }) => format!("Set {count} Fields"),
+        Some(EditorAction::AddComponent { .. }) => format!("Add {count} Components"),
+        Some(EditorAction::RemoveComponent { .. }) => format!("Remove {count} Components"),
+        _ => "Batch".to_owned(),
+    }
+}
+
+/// Returns `true` if two actions are the same ECS variant (ignoring payload).
+fn same_ecs_variant(a: &EditorAction, b: &EditorAction) -> bool {
+    matches!(
+        (a, b),
+        (EditorAction::Spawn, EditorAction::Spawn)
+            | (EditorAction::Despawn(_), EditorAction::Despawn(_))
+            | (EditorAction::SetField { .. }, EditorAction::SetField { .. })
+            | (EditorAction::AddComponent { .. }, EditorAction::AddComponent { .. })
+            | (EditorAction::RemoveComponent { .. }, EditorAction::RemoveComponent { .. })
+    )
+}
+
+pub(crate) fn apply_actions(
+    resources: &mut Resources,
+    actions: &[EditorAction],
+    undo_stack: &mut UndoStack,
+) {
+    let mut i = 0;
+    while i < actions.len() {
+        let action = &actions[i];
+
+        // Undo/Redo are handled directly.
+        if matches!(action, EditorAction::Undo) {
+            undo_stack.undo(resources);
+            i += 1;
+            continue;
+        }
+        if matches!(action, EditorAction::Redo) {
+            undo_stack.redo(resources);
+            i += 1;
+            continue;
+        }
+
+        // Check if this is an ECS action that can be batched.
+        if action_to_command(action, resources).is_some() {
+            // Find the run of consecutive same-variant ECS actions.
+            let run_start = i;
+            let mut run_end = i + 1;
+            while run_end < actions.len() && same_ecs_variant(action, &actions[run_end]) {
+                run_end += 1;
+            }
+            let run = &actions[run_start..run_end];
+
+            if run.len() == 1 {
+                // Single action — execute directly (snapshot already captured above
+                // was discarded; re-capture since resources may have changed).
+                if let Some(cmd) = action_to_command(&run[0], resources) {
+                    undo_stack.execute(cmd, resources);
+                }
+            } else {
+                // Multiple same-type actions — batch into a CompoundCommand.
+                let desc = batch_description(run);
+                let mut cmds: Vec<Box<dyn EditorCommand>> = Vec::with_capacity(run.len());
+                for a in run {
+                    // Snapshot must be taken sequentially: each command's
+                    // before-state depends on the previous command's execution.
+                    if let Some(cmd) = action_to_command(a, resources) {
+                        cmds.push(cmd);
+                    }
+                }
+                let compound = CompoundCommand::new(desc, cmds);
+                undo_stack.execute(Box::new(compound), resources);
+            }
+
+            i = run_end;
+            continue;
+        }
+
+        // Non-ECS actions: process directly (no undo).
         match action {
-            EditorAction::Spawn => {
-                let mut commands = match resources.remove::<Commands>() {
-                    Some(c) => c,
-                    None => return,
-                };
-                let entity = commands.spawn(resources).id();
-                resources.insert(commands);
-
-                // Auto-add Name and Transform defaults for editor-spawned entities.
-                let default_components: Vec<TypeId> = resources
-                    .get::<ComponentRegistry>()
-                    .map(|reg| {
-                        reg.reflected_type_names()
-                            .into_iter()
-                            .filter(|(_, name)| {
-                                let short = name.rsplit("::").next().unwrap_or(name);
-                                short == "Name" || short == "Transform"
-                            })
-                            .map(|(tid, _)| tid)
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                for type_id in &default_components {
-                    let mut inserted = false;
-                    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                        inserted = registry.insert_default_reflected(type_id, entity);
-                    }
-                    if inserted {
-                        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                            if let Some(current) = archetypes.entity_archetype(entity) {
-                                let new_arch =
-                                    archetypes.archetype_after_add_dynamic(current, *type_id);
-                                archetypes.register_entity(entity, new_arch);
-                            }
-                        }
-                    }
-                }
-            }
-            EditorAction::Despawn(entity) => {
-                if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
-                    alloc.despawn(*entity);
-                }
-                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                    archetypes.unregister_entity(*entity);
-                }
-                if let Some(components) = resources.get_mut::<ComponentRegistry>() {
-                    components.remove_entity(*entity);
-                }
-            }
-            EditorAction::SetField {
-                entity,
-                type_id,
-                field,
-                value,
-            } => {
-                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                    if let Err(e) =
-                        registry.reflect_set_field(type_id, *entity, field, value.clone())
-                    {
-                        tracing::warn!("failed to set field '{field}': {e}");
-                    }
-                }
-            }
-            EditorAction::AddComponent { entity, type_id } => {
-                let mut inserted = false;
-                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                    inserted = registry.insert_default_reflected(type_id, *entity);
-                }
-                if inserted {
-                    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                        if let Some(current) = archetypes.entity_archetype(*entity) {
-                            let new_arch =
-                                archetypes.archetype_after_add_dynamic(current, *type_id);
-                            archetypes.register_entity(*entity, new_arch);
-                        }
-                    }
-                }
-            }
-            EditorAction::RemoveComponent { entity, type_id } => {
-                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                    registry.remove_component(*entity, type_id);
-                }
-                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                    if let Some(current) = archetypes.entity_archetype(*entity) {
-                        let new_arch =
-                            archetypes.archetype_after_remove_dynamic(current, *type_id);
-                        archetypes.register_entity(*entity, new_arch);
-                    }
-                }
-            }
             EditorAction::SaveScene => {
                 let scenes_dir = resources
                     .get::<ProjectState>()
@@ -177,6 +206,7 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
                                 tracing::error!("failed to sync scene to ECS: {e}");
                             } else {
                                 tracing::info!("scene loaded from {}", path.display());
+                                undo_stack.clear();
                             }
                         }
                         Err(e) => {
@@ -191,8 +221,6 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
                 if let Err(e) = doc.save(&scene_path) {
                     tracing::error!("failed to save play scene: {e}");
                 } else {
-                    // In project mode, use current_exe() to avoid recompilation.
-                    // Detect via explicit flag OR runtime check (exe inside project target/).
                     let is_project = resources
                         .get::<ProjectState>()
                         .is_some_and(|ps| {
@@ -219,10 +247,12 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
                 }
             }
             EditorAction::OpenProject(path) => {
-                // Remove ProjectState to avoid borrow conflicts with resources.
                 let mut ps = match resources.remove::<ProjectState>() {
                     Some(ps) => ps,
-                    None => continue,
+                    None => {
+                        i += 1;
+                        continue;
+                    }
                 };
                 match ps.open_project(path) {
                     Ok(()) => {
@@ -233,14 +263,12 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
                             .unwrap_or_default();
                         tracing::info!("opened project: {title}");
 
-                        // Set window title.
                         if let Some(wh) = resources.get::<ome_window::WindowHandle>() {
                             let _ = wh
                                 .window()
                                 .set_title(&format!("{title} — Oh My Engine"));
                         }
 
-                        // Load main_scene if present.
                         let main_scene_path = ps.active_project.as_ref().and_then(|p| {
                             p.manifest
                                 .main_scene
@@ -287,13 +315,13 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
                         ps.new_project_form.error =
                             Some("Engine root not configured".to_owned());
                     }
+                    i += 1;
                     continue;
                 };
 
                 match crate::project::create_project(name, parent_path, &engine_root) {
                     Ok(root) => {
                         tracing::info!("created project: {name}");
-                        // Add to recents and launch the project binary.
                         if let Some(ps) = resources.get_mut::<ProjectState>() {
                             ps.editor_config.add_recent(name, &root);
                             if let Err(e) = ps.editor_config.save() {
@@ -313,7 +341,6 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
                 }
             }
             EditorAction::CloseProject => {
-                // Despawn all entities.
                 let all_entities: Vec<Entity> = resources
                     .get::<ArchetypeRegistry>()
                     .map(|archetypes| {
@@ -336,19 +363,19 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
                     }
                 }
 
-                // Clear selection.
                 if let Some(overlay) = resources.get_mut::<EditorOverlay>() {
                     overlay.selected_entities.clear();
                     overlay.last_clicked_index = None;
                 }
 
-                // Close project and reset title.
                 if let Some(ps) = resources.get_mut::<ProjectState>() {
                     ps.close_project();
                 }
                 if let Some(wh) = resources.get::<ome_window::WindowHandle>() {
                     let _ = wh.window().set_title("Oh My Engine");
                 }
+
+                undo_stack.clear();
             }
             EditorAction::RemoveRecent(path) => {
                 if let Some(ps) = resources.get_mut::<ProjectState>() {
@@ -360,7 +387,6 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
             }
             EditorAction::LaunchProject(path) => {
                 if let Some(ps) = resources.get_mut::<ProjectState>() {
-                    // Add to recents before launching.
                     let name = path
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
@@ -377,7 +403,10 @@ pub(crate) fn apply_actions(resources: &mut Resources, actions: &[EditorAction])
                     ps.kill_launcher();
                 }
             }
+            // ECS actions and Undo/Redo are already handled above.
+            _ => {}
         }
+        i += 1;
     }
 }
 

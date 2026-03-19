@@ -11,7 +11,22 @@ pub(crate) fn draw_menu_bar(
     dock_state: &mut DockState<EditorTab>,
     actions: &mut Vec<EditorAction>,
     is_playing: bool,
+    can_undo: bool,
+    can_redo: bool,
+    undo_desc: Option<&str>,
+    redo_desc: Option<&str>,
 ) {
+    // Keyboard shortcuts — check before any UI so they work regardless of focus.
+    let ctrl_z = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z));
+    let ctrl_y = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Y));
+
+    if ctrl_z && can_undo {
+        actions.push(EditorAction::Undo);
+    }
+    if ctrl_y && can_redo {
+        actions.push(EditorAction::Redo);
+    }
+
     egui::TopBottomPanel::top("editor_menu").show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
@@ -26,6 +41,31 @@ pub(crate) fn draw_menu_bar(
                 ui.separator();
                 if ui.button("Close Project").clicked() {
                     actions.push(EditorAction::CloseProject);
+                    ui.close_menu();
+                }
+            });
+            ui.menu_button("Edit", |ui| {
+                let undo_label = match undo_desc {
+                    Some(desc) => format!("Undo {desc}  Ctrl+Z"),
+                    None => "Undo  Ctrl+Z".to_owned(),
+                };
+                if ui
+                    .add_enabled(can_undo, egui::Button::new(undo_label))
+                    .clicked()
+                {
+                    actions.push(EditorAction::Undo);
+                    ui.close_menu();
+                }
+
+                let redo_label = match redo_desc {
+                    Some(desc) => format!("Redo {desc}  Ctrl+Y"),
+                    None => "Redo  Ctrl+Y".to_owned(),
+                };
+                if ui
+                    .add_enabled(can_redo, egui::Button::new(redo_label))
+                    .clicked()
+                {
+                    actions.push(EditorAction::Redo);
                     ui.close_menu();
                 }
             });
