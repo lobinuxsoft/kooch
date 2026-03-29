@@ -25,24 +25,30 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, Type, parse_macro_input};
+use syn::{Data, DeriveInput, Fields, Lit, Meta, MetaNameValue, Type, parse_macro_input};
 
 /// Derives the `Reflect` trait for a named-field struct.
 ///
 /// Generates `reflect_fields`, `reflect_get`, `reflect_set`, and
 /// `reflect_default` based on the struct's fields. Each field type
 /// must map to a known `FieldKind` / `ReflectValue` variant.
-#[proc_macro_derive(Reflect)]
+#[proc_macro_derive(Reflect, attributes(reflect))]
 pub fn derive_reflect(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
+
+    // Parse #[reflect(inspector = "hidden"|"read_only"|"editable")] attribute.
+    let inspector_visibility = match parse_inspector_attr(&input) {
+        Ok(vis) => vis,
+        Err(err) => return err,
+    };
 
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(named) => &named.named,
             Fields::Unit => {
                 // Unit struct — no fields.
-                return unit_struct_impl(name);
+                return unit_struct_impl(name, inspector_visibility.as_ref());
             }
             Fields::Unnamed(_) => {
                 return syn::Error::new_spanned(
@@ -124,6 +130,14 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
 
     let field_count = field_metas.len();
 
+    let visibility_method = inspector_visibility.map(|vis| {
+        quote! {
+            fn inspector_visibility() -> ::ome_ecs::reflect::InspectorVisibility {
+                ::ome_ecs::reflect::InspectorVisibility::#vis
+            }
+        }
+    });
+
     let expanded = quote! {
         impl ::ome_ecs::reflect::Reflect for #name {
             fn reflect_fields(&self) -> &'static [::ome_ecs::reflect::FieldMeta] {
@@ -154,6 +168,8 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             fn reflect_default() -> Self {
                 Self::default()
             }
+
+            #visibility_method
         }
     };
 
@@ -163,7 +179,18 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
 }
 
 /// Generates a Reflect impl for a unit struct (no fields).
-fn unit_struct_impl(name: &syn::Ident) -> TokenStream {
+fn unit_struct_impl(
+    name: &syn::Ident,
+    inspector_visibility: Option<&proc_macro2::Ident>,
+) -> TokenStream {
+    let visibility_method = inspector_visibility.map(|vis| {
+        quote! {
+            fn inspector_visibility() -> ::ome_ecs::reflect::InspectorVisibility {
+                ::ome_ecs::reflect::InspectorVisibility::#vis
+            }
+        }
+    });
+
     let expanded = quote! {
         impl ::ome_ecs::reflect::Reflect for #name {
             fn reflect_fields(&self) -> &'static [::ome_ecs::reflect::FieldMeta] {
@@ -186,6 +213,8 @@ fn unit_struct_impl(name: &syn::Ident) -> TokenStream {
             fn reflect_default() -> Self {
                 Self::default()
             }
+
+            #visibility_method
         }
     };
     expanded.into()
@@ -214,6 +243,55 @@ fn type_mapping(ty: &Type) -> Option<(&'static str, &'static str, bool)> {
         "Mat4" => Some(("Mat4", "Mat4", false)),
         _ => None,
     }
+}
+
+/// Parses `#[reflect(inspector = "hidden"|"read_only"|"editable")]` from struct attributes.
+///
+/// Returns `Ok(Some(ident))` with the variant name (`Hidden`, `ReadOnly`, `Editable`)
+/// if the attribute is present, `Ok(None)` to use the trait default, or
+/// `Err(compile_error)` for invalid values.
+fn parse_inspector_attr(input: &DeriveInput) -> Result<Option<proc_macro2::Ident>, TokenStream> {
+    for attr in &input.attrs {
+        if !attr.path().is_ident("reflect") {
+            continue;
+        }
+        let nested = match attr.parse_args_with(
+            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
+        ) {
+            Ok(n) => n,
+            Err(e) => return Err(e.to_compile_error().into()),
+        };
+        for meta in nested {
+            if let Meta::NameValue(MetaNameValue {
+                path,
+                value: syn::Expr::Lit(expr_lit),
+                ..
+            }) = meta
+                && path.is_ident("inspector")
+                && let Lit::Str(lit_str) = &expr_lit.lit
+            {
+                let val = lit_str.value();
+                let variant_name = match val.as_str() {
+                    "hidden" => "Hidden",
+                    "read_only" => "ReadOnly",
+                    "editable" => "Editable",
+                    _ => {
+                        return Err(syn::Error::new_spanned(
+                            lit_str,
+                            "expected \"hidden\", \"read_only\", or \"editable\"",
+                        )
+                        .to_compile_error()
+                        .into());
+                    }
+                };
+                return Ok(Some(proc_macro2::Ident::new(
+                    variant_name,
+                    proc_macro2::Span::call_site(),
+                )));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Extracts the last path segment identifier from a type.

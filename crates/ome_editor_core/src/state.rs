@@ -9,7 +9,7 @@ use winit::window::Window;
 
 use ome_core::raw_event::RawEventHandler;
 use ome_ecs::entity::Entity;
-use ome_ecs::reflect::ReflectValue;
+use ome_ecs::reflect::{InspectorVisibility, ReflectValue};
 
 /// Shared egui-winit state for event forwarding between the
 /// window event handler and the render system.
@@ -120,6 +120,7 @@ pub(crate) struct ComponentDisplayInfo {
     pub(crate) type_id: TypeId,
     pub(crate) short_name: String,
     pub(crate) fields: Option<Vec<(String, ReflectValue)>>,
+    pub(crate) visibility: InspectorVisibility,
 }
 
 pub(crate) struct EntityDisplayInfo {

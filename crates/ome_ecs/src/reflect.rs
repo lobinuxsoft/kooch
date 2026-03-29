@@ -51,6 +51,18 @@ pub enum FieldKind {
     Nested,
 }
 
+/// Controls how the inspector displays a reflected component.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InspectorVisibility {
+    /// Component is not shown in the inspector.
+    Hidden,
+    /// Component is shown but fields are not editable.
+    ReadOnly,
+    /// Component is fully editable (default).
+    #[default]
+    Editable,
+}
+
 /// Type-erased value for getting and setting reflected fields.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ReflectValue {
@@ -222,6 +234,14 @@ pub trait Reflect: Send + Sync + 'static {
     fn reflect_default() -> Self
     where
         Self: Sized;
+
+    /// Returns the inspector visibility for this component type.
+    fn inspector_visibility() -> InspectorVisibility
+    where
+        Self: Sized,
+    {
+        InspectorVisibility::Editable
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +287,9 @@ pub(crate) trait ReflectAccessor: Send + Sync {
     ///
     /// Returns `true` if inserted successfully.
     fn insert_default_into(&self, storage: &mut dyn AnyStorage, entity: Entity) -> bool;
+
+    /// Returns the inspector visibility for this component type.
+    fn inspector_visibility(&self) -> InspectorVisibility;
 }
 
 /// Concrete [`ReflectAccessor`] for a component type `T: Reflect`.
@@ -366,6 +389,10 @@ impl<T: Reflect> ReflectAccessor for TypedReflectAccessor<T> {
 
     fn insert_default_into(&self, storage: &mut dyn AnyStorage, entity: Entity) -> bool {
         (self.inserter)(storage, entity)
+    }
+
+    fn inspector_visibility(&self) -> InspectorVisibility {
+        T::inspector_visibility()
     }
 }
 
