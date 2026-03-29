@@ -44,7 +44,7 @@ pub use gpu_sync::{EntityGpuState, entity_gpu_sync_system};
 pub use plugin::EcsPlugin;
 pub use query::{AccessTracker, Query, QueryFilter, With, Without, WorldQuery};
 pub use ome_ecs_macros::Reflect;
-pub use reflect::{FieldKind, FieldMeta, Reflect, ReflectError, ReflectValue};
+pub use reflect::{FieldKind, FieldMeta, InspectorVisibility, Reflect, ReflectError, ReflectValue};
 pub use scene::{
     ComponentDescription, EntityDescription, SceneDocument, SceneError, sync_scene_to_ecs,
 };

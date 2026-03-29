@@ -14,6 +14,7 @@ use crate::Reflect;
 /// The editor displays this in the World panel instead of the raw
 /// `index:generation` when present and non-empty.
 #[derive(Debug, Clone, Default, Reflect)]
+#[reflect(inspector = "hidden")]
 pub struct Name {
     pub value: String,
 }

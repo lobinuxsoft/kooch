@@ -153,8 +153,9 @@ impl SceneDocument {
             std::any::TypeId::of::<GlobalTransform>(),
         ];
 
-        let mut entities = Vec::new();
-        // Map entity → index for parent name lookup.
+        // (entity_index, EntityDescription) for stable ordering.
+        let mut indexed_entities: Vec<(u32, EntityDescription)> = Vec::new();
+        // Map entity → vec index for parent name lookup.
         let mut entity_to_idx: std::collections::HashMap<crate::entity::Entity, usize> =
             std::collections::HashMap::new();
 
@@ -219,13 +220,16 @@ impl SceneDocument {
                         })
                         .unwrap_or_else(|| format!("Entity {}", entity.index()));
 
-                    let idx = entities.len();
+                    let idx = indexed_entities.len();
                     entity_to_idx.insert(entity, idx);
-                    entities.push(EntityDescription {
-                        name: display_name,
-                        parent: None, // Filled in second pass.
-                        components: comp_descs,
-                    });
+                    indexed_entities.push((
+                        entity.index(),
+                        EntityDescription {
+                            name: display_name,
+                            parent: None, // Filled in second pass.
+                            components: comp_descs,
+                        },
+                    ));
                 }
             }
 
@@ -234,20 +238,18 @@ impl SceneDocument {
                 for (&entity, idx) in &entity_to_idx {
                     if let Some(parent_comp) = parent_storage.get(entity) {
                         if let Some(&parent_idx) = entity_to_idx.get(&parent_comp.entity) {
-                            entities[*idx].parent = Some(entities[parent_idx].name.clone());
+                            indexed_entities[*idx].1.parent =
+                                Some(indexed_entities[parent_idx].1.name.clone());
                         }
                     }
                 }
             }
         }
 
-        // Sort by the order entities appear in the allocator.
-        entities.sort_by_key(|e| {
-            e.name
-                .strip_prefix("Entity ")
-                .and_then(|s| s.parse::<u32>().ok())
-                .unwrap_or(u32::MAX)
-        });
+        // Sort by entity index for stable ordering across save/load.
+        indexed_entities.sort_by_key(|(idx, _)| *idx);
+        let entities: Vec<EntityDescription> =
+            indexed_entities.into_iter().map(|(_, desc)| desc).collect();
 
         SceneDocument {
             name: "Untitled Scene".into(),
@@ -338,6 +340,7 @@ pub fn sync_scene_to_ecs(
     }
 
     // 3. Second pass: establish hierarchy from parent names.
+    let parent_tid = std::any::TypeId::of::<Parent>();
     for (entity, parent_name) in &spawned_order {
         if let Some(parent_name) = parent_name {
             if let Some(&parent_entity) = name_to_entity.get(parent_name) {
@@ -345,6 +348,14 @@ pub fn sync_scene_to_ecs(
                     registry.register_cpu_reflected::<Parent>();
                     if let Some(storage) = registry.get_cpu_mut::<Parent>() {
                         storage.insert(*entity, Parent { entity: parent_entity });
+                    }
+                }
+                // Update the archetype to include Parent.
+                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
+                    if let Some(current) = archetypes.entity_archetype(*entity) {
+                        let new_arch =
+                            archetypes.archetype_after_add_dynamic(current, parent_tid);
+                        archetypes.register_entity(*entity, new_arch);
                     }
                 }
             }

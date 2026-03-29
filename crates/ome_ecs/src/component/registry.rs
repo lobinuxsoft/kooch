@@ -12,7 +12,8 @@ use wgpu::{Device, Queue};
 
 use crate::entity::Entity;
 use crate::reflect::{
-    FieldMeta, Reflect, ReflectAccessor, ReflectError, ReflectValue, TypedReflectAccessor,
+    FieldMeta, InspectorVisibility, Reflect, ReflectAccessor, ReflectError, ReflectValue,
+    TypedReflectAccessor,
 };
 
 use super::cpu_storage::ComponentStorage;
@@ -219,6 +220,15 @@ impl ComponentRegistry {
         // SAFETY: We have &mut self, so exclusive access is guaranteed.
         let storage_mut = unsafe { &mut **storage.get() };
         accessor.set_field(storage_mut, entity, field, value)
+    }
+
+    /// Returns the inspector visibility for a reflected component type.
+    /// Returns the inspector visibility for a reflected component type.
+    pub fn reflect_inspector_visibility(
+        &self,
+        type_id: &TypeId,
+    ) -> Option<InspectorVisibility> {
+        self.reflectors.get(type_id).map(|r| r.inspector_visibility())
     }
 
     /// Returns all `TypeId`s that have a registered reflector.
