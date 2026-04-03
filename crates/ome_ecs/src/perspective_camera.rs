@@ -26,6 +26,10 @@ use crate::Reflect;
 /// - `active`: true
 #[derive(Debug, Clone, Copy, Reflect)]
 pub struct PerspectiveCamera {
+    /// Whether this camera is active.
+    pub active: bool,
+    /// Priority for multi-camera rendering (higher = rendered later).
+    pub priority: i32,
     /// Field of view in degrees.
     pub fov: f32,
     /// Near clipping plane.
@@ -34,21 +38,17 @@ pub struct PerspectiveCamera {
     pub far: f32,
     /// Clear color RGBA (linear).
     pub clear_color: Vec4,
-    /// Priority for multi-camera rendering (higher = rendered later).
-    pub priority: i32,
-    /// Whether this camera is active.
-    pub active: bool,
 }
 
 impl Default for PerspectiveCamera {
     fn default() -> Self {
         Self {
+            active: true,
+            priority: 0,
             fov: 60.0,
             near: 0.1,
             far: 1000.0,
             clear_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
-            priority: 0,
-            active: true,
         }
     }
 }
@@ -76,6 +76,6 @@ mod tests {
         let cam = PerspectiveCamera::default();
         let fields = cam.reflect_fields();
         let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
-        assert_eq!(names, &["fov", "near", "far", "clear_color", "priority", "active"]);
+        assert_eq!(names, &["active", "priority", "fov", "near", "far", "clear_color"]);
     }
 }

@@ -224,15 +224,21 @@ impl EditorCommand for SetFieldCommand {
 pub(crate) struct SpawnCommand {
     /// The entity that was (or will be) spawned.
     entity: Option<Entity>,
-    /// Component TypeIds added during spawn (Name, Transform defaults).
-    default_component_types: Vec<TypeId>,
+    /// Extra component TypeIds to add beyond Name + Transform.
+    extra_component_types: Vec<TypeId>,
+    /// Optional name to set on the Name component.
+    name: Option<String>,
+    /// All component TypeIds added during spawn (base + extra).
+    spawned_component_types: Vec<TypeId>,
 }
 
 impl SpawnCommand {
-    pub fn new() -> Self {
+    pub fn new(extra_component_types: Vec<TypeId>, name: Option<String>) -> Self {
         Self {
             entity: None,
-            default_component_types: Vec::new(),
+            extra_component_types,
+            name,
+            spawned_component_types: Vec::new(),
         }
     }
 
@@ -263,22 +269,32 @@ impl SpawnCommand {
 
         self.entity = Some(entity);
 
-        // Auto-add Name and Transform defaults.
-        let default_types: Vec<TypeId> = resources
-            .get::<ComponentRegistry>()
-            .map(|reg| {
-                reg.reflected_type_names()
-                    .into_iter()
-                    .filter(|(_, name)| {
-                        let short = name.rsplit("::").next().unwrap_or(name);
-                        short == "Name" || short == "Transform"
-                    })
-                    .map(|(tid, _)| tid)
-                    .collect()
-            })
-            .unwrap_or_default();
+        // Auto-add base components in deterministic order: Name, Transform, then extras.
+        let mut all_types: Vec<TypeId> = Vec::new();
+        if let Some(reg) = resources.get::<ComponentRegistry>() {
+            let type_names = reg.reflected_type_names();
+            // Name first.
+            if let Some((tid, _)) = type_names.iter().find(|(_, name)| {
+                name.rsplit("::").next().unwrap_or(name) == "Name"
+            }) {
+                all_types.push(*tid);
+            }
+            // Transform second.
+            if let Some((tid, _)) = type_names.iter().find(|(_, name)| {
+                name.rsplit("::").next().unwrap_or(name) == "Transform"
+            }) {
+                all_types.push(*tid);
+            }
+        }
 
-        for type_id in &default_types {
+        // Append extra component types (avoid duplicates).
+        for tid in &self.extra_component_types {
+            if !all_types.contains(tid) {
+                all_types.push(*tid);
+            }
+        }
+
+        for type_id in &all_types {
             let mut inserted = false;
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 inserted = registry.insert_default_reflected(type_id, entity);
@@ -293,7 +309,20 @@ impl SpawnCommand {
                 }
             }
         }
-        self.default_component_types = default_types;
+        self.spawned_component_types = all_types;
+
+        // Set the Name component value if provided.
+        if let Some(ref name) = self.name {
+            let name_tid = TypeId::of::<ome_ecs::Name>();
+            if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                let _ = registry.reflect_set_field(
+                    &name_tid,
+                    entity,
+                    "value",
+                    ReflectValue::String(name.clone()),
+                );
+            }
+        }
     }
 
     fn spawn_fresh(&self, resources: &mut Resources) -> Entity {
@@ -887,7 +916,7 @@ mod tests {
         let mut stack = UndoStack::new();
 
         // Spawn via command.
-        let cmd = SpawnCommand::new();
+        let cmd = SpawnCommand::new(vec![], None);
         stack.execute(Box::new(cmd), &mut resources);
 
         // Find the spawned entity (should be index 0).
