@@ -489,7 +489,7 @@ fn draw_multi_reflected_fields(
                         ui.label(name);
                         if read_only {
                             draw_readonly_value(ui, value);
-                        } else if let Some(new_value) = draw_value_widget(ui, value) {
+                        } else if let Some(new_value) = draw_value_widget(ui, value, name) {
                             for &entity in targets {
                                 actions.push(EditorAction::SetField {
                                     entity,
@@ -504,7 +504,7 @@ fn draw_multi_reflected_fields(
                         ui.label(format!("{name} \u{2014}"));
                         if read_only {
                             draw_readonly_value(ui, base);
-                        } else if let Some(new_value) = draw_value_widget(ui, base) {
+                        } else if let Some(new_value) = draw_value_widget(ui, base, name) {
                             for &entity in targets {
                                 actions.push(EditorAction::SetField {
                                     entity,
@@ -539,7 +539,7 @@ fn draw_reflected_fields(
         .show(ui, |ui| {
             for (name, value) in fields {
                 ui.label(name);
-                if let Some(new_value) = draw_value_widget(ui, value) {
+                if let Some(new_value) = draw_value_widget(ui, value, name) {
                     actions.push(EditorAction::SetField {
                         entity,
                         type_id,
@@ -582,7 +582,8 @@ fn draw_readonly_value(ui: &mut egui::Ui, value: &ReflectValue) {
 
 /// Draws an editable widget for a single reflected value.
 /// Returns `Some(new_value)` if the user modified it.
-fn draw_value_widget(ui: &mut egui::Ui, value: &ReflectValue) -> Option<ReflectValue> {
+/// `field_name` is used to detect color fields and show a color picker.
+fn draw_value_widget(ui: &mut egui::Ui, value: &ReflectValue, field_name: &str) -> Option<ReflectValue> {
     match value {
         ReflectValue::F32(v) => {
             let mut val = *v;
@@ -677,20 +678,29 @@ fn draw_value_widget(ui: &mut egui::Ui, value: &ReflectValue) -> Option<ReflectV
             changed.then_some(ReflectValue::Vec3(glam::Vec3::new(x, y, z)))
         }
         ReflectValue::Vec4(v) => {
-            let mut vals = [v.x, v.y, v.z, v.w];
-            let labels = ["x", "y", "z", "w"];
-            let mut changed = false;
-            ui.horizontal(|ui| {
-                for (i, label) in labels.iter().enumerate() {
-                    ui.label(*label);
-                    changed |= ui
-                        .add(egui::DragValue::new(&mut vals[i]).speed(0.1))
-                        .changed();
-                }
-            });
-            changed.then_some(ReflectValue::Vec4(glam::Vec4::new(
-                vals[0], vals[1], vals[2], vals[3],
-            )))
+            let is_color = field_name.contains("color");
+            if is_color {
+                let mut rgba = [v.x, v.y, v.z, v.w];
+                let resp = ui.color_edit_button_rgba_unmultiplied(&mut rgba);
+                resp.changed().then_some(ReflectValue::Vec4(glam::Vec4::new(
+                    rgba[0], rgba[1], rgba[2], rgba[3],
+                )))
+            } else {
+                let mut vals = [v.x, v.y, v.z, v.w];
+                let labels = ["x", "y", "z", "w"];
+                let mut changed = false;
+                ui.horizontal(|ui| {
+                    for (i, label) in labels.iter().enumerate() {
+                        ui.label(*label);
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut vals[i]).speed(0.1))
+                            .changed();
+                    }
+                });
+                changed.then_some(ReflectValue::Vec4(glam::Vec4::new(
+                    vals[0], vals[1], vals[2], vals[3],
+                )))
+            }
         }
         ReflectValue::Quat(v) => {
             // Display as Euler angles (degrees) for intuitive editing.

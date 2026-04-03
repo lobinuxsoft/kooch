@@ -20,7 +20,12 @@ use crate::undo::{
 };
 
 pub(crate) enum EditorAction {
-    Spawn,
+    /// Spawn an entity with Name + Transform + optional extra components.
+    /// The optional String sets the Name component value.
+    Spawn {
+        extra: Vec<TypeId>,
+        name: Option<String>,
+    },
     Despawn(Entity),
     SetField {
         entity: Entity,
@@ -65,7 +70,9 @@ fn action_to_command(
     resources: &Resources,
 ) -> Option<Box<dyn EditorCommand>> {
     match action {
-        EditorAction::Spawn => Some(Box::new(SpawnCommand::new())),
+        EditorAction::Spawn { extra, name } => {
+            Some(Box::new(SpawnCommand::new(extra.clone(), name.clone())))
+        }
         EditorAction::Despawn(entity) => Some(Box::new(DespawnCommand::new(resources, *entity))),
         EditorAction::SetField {
             entity,
@@ -96,7 +103,7 @@ fn action_to_command(
 fn batch_description(actions: &[EditorAction]) -> String {
     let count = actions.len();
     match actions.first() {
-        Some(EditorAction::Spawn) => format!("Spawn {count} Entities"),
+        Some(EditorAction::Spawn { .. }) => format!("Spawn {count} Entities"),
         Some(EditorAction::Despawn(_)) => format!("Despawn {count} Entities"),
         Some(EditorAction::SetField { .. }) => format!("Set {count} Fields"),
         Some(EditorAction::AddComponent { .. }) => format!("Add {count} Components"),
@@ -109,7 +116,7 @@ fn batch_description(actions: &[EditorAction]) -> String {
 fn same_ecs_variant(a: &EditorAction, b: &EditorAction) -> bool {
     matches!(
         (a, b),
-        (EditorAction::Spawn, EditorAction::Spawn)
+        (EditorAction::Spawn { .. }, EditorAction::Spawn { .. })
             | (EditorAction::Despawn(_), EditorAction::Despawn(_))
             | (EditorAction::SetField { .. }, EditorAction::SetField { .. })
             | (EditorAction::AddComponent { .. }, EditorAction::AddComponent { .. })

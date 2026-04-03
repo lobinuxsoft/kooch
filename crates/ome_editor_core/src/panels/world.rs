@@ -5,6 +5,8 @@ use std::collections::HashSet;
 
 use egui::NumExt as _;
 use ome_ecs::entity::Entity;
+use ome_ecs::perspective_camera::PerspectiveCamera;
+use ome_ecs::orthographic_camera::OrthographicCamera;
 use ome_ecs::reflect::ReflectValue;
 
 use crate::actions::EditorAction;
@@ -51,9 +53,27 @@ pub(crate) fn draw_world_content(
     ui.separator();
 
     ui.horizontal(|ui| {
-        if ui.button(format!("{} Spawn", icons::PLUS)).clicked() {
-            actions.push(EditorAction::Spawn);
-        }
+        ui.menu_button(format!("{} Spawn", icons::PLUS), |ui| {
+            if ui.button(format!("{} Entity", icons::CUBE)).clicked() {
+                actions.push(EditorAction::Spawn { extra: vec![], name: None });
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button("Perspective Camera").clicked() {
+                actions.push(EditorAction::Spawn {
+                    extra: vec![TypeId::of::<PerspectiveCamera>()],
+                    name: Some("Perspective Camera".to_owned()),
+                });
+                ui.close_menu();
+            }
+            if ui.button("Orthographic Camera").clicked() {
+                actions.push(EditorAction::Spawn {
+                    extra: vec![TypeId::of::<OrthographicCamera>()],
+                    name: Some("Orthographic Camera".to_owned()),
+                });
+                ui.close_menu();
+            }
+        });
         let can_despawn = !selected.is_empty();
         if ui
             .add_enabled(

@@ -24,7 +24,7 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
 
     for archetype in archetypes.iter_matching(&[]) {
         for &entity in archetype.entities() {
-            let comps: Vec<ComponentDisplayInfo> = archetype
+            let mut comps: Vec<ComponentDisplayInfo> = archetype
                 .components()
                 .iter()
                 .filter_map(|tid| {
@@ -47,6 +47,20 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                     })
                 })
                 .collect();
+
+            // Sort: Name first, Transform second, rest alphabetically.
+            comps.sort_by(|a, b| {
+                fn priority(name: &str) -> u8 {
+                    match name {
+                        "Name" => 0,
+                        "Transform" => 1,
+                        _ => 2,
+                    }
+                }
+                let pa = priority(&a.short_name);
+                let pb = priority(&b.short_name);
+                pa.cmp(&pb).then_with(|| a.short_name.cmp(&b.short_name))
+            });
 
             let idx = flat.len();
             entity_idx_map.insert(entity, idx);
