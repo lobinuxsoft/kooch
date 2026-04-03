@@ -19,6 +19,12 @@ use crate::name::Name;
 use crate::orthographic_camera::OrthographicCamera;
 use crate::perspective_camera::PerspectiveCamera;
 use crate::query::AccessTracker;
+use crate::sdf_box::SdfBox;
+use crate::sdf_capsule::SdfCapsule;
+use crate::sdf_cylinder::SdfCylinder;
+use crate::sdf_plane::SdfPlane;
+use crate::sdf_sphere::SdfSphere;
+use crate::sdf_torus::SdfTorus;
 use crate::transform::Transform;
 
 /// Plugin that bootstraps the entity and component systems.
@@ -41,6 +47,12 @@ fn register_builtin_components(resources: &mut ome_core::resource::Resources) {
         registry.register_cpu_reflected::<GlobalTransform>();
         registry.register_cpu_reflected::<PerspectiveCamera>();
         registry.register_cpu_reflected::<OrthographicCamera>();
+        registry.register_cpu_reflected::<SdfSphere>();
+        registry.register_cpu_reflected::<SdfBox>();
+        registry.register_cpu_reflected::<SdfCapsule>();
+        registry.register_cpu_reflected::<SdfCylinder>();
+        registry.register_cpu_reflected::<SdfTorus>();
+        registry.register_cpu_reflected::<SdfPlane>();
     }
 }
 
