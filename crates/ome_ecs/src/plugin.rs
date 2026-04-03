@@ -16,6 +16,8 @@ use crate::hierarchy::{
     Children, GlobalTransform, Parent, hierarchy_sync_system, transform_propagation_system,
 };
 use crate::name::Name;
+use crate::orthographic_camera::OrthographicCamera;
+use crate::perspective_camera::PerspectiveCamera;
 use crate::query::AccessTracker;
 use crate::transform::Transform;
 
@@ -37,6 +39,8 @@ fn register_builtin_components(resources: &mut ome_core::resource::Resources) {
         registry.register_cpu_reflected::<Parent>();
         registry.register_cpu_reflected::<Children>();
         registry.register_cpu_reflected::<GlobalTransform>();
+        registry.register_cpu_reflected::<PerspectiveCamera>();
+        registry.register_cpu_reflected::<OrthographicCamera>();
     }
 }
 

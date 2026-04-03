@@ -30,6 +30,8 @@ pub mod reflect;
 pub mod scene;
 pub mod hierarchy;
 pub mod name;
+pub mod orthographic_camera;
+pub mod perspective_camera;
 pub mod transform;
 
 pub use allocator::EntityAllocator;
@@ -50,4 +52,6 @@ pub use scene::{
 };
 pub use hierarchy::{Children, GlobalTransform, Parent};
 pub use name::Name;
+pub use orthographic_camera::OrthographicCamera;
+pub use perspective_camera::PerspectiveCamera;
 pub use transform::Transform;
