@@ -30,6 +30,7 @@ pub mod reflect;
 pub mod scene;
 pub mod hierarchy;
 pub mod directional_light;
+pub mod mesh_renderer;
 pub mod name;
 pub mod orthographic_camera;
 pub mod perspective_camera;
@@ -61,6 +62,7 @@ pub use scene::{
 };
 pub use directional_light::DirectionalLight;
 pub use hierarchy::{Children, GlobalTransform, Parent};
+pub use mesh_renderer::MeshRenderer;
 pub use name::Name;
 pub use orthographic_camera::OrthographicCamera;
 pub use perspective_camera::PerspectiveCamera;
