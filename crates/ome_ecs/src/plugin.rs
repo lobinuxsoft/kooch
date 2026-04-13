@@ -12,12 +12,14 @@ use crate::component::{component_despawn_cleanup_system, component_gpu_sync_syst
 #[cfg(feature = "dynamic")]
 use crate::entity::Entity;
 use crate::gpu_sync::entity_gpu_sync_system;
+use crate::directional_light::DirectionalLight;
 use crate::hierarchy::{
     Children, GlobalTransform, Parent, hierarchy_sync_system, transform_propagation_system,
 };
 use crate::name::Name;
 use crate::orthographic_camera::OrthographicCamera;
 use crate::perspective_camera::PerspectiveCamera;
+use crate::point_light::PointLight;
 use crate::query::AccessTracker;
 use crate::sdf_box::SdfBox;
 use crate::sdf_capsule::SdfCapsule;
@@ -25,6 +27,7 @@ use crate::sdf_cylinder::SdfCylinder;
 use crate::sdf_plane::SdfPlane;
 use crate::sdf_sphere::SdfSphere;
 use crate::sdf_torus::SdfTorus;
+use crate::spot_light::SpotLight;
 use crate::transform::Transform;
 
 /// Plugin that bootstraps the entity and component systems.
@@ -53,6 +56,9 @@ fn register_builtin_components(resources: &mut ome_core::resource::Resources) {
         registry.register_cpu_reflected::<SdfCylinder>();
         registry.register_cpu_reflected::<SdfTorus>();
         registry.register_cpu_reflected::<SdfPlane>();
+        registry.register_cpu_reflected::<DirectionalLight>();
+        registry.register_cpu_reflected::<PointLight>();
+        registry.register_cpu_reflected::<SpotLight>();
     }
 }
 
