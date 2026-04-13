@@ -16,6 +16,7 @@ use crate::directional_light::DirectionalLight;
 use crate::hierarchy::{
     Children, GlobalTransform, Parent, hierarchy_sync_system, transform_propagation_system,
 };
+use crate::mesh_renderer::MeshRenderer;
 use crate::name::Name;
 use crate::orthographic_camera::OrthographicCamera;
 use crate::perspective_camera::PerspectiveCamera;
@@ -59,6 +60,7 @@ fn register_builtin_components(resources: &mut ome_core::resource::Resources) {
         registry.register_cpu_reflected::<DirectionalLight>();
         registry.register_cpu_reflected::<PointLight>();
         registry.register_cpu_reflected::<SpotLight>();
+        registry.register_cpu_reflected::<MeshRenderer>();
     }
 }
 

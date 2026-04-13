@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use egui::NumExt as _;
 use ome_ecs::directional_light::DirectionalLight;
 use ome_ecs::entity::Entity;
+use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::orthographic_camera::OrthographicCamera;
 use ome_ecs::perspective_camera::PerspectiveCamera;
 use ome_ecs::point_light::PointLight;
@@ -127,6 +128,13 @@ pub(crate) fn draw_world_content(
                     ui.close_menu();
                 }
             });
+            if ui.button("Mesh Renderer").clicked() {
+                actions.push(EditorAction::Spawn {
+                    extra: vec![TypeId::of::<MeshRenderer>()],
+                    name: Some("Mesh".to_owned()),
+                });
+                ui.close_menu();
+            }
             ui.menu_button("Lights", |ui| {
                 if ui.button("Directional Light").clicked() {
                     actions.push(EditorAction::Spawn {
