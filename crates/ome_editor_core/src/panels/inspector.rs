@@ -663,19 +663,26 @@ fn draw_value_widget(ui: &mut egui::Ui, value: &ReflectValue, field_name: &str) 
             changed.then_some(ReflectValue::Vec2(glam::Vec2::new(x, y)))
         }
         ReflectValue::Vec3(v) => {
-            let mut x = v.x;
-            let mut y = v.y;
-            let mut z = v.z;
-            let mut changed = false;
-            ui.horizontal(|ui| {
-                ui.label("x");
-                changed |= ui.add(egui::DragValue::new(&mut x).speed(0.1)).changed();
-                ui.label("y");
-                changed |= ui.add(egui::DragValue::new(&mut y).speed(0.1)).changed();
-                ui.label("z");
-                changed |= ui.add(egui::DragValue::new(&mut z).speed(0.1)).changed();
-            });
-            changed.then_some(ReflectValue::Vec3(glam::Vec3::new(x, y, z)))
+            if field_name.contains("color") {
+                let mut rgb = [v.x, v.y, v.z];
+                let resp = ui.color_edit_button_rgb(&mut rgb);
+                resp.changed()
+                    .then_some(ReflectValue::Vec3(glam::Vec3::new(rgb[0], rgb[1], rgb[2])))
+            } else {
+                let mut x = v.x;
+                let mut y = v.y;
+                let mut z = v.z;
+                let mut changed = false;
+                ui.horizontal(|ui| {
+                    ui.label("x");
+                    changed |= ui.add(egui::DragValue::new(&mut x).speed(0.1)).changed();
+                    ui.label("y");
+                    changed |= ui.add(egui::DragValue::new(&mut y).speed(0.1)).changed();
+                    ui.label("z");
+                    changed |= ui.add(egui::DragValue::new(&mut z).speed(0.1)).changed();
+                });
+                changed.then_some(ReflectValue::Vec3(glam::Vec3::new(x, y, z)))
+            }
         }
         ReflectValue::Vec4(v) => {
             let is_color = field_name.contains("color");

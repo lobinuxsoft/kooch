@@ -4,9 +4,11 @@ use std::any::TypeId;
 use std::collections::HashSet;
 
 use egui::NumExt as _;
+use ome_ecs::directional_light::DirectionalLight;
 use ome_ecs::entity::Entity;
 use ome_ecs::orthographic_camera::OrthographicCamera;
 use ome_ecs::perspective_camera::PerspectiveCamera;
+use ome_ecs::point_light::PointLight;
 use ome_ecs::reflect::ReflectValue;
 use ome_ecs::sdf_box::SdfBox;
 use ome_ecs::sdf_capsule::SdfCapsule;
@@ -14,6 +16,7 @@ use ome_ecs::sdf_cylinder::SdfCylinder;
 use ome_ecs::sdf_plane::SdfPlane;
 use ome_ecs::sdf_sphere::SdfSphere;
 use ome_ecs::sdf_torus::SdfTorus;
+use ome_ecs::spot_light::SpotLight;
 
 use crate::actions::EditorAction;
 use crate::icons;
@@ -120,6 +123,29 @@ pub(crate) fn draw_world_content(
                     actions.push(EditorAction::Spawn {
                         extra: vec![TypeId::of::<SdfPlane>()],
                         name: Some("SDF Plane".to_owned()),
+                    });
+                    ui.close_menu();
+                }
+            });
+            ui.menu_button("Lights", |ui| {
+                if ui.button("Directional Light").clicked() {
+                    actions.push(EditorAction::Spawn {
+                        extra: vec![TypeId::of::<DirectionalLight>()],
+                        name: Some("Directional Light".to_owned()),
+                    });
+                    ui.close_menu();
+                }
+                if ui.button("Point Light").clicked() {
+                    actions.push(EditorAction::Spawn {
+                        extra: vec![TypeId::of::<PointLight>()],
+                        name: Some("Point Light".to_owned()),
+                    });
+                    ui.close_menu();
+                }
+                if ui.button("Spot Light").clicked() {
+                    actions.push(EditorAction::Spawn {
+                        extra: vec![TypeId::of::<SpotLight>()],
+                        name: Some("Spot Light".to_owned()),
                     });
                     ui.close_menu();
                 }
