@@ -29,15 +29,18 @@ pub mod query;
 pub mod reflect;
 pub mod scene;
 pub mod hierarchy;
+pub mod directional_light;
 pub mod name;
 pub mod orthographic_camera;
 pub mod perspective_camera;
+pub mod point_light;
 pub mod sdf_box;
 pub mod sdf_capsule;
 pub mod sdf_cylinder;
 pub mod sdf_plane;
 pub mod sdf_sphere;
 pub mod sdf_torus;
+pub mod spot_light;
 pub mod transform;
 
 pub use allocator::EntityAllocator;
@@ -56,14 +59,17 @@ pub use reflect::{FieldKind, FieldMeta, InspectorVisibility, Reflect, ReflectErr
 pub use scene::{
     ComponentDescription, EntityDescription, SceneDocument, SceneError, sync_scene_to_ecs,
 };
+pub use directional_light::DirectionalLight;
 pub use hierarchy::{Children, GlobalTransform, Parent};
 pub use name::Name;
 pub use orthographic_camera::OrthographicCamera;
 pub use perspective_camera::PerspectiveCamera;
+pub use point_light::PointLight;
 pub use sdf_box::SdfBox;
 pub use sdf_capsule::SdfCapsule;
 pub use sdf_cylinder::SdfCylinder;
 pub use sdf_plane::SdfPlane;
 pub use sdf_sphere::SdfSphere;
 pub use sdf_torus::SdfTorus;
+pub use spot_light::SpotLight;
 pub use transform::Transform;
