@@ -5,9 +5,7 @@ use std::collections::HashSet;
 
 use egui::NumExt as _;
 use ome_ecs::directional_light::DirectionalLight;
-use ome_ecs::dynamic_body::DynamicBody;
 use ome_ecs::entity::Entity;
-use ome_ecs::kinematic_body::KinematicBody;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::orthographic_camera::OrthographicCamera;
 use ome_ecs::perspective_camera::PerspectiveCamera;
@@ -20,7 +18,6 @@ use ome_ecs::sdf_plane::SdfPlane;
 use ome_ecs::sdf_sphere::SdfSphere;
 use ome_ecs::sdf_torus::SdfTorus;
 use ome_ecs::spot_light::SpotLight;
-use ome_ecs::static_body::StaticBody;
 
 use crate::actions::EditorAction;
 use crate::icons;
@@ -138,29 +135,6 @@ pub(crate) fn draw_world_content(
                 });
                 ui.close_menu();
             }
-            ui.menu_button("Physics Bodies", |ui| {
-                if ui.button("Dynamic Body").clicked() {
-                    actions.push(EditorAction::Spawn {
-                        extra: vec![TypeId::of::<DynamicBody>()],
-                        name: Some("Dynamic Body".to_owned()),
-                    });
-                    ui.close_menu();
-                }
-                if ui.button("Kinematic Body").clicked() {
-                    actions.push(EditorAction::Spawn {
-                        extra: vec![TypeId::of::<KinematicBody>()],
-                        name: Some("Kinematic Body".to_owned()),
-                    });
-                    ui.close_menu();
-                }
-                if ui.button("Static Body").clicked() {
-                    actions.push(EditorAction::Spawn {
-                        extra: vec![TypeId::of::<StaticBody>()],
-                        name: Some("Static Body".to_owned()),
-                    });
-                    ui.close_menu();
-                }
-            });
             ui.menu_button("Lights", |ui| {
                 if ui.button("Directional Light").clicked() {
                     actions.push(EditorAction::Spawn {
