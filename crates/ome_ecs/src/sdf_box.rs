@@ -19,6 +19,7 @@ use crate::Reflect;
 /// - `size`: (0.5, 0.5, 0.5) half-extents
 /// - `rounding`: 0.0
 #[derive(Debug, Clone, Copy, Reflect)]
+#[reflect(category = "SDF")]
 pub struct SdfBox {
     /// Whether this shape is rendered.
     pub visible: bool,

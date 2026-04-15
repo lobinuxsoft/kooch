@@ -230,18 +230,11 @@ pub(crate) fn draw_inspector_content(
         .collect();
 
     if !available.is_empty() {
-        egui::ComboBox::from_label(format!("{} Add Component", icons::PLUS))
-            .selected_text("Select...")
-            .show_ui(ui, |ui| {
-                for type_info in &available {
-                    if ui.selectable_label(false, &type_info.short_name).clicked() {
-                        actions.push(EditorAction::AddComponent {
-                            entity,
-                            type_id: type_info.type_id,
-                        });
-                    }
-                }
+        ui.menu_button(format!("{} Add Component", icons::PLUS), |ui| {
+            crate::panels::add_component_menu::draw_categorized(ui, &available, |type_id| {
+                actions.push(EditorAction::AddComponent { entity, type_id });
             });
+        });
         ui.separator();
     }
 
@@ -366,30 +359,19 @@ fn draw_multi_entity_inspector(
         .collect();
 
     if !available.is_empty() {
-        egui::ComboBox::from_label(format!("{} Add Component", icons::PLUS))
-            .selected_text("Select...")
-            .show_ui(ui, |ui| {
-                for type_info in &available {
-                    if ui.selectable_label(false, &type_info.short_name).clicked() {
-                        // Add to all selected entities that don't have it.
-                        let have_it: HashSet<Entity> = selected_entities_with_component(
-                            entities,
-                            selected,
-                            type_info.type_id,
-                        )
+        ui.menu_button(format!("{} Add Component", icons::PLUS), |ui| {
+            crate::panels::add_component_menu::draw_categorized(ui, &available, |type_id| {
+                let have_it: HashSet<Entity> =
+                    selected_entities_with_component(entities, selected, type_id)
                         .into_iter()
                         .collect();
-                        for &entity in selected {
-                            if !have_it.contains(&entity) {
-                                actions.push(EditorAction::AddComponent {
-                                    entity,
-                                    type_id: type_info.type_id,
-                                });
-                            }
-                        }
+                for &entity in selected {
+                    if !have_it.contains(&entity) {
+                        actions.push(EditorAction::AddComponent { entity, type_id });
                     }
                 }
             });
+        });
         ui.separator();
     }
 

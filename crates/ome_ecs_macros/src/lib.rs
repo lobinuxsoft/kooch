@@ -43,12 +43,18 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         Err(err) => return err,
     };
 
+    // Parse #[reflect(category = "...")] attribute.
+    let category = match parse_category_attr(&input) {
+        Ok(cat) => cat,
+        Err(err) => return err,
+    };
+
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(named) => &named.named,
             Fields::Unit => {
                 // Unit struct — no fields.
-                return unit_struct_impl(name, inspector_visibility.as_ref());
+                return unit_struct_impl(name, inspector_visibility.as_ref(), category.as_deref());
             }
             Fields::Unnamed(_) => {
                 return syn::Error::new_spanned(
@@ -138,6 +144,14 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         }
     });
 
+    let category_method = category.as_deref().map(|cat| {
+        quote! {
+            fn category() -> Option<&'static str> {
+                Some(#cat)
+            }
+        }
+    });
+
     let expanded = quote! {
         impl ::ome_ecs::reflect::Reflect for #name {
             fn reflect_fields(&self) -> &'static [::ome_ecs::reflect::FieldMeta] {
@@ -170,6 +184,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             }
 
             #visibility_method
+            #category_method
         }
     };
 
@@ -182,11 +197,20 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
 fn unit_struct_impl(
     name: &syn::Ident,
     inspector_visibility: Option<&proc_macro2::Ident>,
+    category: Option<&str>,
 ) -> TokenStream {
     let visibility_method = inspector_visibility.map(|vis| {
         quote! {
             fn inspector_visibility() -> ::ome_ecs::reflect::InspectorVisibility {
                 ::ome_ecs::reflect::InspectorVisibility::#vis
+            }
+        }
+    });
+
+    let category_method = category.map(|cat| {
+        quote! {
+            fn category() -> Option<&'static str> {
+                Some(#cat)
             }
         }
     });
@@ -215,6 +239,7 @@ fn unit_struct_impl(
             }
 
             #visibility_method
+            #category_method
         }
     };
     expanded.into()
@@ -288,6 +313,38 @@ fn parse_inspector_attr(input: &DeriveInput) -> Result<Option<proc_macro2::Ident
                     variant_name,
                     proc_macro2::Span::call_site(),
                 )));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Parses `#[reflect(category = "...")]` from struct attributes.
+///
+/// Returns `Ok(Some(string))` with the category name if the attribute is
+/// present, `Ok(None)` to use the trait default, or `Err(compile_error)`
+/// if the value is not a string literal.
+fn parse_category_attr(input: &DeriveInput) -> Result<Option<String>, TokenStream> {
+    for attr in &input.attrs {
+        if !attr.path().is_ident("reflect") {
+            continue;
+        }
+        let nested = match attr.parse_args_with(
+            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
+        ) {
+            Ok(n) => n,
+            Err(e) => return Err(e.to_compile_error().into()),
+        };
+        for meta in nested {
+            if let Meta::NameValue(MetaNameValue {
+                path,
+                value: syn::Expr::Lit(expr_lit),
+                ..
+            }) = meta
+                && path.is_ident("category")
+                && let Lit::Str(lit_str) = &expr_lit.lit
+            {
+                return Ok(Some(lit_str.value()));
             }
         }
     }

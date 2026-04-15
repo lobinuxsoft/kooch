@@ -199,12 +199,19 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
         .into_iter()
         .map(|(tid, name)| {
             let short = name.rsplit("::").next().unwrap_or(name).to_owned();
+            let category = registry.reflect_category(&tid);
             ReflectedTypeInfo {
                 type_id: tid,
                 short_name: short,
+                category,
             }
         })
         .collect();
-    types.sort_by(|a, b| a.short_name.cmp(&b.short_name));
+    // Sort: uncategorized first (None < Some), then by category, then by name.
+    types.sort_by(|a, b| {
+        a.category
+            .cmp(&b.category)
+            .then_with(|| a.short_name.cmp(&b.short_name))
+    });
     types
 }

@@ -30,6 +30,10 @@ pub mod reflect;
 pub mod scene;
 pub mod hierarchy;
 pub mod directional_light;
+pub mod dynamic_body;
+pub mod kinematic_body;
+pub mod static_body;
+pub mod velocity;
 pub mod mesh_renderer;
 pub mod name;
 pub mod orthographic_camera;
@@ -61,6 +65,10 @@ pub use scene::{
     ComponentDescription, EntityDescription, SceneDocument, SceneError, sync_scene_to_ecs,
 };
 pub use directional_light::DirectionalLight;
+pub use dynamic_body::DynamicBody;
+pub use kinematic_body::KinematicBody;
+pub use static_body::StaticBody;
+pub use velocity::Velocity;
 pub use hierarchy::{Children, GlobalTransform, Parent};
 pub use mesh_renderer::MeshRenderer;
 pub use name::Name;

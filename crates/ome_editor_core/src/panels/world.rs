@@ -413,40 +413,37 @@ pub(crate) fn draw_world_content(
                         ui.menu_button(
                             format!("{} Add Component", icons::PLUS),
                             |ui| {
-                                for type_info in &available {
-                                    if ui
-                                        .selectable_label(false, &type_info.short_name)
-                                        .clicked()
-                                    {
+                                crate::panels::add_component_menu::draw_categorized(
+                                    ui,
+                                    &available,
+                                    |type_id| {
                                         actions.push(EditorAction::AddComponent {
                                             entity,
-                                            type_id: type_info.type_id,
+                                            type_id,
                                         });
-                                        ui.close_menu();
-                                    }
-                                }
+                                    },
+                                );
                             },
                         );
                     }
                 } else if selected.len() > 1 {
                     // Multi-select: add component to all selected.
+                    let all: Vec<&ReflectedTypeInfo> = reflected_types.iter().collect();
                     ui.menu_button(
                         format!("{} Add Component to all", icons::PLUS),
                         |ui| {
-                            for type_info in reflected_types {
-                                if ui
-                                    .selectable_label(false, &type_info.short_name)
-                                    .clicked()
-                                {
+                            crate::panels::add_component_menu::draw_categorized(
+                                ui,
+                                &all,
+                                |type_id| {
                                     for &entity in selected.iter() {
                                         actions.push(EditorAction::AddComponent {
                                             entity,
-                                            type_id: type_info.type_id,
+                                            type_id,
                                         });
                                     }
-                                    ui.close_menu();
-                                }
-                            }
+                                },
+                            );
                         },
                     );
 

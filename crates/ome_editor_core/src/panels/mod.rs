@@ -1,3 +1,4 @@
+pub(crate) mod add_component_menu;
 pub(crate) mod archetypes;
 pub(crate) mod components;
 pub(crate) mod inspector;

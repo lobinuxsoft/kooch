@@ -17,6 +17,7 @@ use crate::Reflect;
 /// - `radius`: 0.25
 /// - `half_height`: 0.5
 #[derive(Debug, Clone, Copy, Reflect)]
+#[reflect(category = "SDF")]
 pub struct SdfCapsule {
     /// Whether this shape is rendered.
     pub visible: bool,

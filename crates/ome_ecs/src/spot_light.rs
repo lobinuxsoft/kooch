@@ -23,6 +23,7 @@ use crate::Reflect;
 /// - `outer_angle`: 45.0 degrees
 /// - `cast_shadows`: true
 #[derive(Debug, Clone, Copy, Reflect)]
+#[reflect(category = "Rendering")]
 pub struct SpotLight {
     /// Whether this light is active.
     pub active: bool,

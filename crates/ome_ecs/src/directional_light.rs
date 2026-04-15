@@ -20,6 +20,7 @@ use crate::Reflect;
 /// - `intensity`: 10000.0 lux (bright overcast daylight)
 /// - `cast_shadows`: true
 #[derive(Debug, Clone, Copy, Reflect)]
+#[reflect(category = "Rendering")]
 pub struct DirectionalLight {
     /// Whether this light is active.
     pub active: bool,

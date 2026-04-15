@@ -153,4 +153,5 @@ pub(crate) struct ComponentTypeInfo {
 pub(crate) struct ReflectedTypeInfo {
     pub(crate) type_id: TypeId,
     pub(crate) short_name: String,
+    pub(crate) category: Option<&'static str>,
 }

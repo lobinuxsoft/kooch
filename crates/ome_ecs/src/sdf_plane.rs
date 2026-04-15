@@ -20,6 +20,7 @@ use crate::Reflect;
 /// - `visible`: true
 /// - `collide`: true
 #[derive(Debug, Clone, Copy, Reflect)]
+#[reflect(category = "SDF")]
 pub struct SdfPlane {
     /// Whether this shape is rendered.
     pub visible: bool,

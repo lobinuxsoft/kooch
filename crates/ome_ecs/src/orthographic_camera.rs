@@ -25,6 +25,7 @@ use crate::Reflect;
 /// - `priority`: 0
 /// - `active`: true
 #[derive(Debug, Clone, Copy, Reflect)]
+#[reflect(category = "Camera")]
 pub struct OrthographicCamera {
     /// Whether this camera is active.
     pub active: bool,

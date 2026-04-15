@@ -242,6 +242,17 @@ pub trait Reflect: Send + Sync + 'static {
     {
         InspectorVisibility::Editable
     }
+
+    /// Returns the editor category for grouping in the "Add Component" menu.
+    ///
+    /// `None` means uncategorized — the editor shows the type at the top
+    /// level of the menu.
+    fn category() -> Option<&'static str>
+    where
+        Self: Sized,
+    {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +301,9 @@ pub(crate) trait ReflectAccessor: Send + Sync {
 
     /// Returns the inspector visibility for this component type.
     fn inspector_visibility(&self) -> InspectorVisibility;
+
+    /// Returns the editor category (if any) for grouping in the menu.
+    fn category(&self) -> Option<&'static str>;
 }
 
 /// Concrete [`ReflectAccessor`] for a component type `T: Reflect`.
@@ -393,6 +407,10 @@ impl<T: Reflect> ReflectAccessor for TypedReflectAccessor<T> {
 
     fn inspector_visibility(&self) -> InspectorVisibility {
         T::inspector_visibility()
+    }
+
+    fn category(&self) -> Option<&'static str> {
+        T::category()
     }
 }
 
