@@ -9,5 +9,12 @@ authors.workspace = true
 
 [dependencies]
 ome_core.workspace = true
+ome_ecs.workspace = true
+ome_sdf.workspace = true
 wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+naga = { version = "23", features = ["wgsl-in"] }

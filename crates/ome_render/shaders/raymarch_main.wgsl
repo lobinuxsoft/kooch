@@ -1,0 +1,149 @@
+// raymarch_main.wgsl — ray-march fragment shader.
+//
+// Concatenated at runtime AFTER `sdf_primitives.wgsl` from ome_sdf, so
+// the `sdf_*` functions are already in scope when this module is parsed.
+
+struct CameraUniforms {
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+    inverse_view: mat4x4<f32>,
+    inverse_projection: mat4x4<f32>,
+    position: vec3<f32>,
+    _pad0: f32,
+}
+
+struct RayMarchParams {
+    max_steps: u32,
+    max_distance: f32,
+    surface_threshold: f32,
+    _pad: f32,
+}
+
+struct SphereInstance {
+    center: vec3<f32>,
+    radius: f32,
+}
+
+struct SceneMeta {
+    sphere_count: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    sky_top: vec4<f32>,
+    sky_bottom: vec4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> camera: CameraUniforms;
+@group(0) @binding(1) var<uniform> params: RayMarchParams;
+@group(1) @binding(0) var<uniform> scene_meta: SceneMeta;
+@group(1) @binding(1) var<storage, read> spheres: array<SphereInstance>;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+// Fullscreen triangle — no vertex buffer needed.
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 3.0, -1.0),
+        vec2<f32>(-1.0,  3.0),
+    );
+    var uvs = array<vec2<f32>, 3>(
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(2.0, 1.0),
+        vec2<f32>(0.0, -1.0),
+    );
+    var out: VertexOutput;
+    out.position = vec4<f32>(positions[vi], 0.0, 1.0);
+    out.uv = uvs[vi];
+    return out;
+}
+
+struct Ray {
+    origin: vec3<f32>,
+    direction: vec3<f32>,
+}
+
+fn generate_ray(uv: vec2<f32>) -> Ray {
+    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let near_h = camera.inverse_projection * vec4<f32>(ndc, -1.0, 1.0);
+    let far_h  = camera.inverse_projection * vec4<f32>(ndc,  1.0, 1.0);
+    let near_view = near_h.xyz / near_h.w;
+    let far_view  = far_h.xyz  / far_h.w;
+    let near_world = (camera.inverse_view * vec4<f32>(near_view, 1.0)).xyz;
+    let far_world  = (camera.inverse_view * vec4<f32>(far_view,  1.0)).xyz;
+    return Ray(near_world, normalize(far_world - near_world));
+}
+
+fn eval_scene(p: vec3<f32>) -> f32 {
+    var d = 1e10;
+    for (var i = 0u; i < scene_meta.sphere_count; i = i + 1u) {
+        let s = spheres[i];
+        d = sdf_union(d, sdf_sphere(p - s.center, s.radius));
+    }
+    return d;
+}
+
+struct HitResult {
+    hit: bool,
+    position: vec3<f32>,
+    distance: f32,
+    steps: u32,
+}
+
+fn ray_march(ray: Ray) -> HitResult {
+    var result: HitResult;
+    result.hit = false;
+    result.steps = 0u;
+    var t = 0.0;
+    for (var i = 0u; i < params.max_steps; i = i + 1u) {
+        result.steps = i;
+        let p = ray.origin + ray.direction * t;
+        let d = eval_scene(p);
+        if d < params.surface_threshold {
+            result.hit = true;
+            result.position = p;
+            result.distance = t;
+            return result;
+        }
+        if t > params.max_distance {
+            break;
+        }
+        t = t + d;
+    }
+    result.distance = t;
+    return result;
+}
+
+fn calc_normal(p: vec3<f32>) -> vec3<f32> {
+    let eps = 0.001;
+    let n = vec3<f32>(
+        eval_scene(p + vec3<f32>(eps, 0.0, 0.0)) - eval_scene(p - vec3<f32>(eps, 0.0, 0.0)),
+        eval_scene(p + vec3<f32>(0.0, eps, 0.0)) - eval_scene(p - vec3<f32>(0.0, eps, 0.0)),
+        eval_scene(p + vec3<f32>(0.0, 0.0, eps)) - eval_scene(p - vec3<f32>(0.0, 0.0, eps)),
+    );
+    return normalize(n);
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let ray = generate_ray(in.uv);
+    let hit = ray_march(ray);
+
+    if !hit.hit {
+        let t = clamp(ray.direction.y * 0.5 + 0.5, 0.0, 1.0);
+        let sky = mix(scene_meta.sky_bottom.rgb, scene_meta.sky_top.rgb, t);
+        return vec4<f32>(sky, 1.0);
+    }
+
+    let normal = calc_normal(hit.position);
+    let sun_dir = normalize(vec3<f32>(0.6, 0.8, 0.3));
+    let diffuse = max(dot(normal, sun_dir), 0.0);
+    let ambient = 0.2;
+    let base = vec3<f32>(0.8, 0.7, 0.6);
+    let color = base * (diffuse + ambient);
+    return vec4<f32>(color, 1.0);
+}
