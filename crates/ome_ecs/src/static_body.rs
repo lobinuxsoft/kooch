@@ -12,6 +12,7 @@ use crate::Reflect;
 ///
 /// Unit struct — its mere presence tags the entity as static.
 #[derive(Debug, Clone, Copy, Default, Reflect)]
+#[reflect(category = "Physics")]
 pub struct StaticBody;
 
 impl Component for StaticBody {}

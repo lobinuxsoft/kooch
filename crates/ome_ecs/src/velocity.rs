@@ -20,7 +20,7 @@ use crate::Reflect;
 /// - `linear`: zero
 /// - `angular`: zero
 #[derive(Debug, Clone, Copy, Default, Reflect)]
-#[reflect(inspector = "read_only")]
+#[reflect(inspector = "read_only", category = "Physics")]
 pub struct Velocity {
     /// Linear velocity in world space (units per second).
     pub linear: Vec3,

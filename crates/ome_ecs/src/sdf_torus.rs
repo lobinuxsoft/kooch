@@ -17,6 +17,7 @@ use crate::Reflect;
 /// - `major_radius`: 0.5 (center of tube to center of torus)
 /// - `minor_radius`: 0.15 (tube radius)
 #[derive(Debug, Clone, Copy, Reflect)]
+#[reflect(category = "SDF")]
 pub struct SdfTorus {
     /// Whether this shape is rendered.
     pub visible: bool,

@@ -18,6 +18,7 @@ use crate::Reflect;
 /// - `angular_drag`: 0.05
 /// - `use_gravity`: true
 #[derive(Debug, Clone, Copy, Reflect)]
+#[reflect(category = "Physics")]
 pub struct DynamicBody {
     /// Mass in kilograms.
     pub mass: f32,

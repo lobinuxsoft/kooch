@@ -231,6 +231,11 @@ impl ComponentRegistry {
         self.reflectors.get(type_id).map(|r| r.inspector_visibility())
     }
 
+    /// Returns the editor category for a reflected component type, if any.
+    pub fn reflect_category(&self, type_id: &TypeId) -> Option<&'static str> {
+        self.reflectors.get(type_id).and_then(|r| r.category())
+    }
+
     /// Returns all `TypeId`s that have a registered reflector.
     pub fn reflected_type_ids(&self) -> Vec<TypeId> {
         self.reflectors.keys().copied().collect()

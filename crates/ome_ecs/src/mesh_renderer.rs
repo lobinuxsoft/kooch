@@ -23,6 +23,7 @@ use crate::Reflect;
 /// - `cast_shadows`: true
 /// - `receive_shadows`: true
 #[derive(Debug, Clone, Reflect)]
+#[reflect(category = "Rendering")]
 pub struct MeshRenderer {
     /// Asset path or handle key for the mesh (e.g. `"meshes/cube.glb"`).
     pub mesh: String,

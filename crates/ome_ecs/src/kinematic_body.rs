@@ -15,6 +15,7 @@ use crate::Reflect;
 ///
 /// - `push_force`: 0.0 (does not push dynamic bodies on contact)
 #[derive(Debug, Clone, Copy, Default, Reflect)]
+#[reflect(category = "Physics")]
 pub struct KinematicBody {
     /// Force applied to dynamic bodies on contact. `0.0` means no push.
     pub push_force: f32,

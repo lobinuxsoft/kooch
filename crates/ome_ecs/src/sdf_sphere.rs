@@ -16,6 +16,7 @@ use crate::Reflect;
 /// - `collide`: true
 /// - `radius`: 0.5
 #[derive(Debug, Clone, Copy, Reflect)]
+#[reflect(category = "SDF")]
 pub struct SdfSphere {
     /// Whether this shape is rendered.
     pub visible: bool,

@@ -21,6 +21,7 @@ use crate::Reflect;
 /// - `range`: 10.0
 /// - `cast_shadows`: true
 #[derive(Debug, Clone, Copy, Reflect)]
+#[reflect(category = "Rendering")]
 pub struct PointLight {
     /// Whether this light is active.
     pub active: bool,
