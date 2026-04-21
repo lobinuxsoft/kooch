@@ -153,6 +153,7 @@ fn run_editor_ui(
                 viewport_texture_id: texture_id,
                 viewport_request: request,
                 rotation_euler_cache: &mut overlay.rotation_euler_cache,
+                rotation_display_mode: &mut overlay.rotation_display_mode,
             };
 
             DockArea::new(&mut overlay.dock_state)

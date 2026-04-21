@@ -81,12 +81,26 @@ pub(crate) fn dock_has_tab(dock_state: &DockState<EditorTab>, tab: &EditorTab) -
 // Editor overlay resource
 // ---------------------------------------------------------------------------
 
+/// Display mode for `Transform.rotation` in the Inspector panel.
+///
+/// `Local` (the default) shows the rotation stored in the Transform
+/// directly, i.e. relative to the entity's parent. `World` shows the
+/// world-space rotation computed by the hierarchy propagation, and
+/// converts user edits back to local on write. The Transform storage
+/// itself never changes representation — only the display does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub(crate) enum RotationDisplayMode {
+    #[default]
+    Local,
+    World,
+}
+
 /// Cache key for the editor's per-field Euler rotation state.
 ///
-/// Scoped by `(Entity, component TypeId, field name)` so different Quat
-/// fields on the same entity — or the same field across entities — do
-/// not collide.
-pub(crate) type EulerCacheKey = (Entity, TypeId, String);
+/// Scoped by `(Entity, component TypeId, field name, display mode)` so
+/// different Quat fields — or the same field under different display
+/// modes — do not collide.
+pub(crate) type EulerCacheKey = (Entity, TypeId, String, RotationDisplayMode);
 
 /// Editor overlay state, stored as a resource.
 ///
@@ -105,6 +119,9 @@ pub struct EditorOverlay {
     /// every frame, which introduces gimbal lock when crossing ±90° on
     /// any axis. See issue #202.
     pub(crate) rotation_euler_cache: HashMap<EulerCacheKey, Vec3>,
+    /// Display mode for `Transform.rotation` in the Inspector. Toggled
+    /// via a button in the Inspector header. Persists for the session.
+    pub(crate) rotation_display_mode: RotationDisplayMode,
 }
 
 /// Forwards raw winit events to egui for input processing.
@@ -150,6 +167,14 @@ pub(crate) struct EntityDisplayInfo {
     pub(crate) children: Vec<Entity>,
     /// Depth in the hierarchy tree (0 = root).
     pub(crate) depth: usize,
+    /// World-space rotation from `GlobalTransform`, if available. Used
+    /// by the Inspector's World rotation display mode.
+    pub(crate) global_rotation: Option<glam::Quat>,
+    /// Parent's world-space rotation from `GlobalTransform`, if the
+    /// entity has a parent and that parent has a `GlobalTransform`.
+    /// Used to convert World-space edits back to the local rotation
+    /// stored on the entity's own Transform.
+    pub(crate) parent_global_rotation: Option<glam::Quat>,
 }
 
 /// Display data for a single archetype.
