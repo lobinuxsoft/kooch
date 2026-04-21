@@ -1,0 +1,66 @@
+//! egui_dock TabViewer implementation for the editor dock area.
+
+use egui_dock::TabViewer;
+
+use ome_ecs::entity::Entity;
+
+use crate::actions::EditorAction;
+use crate::panels::archetypes::draw_archetypes_content;
+use crate::panels::components::draw_components_content;
+use crate::panels::inspector::draw_inspector_content;
+use crate::panels::view::draw_view_content;
+use crate::panels::world::draw_world_content;
+use crate::state::{
+    ArchetypeDisplayInfo, ComponentTypeInfo, EditorTab, EntityDisplayInfo, ReflectedTypeInfo,
+};
+
+pub(crate) struct EditorTabViewer<'a> {
+    pub(crate) entities: &'a [EntityDisplayInfo],
+    pub(crate) archetypes: &'a [ArchetypeDisplayInfo],
+    pub(crate) component_types: &'a [ComponentTypeInfo],
+    pub(crate) selected: &'a mut Vec<Entity>,
+    pub(crate) reflected_types: &'a [ReflectedTypeInfo],
+    pub(crate) actions: &'a mut Vec<EditorAction>,
+    pub(crate) entity_count: usize,
+    pub(crate) archetype_count: usize,
+    pub(crate) active_archetype_count: usize,
+    pub(crate) last_clicked_index: &'a mut Option<usize>,
+}
+
+impl<'a> TabViewer for EditorTabViewer<'a> {
+    type Tab = EditorTab;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        tab.to_string().into()
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        match tab {
+            EditorTab::World => draw_world_content(
+                ui,
+                self.entities,
+                self.selected,
+                self.reflected_types,
+                self.actions,
+                self.entity_count,
+                self.archetype_count,
+                self.active_archetype_count,
+                self.last_clicked_index,
+            ),
+            EditorTab::View => draw_view_content(ui),
+            EditorTab::Inspector => draw_inspector_content(
+                ui,
+                self.entities,
+                self.selected,
+                self.reflected_types,
+                self.actions,
+            ),
+            EditorTab::Archetypes => draw_archetypes_content(ui, self.archetypes),
+            EditorTab::Components => draw_components_content(ui, self.component_types),
+        }
+    }
+
+    fn closeable(&mut self, _tab: &mut Self::Tab) -> bool {
+        true
+    }
+}
