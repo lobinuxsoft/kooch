@@ -10,13 +10,25 @@ use crate::state::{
 };
 
 pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo> {
-    use ome_ecs::hierarchy::Parent;
+    use glam::Quat;
+    use ome_ecs::hierarchy::{GlobalTransform, Parent};
     use std::collections::HashMap;
 
     let Some(archetypes) = resources.get::<ArchetypeRegistry>() else {
         return Vec::new();
     };
     let components = resources.get::<ComponentRegistry>();
+
+    // Collect world-space rotations from GlobalTransform once so the
+    // Inspector's World rotation display mode has a lookup table.
+    let mut global_rotations: HashMap<ome_ecs::Entity, Quat> = HashMap::new();
+    if let Some(registry) = components.as_ref()
+        && let Some(gt_storage) = registry.get_cpu::<GlobalTransform>()
+    {
+        for (entity, gt) in gt_storage.iter() {
+            global_rotations.insert(*entity, gt.rotation());
+        }
+    }
 
     // First pass: gather all entities with their components.
     let mut flat: Vec<EntityDisplayInfo> = Vec::new();
@@ -72,20 +84,24 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                 parent: None,
                 children: Vec::new(),
                 depth: 0,
+                global_rotation: global_rotations.get(&entity).copied(),
+                parent_global_rotation: None,
             });
         }
     }
 
     // Second pass: populate parent/children from hierarchy components.
-    if let Some(registry) = components.as_ref() {
-        if let Some(parent_storage) = registry.get_cpu::<Parent>() {
-            for (child_entity, parent_comp) in parent_storage.iter() {
-                if let Some(&child_idx) = entity_idx_map.get(child_entity) {
-                    flat[child_idx].parent = Some(parent_comp.entity);
-                }
-                if let Some(&parent_idx) = entity_idx_map.get(&parent_comp.entity) {
-                    flat[parent_idx].children.push(*child_entity);
-                }
+    if let Some(registry) = components.as_ref()
+        && let Some(parent_storage) = registry.get_cpu::<Parent>()
+    {
+        for (child_entity, parent_comp) in parent_storage.iter() {
+            if let Some(&child_idx) = entity_idx_map.get(child_entity) {
+                flat[child_idx].parent = Some(parent_comp.entity);
+                flat[child_idx].parent_global_rotation =
+                    global_rotations.get(&parent_comp.entity).copied();
+            }
+            if let Some(&parent_idx) = entity_idx_map.get(&parent_comp.entity) {
+                flat[parent_idx].children.push(*child_entity);
             }
         }
     }
@@ -124,6 +140,8 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                     parent: None,
                     children: Vec::new(),
                     depth: 0,
+                    global_rotation: None,
+                    parent_global_rotation: None,
                 },
             );
             info.depth = depth;

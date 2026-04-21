@@ -7,15 +7,43 @@ use glam::{EulerRot, Quat, Vec3};
 
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::{FieldChoice, FieldMeta, InspectorVisibility, ReflectValue};
+use ome_ecs::transform::Transform;
 
 use crate::actions::EditorAction;
 use crate::icons;
-use crate::state::{ComponentDisplayInfo, EntityDisplayInfo, EulerCacheKey, ReflectedTypeInfo};
+use crate::state::{
+    ComponentDisplayInfo, EntityDisplayInfo, EulerCacheKey, ReflectedTypeInfo,
+    RotationDisplayMode,
+};
 
 /// Threshold for considering a cached Euler still in sync with the
 /// underlying quaternion. Compared against `|dot(actual, reconstructed)|`
 /// since `q` and `-q` represent the same rotation.
 const EULER_CACHE_EPS: f32 = 1.0e-4;
+
+/// Context for editing the `Transform.rotation` field in either Local
+/// or World display mode. The World path uses `self_global` for display
+/// and `parent_global` to convert edits back to local space.
+#[derive(Clone, Copy)]
+struct RotationContext {
+    mode: RotationDisplayMode,
+    /// World-space rotation of the entity itself, from `GlobalTransform`.
+    self_global: Option<Quat>,
+    /// Parent's world-space rotation, if the entity has a parent with
+    /// a `GlobalTransform`. `None` means treat the parent as identity
+    /// (root entity or parent without propagated global transform).
+    parent_global: Option<Quat>,
+}
+
+impl RotationContext {
+    fn local_only() -> Self {
+        Self {
+            mode: RotationDisplayMode::Local,
+            self_global: None,
+            parent_global: None,
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Multi-entity types
@@ -179,9 +207,18 @@ pub(crate) fn draw_inspector_content(
     reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
     euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
+    rotation_display_mode: &mut RotationDisplayMode,
 ) {
     // Evict cache entries for entities that are no longer selected.
-    euler_cache.retain(|(entity, _, _), _| selected.contains(entity));
+    euler_cache.retain(|(entity, _, _, _), _| selected.contains(entity));
+
+    // Global rotation display toggle (affects Transform.rotation fields).
+    ui.horizontal(|ui| {
+        ui.label("Rotation:");
+        ui.selectable_value(rotation_display_mode, RotationDisplayMode::Local, "Local");
+        ui.selectable_value(rotation_display_mode, RotationDisplayMode::World, "World");
+    });
+    ui.separator();
 
     if selected.is_empty() {
         ui.weak("No entity selected");
@@ -267,6 +304,12 @@ pub(crate) fn draw_inspector_content(
         return;
     }
 
+    let rotation_ctx = RotationContext {
+        mode: *rotation_display_mode,
+        self_global: info.global_rotation,
+        parent_global: info.parent_global_rotation,
+    };
+
     egui::ScrollArea::vertical().show(ui, |ui| {
         for comp in &visible_components {
             let is_read_only = comp.visibility == InspectorVisibility::ReadOnly;
@@ -314,6 +357,7 @@ pub(crate) fn draw_inspector_content(
                             fields,
                             comp.field_metas,
                             euler_cache,
+                            rotation_ctx,
                             actions,
                         );
                     }
@@ -548,7 +592,10 @@ fn draw_multi_reflected_fields(
 /// Renders editable widgets for reflected component fields.
 ///
 /// `euler_cache` lets the Quat path preserve editor-side Euler state to
-/// avoid gimbal lock from a per-frame Quat→Euler→Quat round-trip. See #202.
+/// avoid gimbal lock from a per-frame Quat→Euler→Quat round-trip (#202).
+/// `rotation_ctx` is only consulted for `Transform.rotation` so the
+/// Inspector can toggle Local vs World display (#205). Other Quat fields
+/// always edit in local space.
 fn draw_reflected_fields(
     ui: &mut egui::Ui,
     entity: Entity,
@@ -556,6 +603,7 @@ fn draw_reflected_fields(
     fields: &[(String, ReflectValue)],
     field_metas: Option<&'static [FieldMeta]>,
     euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
+    rotation_ctx: RotationContext,
     actions: &mut Vec<EditorAction>,
 ) {
     egui::Grid::new(format!("fields_{:?}_{}", type_id, entity.index()))
@@ -567,7 +615,12 @@ fn draw_reflected_fields(
                 let choices = choices_for(field_metas, name);
                 let new_value = match value {
                     ReflectValue::Quat(q) => {
-                        draw_quat_with_cache(ui, entity, type_id, name, *q, euler_cache)
+                        let ctx = if is_transform_rotation(type_id, name) {
+                            rotation_ctx
+                        } else {
+                            RotationContext::local_only()
+                        };
+                        draw_quat_with_cache(ui, entity, type_id, name, *q, ctx, euler_cache)
                     }
                     _ => draw_value_widget(ui, value, name, choices),
                 };
@@ -584,23 +637,45 @@ fn draw_reflected_fields(
         });
 }
 
+/// Identifies the specific `Transform.rotation` field, which is the
+/// only Quat with a meaningful world-space interpretation.
+fn is_transform_rotation(type_id: TypeId, field_name: &str) -> bool {
+    type_id == TypeId::of::<Transform>() && field_name == "rotation"
+}
+
 /// Renders a Quat field as XYZ Euler degrees with a persistent cache so
 /// crossing ±90° on any axis does not snap the other two (gimbal lock
 /// from a per-frame Quat→Euler→Quat round-trip). See #202.
 ///
-/// The cache is refreshed only when the actual Quat differs from the
-/// reconstruction of the cached Euler within [`EULER_CACHE_EPS`], i.e.
-/// when the rotation was modified externally (scripting, undo, physics).
+/// When `context.mode == World` and `context.self_global` is available,
+/// the field is displayed in world space; user edits are converted back
+/// to local space via `parent_global.inverse()` before being returned.
+/// The returned `ReflectValue::Quat` is always the local rotation so the
+/// Transform storage never changes representation. See #205.
+///
+/// The cache is refreshed only when the displayed quaternion (local or
+/// world depending on mode) differs from the reconstruction of the
+/// cached Euler within [`EULER_CACHE_EPS`], i.e. when the rotation was
+/// modified externally (scripting, undo, physics).
 fn draw_quat_with_cache(
     ui: &mut egui::Ui,
     entity: Entity,
     type_id: TypeId,
     field_name: &str,
-    actual: Quat,
+    local_quat: Quat,
+    context: RotationContext,
     euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
 ) -> Option<ReflectValue> {
-    let key: EulerCacheKey = (entity, type_id, field_name.to_owned());
-    let euler = fresh_cached_euler(euler_cache, &key, actual);
+    let mode = context.mode;
+    // In World mode, display the entity's world-space rotation; fall
+    // back to the stored local if the GlobalTransform is not available.
+    let display_quat = match mode {
+        RotationDisplayMode::Local => local_quat,
+        RotationDisplayMode::World => context.self_global.unwrap_or(local_quat),
+    };
+
+    let key: EulerCacheKey = (entity, type_id, field_name.to_owned(), mode);
+    let euler = fresh_cached_euler(euler_cache, &key, display_quat);
     let mut dx = euler.x.to_degrees();
     let mut dy = euler.y.to_degrees();
     let mut dz = euler.z.to_degrees();
@@ -624,8 +699,20 @@ fn draw_quat_with_cache(
     }
     let new_euler = Vec3::new(dx.to_radians(), dy.to_radians(), dz.to_radians());
     euler_cache.insert(key, new_euler);
-    let new_quat = Quat::from_euler(EulerRot::XYZ, new_euler.x, new_euler.y, new_euler.z);
-    Some(ReflectValue::Quat(new_quat))
+    let new_display_quat =
+        Quat::from_euler(EulerRot::XYZ, new_euler.x, new_euler.y, new_euler.z);
+    // Convert the edited display-space quaternion back to local space so
+    // the Transform storage remains authoritative.
+    let new_local = match mode {
+        RotationDisplayMode::Local => new_display_quat,
+        RotationDisplayMode::World => {
+            let parent_inv = context
+                .parent_global
+                .map_or(Quat::IDENTITY, |p| p.inverse());
+            parent_inv * new_display_quat
+        }
+    };
+    Some(ReflectValue::Quat(new_local))
 }
 
 /// Returns the Euler angles the inspector should display for `actual`,
