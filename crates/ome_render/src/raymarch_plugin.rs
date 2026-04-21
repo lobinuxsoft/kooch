@@ -1,7 +1,8 @@
 //! Plugin that installs the ray-marching renderer.
 //!
-//! Reads the active `PerspectiveCamera + Transform` and all visible
-//! `SdfSphere + Transform` entities each frame, uploads them to GPU
+//! Reads the active `PerspectiveCamera + Transform` and every visible
+//! SDF shape entity (Sphere, Box, Capsule, Cylinder, Torus, Plane) with
+//! an optional `SdfBlend` component each frame, uploads them to GPU
 //! buffers, and draws a fullscreen pass.
 
 use glam::Vec4;

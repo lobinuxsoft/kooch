@@ -9,7 +9,7 @@ use winit::window::Window;
 
 use ome_core::raw_event::RawEventHandler;
 use ome_ecs::entity::Entity;
-use ome_ecs::reflect::{InspectorVisibility, ReflectValue};
+use ome_ecs::reflect::{FieldMeta, InspectorVisibility, ReflectValue};
 
 /// Shared egui-winit state for event forwarding between the
 /// window event handler and the render system.
@@ -120,6 +120,10 @@ pub(crate) struct ComponentDisplayInfo {
     pub(crate) type_id: TypeId,
     pub(crate) short_name: String,
     pub(crate) fields: Option<Vec<(String, ReflectValue)>>,
+    /// Static field metadata parallel to `fields`. Used to pick widget
+    /// kinds (e.g. dropdown for `choices`) without re-querying the
+    /// ComponentRegistry during the UI pass.
+    pub(crate) field_metas: Option<&'static [FieldMeta]>,
     pub(crate) visibility: InspectorVisibility,
 }
 

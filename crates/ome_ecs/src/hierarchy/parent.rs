@@ -23,6 +23,7 @@ impl Reflect for Parent {
             name: "entity",
             type_name: "Entity",
             kind: FieldKind::String,
+            choices: &[],
         }];
         FIELDS
     }

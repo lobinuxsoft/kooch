@@ -36,6 +36,7 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                         .unwrap_or(full_name)
                         .to_owned();
                     let fields = registry.reflect_get_fields(tid, entity);
+                    let field_metas = registry.reflect_field_metas(tid);
                     let visibility = registry
                         .reflect_inspector_visibility(tid)
                         .unwrap_or(ome_ecs::reflect::InspectorVisibility::Editable);
@@ -43,6 +44,7 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                         type_id: *tid,
                         short_name,
                         fields,
+                        field_metas,
                         visibility,
                     })
                 })
