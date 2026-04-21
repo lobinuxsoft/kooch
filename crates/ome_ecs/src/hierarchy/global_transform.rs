@@ -1,6 +1,6 @@
 //! GlobalTransform component — world-space transform matrix.
 
-use glam::Mat4;
+use glam::{Mat4, Quat, Vec3};
 
 use crate::component::Component;
 use crate::reflect::{
@@ -17,6 +17,23 @@ use crate::reflect::{
 #[derive(Debug, Clone, Copy)]
 pub struct GlobalTransform {
     pub matrix: Mat4,
+}
+
+impl GlobalTransform {
+    /// Returns the world-space translation extracted from the matrix.
+    pub fn translation(&self) -> Vec3 {
+        self.matrix.to_scale_rotation_translation().2
+    }
+
+    /// Returns the world-space rotation extracted from the matrix.
+    pub fn rotation(&self) -> Quat {
+        self.matrix.to_scale_rotation_translation().1
+    }
+
+    /// Returns the world-space scale extracted from the matrix.
+    pub fn scale(&self) -> Vec3 {
+        self.matrix.to_scale_rotation_translation().0
+    }
 }
 
 impl Component for GlobalTransform {}
