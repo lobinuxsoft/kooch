@@ -4,7 +4,7 @@ use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
 use ome_ecs::entity::Entity;
-use ome_ecs::reflect::{InspectorVisibility, ReflectValue};
+use ome_ecs::reflect::{FieldChoice, FieldMeta, InspectorVisibility, ReflectValue};
 
 use crate::actions::EditorAction;
 use crate::icons;
@@ -32,6 +32,9 @@ struct MultiComponentInfo {
     total_count: usize,
     /// Merged fields (`None` = no reflection).
     fields: Option<Vec<(String, MultiFieldValue)>>,
+    /// Static field metadata parallel to `fields`. Shared across entities
+    /// because the reflection layout is the same per component type.
+    field_metas: Option<&'static [FieldMeta]>,
     visibility: InspectorVisibility,
 }
 
@@ -61,6 +64,7 @@ fn gather_multi_component_info(
         short_name: String,
         count: usize,
         visibility: InspectorVisibility,
+        field_metas: Option<&'static [FieldMeta]>,
     }
     let mut comp_map: HashMap<TypeId, CompMeta> = HashMap::new();
 
@@ -70,6 +74,7 @@ fn gather_multi_component_info(
                 short_name: comp.short_name.clone(),
                 count: 0,
                 visibility: comp.visibility,
+                field_metas: comp.field_metas,
             });
             entry.count += 1;
         }
@@ -131,6 +136,7 @@ fn gather_multi_component_info(
             present_count: meta.count,
             total_count,
             fields,
+            field_metas: meta.field_metas,
             visibility: meta.visibility,
         });
     }
@@ -282,9 +288,22 @@ pub(crate) fn draw_inspector_content(
                     if fields.is_empty() {
                         ui.weak("(no fields)");
                     } else if is_read_only {
-                        draw_readonly_fields(ui, entity, comp.type_id, fields);
+                        draw_readonly_fields(
+                            ui,
+                            entity,
+                            comp.type_id,
+                            fields,
+                            comp.field_metas,
+                        );
                     } else {
-                        draw_reflected_fields(ui, entity, comp.type_id, fields, actions);
+                        draw_reflected_fields(
+                            ui,
+                            entity,
+                            comp.type_id,
+                            fields,
+                            comp.field_metas,
+                            actions,
+                        );
                     }
                 } else {
                     ui.weak("(no reflection)");
@@ -435,6 +454,7 @@ fn draw_multi_entity_inspector(
                             ui,
                             comp.type_id,
                             fields,
+                            comp.field_metas,
                             &targets,
                             is_read_only,
                             actions,
@@ -457,6 +477,7 @@ fn draw_multi_reflected_fields(
     ui: &mut egui::Ui,
     type_id: TypeId,
     fields: &[(String, MultiFieldValue)],
+    field_metas: Option<&'static [FieldMeta]>,
     targets: &[Entity],
     read_only: bool,
     actions: &mut Vec<EditorAction>,
@@ -466,12 +487,15 @@ fn draw_multi_reflected_fields(
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
             for (name, multi_val) in fields {
+                let choices = choices_for(field_metas, name);
                 match multi_val {
                     MultiFieldValue::Uniform(value) => {
                         ui.label(name);
                         if read_only {
-                            draw_readonly_value(ui, value);
-                        } else if let Some(new_value) = draw_value_widget(ui, value, name) {
+                            draw_readonly_value(ui, value, choices);
+                        } else if let Some(new_value) =
+                            draw_value_widget(ui, value, name, choices)
+                        {
                             for &entity in targets {
                                 actions.push(EditorAction::SetField {
                                     entity,
@@ -485,8 +509,10 @@ fn draw_multi_reflected_fields(
                     MultiFieldValue::Mixed(base) => {
                         ui.label(format!("{name} \u{2014}"));
                         if read_only {
-                            draw_readonly_value(ui, base);
-                        } else if let Some(new_value) = draw_value_widget(ui, base, name) {
+                            draw_readonly_value(ui, base, choices);
+                        } else if let Some(new_value) =
+                            draw_value_widget(ui, base, name, choices)
+                        {
                             for &entity in targets {
                                 actions.push(EditorAction::SetField {
                                     entity,
@@ -513,6 +539,7 @@ fn draw_reflected_fields(
     entity: Entity,
     type_id: TypeId,
     fields: &[(String, ReflectValue)],
+    field_metas: Option<&'static [FieldMeta]>,
     actions: &mut Vec<EditorAction>,
 ) {
     egui::Grid::new(format!("fields_{:?}_{}", type_id, entity.index()))
@@ -521,7 +548,8 @@ fn draw_reflected_fields(
         .show(ui, |ui| {
             for (name, value) in fields {
                 ui.label(name);
-                if let Some(new_value) = draw_value_widget(ui, value, name) {
+                let choices = choices_for(field_metas, name);
+                if let Some(new_value) = draw_value_widget(ui, value, name, choices) {
                     actions.push(EditorAction::SetField {
                         entity,
                         type_id,
@@ -534,12 +562,25 @@ fn draw_reflected_fields(
         });
 }
 
+/// Looks up the `choices` slice for a field by name. Returns an empty
+/// slice if the metadata is missing or the field has no `choices` hint.
+fn choices_for(
+    field_metas: Option<&'static [FieldMeta]>,
+    name: &str,
+) -> &'static [FieldChoice] {
+    field_metas
+        .and_then(|metas| metas.iter().find(|m| m.name == name))
+        .map(|m| m.choices)
+        .unwrap_or(&[])
+}
+
 /// Renders read-only display for component fields.
 fn draw_readonly_fields(
     ui: &mut egui::Ui,
     entity: Entity,
     type_id: TypeId,
     fields: &[(String, ReflectValue)],
+    field_metas: Option<&'static [FieldMeta]>,
 ) {
     egui::Grid::new(format!("ro_fields_{:?}_{}", type_id, entity.index()))
         .num_columns(2)
@@ -547,15 +588,109 @@ fn draw_readonly_fields(
         .show(ui, |ui| {
             for (name, value) in fields {
                 ui.label(name);
-                draw_readonly_value(ui, value);
+                let choices = choices_for(field_metas, name);
+                draw_readonly_value(ui, value, choices);
                 ui.end_row();
             }
         });
 }
 
-/// Renders a read-only display for a single value.
-fn draw_readonly_value(ui: &mut egui::Ui, value: &ReflectValue) {
-    ui.weak(format!("{value}"));
+/// Renders a read-only display for a single value. If the field has a
+/// `choices` hint, prefer the matching label over the raw numeric value.
+fn draw_readonly_value(
+    ui: &mut egui::Ui,
+    value: &ReflectValue,
+    choices: &'static [FieldChoice],
+) {
+    if let Some(label) = choice_label_for(value, choices) {
+        ui.weak(label);
+    } else {
+        ui.weak(format!("{value}"));
+    }
+}
+
+/// Returns the `choices` label for an integer-valued field, if any.
+fn choice_label_for(
+    value: &ReflectValue,
+    choices: &'static [FieldChoice],
+) -> Option<&'static str> {
+    let current = reflect_value_as_i64(value)?;
+    choices
+        .iter()
+        .find(|c| c.value == current)
+        .map(|c| c.label)
+}
+
+/// Converts an integer [`ReflectValue`] into `i64` for dropdown matching.
+fn reflect_value_as_i64(value: &ReflectValue) -> Option<i64> {
+    match value {
+        ReflectValue::U8(v) => Some(*v as i64),
+        ReflectValue::U16(v) => Some(*v as i64),
+        ReflectValue::U32(v) => Some(*v as i64),
+        ReflectValue::U64(v) => Some(*v as i64),
+        ReflectValue::I8(v) => Some(*v as i64),
+        ReflectValue::I16(v) => Some(*v as i64),
+        ReflectValue::I32(v) => Some(*v as i64),
+        ReflectValue::I64(v) => Some(*v),
+        _ => None,
+    }
+}
+
+/// Reconstructs an integer [`ReflectValue`] of the same kind as `template`
+/// from an `i64` value produced by the dropdown. Returns `None` for
+/// non-integer templates.
+fn reflect_value_from_i64(template: &ReflectValue, v: i64) -> Option<ReflectValue> {
+    match template {
+        ReflectValue::U8(_) => Some(ReflectValue::U8(v.clamp(0, u8::MAX as i64) as u8)),
+        ReflectValue::U16(_) => Some(ReflectValue::U16(v.clamp(0, u16::MAX as i64) as u16)),
+        ReflectValue::U32(_) => Some(ReflectValue::U32(v.clamp(0, u32::MAX as i64) as u32)),
+        ReflectValue::U64(_) => Some(ReflectValue::U64(v.max(0) as u64)),
+        ReflectValue::I8(_) => {
+            Some(ReflectValue::I8(v.clamp(i8::MIN as i64, i8::MAX as i64) as i8))
+        }
+        ReflectValue::I16(_) => Some(ReflectValue::I16(
+            v.clamp(i16::MIN as i64, i16::MAX as i64) as i16,
+        )),
+        ReflectValue::I32(_) => Some(ReflectValue::I32(
+            v.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+        )),
+        ReflectValue::I64(_) => Some(ReflectValue::I64(v)),
+        _ => None,
+    }
+}
+
+/// Renders a dropdown for an integer field with `choices` metadata.
+/// Returns `Some(new_value)` when the user picks a different entry.
+fn draw_choice_dropdown(
+    ui: &mut egui::Ui,
+    value: &ReflectValue,
+    choices: &'static [FieldChoice],
+    field_name: &str,
+) -> Option<ReflectValue> {
+    let current = reflect_value_as_i64(value)?;
+    let selected_label = choices
+        .iter()
+        .find(|c| c.value == current)
+        .map(|c| c.label)
+        .unwrap_or("(unknown)");
+    let mut picked: Option<i64> = None;
+    egui::ComboBox::from_id_salt(("choice_dropdown", field_name))
+        .selected_text(selected_label)
+        .show_ui(ui, |ui| {
+            for choice in choices {
+                if ui
+                    .selectable_label(choice.value == current, choice.label)
+                    .clicked()
+                {
+                    picked = Some(choice.value);
+                }
+            }
+        });
+    let new_val = picked?;
+    if new_val == current {
+        return None;
+    }
+    reflect_value_from_i64(value, new_val)
 }
 
 // ---------------------------------------------------------------------------
@@ -565,7 +700,18 @@ fn draw_readonly_value(ui: &mut egui::Ui, value: &ReflectValue) {
 /// Draws an editable widget for a single reflected value.
 /// Returns `Some(new_value)` if the user modified it.
 /// `field_name` is used to detect color fields and show a color picker.
-fn draw_value_widget(ui: &mut egui::Ui, value: &ReflectValue, field_name: &str) -> Option<ReflectValue> {
+/// `choices` renders integer fields as a dropdown when non-empty.
+fn draw_value_widget(
+    ui: &mut egui::Ui,
+    value: &ReflectValue,
+    field_name: &str,
+    choices: &'static [FieldChoice],
+) -> Option<ReflectValue> {
+    if !choices.is_empty()
+        && let Some(new_value) = draw_choice_dropdown(ui, value, choices, field_name)
+    {
+        return Some(new_value);
+    }
     match value {
         ReflectValue::F32(v) => {
             let mut val = *v;
