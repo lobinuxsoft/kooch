@@ -1,7 +1,7 @@
 // raymarch_main.wgsl — ray-march fragment shader.
 //
 // Concatenated at runtime AFTER `sdf_primitives.wgsl` from ome_sdf, so
-// the `sdf_*` functions are already in scope when this module is parsed.
+// the `sdf_*`, `transform_point`, and CSG helpers are already in scope.
 
 struct CameraUniforms {
     view: mat4x4<f32>,
@@ -19,13 +19,28 @@ struct RayMarchParams {
     _pad: f32,
 }
 
-struct SphereInstance {
-    center: vec3<f32>,
-    radius: f32,
+// Matches Rust `SdfInstance` byte-for-byte (80 bytes).
+// Field interpretation by type_tag:
+//   0 Sphere   — params.x = radius
+//   1 Box      — params.xyz = half_extents, params.w = rounding
+//   2 Capsule  — params.x = half_height, params.y = radius
+//   3 Cylinder — params.x = half_height, params.y = radius
+//   4 Torus    — params.x = major_radius, params.y = minor_radius
+//   5 Plane    — no params (normal = local Y+ via rotation)
+struct SdfInstance {
+    position: vec3<f32>,
+    type_tag: u32,
+    rotation: vec4<f32>,
+    scale: vec3<f32>,
+    _pad0: f32,
+    params: vec4<f32>,
+    blend_mode: u32,
+    blend_smoothness: f32,
+    _pad1: vec2<f32>,
 }
 
 struct SceneMeta {
-    sphere_count: u32,
+    instance_count: u32,
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
@@ -36,7 +51,7 @@ struct SceneMeta {
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> params: RayMarchParams;
 @group(1) @binding(0) var<uniform> scene_meta: SceneMeta;
-@group(1) @binding(1) var<storage, read> spheres: array<SphereInstance>;
+@group(1) @binding(1) var<storage, read> instances: array<SdfInstance>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -78,11 +93,67 @@ fn generate_ray(uv: vec2<f32>) -> Ray {
     return Ray(near_world, normalize(far_world - near_world));
 }
 
+// Evaluates the primitive selected by `type_tag` at local-space point
+// `local`. Returns the signed distance in local space; the caller is
+// responsible for rescaling it by the instance's scale factor.
+fn eval_primitive(local: vec3<f32>, inst: SdfInstance) -> f32 {
+    switch inst.type_tag {
+        case 0u: {
+            return sdf_sphere(local, inst.params.x);
+        }
+        case 1u: {
+            return sdf_rounded_box(local, inst.params.xyz, inst.params.w);
+        }
+        case 2u: {
+            return sdf_capsule_y(local, inst.params.x, inst.params.y);
+        }
+        case 3u: {
+            return sdf_capped_cylinder(local, inst.params.x, inst.params.y);
+        }
+        case 4u: {
+            return sdf_torus(local, inst.params.x, inst.params.y);
+        }
+        case 5u: {
+            return sdf_plane_y(local);
+        }
+        default: {
+            return 1e10;
+        }
+    }
+}
+
+// Applies `blend_mode` to combine the accumulated scene distance `acc`
+// with this instance's distance `d`. `k` is clamped to a small positive
+// value to keep the smooth operators well-defined.
+fn apply_blend(acc: f32, d: f32, blend_mode: u32, k_in: f32) -> f32 {
+    let k = max(k_in, 1e-5);
+    switch blend_mode {
+        case 1u: {
+            return sdf_smooth_union(acc, d, k);
+        }
+        case 2u: {
+            return sdf_smooth_intersection(acc, d, k);
+        }
+        case 3u: {
+            return sdf_smooth_subtraction(acc, d, k);
+        }
+        default: {
+            return sdf_union(acc, d);
+        }
+    }
+}
+
 fn eval_scene(p: vec3<f32>) -> f32 {
     var d = 1e10;
-    for (var i = 0u; i < scene_meta.sphere_count; i = i + 1u) {
-        let s = spheres[i];
-        d = sdf_union(d, sdf_sphere(p - s.center, s.radius));
+    let count = scene_meta.instance_count;
+    for (var i = 0u; i < count; i = i + 1u) {
+        let inst = instances[i];
+        // Conservative Lipschitz bound: use the smallest scale axis so
+        // the returned distance never overshoots under non-uniform scale.
+        let s = max(min(inst.scale.x, min(inst.scale.y, inst.scale.z)), 1e-5);
+        let local = transform_point(p, inst.position, inst.rotation) / s;
+        let pd = eval_primitive(local, inst) * s;
+        d = apply_blend(d, pd, inst.blend_mode, inst.blend_smoothness);
     }
     return d;
 }
