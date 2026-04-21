@@ -6,6 +6,7 @@ use ome_core::event::{AppExit, Events};
 use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
+use ome_render::RayMarchRenderer;
 
 use crate::actions::{apply_actions, EditorAction};
 use crate::launch_screen::{self, LaunchAction};
@@ -21,6 +22,7 @@ use crate::state::{
 use crate::systems::present::present_editor_frame;
 use crate::systems::tab_viewer::EditorTabViewer;
 use crate::undo::UndoStack;
+use crate::viewport::{render_viewport, ViewportTarget};
 
 /// ECS data gathered once per frame, before the egui context runs.
 struct FrameDisplayData {
@@ -97,6 +99,14 @@ fn poll_launcher(resources: &mut Resources) -> bool {
     launched
 }
 
+/// Handles to the viewport resource consumed by the UI: a read-only
+/// texture id for drawing, and a slot where the View panel writes the
+/// desired backing texture size for the next frame.
+struct ViewportUi<'a> {
+    texture_id: egui::TextureId,
+    request: &'a mut Option<(u32, u32)>,
+}
+
 /// Runs the egui UI for one frame. Produces the tessellation input and the
 /// editor actions queued by widgets.
 fn run_editor_ui(
@@ -106,10 +116,15 @@ fn run_editor_ui(
     project_loaded: bool,
     data: &FrameDisplayData,
     undo: &UndoInfo,
+    viewport: ViewportUi<'_>,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut last_clicked_index = overlay.last_clicked_index.take();
     let mut actions: Vec<EditorAction> = Vec::new();
+    let ViewportUi {
+        texture_id,
+        request,
+    } = viewport;
 
     let full_output = overlay.ctx.run(raw_input, |ctx| {
         if project_loaded {
@@ -135,6 +150,8 @@ fn run_editor_ui(
                 archetype_count: data.archetype_count,
                 active_archetype_count: data.active_archetype_count,
                 last_clicked_index: &mut last_clicked_index,
+                viewport_texture_id: texture_id,
+                viewport_request: request,
             };
 
             DockArea::new(&mut overlay.dock_state)
@@ -229,10 +246,20 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut overlay = resources
         .remove::<EditorOverlay>()
         .expect("EditorOverlay not found");
+    let mut viewport = resources
+        .remove::<ViewportTarget>()
+        .expect("ViewportTarget not found");
+    let mut raymarch = resources
+        .remove::<RayMarchRenderer>()
+        .expect("RayMarchRenderer not found");
     let mut project_state = resources.remove::<ProjectState>();
     let mut undo_stack = resources
         .remove::<UndoStack>()
         .unwrap_or_else(UndoStack::new);
+
+    // Apply the previous frame's size request before the UI runs so the
+    // texture id stays stable through the entire egui pass.
+    viewport.resize_if_needed(gpu.device(), &mut overlay.renderer);
 
     let undo = UndoInfo {
         can_undo: undo_stack.can_undo(),
@@ -247,6 +274,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         state.take_egui_input(&window)
     };
 
+    let mut viewport_request: Option<(u32, u32)> = None;
     let (full_output, actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
@@ -254,12 +282,24 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         project_loaded,
         &display_data,
         &undo,
+        ViewportUi {
+            texture_id: viewport.texture_id(),
+            request: &mut viewport_request,
+        },
     );
+
+    if let Some(size) = viewport_request {
+        viewport.request_size(size);
+    }
+
+    render_viewport(&gpu, &mut raymarch, &viewport, resources, project_loaded);
 
     let _presented = present_editor_frame(&gpu, &mut overlay, &window, full_output);
 
     resources.insert(gpu);
     resources.insert(overlay);
+    resources.insert(viewport);
+    resources.insert(raymarch);
     if let Some(ps) = project_state {
         resources.insert(ps);
     }

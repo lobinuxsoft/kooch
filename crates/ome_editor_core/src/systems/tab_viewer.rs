@@ -25,6 +25,8 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) archetype_count: usize,
     pub(crate) active_archetype_count: usize,
     pub(crate) last_clicked_index: &'a mut Option<usize>,
+    pub(crate) viewport_texture_id: egui::TextureId,
+    pub(crate) viewport_request: &'a mut Option<(u32, u32)>,
 }
 
 impl<'a> TabViewer for EditorTabViewer<'a> {
@@ -47,7 +49,9 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.active_archetype_count,
                 self.last_clicked_index,
             ),
-            EditorTab::View => draw_view_content(ui),
+            EditorTab::View => {
+                draw_view_content(ui, self.viewport_texture_id, self.viewport_request)
+            }
             EditorTab::Inspector => draw_inspector_content(
                 ui,
                 self.entities,
