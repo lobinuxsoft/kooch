@@ -56,6 +56,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         dock_state: crate::state::default_dock_state(),
         selected_entities: Vec::new(),
         last_clicked_index: None,
+        rotation_euler_cache: std::collections::HashMap::new(),
     };
 
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });

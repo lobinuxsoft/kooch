@@ -1,6 +1,9 @@
 //! egui_dock TabViewer implementation for the editor dock area.
 
+use std::collections::HashMap;
+
 use egui_dock::TabViewer;
+use glam::Vec3;
 
 use ome_ecs::entity::Entity;
 
@@ -11,7 +14,8 @@ use crate::panels::inspector::draw_inspector_content;
 use crate::panels::view::draw_view_content;
 use crate::panels::world::draw_world_content;
 use crate::state::{
-    ArchetypeDisplayInfo, ComponentTypeInfo, EditorTab, EntityDisplayInfo, ReflectedTypeInfo,
+    ArchetypeDisplayInfo, ComponentTypeInfo, EditorTab, EntityDisplayInfo, EulerCacheKey,
+    ReflectedTypeInfo,
 };
 
 pub(crate) struct EditorTabViewer<'a> {
@@ -27,6 +31,7 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) last_clicked_index: &'a mut Option<usize>,
     pub(crate) viewport_texture_id: egui::TextureId,
     pub(crate) viewport_request: &'a mut Option<(u32, u32)>,
+    pub(crate) rotation_euler_cache: &'a mut HashMap<EulerCacheKey, Vec3>,
 }
 
 impl<'a> TabViewer for EditorTabViewer<'a> {
@@ -58,6 +63,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.selected,
                 self.reflected_types,
                 self.actions,
+                self.rotation_euler_cache,
             ),
             EditorTab::Archetypes => draw_archetypes_content(ui, self.archetypes),
             EditorTab::Components => draw_components_content(ui, self.component_types),
