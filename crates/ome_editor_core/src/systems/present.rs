@@ -56,9 +56,9 @@ pub(crate) fn present_editor_frame(
     );
 
     let output = match gpu.surface().get_current_texture() {
-        Ok(tex) => tex,
-        Err(e) => {
-            tracing::warn!("Failed to acquire surface texture: {e}");
+        wgpu::CurrentSurfaceTexture::Success(tex) | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
+        status => {
+            tracing::warn!(?status, "Failed to acquire surface texture");
             return false;
         }
     };
@@ -71,6 +71,7 @@ pub(crate) fn present_editor_frame(
             label: Some("egui_render_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
+                depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -83,7 +84,9 @@ pub(crate) fn present_editor_frame(
                 },
             })],
             depth_stencil_attachment: None,
-            ..Default::default()
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         let mut render_pass = render_pass.forget_lifetime();

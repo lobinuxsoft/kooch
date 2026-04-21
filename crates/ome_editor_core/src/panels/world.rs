@@ -299,8 +299,13 @@ pub(crate) fn draw_world_content(
                     || resp.has_focus()
                 {
                     let r = rect.expand(visuals.expansion);
-                    ui.painter()
-                        .rect(r, visuals.rounding, visuals.bg_fill, visuals.bg_stroke);
+                    ui.painter().rect(
+                        r,
+                        visuals.corner_radius,
+                        visuals.bg_fill,
+                        visuals.bg_stroke,
+                        egui::StrokeKind::Inside,
+                    );
                 }
                 let mut text_color = visuals.text_color();
                 if being_dragged {

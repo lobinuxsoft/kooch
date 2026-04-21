@@ -16,4 +16,4 @@ bytemuck.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-naga = { version = "23", features = ["wgsl-in"] }
+naga = { version = "29", features = ["wgsl-in"] }
