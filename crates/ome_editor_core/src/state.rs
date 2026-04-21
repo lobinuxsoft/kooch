@@ -1,9 +1,11 @@
 //! Editor overlay types and state.
 
 use std::any::{Any, TypeId};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use egui_dock::{DockState, NodeIndex};
+use glam::Vec3;
 use winit::event::WindowEvent;
 use winit::window::Window;
 
@@ -79,6 +81,13 @@ pub(crate) fn dock_has_tab(dock_state: &DockState<EditorTab>, tab: &EditorTab) -
 // Editor overlay resource
 // ---------------------------------------------------------------------------
 
+/// Cache key for the editor's per-field Euler rotation state.
+///
+/// Scoped by `(Entity, component TypeId, field name)` so different Quat
+/// fields on the same entity — or the same field across entities — do
+/// not collide.
+pub(crate) type EulerCacheKey = (Entity, TypeId, String);
+
 /// Editor overlay state, stored as a resource.
 ///
 /// Holds the egui context, winit integration state, wgpu renderer,
@@ -91,6 +100,11 @@ pub struct EditorOverlay {
     pub(crate) selected_entities: Vec<Entity>,
     /// Anchor index for Shift+Click range selection in the World panel.
     pub(crate) last_clicked_index: Option<usize>,
+    /// Per-field Euler angle cache (radians, XYZ convention) for Quat
+    /// rotation fields. Kept to avoid a `Quat → Euler → Quat` round-trip
+    /// every frame, which introduces gimbal lock when crossing ±90° on
+    /// any axis. See issue #202.
+    pub(crate) rotation_euler_cache: HashMap<EulerCacheKey, Vec3>,
 }
 
 /// Forwards raw winit events to egui for input processing.

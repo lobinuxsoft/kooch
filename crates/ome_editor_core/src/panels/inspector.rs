@@ -3,12 +3,19 @@
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
+use glam::{EulerRot, Quat, Vec3};
+
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::{FieldChoice, FieldMeta, InspectorVisibility, ReflectValue};
 
 use crate::actions::EditorAction;
 use crate::icons;
-use crate::state::{ComponentDisplayInfo, EntityDisplayInfo, ReflectedTypeInfo};
+use crate::state::{ComponentDisplayInfo, EntityDisplayInfo, EulerCacheKey, ReflectedTypeInfo};
+
+/// Threshold for considering a cached Euler still in sync with the
+/// underlying quaternion. Compared against `|dot(actual, reconstructed)|`
+/// since `q` and `-q` represent the same rotation.
+const EULER_CACHE_EPS: f32 = 1.0e-4;
 
 // ---------------------------------------------------------------------------
 // Multi-entity types
@@ -171,7 +178,11 @@ pub(crate) fn draw_inspector_content(
     selected: &[Entity],
     reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
+    euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
 ) {
+    // Evict cache entries for entities that are no longer selected.
+    euler_cache.retain(|(entity, _, _), _| selected.contains(entity));
+
     if selected.is_empty() {
         ui.weak("No entity selected");
         return;
@@ -302,6 +313,7 @@ pub(crate) fn draw_inspector_content(
                             comp.type_id,
                             fields,
                             comp.field_metas,
+                            euler_cache,
                             actions,
                         );
                     }
@@ -534,12 +546,16 @@ fn draw_multi_reflected_fields(
 // ---------------------------------------------------------------------------
 
 /// Renders editable widgets for reflected component fields.
+///
+/// `euler_cache` lets the Quat path preserve editor-side Euler state to
+/// avoid gimbal lock from a per-frame Quat→Euler→Quat round-trip. See #202.
 fn draw_reflected_fields(
     ui: &mut egui::Ui,
     entity: Entity,
     type_id: TypeId,
     fields: &[(String, ReflectValue)],
     field_metas: Option<&'static [FieldMeta]>,
+    euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
     actions: &mut Vec<EditorAction>,
 ) {
     egui::Grid::new(format!("fields_{:?}_{}", type_id, entity.index()))
@@ -549,7 +565,13 @@ fn draw_reflected_fields(
             for (name, value) in fields {
                 ui.label(name);
                 let choices = choices_for(field_metas, name);
-                if let Some(new_value) = draw_value_widget(ui, value, name, choices) {
+                let new_value = match value {
+                    ReflectValue::Quat(q) => {
+                        draw_quat_with_cache(ui, entity, type_id, name, *q, euler_cache)
+                    }
+                    _ => draw_value_widget(ui, value, name, choices),
+                };
+                if let Some(new_value) = new_value {
                     actions.push(EditorAction::SetField {
                         entity,
                         type_id,
@@ -560,6 +582,70 @@ fn draw_reflected_fields(
                 ui.end_row();
             }
         });
+}
+
+/// Renders a Quat field as XYZ Euler degrees with a persistent cache so
+/// crossing ±90° on any axis does not snap the other two (gimbal lock
+/// from a per-frame Quat→Euler→Quat round-trip). See #202.
+///
+/// The cache is refreshed only when the actual Quat differs from the
+/// reconstruction of the cached Euler within [`EULER_CACHE_EPS`], i.e.
+/// when the rotation was modified externally (scripting, undo, physics).
+fn draw_quat_with_cache(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    type_id: TypeId,
+    field_name: &str,
+    actual: Quat,
+    euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
+) -> Option<ReflectValue> {
+    let key: EulerCacheKey = (entity, type_id, field_name.to_owned());
+    let euler = fresh_cached_euler(euler_cache, &key, actual);
+    let mut dx = euler.x.to_degrees();
+    let mut dy = euler.y.to_degrees();
+    let mut dz = euler.z.to_degrees();
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label("x");
+        changed |= ui
+            .add(egui::DragValue::new(&mut dx).speed(0.5).suffix("\u{00b0}"))
+            .changed();
+        ui.label("y");
+        changed |= ui
+            .add(egui::DragValue::new(&mut dy).speed(0.5).suffix("\u{00b0}"))
+            .changed();
+        ui.label("z");
+        changed |= ui
+            .add(egui::DragValue::new(&mut dz).speed(0.5).suffix("\u{00b0}"))
+            .changed();
+    });
+    if !changed {
+        return None;
+    }
+    let new_euler = Vec3::new(dx.to_radians(), dy.to_radians(), dz.to_radians());
+    euler_cache.insert(key, new_euler);
+    let new_quat = Quat::from_euler(EulerRot::XYZ, new_euler.x, new_euler.y, new_euler.z);
+    Some(ReflectValue::Quat(new_quat))
+}
+
+/// Returns the Euler angles the inspector should display for `actual`,
+/// refreshing the cache when the underlying quaternion changed outside
+/// the editor.
+fn fresh_cached_euler(
+    euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
+    key: &EulerCacheKey,
+    actual: Quat,
+) -> Vec3 {
+    if let Some(cached) = euler_cache.get(key).copied() {
+        let reconstructed = Quat::from_euler(EulerRot::XYZ, cached.x, cached.y, cached.z);
+        if actual.dot(reconstructed).abs() > 1.0 - EULER_CACHE_EPS {
+            return cached;
+        }
+    }
+    let (x, y, z) = actual.to_euler(EulerRot::XYZ);
+    let euler = Vec3::new(x, y, z);
+    euler_cache.insert(key.clone(), euler);
+    euler
 }
 
 /// Looks up the `choices` slice for a field by name. Returns an empty

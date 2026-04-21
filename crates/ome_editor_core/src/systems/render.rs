@@ -152,6 +152,7 @@ fn run_editor_ui(
                 last_clicked_index: &mut last_clicked_index,
                 viewport_texture_id: texture_id,
                 viewport_request: request,
+                rotation_euler_cache: &mut overlay.rotation_euler_cache,
             };
 
             DockArea::new(&mut overlay.dock_state)
