@@ -35,6 +35,7 @@ impl Reflect for GlobalTransform {
             name: "matrix",
             type_name: "glam::Mat4",
             kind: FieldKind::Mat4,
+            choices: &[],
         }];
         FIELDS
     }

@@ -98,12 +98,19 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         let kind_ident: proc_macro2::TokenStream = kind_variant.parse().unwrap();
         let value_ident: proc_macro2::TokenStream = kind_variant.parse().unwrap();
 
+        let choices_expr = match parse_field_choices(field) {
+            Ok(Some(expr)) => quote! { #expr },
+            Ok(None) => quote! { &[] },
+            Err(e) => return e,
+        };
+
         // FieldMeta entry.
         field_metas.push(quote! {
             ::ome_ecs::reflect::FieldMeta {
                 name: #field_name_str,
                 type_name: #type_name_str,
                 kind: ::ome_ecs::reflect::FieldKind::#kind_ident,
+                choices: #choices_expr,
             }
         });
 
@@ -313,6 +320,35 @@ fn parse_inspector_attr(input: &DeriveInput) -> Result<Option<proc_macro2::Ident
                     variant_name,
                     proc_macro2::Span::call_site(),
                 )));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Parses `#[reflect(choices = PATH)]` from a field's attributes.
+///
+/// Returns `Ok(Some(expr))` with the path/identifier pointing to a
+/// `&'static [::ome_ecs::reflect::FieldChoice]` constant when present,
+/// `Ok(None)` when absent, or `Err(compile_error)` on a parse failure.
+fn parse_field_choices(
+    field: &syn::Field,
+) -> Result<Option<syn::Expr>, TokenStream> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("reflect") {
+            continue;
+        }
+        let nested = match attr.parse_args_with(
+            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
+        ) {
+            Ok(n) => n,
+            Err(e) => return Err(e.to_compile_error().into()),
+        };
+        for meta in nested {
+            if let Meta::NameValue(MetaNameValue { path, value, .. }) = meta
+                && path.is_ident("choices")
+            {
+                return Ok(Some(value));
             }
         }
     }

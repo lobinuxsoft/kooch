@@ -26,6 +26,7 @@ use crate::orthographic_camera::OrthographicCamera;
 use crate::perspective_camera::PerspectiveCamera;
 use crate::point_light::PointLight;
 use crate::query::AccessTracker;
+use crate::sdf_blend::SdfBlend;
 use crate::sdf_box::SdfBox;
 use crate::sdf_capsule::SdfCapsule;
 use crate::sdf_cylinder::SdfCylinder;
@@ -61,6 +62,7 @@ fn register_builtin_components(resources: &mut ome_core::resource::Resources) {
         registry.register_cpu_reflected::<SdfCylinder>();
         registry.register_cpu_reflected::<SdfTorus>();
         registry.register_cpu_reflected::<SdfPlane>();
+        registry.register_cpu_reflected::<SdfBlend>();
         registry.register_cpu_reflected::<DirectionalLight>();
         registry.register_cpu_reflected::<PointLight>();
         registry.register_cpu_reflected::<SpotLight>();

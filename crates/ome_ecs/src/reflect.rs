@@ -25,6 +25,23 @@ pub struct FieldMeta {
     pub type_name: &'static str,
     /// Discriminant for the field's value type.
     pub kind: FieldKind,
+    /// Optional enum-like choice set for integer fields. When non-empty,
+    /// the editor inspector renders the field as a dropdown instead of
+    /// a free-form numeric input. Ignored for non-integer `kind`s.
+    pub choices: &'static [FieldChoice],
+}
+
+/// A labelled value in a [`FieldMeta::choices`] set.
+///
+/// The `value` is stored as `i64` so a single representation covers
+/// every integer [`FieldKind`]; it is narrowed back to the target type
+/// when applied.
+#[derive(Debug, Clone, Copy)]
+pub struct FieldChoice {
+    /// Human-readable label shown in the dropdown.
+    pub label: &'static str,
+    /// Underlying integer value.
+    pub value: i64,
 }
 
 /// Discriminant for supported reflected field types.
@@ -435,11 +452,13 @@ mod tests {
                     name: "hp",
                     type_name: "u32",
                     kind: FieldKind::U32,
+                    choices: &[],
                 },
                 FieldMeta {
                     name: "max_hp",
                     type_name: "u32",
                     kind: FieldKind::U32,
+                    choices: &[],
                 },
             ];
             FIELDS
@@ -509,16 +528,19 @@ mod tests {
                     name: "x",
                     type_name: "f32",
                     kind: FieldKind::F32,
+                    choices: &[],
                 },
                 FieldMeta {
                     name: "y",
                     type_name: "f32",
                     kind: FieldKind::F32,
+                    choices: &[],
                 },
                 FieldMeta {
                     name: "z",
                     type_name: "f32",
                     kind: FieldKind::F32,
+                    choices: &[],
                 },
             ];
             FIELDS
