@@ -15,8 +15,12 @@ struct CameraUniforms {
 struct RayMarchParams {
     max_steps: u32,
     max_distance: f32,
+    // Hit threshold at distance zero (close-up precision floor).
     surface_threshold: f32,
-    _pad: f32,
+    // Adds `epsilon_factor * distance_traveled` to the threshold so far
+    // surfaces don't shimmer and don't waste iterations on sub-pixel
+    // precision the viewer can't see anyway.
+    epsilon_factor: f32,
 }
 
 // Matches Rust `SdfInstance` byte-for-byte (80 bytes).
@@ -181,7 +185,11 @@ fn ray_march(ray: Ray) -> HitResult {
         result.steps = i;
         let p = ray.origin + ray.direction * t;
         let d = eval_scene(p);
-        if d < params.surface_threshold {
+        // Adaptive epsilon: threshold widens linearly with distance to
+        // approximate a pixel-cone footprint. Rays converge faster on
+        // far surfaces without losing close-up precision.
+        let epsilon = params.surface_threshold + params.epsilon_factor * t;
+        if d < epsilon {
             result.hit = true;
             result.position = p;
             result.distance = t;
