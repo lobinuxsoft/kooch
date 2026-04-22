@@ -3,7 +3,7 @@
 use ome_core::event::{AppExit, Events};
 use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
-use wgpu::SurfaceError;
+use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
 
 use crate::clear_color::ClearColor;
 use crate::fps::FpsTracker;
@@ -25,21 +25,53 @@ pub fn render_system(resources: &mut Resources) {
 
     // Scope the immutable borrow of GpuContext so we can mutably borrow
     // resources again in the error path.
-    let result = {
+    let outcome = {
         let Some(gpu) = resources.get::<GpuContext>() else {
             return;
         };
-        render_frame(gpu, color)
+        let frame = gpu.surface().get_current_texture();
+        match frame {
+            CurrentSurfaceTexture::Success(tex) | CurrentSurfaceTexture::Suboptimal(tex) => {
+                render_frame(gpu, color, tex);
+                SurfaceOutcome::Presented
+            }
+            CurrentSurfaceTexture::Outdated | CurrentSurfaceTexture::Lost => {
+                SurfaceOutcome::NeedsReconfigure
+            }
+            CurrentSurfaceTexture::Occluded | CurrentSurfaceTexture::Timeout => {
+                SurfaceOutcome::Skip
+            }
+            CurrentSurfaceTexture::Validation => SurfaceOutcome::Error,
+        }
     };
 
-    if let Err(err) = result {
-        handle_surface_error(resources, err);
+    match outcome {
+        SurfaceOutcome::Presented | SurfaceOutcome::Skip => {}
+        SurfaceOutcome::NeedsReconfigure => {
+            if let Some(gpu) = resources.get_mut::<GpuContext>() {
+                let (w, h) = gpu.size();
+                tracing::warn!("Surface outdated, reconfiguring ({w}x{h})");
+                gpu.resize(w, h);
+            }
+        }
+        SurfaceOutcome::Error => {
+            tracing::error!("Surface validation error — requesting exit");
+            if let Some(events) = resources.get_mut::<Events<AppExit>>() {
+                events.send(AppExit);
+            }
+        }
     }
 }
 
-/// Acquires a frame, runs a clear-color render pass, and presents.
-fn render_frame(gpu: &GpuContext, color: ClearColor) -> Result<(), SurfaceError> {
-    let frame = gpu.surface().get_current_texture()?;
+enum SurfaceOutcome {
+    Presented,
+    Skip,
+    NeedsReconfigure,
+    Error,
+}
+
+/// Runs a clear-color render pass on `frame` and presents it.
+fn render_frame(gpu: &GpuContext, color: ClearColor, frame: SurfaceTexture) {
     let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     let mut encoder = gpu
@@ -54,6 +86,7 @@ fn render_frame(gpu: &GpuContext, color: ClearColor) -> Result<(), SurfaceError>
             label: Some("clear_color_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
+                depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(color.to_wgpu()),
@@ -63,33 +96,10 @@ fn render_frame(gpu: &GpuContext, color: ClearColor) -> Result<(), SurfaceError>
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
     }
 
     gpu.queue().submit(std::iter::once(encoder.finish()));
     frame.present();
-
-    Ok(())
-}
-
-/// Reacts to surface errors: reconfigure on Lost/Outdated, exit on OOM.
-fn handle_surface_error(resources: &mut Resources, err: SurfaceError) {
-    match err {
-        SurfaceError::Outdated | SurfaceError::Lost => {
-            if let Some(gpu) = resources.get_mut::<GpuContext>() {
-                let (w, h) = gpu.size();
-                tracing::warn!(%err, "Surface lost, reconfiguring ({w}x{h})");
-                gpu.resize(w, h);
-            }
-        }
-        SurfaceError::OutOfMemory => {
-            tracing::error!("GPU out of memory — requesting exit");
-            if let Some(events) = resources.get_mut::<Events<AppExit>>() {
-                events.send(AppExit);
-            }
-        }
-        other => {
-            tracing::warn!(%other, "Surface error, skipping frame");
-        }
-    }
 }

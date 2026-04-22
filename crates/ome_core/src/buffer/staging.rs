@@ -60,7 +60,10 @@ impl StagingBuffer {
         slice.map_async(wgpu::MapMode::Read, |result| {
             result.expect("failed to map staging buffer");
         });
-        device.poll(wgpu::Maintain::Wait);
+        let _ = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(30)),
+        });
 
         let data = slice.get_mapped_range();
         let result = bytemuck::cast_slice(&data).to_vec();

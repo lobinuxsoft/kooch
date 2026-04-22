@@ -23,7 +23,7 @@ use wgpu::{
 #[derive(Debug)]
 pub enum GpuError {
     /// No suitable GPU adapter was found.
-    NoAdapter,
+    NoAdapter(wgpu::RequestAdapterError),
     /// Failed to create the wgpu surface.
     Surface(wgpu::CreateSurfaceError),
     /// Failed to request a GPU device.
@@ -33,7 +33,7 @@ pub enum GpuError {
 impl std::fmt::Display for GpuError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NoAdapter => write!(f, "no suitable GPU adapter found"),
+            Self::NoAdapter(e) => write!(f, "no suitable GPU adapter found: {e}"),
             Self::Surface(e) => write!(f, "failed to create surface: {e}"),
             Self::Device(e) => write!(f, "failed to request device: {e}"),
         }
@@ -43,7 +43,7 @@ impl std::fmt::Display for GpuError {
 impl std::error::Error for GpuError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::NoAdapter => None,
+            Self::NoAdapter(e) => Some(e),
             Self::Surface(e) => Some(e),
             Self::Device(e) => Some(e),
         }
@@ -90,7 +90,10 @@ impl GpuContext {
     ) -> Result<Self, GpuError> {
         let instance = Instance::new(InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-            ..Default::default()
+            flags: wgpu::InstanceFlags::default(),
+            backend_options: wgpu::BackendOptions::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            display: None,
         });
 
         let surface = instance.create_surface(target)?;
@@ -100,7 +103,7 @@ impl GpuContext {
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }))
-        .ok_or(GpuError::NoAdapter)?;
+        .map_err(GpuError::NoAdapter)?;
 
         let info = adapter.get_info();
         tracing::info!(
@@ -110,16 +113,17 @@ impl GpuContext {
             "GPU adapter selected"
         );
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &DeviceDescriptor {
-                label: Some("ome_device"),
-                ..Default::default()
-            },
-            None,
-        ))?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
+            label: Some("ome_device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::Off,
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+        }))?;
 
         // Log uncaptured device errors (recovery deferred to post-v0.1).
-        device.on_uncaptured_error(Box::new(|error| {
+        device.on_uncaptured_error(std::sync::Arc::new(|error: wgpu::Error| {
             tracing::error!("wgpu device error: {error}");
         }));
 
@@ -254,7 +258,10 @@ mod tests {
     fn create_adapter_headless() {
         let instance = Instance::new(InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-            ..Default::default()
+            flags: wgpu::InstanceFlags::default(),
+            backend_options: wgpu::BackendOptions::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            display: None,
         });
 
         let adapter = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
@@ -263,7 +270,7 @@ mod tests {
             force_fallback_adapter: false,
         }));
 
-        assert!(adapter.is_some(), "expected a GPU adapter to be available");
+        assert!(adapter.is_ok(), "expected a GPU adapter to be available");
 
         let info = adapter.unwrap().get_info();
         println!("Adapter: {} ({:?})", info.name, info.backend);

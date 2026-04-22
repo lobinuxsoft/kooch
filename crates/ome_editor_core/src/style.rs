@@ -34,8 +34,8 @@ pub(crate) fn configure_fonts(ctx: &egui::Context) {
 
 pub(crate) fn configure_style(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
-    style.visuals.window_rounding = egui::Rounding::same(6.0);
-    style.visuals.menu_rounding = egui::Rounding::same(4.0);
+    style.visuals.window_corner_radius = egui::CornerRadius::same(6);
+    style.visuals.menu_corner_radius = egui::CornerRadius::same(4);
     style.spacing.item_spacing = egui::vec2(6.0, 4.0);
     ctx.set_style(style);
 }

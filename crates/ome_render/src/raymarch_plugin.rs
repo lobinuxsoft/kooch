@@ -12,7 +12,8 @@ use ome_core::gpu::GpuContext;
 use ome_core::plugin::Plugin;
 use ome_core::resource::Resources;
 use ome_core::stage::Stage;
-use wgpu::SurfaceError;
+
+use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
 
 use crate::fps::FpsTracker;
 use crate::raymarch::RayMarchRenderer;
@@ -95,22 +96,57 @@ fn raymarch_system(resources: &mut Resources) {
     let has_camera = renderer.update_camera(gpu.device(), gpu.queue(), resources, aspect);
     renderer.update_scene(gpu.device(), gpu.queue(), resources, sky.top, sky.bottom);
 
-    let result = if has_camera {
-        render_frame(&gpu, &renderer)
+    let outcome = if has_camera {
+        acquire_and_render(&gpu, &renderer)
     } else {
-        Ok(())
+        SurfaceOutcome::Skip
     };
 
     resources.insert(gpu);
     resources.insert(renderer);
 
-    if let Err(err) = result {
-        handle_surface_error(resources, err);
+    match outcome {
+        SurfaceOutcome::Presented | SurfaceOutcome::Skip => {}
+        SurfaceOutcome::NeedsReconfigure => {
+            if let Some(gpu) = resources.get_mut::<GpuContext>() {
+                let (w, h) = gpu.size();
+                tracing::warn!("Surface outdated, reconfiguring ({w}x{h})");
+                gpu.resize(w, h);
+            }
+        }
+        SurfaceOutcome::Error => {
+            tracing::error!("Surface validation error — requesting exit");
+            if let Some(events) = resources.get_mut::<Events<AppExit>>() {
+                events.send(AppExit);
+            }
+        }
     }
 }
 
-fn render_frame(gpu: &GpuContext, renderer: &RayMarchRenderer) -> Result<(), SurfaceError> {
-    let frame = gpu.surface().get_current_texture()?;
+enum SurfaceOutcome {
+    Presented,
+    Skip,
+    NeedsReconfigure,
+    Error,
+}
+
+fn acquire_and_render(gpu: &GpuContext, renderer: &RayMarchRenderer) -> SurfaceOutcome {
+    match gpu.surface().get_current_texture() {
+        CurrentSurfaceTexture::Success(tex) | CurrentSurfaceTexture::Suboptimal(tex) => {
+            render_frame(gpu, renderer, tex);
+            SurfaceOutcome::Presented
+        }
+        CurrentSurfaceTexture::Outdated | CurrentSurfaceTexture::Lost => {
+            SurfaceOutcome::NeedsReconfigure
+        }
+        CurrentSurfaceTexture::Occluded | CurrentSurfaceTexture::Timeout => {
+            SurfaceOutcome::Skip
+        }
+        CurrentSurfaceTexture::Validation => SurfaceOutcome::Error,
+    }
+}
+
+fn render_frame(gpu: &GpuContext, renderer: &RayMarchRenderer, frame: SurfaceTexture) {
     let view = frame
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
@@ -122,26 +158,4 @@ fn render_frame(gpu: &GpuContext, renderer: &RayMarchRenderer) -> Result<(), Sur
     renderer.render(&mut encoder, &view);
     gpu.queue().submit(std::iter::once(encoder.finish()));
     frame.present();
-    Ok(())
-}
-
-fn handle_surface_error(resources: &mut Resources, err: SurfaceError) {
-    match err {
-        SurfaceError::Outdated | SurfaceError::Lost => {
-            if let Some(gpu) = resources.get_mut::<GpuContext>() {
-                let (w, h) = gpu.size();
-                tracing::warn!(%err, "Surface lost, reconfiguring ({w}x{h})");
-                gpu.resize(w, h);
-            }
-        }
-        SurfaceError::OutOfMemory => {
-            tracing::error!("GPU out of memory — requesting exit");
-            if let Some(events) = resources.get_mut::<Events<AppExit>>() {
-                events.send(AppExit);
-            }
-        }
-        other => {
-            tracing::warn!(%other, "Surface error, skipping frame");
-        }
-    }
 }

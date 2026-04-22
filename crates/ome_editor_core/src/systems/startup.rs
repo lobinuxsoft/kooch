@@ -39,7 +39,11 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         None,
     )));
 
-    let mut renderer = egui_wgpu::Renderer::new(gpu.device(), gpu.format(), None, 1, false);
+    let mut renderer = egui_wgpu::Renderer::new(
+        gpu.device(),
+        gpu.format(),
+        egui_wgpu::RendererOptions::default(),
+    );
 
     let raymarch = RayMarchRenderer::new(gpu.device(), gpu.format());
     let viewport = ViewportTarget::new(
