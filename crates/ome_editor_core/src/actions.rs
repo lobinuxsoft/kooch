@@ -3,6 +3,7 @@
 use std::any::TypeId;
 use std::path::PathBuf;
 
+use glam::{Quat, Vec3};
 use ome_core::resource::Resources;
 use ome_ecs::allocator::EntityAllocator;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
@@ -10,6 +11,7 @@ use ome_ecs::component::ComponentRegistry;
 use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::Parent;
 use ome_ecs::reflect::ReflectValue;
+use ome_ecs::transform::Transform;
 
 use crate::play_state::PlayState;
 use crate::project_state::ProjectState;
@@ -390,6 +392,12 @@ pub(crate) fn apply_actions(
                 undo_stack.clear();
             }
             EditorAction::Reparent { entity, new_parent } => {
+                // Preserve the child's world-space transform across the
+                // reparent. Without this, parenting snaps the child to
+                // `parent * child_local` and unparenting snaps it back
+                // to `child_local` (as if it were a root all along).
+                rewrite_local_transform_for_reparent(resources, *entity, *new_parent);
+
                 match new_parent {
                     Some(parent) => {
                         let mut needs_archetype_add = false;
@@ -465,5 +473,115 @@ pub(crate) fn apply_actions(
         }
         i += 1;
     }
+}
+
+/// Rewrites an entity's local `Transform` so its world-space pose
+/// stays the same across a reparent. Call this BEFORE updating the
+/// entity's `Parent` component.
+///
+/// Works entirely in TRS space (translation / rotation / scale) by
+/// walking up the hierarchy chain on both sides and composing per
+/// component. This avoids the `Mat4::to_scale_rotation_translation`
+/// SVD pass that the previous implementation did — that path drifts
+/// precision on every reparent when any ancestor carries rotation,
+/// which compounded across multiple drag cycles into visibly
+/// corrupted numbers in the inspector.
+///
+/// Silently does nothing if the entity or any ancestor lacks a
+/// `Transform` — in that case the previous snap-back behavior is
+/// unavoidable and matches the old impl.
+fn rewrite_local_transform_for_reparent(
+    resources: &mut Resources,
+    entity: Entity,
+    new_parent: Option<Entity>,
+) {
+    let Some((child_wp, child_wr, child_ws)) = compute_world_trs(resources, entity) else {
+        return;
+    };
+    let (parent_wp, parent_wr, parent_ws) = match new_parent {
+        Some(p) => compute_world_trs(resources, p)
+            .unwrap_or((Vec3::ZERO, Quat::IDENTITY, Vec3::ONE)),
+        None => (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
+    };
+
+    // Derive the local TRS that satisfies
+    //   new_parent.world ⊕ new_local = child.world
+    // where `⊕` is the Unity-style compose:
+    //   world_pos = parent_pos + parent_rot · (parent_scale * local_pos)
+    //   world_rot = parent_rot · local_rot
+    //   world_scale = parent_scale * local_scale  (component-wise)
+    let parent_rot_inv = parent_wr.inverse();
+    let inv_parent_scale = Vec3::new(
+        safe_inv(parent_ws.x),
+        safe_inv(parent_ws.y),
+        safe_inv(parent_ws.z),
+    );
+    // Inverse of `T + R · (S ⊙ local)`: subtract T, apply R⁻¹, then
+    // divide by S component-wise. Doing the scale division before the
+    // rotation was the order bug that corrupted reparents when the
+    // parent had both rotation and non-uniform scale.
+    let new_local_pos = (parent_rot_inv * (child_wp - parent_wp)) * inv_parent_scale;
+    let new_local_rot = parent_rot_inv * child_wr;
+    let new_local_scale = child_ws * inv_parent_scale;
+
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        && let Some(transform_storage) = registry.get_cpu_mut::<Transform>()
+        && let Some(transform) = transform_storage.get_mut(entity)
+    {
+        transform.position = new_local_pos;
+        transform.rotation = new_local_rot;
+        transform.scale = new_local_scale;
+    }
+}
+
+/// Walks up the parent chain from `entity` to a root, composing TRS
+/// per component. Returns the world-space `(translation, rotation,
+/// scale)` or `None` if the entity has no `Transform`.
+///
+/// Intentionally avoids touching `GlobalTransform.matrix` because
+/// that path depends on the SVD decomposition used during propagation,
+/// which loses precision for hierarchies that mix rotation and
+/// non-uniform scale. Walking TRS directly keeps reparent math stable.
+fn compute_world_trs(
+    resources: &Resources,
+    entity: Entity,
+) -> Option<(Vec3, Quat, Vec3)> {
+    let registry = resources.get::<ComponentRegistry>()?;
+    let transform_storage = registry.get_cpu::<Transform>()?;
+    let parent_storage = registry.get_cpu::<Parent>();
+
+    // Collect ancestry from `entity` up to the root.
+    let mut chain = Vec::with_capacity(8);
+    chain.push(entity);
+    let mut current = entity;
+    while let Some(parent) = parent_storage.as_ref().and_then(|s| s.get(current)) {
+        if chain.contains(&parent.entity) {
+            // Cycle in the hierarchy. Bail.
+            break;
+        }
+        chain.push(parent.entity);
+        current = parent.entity;
+    }
+    chain.reverse(); // root first
+
+    // Fold TRS down the chain.
+    let mut world_pos = Vec3::ZERO;
+    let mut world_rot = Quat::IDENTITY;
+    let mut world_scale = Vec3::ONE;
+    for &e in &chain {
+        let t = transform_storage.get(e)?;
+        let new_pos = world_pos + world_rot * (world_scale * t.position);
+        let new_rot = world_rot * t.rotation;
+        let new_scale = world_scale * t.scale;
+        world_pos = new_pos;
+        world_rot = new_rot;
+        world_scale = new_scale;
+    }
+    Some((world_pos, world_rot, world_scale))
+}
+
+/// Inverse with a floor to avoid division by zero on degenerate scales.
+fn safe_inv(v: f32) -> f32 {
+    if v.abs() < 1e-6 { 1.0 / 1e-6 } else { 1.0 / v }
 }
 
