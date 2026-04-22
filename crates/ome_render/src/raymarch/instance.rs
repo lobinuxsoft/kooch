@@ -27,13 +27,26 @@ pub(super) struct CameraUniforms {
 }
 
 /// Matches `RayMarchParams` in the WGSL shader.
+///
+/// The hit test uses an **adaptive epsilon**: a ray is considered on the
+/// surface when the signed distance is below
+/// `surface_threshold + epsilon_factor * distance_traveled`. The
+/// distance-proportional term approximates the pixel-cone footprint,
+/// avoiding shimmer on far surfaces (where a pixel covers many world
+/// units) and saving iterations in regions where sub-mm precision
+/// doesn't matter.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug)]
 pub struct RayMarchParams {
     pub max_steps: u32,
     pub max_distance: f32,
+    /// Base hit threshold at distance zero. Sets the precision for
+    /// close-up geometry.
     pub surface_threshold: f32,
-    pub _pad: f32,
+    /// Linear coefficient scaling the threshold with distance travelled.
+    /// A perfect pixel-cone match would be `1 / viewport_height`; `1e-3`
+    /// is a reasonable default for 720p-1440p viewports.
+    pub epsilon_factor: f32,
 }
 
 impl Default for RayMarchParams {
@@ -47,7 +60,10 @@ impl Default for RayMarchParams {
             max_steps: 256,
             max_distance: 100.0,
             surface_threshold: 0.001,
-            _pad: 0.0,
+            // Adaptive term: at t=10 threshold is 0.011; at t=100 it's
+            // 0.101. Eliminates far-surface shimmer without relaxing the
+            // close-up precision defined above.
+            epsilon_factor: 0.001,
         }
     }
 }
