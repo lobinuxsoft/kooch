@@ -1,6 +1,8 @@
 //! ECS data gathering functions for the editor UI.
 
 use ome_core::resource::Resources;
+use ome_ecs::EphemeralComponents;
+use ome_ecs::archetype::Archetype;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
 use ome_ecs::component::ComponentRegistry;
 
@@ -8,6 +10,16 @@ use crate::state::{
     ArchetypeDisplayInfo, ComponentDisplayInfo, ComponentTypeInfo, EntityDisplayInfo,
     ReflectedTypeInfo,
 };
+
+/// Returns whether an archetype carries any marker registered as
+/// ephemeral. Used to keep editor-owned entities (cameras, gizmos) out
+/// of the World hierarchy and Archetype panels.
+fn archetype_is_ephemeral(archetype: &Archetype, ephemeral: &EphemeralComponents) -> bool {
+    archetype
+        .components()
+        .iter()
+        .any(|tid| ephemeral.contains(tid))
+}
 
 pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo> {
     use glam::Quat;
@@ -18,6 +30,10 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
         return Vec::new();
     };
     let components = resources.get::<ComponentRegistry>();
+    let ephemeral = resources
+        .get::<EphemeralComponents>()
+        .map(|e| e.clone())
+        .unwrap_or_default();
 
     // Collect world-space rotations from GlobalTransform once so the
     // Inspector's World rotation display mode has a lookup table.
@@ -35,6 +51,9 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
     let mut entity_idx_map: HashMap<ome_ecs::Entity, usize> = HashMap::new();
 
     for archetype in archetypes.iter_matching(&[]) {
+        if archetype_is_ephemeral(archetype, &ephemeral) {
+            continue;
+        }
         for &entity in archetype.entities() {
             let mut comps: Vec<ComponentDisplayInfo> = archetype
                 .components()
@@ -165,9 +184,16 @@ pub(crate) fn gather_archetype_data(resources: &Resources) -> Vec<ArchetypeDispl
         return Vec::new();
     };
     let components = resources.get::<ComponentRegistry>();
+    let ephemeral = resources
+        .get::<EphemeralComponents>()
+        .map(|e| e.clone())
+        .unwrap_or_default();
 
     let mut result = Vec::new();
     for archetype in archetypes.iter_matching(&[]) {
+        if archetype_is_ephemeral(archetype, &ephemeral) {
+            continue;
+        }
         let comp_names: Vec<String> = archetype
             .components()
             .iter()
