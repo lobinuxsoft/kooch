@@ -13,7 +13,10 @@
 //! modules added in subsequent commits.
 
 pub mod controller;
+pub mod fly;
 pub mod markers;
+pub mod orbit;
+pub mod pan_zoom;
 
 use std::any::TypeId;
 
