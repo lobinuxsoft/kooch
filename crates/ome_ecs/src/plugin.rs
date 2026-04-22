@@ -9,6 +9,7 @@ use crate::archetype_registry::ArchetypeRegistry;
 use crate::commands::{Commands, commands_apply_system};
 use crate::component::registry::ComponentRegistry;
 use crate::component::{component_despawn_cleanup_system, component_gpu_sync_system};
+use crate::ephemeral::EphemeralComponents;
 #[cfg(feature = "dynamic")]
 use crate::entity::Entity;
 use crate::gpu_sync::entity_gpu_sync_system;
@@ -81,6 +82,7 @@ impl Plugin for EcsPlugin {
         app.insert_resource(ArchetypeRegistry::new());
         app.insert_resource(AccessTracker::new());
         app.insert_resource(Commands::new());
+        app.insert_resource(EphemeralComponents::new());
 
         // Register built-in components before user startup systems.
         app.add_system(Stage::Startup, register_builtin_components);

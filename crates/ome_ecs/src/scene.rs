@@ -143,7 +143,13 @@ impl SceneDocument {
     /// Hierarchy components (`Parent`, `Children`, `GlobalTransform`) are
     /// excluded from the component list. Instead, parent relationships are
     /// stored as an entity name reference in `EntityDescription::parent`.
+    ///
+    /// Entities whose archetype contains a marker registered in
+    /// [`EphemeralComponents`](crate::ephemeral::EphemeralComponents) are
+    /// skipped entirely — used by editor crates to keep helper entities
+    /// (cameras, gizmos) out of user scene files.
     pub fn from_ecs(resources: &Resources) -> Self {
+        use crate::ephemeral::EphemeralComponents;
         use crate::hierarchy::{Children, GlobalTransform, Parent};
 
         // Type IDs of hierarchy components to skip during serialization.
@@ -152,6 +158,13 @@ impl SceneDocument {
             std::any::TypeId::of::<Children>(),
             std::any::TypeId::of::<GlobalTransform>(),
         ];
+
+        // Snapshot ephemeral markers; default to empty if the resource is
+        // not present (e.g., headless tests without an editor plugin).
+        let ephemeral = resources
+            .get::<EphemeralComponents>()
+            .map(|e| e.clone())
+            .unwrap_or_default();
 
         // (entity_index, EntityDescription) for stable ordering.
         let mut indexed_entities: Vec<(u32, EntityDescription)> = Vec::new();
@@ -164,6 +177,12 @@ impl SceneDocument {
 
         if let (Some(archetypes), Some(components)) = (archetypes, components) {
             for archetype in archetypes.iter_matching(&[]) {
+                // Skip entire archetypes that carry an ephemeral marker.
+                // Every entity in an archetype shares the same component
+                // set, so the decision is per-archetype, not per-entity.
+                if ephemeral.intersects(archetype.components()) {
+                    continue;
+                }
                 for &entity in archetype.entities() {
                     let mut comp_descs = Vec::new();
 
@@ -365,14 +384,29 @@ pub fn sync_scene_to_ecs(
     Ok(())
 }
 
-/// Despawns every alive entity in the ECS.
+/// Despawns every alive entity in the ECS, except those marked ephemeral.
+///
+/// Entities whose archetype contains a marker registered in
+/// [`EphemeralComponents`](crate::ephemeral::EphemeralComponents) are
+/// preserved across scene loads. This keeps editor helper entities
+/// (cameras, gizmos) alive when the user opens a different scene.
 fn despawn_all(resources: &mut Resources) {
-    // Collect all alive entities from archetypes.
+    use crate::ephemeral::EphemeralComponents;
+
+    // Snapshot ephemeral markers; default to empty if the resource is
+    // not present (e.g., headless tests without an editor plugin).
+    let ephemeral = resources
+        .get::<EphemeralComponents>()
+        .map(|e| e.clone())
+        .unwrap_or_default();
+
+    // Collect all alive entities from archetypes, skipping ephemeral ones.
     let entities: Vec<_> = resources
         .get::<ArchetypeRegistry>()
         .map(|archetypes| {
             archetypes
                 .iter_matching(&[])
+                .filter(|arch| !ephemeral.intersects(arch.components()))
                 .flat_map(|arch| arch.entities().to_vec())
                 .collect()
         })
@@ -579,6 +613,86 @@ mod tests {
             .expect("Health component not found");
         assert!(health_comp.fields.contains(&("hp".into(), ReflectValue::U32(42))));
         assert!(health_comp.fields.contains(&("max_hp".into(), ReflectValue::U32(100))));
+    }
+
+    // -- Marker component used by the ephemeral-filter tests ---------------
+
+    /// Zero-sized marker registered as ephemeral in the tests below.
+    struct TestEphemeral;
+    impl Component for TestEphemeral {}
+
+    #[test]
+    fn from_ecs_skips_ephemeral_entities() {
+        use crate::ephemeral::EphemeralComponents;
+
+        let mut resources = setup_resources();
+        let mut ephemeral = EphemeralComponents::new();
+        ephemeral.insert(std::any::TypeId::of::<TestEphemeral>());
+        resources.insert(ephemeral);
+
+        // Spawn one persistent entity and one ephemeral entity.
+        {
+            let mut commands = resources.remove::<Commands>().unwrap();
+            commands
+                .spawn(&mut resources)
+                .insert_reflected(Health { hp: 1, max_hp: 1 });
+            commands
+                .spawn(&mut resources)
+                .insert_reflected(Health { hp: 99, max_hp: 99 })
+                .insert(TestEphemeral);
+            commands.apply(&mut resources);
+            resources.insert(commands);
+        }
+
+        let doc = SceneDocument::from_ecs(&resources);
+
+        // Only the non-ephemeral entity should be serialized.
+        assert_eq!(doc.entities.len(), 1);
+        let health = &doc.entities[0].components[0];
+        assert!(health.fields.contains(&("hp".into(), ReflectValue::U32(1))));
+    }
+
+    #[test]
+    fn despawn_all_preserves_ephemeral_entities() {
+        use crate::ephemeral::EphemeralComponents;
+
+        let mut resources = setup_resources();
+        let mut ephemeral = EphemeralComponents::new();
+        ephemeral.insert(std::any::TypeId::of::<TestEphemeral>());
+        resources.insert(ephemeral);
+
+        // Register Health so it can be looked up by name during sync.
+        resources
+            .get_mut::<ComponentRegistry>()
+            .unwrap()
+            .register_cpu_reflected::<Health>();
+
+        // Spawn one persistent and one ephemeral entity.
+        {
+            let mut commands = resources.remove::<Commands>().unwrap();
+            commands
+                .spawn(&mut resources)
+                .insert_reflected(Health { hp: 1, max_hp: 1 });
+            commands
+                .spawn(&mut resources)
+                .insert_reflected(Health { hp: 99, max_hp: 99 })
+                .insert(TestEphemeral);
+            commands.apply(&mut resources);
+            resources.insert(commands);
+        }
+
+        // Loading an empty scene should wipe the persistent entity but
+        // keep the ephemeral one alive.
+        let empty = SceneDocument {
+            name: "empty".into(),
+            version: "0.1.0".into(),
+            entities: vec![],
+        };
+        sync_scene_to_ecs(&empty, &mut resources).unwrap();
+
+        let query = Query::<&Health>::new(&resources);
+        let healths: Vec<u32> = query.iter().map(|h| h.hp).collect();
+        assert_eq!(healths, vec![99], "ephemeral entity must survive scene load");
     }
 
     #[test]
