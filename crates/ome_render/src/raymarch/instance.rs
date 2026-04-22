@@ -39,7 +39,12 @@ pub struct RayMarchParams {
 impl Default for RayMarchParams {
     fn default() -> Self {
         Self {
-            max_steps: 128,
+            // 256 (vs the prior 128) lets sphere-tracing converge through
+            // concave necks and grazing silhouettes that previously hit the
+            // budget. ~2x cost in the worst case but the test scene stays
+            // well under render budget on RDNA4. A future engine-settings
+            // panel will let users tune this per-scene at runtime.
+            max_steps: 256,
             max_distance: 100.0,
             surface_threshold: 0.001,
             _pad: 0.0,
