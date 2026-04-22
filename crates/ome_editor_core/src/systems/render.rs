@@ -9,6 +9,10 @@ use ome_ecs::archetype_registry::ArchetypeRegistry;
 use ome_render::RayMarchRenderer;
 
 use crate::actions::{apply_actions, EditorAction};
+use crate::editor_camera::EditorCameraController;
+use crate::editor_camera::input::{
+    ViewportInputDelta, apply_viewport_input, entity_world_position,
+};
 use crate::launch_screen::{self, LaunchAction};
 use crate::menu_bar::draw_menu_bar;
 use crate::play_state::PlayState;
@@ -100,11 +104,15 @@ fn poll_launcher(resources: &mut Resources) -> bool {
 }
 
 /// Handles to the viewport resource consumed by the UI: a read-only
-/// texture id for drawing, and a slot where the View panel writes the
-/// desired backing texture size for the next frame.
+/// texture id for drawing, slots where the View panel writes the
+/// desired backing texture size and the captured input delta for the
+/// frame, and a read-only snapshot of the camera controller used for
+/// sensitivity reads inside the egui closure.
 struct ViewportUi<'a> {
     texture_id: egui::TextureId,
     request: &'a mut Option<(u32, u32)>,
+    input: &'a mut Option<ViewportInputDelta>,
+    controller: &'a EditorCameraController,
 }
 
 /// Runs the egui UI for one frame. Produces the tessellation input and the
@@ -124,6 +132,8 @@ fn run_editor_ui(
     let ViewportUi {
         texture_id,
         request,
+        input,
+        controller,
     } = viewport;
 
     let full_output = overlay.ctx.run(raw_input, |ctx| {
@@ -152,6 +162,8 @@ fn run_editor_ui(
                 last_clicked_index: &mut last_clicked_index,
                 viewport_texture_id: texture_id,
                 viewport_request: request,
+                viewport_input: input,
+                editor_camera_controller: controller,
                 rotation_euler_cache: &mut overlay.rotation_euler_cache,
                 rotation_display_mode: &mut overlay.rotation_display_mode,
             };
@@ -277,6 +289,11 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     };
 
     let mut viewport_request: Option<(u32, u32)> = None;
+    let mut viewport_input: Option<ViewportInputDelta> = None;
+    let controller_snapshot = resources
+        .get::<EditorCameraController>()
+        .cloned()
+        .unwrap_or_default();
     let (full_output, actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
@@ -287,11 +304,25 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         ViewportUi {
             texture_id: viewport.texture_id(),
             request: &mut viewport_request,
+            input: &mut viewport_input,
+            controller: &controller_snapshot,
         },
     );
 
     if let Some(size) = viewport_request {
         viewport.request_size(size);
+    }
+
+    // Apply viewport input to the editor camera before the same frame's
+    // render pass so the new pose is visible immediately. Focus-on-
+    // selection uses the first selected entity's world position, if any.
+    if let Some(delta) = viewport_input {
+        let selection_world = overlay
+            .selected_entities
+            .first()
+            .copied()
+            .and_then(|e| entity_world_position(resources, e));
+        apply_viewport_input(delta, resources, selection_world);
     }
 
     render_viewport(&gpu, &mut raymarch, &viewport, resources, project_loaded);

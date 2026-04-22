@@ -65,6 +65,8 @@ impl Plugin for EditorPlugin {
         // the spawn (e.g. play-mode snapshot triggered immediately).
         app.add_system(Stage::Startup, editor_camera::register_ephemeral_markers_system);
         app.add_system(Stage::Startup, editor_camera::spawn_editor_camera_system);
+        // Hand the viewport over to the gameplay camera in play mode.
+        app.add_system(Stage::PreRender, editor_camera::sync_editor_camera_active_system);
         app.add_system(Stage::Render, systems::editor_render_system);
     }
 
