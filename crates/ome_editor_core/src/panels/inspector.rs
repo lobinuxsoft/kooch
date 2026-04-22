@@ -1078,8 +1078,46 @@ fn draw_value_widget(
                 dz.to_radians(),
             )))
         }
-        ReflectValue::Mat4(_) => {
-            ui.label("[Mat4]");
+        ReflectValue::Mat4(m) => {
+            let (scale, rotation, translation) = m.to_scale_rotation_translation();
+            let (ex, ey, ez) = rotation.to_euler(glam::EulerRot::XYZ);
+            // Reuse GlobalTransform's shear detector so the inspector
+            // flags the same configurations the engine considers risky
+            // for TRS round-trip. See #214 for the full discussion.
+            let gt = ome_ecs::hierarchy::GlobalTransform { matrix: *m };
+            let shear = gt.has_shear(1e-4);
+            ui.vertical(|ui| {
+                ui.label(format!(
+                    "translation ({:.3}, {:.3}, {:.3})",
+                    translation.x, translation.y, translation.z
+                ));
+                ui.label(format!(
+                    "rotation    ({:.2}\u{00b0}, {:.2}\u{00b0}, {:.2}\u{00b0})",
+                    ex.to_degrees(),
+                    ey.to_degrees(),
+                    ez.to_degrees()
+                ));
+                ui.horizontal(|ui| {
+                    ui.label(format!(
+                        "lossy_scale ({:.3}, {:.3}, {:.3})",
+                        scale.x, scale.y, scale.z
+                    ));
+                    if shear {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(240, 180, 40),
+                            "\u{26a0}",
+                        )
+                        .on_hover_text(
+                            "Shear detected in this matrix. Non-uniform \
+                             parent scale composed with a rotated child \
+                             produces shear that `Transform { scale }` \
+                             cannot represent. The values above are a \
+                             best-fit decomposition and will NOT round-trip \
+                             through TRS. See issue #214.",
+                        );
+                    }
+                });
+            });
             None
         }
     }
