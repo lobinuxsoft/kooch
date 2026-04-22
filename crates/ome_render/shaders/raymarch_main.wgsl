@@ -204,8 +204,15 @@ fn ray_march(ray: Ray) -> HitResult {
     return result;
 }
 
-fn calc_normal(p: vec3<f32>) -> vec3<f32> {
-    let eps = 0.001;
+fn calc_normal(p: vec3<f32>, dist: f32) -> vec3<f32> {
+    // Sub-precision eps: 10% of the adaptive hit threshold. Keeps the
+    // central-difference samples tighter than the hit detection itself,
+    // so they never bridge CSG `min(a, b)` seams that the hit test
+    // would ignore. Without this, normals near smooth-blend zones or
+    // primitive boundaries average across discontinuous gradients and
+    // produce dark patches on otherwise lit surfaces (#225).
+    let hit_threshold = params.surface_threshold + params.epsilon_factor * dist;
+    let eps = hit_threshold * 0.1;
     let n = vec3<f32>(
         eval_scene(p + vec3<f32>(eps, 0.0, 0.0)) - eval_scene(p - vec3<f32>(eps, 0.0, 0.0)),
         eval_scene(p + vec3<f32>(0.0, eps, 0.0)) - eval_scene(p - vec3<f32>(0.0, eps, 0.0)),
@@ -225,7 +232,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(sky, 1.0);
     }
 
-    let normal = calc_normal(hit.position);
+    let normal = calc_normal(hit.position, hit.distance);
     let sun_dir = normalize(vec3<f32>(0.6, 0.8, 0.3));
     let diffuse = max(dot(normal, sun_dir), 0.0);
     let ambient = 0.2;
