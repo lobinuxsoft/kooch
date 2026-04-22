@@ -148,11 +148,18 @@ fn eval_scene(p: vec3<f32>) -> f32 {
     let count = scene_meta.instance_count;
     for (var i = 0u; i < count; i = i + 1u) {
         let inst = instances[i];
-        // Conservative Lipschitz bound: use the smallest scale axis so
-        // the returned distance never overshoots under non-uniform scale.
-        let s = max(min(inst.scale.x, min(inst.scale.y, inst.scale.z)), 1e-5);
-        let local = transform_point(p, inst.position, inst.rotation) / s;
-        let pd = eval_primitive(local, inst) * s;
+        // Per-axis scale: divide each component of the local sample
+        // point by its corresponding scale, which deforms the primitive
+        // (e.g. scale = (2,1,1) turns a sphere into a prolate ellipsoid).
+        let scale = max(inst.scale, vec3<f32>(1e-5));
+        let local = transform_point(p, inst.position, inst.rotation) / scale;
+        // Lipschitz correction: sphere-tracing needs a conservative
+        // (i.e. <= actual) distance estimate. The smallest axis sets
+        // the safe upper bound when the other axes are larger. This is
+        // not exactly Lipschitz-1 under extreme ratios, but sphere-
+        // tracing converges for normal (<= ~10x) scale ratios.
+        let s_min = min(scale.x, min(scale.y, scale.z));
+        let pd = eval_primitive(local, inst) * s_min;
         d = apply_blend(d, pd, inst.blend_mode, inst.blend_smoothness);
     }
     return d;
