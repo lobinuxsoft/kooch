@@ -475,21 +475,28 @@ pub(crate) fn apply_actions(
     }
 }
 
-/// Rewrites an entity's local `Transform` so its world-space pose
+/// Rewrites an entity's local `Transform` so its world-space TRS
 /// stays the same across a reparent. Call this BEFORE updating the
 /// entity's `Parent` component.
 ///
-/// Works entirely in TRS space (translation / rotation / scale) by
-/// walking up the hierarchy chain on both sides and composing per
-/// component. This avoids the `Mat4::to_scale_rotation_translation`
-/// SVD pass that the previous implementation did — that path drifts
-/// precision on every reparent when any ancestor carries rotation,
-/// which compounded across multiple drag cycles into visibly
-/// corrupted numbers in the inspector.
+/// Composes TRS directly (position / rotation / scale) rather than
+/// going through `Mat4 inverse + to_scale_rotation_translation`. The
+/// matrix path — which is what Bevy uses — is mathematically cleaner
+/// for single reparents under shear-free hierarchies but loses
+/// information every time `to_scale_rotation_translation` runs on a
+/// sheared matrix. Repeated reparenting through a parent with both
+/// rotation and non-uniform scale accumulates SVD drift in the
+/// child's TRS values visible in the inspector.
 ///
-/// Silently does nothing if the entity or any ancestor lacks a
-/// `Transform` — in that case the previous snap-back behavior is
-/// unavoidable and matches the old impl.
+/// TRS composition trades a different property: the rendered matrix
+/// (`parent.matrix * local.matrix`) may gain shear that the previous
+/// rendering did not have, so the shape can visually change on the
+/// first reparent. The shape change is deterministic, though, and
+/// returning the child to a shear-free parent restores the original
+/// shape exactly. The inspector TRS numbers stay idempotent across
+/// reparents, which is what matters for editor UX.
+///
+/// See issue #214 for the full research write-up.
 fn rewrite_local_transform_for_reparent(
     resources: &mut Resources,
     entity: Entity,
@@ -504,22 +511,17 @@ fn rewrite_local_transform_for_reparent(
         None => (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
     };
 
-    // Derive the local TRS that satisfies
-    //   new_parent.world ⊕ new_local = child.world
-    // where `⊕` is the Unity-style compose:
-    //   world_pos = parent_pos + parent_rot · (parent_scale * local_pos)
-    //   world_rot = parent_rot · local_rot
-    //   world_scale = parent_scale * local_scale  (component-wise)
+    // Inverse of `world = T + R · (S ⊙ local)`: subtract T, apply
+    // R⁻¹, then divide by S component-wise. Doing the scale division
+    // before the rotation corrupts position when the parent has both
+    // rotation and non-uniform scale (failure mode caught during
+    // manual testing with BoxRoot).
     let parent_rot_inv = parent_wr.inverse();
     let inv_parent_scale = Vec3::new(
         safe_inv(parent_ws.x),
         safe_inv(parent_ws.y),
         safe_inv(parent_ws.z),
     );
-    // Inverse of `T + R · (S ⊙ local)`: subtract T, apply R⁻¹, then
-    // divide by S component-wise. Doing the scale division before the
-    // rotation was the order bug that corrupted reparents when the
-    // parent had both rotation and non-uniform scale.
     let new_local_pos = (parent_rot_inv * (child_wp - parent_wp)) * inv_parent_scale;
     let new_local_rot = parent_rot_inv * child_wr;
     let new_local_scale = child_ws * inv_parent_scale;
@@ -538,10 +540,12 @@ fn rewrite_local_transform_for_reparent(
 /// per component. Returns the world-space `(translation, rotation,
 /// scale)` or `None` if the entity has no `Transform`.
 ///
-/// Intentionally avoids touching `GlobalTransform.matrix` because
-/// that path depends on the SVD decomposition used during propagation,
-/// which loses precision for hierarchies that mix rotation and
-/// non-uniform scale. Walking TRS directly keeps reparent math stable.
+/// Intentionally avoids reading `GlobalTransform.matrix`. That matrix
+/// is the product of `Mat4` composition across the hierarchy and can
+/// carry shear when an ancestor has non-uniform scale composed with
+/// a rotated descendant. Reading TRS back from it requires SVD, and
+/// repeated reparents accumulate decomposition drift in the
+/// inspector. Walking TRS directly stays stable.
 fn compute_world_trs(
     resources: &Resources,
     entity: Entity,
@@ -550,21 +554,18 @@ fn compute_world_trs(
     let transform_storage = registry.get_cpu::<Transform>()?;
     let parent_storage = registry.get_cpu::<Parent>();
 
-    // Collect ancestry from `entity` up to the root.
     let mut chain = Vec::with_capacity(8);
     chain.push(entity);
     let mut current = entity;
     while let Some(parent) = parent_storage.as_ref().and_then(|s| s.get(current)) {
         if chain.contains(&parent.entity) {
-            // Cycle in the hierarchy. Bail.
             break;
         }
         chain.push(parent.entity);
         current = parent.entity;
     }
-    chain.reverse(); // root first
+    chain.reverse();
 
-    // Fold TRS down the chain.
     let mut world_pos = Vec3::ZERO;
     let mut world_rot = Quat::IDENTITY;
     let mut world_scale = Vec3::ONE;

@@ -21,18 +21,61 @@ pub struct GlobalTransform {
 
 impl GlobalTransform {
     /// Returns the world-space translation extracted from the matrix.
+    ///
+    /// This one is not lossy — translation is the fourth column of an
+    /// affine matrix, untouched by shear in the rotation/scale block.
     pub fn translation(&self) -> Vec3 {
         self.matrix.to_scale_rotation_translation().2
     }
 
     /// Returns the world-space rotation extracted from the matrix.
+    ///
+    /// Lossy under shear — see `has_shear`. Uses a polar-style
+    /// decomposition via `Mat4::to_scale_rotation_translation`, which
+    /// returns the closest orthonormal rotation when the upper-left
+    /// 3×3 block contains shear.
     pub fn rotation(&self) -> Quat {
         self.matrix.to_scale_rotation_translation().1
     }
 
-    /// Returns the world-space scale extracted from the matrix.
+    /// Returns the world-space scale approximated from the matrix.
+    ///
+    /// Lossy under shear. Alias for [`Self::lossy_scale`] kept for
+    /// callers that don't need the explicit reminder in the name.
     pub fn scale(&self) -> Vec3 {
+        self.lossy_scale()
+    }
+
+    /// Returns the world-space scale approximated from the matrix.
+    ///
+    /// Named after Unity's `Transform.lossyScale` for honesty: when
+    /// the upper-left 3×3 block contains shear (which happens as soon
+    /// as a non-uniformly-scaled parent composes with a rotated
+    /// child), no `Vec3` scale exists that reproduces the matrix
+    /// exactly. The value returned here is the best-fit diagonal —
+    /// useful for display and debugging but not for round-tripping.
+    pub fn lossy_scale(&self) -> Vec3 {
         self.matrix.to_scale_rotation_translation().0
+    }
+
+    /// Returns `true` when the upper-left 3×3 block of the matrix has
+    /// detectable shear (non-orthogonal columns).
+    ///
+    /// Shear emerges when an ancestor with non-uniform scale composes
+    /// with a rotated descendant — the product `R · S_nonuniform · R'`
+    /// is not a pure rotation × scale and can't be stored losslessly
+    /// in `Transform { rotation, scale }`. See issue #214 for the
+    /// architectural discussion.
+    ///
+    /// `epsilon` gates tolerance against floating-point noise; a
+    /// reasonable default is `1e-4`.
+    pub fn has_shear(&self, epsilon: f32) -> bool {
+        let x = self.matrix.x_axis.truncate();
+        let y = self.matrix.y_axis.truncate();
+        let z = self.matrix.z_axis.truncate();
+        x.dot(y).abs() > epsilon * x.length() * y.length()
+            || x.dot(z).abs() > epsilon * x.length() * z.length()
+            || y.dot(z).abs() > epsilon * y.length() * z.length()
     }
 }
 
