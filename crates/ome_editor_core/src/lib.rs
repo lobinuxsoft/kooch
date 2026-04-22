@@ -24,6 +24,7 @@ pub mod project;
 pub mod project_state;
 pub(crate) mod actions;
 pub(crate) mod drag_drop;
+pub(crate) mod layout;
 pub(crate) mod menu_bar;
 pub(crate) mod panels;
 pub(crate) mod queries;
@@ -59,7 +60,12 @@ impl Plugin for EditorPlugin {
         app.insert_resource(project_state::ProjectState::new());
         app.insert_resource(undo::UndoStack::new());
         app.insert_resource(editor_camera::EditorCameraController::default());
+        app.insert_resource(layout::LayoutPersistence::default());
         app.add_system(Stage::Startup, systems::editor_startup_system);
+        // Loads the saved dock layout from disk (if any) and replaces the
+        // overlay's default. Must run AFTER editor_startup_system so the
+        // overlay exists.
+        app.add_system(Stage::Startup, layout::load_layout_system);
         // Register the EditorOnly marker as ephemeral *before* the camera
         // is spawned, so the entity is filtered from any save that races
         // the spawn (e.g. play-mode snapshot triggered immediately).
@@ -68,6 +74,10 @@ impl Plugin for EditorPlugin {
         // Hand the viewport over to the gameplay camera in play mode.
         app.add_system(Stage::PreRender, editor_camera::sync_editor_camera_active_system);
         app.add_system(Stage::Render, systems::editor_render_system);
+        // Persist any dock-layout changes after the frame finishes.
+        // Cheap fast-path: re-serializes and compares before any disk I/O,
+        // so steady-state frames produce zero writes.
+        app.add_system(Stage::Last, layout::save_layout_system);
     }
 
     fn name(&self) -> &str {
