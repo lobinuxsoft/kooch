@@ -24,23 +24,35 @@ pub(super) fn choices_for(
 /// detection on `Vec3`. Bridge until the asset handle system (#184)
 /// makes this explicit via typed handles.
 ///
+/// Format choices favour open standards with no licensing friction and
+/// formats the engine actually plans to support:
+/// - **Mesh**: glTF 2.0 only. Khronos open spec, supports animation,
+///   skeletons, materials, scenes — drops the legacy `.obj`.
+/// - **Texture**: LDR (PNG, JPEG), GPU compressed (KTX2), HDR (EXR,
+///   Radiance HDR). Drops `.tga` — legacy with no real advantage.
+/// - **Audio**: Xiph (Vorbis, FLAC) plus PCM `.wav`. Drops `.mp3`
+///   because `kira` gates it behind a feature flag and the historical
+///   patent baggage adds zero value when Vorbis covers the same niche.
+/// - **Material**: RON only. Same format as `.ome_scene`, handles
+///   nested structures cleanly. Drops TOML.
+///
 /// `extensions` is empty when the kind is recognised but no specific
 /// filter applies (generic `*_path` / `*_file` fields). The dialog will
 /// still show the file picker, just without a type filter.
 fn asset_filter_for(field_name: &str) -> Option<(&'static str, &'static [&'static str])> {
     let n = field_name.to_lowercase();
     if n.contains("mesh") {
-        Some(("Mesh", &["gltf", "glb", "obj"]))
+        Some(("Mesh", &["gltf", "glb"]))
     } else if n.contains("texture") || n.contains("image") {
-        Some(("Texture", &["png", "jpg", "jpeg", "tga", "ktx2", "exr", "hdr"]))
+        Some(("Texture", &["png", "jpg", "jpeg", "ktx2", "exr", "hdr"]))
     } else if n.contains("audio") || n.contains("sound") {
-        Some(("Audio", &["ogg", "wav", "mp3", "flac"]))
+        Some(("Audio", &["ogg", "wav", "flac"]))
     } else if n.contains("scene") {
         Some(("Scene", &["ome_scene"]))
     } else if n.contains("shader") {
         Some(("Shader", &["wgsl"]))
     } else if n.contains("material") {
-        Some(("Material", &["ron", "toml"]))
+        Some(("Material", &["ron"]))
     } else if n.ends_with("_path") || n.ends_with("_file") {
         Some(("File", &[]))
     } else {
@@ -426,7 +438,22 @@ mod tests {
         assert_eq!(label, "Mesh");
         assert!(exts.contains(&"gltf"));
         assert!(exts.contains(&"glb"));
-        assert!(exts.contains(&"obj"));
+        // Legacy formats deliberately excluded — see asset_filter_for docstring.
+        assert!(!exts.contains(&"obj"));
+    }
+
+    #[test]
+    fn excludes_legacy_and_licensed_audio() {
+        let (_, exts) = asset_filter_for("audio").expect("audio recognised");
+        assert!(exts.contains(&"ogg"));
+        assert!(exts.contains(&"flac"));
+        assert!(!exts.contains(&"mp3"));
+    }
+
+    #[test]
+    fn material_uses_ron_only() {
+        let (_, exts) = asset_filter_for("material").expect("material recognised");
+        assert_eq!(exts, &["ron"]);
     }
 
     #[test]
