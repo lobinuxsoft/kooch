@@ -1,7 +1,10 @@
 //! Transform propagation system — computes GlobalTransform from hierarchy.
 
+use std::any::TypeId;
+
 use glam::Mat4;
 
+use crate::archetype_registry::ArchetypeRegistry;
 use crate::entity::Entity;
 
 use super::children::Children;
@@ -94,16 +97,34 @@ pub fn transform_propagation_system(resources: &mut ome_core::resource::Resource
         }
     }
 
-    // Write GlobalTransform values.
+    // Write GlobalTransform values. Track which entities gained the
+    // component for the first time so their archetype can be updated.
+    let mut gained_gt: Vec<Entity> = Vec::new();
     for (entity, gt) in global_transforms {
         if let Some(storage) = registry.get_cpu_mut::<GlobalTransform>() {
             if let Some(existing) = storage.get_mut(entity) {
                 *existing = gt;
             } else {
                 storage.insert(entity, gt);
+                gained_gt.push(entity);
             }
         }
     }
 
     resources.insert(registry);
+
+    // Sync archetypes for entities that gained GlobalTransform. Without
+    // this, the component sits in storage but no archetype lists it,
+    // which means queries iterating by archetype never see it.
+    if !gained_gt.is_empty()
+        && let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+    {
+        let gt_tid = TypeId::of::<GlobalTransform>();
+        for entity in gained_gt {
+            if let Some(current) = archetypes.entity_archetype(entity) {
+                let new_arch = archetypes.archetype_after_add_dynamic(current, gt_tid);
+                archetypes.register_entity(entity, new_arch);
+            }
+        }
+    }
 }

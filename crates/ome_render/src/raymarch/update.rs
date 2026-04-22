@@ -2,13 +2,15 @@
 //!
 //! Collects all visible SDF shape entities into a unified instance
 //! buffer, sorted by entity index for stable CSG evaluation order.
+//! Uses `GlobalTransform` (world-space) so parent/child hierarchies
+//! are respected — moving a parent moves its children with it.
 
 use glam::{Mat4, Vec4};
 use ome_ecs::entity::Entity;
+use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::query::Query;
 use ome_ecs::{
     PerspectiveCamera, SdfBlend, SdfBox, SdfCapsule, SdfCylinder, SdfPlane, SdfSphere, SdfTorus,
-    Transform,
 };
 
 use super::instance::{
@@ -20,8 +22,9 @@ use super::renderer::{RayMarchRenderer, make_scene_bg};
 impl RayMarchRenderer {
     /// Uploads the active camera (from ECS) to the GPU.
     ///
-    /// Picks the first `active` `PerspectiveCamera` paired with a `Transform`
-    /// by highest `priority`. Returns `true` when a camera was found.
+    /// Picks the first `active` `PerspectiveCamera` paired with a
+    /// `GlobalTransform` by highest `priority`. Returns `true` when a
+    /// camera was found.
     pub fn update_camera(
         &mut self,
         _device: &wgpu::Device,
@@ -29,9 +32,9 @@ impl RayMarchRenderer {
         resources: &ome_core::resource::Resources,
         aspect: f32,
     ) -> bool {
-        let query = Query::<(&PerspectiveCamera, &Transform)>::new(resources);
-        let mut best: Option<(i32, PerspectiveCamera, Transform)> = None;
-        query.for_each(|(cam, tr)| {
+        let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
+        let mut best: Option<(i32, PerspectiveCamera, Mat4)> = None;
+        query.for_each(|(cam, gt)| {
             if !cam.active {
                 return;
             }
@@ -40,28 +43,29 @@ impl RayMarchRenderer {
                 None => true,
             };
             if better {
-                best = Some((cam.priority, *cam, *tr));
+                best = Some((cam.priority, *cam, gt.matrix));
             }
         });
         drop(query);
 
-        let Some((_, cam, tr)) = best else {
+        let Some((_, cam, world_matrix)) = best else {
             return false;
         };
 
-        let view = Mat4::from_rotation_translation(tr.rotation, tr.position).inverse();
+        let view = world_matrix.inverse();
         let projection = Mat4::perspective_rh(
             cam.fov.to_radians(),
             aspect.max(0.001),
             cam.near.max(0.001),
             cam.far.max(cam.near + 0.001),
         );
+        let (_, _, translation) = world_matrix.to_scale_rotation_translation();
         let uniforms = super::instance::CameraUniforms {
             view: view.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),
             inverse_view: view.inverse().to_cols_array_2d(),
             inverse_projection: projection.inverse().to_cols_array_2d(),
-            position: tr.position.to_array(),
+            position: translation.to_array(),
             _pad0: 0.0,
         };
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -132,16 +136,17 @@ fn blend_of(b: Option<&SdfBlend>) -> (u32, f32) {
 
 fn make_instance(
     entity: Entity,
-    tr: &Transform,
+    gt: &GlobalTransform,
     type_tag: u32,
     params: [f32; 4],
     blend: (u32, f32),
 ) -> (u32, SdfInstance) {
+    let (scale, rotation, translation) = gt.matrix.to_scale_rotation_translation();
     let inst = SdfInstance {
-        position: tr.position.to_array(),
+        position: translation.to_array(),
         type_tag,
-        rotation: tr.rotation.to_array(),
-        scale: tr.scale.to_array(),
+        rotation: rotation.to_array(),
+        scale: scale.to_array(),
         _pad0: 0.0,
         params,
         blend_mode: blend.0,
@@ -155,14 +160,14 @@ fn collect_spheres(
     resources: &ome_core::resource::Resources,
     out: &mut Vec<(u32, SdfInstance)>,
 ) {
-    let q = Query::<(Entity, &SdfSphere, &Transform, Option<&SdfBlend>)>::new(resources);
-    q.for_each(|(e, s, tr, b)| {
+    let q = Query::<(Entity, &SdfSphere, &GlobalTransform, Option<&SdfBlend>)>::new(resources);
+    q.for_each(|(e, s, gt, b)| {
         if !s.visible {
             return;
         }
         out.push(make_instance(
             e,
-            tr,
+            gt,
             TYPE_SPHERE,
             [s.radius, 0.0, 0.0, 0.0],
             blend_of(b),
@@ -174,14 +179,14 @@ fn collect_boxes(
     resources: &ome_core::resource::Resources,
     out: &mut Vec<(u32, SdfInstance)>,
 ) {
-    let q = Query::<(Entity, &SdfBox, &Transform, Option<&SdfBlend>)>::new(resources);
-    q.for_each(|(e, b, tr, bl)| {
+    let q = Query::<(Entity, &SdfBox, &GlobalTransform, Option<&SdfBlend>)>::new(resources);
+    q.for_each(|(e, b, gt, bl)| {
         if !b.visible {
             return;
         }
         out.push(make_instance(
             e,
-            tr,
+            gt,
             TYPE_BOX,
             [b.size.x, b.size.y, b.size.z, b.rounding],
             blend_of(bl),
@@ -193,14 +198,14 @@ fn collect_capsules(
     resources: &ome_core::resource::Resources,
     out: &mut Vec<(u32, SdfInstance)>,
 ) {
-    let q = Query::<(Entity, &SdfCapsule, &Transform, Option<&SdfBlend>)>::new(resources);
-    q.for_each(|(e, c, tr, bl)| {
+    let q = Query::<(Entity, &SdfCapsule, &GlobalTransform, Option<&SdfBlend>)>::new(resources);
+    q.for_each(|(e, c, gt, bl)| {
         if !c.visible {
             return;
         }
         out.push(make_instance(
             e,
-            tr,
+            gt,
             TYPE_CAPSULE,
             [c.half_height, c.radius, 0.0, 0.0],
             blend_of(bl),
@@ -212,14 +217,14 @@ fn collect_cylinders(
     resources: &ome_core::resource::Resources,
     out: &mut Vec<(u32, SdfInstance)>,
 ) {
-    let q = Query::<(Entity, &SdfCylinder, &Transform, Option<&SdfBlend>)>::new(resources);
-    q.for_each(|(e, c, tr, bl)| {
+    let q = Query::<(Entity, &SdfCylinder, &GlobalTransform, Option<&SdfBlend>)>::new(resources);
+    q.for_each(|(e, c, gt, bl)| {
         if !c.visible {
             return;
         }
         out.push(make_instance(
             e,
-            tr,
+            gt,
             TYPE_CYLINDER,
             [c.half_height, c.radius, 0.0, 0.0],
             blend_of(bl),
@@ -231,14 +236,14 @@ fn collect_toruses(
     resources: &ome_core::resource::Resources,
     out: &mut Vec<(u32, SdfInstance)>,
 ) {
-    let q = Query::<(Entity, &SdfTorus, &Transform, Option<&SdfBlend>)>::new(resources);
-    q.for_each(|(e, t, tr, bl)| {
+    let q = Query::<(Entity, &SdfTorus, &GlobalTransform, Option<&SdfBlend>)>::new(resources);
+    q.for_each(|(e, t, gt, bl)| {
         if !t.visible {
             return;
         }
         out.push(make_instance(
             e,
-            tr,
+            gt,
             TYPE_TORUS,
             [t.major_radius, t.minor_radius, 0.0, 0.0],
             blend_of(bl),
@@ -250,11 +255,11 @@ fn collect_planes(
     resources: &ome_core::resource::Resources,
     out: &mut Vec<(u32, SdfInstance)>,
 ) {
-    let q = Query::<(Entity, &SdfPlane, &Transform, Option<&SdfBlend>)>::new(resources);
-    q.for_each(|(e, p, tr, bl)| {
+    let q = Query::<(Entity, &SdfPlane, &GlobalTransform, Option<&SdfBlend>)>::new(resources);
+    q.for_each(|(e, p, gt, bl)| {
         if !p.visible {
             return;
         }
-        out.push(make_instance(e, tr, TYPE_PLANE, [0.0; 4], blend_of(bl)));
+        out.push(make_instance(e, gt, TYPE_PLANE, [0.0; 4], blend_of(bl)));
     });
 }
