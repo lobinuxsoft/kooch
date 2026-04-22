@@ -34,6 +34,28 @@ pub fn camera_position(focus_point: Vec3, orientation: Quat, distance: f32) -> V
     focus_point - forward * distance
 }
 
+/// Rotates the camera around its own position (FPS-style look) instead
+/// of around `focus_point`, and returns the re-anchored focus point.
+///
+/// Internally this just calls [`apply_yaw_pitch`] for the rotation,
+/// then re-derives `focus_point` so it sits `distance` units in front
+/// of the (unchanged) camera position. This keeps the orbit pivot
+/// available for whatever the user looks at when fly mode ends.
+///
+/// Returns `(new_orientation, new_focus_point)`.
+pub fn fly_look_pivot_camera(
+    position: Vec3,
+    orientation: Quat,
+    distance: f32,
+    yaw_delta: f32,
+    pitch_delta: f32,
+) -> (Quat, Vec3) {
+    let new_orientation = apply_yaw_pitch(orientation, yaw_delta, pitch_delta);
+    let forward = new_orientation * -Vec3::Z;
+    let new_focus = position + forward * distance;
+    (new_orientation, new_focus)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +119,47 @@ mod tests {
         // Identity orientation looks down -Z; camera should be at +Z.
         let pos = camera_position(Vec3::ZERO, Quat::IDENTITY, 10.0);
         assert!(approx_eq(pos, Vec3::new(0.0, 0.0, 10.0), 1e-5));
+    }
+
+    #[test]
+    fn fly_look_keeps_camera_position_fixed() {
+        // Start: camera at (5,5,5) looking at origin.
+        let initial_position = Vec3::new(5.0, 5.0, 5.0);
+        let initial_focus = Vec3::ZERO;
+        let distance = (initial_position - initial_focus).length();
+        // Build a rotation that looks from initial_position toward origin.
+        let view = glam::Mat4::look_at_rh(initial_position, initial_focus, Vec3::Y);
+        let initial_rotation = view.inverse().to_scale_rotation_translation().1;
+
+        // Rotate by an arbitrary yaw + pitch in fly mode.
+        let (new_rotation, new_focus) = fly_look_pivot_camera(
+            initial_position,
+            initial_rotation,
+            distance,
+            0.7,
+            -0.3,
+        );
+
+        // The derived camera position from the new state must equal
+        // the initial position (FPS pivot is the camera, not the focus).
+        let derived = camera_position(new_focus, new_rotation, distance);
+        assert!(
+            approx_eq(derived, initial_position, 1e-4),
+            "expected camera to stay at {initial_position:?}, got {derived:?}",
+        );
+    }
+
+    #[test]
+    fn fly_look_with_zero_deltas_is_a_noop() {
+        let pos = Vec3::new(2.0, 3.0, 4.0);
+        let focus = Vec3::new(1.0, 0.0, 1.0);
+        let distance = (pos - focus).length();
+        let view = glam::Mat4::look_at_rh(pos, focus, Vec3::Y);
+        let rotation = view.inverse().to_scale_rotation_translation().1;
+
+        let (new_rot, new_focus) = fly_look_pivot_camera(pos, rotation, distance, 0.0, 0.0);
+        assert!(approx_eq(new_focus, focus, 1e-4));
+        // Rotation shouldn't drift either.
+        assert!((rotation * Vec3::Z - new_rot * Vec3::Z).length() < 1e-5);
     }
 }

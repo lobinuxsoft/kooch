@@ -28,7 +28,7 @@ use ome_ecs::transform::Transform;
 use super::controller::EditorCameraController;
 use super::fly::{FlyKeys, fly_velocity};
 use super::markers::EditorCamera;
-use super::orbit::{apply_yaw_pitch, camera_position};
+use super::orbit::{apply_yaw_pitch, camera_position, fly_look_pivot_camera};
 use super::pan_zoom::{apply_zoom, pan_delta};
 
 /// Snapshot of one frame of viewport-relevant input, captured during
@@ -112,9 +112,13 @@ pub fn collect_viewport_input(
     }
 
     // --- Right-mouse hold → fly mode --------------------------------------
-    delta.fly_active = response.dragged_by(egui::PointerButton::Secondary)
-        || response.is_pointer_button_down_on()
-            && ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
+    //
+    // Fly mode stays active for the whole duration RMB is held *after*
+    // being pressed inside the viewport. Using `is_pointer_button_down_on`
+    // + the global RMB-held query (rather than `dragged_by`) means WASD
+    // works on the first frame even before any mouse motion.
+    delta.fly_active = response.is_pointer_button_down_on()
+        && ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
 
     if delta.fly_active {
         let drag = response.drag_delta();
@@ -215,10 +219,30 @@ pub fn apply_viewport_input(
     }
 
     // --- Fly-mode look + WASD/QE ------------------------------------------
+    //
+    // FPS look pivots around the *camera*, not around `focus_point`.
+    // `fly_look_pivot_camera` rotates and re-anchors `focus_point` so
+    // the derived camera position stays fixed under pure rotation.
+    // WASD/QE then translates camera and focus together so the in-front
+    // pivot moves with the camera.
     if delta.fly_active {
         if delta.fly_yaw != 0.0 || delta.fly_pitch != 0.0 {
-            rotation = apply_yaw_pitch(rotation, delta.fly_yaw, delta.fly_pitch);
+            let position_before = camera_position(
+                controller.focus_point,
+                rotation,
+                controller.distance,
+            );
+            let (new_rotation, new_focus) = fly_look_pivot_camera(
+                position_before,
+                rotation,
+                controller.distance,
+                delta.fly_yaw,
+                delta.fly_pitch,
+            );
+            rotation = new_rotation;
+            controller.focus_point = new_focus;
         }
+
         let velocity = fly_velocity(delta.fly_keys, rotation, controller.fly_speed, dt);
         if velocity != Vec3::ZERO {
             controller.focus_point += velocity;
