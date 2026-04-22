@@ -10,6 +10,7 @@ use ome_ecs::reflect::{FieldChoice, FieldMeta, InspectorVisibility, ReflectValue
 use ome_ecs::transform::Transform;
 
 use crate::actions::EditorAction;
+use crate::drag_drop::DraggedComponent;
 use crate::icons;
 use crate::state::{
     ComponentDisplayInfo, EntityDisplayInfo, EulerCacheKey, ReflectedTypeInfo,
@@ -220,6 +221,43 @@ pub(crate) fn draw_inspector_content(
     });
     ui.separator();
 
+    // Whole inspector area is a drop zone for DraggedComponent. On drop,
+    // the component is added to every selected entity. See #209.
+    let (_, dropped) = ui.dnd_drop_zone::<DraggedComponent, ()>(
+        egui::Frame::default(),
+        |ui| draw_inspector_body(
+            ui,
+            entities,
+            selected,
+            reflected_types,
+            actions,
+            euler_cache,
+            rotation_display_mode,
+        ),
+    );
+
+    if let Some(payload) = dropped {
+        for &entity in selected {
+            actions.push(EditorAction::AddComponent {
+                entity,
+                type_id: payload.0,
+            });
+        }
+    }
+}
+
+/// Inspector body — everything below the rotation-mode toggle. Split out
+/// so it can be wrapped by a `dnd_drop_zone` without disturbing the
+/// early-return control flow the old function used.
+fn draw_inspector_body(
+    ui: &mut egui::Ui,
+    entities: &[EntityDisplayInfo],
+    selected: &[Entity],
+    reflected_types: &[ReflectedTypeInfo],
+    actions: &mut Vec<EditorAction>,
+    euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
+    rotation_display_mode: &mut RotationDisplayMode,
+) {
     if selected.is_empty() {
         ui.weak("No entity selected");
         return;
@@ -325,11 +363,12 @@ pub(crate) fn draw_inspector_content(
             )
             .show_header(ui, |ui| {
                 ui.strong(format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name));
-                if !is_read_only
-                    && ui
-                        .small_button(icons::X)
-                        .on_hover_text("Remove component")
-                        .clicked()
+                // Removal is always available regardless of visibility:
+                // `ReadOnly` gates field edits, not component lifecycle.
+                if ui
+                    .small_button(icons::X)
+                    .on_hover_text("Remove component")
+                    .clicked()
                 {
                     actions.push(EditorAction::RemoveComponent {
                         entity,
@@ -480,11 +519,12 @@ fn draw_multi_entity_inspector(
                 };
                 ui.strong(label);
 
-                if !is_read_only
-                    && ui
-                        .small_button(icons::X)
-                        .on_hover_text("Remove from all selected")
-                        .clicked()
+                // Removal is always available regardless of visibility:
+                // `ReadOnly` gates field edits, not component lifecycle.
+                if ui
+                    .small_button(icons::X)
+                    .on_hover_text("Remove from all selected")
+                    .clicked()
                 {
                     let targets =
                         selected_entities_with_component(entities, selected, comp.type_id);

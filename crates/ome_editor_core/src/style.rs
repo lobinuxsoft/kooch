@@ -37,5 +37,12 @@ pub(crate) fn configure_style(ctx: &egui::Context) {
     style.visuals.window_corner_radius = egui::CornerRadius::same(6);
     style.visuals.menu_corner_radius = egui::CornerRadius::same(4);
     style.spacing.item_spacing = egui::vec2(6.0, 4.0);
+    // Disable text selection on labels globally. egui 0.34 defaults to
+    // selectable labels + multi-widget text selection, which in an editor
+    // (a) has no functional purpose and (b) leaks state across widgets
+    // after a DnD interaction ends with the pointer still registering
+    // as held. See #209 bug report.
+    style.interaction.selectable_labels = false;
+    style.interaction.multi_widget_text_select = false;
     ctx.set_style(style);
 }

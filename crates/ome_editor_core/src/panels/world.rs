@@ -20,6 +20,7 @@ use ome_ecs::sdf_torus::SdfTorus;
 use ome_ecs::spot_light::SpotLight;
 
 use crate::actions::EditorAction;
+use crate::drag_drop::DraggedComponent;
 use crate::icons;
 use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
 
@@ -322,26 +323,45 @@ pub(crate) fn draw_world_content(
             // Single response handles both click and drag.
             resp.dnd_set_drag_payload(info.entity);
 
-            // Drop target: highlight valid targets and push reparent action on release.
-            if !being_dragged {
-                if let Some(dragged) = resp.dnd_hover_payload::<Entity>() {
-                    let d = *dragged;
-                    if d != info.entity && !is_descendant(info.entity, d, entities) {
-                        ui.painter().rect_filled(
-                            resp.rect,
-                            2.0,
-                            egui::Color32::from_rgba_unmultiplied(60, 130, 230, 40),
-                        );
+            // Drop target: guard each `release_payload` call by a prior
+            // `hover_payload::<T>` check of the same type. `release_payload`
+            // internally calls `take` *before* checking the type, so a
+            // mismatched-type release silently drops the payload for any
+            // subsequent check — meaning unguarded order-dependent checks
+            // for multiple payload types on the same response are broken.
+
+            if !being_dragged && let Some(dragged) = resp.dnd_hover_payload::<Entity>() {
+                let d = *dragged;
+                if d != info.entity && !is_descendant(info.entity, d, entities) {
+                    ui.painter().rect_filled(
+                        resp.rect,
+                        2.0,
+                        egui::Color32::from_rgba_unmultiplied(60, 130, 230, 40),
+                    );
+                    if let Some(released) = resp.dnd_release_payload::<Entity>() {
+                        let r = *released;
+                        if r != info.entity && !is_descendant(info.entity, r, entities) {
+                            actions.push(EditorAction::Reparent {
+                                entity: r,
+                                new_parent: Some(info.entity),
+                            });
+                        }
                     }
                 }
-                if let Some(dragged) = resp.dnd_release_payload::<Entity>() {
-                    let d = *dragged;
-                    if d != info.entity && !is_descendant(info.entity, d, entities) {
-                        actions.push(EditorAction::Reparent {
-                            entity: d,
-                            new_parent: Some(info.entity),
-                        });
-                    }
+            }
+
+            // Drop target: Components-panel drag. Accept on any entity row.
+            if resp.dnd_hover_payload::<DraggedComponent>().is_some() {
+                ui.painter().rect_filled(
+                    resp.rect,
+                    2.0,
+                    egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
+                );
+                if let Some(dragged) = resp.dnd_release_payload::<DraggedComponent>() {
+                    actions.push(EditorAction::AddComponent {
+                        entity: info.entity,
+                        type_id: dragged.0,
+                    });
                 }
             }
 
