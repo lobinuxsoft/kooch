@@ -16,6 +16,7 @@
 //!     .run();
 //! ```
 
+pub mod editor_camera;
 pub mod icons;
 pub mod launch_screen;
 pub mod play_state;
@@ -36,6 +37,7 @@ use ome_core::app::App;
 use ome_core::plugin::Plugin;
 use ome_core::stage::Stage;
 
+pub use editor_camera::{EditorCamera, EditorCameraController, EditorOnly};
 pub use state::EditorOverlay;
 pub use play_state::PlayState;
 pub use project::{EditorConfig, ProjectManifest};
@@ -56,7 +58,15 @@ impl Plugin for EditorPlugin {
         app.insert_resource(PlayState::new());
         app.insert_resource(project_state::ProjectState::new());
         app.insert_resource(undo::UndoStack::new());
+        app.insert_resource(editor_camera::EditorCameraController::default());
         app.add_system(Stage::Startup, systems::editor_startup_system);
+        // Register the EditorOnly marker as ephemeral *before* the camera
+        // is spawned, so the entity is filtered from any save that races
+        // the spawn (e.g. play-mode snapshot triggered immediately).
+        app.add_system(Stage::Startup, editor_camera::register_ephemeral_markers_system);
+        app.add_system(Stage::Startup, editor_camera::spawn_editor_camera_system);
+        // Hand the viewport over to the gameplay camera in play mode.
+        app.add_system(Stage::PreRender, editor_camera::sync_editor_camera_active_system);
         app.add_system(Stage::Render, systems::editor_render_system);
     }
 

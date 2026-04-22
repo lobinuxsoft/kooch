@@ -8,6 +8,8 @@ use glam::Vec3;
 use ome_ecs::entity::Entity;
 
 use crate::actions::EditorAction;
+use crate::editor_camera::EditorCameraController;
+use crate::editor_camera::input::ViewportInputDelta;
 use crate::panels::archetypes::draw_archetypes_content;
 use crate::panels::components::draw_components_content;
 use crate::panels::inspector::draw_inspector_content;
@@ -31,6 +33,8 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) last_clicked_index: &'a mut Option<usize>,
     pub(crate) viewport_texture_id: egui::TextureId,
     pub(crate) viewport_request: &'a mut Option<(u32, u32)>,
+    pub(crate) viewport_input: &'a mut Option<ViewportInputDelta>,
+    pub(crate) editor_camera_controller: &'a EditorCameraController,
     pub(crate) rotation_euler_cache: &'a mut HashMap<EulerCacheKey, Vec3>,
     pub(crate) rotation_display_mode: &'a mut RotationDisplayMode,
 }
@@ -55,9 +59,13 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.active_archetype_count,
                 self.last_clicked_index,
             ),
-            EditorTab::View => {
-                draw_view_content(ui, self.viewport_texture_id, self.viewport_request)
-            }
+            EditorTab::View => draw_view_content(
+                ui,
+                self.viewport_texture_id,
+                self.viewport_request,
+                self.viewport_input,
+                self.editor_camera_controller,
+            ),
             EditorTab::Inspector => draw_inspector_content(
                 ui,
                 self.entities,
