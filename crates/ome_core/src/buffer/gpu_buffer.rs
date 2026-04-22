@@ -204,7 +204,10 @@ mod tests {
     fn create_headless_device() -> (Device, Queue) {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-            ..Default::default()
+            flags: wgpu::InstanceFlags::default(),
+            backend_options: wgpu::BackendOptions::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            display: None,
         });
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -214,13 +217,10 @@ mod tests {
         }))
         .expect("no GPU adapter");
 
-        pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("test_device"),
-                ..Default::default()
-            },
-            None,
-        ))
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("test_device"),
+            ..Default::default()
+        }))
         .expect("failed to create device")
     }
 
