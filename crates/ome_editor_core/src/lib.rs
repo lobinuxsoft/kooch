@@ -22,6 +22,7 @@ pub mod play_state;
 pub mod project;
 pub mod project_state;
 pub(crate) mod actions;
+pub(crate) mod drag_drop;
 pub(crate) mod menu_bar;
 pub(crate) mod panels;
 pub(crate) mod queries;
