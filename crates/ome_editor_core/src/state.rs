@@ -22,7 +22,10 @@ pub(crate) type SharedWinitState = Arc<Mutex<egui_winit::State>>;
 // ---------------------------------------------------------------------------
 
 /// Identifiers for each dockable editor tab.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// `Serialize`/`Deserialize` enable persisting the dock layout between
+/// editor sessions via [`crate::layout`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub(crate) enum EditorTab {
     World,
     View,
