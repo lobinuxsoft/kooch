@@ -19,6 +19,7 @@ use ome_ecs::query::Query;
 use super::SHADER_SOURCE;
 use super::gpu_mesh::vertex_buffer_layout;
 use super::loader::MeshLoader;
+use crate::VIEWPORT_DEPTH_FORMAT;
 
 /// Camera matrices uploaded to the mesh shader. View and projection are
 /// pre-multiplied to keep the shader trivial; lighting (which would need
@@ -137,7 +138,13 @@ impl MeshPassRenderer {
                 cull_mode: Some(wgpu::Face::Back),
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: VIEWPORT_DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
             cache: None,
@@ -165,6 +172,7 @@ impl MeshPassRenderer {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
         resources: &Resources,
         aspect: f32,
     ) {
@@ -220,7 +228,14 @@ impl MeshPassRenderer {
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,

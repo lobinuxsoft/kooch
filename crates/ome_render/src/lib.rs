@@ -15,6 +15,11 @@ pub mod raymarch;
 pub mod raymarch_plugin;
 mod systems;
 
+/// Depth format shared by every renderer that writes into the editor's
+/// offscreen viewport target. `Depth32Float` is universally supported
+/// and gives enough precision without stencil (which we don't use).
+pub const VIEWPORT_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
 pub use clear_color::ClearColor;
 pub use fps::FpsTracker;
 pub use mesh::{Aabb, GpuMesh, MeshLoadError, MeshLoader, MeshPassRenderer, MeshVertex};

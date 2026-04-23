@@ -48,9 +48,9 @@ pub(crate) fn render_viewport(
 
     if camera_ok {
         raymarch.update_scene(gpu.device(), gpu.queue(), resources, SKY_TOP, SKY_BOTTOM);
-        raymarch.render(&mut encoder, target.view());
+        raymarch.render(&mut encoder, target.view(), target.depth_view());
     } else {
-        clear_to_black(&mut encoder, target.view());
+        clear_to_black(&mut encoder, target.view(), target.depth_view());
     }
 
     if project_loaded && has_visible_mesh(resources) {
@@ -59,6 +59,7 @@ pub(crate) fn render_viewport(
             gpu.queue(),
             &mut encoder,
             target.view(),
+            target.depth_view(),
             resources,
             target.aspect(),
         );
@@ -67,7 +68,11 @@ pub(crate) fn render_viewport(
     gpu.queue().submit(Some(encoder.finish()));
 }
 
-fn clear_to_black(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+fn clear_to_black(
+    encoder: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    depth: &wgpu::TextureView,
+) {
     let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("viewport_clear_pass"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -79,7 +84,14 @@ fn clear_to_black(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) 
                 store: wgpu::StoreOp::Store,
             },
         })],
-        depth_stencil_attachment: None,
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: depth,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(1.0),
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
         timestamp_writes: None,
         occlusion_query_set: None,
         multiview_mask: None,

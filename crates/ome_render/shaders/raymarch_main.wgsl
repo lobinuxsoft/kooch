@@ -217,15 +217,36 @@ fn calc_normal(p: vec3<f32>, dist: f32) -> vec3<f32> {
     return normalize(n);
 }
 
+struct FsOut {
+    @location(0) color: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+}
+
+// Projects a world-space position into NDC depth in wgpu's [0, 1] range.
+// Matches the projection matrix built on the CPU (`Mat4::perspective_rh`),
+// whose z output is already [0, 1] — no OpenGL-style re-mapping needed.
+fn world_to_ndc_depth(world: vec3<f32>) -> f32 {
+    let clip = camera.projection * (camera.view * vec4<f32>(world, 1.0));
+    if clip.w <= 0.0 {
+        return 1.0;
+    }
+    return clamp(clip.z / clip.w, 0.0, 1.0);
+}
+
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput) -> FsOut {
     let ray = generate_ray(in.uv);
     let hit = ray_march(ray);
+
+    var out: FsOut;
 
     if !hit.hit {
         let t = clamp(ray.direction.y * 0.5 + 0.5, 0.0, 1.0);
         let sky = mix(scene_meta.sky_bottom.rgb, scene_meta.sky_top.rgb, t);
-        return vec4<f32>(sky, 1.0);
+        out.color = vec4<f32>(sky, 1.0);
+        // Sky at far plane so any later mesh pass wins the depth test.
+        out.depth = 1.0;
+        return out;
     }
 
     let normal = calc_normal(hit.position, hit.distance);
@@ -234,5 +255,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ambient = 0.2;
     let base = vec3<f32>(0.8, 0.7, 0.6);
     let color = base * (diffuse + ambient);
-    return vec4<f32>(color, 1.0);
+    out.color = vec4<f32>(color, 1.0);
+    out.depth = world_to_ndc_depth(hit.position);
+    return out;
 }
