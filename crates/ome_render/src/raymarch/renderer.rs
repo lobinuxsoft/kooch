@@ -6,6 +6,7 @@ use super::SHADER_SOURCE;
 use super::instance::{
     CameraUniforms, INITIAL_INSTANCE_CAPACITY, RayMarchParams, SceneMeta, SdfInstance,
 };
+use crate::VIEWPORT_DEPTH_FORMAT;
 
 /// Ray-marching pipeline + buffers + bind groups.
 pub struct RayMarchRenderer {
@@ -148,7 +149,18 @@ impl RayMarchRenderer {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
-            depth_stencil: None,
+            // LessEqual (not Less) so the sky pixel — which writes
+            // `frag_depth = 1.0` explicitly — passes the depth test
+            // against a depth buffer cleared to 1.0. With Less the
+            // sky would fail (1.0 < 1.0 = false) and the viewport
+            // would show the clear color (black) behind every SDF.
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: VIEWPORT_DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
             cache: None,
@@ -168,9 +180,16 @@ impl RayMarchRenderer {
         }
     }
 
-    /// Records the ray-march pass into `encoder`, clearing the target to
-    /// black and drawing the fullscreen triangle.
-    pub fn render(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+    /// Records the ray-march pass into `encoder`, clearing the color target
+    /// to black, clearing the depth target to far, and drawing the fullscreen
+    /// triangle. The fragment shader writes `@builtin(frag_depth)` from the
+    /// world-space hit so later mesh passes can depth-test against the SDF.
+    pub fn render(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+    ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("raymarch_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -182,7 +201,14 @@ impl RayMarchRenderer {
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,

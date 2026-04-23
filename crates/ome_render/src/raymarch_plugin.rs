@@ -15,8 +15,58 @@ use ome_core::stage::Stage;
 
 use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
 
+use crate::VIEWPORT_DEPTH_FORMAT;
 use crate::fps::FpsTracker;
 use crate::raymarch::RayMarchRenderer;
+
+/// Surface-sized depth texture owned by the standalone plugin (not the
+/// editor path, which provides its own depth from `ViewportTarget`).
+/// Recreated on-demand when the window size changes.
+struct RaymarchDepth {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    size: (u32, u32),
+}
+
+impl RaymarchDepth {
+    fn new(device: &wgpu::Device, size: (u32, u32)) -> Self {
+        let (_texture, view) = create_depth(device, size);
+        Self {
+            _texture,
+            view,
+            size,
+        }
+    }
+
+    fn ensure(&mut self, device: &wgpu::Device, size: (u32, u32)) {
+        if size == self.size {
+            return;
+        }
+        let (tex, view) = create_depth(device, size);
+        self._texture = tex;
+        self.view = view;
+        self.size = size;
+    }
+}
+
+fn create_depth(device: &wgpu::Device, size: (u32, u32)) -> (wgpu::Texture, wgpu::TextureView) {
+    let tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("raymarch_plugin_depth_texture"),
+        size: wgpu::Extent3d {
+            width: size.0.max(1),
+            height: size.1.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: VIEWPORT_DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+    (tex, view)
+}
 
 /// Sky colors used when a ray misses every SDF.
 #[derive(Debug, Clone, Copy)]
@@ -65,7 +115,9 @@ fn init_renderer(resources: &mut Resources) {
         return;
     };
     let renderer = RayMarchRenderer::new(gpu.device(), gpu.format());
+    let depth = RaymarchDepth::new(gpu.device(), gpu.size());
     resources.insert(renderer);
+    resources.insert(depth);
     tracing::info!("RayMarchPlugin: renderer initialized");
 }
 
@@ -90,20 +142,25 @@ fn raymarch_system(resources: &mut Resources) {
         resources.insert(renderer);
         return;
     };
+    let mut depth = resources
+        .remove::<RaymarchDepth>()
+        .unwrap_or_else(|| RaymarchDepth::new(gpu.device(), gpu.size()));
 
     let (w, h) = gpu.size();
+    depth.ensure(gpu.device(), (w, h));
     let aspect = w as f32 / h.max(1) as f32;
     let has_camera = renderer.update_camera(gpu.device(), gpu.queue(), resources, aspect);
     renderer.update_scene(gpu.device(), gpu.queue(), resources, sky.top, sky.bottom);
 
     let outcome = if has_camera {
-        acquire_and_render(&gpu, &renderer)
+        acquire_and_render(&gpu, &renderer, &depth)
     } else {
         SurfaceOutcome::Skip
     };
 
     resources.insert(gpu);
     resources.insert(renderer);
+    resources.insert(depth);
 
     match outcome {
         SurfaceOutcome::Presented | SurfaceOutcome::Skip => {}
@@ -130,10 +187,14 @@ enum SurfaceOutcome {
     Error,
 }
 
-fn acquire_and_render(gpu: &GpuContext, renderer: &RayMarchRenderer) -> SurfaceOutcome {
+fn acquire_and_render(
+    gpu: &GpuContext,
+    renderer: &RayMarchRenderer,
+    depth: &RaymarchDepth,
+) -> SurfaceOutcome {
     match gpu.surface().get_current_texture() {
         CurrentSurfaceTexture::Success(tex) | CurrentSurfaceTexture::Suboptimal(tex) => {
-            render_frame(gpu, renderer, tex);
+            render_frame(gpu, renderer, depth, tex);
             SurfaceOutcome::Presented
         }
         CurrentSurfaceTexture::Outdated | CurrentSurfaceTexture::Lost => {
@@ -146,7 +207,12 @@ fn acquire_and_render(gpu: &GpuContext, renderer: &RayMarchRenderer) -> SurfaceO
     }
 }
 
-fn render_frame(gpu: &GpuContext, renderer: &RayMarchRenderer, frame: SurfaceTexture) {
+fn render_frame(
+    gpu: &GpuContext,
+    renderer: &RayMarchRenderer,
+    depth: &RaymarchDepth,
+    frame: SurfaceTexture,
+) {
     let view = frame
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
@@ -155,7 +221,7 @@ fn render_frame(gpu: &GpuContext, renderer: &RayMarchRenderer, frame: SurfaceTex
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("raymarch_encoder"),
         });
-    renderer.render(&mut encoder, &view);
+    renderer.render(&mut encoder, &view, &depth.view);
     gpu.queue().submit(std::iter::once(encoder.finish()));
     frame.present();
 }
