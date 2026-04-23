@@ -204,8 +204,11 @@ fn ray_march(ray: Ray) -> HitResult {
     return result;
 }
 
-fn calc_normal(p: vec3<f32>) -> vec3<f32> {
-    let eps = 0.001;
+fn calc_normal(p: vec3<f32>, dist: f32) -> vec3<f32> {
+    // Eps formula lives in `sdf_primitives.wgsl::sdf_normal_eps` so any
+    // future SDF-normal shader (pathtracer, debug viz, etc.) reuses the
+    // same value and inherits the CSG-seam guarantee from #225.
+    let eps = sdf_normal_eps(dist, params.surface_threshold, params.epsilon_factor);
     let n = vec3<f32>(
         eval_scene(p + vec3<f32>(eps, 0.0, 0.0)) - eval_scene(p - vec3<f32>(eps, 0.0, 0.0)),
         eval_scene(p + vec3<f32>(0.0, eps, 0.0)) - eval_scene(p - vec3<f32>(0.0, eps, 0.0)),
@@ -225,7 +228,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(sky, 1.0);
     }
 
-    let normal = calc_normal(hit.position);
+    let normal = calc_normal(hit.position, hit.distance);
     let sun_dir = normalize(vec3<f32>(0.6, 0.8, 0.3));
     let diffuse = max(dot(normal, sun_dir), 0.0);
     let ambient = 0.2;
