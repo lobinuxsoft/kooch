@@ -6,7 +6,7 @@ use ome_core::event::{AppExit, Events};
 use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
-use ome_render::{MeshPassRenderer, RayMarchRenderer};
+use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
 
 use crate::actions::{apply_actions, EditorAction};
 use crate::editor_camera::EditorCameraController;
@@ -269,6 +269,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut mesh_pass = resources
         .remove::<MeshPassRenderer>()
         .expect("MeshPassRenderer not found");
+    let mut sky_pass = resources
+        .remove::<SkyRenderPass>()
+        .expect("SkyRenderPass not found");
     let mut project_state = resources.remove::<ProjectState>();
     let mut undo_stack = resources
         .remove::<UndoStack>()
@@ -330,6 +333,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 
     render_viewport(
         &gpu,
+        &mut sky_pass,
         &mut raymarch,
         &mut mesh_pass,
         &viewport,
@@ -344,6 +348,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     resources.insert(viewport);
     resources.insert(raymarch);
     resources.insert(mesh_pass);
+    resources.insert(sky_pass);
     if let Some(ps) = project_state {
         resources.insert(ps);
     }

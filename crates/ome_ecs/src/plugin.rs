@@ -34,6 +34,7 @@ use crate::sdf_cylinder::SdfCylinder;
 use crate::sdf_plane::SdfPlane;
 use crate::sdf_sphere::SdfSphere;
 use crate::sdf_torus::SdfTorus;
+use crate::sky_renderer::SkyRenderer;
 use crate::spot_light::SpotLight;
 use crate::transform::Transform;
 
@@ -67,6 +68,7 @@ fn register_builtin_components(resources: &mut ome_core::resource::Resources) {
         registry.register_cpu_reflected::<DirectionalLight>();
         registry.register_cpu_reflected::<PointLight>();
         registry.register_cpu_reflected::<SpotLight>();
+        registry.register_cpu_reflected::<SkyRenderer>();
         registry.register_cpu_reflected::<MeshRenderer>();
         registry.register_cpu_reflected::<DynamicBody>();
         registry.register_cpu_reflected::<KinematicBody>();

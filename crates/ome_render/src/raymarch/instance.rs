@@ -93,11 +93,18 @@ pub(super) struct SdfInstance {
 }
 
 /// Matches `SceneMeta` in the WGSL shader.
+///
+/// `skip_internal_sky = 1` tells the fragment shader to discard on miss
+/// instead of drawing its internal vertical gradient. Set this when a
+/// separate sky pass (e.g. `SkyRenderPass`) ran before us and already
+/// filled the background — the ray-march pass then becomes additive on
+/// top of that sky, only writing colors where rays actually hit SDFs.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(super) struct SceneMeta {
     pub instance_count: u32,
-    pub _pad0: [u32; 3],
+    pub skip_internal_sky: u32,
+    pub _pad0: [u32; 2],
     pub sky_top: [f32; 4],
     pub sky_bottom: [f32; 4],
 }
@@ -106,7 +113,8 @@ impl Default for SceneMeta {
     fn default() -> Self {
         Self {
             instance_count: 0,
-            _pad0: [0; 3],
+            skip_internal_sky: 0,
+            _pad0: [0; 2],
             sky_top: [0.5, 0.7, 1.0, 1.0],
             sky_bottom: [0.1, 0.2, 0.4, 1.0],
         }
