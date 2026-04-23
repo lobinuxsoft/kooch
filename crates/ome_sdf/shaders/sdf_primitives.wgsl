@@ -146,3 +146,31 @@ fn transform_point(p: vec3<f32>, position: vec3<f32>, rotation: vec4<f32>) -> ve
 fn scale_point(p: vec3<f32>, s: f32) -> vec3<f32> {
     return p / s;
 }
+
+// =============================================================================
+// NORMAL CALCULATION HELPERS
+// =============================================================================
+
+/// Returns the central-difference epsilon to use when computing an SDF
+/// surface normal at a hit point.
+///
+/// Returns 10% of the local hit threshold — sub-precision relative to
+/// the hit-detection itself — so the central-difference samples are
+/// guaranteed never to bridge `min(a, b)` gradient discontinuities at
+/// CSG seams. Without this, normals near smooth-blend zones average
+/// across incompatible primitives and produce dark patches on lit
+/// surfaces (#225 H#1).
+///
+/// `dist` is the ray distance traveled to the hit point (the depth
+/// proxy that the hit threshold uses). `surface_threshold` and
+/// `epsilon_factor` come from the caller's `RayMarchParams`-equivalent
+/// uniform — pass them in so this helper stays decoupled from any
+/// renderer-specific binding layout.
+///
+/// **Use this in any future shader that computes SDF normals via
+/// central differences** (compute pathtracer, debug visualization,
+/// etc.). Do NOT hardcode an epsilon — the project learned the hard
+/// way that a constant `0.001` causes the artifact above.
+fn sdf_normal_eps(dist: f32, surface_threshold: f32, epsilon_factor: f32) -> f32 {
+    return (surface_threshold + epsilon_factor * dist) * 0.1;
+}

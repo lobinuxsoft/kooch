@@ -205,14 +205,10 @@ fn ray_march(ray: Ray) -> HitResult {
 }
 
 fn calc_normal(p: vec3<f32>, dist: f32) -> vec3<f32> {
-    // Sub-precision eps: 10% of the adaptive hit threshold. Keeps the
-    // central-difference samples tighter than the hit detection itself,
-    // so they never bridge CSG `min(a, b)` seams that the hit test
-    // would ignore. Without this, normals near smooth-blend zones or
-    // primitive boundaries average across discontinuous gradients and
-    // produce dark patches on otherwise lit surfaces (#225).
-    let hit_threshold = params.surface_threshold + params.epsilon_factor * dist;
-    let eps = hit_threshold * 0.1;
+    // Eps formula lives in `sdf_primitives.wgsl::sdf_normal_eps` so any
+    // future SDF-normal shader (pathtracer, debug viz, etc.) reuses the
+    // same value and inherits the CSG-seam guarantee from #225.
+    let eps = sdf_normal_eps(dist, params.surface_threshold, params.epsilon_factor);
     let n = vec3<f32>(
         eval_scene(p + vec3<f32>(eps, 0.0, 0.0)) - eval_scene(p - vec3<f32>(eps, 0.0, 0.0)),
         eval_scene(p + vec3<f32>(0.0, eps, 0.0)) - eval_scene(p - vec3<f32>(0.0, eps, 0.0)),

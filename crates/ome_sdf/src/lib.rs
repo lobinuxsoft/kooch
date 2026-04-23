@@ -47,6 +47,7 @@ mod tests {
             "sdf_smooth_subtraction",
             "transform_point",
             "scale_point",
+            "sdf_normal_eps",
         ];
         for name in expected {
             assert!(
