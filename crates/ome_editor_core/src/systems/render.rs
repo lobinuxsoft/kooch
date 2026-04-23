@@ -6,7 +6,7 @@ use ome_core::event::{AppExit, Events};
 use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
-use ome_render::RayMarchRenderer;
+use ome_render::{MeshPassRenderer, RayMarchRenderer};
 
 use crate::actions::{apply_actions, EditorAction};
 use crate::editor_camera::EditorCameraController;
@@ -266,6 +266,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut raymarch = resources
         .remove::<RayMarchRenderer>()
         .expect("RayMarchRenderer not found");
+    let mut mesh_pass = resources
+        .remove::<MeshPassRenderer>()
+        .expect("MeshPassRenderer not found");
     let mut project_state = resources.remove::<ProjectState>();
     let mut undo_stack = resources
         .remove::<UndoStack>()
@@ -325,7 +328,14 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         apply_viewport_input(delta, resources, selection_world);
     }
 
-    render_viewport(&gpu, &mut raymarch, &viewport, resources, project_loaded);
+    render_viewport(
+        &gpu,
+        &mut raymarch,
+        &mut mesh_pass,
+        &viewport,
+        resources,
+        project_loaded,
+    );
 
     let _presented = present_editor_frame(&gpu, &mut overlay, &window, full_output);
 
@@ -333,6 +343,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     resources.insert(overlay);
     resources.insert(viewport);
     resources.insert(raymarch);
+    resources.insert(mesh_pass);
     if let Some(ps) = project_state {
         resources.insert(ps);
     }

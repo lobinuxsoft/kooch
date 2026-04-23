@@ -6,8 +6,10 @@ use glam::Vec4;
 use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
 use ome_ecs::SdfSphere;
+use ome_ecs::hierarchy::GlobalTransform;
+use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::Query;
-use ome_render::RayMarchRenderer;
+use ome_render::{MeshPassRenderer, RayMarchRenderer};
 
 use crate::viewport::target::ViewportTarget;
 
@@ -18,12 +20,18 @@ const SKY_BOTTOM: Vec4 = Vec4::new(0.1, 0.2, 0.4, 1.0);
 
 /// Renders the active scene into the viewport offscreen texture.
 ///
-/// When the project is not loaded, there is no active camera, or there
-/// are no visible SDF shapes, the texture is cleared to solid black and
-/// the ray-march pipeline is skipped entirely.
+/// Two passes share the encoder and the offscreen target:
+/// 1. **Ray-march pass** — clears the target to sky / black and writes
+///    visible SDF shapes (skipped when there is no active camera or no
+///    SDF content; in that case a black clear pass runs instead).
+/// 2. **Mesh pass** — paints visible `MeshRenderer + GlobalTransform`
+///    entities on top of whatever the ray-march pass produced. Skipped
+///    when no entity has a non-empty `mesh` path. No depth buffer yet
+///    (issue #129 ships scope-strict; depth/SDF compositing follows).
 pub(crate) fn render_viewport(
     gpu: &GpuContext,
     raymarch: &mut RayMarchRenderer,
+    mesh_pass: &mut MeshPassRenderer,
     target: &ViewportTarget,
     resources: &Resources,
     project_loaded: bool,
@@ -34,8 +42,8 @@ pub(crate) fn render_viewport(
             label: Some("viewport_encoder"),
         });
 
-    let has_content = project_loaded && has_visible_sdf(resources);
-    let camera_ok = has_content
+    let has_sdf = project_loaded && has_visible_sdf(resources);
+    let camera_ok = has_sdf
         && raymarch.update_camera(gpu.device(), gpu.queue(), resources, target.aspect());
 
     if camera_ok {
@@ -43,6 +51,17 @@ pub(crate) fn render_viewport(
         raymarch.render(&mut encoder, target.view());
     } else {
         clear_to_black(&mut encoder, target.view());
+    }
+
+    if project_loaded && has_visible_mesh(resources) {
+        mesh_pass.render(
+            gpu.device(),
+            gpu.queue(),
+            &mut encoder,
+            target.view(),
+            resources,
+            target.aspect(),
+        );
     }
 
     gpu.queue().submit(Some(encoder.finish()));
@@ -72,6 +91,17 @@ fn has_visible_sdf(resources: &Resources) -> bool {
     let mut found = false;
     query.for_each(|sphere| {
         if sphere.visible {
+            found = true;
+        }
+    });
+    found
+}
+
+fn has_visible_mesh(resources: &Resources) -> bool {
+    let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
+    let mut found = false;
+    query.for_each(|(mr, _)| {
+        if mr.visible && !mr.mesh.is_empty() {
             found = true;
         }
     });
