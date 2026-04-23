@@ -5,7 +5,7 @@ use std::sync::Arc;
 use ome_core::gpu::GpuContext;
 use ome_core::raw_event::RawEventHandler;
 use ome_core::resource::Resources;
-use ome_render::{MeshPassRenderer, RayMarchRenderer};
+use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
 
 use crate::state::{EditorOverlay, EguiEventHandler};
 use crate::style::{configure_fonts, configure_style};
@@ -47,6 +47,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
 
     let raymarch = RayMarchRenderer::new(gpu.device(), gpu.format());
     let mesh_pass = MeshPassRenderer::new(gpu.device(), gpu.format());
+    let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format());
     let viewport = ViewportTarget::new(
         gpu.device(),
         &mut renderer,
@@ -70,6 +71,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     resources.insert(handler);
     resources.insert(raymarch);
     resources.insert(mesh_pass);
+    resources.insert(sky_pass);
     resources.insert(viewport);
 
     tracing::info!("Editor overlay initialized");

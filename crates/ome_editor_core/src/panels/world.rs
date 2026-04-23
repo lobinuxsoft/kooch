@@ -17,6 +17,7 @@ use ome_ecs::sdf_cylinder::SdfCylinder;
 use ome_ecs::sdf_plane::SdfPlane;
 use ome_ecs::sdf_sphere::SdfSphere;
 use ome_ecs::sdf_torus::SdfTorus;
+use ome_ecs::sky_renderer::SkyRenderer;
 use ome_ecs::spot_light::SpotLight;
 
 use crate::actions::EditorAction;
@@ -133,6 +134,13 @@ pub(crate) fn draw_world_content(
                 actions.push(EditorAction::Spawn {
                     extra: vec![TypeId::of::<MeshRenderer>()],
                     name: Some("Mesh".to_owned()),
+                });
+                ui.close_menu();
+            }
+            if ui.button("Sky").clicked() {
+                actions.push(EditorAction::Spawn {
+                    extra: vec![TypeId::of::<SkyRenderer>()],
+                    name: Some("Sky".to_owned()),
                 });
                 ui.close_menu();
             }

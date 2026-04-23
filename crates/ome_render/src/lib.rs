@@ -13,6 +13,7 @@ pub mod mesh;
 pub mod plugin;
 pub mod raymarch;
 pub mod raymarch_plugin;
+pub mod sky;
 mod systems;
 
 /// Depth format shared by every renderer that writes into the editor's
@@ -26,3 +27,4 @@ pub use mesh::{Aabb, GpuMesh, MeshLoadError, MeshLoader, MeshPassRenderer, MeshV
 pub use plugin::RenderPlugin;
 pub use raymarch::{RayMarchParams, RayMarchRenderer};
 pub use raymarch_plugin::{RayMarchPlugin, SkyGradient};
+pub use sky::{ActiveSky, SkyRenderPass};

@@ -47,6 +47,7 @@ pub mod sdf_cylinder;
 pub mod sdf_plane;
 pub mod sdf_sphere;
 pub mod sdf_torus;
+pub mod sky_renderer;
 pub mod spot_light;
 pub mod transform;
 
@@ -85,5 +86,6 @@ pub use sdf_cylinder::SdfCylinder;
 pub use sdf_plane::SdfPlane;
 pub use sdf_sphere::SdfSphere;
 pub use sdf_torus::SdfTorus;
+pub use sky_renderer::SkyRenderer;
 pub use spot_light::SpotLight;
 pub use transform::Transform;

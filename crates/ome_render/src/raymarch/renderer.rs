@@ -180,16 +180,32 @@ impl RayMarchRenderer {
         }
     }
 
-    /// Records the ray-march pass into `encoder`, clearing the color target
-    /// to black, clearing the depth target to far, and drawing the fullscreen
+    /// Records the ray-march pass into `encoder` and draws the fullscreen
     /// triangle. The fragment shader writes `@builtin(frag_depth)` from the
     /// world-space hit so later mesh passes can depth-test against the SDF.
+    ///
+    /// When `clear_targets = true` the pass clears color to black and depth
+    /// to 1.0 — appropriate when the raymarch is the FIRST pass of the
+    /// frame. When `false` the targets are loaded, preserving whatever a
+    /// prior pass wrote (e.g. a `SkyRenderPass` that already drew a sky
+    /// background + depth=1.0); pair with `update_scene(skip_internal_sky = true)`.
     pub fn render(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         depth: &wgpu::TextureView,
+        clear_targets: bool,
     ) {
+        let color_load = if clear_targets {
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+        } else {
+            wgpu::LoadOp::Load
+        };
+        let depth_load = if clear_targets {
+            wgpu::LoadOp::Clear(1.0)
+        } else {
+            wgpu::LoadOp::Load
+        };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("raymarch_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -197,14 +213,14 @@ impl RayMarchRenderer {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    load: color_load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
+                    load: depth_load,
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,

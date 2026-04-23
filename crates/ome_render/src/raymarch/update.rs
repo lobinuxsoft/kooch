@@ -76,6 +76,11 @@ impl RayMarchRenderer {
     /// Uploads every visible SDF shape entity to the instance storage buffer.
     /// Instances are sorted by `Entity::index()` to make CSG evaluation
     /// order reproducible across frames.
+    ///
+    /// `skip_internal_sky = true` tells the fragment shader to discard on
+    /// ray miss instead of drawing its internal gradient — use this when a
+    /// separate sky pass ran before the raymarch and already filled the
+    /// background.
     pub fn update_scene(
         &mut self,
         device: &wgpu::Device,
@@ -83,6 +88,7 @@ impl RayMarchRenderer {
         resources: &ome_core::resource::Resources,
         sky_top: Vec4,
         sky_bottom: Vec4,
+        skip_internal_sky: bool,
     ) {
         let mut tagged: Vec<(u32, SdfInstance)> = Vec::new();
         collect_spheres(resources, &mut tagged);
@@ -119,7 +125,8 @@ impl RayMarchRenderer {
 
         let meta = SceneMeta {
             instance_count: data.len() as u32,
-            _pad0: [0; 3],
+            skip_internal_sky: u32::from(skip_internal_sky),
+            _pad0: [0; 2],
             sky_top: sky_top.to_array(),
             sky_bottom: sky_bottom.to_array(),
         };

@@ -150,7 +150,17 @@ fn raymarch_system(resources: &mut Resources) {
     depth.ensure(gpu.device(), (w, h));
     let aspect = w as f32 / h.max(1) as f32;
     let has_camera = renderer.update_camera(gpu.device(), gpu.queue(), resources, aspect);
-    renderer.update_scene(gpu.device(), gpu.queue(), resources, sky.top, sky.bottom);
+    // Standalone demo has no separate sky pass — raymarch owns the sky via
+    // its internal gradient, so `skip_internal_sky = false` and it clears
+    // the targets itself.
+    renderer.update_scene(
+        gpu.device(),
+        gpu.queue(),
+        resources,
+        sky.top,
+        sky.bottom,
+        false,
+    );
 
     let outcome = if has_camera {
         acquire_and_render(&gpu, &renderer, &depth)
@@ -221,7 +231,8 @@ fn render_frame(
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("raymarch_encoder"),
         });
-    renderer.render(&mut encoder, &view, &depth.view);
+    // Standalone demo: raymarch is the only pass, clears its own targets.
+    renderer.render(&mut encoder, &view, &depth.view, true);
     gpu.queue().submit(std::iter::once(encoder.finish()));
     frame.present();
 }

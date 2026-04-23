@@ -1,35 +1,37 @@
-//! Viewport ray-march pass: writes the current scene into the offscreen
-//! texture, or clears it to black when there is nothing to render.
+//! Viewport render orchestration.
+//!
+//! Three passes share one encoder and the offscreen target, in this order:
+//! 1. **Sky pass** (optional) — runs when an active `SkyRenderer` entity
+//!    exists. Clears color + depth and draws the procedural sky.
+//! 2. **Ray-march pass** — draws SDF shapes. If the sky pass ran first,
+//!    loads the targets (preserving the sky) and discards on ray miss;
+//!    otherwise clears the targets and draws its internal gradient.
+//! 3. **Mesh pass** — paints visible `MeshRenderer + GlobalTransform`
+//!    entities on top, depth-testing against the SDF depth buffer.
 
 use glam::Vec4;
 
 use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
+use ome_core::time::Time;
 use ome_ecs::SdfSphere;
 use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::Query;
-use ome_render::{MeshPassRenderer, RayMarchRenderer};
+use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
 
 use crate::viewport::target::ViewportTarget;
 
-/// Sky gradient used when the scene has renderable content. Kept in sync
-/// with the defaults of `SkyGradient` in `ome_render::raymarch_plugin`.
+/// Fallback sky gradient used when no `SkyRenderer` entity exists.
+/// Kept in sync with the defaults of `SkyGradient` in
+/// `ome_render::raymarch_plugin` and the `SkyRenderer` component defaults.
 const SKY_TOP: Vec4 = Vec4::new(0.5, 0.7, 1.0, 1.0);
 const SKY_BOTTOM: Vec4 = Vec4::new(0.1, 0.2, 0.4, 1.0);
 
 /// Renders the active scene into the viewport offscreen texture.
-///
-/// Two passes share the encoder and the offscreen target:
-/// 1. **Ray-march pass** — clears the target to sky / black and writes
-///    visible SDF shapes (skipped when there is no active camera or no
-///    SDF content; in that case a black clear pass runs instead).
-/// 2. **Mesh pass** — paints visible `MeshRenderer + GlobalTransform`
-///    entities on top of whatever the ray-march pass produced. Skipped
-///    when no entity has a non-empty `mesh` path. No depth buffer yet
-///    (issue #129 ships scope-strict; depth/SDF compositing follows).
 pub(crate) fn render_viewport(
     gpu: &GpuContext,
+    sky_pass: &mut SkyRenderPass,
     raymarch: &mut RayMarchRenderer,
     mesh_pass: &mut MeshPassRenderer,
     target: &ViewportTarget,
@@ -42,17 +44,51 @@ pub(crate) fn render_viewport(
             label: Some("viewport_encoder"),
         });
 
+    // Pass 1: Sky (when available).
+    let sky_drawn = if project_loaded {
+        if let Some(active_sky) = SkyRenderPass::active_sky(resources) {
+            let time_secs = resources
+                .get::<Time>()
+                .map(|t| t.elapsed_secs())
+                .unwrap_or(0.0);
+            sky_pass.render(
+                gpu.queue(),
+                &mut encoder,
+                target.view(),
+                target.depth_view(),
+                resources,
+                target.aspect(),
+                active_sky,
+                time_secs,
+            )
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    // Pass 2: Ray-march.
     let has_sdf = project_loaded && has_visible_sdf(resources);
     let camera_ok = has_sdf
         && raymarch.update_camera(gpu.device(), gpu.queue(), resources, target.aspect());
 
     if camera_ok {
-        raymarch.update_scene(gpu.device(), gpu.queue(), resources, SKY_TOP, SKY_BOTTOM);
-        raymarch.render(&mut encoder, target.view(), target.depth_view());
-    } else {
+        raymarch.update_scene(
+            gpu.device(),
+            gpu.queue(),
+            resources,
+            SKY_TOP,
+            SKY_BOTTOM,
+            sky_drawn,
+        );
+        // When sky drew first, preserve its output; otherwise clear.
+        raymarch.render(&mut encoder, target.view(), target.depth_view(), !sky_drawn);
+    } else if !sky_drawn {
         clear_to_black(&mut encoder, target.view(), target.depth_view());
     }
 
+    // Pass 3: Mesh.
     if project_loaded && has_visible_mesh(resources) {
         mesh_pass.render(
             gpu.device(),

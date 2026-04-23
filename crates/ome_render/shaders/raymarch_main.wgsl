@@ -45,9 +45,11 @@ struct SdfInstance {
 
 struct SceneMeta {
     instance_count: u32,
+    // `1` = a separate sky pass already ran, discard on miss (additive).
+    // `0` = no sky pass, draw the internal vertical gradient on miss.
+    skip_internal_sky: u32,
     _pad0: u32,
     _pad1: u32,
-    _pad2: u32,
     sky_top: vec4<f32>,
     sky_bottom: vec4<f32>,
 }
@@ -241,6 +243,12 @@ fn fs_main(in: VertexOutput) -> FsOut {
     var out: FsOut;
 
     if !hit.hit {
+        if scene_meta.skip_internal_sky != 0u {
+            // A separate sky pass already wrote color + depth=1.0 for
+            // every pixel; do nothing. `discard` skips both color and
+            // depth writes, preserving whatever the sky pass left.
+            discard;
+        }
         let t = clamp(ray.direction.y * 0.5 + 0.5, 0.0, 1.0);
         let sky = mix(scene_meta.sky_bottom.rgb, scene_meta.sky_top.rgb, t);
         out.color = vec4<f32>(sky, 1.0);
