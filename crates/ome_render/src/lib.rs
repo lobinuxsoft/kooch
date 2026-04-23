@@ -4,9 +4,12 @@
 //!   frame (used as the minimal GPU smoke test).
 //! - [`RayMarchPlugin`] sphere-traces SDF components from the ECS into
 //!   a fullscreen fragment shader.
+//! - [`MeshPassRenderer`] draws every visible `MeshRenderer + GlobalTransform`
+//!   entity using glTF-loaded meshes, layered on top of the SDF image.
 
 pub mod clear_color;
 pub mod fps;
+pub mod mesh;
 pub mod plugin;
 pub mod raymarch;
 pub mod raymarch_plugin;
@@ -14,6 +17,7 @@ mod systems;
 
 pub use clear_color::ClearColor;
 pub use fps::FpsTracker;
+pub use mesh::{Aabb, GpuMesh, MeshLoadError, MeshLoader, MeshPassRenderer, MeshVertex};
 pub use plugin::RenderPlugin;
 pub use raymarch::{RayMarchParams, RayMarchRenderer};
 pub use raymarch_plugin::{RayMarchPlugin, SkyGradient};
