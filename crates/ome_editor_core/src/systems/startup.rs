@@ -45,9 +45,10 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         egui_wgpu::RendererOptions::default(),
     );
 
-    let raymarch = RayMarchRenderer::new(gpu.device(), gpu.format());
-    let mesh_pass = MeshPassRenderer::new(gpu.device(), gpu.format());
-    let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format());
+    let pipeline_cache = gpu.pipeline_cache();
+    let raymarch = RayMarchRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
+    let mesh_pass = MeshPassRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
+    let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format(), pipeline_cache);
     let viewport = ViewportTarget::new(
         gpu.device(),
         &mut renderer,

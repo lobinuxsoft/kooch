@@ -15,9 +15,11 @@
 //! ```
 
 use wgpu::{
-    Adapter, Device, DeviceDescriptor, Instance, InstanceDescriptor, Queue, RequestAdapterOptions,
-    Surface, SurfaceConfiguration, SurfaceTarget, TextureFormat,
+    Adapter, Device, DeviceDescriptor, Instance, InstanceDescriptor, PipelineCache, Queue,
+    RequestAdapterOptions, Surface, SurfaceConfiguration, SurfaceTarget, TextureFormat,
 };
+
+use crate::pipeline_cache;
 
 /// Errors that can occur during GPU context initialization.
 #[derive(Debug)]
@@ -74,6 +76,7 @@ pub struct GpuContext {
     queue: Queue,
     surface: Surface<'static>,
     surface_config: SurfaceConfiguration,
+    pipeline_cache: Option<PipelineCache>,
 }
 
 impl GpuContext {
@@ -114,15 +117,18 @@ impl GpuContext {
         );
 
         let required_limits = elevated_compute_limits(&adapter);
+        let required_features = optional_features(&adapter);
 
         let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
             label: Some("ome_device"),
-            required_features: wgpu::Features::empty(),
+            required_features,
             required_limits,
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::Off,
             experimental_features: wgpu::ExperimentalFeatures::default(),
         }))?;
+
+        let pipeline_cache = pipeline_cache::load(&device, &adapter);
 
         // Log uncaptured device errors (recovery deferred to post-v0.1).
         device.on_uncaptured_error(std::sync::Arc::new(|error: wgpu::Error| {
@@ -167,6 +173,7 @@ impl GpuContext {
             queue,
             surface,
             surface_config,
+            pipeline_cache,
         })
     }
 
@@ -229,6 +236,37 @@ impl GpuContext {
     pub fn size(&self) -> (u32, u32) {
         (self.surface_config.width, self.surface_config.height)
     }
+
+    /// Returns the shared pipeline cache, if one was created for this adapter.
+    ///
+    /// `None` on adapters that lack [`wgpu::Features::PIPELINE_CACHE`] (Metal,
+    /// GL, WebGPU). Callers passing this into pipeline descriptors should fall
+    /// back to `cache: None` in that case — both paths are correct.
+    #[inline]
+    pub fn pipeline_cache(&self) -> Option<&PipelineCache> {
+        self.pipeline_cache.as_ref()
+    }
+}
+
+impl Drop for GpuContext {
+    fn drop(&mut self) {
+        if let Some(cache) = &self.pipeline_cache
+            && let Err(e) = pipeline_cache::save(cache, &self.adapter)
+        {
+            tracing::warn!(error = %e, "failed to persist pipeline cache on shutdown");
+        }
+    }
+}
+
+/// Requests optional features whose absence would silently degrade the engine
+/// (pipeline cache, etc.), falling back to `empty()` when unsupported so
+/// cross-backend builds keep working.
+fn optional_features(adapter: &Adapter) -> wgpu::Features {
+    let mut features = wgpu::Features::empty();
+    if adapter.features().contains(wgpu::Features::PIPELINE_CACHE) {
+        features |= wgpu::Features::PIPELINE_CACHE;
+    }
+    features
 }
 
 /// Targets from wgpu capabilities audit §C.1: SSAO tiles (8×8×16 = 1024 invocations)

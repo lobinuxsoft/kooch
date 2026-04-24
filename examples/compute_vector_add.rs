@@ -72,7 +72,7 @@ fn main() {
     });
 
     // -- Dispatch compute shader --
-    let compute = VectorAddCompute::new(&device);
+    let compute = VectorAddCompute::new(&device, None);
     compute.dispatch(&device, &queue, &buf_a, &buf_b, &buf_output, ELEMENT_COUNT);
 
     // -- Copy output → staging --

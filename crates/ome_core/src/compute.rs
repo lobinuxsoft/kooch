@@ -44,7 +44,11 @@ pub struct VectorAddCompute {
 
 impl VectorAddCompute {
     /// Creates the shader module, bind group layout, and compute pipeline.
-    pub fn new(device: &Device) -> Self {
+    ///
+    /// Pass `pipeline_cache` from [`GpuContext::pipeline_cache`](crate::gpu::GpuContext::pipeline_cache)
+    /// to share the engine-wide driver cache. `None` is valid on backends
+    /// without [`wgpu::Features::PIPELINE_CACHE`].
+    pub fn new(device: &Device, pipeline_cache: Option<&wgpu::PipelineCache>) -> Self {
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("vector_add_shader"),
             source: wgpu::ShaderSource::Wgsl(VECTOR_ADD_SHADER.into()),
@@ -98,7 +102,7 @@ impl VectorAddCompute {
             module: &shader,
             entry_point: Some("main"),
             compilation_options: Default::default(),
-            cache: None,
+            cache: pipeline_cache,
         });
 
         Self {
@@ -196,6 +200,6 @@ mod tests {
         .expect("failed to create device");
 
         // Should not panic.
-        let _compute = VectorAddCompute::new(&device);
+        let _compute = VectorAddCompute::new(&device, None);
     }
 }
