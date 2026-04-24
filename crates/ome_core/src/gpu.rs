@@ -113,10 +113,12 @@ impl GpuContext {
             "GPU adapter selected"
         );
 
+        let required_limits = elevated_compute_limits(&adapter);
+
         let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
             label: Some("ome_device"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
+            required_limits,
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::Off,
             experimental_features: wgpu::ExperimentalFeatures::default(),
@@ -226,6 +228,42 @@ impl GpuContext {
     #[inline]
     pub fn size(&self) -> (u32, u32) {
         (self.surface_config.width, self.surface_config.height)
+    }
+}
+
+/// Targets from wgpu capabilities audit §C.1: SSAO tiles (8×8×16 = 1024 invocations)
+/// and bloom downsample (~32 KiB LDS) need more than wgpu defaults of 256 / 16 KiB.
+/// Clamped against adapter-reported limits so older GPUs fall back gracefully.
+const TARGET_MAX_COMPUTE_INVOCATIONS_PER_WORKGROUP: u32 = 1024;
+const TARGET_MAX_COMPUTE_WORKGROUP_STORAGE_SIZE: u32 = 32_768;
+
+fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
+    let adapter_limits = adapter.limits();
+
+    let invocations = TARGET_MAX_COMPUTE_INVOCATIONS_PER_WORKGROUP
+        .min(adapter_limits.max_compute_invocations_per_workgroup);
+    let storage = TARGET_MAX_COMPUTE_WORKGROUP_STORAGE_SIZE
+        .min(adapter_limits.max_compute_workgroup_storage_size);
+
+    if invocations < TARGET_MAX_COMPUTE_INVOCATIONS_PER_WORKGROUP {
+        tracing::warn!(
+            requested = TARGET_MAX_COMPUTE_INVOCATIONS_PER_WORKGROUP,
+            granted = invocations,
+            "adapter clamped max_compute_invocations_per_workgroup; compute-heavy passes (SSAO, bloom) may run degraded"
+        );
+    }
+    if storage < TARGET_MAX_COMPUTE_WORKGROUP_STORAGE_SIZE {
+        tracing::warn!(
+            requested = TARGET_MAX_COMPUTE_WORKGROUP_STORAGE_SIZE,
+            granted = storage,
+            "adapter clamped max_compute_workgroup_storage_size; tile-based compute passes may need smaller tiles"
+        );
+    }
+
+    wgpu::Limits {
+        max_compute_invocations_per_workgroup: invocations,
+        max_compute_workgroup_storage_size: storage,
+        ..wgpu::Limits::default()
     }
 }
 
