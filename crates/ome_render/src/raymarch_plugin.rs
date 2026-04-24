@@ -114,7 +114,7 @@ fn init_renderer(resources: &mut Resources) {
         tracing::warn!("RayMarchPlugin: GpuContext missing at Startup, renderer not created");
         return;
     };
-    let renderer = RayMarchRenderer::new(gpu.device(), gpu.format());
+    let renderer = RayMarchRenderer::new(gpu.device(), gpu.format(), gpu.pipeline_cache());
     let depth = RaymarchDepth::new(gpu.device(), gpu.size());
     resources.insert(renderer);
     resources.insert(depth);
