@@ -49,6 +49,7 @@ pub mod event;
 pub mod gpu;
 pub mod pipeline_cache;
 pub mod plugin;
+pub mod power;
 pub mod prelude;
 pub mod raw_event;
 pub mod resource;

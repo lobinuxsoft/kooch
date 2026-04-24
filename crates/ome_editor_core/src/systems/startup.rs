@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use ome_core::gpu::GpuContext;
+use ome_core::power::{self, PowerProfile};
 use ome_core::raw_event::RawEventHandler;
 use ome_core::resource::Resources;
 use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
@@ -68,12 +69,14 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     };
 
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });
+    let power_profile: PowerProfile = power::detect();
     resources.insert(overlay);
     resources.insert(handler);
     resources.insert(raymarch);
     resources.insert(mesh_pass);
     resources.insert(sky_pass);
     resources.insert(viewport);
+    resources.insert(power_profile);
 
     tracing::info!("Editor overlay initialized");
 }

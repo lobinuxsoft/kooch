@@ -4,6 +4,7 @@ use std::any::TypeId;
 use std::path::PathBuf;
 
 use glam::{Quat, Vec3};
+use ome_core::power::PowerProfile;
 use ome_core::resource::Resources;
 use ome_ecs::allocator::EntityAllocator;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
@@ -62,6 +63,7 @@ pub(crate) enum EditorAction {
     RemoveRecent(PathBuf),
     LaunchProject(PathBuf),
     CancelLaunch,
+    SetPowerProfile(PowerProfile),
 }
 
 /// Converts an action into an undoable command, capturing before-state.
@@ -466,6 +468,16 @@ pub(crate) fn apply_actions(
             EditorAction::CancelLaunch => {
                 if let Some(ps) = resources.get_mut::<ProjectState>() {
                     ps.kill_launcher();
+                }
+            }
+            EditorAction::SetPowerProfile(profile) => {
+                if let Some(slot) = resources.get_mut::<PowerProfile>() {
+                    if *slot != *profile {
+                        tracing::info!(from = slot.as_str(), to = profile.as_str(), "power profile changed");
+                        *slot = *profile;
+                    }
+                } else {
+                    resources.insert(*profile);
                 }
             }
             // ECS actions and Undo/Redo are already handled above.
