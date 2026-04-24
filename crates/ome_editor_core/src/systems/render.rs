@@ -125,6 +125,7 @@ fn run_editor_ui(
     data: &FrameDisplayData,
     undo: &UndoInfo,
     viewport: ViewportUi<'_>,
+    power_profile: ome_core::power::PowerProfile,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut last_clicked_index = overlay.last_clicked_index.take();
@@ -147,6 +148,7 @@ fn run_editor_ui(
                 undo.can_redo,
                 undo.undo_desc.as_deref(),
                 undo.redo_desc.as_deref(),
+                power_profile,
             );
 
             let mut tab_viewer = EditorTabViewer {
@@ -300,6 +302,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<EditorCameraController>()
         .cloned()
         .unwrap_or_default();
+    let power_profile = resources
+        .get::<ome_core::power::PowerProfile>()
+        .copied()
+        .unwrap_or_default();
     let (full_output, actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
@@ -313,6 +319,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             input: &mut viewport_input,
             controller: &controller_snapshot,
         },
+        power_profile,
     );
 
     if let Some(size) = viewport_request {

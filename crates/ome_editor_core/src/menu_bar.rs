@@ -1,6 +1,7 @@
 //! Editor menu bar drawing.
 
 use egui_dock::DockState;
+use ome_core::power::PowerProfile;
 
 use crate::actions::EditorAction;
 use crate::icons;
@@ -15,6 +16,7 @@ pub(crate) fn draw_menu_bar(
     can_redo: bool,
     undo_desc: Option<&str>,
     redo_desc: Option<&str>,
+    power_profile: PowerProfile,
 ) {
     // Keyboard shortcuts — check before any UI so they work regardless of focus.
     let ctrl_z = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z));
@@ -68,6 +70,24 @@ pub(crate) fn draw_menu_bar(
                     actions.push(EditorAction::Redo);
                     ui.close_menu();
                 }
+            });
+            ui.menu_button("Engine", |ui| {
+                ui.menu_button(format!("Power Profile: {}", power_profile.as_str()), |ui| {
+                    for option in [
+                        PowerProfile::Plugged,
+                        PowerProfile::Balanced,
+                        PowerProfile::Battery,
+                        PowerProfile::Debug,
+                    ] {
+                        if ui
+                            .selectable_label(power_profile == option, option.as_str())
+                            .clicked()
+                        {
+                            actions.push(EditorAction::SetPowerProfile(option));
+                            ui.close_menu();
+                        }
+                    }
+                });
             });
             ui.menu_button("Window", |ui| {
                 for &tab in ALL_TABS {
