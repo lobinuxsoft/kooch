@@ -8,6 +8,12 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ome_ecs::reflect::ReflectValue;
+use ome_ecs::scene::{ComponentDescription, EntityDescription, SceneDocument};
+
+/// Convention path of the default scene relative to the project root.
+pub const DEFAULT_SCENE_REL_PATH: &str = "scenes/default.ome_scene";
+
 // ---------------------------------------------------------------------------
 // Project manifest (project.ome)
 // ---------------------------------------------------------------------------
@@ -205,10 +211,13 @@ struct ScenePathArg(std::path::PathBuf);
 
 fn load_scene(resources: &mut Resources) {{
     let Some(arg) = resources.remove::<ScenePathArg>() else {{ return }};
-    match oh_my_engine::ome_ecs::SceneDocument::load(&arg.0) {{
-        Ok(doc) => {{ let _ = oh_my_engine::ome_ecs::sync_scene_to_ecs(&doc, resources); }}
-        Err(e) => eprintln!("failed to load scene: {{e}}"),
+    let mut sm = resources
+        .remove::<oh_my_engine::ome_ecs::SceneManager>()
+        .unwrap_or_default();
+    if let Err(e) = sm.load(&arg.0, resources) {{
+        eprintln!("failed to load scene: {{e}}");
     }}
+    resources.insert(sm);
 }}
 
 fn auto_open_project(resources: &mut Resources) {{
@@ -266,7 +275,8 @@ pub fn create_project(
     for dir in PROJECT_DIRS {
         fs::create_dir_all(project_root.join(dir)).map_err(ProjectError::Io)?;
     }
-    let manifest = ProjectManifest::new(name);
+    let mut manifest = ProjectManifest::new(name);
+    manifest.main_scene = Some(DEFAULT_SCENE_REL_PATH.to_owned());
     manifest.save(&project_root)?;
 
     // Generate Cargo.toml.
@@ -277,7 +287,79 @@ pub fn create_project(
     let main_rs = generate_main_rs(name);
     fs::write(project_root.join("src").join("main.rs"), main_rs).map_err(ProjectError::Io)?;
 
+    // Bootstrap the default scene file so the editor never opens empty.
+    ensure_default_scene(&project_root)?;
+
     Ok(project_root)
+}
+
+/// Ensures `scenes/default.ome_scene` exists under `project_root`.
+///
+/// If the file is missing, writes a minimal starter scene with one Camera
+/// entity (Transform + PerspectiveCamera + Name) and one Sky entity
+/// (SkyRenderer + Name). All component fields are left empty so
+/// `sync_scene_to_ecs` materializes them via `Reflect::reflect_default()`,
+/// which means the starter tracks default changes without churn.
+///
+/// Returns the absolute path to the scene file.
+pub fn ensure_default_scene(project_root: &Path) -> Result<PathBuf, ProjectError> {
+    let scenes_dir = project_root.join("scenes");
+    fs::create_dir_all(&scenes_dir).map_err(ProjectError::Io)?;
+
+    let path = project_root.join(DEFAULT_SCENE_REL_PATH);
+    if path.exists() {
+        return Ok(path);
+    }
+
+    let doc = SceneDocument {
+        name: "Default Scene".to_owned(),
+        version: "0.1.0".to_owned(),
+        entities: vec![
+            EntityDescription {
+                name: "Camera".to_owned(),
+                parent: None,
+                components: vec![
+                    ComponentDescription {
+                        type_name: "ome_ecs::name::Name".to_owned(),
+                        fields: vec![(
+                            "value".to_owned(),
+                            ReflectValue::String("Camera".to_owned()),
+                        )],
+                    },
+                    ComponentDescription {
+                        type_name: "ome_ecs::transform::Transform".to_owned(),
+                        fields: vec![],
+                    },
+                    ComponentDescription {
+                        type_name: "ome_ecs::perspective_camera::PerspectiveCamera".to_owned(),
+                        fields: vec![],
+                    },
+                ],
+            },
+            EntityDescription {
+                name: "Sky".to_owned(),
+                parent: None,
+                components: vec![
+                    ComponentDescription {
+                        type_name: "ome_ecs::name::Name".to_owned(),
+                        fields: vec![(
+                            "value".to_owned(),
+                            ReflectValue::String("Sky".to_owned()),
+                        )],
+                    },
+                    ComponentDescription {
+                        type_name: "ome_ecs::sky_renderer::SkyRenderer".to_owned(),
+                        fields: vec![],
+                    },
+                ],
+            },
+        ],
+    };
+
+    doc.save(&path)
+        .map_err(|e| ProjectError::Serialize(e.to_string()))?;
+
+    Ok(path)
 }
 
 // ---------------------------------------------------------------------------

@@ -254,12 +254,27 @@ impl ProjectState {
 
     /// Opens a project from the given root directory.
     pub fn open_project(&mut self, root_path: &Path) -> Result<(), crate::project::ProjectError> {
-        let manifest = ProjectManifest::load(root_path)?;
+        let mut manifest = ProjectManifest::load(root_path)?;
         self.editor_config
             .add_recent(&manifest.name, root_path);
         if let Err(e) = self.editor_config.save() {
             tracing::warn!("failed to save editor config: {e}");
         }
+
+        // Self-heal default scene: keep `scenes/default.ome_scene` on disk
+        // and point `main_scene` at it whenever the manifest has no entry.
+        // Existing main_scene values are respected even if the file is
+        // missing — that's a load error, not a manifest problem.
+        if let Err(e) = crate::project::ensure_default_scene(root_path) {
+            tracing::warn!("failed to ensure default scene: {e}");
+        }
+        if manifest.main_scene.is_none() {
+            manifest.main_scene = Some(crate::project::DEFAULT_SCENE_REL_PATH.to_owned());
+            if let Err(e) = manifest.save(root_path) {
+                tracing::warn!("failed to persist updated manifest: {e}");
+            }
+        }
+
         self.active_project = Some(ActiveProject {
             manifest,
             root_path: root_path.to_owned(),
