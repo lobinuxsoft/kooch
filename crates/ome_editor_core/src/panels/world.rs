@@ -523,9 +523,13 @@ pub(crate) fn draw_world_content(
             });
         }
 
-        // Empty space drop target — drop here to unparent an entity.
+        // Empty space: click to deselect, drop target to unparent an entity.
         let remaining = ui.available_rect_before_wrap();
-        let empty_resp = ui.allocate_rect(remaining, egui::Sense::hover());
+        let empty_resp = ui.allocate_rect(remaining, egui::Sense::click_and_drag());
+        if empty_resp.clicked() {
+            selected.clear();
+            *last_clicked_index = None;
+        }
         if empty_resp.dnd_hover_payload::<Entity>().is_some() {
             ui.painter().rect_filled(
                 remaining,

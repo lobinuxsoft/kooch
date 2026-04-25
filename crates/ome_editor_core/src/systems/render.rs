@@ -6,7 +6,7 @@ use ome_core::event::{AppExit, Events};
 use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
-use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
+use ome_render::{GizmoBatch, GizmoRenderer, MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
 
 use crate::actions::{apply_actions, EditorAction};
 use crate::editor_camera::EditorCameraController;
@@ -274,6 +274,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut sky_pass = resources
         .remove::<SkyRenderPass>()
         .expect("SkyRenderPass not found");
+    let mut gizmo_renderer = resources
+        .remove::<GizmoRenderer>()
+        .expect("GizmoRenderer not found");
+    let gizmo_batch = resources.remove::<GizmoBatch>().unwrap_or_default();
     let mut project_state = resources.remove::<ProjectState>();
     let mut undo_stack = resources
         .remove::<UndoStack>()
@@ -343,6 +347,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut sky_pass,
         &mut raymarch,
         &mut mesh_pass,
+        &mut gizmo_renderer,
+        &gizmo_batch,
         &viewport,
         resources,
         project_loaded,
@@ -356,6 +362,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     resources.insert(raymarch);
     resources.insert(mesh_pass);
     resources.insert(sky_pass);
+    resources.insert(gizmo_renderer);
+    resources.insert(gizmo_batch);
     if let Some(ps) = project_state {
         resources.insert(ps);
     }
