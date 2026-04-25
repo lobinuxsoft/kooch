@@ -10,6 +10,7 @@
 //!   viewport orchestrator.
 
 pub mod fps;
+pub mod gizmos;
 pub mod mesh;
 pub mod plugin;
 pub mod raymarch;
@@ -22,6 +23,7 @@ pub mod sky;
 pub const VIEWPORT_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 pub use fps::FpsTracker;
+pub use gizmos::{GizmoBatch, GizmoRenderer, LineSegment};
 pub use mesh::{Aabb, GpuMesh, MeshLoadError, MeshLoader, MeshPassRenderer, MeshVertex};
 pub use plugin::RenderPlugin;
 pub use raymarch::{RayMarchParams, RayMarchRenderer};

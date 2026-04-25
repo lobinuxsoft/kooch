@@ -24,6 +24,7 @@ pub mod project;
 pub mod project_state;
 pub(crate) mod actions;
 pub(crate) mod drag_drop;
+pub(crate) mod gizmos;
 pub(crate) mod layout;
 pub(crate) mod menu_bar;
 pub(crate) mod panels;
@@ -73,6 +74,9 @@ impl Plugin for EditorPlugin {
         app.add_system(Stage::Startup, editor_camera::spawn_editor_camera_system);
         // Hand the viewport over to the gameplay camera in play mode.
         app.add_system(Stage::PreRender, editor_camera::sync_editor_camera_active_system);
+        // Rebuild the gizmo line batch from current selection. Runs after
+        // transform propagation (PostUpdate) so GlobalTransform is fresh.
+        app.add_system(Stage::PreRender, gizmos::build_gizmo_batch_system);
         app.add_system(Stage::Render, systems::editor_render_system);
         // Persist any dock-layout changes after the frame finishes.
         // Cheap fast-path: re-serializes and compares before any disk I/O,

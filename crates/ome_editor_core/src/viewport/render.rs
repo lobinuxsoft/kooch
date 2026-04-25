@@ -18,7 +18,7 @@ use ome_ecs::SdfSphere;
 use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::Query;
-use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
+use ome_render::{GizmoBatch, GizmoRenderer, MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
 
 use crate::viewport::target::ViewportTarget;
 
@@ -34,6 +34,8 @@ pub(crate) fn render_viewport(
     sky_pass: &mut SkyRenderPass,
     raymarch: &mut RayMarchRenderer,
     mesh_pass: &mut MeshPassRenderer,
+    gizmo_renderer: &mut GizmoRenderer,
+    gizmo_batch: &GizmoBatch,
     target: &ViewportTarget,
     resources: &Resources,
     project_loaded: bool,
@@ -97,6 +99,20 @@ pub(crate) fn render_viewport(
             target.view(),
             target.depth_view(),
             resources,
+            target.aspect(),
+        );
+    }
+
+    // Pass 4: Gizmos (always-on-top, depth comparison `Always`).
+    if project_loaded {
+        gizmo_renderer.render(
+            gpu.device(),
+            gpu.queue(),
+            &mut encoder,
+            target.view(),
+            target.depth_view(),
+            resources,
+            gizmo_batch,
             target.aspect(),
         );
     }
