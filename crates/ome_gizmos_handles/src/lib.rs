@@ -20,12 +20,14 @@
 //! mode, and undo integration are polish follow-ups.
 
 mod plane;
+mod rotate;
 mod translate;
 
 pub use plane::PlaneHandle;
+pub use rotate::RotateHandle;
 pub use translate::TranslateHandle;
 
-use glam::{Mat3, Vec3};
+use glam::{Mat3, Quat, Vec3};
 use ome_gizmos::Gizmos;
 
 // ---------------------------------------------------------------------------
@@ -96,6 +98,51 @@ pub struct DragInfo {
     pub current_ray: Ray,
 }
 
+/// Output of [`Handle::drag`] — what kind of edit the handle wants to
+/// apply to the selected entity this frame. The editor matches on the
+/// variant and updates `Transform` accordingly.
+#[derive(Debug, Clone, Copy)]
+pub enum TransformDelta {
+    Translation(Vec3),
+    Rotation(Quat),
+    Scale(Vec3),
+}
+
+impl TransformDelta {
+    /// Identity delta (no change). Used by drag returns when picking
+    /// fails or modes don't match.
+    pub fn none() -> Self {
+        Self::Translation(Vec3::ZERO)
+    }
+
+    pub fn is_noop(self) -> bool {
+        match self {
+            Self::Translation(v) => v == Vec3::ZERO,
+            Self::Rotation(q) => q.abs_diff_eq(Quat::IDENTITY, 1e-6),
+            Self::Scale(v) => v == Vec3::ZERO,
+        }
+    }
+}
+
+/// Edit mode for a [`HandleSet`] — selects which subset of handles
+/// renders / picks / drags this frame. Mirrors Maya / Unity / Unreal
+/// conventions (W = translate, E = rotate, R = scale).
+///
+/// Note: the W/E/R hotkey labels are conventions enforced by the
+/// editor's input layer; the enum itself is shortcut-agnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandleMode {
+    Translate,
+    Rotate,
+    Scale,
+}
+
+impl Default for HandleMode {
+    fn default() -> Self {
+        Self::Translate
+    }
+}
+
 /// World-space frame in which a handle is placed: origin + orthonormal
 /// basis. The editor sets `basis = Mat3::IDENTITY` for World-space mode
 /// and `basis = entity_world_rotation` for Local-space mode.
@@ -126,6 +173,11 @@ impl HandleFrame {
 
 /// Interactive handle — produces a visual, accepts picks, applies drags.
 pub trait Handle: Send + Sync + 'static {
+    /// Which editor mode this handle is part of. `HandleSet` filters
+    /// handles by their mode each frame so only the active set renders
+    /// / picks / drags.
+    fn mode(&self) -> HandleMode;
+
     /// Draws the handle into the gizmo batch. `frame` carries the
     /// world-space origin and basis; handles align their geometry to
     /// the basis so the Local/World inspector toggle is honored.
@@ -135,9 +187,11 @@ pub trait Handle: Send + Sync + 'static {
     /// otherwise. Smallest distance wins when multiple handles are hit.
     fn pick(&self, ray: Ray, frame: HandleFrame) -> Option<f32>;
 
-    /// Returns the world-space translation delta for one drag frame.
-    /// Called repeatedly while the user drags this handle.
-    fn drag(&self, drag: DragInfo, frame: HandleFrame) -> Vec3;
+    /// Returns the world-space transform delta for one drag frame.
+    /// Variant depends on the handle kind: translate handles return
+    /// `Translation`, rotate handles return `Rotation`, scale handles
+    /// return `Scale`.
+    fn drag(&self, drag: DragInfo, frame: HandleFrame) -> TransformDelta;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +214,7 @@ pub struct HandleSet {
     handles: Vec<Box<dyn Handle>>,
     state: SetState,
     frame: HandleFrame,
+    mode: HandleMode,
 }
 
 impl Default for HandleSet {
@@ -172,9 +227,13 @@ impl Default for HandleSet {
                 Box::new(PlaneHandle::new(Axis::X, Axis::Y)),
                 Box::new(PlaneHandle::new(Axis::X, Axis::Z)),
                 Box::new(PlaneHandle::new(Axis::Y, Axis::Z)),
+                Box::new(RotateHandle::new(Axis::X)),
+                Box::new(RotateHandle::new(Axis::Y)),
+                Box::new(RotateHandle::new(Axis::Z)),
             ],
             state: SetState::Idle,
             frame: HandleFrame::default(),
+            mode: HandleMode::Translate,
         }
     }
 }
@@ -187,6 +246,7 @@ impl HandleSet {
             handles: Vec::new(),
             state: SetState::Idle,
             frame: HandleFrame::default(),
+            mode: HandleMode::Translate,
         }
     }
 
@@ -206,6 +266,21 @@ impl HandleSet {
         self.frame.basis = basis;
     }
 
+    /// Switches the active edit mode. Filters which handles render /
+    /// pick / drag this frame. Resets transient hover/drag state when
+    /// the mode actually changes so leftover state from another mode
+    /// doesn't bleed into the new one.
+    pub fn set_mode(&mut self, mode: HandleMode) {
+        if self.mode != mode {
+            self.mode = mode;
+            self.state = SetState::Idle;
+        }
+    }
+
+    pub fn mode(&self) -> HandleMode {
+        self.mode
+    }
+
     /// Returns `true` if a handle is currently hovered or being dragged.
     /// The editor uses this to suppress camera input.
     pub fn is_active(&self) -> bool {
@@ -217,18 +292,19 @@ impl HandleSet {
         matches!(self.state, SetState::Drag(..))
     }
 
-    /// Processes one frame of input. Returns the translation delta to
-    /// apply to the selected entity (`Vec3::ZERO` if no drag is active).
+    /// Processes one frame of input. Returns the [`TransformDelta`] to
+    /// apply to the selected entity (`TransformDelta::none()` if no
+    /// drag is active or the active handle's mode is filtered out).
     pub fn update(
         &mut self,
         ray: Option<Ray>,
         lmb_pressed: bool,
         lmb_held: bool,
-    ) -> Vec3 {
+    ) -> TransformDelta {
         // No cursor over the viewport → drop hover, end drag if any.
         let Some(ray) = ray else {
             self.state = SetState::Idle;
-            return Vec3::ZERO;
+            return TransformDelta::none();
         };
 
         match self.state {
@@ -239,13 +315,13 @@ impl HandleSet {
                     (Some(idx), false) => SetState::Hover(idx),
                     (None, _) => SetState::Idle,
                 };
-                Vec3::ZERO
+                TransformDelta::none()
             }
             SetState::Drag(idx, last_ray) => {
                 if !lmb_held {
                     // Released — return to idle (re-pick on next frame).
                     self.state = SetState::Idle;
-                    return Vec3::ZERO;
+                    return TransformDelta::none();
                 }
                 let drag = DragInfo {
                     last_ray,
@@ -259,9 +335,26 @@ impl HandleSet {
         }
     }
 
-    /// Renders all handles into the gizmo batch with current state.
+    /// Renders the active-mode handles into the gizmo batch with their
+    /// current state. Inactive-mode handles are skipped entirely.
+    /// **While a drag is active**, sibling handles in the same mode are
+    /// also hidden so the user only sees the one they're dragging —
+    /// matches Unity / Maya / Blender behavior and reduces visual
+    /// clutter while the manipulation is in progress.
     pub fn draw(&self, gizmos: &mut Gizmos<'_>) {
+        let dragging_idx = match self.state {
+            SetState::Drag(idx, _) => Some(idx),
+            _ => None,
+        };
         for (i, h) in self.handles.iter().enumerate() {
+            if h.mode() != self.mode {
+                continue;
+            }
+            if let Some(active) = dragging_idx
+                && active != i
+            {
+                continue;
+            }
             let state = match self.state {
                 SetState::Hover(idx) if idx == i => HandleState::Hover,
                 SetState::Drag(idx, _) if idx == i => HandleState::Dragging,
@@ -274,6 +367,9 @@ impl HandleSet {
     fn pick_closest(&self, ray: Ray) -> Option<usize> {
         let mut best: Option<(usize, f32)> = None;
         for (i, h) in self.handles.iter().enumerate() {
+            if h.mode() != self.mode {
+                continue;
+            }
             if let Some(t) = h.pick(ray, self.frame) {
                 match best {
                     Some((_, best_t)) if best_t <= t => {}

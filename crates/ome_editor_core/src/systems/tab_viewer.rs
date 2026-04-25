@@ -7,6 +7,8 @@ use glam::Vec3;
 
 use ome_ecs::entity::Entity;
 
+use ome_gizmos_handles::HandleMode;
+
 use crate::actions::EditorAction;
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::ViewportInputDelta;
@@ -37,6 +39,10 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) editor_camera_controller: &'a EditorCameraController,
     pub(crate) rotation_euler_cache: &'a mut HashMap<EulerCacheKey, Vec3>,
     pub(crate) rotation_display_mode: &'a mut RotationDisplayMode,
+    pub(crate) handle_mode: HandleMode,
+    /// `true` when at least one currently-selected entity carries a
+    /// `Transform` — gates the viewport's Local/World toggle.
+    pub(crate) selection_has_transform: bool,
 }
 
 impl<'a> TabViewer for EditorTabViewer<'a> {
@@ -65,6 +71,9 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.viewport_request,
                 self.viewport_input,
                 self.editor_camera_controller,
+                self.handle_mode,
+                self.rotation_display_mode,
+                self.selection_has_transform,
             ),
             EditorTab::Inspector => draw_inspector_content(
                 ui,

@@ -4,7 +4,7 @@
 use glam::{Vec3, Vec4};
 use ome_gizmos::Gizmos;
 
-use crate::{Axis, DragInfo, Handle, HandleFrame, HandleState, Ray};
+use crate::{Axis, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta};
 
 /// Two-axis translate handle. Lives at the "corner" between two
 /// cardinal axes and constrains drag to that plane.
@@ -64,6 +64,10 @@ impl PlaneHandle {
 }
 
 impl Handle for PlaneHandle {
+    fn mode(&self) -> HandleMode {
+        HandleMode::Translate
+    }
+
     fn draw(&self, gizmos: &mut Gizmos<'_>, frame: HandleFrame, state: HandleState) {
         let base_color = self.normal_axis();
         let rgb = match state {
@@ -94,18 +98,19 @@ impl Handle for PlaneHandle {
         if inside { Some(t) } else { None }
     }
 
-    fn drag(&self, drag: DragInfo, frame: HandleFrame) -> Vec3 {
+    fn drag(&self, drag: DragInfo, frame: HandleFrame) -> TransformDelta {
         let (_, axis_a, axis_b, normal) = self.corners(frame);
         let last = ray_vs_plane(drag.last_ray, frame.origin, normal).map(|t| drag.last_ray.at(t));
         let current =
             ray_vs_plane(drag.current_ray, frame.origin, normal).map(|t| drag.current_ray.at(t));
-        match (last, current) {
+        let translation = match (last, current) {
             (Some(l), Some(c)) => {
                 let delta = c - l;
                 axis_a * delta.dot(axis_a) + axis_b * delta.dot(axis_b)
             }
             _ => Vec3::ZERO,
-        }
+        };
+        TransformDelta::Translation(translation)
     }
 }
 

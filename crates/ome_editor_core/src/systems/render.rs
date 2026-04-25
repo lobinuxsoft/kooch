@@ -114,6 +114,7 @@ struct ViewportUi<'a> {
     request: &'a mut Option<(u32, u32)>,
     input: &'a mut Option<ViewportInputDelta>,
     controller: &'a EditorCameraController,
+    handle_mode: ome_gizmos_handles::HandleMode,
 }
 
 /// Runs the egui UI for one frame. Produces the tessellation input and the
@@ -136,6 +137,7 @@ fn run_editor_ui(
         request,
         input,
         controller,
+        handle_mode,
     } = viewport;
 
     let full_output = overlay.ctx.run(raw_input, |ctx| {
@@ -152,6 +154,10 @@ fn run_editor_ui(
                 power_profile,
             );
 
+            let selection_has_transform = data.entities.iter().any(|info| {
+                selected.contains(&info.entity)
+                    && info.components.iter().any(|c| c.short_name == "Transform")
+            });
             let mut tab_viewer = EditorTabViewer {
                 entities: &data.entities,
                 archetypes: &data.archetypes,
@@ -169,6 +175,8 @@ fn run_editor_ui(
                 editor_camera_controller: controller,
                 rotation_euler_cache: &mut overlay.rotation_euler_cache,
                 rotation_display_mode: &mut overlay.rotation_display_mode,
+                handle_mode,
+                selection_has_transform,
             };
 
             DockArea::new(&mut overlay.dock_state)
@@ -327,6 +335,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             request: &mut viewport_request,
             input: &mut viewport_input,
             controller: &controller_snapshot,
+            handle_mode: resources
+                .get::<ome_gizmos_handles::HandleSet>()
+                .map(|h| h.mode())
+                .unwrap_or_default(),
         },
         power_profile,
     );

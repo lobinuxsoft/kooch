@@ -1,22 +1,40 @@
-//! View panel — draws the viewport offscreen texture and reports the
-//! desired backing texture size for the next frame.
+//! View panel — viewport image + handle-mode toolbar overlay.
+//!
+//! The toolbar at the top-left of the panel hosts:
+//!
+//! 1. **Move / Rotate / Scale** mode buttons (always visible). Tinted
+//!    when the corresponding `HandleMode` is active. Tooltip shows the
+//!    keyboard shortcut.
+//! 2. **Local / World** rotation-display toggle (only when at least
+//!    one selected entity has a `Transform` component). Affects the
+//!    inspector rotation display AND the gizmo handles' basis.
+//!
+//! Toolbar clicks write to `viewport_input.mode_request` so the
+//! existing W / E / R keyboard pipeline applies the change with no
+//! extra wiring.
 
-use crate::editor_camera::input::{ViewportInputDelta, collect_viewport_input};
+use ome_gizmos_handles::HandleMode;
+
 use crate::editor_camera::EditorCameraController;
+use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
+use crate::icons;
+use crate::state::RotationDisplayMode;
 
-/// Draws the viewport image filling the available panel area.
-///
-/// `texture_id` is the egui-side handle to the offscreen ray-march texture.
-/// `request` is written with the desired backing texture size (in physical
-/// pixels) so the render system can resize the offscreen texture next frame.
-/// `input` is written with the viewport input delta this frame, consumed
-/// after egui closes by the editor camera controller.
+const TOOLBAR_BUTTON_SIZE: f32 = 28.0;
+const TOOLBAR_PADDING: f32 = 6.0;
+const TOOLBAR_OFFSET: egui::Vec2 = egui::vec2(8.0, 8.0);
+
+/// Draws the viewport image + the mode + Local/World toolbar.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_view_content(
     ui: &mut egui::Ui,
     texture_id: egui::TextureId,
     request: &mut Option<(u32, u32)>,
     input: &mut Option<ViewportInputDelta>,
     controller: &EditorCameraController,
+    current_mode: HandleMode,
+    rotation_mode: &mut RotationDisplayMode,
+    selection_has_transform: bool,
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -31,12 +49,113 @@ pub(crate) fn draw_view_content(
         return;
     }
 
-    // Allocate an interactive image so MMB/RMB drags, scroll and the F
-    // key can be captured by the editor camera input layer. The same
-    // widget paints the offscreen texture and acts as the input target.
+    let panel_origin = ui.cursor().min;
+
+    // Allocate the interactive viewport image first (it captures camera
+    // input). The toolbar is drawn on top using a child UI placed at
+    // the top-left corner of the panel rect so its clicks do not fall
+    // through to the viewport drag layer.
     let response = ui.add(
         egui::Image::new((texture_id, available)).sense(egui::Sense::click_and_drag()),
     );
+    let mut delta = collect_viewport_input(&response, ui, controller);
 
-    *input = Some(collect_viewport_input(&response, ui, controller));
+    // The whole toolbar only operates on Transforms — gizmo modes,
+    // Local/World, all of it. Hide it entirely when no selected entity
+    // carries one.
+    if !selection_has_transform {
+        *input = Some(delta);
+        return;
+    }
+
+    let toolbar_rect = egui::Rect::from_min_size(
+        panel_origin + TOOLBAR_OFFSET,
+        egui::vec2(
+            TOOLBAR_BUTTON_SIZE + TOOLBAR_PADDING * 2.0,
+            (TOOLBAR_BUTTON_SIZE + TOOLBAR_PADDING) * 5.0 + TOOLBAR_PADDING,
+        ),
+    );
+    let mut toolbar_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(toolbar_rect)
+            .layout(egui::Layout::top_down(egui::Align::Center)),
+    );
+    toolbar_ui.set_min_size(toolbar_rect.size());
+
+    egui::Frame::none()
+        .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
+        .rounding(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
+        .show(&mut toolbar_ui, |ui| {
+            ui.spacing_mut().item_spacing.y = TOOLBAR_PADDING * 0.5;
+
+            if mode_button(
+                ui,
+                icons::ARROWS_OUT_CARDINAL,
+                "Move (W)",
+                current_mode == HandleMode::Translate,
+            ) {
+                delta.mode_request = Some(HandleModeRequest::Translate);
+            }
+            if mode_button(
+                ui,
+                icons::ARROWS_CLOCKWISE,
+                "Rotate (E)",
+                current_mode == HandleMode::Rotate,
+            ) {
+                delta.mode_request = Some(HandleModeRequest::Rotate);
+            }
+            if mode_button(
+                ui,
+                icons::ARROWS_OUT_SIMPLE,
+                "Scale (R)",
+                current_mode == HandleMode::Scale,
+            ) {
+                delta.mode_request = Some(HandleModeRequest::Scale);
+            }
+
+            ui.add_space(TOOLBAR_PADDING * 0.25);
+            ui.separator();
+            ui.add_space(TOOLBAR_PADDING * 0.25);
+
+            if mode_button(
+                ui,
+                icons::MAP_PIN_SIMPLE_AREA,
+                "Local — handles follow entity rotation",
+                *rotation_mode == RotationDisplayMode::Local,
+            ) {
+                *rotation_mode = RotationDisplayMode::Local;
+            }
+            if mode_button(
+                ui,
+                icons::GLOBE_SIMPLE,
+                "World — handles aligned to world axes",
+                *rotation_mode == RotationDisplayMode::World,
+            ) {
+                *rotation_mode = RotationDisplayMode::World;
+            }
+        });
+
+    *input = Some(delta);
+}
+
+/// Renders one toolbar button. Highlights when `active`. Returns
+/// `true` the frame the button is clicked.
+fn mode_button(ui: &mut egui::Ui, icon: &str, tooltip: &str, active: bool) -> bool {
+    let visuals = ui.style().visuals.clone();
+    let fill = if active {
+        visuals.selection.bg_fill
+    } else {
+        visuals.widgets.inactive.bg_fill
+    };
+    let stroke = if active {
+        visuals.selection.stroke
+    } else {
+        visuals.widgets.inactive.bg_stroke
+    };
+    let button = egui::Button::new(egui::RichText::new(icon).size(18.0))
+        .min_size(egui::vec2(TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE))
+        .fill(fill)
+        .stroke(stroke);
+    ui.add(button).on_hover_text(tooltip).clicked()
 }

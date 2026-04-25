@@ -27,9 +27,9 @@ use ome_ecs::perspective_camera::PerspectiveCamera;
 use ome_ecs::query::Query;
 use ome_ecs::transform::Transform;
 use ome_gizmos::{GizmoBatch, Gizmos, MeshBatch, Visualizer, VisualizerRegistry};
-use ome_gizmos_handles::{HandleSet, Ray};
+use ome_gizmos_handles::{HandleMode, HandleSet, Ray, TransformDelta};
 
-use crate::editor_camera::input::ViewportInputDelta;
+use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta};
 use crate::state::{EditorOverlay, RotationDisplayMode};
 
 // ---------------------------------------------------------------------------
@@ -300,6 +300,13 @@ pub(crate) fn apply_handle_input(
     selected: &[Entity],
     rotation_mode: RotationDisplayMode,
 ) -> bool {
+    // Apply W / E / R mode request even when nothing is selected.
+    if let Some(req) = delta.mode_request
+        && let Some(handle_set) = resources.get_mut::<HandleSet>()
+    {
+        handle_set.set_mode(handle_mode_for_request(req));
+    }
+
     // Single-entity v1: handles are suppressed for empty / multi selection.
     let target = match selected {
         [e] => *e,
@@ -327,23 +334,40 @@ pub(crate) fn apply_handle_input(
     };
     handle_set.set_origin(target_origin);
     handle_set.set_basis(basis);
-    let translation = handle_set.update(ray, delta.lmb_pressed, delta.lmb_held);
+    let delta_out = handle_set.update(ray, delta.lmb_pressed, delta.lmb_held);
     let active = handle_set.is_active();
     let dragging = handle_set.is_dragging();
     resources.insert(handle_set);
 
     // Apply the per-frame delta to the entity's local Transform.
-    // We mutate `Transform.position`; `transform_propagation_system`
-    // re-derives the world matrix downstream.
-    if dragging && translation != Vec3::ZERO {
+    // `transform_propagation_system` re-derives the world matrix
+    // downstream so the same-frame render sees the new pose.
+    if dragging && !delta_out.is_noop() {
+        let mut mutated = false;
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
             && let Some(storage) = registry.get_cpu_mut::<Transform>()
             && let Some(t) = storage.get_mut(target)
         {
-            t.position += translation;
+            match delta_out {
+                TransformDelta::Translation(v) => {
+                    t.position += v;
+                    mutated = true;
+                }
+                TransformDelta::Rotation(q) => {
+                    // Left-multiply: world rotation accumulates on the
+                    // existing local rotation.
+                    t.rotation = q * t.rotation;
+                    t.rotation = t.rotation.normalize();
+                    mutated = true;
+                }
+                TransformDelta::Scale(_) => {
+                    // Phase 5 territory.
+                }
+            }
         }
-        // Re-propagate so the same-frame render sees the new world matrix.
-        transform_propagation_system(resources);
+        if mutated {
+            transform_propagation_system(resources);
+        }
     }
 
     active
@@ -406,6 +430,14 @@ fn active_camera(resources: &Resources) -> Option<(PerspectiveCamera, GlobalTran
     });
     drop(query);
     best.map(|(_, c, g)| (c, g))
+}
+
+fn handle_mode_for_request(req: HandleModeRequest) -> HandleMode {
+    match req {
+        HandleModeRequest::Translate => HandleMode::Translate,
+        HandleModeRequest::Rotate => HandleMode::Rotate,
+        HandleModeRequest::Scale => HandleMode::Scale,
+    }
 }
 
 fn entity_world_position(resources: &Resources, entity: Entity) -> Option<Vec3> {

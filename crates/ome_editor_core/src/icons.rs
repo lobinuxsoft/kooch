@@ -3,8 +3,26 @@
 //! Uses unicode codepoints from the Phosphor Icons Regular font,
 //! embedded via `include_bytes!` in the font setup.
 
+/// Arrows-out-cardinal — translate / move tool (4 cardinal arrows from center).
+pub const ARROWS_OUT_CARDINAL: &str = "\u{e0a4}";
+
+/// Arrows-clockwise — rotate tool (two curved arrows forming a cycle).
+pub const ARROWS_CLOCKWISE: &str = "\u{e094}";
+
+/// Arrows-out — scale tool (4 diagonal corner arrows pointing outward).
+pub const ARROWS_OUT: &str = "\u{e0a2}";
+
+/// Arrows-out-simple — alternative scale icon (cleaner two-arrow style).
+pub const ARROWS_OUT_SIMPLE: &str = "\u{e0a6}";
+
 /// Globe icon — used for "World" panel tab.
 pub const GLOBE: &str = "\u{e288}";
+
+/// Globe-simple icon — used for World-space rotation toggle.
+pub const GLOBE_SIMPLE: &str = "\u{e28e}";
+
+/// Map-pin-simple-area icon — used for Local-space rotation toggle.
+pub const MAP_PIN_SIMPLE_AREA: &str = "\u{ee3c}";
 
 /// Eye icon — used for "View" panel tab.
 pub const EYE: &str = "\u{e220}";

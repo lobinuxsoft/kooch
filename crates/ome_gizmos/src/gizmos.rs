@@ -87,4 +87,18 @@ impl<'a> Gizmos<'a> {
     pub fn filled_arrow(&mut self, base: Vec3, tip: Vec3, color: Vec4) {
         self.mesh_batch.filled_arrow(base, tip, color);
     }
+
+    /// Pushes a filled torus around `axis` through `center`. Used by
+    /// the rotate handle.
+    pub fn filled_torus(
+        &mut self,
+        center: Vec3,
+        axis: Vec3,
+        major_radius: f32,
+        minor_radius: f32,
+        color: Vec4,
+    ) {
+        self.mesh_batch
+            .filled_torus(center, axis, major_radius, minor_radius, color);
+    }
 }

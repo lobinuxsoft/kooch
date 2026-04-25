@@ -17,6 +17,16 @@ use std::any::TypeId;
 
 use glam::{Quat, Vec2, Vec3};
 
+/// Mode request raised by W / E / R hotkeys. Mirrors
+/// `ome_gizmos_handles::HandleMode` but kept local to avoid pulling
+/// the handles crate into this module's surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandleModeRequest {
+    Translate,
+    Rotate,
+    Scale,
+}
+
 use ome_core::resource::Resources;
 use ome_core::time::Time;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
@@ -56,6 +66,9 @@ pub struct ViewportInputDelta {
     pub fly_active: bool,
     /// `true` when the user pressed `F` this frame to focus the selection.
     pub focus_pressed: bool,
+    /// `Some(mode)` when the user pressed W / E / R this frame inside
+    /// the viewport. Forwarded to `HandleSet::set_mode`.
+    pub mode_request: Option<HandleModeRequest>,
     /// Cursor position relative to the viewport's top-left corner, in
     /// physical pixels. `None` when the cursor is outside the viewport.
     /// Consumed by the gizmo handle system to construct picking rays.
@@ -72,7 +85,10 @@ pub struct ViewportInputDelta {
 
 impl ViewportInputDelta {
     /// Returns whether the snapshot would actually change the camera.
-    /// Used to skip the entire apply path on idle frames.
+    /// Used to skip the entire apply path on idle frames. The
+    /// `mode_request` field is intentionally NOT included here — it
+    /// targets the gizmo handle set, not the camera, and is consumed
+    /// by `apply_handle_input` independently.
     pub fn is_idle(self) -> bool {
         self.orbit_yaw == 0.0
             && self.orbit_pitch == 0.0
@@ -152,6 +168,24 @@ pub fn collect_viewport_input(
     // --- F key → focus on selection (only if hovered) ---------------------
     if response.hovered() {
         delta.focus_pressed = ui.input(|i| i.key_pressed(egui::Key::F));
+    }
+
+    // --- W / E / R → handle mode switch ----------------------------------
+    //
+    // Suppressed during fly mode so the WASD camera movement keys don't
+    // accidentally toggle the gizmo mode each time they're tapped.
+    if response.hovered() && !modifiers.any() && !delta.fly_active {
+        delta.mode_request = ui.input(|i| {
+            if i.key_pressed(egui::Key::W) {
+                Some(HandleModeRequest::Translate)
+            } else if i.key_pressed(egui::Key::E) {
+                Some(HandleModeRequest::Rotate)
+            } else if i.key_pressed(egui::Key::R) {
+                Some(HandleModeRequest::Scale)
+            } else {
+                None
+            }
+        });
     }
 
     // --- Cursor + LMB state for gizmo handles -----------------------------
