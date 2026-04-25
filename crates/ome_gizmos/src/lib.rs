@@ -17,4 +17,4 @@ mod renderer;
 
 pub use renderer::{GizmoBatch, GizmoRenderer, LineSegment};
 
-pub(crate) const SHADER_SOURCE: &str = include_str!("../../shaders/gizmo_main.wgsl");
+pub(crate) const SHADER_SOURCE: &str = include_str!("../shaders/gizmo_main.wgsl");

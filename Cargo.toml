@@ -9,6 +9,7 @@ members = [
     "crates/ome_sdf",
     "crates/ome_lighting",
     "crates/ome_render",
+    "crates/ome_gizmos",
     "crates/ome_physics",
     "crates/ome_gravity",
     "crates/ome_world",
@@ -77,6 +78,7 @@ ome_input = { path = "crates/ome_input" }
 ome_sdf = { path = "crates/ome_sdf" }
 ome_lighting = { path = "crates/ome_lighting" }
 ome_render = { path = "crates/ome_render" }
+ome_gizmos = { path = "crates/ome_gizmos" }
 ome_physics = { path = "crates/ome_physics" }
 ome_gravity = { path = "crates/ome_gravity" }
 ome_world = { path = "crates/ome_world" }
@@ -100,6 +102,7 @@ ome_ecs.workspace = true
 # Optional (controlled by features)
 ome_window = { workspace = true, optional = true }
 ome_render = { workspace = true, optional = true }
+ome_gizmos = { workspace = true, optional = true }
 ome_input = { workspace = true, optional = true }
 ome_audio = { workspace = true, optional = true }
 ome_sdf = { workspace = true, optional = true }
@@ -119,9 +122,10 @@ pollster.workspace = true
 tracing.workspace = true
 
 [features]
-default = ["window", "render"]
+default = ["window", "render", "gizmos"]
 window = ["dep:ome_window"]
 render = ["dep:ome_render", "window"]
+gizmos = ["dep:ome_gizmos", "render"]
 input = ["dep:ome_input", "window"]
 audio = ["dep:ome_audio"]
 sdf = ["dep:ome_sdf"]
