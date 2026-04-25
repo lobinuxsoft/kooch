@@ -154,6 +154,61 @@ impl MeshBatch {
         self.draws.push(MeshDraw { vertices, indices });
     }
 
+    /// Pushes a filled torus around `axis` (unit vector through
+    /// `center`) with the given major and minor radii. 32 segments
+    /// around the major direction × 8 around the minor. Solid fill
+    /// (no shader edges) so it reads as a smooth ring.
+    pub fn filled_torus(
+        &mut self,
+        center: Vec3,
+        axis: Vec3,
+        major_radius: f32,
+        minor_radius: f32,
+        color: Vec4,
+    ) {
+        let axis = axis.normalize_or_zero();
+        if axis == Vec3::ZERO {
+            return;
+        }
+        let (perp_a, perp_b) = perpendiculars(axis);
+
+        const MAJOR: u32 = 32;
+        const MINOR: u32 = 8;
+        let two_pi = std::f32::consts::TAU;
+
+        let mut vertices: Vec<MeshVertex> = Vec::with_capacity((MAJOR * MINOR) as usize);
+        let mut indices: Vec<u32> = Vec::with_capacity((MAJOR * MINOR * 6) as usize);
+
+        for i in 0..MAJOR {
+            let theta = (i as f32) / (MAJOR as f32) * two_pi;
+            let cos_t = theta.cos();
+            let sin_t = theta.sin();
+            let ring_dir = perp_a * cos_t + perp_b * sin_t;
+            let ring_center = center + ring_dir * major_radius;
+            for j in 0..MINOR {
+                let phi = (j as f32) / (MINOR as f32) * two_pi;
+                let cos_p = phi.cos();
+                let sin_p = phi.sin();
+                let offset = ring_dir * cos_p * minor_radius + axis * sin_p * minor_radius;
+                vertices.push(MeshVertex::new(ring_center + offset, color));
+            }
+        }
+
+        for i in 0..MAJOR {
+            let i_next = (i + 1) % MAJOR;
+            for j in 0..MINOR {
+                let j_next = (j + 1) % MINOR;
+                let a = i * MINOR + j;
+                let b = i_next * MINOR + j;
+                let c = i_next * MINOR + j_next;
+                let d = i * MINOR + j_next;
+                indices.extend_from_slice(&[a, b, c, a, c, d]);
+            }
+        }
+
+        self.draws.push(MeshDraw { vertices, indices });
+    }
+
     /// Pushes a filled 3D arrow from `base` to `tip`: an octagonal
     /// cylinder shaft + an octagonal cone head. Color is RGBA. No
     /// edge UVs (vertices use the neutral 0.5,0.5) so the shader

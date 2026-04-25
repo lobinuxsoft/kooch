@@ -70,13 +70,9 @@ pub(crate) fn draw_inspector_content(
     // Evict cache entries for entities that are no longer selected.
     euler_cache.retain(|(entity, _, _, _), _| selected.contains(entity));
 
-    // Global rotation display toggle (affects Transform.rotation fields).
-    ui.horizontal(|ui| {
-        ui.label("Rotation:");
-        ui.selectable_value(rotation_display_mode, RotationDisplayMode::Local, "Local");
-        ui.selectable_value(rotation_display_mode, RotationDisplayMode::World, "World");
-    });
-    ui.separator();
+    // The Local/World rotation toggle moved to the viewport toolbar
+    // (panels/view.rs). It now only renders when a selected entity has
+    // a `Transform` component — see `View` panel for the gating logic.
 
     // Whole inspector area is a drop zone for DraggedComponent. On drop,
     // the component is added to every selected entity. See #209.
@@ -264,3 +260,4 @@ fn draw_inspector_body(
         }
     });
 }
+

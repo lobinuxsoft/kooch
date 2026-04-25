@@ -3,7 +3,7 @@
 use glam::{Vec3, Vec4};
 use ome_gizmos::Gizmos;
 
-use crate::{Axis, DragInfo, Handle, HandleFrame, HandleState, Ray};
+use crate::{Axis, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta};
 
 /// Axis-aligned translate handle. One per cardinal axis (X / Y / Z).
 ///
@@ -35,6 +35,10 @@ impl TranslateHandle {
 }
 
 impl Handle for TranslateHandle {
+    fn mode(&self) -> HandleMode {
+        HandleMode::Translate
+    }
+
     fn draw(&self, gizmos: &mut Gizmos<'_>, frame: HandleFrame, state: HandleState) {
         let rgb = match state {
             HandleState::Idle => self.axis.base_color(),
@@ -55,11 +59,11 @@ impl Handle for TranslateHandle {
         ray_vs_segment(ray, p1, p2, self.pick_thickness)
     }
 
-    fn drag(&self, drag: DragInfo, frame: HandleFrame) -> Vec3 {
+    fn drag(&self, drag: DragInfo, frame: HandleFrame) -> TransformDelta {
         let axis = frame.world_axis(self.axis);
         let last_s = project_ray_to_axis(drag.last_ray, frame.origin, axis);
         let current_s = project_ray_to_axis(drag.current_ray, frame.origin, axis);
-        axis * (current_s - last_s)
+        TransformDelta::Translation(axis * (current_s - last_s))
     }
 }
 
