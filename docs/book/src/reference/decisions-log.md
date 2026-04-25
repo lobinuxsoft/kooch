@@ -331,3 +331,29 @@ Format:
 > downstream. Educating the user is honest.
 > **Consequence:** Users authoring shear-causing parent chains see the
 > warning. No automatic "fix" is offered.
+
+> **2026-04-25 · Three-system editor architecture: Gizmos / Editor / UI Toolkit** *(research [#276](https://github.com/lobinuxsoft/oh_my_engine/issues/276), doc `docs/research/editor-three-system-architecture.md`)*
+>
+> **Decision:** Editor evolves into three separate, pure-Rust,
+> custom-built subsystems: **`ome_gizmos`** (visual gizmo API +
+> visualizer registry, usable at runtime too) + **`ome_gizmos_handles`**
+> (interactive translate/rotate/scale, editor-only); **`ome_editor_api`**
+> (user editor extensions: inspectors, panels, actions, loaded via
+> libloading from a user `editor/` crate); **`ome_ui`** (declarative
+> HTML-like UI Toolkit: `.ome_ui` markup + `.ome_style` CSS subset +
+> Rust behavior, retained-mode with fine-grained signals, coexists
+> with `egui`).
+> **Why:** Godot's self-hosted monolith couples concerns; Unity's
+> separation (Gizmos / Handles / Editor scripts / UI Toolkit) lets
+> each evolve independently and gives users one mental model per
+> need. We follow Unity's separation. External libraries —
+> `transform-gizmo`, Slint, Dioxus — rejected: only cover narrow
+> slices, none address user-extensibility for custom component
+> visualizers, and we want the engine to be self-contained pure
+> Rust with no FFI.
+> **Consequence:** A multi-quarter commitment. Three implementation
+> epics (one per subsystem) replace the original gizmo epic #198 as
+> sub-epic of the Gizmos one. The current `ome_render::gizmos`
+> module (PR #277) migrates into `ome_gizmos` in phase 1. The
+> `ome_ui` toolkit is the heaviest piece (multi-month) and runs in
+> parallel with the others.
