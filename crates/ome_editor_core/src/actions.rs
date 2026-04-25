@@ -197,11 +197,9 @@ pub(crate) fn apply_actions(
                 }
                 let path = dialog.save_file();
                 if let Some(path) = path {
-                    let doc = ome_ecs::SceneDocument::from_ecs(resources);
-                    if let Err(e) = doc.save(&path) {
-                        tracing::error!("failed to save scene: {e}");
-                    } else {
-                        tracing::info!("scene saved to {}", path.display());
+                    match save_scene_as(resources, path.clone()) {
+                        Ok(()) => tracing::info!("scene saved to {}", path.display()),
+                        Err(e) => tracing::error!("failed to save scene: {e}"),
                     }
                 }
             }
@@ -216,18 +214,12 @@ pub(crate) fn apply_actions(
                 }
                 let path = dialog.pick_file();
                 if let Some(path) = path {
-                    match ome_ecs::SceneDocument::load(&path) {
-                        Ok(doc) => {
-                            if let Err(e) = ome_ecs::sync_scene_to_ecs(&doc, resources) {
-                                tracing::error!("failed to sync scene to ECS: {e}");
-                            } else {
-                                tracing::info!("scene loaded from {}", path.display());
-                                undo_stack.clear();
-                            }
+                    match load_scene(resources, &path) {
+                        Ok(()) => {
+                            tracing::info!("scene loaded from {}", path.display());
+                            undo_stack.clear();
                         }
-                        Err(e) => {
-                            tracing::error!("failed to load scene: {e}");
-                        }
+                        Err(e) => tracing::error!("failed to load scene: {e}"),
                     }
                 }
             }
@@ -293,19 +285,8 @@ pub(crate) fn apply_actions(
                         });
                         if let Some(scene_path) = main_scene_path {
                             if scene_path.exists() {
-                                match ome_ecs::SceneDocument::load(&scene_path) {
-                                    Ok(doc) => {
-                                        if let Err(e) =
-                                            ome_ecs::sync_scene_to_ecs(&doc, resources)
-                                        {
-                                            tracing::error!(
-                                                "failed to sync main scene: {e}"
-                                            );
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("failed to load main scene: {e}");
-                                    }
+                                if let Err(e) = load_scene(resources, &scene_path) {
+                                    tracing::error!("failed to load main scene: {e}");
                                 }
                             }
                         }
@@ -596,5 +577,33 @@ fn compute_world_trs(
 /// Inverse with a floor to avoid division by zero on degenerate scales.
 fn safe_inv(v: f32) -> f32 {
     if v.abs() < 1e-6 { 1.0 / 1e-6 } else { 1.0 / v }
+}
+
+/// Loads a scene through `SceneManager`, lifting it out of `Resources`
+/// while the load runs (avoids overlapping borrows with `sync_scene_to_ecs`).
+fn load_scene(
+    resources: &mut Resources,
+    path: &std::path::Path,
+) -> Result<(), ome_ecs::SceneError> {
+    let mut sm = resources
+        .remove::<ome_ecs::SceneManager>()
+        .unwrap_or_default();
+    let result = sm.load(path, resources);
+    resources.insert(sm);
+    result
+}
+
+/// Saves the current ECS state to `path` via `SceneManager`, adopting it
+/// as the new current scene.
+fn save_scene_as(
+    resources: &mut Resources,
+    path: PathBuf,
+) -> Result<(), ome_ecs::SceneError> {
+    let mut sm = resources
+        .remove::<ome_ecs::SceneManager>()
+        .unwrap_or_default();
+    let result = sm.save_as(path, resources);
+    resources.insert(sm);
+    result
 }
 

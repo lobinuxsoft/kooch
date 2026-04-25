@@ -27,6 +27,7 @@ use crate::orthographic_camera::OrthographicCamera;
 use crate::perspective_camera::PerspectiveCamera;
 use crate::point_light::PointLight;
 use crate::query::AccessTracker;
+use crate::scene_manager::SceneManager;
 use crate::sdf_blend::SdfBlend;
 use crate::sdf_box::SdfBox;
 use crate::sdf_capsule::SdfCapsule;
@@ -85,6 +86,7 @@ impl Plugin for EcsPlugin {
         app.insert_resource(AccessTracker::new());
         app.insert_resource(Commands::new());
         app.insert_resource(EphemeralComponents::new());
+        app.insert_resource(SceneManager::new());
 
         // Register built-in components before user startup systems.
         app.add_system(Stage::Startup, register_builtin_components);

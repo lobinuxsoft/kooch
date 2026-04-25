@@ -29,6 +29,7 @@ pub mod plugin;
 pub mod query;
 pub mod reflect;
 pub mod scene;
+pub mod scene_manager;
 pub mod hierarchy;
 pub mod directional_light;
 pub mod dynamic_body;
@@ -68,6 +69,7 @@ pub use reflect::{FieldKind, FieldMeta, InspectorVisibility, Reflect, ReflectErr
 pub use scene::{
     ComponentDescription, EntityDescription, SceneDocument, SceneError, sync_scene_to_ecs,
 };
+pub use scene_manager::SceneManager;
 pub use directional_light::DirectionalLight;
 pub use dynamic_body::DynamicBody;
 pub use kinematic_body::KinematicBody;
