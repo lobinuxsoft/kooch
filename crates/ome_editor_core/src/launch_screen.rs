@@ -64,12 +64,9 @@ pub fn draw_launch_screen(ctx: &egui::Context, project_state: &mut ProjectState)
                     .clicked()
                 {
                     if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                        // If it has a Cargo.toml, launch it; otherwise open directly.
-                        if path.join("Cargo.toml").exists() {
-                            actions.push(LaunchAction::LaunchProject(path));
-                        } else {
-                            actions.push(LaunchAction::OpenProject(path));
-                        }
+                        // Always open in-process — running the project crate
+                        // is reserved for the editor's Play action.
+                        actions.push(LaunchAction::OpenProject(path));
                     }
                 }
             });
@@ -102,7 +99,6 @@ pub fn draw_launch_screen(ctx: &egui::Context, project_state: &mut ProjectState)
             } else {
                 for entry in &recent {
                     let exists = entry.path.join("project.ome").exists();
-                    let is_crate = entry.path.join("Cargo.toml").exists();
                     ui.horizontal(|ui| {
                         // Clickable project entry.
                         let label_text = if exists {
@@ -125,11 +121,7 @@ pub fn draw_launch_screen(ctx: &egui::Context, project_state: &mut ProjectState)
                         );
 
                         if response.clicked() {
-                            if is_crate {
-                                actions.push(LaunchAction::LaunchProject(entry.path.clone()));
-                            } else {
-                                actions.push(LaunchAction::OpenProject(entry.path.clone()));
-                            }
+                            actions.push(LaunchAction::OpenProject(entry.path.clone()));
                         }
 
                         if response.hovered() && exists {
