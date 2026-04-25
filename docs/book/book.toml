@@ -1,0 +1,34 @@
+[book]
+authors = ["lobinuxsoft"]
+language = "en"
+src = "src"
+title = "Oh My Engine"
+description = "GPU-driven game engine in Rust — SDF ray-marching + hybrid CPU/GPU ECS."
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/lobinuxsoft/oh_my_engine"
+edit-url-template = "https://github.com/lobinuxsoft/oh_my_engine/edit/development/docs/book/{path}"
+additional-js = ["mermaid.min.js", "mermaid-init.js", "theme/diagram-zoom.js"]
+additional-css = ["theme/custom.css"]
+
+[output.html.search]
+enable = true
+limit-results = 30
+use-boolean-and = true
+boost-title = 2
+
+[output.html.fold]
+enable = true
+level = 1
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[preprocessor.toc]
+command = "mdbook-toc"
+renderer = ["html"]
+
+[rust]
+edition = "2024"
