@@ -93,9 +93,14 @@ impl GizmoBatch {
         self.arrow(origin, origin + Vec3::Z * length, Vec3::X, Vec3::Y, BLUE);
     }
 
-    /// Pushes a single arrow: main line + 4 arrowhead segments forming a
+    /// Pushes a single arrow: shaft + 4 arrowhead segments forming a
     /// "+"-shaped 3D head at `tip`. `perp_a` and `perp_b` are the two
-    /// axes perpendicular to the arrow direction (must be unit-length).
+    /// unit-length axes perpendicular to the arrow direction (orient
+    /// the arrowhead).
+    ///
+    /// Lines render at fixed 1-pixel width — `wgpu` does not expose a
+    /// line-width control. Real thickness arrives with the quad-line
+    /// rendering refactor (sub-phase 3a of #278).
     pub fn arrow(&mut self, base: Vec3, tip: Vec3, perp_a: Vec3, perp_b: Vec3, color: Vec3) {
         let dir = (tip - base).normalize_or_zero();
         let length = (tip - base).length();

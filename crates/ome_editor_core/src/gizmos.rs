@@ -16,16 +16,20 @@
 
 use std::any::TypeId;
 
-use glam::Vec3;
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use ome_core::resource::Resources;
+use ome_ecs::component::ComponentRegistry;
 use ome_ecs::directional_light::DirectionalLight;
 use ome_ecs::entity::Entity;
-use ome_ecs::hierarchy::GlobalTransform;
+use ome_ecs::hierarchy::{GlobalTransform, transform_propagation_system};
 use ome_ecs::orthographic_camera::OrthographicCamera;
 use ome_ecs::perspective_camera::PerspectiveCamera;
+use ome_ecs::query::Query;
 use ome_ecs::transform::Transform;
 use ome_gizmos::{GizmoBatch, Gizmos, Visualizer, VisualizerRegistry};
+use ome_gizmos_handles::{HandleSet, Ray};
 
+use crate::editor_camera::input::ViewportInputDelta;
 use crate::state::EditorOverlay;
 
 // ---------------------------------------------------------------------------
@@ -58,12 +62,14 @@ pub(crate) struct TransformVisualizer;
 impl Visualizer<Transform> for TransformVisualizer {
     fn draw(&self, _component: &Transform, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
         let origin = transform.matrix.w_axis.truncate();
+        // Axis arrows are owned by the translate handles in single-select.
+        // The visualizer just draws the selection bbox — multi-select shows
+        // only this on every selected entity.
         gizmos.aabb(
             origin - Vec3::splat(PLACEHOLDER_BBOX_HALF),
             origin + Vec3::splat(PLACEHOLDER_BBOX_HALF),
             SELECTION_COLOR,
         );
-        gizmos.axis_arrows(origin, AXIS_LINE_LENGTH);
     }
 }
 
@@ -197,6 +203,7 @@ impl Visualizer<DirectionalLight> for DirectionalLightVisualizer {
 // ---------------------------------------------------------------------------
 
 /// Inserts the `VisualizerRegistry` and registers built-in visualizers.
+/// Also inserts a default `HandleSet` (3 translate handles X/Y/Z).
 /// Runs once at editor startup.
 pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     let mut registry = resources
@@ -207,6 +214,10 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     registry.register::<OrthographicCamera, OrthographicCameraVisualizer>();
     registry.register::<DirectionalLight, DirectionalLightVisualizer>();
     resources.insert(registry);
+
+    if resources.get::<HandleSet>().is_none() {
+        resources.insert(HandleSet::default());
+    }
 }
 
 /// Pre-render system that rebuilds the gizmo batch from current
@@ -248,8 +259,142 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
         }
     }
 
+    // Pass 5: handles. They draw on top of the visualizers, with hover/
+    // drag state managed by `HandleSet`. The handle set is populated
+    // (origin updated) only when exactly one entity is selected — multi
+    // and empty selections suppress translate handles for v1.
+    if let Some(handle_set) = resources.get::<HandleSet>() {
+        let mut gizmos = Gizmos::new(&mut batch);
+        handle_set.draw(&mut gizmos);
+    }
+
     resources.insert(batch);
     resources.insert(registry);
+}
+
+/// Updates `HandleSet` from this frame's viewport input and applies any
+/// resulting translation delta to the (single) selected entity. Runs
+/// inside `editor_render_system` between input capture and camera
+/// input apply, so the handle can absorb input before the camera
+/// controller sees it.
+///
+/// Returns `true` when the handle is hovered or dragging — the caller
+/// should skip applying camera-controller input on those frames.
+pub(crate) fn apply_handle_input(
+    delta: ViewportInputDelta,
+    resources: &mut Resources,
+    selected: &[Entity],
+) -> bool {
+    // Single-entity v1: handles are suppressed for empty / multi selection.
+    let target = match selected {
+        [e] => *e,
+        _ => {
+            // Reset state so leftover hover/drag clears when selection changes.
+            if let Some(handle_set) = resources.get_mut::<HandleSet>() {
+                let _ = handle_set.update(None, false, false);
+            }
+            return false;
+        }
+    };
+
+    let target_origin = match entity_world_position(resources, target) {
+        Some(p) => p,
+        None => return false,
+    };
+
+    let ray = build_world_ray(resources, delta);
+
+    let mut handle_set = match resources.remove::<HandleSet>() {
+        Some(h) => h,
+        None => return false,
+    };
+    handle_set.set_origin(target_origin);
+    let translation = handle_set.update(ray, delta.lmb_pressed, delta.lmb_held);
+    let active = handle_set.is_active();
+    let dragging = handle_set.is_dragging();
+    resources.insert(handle_set);
+
+    // Apply the per-frame delta to the entity's local Transform.
+    // We mutate `Transform.position`; `transform_propagation_system`
+    // re-derives the world matrix downstream.
+    if dragging && translation != Vec3::ZERO {
+        if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+            && let Some(storage) = registry.get_cpu_mut::<Transform>()
+            && let Some(t) = storage.get_mut(target)
+        {
+            t.position += translation;
+        }
+        // Re-propagate so the same-frame render sees the new world matrix.
+        transform_propagation_system(resources);
+    }
+
+    active
+}
+
+/// Constructs a world-space ray from the viewport cursor + active
+/// camera. Returns `None` when the cursor isn't over the viewport or
+/// no active perspective camera exists.
+fn build_world_ray(resources: &Resources, delta: ViewportInputDelta) -> Option<Ray> {
+    let cursor = delta.cursor_local?;
+    let viewport_size = delta.viewport_size;
+    if viewport_size.x < 1.0 || viewport_size.y < 1.0 {
+        return None;
+    }
+    let aspect = viewport_size.x / viewport_size.y;
+
+    let (camera, gt) = active_camera(resources)?;
+
+    let view = gt.matrix.inverse();
+    let proj = Mat4::perspective_rh(
+        camera.fov.to_radians(),
+        aspect.max(0.001),
+        camera.near.max(0.001),
+        camera.far.max(camera.near + 0.001),
+    );
+    let inv_vp = (proj * view).inverse();
+
+    // Cursor in NDC. egui's Y is down; NDC's Y is up.
+    let ndc_x = 2.0 * (cursor.x / viewport_size.x) - 1.0;
+    let ndc_y = 1.0 - 2.0 * (cursor.y / viewport_size.y);
+
+    // Project a point on the far plane back to world space.
+    let far_world = inv_vp * Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+    if far_world.w.abs() < 1e-6 {
+        return None;
+    }
+    let far_world = far_world.truncate() / far_world.w;
+    let camera_pos = gt.matrix.w_axis.truncate();
+    let direction = (far_world - camera_pos).normalize_or_zero();
+    if direction == Vec3::ZERO {
+        return None;
+    }
+    Some(Ray::new(camera_pos, direction))
+}
+
+fn active_camera(resources: &Resources) -> Option<(PerspectiveCamera, GlobalTransform)> {
+    let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
+    let mut best: Option<(i32, PerspectiveCamera, GlobalTransform)> = None;
+    query.for_each(|(cam, gt)| {
+        if !cam.active {
+            return;
+        }
+        let better = match &best {
+            Some((p, _, _)) => cam.priority > *p,
+            None => true,
+        };
+        if better {
+            best = Some((cam.priority, *cam, *gt));
+        }
+    });
+    drop(query);
+    best.map(|(_, c, g)| (c, g))
+}
+
+fn entity_world_position(resources: &Resources, entity: Entity) -> Option<Vec3> {
+    let registry = resources.get::<ComponentRegistry>()?;
+    let storage = registry.get_cpu::<GlobalTransform>()?;
+    let gt = storage.get(entity)?;
+    Some(gt.matrix.w_axis.truncate())
 }
 
 /// Reads the Inspector's `CollapsingHeader` state for a (entity,

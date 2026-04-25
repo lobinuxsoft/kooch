@@ -334,13 +334,21 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // Apply viewport input to the editor camera before the same frame's
     // render pass so the new pose is visible immediately. Focus-on-
     // selection uses the first selected entity's world position, if any.
+    //
+    // First give the gizmo handle system a chance to absorb input. If a
+    // handle is hovered or being dragged, suppress camera input so the
+    // user doesn't inadvertently orbit while moving an entity.
     if let Some(delta) = viewport_input {
-        let selection_world = overlay
-            .selected_entities
-            .first()
-            .copied()
-            .and_then(|e| entity_world_position(resources, e));
-        apply_viewport_input(delta, resources, selection_world);
+        let selected_snapshot: Vec<_> = overlay.selected_entities.iter().copied().collect();
+        let handle_active = crate::gizmos::apply_handle_input(delta, resources, &selected_snapshot);
+        if !handle_active {
+            let selection_world = overlay
+                .selected_entities
+                .first()
+                .copied()
+                .and_then(|e| entity_world_position(resources, e));
+            apply_viewport_input(delta, resources, selection_world);
+        }
     }
 
     render_viewport(

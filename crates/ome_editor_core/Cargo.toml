@@ -12,6 +12,7 @@ ome_core.workspace = true
 ome_ecs.workspace = true
 ome_render.workspace = true
 ome_gizmos.workspace = true
+ome_gizmos_handles.workspace = true
 ome_window.workspace = true
 egui.workspace = true
 egui-winit.workspace = true

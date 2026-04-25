@@ -10,6 +10,7 @@ members = [
     "crates/ome_lighting",
     "crates/ome_render",
     "crates/ome_gizmos",
+    "crates/ome_gizmos_handles",
     "crates/ome_physics",
     "crates/ome_gravity",
     "crates/ome_world",
@@ -79,6 +80,7 @@ ome_sdf = { path = "crates/ome_sdf" }
 ome_lighting = { path = "crates/ome_lighting" }
 ome_render = { path = "crates/ome_render" }
 ome_gizmos = { path = "crates/ome_gizmos" }
+ome_gizmos_handles = { path = "crates/ome_gizmos_handles" }
 ome_physics = { path = "crates/ome_physics" }
 ome_gravity = { path = "crates/ome_gravity" }
 ome_world = { path = "crates/ome_world" }
