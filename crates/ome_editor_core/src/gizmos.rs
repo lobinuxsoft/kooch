@@ -210,11 +210,16 @@ impl Visualizer<DirectionalLight> for DirectionalLightVisualizer {
 /// Inserts the `VisualizerRegistry` and registers built-in visualizers.
 /// Also inserts a default `HandleSet` (3 translate handles X/Y/Z).
 /// Runs once at editor startup.
+///
+/// `TransformVisualizer` (the small yellow selection cube) is **not**
+/// registered: the translate / rotate / scale handles already provide
+/// visual feedback for what's selected, so a separate marker just adds
+/// clutter. The struct stays in the codebase in case it becomes useful
+/// for a different purpose later.
 pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     let mut registry = resources
         .remove::<VisualizerRegistry>()
         .unwrap_or_default();
-    registry.register::<Transform, TransformVisualizer>();
     registry.register::<PerspectiveCamera, PerspectiveCameraVisualizer>();
     registry.register::<OrthographicCamera, OrthographicCameraVisualizer>();
     registry.register::<DirectionalLight, DirectionalLightVisualizer>();
@@ -324,7 +329,11 @@ pub(crate) fn apply_handle_input(
         None => return false,
     };
 
-    let basis = handle_basis(resources, target, rotation_mode);
+    let entity_rotation = entity_world_rotation(resources, target);
+    let basis = match rotation_mode {
+        RotationDisplayMode::Local => entity_rotation,
+        RotationDisplayMode::World => Mat3::IDENTITY,
+    };
 
     let ray = build_world_ray(resources, delta);
 
@@ -334,6 +343,7 @@ pub(crate) fn apply_handle_input(
     };
     handle_set.set_origin(target_origin);
     handle_set.set_basis(basis);
+    handle_set.set_entity_rotation(entity_rotation);
     let delta_out = handle_set.update(ray, delta.lmb_pressed, delta.lmb_held);
     let active = handle_set.is_active();
     let dragging = handle_set.is_dragging();
@@ -360,8 +370,15 @@ pub(crate) fn apply_handle_input(
                     t.rotation = t.rotation.normalize();
                     mutated = true;
                 }
-                TransformDelta::Scale(_) => {
-                    // Phase 5 territory.
+                TransformDelta::Scale(factor) => {
+                    // Component-wise multiply preserves any pre-existing
+                    // non-uniform scale.
+                    t.scale *= factor;
+                    // Clamp to a tiny positive minimum so a fast drag
+                    // can't collapse the entity to zero (which becomes
+                    // un-recoverable since 0 × anything = 0).
+                    t.scale = t.scale.max(Vec3::splat(0.001));
+                    mutated = true;
                 }
             }
         }
@@ -447,17 +464,15 @@ fn entity_world_position(resources: &Resources, entity: Entity) -> Option<Vec3> 
     Some(gt.matrix.w_axis.truncate())
 }
 
-/// Computes the rotation basis the gizmo handles should use for the
-/// selected entity given the inspector's Local/World toggle.
+/// Reads the entity's world-space rotation from `GlobalTransform`.
+/// Used as both the Local-mode display basis and the
+/// `entity_world_rotation` always-on field used by `ScaleHandle` to
+/// convert World-space drag intent into local-space scale factors.
 ///
-/// - `World` → identity (handles aligned with world axes).
-/// - `Local` → rotation extracted from the entity's `GlobalTransform`,
-///   so the handles spin with the entity's world rotation (matches
-///   Unity / Godot's "Local" gizmo behavior).
-fn handle_basis(resources: &Resources, entity: Entity, mode: RotationDisplayMode) -> Mat3 {
-    if matches!(mode, RotationDisplayMode::World) {
-        return Mat3::IDENTITY;
-    }
+/// `to_scale_rotation_translation` is lossy under shear; for our
+/// typical scene hierarchies that's acceptable. See PR #217 / the
+/// shear decision in the Decisions Log.
+fn entity_world_rotation(resources: &Resources, entity: Entity) -> Mat3 {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Mat3::IDENTITY;
     };
@@ -467,9 +482,6 @@ fn handle_basis(resources: &Resources, entity: Entity, mode: RotationDisplayMode
     let Some(gt) = storage.get(entity) else {
         return Mat3::IDENTITY;
     };
-    // `to_scale_rotation_translation` is lossy under shear; for our
-    // typical scene hierarchies that's acceptable. See PR #217 / the
-    // shear decision in the Decisions Log.
     let (_, rotation, _) = gt.matrix.to_scale_rotation_translation();
     Mat3::from_quat(rotation)
 }

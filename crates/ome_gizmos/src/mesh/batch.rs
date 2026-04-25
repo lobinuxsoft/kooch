@@ -2,7 +2,7 @@
 //! renderer consumes.
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Vec2, Vec3, Vec4};
+use glam::{Mat3, Vec2, Vec3, Vec4};
 
 /// Single mesh vertex — position + RGBA color + edge UV.
 ///
@@ -151,6 +151,53 @@ impl MeshBatch {
             indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         }
 
+        self.draws.push(MeshDraw { vertices, indices });
+    }
+
+    /// Pushes a filled oriented box. Like [`Self::filled_aabb`] but the
+    /// 6 faces are rotated by `basis` (each column is a face axis).
+    /// Use to draw cubes that follow a Local-mode entity rotation.
+    pub fn filled_obb(&mut self, center: Vec3, basis: Mat3, half_extents: Vec3, color: Vec4) {
+        let h = half_extents;
+        let bx = basis.x_axis;
+        let by = basis.y_axis;
+        let bz = basis.z_axis;
+        let p = |sx: f32, sy: f32, sz: f32| {
+            center + bx * (h.x * sx) + by * (h.y * sy) + bz * (h.z * sz)
+        };
+        // Same 6 faces / 24 vertices layout as `filled_aabb`, but with
+        // basis-rotated face axes instead of cardinal world axes.
+        let faces: [[Vec3; 4]; 6] = [
+            // -X face
+            [p(-1.0, -1.0, 1.0), p(-1.0, -1.0, -1.0), p(-1.0, 1.0, -1.0), p(-1.0, 1.0, 1.0)],
+            // +X
+            [p(1.0, -1.0, -1.0), p(1.0, -1.0, 1.0), p(1.0, 1.0, 1.0), p(1.0, 1.0, -1.0)],
+            // -Y
+            [p(-1.0, -1.0, -1.0), p(1.0, -1.0, -1.0), p(1.0, -1.0, 1.0), p(-1.0, -1.0, 1.0)],
+            // +Y
+            [p(-1.0, 1.0, 1.0), p(1.0, 1.0, 1.0), p(1.0, 1.0, -1.0), p(-1.0, 1.0, -1.0)],
+            // -Z
+            [p(1.0, -1.0, -1.0), p(-1.0, -1.0, -1.0), p(-1.0, 1.0, -1.0), p(1.0, 1.0, -1.0)],
+            // +Z
+            [p(-1.0, -1.0, 1.0), p(1.0, -1.0, 1.0), p(1.0, 1.0, 1.0), p(-1.0, 1.0, 1.0)],
+        ];
+
+        let uvs: [Vec2; 4] = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(1.0, 1.0),
+            Vec2::new(0.0, 1.0),
+        ];
+
+        let mut vertices: Vec<MeshVertex> = Vec::with_capacity(24);
+        let mut indices: Vec<u32> = Vec::with_capacity(36);
+        for face in &faces {
+            let base = vertices.len() as u32;
+            for i in 0..4 {
+                vertices.push(MeshVertex::with_edge_uv(face[i], color, uvs[i]));
+            }
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
         self.draws.push(MeshDraw { vertices, indices });
     }
 
