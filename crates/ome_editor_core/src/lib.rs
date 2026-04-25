@@ -74,6 +74,9 @@ impl Plugin for EditorPlugin {
         app.add_system(Stage::Startup, editor_camera::spawn_editor_camera_system);
         // Hand the viewport over to the gameplay camera in play mode.
         app.add_system(Stage::PreRender, editor_camera::sync_editor_camera_active_system);
+        // Register built-in visualizers (Transform, ...) into the
+        // VisualizerRegistry. Must run BEFORE the first gizmo batch build.
+        app.add_system(Stage::Startup, gizmos::register_builtin_visualizers_system);
         // Rebuild the gizmo line batch from current selection. Runs after
         // transform propagation (PostUpdate) so GlobalTransform is fresh.
         app.add_system(Stage::PreRender, gizmos::build_gizmo_batch_system);
