@@ -1,0 +1,12 @@
+[package]
+name = "ome_gizmos_handles"
+description = "Interactive editor handles (translate / rotate / scale) for oh_my_engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ome_gizmos.workspace = true
+glam.workspace = true

@@ -15,7 +15,7 @@
 
 use std::any::TypeId;
 
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec2, Vec3};
 
 use ome_core::resource::Resources;
 use ome_core::time::Time;
@@ -56,6 +56,18 @@ pub struct ViewportInputDelta {
     pub fly_active: bool,
     /// `true` when the user pressed `F` this frame to focus the selection.
     pub focus_pressed: bool,
+    /// Cursor position relative to the viewport's top-left corner, in
+    /// physical pixels. `None` when the cursor is outside the viewport.
+    /// Consumed by the gizmo handle system to construct picking rays.
+    pub cursor_local: Option<Vec2>,
+    /// Viewport size in physical pixels, used together with `cursor_local`
+    /// to derive normalized device coordinates.
+    pub viewport_size: Vec2,
+    /// `true` when the primary (left) mouse button was just pressed
+    /// this frame inside the viewport.
+    pub lmb_pressed: bool,
+    /// `true` when the primary (left) mouse button is currently held.
+    pub lmb_held: bool,
 }
 
 impl ViewportInputDelta {
@@ -141,6 +153,25 @@ pub fn collect_viewport_input(
     if response.hovered() {
         delta.focus_pressed = ui.input(|i| i.key_pressed(egui::Key::F));
     }
+
+    // --- Cursor + LMB state for gizmo handles -----------------------------
+    let pixels_per_point = ui.ctx().pixels_per_point();
+    let rect = response.rect;
+    delta.viewport_size = Vec2::new(rect.width(), rect.height()) * pixels_per_point;
+    delta.cursor_local = response.hover_pos().map(|p| {
+        let local = p - rect.min;
+        Vec2::new(local.x, local.y) * pixels_per_point
+    });
+    let (pressed, held) = ui.input(|i| {
+        (
+            i.pointer.button_pressed(egui::PointerButton::Primary),
+            i.pointer.button_down(egui::PointerButton::Primary),
+        )
+    });
+    // Pressed only counts when the cursor is over the viewport — egui
+    // reports the press globally otherwise.
+    delta.lmb_pressed = pressed && response.hovered();
+    delta.lmb_held = held;
 
     delta
 }
