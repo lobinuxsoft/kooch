@@ -13,8 +13,12 @@
 //! Lines render always-on-top: depth comparison `Always`, depth-write
 //! disabled. Matches the default Unity / Unreal feel for editor gizmos.
 
+mod gizmos;
 mod renderer;
+mod visualizer;
 
+pub use gizmos::Gizmos;
 pub use renderer::{GizmoBatch, GizmoRenderer, LineSegment};
+pub use visualizer::{Visualizer, VisualizerRegistry};
 
 pub(crate) const SHADER_SOURCE: &str = include_str!("../shaders/gizmo_main.wgsl");
