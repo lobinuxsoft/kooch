@@ -1,0 +1,25 @@
+/* Mermaid diagrams: full-width, consistent height range, clickable to
+   open the raw SVG in a new tab for full zoom. */
+.mermaid {
+    width: 100%;
+    text-align: center;
+    margin: 1.5em 0;
+    padding: 1em;
+    background: var(--quote-bg, rgba(255, 255, 255, 0.04));
+    border-radius: 6px;
+    cursor: zoom-in;
+}
+
+.mermaid svg {
+    max-width: 100% !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 400px;
+    max-height: 700px;
+    display: inline-block;
+}
+
+/* Hover hint that the diagram is interactive. */
+.mermaid:hover {
+    background: var(--quote-bg, rgba(255, 255, 255, 0.07));
+}
