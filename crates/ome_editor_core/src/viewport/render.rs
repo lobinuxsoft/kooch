@@ -18,7 +18,8 @@ use ome_ecs::SdfSphere;
 use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::Query;
-use ome_render::{GizmoBatch, GizmoRenderer, MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
+use ome_gizmos::{GizmoBatch, GizmoRenderer};
+use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
 
 use crate::viewport::target::ViewportTarget;
 

@@ -8,8 +8,9 @@ use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::query::Query;
 use wgpu::util::DeviceExt;
 
-use super::SHADER_SOURCE;
-use crate::VIEWPORT_DEPTH_FORMAT;
+use ome_render::VIEWPORT_DEPTH_FORMAT;
+
+use crate::SHADER_SOURCE;
 
 /// One line segment to be drawn in world space.
 #[derive(Debug, Clone, Copy)]

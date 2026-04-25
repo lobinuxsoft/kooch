@@ -27,7 +27,7 @@ use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::query::Query;
 use ome_ecs::transform::Transform;
-use ome_render::GizmoBatch;
+use ome_gizmos::GizmoBatch;
 
 use crate::state::EditorOverlay;
 

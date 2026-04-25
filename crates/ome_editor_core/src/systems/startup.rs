@@ -6,7 +6,8 @@ use ome_core::gpu::GpuContext;
 use ome_core::power::{self, PowerProfile};
 use ome_core::raw_event::RawEventHandler;
 use ome_core::resource::Resources;
-use ome_render::{GizmoBatch, GizmoRenderer, MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
+use ome_gizmos::{GizmoBatch, GizmoRenderer};
+use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
 
 use crate::state::{EditorOverlay, EguiEventHandler};
 use crate::style::{configure_fonts, configure_style};

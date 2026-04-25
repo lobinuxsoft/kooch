@@ -36,6 +36,8 @@ pub use ome_plugin_api;
 pub use ome_window;
 #[cfg(feature = "render")]
 pub use ome_render;
+#[cfg(feature = "gizmos")]
+pub use ome_gizmos;
 #[cfg(feature = "input")]
 pub use ome_input;
 #[cfg(feature = "audio")]

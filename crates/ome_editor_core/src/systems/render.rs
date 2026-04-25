@@ -6,7 +6,8 @@ use ome_core::event::{AppExit, Events};
 use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
-use ome_render::{GizmoBatch, GizmoRenderer, MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
+use ome_gizmos::{GizmoBatch, GizmoRenderer};
+use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
 
 use crate::actions::{apply_actions, EditorAction};
 use crate::editor_camera::EditorCameraController;
