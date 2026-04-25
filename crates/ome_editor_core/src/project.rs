@@ -179,82 +179,48 @@ edition = "2024"
 [workspace]
 
 [dependencies]
-oh_my_engine = {{ path = "{engine_path}", features = ["editor"] }}
+oh_my_engine = {{ path = "{engine_path}" }}
+# Direct dep needed until `Reflect` proc-macro resolves through the facade.
 ome_ecs = {{ path = "{engine_path}/crates/ome_ecs" }}
 "#,
     )
 }
 
 /// Generates a scaffold `src/main.rs` for a project crate.
-fn generate_main_rs(name: &str) -> String {
-    let title = name.to_owned();
-    format!(
-        r##"use oh_my_engine::prelude::*;
-use oh_my_engine::ome_ecs::component::{{Component, ComponentRegistry}};
-use oh_my_engine::ome_ecs::Reflect;
-use oh_my_engine::ome_editor_core::{{EditorPlugin, ProjectState}};
+///
+/// The template is intentionally minimal: `DefaultPlugins` wires window,
+/// ECS, the full render pipeline, and `SceneBootstrapPlugin` (which loads
+/// the scene from `--scene <path>` or `scenes/default.ome_scene`).
+///
+/// `register_components` is left as a customization point for users who
+/// add their own `#[derive(Reflect, Component)]` types.
+fn generate_main_rs(_name: &str) -> String {
+    r##"use oh_my_engine::ome_ecs::Reflect;
+use oh_my_engine::ome_ecs::component::{Component, ComponentRegistry};
+use oh_my_engine::prelude::*;
 
 // -- Define your components here --
 // #[derive(Default, Reflect)]
-// struct Health {{ pub hp: u32, pub max_hp: u32 }}
-// impl Component for Health {{}}
+// struct Health { pub hp: u32, pub max_hp: u32 }
+// impl Component for Health {}
 
-// Register your custom components here.
-// Built-in components (Transform, Name) are registered automatically by EcsPlugin.
-fn register_components(resources: &mut Resources) {{
-    if let Some(_registry) = resources.get_mut::<ComponentRegistry>() {{
+/// Registers custom components for scene serialization.
+/// Built-in components (Transform, Name) are registered by `EcsPlugin`.
+fn register_components(resources: &mut Resources) {
+    if let Some(_registry) = resources.get_mut::<ComponentRegistry>() {
         // registry.register_cpu_reflected::<Health>();
-    }}
-}}
+    }
+}
 
-struct ScenePathArg(std::path::PathBuf);
-
-fn load_scene(resources: &mut Resources) {{
-    let Some(arg) = resources.remove::<ScenePathArg>() else {{ return }};
-    let mut sm = resources
-        .remove::<oh_my_engine::ome_ecs::SceneManager>()
-        .unwrap_or_default();
-    if let Err(e) = sm.load(&arg.0, resources) {{
-        eprintln!("failed to load scene: {{e}}");
-    }}
-    resources.insert(sm);
-}}
-
-fn auto_open_project(resources: &mut Resources) {{
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if let Some(ps) = resources.get_mut::<ProjectState>() {{
-        ps.is_project_binary = true;
-        let _ = ps.open_project(&root);
-    }}
-}}
-
-fn main() {{
+fn main() {
     oh_my_engine::ome_core::init_tracing();
-    let args: Vec<String> = std::env::args().collect();
-    let play_mode = args.iter().any(|a| a == "--play");
-    let scene = args.iter().position(|a| a == "--scene")
-        .and_then(|i| args.get(i + 1))
-        .map(std::path::PathBuf::from);
-
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins);
-    app.add_plugin(WindowPlugin {{ title: "{title}".into(), width: 1280, height: 720 }});
-    app.add_plugin(EcsPlugin);
+    app.add_plugins(DefaultPlugins);
     app.add_system(Stage::Startup, register_components);
-
-    if play_mode {{
-        if let Some(path) = scene {{
-            app.insert_resource(ScenePathArg(path));
-            app.add_system(Stage::Startup, load_scene);
-        }}
-    }} else {{
-        app.add_plugin(EditorPlugin);
-        app.add_system(Stage::Startup, auto_open_project);
-    }}
     app.run();
-}}
-"##,
-    )
+}
+"##
+    .to_owned()
 }
 
 /// Creates a new project directory with the standard structure and manifest.
