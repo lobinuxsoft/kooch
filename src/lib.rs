@@ -8,7 +8,7 @@
 //! | Feature    | Description                | Dependencies |
 //! |------------|----------------------------|--------------|
 //! | `window`   | Windowing via winit         | —            |
-//! | `render`   | Clear-color renderer        | `window`     |
+//! | `render`   | Full game render pipeline   | `window`     |
 //! | `input`    | Gamepad/keyboard input      | `window`     |
 //! | `audio`    | Audio playback via kira     | —            |
 //! | `sdf`      | Signed distance fields      | —            |
@@ -20,6 +20,8 @@
 //! | `editor`   | Editor UI                   | —            |
 //!
 //! Default features: `window`, `render`.
+
+mod scene_bootstrap;
 
 // Always present
 pub use ome_core;
@@ -53,6 +55,8 @@ pub use ome_scripting;
 #[cfg(feature = "editor")]
 pub use ome_editor_core;
 
+pub use scene_bootstrap::SceneBootstrapPlugin;
+
 /// Convenient re-exports for common usage.
 ///
 /// ```ignore
@@ -65,24 +69,32 @@ pub mod prelude {
     #[cfg(feature = "window")]
     pub use ome_window::{WindowCloseRequested, WindowHandle, WindowPlugin, WindowResized};
     #[cfg(feature = "render")]
-    pub use ome_render::{ClearColor, RenderPlugin};
+    pub use ome_render::RenderPlugin;
     #[cfg(feature = "dynamic")]
     pub use ome_plugin_api::prelude as plugin_api;
+
+    pub use crate::{DefaultPlugins, SceneBootstrapPlugin};
 }
 
-/// Default set of plugins for a windowed application.
+/// Default set of plugins for a windowed game application.
 ///
 /// Includes [`CorePlugin`](ome_core::plugin::CorePlugin),
-/// [`EcsPlugin`](ome_ecs::EcsPlugin), and conditionally
-/// [`WindowPlugin`](ome_window::WindowPlugin) and
+/// [`EcsPlugin`](ome_ecs::EcsPlugin), [`SceneBootstrapPlugin`], and
+/// conditionally [`WindowPlugin`](ome_window::WindowPlugin) and
 /// [`RenderPlugin`](ome_render::RenderPlugin) based on enabled features.
+///
+/// `SceneBootstrapPlugin` resolves the initial scene from `--scene <path>`
+/// CLI args or falls back to `scenes/default.ome_scene` relative to cwd.
 ///
 /// # Example
 /// ```ignore
 /// use oh_my_engine::prelude::*;
-/// use oh_my_engine::DefaultPlugins;
 ///
-/// App::new().add_plugins(DefaultPlugins).run();
+/// fn main() {
+///     let mut app = App::new();
+///     app.add_plugins(DefaultPlugins);
+///     app.run();
+/// }
 /// ```
 pub struct DefaultPlugins;
 
@@ -96,8 +108,8 @@ impl ome_core::plugin::PluginGroup for DefaultPlugins {
         let builder = builder.add(ome_window::WindowPlugin::default());
 
         #[cfg(feature = "render")]
-        let builder = builder.add(ome_render::RenderPlugin::default());
+        let builder = builder.add(ome_render::RenderPlugin);
 
-        builder
+        builder.add(SceneBootstrapPlugin::default())
     }
 }

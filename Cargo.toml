@@ -143,19 +143,9 @@ name = "compute_vector_add"
 path = "examples/compute_vector_add.rs"
 
 [[example]]
-name = "clear_color"
-path = "examples/clear_color.rs"
-required-features = ["render"]
-
-[[example]]
 name = "raymarch_demo"
 path = "examples/raymarch_demo.rs"
 required-features = ["render", "window"]
-
-[[example]]
-name = "game_runner"
-path = "examples/game_runner.rs"
-required-features = ["window"]
 
 [[example]]
 name = "dynamic_plugin"

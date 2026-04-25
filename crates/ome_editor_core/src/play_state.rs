@@ -37,42 +37,35 @@ impl PlayState {
         self.child.is_some()
     }
 
-    /// Launches the game process with the given scene file.
+    /// Launches the game process via `cargo run --manifest-path <project>`.
     ///
-    /// When `exe_path` is `Some`, the given binary is launched directly
-    /// with `--play --scene <path>` (project mode, no recompilation).
-    /// When `None`, falls back to `cargo run --example game_runner`.
+    /// Cargo handles the build (incremental, cached) and runs the resulting
+    /// binary with `--scene <abs-path>`. The play binary picks up the scene
+    /// through `oh_my_engine::SceneBootstrapPlugin`.
     pub fn launch(
         &mut self,
+        manifest_path: &Path,
         scene_path: &Path,
-        exe_path: Option<&Path>,
     ) -> Result<(), PlayError> {
         if self.is_playing() {
             return Err(PlayError::AlreadyPlaying);
         }
 
-        // Clear previous output.
         if let Ok(mut out) = self.output.lock() {
             out.clear();
         }
 
-        let mut child = if let Some(exe) = exe_path {
-            Command::new(exe)
-                .args(["--play", "--scene"])
-                .arg(scene_path)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| PlayError::Spawn(e.to_string()))?
-        } else {
-            Command::new("cargo")
-                .args(["run", "--example", "game_runner", "--", "--scene"])
-                .arg(scene_path)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| PlayError::Spawn(e.to_string()))?
-        };
+        let mut child = Command::new("cargo")
+            .arg("run")
+            .arg("--manifest-path")
+            .arg(manifest_path)
+            .arg("--")
+            .arg("--scene")
+            .arg(scene_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| PlayError::Spawn(e.to_string()))?;
 
         // Spawn reader threads for stdout/stderr.
         if let Some(stdout) = child.stdout.take() {

@@ -224,29 +224,30 @@ pub(crate) fn apply_actions(
                 }
             }
             EditorAction::Play => {
+                let manifest_path = resources
+                    .get::<ProjectState>()
+                    .and_then(|ps| ps.active_project.as_ref().map(|p| p.root_path.join("Cargo.toml")));
+                let Some(manifest_path) = manifest_path else {
+                    tracing::error!("Play: no active project — open a project first");
+                    i += 1;
+                    continue;
+                };
+                if !manifest_path.exists() {
+                    tracing::error!(
+                        "Play: project has no Cargo.toml at {} — Play only works on crate-projects",
+                        manifest_path.display()
+                    );
+                    i += 1;
+                    continue;
+                }
                 let doc = ome_ecs::SceneDocument::from_ecs(resources);
                 let scene_path = std::env::temp_dir().join("ome_play_scene.ome_scene");
                 if let Err(e) = doc.save(&scene_path) {
                     tracing::error!("failed to save play scene: {e}");
-                } else {
-                    let is_project = resources
-                        .get::<ProjectState>()
-                        .is_some_and(|ps| {
-                            if ps.is_project_binary {
-                                return true;
-                            }
-                            let Some(project) = &ps.active_project else { return false };
-                            let Ok(exe) = std::env::current_exe() else { return false };
-                            exe.starts_with(project.root_path.join("target"))
-                        });
-                    let exe = is_project
-                        .then(|| std::env::current_exe().ok())
-                        .flatten();
-                    if let Some(play_state) = resources.get_mut::<PlayState>() {
-                        if let Err(e) = play_state.launch(&scene_path, exe.as_deref()) {
-                            tracing::error!("failed to launch game: {e}");
-                        }
-                    }
+                } else if let Some(play_state) = resources.get_mut::<PlayState>()
+                    && let Err(e) = play_state.launch(&manifest_path, &scene_path)
+                {
+                    tracing::error!("failed to launch game: {e}");
                 }
             }
             EditorAction::Stop => {
