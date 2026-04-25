@@ -5,7 +5,7 @@
 //! (filled triangles) so the underlying storage stays opaque to
 //! callers — future render-path changes don't ripple through user code.
 
-use glam::{Vec3, Vec4};
+use glam::{Mat3, Vec3, Vec4};
 
 use crate::mesh::MeshBatch;
 use crate::renderer::GizmoBatch;
@@ -78,6 +78,12 @@ impl<'a> Gizmos<'a> {
     /// `center` with the given world-space half-extents.
     pub fn filled_aabb(&mut self, center: Vec3, half_extents: Vec3, color: Vec4) {
         self.mesh_batch.filled_aabb(center, half_extents, color);
+    }
+
+    /// Pushes a filled oriented box — like [`Self::filled_aabb`] but
+    /// the faces are rotated by `basis` (each column is a face axis).
+    pub fn filled_obb(&mut self, center: Vec3, basis: Mat3, half_extents: Vec3, color: Vec4) {
+        self.mesh_batch.filled_obb(center, basis, half_extents, color);
     }
 
     /// Pushes a filled 3D arrow from `base` to `tip` — an octagonal

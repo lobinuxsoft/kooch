@@ -21,10 +21,12 @@
 
 mod plane;
 mod rotate;
+mod scale;
 mod translate;
 
 pub use plane::PlaneHandle;
 pub use rotate::RotateHandle;
+pub use scale::ScaleHandle;
 pub use translate::TranslateHandle;
 
 use glam::{Mat3, Quat, Vec3};
@@ -143,13 +145,22 @@ impl Default for HandleMode {
     }
 }
 
-/// World-space frame in which a handle is placed: origin + orthonormal
-/// basis. The editor sets `basis = Mat3::IDENTITY` for World-space mode
-/// and `basis = entity_world_rotation` for Local-space mode.
+/// World-space frame in which a handle is placed.
+///
+/// - `origin` — world position of the entity (handles are drawn around it).
+/// - `basis` — display orientation. `Mat3::IDENTITY` in World mode,
+///   the entity's world rotation in Local mode. Drives visual cube /
+///   arrow / torus orientation and the drag axis selection.
+/// - `entity_world_rotation` — always the entity's actual world
+///   rotation, regardless of mode. Needed for handles that have to
+///   convert between world and local spaces (e.g. scale's
+///   stretch-matrix conversion in World mode). Equal to `basis` in
+///   Local mode; differs in World mode.
 #[derive(Debug, Clone, Copy)]
 pub struct HandleFrame {
     pub origin: Vec3,
     pub basis: Mat3,
+    pub entity_world_rotation: Mat3,
 }
 
 impl Default for HandleFrame {
@@ -157,6 +168,7 @@ impl Default for HandleFrame {
         Self {
             origin: Vec3::ZERO,
             basis: Mat3::IDENTITY,
+            entity_world_rotation: Mat3::IDENTITY,
         }
     }
 }
@@ -230,6 +242,10 @@ impl Default for HandleSet {
                 Box::new(RotateHandle::new(Axis::X)),
                 Box::new(RotateHandle::new(Axis::Y)),
                 Box::new(RotateHandle::new(Axis::Z)),
+                Box::new(ScaleHandle::axis(Axis::X)),
+                Box::new(ScaleHandle::axis(Axis::Y)),
+                Box::new(ScaleHandle::axis(Axis::Z)),
+                Box::new(ScaleHandle::center()),
             ],
             state: SetState::Idle,
             frame: HandleFrame::default(),
@@ -264,6 +280,13 @@ impl HandleSet {
     /// for World-space mode, the entity's world rotation for Local mode.
     pub fn set_basis(&mut self, basis: Mat3) {
         self.frame.basis = basis;
+    }
+
+    /// Sets the entity's actual world rotation, used by handles that
+    /// need world→local space conversion regardless of display mode
+    /// (notably `ScaleHandle` in World mode).
+    pub fn set_entity_rotation(&mut self, rotation: Mat3) {
+        self.frame.entity_world_rotation = rotation;
     }
 
     /// Switches the active edit mode. Filters which handles render /
