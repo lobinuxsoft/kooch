@@ -12,20 +12,25 @@ use ome_render::VIEWPORT_DEPTH_FORMAT;
 
 use crate::SHADER_SOURCE;
 
-/// One line segment to be drawn in world space.
+/// Default screen-space thickness in physical pixels for `line` calls.
+pub const DEFAULT_LINE_THICKNESS: f32 = 2.0;
+
+/// One line segment to be drawn in world space, plus its rendered
+/// thickness in physical pixels.
 #[derive(Debug, Clone, Copy)]
 pub struct LineSegment {
     pub start: Vec3,
     pub end: Vec3,
     pub color: Vec3,
+    pub thickness: f32,
 }
 
 /// Per-frame collection of line segments queued for the gizmo pass.
 ///
-/// The editor pushes segments via [`Self::line`], [`Self::aabb`], or
-/// [`Self::axis_lines`] each frame. The renderer drains the batch
-/// during rendering. Stored as a `Resources` entry, inserted by the
-/// editor's startup system.
+/// Lines are rasterized as **screen-space quads** (sub-phase 3a of
+/// #278): each segment becomes a 4-vertex quad whose perpendicular
+/// offset is `thickness` physical pixels. Works around `wgpu`'s
+/// fixed 1-pixel `LineList` width limitation.
 #[derive(Debug, Default)]
 pub struct GizmoBatch {
     pub lines: Vec<LineSegment>,
@@ -36,9 +41,20 @@ impl GizmoBatch {
         self.lines.clear();
     }
 
-    /// Pushes a single line segment.
+    /// Pushes a line segment with [`DEFAULT_LINE_THICKNESS`].
     pub fn line(&mut self, start: Vec3, end: Vec3, color: Vec3) {
-        self.lines.push(LineSegment { start, end, color });
+        self.line_thick(start, end, color, DEFAULT_LINE_THICKNESS);
+    }
+
+    /// Pushes a line segment with explicit screen-space thickness in
+    /// physical pixels.
+    pub fn line_thick(&mut self, start: Vec3, end: Vec3, color: Vec3, thickness: f32) {
+        self.lines.push(LineSegment {
+            start,
+            end,
+            color,
+            thickness,
+        });
     }
 
     /// Pushes the 12 edges of an axis-aligned bounding box.
@@ -82,8 +98,8 @@ impl GizmoBatch {
     }
 
     /// Pushes three world-space axis arrows (X red, Y green, Z blue) of
-    /// the given length starting at `origin`. Each arrow is the main line
-    /// plus four small lines forming a 3D arrowhead at the positive end.
+    /// the given length starting at `origin`. Each arrow is the main
+    /// shaft plus four small lines forming a 3D arrowhead.
     pub fn axis_arrows(&mut self, origin: Vec3, length: f32) {
         const RED: Vec3 = Vec3::new(1.0, 0.25, 0.25);
         const GREEN: Vec3 = Vec3::new(0.25, 1.0, 0.25);
@@ -97,10 +113,6 @@ impl GizmoBatch {
     /// "+"-shaped 3D head at `tip`. `perp_a` and `perp_b` are the two
     /// unit-length axes perpendicular to the arrow direction (orient
     /// the arrowhead).
-    ///
-    /// Lines render at fixed 1-pixel width — `wgpu` does not expose a
-    /// line-width control. Real thickness arrives with the quad-line
-    /// rendering refactor (sub-phase 3a of #278).
     pub fn arrow(&mut self, base: Vec3, tip: Vec3, perp_a: Vec3, perp_b: Vec3, color: Vec3) {
         let dir = (tip - base).normalize_or_zero();
         let length = (tip - base).length();
@@ -115,26 +127,50 @@ impl GizmoBatch {
     }
 }
 
-/// One vertex of a gizmo line. Position in world space, color RGB.
+// ---------------------------------------------------------------------------
+// GPU types — vertex format + camera uniforms
+// ---------------------------------------------------------------------------
+
+/// Quad-line vertex. Each line emits 6 vertices (two triangles).
+///
+/// `position` is this vertex's 3D world endpoint; `other_position` is
+/// the line's other endpoint (used by the vertex shader to compute the
+/// perpendicular direction). `side` is `+1` or `-1` indicating which
+/// side of the line this vertex sits on. `thickness` is in physical
+/// pixels and controls the perpendicular offset magnitude.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct GizmoVertex {
     position: [f32; 3],
     color: [f32; 3],
+    other_position: [f32; 3],
+    side: f32,
+    thickness: f32,
 }
 
-/// `view_proj` matrix matching `CameraUniforms` in `gizmo_main.wgsl`.
+/// Matches `CameraUniforms` in `gizmo_main.wgsl`.
+///
+/// `view_proj` projects world points to clip space; `viewport_size`
+/// (physical pixels) lets the shader convert pixel-thickness into
+/// NDC offsets.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 struct CameraUniforms {
     view_proj: [[f32; 4]; 4],
+    viewport_size: [f32; 2],
+    _pad: [f32; 2],
 }
 
-/// Initial vertex buffer capacity in vertices (= 2 × line capacity).
+/// Initial vertex buffer capacity in vertices (= 6 × line capacity).
 /// Grows on demand if the batch overflows.
-const INITIAL_VERTEX_CAPACITY: u64 = 1024;
+const INITIAL_VERTEX_CAPACITY: u64 = 4096;
 
-/// Renders gizmo line segments queued in [`GizmoBatch`] each frame.
+// ---------------------------------------------------------------------------
+// GizmoRenderer
+// ---------------------------------------------------------------------------
+
+/// Renders gizmo line segments queued in [`GizmoBatch`] each frame as
+/// screen-space quads.
 pub struct GizmoRenderer {
     pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
@@ -196,6 +232,9 @@ impl GizmoRenderer {
             attributes: &wgpu::vertex_attr_array![
                 0 => Float32x3, // position
                 1 => Float32x3, // color
+                2 => Float32x3, // other_position
+                3 => Float32,   // side
+                4 => Float32,   // thickness
             ],
         };
 
@@ -219,7 +258,7 @@ impl GizmoRenderer {
                 })],
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
+                topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: None,
@@ -255,8 +294,13 @@ impl GizmoRenderer {
         }
     }
 
-    /// Renders all queued segments. No-ops when the batch is empty or no
-    /// active `PerspectiveCamera + GlobalTransform` is found.
+    /// Renders all queued segments. No-ops when the batch is empty or
+    /// no active `PerspectiveCamera + GlobalTransform` is found.
+    ///
+    /// `viewport_size` is the physical-pixel size of the render target.
+    /// The vertex shader uses it to convert per-line `thickness` (also
+    /// in physical pixels) to NDC offsets.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         device: &wgpu::Device,
@@ -266,36 +310,36 @@ impl GizmoRenderer {
         depth: &wgpu::TextureView,
         resources: &Resources,
         batch: &GizmoBatch,
-        aspect: f32,
+        viewport_size: (u32, u32),
     ) {
         if batch.lines.is_empty() {
             return;
         }
+        if viewport_size.0 == 0 || viewport_size.1 == 0 {
+            return;
+        }
+        let aspect = viewport_size.0 as f32 / viewport_size.1.max(1) as f32;
 
         let Some(view_proj) = active_camera_view_proj(resources, aspect) else {
             return;
         };
 
-        // Upload camera.
+        // Upload camera uniforms.
         queue.write_buffer(
             &self.camera_buffer,
             0,
             bytemuck::bytes_of(&CameraUniforms {
                 view_proj: view_proj.to_cols_array_2d(),
+                viewport_size: [viewport_size.0 as f32, viewport_size.1 as f32],
+                _pad: [0.0; 2],
             }),
         );
 
-        // Build vertex data: 2 vertices per line.
-        let mut vertices: Vec<GizmoVertex> = Vec::with_capacity(batch.lines.len() * 2);
+        // Build vertex data: 6 vertices per line (two triangles forming
+        // a quad in screen-space, expanded by the vertex shader).
+        let mut vertices: Vec<GizmoVertex> = Vec::with_capacity(batch.lines.len() * 6);
         for seg in &batch.lines {
-            vertices.push(GizmoVertex {
-                position: seg.start.to_array(),
-                color: seg.color.to_array(),
-            });
-            vertices.push(GizmoVertex {
-                position: seg.end.to_array(),
-                color: seg.color.to_array(),
-            });
+            push_quad(seg, &mut vertices);
         }
 
         // Resize buffer if needed.
@@ -340,6 +384,59 @@ impl GizmoRenderer {
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.draw(0..vertices.len() as u32, 0..1);
     }
+}
+
+/// Generates the 6 vertices (2 triangles) forming the screen-space
+/// quad for one [`LineSegment`].
+fn push_quad(seg: &LineSegment, vertices: &mut Vec<GizmoVertex>) {
+    let p1 = seg.start.to_array();
+    let p2 = seg.end.to_array();
+    let color = seg.color.to_array();
+    let thickness = seg.thickness;
+
+    // The four logical corners of the quad in screen space:
+    //   A = p1 + perp           B = p1 - perp
+    //   C = p2 + perp           D = p2 - perp
+    //
+    // The shader computes `perp` from `(other_position - position)`. At
+    // p2 that direction is reversed, so to keep C / D on the same world
+    // sides as A / B we flip the `side` sign at p2.
+    let a = GizmoVertex {
+        position: p1,
+        color,
+        other_position: p2,
+        side: 1.0,
+        thickness,
+    };
+    let b = GizmoVertex {
+        position: p1,
+        color,
+        other_position: p2,
+        side: -1.0,
+        thickness,
+    };
+    let c = GizmoVertex {
+        position: p2,
+        color,
+        other_position: p1,
+        side: -1.0,
+        thickness,
+    };
+    let d = GizmoVertex {
+        position: p2,
+        color,
+        other_position: p1,
+        side: 1.0,
+        thickness,
+    };
+
+    // Triangle 1: A, B, C.  Triangle 2: B, D, C.
+    vertices.push(a);
+    vertices.push(b);
+    vertices.push(c);
+    vertices.push(b);
+    vertices.push(d);
+    vertices.push(c);
 }
 
 fn active_camera_view_proj(resources: &Resources, aspect: f32) -> Option<Mat4> {

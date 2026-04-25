@@ -1,9 +1,9 @@
 //! [`TranslateHandle`] — drag-an-axis-arrow to move the entity along it.
 
-use glam::Vec3;
+use glam::{Vec3, Vec4};
 use ome_gizmos::Gizmos;
 
-use crate::{Axis, DragInfo, Handle, HandleState, Ray};
+use crate::{Axis, DragInfo, Handle, HandleFrame, HandleState, Ray};
 
 /// Axis-aligned translate handle. One per cardinal axis (X / Y / Z).
 ///
@@ -35,28 +35,30 @@ impl TranslateHandle {
 }
 
 impl Handle for TranslateHandle {
-    fn draw(&self, gizmos: &mut Gizmos<'_>, origin: Vec3, state: HandleState) {
-        let color = match state {
+    fn draw(&self, gizmos: &mut Gizmos<'_>, frame: HandleFrame, state: HandleState) {
+        let rgb = match state {
             HandleState::Idle => self.axis.base_color(),
             HandleState::Hover => bright(self.axis.base_color()),
             HandleState::Dragging => Vec3::new(1.0, 0.85, 0.2), // selection-yellow while dragging
         };
-        let dir = self.axis.vec();
-        let tip = origin + dir * self.length;
-        let (perp_a, perp_b) = perpendiculars(dir);
-        gizmos.arrow(origin, tip, perp_a, perp_b, color);
+        let dir = frame.world_axis(self.axis);
+        let tip = frame.origin + dir * self.length;
+        // Solid mesh arrow with full alpha — translates read better as
+        // opaque shapes, unlike the translucent plane handles.
+        gizmos.filled_arrow(frame.origin, tip, Vec4::new(rgb.x, rgb.y, rgb.z, 1.0));
     }
 
-    fn pick(&self, ray: Ray, origin: Vec3) -> Option<f32> {
-        let p1 = origin;
-        let p2 = origin + self.axis.vec() * self.length;
+    fn pick(&self, ray: Ray, frame: HandleFrame) -> Option<f32> {
+        let dir = frame.world_axis(self.axis);
+        let p1 = frame.origin;
+        let p2 = frame.origin + dir * self.length;
         ray_vs_segment(ray, p1, p2, self.pick_thickness)
     }
 
-    fn drag(&self, drag: DragInfo, origin: Vec3) -> Vec3 {
-        let axis = self.axis.vec();
-        let last_s = project_ray_to_axis(drag.last_ray, origin, axis);
-        let current_s = project_ray_to_axis(drag.current_ray, origin, axis);
+    fn drag(&self, drag: DragInfo, frame: HandleFrame) -> Vec3 {
+        let axis = frame.world_axis(self.axis);
+        let last_s = project_ray_to_axis(drag.last_ray, frame.origin, axis);
+        let current_s = project_ray_to_axis(drag.current_ray, frame.origin, axis);
         axis * (current_s - last_s)
     }
 }
@@ -68,19 +70,6 @@ impl Handle for TranslateHandle {
 /// Brightens a color toward white for hover feedback.
 fn bright(c: Vec3) -> Vec3 {
     c.lerp(Vec3::ONE, 0.4)
-}
-
-/// Returns two unit vectors perpendicular to `dir` (for arrowhead
-/// orientation). Picks a stable up reference avoiding the gimbal case.
-fn perpendiculars(dir: Vec3) -> (Vec3, Vec3) {
-    let up = if dir.y.abs() > 0.99 {
-        Vec3::X
-    } else {
-        Vec3::Y
-    };
-    let perp_a = dir.cross(up).normalize_or(Vec3::X);
-    let perp_b = dir.cross(perp_a).normalize_or(Vec3::Y);
-    (perp_a, perp_b)
 }
 
 /// Projects a ray onto a line and returns the position `s` along the

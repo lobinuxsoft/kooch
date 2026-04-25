@@ -18,7 +18,7 @@ use ome_ecs::SdfSphere;
 use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::Query;
-use ome_gizmos::{GizmoBatch, GizmoRenderer};
+use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
 use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
 
 use crate::viewport::target::ViewportTarget;
@@ -30,6 +30,7 @@ const SKY_TOP: Vec4 = Vec4::new(0.5, 0.7, 1.0, 1.0);
 const SKY_BOTTOM: Vec4 = Vec4::new(0.1, 0.2, 0.4, 1.0);
 
 /// Renders the active scene into the viewport offscreen texture.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_viewport(
     gpu: &GpuContext,
     sky_pass: &mut SkyRenderPass,
@@ -37,6 +38,8 @@ pub(crate) fn render_viewport(
     mesh_pass: &mut MeshPassRenderer,
     gizmo_renderer: &mut GizmoRenderer,
     gizmo_batch: &GizmoBatch,
+    mesh_gizmo_renderer: &mut MeshGizmoRenderer,
+    mesh_gizmo_batch: &MeshBatch,
     target: &ViewportTarget,
     resources: &Resources,
     project_loaded: bool,
@@ -104,7 +107,8 @@ pub(crate) fn render_viewport(
         );
     }
 
-    // Pass 4: Gizmos (always-on-top, depth comparison `Always`).
+    // Pass 4: Line gizmos (always-on-top, depth comparison `Always`,
+    // screen-space thick lines).
     if project_loaded {
         gizmo_renderer.render(
             gpu.device(),
@@ -114,7 +118,22 @@ pub(crate) fn render_viewport(
             target.depth_view(),
             resources,
             gizmo_batch,
-            target.aspect(),
+            target.size(),
+        );
+    }
+
+    // Pass 5: Mesh gizmos (always-on-top, alpha-blended triangles for
+    // filled plane handles, future rotate tori, custom 3D shapes).
+    if project_loaded {
+        mesh_gizmo_renderer.render(
+            gpu.device(),
+            gpu.queue(),
+            &mut encoder,
+            target.view(),
+            target.depth_view(),
+            resources,
+            mesh_gizmo_batch,
+            target.size(),
         );
     }
 

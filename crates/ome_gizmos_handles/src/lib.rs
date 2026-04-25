@@ -25,7 +25,7 @@ mod translate;
 pub use plane::PlaneHandle;
 pub use translate::TranslateHandle;
 
-use glam::Vec3;
+use glam::{Mat3, Vec3};
 use ome_gizmos::Gizmos;
 
 // ---------------------------------------------------------------------------
@@ -96,19 +96,48 @@ pub struct DragInfo {
     pub current_ray: Ray,
 }
 
+/// World-space frame in which a handle is placed: origin + orthonormal
+/// basis. The editor sets `basis = Mat3::IDENTITY` for World-space mode
+/// and `basis = entity_world_rotation` for Local-space mode.
+#[derive(Debug, Clone, Copy)]
+pub struct HandleFrame {
+    pub origin: Vec3,
+    pub basis: Mat3,
+}
+
+impl Default for HandleFrame {
+    fn default() -> Self {
+        Self {
+            origin: Vec3::ZERO,
+            basis: Mat3::IDENTITY,
+        }
+    }
+}
+
+impl HandleFrame {
+    /// Maps a local-space direction to world space using the frame's
+    /// rotation. For built-in axis handles this turns `Axis::X` into
+    /// either `(1,0,0)` (World mode) or the entity's local +X
+    /// direction (Local mode).
+    pub fn world_axis(&self, axis: Axis) -> Vec3 {
+        (self.basis * axis.vec()).normalize_or(axis.vec())
+    }
+}
+
 /// Interactive handle — produces a visual, accepts picks, applies drags.
 pub trait Handle: Send + Sync + 'static {
-    /// Draws the handle into the gizmo batch. `origin` is the
-    /// world-space position of the handle's entity (selected entity).
-    fn draw(&self, gizmos: &mut Gizmos<'_>, origin: Vec3, state: HandleState);
+    /// Draws the handle into the gizmo batch. `frame` carries the
+    /// world-space origin and basis; handles align their geometry to
+    /// the basis so the Local/World inspector toggle is honored.
+    fn draw(&self, gizmos: &mut Gizmos<'_>, frame: HandleFrame, state: HandleState);
 
     /// Returns the distance along `ray` if the handle is hit, `None`
     /// otherwise. Smallest distance wins when multiple handles are hit.
-    fn pick(&self, ray: Ray, origin: Vec3) -> Option<f32>;
+    fn pick(&self, ray: Ray, frame: HandleFrame) -> Option<f32>;
 
     /// Returns the world-space translation delta for one drag frame.
     /// Called repeatedly while the user drags this handle.
-    fn drag(&self, drag: DragInfo, origin: Vec3) -> Vec3;
+    fn drag(&self, drag: DragInfo, frame: HandleFrame) -> Vec3;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +159,7 @@ enum SetState {
 pub struct HandleSet {
     handles: Vec<Box<dyn Handle>>,
     state: SetState,
-    origin: Vec3,
+    frame: HandleFrame,
 }
 
 impl Default for HandleSet {
@@ -145,7 +174,7 @@ impl Default for HandleSet {
                 Box::new(PlaneHandle::new(Axis::Y, Axis::Z)),
             ],
             state: SetState::Idle,
-            origin: Vec3::ZERO,
+            frame: HandleFrame::default(),
         }
     }
 }
@@ -157,7 +186,7 @@ impl HandleSet {
         Self {
             handles: Vec::new(),
             state: SetState::Idle,
-            origin: Vec3::ZERO,
+            frame: HandleFrame::default(),
         }
     }
 
@@ -168,7 +197,13 @@ impl HandleSet {
     /// Updates the world-space origin where handles render. Called every
     /// frame from the entity's `GlobalTransform`.
     pub fn set_origin(&mut self, origin: Vec3) {
-        self.origin = origin;
+        self.frame.origin = origin;
+    }
+
+    /// Updates the rotation basis applied to local axes. `Mat3::IDENTITY`
+    /// for World-space mode, the entity's world rotation for Local mode.
+    pub fn set_basis(&mut self, basis: Mat3) {
+        self.frame.basis = basis;
     }
 
     /// Returns `true` if a handle is currently hovered or being dragged.
@@ -216,7 +251,7 @@ impl HandleSet {
                     last_ray,
                     current_ray: ray,
                 };
-                let delta = self.handles[idx].drag(drag, self.origin);
+                let delta = self.handles[idx].drag(drag, self.frame);
                 // Update the last_ray for the next drag tick.
                 self.state = SetState::Drag(idx, ray);
                 delta
@@ -232,14 +267,14 @@ impl HandleSet {
                 SetState::Drag(idx, _) if idx == i => HandleState::Dragging,
                 _ => HandleState::Idle,
             };
-            h.draw(gizmos, self.origin, state);
+            h.draw(gizmos, self.frame, state);
         }
     }
 
     fn pick_closest(&self, ray: Ray) -> Option<usize> {
         let mut best: Option<(usize, f32)> = None;
         for (i, h) in self.handles.iter().enumerate() {
-            if let Some(t) = h.pick(ray, self.origin) {
+            if let Some(t) = h.pick(ray, self.frame) {
                 match best {
                     Some((_, best_t)) if best_t <= t => {}
                     _ => best = Some((i, t)),

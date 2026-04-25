@@ -1,10 +1,10 @@
 //! [`PlaneHandle`] — drag a small square at the corner of two axes to
 //! translate in the plane formed by those axes.
 
-use glam::Vec3;
+use glam::{Vec3, Vec4};
 use ome_gizmos::Gizmos;
 
-use crate::{Axis, DragInfo, Handle, HandleState, Ray};
+use crate::{Axis, DragInfo, Handle, HandleFrame, HandleState, Ray};
 
 /// Two-axis translate handle. Lives at the "corner" between two
 /// cardinal axes and constrains drag to that plane.
@@ -48,51 +48,45 @@ impl PlaneHandle {
         }
     }
 
-    /// Plane normal (cross product of the two axes).
-    fn normal(&self) -> Vec3 {
-        self.axis_a.vec().cross(self.axis_b.vec()).normalize()
-    }
-
-    /// Returns the four corners of the square in world space.
-    fn corners(&self, origin: Vec3) -> [Vec3; 4] {
-        let a = self.axis_a.vec();
-        let b = self.axis_b.vec();
-        let p0 = origin + a * self.offset + b * self.offset;
+    /// Returns the four corners of the square in world space, plus the
+    /// frame-rotated axis vectors and plane normal — all the geometry
+    /// needed by `pick` / `drag` / `draw`.
+    fn corners(&self, frame: HandleFrame) -> ([Vec3; 4], Vec3, Vec3, Vec3) {
+        let a = frame.world_axis(self.axis_a);
+        let b = frame.world_axis(self.axis_b);
+        let normal = a.cross(b).normalize_or(Vec3::Y);
+        let p0 = frame.origin + a * self.offset + b * self.offset;
         let p1 = p0 + a * self.size;
         let p2 = p1 + b * self.size;
         let p3 = p0 + b * self.size;
-        [p0, p1, p2, p3]
+        ([p0, p1, p2, p3], a, b, normal)
     }
 }
 
 impl Handle for PlaneHandle {
-    fn draw(&self, gizmos: &mut Gizmos<'_>, origin: Vec3, state: HandleState) {
+    fn draw(&self, gizmos: &mut Gizmos<'_>, frame: HandleFrame, state: HandleState) {
         let base_color = self.normal_axis();
-        let color = match state {
+        let rgb = match state {
             HandleState::Idle => base_color,
             HandleState::Hover => bright(base_color),
             HandleState::Dragging => Vec3::new(1.0, 0.85, 0.2),
         };
-        let [p0, p1, p2, p3] = self.corners(origin);
-        gizmos.line(p0, p1, color);
-        gizmos.line(p1, p2, color);
-        gizmos.line(p2, p3, color);
-        gizmos.line(p3, p0, color);
-        // Diagonal cross to make hover target obvious until filled
-        // translucent quads arrive in sub-phase 3b.
-        gizmos.line(p0, p2, color);
-        gizmos.line(p1, p3, color);
+        // Fill alpha 0.55 reads cleanly over the colorful SDF background;
+        // the shader renders the perimeter with alpha 1.0 via per-vertex
+        // `edge_uv`. Hover / drag feedback comes from the color shift,
+        // not the alpha.
+        let fill_color = Vec4::new(rgb.x, rgb.y, rgb.z, 0.55);
+        let ([p0, p1, p2, p3], _, _, _) = self.corners(frame);
+        gizmos.filled_quad(p0, p1, p2, p3, fill_color);
     }
 
-    fn pick(&self, ray: Ray, origin: Vec3) -> Option<f32> {
-        let normal = self.normal();
-        let plane_origin = origin;
-        let t = ray_vs_plane(ray, plane_origin, normal)?;
+    fn pick(&self, ray: Ray, frame: HandleFrame) -> Option<f32> {
+        let (_, axis_a, axis_b, normal) = self.corners(frame);
+        let t = ray_vs_plane(ray, frame.origin, normal)?;
         let hit = ray.at(t);
-        // Project hit onto the two axes; bail if outside the square.
-        let local = hit - origin;
-        let s_a = local.dot(self.axis_a.vec());
-        let s_b = local.dot(self.axis_b.vec());
+        let local = hit - frame.origin;
+        let s_a = local.dot(axis_a);
+        let s_b = local.dot(axis_b);
         let inside = s_a >= self.offset
             && s_a <= self.offset + self.size
             && s_b >= self.offset
@@ -100,21 +94,15 @@ impl Handle for PlaneHandle {
         if inside { Some(t) } else { None }
     }
 
-    fn drag(&self, drag: DragInfo, origin: Vec3) -> Vec3 {
-        let normal = self.normal();
-        let last = ray_vs_plane(drag.last_ray, origin, normal).map(|t| drag.last_ray.at(t));
+    fn drag(&self, drag: DragInfo, frame: HandleFrame) -> Vec3 {
+        let (_, axis_a, axis_b, normal) = self.corners(frame);
+        let last = ray_vs_plane(drag.last_ray, frame.origin, normal).map(|t| drag.last_ray.at(t));
         let current =
-            ray_vs_plane(drag.current_ray, origin, normal).map(|t| drag.current_ray.at(t));
+            ray_vs_plane(drag.current_ray, frame.origin, normal).map(|t| drag.current_ray.at(t));
         match (last, current) {
             (Some(l), Some(c)) => {
                 let delta = c - l;
-                // Constrain to the two plane axes (the projection onto the
-                // plane already does this, but the floating-point residue
-                // could leak into the third axis — explicit project keeps
-                // things clean).
-                let a = self.axis_a.vec();
-                let b = self.axis_b.vec();
-                a * delta.dot(a) + b * delta.dot(b)
+                axis_a * delta.dot(axis_a) + axis_b * delta.dot(axis_b)
             }
             _ => Vec3::ZERO,
         }

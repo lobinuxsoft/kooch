@@ -6,7 +6,7 @@ use ome_core::event::{AppExit, Events};
 use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
-use ome_gizmos::{GizmoBatch, GizmoRenderer};
+use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
 use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
 
 use crate::actions::{apply_actions, EditorAction};
@@ -279,6 +279,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .remove::<GizmoRenderer>()
         .expect("GizmoRenderer not found");
     let gizmo_batch = resources.remove::<GizmoBatch>().unwrap_or_default();
+    let mut mesh_gizmo_renderer = resources
+        .remove::<MeshGizmoRenderer>()
+        .expect("MeshGizmoRenderer not found");
+    let mesh_gizmo_batch = resources.remove::<MeshBatch>().unwrap_or_default();
     let mut project_state = resources.remove::<ProjectState>();
     let mut undo_stack = resources
         .remove::<UndoStack>()
@@ -340,7 +344,13 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // user doesn't inadvertently orbit while moving an entity.
     if let Some(delta) = viewport_input {
         let selected_snapshot: Vec<_> = overlay.selected_entities.iter().copied().collect();
-        let handle_active = crate::gizmos::apply_handle_input(delta, resources, &selected_snapshot);
+        let rotation_mode = overlay.rotation_display_mode;
+        let handle_active = crate::gizmos::apply_handle_input(
+            delta,
+            resources,
+            &selected_snapshot,
+            rotation_mode,
+        );
         if !handle_active {
             let selection_world = overlay
                 .selected_entities
@@ -358,6 +368,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut mesh_pass,
         &mut gizmo_renderer,
         &gizmo_batch,
+        &mut mesh_gizmo_renderer,
+        &mesh_gizmo_batch,
         &viewport,
         resources,
         project_loaded,
@@ -373,6 +385,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     resources.insert(sky_pass);
     resources.insert(gizmo_renderer);
     resources.insert(gizmo_batch);
+    resources.insert(mesh_gizmo_renderer);
+    resources.insert(mesh_gizmo_batch);
     if let Some(ps) = project_state {
         resources.insert(ps);
     }
