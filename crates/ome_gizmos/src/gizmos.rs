@@ -23,9 +23,17 @@ impl<'a> Gizmos<'a> {
         Self { batch }
     }
 
-    /// Pushes a single line segment.
+    /// Pushes a line segment with the default screen-space thickness
+    /// ([`crate::DEFAULT_LINE_THICKNESS`]).
     pub fn line(&mut self, start: Vec3, end: Vec3, color: Vec3) {
         self.batch.line(start, end, color);
+    }
+
+    /// Pushes a line segment with explicit screen-space thickness in
+    /// physical pixels. Use for hover / drag emphasis or any context
+    /// where the default 2-pixel default isn't loud enough.
+    pub fn line_thick(&mut self, start: Vec3, end: Vec3, color: Vec3, thickness: f32) {
+        self.batch.line_thick(start, end, color, thickness);
     }
 
     /// Pushes the 12 edges of an axis-aligned bounding box.

@@ -114,7 +114,7 @@ pub(crate) fn render_viewport(
             target.depth_view(),
             resources,
             gizmo_batch,
-            target.aspect(),
+            target.size(),
         );
     }
 

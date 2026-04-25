@@ -58,6 +58,11 @@ impl ViewportTarget {
         self.current_size.0 as f32 / self.current_size.1.max(1) as f32
     }
 
+    /// Backing texture size in physical pixels.
+    pub fn size(&self) -> (u32, u32) {
+        self.current_size
+    }
+
     /// Records a size request. The actual resize happens on the next call
     /// to [`resize_if_needed`], before the frame is rendered.
     pub fn request_size(&mut self, size: (u32, u32)) {
