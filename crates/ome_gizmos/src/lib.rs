@@ -14,10 +14,12 @@
 //! disabled. Matches the default Unity / Unreal feel for editor gizmos.
 
 mod gizmos;
+pub mod mesh;
 mod renderer;
 mod visualizer;
 
 pub use gizmos::Gizmos;
+pub use mesh::{MeshBatch, MeshDraw, MeshGizmoRenderer, MeshVertex};
 pub use renderer::{DEFAULT_LINE_THICKNESS, GizmoBatch, GizmoRenderer, LineSegment};
 pub use visualizer::{Visualizer, VisualizerRegistry};
 

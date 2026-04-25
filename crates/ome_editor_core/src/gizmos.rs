@@ -16,7 +16,7 @@
 
 use std::any::TypeId;
 
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use ome_core::resource::Resources;
 use ome_ecs::component::ComponentRegistry;
 use ome_ecs::directional_light::DirectionalLight;
@@ -26,19 +26,24 @@ use ome_ecs::orthographic_camera::OrthographicCamera;
 use ome_ecs::perspective_camera::PerspectiveCamera;
 use ome_ecs::query::Query;
 use ome_ecs::transform::Transform;
-use ome_gizmos::{GizmoBatch, Gizmos, Visualizer, VisualizerRegistry};
+use ome_gizmos::{GizmoBatch, Gizmos, MeshBatch, Visualizer, VisualizerRegistry};
 use ome_gizmos_handles::{HandleSet, Ray};
 
 use crate::editor_camera::input::ViewportInputDelta;
-use crate::state::EditorOverlay;
+use crate::state::{EditorOverlay, RotationDisplayMode};
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const PLACEHOLDER_BBOX_HALF: f32 = 0.5;
+/// Half-extent of the small filled cube the `TransformVisualizer`
+/// places at each selected entity's origin (so total cube edge = 0.2
+/// world units). Small enough to behave as a marker rather than a
+/// containing box, big enough to read at most camera distances.
+const SELECTION_CUBE_HALF: f32 = 0.1;
+#[allow(dead_code)]
 const AXIS_LINE_LENGTH: f32 = 1.0;
-const SELECTION_COLOR: Vec3 = Vec3::new(1.0, 0.85, 0.2);
+const SELECTION_COLOR_RGBA: Vec4 = Vec4::new(1.0, 0.85, 0.2, 0.55);
 
 const FRUSTUM_COLOR: Vec3 = Vec3::new(0.4, 0.8, 1.0);
 const ORTHO_COLOR: Vec3 = Vec3::new(0.6, 0.85, 1.0);
@@ -62,13 +67,13 @@ pub(crate) struct TransformVisualizer;
 impl Visualizer<Transform> for TransformVisualizer {
     fn draw(&self, _component: &Transform, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
         let origin = transform.matrix.w_axis.truncate();
-        // Axis arrows are owned by the translate handles in single-select.
-        // The visualizer just draws the selection bbox — multi-select shows
-        // only this on every selected entity.
-        gizmos.aabb(
-            origin - Vec3::splat(PLACEHOLDER_BBOX_HALF),
-            origin + Vec3::splat(PLACEHOLDER_BBOX_HALF),
-            SELECTION_COLOR,
+        // Filled translucent cube with shader-rendered edges. Replaces
+        // the line-based bbox that was redundant with the translate
+        // handle arrows in single-select.
+        gizmos.filled_aabb(
+            origin,
+            Vec3::splat(SELECTION_CUBE_HALF),
+            SELECTION_COLOR_RGBA,
         );
     }
 }
@@ -220,19 +225,22 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     }
 }
 
-/// Pre-render system that rebuilds the gizmo batch from current
-/// selection by dispatching through the [`VisualizerRegistry`].
+/// Pre-render system that rebuilds the gizmo line + mesh batches from
+/// current selection by dispatching through the [`VisualizerRegistry`].
 pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
     let (selected, ctx) = match resources.get::<EditorOverlay>() {
         Some(overlay) => (overlay.selected_entities.clone(), overlay.ctx.clone()),
         None => return,
     };
 
-    let mut batch = resources.remove::<GizmoBatch>().unwrap_or_default();
-    batch.clear();
+    let mut line_batch = resources.remove::<GizmoBatch>().unwrap_or_default();
+    let mut mesh_batch = resources.remove::<MeshBatch>().unwrap_or_default();
+    line_batch.clear();
+    mesh_batch.clear();
 
     if selected.is_empty() {
-        resources.insert(batch);
+        resources.insert(line_batch);
+        resources.insert(mesh_batch);
         return;
     }
 
@@ -244,7 +252,7 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
         .unwrap_or_default();
 
     {
-        let mut gizmos = Gizmos::new(&mut batch);
+        let mut gizmos = Gizmos::new(&mut line_batch, &mut mesh_batch);
         let resources_ref: &Resources = &*resources;
         for entity in &selected {
             for type_id in registry.registered_types() {
@@ -264,11 +272,12 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
     // (origin updated) only when exactly one entity is selected — multi
     // and empty selections suppress translate handles for v1.
     if let Some(handle_set) = resources.get::<HandleSet>() {
-        let mut gizmos = Gizmos::new(&mut batch);
+        let mut gizmos = Gizmos::new(&mut line_batch, &mut mesh_batch);
         handle_set.draw(&mut gizmos);
     }
 
-    resources.insert(batch);
+    resources.insert(line_batch);
+    resources.insert(mesh_batch);
     resources.insert(registry);
 }
 
@@ -278,12 +287,18 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
 /// input apply, so the handle can absorb input before the camera
 /// controller sees it.
 ///
+/// `rotation_mode` must come from the caller — at the point where the
+/// editor render system invokes this, `EditorOverlay` has already been
+/// removed from `resources`, so reading it back here would always
+/// fall back to `Local`.
+///
 /// Returns `true` when the handle is hovered or dragging — the caller
 /// should skip applying camera-controller input on those frames.
 pub(crate) fn apply_handle_input(
     delta: ViewportInputDelta,
     resources: &mut Resources,
     selected: &[Entity],
+    rotation_mode: RotationDisplayMode,
 ) -> bool {
     // Single-entity v1: handles are suppressed for empty / multi selection.
     let target = match selected {
@@ -302,6 +317,8 @@ pub(crate) fn apply_handle_input(
         None => return false,
     };
 
+    let basis = handle_basis(resources, target, rotation_mode);
+
     let ray = build_world_ray(resources, delta);
 
     let mut handle_set = match resources.remove::<HandleSet>() {
@@ -309,6 +326,7 @@ pub(crate) fn apply_handle_input(
         None => return false,
     };
     handle_set.set_origin(target_origin);
+    handle_set.set_basis(basis);
     let translation = handle_set.update(ray, delta.lmb_pressed, delta.lmb_held);
     let active = handle_set.is_active();
     let dragging = handle_set.is_dragging();
@@ -395,6 +413,33 @@ fn entity_world_position(resources: &Resources, entity: Entity) -> Option<Vec3> 
     let storage = registry.get_cpu::<GlobalTransform>()?;
     let gt = storage.get(entity)?;
     Some(gt.matrix.w_axis.truncate())
+}
+
+/// Computes the rotation basis the gizmo handles should use for the
+/// selected entity given the inspector's Local/World toggle.
+///
+/// - `World` → identity (handles aligned with world axes).
+/// - `Local` → rotation extracted from the entity's `GlobalTransform`,
+///   so the handles spin with the entity's world rotation (matches
+///   Unity / Godot's "Local" gizmo behavior).
+fn handle_basis(resources: &Resources, entity: Entity, mode: RotationDisplayMode) -> Mat3 {
+    if matches!(mode, RotationDisplayMode::World) {
+        return Mat3::IDENTITY;
+    }
+    let Some(registry) = resources.get::<ComponentRegistry>() else {
+        return Mat3::IDENTITY;
+    };
+    let Some(storage) = registry.get_cpu::<GlobalTransform>() else {
+        return Mat3::IDENTITY;
+    };
+    let Some(gt) = storage.get(entity) else {
+        return Mat3::IDENTITY;
+    };
+    // `to_scale_rotation_translation` is lossy under shear; for our
+    // typical scene hierarchies that's acceptable. See PR #217 / the
+    // shear decision in the Decisions Log.
+    let (_, rotation, _) = gt.matrix.to_scale_rotation_translation();
+    Mat3::from_quat(rotation)
 }
 
 /// Reads the Inspector's `CollapsingHeader` state for a (entity,
