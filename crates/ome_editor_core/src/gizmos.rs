@@ -36,10 +36,8 @@ use crate::actions::EditorAction;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta};
 use crate::state::{EditorOverlay, RotationDisplayMode};
 
-#[allow(unused_imports)]
-pub(crate) use visualizers::{
+use visualizers::{
     DirectionalLightVisualizer, OrthographicCameraVisualizer, PerspectiveCameraVisualizer,
-    TransformVisualizer,
 };
 
 // ---------------------------------------------------------------------------
@@ -49,12 +47,6 @@ pub(crate) use visualizers::{
 /// Inserts the `VisualizerRegistry` and registers built-in visualizers.
 /// Also inserts a default `HandleSet` (3 translate handles X/Y/Z).
 /// Runs once at editor startup.
-///
-/// `TransformVisualizer` (the small yellow selection cube) is **not**
-/// registered: the translate / rotate / scale handles already provide
-/// visual feedback for what's selected, so a separate marker just adds
-/// clutter. The struct stays in the codebase in case it becomes useful
-/// for a different purpose later.
 pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     let mut registry = resources
         .remove::<VisualizerRegistry>()

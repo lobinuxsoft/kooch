@@ -26,7 +26,7 @@ pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>
     ui.menu_button(format!("{} Spawn", icons::PLUS), |ui| {
         if ui.button(format!("{} Entity", icons::CUBE)).clicked() {
             actions.push(EditorAction::Spawn { extra: vec![], name: None });
-            ui.close_menu();
+            ui.close();
         }
         ui.separator();
         if ui.button("Perspective Camera").clicked() {
@@ -34,14 +34,14 @@ pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>
                 extra: vec![TypeId::of::<PerspectiveCamera>()],
                 name: Some("Perspective Camera".to_owned()),
             });
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Orthographic Camera").clicked() {
             actions.push(EditorAction::Spawn {
                 extra: vec![TypeId::of::<OrthographicCamera>()],
                 name: Some("Orthographic Camera".to_owned()),
             });
-            ui.close_menu();
+            ui.close();
         }
         ui.separator();
         ui.menu_button("SDF Shapes", |ui| {
@@ -50,42 +50,42 @@ pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>
                     extra: vec![TypeId::of::<SdfSphere>()],
                     name: Some("SDF Sphere".to_owned()),
                 });
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Box").clicked() {
                 actions.push(EditorAction::Spawn {
                     extra: vec![TypeId::of::<SdfBox>()],
                     name: Some("SDF Box".to_owned()),
                 });
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Capsule").clicked() {
                 actions.push(EditorAction::Spawn {
                     extra: vec![TypeId::of::<SdfCapsule>()],
                     name: Some("SDF Capsule".to_owned()),
                 });
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Cylinder").clicked() {
                 actions.push(EditorAction::Spawn {
                     extra: vec![TypeId::of::<SdfCylinder>()],
                     name: Some("SDF Cylinder".to_owned()),
                 });
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Torus").clicked() {
                 actions.push(EditorAction::Spawn {
                     extra: vec![TypeId::of::<SdfTorus>()],
                     name: Some("SDF Torus".to_owned()),
                 });
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Plane").clicked() {
                 actions.push(EditorAction::Spawn {
                     extra: vec![TypeId::of::<SdfPlane>()],
                     name: Some("SDF Plane".to_owned()),
                 });
-                ui.close_menu();
+                ui.close();
             }
         });
         if ui.button("Mesh Renderer").clicked() {
@@ -93,14 +93,14 @@ pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>
                 extra: vec![TypeId::of::<MeshRenderer>()],
                 name: Some("Mesh".to_owned()),
             });
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Sky").clicked() {
             actions.push(EditorAction::Spawn {
                 extra: vec![TypeId::of::<SkyRenderer>()],
                 name: Some("Sky".to_owned()),
             });
-            ui.close_menu();
+            ui.close();
         }
         ui.menu_button("Lights", |ui| {
             if ui.button("Directional Light").clicked() {
@@ -108,21 +108,21 @@ pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>
                     extra: vec![TypeId::of::<DirectionalLight>()],
                     name: Some("Directional Light".to_owned()),
                 });
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Point Light").clicked() {
                 actions.push(EditorAction::Spawn {
                     extra: vec![TypeId::of::<PointLight>()],
                     name: Some("Point Light".to_owned()),
                 });
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Spot Light").clicked() {
                 actions.push(EditorAction::Spawn {
                     extra: vec![TypeId::of::<SpotLight>()],
                     name: Some("Spot Light".to_owned()),
                 });
-                ui.close_menu();
+                ui.close();
             }
         });
     });

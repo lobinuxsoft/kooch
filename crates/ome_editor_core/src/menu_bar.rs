@@ -7,6 +7,11 @@ use crate::actions::EditorAction;
 use crate::icons;
 use crate::state::{dock_has_tab, EditorTab, ALL_TABS};
 
+// Migrating off `TopBottomPanel::top(...).show(ctx, ...)` requires
+// adopting the eframe 0.34+ `App::ui(&mut self, ui: &mut Ui)` pattern,
+// which is a structural change to the editor's render loop. Out of
+// scope for the #299 cleanup.
+#[allow(deprecated)]
 pub(crate) fn draw_menu_bar(
     ctx: &egui::Context,
     dock_state: &mut DockState<EditorTab>,
@@ -30,20 +35,20 @@ pub(crate) fn draw_menu_bar(
     }
 
     egui::TopBottomPanel::top("editor_menu").show(ctx, |ui| {
-        egui::menu::bar(ui, |ui| {
+        egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("Save Scene...").clicked() {
                     actions.push(EditorAction::SaveScene);
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui.button("Open Scene...").clicked() {
                     actions.push(EditorAction::OpenScene);
-                    ui.close_menu();
+                    ui.close();
                 }
                 ui.separator();
                 if ui.button("Close Project").clicked() {
                     actions.push(EditorAction::CloseProject);
-                    ui.close_menu();
+                    ui.close();
                 }
             });
             ui.menu_button("Edit", |ui| {
@@ -56,7 +61,7 @@ pub(crate) fn draw_menu_bar(
                     .clicked()
                 {
                     actions.push(EditorAction::Undo);
-                    ui.close_menu();
+                    ui.close();
                 }
 
                 let redo_label = match redo_desc {
@@ -68,7 +73,7 @@ pub(crate) fn draw_menu_bar(
                     .clicked()
                 {
                     actions.push(EditorAction::Redo);
-                    ui.close_menu();
+                    ui.close();
                 }
             });
             ui.menu_button("Engine", |ui| {
@@ -84,7 +89,7 @@ pub(crate) fn draw_menu_bar(
                             .clicked()
                         {
                             actions.push(EditorAction::SetPowerProfile(option));
-                            ui.close_menu();
+                            ui.close();
                         }
                     }
                 });
@@ -98,7 +103,7 @@ pub(crate) fn draw_menu_bar(
                         } else {
                             dock_state.add_window(vec![tab]);
                         }
-                        ui.close_menu();
+                        ui.close();
                     }
                 }
             });
