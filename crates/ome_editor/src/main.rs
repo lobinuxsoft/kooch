@@ -10,6 +10,7 @@ use ome_core::prelude::*;
 use ome_ecs::EcsPlugin;
 use ome_editor_core::EditorPlugin;
 use ome_window::WindowPlugin;
+use ome_world::WorldStreamingPlugin;
 
 /// Path to the engine repository root (resolved at compile time).
 ///
@@ -42,6 +43,7 @@ fn main() {
         height: 720,
     });
     app.add_plugin(EcsPlugin);
+    app.add_plugin(WorldStreamingPlugin);
     app.add_plugin(EditorPlugin);
     app.add_system(Stage::Startup, set_engine_root);
     app.run();

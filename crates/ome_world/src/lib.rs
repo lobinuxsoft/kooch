@@ -1,9 +1,30 @@
-//! ome_world - World scale and coordinates for oh_my_engine
+//! ome_world — chunk-based world streaming for `oh_my_engine`.
 //!
-//! Provides hierarchical coordinate system, camera-relative transforms,
-//! sector/chunk management, LOD, and world streaming.
+//! Defines the chunk identity / state types, the streaming-focus
+//! component that drives load/unload decisions, the LOD ring
+//! configuration, and the [`ChunkManager`] resource that mediates
+//! between them.
+//!
+//! Hierarchical coordinates live in `ome_core::coord` (issue #50).
+//! Sparse SDF storage (#136), BVH (#115), Edit Baker (#309), physics
+//! regions (#311) and persistent edit logs (#312) compose with this
+//! crate as separate concerns; see issue #54 + epic #313 for the
+//! roadmap.
 
-/// Placeholder for future implementation
-pub fn init() {
-    tracing::info!("ome_world initialized");
-}
+pub mod activation;
+pub mod chunk;
+pub mod focus;
+pub mod lod;
+pub mod manager;
+pub mod plugin;
+
+pub use activation::{activate_chunks, activation_system};
+pub use chunk::{
+    Aabb, BASE_CHUNK_SIZE_METERS, ChunkData, ChunkId, ChunkState, MAX_LOD_LEVEL,
+};
+pub use focus::StreamingFocus;
+pub use lod::{LodRing, LodRingConfig};
+pub use manager::{ChunkEvictionListener, ChunkManager};
+pub use plugin::{
+    DEFAULT_MAX_LOADS_PER_FRAME, DEFAULT_MAX_UNLOADS_PER_FRAME, WorldStreamingPlugin,
+};

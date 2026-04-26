@@ -112,6 +112,9 @@ impl ome_core::plugin::PluginGroup for DefaultPlugins {
         #[cfg(feature = "render")]
         let builder = builder.add(ome_render::RenderPlugin);
 
+        #[cfg(feature = "world")]
+        let builder = builder.add(ome_world::WorldStreamingPlugin);
+
         builder.add(SceneBootstrapPlugin::default())
     }
 }

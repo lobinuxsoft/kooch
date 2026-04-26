@@ -12,4 +12,5 @@ ome_core.workspace = true
 ome_ecs.workspace = true
 ome_editor_core.workspace = true
 ome_window.workspace = true
+ome_world.workspace = true
 tracing.workspace = true
