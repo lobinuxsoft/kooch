@@ -124,7 +124,7 @@ pollster.workspace = true
 tracing.workspace = true
 
 [features]
-default = ["window", "render", "gizmos"]
+default = ["window", "render", "gizmos", "world"]
 window = ["dep:ome_window"]
 render = ["dep:ome_render", "window"]
 gizmos = ["dep:ome_gizmos", "render"]

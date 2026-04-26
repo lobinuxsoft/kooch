@@ -16,6 +16,7 @@ pub mod chunk;
 pub mod focus;
 pub mod lod;
 pub mod manager;
+pub mod plugin;
 
 pub use activation::{activate_chunks, activation_system};
 pub use chunk::{
@@ -24,3 +25,6 @@ pub use chunk::{
 pub use focus::StreamingFocus;
 pub use lod::{LodRing, LodRingConfig};
 pub use manager::{ChunkEvictionListener, ChunkManager};
+pub use plugin::{
+    DEFAULT_MAX_LOADS_PER_FRAME, DEFAULT_MAX_UNLOADS_PER_FRAME, WorldStreamingPlugin,
+};
