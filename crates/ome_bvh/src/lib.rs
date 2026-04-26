@@ -23,9 +23,11 @@
 //! 5. **PR-5**: collision broadphase (#40) + frustum / light culling.
 
 pub mod aabb;
+pub mod bvh;
 pub mod morton;
 pub mod node;
 
 pub use aabb::Aabb;
+pub use bvh::Bvh;
 pub use morton::MortonCode;
 pub use node::BvhNode;
