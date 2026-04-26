@@ -2,20 +2,27 @@
 //!
 //! Two halves:
 //!
-//! 1. [`collect_viewport_input`] runs **inside** the egui closure with
-//!    the View panel's `Response` and `Ui`. It snapshots drag deltas,
-//!    scroll, modifier state, fly-mode keys and the focus-on-selection
-//!    keystroke into a [`ViewportInputDelta`].
+//! 1. [`collect_viewport_input`] (in [`collect`]) runs **inside** the
+//!    egui closure with the View panel's `Response` and `Ui`. It
+//!    snapshots drag deltas, scroll, modifier state, fly-mode keys and
+//!    the focus-on-selection keystroke into a [`ViewportInputDelta`].
 //!
-//! 2. [`apply_viewport_input`] runs **outside** the egui closure with
-//!    `&mut Resources`. It turns the snapshot into mutations on the
-//!    editor camera entity's `Transform` and the [`EditorCameraController`]
+//! 2. [`apply_viewport_input`] (in [`apply`]) runs **outside** the egui
+//!    closure with `&mut Resources`. It turns the snapshot into
+//!    mutations on the editor camera entity's `Transform` and the
+//!    [`crate::editor_camera::controller::EditorCameraController`]
 //!    resource, then propagates `GlobalTransform` so the renderer sees
 //!    the new pose this same frame.
 
-use std::any::TypeId;
+mod apply;
+mod collect;
 
-use glam::{Quat, Vec2, Vec3};
+use glam::Vec2;
+
+use crate::editor_camera::fly::FlyKeys;
+
+pub use apply::{apply_viewport_input, entity_world_position};
+pub use collect::collect_viewport_input;
 
 /// Mode request raised by W / E / R hotkeys. Mirrors
 /// `ome_gizmos_handles::HandleMode` but kept local to avoid pulling
@@ -26,20 +33,6 @@ pub enum HandleModeRequest {
     Rotate,
     Scale,
 }
-
-use ome_core::resource::Resources;
-use ome_core::time::Time;
-use ome_ecs::archetype_registry::ArchetypeRegistry;
-use ome_ecs::component::ComponentRegistry;
-use ome_ecs::entity::Entity;
-use ome_ecs::hierarchy::{GlobalTransform, transform_propagation_system};
-use ome_ecs::transform::Transform;
-
-use super::controller::EditorCameraController;
-use super::fly::{FlyKeys, fly_velocity};
-use super::markers::EditorCamera;
-use super::orbit::{apply_yaw_pitch, camera_position, fly_look_pivot_camera};
-use super::pan_zoom::{apply_zoom, pan_delta};
 
 /// Snapshot of one frame of viewport-relevant input, captured during
 /// the egui pass and consumed afterwards by [`apply_viewport_input`].
@@ -108,286 +101,10 @@ impl ViewportInputDelta {
     }
 }
 
-/// Reads egui input within the View panel and returns a delta snapshot.
-///
-/// Called inside the egui closure with the response of the viewport
-/// image (which must have been allocated with `Sense::click_and_drag()`).
-///
-/// Modifiers and behaviour follow the issue spec:
-/// - **MMB drag** → orbit
-/// - **Shift + MMB drag** → pan
-/// - **Mouse wheel** (only when hovered) → zoom
-/// - **RMB hold** → fly mode (mouse delta is look, WASD/QE translate)
-/// - **F** (only when hovered) → focus on selection
-pub fn collect_viewport_input(
-    response: &egui::Response,
-    ui: &egui::Ui,
-    controller: &EditorCameraController,
-) -> ViewportInputDelta {
-    let mut delta = ViewportInputDelta::default();
-
-    let modifiers = ui.input(|i| i.modifiers);
-    let shift_held = modifiers.shift;
-
-    // --- Middle-mouse drag → orbit or pan ---------------------------------
-    if response.dragged_by(egui::PointerButton::Middle) {
-        let drag = response.drag_delta();
-        if shift_held {
-            delta.pan_dx = drag.x;
-            delta.pan_dy = drag.y;
-        } else {
-            // Drag right (+x) yaws the camera right (positive yaw_delta
-            // around world +Y is a left turn under right-hand rule, so we
-            // negate here to match the "drag-right turns view right" feel).
-            delta.orbit_yaw = -drag.x * controller.orbit_sensitivity;
-            // Drag down (+y) pitches the camera down (negative pitch).
-            delta.orbit_pitch = -drag.y * controller.orbit_sensitivity;
-        }
-    }
-
-    // --- Right-mouse hold → fly mode --------------------------------------
-    //
-    // Fly mode stays active for the whole duration RMB is held *after*
-    // being pressed inside the viewport. Using `is_pointer_button_down_on`
-    // + the global RMB-held query (rather than `dragged_by`) means WASD
-    // works on the first frame even before any mouse motion.
-    delta.fly_active = response.is_pointer_button_down_on()
-        && ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
-
-    if delta.fly_active {
-        let drag = response.drag_delta();
-        delta.fly_yaw = -drag.x * controller.fly_look_sensitivity;
-        delta.fly_pitch = -drag.y * controller.fly_look_sensitivity;
-        delta.fly_keys = read_fly_keys(ui);
-    }
-
-    // --- Scroll wheel → zoom (only if hovered) ----------------------------
-    if response.hovered() {
-        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-        // Translate raw pixel scroll into "lines" (egui returns ~30-50 px
-        // per mouse-wheel notch on most platforms).
-        if scroll.abs() > f32::EPSILON {
-            delta.zoom_lines = scroll / 50.0;
-        }
-    }
-
-    // --- F key → focus on selection (only if hovered) ---------------------
-    if response.hovered() {
-        delta.focus_pressed = ui.input(|i| i.key_pressed(egui::Key::F));
-    }
-
-    // --- W / E / R → handle mode switch ----------------------------------
-    //
-    // Suppressed during fly mode so the WASD camera movement keys don't
-    // accidentally toggle the gizmo mode each time they're tapped.
-    if response.hovered() && !modifiers.any() && !delta.fly_active {
-        delta.mode_request = ui.input(|i| {
-            if i.key_pressed(egui::Key::W) {
-                Some(HandleModeRequest::Translate)
-            } else if i.key_pressed(egui::Key::E) {
-                Some(HandleModeRequest::Rotate)
-            } else if i.key_pressed(egui::Key::R) {
-                Some(HandleModeRequest::Scale)
-            } else {
-                None
-            }
-        });
-    }
-
-    // --- Cursor + LMB state for gizmo handles -----------------------------
-    let pixels_per_point = ui.ctx().pixels_per_point();
-    let rect = response.rect;
-    delta.viewport_size = Vec2::new(rect.width(), rect.height()) * pixels_per_point;
-    delta.cursor_local = response.hover_pos().map(|p| {
-        let local = p - rect.min;
-        Vec2::new(local.x, local.y) * pixels_per_point
-    });
-    let (pressed, held) = ui.input(|i| {
-        (
-            i.pointer.button_pressed(egui::PointerButton::Primary),
-            i.pointer.button_down(egui::PointerButton::Primary),
-        )
-    });
-    // Pressed only counts when the cursor is over the viewport — egui
-    // reports the press globally otherwise.
-    delta.lmb_pressed = pressed && response.hovered();
-    delta.lmb_held = held;
-
-    // Keyboard modifiers — captured globally (no hover gate) because
-    // the user may start a drag, then press Ctrl after the cursor
-    // wandered out of the strict hover bounds. egui still reports the
-    // modifier state correctly throughout.
-    delta.ctrl_held = modifiers.ctrl || modifiers.command;
-    delta.shift_held = modifiers.shift;
-    delta.alt_held = modifiers.alt;
-
-    delta
-}
-
-fn read_fly_keys(ui: &egui::Ui) -> FlyKeys {
-    ui.input(|i| FlyKeys {
-        forward: i.key_down(egui::Key::W),
-        backward: i.key_down(egui::Key::S),
-        left: i.key_down(egui::Key::A),
-        right: i.key_down(egui::Key::D),
-        up: i.key_down(egui::Key::E),
-        down: i.key_down(egui::Key::Q),
-    })
-}
-
-/// Applies a captured input delta to the editor camera entity.
-///
-/// Mutates the controller's focus point / distance, the camera
-/// `Transform`, and triggers a hierarchy propagation so the renderer
-/// reads the updated `GlobalTransform` on this same frame.
-///
-/// `selection_world_position` is the world-space position used to
-/// re-centre the camera when the user pressed `F`. `None` means "no
-/// selection" — focus-on-selection is a no-op in that case.
-pub fn apply_viewport_input(
-    delta: ViewportInputDelta,
-    resources: &mut Resources,
-    selection_world_position: Option<Vec3>,
-) {
-    if delta.is_idle() {
-        return;
-    }
-
-    let Some(entity) = find_editor_camera_entity(resources) else {
-        return;
-    };
-
-    let dt = resources
-        .get::<Time>()
-        .map(|t| t.delta_secs())
-        .unwrap_or(1.0 / 60.0);
-
-    // --- Snapshot controller and current transform ------------------------
-    let mut controller = match resources.get::<EditorCameraController>() {
-        Some(c) => c.clone(),
-        None => return,
-    };
-
-    // Position is purely derived from focus_point/orientation/distance, so
-    // we ignore the existing position and recompute it after mutations.
-    let Some((_, mut rotation)) = read_transform(resources, entity) else {
-        return;
-    };
-
-    // --- Orbit (MMB drag, no Shift) ---------------------------------------
-    if delta.orbit_yaw != 0.0 || delta.orbit_pitch != 0.0 {
-        rotation = apply_yaw_pitch(rotation, delta.orbit_yaw, delta.orbit_pitch);
-    }
-
-    // --- Pan (Shift + MMB drag) -------------------------------------------
-    if delta.pan_dx != 0.0 || delta.pan_dy != 0.0 {
-        let world_delta = pan_delta(
-            delta.pan_dx,
-            delta.pan_dy,
-            controller.effective_pan_sensitivity(),
-            rotation,
-        );
-        controller.focus_point += world_delta;
-    }
-
-    // --- Zoom (mouse wheel) -----------------------------------------------
-    if delta.zoom_lines != 0.0 {
-        controller.distance =
-            apply_zoom(controller.distance, delta.zoom_lines, controller.zoom_sensitivity);
-        controller.clamp_distance();
-    }
-
-    // --- Fly-mode look + WASD/QE ------------------------------------------
-    //
-    // FPS look pivots around the *camera*, not around `focus_point`.
-    // `fly_look_pivot_camera` rotates and re-anchors `focus_point` so
-    // the derived camera position stays fixed under pure rotation.
-    // WASD/QE then translates camera and focus together so the in-front
-    // pivot moves with the camera.
-    if delta.fly_active {
-        if delta.fly_yaw != 0.0 || delta.fly_pitch != 0.0 {
-            let position_before = camera_position(
-                controller.focus_point,
-                rotation,
-                controller.distance,
-            );
-            let (new_rotation, new_focus) = fly_look_pivot_camera(
-                position_before,
-                rotation,
-                controller.distance,
-                delta.fly_yaw,
-                delta.fly_pitch,
-            );
-            rotation = new_rotation;
-            controller.focus_point = new_focus;
-        }
-
-        let velocity = fly_velocity(delta.fly_keys, rotation, controller.fly_speed, dt);
-        if velocity != Vec3::ZERO {
-            controller.focus_point += velocity;
-        }
-    }
-
-    // --- Focus on selection (F) -------------------------------------------
-    if delta.focus_pressed {
-        if let Some(target) = selection_world_position {
-            controller.focus_point = target;
-        }
-    }
-
-    // --- Recompute position from the (possibly updated) state -------------
-    let position = camera_position(controller.focus_point, rotation, controller.distance);
-
-    write_transform(resources, entity, position, rotation);
-    if let Some(c) = resources.get_mut::<EditorCameraController>() {
-        *c = controller;
-    }
-
-    // Propagate GlobalTransform so the same-frame renderer sees the
-    // updated world matrix without waiting for PostUpdate.
-    transform_propagation_system(resources);
-}
-
-/// Returns the world-space position of `entity` from its `GlobalTransform`,
-/// for focus-on-selection. `None` when the entity has no `GlobalTransform`.
-pub fn entity_world_position(resources: &Resources, entity: Entity) -> Option<Vec3> {
-    let registry = resources.get::<ComponentRegistry>()?;
-    let storage = registry.get_cpu::<GlobalTransform>()?;
-    let gt = storage.get(entity)?;
-    let (_, _, translation) = gt.matrix.to_scale_rotation_translation();
-    Some(translation)
-}
-
-fn find_editor_camera_entity(resources: &Resources) -> Option<Entity> {
-    let archetypes = resources.get::<ArchetypeRegistry>()?;
-    let editor_camera_tid = TypeId::of::<EditorCamera>();
-    for arch in archetypes.iter_matching(&[]) {
-        if arch.components().contains(&editor_camera_tid) {
-            return arch.entities().first().copied();
-        }
-    }
-    None
-}
-
-fn read_transform(resources: &Resources, entity: Entity) -> Option<(Vec3, Quat)> {
-    let registry = resources.get::<ComponentRegistry>()?;
-    let storage = registry.get_cpu::<Transform>()?;
-    let t = storage.get(entity)?;
-    Some((t.position, t.rotation))
-}
-
-fn write_transform(resources: &mut Resources, entity: Entity, position: Vec3, rotation: Quat) {
-    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Transform>()
-        && let Some(t) = storage.get_mut(entity)
-    {
-        t.position = position;
-        t.rotation = rotation;
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use ome_core::resource::Resources;
+
     use super::*;
 
     #[test]
