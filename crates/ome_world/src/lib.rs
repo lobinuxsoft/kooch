@@ -12,7 +12,11 @@
 //! roadmap.
 
 pub mod chunk;
+pub mod focus;
+pub mod lod;
 
 pub use chunk::{
     Aabb, BASE_CHUNK_SIZE_METERS, ChunkData, ChunkId, ChunkState, MAX_LOD_LEVEL,
 };
+pub use focus::StreamingFocus;
+pub use lod::{LodRing, LodRingConfig};
