@@ -320,6 +320,23 @@ impl SkyRenderPass {
             cam.far.max(cam.near + 0.001),
         );
         let (_, _, translation) = world_matrix.to_scale_rotation_translation();
+
+        // Plumb ActiveOrigin: same pattern as raymarch + mesh. The sky
+        // is a backdrop infinity-cube — universe position only matters
+        // for future per-planet atmosphere lookups (#248), so we log
+        // at TRACE for now without changing the uniform layout.
+        if let Some(active_origin) = resources.get::<ome_core::coord::ActiveOrigin>() {
+            let universe_pos = active_origin
+                .coord()
+                .translated(translation.as_dvec3());
+            tracing::trace!(
+                target: "ome_render::sky",
+                sector = ?universe_pos.sector,
+                offset = ?universe_pos.offset,
+                "camera universe position"
+            );
+        }
+
         let uniforms = CameraUniforms {
             view: view.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),
