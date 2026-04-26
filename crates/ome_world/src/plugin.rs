@@ -12,7 +12,6 @@
 use ome_core::app::App;
 use ome_core::plugin::Plugin;
 use ome_core::resource::Resources;
-use ome_core::stage::Stage;
 use ome_ecs::component::ComponentRegistry;
 
 use crate::activation::activation_system;
@@ -78,7 +77,12 @@ impl Plugin for WorldStreamingPlugin {
 /// budget, put the manager back. The remove/insert dance is needed
 /// because `activation_system` reads `&Resources` for the focus query
 /// while we mutate the manager.
-fn world_streaming_system(resources: &mut Resources) {
+///
+/// Currently unregistered from the schedule (see `WorldStreamingPlugin::build`
+/// for the rationale — brute-force activation is O(N³), waiting on
+/// #115 PR-2 to plug in BVH-backed queries). Exposed publicly so
+/// integration tests / debug tools can drive a manual tick.
+pub fn world_streaming_system(resources: &mut Resources) {
     let Some(mut manager) = resources.remove::<ChunkManager>() else {
         return;
     };

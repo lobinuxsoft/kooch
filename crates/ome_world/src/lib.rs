@@ -19,12 +19,14 @@ pub mod manager;
 pub mod plugin;
 
 pub use activation::{activate_chunks, activation_system};
-pub use chunk::{
-    Aabb, BASE_CHUNK_SIZE_METERS, ChunkData, ChunkId, ChunkState, MAX_LOD_LEVEL,
-};
+pub use chunk::{BASE_CHUNK_SIZE_METERS, ChunkData, ChunkId, ChunkState, MAX_LOD_LEVEL};
+// Re-exported for backwards compatibility — `Aabb` lives in `ome_bvh`
+// since PR #115 PR-1; consumers can keep importing it through `ome_world`.
+pub use ome_bvh::Aabb;
 pub use focus::StreamingFocus;
 pub use lod::{LodRing, LodRingConfig};
 pub use manager::{ChunkEvictionListener, ChunkManager};
 pub use plugin::{
     DEFAULT_MAX_LOADS_PER_FRAME, DEFAULT_MAX_UNLOADS_PER_FRAME, WorldStreamingPlugin,
+    world_streaming_system,
 };
