@@ -6,8 +6,10 @@ mod component;
 mod despawn;
 mod set_field;
 mod spawn;
+mod transform_edit;
 
 pub(crate) use component::{AddComponentCommand, RemoveComponentCommand};
 pub(crate) use despawn::DespawnCommand;
 pub(crate) use set_field::SetFieldCommand;
 pub(crate) use spawn::SpawnCommand;
+pub(crate) use transform_edit::TransformEditCommand;

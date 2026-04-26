@@ -12,6 +12,7 @@ use winit::window::Window;
 use ome_core::raw_event::RawEventHandler;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::{FieldMeta, InspectorVisibility, ReflectValue};
+use ome_ecs::transform::Transform;
 use ome_gizmos_handles::SnapSettings;
 
 /// Shared egui-winit state for event forwarding between the
@@ -129,6 +130,11 @@ pub struct EditorOverlay {
     /// User-tunable snap step sizes for the gizmo handles. Edited from
     /// the viewport toolbar.
     pub(crate) snap_settings: SnapSettings,
+    /// Snapshot of the entity's `Transform` at the moment a viewport
+    /// gizmo drag started. `Some` while a drag is in progress, `None`
+    /// otherwise. Used to emit a single `TransformEdit` undo entry per
+    /// drag (instead of one per frame) when the user releases.
+    pub(crate) gizmo_drag_start: Option<(Entity, Transform)>,
 }
 
 /// Forwards raw winit events to egui for input processing.
