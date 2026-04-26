@@ -314,6 +314,25 @@ fn active_camera_view_proj(resources: &Resources, aspect: f32) -> Option<Mat4> {
     drop(query);
 
     let (_, cam, world) = best?;
+
+    // Plumb ActiveOrigin: same pattern as the raymarch pipeline. The
+    // mesh pass currently uploads only `view * projection`, so the
+    // universe position is logged at TRACE level rather than uploaded.
+    // Real consumption (per-mesh world-space effects) will land with
+    // #54 chunking.
+    if let Some(active_origin) = resources.get::<ome_core::coord::ActiveOrigin>() {
+        let (_, _, translation) = world.to_scale_rotation_translation();
+        let universe_pos = active_origin
+            .coord()
+            .translated(translation.as_dvec3());
+        tracing::trace!(
+            target: "ome_render::mesh",
+            sector = ?universe_pos.sector,
+            offset = ?universe_pos.offset,
+            "camera universe position"
+        );
+    }
+
     let view = world.inverse();
     let projection = Mat4::perspective_rh(
         cam.fov.to_radians(),

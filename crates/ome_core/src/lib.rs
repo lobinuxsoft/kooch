@@ -45,6 +45,7 @@
 pub mod app;
 pub mod buffer;
 pub mod compute;
+pub mod coord;
 pub mod event;
 pub mod gpu;
 pub mod pipeline_cache;
