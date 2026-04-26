@@ -39,13 +39,33 @@ impl Plugin for WorldStreamingPlugin {
         app.insert_resource(ChunkManager::default());
         app.insert_resource(LodRingConfig::default());
 
-        // Register the StreamingFocus component for the ECS so it can
-        // be attached to entities and queried.
+        // Register the StreamingFocus component on the ECS registry.
+        // Use `register_cpu_reflected` (NOT plain `register_cpu`) so the
+        // editor's drag-and-drop / inspector / spawn flows can construct
+        // a default instance via the Reflect accessor — without the
+        // reflector, `insert_default_reflected` silently no-ops.
         if let Some(registry) = app.resources_mut().get_mut::<ComponentRegistry>() {
-            registry.register_cpu::<StreamingFocus>();
+            registry.register_cpu_reflected::<StreamingFocus>();
         }
 
-        app.add_system(Stage::PreUpdate, world_streaming_system);
+        // NOTE: the per-frame activation system is intentionally NOT
+        // registered here. The current `activation_system` does brute-
+        // force grid iteration over the LOD ring radii, which produces
+        // millions of pending chunk requests per frame at gameplay-
+        // realistic radii (e.g. 32 km LOD-3 ring with 512 m chunks =
+        // ~238 k chunks per ring per frame). Editor tested at 41 M
+        // entries pending after 30 s of runtime.
+        //
+        // The proper fix is structural: a BVH / octree (issue #115) so
+        // the activation queries each LOD ring in O(log N) instead of
+        // O(N³). When #115 lands, the schedule registration goes back
+        // here and the brute-force `chunks_within_sphere` is replaced
+        // by an octree query inside `activation_system`.
+        //
+        // Until then, `activation_system` and `activate_chunks` remain
+        // public helpers (callable from tests / manual tools) — the
+        // math (AABB-vs-sphere filter, distance² priority) is correct
+        // and survives the refactor.
     }
 
     fn name(&self) -> &str {
