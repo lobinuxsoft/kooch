@@ -1,162 +1,20 @@
 //! Per-`ReflectValue` editor widgets and choice helpers.
 //!
-//! `draw_value_widget` is the giant `match` over `ReflectValue` variants;
-//! `draw_choice_dropdown` covers integer fields with `FieldChoice` hints;
-//! `draw_readonly_value` is the non-interactive counterpart shared by
-//! both single- and multi-entity rendering paths.
+//! [`draw_value_widget`] is the giant `match` over `ReflectValue`
+//! variants; [`choices::draw_choice_dropdown`] covers integer fields with
+//! `FieldChoice` hints (used internally); [`draw_readonly_value`] is the
+//! non-interactive counterpart shared by both single- and multi-entity
+//! rendering paths.
 
-use ome_ecs::reflect::{FieldChoice, FieldMeta, ReflectValue};
+mod asset;
+mod choices;
 
-/// Looks up the `choices` slice for a field by name. Returns an empty
-/// slice if the metadata is missing or the field has no `choices` hint.
-pub(super) fn choices_for(
-    field_metas: Option<&'static [FieldMeta]>,
-    name: &str,
-) -> &'static [FieldChoice] {
-    field_metas
-        .and_then(|metas| metas.iter().find(|m| m.name == name))
-        .map(|m| m.choices)
-        .unwrap_or(&[])
-}
+use ome_ecs::reflect::{FieldChoice, ReflectValue};
 
-/// Returns `(label, extensions)` when a String field's name suggests it
-/// holds an asset path. Heuristic-based — same pattern as the `color`
-/// detection on `Vec3`. Bridge until the asset handle system (#184)
-/// makes this explicit via typed handles.
-///
-/// Format choices favour open standards with no licensing friction and
-/// formats the engine actually plans to support:
-/// - **Mesh**: glTF 2.0 only. Khronos open spec, supports animation,
-///   skeletons, materials, scenes — drops the legacy `.obj`.
-/// - **Texture**: LDR (PNG, JPEG), GPU compressed (KTX2), HDR (EXR,
-///   Radiance HDR). Drops `.tga` — legacy with no real advantage.
-/// - **Audio**: Xiph (Vorbis, FLAC) plus PCM `.wav`. Drops `.mp3`
-///   because `kira` gates it behind a feature flag and the historical
-///   patent baggage adds zero value when Vorbis covers the same niche.
-/// - **Material**: RON only. Same format as `.ome_scene`, handles
-///   nested structures cleanly. Drops TOML.
-///
-/// `extensions` is empty when the kind is recognised but no specific
-/// filter applies (generic `*_path` / `*_file` fields). The dialog will
-/// still show the file picker, just without a type filter.
-fn asset_filter_for(field_name: &str) -> Option<(&'static str, &'static [&'static str])> {
-    let n = field_name.to_lowercase();
-    if n.contains("mesh") {
-        Some(("Mesh", &["gltf", "glb"]))
-    } else if n.contains("texture") || n.contains("image") {
-        Some(("Texture", &["png", "jpg", "jpeg", "ktx2", "exr", "hdr"]))
-    } else if n.contains("audio") || n.contains("sound") {
-        Some(("Audio", &["ogg", "wav", "flac"]))
-    } else if n.contains("scene") {
-        Some(("Scene", &["ome_scene"]))
-    } else if n.contains("shader") {
-        Some(("Shader", &["wgsl"]))
-    } else if n.contains("material") {
-        Some(("Material", &["ron"]))
-    } else if n.ends_with("_path") || n.ends_with("_file") {
-        Some(("File", &[]))
-    } else {
-        None
-    }
-}
+pub(super) use self::choices::{choices_for, draw_readonly_value};
 
-/// Renders a read-only display for a single value. If the field has a
-/// `choices` hint, prefer the matching label over the raw numeric value.
-pub(super) fn draw_readonly_value(
-    ui: &mut egui::Ui,
-    value: &ReflectValue,
-    choices: &'static [FieldChoice],
-) {
-    if let Some(label) = choice_label_for(value, choices) {
-        ui.weak(label);
-    } else {
-        ui.weak(format!("{value}"));
-    }
-}
-
-/// Returns the `choices` label for an integer-valued field, if any.
-fn choice_label_for(
-    value: &ReflectValue,
-    choices: &'static [FieldChoice],
-) -> Option<&'static str> {
-    let current = reflect_value_as_i64(value)?;
-    choices
-        .iter()
-        .find(|c| c.value == current)
-        .map(|c| c.label)
-}
-
-/// Converts an integer [`ReflectValue`] into `i64` for dropdown matching.
-fn reflect_value_as_i64(value: &ReflectValue) -> Option<i64> {
-    match value {
-        ReflectValue::U8(v) => Some(*v as i64),
-        ReflectValue::U16(v) => Some(*v as i64),
-        ReflectValue::U32(v) => Some(*v as i64),
-        ReflectValue::U64(v) => Some(*v as i64),
-        ReflectValue::I8(v) => Some(*v as i64),
-        ReflectValue::I16(v) => Some(*v as i64),
-        ReflectValue::I32(v) => Some(*v as i64),
-        ReflectValue::I64(v) => Some(*v),
-        _ => None,
-    }
-}
-
-/// Reconstructs an integer [`ReflectValue`] of the same kind as `template`
-/// from an `i64` value produced by the dropdown. Returns `None` for
-/// non-integer templates.
-fn reflect_value_from_i64(template: &ReflectValue, v: i64) -> Option<ReflectValue> {
-    match template {
-        ReflectValue::U8(_) => Some(ReflectValue::U8(v.clamp(0, u8::MAX as i64) as u8)),
-        ReflectValue::U16(_) => Some(ReflectValue::U16(v.clamp(0, u16::MAX as i64) as u16)),
-        ReflectValue::U32(_) => Some(ReflectValue::U32(v.clamp(0, u32::MAX as i64) as u32)),
-        ReflectValue::U64(_) => Some(ReflectValue::U64(v.max(0) as u64)),
-        ReflectValue::I8(_) => {
-            Some(ReflectValue::I8(v.clamp(i8::MIN as i64, i8::MAX as i64) as i8))
-        }
-        ReflectValue::I16(_) => Some(ReflectValue::I16(
-            v.clamp(i16::MIN as i64, i16::MAX as i64) as i16,
-        )),
-        ReflectValue::I32(_) => Some(ReflectValue::I32(
-            v.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
-        )),
-        ReflectValue::I64(_) => Some(ReflectValue::I64(v)),
-        _ => None,
-    }
-}
-
-/// Renders a dropdown for an integer field with `choices` metadata.
-/// Returns `Some(new_value)` when the user picks a different entry.
-fn draw_choice_dropdown(
-    ui: &mut egui::Ui,
-    value: &ReflectValue,
-    choices: &'static [FieldChoice],
-    field_name: &str,
-) -> Option<ReflectValue> {
-    let current = reflect_value_as_i64(value)?;
-    let selected_label = choices
-        .iter()
-        .find(|c| c.value == current)
-        .map(|c| c.label)
-        .unwrap_or("(unknown)");
-    let mut picked: Option<i64> = None;
-    egui::ComboBox::from_id_salt(("choice_dropdown", field_name))
-        .selected_text(selected_label)
-        .show_ui(ui, |ui| {
-            for choice in choices {
-                if ui
-                    .selectable_label(choice.value == current, choice.label)
-                    .clicked()
-                {
-                    picked = Some(choice.value);
-                }
-            }
-        });
-    let new_val = picked?;
-    if new_val == current {
-        return None;
-    }
-    reflect_value_from_i64(value, new_val)
-}
+use self::asset::asset_filter_for;
+use self::choices::draw_choice_dropdown;
 
 /// Draws an editable widget for a single reflected value.
 /// Returns `Some(new_value)` if the user modified it.
@@ -263,12 +121,11 @@ pub(super) fn draw_value_widget(
                             let label_with_exts = format!("{label} ({exts_display})");
                             dialog = dialog.add_filter(label_with_exts, exts);
                         }
-                        if !val.is_empty() {
-                            if let Some(parent) = std::path::Path::new(&val).parent() {
-                                if parent.exists() {
-                                    dialog = dialog.set_directory(parent);
-                                }
-                            }
+                        if !val.is_empty()
+                            && let Some(parent) = std::path::Path::new(&val).parent()
+                            && parent.exists()
+                        {
+                            dialog = dialog.set_directory(parent);
                         }
                         if let Some(picked) = dialog.pick_file() {
                             val = picked.to_string_lossy().into_owned();
@@ -425,66 +282,5 @@ pub(super) fn draw_value_widget(
             });
             None
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::asset_filter_for;
-
-    #[test]
-    fn detects_mesh_field() {
-        let (label, exts) = asset_filter_for("mesh").expect("mesh recognised");
-        assert_eq!(label, "Mesh");
-        assert!(exts.contains(&"gltf"));
-        assert!(exts.contains(&"glb"));
-        // Legacy formats deliberately excluded — see asset_filter_for docstring.
-        assert!(!exts.contains(&"obj"));
-    }
-
-    #[test]
-    fn excludes_legacy_and_licensed_audio() {
-        let (_, exts) = asset_filter_for("audio").expect("audio recognised");
-        assert!(exts.contains(&"ogg"));
-        assert!(exts.contains(&"flac"));
-        assert!(!exts.contains(&"mp3"));
-    }
-
-    #[test]
-    fn material_uses_ron_only() {
-        let (_, exts) = asset_filter_for("material").expect("material recognised");
-        assert_eq!(exts, &["ron"]);
-    }
-
-    #[test]
-    fn detects_compound_field_names() {
-        // Real components use suffixed names like `mesh_path`, `texture_handle`, etc.
-        assert!(asset_filter_for("mesh_path").is_some());
-        assert!(asset_filter_for("diffuse_texture").is_some());
-        assert!(asset_filter_for("background_audio").is_some());
-        assert!(asset_filter_for("startup_scene").is_some());
-        assert!(asset_filter_for("vertex_shader").is_some());
-        assert!(asset_filter_for("base_material").is_some());
-    }
-
-    #[test]
-    fn case_insensitive() {
-        assert!(asset_filter_for("MeshPath").is_some());
-        assert!(asset_filter_for("DIFFUSE_TEXTURE").is_some());
-    }
-
-    #[test]
-    fn generic_path_suffix_falls_back_to_no_filter() {
-        let (label, exts) = asset_filter_for("config_path").expect("recognised");
-        assert_eq!(label, "File");
-        assert!(exts.is_empty());
-    }
-
-    #[test]
-    fn non_asset_strings_return_none() {
-        // Plain string fields like Name.value must NOT trigger a picker.
-        assert!(asset_filter_for("value").is_none());
-        assert!(asset_filter_for("name").is_none());
-        assert!(asset_filter_for("description").is_none());
     }
 }
