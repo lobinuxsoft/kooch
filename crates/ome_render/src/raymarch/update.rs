@@ -9,6 +9,7 @@
 //! [`super::csg_tree`].
 
 use glam::{Mat4, Vec4};
+use ome_core::coord::ActiveOrigin;
 use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::query::Query;
@@ -94,6 +95,25 @@ impl RayMarchRenderer {
             cam.far.max(cam.near + 0.001),
         );
         let (_, _, translation) = world_matrix.to_scale_rotation_translation();
+
+        // Plumb ActiveOrigin: the camera's `translation` is f32 in the
+        // simulation frame anchored at ActiveOrigin. Composing the two
+        // gives the absolute universe position — emitted at TRACE level
+        // so debug HUDs / future per-frame world-space passes have an
+        // end-to-end consumer of the coord system without forcing the
+        // shader to gain new uniforms before there's a real use case.
+        if let Some(active_origin) = resources.get::<ActiveOrigin>() {
+            let universe_pos = active_origin
+                .coord()
+                .translated(translation.as_dvec3());
+            tracing::trace!(
+                target: "ome_render::raymarch",
+                sector = ?universe_pos.sector,
+                offset = ?universe_pos.offset,
+                "camera universe position"
+            );
+        }
+
         let uniforms = super::instance::CameraUniforms {
             view: view.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),

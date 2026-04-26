@@ -127,10 +127,12 @@ pub struct CorePlugin;
 
 impl Plugin for CorePlugin {
     fn build(&self, app: &mut App) {
+        use crate::coord::ActiveOrigin;
         use crate::event::AppExit;
         use crate::time::Time;
 
         app.insert_resource(Time::new());
+        app.insert_resource(ActiveOrigin::default());
         app.add_event::<AppExit>();
     }
 
