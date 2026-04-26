@@ -11,11 +11,13 @@
 //! crate as separate concerns; see issue #54 + epic #313 for the
 //! roadmap.
 
+pub mod activation;
 pub mod chunk;
 pub mod focus;
 pub mod lod;
 pub mod manager;
 
+pub use activation::{activate_chunks, activation_system};
 pub use chunk::{
     Aabb, BASE_CHUNK_SIZE_METERS, ChunkData, ChunkId, ChunkState, MAX_LOD_LEVEL,
 };
