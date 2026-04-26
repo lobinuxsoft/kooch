@@ -19,8 +19,10 @@
 //!
 //! See `feedback_planet_scale_gpu_driven` (memory) and issue #50.
 
+pub mod camera_relative;
 pub mod local;
 pub mod universe;
 
+pub use camera_relative::CameraRelativeCoord;
 pub use local::{CelestialBodyRef, LocalCoord};
 pub use universe::{SECTOR_HALF, SECTOR_SIZE_METERS, UniverseCoord};
