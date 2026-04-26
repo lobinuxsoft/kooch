@@ -33,7 +33,7 @@ pub(crate) fn configure_fonts(ctx: &egui::Context) {
 }
 
 pub(crate) fn configure_style(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
     style.visuals.window_corner_radius = egui::CornerRadius::same(6);
     style.visuals.menu_corner_radius = egui::CornerRadius::same(4);
     style.spacing.item_spacing = egui::vec2(6.0, 4.0);
@@ -44,5 +44,5 @@ pub(crate) fn configure_style(ctx: &egui::Context) {
     // as held. See #209 bug report.
     style.interaction.selectable_labels = false;
     style.interaction.multi_widget_text_select = false;
-    ctx.set_style(style);
+    ctx.set_global_style(style);
 }

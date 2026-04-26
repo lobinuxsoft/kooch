@@ -19,6 +19,11 @@ pub enum LaunchAction {
 }
 
 /// Draws the full launch screen UI. Returns a list of actions to apply.
+// Migrating off `egui::CentralPanel::default().show(ctx, ...)` requires
+// adopting the eframe 0.34+ `App::ui(&mut self, ui: &mut Ui)` pattern,
+// which is a structural change to the editor's render loop. Out of
+// scope for the #299 cleanup.
+#[allow(deprecated)]
 pub fn draw_launch_screen(ctx: &egui::Context, project_state: &mut ProjectState) -> Vec<LaunchAction> {
     let mut actions = Vec::new();
 
@@ -213,6 +218,7 @@ fn draw_new_project_form(
 }
 
 /// Draws the launcher compilation/running overlay.
+#[allow(deprecated)] // CentralPanel::show — see draw_launch_screen note.
 fn draw_launcher_overlay(
     ctx: &egui::Context,
     project_state: &mut ProjectState,

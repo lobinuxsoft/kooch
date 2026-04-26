@@ -83,9 +83,9 @@ pub(crate) fn draw_view_content(
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
 
-    egui::Frame::none()
+    egui::Frame::new()
         .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
-        .rounding(egui::CornerRadius::same(6))
+        .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
         .show(&mut toolbar_ui, |ui| {
             ui.spacing_mut().item_spacing.x = TOOLBAR_PADDING * 0.5;

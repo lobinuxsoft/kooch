@@ -266,7 +266,7 @@ fn handle_context_menu(
             for entity in selected.drain(..) {
                 actions.push(EditorAction::Despawn(entity));
             }
-            ui.close_menu();
+            ui.close();
         }
 
         // Add Component submenu (only for single entity).
@@ -341,7 +341,7 @@ fn handle_context_menu(
                                             type_id: *type_id,
                                         });
                                     }
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             }
                         },

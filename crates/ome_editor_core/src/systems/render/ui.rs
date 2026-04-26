@@ -37,6 +37,12 @@ pub(super) struct ViewportUi<'a> {
 
 /// Runs the egui UI for one frame. Produces the tessellation input and the
 /// editor actions queued by widgets.
+//
+// Migrating off `Context::run` + `DockArea::show(ctx, ...)` requires
+// adopting the eframe 0.34+ `App::ui(&mut self, ui: &mut Ui)` pattern,
+// which is a structural change to the editor's render loop. Out of
+// scope for the #299 cleanup.
+#[allow(deprecated)]
 pub(super) fn run_editor_ui(
     overlay: &mut EditorOverlay,
     project_state: &mut Option<ProjectState>,
@@ -99,7 +105,7 @@ pub(super) fn run_editor_ui(
             };
 
             DockArea::new(&mut overlay.dock_state)
-                .style(egui_dock::Style::from_egui(ctx.style().as_ref()))
+                .style(egui_dock::Style::from_egui(ctx.global_style().as_ref()))
                 .show(ctx, &mut tab_viewer);
         } else if let Some(ps) = project_state.as_mut() {
             let launch_actions = launch_screen::draw_launch_screen(ctx, ps);

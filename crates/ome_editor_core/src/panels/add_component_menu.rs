@@ -31,7 +31,7 @@ pub(crate) fn draw_categorized(
     for type_info in &uncategorized {
         if ui.selectable_label(false, &type_info.short_name).clicked() {
             on_select(type_info.type_id);
-            ui.close_menu();
+            ui.close();
         }
     }
 
@@ -44,7 +44,7 @@ pub(crate) fn draw_categorized(
             for type_info in entries {
                 if ui.selectable_label(false, &type_info.short_name).clicked() {
                     on_select(type_info.type_id);
-                    ui.close_menu();
+                    ui.close();
                 }
             }
         });

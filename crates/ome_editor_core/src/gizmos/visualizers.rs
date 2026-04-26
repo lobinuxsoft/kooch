@@ -1,24 +1,14 @@
 //! Built-in [`Visualizer`] implementations for the editor's overlay
-//! gizmos: cameras (perspective + orthographic), directional lights,
-//! and a (currently unused) Transform marker cube. Registered by
+//! gizmos: cameras (perspective + orthographic) and directional
+//! lights. Registered by
 //! [`super::register_builtin_visualizers_system`].
 
-use glam::{Vec3, Vec4};
+use glam::Vec3;
 use ome_ecs::directional_light::DirectionalLight;
 use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::orthographic_camera::OrthographicCamera;
 use ome_ecs::perspective_camera::PerspectiveCamera;
-use ome_ecs::transform::Transform;
 use ome_gizmos::{Gizmos, Visualizer};
-
-/// Half-extent of the small filled cube the `TransformVisualizer`
-/// places at each selected entity's origin (so total cube edge = 0.2
-/// world units). Small enough to behave as a marker rather than a
-/// containing box, big enough to read at most camera distances.
-const SELECTION_CUBE_HALF: f32 = 0.1;
-#[allow(dead_code)]
-const AXIS_LINE_LENGTH: f32 = 1.0;
-const SELECTION_COLOR_RGBA: Vec4 = Vec4::new(1.0, 0.85, 0.2, 0.55);
 
 const FRUSTUM_COLOR: Vec3 = Vec3::new(0.4, 0.8, 1.0);
 const ORTHO_COLOR: Vec3 = Vec3::new(0.6, 0.85, 1.0);
@@ -30,24 +20,6 @@ const DIRLIGHT_ARROW_LENGTH: f32 = 2.0;
 /// frustum shape readable. Future work: read the live aspect from the
 /// editor's `ViewportTarget`.
 const FRUSTUM_ASPECT: f32 = 16.0 / 9.0;
-
-/// Built-in visualizer for `Transform`: selection bbox + axis arrows.
-#[derive(Default)]
-pub(crate) struct TransformVisualizer;
-
-impl Visualizer<Transform> for TransformVisualizer {
-    fn draw(&self, _component: &Transform, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
-        let origin = transform.matrix.w_axis.truncate();
-        // Filled translucent cube with shader-rendered edges. Replaces
-        // the line-based bbox that was redundant with the translate
-        // handle arrows in single-select.
-        gizmos.filled_aabb(
-            origin,
-            Vec3::splat(SELECTION_CUBE_HALF),
-            SELECTION_COLOR_RGBA,
-        );
-    }
-}
 
 /// Built-in visualizer for `PerspectiveCamera`: pyramid frustum from
 /// camera origin to the far plane plus rectangles at near and far.
