@@ -13,7 +13,7 @@
 //! existing W / E / R keyboard pipeline applies the change with no
 //! extra wiring.
 
-use ome_gizmos_handles::HandleMode;
+use ome_gizmos_handles::{HandleMode, SnapSettings};
 
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
@@ -34,6 +34,7 @@ pub(crate) fn draw_view_content(
     controller: &EditorCameraController,
     current_mode: HandleMode,
     rotation_mode: &mut RotationDisplayMode,
+    snap_settings: &mut SnapSettings,
     selection_has_transform: bool,
 ) {
     let available = ui.available_size();
@@ -68,26 +69,26 @@ pub(crate) fn draw_view_content(
         return;
     }
 
+    // Horizontal toolbar at the top edge of the viewport. Three
+    // sections separated by vertical bars: gizmo mode, basis mode,
+    // snap steps. Width is set generous so egui auto-shrinks the
+    // frame to fit content; height holds one button row.
     let toolbar_rect = egui::Rect::from_min_size(
         panel_origin + TOOLBAR_OFFSET,
-        egui::vec2(
-            TOOLBAR_BUTTON_SIZE + TOOLBAR_PADDING * 2.0,
-            (TOOLBAR_BUTTON_SIZE + TOOLBAR_PADDING) * 5.0 + TOOLBAR_PADDING,
-        ),
+        egui::vec2(420.0, TOOLBAR_BUTTON_SIZE + TOOLBAR_PADDING * 2.0),
     );
     let mut toolbar_ui = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(toolbar_rect)
-            .layout(egui::Layout::top_down(egui::Align::Center)),
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    toolbar_ui.set_min_size(toolbar_rect.size());
 
     egui::Frame::none()
         .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
         .rounding(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
         .show(&mut toolbar_ui, |ui| {
-            ui.spacing_mut().item_spacing.y = TOOLBAR_PADDING * 0.5;
+            ui.spacing_mut().item_spacing.x = TOOLBAR_PADDING * 0.5;
 
             if mode_button(
                 ui,
@@ -114,9 +115,7 @@ pub(crate) fn draw_view_content(
                 delta.mode_request = Some(HandleModeRequest::Scale);
             }
 
-            ui.add_space(TOOLBAR_PADDING * 0.25);
             ui.separator();
-            ui.add_space(TOOLBAR_PADDING * 0.25);
 
             if mode_button(
                 ui,
@@ -134,6 +133,30 @@ pub(crate) fn draw_view_content(
             ) {
                 *rotation_mode = RotationDisplayMode::World;
             }
+
+            ui.separator();
+
+            // Snap step values. Reuse the move / rotate glyphs as
+            // prefixes so users associate each spinner with the matching
+            // gizmo mode without spending toolbar width on text labels.
+            ui.add(
+                egui::DragValue::new(&mut snap_settings.translate)
+                    .speed(0.01)
+                    .range(0.001..=10.0)
+                    .max_decimals(3)
+                    .prefix(format!("{} ", icons::ARROWS_OUT_CARDINAL)),
+            )
+            .on_hover_text("Translate snap step (world units, hold Ctrl while dragging)");
+
+            ui.add(
+                egui::DragValue::new(&mut snap_settings.rotate_deg)
+                    .speed(0.1)
+                    .range(0.1..=180.0)
+                    .suffix("°")
+                    .max_decimals(1)
+                    .prefix(format!("{} ", icons::ARROWS_CLOCKWISE)),
+            )
+            .on_hover_text("Rotate snap step (degrees, hold Ctrl while dragging)");
         });
 
     *input = Some(delta);

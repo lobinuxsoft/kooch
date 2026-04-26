@@ -81,6 +81,12 @@ pub struct ViewportInputDelta {
     pub lmb_pressed: bool,
     /// `true` when the primary (left) mouse button is currently held.
     pub lmb_held: bool,
+    /// Keyboard modifier state at this frame. Threaded through to the
+    /// gizmo handle system for snap modifiers (Ctrl on translate,
+    /// Shift on rotate).
+    pub ctrl_held: bool,
+    pub shift_held: bool,
+    pub alt_held: bool,
 }
 
 impl ViewportInputDelta {
@@ -206,6 +212,14 @@ pub fn collect_viewport_input(
     // reports the press globally otherwise.
     delta.lmb_pressed = pressed && response.hovered();
     delta.lmb_held = held;
+
+    // Keyboard modifiers — captured globally (no hover gate) because
+    // the user may start a drag, then press Ctrl after the cursor
+    // wandered out of the strict hover bounds. egui still reports the
+    // modifier state correctly throughout.
+    delta.ctrl_held = modifiers.ctrl || modifiers.command;
+    delta.shift_held = modifiers.shift;
+    delta.alt_held = modifiers.alt;
 
     delta
 }

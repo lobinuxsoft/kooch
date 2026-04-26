@@ -61,10 +61,31 @@ impl Handle for TranslateHandle {
 
     fn drag(&self, drag: DragInfo, frame: HandleFrame) -> TransformDelta {
         let axis = frame.world_axis(self.axis);
+        let start_s = project_ray_to_axis(drag.start_ray, frame.origin, axis);
         let last_s = project_ray_to_axis(drag.last_ray, frame.origin, axis);
         let current_s = project_ray_to_axis(drag.current_ray, frame.origin, axis);
-        TransformDelta::Translation(axis * (current_s - last_s))
+
+        // Total dragged distance from the click anchor. Anchoring at
+        // `start_s` (instead of accumulating per-frame) lets the snap
+        // step toggle on / off mid-drag without rewinding more than
+        // one increment.
+        let total_last = last_s - start_s;
+        let total_now = current_s - start_s;
+        let (total_last, total_now) = if drag.modifiers.ctrl {
+            let step = drag.snap.translate;
+            (snap_to(total_last, step), snap_to(total_now, step))
+        } else {
+            (total_last, total_now)
+        };
+        TransformDelta::Translation(axis * (total_now - total_last))
     }
+}
+
+fn snap_to(value: f32, step: f32) -> f32 {
+    if step.abs() < 1e-6 {
+        return value;
+    }
+    (value / step).round() * step
 }
 
 // ---------------------------------------------------------------------------

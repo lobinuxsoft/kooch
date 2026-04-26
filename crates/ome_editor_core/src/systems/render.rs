@@ -175,6 +175,7 @@ fn run_editor_ui(
                 editor_camera_controller: controller,
                 rotation_euler_cache: &mut overlay.rotation_euler_cache,
                 rotation_display_mode: &mut overlay.rotation_display_mode,
+                snap_settings: &mut overlay.snap_settings,
                 handle_mode,
                 selection_has_transform,
             };
@@ -357,11 +358,13 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     if let Some(delta) = viewport_input {
         let selected_snapshot: Vec<_> = overlay.selected_entities.iter().copied().collect();
         let rotation_mode = overlay.rotation_display_mode;
+        let snap = overlay.snap_settings;
         let handle_active = crate::gizmos::apply_handle_input(
             delta,
             resources,
             &selected_snapshot,
             rotation_mode,
+            snap,
         );
         if !handle_active {
             let selection_world = overlay

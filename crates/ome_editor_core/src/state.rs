@@ -12,6 +12,7 @@ use winit::window::Window;
 use ome_core::raw_event::RawEventHandler;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::{FieldMeta, InspectorVisibility, ReflectValue};
+use ome_gizmos_handles::SnapSettings;
 
 /// Shared egui-winit state for event forwarding between the
 /// window event handler and the render system.
@@ -125,6 +126,9 @@ pub struct EditorOverlay {
     /// Display mode for `Transform.rotation` in the Inspector. Toggled
     /// via a button in the Inspector header. Persists for the session.
     pub(crate) rotation_display_mode: RotationDisplayMode,
+    /// User-tunable snap step sizes for the gizmo handles. Edited from
+    /// the viewport toolbar.
+    pub(crate) snap_settings: SnapSettings,
 }
 
 /// Forwards raw winit events to egui for input processing.
