@@ -1,6 +1,7 @@
 //! Ray-marching renderer — fullscreen fragment shader that sphere-traces
 //! SDF components from the ECS with per-entity CSG blend support.
 
+mod csg_tree;
 mod instance;
 mod renderer;
 mod update;
