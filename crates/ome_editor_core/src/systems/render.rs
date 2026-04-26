@@ -161,7 +161,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<ome_core::power::PowerProfile>()
         .copied()
         .unwrap_or_default();
-    let (full_output, actions) = run_editor_ui(
+    let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
         raw_input,
@@ -202,6 +202,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             &selected_snapshot,
             rotation_mode,
             snap,
+            &mut overlay.gizmo_drag_start,
+            &mut actions,
         );
         if !handle_active {
             let selection_world = overlay

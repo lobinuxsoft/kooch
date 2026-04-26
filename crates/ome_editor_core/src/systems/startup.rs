@@ -70,6 +70,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         rotation_euler_cache: std::collections::HashMap::new(),
         rotation_display_mode: crate::state::RotationDisplayMode::default(),
         snap_settings: ome_gizmos_handles::SnapSettings::default(),
+        gizmo_drag_start: None,
     };
 
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });

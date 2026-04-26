@@ -4,7 +4,7 @@ use ome_core::resource::Resources;
 
 use crate::undo::{
     AddComponentCommand, DespawnCommand, EditorCommand, RemoveComponentCommand, SetFieldCommand,
-    SpawnCommand,
+    SpawnCommand, TransformEditCommand,
 };
 
 use super::EditorAction;
@@ -42,6 +42,9 @@ pub(super) fn action_to_command(
         EditorAction::RemoveComponent { entity, type_id } => {
             Some(Box::new(RemoveComponentCommand::new(resources, *entity, *type_id)))
         }
+        EditorAction::TransformEdit { entity, before, after, desc } => Some(Box::new(
+            TransformEditCommand::new(*entity, *before, *after, desc),
+        )),
         _ => None,
     }
 }

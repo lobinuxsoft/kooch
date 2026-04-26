@@ -12,6 +12,7 @@ use ome_core::power::PowerProfile;
 use ome_core::resource::Resources;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::ReflectValue;
+use ome_ecs::transform::Transform;
 
 use crate::undo::{CompoundCommand, EditorCommand, UndoStack};
 
@@ -39,6 +40,15 @@ pub(crate) enum EditorAction {
     RemoveComponent {
         entity: Entity,
         type_id: TypeId,
+    },
+    /// Atomic Transform replacement, emitted by viewport gizmo handles
+    /// at the end of a drag (one entry per drag, not per frame). The
+    /// `desc` is the static label shown in the Edit menu's undo history.
+    TransformEdit {
+        entity: Entity,
+        before: Transform,
+        after: Transform,
+        desc: &'static str,
     },
     Undo,
     Redo,

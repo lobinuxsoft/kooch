@@ -32,6 +32,7 @@ use ome_ecs::transform::Transform;
 use ome_gizmos::{GizmoBatch, Gizmos, MeshBatch, VisualizerRegistry};
 use ome_gizmos_handles::{DragModifiers, HandleMode, HandleSet, Ray, SnapSettings, TransformDelta};
 
+use crate::actions::EditorAction;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta};
 use crate::state::{EditorOverlay, RotationDisplayMode};
 
@@ -137,12 +138,19 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
 ///
 /// Returns `true` when the handle is hovered or dragging — the caller
 /// should skip applying camera-controller input on those frames.
+///
+/// `drag_start` is the persisted snapshot of the entity's `Transform`
+/// at the moment the drag began. Cleared when the drag ends; used to
+/// emit a single `EditorAction::TransformEdit` with before/after state
+/// so the undo stack records one entry per drag (not per frame).
 pub(crate) fn apply_handle_input(
     delta: ViewportInputDelta,
     resources: &mut Resources,
     selected: &[Entity],
     rotation_mode: RotationDisplayMode,
     snap: SnapSettings,
+    drag_start: &mut Option<(Entity, Transform)>,
+    actions: &mut Vec<EditorAction>,
 ) -> bool {
     // Apply W / E / R mode request even when nothing is selected.
     if let Some(req) = delta.mode_request
@@ -165,6 +173,8 @@ pub(crate) fn apply_handle_input(
                     SnapSettings::default(),
                 );
             }
+            // Clear any stale snapshot — selection changed mid-drag.
+            *drag_start = None;
             return false;
         }
     };
@@ -194,10 +204,21 @@ pub(crate) fn apply_handle_input(
         shift: delta.shift_held,
         alt: delta.alt_held,
     };
+    let was_dragging = drag_start.is_some();
+    let mode = handle_set.mode();
     let delta_out = handle_set.update(ray, delta.lmb_pressed, delta.lmb_held, modifiers, snap);
     let active = handle_set.is_active();
     let dragging = handle_set.is_dragging();
     resources.insert(handle_set);
+
+    // Drag start: snapshot the entity's Transform BEFORE any mutation.
+    // `HandleSet::update` returns `TransformDelta::none()` on the
+    // Idle→Drag transition frame, so the snapshot is taken pre-mutation.
+    if !was_dragging && dragging {
+        if let Some(t) = read_transform(resources, target) {
+            *drag_start = Some((target, t));
+        }
+    }
 
     // Apply the per-frame delta to the entity's local Transform.
     // `transform_propagation_system` re-derives the world matrix
@@ -237,7 +258,43 @@ pub(crate) fn apply_handle_input(
         }
     }
 
+    // Drag end: emit one TransformEdit action with before/after.
+    // Compares against the snapshot to skip no-op drags (clicked the
+    // handle but didn't move).
+    if was_dragging && !dragging
+        && let Some((entity, before)) = drag_start.take()
+        && let Some(after) = read_transform(resources, entity)
+        && !transforms_equal(before, after)
+    {
+        actions.push(EditorAction::TransformEdit {
+            entity,
+            before,
+            after,
+            desc: handle_mode_desc(mode),
+        });
+    }
+
     active
+}
+
+fn read_transform(resources: &Resources, entity: Entity) -> Option<Transform> {
+    resources
+        .get::<ComponentRegistry>()
+        .and_then(|reg| reg.get_cpu::<Transform>())
+        .and_then(|storage| storage.get(entity))
+        .copied()
+}
+
+fn transforms_equal(a: Transform, b: Transform) -> bool {
+    a.position == b.position && a.rotation == b.rotation && a.scale == b.scale
+}
+
+fn handle_mode_desc(mode: HandleMode) -> &'static str {
+    match mode {
+        HandleMode::Translate => "Move Entity",
+        HandleMode::Rotate => "Rotate Entity",
+        HandleMode::Scale => "Scale Entity",
+    }
 }
 
 /// Constructs a world-space ray from the viewport cursor + active
