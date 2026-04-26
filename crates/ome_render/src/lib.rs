@@ -26,6 +26,6 @@ pub const VIEWPORT_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Dept
 pub use fps::FpsTracker;
 pub use mesh::{Aabb, GpuMesh, MeshLoadError, MeshLoader, MeshPassRenderer, MeshVertex};
 pub use plugin::RenderPlugin;
-pub use raymarch::{RayMarchParams, RayMarchRenderer};
+pub use raymarch::{RayMarchParams, RayMarchRenderer, has_any_visible_sdf};
 pub use raymarch_plugin::{RayMarchPlugin, SkyGradient};
 pub use sky::{ActiveSky, SkyRenderPass};
