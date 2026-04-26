@@ -26,8 +26,10 @@ pub mod aabb;
 pub mod bvh;
 pub mod morton;
 pub mod node;
+pub mod query;
 
 pub use aabb::Aabb;
 pub use bvh::Bvh;
 pub use morton::MortonCode;
 pub use node::BvhNode;
+pub use query::MAX_STACK_DEPTH;
