@@ -1,7 +1,10 @@
-//! GPU instance + scene metadata layouts for the unified ray-march pipeline.
+//! GPU primitive + scene metadata layouts for the unified ray-march pipeline.
 //!
-//! The byte layout of [`SdfInstance`] matches the WGSL `SdfInstance`
+//! The byte layout of [`SdfPrimitive`] matches the WGSL `SdfPrimitive`
 //! struct in `raymarch_main.wgsl` under std430 storage-buffer rules.
+//! CSG composition lives in a separate token SSBO (see
+//! [`super::csg_tree`]) — primitives carry only their own intrinsic
+//! geometric data.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -68,31 +71,35 @@ impl Default for RayMarchParams {
     }
 }
 
-/// Per-entity unified SDF instance (80 bytes).
+/// Per-entity SDF primitive (64 bytes).
 ///
 /// Field offsets match the WGSL struct byte-for-byte:
 /// - `position` (vec3 at 0) + `type_tag` (u32 at 12) fill the first 16-byte slot.
 /// - `rotation` (vec4 at 16) is naturally 16-aligned.
 /// - `scale` (vec3 at 32) + `_pad0` (f32 at 44) fill the next 16-byte slot.
 /// - `params` (vec4 at 48) holds primitive-specific data; interpretation
-///   depends on `type_tag`.
-/// - `blend_mode` (u32 at 64) + `blend_smoothness` (f32 at 68) + `_pad1`
-///   (vec2 at 72) close the struct at 80 bytes, a multiple of 16.
+///   depends on `type_tag`. Closes the struct at 64 bytes (multiple of 16).
+///
+/// CSG blend metadata used to live here as `blend_mode` / `blend_smoothness`;
+/// composition is now expressed by the token SSBO and lives in
+/// [`super::csg_tree::Token`].
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
-pub(super) struct SdfInstance {
+pub(super) struct SdfPrimitive {
     pub position: [f32; 3],
     pub type_tag: u32,
     pub rotation: [f32; 4],
     pub scale: [f32; 3],
     pub _pad0: f32,
     pub params: [f32; 4],
-    pub blend_mode: u32,
-    pub blend_smoothness: f32,
-    pub _pad1: [u32; 2],
 }
 
 /// Matches `SceneMeta` in the WGSL shader.
+///
+/// `primitive_count` is the length of the primitives SSBO (used for
+/// safety bounds when a token references an out-of-range primitive
+/// index). `token_count` is the length of the postfix CSG token SSBO —
+/// the shader iterates `[0, token_count)` once per ray sample.
 ///
 /// `skip_internal_sky = 1` tells the fragment shader to discard on miss
 /// instead of drawing its internal vertical gradient. Set this when a
@@ -102,9 +109,10 @@ pub(super) struct SdfInstance {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(super) struct SceneMeta {
-    pub instance_count: u32,
+    pub primitive_count: u32,
+    pub token_count: u32,
     pub skip_internal_sky: u32,
-    pub _pad0: [u32; 2],
+    pub _pad0: u32,
     pub sky_top: [f32; 4],
     pub sky_bottom: [f32; 4],
 }
@@ -112,25 +120,31 @@ pub(super) struct SceneMeta {
 impl Default for SceneMeta {
     fn default() -> Self {
         Self {
-            instance_count: 0,
+            primitive_count: 0,
+            token_count: 0,
             skip_internal_sky: 0,
-            _pad0: [0; 2],
+            _pad0: 0,
             sky_top: [0.5, 0.7, 1.0, 1.0],
             sky_bottom: [0.1, 0.2, 0.4, 1.0],
         }
     }
 }
 
-/// Initial capacity for the SDF instance storage buffer (grows on demand).
-pub(super) const INITIAL_INSTANCE_CAPACITY: u64 = 256;
+/// Initial capacity for the SDF primitive storage buffer (grows on demand).
+pub(super) const INITIAL_PRIMITIVE_CAPACITY: u64 = 256;
+
+/// Initial capacity for the CSG token storage buffer (grows on demand).
+/// Token count grows as `2 * primitive_count - 1` for a fully-roled tree,
+/// so this is sized to roughly match the primitive capacity.
+pub(super) const INITIAL_TOKEN_CAPACITY: u64 = 512;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn sdf_instance_layout_is_80_bytes() {
-        assert_eq!(std::mem::size_of::<SdfInstance>(), 80);
-        assert_eq!(std::mem::align_of::<SdfInstance>(), 4);
+    fn sdf_primitive_layout_is_64_bytes() {
+        assert_eq!(std::mem::size_of::<SdfPrimitive>(), 64);
+        assert_eq!(std::mem::align_of::<SdfPrimitive>(), 4);
     }
 }

@@ -23,7 +23,7 @@ struct RayMarchParams {
     epsilon_factor: f32,
 }
 
-// Matches Rust `SdfInstance` byte-for-byte (80 bytes).
+// Matches Rust `SdfPrimitive` byte-for-byte (64 bytes).
 // Field interpretation by type_tag:
 //   0 Sphere   — params.x = radius
 //   1 Box      — params.xyz = half_extents, params.w = rounding
@@ -31,25 +31,35 @@ struct RayMarchParams {
 //   3 Cylinder — params.x = half_height, params.y = radius
 //   4 Torus    — params.x = major_radius, params.y = minor_radius
 //   5 Plane    — no params (normal = local Y+ via rotation)
-struct SdfInstance {
+struct SdfPrimitive {
     position: vec3<f32>,
     type_tag: u32,
     rotation: vec4<f32>,
     scale: vec3<f32>,
     _pad0: f32,
     params: vec4<f32>,
-    blend_mode: u32,
-    blend_smoothness: f32,
-    _pad1: vec2<f32>,
+}
+
+// Matches Rust `Token` byte-for-byte (16 bytes). The CSG composition is
+// expressed as a flat array of tokens in postfix (RPN) order — see
+// `crates/ome_render/src/raymarch/csg_tree.rs`.
+//   kind == 0u → LEAF; primitive_index references the primitives array.
+//   kind == 1u → OPERATOR; op selects the CSG combiner, smoothness sets
+//                the blend radius for smooth variants.
+struct Token {
+    kind: u32,
+    op: u32,
+    smoothness: f32,
+    primitive_index: u32,
 }
 
 struct SceneMeta {
-    instance_count: u32,
+    primitive_count: u32,
+    token_count: u32,
     // `1` = a separate sky pass already ran, discard on miss (additive).
     // `0` = no sky pass, draw the internal vertical gradient on miss.
     skip_internal_sky: u32,
     _pad0: u32,
-    _pad1: u32,
     sky_top: vec4<f32>,
     sky_bottom: vec4<f32>,
 }
@@ -57,7 +67,8 @@ struct SceneMeta {
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> params: RayMarchParams;
 @group(1) @binding(0) var<uniform> scene_meta: SceneMeta;
-@group(1) @binding(1) var<storage, read> instances: array<SdfInstance>;
+@group(1) @binding(1) var<storage, read> primitives: array<SdfPrimitive>;
+@group(1) @binding(2) var<storage, read> tokens: array<Token>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -100,24 +111,24 @@ fn generate_ray(uv: vec2<f32>) -> Ray {
 }
 
 // Evaluates the primitive selected by `type_tag` at local-space point
-// `local`. Returns the signed distance in local space; the caller is
-// responsible for rescaling it by the instance's scale factor.
-fn eval_primitive(local: vec3<f32>, inst: SdfInstance) -> f32 {
-    switch inst.type_tag {
+// `local`. Returns the local-space signed distance; the caller applies
+// the Lipschitz scaling correction.
+fn eval_primitive_kind(local: vec3<f32>, prim: SdfPrimitive) -> f32 {
+    switch prim.type_tag {
         case 0u: {
-            return sdf_sphere(local, inst.params.x);
+            return sdf_sphere(local, prim.params.x);
         }
         case 1u: {
-            return sdf_rounded_box(local, inst.params.xyz, inst.params.w);
+            return sdf_rounded_box(local, prim.params.xyz, prim.params.w);
         }
         case 2u: {
-            return sdf_capsule_y(local, inst.params.x, inst.params.y);
+            return sdf_capsule_y(local, prim.params.x, prim.params.y);
         }
         case 3u: {
-            return sdf_capped_cylinder(local, inst.params.x, inst.params.y);
+            return sdf_capped_cylinder(local, prim.params.x, prim.params.y);
         }
         case 4u: {
-            return sdf_torus(local, inst.params.x, inst.params.y);
+            return sdf_torus(local, prim.params.x, prim.params.y);
         }
         case 5u: {
             return sdf_plane_y(local);
@@ -128,47 +139,83 @@ fn eval_primitive(local: vec3<f32>, inst: SdfInstance) -> f32 {
     }
 }
 
-// Applies `blend_mode` to combine the accumulated scene distance `acc`
-// with this instance's distance `d`. `k` is clamped to a small positive
-// value to keep the smooth operators well-defined.
-fn apply_blend(acc: f32, d: f32, blend_mode: u32, k_in: f32) -> f32 {
+// World-space evaluation of one primitive: transform into local space,
+// scale-correct, evaluate, then re-scale by the smallest axis to get
+// a Lipschitz-conservative distance estimate suitable for sphere
+// tracing. The `s_min` term is the "Lipschitz workaround for non-uniform
+// scale" tracked by #225 — to be replaced by Segment Tracing (#224).
+fn eval_primitive_at(p: vec3<f32>, prim: SdfPrimitive) -> f32 {
+    let scale = max(prim.scale, vec3<f32>(1e-5));
+    let local = transform_point(p, prim.position, prim.rotation) / scale;
+    let s_min = min(scale.x, min(scale.y, scale.z));
+    return eval_primitive_kind(local, prim) * s_min;
+}
+
+// Combines two stack values with a CSG operator. `k_in` is clamped to
+// keep the smooth helpers numerically stable; with `k = 1e-5` the smooth
+// variants degenerate to their hard counterparts (used by the migration
+// default tree when a role's max smoothness is zero).
+fn apply_op(a: f32, b: f32, op: u32, k_in: f32) -> f32 {
     let k = max(k_in, 1e-5);
-    switch blend_mode {
+    switch op {
+        case 0u: {
+            return sdf_union(a, b);
+        }
         case 1u: {
-            return sdf_smooth_union(acc, d, k);
+            return sdf_smooth_union(a, b, k);
         }
         case 2u: {
-            return sdf_smooth_intersection(acc, d, k);
+            return sdf_intersection(a, b);
         }
         case 3u: {
-            return sdf_smooth_subtraction(acc, d, k);
+            return sdf_smooth_intersection(a, b, k);
+        }
+        case 4u: {
+            return sdf_subtraction(a, b);
+        }
+        case 5u: {
+            return sdf_smooth_subtraction(a, b, k);
         }
         default: {
-            return sdf_union(acc, d);
+            return sdf_union(a, b);
         }
     }
 }
 
+// Postfix evaluator: walks the token stream once, maintaining a
+// fixed-size stack of accumulated SDF values. LEAF tokens push a freshly
+// evaluated primitive; OPERATOR tokens pop two values, apply the op, and
+// push the result. A well-formed tree always leaves exactly one value on
+// the stack at the end. Empty token streams render as the sky background.
+//
+// Stack size is fixed at 16 to bound register pressure across all GPU
+// targets supported by wgpu (RDNA 2 / Apple M / Adreno). The CPU side
+// (`csg_tree::CsgNode::serialise_postfix`) refuses any tree that would
+// exceed this depth at upload time — a depth of 16 covers ~65k primitives
+// in a balanced tree.
 fn eval_scene(p: vec3<f32>) -> f32 {
-    var d = 1e10;
-    let count = scene_meta.instance_count;
-    for (var i = 0u; i < count; i = i + 1u) {
-        let inst = instances[i];
-        // Per-axis scale: divide each component of the local sample
-        // point by its corresponding scale, which deforms the primitive
-        // (e.g. scale = (2,1,1) turns a sphere into a prolate ellipsoid).
-        let scale = max(inst.scale, vec3<f32>(1e-5));
-        let local = transform_point(p, inst.position, inst.rotation) / scale;
-        // Lipschitz correction: sphere-tracing needs a conservative
-        // (i.e. <= actual) distance estimate. The smallest axis sets
-        // the safe upper bound when the other axes are larger. This is
-        // not exactly Lipschitz-1 under extreme ratios, but sphere-
-        // tracing converges for normal (<= ~10x) scale ratios.
-        let s_min = min(scale.x, min(scale.y, scale.z));
-        let pd = eval_primitive(local, inst) * s_min;
-        d = apply_blend(d, pd, inst.blend_mode, inst.blend_smoothness);
+    let count = scene_meta.token_count;
+    if count == 0u {
+        return 1e10;
     }
-    return d;
+    var stack: array<f32, 16>;
+    var sp: u32 = 0u;
+    for (var i = 0u; i < count; i = i + 1u) {
+        let tok = tokens[i];
+        if tok.kind == 0u {
+            // LEAF — evaluate the primitive and push.
+            let prim = primitives[tok.primitive_index];
+            stack[sp] = eval_primitive_at(p, prim);
+            sp = sp + 1u;
+        } else {
+            // OPERATOR — pop two operands, push the combined result.
+            let b = stack[sp - 1u];
+            let a = stack[sp - 2u];
+            stack[sp - 2u] = apply_op(a, b, tok.op, tok.smoothness);
+            sp = sp - 1u;
+        }
+    }
+    return stack[0];
 }
 
 struct HitResult {
