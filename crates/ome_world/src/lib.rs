@@ -14,9 +14,11 @@
 pub mod chunk;
 pub mod focus;
 pub mod lod;
+pub mod manager;
 
 pub use chunk::{
     Aabb, BASE_CHUNK_SIZE_METERS, ChunkData, ChunkId, ChunkState, MAX_LOD_LEVEL,
 };
 pub use focus::StreamingFocus;
 pub use lod::{LodRing, LodRingConfig};
+pub use manager::{ChunkEvictionListener, ChunkManager};
