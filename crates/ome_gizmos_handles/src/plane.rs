@@ -100,18 +100,43 @@ impl Handle for PlaneHandle {
 
     fn drag(&self, drag: DragInfo, frame: HandleFrame) -> TransformDelta {
         let (_, axis_a, axis_b, normal) = self.corners(frame);
+        let start = ray_vs_plane(drag.start_ray, frame.origin, normal).map(|t| drag.start_ray.at(t));
         let last = ray_vs_plane(drag.last_ray, frame.origin, normal).map(|t| drag.last_ray.at(t));
         let current =
             ray_vs_plane(drag.current_ray, frame.origin, normal).map(|t| drag.current_ray.at(t));
-        let translation = match (last, current) {
-            (Some(l), Some(c)) => {
-                let delta = c - l;
-                axis_a * delta.dot(axis_a) + axis_b * delta.dot(axis_b)
+        let translation = match (start, last, current) {
+            (Some(s), Some(l), Some(c)) => {
+                // Project all three onto the two plane axes (relative
+                // to the start point) so snap math has a stable
+                // anchor and toggling Ctrl mid-drag works smoothly.
+                let last_a = (l - s).dot(axis_a);
+                let last_b = (l - s).dot(axis_b);
+                let now_a = (c - s).dot(axis_a);
+                let now_b = (c - s).dot(axis_b);
+                let (last_a, last_b, now_a, now_b) = if drag.modifiers.ctrl {
+                    let step = drag.snap.translate;
+                    (
+                        snap_to(last_a, step),
+                        snap_to(last_b, step),
+                        snap_to(now_a, step),
+                        snap_to(now_b, step),
+                    )
+                } else {
+                    (last_a, last_b, now_a, now_b)
+                };
+                axis_a * (now_a - last_a) + axis_b * (now_b - last_b)
             }
             _ => Vec3::ZERO,
         };
         TransformDelta::Translation(translation)
     }
+}
+
+fn snap_to(value: f32, step: f32) -> f32 {
+    if step.abs() < 1e-6 {
+        return value;
+    }
+    (value / step).round() * step
 }
 
 // ---------------------------------------------------------------------------

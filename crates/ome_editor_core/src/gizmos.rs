@@ -27,7 +27,7 @@ use ome_ecs::perspective_camera::PerspectiveCamera;
 use ome_ecs::query::Query;
 use ome_ecs::transform::Transform;
 use ome_gizmos::{GizmoBatch, Gizmos, MeshBatch, Visualizer, VisualizerRegistry};
-use ome_gizmos_handles::{HandleMode, HandleSet, Ray, TransformDelta};
+use ome_gizmos_handles::{DragModifiers, HandleMode, HandleSet, Ray, SnapSettings, TransformDelta};
 
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta};
 use crate::state::{EditorOverlay, RotationDisplayMode};
@@ -304,6 +304,7 @@ pub(crate) fn apply_handle_input(
     resources: &mut Resources,
     selected: &[Entity],
     rotation_mode: RotationDisplayMode,
+    snap: SnapSettings,
 ) -> bool {
     // Apply W / E / R mode request even when nothing is selected.
     if let Some(req) = delta.mode_request
@@ -318,7 +319,13 @@ pub(crate) fn apply_handle_input(
         _ => {
             // Reset state so leftover hover/drag clears when selection changes.
             if let Some(handle_set) = resources.get_mut::<HandleSet>() {
-                let _ = handle_set.update(None, false, false);
+                let _ = handle_set.update(
+                    None,
+                    false,
+                    false,
+                    DragModifiers::default(),
+                    SnapSettings::default(),
+                );
             }
             return false;
         }
@@ -344,7 +351,12 @@ pub(crate) fn apply_handle_input(
     handle_set.set_origin(target_origin);
     handle_set.set_basis(basis);
     handle_set.set_entity_rotation(entity_rotation);
-    let delta_out = handle_set.update(ray, delta.lmb_pressed, delta.lmb_held);
+    let modifiers = DragModifiers {
+        ctrl: delta.ctrl_held,
+        shift: delta.shift_held,
+        alt: delta.alt_held,
+    };
+    let delta_out = handle_set.update(ray, delta.lmb_pressed, delta.lmb_held, modifiers, snap);
     let active = handle_set.is_active();
     let dragging = handle_set.is_dragging();
     resources.insert(handle_set);

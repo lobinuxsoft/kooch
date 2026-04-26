@@ -7,7 +7,7 @@ use glam::Vec3;
 
 use ome_ecs::entity::Entity;
 
-use ome_gizmos_handles::HandleMode;
+use ome_gizmos_handles::{HandleMode, SnapSettings};
 
 use crate::actions::EditorAction;
 use crate::editor_camera::EditorCameraController;
@@ -39,6 +39,7 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) editor_camera_controller: &'a EditorCameraController,
     pub(crate) rotation_euler_cache: &'a mut HashMap<EulerCacheKey, Vec3>,
     pub(crate) rotation_display_mode: &'a mut RotationDisplayMode,
+    pub(crate) snap_settings: &'a mut SnapSettings,
     pub(crate) handle_mode: HandleMode,
     /// `true` when at least one currently-selected entity carries a
     /// `Transform` — gates the viewport's Local/World toggle.
@@ -73,6 +74,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.editor_camera_controller,
                 self.handle_mode,
                 self.rotation_display_mode,
+                self.snap_settings,
                 self.selection_has_transform,
             ),
             EditorTab::Inspector => draw_inspector_content(

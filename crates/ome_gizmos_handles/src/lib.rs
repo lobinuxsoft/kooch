@@ -92,12 +92,53 @@ impl Axis {
 }
 
 /// Per-frame ray delta passed to [`Handle::drag`] while a drag is
-/// active. `last_ray` is from the previous frame, `current_ray` from
-/// this frame.
+/// active.
+///
+/// - `start_ray` is the ray captured at the moment the user clicked
+///   the handle. Stays fixed for the whole drag and lets snap math
+///   anchor totals to a stable reference (so toggling a modifier
+///   mid-drag works without rewinding more than one snap step).
+/// - `last_ray` / `current_ray` are the previous and current frame's
+///   rays — what the unsnapped per-frame delta is computed from.
+/// - `modifiers` reflects the current keyboard state so handles can
+///   gate snap math on Ctrl / Shift / Alt.
 #[derive(Debug, Clone, Copy)]
 pub struct DragInfo {
+    pub start_ray: Ray,
     pub last_ray: Ray,
     pub current_ray: Ray,
+    pub modifiers: DragModifiers,
+    pub snap: SnapSettings,
+}
+
+/// Keyboard modifier state at this frame. Owned by the editor and
+/// threaded through to handles so each handle can pick the appropriate
+/// snap modifier (Ctrl for translate / rotate snap).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DragModifiers {
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+}
+
+/// User-tunable snap step sizes. Threaded through `DragInfo` to each
+/// handle so the snap math reads the live values from the toolbar
+/// instead of hard-coding compile-time constants.
+#[derive(Debug, Clone, Copy)]
+pub struct SnapSettings {
+    /// Translate / plane snap step in world units. Applied per axis.
+    pub translate: f32,
+    /// Rotate snap step in degrees.
+    pub rotate_deg: f32,
+}
+
+impl Default for SnapSettings {
+    fn default() -> Self {
+        Self {
+            translate: 0.5,
+            rotate_deg: 15.0,
+        }
+    }
 }
 
 /// Output of [`Handle::drag`] — what kind of edit the handle wants to
@@ -214,7 +255,13 @@ pub trait Handle: Send + Sync + 'static {
 enum SetState {
     Idle,
     Hover(usize),
-    Drag(usize, Ray),
+    /// Drag in progress. `start_ray` stays fixed for the whole drag;
+    /// `last_ray` is the previous frame's ray.
+    Drag {
+        idx: usize,
+        start_ray: Ray,
+        last_ray: Ray,
+    },
 }
 
 /// Coordinator for a group of handles. Owns the `Idle → Hover → Drag`
@@ -312,7 +359,7 @@ impl HandleSet {
 
     /// Returns `true` if a drag is in progress.
     pub fn is_dragging(&self) -> bool {
-        matches!(self.state, SetState::Drag(..))
+        matches!(self.state, SetState::Drag { .. })
     }
 
     /// Processes one frame of input. Returns the [`TransformDelta`] to
@@ -323,6 +370,8 @@ impl HandleSet {
         ray: Option<Ray>,
         lmb_pressed: bool,
         lmb_held: bool,
+        modifiers: DragModifiers,
+        snap: SnapSettings,
     ) -> TransformDelta {
         // No cursor over the viewport → drop hover, end drag if any.
         let Some(ray) = ray else {
@@ -334,25 +383,41 @@ impl HandleSet {
             SetState::Idle | SetState::Hover(_) => {
                 let hit = self.pick_closest(ray);
                 self.state = match (hit, lmb_pressed) {
-                    (Some(idx), true) => SetState::Drag(idx, ray),
+                    (Some(idx), true) => SetState::Drag {
+                        idx,
+                        start_ray: ray,
+                        last_ray: ray,
+                    },
                     (Some(idx), false) => SetState::Hover(idx),
                     (None, _) => SetState::Idle,
                 };
                 TransformDelta::none()
             }
-            SetState::Drag(idx, last_ray) => {
+            SetState::Drag {
+                idx,
+                start_ray,
+                last_ray,
+            } => {
                 if !lmb_held {
                     // Released — return to idle (re-pick on next frame).
                     self.state = SetState::Idle;
                     return TransformDelta::none();
                 }
                 let drag = DragInfo {
+                    start_ray,
                     last_ray,
                     current_ray: ray,
+                    modifiers,
+                    snap,
                 };
                 let delta = self.handles[idx].drag(drag, self.frame);
-                // Update the last_ray for the next drag tick.
-                self.state = SetState::Drag(idx, ray);
+                // Update the last_ray for the next drag tick;
+                // start_ray stays fixed for the whole drag.
+                self.state = SetState::Drag {
+                    idx,
+                    start_ray,
+                    last_ray: ray,
+                };
                 delta
             }
         }
@@ -366,7 +431,7 @@ impl HandleSet {
     /// clutter while the manipulation is in progress.
     pub fn draw(&self, gizmos: &mut Gizmos<'_>) {
         let dragging_idx = match self.state {
-            SetState::Drag(idx, _) => Some(idx),
+            SetState::Drag { idx, .. } => Some(idx),
             _ => None,
         };
         for (i, h) in self.handles.iter().enumerate() {
@@ -380,7 +445,7 @@ impl HandleSet {
             }
             let state = match self.state {
                 SetState::Hover(idx) if idx == i => HandleState::Hover,
-                SetState::Drag(idx, _) if idx == i => HandleState::Dragging,
+                SetState::Drag { idx, .. } if idx == i => HandleState::Dragging,
                 _ => HandleState::Idle,
             };
             h.draw(gizmos, self.frame, state);
