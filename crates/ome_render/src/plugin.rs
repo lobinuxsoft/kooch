@@ -22,7 +22,6 @@ use ome_core::plugin::Plugin;
 use ome_core::resource::Resources;
 use ome_core::stage::Stage;
 use ome_core::time::Time;
-use ome_ecs::SdfSphere;
 use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::Query;
@@ -270,7 +269,7 @@ fn render_passes(
     };
 
     // Pass 2: Ray-march.
-    let has_sdf = has_visible_sdf(resources);
+    let has_sdf = crate::raymarch::has_any_visible_sdf(resources);
     let camera_ok =
         has_sdf && raymarch.update_camera(gpu.device(), gpu.queue(), resources, aspect);
     if camera_ok {
@@ -332,17 +331,6 @@ fn clear_to_black(
         occlusion_query_set: None,
         multiview_mask: None,
     });
-}
-
-fn has_visible_sdf(resources: &Resources) -> bool {
-    let query = Query::<&SdfSphere>::new(resources);
-    let mut found = false;
-    query.for_each(|sphere| {
-        if sphere.visible {
-            found = true;
-        }
-    });
-    found
 }
 
 fn has_visible_mesh(resources: &Resources) -> bool {
