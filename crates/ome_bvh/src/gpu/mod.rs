@@ -16,6 +16,7 @@
 
 pub mod builder;
 pub mod morton;
+pub mod sort;
 pub mod sort_types;
 pub mod types;
 
@@ -30,3 +31,16 @@ pub use types::{GpuAabb, GpuSceneBounds};
 /// Onesweep init compute shader source. Cleared by the `BvhGpuBuilder`
 /// at the start of every sort run.
 pub(crate) const ONESWEEP_INIT_WGSL: &str = include_str!("../../shaders/onesweep_init.wgsl");
+
+/// Onesweep global histogram count shader source. One dispatch over
+/// the input keys — counts all 4 passes' digits simultaneously via
+/// workgroup-local histograms flushed atomically to global.
+pub(crate) const ONESWEEP_HISTOGRAM_WGSL: &str =
+    include_str!("../../shaders/onesweep_global_histogram.wgsl");
+
+/// Onesweep exclusive scan shader source. One dispatch per pass (4
+/// total) — converts each pass's 256-bucket histogram from counts
+/// into exclusive prefix sums (bucket starting offsets in the sorted
+/// output).
+pub(crate) const ONESWEEP_EXCLUSIVE_SCAN_WGSL: &str =
+    include_str!("../../shaders/onesweep_exclusive_scan.wgsl");
