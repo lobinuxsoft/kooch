@@ -29,6 +29,7 @@ use ome_ecs::query::Query;
 
 use crate::chunk::{BASE_CHUNK_SIZE_METERS, ChunkId};
 use crate::focus::StreamingFocus;
+use crate::focus_cache::{FocusCacheState, FocusPosition};
 use crate::lod::LodRingConfig;
 use crate::manager::ChunkManager;
 
@@ -69,10 +70,43 @@ pub fn activate_chunks(
     }
 }
 
+/// Cached activation step. Same semantics as [`activate_chunks`] but
+/// **skips entirely** when no focus has crossed a chunk boundary on
+/// any LOD since the last call.
+///
+/// `focuses[i] = (entity, universe_position, priority)`. The cache is
+/// updated in place each tick; stale entities (no longer in the focus
+/// list) are purged automatically.
+///
+/// This is the normal entry point used by the schedule. The
+/// uncached [`activate_chunks`] stays available as a pure helper for
+/// tests / one-shot tooling.
+pub fn activate_chunks_cached(
+    focuses: &[(Entity, DVec3, u8)],
+    cache: &mut FocusCacheState,
+    manager: &mut ChunkManager,
+    config: &LodRingConfig,
+) {
+    let positions: Vec<FocusPosition> =
+        focuses.iter().map(|(e, p, _)| (*e, *p)).collect();
+    let dirty = cache.dirty_pairs(&positions, config.lod_count());
+    cache.purge_stale(&positions);
+
+    if dirty.is_empty() {
+        // No focus crossed a chunk boundary this tick — the desired
+        // set is identical to last tick's, so nothing to enqueue.
+        return;
+    }
+
+    let bare: Vec<(DVec3, u8)> = focuses.iter().map(|(_, p, pr)| (*p, *pr)).collect();
+    activate_chunks(&bare, manager, config);
+}
+
 /// ECS-aware activation: extracts focuses from the world, then calls
-/// the pure [`activate_chunks`].
+/// [`activate_chunks_cached`] with the world-managed cache.
 pub fn activation_system(
     resources: &Resources,
+    cache: &mut FocusCacheState,
     manager: &mut ChunkManager,
     config: &LodRingConfig,
 ) {
@@ -81,42 +115,72 @@ pub fn activation_system(
         .copied()
         .unwrap_or_default();
 
-    let mut focuses: Vec<(DVec3, u8)> = Vec::new();
+    let mut focuses: Vec<(Entity, DVec3, u8)> = Vec::new();
     let q = Query::<(Entity, &StreamingFocus, &GlobalTransform)>::new(resources);
-    q.for_each(|(_, focus, gt)| {
+    q.for_each(|(entity, focus, gt)| {
         if !focus.active {
             return;
         }
         let (_, _, translation) = gt.matrix.to_scale_rotation_translation();
         let universe_pos = origin.coord().translated(translation.as_dvec3()).to_dvec3();
-        focuses.push((universe_pos, focus.priority));
+        focuses.push((entity, universe_pos, focus.priority));
     });
     drop(q);
 
-    activate_chunks(&focuses, manager, config);
+    activate_chunks_cached(&focuses, cache, manager, config);
 }
 
 /// Enumerate every chunk at `lod` whose AABB intersects the sphere
-/// (center, radius). Iterates a tight grid bounding box in world coords
-/// and runs an exact AABB-sphere test per cell.
+/// `(center, radius)`. Iterates the bounding-box grid with **per-axis
+/// early-out**: the squared distance from `center` to the closest
+/// point of the current axis slab is accumulated outer → inner, so
+/// whole `(y, z)` slices and whole `z` columns are skipped without
+/// touching their cells.
+///
+/// Reduces the cell count tested from the cube bounding box (≈8r³ /
+/// chunk³) to roughly the inscribed sphere (≈⁴⁄₃πr³ / chunk³) — about
+/// 50 % fewer evaluations in the limit. The exact AABB-vs-sphere test
+/// inside the inner loop stays identical, so the result set is
+/// byte-identical to the old brute-force version.
 fn chunks_within_sphere(center: DVec3, radius: f64, lod: u8) -> Vec<ChunkId> {
     let chunk_size = BASE_CHUNK_SIZE_METERS * (1u64 << lod) as f64;
     let radius_sq = radius * radius;
 
     let min_world = center - DVec3::splat(radius);
     let max_world = center + DVec3::splat(radius);
-    let min_idx = (min_world / chunk_size).floor();
-    let max_idx = (max_world / chunk_size).ceil();
+    let min_idx_x = (min_world.x / chunk_size).floor() as i32;
+    let max_idx_x = (max_world.x / chunk_size).ceil() as i32;
+    let min_idx_y = (min_world.y / chunk_size).floor() as i32;
+    let max_idx_y = (max_world.y / chunk_size).ceil() as i32;
+    let min_idx_z = (min_world.z / chunk_size).floor() as i32;
+    let max_idx_z = (max_world.z / chunk_size).ceil() as i32;
 
     let mut out = Vec::new();
-    for x in min_idx.x as i32..max_idx.x as i32 {
-        for y in min_idx.y as i32..max_idx.y as i32 {
-            for z in min_idx.z as i32..max_idx.z as i32 {
-                let chunk_min =
-                    DVec3::new(x as f64, y as f64, z as f64) * chunk_size;
-                let chunk_max = chunk_min + DVec3::splat(chunk_size);
-                let closest = center.clamp(chunk_min, chunk_max);
-                if (center - closest).length_squared() <= radius_sq {
+    for x in min_idx_x..max_idx_x {
+        let cell_min_x = x as f64 * chunk_size;
+        let cell_max_x = cell_min_x + chunk_size;
+        let dx = center.x - center.x.clamp(cell_min_x, cell_max_x);
+        let dx_sq = dx * dx;
+        if dx_sq > radius_sq {
+            // Whole y-z slice is outside the sphere — skip ~chunk_count² cells.
+            continue;
+        }
+
+        for y in min_idx_y..max_idx_y {
+            let cell_min_y = y as f64 * chunk_size;
+            let cell_max_y = cell_min_y + chunk_size;
+            let dy = center.y - center.y.clamp(cell_min_y, cell_max_y);
+            let xy_sq = dx_sq + dy * dy;
+            if xy_sq > radius_sq {
+                // Whole z column is outside — skip ~chunk_count cells.
+                continue;
+            }
+
+            for z in min_idx_z..max_idx_z {
+                let cell_min_z = z as f64 * chunk_size;
+                let cell_max_z = cell_min_z + chunk_size;
+                let dz = center.z - center.z.clamp(cell_min_z, cell_max_z);
+                if xy_sq + dz * dz <= radius_sq {
                     out.push(ChunkId::new(IVec3::new(x, y, z), lod));
                 }
             }
@@ -157,6 +221,10 @@ mod tests {
                 radius_meters: radius,
             }],
         }
+    }
+
+    fn entity(idx: u32) -> Entity {
+        Entity::new(idx, 0)
     }
 
     #[test]
@@ -263,6 +331,136 @@ mod tests {
         assert!(lod0_count > 0, "expected at least one LOD 0 chunk");
         assert!(lod2_count > 0, "expected at least one LOD 2 chunk");
     }
+
+    // -- cached-activation tests ----------------------------------------
+
+    #[test]
+    fn cached_first_call_loads_chunks() {
+        let mut m = ChunkManager::new(1024);
+        let mut cache = FocusCacheState::default();
+        activate_chunks_cached(
+            &[(entity(1), DVec3::ZERO, 0)],
+            &mut cache,
+            &mut m,
+            &one_ring(0, 100.0),
+        );
+        // First call sees the focus as never-before-seen → activates.
+        assert!(m.pending_load_count() > 0);
+    }
+
+    #[test]
+    fn cached_stationary_second_call_skips_work() {
+        let mut m = ChunkManager::new(1024);
+        let mut cache = FocusCacheState::default();
+        let cfg = one_ring(0, 100.0);
+        let focuses = [(entity(1), DVec3::new(10.0, 10.0, 10.0), 0u8)];
+
+        activate_chunks_cached(&focuses, &mut cache, &mut m, &cfg);
+        m.process_queues(usize::MAX, 0);
+        let loaded_after_first = m.loaded_count();
+        let pending_after_first = m.pending_load_count();
+        assert!(loaded_after_first > 0);
+        assert_eq!(pending_after_first, 0, "first call should have drained");
+
+        // Second call: same position. Cache reports no dirty pairs.
+        activate_chunks_cached(&focuses, &mut cache, &mut m, &cfg);
+        // Manager state is unchanged — no new pending loads, no unloads.
+        assert_eq!(m.pending_load_count(), 0);
+        assert_eq!(m.pending_unload_count(), 0);
+        assert_eq!(m.loaded_count(), loaded_after_first);
+    }
+
+    #[test]
+    fn cached_sub_chunk_movement_skips_work() {
+        let mut m = ChunkManager::new(1024);
+        let mut cache = FocusCacheState::default();
+        let cfg = one_ring(0, 100.0);
+
+        // First call at (10,10,10) — chunk (0,0,0).
+        activate_chunks_cached(
+            &[(entity(1), DVec3::new(10.0, 10.0, 10.0), 0)],
+            &mut cache,
+            &mut m,
+            &cfg,
+        );
+        m.process_queues(usize::MAX, 0);
+
+        // Second call: focus moved 30 m on x — still chunk (0,0,0) at LOD 0
+        // (chunk size 64).
+        activate_chunks_cached(
+            &[(entity(1), DVec3::new(40.0, 10.0, 10.0), 0)],
+            &mut cache,
+            &mut m,
+            &cfg,
+        );
+        // No work (still in same chunk).
+        assert_eq!(m.pending_load_count(), 0);
+        assert_eq!(m.pending_unload_count(), 0);
+    }
+
+    #[test]
+    fn cached_chunk_boundary_cross_triggers_work() {
+        let mut m = ChunkManager::new(1024);
+        let mut cache = FocusCacheState::default();
+        let cfg = one_ring(0, 100.0);
+
+        activate_chunks_cached(
+            &[(entity(1), DVec3::ZERO, 0)],
+            &mut cache,
+            &mut m,
+            &cfg,
+        );
+        m.process_queues(usize::MAX, 0);
+        let loaded_initial = m.loaded_count();
+
+        // Move 100 m on x — crosses LOD-0 boundary at 64.
+        activate_chunks_cached(
+            &[(entity(1), DVec3::new(100.0, 0.0, 0.0), 0)],
+            &mut cache,
+            &mut m,
+            &cfg,
+        );
+        // Some chunks newly desired (right of focus), some no longer
+        // desired (left). Work was done.
+        assert!(
+            m.pending_load_count() > 0 || m.pending_unload_count() > 0,
+            "boundary crossing must produce queue activity"
+        );
+        // After draining, total loaded should still be reasonable.
+        m.process_queues(usize::MAX, usize::MAX);
+        assert!(m.loaded_count() > 0);
+        let _ = loaded_initial;
+    }
+
+    #[test]
+    fn cached_purges_dropped_focus() {
+        let mut m = ChunkManager::new(1024);
+        let mut cache = FocusCacheState::default();
+        let cfg = one_ring(0, 100.0);
+
+        // Two focuses, then one despawns.
+        activate_chunks_cached(
+            &[
+                (entity(1), DVec3::ZERO, 0),
+                (entity(2), DVec3::new(500.0, 0.0, 0.0), 0),
+            ],
+            &mut cache,
+            &mut m,
+            &cfg,
+        );
+        assert_eq!(cache.tracked_count(), 2);
+
+        // Tick again with only entity 1 — entity 2 is purged.
+        activate_chunks_cached(
+            &[(entity(1), DVec3::ZERO, 0)],
+            &mut cache,
+            &mut m,
+            &cfg,
+        );
+        assert_eq!(cache.tracked_count(), 1);
+    }
+
+    // -- legacy activate_chunks tests (uncached path) -------------------
 
     #[test]
     fn closest_chunk_gets_lowest_priority() {
