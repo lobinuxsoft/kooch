@@ -45,18 +45,26 @@ const LBVH_WORKGROUP_SIZE: u32 = 64;
 /// `next_power_of_two` when an upload exceeds capacity.
 const INITIAL_LBVH_CAPACITY: u64 = 1024;
 
-/// Constant slack added on top of `⌈log₂ N⌉` for the AABB propagation
-/// loop, on top of the multiplicative `× 2` factor. Karras 2012 proves
-/// `depth ≤ ⌈log₂ N⌉` for sorted Morton inputs with strict ordering —
-/// but in practice random AABBs at `N >> 1024` can produce sub-trees
-/// where the balance proof's small constant matters: at `N = 65 000`
-/// random with the original `log_n + 4` budget, ~17 expected iterations
-/// were not enough for the root to converge.
+/// Additive slack on top of the `2 × log_n` multiplicative factor in
+/// [`aabb_iterations`]. **EMPIRICAL — not a tight theoretical bound.**
 ///
-/// We use `2 × log_n + 4` as a robust upper bound — it costs at most
-/// `~16` extra dispatches at `N = 65 000`, each ~16 k workgroups × 64
-/// threads (negligible vs the build itself) and easily absorbs any
-/// non-canonical depth.
+/// Karras 2012 proves `depth ≤ ⌈log₂ N⌉` for sorted Morton inputs with
+/// strict ordering, but in practice random AABBs at `N >> 1024` produce
+/// sub-trees where the balance proof's small constants matter: at
+/// `N = 65 000` random Karras, the previous `log_n + 4` budget left
+/// the root unconverged. The current `2 × log_n + 4` formula clears
+/// every input we exercise in the golden suite up to `N = 65 000`.
+///
+/// **At `N = 1 M+` an adversarial topology may still exceed this bound
+/// silently and produce wrong-but-plausible AABBs.** The
+/// `cfg(debug_assertions)` invariant check in
+/// [`crate::gpu::build`] catches that case (panics with the offending
+/// `N`); release builds skip the check for zero overhead. The
+/// definitive fix — a single-dispatch atomic-counter bottom-up à la
+/// Karras' CUDA implementation — needs WGSL primitives that don't
+/// exist portably yet (cross-workgroup memory model + subgroup ops
+/// stable across RDNA / Ada / Apple). Tracked as a follow-up; see
+/// `BUG 3` in the project memory for the full rationale.
 const AABB_ITERATION_SLACK: u32 = 4;
 
 /// Uniform configuration for every Karras pass — only the leaf count
@@ -375,18 +383,25 @@ fn make_aux_u32_buffer(device: &wgpu::Device, suffix: &str, n: u64) -> wgpu::Buf
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(&format!("ome_bvh::{suffix}")),
         size: 2 * n * 4,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        // `COPY_SRC` is needed by the `cfg(debug_assertions)` AABB
+        // convergence invariant check in `gpu::build` (it copies the
+        // `done_buffer` to a MAP_READ staging buffer). The flag is
+        // free in release — wgpu only validates against pipeline
+        // usage at command submission time.
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     })
 }
 
-/// Number of times the AABB propagation pass must be dispatched to
-/// guarantee every internal node converges. Karras' index tie-break
-/// bounds tree depth by `⌈log₂ N⌉`, but random-input experiments at
-/// `N >> 1024` reveal a non-trivial constant factor in practice; we
-/// use `2 × log_n + slack` which converges every observed tree in
-/// our golden suite up to `N = 65 000`.
-fn aabb_iterations(n: u32) -> u32 {
+/// Number of times the AABB propagation pass must be dispatched.
+/// `pub(crate)` so the debug invariant check in [`crate::gpu::build`]
+/// can quote the exact iteration count in its panic message.
+///
+/// See [`AABB_ITERATION_SLACK`] for the rationale behind the
+/// `2 × log_n + 4` formula and the limits of the empirical bound.
+pub(crate) fn aabb_iterations(n: u32) -> u32 {
     if n <= 1 {
         return 0;
     }

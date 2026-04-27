@@ -63,12 +63,19 @@ impl std::error::Error for BvhBuildError {}
 /// Shared state between the orchestrator's `map_async` callbacks and
 /// [`BvhGpuBuild::poll`]. Atomic loads/stores on the booleans avoid
 /// any locking on the hot poll path.
+///
+/// The `done_*` fields back the `cfg(debug_assertions)` AABB
+/// convergence invariant check — see [`BvhGpuBuild::done_staging`].
+/// In release builds nothing ever sets them; the field shape stays
+/// identical to keep the struct simple.
 #[derive(Default)]
 struct MapState {
     nodes_done: AtomicBool,
     indices_done: AtomicBool,
     nodes_err: AtomicBool,
     indices_err: AtomicBool,
+    done_done: AtomicBool,
+    done_err: AtomicBool,
 }
 
 /// Handle to a GPU LBVH build in flight. Drive with
@@ -98,6 +105,15 @@ pub struct BvhGpuBuild<T: Copy> {
     /// Set true after [`Self::poll`] returns `Some(_)` so subsequent
     /// polls don't try to unmap an already-unmapped buffer.
     consumed: bool,
+    /// **Debug-only** staging copy of the LBVH `done` array. Populated
+    /// only when `cfg!(debug_assertions) && n >= 2`; `None` in release
+    /// or for trivial sizes. When `Some`, [`Self::poll`] reads it once
+    /// the build resolves and panics if any internal node has
+    /// `done[i] == 0` — that means the AABB propagation iteration
+    /// count was insufficient and the resulting AABBs are silently
+    /// wrong. See `AABB_ITERATION_SLACK` in `gpu/lbvh.rs` for the
+    /// empirical bound this guards.
+    done_staging: Option<wgpu::Buffer>,
 }
 
 /// Lightweight view of a completed (or in-flight + fenced) GPU BVH for
@@ -135,6 +151,7 @@ impl<T: Copy> BvhGpuBuild<T> {
         }
         if self.map_state.nodes_err.load(Ordering::Acquire)
             || self.map_state.indices_err.load(Ordering::Acquire)
+            || self.map_state.done_err.load(Ordering::Acquire)
         {
             self.consumed = true;
             return Some(Err(BvhBuildError::BufferMapFailed));
@@ -144,9 +161,16 @@ impl<T: Copy> BvhGpuBuild<T> {
         {
             return None;
         }
+        // Debug-only invariant check: wait for the done staging map
+        // (same submission as nodes/indices, so it lands during the
+        // same `device.poll`) and verify every internal converged.
+        if self.done_staging.is_some() && !self.map_state.done_done.load(Ordering::Acquire) {
+            return None;
+        }
 
         // Both staging buffers are mapped — assemble the Bvh<T>.
         self.consumed = true;
+        self.check_aabb_convergence_in_debug();
         let total_nodes = (2 * self.n - 1) as usize;
         let nodes_bytes = total_nodes * std::mem::size_of::<BvhNode>();
         let nodes: Vec<BvhNode> = {
@@ -176,6 +200,44 @@ impl<T: Copy> BvhGpuBuild<T> {
             .map(|&i| self.payloads[i as usize])
             .collect();
         Some(Ok(Bvh { nodes, leaves }))
+    }
+
+    /// Debug-only AABB convergence check. In release builds this is a
+    /// no-op (`done_staging` is always `None`). In debug, reads the
+    /// staged copy of the LBVH `done[]` array and panics if any
+    /// internal node has `done[i] == 0` — that means the AABB
+    /// propagation iteration count was insufficient, the resulting
+    /// AABBs are silently wrong, and the caller is about to consume
+    /// a corrupt BVH.
+    fn check_aabb_convergence_in_debug(&self) {
+        let Some(ref staging) = self.done_staging else {
+            return;
+        };
+        if self.n < 2 {
+            return;
+        }
+        let n_internals = (self.n - 1) as usize;
+        let bytes = n_internals * 4;
+        let slice = staging.slice(..bytes as u64);
+        let data = slice.get_mapped_range();
+        let dones = bytemuck::cast_slice::<u8, u32>(&data);
+        // Find the first un-done internal — its index gives the
+        // operator a precise reproduction handle.
+        let unfinished = dones
+            .iter()
+            .take(n_internals)
+            .position(|&d| d == 0u32);
+        drop(data);
+        staging.unmap();
+        if let Some(idx) = unfinished {
+            let iters = crate::gpu::lbvh::aabb_iterations(self.n);
+            panic!(
+                "AABB iteration slack insufficient for N={} (depth exceeded 2·log_n+4 — \
+                 internal node {idx} of {n_internals} unfinished after {iters} iterations). \
+                 Please file an issue against the LBVH builder with the input seed.",
+                self.n
+            );
+        }
     }
 
     /// GPU-resident view of the (in-flight or completed) tree.
@@ -363,9 +425,36 @@ pub fn build_gpu<T: Copy + bytemuck::Pod>(
         indices_bytes,
     );
 
+    // Debug-only: stage a copy of the LBVH `done` array so
+    // `BvhGpuBuild::poll` can verify every internal node converged
+    // (i.e. `done[i] == 1` for all `i in 0..n-1`). Catches the case
+    // where the AABB iteration count was insufficient — silently
+    // wrong AABBs are a planet-scale-grade footgun. Skipped in
+    // release for zero overhead.
+    let done_staging = if cfg!(debug_assertions) && n >= 2 {
+        let n_internals = (n - 1) as u64;
+        let bytes = n_internals * 4;
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ome_bvh::build_gpu_done_staging_debug"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(
+            &builder.lbvh_buffers.done_buffer,
+            0,
+            &staging,
+            0,
+            bytes,
+        );
+        Some(staging)
+    } else {
+        None
+    };
+
     let submission_index = queue.submit(std::iter::once(encoder.finish()));
 
-    // Arm map_async on both staging buffers. Callbacks fire from
+    // Arm map_async on the staging buffers. Callbacks fire from
     // inside `device.poll(...)` invocations on the calling thread.
     let map_state = Arc::new(MapState::default());
     {
@@ -384,6 +473,15 @@ pub fn build_gpu<T: Copy + bytemuck::Pod>(
                 Err(_) => st.indices_err.store(true, Ordering::Release),
             });
     }
+    if let Some(ref staging) = done_staging {
+        let st = map_state.clone();
+        staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |res| match res {
+                Ok(()) => st.done_done.store(true, Ordering::Release),
+                Err(_) => st.done_err.store(true, Ordering::Release),
+            });
+    }
 
     BvhGpuBuild {
         n,
@@ -394,6 +492,7 @@ pub fn build_gpu<T: Copy + bytemuck::Pod>(
         map_state,
         payloads,
         consumed: false,
+        done_staging,
     }
 }
 
@@ -419,6 +518,7 @@ fn empty_build<T: Copy>(builder: &BvhGpuBuilder, device: &wgpu::Device) -> BvhGp
         map_state: Arc::new(MapState::default()),
         payloads: Vec::new(),
         consumed: false,
+        done_staging: None,
     }
 }
 
