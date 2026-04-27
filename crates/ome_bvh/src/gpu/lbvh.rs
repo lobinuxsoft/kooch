@@ -45,11 +45,18 @@ const LBVH_WORKGROUP_SIZE: u32 = 64;
 /// `next_power_of_two` when an upload exceeds capacity.
 const INITIAL_LBVH_CAPACITY: u64 = 1024;
 
-/// Slack added on top of `⌈log₂ N⌉` for the AABB propagation loop.
-/// Karras' index tie-break keeps tree depth bounded by `log₂ N`
-/// even under fully-duplicate Morton codes — slack absorbs any
-/// residual unbalance and keeps the loop count comfortably above
-/// the worst observed depth.
+/// Constant slack added on top of `⌈log₂ N⌉` for the AABB propagation
+/// loop, on top of the multiplicative `× 2` factor. Karras 2012 proves
+/// `depth ≤ ⌈log₂ N⌉` for sorted Morton inputs with strict ordering —
+/// but in practice random AABBs at `N >> 1024` can produce sub-trees
+/// where the balance proof's small constant matters: at `N = 65 000`
+/// random with the original `log_n + 4` budget, ~17 expected iterations
+/// were not enough for the root to converge.
+///
+/// We use `2 × log_n + 4` as a robust upper bound — it costs at most
+/// `~16` extra dispatches at `N = 65 000`, each ~16 k workgroups × 64
+/// threads (negligible vs the build itself) and easily absorbs any
+/// non-canonical depth.
 const AABB_ITERATION_SLACK: u32 = 4;
 
 /// Uniform configuration for every Karras pass — only the leaf count
@@ -375,16 +382,17 @@ fn make_aux_u32_buffer(device: &wgpu::Device, suffix: &str, n: u64) -> wgpu::Buf
 
 /// Number of times the AABB propagation pass must be dispatched to
 /// guarantee every internal node converges. Karras' index tie-break
-/// keeps tree depth bounded by `⌈log₂ N⌉` regardless of input
-/// (duplicates fall back to the index-bit prefix); the slack absorbs
-/// any residual non-canonical depth from numerical edge cases.
+/// bounds tree depth by `⌈log₂ N⌉`, but random-input experiments at
+/// `N >> 1024` reveal a non-trivial constant factor in practice; we
+/// use `2 × log_n + slack` which converges every observed tree in
+/// our golden suite up to `N = 65 000`.
 fn aabb_iterations(n: u32) -> u32 {
     if n <= 1 {
         return 0;
     }
     // Bits required to represent (n - 1) — i.e. ⌈log₂ n⌉.
     let log_n = 32 - (n - 1).leading_zeros();
-    log_n + AABB_ITERATION_SLACK
+    2 * log_n + AABB_ITERATION_SLACK
 }
 
 /// Pass 1 of the Karras build: write the N leaves into
@@ -750,11 +758,11 @@ mod tests {
     fn aabb_iterations_grows_with_log_n() {
         assert_eq!(aabb_iterations(0), 0);
         assert_eq!(aabb_iterations(1), 0);
-        // ⌈log₂ 2⌉ = 1, + 4 slack.
-        assert_eq!(aabb_iterations(2), 5);
-        assert_eq!(aabb_iterations(8), 3 + AABB_ITERATION_SLACK);
-        assert_eq!(aabb_iterations(1024), 10 + AABB_ITERATION_SLACK);
-        assert_eq!(aabb_iterations(65536), 16 + AABB_ITERATION_SLACK);
+        // 2 × ⌈log₂ N⌉ + 4 slack.
+        assert_eq!(aabb_iterations(2), 2 * 1 + AABB_ITERATION_SLACK);
+        assert_eq!(aabb_iterations(8), 2 * 3 + AABB_ITERATION_SLACK);
+        assert_eq!(aabb_iterations(1024), 2 * 10 + AABB_ITERATION_SLACK);
+        assert_eq!(aabb_iterations(65536), 2 * 16 + AABB_ITERATION_SLACK);
     }
 
     #[test]
