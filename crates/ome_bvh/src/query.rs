@@ -4,7 +4,8 @@
 //! 1. Pop a node index from a fixed-size stack.
 //! 2. Cull by testing the node's AABB against the query primitive.
 //! 3. If leaf → visit each owned item; if internal → push both children
-//!    (right at left + 1, by construction in [`super::bvh::Bvh::build`]).
+//!    (left and right read explicitly from the node — Karras layout
+//!    does not guarantee `right = left + 1`, see [`crate::node`]).
 //!
 //! Stack size is fixed at [`MAX_STACK_DEPTH`] = 32; this covers any
 //! BVH up to 2³² ≈ 4 B leaves built balanced. Sphere-tracing's 16-slot
@@ -135,20 +136,21 @@ fn traverse<T: Copy>(
         }
 
         if node.is_leaf() {
-            let first = node.left_or_first as usize;
-            let count = node.count as usize;
+            let first = node.first_leaf() as usize;
+            let count = node.count() as usize;
             for i in 0..count {
                 visit(&bvh.leaves[first + i]);
             }
         } else {
-            // Right child at left + 1, by `Bvh::build` invariant.
+            // Karras layout: read both children explicitly — they may
+            // be at non-contiguous positions in the flat array.
             debug_assert!(
                 sp + 2 <= MAX_STACK_DEPTH,
                 "BVH traversal stack overflow at depth {sp}; tree is degenerate"
             );
-            stack[sp] = node.left_or_first;
+            stack[sp] = node.left;
             sp += 1;
-            stack[sp] = node.left_or_first + 1;
+            stack[sp] = node.right_child();
             sp += 1;
         }
     }
