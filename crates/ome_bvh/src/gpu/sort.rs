@@ -688,12 +688,15 @@ pub fn dispatch_scatter(
     pass.dispatch_workgroups(cfg.partition_count.max(1), 1, 1);
 }
 
-/// Full sort orchestration: init → histogram (all passes) → exclusive
-/// scan (4 dispatches) → scatter (4 dispatches with ping-pong).
+/// Full sort orchestration recorded into the caller-supplied encoder:
+/// init → histogram (all passes) → exclusive scan (4 dispatches) →
+/// scatter (4 dispatches with ping-pong).
 ///
-/// On return, `buffers.keys_a` holds the sorted keys and
-/// `buffers.values_a` holds the values reordered to match. (Even number
-/// of scatter passes: 4 → result lands back in `_a`.)
+/// Caller is responsible for placing the input keys in `buffers.keys_a`
+/// (and matching `values_a` if needed) before submitting the encoder.
+/// On submission completion, sorted keys land in `buffers.keys_a` and
+/// the permuted values in `buffers.values_a` (even pass count → result
+/// returns to the `_a` slot).
 ///
 /// **Important**: the scan over the global histogram is destructive
 /// (in-place: counts → exclusive prefix). Each scatter pass needs the
@@ -701,30 +704,26 @@ pub fn dispatch_scatter(
 /// in one batch BEFORE any scatter, then scatter consumes them in
 /// order. The descriptor table is cleared by `dispatch_init` at the
 /// start; subsequent passes need re-clearing because each scatter
-/// publishes new descriptors. We re-issue init between passes.
-pub fn dispatch_sort(
+/// publishes new descriptors. We re-issue clear-only between passes.
+pub fn dispatch_sort_into(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
+    encoder: &mut wgpu::CommandEncoder,
     pipelines: &SortPipelines,
     buffers: &SortBuffers,
     count: u32,
-) -> wgpu::CommandEncoder {
-    let mut encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("ome_bvh::sort_encoder"),
-        });
-
+) {
     let partitions = (count + crate::gpu::sort_types::ITEMS_PER_TILE - 1)
         / crate::gpu::sort_types::ITEMS_PER_TILE;
 
     // 1. Clear histogram + descriptors.
-    dispatch_init(device, queue, &mut encoder, pipelines, buffers, partitions);
+    dispatch_init(device, queue, encoder, pipelines, buffers, partitions);
 
     // 2. Compute per-pass histograms (all 4 in one dispatch).
     dispatch_histogram(
         device,
         queue,
-        &mut encoder,
+        encoder,
         pipelines,
         buffers,
         &buffers.keys_a,
@@ -733,7 +732,7 @@ pub fn dispatch_sort(
 
     // 3. Exclusive scan each pass's histogram in place.
     for pass_index in 0..RADIX_PASSES {
-        dispatch_exclusive_scan(device, &mut encoder, pipelines, buffers, pass_index);
+        dispatch_exclusive_scan(device, encoder, pipelines, buffers, pass_index);
     }
 
     // 4. Scatter each pass with ping-pong. Re-clear descriptors before
@@ -746,9 +745,27 @@ pub fn dispatch_sort(
         if pass_index > 0 {
             encoder.clear_buffer(&buffers.partition_descriptors, 0, None);
         }
-        dispatch_scatter(device, queue, &mut encoder, pipelines, buffers, count, pass_index);
+        dispatch_scatter(device, queue, encoder, pipelines, buffers, count, pass_index);
     }
+}
 
+/// Standalone sort orchestration — creates its own encoder and returns
+/// it for the caller to submit. Wrapper around [`dispatch_sort_into`]
+/// used by the existing onesweep unit tests; production code records
+/// the sort into a shared encoder via `dispatch_sort_into` so morton +
+/// sort + lbvh share a single submission.
+pub fn dispatch_sort(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pipelines: &SortPipelines,
+    buffers: &SortBuffers,
+    count: u32,
+) -> wgpu::CommandEncoder {
+    let mut encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("ome_bvh::sort_encoder"),
+        });
+    dispatch_sort_into(device, queue, &mut encoder, pipelines, buffers, count);
     encoder
 }
 

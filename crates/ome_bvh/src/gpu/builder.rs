@@ -215,20 +215,20 @@ impl BvhGpuBuilder {
         }
     }
 
-    /// Upload the AABB list + dispatch the Morton compute pass + write
-    /// timestamps. Returns the (item count, encoder) so the caller can
-    /// chain further passes (radix sort, builder) onto the same encoder
-    /// before submission.
+    /// Upload the AABB list + record the Morton compute pass into the
+    /// caller-supplied encoder. Production primitive: `Bvh::build_gpu`
+    /// chains this with sort + lbvh on a single encoder before submit.
     ///
-    /// Public for unit-testing the Morton pass in isolation; production
-    /// callers should use the high-level `Bvh::build_gpu` API
-    /// (subtask 4 of PR-3).
-    pub fn dispatch_morton(
+    /// Buffer uploads (`queue.write_buffer`) happen before the encoder
+    /// commands run within a submission, so it's safe to call this even
+    /// when later passes on `encoder` read the uploaded data.
+    pub fn dispatch_morton_into(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
         aabbs: &[crate::aabb::Aabb],
-    ) -> wgpu::CommandEncoder {
+    ) {
         let count = aabbs.len() as u64;
         self.ensure_capacity(device, count);
 
@@ -264,26 +264,35 @@ impl BvhGpuBuilder {
             ],
         });
 
+        let timestamp_writes = wgpu::ComputePassTimestampWrites {
+            query_set: &self.timestamps.query_set,
+            beginning_of_pass_write_index: Some(TS_MORTON_START),
+            end_of_pass_write_index: Some(TS_MORTON_END),
+        };
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("ome_bvh::morton_pass"),
+            timestamp_writes: Some(timestamp_writes),
+        });
+        pass.set_pipeline(&self.morton_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        let workgroups = ((count as u32) + MORTON_WORKGROUP_SIZE - 1) / MORTON_WORKGROUP_SIZE;
+        pass.dispatch_workgroups(workgroups.max(1), 1, 1);
+    }
+
+    /// Standalone Morton dispatch — creates its own encoder and returns
+    /// it for the caller to submit. Used by the unit tests for the
+    /// Morton pass in isolation; production code uses
+    /// [`Self::dispatch_morton_into`] via `Bvh::build_gpu`.
+    pub fn dispatch_morton(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        aabbs: &[crate::aabb::Aabb],
+    ) -> wgpu::CommandEncoder {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("ome_bvh::morton_encoder"),
         });
-
-        {
-            let timestamp_writes = wgpu::ComputePassTimestampWrites {
-                query_set: &self.timestamps.query_set,
-                beginning_of_pass_write_index: Some(TS_MORTON_START),
-                end_of_pass_write_index: Some(TS_MORTON_END),
-            };
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("ome_bvh::morton_pass"),
-                timestamp_writes: Some(timestamp_writes),
-            });
-            pass.set_pipeline(&self.morton_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            let workgroups = ((count as u32) + MORTON_WORKGROUP_SIZE - 1) / MORTON_WORKGROUP_SIZE;
-            pass.dispatch_workgroups(workgroups.max(1), 1, 1);
-        }
-
+        self.dispatch_morton_into(device, queue, &mut encoder, aabbs);
         encoder
     }
 
