@@ -10,3 +10,8 @@ authors.workspace = true
 [dependencies]
 glam.workspace = true
 bytemuck.workspace = true
+wgpu.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true
