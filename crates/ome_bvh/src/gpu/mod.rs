@@ -44,3 +44,10 @@ pub(crate) const ONESWEEP_HISTOGRAM_WGSL: &str =
 /// output).
 pub(crate) const ONESWEEP_EXCLUSIVE_SCAN_WGSL: &str =
     include_str!("../../shaders/onesweep_exclusive_scan.wgsl");
+
+/// Onesweep scatter shader source. One dispatch per pass (4 total) —
+/// per-partition decoupled-lookback chained scan + scatter. Reads
+/// `keys_in`/`values_in`, writes to `keys_out`/`values_out`. The
+/// dispatcher swaps the buffers between passes (ping-pong).
+pub(crate) const ONESWEEP_SCATTER_WGSL: &str =
+    include_str!("../../shaders/onesweep_scatter.wgsl");
