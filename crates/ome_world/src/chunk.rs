@@ -13,6 +13,7 @@
 //! manages.
 
 use glam::{DVec3, IVec3, Vec3};
+use ome_bvh::Aabb;
 use ome_core::coord::{ActiveOrigin, UniverseCoord};
 
 /// Side length of a level-0 chunk in meters. A chunk at level N has
@@ -73,35 +74,7 @@ impl ChunkId {
         let delta = origin.coord().delta_to(&world);
         let min = delta.as_vec3();
         let s = self.size_meters() as f32;
-        Aabb {
-            min,
-            max: min + Vec3::splat(s),
-        }
-    }
-}
-
-/// Axis-aligned bounding box in the simulation frame (camera-relative
-/// coords; f32 is sufficient near the active origin).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Aabb {
-    pub min: Vec3,
-    pub max: Vec3,
-}
-
-impl Aabb {
-    pub fn center(&self) -> Vec3 {
-        (self.min + self.max) * 0.5
-    }
-
-    pub fn extents(&self) -> Vec3 {
-        (self.max - self.min) * 0.5
-    }
-
-    /// Squared distance from `point` to the closest boundary of the box.
-    /// Returns `0.0` for points inside.
-    pub fn distance_squared(&self, point: Vec3) -> f32 {
-        let clamped = point.clamp(self.min, self.max);
-        (point - clamped).length_squared()
+        Aabb::new(min, min + Vec3::splat(s))
     }
 }
 
@@ -218,35 +191,5 @@ mod tests {
         let data = ChunkData::new(ChunkId::new(IVec3::ZERO, 0));
         assert_eq!(data.state, ChunkState::Unloaded);
         assert_eq!(data.last_seen_frame, 0);
-    }
-
-    #[test]
-    fn aabb_center_and_extents() {
-        let b = Aabb {
-            min: Vec3::new(0.0, 0.0, 0.0),
-            max: Vec3::new(2.0, 4.0, 6.0),
-        };
-        assert_eq!(b.center(), Vec3::new(1.0, 2.0, 3.0));
-        assert_eq!(b.extents(), Vec3::new(1.0, 2.0, 3.0));
-    }
-
-    #[test]
-    fn aabb_distance_squared_inside_is_zero() {
-        let b = Aabb {
-            min: Vec3::ZERO,
-            max: Vec3::splat(10.0),
-        };
-        assert!(b.distance_squared(Vec3::splat(5.0)) < 1e-6);
-    }
-
-    #[test]
-    fn aabb_distance_squared_outside_is_corner_distance() {
-        let b = Aabb {
-            min: Vec3::ZERO,
-            max: Vec3::splat(10.0),
-        };
-        // Point at (-3, -4, 0) → closest is (0,0,0), distance² = 25.
-        let d2 = b.distance_squared(Vec3::new(-3.0, -4.0, 0.0));
-        assert!((d2 - 25.0).abs() < 1e-3);
     }
 }
