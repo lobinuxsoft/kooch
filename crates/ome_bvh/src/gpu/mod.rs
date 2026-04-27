@@ -15,12 +15,14 @@
 //! pass module verify this against random inputs.
 
 pub mod builder;
+pub mod lbvh;
 pub mod morton;
 pub mod sort;
 pub mod sort_types;
 pub mod types;
 
 pub use builder::{BvhGpuBuilder, BvhTimestamps};
+pub use lbvh::{LbvhBuffers, LbvhConfig, LbvhPipelines, dispatch_lbvh_build};
 pub use sort_types::{
     FLAG_AGGREGATE, FLAG_INVALID, FLAG_PREFIX, ITEMS_PER_TILE, OnesweepConfig, RADIX_BITS,
     RADIX_BUCKETS, RADIX_PASSES, SORT_WORKGROUP_SIZE, global_histogram_size_bytes,
@@ -51,3 +53,20 @@ pub(crate) const ONESWEEP_EXCLUSIVE_SCAN_WGSL: &str =
 /// dispatcher swaps the buffers between passes (ping-pong).
 pub(crate) const ONESWEEP_SCATTER_WGSL: &str =
     include_str!("../../shaders/onesweep_scatter.wgsl");
+
+/// Karras LBVH pass 1: write the N leaf nodes into nodes[N-1..2N-1)
+/// using the Morton-permuted lookup `original_aabbs[sorted_indices[k]]`.
+pub(crate) const KARRAS_LEAVES_WGSL: &str =
+    include_str!("../../shaders/karras_leaves.wgsl");
+
+/// Karras LBVH pass 2: parallel construction of the N-1 internal
+/// nodes via Karras 2012's delta + range + split algorithm. Writes
+/// node payloads + parent pointers; AABBs are filled by pass 3.
+pub(crate) const KARRAS_INTERNAL_WGSL: &str =
+    include_str!("../../shaders/karras_internal.wgsl");
+
+/// Karras LBVH pass 3: bottom-up AABB propagation. Each leaf walks
+/// up the parent chain; the second child to arrive at each internal
+/// node merges both children's AABBs into the parent.
+pub(crate) const KARRAS_AABB_WGSL: &str =
+    include_str!("../../shaders/karras_aabb.wgsl");
