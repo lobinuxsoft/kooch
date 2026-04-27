@@ -156,6 +156,24 @@ impl<T: Copy> Bvh<T> {
         Self { nodes, leaves }
     }
 
+    /// Build a BVH on the GPU. Chains morton encoding + onesweep radix
+    /// sort + Karras parallel construction on a single command encoder
+    /// and submits in one call. Returns a [`crate::gpu::BvhGpuBuild`]
+    /// handle the caller polls (frame-loop-friendly) until the result
+    /// is ready. See the module docs in `gpu/build.rs` for usage
+    /// patterns (CPU readback vs GPU-resident handoff).
+    pub fn build_gpu(
+        builder: &mut crate::gpu::BvhGpuBuilder,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        items: Vec<(T, Aabb)>,
+    ) -> crate::gpu::BvhGpuBuild<T>
+    where
+        T: bytemuck::Pod,
+    {
+        crate::gpu::build::build_gpu(builder, device, queue, items)
+    }
+
     /// AABB of the root node — i.e. the union of every leaf bound.
     /// Returns [`Aabb::EMPTY`] for an empty BVH.
     pub fn root_aabb(&self) -> Aabb {

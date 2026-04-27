@@ -15,3 +15,10 @@ tracing.workspace = true
 
 [dev-dependencies]
 pollster.workspace = true
+
+[features]
+# Expose `BvhGpuBuild::block_on` outside the test suite. Off by default
+# — `block_on` blocks the calling thread on `device.poll(Wait)`, which
+# violates the planet-scale + GPU-driven hot-loop constraint. Tooling
+# crates (headless integration tests, offline bake utilities) opt in.
+block_on = []

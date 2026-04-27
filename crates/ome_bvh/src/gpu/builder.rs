@@ -329,58 +329,14 @@ impl BvhGpuBuilder {
         encoder
     }
 
-    /// Record the full onesweep radix sort into `encoder` using the
-    /// builder-owned pipelines + buffers. Caller must have placed the
-    /// input keys in `self.sort_buffers.keys_a` (and matching values in
-    /// `values_a`) before this call. On submission, the sorted result
-    /// returns to `_a` (4 ping-pong scatter passes).
-    #[allow(dead_code)] // Consumed by `Bvh::build_gpu` in subtask 4c.
-    pub(crate) fn dispatch_sort_into(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        count: u32,
-    ) {
-        crate::gpu::sort::dispatch_sort_into(
-            device,
-            queue,
-            encoder,
-            &self.sort_pipelines,
-            &self.sort_buffers,
-            count,
-        );
-    }
-
-    /// Record the full Karras LBVH build into `encoder` using the
-    /// builder-owned pipelines + buffers. Inputs are caller-supplied
-    /// buffers (typically the sort outputs in
-    /// `self.sort_buffers.{keys_a, values_a}` plus the AABB upload in
-    /// `self.aabbs_buffer`). On submission, `self.lbvh_buffers.nodes_buffer`
-    /// holds the `2n-1` BvhNode flat tree.
-    #[allow(dead_code)] // Consumed by `Bvh::build_gpu` in subtask 4c.
-    pub(crate) fn dispatch_lbvh_into(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        original_aabbs: &wgpu::Buffer,
-        sorted_morton: &wgpu::Buffer,
-        sorted_indices: &wgpu::Buffer,
-        n: u32,
-    ) {
-        crate::gpu::lbvh::dispatch_lbvh_build(
-            device,
-            queue,
-            encoder,
-            &self.lbvh_pipelines,
-            &self.lbvh_buffers,
-            original_aabbs,
-            sorted_morton,
-            sorted_indices,
-            n,
-        );
-    }
+    // Sort + LBVH dispatches are issued by `Bvh::build_gpu` in
+    // `gpu::build` via the free-function primitives in `gpu::sort`
+    // and `gpu::lbvh`. We don't expose `&self`-receiving wrappers here
+    // because the orchestrator simultaneously borrows disjoint fields
+    // of the builder (e.g. `&self.aabbs_buffer` together with
+    // `&self.lbvh_pipelines`), and a `&self`-method receiver would
+    // conflict with those borrows. The free functions accept the
+    // pipelines/buffers as explicit refs, sidestepping that.
 
     /// Test-only readback of the Morton codes buffer. Returns `count`
     /// codes in a CPU `Vec<u32>`. Production code never roundtrips this

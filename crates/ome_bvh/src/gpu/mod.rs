@@ -14,6 +14,7 @@
 //! emit byte-identical results — the consistency tests in each
 //! pass module verify this against random inputs.
 
+pub mod build;
 pub mod builder;
 pub mod lbvh;
 pub mod morton;
@@ -21,6 +22,7 @@ pub mod sort;
 pub mod sort_types;
 pub mod types;
 
+pub use build::{BvhBuildError, BvhGpuBuild, GpuBvhHandle, build_gpu};
 pub use builder::{BvhGpuBuilder, BvhTimestamps};
 pub use lbvh::{LbvhBuffers, LbvhConfig, LbvhPipelines, dispatch_lbvh_build};
 pub use sort_types::{
