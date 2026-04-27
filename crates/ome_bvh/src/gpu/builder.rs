@@ -16,6 +16,9 @@ use std::num::NonZeroU64;
 
 use wgpu::util::DeviceExt;
 
+use crate::gpu::lbvh::{LbvhBuffers, LbvhPipelines};
+use crate::gpu::sort::{SortBuffers, SortPipelines};
+use crate::gpu::sort_types::ITEMS_PER_TILE;
 use crate::gpu::types::{GpuAabb, GpuSceneBounds};
 
 /// Number of timestamp slots: one pair (start/end) per compute pass.
@@ -48,24 +51,36 @@ const MORTON_WORKGROUP_SIZE: u32 = 256;
 /// it in a long-lived resource (e.g. a `wgpu::Device`-scoped struct
 /// in `ome_render` or as a `Resources` entry).
 pub struct BvhGpuBuilder {
-    morton_pipeline: wgpu::ComputePipeline,
-    morton_bgl: wgpu::BindGroupLayout,
+    pub(crate) morton_pipeline: wgpu::ComputePipeline,
+    pub(crate) morton_bgl: wgpu::BindGroupLayout,
 
     // Reusable buffers — capacities are tracked separately so we only
     // grow (never shrink). All buffers use `STORAGE | COPY_DST`; the
     // staging readback path uses `MAP_READ | COPY_DST`.
-    aabbs_buffer: wgpu::Buffer,
-    aabbs_capacity: u64,
+    pub(crate) aabbs_buffer: wgpu::Buffer,
+    pub(crate) aabbs_capacity: u64,
 
-    scene_bounds_buffer: wgpu::Buffer,
+    pub(crate) scene_bounds_buffer: wgpu::Buffer,
 
-    morton_codes_buffer: wgpu::Buffer,
-    morton_codes_capacity: u64,
+    pub(crate) morton_codes_buffer: wgpu::Buffer,
+    pub(crate) morton_codes_capacity: u64,
+
+    /// Onesweep radix sort pipelines + reusable buffers. Driven by
+    /// [`Self::dispatch_sort_into`] (pass-through wrapper around
+    /// [`crate::gpu::sort::dispatch_sort_into`]).
+    pub(crate) sort_pipelines: SortPipelines,
+    pub(crate) sort_buffers: SortBuffers,
+
+    /// Karras LBVH constructor pipelines + reusable buffers. Driven by
+    /// [`Self::dispatch_lbvh_into`] (pass-through wrapper around
+    /// [`crate::gpu::lbvh::dispatch_lbvh_build`]).
+    pub(crate) lbvh_pipelines: LbvhPipelines,
+    pub(crate) lbvh_buffers: LbvhBuffers,
 
     /// Timestamp query set + resolve buffer for per-pass profiling.
     /// Always created; queries are written even if no consumer reads
     /// them (cost is negligible vs the work being measured).
-    timestamps: BvhTimestamps,
+    pub(crate) timestamps: BvhTimestamps,
 }
 
 /// Per-build timestamp infrastructure. Resolved into `resolve_buffer`
@@ -174,6 +189,11 @@ impl BvhGpuBuilder {
 
         let timestamps = BvhTimestamps::new(device, queue);
 
+        let sort_pipelines = SortPipelines::new(device, pipeline_cache);
+        let sort_buffers = SortBuffers::new(device);
+        let lbvh_pipelines = LbvhPipelines::new(device, pipeline_cache);
+        let lbvh_buffers = LbvhBuffers::new(device);
+
         Self {
             morton_pipeline,
             morton_bgl,
@@ -182,15 +202,22 @@ impl BvhGpuBuilder {
             scene_bounds_buffer,
             morton_codes_buffer,
             morton_codes_capacity: INITIAL_MORTON_CAPACITY,
+            sort_pipelines,
+            sort_buffers,
+            lbvh_pipelines,
+            lbvh_buffers,
             timestamps,
         }
     }
 
-    /// Grow the AABBs and morton-codes buffers if `count` exceeds the
-    /// current capacity. New capacity is `next_power_of_two(count)`,
-    /// matching the pattern used elsewhere in the engine
-    /// (`raymarch::primitives_buffer`, `raymarch::tokens_buffer`).
-    fn ensure_capacity(&mut self, device: &wgpu::Device, count: u64) {
+    /// Grow every owned buffer to fit `count` items. Each sub-component
+    /// (morton state, sort, lbvh) tracks its own capacity and only
+    /// reallocates if the request exceeds what it already has — buffers
+    /// never shrink.
+    ///
+    /// `pub(crate)` so `gpu::build::Bvh::build_gpu` can call it from
+    /// outside this module before recording the encoder.
+    pub(crate) fn ensure_capacity(&mut self, device: &wgpu::Device, count: u64) {
         if count > self.aabbs_capacity {
             let new_cap = count.next_power_of_two().max(INITIAL_AABB_CAPACITY);
             self.aabbs_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -213,6 +240,12 @@ impl BvhGpuBuilder {
             });
             self.morton_codes_capacity = new_cap;
         }
+        // Sort needs both keys/values capacity in items and a partition
+        // descriptor count derived from `ITEMS_PER_TILE`.
+        let partitions = ((count as u32) + ITEMS_PER_TILE - 1) / ITEMS_PER_TILE;
+        self.sort_buffers
+            .ensure_capacity(device, count, partitions.max(1));
+        self.lbvh_buffers.ensure_capacity(device, count);
     }
 
     /// Upload the AABB list + record the Morton compute pass into the
@@ -294,6 +327,59 @@ impl BvhGpuBuilder {
         });
         self.dispatch_morton_into(device, queue, &mut encoder, aabbs);
         encoder
+    }
+
+    /// Record the full onesweep radix sort into `encoder` using the
+    /// builder-owned pipelines + buffers. Caller must have placed the
+    /// input keys in `self.sort_buffers.keys_a` (and matching values in
+    /// `values_a`) before this call. On submission, the sorted result
+    /// returns to `_a` (4 ping-pong scatter passes).
+    #[allow(dead_code)] // Consumed by `Bvh::build_gpu` in subtask 4c.
+    pub(crate) fn dispatch_sort_into(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        count: u32,
+    ) {
+        crate::gpu::sort::dispatch_sort_into(
+            device,
+            queue,
+            encoder,
+            &self.sort_pipelines,
+            &self.sort_buffers,
+            count,
+        );
+    }
+
+    /// Record the full Karras LBVH build into `encoder` using the
+    /// builder-owned pipelines + buffers. Inputs are caller-supplied
+    /// buffers (typically the sort outputs in
+    /// `self.sort_buffers.{keys_a, values_a}` plus the AABB upload in
+    /// `self.aabbs_buffer`). On submission, `self.lbvh_buffers.nodes_buffer`
+    /// holds the `2n-1` BvhNode flat tree.
+    #[allow(dead_code)] // Consumed by `Bvh::build_gpu` in subtask 4c.
+    pub(crate) fn dispatch_lbvh_into(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        original_aabbs: &wgpu::Buffer,
+        sorted_morton: &wgpu::Buffer,
+        sorted_indices: &wgpu::Buffer,
+        n: u32,
+    ) {
+        crate::gpu::lbvh::dispatch_lbvh_build(
+            device,
+            queue,
+            encoder,
+            &self.lbvh_pipelines,
+            &self.lbvh_buffers,
+            original_aabbs,
+            sorted_morton,
+            sorted_indices,
+            n,
+        );
     }
 
     /// Test-only readback of the Morton codes buffer. Returns `count`
