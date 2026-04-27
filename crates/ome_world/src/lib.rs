@@ -14,6 +14,7 @@
 pub mod activation;
 pub mod chunk;
 pub mod focus;
+pub mod focus_cache;
 pub mod lod;
 pub mod manager;
 pub mod plugin;
@@ -24,6 +25,7 @@ pub use chunk::{BASE_CHUNK_SIZE_METERS, ChunkData, ChunkId, ChunkState, MAX_LOD_
 // since PR #115 PR-1; consumers can keep importing it through `ome_world`.
 pub use ome_bvh::Aabb;
 pub use focus::StreamingFocus;
+pub use focus_cache::{DirtyFocusLod, FocusCacheState, FocusPosition};
 pub use lod::{LodRing, LodRingConfig};
 pub use manager::{ChunkEvictionListener, ChunkManager};
 pub use plugin::{
