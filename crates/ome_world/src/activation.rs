@@ -29,6 +29,7 @@ use ome_ecs::query::Query;
 
 use crate::chunk::{BASE_CHUNK_SIZE_METERS, ChunkId};
 use crate::focus::StreamingFocus;
+use crate::focus_cache::{FocusCacheState, FocusPosition};
 use crate::lod::LodRingConfig;
 use crate::manager::ChunkManager;
 
@@ -69,10 +70,43 @@ pub fn activate_chunks(
     }
 }
 
+/// Cached activation step. Same semantics as [`activate_chunks`] but
+/// **skips entirely** when no focus has crossed a chunk boundary on
+/// any LOD since the last call.
+///
+/// `focuses[i] = (entity, universe_position, priority)`. The cache is
+/// updated in place each tick; stale entities (no longer in the focus
+/// list) are purged automatically.
+///
+/// This is the normal entry point used by the schedule. The
+/// uncached [`activate_chunks`] stays available as a pure helper for
+/// tests / one-shot tooling.
+pub fn activate_chunks_cached(
+    focuses: &[(Entity, DVec3, u8)],
+    cache: &mut FocusCacheState,
+    manager: &mut ChunkManager,
+    config: &LodRingConfig,
+) {
+    let positions: Vec<FocusPosition> =
+        focuses.iter().map(|(e, p, _)| (*e, *p)).collect();
+    let dirty = cache.dirty_pairs(&positions, config.lod_count());
+    cache.purge_stale(&positions);
+
+    if dirty.is_empty() {
+        // No focus crossed a chunk boundary this tick — the desired
+        // set is identical to last tick's, so nothing to enqueue.
+        return;
+    }
+
+    let bare: Vec<(DVec3, u8)> = focuses.iter().map(|(_, p, pr)| (*p, *pr)).collect();
+    activate_chunks(&bare, manager, config);
+}
+
 /// ECS-aware activation: extracts focuses from the world, then calls
-/// the pure [`activate_chunks`].
+/// [`activate_chunks_cached`] with the world-managed cache.
 pub fn activation_system(
     resources: &Resources,
+    cache: &mut FocusCacheState,
     manager: &mut ChunkManager,
     config: &LodRingConfig,
 ) {
@@ -81,19 +115,19 @@ pub fn activation_system(
         .copied()
         .unwrap_or_default();
 
-    let mut focuses: Vec<(DVec3, u8)> = Vec::new();
+    let mut focuses: Vec<(Entity, DVec3, u8)> = Vec::new();
     let q = Query::<(Entity, &StreamingFocus, &GlobalTransform)>::new(resources);
-    q.for_each(|(_, focus, gt)| {
+    q.for_each(|(entity, focus, gt)| {
         if !focus.active {
             return;
         }
         let (_, _, translation) = gt.matrix.to_scale_rotation_translation();
         let universe_pos = origin.coord().translated(translation.as_dvec3()).to_dvec3();
-        focuses.push((universe_pos, focus.priority));
+        focuses.push((entity, universe_pos, focus.priority));
     });
     drop(q);
 
-    activate_chunks(&focuses, manager, config);
+    activate_chunks_cached(&focuses, cache, manager, config);
 }
 
 /// Enumerate every chunk at `lod` whose AABB intersects the sphere
@@ -187,6 +221,10 @@ mod tests {
                 radius_meters: radius,
             }],
         }
+    }
+
+    fn entity(idx: u32) -> Entity {
+        Entity::new(idx, 0)
     }
 
     #[test]
@@ -293,6 +331,136 @@ mod tests {
         assert!(lod0_count > 0, "expected at least one LOD 0 chunk");
         assert!(lod2_count > 0, "expected at least one LOD 2 chunk");
     }
+
+    // -- cached-activation tests ----------------------------------------
+
+    #[test]
+    fn cached_first_call_loads_chunks() {
+        let mut m = ChunkManager::new(1024);
+        let mut cache = FocusCacheState::default();
+        activate_chunks_cached(
+            &[(entity(1), DVec3::ZERO, 0)],
+            &mut cache,
+            &mut m,
+            &one_ring(0, 100.0),
+        );
+        // First call sees the focus as never-before-seen → activates.
+        assert!(m.pending_load_count() > 0);
+    }
+
+    #[test]
+    fn cached_stationary_second_call_skips_work() {
+        let mut m = ChunkManager::new(1024);
+        let mut cache = FocusCacheState::default();
+        let cfg = one_ring(0, 100.0);
+        let focuses = [(entity(1), DVec3::new(10.0, 10.0, 10.0), 0u8)];
+
+        activate_chunks_cached(&focuses, &mut cache, &mut m, &cfg);
+        m.process_queues(usize::MAX, 0);
+        let loaded_after_first = m.loaded_count();
+        let pending_after_first = m.pending_load_count();
+        assert!(loaded_after_first > 0);
+        assert_eq!(pending_after_first, 0, "first call should have drained");
+
+        // Second call: same position. Cache reports no dirty pairs.
+        activate_chunks_cached(&focuses, &mut cache, &mut m, &cfg);
+        // Manager state is unchanged — no new pending loads, no unloads.
+        assert_eq!(m.pending_load_count(), 0);
+        assert_eq!(m.pending_unload_count(), 0);
+        assert_eq!(m.loaded_count(), loaded_after_first);
+    }
+
+    #[test]
+    fn cached_sub_chunk_movement_skips_work() {
+        let mut m = ChunkManager::new(1024);
+        let mut cache = FocusCacheState::default();
+        let cfg = one_ring(0, 100.0);
+
+        // First call at (10,10,10) — chunk (0,0,0).
+        activate_chunks_cached(
+            &[(entity(1), DVec3::new(10.0, 10.0, 10.0), 0)],
+            &mut cache,
+            &mut m,
+            &cfg,
+        );
+        m.process_queues(usize::MAX, 0);
+
+        // Second call: focus moved 30 m on x — still chunk (0,0,0) at LOD 0
+        // (chunk size 64).
+        activate_chunks_cached(
+            &[(entity(1), DVec3::new(40.0, 10.0, 10.0), 0)],
+            &mut cache,
+            &mut m,
+            &cfg,
+        );
+        // No work (still in same chunk).
+        assert_eq!(m.pending_load_count(), 0);
+        assert_eq!(m.pending_unload_count(), 0);
+    }
+
+    #[test]
+    fn cached_chunk_boundary_cross_triggers_work() {
+        let mut m = ChunkManager::new(1024);
+        let mut cache = FocusCacheState::default();
+        let cfg = one_ring(0, 100.0);
+
+        activate_chunks_cached(
+            &[(entity(1), DVec3::ZERO, 0)],
+            &mut cache,
+            &mut m,
+            &cfg,
+        );
+        m.process_queues(usize::MAX, 0);
+        let loaded_initial = m.loaded_count();
+
+        // Move 100 m on x — crosses LOD-0 boundary at 64.
+        activate_chunks_cached(
+            &[(entity(1), DVec3::new(100.0, 0.0, 0.0), 0)],
+            &mut cache,
+            &mut m,
+            &cfg,
+        );
+        // Some chunks newly desired (right of focus), some no longer
+        // desired (left). Work was done.
+        assert!(
+            m.pending_load_count() > 0 || m.pending_unload_count() > 0,
+            "boundary crossing must produce queue activity"
+        );
+        // After draining, total loaded should still be reasonable.
+        m.process_queues(usize::MAX, usize::MAX);
+        assert!(m.loaded_count() > 0);
+        let _ = loaded_initial;
+    }
+
+    #[test]
+    fn cached_purges_dropped_focus() {
+        let mut m = ChunkManager::new(1024);
+        let mut cache = FocusCacheState::default();
+        let cfg = one_ring(0, 100.0);
+
+        // Two focuses, then one despawns.
+        activate_chunks_cached(
+            &[
+                (entity(1), DVec3::ZERO, 0),
+                (entity(2), DVec3::new(500.0, 0.0, 0.0), 0),
+            ],
+            &mut cache,
+            &mut m,
+            &cfg,
+        );
+        assert_eq!(cache.tracked_count(), 2);
+
+        // Tick again with only entity 1 — entity 2 is purged.
+        activate_chunks_cached(
+            &[(entity(1), DVec3::ZERO, 0)],
+            &mut cache,
+            &mut m,
+            &cfg,
+        );
+        assert_eq!(cache.tracked_count(), 1);
+    }
+
+    // -- legacy activate_chunks tests (uncached path) -------------------
 
     #[test]
     fn closest_chunk_gets_lowest_priority() {

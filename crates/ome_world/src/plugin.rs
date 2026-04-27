@@ -16,6 +16,7 @@ use ome_ecs::component::ComponentRegistry;
 
 use crate::activation::activation_system;
 use crate::focus::StreamingFocus;
+use crate::focus_cache::FocusCacheState;
 use crate::lod::LodRingConfig;
 use crate::manager::ChunkManager;
 
@@ -37,6 +38,7 @@ impl Plugin for WorldStreamingPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ChunkManager::default());
         app.insert_resource(LodRingConfig::default());
+        app.insert_resource(FocusCacheState::default());
 
         // Register the StreamingFocus component on the ECS registry.
         // Use `register_cpu_reflected` (NOT plain `register_cpu`) so the
@@ -47,24 +49,15 @@ impl Plugin for WorldStreamingPlugin {
             registry.register_cpu_reflected::<StreamingFocus>();
         }
 
-        // NOTE: the per-frame activation system is intentionally NOT
-        // registered here. The current `activation_system` does brute-
-        // force grid iteration over the LOD ring radii, which produces
-        // millions of pending chunk requests per frame at gameplay-
-        // realistic radii (e.g. 32 km LOD-3 ring with 512 m chunks =
-        // ~238 k chunks per ring per frame). Editor tested at 41 M
-        // entries pending after 30 s of runtime.
-        //
-        // The proper fix is structural: a BVH / octree (issue #115) so
-        // the activation queries each LOD ring in O(log N) instead of
-        // O(N³). When #115 lands, the schedule registration goes back
-        // here and the brute-force `chunks_within_sphere` is replaced
-        // by an octree query inside `activation_system`.
-        //
-        // Until then, `activation_system` and `activate_chunks` remain
-        // public helpers (callable from tests / manual tools) — the
-        // math (AABB-vs-sphere filter, distance² priority) is correct
-        // and survives the refactor.
+        // Re-enabled in #115 PR-2: the activation system is now cache-
+        // gated by `FocusCacheState`. When no `StreamingFocus` has
+        // crossed a chunk boundary on any LOD since the last tick, the
+        // system early-returns without enumerating the grid — kills
+        // the regression caught in PR #315 (41 M pending entries in
+        // 30 s of editor runtime). The full LBVH-backed activation
+        // (using `ome_bvh`) lands in PR-4 / PR-5 when raymarch culling
+        // and physics broadphase need it.
+        app.add_system(ome_core::stage::Stage::PreUpdate, world_streaming_system);
     }
 
     fn name(&self) -> &str {
@@ -72,18 +65,19 @@ impl Plugin for WorldStreamingPlugin {
     }
 }
 
-/// Per-frame system: pull `ChunkManager` out, read `LodRingConfig`,
-/// run the activation pass + drain the queues with the per-frame
-/// budget, put the manager back. The remove/insert dance is needed
-/// because `activation_system` reads `&Resources` for the focus query
-/// while we mutate the manager.
-///
-/// Currently unregistered from the schedule (see `WorldStreamingPlugin::build`
-/// for the rationale — brute-force activation is O(N³), waiting on
-/// #115 PR-2 to plug in BVH-backed queries). Exposed publicly so
-/// integration tests / debug tools can drive a manual tick.
+/// Per-frame system: pull `ChunkManager` + `FocusCacheState` out,
+/// read `LodRingConfig`, run the cached activation pass + drain the
+/// queues with the per-frame budget, put the resources back. The
+/// remove/insert dance is needed because `activation_system` reads
+/// `&Resources` for the focus query while we mutate the manager and
+/// the cache.
 pub fn world_streaming_system(resources: &mut Resources) {
     let Some(mut manager) = resources.remove::<ChunkManager>() else {
+        return;
+    };
+    let Some(mut cache) = resources.remove::<FocusCacheState>() else {
+        // Put the manager back if we bail.
+        resources.insert(manager);
         return;
     };
     let config = resources
@@ -91,7 +85,7 @@ pub fn world_streaming_system(resources: &mut Resources) {
         .cloned()
         .unwrap_or_default();
 
-    activation_system(resources, &mut manager, &config);
+    activation_system(resources, &mut cache, &mut manager, &config);
     let (loaded, unloaded) =
         manager.process_queues(DEFAULT_MAX_LOADS_PER_FRAME, DEFAULT_MAX_UNLOADS_PER_FRAME);
 
@@ -108,6 +102,7 @@ pub fn world_streaming_system(resources: &mut Resources) {
     }
 
     resources.insert(manager);
+    resources.insert(cache);
 }
 
 #[cfg(test)]
