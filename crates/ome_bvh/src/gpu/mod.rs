@@ -16,7 +16,17 @@
 
 pub mod builder;
 pub mod morton;
+pub mod sort_types;
 pub mod types;
 
 pub use builder::{BvhGpuBuilder, BvhTimestamps};
+pub use sort_types::{
+    FLAG_AGGREGATE, FLAG_INVALID, FLAG_PREFIX, ITEMS_PER_TILE, OnesweepConfig, RADIX_BITS,
+    RADIX_BUCKETS, RADIX_PASSES, SORT_WORKGROUP_SIZE, global_histogram_size_bytes,
+    partition_descriptors_size_bytes,
+};
 pub use types::{GpuAabb, GpuSceneBounds};
+
+/// Onesweep init compute shader source. Cleared by the `BvhGpuBuilder`
+/// at the start of every sort run.
+pub(crate) const ONESWEEP_INIT_WGSL: &str = include_str!("../../shaders/onesweep_init.wgsl");
