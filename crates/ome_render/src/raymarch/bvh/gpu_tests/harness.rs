@@ -8,10 +8,8 @@ use glam::Quat;
 use super::shader::TEST_COMPUTE_WGSL;
 use crate::raymarch::aabb::primitive_aabb;
 use crate::raymarch::bvh::BvhState;
-use crate::raymarch::instance::{
-    IS_RAYMARCH, LeafAabb, RaymarchPayload, ROLE_RAYMARCH_ADD, SceneMeta, SdfPrimitive,
-    TYPE_SPHERE,
-};
+use crate::raymarch::instance::{RaymarchPayload, SceneMeta, SdfPrimitive, TYPE_SPHERE};
+use ome_bvh::{IS_RAYMARCH, LeafAabb, ROLE_RAYMARCH_ADD};
 
 /// Headless GPU acquisition. Returns `None` when no adapter is
 /// available or the timestamp features the BvhGpuBuilder needs are

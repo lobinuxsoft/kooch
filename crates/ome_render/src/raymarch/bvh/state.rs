@@ -1,47 +1,76 @@
-//! [`BvhState`] — kick / poll_swap lifecycle plus the scene-state
-//! hash. Owns the [`BvhGpuBuilder`] and two [`OutputSlot`]s.
+//! [`BvhState`] — raymarch wrapper around the engine-shared
+//! [`SharedBvhState`].
+//!
+//! Holds the renderer's view of the multi-consumer GPU BVH plus a
+//! parallel double-buffer for the raymarch-only [`RaymarchPayload`]
+//! storage buffer (binding 5 of the raymarch fragment shader). Every
+//! BVH-side concern — nodes / sorted_indices / leaf_aabbs / capacity
+//! growth — is delegated to [`SharedBvhState`]; only the raymarch
+//! side payload lives here.
+//!
+//! The payload double-buffer mirrors the shared BVH's swap: when
+//! [`SharedBvhState::poll_swap`] reports a [`SwapInfo`] the renderer
+//! uploads the captured `RaymarchPayload[]` into the same slot index.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use ome_bvh::{Aabb, BvhBuildError, BvhGpuBuild, BvhGpuBuilder, BvhNode};
+use ome_bvh::{Aabb, BvhBuildError, LeafAabb, SharedBvhState, SwapInfo};
 
-use super::slot::{INITIAL_SLOT_CAPACITY, OutputSlot};
-use crate::raymarch::instance::{INITIAL_LEAF_AABB_CAPACITY, LeafAabb, RaymarchPayload};
+use crate::raymarch::instance::RaymarchPayload;
 
-/// In-flight build awaiting GPU completion. Once
-/// [`BvhGpuBuild::poll`] returns `Some(Ok(_))`, [`BvhState::poll_swap`]
-/// copies the result into `target_slot` and flips `current_slot`.
-struct PendingBuild {
-    build: BvhGpuBuild<u32>,
-    /// Slot index (0 or 1) the result will land in.
-    target_slot: u8,
-    /// Per-leaf metadata captured at kick time. Uploaded to the target
-    /// slot's `leaf_aabbs_buffer` at swap. Held on the CPU because the
-    /// LBVH builder doesn't see this metadata.
-    leaf_aabbs: Vec<LeafAabb>,
-    /// Per-primitive raymarch payload (smoothness). Parallel to
-    /// `leaf_aabbs`; uploaded to the target slot's
-    /// `raymarch_payloads_buffer` at swap.
-    raymarch_payloads: Vec<RaymarchPayload>,
-    /// Number of leaves submitted to the build. Used at swap time to
-    /// drive the copy lengths.
-    n: u32,
+/// Initial capacity (in primitives) for the raymarch payload double-
+/// buffer. Tracks `INITIAL_SLOT_CAPACITY` in `ome_bvh::shared` so
+/// growth events line up across the two double-buffers.
+const INITIAL_PAYLOAD_CAPACITY: u64 = 256;
+
+/// Per-slot raymarch-only side buffer. Mirrors the shared BVH's slot
+/// rotation; bound by the raymarch fragment shader at binding 5.
+struct PayloadSlot {
+    buffer: wgpu::Buffer,
+    capacity: u64,
 }
 
-/// Double-buffered BVH GPU state. Plug-in struct held as a sub-resource
-/// of the raymarch renderer.
+impl PayloadSlot {
+    fn new(device: &wgpu::Device, capacity: u64) -> Self {
+        Self {
+            buffer: make_payload_buffer(device, capacity),
+            capacity,
+        }
+    }
+
+    fn ensure_capacity(&mut self, device: &wgpu::Device, n: u64) {
+        if n <= self.capacity {
+            return;
+        }
+        let new_cap = n.next_power_of_two().max(INITIAL_PAYLOAD_CAPACITY);
+        self.buffer = make_payload_buffer(device, new_cap);
+        self.capacity = new_cap;
+    }
+}
+
+fn make_payload_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("raymarch_bvh::payload_slot"),
+        size: capacity * std::mem::size_of::<RaymarchPayload>() as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// Per-build raymarch payload captured at kick time. Drained on the
+/// matching [`SwapInfo`] and uploaded to the swapped-in slot.
+struct PendingPayload {
+    raymarch_payloads: Vec<RaymarchPayload>,
+}
+
+/// Raymarch-side BVH state. Wraps [`SharedBvhState`] and the parallel
+/// raymarch payload double-buffer. Bound to the renderer as a sub-
+/// resource of `RayMarchRenderer`.
 pub struct BvhState {
-    pub(in crate::raymarch) builder: BvhGpuBuilder,
-    slot_a: OutputSlot,
-    slot_b: OutputSlot,
-    /// `0` → renderer reads `slot_a`, builds target `slot_b`. `1` → mirror.
-    current_slot: u8,
-    pending: Option<PendingBuild>,
-    /// Hash of the last successfully kicked scene state (primitives
-    /// bytes + per-leaf metadata). Used to skip redundant builds when
-    /// the scene hasn't changed between frames.
-    dirty_hash: Option<u64>,
+    shared: SharedBvhState,
+    payload_slots: [PayloadSlot; 2],
+    pending_payload: Option<PendingPayload>,
 }
 
 impl BvhState {
@@ -53,65 +82,49 @@ impl BvhState {
         queue: &wgpu::Queue,
         pipeline_cache: Option<&wgpu::PipelineCache>,
     ) -> Self {
-        let builder = BvhGpuBuilder::new(device, queue, pipeline_cache);
-        let initial = INITIAL_LEAF_AABB_CAPACITY.max(INITIAL_SLOT_CAPACITY);
         Self {
-            builder,
-            slot_a: OutputSlot::new(device, initial),
-            slot_b: OutputSlot::new(device, initial),
-            current_slot: 0,
-            pending: None,
-            dirty_hash: None,
+            shared: SharedBvhState::new(device, queue, pipeline_cache),
+            payload_slots: [
+                PayloadSlot::new(device, INITIAL_PAYLOAD_CAPACITY),
+                PayloadSlot::new(device, INITIAL_PAYLOAD_CAPACITY),
+            ],
+            pending_payload: None,
         }
     }
 
-    /// Borrow the slot the renderer should bind this frame.
+    /// Borrow the BVH-nodes buffer for the currently-active slot.
     pub fn current_nodes(&self) -> &wgpu::Buffer {
-        &self.slot(self.current_slot).nodes_buffer
+        self.shared.current_nodes()
     }
 
+    /// Borrow the sorted-indices buffer for the currently-active slot.
     pub fn current_sorted_indices(&self) -> &wgpu::Buffer {
-        &self.slot(self.current_slot).sorted_indices_buffer
+        self.shared.current_sorted_indices()
     }
 
+    /// Borrow the leaf-AABB buffer for the currently-active slot.
     pub fn current_leaf_aabbs(&self) -> &wgpu::Buffer {
-        &self.slot(self.current_slot).leaf_aabbs_buffer
+        self.shared.current_leaf_aabbs()
     }
 
-    /// Borrow the raymarch-only payload buffer for the currently-bound
+    /// Borrow the raymarch-only payload buffer for the currently-active
     /// slot. Only the raymarch fragment shader needs this binding —
     /// physics broadphase and frustum culling skip it.
     pub fn current_raymarch_payloads(&self) -> &wgpu::Buffer {
-        &self.slot(self.current_slot).raymarch_payloads_buffer
+        let idx = self.shared.current_slot_index() as usize;
+        &self.payload_slots[idx].buffer
     }
 
-    /// Number of valid primitives in the currently-bound slot. `0`
+    /// Number of valid primitives in the currently-active slot. `0`
     /// before any build has resolved.
     pub fn current_n(&self) -> u32 {
-        self.slot(self.current_slot).n
-    }
-
-    fn slot(&self, idx: u8) -> &OutputSlot {
-        match idx {
-            0 => &self.slot_a,
-            _ => &self.slot_b,
-        }
-    }
-
-    fn slot_mut(&mut self, idx: u8) -> &mut OutputSlot {
-        match idx {
-            0 => &mut self.slot_a,
-            _ => &mut self.slot_b,
-        }
+        self.shared.current_n()
     }
 
     /// Compute a stable hash of `(items + leaf_aabbs + raymarch_payloads)`
     /// so callers can detect whether the scene changed since the last
-    /// build. Exposed publicly so the update path can hash before
-    /// paying the cost of formatting payload Vecs.
-    ///
-    /// Hashing the raymarch payload alongside the items + leaves is
-    /// load-bearing: a smoothness change with no AABB / flag delta
+    /// build. Hashing the raymarch payload alongside the items + leaves
+    /// is load-bearing: a smoothness change with no AABB / flag delta
     /// must still trigger a re-upload, otherwise the bound slot keeps
     /// stale `k` and the smooth blend silently drifts.
     pub fn hash_scene(
@@ -123,8 +136,6 @@ impl BvhState {
         items.len().hash(&mut h);
         for (id, a) in items {
             id.hash(&mut h);
-            // Aabb's f32 fields don't implement Hash directly; project
-            // through their bit patterns.
             for c in a.min.to_array().iter().chain(a.max.to_array().iter()) {
                 c.to_bits().hash(&mut h);
             }
@@ -171,32 +182,22 @@ impl BvhState {
             raymarch_payloads.len(),
             "items and raymarch_payloads must align 1:1 — one entry per primitive",
         );
-        if self.pending.is_some() {
-            return false;
-        }
-        let hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads);
-        if Some(hash) == self.dirty_hash {
-            return false;
-        }
+
+        // Grow the target payload slot up front so the SharedBvhState
+        // and the payload buffer reach the same capacity in lockstep.
         let n = items.len() as u32;
-        // Free slot is the one NOT currently bound to the renderer.
-        let target_slot = self.current_slot ^ 1;
-
-        // Make sure the target slot can hold the result. Always grow to
-        // at least 1 to keep the buffers valid even for empty scenes.
+        let target_slot = self.shared.current_slot_index() ^ 1;
         let needed = (n as u64).max(1);
-        self.slot_mut(target_slot).ensure_capacity(device, needed);
+        self.payload_slots[target_slot as usize].ensure_capacity(device, needed);
 
-        let build = ome_bvh::Bvh::<u32>::build_gpu(&mut self.builder, device, queue, items);
-        self.pending = Some(PendingBuild {
-            build,
-            target_slot,
-            leaf_aabbs,
-            raymarch_payloads,
-            n,
-        });
-        self.dirty_hash = Some(hash);
-        true
+        let scene_hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads);
+        let kicked = self
+            .shared
+            .kick(device, queue, items, leaf_aabbs, scene_hash);
+        if kicked {
+            self.pending_payload = Some(PendingPayload { raymarch_payloads });
+        }
+        kicked
     }
 
     /// Drive the in-flight build forward. Must be called once per
@@ -204,7 +205,8 @@ impl BvhState {
     ///
     /// - `None` — no pending build, or pending build still in flight.
     /// - `Some(Ok(()))` — pending build resolved; result copied into
-    ///   the target slot; `current_slot` flipped.
+    ///   the target slot; raymarch payload uploaded onto the same slot;
+    ///   `current_slot` flipped.
     /// - `Some(Err(_))` — build failed; pending dropped without
     ///   touching the slots. The renderer keeps using the previous
     ///   slot's data until the next successful build.
@@ -213,64 +215,25 @@ impl BvhState {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Option<Result<(), BvhBuildError>> {
-        device.poll(wgpu::PollType::Poll).ok()?;
-        let Some(pending) = self.pending.as_mut() else {
-            return None;
-        };
-        let outcome = pending.build.poll(device)?;
-        // Take ownership now — we'll either commit or drop based on the
-        // outcome.
-        let pending = self.pending.take().expect("just observed Some above");
-
-        let bvh = match outcome {
-            Ok(b) => b,
-            Err(e) => return Some(Err(e)),
-        };
-
-        // Copy the GPU build's output (still living in the builder's
-        // internal scratch buffers) into the target slot's stable
-        // buffers. Empty builds (n == 0) leave the slot's `n = 0`,
-        // signalling "no primitives" to the renderer.
-        let n = pending.n;
-        let target_slot = pending.target_slot;
-        if n > 0 {
-            let total_nodes = (2 * n - 1) as u64;
-            let nodes_bytes = total_nodes * std::mem::size_of::<BvhNode>() as u64;
-            let indices_bytes = (n as u64) * 4;
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("raymarch_bvh::poll_swap_copy_encoder"),
-            });
-            encoder.copy_buffer_to_buffer(
-                self.builder.nodes_buffer(),
-                0,
-                &self.slot(target_slot).nodes_buffer,
-                0,
-                nodes_bytes,
-            );
-            encoder.copy_buffer_to_buffer(
-                self.builder.sorted_indices_buffer(),
-                0,
-                &self.slot(target_slot).sorted_indices_buffer,
-                0,
-                indices_bytes,
-            );
-            queue.submit(std::iter::once(encoder.finish()));
-            queue.write_buffer(
-                &self.slot(target_slot).leaf_aabbs_buffer,
-                0,
-                bytemuck::cast_slice(&pending.leaf_aabbs),
-            );
-            queue.write_buffer(
-                &self.slot(target_slot).raymarch_payloads_buffer,
-                0,
-                bytemuck::cast_slice(&pending.raymarch_payloads),
-            );
+        match self.shared.poll_swap(device, queue)? {
+            Err(e) => {
+                // Build failed; drop the captured payload — there is
+                // no slot to upload it to.
+                self.pending_payload = None;
+                Some(Err(e))
+            }
+            Ok(SwapInfo { target_slot, n }) => {
+                if let Some(pending) = self.pending_payload.take()
+                    && n > 0
+                {
+                    queue.write_buffer(
+                        &self.payload_slots[target_slot as usize].buffer,
+                        0,
+                        bytemuck::cast_slice(&pending.raymarch_payloads),
+                    );
+                }
+                Some(Ok(()))
+            }
         }
-        self.slot_mut(target_slot).n = n;
-        self.current_slot = target_slot;
-        // Drop the build handle (and `bvh` Vec<BvhNode> we don't need)
-        // explicitly to make the lifetime obvious.
-        drop(bvh);
-        Some(Ok(()))
     }
 }

@@ -4,11 +4,9 @@
 //! when it changes — otherwise the BVH stays stale across edits.
 
 use super::BvhState;
-use crate::raymarch::instance::{
-    IS_RAYMARCH, LeafAabb, RaymarchPayload, ROLE_RAYMARCH_ADD, ROLE_RAYMARCH_INT,
-};
+use crate::raymarch::instance::RaymarchPayload;
 use glam::Vec3;
-use ome_bvh::Aabb;
+use ome_bvh::{Aabb, IS_RAYMARCH, LeafAabb, ROLE_RAYMARCH_ADD, ROLE_RAYMARCH_INT};
 
 fn dummy_leaf(role_bits: u32, entity_id: u32) -> LeafAabb {
     LeafAabb {

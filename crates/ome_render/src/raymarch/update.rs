@@ -12,7 +12,9 @@
 //! more (PR-4 of #115).
 
 use glam::{Mat4, Vec4};
-use ome_bvh::Aabb;
+use ome_bvh::{
+    Aabb, IS_RAYMARCH, LeafAabb, ROLE_RAYMARCH_ADD, ROLE_RAYMARCH_INT, ROLE_RAYMARCH_SUB,
+};
 use ome_core::coord::ActiveOrigin;
 use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::GlobalTransform;
@@ -24,8 +26,7 @@ use ome_ecs::{
 
 use super::aabb::primitive_aabb;
 use super::instance::{
-    IS_RAYMARCH, INITIAL_PRIMITIVE_CAPACITY, LeafAabb, RaymarchPayload, ROLE_RAYMARCH_ADD,
-    ROLE_RAYMARCH_INT, ROLE_RAYMARCH_SUB, SceneMeta, SdfPrimitive, TYPE_BOX, TYPE_CAPSULE,
+    INITIAL_PRIMITIVE_CAPACITY, RaymarchPayload, SceneMeta, SdfPrimitive, TYPE_BOX, TYPE_CAPSULE,
     TYPE_CYLINDER, TYPE_PLANE, TYPE_SPHERE, TYPE_TORUS,
 };
 use super::renderer::{RayMarchRenderer, make_scene_bg};
