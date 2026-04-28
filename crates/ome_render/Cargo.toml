@@ -8,6 +8,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+ome_bvh.workspace = true
 ome_core.workspace = true
 ome_ecs.workspace = true
 ome_sdf.workspace = true
@@ -18,4 +19,6 @@ tracing.workspace = true
 gltf.workspace = true
 
 [dev-dependencies]
+ome_bvh = { workspace = true, features = ["block_on"] }
 naga = { version = "29", features = ["wgsl-in"] }
+pollster.workspace = true

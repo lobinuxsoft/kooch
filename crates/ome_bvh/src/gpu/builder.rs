@@ -210,6 +210,33 @@ impl BvhGpuBuilder {
         }
     }
 
+    /// Reference to the LBVH output nodes buffer. After
+    /// [`crate::Bvh::build_gpu`] resolves, this buffer holds the
+    /// `2N - 1` [`crate::BvhNode`]s in standard Karras layout.
+    ///
+    /// **Internal scratch — not stable across builds.** The builder
+    /// reuses this buffer in every build, so subsequent calls
+    /// overwrite the contents. Consumers that need a stable handle for
+    /// rendering should either:
+    /// - Hold a [`crate::BvhGpuBuild`] alive (the build's
+    ///   [`crate::GpuBvhHandle`] gates access on the build's submission
+    ///   index), or
+    /// - Copy the contents into their own buffers between builds (PR-4
+    ///   raymarch culling does this — see `ome_render::raymarch::bvh`).
+    pub fn nodes_buffer(&self) -> &wgpu::Buffer {
+        &self.lbvh_buffers.nodes_buffer
+    }
+
+    /// Reference to the onesweep-sorted payload-indices buffer. After
+    /// [`crate::Bvh::build_gpu`] resolves, this buffer holds `N` u32
+    /// entries — `sorted_indices[k]` = original index of the item at
+    /// Morton-sorted position `k`.
+    ///
+    /// **Internal scratch — same caveat as [`Self::nodes_buffer`].**
+    pub fn sorted_indices_buffer(&self) -> &wgpu::Buffer {
+        &self.sort_buffers.values_a
+    }
+
     /// Grow every owned buffer to fit `count` items. Each sub-component
     /// (morton state, sort, lbvh) tracks its own capacity and only
     /// reallocates if the request exceeds what it already has — buffers

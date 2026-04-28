@@ -48,7 +48,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     );
 
     let pipeline_cache = gpu.pipeline_cache();
-    let raymarch = RayMarchRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
+    let raymarch = RayMarchRenderer::new(gpu.device(), gpu.queue(), gpu.format(), pipeline_cache);
     let mesh_pass = MeshPassRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
     let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format(), pipeline_cache);
     let gizmo_renderer = GizmoRenderer::new(gpu.device(), gpu.format(), pipeline_cache);

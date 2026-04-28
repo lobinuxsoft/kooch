@@ -2,6 +2,24 @@
 //
 // Concatenated at runtime AFTER `sdf_primitives.wgsl` from ome_sdf, so
 // the `sdf_*`, `transform_point`, and CSG helpers are already in scope.
+//
+// PR-4 of #115: scene composition is BVH-driven. The shader does NOT
+// iterate a postfix CSG token stream any more — the BVH traversal IS
+// the evaluation loop. Each leaf knows its CSG role; the traversal
+// accumulates per-role distances; the final scene SDF is a fixed
+// 3-operator combination (smooth_subtract(smooth_intersect(adds, ints),
+// subs)). Primitives whose AABB does not contain `p` are pruned by the
+// stack-based traversal — never evaluated, never paid for.
+//
+// DETERMINISM: the traversal pushes `left` BEFORE `right` on the stack
+// (so pop order is right-first), and that push order is FIXED across
+// frames. `smooth_union` and `smooth_intersection` are NOT strictly
+// associative in float32 — `smooth_union(smooth_union(a, b), c)` may
+// differ in the last bit from `smooth_union(a, smooth_union(b, c))`.
+// Cross-frame byte-identity (the cull-vs-cull regression test in PR-4
+// subtask S9) requires the accumulator order to never depend on
+// runtime ray geometry. Do not switch to a t-near-sorted children
+// push without re-deriving the determinism story.
 
 struct CameraUniforms {
     view: mat4x4<f32>,
@@ -40,35 +58,83 @@ struct SdfPrimitive {
     params: vec4<f32>,
 }
 
-// Matches Rust `Token` byte-for-byte (16 bytes). The CSG composition is
-// expressed as a flat array of tokens in postfix (RPN) order — see
-// `crates/ome_render/src/raymarch/csg_tree.rs`.
-//   kind == 0u → LEAF; primitive_index references the primitives array.
-//   kind == 1u → OPERATOR; op selects the CSG combiner, smoothness sets
-//                the blend radius for smooth variants.
-struct Token {
-    kind: u32,
-    op: u32,
-    smoothness: f32,
-    primitive_index: u32,
+// Matches Rust `BvhNode` byte-for-byte (32 bytes, std430-clean).
+// `right_or_count`'s high bit (`0x80000000`) is the leaf flag:
+//   - clear → internal: `left` + `right_or_count` are child indices.
+//   - set   → leaf: `left` = first leaf-payload idx, `right_or_count &
+//     0x7FFFFFFF` = count of contiguous payloads.
+struct BvhNode {
+    aabb_min: vec3<f32>,
+    left: u32,
+    aabb_max: vec3<f32>,
+    right_or_count: u32,
 }
 
+// Matches Rust `LeafAabb` byte-for-byte (32 bytes, std430-clean).
+// Per-primitive metadata that drives the per-role accumulators in
+// `eval_scene_bvh`. `aabb_min/max` are inflated by the per-role smooth-
+// blend k_max so the cull stays conservative under smooth blends.
+struct LeafAabb {
+    aabb_min: vec3<f32>,
+    role: u32,
+    aabb_max: vec3<f32>,
+    smoothness: f32,
+}
+
+// Per-frame scene metadata. 64 bytes, std140-uniform-clean. Field
+// offsets pinned by an `offset_of!` test on the Rust side (see
+// `instance.rs`).
 struct SceneMeta {
     primitive_count: u32,
-    token_count: u32,
+    bvh_n: u32,
     // `1` = a separate sky pass already ran, discard on miss (additive).
     // `0` = no sky pass, draw the internal vertical gradient on miss.
     skip_internal_sky: u32,
+    has_intersects: u32,
+    has_subs: u32,
+    // Per-role smoothness maxima for the FINAL combination step (the
+    // outer `smooth_intersect` / `smooth_subtract` of the default tree).
+    // Per-leaf smoothness — used inside the role's own accumulator —
+    // travels in `LeafAabb.smoothness`.
+    k_int_scene: f32,
+    k_sub_scene: f32,
     _pad0: u32,
     sky_top: vec4<f32>,
     sky_bottom: vec4<f32>,
 }
 
+// CSG role constants — must match `instance::ROLE_*` on the Rust side.
+const ROLE_ADD: u32 = 0u;
+const ROLE_INTERSECT: u32 = 1u;
+const ROLE_SUBTRACT: u32 = 2u;
+
+const BVH_LEAF_FLAG: u32 = 0x80000000u;
+const BVH_VALUE_MASK: u32 = 0x7FFFFFFFu;
+
+// Maximum traversal stack depth. Matches `ome_bvh::query::MAX_STACK_DEPTH`.
+// A balanced BVH up to ~4 B leaves stays within this; pathological
+// inputs would still hit a debug-assertion panic on the Rust side
+// before they reach the shader.
+const BVH_STACK_DEPTH: u32 = 32u;
+
+// Identity values for the three per-role accumulators. Picked so an
+// empty role collapses cleanly under the final combination:
+//
+// - smooth_union(+inf, x, k) ≈ x  (union with nothing = x).
+// - smooth_intersection(-inf, x, k) ≈ x  (intersect with universe = x).
+//
+// `1e10` is the same large-but-finite sentinel `eval_scene` already
+// uses for "no primitive at this point" — keeps the math NaN-free.
+const ACC_UNION_IDENTITY: f32 = 1.0e10;
+const ACC_INTERSECT_IDENTITY: f32 = -1.0e10;
+
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> params: RayMarchParams;
 @group(1) @binding(0) var<uniform> scene_meta: SceneMeta;
 @group(1) @binding(1) var<storage, read> primitives: array<SdfPrimitive>;
-@group(1) @binding(2) var<storage, read> tokens: array<Token>;
+@group(1) @binding(2) var<storage, read> bvh_nodes: array<BvhNode>;
+@group(1) @binding(3) var<storage, read> sorted_indices: array<u32>;
+@group(1) @binding(4) var<storage, read> leaf_aabbs: array<LeafAabb>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -151,71 +217,99 @@ fn eval_primitive_at(p: vec3<f32>, prim: SdfPrimitive) -> f32 {
     return eval_primitive_kind(local, prim) * s_min;
 }
 
-// Combines two stack values with a CSG operator. `k_in` is clamped to
-// keep the smooth helpers numerically stable; with `k = 1e-5` the smooth
-// variants degenerate to their hard counterparts (used by the migration
-// default tree when a role's max smoothness is zero).
-fn apply_op(a: f32, b: f32, op: u32, k_in: f32) -> f32 {
-    let k = max(k_in, 1e-5);
-    switch op {
-        case 0u: {
-            return sdf_union(a, b);
-        }
-        case 1u: {
-            return sdf_smooth_union(a, b, k);
-        }
-        case 2u: {
-            return sdf_intersection(a, b);
-        }
-        case 3u: {
-            return sdf_smooth_intersection(a, b, k);
-        }
-        case 4u: {
-            return sdf_subtraction(a, b);
-        }
-        case 5u: {
-            return sdf_smooth_subtraction(a, b, k);
-        }
-        default: {
-            return sdf_union(a, b);
-        }
-    }
+// Returns true if `p` is inside the AABB defined by `lo`/`hi` (boundary
+// inclusive). Used to cull subtrees during the BVH point-query walk in
+// `eval_scene_bvh`.
+fn point_in_aabb(p: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> bool {
+    return all(p >= lo) && all(p <= hi);
 }
 
-// Postfix evaluator: walks the token stream once, maintaining a
-// fixed-size stack of accumulated SDF values. LEAF tokens push a freshly
-// evaluated primitive; OPERATOR tokens pop two values, apply the op, and
-// push the result. A well-formed tree always leaves exactly one value on
-// the stack at the end. Empty token streams render as the sky background.
+// BVH-driven scene SDF evaluator. Walks the BVH stack-based, point-
+// querying every leaf whose AABB contains `p`, and accumulates the
+// hit's distance into the role's accumulator (smooth_union for ADD/SUB,
+// smooth_intersection for INTERSECT). Final result combines the three
+// accumulators with the fixed default tree:
 //
-// Stack size is fixed at 16 to bound register pressure across all GPU
-// targets supported by wgpu (RDNA 2 / Apple M / Adreno). The CPU side
-// (`csg_tree::CsgNode::serialise_postfix`) refuses any tree that would
-// exceed this depth at upload time — a depth of 16 covers ~65k primitives
-// in a balanced tree.
-fn eval_scene(p: vec3<f32>) -> f32 {
-    let count = scene_meta.token_count;
-    if count == 0u {
-        return 1e10;
+//   smooth_subtract(smooth_intersect(adds, ints, k_int), subs, k_sub)
+//
+// Branches collapse to the identity element when their role is empty —
+// `has_intersects == 0` skips the intersect step entirely, etc.
+//
+// `bvh_n == 0` short-circuits to the union identity (`1e10`), which
+// the ray-march loop will read as "no surface anywhere" → sky.
+fn eval_scene_bvh(p: vec3<f32>) -> f32 {
+    if scene_meta.bvh_n == 0u {
+        return ACC_UNION_IDENTITY;
     }
-    var stack: array<f32, 16>;
-    var sp: u32 = 0u;
-    for (var i = 0u; i < count; i = i + 1u) {
-        let tok = tokens[i];
-        if tok.kind == 0u {
-            // LEAF — evaluate the primitive and push.
-            let prim = primitives[tok.primitive_index];
-            stack[sp] = eval_primitive_at(p, prim);
-            sp = sp + 1u;
+
+    var add_acc: f32 = ACC_UNION_IDENTITY;
+    var int_acc: f32 = ACC_INTERSECT_IDENTITY;
+    var sub_acc: f32 = ACC_UNION_IDENTITY;
+
+    var stack: array<u32, 32>;
+    stack[0] = 0u;
+    var sp: u32 = 1u;
+
+    while sp > 0u {
+        sp = sp - 1u;
+        let node = bvh_nodes[stack[sp]];
+        if !point_in_aabb(p, node.aabb_min, node.aabb_max) {
+            continue;
+        }
+        let payload = node.right_or_count;
+        if (payload & BVH_LEAF_FLAG) != 0u {
+            let count = payload & BVH_VALUE_MASK;
+            let first = node.left;
+            for (var i: u32 = 0u; i < count; i = i + 1u) {
+                let leaf_idx = first + i;
+                let prim_idx = sorted_indices[leaf_idx];
+                let leaf = leaf_aabbs[prim_idx];
+                let prim = primitives[prim_idx];
+                let d = eval_primitive_at(p, prim);
+                let k = max(leaf.smoothness, 1e-5);
+                switch leaf.role {
+                    case 0u: {
+                        add_acc = sdf_smooth_union(add_acc, d, k);
+                    }
+                    case 1u: {
+                        int_acc = sdf_smooth_intersection(int_acc, d, k);
+                    }
+                    case 2u: {
+                        sub_acc = sdf_smooth_union(sub_acc, d, k);
+                    }
+                    default: {
+                        add_acc = sdf_smooth_union(add_acc, d, k);
+                    }
+                }
+            }
         } else {
-            // OPERATOR — pop two operands, push the combined result.
-            let b = stack[sp - 1u];
-            let a = stack[sp - 2u];
-            stack[sp - 2u] = apply_op(a, b, tok.op, tok.smoothness);
-            sp = sp - 1u;
+            // Internal node — push left FIRST, then right. Pop order
+            // becomes right-first; both children eventually visited in
+            // a stable, deterministic sequence. See the determinism
+            // note at the top of this file.
+            let left = node.left;
+            let right = payload & BVH_VALUE_MASK;
+            if sp + 2u <= 32u {
+                stack[sp] = left;
+                sp = sp + 1u;
+                stack[sp] = right;
+                sp = sp + 1u;
+            }
+            // Stack overflow theoretically possible for adversarial
+            // topologies; the Rust-side debug invariant catches that
+            // before the BVH ever reaches the shader. Silently skip
+            // here in release rather than corrupt the result.
         }
     }
-    return stack[0];
+
+    var result = add_acc;
+    if scene_meta.has_intersects != 0u {
+        result = sdf_smooth_intersection(result, int_acc, max(scene_meta.k_int_scene, 1e-5));
+    }
+    if scene_meta.has_subs != 0u {
+        result = sdf_smooth_subtraction(result, sub_acc, max(scene_meta.k_sub_scene, 1e-5));
+    }
+    return result;
 }
 
 struct HitResult {
@@ -233,7 +327,7 @@ fn ray_march(ray: Ray) -> HitResult {
     for (var i = 0u; i < params.max_steps; i = i + 1u) {
         result.steps = i;
         let p = ray.origin + ray.direction * t;
-        let d = eval_scene(p);
+        let d = eval_scene_bvh(p);
         // Adaptive epsilon: threshold widens linearly with distance to
         // approximate a pixel-cone footprint. Rays converge faster on
         // far surfaces without losing close-up precision.
@@ -259,9 +353,9 @@ fn calc_normal(p: vec3<f32>, dist: f32) -> vec3<f32> {
     // same value and inherits the CSG-seam guarantee from #225.
     let eps = sdf_normal_eps(dist, params.surface_threshold, params.epsilon_factor);
     let n = vec3<f32>(
-        eval_scene(p + vec3<f32>(eps, 0.0, 0.0)) - eval_scene(p - vec3<f32>(eps, 0.0, 0.0)),
-        eval_scene(p + vec3<f32>(0.0, eps, 0.0)) - eval_scene(p - vec3<f32>(0.0, eps, 0.0)),
-        eval_scene(p + vec3<f32>(0.0, 0.0, eps)) - eval_scene(p - vec3<f32>(0.0, 0.0, eps)),
+        eval_scene_bvh(p + vec3<f32>(eps, 0.0, 0.0)) - eval_scene_bvh(p - vec3<f32>(eps, 0.0, 0.0)),
+        eval_scene_bvh(p + vec3<f32>(0.0, eps, 0.0)) - eval_scene_bvh(p - vec3<f32>(0.0, eps, 0.0)),
+        eval_scene_bvh(p + vec3<f32>(0.0, 0.0, eps)) - eval_scene_bvh(p - vec3<f32>(0.0, 0.0, eps)),
     );
     return normalize(n);
 }

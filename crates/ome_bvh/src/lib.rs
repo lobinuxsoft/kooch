@@ -31,7 +31,10 @@ pub mod query;
 
 pub use aabb::Aabb;
 pub use bvh::Bvh;
-pub use gpu::{BvhGpuBuilder, BvhTimestamps, GpuAabb, GpuSceneBounds};
+pub use gpu::{
+    BvhBuildError, BvhGpuBuild, BvhGpuBuilder, BvhTimestamps, GpuAabb, GpuBvhHandle,
+    GpuSceneBounds,
+};
 pub use morton::MortonCode;
-pub use node::BvhNode;
+pub use node::{BVH_LEAF_FLAG, BVH_VALUE_MASK, BvhNode};
 pub use query::MAX_STACK_DEPTH;
