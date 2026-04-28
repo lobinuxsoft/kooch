@@ -1,7 +1,10 @@
 //! ome_sdf — Signed Distance Field system for oh_my_engine.
 //!
 //! Hosts the WGSL primitive library consumed by the ray-marching
-//! renderer and (eventually) by the physics broadphase.
+//! renderer and (eventually) by the physics broadphase, plus the
+//! chunk-local sparse SDF voxel storage backend (issue #136).
+
+pub mod sparse;
 
 /// Source of `shaders/sdf_primitives.wgsl` embedded at compile time.
 ///
