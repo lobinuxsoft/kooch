@@ -71,13 +71,23 @@ struct BvhNode {
 }
 
 // Matches Rust `LeafAabb` byte-for-byte (32 bytes, std430-clean).
-// Per-primitive metadata that drives the per-role accumulators in
-// `eval_scene_bvh`. `aabb_min/max` are inflated by the per-role smooth-
-// blend k_max so the cull stays conservative under smooth blends.
+// Multi-consumer per-primitive metadata: AABB + bit-packed `flags` +
+// `entity_id`. `flags` is shared across raymarch / physics broadphase /
+// frustum culling — see the `IS_*` / `ROLE_RAYMARCH_*` constants below.
+// `aabb_min/max` are inflated by the per-role smooth-blend k_max so the
+// cull stays conservative under smooth blends.
 struct LeafAabb {
     aabb_min: vec3<f32>,
-    role: u32,
+    flags: u32,
     aabb_max: vec3<f32>,
+    entity_id: u32,
+}
+
+// Matches Rust `RaymarchPayload` byte-for-byte (4 bytes, std430).
+// Raymarch-only per-primitive smoothness — bound separately so the
+// non-raymarch consumers (physics broadphase, frustum culling) don't
+// have to read fields they never use.
+struct RaymarchPayload {
     smoothness: f32,
 }
 
@@ -103,10 +113,19 @@ struct SceneMeta {
     sky_bottom: vec4<f32>,
 }
 
-// CSG role constants — must match `instance::ROLE_*` on the Rust side.
-const ROLE_ADD: u32 = 0u;
-const ROLE_INTERSECT: u32 = 1u;
-const ROLE_SUBTRACT: u32 = 2u;
+// Multi-consumer leaf-flag scheme. Must match the `IS_*` /
+// `ROLE_RAYMARCH_*` constants in `instance.rs` byte-for-byte.
+const ROLE_RAYMARCH_MASK: u32 = 0x3u;
+const ROLE_RAYMARCH_ADD: u32 = 0x0u;
+const ROLE_RAYMARCH_INT: u32 = 0x1u;
+const ROLE_RAYMARCH_SUB: u32 = 0x2u;
+const IS_RAYMARCH: u32 = 1u << 2u;
+// Reserved consumer bits — defined here for parity with the Rust side.
+// The raymarch shader never reads them; physics + frustum cull have
+// their own shaders.
+const IS_COLLIDER: u32 = 1u << 3u;
+const IS_VISIBLE_MESH: u32 = 1u << 4u;
+const IS_LIGHT: u32 = 1u << 5u;
 
 const BVH_LEAF_FLAG: u32 = 0x80000000u;
 const BVH_VALUE_MASK: u32 = 0x7FFFFFFFu;
@@ -135,6 +154,7 @@ const ACC_INTERSECT_IDENTITY: f32 = -1.0e10;
 @group(1) @binding(2) var<storage, read> bvh_nodes: array<BvhNode>;
 @group(1) @binding(3) var<storage, read> sorted_indices: array<u32>;
 @group(1) @binding(4) var<storage, read> leaf_aabbs: array<LeafAabb>;
+@group(1) @binding(5) var<storage, read> raymarch_payloads: array<RaymarchPayload>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -264,10 +284,17 @@ fn eval_scene_bvh(p: vec3<f32>) -> f32 {
                 let leaf_idx = first + i;
                 let prim_idx = sorted_indices[leaf_idx];
                 let leaf = leaf_aabbs[prim_idx];
+                // Skip leaves that don't participate in the raymarch
+                // consumer. Future-proofs the shader for a single
+                // unified BVH that also indexes colliders / visible
+                // meshes (#115 PR-5).
+                if (leaf.flags & IS_RAYMARCH) == 0u {
+                    continue;
+                }
                 let prim = primitives[prim_idx];
                 let d = eval_primitive_at(p, prim);
-                let k = max(leaf.smoothness, 1e-5);
-                switch leaf.role {
+                let k = max(raymarch_payloads[prim_idx].smoothness, 1e-5);
+                switch (leaf.flags & ROLE_RAYMARCH_MASK) {
                     case 0u: {
                         add_acc = sdf_smooth_union(add_acc, d, k);
                     }

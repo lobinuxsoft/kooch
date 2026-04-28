@@ -20,5 +20,6 @@ gltf.workspace = true
 
 [dev-dependencies]
 ome_bvh = { workspace = true, features = ["block_on"] }
+ome_physics.workspace = true
 naga = { version = "29", features = ["wgsl-in"] }
 pollster.workspace = true

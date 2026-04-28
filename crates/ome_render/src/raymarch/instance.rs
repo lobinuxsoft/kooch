@@ -152,50 +152,20 @@ impl Default for SceneMeta {
 /// Initial capacity for the SDF primitive storage buffer (grows on demand).
 pub(super) const INITIAL_PRIMITIVE_CAPACITY: u64 = 256;
 
-/// CSG role of a primitive in the default tree. Matches the `ROLE_*`
-/// constants in the BVH-traversal WGSL shader and drives the per-role
-/// accumulator a ray's traversal builds up.
+/// Raymarch-only per-primitive metadata. Lives in a separate storage
+/// buffer (`@group(1) @binding(5)` in `raymarch_main.wgsl`) so non-
+/// raymarch consumers (physics broadphase, frustum culling) don't pay
+/// for fields they never read.
 ///
-/// The role is encoded into a u32 (rather than a smaller type) because
-/// `LeafAabb` already has a 4-byte slot from the std430 layout — using
-/// a smaller type would not save any bytes.
-pub(super) const ROLE_ADD: u32 = 0;
-pub(super) const ROLE_INTERSECT: u32 = 1;
-pub(super) const ROLE_SUBTRACT: u32 = 2;
-
-/// Per-leaf metadata uploaded to the GPU alongside the BVH itself.
-///
-/// **32 bytes, std430-clean** — same layout family as `BvhNode`, so the
-/// WGSL traversal can read both buffers without per-vendor alignment
-/// fixes. Field order mirrors the WGSL `LeafAabb`:
-///
-/// ```text
-///   [0..12 ) aabb_min:    vec3<f32>
-///   [12..16) role:        u32
-///   [16..28) aabb_max:    vec3<f32>
-///   [28..32) smoothness:  f32
-/// ```
-///
-/// `role` is one of [`ROLE_ADD`] / [`ROLE_INTERSECT`] / [`ROLE_SUBTRACT`].
-/// `smoothness` is the primitive's individual `SdfBlend.smoothness`
-/// (per-primitive, NOT per-role-max). Per-role-max is uploaded once
-/// per scene in [`SceneMeta`] for the final tree combination step.
-///
-/// `aabb_min` / `aabb_max` are the world-space bounds **already inflated**
-/// by the per-primitive smoothness — see [`super::aabb::primitive_aabb`].
+/// **4 bytes, std430 stride 4** — single `f32` for now. Future fields
+/// (per-leaf material override, debug colour, etc.) extend the struct
+/// without touching the shared `ome_bvh::LeafAabb`.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
-pub(super) struct LeafAabb {
-    pub aabb_min: [f32; 3],
-    pub role: u32,
-    pub aabb_max: [f32; 3],
+pub(super) struct RaymarchPayload {
     pub smoothness: f32,
 }
 
-/// Initial capacity for the leaf-AABB storage buffer (grows on demand).
-/// Always equals `INITIAL_PRIMITIVE_CAPACITY` because there is exactly
-/// one leaf per primitive.
-pub(super) const INITIAL_LEAF_AABB_CAPACITY: u64 = INITIAL_PRIMITIVE_CAPACITY;
 
 #[cfg(test)]
 mod tests {
@@ -208,26 +178,9 @@ mod tests {
     }
 
     #[test]
-    fn leaf_aabb_layout_is_32_bytes() {
-        assert_eq!(std::mem::size_of::<LeafAabb>(), 32);
-        assert_eq!(std::mem::align_of::<LeafAabb>(), 4);
-    }
-
-    #[test]
-    fn leaf_aabb_field_offsets_match_wgsl() {
-        use std::mem::offset_of;
-        // Mirror the std430 layout the BVH-traversal shader expects.
-        assert_eq!(offset_of!(LeafAabb, aabb_min), 0);
-        assert_eq!(offset_of!(LeafAabb, role), 12);
-        assert_eq!(offset_of!(LeafAabb, aabb_max), 16);
-        assert_eq!(offset_of!(LeafAabb, smoothness), 28);
-    }
-
-    #[test]
-    fn role_constants_distinct() {
-        assert_ne!(ROLE_ADD, ROLE_INTERSECT);
-        assert_ne!(ROLE_ADD, ROLE_SUBTRACT);
-        assert_ne!(ROLE_INTERSECT, ROLE_SUBTRACT);
+    fn raymarch_payload_layout_is_4_bytes() {
+        assert_eq!(std::mem::size_of::<RaymarchPayload>(), 4);
+        assert_eq!(std::mem::align_of::<RaymarchPayload>(), 4);
     }
 
     #[test]

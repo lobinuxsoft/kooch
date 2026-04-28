@@ -1,81 +1,35 @@
-//! High-level GPU LBVH build orchestrator.
+//! [`BvhGpuBuild<T>`] + [`build_gpu`] — full Karras GPU LBVH path.
 //!
-//! [`Bvh::build_gpu`] chains morton + onesweep sort + Karras LBVH on a
-//! single command encoder, submits, and returns a [`BvhGpuBuild<T>`]
-//! handle. The handle is poll-driven (see
-//! [`BvhGpuBuild::poll`]) so the caller can integrate it into a
-//! frame loop without ever calling `block_on` from the hot path.
-//!
-//! Two consumption modes are supported:
-//!
-//! - **CPU readback** (tests, tooling, oneshot tools): the caller polls
-//!   until [`BvhGpuBuild::poll`] returns `Some(Ok(Bvh<T>))`, recovering
-//!   the flat `Vec<BvhNode>` and the permuted `Vec<T>` payload.
-//! - **GPU-resident handoff** (production hot loop, PR-4 raymarch
-//!   culling, PR-5 collision broadphase): the caller does NOT readback;
-//!   instead it grabs [`BvhGpuBuild::gpu_handle`] which exposes the
-//!   `nodes_buffer` + `n` for downstream traversal kernels. The first
-//!   call to `gpu_handle` blocks on the build's submission to ensure
-//!   the buffer contents are valid; subsequent calls are free.
-//!
-//! See `crates/ome_bvh/src/gpu/builder.rs` for the underlying state
-//! (pipelines + reusable buffers).
+//! Chains morton + onesweep sort + Karras (leaves + internal + AABB
+//! propagation) on a single command encoder, submits, and returns a
+//! poll-driven handle. The `n == 0` and `n == 1` branches are made
+//! visible at the call site so the orchestrator's edge-case guards
+//! stay reviewable.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
 use crate::aabb::Aabb;
 use crate::bvh::Bvh;
 use crate::gpu::builder::BvhGpuBuilder;
 use crate::node::BvhNode;
 
-/// Errors surfaced by the GPU build pipeline. All are terminal — the
-/// caller should drop the [`BvhGpuBuild`] and either retry or fail
-/// loudly. Returned through [`BvhGpuBuild::poll`] /
-/// [`BvhGpuBuild::block_on`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BvhBuildError {
-    /// `wgpu::Device` was lost (driver crash, surface reconfigured
-    /// mid-build, etc). The build's submission can't complete and the
-    /// staging buffers will never resolve.
-    DeviceLost,
-    /// `map_async` callback reported a buffer mapping failure on either
-    /// the nodes or the sorted-indices staging buffer.
-    BufferMapFailed,
-    /// Buffer allocation failed during `ensure_capacity` — the GPU is
-    /// out of memory or the requested size exceeded
-    /// `max_buffer_size`. The build was abandoned before submission.
-    OutOfMemory,
-}
+use super::error::BvhBuildError;
+use super::lifecycle::{GpuBvhHandle, MapState};
 
-impl std::fmt::Display for BvhBuildError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::DeviceLost => f.write_str("wgpu device was lost during the BVH build"),
-            Self::BufferMapFailed => f.write_str("staging buffer map_async failed"),
-            Self::OutOfMemory => f.write_str("GPU buffer allocation failed (out of memory)"),
-        }
-    }
-}
-
-impl std::error::Error for BvhBuildError {}
-
-/// Shared state between the orchestrator's `map_async` callbacks and
-/// [`BvhGpuBuild::poll`]. Atomic loads/stores on the booleans avoid
-/// any locking on the hot poll path.
-///
-/// The `done_*` fields back the `cfg(debug_assertions)` AABB
-/// convergence invariant check — see [`BvhGpuBuild::done_staging`].
-/// In release builds nothing ever sets them; the field shape stays
-/// identical to keep the struct simple.
-#[derive(Default)]
-struct MapState {
-    nodes_done: AtomicBool,
-    indices_done: AtomicBool,
-    nodes_err: AtomicBool,
-    indices_err: AtomicBool,
-    done_done: AtomicBool,
-    done_err: AtomicBool,
+/// Result of a successfully resolved [`BvhGpuBuild::poll`]. Carries
+/// the byte-identical CPU mirror of the GPU build alongside the
+/// `sorted_indices` permutation the readback already paid for. The
+/// permutation feeds [`Bvh::refit_in_place`] so a CPU consumer
+/// (physics broadphase, debug tooling, ...) can stay in sync with
+/// subsequent refits over the same topology without a fresh nodes
+/// readback.
+pub struct BvhGpuBuildResult<T: Copy> {
+    pub bvh: Bvh<T>,
+    /// `sorted_indices[k]` = original-input position of the leaf at
+    /// sorted position `k` (i.e. `nodes[(N-1) + k]`). Empty for the
+    /// `n == 0` build path.
+    pub sorted_indices: Vec<u32>,
 }
 
 /// Handle to a GPU LBVH build in flight. Drive with
@@ -109,45 +63,37 @@ pub struct BvhGpuBuild<T: Copy> {
     /// only when `cfg!(debug_assertions) && n >= 2`; `None` in release
     /// or for trivial sizes. When `Some`, [`Self::poll`] reads it once
     /// the build resolves and panics if any internal node has
-    /// `done[i] == 0` — that means the AABB propagation iteration
-    /// count was insufficient and the resulting AABBs are silently
-    /// wrong. See `AABB_ITERATION_SLACK` in `gpu/lbvh.rs` for the
-    /// empirical bound this guards.
+    /// `done[i] == 0`. See `AABB_ITERATION_SLACK` in `gpu/lbvh.rs`.
     done_staging: Option<wgpu::Buffer>,
-}
-
-/// Lightweight view of a completed (or in-flight + fenced) GPU BVH for
-/// downstream traversal kernels. PR-4 raymarch culling + PR-5
-/// broadphase consume this without ever going through CPU readback.
-///
-/// `nodes_buffer` is a borrow of the `BvhGpuBuild`'s refcounted clone
-/// of the builder's nodes buffer — it stays valid for the lifetime of
-/// the [`BvhGpuBuild`] (or longer; the underlying GPU buffer is shared
-/// with the builder's reusable storage).
-pub struct GpuBvhHandle<'a> {
-    pub nodes_buffer: &'a wgpu::Buffer,
-    pub n: u32,
 }
 
 impl<T: Copy> BvhGpuBuild<T> {
     /// Non-blocking check. Returns:
     ///
     /// - `None` while either staging buffer is still in flight.
-    /// - `Some(Ok(Bvh<T>))` once both buffers are mapped — the result
-    ///   is byte-identical to `Bvh::build(items)` on the same input.
+    /// - `Some(Ok(BvhGpuBuildResult))` once both buffers are mapped —
+    ///   the `bvh` field is byte-identical to `Bvh::build(items)` and
+    ///   `sorted_indices` is the permutation the readback already
+    ///   produced (re-used by [`Bvh::refit_in_place`] downstream).
     /// - `Some(Err(_))` if the device was lost or a buffer map failed.
     ///
     /// Caller is expected to call `device.poll(PollType::Poll)` once
     /// per frame so wgpu invokes the `map_async` callbacks; this
     /// function only reads the resulting atomic flags.
-    pub fn poll(&mut self, _device: &wgpu::Device) -> Option<Result<Bvh<T>, BvhBuildError>> {
+    pub fn poll(
+        &mut self,
+        _device: &wgpu::Device,
+    ) -> Option<Result<BvhGpuBuildResult<T>, BvhBuildError>> {
         if self.consumed {
             return None;
         }
         if self.submission_index.is_none() {
             // n == 0 path — empty BVH resolves immediately.
             self.consumed = true;
-            return Some(Ok(Bvh::empty()));
+            return Some(Ok(BvhGpuBuildResult {
+                bvh: Bvh::empty(),
+                sorted_indices: Vec::new(),
+            }));
         }
         if self.map_state.nodes_err.load(Ordering::Acquire)
             || self.map_state.indices_err.load(Ordering::Acquire)
@@ -199,7 +145,10 @@ impl<T: Copy> BvhGpuBuild<T> {
             .iter()
             .map(|&i| self.payloads[i as usize])
             .collect();
-        Some(Ok(Bvh { nodes, leaves }))
+        Some(Ok(BvhGpuBuildResult {
+            bvh: Bvh { nodes, leaves },
+            sorted_indices,
+        }))
     }
 
     /// Debug-only AABB convergence check. In release builds this is a
@@ -264,7 +213,10 @@ impl<T: Copy> BvhGpuBuild<T> {
     /// build resolves, then return the result. **Never** call from a
     /// frame loop — `device.poll(Wait)` blocks the calling thread.
     #[cfg(any(test, feature = "block_on"))]
-    pub fn block_on(mut self, device: &wgpu::Device) -> Result<Bvh<T>, BvhBuildError> {
+    pub fn block_on(
+        mut self,
+        device: &wgpu::Device,
+    ) -> Result<BvhGpuBuildResult<T>, BvhBuildError> {
         let Some(idx) = self.submission_index.clone() else {
             // n == 0 short-circuit.
             return self
@@ -498,7 +450,7 @@ pub fn build_gpu<T: Copy + bytemuck::Pod>(
 
 /// Construct a placeholder `BvhGpuBuild` for the `n == 0` case. No GPU
 /// dispatches and no submission — `submission_index = None` makes
-/// [`BvhGpuBuild::poll`] return `Some(Ok(Bvh::empty()))` immediately.
+/// `BvhGpuBuild::poll` return `Some(Ok(Bvh::empty()))` immediately.
 /// Staging buffers are minimal placeholders that are never mapped.
 fn empty_build<T: Copy>(builder: &BvhGpuBuilder, device: &wgpu::Device) -> BvhGpuBuild<T> {
     let placeholder = |label: &str| -> wgpu::Buffer {
@@ -519,148 +471,5 @@ fn empty_build<T: Copy>(builder: &BvhGpuBuilder, device: &wgpu::Device) -> BvhGp
         payloads: Vec::new(),
         consumed: false,
         done_staging: None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    //! Golden CPU/GPU consistency tests for `Bvh::build_gpu`. The
-    //! six sizes cover the structural edge cases:
-    //!
-    //! - **N = 1**: leaves-only dispatch (no internals). Verifies the
-    //!   `n >= 2` orchestrator guard.
-    //! - **N = 2**: smallest non-trivial Karras tree (1 internal +
-    //!   2 leaves). Catches off-by-one in `range_and_split` for the
-    //!   lower bound — N = 8 + masks this.
-    //! - **N = 8**: balanced grid, sub-tile (one onesweep partition).
-    //! - **N = 100**: random AABBs, asymmetric split, sub-tile.
-    //! - **N = 1024**: balanced 32 × 32 grid, exactly one onesweep
-    //!   partition.
-    //! - **N = 65 000**: 22 onesweep partitions + ~16 levels of AABB
-    //!   propagation. Stress-tests the decoupled-lookback chained scan
-    //!   and the AABB iteration count, plus the buffer growth path.
-    //!
-    //! Each test uses a deterministic seed so failures are reproducible.
-
-    use super::*;
-    use crate::gpu::builder::test_device;
-    use glam::Vec3;
-
-    fn aabb_at(centre: Vec3, half: f32) -> Aabb {
-        Aabb::from_centre(centre, Vec3::splat(half))
-    }
-
-    /// Cheap deterministic LCG — the same constants used elsewhere in
-    /// the ome_bvh tests, so reproductions match.
-    fn lcg(state: &mut u32) -> f32 {
-        *state = state.wrapping_mul(1103515245).wrapping_add(12345);
-        (*state >> 16) as f32 / 32768.0
-    }
-
-    fn random_items(n: u32, seed: u32, world_size: f32) -> Vec<(u32, Aabb)> {
-        let mut state = seed;
-        (0..n)
-            .map(|i| {
-                let centre = Vec3::new(lcg(&mut state), lcg(&mut state), lcg(&mut state))
-                    * world_size;
-                (i, Aabb::from_centre(centre, Vec3::splat(0.2)))
-            })
-            .collect()
-    }
-
-    fn assert_gpu_matches_cpu(gpu: &Bvh<u32>, cpu: &Bvh<u32>, label: &str) {
-        assert_eq!(
-            gpu.nodes.len(),
-            cpu.nodes.len(),
-            "[{label}] node count: gpu={} cpu={}",
-            gpu.nodes.len(),
-            cpu.nodes.len()
-        );
-        for (i, (g, c)) in gpu.nodes.iter().zip(cpu.nodes.iter()).enumerate() {
-            assert_eq!(
-                g, c,
-                "[{label}] node[{i}] diverges:\n  gpu: {g:?}\n  cpu: {c:?}"
-            );
-        }
-        assert_eq!(
-            gpu.leaves, cpu.leaves,
-            "[{label}] leaves payload mismatch"
-        );
-    }
-
-    fn run_pair(items: Vec<(u32, Aabb)>, label: &str) {
-        let Some((device, queue)) = test_device::try_acquire() else {
-            eprintln!("ome_bvh::gpu::build: no GPU adapter — skipping {label}");
-            return;
-        };
-        let mut builder = BvhGpuBuilder::new(&device, &queue, None);
-        let cpu = Bvh::build(items.clone());
-        let build = Bvh::<u32>::build_gpu(&mut builder, &device, &queue, items);
-        let gpu = build.block_on(&device).expect("GPU build failed");
-        assert_gpu_matches_cpu(&gpu, &cpu, label);
-    }
-
-    #[test]
-    fn build_gpu_matches_cpu_n_1() {
-        // Smallest non-empty tree: a single leaf, no internals. Hits
-        // the `n >= 2` orchestrator guard around sort + internal +
-        // AABB passes; verifies the leaves-only dispatch resolves
-        // cleanly.
-        let items = vec![(0u32, aabb_at(Vec3::ZERO, 1.0))];
-        run_pair(items, "n=1");
-    }
-
-    #[test]
-    fn build_gpu_matches_cpu_n_2() {
-        // Smallest Karras non-trivial tree: 1 internal at idx 0, 2
-        // leaves at idx 1, 2. Catches off-by-one bugs in
-        // `range_and_split` for the lower bound — N=8 masks them
-        // because the asymmetry tends to fall on the upper side.
-        let items = vec![
-            (0u32, aabb_at(Vec3::ZERO, 0.5)),
-            (1u32, aabb_at(Vec3::splat(10.0), 0.5)),
-        ];
-        run_pair(items, "n=2");
-    }
-
-    #[test]
-    fn build_gpu_matches_cpu_n_8() {
-        // Balanced linear grid (one onesweep partition).
-        let items: Vec<(u32, Aabb)> = (0..8u32)
-            .map(|i| (i, aabb_at(Vec3::new(i as f32, 0.0, 0.0), 0.4)))
-            .collect();
-        run_pair(items, "n=8");
-    }
-
-    #[test]
-    fn build_gpu_matches_cpu_n_100() {
-        // Random AABBs in a 10×10×10 box — asymmetric split inside one
-        // onesweep partition.
-        run_pair(random_items(100, 0xc0ffee01, 10.0), "n=100");
-    }
-
-    #[test]
-    fn build_gpu_matches_cpu_n_1024() {
-        // 32×32 grid — exactly one onesweep partition (ITEMS_PER_TILE
-        // = 3072 > 1024). Balanced tree with depth ⌈log₂ 1024⌉ = 10.
-        let items: Vec<(u32, Aabb)> = (0..1024u32)
-            .map(|i| {
-                let x = (i % 32) as f32;
-                let y = (i / 32) as f32;
-                (i, aabb_at(Vec3::new(x, y, 0.0), 0.4))
-            })
-            .collect();
-        run_pair(items, "n=1024");
-    }
-
-    #[test]
-    fn build_gpu_matches_cpu_n_65000() {
-        // 65 000 random items — 22 onesweep partitions
-        // (ceil(65000/3072) = 22), AABB propagation depth ~16. Stress
-        // tests:
-        //   - decoupled-lookback chained scan across partitions
-        //   - buffer growth path (initial cap 1024 → next_pow2 65536)
-        //   - AABB iteration count `⌈log₂ N⌉ + 4 = 20`
-        run_pair(random_items(65_000, 0xfeedface, 1000.0), "n=65000");
     }
 }

@@ -132,9 +132,20 @@ impl RayMarchRenderer {
                         },
                         count: None,
                     },
-                    // 4 — per-leaf AABB + role + smoothness.
+                    // 4 — per-leaf AABB + flags + entity_id (multi-consumer).
                     wgpu::BindGroupLayoutEntry {
                         binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // 5 — raymarch-only payload (per-primitive smoothness).
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -160,6 +171,7 @@ impl RayMarchRenderer {
             bvh_state.current_nodes(),
             bvh_state.current_sorted_indices(),
             bvh_state.current_leaf_aabbs(),
+            bvh_state.current_raymarch_payloads(),
         );
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -315,6 +327,7 @@ pub(super) fn make_scene_bg(
     bvh_nodes: &wgpu::Buffer,
     sorted_indices: &wgpu::Buffer,
     leaf_aabbs: &wgpu::Buffer,
+    raymarch_payloads: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("raymarch_scene_bg"),
@@ -339,6 +352,10 @@ pub(super) fn make_scene_bg(
             wgpu::BindGroupEntry {
                 binding: 4,
                 resource: leaf_aabbs.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: raymarch_payloads.as_entire_binding(),
             },
         ],
     })

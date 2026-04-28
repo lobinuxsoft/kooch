@@ -1,46 +1,41 @@
-//! Per-slot stable buffer set for the double-buffered BVH state.
+//! Per-slot stable buffer set for the double-buffered shared BVH.
 //!
-//! `BvhState` keeps two `OutputSlot`s and rotates between them on every
-//! resolved build. While slot A is bound to the renderer, the next
-//! build's results are copied into slot B; on swap, the roles flip.
-//! Capacity grows on demand via `next_power_of_two`; buffers never
-//! shrink — keeps reallocation churn bounded across scene size changes.
+//! [`OutputSlot`] keeps the `nodes`, `sorted_indices`, and
+//! `leaf_aabbs` buffers each consumer binds. Capacity grows on demand
+//! via `next_power_of_two`; buffers never shrink — keeps reallocation
+//! churn bounded across scene-size changes.
 
-use ome_bvh::BvhNode;
+use crate::leaf::LeafAabb;
+use crate::node::BvhNode;
 
-use crate::raymarch::instance::LeafAabb;
-
-/// Initial capacity (in leaves) for the per-slot stable buffers. Grows
-/// by `next_power_of_two` whenever a build exceeds it.
+/// Initial capacity (in leaves) for the per-slot stable buffers.
 pub(super) const INITIAL_SLOT_CAPACITY: u64 = 256;
 
-/// Per-slot stable buffer set. The renderer binds these directly when
-/// the slot is `current`. Capacity grows on demand; buffers never shrink.
+/// Per-slot stable buffer set. The renderer / physics / frustum-cull
+/// consumers bind these directly when the slot is `current`. Capacity
+/// grows on demand; buffers never shrink.
 pub(super) struct OutputSlot {
-    /// Flat tree of `BvhNode`s. Sized for `2N` to keep capacity
+    /// Flat tree of [`BvhNode`]s. Sized for `2N` to keep capacity
     /// arithmetic simple (real fill is `2N - 1`).
     pub(super) nodes_buffer: wgpu::Buffer,
     /// `sorted_indices[k]` = original payload index at sorted position
     /// `k`. Length `N`.
     pub(super) sorted_indices_buffer: wgpu::Buffer,
-    /// Per-primitive metadata (AABB + role + smoothness). Length `N`.
+    /// Per-primitive multi-consumer metadata (AABB + flags + entity_id).
+    /// Length `N`.
     pub(super) leaf_aabbs_buffer: wgpu::Buffer,
-    /// Capacity in leaves (matches `LbvhBuffers::capacity`'s convention).
     pub(super) capacity: u64,
-    /// Number of valid leaves (= primitives) in this slot. `0` until the
-    /// first build resolves into it.
+    /// Number of valid leaves (= primitives) in this slot. `0` until
+    /// the first build resolves into it.
     pub(super) n: u32,
 }
 
 impl OutputSlot {
     pub(super) fn new(device: &wgpu::Device, capacity: u64) -> Self {
-        let nodes_buffer = make_nodes_buffer(device, capacity);
-        let sorted_indices_buffer = make_indices_buffer(device, capacity);
-        let leaf_aabbs_buffer = make_leaf_aabbs_buffer(device, capacity);
         Self {
-            nodes_buffer,
-            sorted_indices_buffer,
-            leaf_aabbs_buffer,
+            nodes_buffer: make_nodes_buffer(device, capacity),
+            sorted_indices_buffer: make_indices_buffer(device, capacity),
+            leaf_aabbs_buffer: make_leaf_aabbs_buffer(device, capacity),
             capacity,
             n: 0,
         }
@@ -60,16 +55,21 @@ impl OutputSlot {
 
 fn make_nodes_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("raymarch_bvh::slot::nodes"),
+        label: Some("ome_bvh::shared::nodes"),
         size: 2 * capacity * std::mem::size_of::<BvhNode>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        // COPY_SRC kept on the production buffer so debug tooling /
+        // S7 sync tests can read back the active slot without
+        // touching the builder scratch. Cost is zero when unused.
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     })
 }
 
 fn make_indices_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("raymarch_bvh::slot::sorted_indices"),
+        label: Some("ome_bvh::shared::sorted_indices"),
         size: capacity * 4,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
@@ -78,7 +78,7 @@ fn make_indices_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
 
 fn make_leaf_aabbs_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("raymarch_bvh::slot::leaf_aabbs"),
+        label: Some("ome_bvh::shared::leaf_aabbs"),
         size: capacity * std::mem::size_of::<LeafAabb>() as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,

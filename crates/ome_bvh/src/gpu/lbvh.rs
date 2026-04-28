@@ -567,6 +567,69 @@ pub fn dispatch_lbvh_internal_and_aabb_into(
     }
 }
 
+/// AABB propagation only (pass 3) — the refit fast path.
+///
+/// Reuses the same compute pipeline as the full build's pass 3 but
+/// skips the internal-node construction (pass 2). Caller invariants:
+///
+/// 1. `buffers.nodes_buffer` already holds a previously-built BVH's
+///    topology (left / right_or_count of every internal node). The
+///    refit preserves topology — only AABBs change.
+/// 2. `buffers.done_buffer[0..n-1]` has been reset to `0` (caller
+///    typically uses `encoder.clear_buffer`); leaves' done bits are
+///    re-set to 1 by an immediately-preceding leaves-rewrite pass.
+/// 3. The leaves at `nodes[(n-1)..(2n-1))` already hold the new
+///    AABBs (caller dispatched [`dispatch_lbvh_leaves_into`] with the
+///    fresh `original_aabbs` first).
+///
+/// **Requires `n >= 2`** — the caller skips this for `n in {0, 1}`
+/// (no internals to refit).
+pub fn dispatch_lbvh_aabb_only_into(
+    device: &wgpu::Device,
+    _queue: &wgpu::Queue,
+    encoder: &mut wgpu::CommandEncoder,
+    pipelines: &LbvhPipelines,
+    buffers: &LbvhBuffers,
+    n: u32,
+) {
+    debug_assert!(
+        n >= 2,
+        "dispatch_lbvh_aabb_only_into requires n >= 2 — \
+         orchestrator must skip this for n in {{0, 1}}"
+    );
+
+    let internal_workgroups = (n - 1).div_ceil(LBVH_WORKGROUP_SIZE);
+    let aabb_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("ome_bvh::karras_aabb_bg_refit"),
+        layout: &pipelines.aabb_bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffers.nodes_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: buffers.done_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buffers.config_buffer.as_entire_binding(),
+            },
+        ],
+    });
+    let iterations = aabb_iterations(n);
+    for iter in 0..iterations {
+        let label = format!("ome_bvh::karras_aabb_refit_pass_{iter}");
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some(&label),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&pipelines.aabb_pipeline);
+        pass.set_bind_group(0, &aabb_bg, &[]);
+        pass.dispatch_workgroups(internal_workgroups.max(1), 1, 1);
+    }
+}
+
 /// Convenience wrapper that dispatches the full Karras build (leaves +
 /// internal + aabb) for any `n >= 0`. Used by the existing per-stage
 /// integration tests; production code in [`crate::gpu::build`] calls

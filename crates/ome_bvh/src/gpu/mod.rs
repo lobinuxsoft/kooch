@@ -22,9 +22,13 @@ pub mod sort;
 pub mod sort_types;
 pub mod types;
 
-pub use build::{BvhBuildError, BvhGpuBuild, GpuBvhHandle, build_gpu};
+pub use build::{
+    BvhBuildError, BvhGpuBuild, BvhGpuBuildResult, BvhGpuRefit, GpuBvhHandle, build_gpu, refit_gpu,
+};
 pub use builder::{BvhGpuBuilder, BvhTimestamps};
-pub use lbvh::{LbvhBuffers, LbvhConfig, LbvhPipelines, dispatch_lbvh_build};
+pub use lbvh::{
+    LbvhBuffers, LbvhConfig, LbvhPipelines, dispatch_lbvh_aabb_only_into, dispatch_lbvh_build,
+};
 pub use sort_types::{
     FLAG_AGGREGATE, FLAG_INVALID, FLAG_PREFIX, ITEMS_PER_TILE, OnesweepConfig, RADIX_BITS,
     RADIX_BUCKETS, RADIX_PASSES, SORT_WORKGROUP_SIZE, global_histogram_size_bytes,

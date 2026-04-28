@@ -8,6 +8,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+ome_bvh.workspace = true
 ome_core.workspace = true
 ome_ecs.workspace = true
 ome_sdf.workspace = true

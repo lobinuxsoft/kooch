@@ -22,11 +22,11 @@ fn cull_vs_cull_byte_identical_n_8() {
         eprintln!("raymarch_bvh::gpu_tests: no GPU adapter — skipping");
         return;
     };
-    let (primitives, leaves) = random_sphere_scene(8, 0xc0ffee01);
+    let (primitives, leaves, payloads) = random_sphere_scene(8, 0xc0ffee01);
     let items = items_from_leaves(&leaves);
 
     let mut state = BvhState::new(&device, &queue, None);
-    state.kick_if_dirty(&device, &queue, items, leaves.clone());
+    state.kick_if_dirty(&device, &queue, items, leaves.clone(), payloads.clone());
     drive_bvh_to_completion(&mut state, &device, &queue);
     assert_eq!(state.current_n(), 8, "build must populate slot");
 
@@ -34,10 +34,10 @@ fn cull_vs_cull_byte_identical_n_8() {
     let meta = default_test_meta(&state, primitives.len());
 
     let run_a = run_eval_pass(
-        &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main",
+        &device, &queue, &state, &primitives, &leaves, &payloads, &samples, &meta, "cs_main",
     );
     let run_b = run_eval_pass(
-        &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main",
+        &device, &queue, &state, &primitives, &leaves, &payloads, &samples, &meta, "cs_main",
     );
     assert_eq!(run_a.len(), run_b.len());
     for (i, (a, b)) in run_a.iter().zip(run_b.iter()).enumerate() {
@@ -59,11 +59,11 @@ fn cull_vs_cull_byte_identical_n_8() {
 #[test]
 fn cull_vs_cull_byte_identical_n_1024() {
     let Some((device, queue)) = try_acquire_device() else { return; };
-    let (primitives, leaves) = random_sphere_scene(1024, 0xfeedface);
+    let (primitives, leaves, payloads) = random_sphere_scene(1024, 0xfeedface);
     let items = items_from_leaves(&leaves);
 
     let mut state = BvhState::new(&device, &queue, None);
-    state.kick_if_dirty(&device, &queue, items, leaves.clone());
+    state.kick_if_dirty(&device, &queue, items, leaves.clone(), payloads.clone());
     drive_bvh_to_completion(&mut state, &device, &queue);
     assert_eq!(state.current_n(), 1024);
 
@@ -71,10 +71,10 @@ fn cull_vs_cull_byte_identical_n_1024() {
     let meta = default_test_meta(&state, primitives.len());
 
     let run_a = run_eval_pass(
-        &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main",
+        &device, &queue, &state, &primitives, &leaves, &payloads, &samples, &meta, "cs_main",
     );
     let run_b = run_eval_pass(
-        &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main",
+        &device, &queue, &state, &primitives, &leaves, &payloads, &samples, &meta, "cs_main",
     );
     for (i, (a, b)) in run_a.iter().zip(run_b.iter()).enumerate() {
         assert_eq!(

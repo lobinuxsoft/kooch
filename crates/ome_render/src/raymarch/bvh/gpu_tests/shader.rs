@@ -20,8 +20,11 @@ struct BvhNode {
 }
 struct LeafAabb {
     aabb_min: vec3<f32>,
-    role: u32,
+    flags: u32,
     aabb_max: vec3<f32>,
+    entity_id: u32,
+}
+struct RaymarchPayload {
     smoothness: f32,
 }
 struct SdfPrimitive {
@@ -46,13 +49,14 @@ struct SceneMeta {
 }
 struct SamplePoint { pos: vec4<f32> }
 
-@group(0) @binding(0) var<uniform>          scene_meta:     SceneMeta;
-@group(0) @binding(1) var<storage, read>    primitives:     array<SdfPrimitive>;
-@group(0) @binding(2) var<storage, read>    bvh_nodes:      array<BvhNode>;
-@group(0) @binding(3) var<storage, read>    sorted_indices: array<u32>;
-@group(0) @binding(4) var<storage, read>    leaf_aabbs:     array<LeafAabb>;
-@group(0) @binding(5) var<storage, read>    samples:        array<SamplePoint>;
-@group(0) @binding(6) var<storage, read_write> out_d:       array<f32>;
+@group(0) @binding(0) var<uniform>          scene_meta:        SceneMeta;
+@group(0) @binding(1) var<storage, read>    primitives:        array<SdfPrimitive>;
+@group(0) @binding(2) var<storage, read>    bvh_nodes:         array<BvhNode>;
+@group(0) @binding(3) var<storage, read>    sorted_indices:    array<u32>;
+@group(0) @binding(4) var<storage, read>    leaf_aabbs:        array<LeafAabb>;
+@group(0) @binding(5) var<storage, read>    raymarch_payloads: array<RaymarchPayload>;
+@group(0) @binding(6) var<storage, read>    samples:           array<SamplePoint>;
+@group(0) @binding(7) var<storage, read_write> out_d:          array<f32>;
 
 const ACC_UNION_IDENTITY: f32 = 1.0e10;
 const ACC_INTERSECT_IDENTITY: f32 = -1.0e10;
@@ -91,9 +95,8 @@ fn eval_scene_bvh(p: vec3<f32>) -> f32 {
             let first = node.left;
             for (var i: u32 = 0u; i < count; i = i + 1u) {
                 let prim_idx = sorted_indices[first + i];
-                let leaf = leaf_aabbs[prim_idx];
                 let d = sphere_at(p, primitives[prim_idx]);
-                let k = max(leaf.smoothness, 1e-5);
+                let k = max(raymarch_payloads[prim_idx].smoothness, 1e-5);
                 add_acc = smooth_union(add_acc, d, k);
             }
         } else {
@@ -121,9 +124,8 @@ fn eval_scene_fullscan(p: vec3<f32>) -> f32 {
     var acc = ACC_UNION_IDENTITY;
     let n = scene_meta.bvh_n;
     for (var i: u32 = 0u; i < n; i = i + 1u) {
-        let leaf = leaf_aabbs[i];
         let d = sphere_at(p, primitives[i]);
-        let k = max(leaf.smoothness, 1e-5);
+        let k = max(raymarch_payloads[i].smoothness, 1e-5);
         acc = smooth_union(acc, d, k);
     }
     return acc;

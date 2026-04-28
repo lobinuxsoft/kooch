@@ -8,7 +8,8 @@ use glam::Quat;
 use super::shader::TEST_COMPUTE_WGSL;
 use crate::raymarch::aabb::primitive_aabb;
 use crate::raymarch::bvh::BvhState;
-use crate::raymarch::instance::{LeafAabb, ROLE_ADD, SceneMeta, SdfPrimitive, TYPE_SPHERE};
+use crate::raymarch::instance::{RaymarchPayload, SceneMeta, SdfPrimitive, TYPE_SPHERE};
+use ome_bvh::{IS_RAYMARCH, LeafAabb, ROLE_RAYMARCH_ADD};
 
 /// Headless GPU acquisition. Returns `None` when no adapter is
 /// available or the timestamp features the BvhGpuBuilder needs are
@@ -48,12 +49,18 @@ fn lcg(state: &mut u32) -> f32 {
 }
 
 /// Build a deterministic scene of `n` unit spheres scattered across
-/// a 100³ box.
-pub(super) fn random_sphere_scene(n: u32, seed: u32) -> (Vec<SdfPrimitive>, Vec<LeafAabb>) {
+/// a 100³ box. Returns the per-primitive arrays the production
+/// pipeline maintains in lockstep: `(primitives, leaf_aabbs,
+/// raymarch_payloads)`.
+pub(super) fn random_sphere_scene(
+    n: u32,
+    seed: u32,
+) -> (Vec<SdfPrimitive>, Vec<LeafAabb>, Vec<RaymarchPayload>) {
     let mut state = seed;
     let mut prims = Vec::with_capacity(n as usize);
     let mut leaves = Vec::with_capacity(n as usize);
-    for _ in 0..n {
+    let mut payloads = Vec::with_capacity(n as usize);
+    for i in 0..n {
         let pos = [lcg(&mut state) * 100.0, lcg(&mut state) * 100.0, lcg(&mut state) * 100.0];
         let radius = 0.5 + lcg(&mut state) * 0.5;
         let prim = SdfPrimitive {
@@ -67,13 +74,14 @@ pub(super) fn random_sphere_scene(n: u32, seed: u32) -> (Vec<SdfPrimitive>, Vec<
         let aabb = primitive_aabb(&prim, 0.0);
         leaves.push(LeafAabb {
             aabb_min: aabb.min.to_array(),
-            role: ROLE_ADD,
+            flags: IS_RAYMARCH | ROLE_RAYMARCH_ADD,
             aabb_max: aabb.max.to_array(),
-            smoothness: 0.0,
+            entity_id: i,
         });
+        payloads.push(RaymarchPayload { smoothness: 0.0 });
         prims.push(prim);
     }
-    (prims, leaves)
+    (prims, leaves, payloads)
 }
 
 /// Convert a leaf-AABB list into the `(payload_id, Aabb)` pairs
@@ -154,6 +162,7 @@ pub(super) fn run_eval_pass(
     state: &BvhState,
     primitives: &[SdfPrimitive],
     leaf_aabbs: &[LeafAabb],
+    raymarch_payloads: &[RaymarchPayload],
     samples: &[SamplePoint],
     meta: &SceneMeta,
     entry_point: &str,
@@ -192,6 +201,14 @@ pub(super) fn run_eval_pass(
     });
     queue.write_buffer(&leaves_buffer, 0, bytemuck::cast_slice(leaf_aabbs));
 
+    let payloads_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("test_raymarch_payloads"),
+        size: (raymarch_payloads.len() * std::mem::size_of::<RaymarchPayload>()) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&payloads_buffer, 0, bytemuck::cast_slice(raymarch_payloads));
+
     let samples_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("test_samples"),
         size: (samples.len() * std::mem::size_of::<SamplePoint>()) as u64,
@@ -217,7 +234,8 @@ pub(super) fn run_eval_pass(
             bgl_entry(3, wgpu::BufferBindingType::Storage { read_only: true }),
             bgl_entry(4, wgpu::BufferBindingType::Storage { read_only: true }),
             bgl_entry(5, wgpu::BufferBindingType::Storage { read_only: true }),
-            bgl_entry(6, wgpu::BufferBindingType::Storage { read_only: false }),
+            bgl_entry(6, wgpu::BufferBindingType::Storage { read_only: true }),
+            bgl_entry(7, wgpu::BufferBindingType::Storage { read_only: false }),
         ],
     });
     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -229,8 +247,9 @@ pub(super) fn run_eval_pass(
             wgpu::BindGroupEntry { binding: 2, resource: state.current_nodes().as_entire_binding() },
             wgpu::BindGroupEntry { binding: 3, resource: state.current_sorted_indices().as_entire_binding() },
             wgpu::BindGroupEntry { binding: 4, resource: leaves_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: samples_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 6, resource: out_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 5, resource: payloads_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 6, resource: samples_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 7, resource: out_buffer.as_entire_binding() },
         ],
     });
 
