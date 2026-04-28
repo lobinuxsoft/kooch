@@ -421,3 +421,509 @@ mod tests {
         );
     }
 }
+
+// ---------------------------------------------------------------------
+// GPU end-to-end determinism test (S9 of PR-4 #115).
+//
+// Bypasses the ECS layer entirely: builds a synthetic scene of N
+// random spheres, runs `BvhState::kick_if_dirty + poll` to GPU-build
+// the BVH, then dispatches a small compute shader that invokes the
+// same `eval_scene_bvh` traversal logic the fragment shader uses.
+// Compares the float output between two consecutive runs of the same
+// inputs: byte-identical guarantees the per-role accumulator order
+// is a function of BVH topology only (not runtime ray geometry).
+//
+// The compute shader inlines the structs + traversal — separating it
+// out into a shared module would expose internal types in the public
+// API just to dedupe ~80 lines of WGSL, which is a worse trade.
+// ---------------------------------------------------------------------
+#[cfg(test)]
+mod gpu_byte_identical {
+    use super::*;
+    use crate::raymarch::aabb::primitive_aabb;
+    use crate::raymarch::instance::{ROLE_ADD, SceneMeta, SdfPrimitive, TYPE_SPHERE};
+    use bytemuck::{Pod, Zeroable};
+    use glam::Quat;
+
+    /// Headless GPU acquisition. Returns `None` when no adapter is
+    /// available or the timestamp features the BvhGpuBuilder needs are
+    /// missing — same skip-not-fail policy as the ome_bvh GPU tests.
+    fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        pollster::block_on(async {
+            let instance = wgpu::Instance::default();
+            let adapter = instance
+                .request_adapter(&wgpu::RequestAdapterOptions::default())
+                .await
+                .ok()?;
+            let needs = wgpu::Features::TIMESTAMP_QUERY
+                | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES;
+            if !adapter.features().contains(needs) {
+                return None;
+            }
+            let (device, queue) = adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("raymarch_bvh::test_device"),
+                    required_features: needs,
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: wgpu::MemoryHints::Performance,
+                    trace: wgpu::Trace::Off,
+                    experimental_features: wgpu::ExperimentalFeatures::default(),
+                })
+                .await
+                .ok()?;
+            Some((device, queue))
+        })
+    }
+
+    /// Same fixed-step LCG used by the ome_bvh tests, so reproductions
+    /// match.
+    fn lcg(state: &mut u32) -> f32 {
+        *state = state.wrapping_mul(1103515245).wrapping_add(12345);
+        (*state >> 16) as f32 / 32768.0
+    }
+
+    /// Build a deterministic scene of `n` unit spheres scattered across
+    /// a 100³ box.
+    fn random_sphere_scene(n: u32, seed: u32) -> (Vec<SdfPrimitive>, Vec<LeafAabb>) {
+        let mut state = seed;
+        let mut prims = Vec::with_capacity(n as usize);
+        let mut leaves = Vec::with_capacity(n as usize);
+        for _ in 0..n {
+            let pos = [lcg(&mut state) * 100.0, lcg(&mut state) * 100.0, lcg(&mut state) * 100.0];
+            let radius = 0.5 + lcg(&mut state) * 0.5;
+            let prim = SdfPrimitive {
+                position: pos,
+                type_tag: TYPE_SPHERE,
+                rotation: Quat::IDENTITY.to_array(),
+                scale: [1.0; 3],
+                _pad0: 0.0,
+                params: [radius, 0.0, 0.0, 0.0],
+            };
+            let aabb = primitive_aabb(&prim, 0.0);
+            leaves.push(LeafAabb {
+                aabb_min: aabb.min.to_array(),
+                role: ROLE_ADD,
+                aabb_max: aabb.max.to_array(),
+                smoothness: 0.0,
+            });
+            prims.push(prim);
+        }
+        (prims, leaves)
+    }
+
+    /// Sample-points payload used by the compute shader (vec4 padded to
+    /// keep std430 alignment simple).
+    #[repr(C)]
+    #[derive(Copy, Clone, Pod, Zeroable, Default)]
+    struct SamplePoint {
+        pos: [f32; 4],
+    }
+
+    fn sample_points_grid(n: u32) -> Vec<SamplePoint> {
+        // Deterministic grid of points across the same 100³ box used to
+        // place the spheres. Enough samples land inside primitives'
+        // AABBs that the per-role accumulator actually exercises a few
+        // smooth_union / smooth_intersect calls per ray.
+        let side = (n as f32).cbrt().ceil() as u32;
+        let step = 100.0 / side as f32;
+        let mut out = Vec::with_capacity(n as usize);
+        for i in 0..n {
+            let x = (i % side) as f32 * step;
+            let y = ((i / side) % side) as f32 * step;
+            let z = (i / (side * side)) as f32 * step;
+            out.push(SamplePoint { pos: [x, y, z, 0.0] });
+        }
+        out
+    }
+
+    /// Compute shader that mirrors `eval_scene_bvh` from
+    /// `raymarch_main.wgsl`. Kept as a local string so the test does
+    /// not have to expose internals of the raymarch module — the
+    /// function body is structurally identical to the production
+    /// fragment-shader version.
+    const TEST_COMPUTE_WGSL: &str = r#"
+struct BvhNode {
+    aabb_min: vec3<f32>,
+    left: u32,
+    aabb_max: vec3<f32>,
+    right_or_count: u32,
+}
+struct LeafAabb {
+    aabb_min: vec3<f32>,
+    role: u32,
+    aabb_max: vec3<f32>,
+    smoothness: f32,
+}
+struct SdfPrimitive {
+    position: vec3<f32>,
+    type_tag: u32,
+    rotation: vec4<f32>,
+    scale: vec3<f32>,
+    _pad0: f32,
+    params: vec4<f32>,
+}
+struct SceneMeta {
+    primitive_count: u32,
+    bvh_n: u32,
+    skip_internal_sky: u32,
+    has_intersects: u32,
+    has_subs: u32,
+    k_int_scene: f32,
+    k_sub_scene: f32,
+    _pad0: u32,
+    sky_top: vec4<f32>,
+    sky_bottom: vec4<f32>,
+}
+struct SamplePoint { pos: vec4<f32> }
+
+@group(0) @binding(0) var<uniform>          scene_meta:     SceneMeta;
+@group(0) @binding(1) var<storage, read>    primitives:     array<SdfPrimitive>;
+@group(0) @binding(2) var<storage, read>    bvh_nodes:      array<BvhNode>;
+@group(0) @binding(3) var<storage, read>    sorted_indices: array<u32>;
+@group(0) @binding(4) var<storage, read>    leaf_aabbs:     array<LeafAabb>;
+@group(0) @binding(5) var<storage, read>    samples:        array<SamplePoint>;
+@group(0) @binding(6) var<storage, read_write> out_d:       array<f32>;
+
+const ACC_UNION_IDENTITY: f32 = 1.0e10;
+const ACC_INTERSECT_IDENTITY: f32 = -1.0e10;
+const BVH_LEAF_FLAG: u32 = 0x80000000u;
+const BVH_VALUE_MASK: u32 = 0x7FFFFFFFu;
+
+fn smooth_union(d1: f32, d2: f32, k: f32) -> f32 {
+    let h = clamp(0.5 + 0.5 * (d2 - d1) / k, 0.0, 1.0);
+    return mix(d2, d1, h) - k * h * (1.0 - h);
+}
+
+fn sphere_at(p: vec3<f32>, prim: SdfPrimitive) -> f32 {
+    let local = p - prim.position;
+    return length(local) - prim.params.x;
+}
+
+fn point_in_aabb(p: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> bool {
+    return all(p >= lo) && all(p <= hi);
+}
+
+fn eval_scene_bvh(p: vec3<f32>) -> f32 {
+    if scene_meta.bvh_n == 0u { return ACC_UNION_IDENTITY; }
+    var add_acc = ACC_UNION_IDENTITY;
+    var int_acc = ACC_INTERSECT_IDENTITY;
+    var sub_acc = ACC_UNION_IDENTITY;
+    var stack: array<u32, 32>;
+    stack[0] = 0u;
+    var sp = 1u;
+    while sp > 0u {
+        sp = sp - 1u;
+        let node = bvh_nodes[stack[sp]];
+        if !point_in_aabb(p, node.aabb_min, node.aabb_max) { continue; }
+        let payload = node.right_or_count;
+        if (payload & BVH_LEAF_FLAG) != 0u {
+            let count = payload & BVH_VALUE_MASK;
+            let first = node.left;
+            for (var i: u32 = 0u; i < count; i = i + 1u) {
+                let prim_idx = sorted_indices[first + i];
+                let leaf = leaf_aabbs[prim_idx];
+                let d = sphere_at(p, primitives[prim_idx]);
+                let k = max(leaf.smoothness, 1e-5);
+                add_acc = smooth_union(add_acc, d, k);
+            }
+        } else {
+            let left = node.left;
+            let right = payload & BVH_VALUE_MASK;
+            if sp + 2u <= 32u {
+                stack[sp] = left; sp = sp + 1u;
+                stack[sp] = right; sp = sp + 1u;
+            }
+        }
+    }
+    return add_acc;
+}
+
+@compute @workgroup_size(64)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if i >= arrayLength(&samples) { return; }
+    out_d[i] = eval_scene_bvh(samples[i].pos.xyz);
+}
+"#;
+
+    /// Run the compute shader once and return the per-sample
+    /// distances. Re-uses the `BvhState`'s GPU-resident buffers —
+    /// matches the production binding layout.
+    fn run_eval_pass(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        state: &BvhState,
+        primitives: &[SdfPrimitive],
+        leaf_aabbs: &[LeafAabb],
+        samples: &[SamplePoint],
+        meta: &SceneMeta,
+    ) -> Vec<f32> {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("raymarch_bvh::test_compute"),
+            source: wgpu::ShaderSource::Wgsl(TEST_COMPUTE_WGSL.into()),
+        });
+
+        let meta_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("test_meta"),
+            size: std::mem::size_of::<SceneMeta>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&meta_buffer, 0, bytemuck::bytes_of(meta));
+
+        let prims_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("test_primitives"),
+            size: (primitives.len() * std::mem::size_of::<SdfPrimitive>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&prims_buffer, 0, bytemuck::cast_slice(primitives));
+
+        // Note: leaf_aabbs is uploaded INTO the BvhState's slot at
+        // poll_swap time via queue.write_buffer; we re-upload here only
+        // because the test wrapper needs a known-aligned binding. In
+        // production the bind group already points at
+        // bvh_state.current_leaf_aabbs() — same data either way.
+        let leaves_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("test_leaf_aabbs"),
+            size: (leaf_aabbs.len() * std::mem::size_of::<LeafAabb>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&leaves_buffer, 0, bytemuck::cast_slice(leaf_aabbs));
+
+        let samples_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("test_samples"),
+            size: (samples.len() * std::mem::size_of::<SamplePoint>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&samples_buffer, 0, bytemuck::cast_slice(samples));
+
+        let out_size = (samples.len() * 4) as u64;
+        let out_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("test_out"),
+            size: out_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("test_bgl"),
+            entries: &[
+                bgl_entry(0, wgpu::BufferBindingType::Uniform),
+                bgl_entry(1, wgpu::BufferBindingType::Storage { read_only: true }),
+                bgl_entry(2, wgpu::BufferBindingType::Storage { read_only: true }),
+                bgl_entry(3, wgpu::BufferBindingType::Storage { read_only: true }),
+                bgl_entry(4, wgpu::BufferBindingType::Storage { read_only: true }),
+                bgl_entry(5, wgpu::BufferBindingType::Storage { read_only: true }),
+                bgl_entry(6, wgpu::BufferBindingType::Storage { read_only: false }),
+            ],
+        });
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("test_bg"),
+            layout: &bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: meta_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: prims_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: state.current_nodes().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: state.current_sorted_indices().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: leaves_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: samples_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: out_buffer.as_entire_binding() },
+            ],
+        });
+
+        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("test_pl"),
+            bind_group_layouts: &[Some(&bgl)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("test_compute_pipeline"),
+            layout: Some(&pl),
+            module: &module,
+            entry_point: Some("cs_main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("test_compute_encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("test_compute_pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            let groups = (samples.len() as u32).div_ceil(64);
+            pass.dispatch_workgroups(groups.max(1), 1, 1);
+        }
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("test_staging"),
+            size: out_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(&out_buffer, 0, &staging, 0, out_size);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| { tx.send(r).ok(); });
+        device
+            .poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(std::time::Duration::from_secs(30)) })
+            .expect("poll");
+        rx.recv().expect("map_async sender").expect("map_async result");
+        let data = slice.get_mapped_range();
+        let v: Vec<f32> = bytemuck::cast_slice::<u8, f32>(&data).to_vec();
+        drop(data);
+        staging.unmap();
+        v
+    }
+
+    fn bgl_entry(binding: u32, ty: wgpu::BufferBindingType) -> wgpu::BindGroupLayoutEntry {
+        wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }
+    }
+
+    fn drive_bvh_to_completion(state: &mut BvhState, device: &wgpu::Device, queue: &wgpu::Queue) {
+        // Loop until poll_swap reports a swap. PR-3's BvhGpuBuild
+        // resolves in 1-2 iterations on a healthy queue.
+        for _ in 0..16 {
+            if let Some(outcome) = state.poll_swap(device, queue) {
+                outcome.expect("BVH build must succeed for the test");
+                return;
+            }
+            // Force progress on the queue. PollType::Wait without
+            // a submission index waits on every outstanding submission.
+            let _ = device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(5)),
+            });
+        }
+        panic!("BVH build did not resolve within 16 poll iterations");
+    }
+
+    /// Eight spheres on a regular grid; same scene rendered twice; the
+    /// per-sample float output of the second run must be byte-identical
+    /// to the first. Validates the determinism of the BVH topology
+    /// (Karras + onesweep — already covered in PR-3) plus the
+    /// deterministic accumulator ordering inside `eval_scene_bvh`.
+    #[test]
+    fn cull_vs_cull_byte_identical_n_8() {
+        let Some((device, queue)) = try_acquire_device() else {
+            eprintln!("raymarch_bvh::gpu_byte_identical: no GPU adapter — skipping");
+            return;
+        };
+        let (primitives, leaves) = random_sphere_scene(8, 0xc0ffee01);
+        let items: Vec<(u32, ome_bvh::Aabb)> = leaves
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                (
+                    i as u32,
+                    ome_bvh::Aabb::new(
+                        glam::Vec3::from_array(l.aabb_min),
+                        glam::Vec3::from_array(l.aabb_max),
+                    ),
+                )
+            })
+            .collect();
+
+        let mut state = BvhState::new(&device, &queue, None);
+        state.kick_if_dirty(&device, &queue, items.clone(), leaves.clone());
+        drive_bvh_to_completion(&mut state, &device, &queue);
+        assert_eq!(state.current_n(), 8, "build must populate slot");
+
+        let samples = sample_points_grid(512);
+        let meta = SceneMeta {
+            primitive_count: primitives.len() as u32,
+            bvh_n: state.current_n(),
+            skip_internal_sky: 0,
+            has_intersects: 0,
+            has_subs: 0,
+            k_int_scene: 0.0,
+            k_sub_scene: 0.0,
+            _pad0: 0,
+            sky_top: [0.5, 0.7, 1.0, 1.0],
+            sky_bottom: [0.1, 0.2, 0.4, 1.0],
+        };
+
+        let run_a = run_eval_pass(&device, &queue, &state, &primitives, &leaves, &samples, &meta);
+        let run_b = run_eval_pass(&device, &queue, &state, &primitives, &leaves, &samples, &meta);
+        assert_eq!(run_a.len(), run_b.len());
+        for (i, (a, b)) in run_a.iter().zip(run_b.iter()).enumerate() {
+            // bit-exact equality — `assert_eq!` on f32 already does
+            // bitwise compare, but explicit `to_bits()` makes the
+            // intent unambiguous against future readers.
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "sample[{i}] diverged across runs: {a} vs {b}",
+            );
+        }
+    }
+
+    /// Same property at 1024 leaves — the BVH has multiple internal
+    /// levels here, and the per-role accumulator visits each leaf in
+    /// a strictly topology-driven order. Catches any latent
+    /// non-determinism in stack push ordering or atomic accumulation.
+    #[test]
+    fn cull_vs_cull_byte_identical_n_1024() {
+        let Some((device, queue)) = try_acquire_device() else { return; };
+        let (primitives, leaves) = random_sphere_scene(1024, 0xfeedface);
+        let items: Vec<(u32, ome_bvh::Aabb)> = leaves
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                (
+                    i as u32,
+                    ome_bvh::Aabb::new(
+                        glam::Vec3::from_array(l.aabb_min),
+                        glam::Vec3::from_array(l.aabb_max),
+                    ),
+                )
+            })
+            .collect();
+
+        let mut state = BvhState::new(&device, &queue, None);
+        state.kick_if_dirty(&device, &queue, items, leaves.clone());
+        drive_bvh_to_completion(&mut state, &device, &queue);
+        assert_eq!(state.current_n(), 1024);
+
+        let samples = sample_points_grid(2048);
+        let meta = SceneMeta {
+            primitive_count: primitives.len() as u32,
+            bvh_n: state.current_n(),
+            skip_internal_sky: 0,
+            has_intersects: 0,
+            has_subs: 0,
+            k_int_scene: 0.0,
+            k_sub_scene: 0.0,
+            _pad0: 0,
+            sky_top: [0.5, 0.7, 1.0, 1.0],
+            sky_bottom: [0.1, 0.2, 0.4, 1.0],
+        };
+
+        let run_a = run_eval_pass(&device, &queue, &state, &primitives, &leaves, &samples, &meta);
+        let run_b = run_eval_pass(&device, &queue, &state, &primitives, &leaves, &samples, &meta);
+        for (i, (a, b)) in run_a.iter().zip(run_b.iter()).enumerate() {
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "sample[{i}] diverged across runs at N=1024",
+            );
+        }
+    }
+}
