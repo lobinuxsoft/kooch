@@ -3,11 +3,8 @@
 use wgpu::util::DeviceExt;
 
 use super::SHADER_SOURCE;
-use super::csg_tree::Token;
-use super::instance::{
-    CameraUniforms, INITIAL_PRIMITIVE_CAPACITY, INITIAL_TOKEN_CAPACITY, RayMarchParams, SceneMeta,
-    SdfPrimitive,
-};
+use super::bvh::BvhState;
+use super::instance::{CameraUniforms, INITIAL_PRIMITIVE_CAPACITY, RayMarchParams, SceneMeta, SdfPrimitive};
 use crate::VIEWPORT_DEPTH_FORMAT;
 
 /// Ray-marching pipeline + buffers + bind groups.
@@ -18,17 +15,17 @@ pub struct RayMarchRenderer {
     pub(super) scene_meta_buffer: wgpu::Buffer,
     pub(super) primitives_buffer: wgpu::Buffer,
     pub(super) primitive_capacity: u64,
-    pub(super) tokens_buffer: wgpu::Buffer,
-    pub(super) token_capacity: u64,
     pub(super) scene_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) camera_bind_group: wgpu::BindGroup,
     pub(super) scene_bind_group: wgpu::BindGroup,
+    pub(super) bvh_state: BvhState,
     pub params: RayMarchParams,
 }
 
 impl RayMarchRenderer {
     pub fn new(
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
         pipeline_cache: Option<&wgpu::PipelineCache>,
     ) -> Self {
@@ -58,12 +55,8 @@ impl RayMarchRenderer {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let tokens_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("raymarch_tokens_buffer"),
-            size: INITIAL_TOKEN_CAPACITY * std::mem::size_of::<Token>() as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+
+        let bvh_state = BvhState::new(device, queue, pipeline_cache);
 
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -95,6 +88,7 @@ impl RayMarchRenderer {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("raymarch_scene_bgl"),
                 entries: &[
+                    // 0 — scene metadata uniform.
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -105,6 +99,7 @@ impl RayMarchRenderer {
                         },
                         count: None,
                     },
+                    // 1 — primitives storage (per-entity SDF parameters).
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -115,8 +110,31 @@ impl RayMarchRenderer {
                         },
                         count: None,
                     },
+                    // 2 — BVH nodes (flat 2N-1 array of BvhNode).
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // 3 — sorted_indices (Morton-permuted payload indices).
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // 4 — per-leaf AABB + role + smoothness.
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -139,7 +157,9 @@ impl RayMarchRenderer {
             &scene_bind_group_layout,
             &scene_meta_buffer,
             &primitives_buffer,
-            &tokens_buffer,
+            bvh_state.current_nodes(),
+            bvh_state.current_sorted_indices(),
+            bvh_state.current_leaf_aabbs(),
         );
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -198,11 +218,10 @@ impl RayMarchRenderer {
             scene_meta_buffer,
             primitives_buffer,
             primitive_capacity: INITIAL_PRIMITIVE_CAPACITY,
-            tokens_buffer,
-            token_capacity: INITIAL_TOKEN_CAPACITY,
             scene_bind_group_layout,
             camera_bind_group,
             scene_bind_group,
+            bvh_state,
             params: RayMarchParams::default(),
         }
     }
@@ -285,12 +304,17 @@ pub(super) fn make_camera_bg(
     })
 }
 
+/// Build the scene bind group from the current frame's buffers. Called
+/// at construction and whenever `update_scene` swaps the BVH slot or
+/// grows a buffer's capacity.
 pub(super) fn make_scene_bg(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     meta: &wgpu::Buffer,
     primitives: &wgpu::Buffer,
-    tokens: &wgpu::Buffer,
+    bvh_nodes: &wgpu::Buffer,
+    sorted_indices: &wgpu::Buffer,
+    leaf_aabbs: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("raymarch_scene_bg"),
@@ -306,7 +330,15 @@ pub(super) fn make_scene_bg(
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: tokens.as_entire_binding(),
+                resource: bvh_nodes.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: sorted_indices.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: leaf_aabbs.as_entire_binding(),
             },
         ],
     })

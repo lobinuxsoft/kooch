@@ -96,22 +96,37 @@ pub(super) struct SdfPrimitive {
 
 /// Matches `SceneMeta` in the WGSL shader.
 ///
-/// `primitive_count` is the length of the primitives SSBO (used for
-/// safety bounds when a token references an out-of-range primitive
-/// index). `token_count` is the length of the postfix CSG token SSBO —
-/// the shader iterates `[0, token_count)` once per ray sample.
+/// `primitive_count` is the length of the primitives SSBO. `bvh_n` is
+/// the number of leaves in the currently-bound BVH — i.e. the number
+/// of primitives that participated in the last completed build. The
+/// fragment shader treats `bvh_n == 0` as 'no scene' and returns the
+/// sky background for every pixel; this is what we want both before
+/// the first build resolves and when the scene is genuinely empty.
+///
+/// `has_intersects` / `has_subs` enable the optional branches of the
+/// fixed default tree:
+///   `smooth_subtract(smooth_intersect(adds, ints, k_int), subs, k_sub)`.
+/// `k_int_scene` / `k_sub_scene` are the per-role smoothness maxima for
+/// those final combination steps.
 ///
 /// `skip_internal_sky = 1` tells the fragment shader to discard on miss
 /// instead of drawing its internal vertical gradient. Set this when a
 /// separate sky pass (e.g. `SkyRenderPass`) ran before us and already
 /// filled the background — the ray-march pass then becomes additive on
 /// top of that sky, only writing colors where rays actually hit SDFs.
+///
+/// Layout: 64 bytes total, std140-uniform clean (vec4 fields aligned to
+/// 16 byte offsets). Verified by an `offset_of!` test.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(super) struct SceneMeta {
     pub primitive_count: u32,
-    pub token_count: u32,
+    pub bvh_n: u32,
     pub skip_internal_sky: u32,
+    pub has_intersects: u32,
+    pub has_subs: u32,
+    pub k_int_scene: f32,
+    pub k_sub_scene: f32,
     pub _pad0: u32,
     pub sky_top: [f32; 4],
     pub sky_bottom: [f32; 4],
@@ -121,8 +136,12 @@ impl Default for SceneMeta {
     fn default() -> Self {
         Self {
             primitive_count: 0,
-            token_count: 0,
+            bvh_n: 0,
             skip_internal_sky: 0,
+            has_intersects: 0,
+            has_subs: 0,
+            k_int_scene: 0.0,
+            k_sub_scene: 0.0,
             _pad0: 0,
             sky_top: [0.5, 0.7, 1.0, 1.0],
             sky_bottom: [0.1, 0.2, 0.4, 1.0],
@@ -132,11 +151,6 @@ impl Default for SceneMeta {
 
 /// Initial capacity for the SDF primitive storage buffer (grows on demand).
 pub(super) const INITIAL_PRIMITIVE_CAPACITY: u64 = 256;
-
-/// Initial capacity for the CSG token storage buffer (grows on demand).
-/// Token count grows as `2 * primitive_count - 1` for a fully-roled tree,
-/// so this is sized to roughly match the primitive capacity.
-pub(super) const INITIAL_TOKEN_CAPACITY: u64 = 512;
 
 /// CSG role of a primitive in the default tree. Matches the `ROLE_*`
 /// constants in the BVH-traversal WGSL shader and drives the per-role
@@ -214,5 +228,28 @@ mod tests {
         assert_ne!(ROLE_ADD, ROLE_INTERSECT);
         assert_ne!(ROLE_ADD, ROLE_SUBTRACT);
         assert_ne!(ROLE_INTERSECT, ROLE_SUBTRACT);
+    }
+
+    #[test]
+    fn scene_meta_layout_is_64_bytes() {
+        // Uniform buffer needs std140-clean alignment. vec4 fields
+        // (sky_top / sky_bottom) must land on 16-byte offsets.
+        assert_eq!(std::mem::size_of::<SceneMeta>(), 64);
+    }
+
+    #[test]
+    fn scene_meta_field_offsets_match_wgsl() {
+        use std::mem::offset_of;
+        assert_eq!(offset_of!(SceneMeta, primitive_count), 0);
+        assert_eq!(offset_of!(SceneMeta, bvh_n), 4);
+        assert_eq!(offset_of!(SceneMeta, skip_internal_sky), 8);
+        assert_eq!(offset_of!(SceneMeta, has_intersects), 12);
+        assert_eq!(offset_of!(SceneMeta, has_subs), 16);
+        assert_eq!(offset_of!(SceneMeta, k_int_scene), 20);
+        assert_eq!(offset_of!(SceneMeta, k_sub_scene), 24);
+        // _pad0 lands at 28; sky_top must start at 32 to keep the vec4
+        // 16-byte aligned.
+        assert_eq!(offset_of!(SceneMeta, sky_top), 32);
+        assert_eq!(offset_of!(SceneMeta, sky_bottom), 48);
     }
 }

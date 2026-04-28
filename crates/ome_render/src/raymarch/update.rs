@@ -3,32 +3,34 @@
 //! Collects all visible SDF shape entities into a primitives storage
 //! buffer (sorted by entity index for stable ordering), groups them by
 //! CSG role (add / intersect / subtract) according to their optional
-//! `SdfBlend`, builds a balanced default tree, and uploads its postfix
-//! linearisation to a separate token storage buffer. The shader walks
-//! the tokens once with a fixed-size evaluation stack — see
-//! [`super::csg_tree`].
+//! `SdfBlend`, computes per-primitive world-space AABBs (inflated by
+//! the per-role smooth-blend k_max so the BVH cull stays conservative),
+//! and kicks a GPU LBVH build whenever the scene state changes.
+//!
+//! The shader iterates the BVH stack-based and accumulates per-role
+//! distances inline — no postfix CSG token stream is uploaded any
+//! more (PR-4 of #115).
 
 use glam::{Mat4, Vec4};
+use ome_bvh::Aabb;
 use ome_core::coord::ActiveOrigin;
 use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::query::Query;
-use ome_ecs::sdf_blend::{
-    MODE_SMOOTH_INTERSECTION, MODE_SMOOTH_SUBTRACTION,
-};
+use ome_ecs::sdf_blend::{MODE_SMOOTH_INTERSECTION, MODE_SMOOTH_SUBTRACTION};
 use ome_ecs::{
     PerspectiveCamera, SdfBlend, SdfBox, SdfCapsule, SdfCylinder, SdfPlane, SdfSphere, SdfTorus,
 };
 
-use super::csg_tree::{DefaultTreeRoles, Token, build_default_tree};
+use super::aabb::primitive_aabb;
 use super::instance::{
-    INITIAL_PRIMITIVE_CAPACITY, INITIAL_TOKEN_CAPACITY, SceneMeta, SdfPrimitive, TYPE_BOX,
-    TYPE_CAPSULE, TYPE_CYLINDER, TYPE_PLANE, TYPE_SPHERE, TYPE_TORUS,
+    INITIAL_PRIMITIVE_CAPACITY, LeafAabb, ROLE_ADD, ROLE_INTERSECT, ROLE_SUBTRACT, SceneMeta,
+    SdfPrimitive, TYPE_BOX, TYPE_CAPSULE, TYPE_CYLINDER, TYPE_PLANE, TYPE_SPHERE, TYPE_TORUS,
 };
 use super::renderer::{RayMarchRenderer, make_scene_bg};
 
 /// Per-entity blend metadata captured during ECS collection. Lives only
-/// long enough to be folded into the default tree before upload.
+/// long enough to be folded into the leaf-AABB table before upload.
 #[derive(Copy, Clone, Debug)]
 struct BlendInfo {
     mode: u32,
@@ -127,8 +129,8 @@ impl RayMarchRenderer {
         true
     }
 
-    /// Uploads every visible SDF primitive entity + the postfix CSG
-    /// token stream that composes them into a scene.
+    /// Uploads every visible SDF primitive entity, kicks a BVH rebuild
+    /// when the scene changed, and refreshes the scene bind group.
     ///
     /// `skip_internal_sky = true` tells the fragment shader to discard on
     /// ray miss instead of drawing its internal gradient — use this when a
@@ -152,60 +154,63 @@ impl RayMarchRenderer {
         collect_planes(resources, &mut tagged);
 
         // Stable ordering: identical ECS state always serialises to the
-        // same primitive array + the same default tree (and therefore
-        // the same token stream + byte-identical render output).
+        // same primitive array + the same BVH input (and therefore the
+        // same byte-identical render output frame-to-frame).
         tagged.sort_by_key(|(idx, _, _)| *idx);
 
-        let mut primitives: Vec<SdfPrimitive> = Vec::with_capacity(tagged.len());
-        let mut roles = DefaultTreeRoles::default();
-        for (_, prim, blend) in tagged {
-            let prim_idx = primitives.len() as u32;
-            primitives.push(prim);
+        // First pass: per-role smoothness maxima + presence flags. The
+        // BVH cull inflates each leaf's AABB by its role's k_max so a
+        // smooth blend's tail can't sneak past the boundary.
+        let mut k_add_max = 0.0f32;
+        let mut k_int_max = 0.0f32;
+        let mut k_sub_max = 0.0f32;
+        let mut has_intersects = false;
+        let mut has_subs = false;
+        for (_, _, blend) in &tagged {
             match blend.mode {
-                // ADD-like: MODE_REPLACE (hard union, k≈0) and
-                // MODE_SMOOTH_UNION both go through the union pool.
-                // Per-role k = max across the role's instances (issue
-                // #307); MODE_REPLACE entities mixed with smooth ones
-                // pick up the role's k — visually negligible drift on
-                // legacy scenes, addressed when the tree-editor UX
-                // ships and per-edge k becomes user-settable.
                 MODE_SMOOTH_INTERSECTION => {
-                    roles.intersects.push(prim_idx);
-                    roles.intersect_smoothness_max =
-                        roles.intersect_smoothness_max.max(blend.smoothness);
+                    has_intersects = true;
+                    k_int_max = k_int_max.max(blend.smoothness);
                 }
                 MODE_SMOOTH_SUBTRACTION => {
-                    roles.subs.push(prim_idx);
-                    roles.subtract_smoothness_max =
-                        roles.subtract_smoothness_max.max(blend.smoothness);
+                    has_subs = true;
+                    k_sub_max = k_sub_max.max(blend.smoothness);
                 }
                 _ => {
-                    roles.adds.push(prim_idx);
-                    roles.add_smoothness_max =
-                        roles.add_smoothness_max.max(blend.smoothness);
+                    k_add_max = k_add_max.max(blend.smoothness);
                 }
             }
         }
 
-        // Build + serialise the default tree. Empty scenes (no adds, or
-        // intersect/subtract without any add) collapse to zero tokens —
-        // the shader treats this as a ray miss and renders the sky.
-        let tokens: Vec<Token> = match build_default_tree(roles) {
-            Some(tree) => match tree.serialise_postfix() {
-                Ok(t) => t,
-                Err(err) => {
-                    tracing::warn!(
-                        "raymarch: CSG tree serialisation failed ({err:?}); rendering empty scene"
-                    );
-                    Vec::new()
-                }
-            },
-            None => Vec::new(),
-        };
+        // Second pass: build per-leaf metadata + BVH input items.
+        let mut primitives: Vec<SdfPrimitive> = Vec::with_capacity(tagged.len());
+        let mut leaf_aabbs: Vec<LeafAabb> = Vec::with_capacity(tagged.len());
+        let mut bvh_items: Vec<(u32, Aabb)> = Vec::with_capacity(tagged.len());
+        for (_, prim, blend) in tagged {
+            let prim_idx = primitives.len() as u32;
+            let role = match blend.mode {
+                MODE_SMOOTH_INTERSECTION => ROLE_INTERSECT,
+                MODE_SMOOTH_SUBTRACTION => ROLE_SUBTRACT,
+                _ => ROLE_ADD,
+            };
+            let inflation = match role {
+                ROLE_INTERSECT => k_int_max,
+                ROLE_SUBTRACT => k_sub_max,
+                _ => k_add_max,
+            };
+            let aabb = primitive_aabb(&prim, inflation);
+            bvh_items.push((prim_idx, aabb));
+            leaf_aabbs.push(LeafAabb {
+                aabb_min: aabb.min.to_array(),
+                role,
+                aabb_max: aabb.max.to_array(),
+                smoothness: blend.smoothness,
+            });
+            primitives.push(prim);
+        }
 
-        // Resize buffers if needed, then re-bind. Both buffers grow
-        // independently — adding a primitive doesn't necessarily change
-        // the token count by the same amount.
+        // Resize the primitives buffer if needed. The leaf-AABB and BVH
+        // node buffers live inside `bvh_state`'s slot management.
         let mut rebind = false;
         let prim_needed = primitives.len().max(1) as u64;
         if prim_needed > self.primitive_capacity {
@@ -221,41 +226,47 @@ impl RayMarchRenderer {
             self.primitive_capacity = new_cap;
             rebind = true;
         }
-        let token_needed = tokens.len().max(1) as u64;
-        if token_needed > self.token_capacity {
-            let new_cap = token_needed
-                .next_power_of_two()
-                .max(INITIAL_TOKEN_CAPACITY);
-            self.tokens_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("raymarch_tokens_buffer"),
-                size: new_cap * std::mem::size_of::<Token>() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.token_capacity = new_cap;
-            rebind = true;
-        }
-        if rebind {
-            self.scene_bind_group = make_scene_bg(
-                device,
-                &self.scene_bind_group_layout,
-                &self.scene_meta_buffer,
-                &self.primitives_buffer,
-                &self.tokens_buffer,
-            );
-        }
 
         if !primitives.is_empty() {
             queue.write_buffer(&self.primitives_buffer, 0, bytemuck::cast_slice(&primitives));
         }
-        if !tokens.is_empty() {
-            queue.write_buffer(&self.tokens_buffer, 0, bytemuck::cast_slice(&tokens));
+
+        // Drive the BVH state: poll any in-flight build for completion
+        // (potentially flipping `current_slot`), then kick a new build
+        // if the scene state changed since the last successful kick.
+        // Both calls are idempotent on stable scenes.
+        if let Some(Err(e)) = self.bvh_state.poll_swap(device, queue) {
+            tracing::warn!(
+                "raymarch BVH build failed: {e}; keeping previous slot's data"
+            );
         }
+        self.bvh_state
+            .kick_if_dirty(device, queue, bvh_items, leaf_aabbs);
+
+        // Rebind every frame: `current_slot` may have flipped between
+        // two GPU buffer sets (slot_a ↔ slot_b) and the bind group must
+        // point at the slot the renderer is consuming this frame.
+        // wgpu treats bind-group creation as cheap; this is the simple
+        // path. Capacity-growth path also flows through here.
+        let _ = rebind;
+        self.scene_bind_group = make_scene_bg(
+            device,
+            &self.scene_bind_group_layout,
+            &self.scene_meta_buffer,
+            &self.primitives_buffer,
+            self.bvh_state.current_nodes(),
+            self.bvh_state.current_sorted_indices(),
+            self.bvh_state.current_leaf_aabbs(),
+        );
 
         let meta = SceneMeta {
             primitive_count: primitives.len() as u32,
-            token_count: tokens.len() as u32,
+            bvh_n: self.bvh_state.current_n(),
             skip_internal_sky: u32::from(skip_internal_sky),
+            has_intersects: u32::from(has_intersects),
+            has_subs: u32::from(has_subs),
+            k_int_scene: k_int_max,
+            k_sub_scene: k_sub_max,
             _pad0: 0,
             sky_top: sky_top.to_array(),
             sky_bottom: sky_bottom.to_array(),
