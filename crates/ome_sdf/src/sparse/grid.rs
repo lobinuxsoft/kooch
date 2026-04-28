@@ -8,7 +8,7 @@
 
 use ome_bvh::Aabb;
 
-use super::{ROOT_CELLS, SUBGRID_VOXELS};
+use super::{ROOT_CELLS, SUBGRID_VOXELS, free_list};
 
 /// Fixed-capacity sparse SDF grid bound to one chunk. See module-level
 /// docs in [`super`] for the layout, capacity, and encoder-ordering
@@ -24,30 +24,40 @@ pub struct SparseGrid {
 
 impl SparseGrid {
     /// Allocate the four GPU buffers for a fresh `SparseGrid` covering
-    /// `bounds` (chunk-local f32, post-`ActiveOrigin`).
+    /// `bounds` (chunk-local f32, post-`ActiveOrigin`) and seed the
+    /// free list + counters so the grid is immediately ready for an
+    /// allocate / populate cycle.
     ///
     /// `root_indices` is initialised to `EMPTY_ROOT_SENTINEL`
-    /// (`0xFFFFFFFF`) via `mapped_at_creation` so a freshly created
-    /// grid is immediately samplable — every lookup returns
-    /// `FAR_FROM_SURFACE`. The free list itself is initialised by a
-    /// separate compute pass shipped in S2.
+    /// (`0xFFFFFFFF`) via `mapped_at_creation` — every lookup on a
+    /// fresh grid returns `FAR_FROM_SURFACE`. The free list is filled
+    /// with the identity permutation `[0, 1, …, max_subgrids - 1]`
+    /// and `counters.free_top` is set to `max_subgrids` via
+    /// [`free_list::init`].
     ///
     /// `max_subgrids` must be in `1..=ROOT_CELLS`. Use
     /// [`super::MAX_SUBGRIDS_DEFAULT`] unless profiling motivates a
     /// per-chunk override.
-    pub fn new(device: &wgpu::Device, bounds: Aabb, max_subgrids: u32) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        bounds: Aabb,
+        max_subgrids: u32,
+    ) -> Self {
         assert!(
             max_subgrids > 0 && max_subgrids <= ROOT_CELLS,
             "max_subgrids must be in 1..={ROOT_CELLS}, got {max_subgrids}",
         );
-        Self {
+        let grid = Self {
             bounds,
             max_subgrids,
             root_indices_buffer: make_root_indices_buffer(device),
             subgrid_pool_buffer: make_subgrid_pool_buffer(device, max_subgrids),
             free_list_buffer: make_free_list_buffer(device, max_subgrids),
             counters_buffer: make_counters_buffer(device),
-        }
+        };
+        free_list::init(queue, &grid.free_list_buffer, &grid.counters_buffer, max_subgrids);
+        grid
     }
 
     pub fn bounds(&self) -> Aabb {
@@ -160,12 +170,12 @@ mod tests {
 
     #[test]
     fn buffer_sizes_match_layout() {
-        let Some((device, _queue)) = test_device::try_acquire() else {
+        let Some((device, queue)) = test_device::try_acquire() else {
             eprintln!("skipping buffer_sizes_match_layout: no GPU available");
             return;
         };
         let max_subgrids = 256;
-        let grid = SparseGrid::new(&device, unit_bounds(), max_subgrids);
+        let grid = SparseGrid::new(&device, &queue, unit_bounds(), max_subgrids);
 
         assert_eq!(grid.max_subgrids(), max_subgrids);
         assert_eq!(grid.bounds(), unit_bounds());
@@ -184,8 +194,8 @@ mod tests {
             eprintln!("skipping root_indices_initialized_to_empty_sentinel: no GPU available");
             return;
         };
-        let grid = SparseGrid::new(&device, unit_bounds(), 16);
-        let bytes = readback(&device, &queue, grid.root_indices_buffer());
+        let grid = SparseGrid::new(&device, &queue, unit_bounds(), 16);
+        let bytes = test_device::readback(&device, &queue, grid.root_indices_buffer());
         assert_eq!(bytes.len(), (ROOT_CELLS as usize) * 4);
         for chunk in bytes.chunks_exact(4) {
             let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
@@ -209,54 +219,21 @@ mod tests {
     #[test]
     #[should_panic(expected = "max_subgrids must be in")]
     fn rejects_zero_max_subgrids() {
-        let Some((device, _queue)) = test_device::try_acquire() else {
+        let Some((device, queue)) = test_device::try_acquire() else {
             // Force the panic path so this test still validates the
             // assert message format when no GPU is available.
             panic!("max_subgrids must be in 1..=4096, got 0 (skipped — no GPU)");
         };
-        let _ = SparseGrid::new(&device, unit_bounds(), 0);
+        let _ = SparseGrid::new(&device, &queue, unit_bounds(), 0);
     }
 
     #[test]
     #[should_panic(expected = "max_subgrids must be in")]
     fn rejects_oversized_max_subgrids() {
-        let Some((device, _queue)) = test_device::try_acquire() else {
+        let Some((device, queue)) = test_device::try_acquire() else {
             panic!("max_subgrids must be in 1..=4096, got 9999 (skipped — no GPU)");
         };
-        let _ = SparseGrid::new(&device, unit_bounds(), ROOT_CELLS + 1);
+        let _ = SparseGrid::new(&device, &queue, unit_bounds(), ROOT_CELLS + 1);
     }
 
-    fn readback(device: &wgpu::Device, queue: &wgpu::Queue, src: &wgpu::Buffer) -> Vec<u8> {
-        let size = src.size();
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ome_sdf::sparse::tests::readback_staging"),
-            size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("ome_sdf::sparse::tests::readback_encoder"),
-        });
-        encoder.copy_buffer_to_buffer(src, 0, &staging, 0, size);
-        queue.submit(std::iter::once(encoder.finish()));
-
-        let slice = staging.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            tx.send(r).ok();
-        });
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(std::time::Duration::from_secs(30)),
-            })
-            .expect("device poll");
-        rx.recv().expect("readback channel").expect("map_async ok");
-
-        let view = slice.get_mapped_range();
-        let bytes = view.to_vec();
-        drop(view);
-        staging.unmap();
-        bytes
-    }
 }

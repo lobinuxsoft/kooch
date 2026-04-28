@@ -44,9 +44,22 @@
 //! responsibility — see issue #309 (Edit Baker)'s atomic-per-chunk
 //! submission contract.
 
+mod free_list;
 mod grid;
 
 pub use grid::SparseGrid;
+
+/// Source of `shaders/sparse_freelist.wgsl` — atomic free-list pop /
+/// push helpers shared by the allocate (#S4) and free (#S7) compute
+/// shaders. Consumer pipelines concat this string ahead of their own
+/// shader source.
+pub const SPARSE_FREELIST_WGSL: &str =
+    include_str!("../../shaders/sparse_freelist.wgsl");
+
+/// Size in bytes of the `SparseCounters` struct (mirrors the WGSL
+/// layout in `sparse_freelist.wgsl`). Four `u32`s: `free_top`,
+/// `alloc_failed_count`, two padding slots.
+pub const FREELIST_COUNTERS_SIZE: u64 = 16;
 
 /// Side length (in cells) of the root grid. Each chunk owns one root
 /// grid, addressing `ROOT_CELLS = ROOT_DIM³` subgrid slots.
@@ -118,5 +131,45 @@ pub(crate) mod test_device {
                 .ok()?;
             Some((device, queue))
         })
+    }
+
+    /// Synchronous full-buffer readback helper for tests. `src` must
+    /// have `COPY_SRC` usage (every `SparseGrid` buffer does).
+    pub fn readback(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        src: &wgpu::Buffer,
+    ) -> Vec<u8> {
+        let size = src.size();
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ome_sdf::sparse::test_device::readback_staging"),
+            size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("ome_sdf::sparse::test_device::readback_encoder"),
+        });
+        encoder.copy_buffer_to_buffer(src, 0, &staging, 0, size);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            tx.send(r).ok();
+        });
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(30)),
+            })
+            .expect("device poll");
+        rx.recv().expect("readback channel").expect("map_async ok");
+
+        let view = slice.get_mapped_range();
+        let bytes = view.to_vec();
+        drop(view);
+        staging.unmap();
+        bytes
     }
 }
