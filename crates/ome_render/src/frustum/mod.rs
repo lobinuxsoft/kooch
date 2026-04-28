@@ -26,6 +26,8 @@
 mod cull;
 
 #[cfg(test)]
+mod bench;
+#[cfg(test)]
 mod tests;
 
 pub use cull::{DrawIndexedIndirectArgs, FrustumCull, FrustumPlanes, FrustumUniforms};

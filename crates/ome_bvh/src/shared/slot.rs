@@ -57,7 +57,12 @@ fn make_nodes_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("ome_bvh::shared::nodes"),
         size: 2 * capacity * std::mem::size_of::<BvhNode>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        // COPY_SRC kept on the production buffer so debug tooling /
+        // S7 sync tests can read back the active slot without
+        // touching the builder scratch. Cost is zero when unused.
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     })
 }

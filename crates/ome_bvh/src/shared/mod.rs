@@ -37,6 +37,9 @@ mod pending;
 mod slot;
 mod state;
 
+#[cfg(test)]
+mod sync_tests;
+
 pub use heuristic::should_refit;
 pub use pending::{BuildToken, SwapInfo};
 pub use state::SharedBvhState;
