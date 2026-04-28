@@ -246,12 +246,19 @@ impl RayMarchRenderer {
                 "raymarch BVH build failed: {e}; keeping previous slot's data"
             );
         }
-        self.bvh_state.kick_if_dirty(
+        // Production frame loop uses the unified rebuild-vs-refit
+        // policy: should_refit-driven decision over the previous
+        // CPU mirror's leaf AABBs. Defaults from the PR-5 plan.
+        // Goldens / tests that want a forced path call kick_if_dirty
+        // or kick_refit_if_dirty directly.
+        self.bvh_state.kick_auto_if_dirty(
             device,
             queue,
             bvh_items,
             leaf_aabbs,
             raymarch_payloads,
+            /* move_threshold_ratio */ 0.25,
+            /* change_threshold_pct */ 10.0,
         );
 
         // Rebind every frame: `current_slot` may have flipped between

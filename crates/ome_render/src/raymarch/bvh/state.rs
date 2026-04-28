@@ -173,8 +173,9 @@ impl BvhState {
         h.finish()
     }
 
-    /// Start a new GPU build if the scene's hash changed since the last
-    /// kick. Returns `true` when a new build was kicked.
+    /// Force a full rebuild on dirty. Production frame loops use
+    /// [`Self::kick_auto_if_dirty`] instead — this entry point stays
+    /// for tests / tooling that need a deterministic full build.
     ///
     /// `items` is the BVH builder input; `leaf_aabbs` is the parallel
     /// per-leaf metadata bound by every consumer; `raymarch_payloads`
@@ -185,6 +186,7 @@ impl BvhState {
     /// has not yet been polled to completion, this is a no-op
     /// regardless of the dirty state — the caller should drive
     /// [`Self::poll_swap`] every frame to keep the pipeline moving.
+    #[allow(dead_code)]
     pub fn kick_if_dirty(
         &mut self,
         device: &wgpu::Device,
@@ -206,6 +208,59 @@ impl BvhState {
 
         let scene_hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads);
         let Some(mut token) = self.shared.kick(device, queue, items, leaf_aabbs, scene_hash) else {
+            return false;
+        };
+        attach_payload_upload(
+            &mut self.payload_slots,
+            device,
+            &mut token,
+            raymarch_payloads,
+        );
+        true
+    }
+
+    /// Unified rebuild-vs-refit entry point. Same dirty-hash gate as
+    /// [`Self::kick_if_dirty`], but the orchestrator picks between
+    /// full build and refit fast-path internally based on the
+    /// [`ome_bvh::should_refit`] heuristic. Returns `true` when a kick
+    /// of either kind was committed.
+    ///
+    /// `move_threshold_ratio` and `change_threshold_pct` forward to
+    /// the heuristic — PR-5 plan defaults are `0.25` and `10.0`. The
+    /// renderer uses these for the production frame loop; tests that
+    /// want to force a specific path call [`Self::kick_if_dirty`] or
+    /// [`Self::kick_refit_if_dirty`] directly.
+    pub fn kick_auto_if_dirty(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        items: Vec<(u32, Aabb)>,
+        leaf_aabbs: Vec<LeafAabb>,
+        raymarch_payloads: Vec<RaymarchPayload>,
+        move_threshold_ratio: f32,
+        change_threshold_pct: f32,
+    ) -> bool {
+        debug_assert_eq!(
+            items.len(),
+            leaf_aabbs.len(),
+            "items and leaf_aabbs must align 1:1 — one entry per primitive",
+        );
+        debug_assert_eq!(
+            items.len(),
+            raymarch_payloads.len(),
+            "items and raymarch_payloads must align 1:1 — one entry per primitive",
+        );
+
+        let scene_hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads);
+        let Some(mut token) = self.shared.kick_auto(
+            device,
+            queue,
+            items,
+            leaf_aabbs,
+            scene_hash,
+            move_threshold_ratio,
+            change_threshold_pct,
+        ) else {
             return false;
         };
         attach_payload_upload(

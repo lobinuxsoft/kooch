@@ -30,6 +30,7 @@
 use crate::leaf::LeafAabb;
 use crate::{Aabb, Bvh, BvhBuildError, BvhGpuBuildResult, BvhGpuBuilder, BvhNode};
 
+use super::heuristic::should_refit;
 use super::pending::{BuildToken, Pending, PendingKind, PollOutcome, SwapInfo};
 use super::slot::{INITIAL_SLOT_CAPACITY, OutputSlot};
 
@@ -75,6 +76,12 @@ pub struct SharedBvhState {
     /// until the first full build resolves; thereafter refreshed on
     /// every successful build / refit swap.
     cpu_mirror: Option<CpuMirror>,
+    /// Lifetime count of accepted [`Self::kick`] calls — every full
+    /// build the orchestrator has committed to since construction.
+    builds_kicked: u64,
+    /// Lifetime count of accepted [`Self::kick_refit`] calls — every
+    /// refit fast-path the orchestrator has committed to.
+    refits_kicked: u64,
 }
 
 impl SharedBvhState {
@@ -95,7 +102,23 @@ impl SharedBvhState {
             pending: None,
             dirty_hash: None,
             cpu_mirror: None,
+            builds_kicked: 0,
+            refits_kicked: 0,
         }
+    }
+
+    /// Lifetime count of accepted full builds. Equal to the number of
+    /// times [`Self::kick`] (directly or via [`Self::kick_auto`])
+    /// returned `Some`.
+    pub fn builds_kicked(&self) -> u64 {
+        self.builds_kicked
+    }
+
+    /// Lifetime count of accepted refit fast-paths. Equal to the
+    /// number of times [`Self::kick_refit`] (directly or via
+    /// [`Self::kick_auto`]) returned `Some`.
+    pub fn refits_kicked(&self) -> u64 {
+        self.refits_kicked
     }
 
     /// Borrow the CPU mirror of the currently-active BVH. `None` until
@@ -206,6 +229,7 @@ impl SharedBvhState {
             side_payloads: Vec::new(),
         });
         self.dirty_hash = Some(scene_hash);
+        self.builds_kicked += 1;
         Some(BuildToken { shared: self })
     }
 
@@ -261,6 +285,7 @@ impl SharedBvhState {
         self.slot_mut(target_slot).ensure_capacity(device, needed);
 
         let refit = crate::gpu::refit_gpu::<u32>(&mut self.builder, device, queue, items);
+        self.refits_kicked += 1;
         self.pending = Some(Pending {
             op: PendingKind::Refit(refit),
             target_slot,
@@ -270,6 +295,67 @@ impl SharedBvhState {
         });
         self.dirty_hash = Some(scene_hash);
         Some(BuildToken { shared: self })
+    }
+
+    /// Unified rebuild-vs-refit lifecycle entry point. Internally picks
+    /// between [`Self::kick`] and [`Self::kick_refit`] based on the
+    /// [`should_refit`] heuristic over the previously-mirrored leaf
+    /// AABBs. Suppressed under the same conditions as the underlying
+    /// methods (pending in flight, hash unchanged, cardinality drift).
+    ///
+    /// Decision matrix:
+    ///
+    /// - First build (`current_n() == 0` / no CPU mirror) → rebuild.
+    /// - Cardinality changed → rebuild.
+    /// - `should_refit(prev_aabbs, new_aabbs, ...)` says "yes" → refit.
+    /// - Otherwise → rebuild.
+    ///
+    /// `move_threshold_ratio` and `change_threshold_pct` forward
+    /// directly to [`should_refit`]. PR-5 plan defaults are `0.25` and
+    /// `10.0`; tighter values land via the S7 bench results.
+    ///
+    /// Lifetime counters [`Self::builds_kicked`] / [`Self::refits_kicked`]
+    /// reflect the chosen path so callers can introspect "what did the
+    /// orchestrator just decide" without tracking it themselves.
+    pub fn kick_auto(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        items: Vec<(u32, Aabb)>,
+        leaf_aabbs: Vec<LeafAabb>,
+        scene_hash: u64,
+        move_threshold_ratio: f32,
+        change_threshold_pct: f32,
+    ) -> Option<BuildToken<'_>> {
+        debug_assert_eq!(
+            items.len(),
+            leaf_aabbs.len(),
+            "items and leaf_aabbs must align 1:1 — one entry per primitive",
+        );
+        // Decide rebuild vs refit BEFORE mutating any state. Refit is
+        // viable only when there's a previous CPU mirror to compare
+        // against and the cardinality matches — both gates are
+        // re-checked downstream anyway, so this is a pure suggestion.
+        let prefer_refit = self
+            .cpu_mirror
+            .as_ref()
+            .filter(|m| m.bvh.leaf_count() == items.len())
+            .map(|m| {
+                let prev: Vec<Aabb> = m
+                    .leaf_aabbs
+                    .iter()
+                    .map(|la| Aabb::new(la.aabb_min.into(), la.aabb_max.into()))
+                    .collect();
+                let curr: Vec<Aabb> = items.iter().map(|(_, a)| *a).collect();
+                should_refit(&prev, &curr, move_threshold_ratio, change_threshold_pct)
+            })
+            .unwrap_or(false);
+
+        if prefer_refit {
+            self.kick_refit(device, queue, items, leaf_aabbs, scene_hash)
+        } else {
+            self.kick(device, queue, items, leaf_aabbs, scene_hash)
+        }
     }
 
     /// Drive the in-flight build forward. Must be called once per
