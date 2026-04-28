@@ -3,7 +3,6 @@
 
 mod aabb;
 mod bvh;
-mod csg_tree;
 mod instance;
 mod renderer;
 mod update;

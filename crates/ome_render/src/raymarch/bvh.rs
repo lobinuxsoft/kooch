@@ -39,7 +39,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use ome_bvh::{Aabb, BvhBuildError, BvhGpuBuild, BvhGpuBuilder, BvhNode};
-use wgpu::util::DeviceExt;
 
 use super::instance::{INITIAL_LEAF_AABB_CAPACITY, LeafAabb};
 
@@ -187,11 +186,6 @@ impl BvhState {
     /// before any build has resolved.
     pub fn current_n(&self) -> u32 {
         self.slot(self.current_slot).n
-    }
-
-    /// Returns `true` when there is no in-flight build.
-    pub fn is_idle(&self) -> bool {
-        self.pending.is_none()
     }
 
     fn slot(&self, idx: u8) -> &OutputSlot {
