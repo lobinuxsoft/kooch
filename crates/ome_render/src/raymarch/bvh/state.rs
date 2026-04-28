@@ -8,9 +8,11 @@
 //! growth — is delegated to [`SharedBvhState`]; only the raymarch
 //! side payload lives here.
 //!
-//! The payload double-buffer mirrors the shared BVH's swap: when
-//! [`SharedBvhState::poll_swap`] reports a [`SwapInfo`] the renderer
-//! uploads the captured `RaymarchPayload[]` into the same slot index.
+//! The raymarch payload upload rides the orchestrator's
+//! [`BuildToken::attach_payload`]: it fires atomically on swap success
+//! and is dropped without running on swap failure, so the parallel
+//! payload buffer can never desync from the BVH it was kicked
+//! alongside.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -49,6 +51,33 @@ impl PayloadSlot {
     }
 }
 
+/// Grow the target payload slot to fit `token.n()`, then register the
+/// upload closure on the orchestrator's [`BuildToken`]. The closure
+/// captures a refcounted clone of the (possibly freshly-grown)
+/// `wgpu::Buffer` plus the owned payload `Vec`, so any later regrow
+/// on the consumer side cannot redirect the upload to the wrong
+/// buffer — the swap publishes whatever the kick committed to.
+///
+/// Free function (not a method) so the borrow only touches
+/// `payload_slots`, leaving the orchestrator-borrow held by `token`
+/// unaffected. Calling this through `&mut self` would conflict with
+/// the live `&mut self.shared` the token already holds.
+fn attach_payload_upload(
+    payload_slots: &mut [PayloadSlot; 2],
+    device: &wgpu::Device,
+    token: &mut ome_bvh::BuildToken<'_>,
+    raymarch_payloads: Vec<RaymarchPayload>,
+) {
+    let target_slot = token.target_slot();
+    let n = token.n();
+    let needed = (n as u64).max(1);
+    payload_slots[target_slot as usize].ensure_capacity(device, needed);
+    let buf = payload_slots[target_slot as usize].buffer.clone();
+    token.attach_payload(move |queue, _slot| {
+        queue.write_buffer(&buf, 0, bytemuck::cast_slice(&raymarch_payloads));
+    });
+}
+
 fn make_payload_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("raymarch_bvh::payload_slot"),
@@ -58,19 +87,12 @@ fn make_payload_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
     })
 }
 
-/// Per-build raymarch payload captured at kick time. Drained on the
-/// matching [`SwapInfo`] and uploaded to the swapped-in slot.
-struct PendingPayload {
-    raymarch_payloads: Vec<RaymarchPayload>,
-}
-
 /// Raymarch-side BVH state. Wraps [`SharedBvhState`] and the parallel
 /// raymarch payload double-buffer. Bound to the renderer as a sub-
 /// resource of `RayMarchRenderer`.
 pub struct BvhState {
     shared: SharedBvhState,
     payload_slots: [PayloadSlot; 2],
-    pending_payload: Option<PendingPayload>,
 }
 
 impl BvhState {
@@ -88,7 +110,6 @@ impl BvhState {
                 PayloadSlot::new(device, INITIAL_PAYLOAD_CAPACITY),
                 PayloadSlot::new(device, INITIAL_PAYLOAD_CAPACITY),
             ],
-            pending_payload: None,
         }
     }
 
@@ -183,21 +204,17 @@ impl BvhState {
             "items and raymarch_payloads must align 1:1 — one entry per primitive",
         );
 
-        // Grow the target payload slot up front so the SharedBvhState
-        // and the payload buffer reach the same capacity in lockstep.
-        let n = items.len() as u32;
-        let target_slot = self.shared.current_slot_index() ^ 1;
-        let needed = (n as u64).max(1);
-        self.payload_slots[target_slot as usize].ensure_capacity(device, needed);
-
         let scene_hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads);
-        let kicked = self
-            .shared
-            .kick(device, queue, items, leaf_aabbs, scene_hash);
-        if kicked {
-            self.pending_payload = Some(PendingPayload { raymarch_payloads });
-        }
-        kicked
+        let Some(mut token) = self.shared.kick(device, queue, items, leaf_aabbs, scene_hash) else {
+            return false;
+        };
+        attach_payload_upload(
+            &mut self.payload_slots,
+            device,
+            &mut token,
+            raymarch_payloads,
+        );
+        true
     }
 
     /// Refit fast path: rewrite leaves with new AABBs over the
@@ -239,55 +256,42 @@ impl BvhState {
             "items and raymarch_payloads must align 1:1 — one entry per primitive",
         );
 
-        let n = items.len() as u32;
-        let target_slot = self.shared.current_slot_index() ^ 1;
-        let needed = (n as u64).max(1);
-        self.payload_slots[target_slot as usize].ensure_capacity(device, needed);
-
         let scene_hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads);
-        let kicked = self
-            .shared
-            .kick_refit(device, queue, items, leaf_aabbs, scene_hash);
-        if kicked {
-            self.pending_payload = Some(PendingPayload { raymarch_payloads });
-        }
-        kicked
+        let Some(mut token) =
+            self.shared
+                .kick_refit(device, queue, items, leaf_aabbs, scene_hash)
+        else {
+            return false;
+        };
+        attach_payload_upload(
+            &mut self.payload_slots,
+            device,
+            &mut token,
+            raymarch_payloads,
+        );
+        true
     }
 
     /// Drive the in-flight build forward. Must be called once per
     /// frame. Returns the build outcome on the frame the swap happens:
     ///
     /// - `None` — no pending build, or pending build still in flight.
-    /// - `Some(Ok(()))` — pending build resolved; result copied into
-    ///   the target slot; raymarch payload uploaded onto the same slot;
-    ///   `current_slot` flipped.
+    /// - `Some(Ok(()))` — pending build resolved; the orchestrator
+    ///   copied nodes / sorted_indices / leaf_aabbs to the target
+    ///   slot, the attached payload uploader fired onto the same slot,
+    ///   and `current_slot` flipped.
     /// - `Some(Err(_))` — build failed; pending dropped without
-    ///   touching the slots. The renderer keeps using the previous
-    ///   slot's data until the next successful build.
+    ///   touching the slots; the captured payload `Vec` was dropped
+    ///   with the uploader closure. The renderer keeps using the
+    ///   previous slot's data until the next successful build.
     pub fn poll_swap(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Option<Result<(), BvhBuildError>> {
         match self.shared.poll_swap(device, queue)? {
-            Err(e) => {
-                // Build failed; drop the captured payload — there is
-                // no slot to upload it to.
-                self.pending_payload = None;
-                Some(Err(e))
-            }
-            Ok(SwapInfo { target_slot, n }) => {
-                if let Some(pending) = self.pending_payload.take()
-                    && n > 0
-                {
-                    queue.write_buffer(
-                        &self.payload_slots[target_slot as usize].buffer,
-                        0,
-                        bytemuck::cast_slice(&pending.raymarch_payloads),
-                    );
-                }
-                Some(Ok(()))
-            }
+            Err(e) => Some(Err(e)),
+            Ok(SwapInfo { .. }) => Some(Ok(())),
         }
     }
 }
