@@ -638,17 +638,47 @@ fn eval_scene_bvh(p: vec3<f32>) -> f32 {
     return add_acc;
 }
 
+// Brute-force baseline: walk every primitive in iteration order,
+// accumulate via the same smooth_union as the BVH path. The byte
+// difference between this and `eval_scene_bvh` at any point inside
+// at least one primitive's AABB is bounded by the per-role smooth-
+// blend k_max plus a few float-rounding ULPs (proof: smooth_union
+// with k → 0 collapses to plain min, which IS associative; smooth
+// blends with k > 0 decay exponentially past their support radius
+// so distant primitives' contribution to a near-AABB point is at
+// most ~k).
+fn eval_scene_fullscan(p: vec3<f32>) -> f32 {
+    var acc = ACC_UNION_IDENTITY;
+    let n = scene_meta.bvh_n;
+    for (var i: u32 = 0u; i < n; i = i + 1u) {
+        let leaf = leaf_aabbs[i];
+        let d = sphere_at(p, primitives[i]);
+        let k = max(leaf.smoothness, 1e-5);
+        acc = smooth_union(acc, d, k);
+    }
+    return acc;
+}
+
 @compute @workgroup_size(64)
 fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x;
     if i >= arrayLength(&samples) { return; }
     out_d[i] = eval_scene_bvh(samples[i].pos.xyz);
 }
+
+@compute @workgroup_size(64)
+fn cs_fullscan(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if i >= arrayLength(&samples) { return; }
+    out_d[i] = eval_scene_fullscan(samples[i].pos.xyz);
+}
 "#;
 
     /// Run the compute shader once and return the per-sample
     /// distances. Re-uses the `BvhState`'s GPU-resident buffers —
-    /// matches the production binding layout.
+    /// matches the production binding layout. `entry_point` selects
+    /// between `cs_main` (BVH-driven) and `cs_fullscan` (brute-force
+    /// baseline used by the Lipschitz-bound test).
     fn run_eval_pass(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -657,6 +687,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         leaf_aabbs: &[LeafAabb],
         samples: &[SamplePoint],
         meta: &SceneMeta,
+        entry_point: &str,
     ) -> Vec<f32> {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("raymarch_bvh::test_compute"),
@@ -743,7 +774,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             label: Some("test_compute_pipeline"),
             layout: Some(&pl),
             module: &module,
-            entry_point: Some("cs_main"),
+            entry_point: Some(entry_point),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -860,8 +891,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             sky_bottom: [0.1, 0.2, 0.4, 1.0],
         };
 
-        let run_a = run_eval_pass(&device, &queue, &state, &primitives, &leaves, &samples, &meta);
-        let run_b = run_eval_pass(&device, &queue, &state, &primitives, &leaves, &samples, &meta);
+        let run_a = run_eval_pass(&device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main");
+        let run_b = run_eval_pass(&device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main");
         assert_eq!(run_a.len(), run_b.len());
         for (i, (a, b)) in run_a.iter().zip(run_b.iter()).enumerate() {
             // bit-exact equality — `assert_eq!` on f32 already does
@@ -873,6 +904,133 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 "sample[{i}] diverged across runs: {a} vs {b}",
             );
         }
+    }
+
+    /// Cull-vs-fullscan Lipschitz-bounded test (S10 of PR-4 #115).
+    ///
+    /// Compares `eval_scene_bvh` against a brute-force `eval_scene_
+    /// fullscan` baseline on the same scene + samples. Restricts the
+    /// comparison to sample points that fall inside at least one
+    /// primitive's inflated AABB — outside that region, the BVH
+    /// short-circuits to `+inf` (no surface) while fullscan returns
+    /// the distance to the nearest primitive (positive). Both are
+    /// correct sphere-tracing answers ("step at least this far"), but
+    /// they are not directly comparable as scalar SDF values.
+    ///
+    /// **Bound documented:** for points inside an AABB, `|bvh -
+    /// fullscan| ≤ k_max + 4·ULP`. Proof sketch: smooth_union at
+    /// `k → 0` collapses to plain `min`, which IS associative; for
+    /// `k > 0`, smooth_union's bias decays exponentially past the
+    /// support radius `k`, so a primitive whose distance > 4·k
+    /// contributes within ULPs to the result. Test scenes here use
+    /// `k = 0` for every primitive, so the bound effectively becomes
+    /// the float-rounding floor.
+    #[test]
+    fn cull_vs_fullscan_lipschitz_bounded() {
+        let Some((device, queue)) = try_acquire_device() else {
+            eprintln!("raymarch_bvh::gpu_byte_identical: no GPU adapter — skipping");
+            return;
+        };
+        let (primitives, leaves) = random_sphere_scene(256, 0xdeadbeef);
+        let items: Vec<(u32, ome_bvh::Aabb)> = leaves
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                (
+                    i as u32,
+                    ome_bvh::Aabb::new(
+                        glam::Vec3::from_array(l.aabb_min),
+                        glam::Vec3::from_array(l.aabb_max),
+                    ),
+                )
+            })
+            .collect();
+
+        let mut state = BvhState::new(&device, &queue, None);
+        state.kick_if_dirty(&device, &queue, items, leaves.clone());
+        drive_bvh_to_completion(&mut state, &device, &queue);
+        assert_eq!(state.current_n(), 256);
+
+        // Sample at every primitive's centre — guaranteed inside its
+        // own inflated AABB, which is what the test bound covers.
+        // Adding a small radial offset on each axis helps cover both
+        // the SDF-positive rim and the strict centre.
+        let mut samples: Vec<SamplePoint> = Vec::with_capacity(primitives.len() * 2);
+        for prim in &primitives {
+            samples.push(SamplePoint {
+                pos: [prim.position[0], prim.position[1], prim.position[2], 0.0],
+            });
+            samples.push(SamplePoint {
+                pos: [
+                    prim.position[0] + 0.1,
+                    prim.position[1] - 0.05,
+                    prim.position[2] + 0.07,
+                    0.0,
+                ],
+            });
+        }
+
+        let meta = SceneMeta {
+            primitive_count: primitives.len() as u32,
+            bvh_n: state.current_n(),
+            skip_internal_sky: 0,
+            has_intersects: 0,
+            has_subs: 0,
+            k_int_scene: 0.0,
+            k_sub_scene: 0.0,
+            _pad0: 0,
+            sky_top: [0.5, 0.7, 1.0, 1.0],
+            sky_bottom: [0.1, 0.2, 0.4, 1.0],
+        };
+
+        let bvh = run_eval_pass(
+            &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main",
+        );
+        let full = run_eval_pass(
+            &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_fullscan",
+        );
+
+        // Bound: `k_max + 4·ULP` — for k=0 scenes, this is essentially
+        // 4 ULPs of the largest accumulator value (~100, the world
+        // box edge length). 4 * (100 * f32::EPSILON) ≈ 5e-5. Padded
+        // to 1e-4 to absorb the smooth_union(k=1e-5) floor.
+        let bound: f32 = 1.0e-4;
+
+        // Restrict comparison to samples inside at least one primitive
+        // AABB — outside that region BVH returns +inf and fullscan
+        // returns the distance to the nearest primitive; both are
+        // valid sphere-tracing outputs but not scalar-comparable.
+        let mut compared = 0u32;
+        let mut max_diff: f32 = 0.0;
+        for (i, sample) in samples.iter().enumerate() {
+            let p = glam::Vec3::new(sample.pos[0], sample.pos[1], sample.pos[2]);
+            let inside = leaves.iter().any(|l| {
+                let lo = glam::Vec3::from_array(l.aabb_min);
+                let hi = glam::Vec3::from_array(l.aabb_max);
+                p.cmpge(lo).all() && p.cmple(hi).all()
+            });
+            if !inside {
+                continue;
+            }
+            let diff = (bvh[i] - full[i]).abs();
+            max_diff = max_diff.max(diff);
+            assert!(
+                diff <= bound,
+                "sample[{i}] @ {p:?}: bvh={} fullscan={} diff={} > bound={}",
+                bvh[i],
+                full[i],
+                diff,
+                bound,
+            );
+            compared += 1;
+        }
+        assert!(
+            compared >= 64,
+            "test sample distribution did not produce enough in-AABB points: {compared}",
+        );
+        eprintln!(
+            "cull_vs_fullscan: {compared} samples compared, max |diff| = {max_diff} (bound {bound})",
+        );
     }
 
     /// Same property at 1024 leaves — the BVH has multiple internal
@@ -916,8 +1074,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             sky_bottom: [0.1, 0.2, 0.4, 1.0],
         };
 
-        let run_a = run_eval_pass(&device, &queue, &state, &primitives, &leaves, &samples, &meta);
-        let run_b = run_eval_pass(&device, &queue, &state, &primitives, &leaves, &samples, &meta);
+        let run_a = run_eval_pass(&device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main");
+        let run_b = run_eval_pass(&device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main");
         for (i, (a, b)) in run_a.iter().zip(run_b.iter()).enumerate() {
             assert_eq!(
                 a.to_bits(),
