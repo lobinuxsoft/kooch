@@ -2,6 +2,7 @@
 //! SDF components from the ECS with per-entity CSG blend support.
 
 mod aabb;
+mod bvh;
 mod csg_tree;
 mod instance;
 mod renderer;
