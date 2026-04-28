@@ -22,11 +22,11 @@ fn bench_pair(n: u32, iters: u32) {
         eprintln!("bench skipped: no GPU adapter");
         return;
     };
-    let (primitives, leaves) = random_sphere_scene(n, 0xb_e_e_f);
+    let (primitives, leaves, payloads) = random_sphere_scene(n, 0xb_e_e_f);
     let items = items_from_leaves(&leaves);
 
     let mut state = BvhState::new(&device, &queue, None);
-    state.kick_if_dirty(&device, &queue, items, leaves.clone());
+    state.kick_if_dirty(&device, &queue, items, leaves.clone(), payloads.clone());
     drive_bvh_to_completion(&mut state, &device, &queue);
     assert_eq!(state.current_n(), n);
 
@@ -42,10 +42,10 @@ fn bench_pair(n: u32, iters: u32) {
 
     // Warmup (1 pass each) to let drivers compile + cache.
     let _ = run_eval_pass(
-        &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main",
+        &device, &queue, &state, &primitives, &leaves, &payloads, &samples, &meta, "cs_main",
     );
     let _ = run_eval_pass(
-        &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_fullscan",
+        &device, &queue, &state, &primitives, &leaves, &payloads, &samples, &meta, "cs_fullscan",
     );
 
     let mut bvh_total = std::time::Duration::ZERO;
@@ -53,13 +53,14 @@ fn bench_pair(n: u32, iters: u32) {
     for _ in 0..iters {
         let t0 = std::time::Instant::now();
         let _ = run_eval_pass(
-            &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main",
+            &device, &queue, &state, &primitives, &leaves, &payloads, &samples, &meta, "cs_main",
         );
         bvh_total += t0.elapsed();
 
         let t0 = std::time::Instant::now();
         let _ = run_eval_pass(
-            &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_fullscan",
+            &device, &queue, &state, &primitives, &leaves, &payloads, &samples, &meta,
+            "cs_fullscan",
         );
         full_total += t0.elapsed();
     }

@@ -24,8 +24,9 @@ use ome_ecs::{
 
 use super::aabb::primitive_aabb;
 use super::instance::{
-    INITIAL_PRIMITIVE_CAPACITY, LeafAabb, ROLE_ADD, ROLE_INTERSECT, ROLE_SUBTRACT, SceneMeta,
-    SdfPrimitive, TYPE_BOX, TYPE_CAPSULE, TYPE_CYLINDER, TYPE_PLANE, TYPE_SPHERE, TYPE_TORUS,
+    IS_RAYMARCH, INITIAL_PRIMITIVE_CAPACITY, LeafAabb, RaymarchPayload, ROLE_RAYMARCH_ADD,
+    ROLE_RAYMARCH_INT, ROLE_RAYMARCH_SUB, SceneMeta, SdfPrimitive, TYPE_BOX, TYPE_CAPSULE,
+    TYPE_CYLINDER, TYPE_PLANE, TYPE_SPHERE, TYPE_TORUS,
 };
 use super::renderer::{RayMarchRenderer, make_scene_bg};
 
@@ -185,25 +186,29 @@ impl RayMarchRenderer {
         // Second pass: build per-leaf metadata + BVH input items.
         let mut primitives: Vec<SdfPrimitive> = Vec::with_capacity(tagged.len());
         let mut leaf_aabbs: Vec<LeafAabb> = Vec::with_capacity(tagged.len());
+        let mut raymarch_payloads: Vec<RaymarchPayload> = Vec::with_capacity(tagged.len());
         let mut bvh_items: Vec<(u32, Aabb)> = Vec::with_capacity(tagged.len());
-        for (_, prim, blend) in tagged {
+        for (entity_idx, prim, blend) in tagged {
             let prim_idx = primitives.len() as u32;
-            let role = match blend.mode {
-                MODE_SMOOTH_INTERSECTION => ROLE_INTERSECT,
-                MODE_SMOOTH_SUBTRACTION => ROLE_SUBTRACT,
-                _ => ROLE_ADD,
+            let role_bits = match blend.mode {
+                MODE_SMOOTH_INTERSECTION => ROLE_RAYMARCH_INT,
+                MODE_SMOOTH_SUBTRACTION => ROLE_RAYMARCH_SUB,
+                _ => ROLE_RAYMARCH_ADD,
             };
-            let inflation = match role {
-                ROLE_INTERSECT => k_int_max,
-                ROLE_SUBTRACT => k_sub_max,
+            let inflation = match role_bits {
+                ROLE_RAYMARCH_INT => k_int_max,
+                ROLE_RAYMARCH_SUB => k_sub_max,
                 _ => k_add_max,
             };
             let aabb = primitive_aabb(&prim, inflation);
             bvh_items.push((prim_idx, aabb));
             leaf_aabbs.push(LeafAabb {
                 aabb_min: aabb.min.to_array(),
-                role,
+                flags: IS_RAYMARCH | role_bits,
                 aabb_max: aabb.max.to_array(),
+                entity_id: entity_idx,
+            });
+            raymarch_payloads.push(RaymarchPayload {
                 smoothness: blend.smoothness,
             });
             primitives.push(prim);
@@ -240,8 +245,13 @@ impl RayMarchRenderer {
                 "raymarch BVH build failed: {e}; keeping previous slot's data"
             );
         }
-        self.bvh_state
-            .kick_if_dirty(device, queue, bvh_items, leaf_aabbs);
+        self.bvh_state.kick_if_dirty(
+            device,
+            queue,
+            bvh_items,
+            leaf_aabbs,
+            raymarch_payloads,
+        );
 
         // Rebind every frame: `current_slot` may have flipped between
         // two GPU buffer sets (slot_a ↔ slot_b) and the bind group must
@@ -257,6 +267,7 @@ impl RayMarchRenderer {
             self.bvh_state.current_nodes(),
             self.bvh_state.current_sorted_indices(),
             self.bvh_state.current_leaf_aabbs(),
+            self.bvh_state.current_raymarch_payloads(),
         );
 
         let meta = SceneMeta {

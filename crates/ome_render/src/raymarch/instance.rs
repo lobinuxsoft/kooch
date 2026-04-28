@@ -152,16 +152,39 @@ impl Default for SceneMeta {
 /// Initial capacity for the SDF primitive storage buffer (grows on demand).
 pub(super) const INITIAL_PRIMITIVE_CAPACITY: u64 = 256;
 
-/// CSG role of a primitive in the default tree. Matches the `ROLE_*`
-/// constants in the BVH-traversal WGSL shader and drives the per-role
-/// accumulator a ray's traversal builds up.
+/// Multi-consumer leaf flag scheme (#115 PR-5).
 ///
-/// The role is encoded into a u32 (rather than a smaller type) because
-/// `LeafAabb` already has a 4-byte slot from the std430 layout — using
-/// a smaller type would not save any bytes.
-pub(super) const ROLE_ADD: u32 = 0;
-pub(super) const ROLE_INTERSECT: u32 = 1;
-pub(super) const ROLE_SUBTRACT: u32 = 2;
+/// `LeafAabb.flags: u32` is shared across every BVH consumer. Bits 0-1
+/// hold the raymarch CSG role, gated by bit 2 (`IS_RAYMARCH`). Bits
+/// 3-5 mark the leaf as a participant of physics broadphase, frustum
+/// culling, or light culling — each consumer filters by its own bit
+/// during traversal.
+///
+/// A single AABB envelope covers every active role for the entity:
+/// when N flags are set, the leaf's AABB is the max-inflation across
+/// all applicable roles. Tighter per-role AABBs are filed as a
+/// follow-up if physics broadphase shows excessive false-positive
+/// pairs (#115 PR-5 acceptance criteria).
+// `ROLE_RAYMARCH_MASK` lives in the shader (`raymarch_main.wgsl`); the
+// Rust side only ever ORs the role bits in directly, so the mask is
+// only referenced from the bit-packing test. Same shape for the
+// reserved consumer flags — physics broadphase, frustum culling and
+// light culling will consume them in S4 / S5 / #27.
+#[allow(dead_code)]
+pub(super) const ROLE_RAYMARCH_MASK: u32 = 0x3;
+pub(super) const ROLE_RAYMARCH_ADD: u32 = 0x0;
+pub(super) const ROLE_RAYMARCH_INT: u32 = 0x1;
+pub(super) const ROLE_RAYMARCH_SUB: u32 = 0x2;
+pub(super) const IS_RAYMARCH: u32 = 1 << 2;
+#[allow(dead_code)]
+pub(super) const IS_COLLIDER: u32 = 1 << 3;
+#[allow(dead_code)]
+pub(super) const IS_VISIBLE_MESH: u32 = 1 << 4;
+/// Reserved for the light-culling consumer (#27). Defined here so
+/// no future consumer accidentally claims the bit; not yet read by
+/// any traversal — fence the issue before consuming it.
+#[allow(dead_code)]
+pub(super) const IS_LIGHT: u32 = 1 << 5;
 
 /// Per-leaf metadata uploaded to the GPU alongside the BVH itself.
 ///
@@ -170,16 +193,21 @@ pub(super) const ROLE_SUBTRACT: u32 = 2;
 /// fixes. Field order mirrors the WGSL `LeafAabb`:
 ///
 /// ```text
-///   [0..12 ) aabb_min:    vec3<f32>
-///   [12..16) role:        u32
-///   [16..28) aabb_max:    vec3<f32>
-///   [28..32) smoothness:  f32
+///   [0..12 ) aabb_min:   vec3<f32>
+///   [12..16) flags:      u32
+///   [16..28) aabb_max:   vec3<f32>
+///   [28..32) entity_id:  u32
 /// ```
 ///
-/// `role` is one of [`ROLE_ADD`] / [`ROLE_INTERSECT`] / [`ROLE_SUBTRACT`].
-/// `smoothness` is the primitive's individual `SdfBlend.smoothness`
-/// (per-primitive, NOT per-role-max). Per-role-max is uploaded once
-/// per scene in [`SceneMeta`] for the final tree combination step.
+/// `flags` packs role + consumer membership; see the `IS_*` /
+/// `ROLE_RAYMARCH_*` constants. `entity_id` is the ECS entity index
+/// the broadphase / frustum cull use to return entity-keyed pair
+/// lists and visibility sets — raymarch ignores this field.
+///
+/// Per-primitive raymarch smoothness lives **outside** the leaf, in
+/// the parallel `RaymarchPayload[]` storage buffer (`raymarch_payloads`
+/// binding). Physics and frustum bind only the BVH + leaves, never the
+/// raymarch payload buffer.
 ///
 /// `aabb_min` / `aabb_max` are the world-space bounds **already inflated**
 /// by the per-primitive smoothness — see [`super::aabb::primitive_aabb`].
@@ -187,15 +215,30 @@ pub(super) const ROLE_SUBTRACT: u32 = 2;
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 pub(super) struct LeafAabb {
     pub aabb_min: [f32; 3],
-    pub role: u32,
+    pub flags: u32,
     pub aabb_max: [f32; 3],
-    pub smoothness: f32,
+    pub entity_id: u32,
 }
 
 /// Initial capacity for the leaf-AABB storage buffer (grows on demand).
 /// Always equals `INITIAL_PRIMITIVE_CAPACITY` because there is exactly
 /// one leaf per primitive.
 pub(super) const INITIAL_LEAF_AABB_CAPACITY: u64 = INITIAL_PRIMITIVE_CAPACITY;
+
+/// Raymarch-only per-primitive metadata. Lives in a separate storage
+/// buffer (`@group(1) @binding(5)` in `raymarch_main.wgsl`) so non-
+/// raymarch consumers (physics broadphase, frustum culling) don't pay
+/// for fields they never read.
+///
+/// **4 bytes, std430 stride 4** — single `f32` for now. Future fields
+/// (per-leaf material override, debug colour, etc.) extend the struct
+/// without touching `LeafAabb`.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable, Default)]
+pub(super) struct RaymarchPayload {
+    pub smoothness: f32,
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -218,16 +261,35 @@ mod tests {
         use std::mem::offset_of;
         // Mirror the std430 layout the BVH-traversal shader expects.
         assert_eq!(offset_of!(LeafAabb, aabb_min), 0);
-        assert_eq!(offset_of!(LeafAabb, role), 12);
+        assert_eq!(offset_of!(LeafAabb, flags), 12);
         assert_eq!(offset_of!(LeafAabb, aabb_max), 16);
-        assert_eq!(offset_of!(LeafAabb, smoothness), 28);
+        assert_eq!(offset_of!(LeafAabb, entity_id), 28);
     }
 
     #[test]
-    fn role_constants_distinct() {
-        assert_ne!(ROLE_ADD, ROLE_INTERSECT);
-        assert_ne!(ROLE_ADD, ROLE_SUBTRACT);
-        assert_ne!(ROLE_INTERSECT, ROLE_SUBTRACT);
+    fn raymarch_payload_layout_is_4_bytes() {
+        assert_eq!(std::mem::size_of::<RaymarchPayload>(), 4);
+        assert_eq!(std::mem::align_of::<RaymarchPayload>(), 4);
+    }
+
+    #[test]
+    fn flag_bits_distinct_and_packed() {
+        // Roles claim bits 0-1, IS_RAYMARCH gates them on bit 2.
+        // Each consumer flag (collider / visible / light) sits in a
+        // distinct bit so a single u32 can mark the same leaf as
+        // belonging to multiple consumers simultaneously.
+        assert_eq!(ROLE_RAYMARCH_MASK, 0b0011);
+        assert_eq!(IS_RAYMARCH, 0b0100);
+        assert_eq!(IS_COLLIDER, 0b1000);
+        assert_eq!(IS_VISIBLE_MESH, 0b1_0000);
+        assert_eq!(IS_LIGHT, 0b10_0000);
+        // Roles must be distinct values inside the mask.
+        assert_ne!(ROLE_RAYMARCH_ADD, ROLE_RAYMARCH_INT);
+        assert_ne!(ROLE_RAYMARCH_ADD, ROLE_RAYMARCH_SUB);
+        assert_ne!(ROLE_RAYMARCH_INT, ROLE_RAYMARCH_SUB);
+        // Role bits never collide with the gate or any consumer flag.
+        let consumers = IS_RAYMARCH | IS_COLLIDER | IS_VISIBLE_MESH | IS_LIGHT;
+        assert_eq!(ROLE_RAYMARCH_MASK & consumers, 0);
     }
 
     #[test]

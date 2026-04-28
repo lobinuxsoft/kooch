@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 use ome_bvh::{Aabb, BvhBuildError, BvhGpuBuild, BvhGpuBuilder, BvhNode};
 
 use super::slot::{INITIAL_SLOT_CAPACITY, OutputSlot};
-use crate::raymarch::instance::{INITIAL_LEAF_AABB_CAPACITY, LeafAabb};
+use crate::raymarch::instance::{INITIAL_LEAF_AABB_CAPACITY, LeafAabb, RaymarchPayload};
 
 /// In-flight build awaiting GPU completion. Once
 /// [`BvhGpuBuild::poll`] returns `Some(Ok(_))`, [`BvhState::poll_swap`]
@@ -20,6 +20,10 @@ struct PendingBuild {
     /// slot's `leaf_aabbs_buffer` at swap. Held on the CPU because the
     /// LBVH builder doesn't see this metadata.
     leaf_aabbs: Vec<LeafAabb>,
+    /// Per-primitive raymarch payload (smoothness). Parallel to
+    /// `leaf_aabbs`; uploaded to the target slot's
+    /// `raymarch_payloads_buffer` at swap.
+    raymarch_payloads: Vec<RaymarchPayload>,
     /// Number of leaves submitted to the build. Used at swap time to
     /// drive the copy lengths.
     n: u32,
@@ -74,6 +78,13 @@ impl BvhState {
         &self.slot(self.current_slot).leaf_aabbs_buffer
     }
 
+    /// Borrow the raymarch-only payload buffer for the currently-bound
+    /// slot. Only the raymarch fragment shader needs this binding —
+    /// physics broadphase and frustum culling skip it.
+    pub fn current_raymarch_payloads(&self) -> &wgpu::Buffer {
+        &self.slot(self.current_slot).raymarch_payloads_buffer
+    }
+
     /// Number of valid primitives in the currently-bound slot. `0`
     /// before any build has resolved.
     pub fn current_n(&self) -> u32 {
@@ -94,11 +105,20 @@ impl BvhState {
         }
     }
 
-    /// Compute a stable hash of `(items + leaf_aabbs)` so callers can
-    /// detect whether the scene changed since the last build.
-    /// Exposed publicly so the update path can hash before paying the
-    /// cost of formatting payload Vecs.
-    pub fn hash_scene(items: &[(u32, Aabb)], leaf_aabbs: &[LeafAabb]) -> u64 {
+    /// Compute a stable hash of `(items + leaf_aabbs + raymarch_payloads)`
+    /// so callers can detect whether the scene changed since the last
+    /// build. Exposed publicly so the update path can hash before
+    /// paying the cost of formatting payload Vecs.
+    ///
+    /// Hashing the raymarch payload alongside the items + leaves is
+    /// load-bearing: a smoothness change with no AABB / flag delta
+    /// must still trigger a re-upload, otherwise the bound slot keeps
+    /// stale `k` and the smooth blend silently drifts.
+    pub fn hash_scene(
+        items: &[(u32, Aabb)],
+        leaf_aabbs: &[LeafAabb],
+        raymarch_payloads: &[RaymarchPayload],
+    ) -> u64 {
         let mut h = DefaultHasher::new();
         items.len().hash(&mut h);
         for (id, a) in items {
@@ -111,8 +131,12 @@ impl BvhState {
         }
         leaf_aabbs.len().hash(&mut h);
         for la in leaf_aabbs {
-            la.role.hash(&mut h);
-            la.smoothness.to_bits().hash(&mut h);
+            la.flags.hash(&mut h);
+            la.entity_id.hash(&mut h);
+        }
+        raymarch_payloads.len().hash(&mut h);
+        for rp in raymarch_payloads {
+            rp.smoothness.to_bits().hash(&mut h);
         }
         h.finish()
     }
@@ -121,8 +145,9 @@ impl BvhState {
     /// kick. Returns `true` when a new build was kicked.
     ///
     /// `items` is the BVH builder input; `leaf_aabbs` is the parallel
-    /// per-leaf metadata that the WGSL traversal will consume. The two
-    /// slices must be the same length and ordering.
+    /// per-leaf metadata bound by every consumer; `raymarch_payloads`
+    /// is the raymarch-only metadata bound by the fragment shader.
+    /// All three slices must be the same length and ordering.
     ///
     /// At most one build is in flight at a time. If a previous build
     /// has not yet been polled to completion, this is a no-op
@@ -134,16 +159,22 @@ impl BvhState {
         queue: &wgpu::Queue,
         items: Vec<(u32, Aabb)>,
         leaf_aabbs: Vec<LeafAabb>,
+        raymarch_payloads: Vec<RaymarchPayload>,
     ) -> bool {
         debug_assert_eq!(
             items.len(),
             leaf_aabbs.len(),
             "items and leaf_aabbs must align 1:1 — one entry per primitive",
         );
+        debug_assert_eq!(
+            items.len(),
+            raymarch_payloads.len(),
+            "items and raymarch_payloads must align 1:1 — one entry per primitive",
+        );
         if self.pending.is_some() {
             return false;
         }
-        let hash = Self::hash_scene(&items, &leaf_aabbs);
+        let hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads);
         if Some(hash) == self.dirty_hash {
             return false;
         }
@@ -161,6 +192,7 @@ impl BvhState {
             build,
             target_slot,
             leaf_aabbs,
+            raymarch_payloads,
             n,
         });
         self.dirty_hash = Some(hash);
@@ -227,6 +259,11 @@ impl BvhState {
                 &self.slot(target_slot).leaf_aabbs_buffer,
                 0,
                 bytemuck::cast_slice(&pending.leaf_aabbs),
+            );
+            queue.write_buffer(
+                &self.slot(target_slot).raymarch_payloads_buffer,
+                0,
+                bytemuck::cast_slice(&pending.raymarch_payloads),
             );
         }
         self.slot_mut(target_slot).n = n;
