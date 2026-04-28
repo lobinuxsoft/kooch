@@ -1,98 +1,11 @@
-//! [`SharedBvhState`] — multi-consumer GPU BVH lifecycle.
-//!
-//! Owns a single [`BvhGpuBuilder`] and a double-buffered pair of
-//! [`OutputSlot`]s (`nodes + sorted_indices + leaf_aabbs`). Every BVH
-//! consumer (raymarch, physics broadphase, frustum culling) binds the
-//! same three buffers from the currently-active slot — that is the
-//! "shared" of the name (#115 PR-5 AC 116).
-//!
-//! Side payloads (e.g. the raymarch's per-primitive smoothness) are
-//! NOT owned by this struct. Consumers that need them maintain their
-//! own parallel double-buffers and mirror the swap by listening to
-//! [`SwapInfo::target_slot`] from [`Self::poll_swap`].
-//!
-//! # Hashing contract
-//!
-//! [`Self::kick`] takes the scene hash from the caller rather than
-//! computing it. This lets each consumer fold its side-payload bytes
-//! into the hash before kicking — a smoothness-only change in
-//! raymarch must still trigger a rebuild even though the items +
-//! leaves are byte-identical.
+//! [`SharedBvhState`] — the orchestrator that ties the
+//! [`crate::BvhGpuBuilder`] together with the double-buffered slots
+//! and the kick / refit / swap lifecycle.
 
 use crate::leaf::LeafAabb;
 use crate::{Aabb, Bvh, BvhBuildError, BvhGpuBuild, BvhGpuBuilder, BvhGpuRefit, BvhNode};
 
-/// Initial capacity (in leaves) for the per-slot stable buffers.
-const INITIAL_SLOT_CAPACITY: u64 = 256;
-
-/// Per-slot stable buffer set. The renderer / physics / frustum-cull
-/// consumers bind these directly when the slot is `current`. Capacity
-/// grows on demand via `next_power_of_two`; buffers never shrink.
-struct OutputSlot {
-    /// Flat tree of [`BvhNode`]s. Sized for `2N` to keep capacity
-    /// arithmetic simple (real fill is `2N - 1`).
-    nodes_buffer: wgpu::Buffer,
-    /// `sorted_indices[k]` = original payload index at sorted position
-    /// `k`. Length `N`.
-    sorted_indices_buffer: wgpu::Buffer,
-    /// Per-primitive multi-consumer metadata (AABB + flags + entity_id).
-    /// Length `N`.
-    leaf_aabbs_buffer: wgpu::Buffer,
-    capacity: u64,
-    /// Number of valid leaves (= primitives) in this slot. `0` until
-    /// the first build resolves into it.
-    n: u32,
-}
-
-impl OutputSlot {
-    fn new(device: &wgpu::Device, capacity: u64) -> Self {
-        Self {
-            nodes_buffer: make_nodes_buffer(device, capacity),
-            sorted_indices_buffer: make_indices_buffer(device, capacity),
-            leaf_aabbs_buffer: make_leaf_aabbs_buffer(device, capacity),
-            capacity,
-            n: 0,
-        }
-    }
-
-    fn ensure_capacity(&mut self, device: &wgpu::Device, n: u64) {
-        if n <= self.capacity {
-            return;
-        }
-        let new_cap = n.next_power_of_two().max(INITIAL_SLOT_CAPACITY);
-        self.nodes_buffer = make_nodes_buffer(device, new_cap);
-        self.sorted_indices_buffer = make_indices_buffer(device, new_cap);
-        self.leaf_aabbs_buffer = make_leaf_aabbs_buffer(device, new_cap);
-        self.capacity = new_cap;
-    }
-}
-
-fn make_nodes_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ome_bvh::shared::nodes"),
-        size: 2 * capacity * std::mem::size_of::<BvhNode>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
-fn make_indices_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ome_bvh::shared::sorted_indices"),
-        size: capacity * 4,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
-fn make_leaf_aabbs_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ome_bvh::shared::leaf_aabbs"),
-        size: capacity * std::mem::size_of::<LeafAabb>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
+use super::slot::{INITIAL_SLOT_CAPACITY, OutputSlot};
 
 /// Discriminator between an in-flight full build and an in-flight
 /// refit. Both operate on the builder's scratch buffers and resolve
@@ -381,48 +294,4 @@ impl SharedBvhState {
         self.current_slot = target_slot;
         Some(Ok(SwapInfo { target_slot, n }))
     }
-}
-
-/// Cheap CPU heuristic for the orchestrator: decide between rebuild
-/// (full [`SharedBvhState::kick`]) and refit (fast
-/// [`SharedBvhState::kick_refit`]) based on how much each AABB has
-/// moved relative to its size.
-///
-/// Returns `true` (i.e. refit is fine) when **fewer than
-/// `change_threshold_pct`** of the AABBs have moved their centre by
-/// **more than `move_threshold_ratio`** of their largest extent. Any
-/// stretch / shrink that keeps the centre in place is treated as a
-/// non-move — this is the cheap proxy; a tighter check would compare
-/// volumes too, but the rebuild fallback is safe and fast enough that
-/// the simple metric earns its keep.
-///
-/// Returns `false` (force rebuild) when:
-/// - The lengths differ (cardinality changed → refit not viable).
-/// - The previous slice is empty (first frame).
-/// - The configured percentage of AABBs moved too far.
-///
-/// Suggested defaults from the PR-5 plan: `move_threshold_ratio =
-/// 0.25`, `change_threshold_pct = 10.0`. These are conservative
-/// (favour rebuild) — the S7 bench surfaces tighter values once the
-/// real workload tells us what "moderate movement" means in practice.
-pub fn should_refit(
-    prev: &[Aabb],
-    curr: &[Aabb],
-    move_threshold_ratio: f32,
-    change_threshold_pct: f32,
-) -> bool {
-    if prev.len() != curr.len() || prev.is_empty() {
-        return false;
-    }
-    let mut moved = 0usize;
-    for (p, c) in prev.iter().zip(curr.iter()) {
-        let extent = p.max - p.min;
-        let max_dim = extent.x.max(extent.y).max(extent.z).max(1e-6);
-        let centre_delta = (c.center() - p.center()).length();
-        if centre_delta > max_dim * move_threshold_ratio {
-            moved += 1;
-        }
-    }
-    let pct_moved = moved as f32 / prev.len() as f32 * 100.0;
-    pct_moved < change_threshold_pct
 }
