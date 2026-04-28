@@ -3,8 +3,17 @@
 //! volumes too, but the rebuild fallback is safe and fast enough that
 //! the simple metric earns its keep until the S7 bench surfaces a
 //! workload that justifies tightening it.
+//!
+//! [`SharedBvhState::kick_auto`] composes this heuristic with the
+//! orchestrator's lifecycle (`kick` / `kick_refit`) and lives here too:
+//! the policy lives next to the predicate it consults, and `state.rs`
+//! stays bounded under the no-monolithic threshold.
 
+use crate::leaf::LeafAabb;
 use crate::Aabb;
+
+use super::pending::BuildToken;
+use super::state::SharedBvhState;
 
 /// Cheap CPU heuristic for the orchestrator: decide between rebuild
 /// (full [`super::SharedBvhState::kick`]) and refit (fast
@@ -48,4 +57,71 @@ pub fn should_refit(
     }
     let pct_moved = moved as f32 / prev.len() as f32 * 100.0;
     pct_moved < change_threshold_pct
+}
+
+impl SharedBvhState {
+    /// Unified rebuild-vs-refit lifecycle entry point. Internally picks
+    /// between [`SharedBvhState::kick`] and [`SharedBvhState::kick_refit`]
+    /// based on the [`should_refit`] heuristic over the previously-
+    /// mirrored leaf AABBs. Suppressed under the same conditions as the
+    /// underlying methods (pending in flight, hash unchanged, cardinality
+    /// drift).
+    ///
+    /// Decision matrix:
+    ///
+    /// - First build (`current_n() == 0` / no CPU mirror) → rebuild.
+    /// - Cardinality changed → rebuild.
+    /// - `should_refit(prev_aabbs, new_aabbs, ...)` says "yes" → refit.
+    /// - Otherwise → rebuild.
+    ///
+    /// `move_threshold_ratio` and `change_threshold_pct` forward
+    /// directly to [`should_refit`]. PR-5 plan defaults are `0.25` and
+    /// `10.0`; tighter values land via the S7 bench results.
+    ///
+    /// Lifetime counters [`SharedBvhState::builds_kicked`] /
+    /// [`SharedBvhState::refits_kicked`] reflect the chosen path so
+    /// callers can introspect "what did the orchestrator just decide"
+    /// without tracking it themselves.
+    pub fn kick_auto(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        items: Vec<(u32, Aabb)>,
+        leaf_aabbs: Vec<LeafAabb>,
+        scene_hash: u64,
+        move_threshold_ratio: f32,
+        change_threshold_pct: f32,
+    ) -> Option<BuildToken<'_>> {
+        debug_assert_eq!(
+            items.len(),
+            leaf_aabbs.len(),
+            "items and leaf_aabbs must align 1:1 — one entry per primitive",
+        );
+        // Decide rebuild vs refit BEFORE mutating any state. The two
+        // public accessors return immutable borrows that drop at the
+        // end of this block, so the subsequent `&mut self` calls don't
+        // collide. Refit is viable only when there's a previous CPU
+        // mirror to compare against and the cardinality matches —
+        // both gates are re-checked downstream anyway, so this is a
+        // pure suggestion.
+        let prefer_refit = {
+            match (self.current_cpu_bvh(), self.current_cpu_leaf_aabbs()) {
+                (Some(bvh), Some(prev_leaves)) if bvh.leaf_count() == items.len() => {
+                    let prev: Vec<Aabb> = prev_leaves
+                        .iter()
+                        .map(|la| Aabb::new(la.aabb_min.into(), la.aabb_max.into()))
+                        .collect();
+                    let curr: Vec<Aabb> = items.iter().map(|(_, a)| *a).collect();
+                    should_refit(&prev, &curr, move_threshold_ratio, change_threshold_pct)
+                }
+                _ => false,
+            }
+        };
+
+        if prefer_refit {
+            self.kick_refit(device, queue, items, leaf_aabbs, scene_hash)
+        } else {
+            self.kick(device, queue, items, leaf_aabbs, scene_hash)
+        }
+    }
 }

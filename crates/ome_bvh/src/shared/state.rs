@@ -28,37 +28,11 @@
 //! [`Bvh::refit_in_place`].
 
 use crate::leaf::LeafAabb;
-use crate::{Aabb, Bvh, BvhBuildError, BvhGpuBuildResult, BvhGpuBuilder, BvhNode};
+use crate::{Aabb, Bvh, BvhBuildError, BvhGpuBuilder, BvhNode};
 
-use super::heuristic::should_refit;
+use super::mirror::CpuMirror;
 use super::pending::{BuildToken, Pending, PendingKind, PollOutcome, SwapInfo};
 use super::slot::{INITIAL_SLOT_CAPACITY, OutputSlot};
-
-/// CPU-side mirror of the most recent successful build / refit. Lives
-/// alongside the GPU buffers so CPU consumers (physics broadphase,
-/// debug tooling, future authoring traversals) can run
-/// [`Bvh::for_each_aabb`] and friends without paying for a separate
-/// CPU build.
-///
-/// The readback that produces `bvh` + `sorted_indices` was already
-/// paid for by the GPU build path (`BvhGpuBuild::poll` always returns
-/// the readback result; pre-S4 the orchestrator threw it away). On
-/// refit the orchestrator updates the leaf AABBs in place and re-
-/// propagates internals via [`Bvh::refit_in_place`] using the stored
-/// permutation — no extra GPU traffic, no new readback.
-struct CpuMirror {
-    bvh: Bvh<u32>,
-    /// Permutation captured at the last full build. Reused on every
-    /// subsequent refit until the next full build supplies a new one.
-    sorted_indices: Vec<u32>,
-    /// Per-leaf metadata in **original input order** (matches the
-    /// ordering of `items` handed to [`SharedBvhState::kick`] /
-    /// [`SharedBvhState::kick_refit`]). Mirrors the GPU's
-    /// `leaf_aabbs_buffer` of the currently-active slot. CPU consumers
-    /// filter this by `IS_*` flags to scope their query to their
-    /// consumer subset.
-    leaf_aabbs: Vec<LeafAabb>,
-}
 
 /// Multi-consumer double-buffered GPU BVH state. Held as a single
 /// resource shared by every BVH consumer in the engine.
@@ -297,67 +271,6 @@ impl SharedBvhState {
         Some(BuildToken { shared: self })
     }
 
-    /// Unified rebuild-vs-refit lifecycle entry point. Internally picks
-    /// between [`Self::kick`] and [`Self::kick_refit`] based on the
-    /// [`should_refit`] heuristic over the previously-mirrored leaf
-    /// AABBs. Suppressed under the same conditions as the underlying
-    /// methods (pending in flight, hash unchanged, cardinality drift).
-    ///
-    /// Decision matrix:
-    ///
-    /// - First build (`current_n() == 0` / no CPU mirror) → rebuild.
-    /// - Cardinality changed → rebuild.
-    /// - `should_refit(prev_aabbs, new_aabbs, ...)` says "yes" → refit.
-    /// - Otherwise → rebuild.
-    ///
-    /// `move_threshold_ratio` and `change_threshold_pct` forward
-    /// directly to [`should_refit`]. PR-5 plan defaults are `0.25` and
-    /// `10.0`; tighter values land via the S7 bench results.
-    ///
-    /// Lifetime counters [`Self::builds_kicked`] / [`Self::refits_kicked`]
-    /// reflect the chosen path so callers can introspect "what did the
-    /// orchestrator just decide" without tracking it themselves.
-    pub fn kick_auto(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        items: Vec<(u32, Aabb)>,
-        leaf_aabbs: Vec<LeafAabb>,
-        scene_hash: u64,
-        move_threshold_ratio: f32,
-        change_threshold_pct: f32,
-    ) -> Option<BuildToken<'_>> {
-        debug_assert_eq!(
-            items.len(),
-            leaf_aabbs.len(),
-            "items and leaf_aabbs must align 1:1 — one entry per primitive",
-        );
-        // Decide rebuild vs refit BEFORE mutating any state. Refit is
-        // viable only when there's a previous CPU mirror to compare
-        // against and the cardinality matches — both gates are
-        // re-checked downstream anyway, so this is a pure suggestion.
-        let prefer_refit = self
-            .cpu_mirror
-            .as_ref()
-            .filter(|m| m.bvh.leaf_count() == items.len())
-            .map(|m| {
-                let prev: Vec<Aabb> = m
-                    .leaf_aabbs
-                    .iter()
-                    .map(|la| Aabb::new(la.aabb_min.into(), la.aabb_max.into()))
-                    .collect();
-                let curr: Vec<Aabb> = items.iter().map(|(_, a)| *a).collect();
-                should_refit(&prev, &curr, move_threshold_ratio, change_threshold_pct)
-            })
-            .unwrap_or(false);
-
-        if prefer_refit {
-            self.kick_refit(device, queue, items, leaf_aabbs, scene_hash)
-        } else {
-            self.kick(device, queue, items, leaf_aabbs, scene_hash)
-        }
-    }
-
     /// Drive the in-flight build forward. Must be called once per
     /// frame. Returns `Some(SwapInfo)` on the frame the swap actually
     /// happens; consumers maintaining parallel double-buffers should
@@ -431,30 +344,16 @@ impl SharedBvhState {
         for upload in pending.side_payloads {
             upload(queue, target_slot);
         }
-        // Refresh the CPU mirror.
-        //
-        // - Build: replace whole mirror — new bvh, new sorted_indices
-        //   permutation, new leaf_aabbs. Topology may have changed.
-        // - Refit: keep bvh + sorted_indices (topology preserved by
-        //   the kick_refit invariant); refit leaf node AABBs in place
-        //   from the new leaf_aabbs and re-propagate internals.
+        // Refresh the CPU mirror — build replaces it, refit applies
+        // in place over the existing topology. See [`CpuMirror`] for
+        // the lifecycle contract.
         match outcome {
-            PollOutcome::Build(BvhGpuBuildResult {
-                bvh,
-                sorted_indices,
-            }) => {
-                self.cpu_mirror = Some(CpuMirror {
-                    bvh,
-                    sorted_indices,
-                    leaf_aabbs: pending.leaf_aabbs,
-                });
+            PollOutcome::Build(result) => {
+                self.cpu_mirror = Some(CpuMirror::from_build(result, pending.leaf_aabbs));
             }
             PollOutcome::Refit => {
                 if let Some(mirror) = self.cpu_mirror.as_mut() {
-                    mirror.leaf_aabbs = pending.leaf_aabbs;
-                    mirror
-                        .bvh
-                        .refit_in_place(&mirror.leaf_aabbs, &mirror.sorted_indices);
+                    mirror.apply_refit(pending.leaf_aabbs);
                 }
             }
         }

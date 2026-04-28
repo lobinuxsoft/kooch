@@ -33,6 +33,7 @@
 //!   picks between rebuild and refit.
 
 mod heuristic;
+mod mirror;
 mod pending;
 mod slot;
 mod state;
