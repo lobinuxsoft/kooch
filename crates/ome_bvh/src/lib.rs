@@ -34,8 +34,8 @@ pub mod shared;
 pub use aabb::Aabb;
 pub use bvh::Bvh;
 pub use gpu::{
-    BvhBuildError, BvhGpuBuild, BvhGpuBuilder, BvhTimestamps, GpuAabb, GpuBvhHandle,
-    GpuSceneBounds,
+    BvhBuildError, BvhGpuBuild, BvhGpuBuilder, BvhGpuRefit, BvhTimestamps, GpuAabb, GpuBvhHandle,
+    GpuSceneBounds, refit_gpu,
 };
 pub use leaf::{
     IS_COLLIDER, IS_LIGHT, IS_RAYMARCH, IS_VISIBLE_MESH, LeafAabb, ROLE_RAYMARCH_ADD,
@@ -44,4 +44,4 @@ pub use leaf::{
 pub use morton::MortonCode;
 pub use node::{BVH_LEAF_FLAG, BVH_VALUE_MASK, BvhNode};
 pub use query::MAX_STACK_DEPTH;
-pub use shared::{SharedBvhState, SwapInfo};
+pub use shared::{SharedBvhState, SwapInfo, should_refit};

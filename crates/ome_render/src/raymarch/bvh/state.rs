@@ -200,6 +200,60 @@ impl BvhState {
         kicked
     }
 
+    /// Refit fast path: rewrite leaves with new AABBs over the
+    /// existing topology. Returns `true` when a refit was kicked.
+    ///
+    /// `#[allow(dead_code)]`: the consumer wiring lives in S6 of
+    /// PR-5 (the refit-vs-rebuild policy). The method is part of
+    /// the public-facing API the orchestrator will pick up there.
+    #[allow(dead_code)]
+    ///
+    /// Suppressed under the same conditions as
+    /// [`SharedBvhState::kick_refit`]: a previous build / refit in
+    /// flight, the scene hash unchanged, or the cardinality differing
+    /// from the previous build. Callers that suspect cardinality
+    /// changed (insertions / removals) should call
+    /// [`Self::kick_if_dirty`] instead.
+    ///
+    /// Caller invariants — silent corruption otherwise:
+    /// - `items[i].0` is at the same array position as in the
+    ///   immediately-preceding successful build / refit.
+    /// - `leaf_aabbs[i]` and `raymarch_payloads[i]` align 1:1 with
+    ///   `items[i]`.
+    pub fn kick_refit_if_dirty(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        items: Vec<(u32, Aabb)>,
+        leaf_aabbs: Vec<LeafAabb>,
+        raymarch_payloads: Vec<RaymarchPayload>,
+    ) -> bool {
+        debug_assert_eq!(
+            items.len(),
+            leaf_aabbs.len(),
+            "items and leaf_aabbs must align 1:1 — one entry per primitive",
+        );
+        debug_assert_eq!(
+            items.len(),
+            raymarch_payloads.len(),
+            "items and raymarch_payloads must align 1:1 — one entry per primitive",
+        );
+
+        let n = items.len() as u32;
+        let target_slot = self.shared.current_slot_index() ^ 1;
+        let needed = (n as u64).max(1);
+        self.payload_slots[target_slot as usize].ensure_capacity(device, needed);
+
+        let scene_hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads);
+        let kicked = self
+            .shared
+            .kick_refit(device, queue, items, leaf_aabbs, scene_hash);
+        if kicked {
+            self.pending_payload = Some(PendingPayload { raymarch_payloads });
+        }
+        kicked
+    }
+
     /// Drive the in-flight build forward. Must be called once per
     /// frame. Returns the build outcome on the frame the swap happens:
     ///

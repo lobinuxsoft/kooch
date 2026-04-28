@@ -20,7 +20,7 @@
 //! leaves are byte-identical.
 
 use crate::leaf::LeafAabb;
-use crate::{Aabb, Bvh, BvhBuildError, BvhGpuBuild, BvhGpuBuilder, BvhNode};
+use crate::{Aabb, Bvh, BvhBuildError, BvhGpuBuild, BvhGpuBuilder, BvhGpuRefit, BvhNode};
 
 /// Initial capacity (in leaves) for the per-slot stable buffers.
 const INITIAL_SLOT_CAPACITY: u64 = 256;
@@ -94,9 +94,29 @@ fn make_leaf_aabbs_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer 
     })
 }
 
-/// In-flight build awaiting GPU completion.
-struct PendingBuild {
-    build: BvhGpuBuild<u32>,
+/// Discriminator between an in-flight full build and an in-flight
+/// refit. Both operate on the builder's scratch buffers and resolve
+/// at the same point in the lifecycle ([`SharedBvhState::poll_swap`]),
+/// so the orchestrator carries them through one common state slot.
+enum PendingKind {
+    Build(BvhGpuBuild<u32>),
+    Refit(BvhGpuRefit),
+}
+
+impl PendingKind {
+    fn poll(&mut self, device: &wgpu::Device) -> Option<Result<(), BvhBuildError>> {
+        match self {
+            // BvhGpuBuild::poll returns the full Bvh<T>; we drop it
+            // (the orchestrator path stays GPU-resident).
+            Self::Build(op) => op.poll(device).map(|r| r.map(|_| ())),
+            Self::Refit(op) => op.poll(device),
+        }
+    }
+}
+
+/// In-flight build or refit awaiting GPU completion.
+struct Pending {
+    op: PendingKind,
     /// Slot index (0 or 1) the result will land in.
     target_slot: u8,
     /// Per-leaf metadata captured at kick time. Uploaded to the target
@@ -128,7 +148,7 @@ pub struct SharedBvhState {
     slot_b: OutputSlot,
     /// `0` → consumers read `slot_a`, build target is `slot_b`.
     current_slot: u8,
-    pending: Option<PendingBuild>,
+    pending: Option<Pending>,
     /// Hash of the last successfully kicked scene state. Compared by
     /// the caller-supplied hash on the next kick.
     dirty_hash: Option<u64>,
@@ -231,8 +251,70 @@ impl SharedBvhState {
         self.slot_mut(target_slot).ensure_capacity(device, needed);
 
         let build = Bvh::<u32>::build_gpu(&mut self.builder, device, queue, items);
-        self.pending = Some(PendingBuild {
-            build,
+        self.pending = Some(Pending {
+            op: PendingKind::Build(build),
+            target_slot,
+            leaf_aabbs,
+            n,
+        });
+        self.dirty_hash = Some(scene_hash);
+        true
+    }
+
+    /// Refit fast path: rewrite leaves with new AABBs and propagate
+    /// internals over the existing topology, skipping morton + sort
+    /// + Karras' internal-node pass. Returns `true` when a refit was
+    /// kicked, `false` when the kick was suppressed.
+    ///
+    /// Suppressed when:
+    /// - A previous build / refit is still in flight.
+    /// - `scene_hash` matches the last successfully kicked hash.
+    /// - The current slot's `n` does not match `items.len()` (refit
+    ///   requires the same cardinality + ordering as the previous
+    ///   build; otherwise the caller should fall back to [`Self::kick`]).
+    /// - There is no previous build in the builder's scratch (i.e.
+    ///   `current_n() == 0`); a refit has nothing to start from.
+    ///
+    /// **Caller invariants** for a successful refit (silent corruption
+    /// otherwise):
+    /// - `items[i].0` is at the same array position as in the last
+    ///   build. Only the AABBs are allowed to change.
+    /// - The previous build's outputs still live in the builder's
+    ///   scratch (no intermediate failed [`Self::kick`] has clobbered
+    ///   them; failed kicks discard `pending` cleanly so this is true
+    ///   in practice).
+    pub fn kick_refit(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        items: Vec<(u32, Aabb)>,
+        leaf_aabbs: Vec<LeafAabb>,
+        scene_hash: u64,
+    ) -> bool {
+        debug_assert_eq!(
+            items.len(),
+            leaf_aabbs.len(),
+            "items and leaf_aabbs must align 1:1 — one entry per primitive",
+        );
+        if self.pending.is_some() {
+            return false;
+        }
+        if Some(scene_hash) == self.dirty_hash {
+            return false;
+        }
+        let n = items.len() as u32;
+        if n == 0 || self.slot(self.current_slot).n != n {
+            // Refit invariant: cardinality must match the previous
+            // build. Caller must use kick() instead.
+            return false;
+        }
+        let target_slot = self.current_slot ^ 1;
+        let needed = n as u64;
+        self.slot_mut(target_slot).ensure_capacity(device, needed);
+
+        let refit = crate::gpu::refit_gpu::<u32>(&mut self.builder, device, queue, items);
+        self.pending = Some(Pending {
+            op: PendingKind::Refit(refit),
             target_slot,
             leaf_aabbs,
             n,
@@ -258,13 +340,12 @@ impl SharedBvhState {
     ) -> Option<Result<SwapInfo, BvhBuildError>> {
         device.poll(wgpu::PollType::Poll).ok()?;
         let pending = self.pending.as_mut()?;
-        let outcome = pending.build.poll(device)?;
+        let outcome = pending.op.poll(device)?;
         let pending = self.pending.take().expect("just observed Some above");
 
-        let bvh = match outcome {
-            Ok(b) => b,
-            Err(e) => return Some(Err(e)),
-        };
+        if let Err(e) = outcome {
+            return Some(Err(e));
+        }
 
         let n = pending.n;
         let target_slot = pending.target_slot;
@@ -298,9 +379,50 @@ impl SharedBvhState {
         }
         self.slot_mut(target_slot).n = n;
         self.current_slot = target_slot;
-        // Drop the build handle and the `bvh` Vec<BvhNode> the GPU
-        // path doesn't need on the CPU side.
-        drop(bvh);
         Some(Ok(SwapInfo { target_slot, n }))
     }
+}
+
+/// Cheap CPU heuristic for the orchestrator: decide between rebuild
+/// (full [`SharedBvhState::kick`]) and refit (fast
+/// [`SharedBvhState::kick_refit`]) based on how much each AABB has
+/// moved relative to its size.
+///
+/// Returns `true` (i.e. refit is fine) when **fewer than
+/// `change_threshold_pct`** of the AABBs have moved their centre by
+/// **more than `move_threshold_ratio`** of their largest extent. Any
+/// stretch / shrink that keeps the centre in place is treated as a
+/// non-move — this is the cheap proxy; a tighter check would compare
+/// volumes too, but the rebuild fallback is safe and fast enough that
+/// the simple metric earns its keep.
+///
+/// Returns `false` (force rebuild) when:
+/// - The lengths differ (cardinality changed → refit not viable).
+/// - The previous slice is empty (first frame).
+/// - The configured percentage of AABBs moved too far.
+///
+/// Suggested defaults from the PR-5 plan: `move_threshold_ratio =
+/// 0.25`, `change_threshold_pct = 10.0`. These are conservative
+/// (favour rebuild) — the S7 bench surfaces tighter values once the
+/// real workload tells us what "moderate movement" means in practice.
+pub fn should_refit(
+    prev: &[Aabb],
+    curr: &[Aabb],
+    move_threshold_ratio: f32,
+    change_threshold_pct: f32,
+) -> bool {
+    if prev.len() != curr.len() || prev.is_empty() {
+        return false;
+    }
+    let mut moved = 0usize;
+    for (p, c) in prev.iter().zip(curr.iter()) {
+        let extent = p.max - p.min;
+        let max_dim = extent.x.max(extent.y).max(extent.z).max(1e-6);
+        let centre_delta = (c.center() - p.center()).length();
+        if centre_delta > max_dim * move_threshold_ratio {
+            moved += 1;
+        }
+    }
+    let pct_moved = moved as f32 / prev.len() as f32 * 100.0;
+    pct_moved < change_threshold_pct
 }

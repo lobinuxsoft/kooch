@@ -496,6 +496,328 @@ pub fn build_gpu<T: Copy + bytemuck::Pod>(
     }
 }
 
+/// Handle to an in-flight GPU LBVH **refit**. Symmetrical to
+/// [`BvhGpuBuild`] but on the **fast path**: rewrites only the leaves
+/// + propagates internal AABBs over an already-built topology. Skips
+/// morton encoding, the onesweep sort, and Karras' internal-node
+/// construction entirely.
+///
+/// Caller invariants (the orchestrator [`SharedBvhState::kick_refit`]
+/// enforces them):
+///
+/// 1. The previous build's outputs are still resident in the
+///    builder's scratch buffers (`builder.nodes_buffer`,
+///    `builder.sorted_indices_buffer`). No intermediate failed build
+///    or partial reset has clobbered them.
+/// 2. `items.len()` equals the previous build's `n`.
+/// 3. `items[i].0` (payload identity) is at the **same array
+///    position** as in the previous build. Only `items[i].1` (the
+///    AABB) may have changed.
+///
+/// Violating (2) or (3) does not panic — it produces wrong-but-
+/// plausible AABBs (the leaves get re-AABB'd through the previous
+/// permutation; topological mismatch is silent). Always go through
+/// the orchestrator.
+pub struct BvhGpuRefit {
+    n: u32,
+    submission_index: Option<wgpu::SubmissionIndex>,
+    /// 4-byte dummy buffer used purely as a fence: `map_async` fires
+    /// once every preceding compute pass on the same encoder has
+    /// completed, so the renderer learns "the refit is done" without
+    /// paying for a `(2N-1) * 32 B` nodes readback. Only exists for
+    /// `n >= 1`.
+    fence_staging: wgpu::Buffer,
+    /// Refcounted clone of the builder's `lbvh_buffers.nodes_buffer`,
+    /// kept alive so [`Self::gpu_handle`] can hand out a stable
+    /// reference until the caller drops the handle.
+    nodes_buffer: wgpu::Buffer,
+    map_state: Arc<MapState>,
+    consumed: bool,
+    /// Same debug-only convergence check as [`BvhGpuBuild::done_staging`].
+    done_staging: Option<wgpu::Buffer>,
+}
+
+impl BvhGpuRefit {
+    /// Non-blocking check. Returns `Some(Ok(()))` once the refit's
+    /// submission completes, `None` while in flight, `Some(Err(_))`
+    /// on device-loss / map failure.
+    pub fn poll(&mut self, _device: &wgpu::Device) -> Option<Result<(), BvhBuildError>> {
+        if self.consumed {
+            return None;
+        }
+        if self.submission_index.is_none() {
+            // n == 0 trivially resolved.
+            self.consumed = true;
+            return Some(Ok(()));
+        }
+        if self.map_state.nodes_err.load(Ordering::Acquire)
+            || self.map_state.done_err.load(Ordering::Acquire)
+        {
+            self.consumed = true;
+            return Some(Err(BvhBuildError::BufferMapFailed));
+        }
+        if !self.map_state.nodes_done.load(Ordering::Acquire) {
+            return None;
+        }
+        if self.done_staging.is_some() && !self.map_state.done_done.load(Ordering::Acquire) {
+            return None;
+        }
+        self.consumed = true;
+        self.check_aabb_convergence_in_debug();
+        self.fence_staging.unmap();
+        Some(Ok(()))
+    }
+
+    /// GPU-resident view of the (in-flight or completed) refit'd tree.
+    /// **First call blocks** on the refit's submission so the buffer
+    /// contents are guaranteed valid; subsequent calls return
+    /// immediately. Same contract as [`BvhGpuBuild::gpu_handle`].
+    pub fn gpu_handle(&self, device: &wgpu::Device) -> GpuBvhHandle<'_> {
+        if let Some(idx) = self.submission_index.clone() {
+            let _ = device.poll(wgpu::PollType::Wait {
+                submission_index: Some(idx),
+                timeout: None,
+            });
+        }
+        GpuBvhHandle {
+            nodes_buffer: &self.nodes_buffer,
+            n: self.n,
+        }
+    }
+
+    /// Test + tooling helper: drive the device polling loop until the
+    /// refit resolves. **Never** call from a frame loop.
+    #[cfg(any(test, feature = "block_on"))]
+    pub fn block_on(mut self, device: &wgpu::Device) -> Result<(), BvhBuildError> {
+        let Some(idx) = self.submission_index.clone() else {
+            return self
+                .poll(device)
+                .expect("empty refit resolves on first poll");
+        };
+        loop {
+            match device.poll(wgpu::PollType::Wait {
+                submission_index: Some(idx.clone()),
+                timeout: Some(std::time::Duration::from_secs(30)),
+            }) {
+                Ok(_) => {}
+                Err(_) => return Err(BvhBuildError::DeviceLost),
+            }
+            if let Some(result) = self.poll(device) {
+                return result;
+            }
+        }
+    }
+
+    fn check_aabb_convergence_in_debug(&self) {
+        let Some(ref staging) = self.done_staging else {
+            return;
+        };
+        if self.n < 2 {
+            return;
+        }
+        let n_internals = (self.n - 1) as usize;
+        let bytes = n_internals * 4;
+        let slice = staging.slice(..bytes as u64);
+        let data = slice.get_mapped_range();
+        let dones = bytemuck::cast_slice::<u8, u32>(&data);
+        let unfinished = dones
+            .iter()
+            .take(n_internals)
+            .position(|&d| d == 0u32);
+        drop(data);
+        staging.unmap();
+        if let Some(idx) = unfinished {
+            let iters = crate::gpu::lbvh::aabb_iterations(self.n);
+            panic!(
+                "AABB iteration slack insufficient during REFIT for N={} (depth exceeded \
+                 2·log_n+4 — internal node {idx} of {n_internals} unfinished after {iters} \
+                 iterations). Topology was preserved from the previous build, so this means \
+                 the original tree was already adversarial and slack ran out only on refit.",
+                self.n
+            );
+        }
+    }
+}
+
+/// Free-function form of `Bvh::refit_gpu`. Re-exported on `Bvh<T>` in
+/// `bvh.rs` so callers write `Bvh::<u32>::refit_gpu(&mut builder, ...)`.
+///
+/// **Caller invariants** — see [`BvhGpuRefit`] for details. Briefly:
+/// items count and order must match the immediately-preceding build;
+/// only AABBs may change. The orchestrator
+/// [`crate::shared::SharedBvhState::kick_refit`] enforces these.
+pub fn refit_gpu<T: Copy + bytemuck::Pod>(
+    builder: &mut BvhGpuBuilder,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    items: Vec<(T, Aabb)>,
+) -> BvhGpuRefit {
+    let n = items.len() as u32;
+
+    if n == 0 {
+        return empty_refit(builder, device);
+    }
+
+    builder.ensure_capacity(device, n as u64);
+
+    let (_payloads, aabbs): (Vec<T>, Vec<Aabb>) = items.into_iter().unzip();
+
+    // Upload the new AABBs into the same `aabbs_buffer` the leaves
+    // pass reads through the existing `sorted_indices` permutation.
+    let gpu_aabbs: Vec<crate::gpu::types::GpuAabb> =
+        aabbs.iter().copied().map(crate::gpu::types::GpuAabb::from).collect();
+    queue.write_buffer(
+        &builder.aabbs_buffer,
+        0,
+        bytemuck::cast_slice(&gpu_aabbs),
+    );
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("ome_bvh::refit_gpu_encoder"),
+    });
+
+    // Reset internals' `done` flags so the propagation pass re-merges
+    // every internal from its (newly-AABB'd) children. Leaves stay
+    // pinned at done=1 by the leaves-rewrite pass below.
+    if n >= 2 {
+        let internals_bytes = ((n - 1) as u64) * 4;
+        encoder.clear_buffer(
+            &builder.lbvh_buffers.done_buffer,
+            0,
+            Some(internals_bytes),
+        );
+    }
+
+    // Pass 1: rewrite leaves with new AABBs through the previous
+    // build's `sort_buffers.values_a` (sorted_indices). Topology
+    // preserved — only `nodes[(N-1)..(2N-1)).aabb_*` change.
+    crate::gpu::lbvh::dispatch_lbvh_leaves_into(
+        device,
+        queue,
+        &mut encoder,
+        &builder.lbvh_pipelines,
+        &builder.lbvh_buffers,
+        &builder.aabbs_buffer,
+        &builder.sort_buffers.values_a,
+        n,
+    );
+
+    // Pass 3: AABB propagation only. `karras_internal` (pass 2) is
+    // skipped — the internal nodes' `left` / `right_or_count` were
+    // written by the previous build and remain valid.
+    if n >= 2 {
+        crate::gpu::lbvh::dispatch_lbvh_aabb_only_into(
+            device,
+            queue,
+            &mut encoder,
+            &builder.lbvh_pipelines,
+            &builder.lbvh_buffers,
+            n,
+        );
+    }
+
+    // Fence staging: a 4-byte dummy whose `map_async` callback fires
+    // once every preceding compute pass on this encoder has
+    // completed. Tiny — copying 4 bytes per refit costs nothing
+    // compared to the `(2N-1) * 32 B` a full nodes readback would
+    // burn each frame.
+    let fence_staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ome_bvh::refit_gpu_fence_staging"),
+        size: 4,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    // Source the fence copy from `nodes_buffer` — its first 4 bytes
+    // are part of `nodes[0].aabb_min.x` and we don't read them. The
+    // nodes buffer is the one downstream consumers wait on, so the
+    // copy is queued strictly after the propagation passes; that's
+    // the only ordering property the fence needs. `config_buffer`
+    // lacks `COPY_SRC` and would require widening usage flags for
+    // no good reason.
+    encoder.copy_buffer_to_buffer(
+        &builder.lbvh_buffers.nodes_buffer,
+        0,
+        &fence_staging,
+        0,
+        4,
+    );
+
+    // Debug-only convergence check (same shape as `build_gpu`).
+    let done_staging = if cfg!(debug_assertions) && n >= 2 {
+        let n_internals = (n - 1) as u64;
+        let bytes = n_internals * 4;
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ome_bvh::refit_gpu_done_staging_debug"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(
+            &builder.lbvh_buffers.done_buffer,
+            0,
+            &staging,
+            0,
+            bytes,
+        );
+        Some(staging)
+    } else {
+        None
+    };
+
+    let submission_index = queue.submit(std::iter::once(encoder.finish()));
+
+    let map_state = Arc::new(MapState::default());
+    {
+        let st = map_state.clone();
+        fence_staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |res| match res {
+                Ok(()) => st.nodes_done.store(true, Ordering::Release),
+                Err(_) => st.nodes_err.store(true, Ordering::Release),
+            });
+    }
+    if let Some(ref staging) = done_staging {
+        let st = map_state.clone();
+        staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |res| match res {
+                Ok(()) => st.done_done.store(true, Ordering::Release),
+                Err(_) => st.done_err.store(true, Ordering::Release),
+            });
+    }
+
+    BvhGpuRefit {
+        n,
+        submission_index: Some(submission_index),
+        fence_staging,
+        nodes_buffer: builder.lbvh_buffers.nodes_buffer.clone(),
+        map_state,
+        consumed: false,
+        done_staging,
+    }
+}
+
+/// Construct a placeholder `BvhGpuRefit` for the `n == 0` case. No
+/// dispatches and no submission — [`BvhGpuRefit::poll`] resolves on
+/// the first call.
+fn empty_refit(builder: &BvhGpuBuilder, device: &wgpu::Device) -> BvhGpuRefit {
+    let placeholder = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ome_bvh::refit_gpu_empty_fence_staging"),
+        size: 4,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    BvhGpuRefit {
+        n: 0,
+        submission_index: None,
+        fence_staging: placeholder,
+        nodes_buffer: builder.lbvh_buffers.nodes_buffer.clone(),
+        map_state: Arc::new(MapState::default()),
+        consumed: false,
+        done_staging: None,
+    }
+}
+
 /// Construct a placeholder `BvhGpuBuild` for the `n == 0` case. No GPU
 /// dispatches and no submission — `submission_index = None` makes
 /// [`BvhGpuBuild::poll`] return `Some(Ok(Bvh::empty()))` immediately.
@@ -651,6 +973,266 @@ mod tests {
             })
             .collect();
         run_pair(items, "n=1024");
+    }
+
+    /// CPU ground-truth refit. Walks the topology in `nodes` and
+    /// rewrites every node's AABB from the new `aabbs` (indexed
+    /// through the original-to-sorted permutation captured at build
+    /// time). Mirrors the GPU's bottom-up multi-dispatch — same
+    /// `done[]` book-keeping, same iteration cap.
+    fn cpu_refit_ground_truth(
+        nodes: &[BvhNode],
+        sorted_indices: &[u32],
+        new_aabbs: &[Aabb],
+    ) -> Vec<BvhNode> {
+        let n = sorted_indices.len() as u32;
+        let mut out = nodes.to_vec();
+
+        if n == 0 {
+            return out;
+        }
+
+        // Phase 1: rewrite leaves with new AABBs through the
+        // build-time permutation (`sorted_indices[k]` = original
+        // index at sorted position k).
+        let leaf_offset: usize = if n == 1 { 0 } else { (n - 1) as usize };
+        for k in 0..n as usize {
+            let leaf_idx = leaf_offset + k;
+            let original = sorted_indices[k] as usize;
+            let aabb = new_aabbs[original];
+            out[leaf_idx].aabb_min = aabb.min.to_array();
+            out[leaf_idx].aabb_max = aabb.max.to_array();
+        }
+
+        if n < 2 {
+            return out;
+        }
+
+        // Phase 2: bottom-up internal propagation, identical
+        // semantics to `karras_aabb.wgsl`.
+        let total = (2 * n - 1) as usize;
+        let mut done = vec![false; total];
+        for k in 0..n as usize {
+            done[(n - 1) as usize + k] = true;
+        }
+        // Match the GPU's iteration cap exactly so this catches the
+        // same convergence problems the GPU would.
+        let max_iters = crate::gpu::lbvh::aabb_iterations(n) as usize;
+        for _ in 0..max_iters {
+            let mut changed = false;
+            for i in 0..(n - 1) as usize {
+                if done[i] {
+                    continue;
+                }
+                let left = out[i].left as usize;
+                let right = (out[i].right_or_count & crate::node::BVH_VALUE_MASK) as usize;
+                if !done[left] || !done[right] {
+                    continue;
+                }
+                let lmin = Vec3::from_array(out[left].aabb_min);
+                let lmax = Vec3::from_array(out[left].aabb_max);
+                let rmin = Vec3::from_array(out[right].aabb_min);
+                let rmax = Vec3::from_array(out[right].aabb_max);
+                out[i].aabb_min = lmin.min(rmin).to_array();
+                out[i].aabb_max = lmax.max(rmax).to_array();
+                done[i] = true;
+                changed = true;
+            }
+            if !changed {
+                break;
+            }
+        }
+        // Ground-truth invariant: every internal must converge under
+        // the same iteration budget the GPU uses. Otherwise the GPU's
+        // own debug invariant would have already panicked.
+        assert!(
+            done.iter().take((n - 1) as usize).all(|&d| d),
+            "CPU refit ground-truth failed to converge — bench seed exposes a tree the GPU \
+             slack also can't handle. Re-evaluate AABB_ITERATION_SLACK before shipping."
+        );
+        out
+    }
+
+    /// Read back the builder's `nodes_buffer` for assertions. Pairs
+    /// with `crate::gpu::lbvh::readback_nodes_for_test` but reads
+    /// from the higher-level builder (post-refit) instead of the raw
+    /// LbvhBuffers.
+    fn readback_builder_nodes(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        builder: &BvhGpuBuilder,
+        n: u32,
+    ) -> Vec<BvhNode> {
+        let total = (2 * n - 1) as u64;
+        let bytes = total * std::mem::size_of::<BvhNode>() as u64;
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ome_bvh::refit_test_nodes_readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("ome_bvh::refit_test_nodes_readback_encoder"),
+        });
+        encoder.copy_buffer_to_buffer(builder.nodes_buffer(), 0, &staging, 0, bytes);
+        queue.submit(std::iter::once(encoder.finish()));
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            tx.send(r).ok();
+        });
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(30)),
+            })
+            .expect("device poll");
+        rx.recv().expect("map sender").expect("map result");
+        let data = slice.get_mapped_range();
+        let v: Vec<BvhNode> = bytemuck::cast_slice::<u8, BvhNode>(&data).to_vec();
+        drop(data);
+        staging.unmap();
+        v
+    }
+
+    fn readback_sorted_indices(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        builder: &BvhGpuBuilder,
+        n: u32,
+    ) -> Vec<u32> {
+        let bytes = (n as u64) * 4;
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ome_bvh::refit_test_indices_readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("ome_bvh::refit_test_indices_readback_encoder"),
+        });
+        encoder.copy_buffer_to_buffer(builder.sorted_indices_buffer(), 0, &staging, 0, bytes);
+        queue.submit(std::iter::once(encoder.finish()));
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            tx.send(r).ok();
+        });
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(30)),
+            })
+            .expect("device poll");
+        rx.recv().expect("map sender").expect("map result");
+        let data = slice.get_mapped_range();
+        let v: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&data).to_vec();
+        drop(data);
+        staging.unmap();
+        v
+    }
+
+    /// Drive a build to completion, then a refit, asserting the
+    /// builder's resulting `nodes_buffer` is byte-identical to the
+    /// CPU ground-truth refit.
+    fn run_refit_pair(
+        items_v0: Vec<(u32, Aabb)>,
+        items_v1: Vec<(u32, Aabb)>,
+        label: &str,
+    ) {
+        let Some((device, queue)) = test_device::try_acquire() else {
+            eprintln!("ome_bvh::gpu::build: no GPU adapter — skipping refit {label}");
+            return;
+        };
+        assert_eq!(items_v0.len(), items_v1.len(), "refit cardinality must match");
+        let n = items_v0.len() as u32;
+        let mut builder = BvhGpuBuilder::new(&device, &queue, None);
+
+        // Initial build.
+        let build = Bvh::<u32>::build_gpu(&mut builder, &device, &queue, items_v0.clone());
+        let _ = build.block_on(&device).expect("initial build failed");
+
+        // Capture the topology + permutation that the refit must preserve.
+        let topology_v0 = readback_builder_nodes(&device, &queue, &builder, n);
+        let sorted_indices_v0 = readback_sorted_indices(&device, &queue, &builder, n);
+
+        // Refit.
+        let refit = refit_gpu::<u32>(&mut builder, &device, &queue, items_v1.clone());
+        refit.block_on(&device).expect("refit failed");
+
+        // GPU result.
+        let gpu_after_refit = readback_builder_nodes(&device, &queue, &builder, n);
+
+        // CPU ground-truth refit over the captured topology.
+        let new_aabbs: Vec<Aabb> = items_v1.iter().map(|(_, a)| *a).collect();
+        let cpu_truth =
+            cpu_refit_ground_truth(&topology_v0, &sorted_indices_v0, &new_aabbs);
+
+        for (i, (g, c)) in gpu_after_refit.iter().zip(cpu_truth.iter()).enumerate() {
+            assert_eq!(
+                g, c,
+                "[{label}] node[{i}] GPU/CPU refit diverge:\n  gpu: {g:?}\n  cpu: {c:?}"
+            );
+        }
+    }
+
+    /// Tiny perturbation: every AABB shifts by the same small delta.
+    /// Topology survives — Morton codes for the centres remain in the
+    /// same sort order; the refit must produce bit-exact AABBs.
+    fn perturb_translate(items: &[(u32, Aabb)], delta: Vec3) -> Vec<(u32, Aabb)> {
+        items
+            .iter()
+            .map(|&(id, a)| (id, Aabb::from_centre(a.center() + delta, (a.max - a.min) * 0.5)))
+            .collect()
+    }
+
+    #[test]
+    fn refit_gpu_matches_cpu_n_1() {
+        let items = vec![(0u32, aabb_at(Vec3::ZERO, 1.0))];
+        let moved = vec![(0u32, aabb_at(Vec3::splat(0.3), 1.0))];
+        run_refit_pair(items, moved, "refit_n=1");
+    }
+
+    #[test]
+    fn refit_gpu_matches_cpu_n_2() {
+        let items = vec![
+            (0u32, aabb_at(Vec3::ZERO, 0.5)),
+            (1u32, aabb_at(Vec3::splat(10.0), 0.5)),
+        ];
+        let moved = vec![
+            (0u32, aabb_at(Vec3::splat(0.05), 0.55)),
+            (1u32, aabb_at(Vec3::splat(10.05), 0.45)),
+        ];
+        run_refit_pair(items, moved, "refit_n=2");
+    }
+
+    #[test]
+    fn refit_gpu_matches_cpu_n_8() {
+        let items: Vec<(u32, Aabb)> = (0..8u32)
+            .map(|i| (i, aabb_at(Vec3::new(i as f32, 0.0, 0.0), 0.4)))
+            .collect();
+        let moved = perturb_translate(&items, Vec3::new(0.05, 0.02, -0.03));
+        run_refit_pair(items, moved, "refit_n=8");
+    }
+
+    #[test]
+    fn refit_gpu_matches_cpu_n_1024() {
+        let items: Vec<(u32, Aabb)> = (0..1024u32)
+            .map(|i| {
+                let x = (i % 32) as f32;
+                let y = (i / 32) as f32;
+                (i, aabb_at(Vec3::new(x, y, 0.0), 0.4))
+            })
+            .collect();
+        let moved = perturb_translate(&items, Vec3::new(0.05, -0.05, 0.02));
+        run_refit_pair(items, moved, "refit_n=1024");
+    }
+
+    #[test]
+    fn refit_gpu_matches_cpu_random_n_100() {
+        let items = random_items(100, 0xc0ffee01, 10.0);
+        let moved = perturb_translate(&items, Vec3::new(0.03, 0.04, -0.02));
+        run_refit_pair(items, moved, "refit_n=100");
     }
 
     #[test]
