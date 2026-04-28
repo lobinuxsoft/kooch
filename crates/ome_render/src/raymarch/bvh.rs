@@ -1033,6 +1033,111 @@ fn cs_fullscan(@builtin(global_invocation_id) gid: vec3<u32>) {
         );
     }
 
+    /// Wall-clock benchmark of cs_main vs cs_fullscan at three
+    /// scales. **Not a CI gate** — gated behind `#[ignore]`; run
+    /// manually with `cargo test ... -- --ignored --nocapture`.
+    /// Reports avg time per pass over `iters` runs and the speedup
+    /// ratio. Speedup grows with scene size as expected for an
+    /// `O(log N)` cull vs `O(N)` baseline.
+    fn bench_pair(n: u32, iters: u32) {
+        let Some((device, queue)) = try_acquire_device() else {
+            eprintln!("bench skipped: no GPU adapter");
+            return;
+        };
+        let (primitives, leaves) = random_sphere_scene(n, 0xb_e_e_f);
+        let items: Vec<(u32, ome_bvh::Aabb)> = leaves
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                (
+                    i as u32,
+                    ome_bvh::Aabb::new(
+                        glam::Vec3::from_array(l.aabb_min),
+                        glam::Vec3::from_array(l.aabb_max),
+                    ),
+                )
+            })
+            .collect();
+
+        let mut state = BvhState::new(&device, &queue, None);
+        state.kick_if_dirty(&device, &queue, items, leaves.clone());
+        drive_bvh_to_completion(&mut state, &device, &queue);
+        assert_eq!(state.current_n(), n);
+
+        // Sample at every primitive centre + 8 grid points per scene
+        // to cover both in-AABB and empty regions.
+        let mut samples: Vec<SamplePoint> = primitives
+            .iter()
+            .map(|p| SamplePoint { pos: [p.position[0], p.position[1], p.position[2], 0.0] })
+            .collect();
+        samples.extend(sample_points_grid(2048));
+
+        let meta = SceneMeta {
+            primitive_count: primitives.len() as u32,
+            bvh_n: state.current_n(),
+            skip_internal_sky: 0,
+            has_intersects: 0,
+            has_subs: 0,
+            k_int_scene: 0.0,
+            k_sub_scene: 0.0,
+            _pad0: 0,
+            sky_top: [0.5, 0.7, 1.0, 1.0],
+            sky_bottom: [0.1, 0.2, 0.4, 1.0],
+        };
+
+        // Warmup (1 pass each) to let drivers compile + cache.
+        let _ = run_eval_pass(
+            &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main",
+        );
+        let _ = run_eval_pass(
+            &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_fullscan",
+        );
+
+        let mut bvh_total = std::time::Duration::ZERO;
+        let mut full_total = std::time::Duration::ZERO;
+        for _ in 0..iters {
+            let t0 = std::time::Instant::now();
+            let _ = run_eval_pass(
+                &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_main",
+            );
+            bvh_total += t0.elapsed();
+
+            let t0 = std::time::Instant::now();
+            let _ = run_eval_pass(
+                &device, &queue, &state, &primitives, &leaves, &samples, &meta, "cs_fullscan",
+            );
+            full_total += t0.elapsed();
+        }
+        let bvh_avg = bvh_total / iters;
+        let full_avg = full_total / iters;
+        let ratio = full_avg.as_secs_f64() / bvh_avg.as_secs_f64();
+        eprintln!(
+            "[N={n} samples={} iters={iters}]  bvh: {:>9.2?} avg | fullscan: {:>9.2?} avg | speedup: {:.2}×",
+            samples.len(),
+            bvh_avg,
+            full_avg,
+            ratio,
+        );
+    }
+
+    #[test]
+    #[ignore = "bench (run with --ignored --nocapture)"]
+    fn bench_scaling_1k() {
+        bench_pair(1024, 5);
+    }
+
+    #[test]
+    #[ignore = "bench (run with --ignored --nocapture)"]
+    fn bench_scaling_10k() {
+        bench_pair(10_240, 5);
+    }
+
+    #[test]
+    #[ignore = "bench (run with --ignored --nocapture)"]
+    fn bench_scaling_65k() {
+        bench_pair(65_000, 3);
+    }
+
     /// Same property at 1024 leaves — the BVH has multiple internal
     /// levels here, and the per-role accumulator visits each leaf in
     /// a strictly topology-driven order. Catches any latent
