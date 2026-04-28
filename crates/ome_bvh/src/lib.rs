@@ -34,8 +34,8 @@ pub mod shared;
 pub use aabb::Aabb;
 pub use bvh::Bvh;
 pub use gpu::{
-    BvhBuildError, BvhGpuBuild, BvhGpuBuilder, BvhGpuRefit, BvhTimestamps, GpuAabb, GpuBvhHandle,
-    GpuSceneBounds, refit_gpu,
+    BvhBuildError, BvhGpuBuild, BvhGpuBuildResult, BvhGpuBuilder, BvhGpuRefit, BvhTimestamps,
+    GpuAabb, GpuBvhHandle, GpuSceneBounds, refit_gpu,
 };
 pub use leaf::{
     IS_COLLIDER, IS_LIGHT, IS_RAYMARCH, IS_VISIBLE_MESH, LeafAabb, ROLE_RAYMARCH_ADD,

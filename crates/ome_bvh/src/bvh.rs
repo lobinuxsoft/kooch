@@ -33,6 +33,7 @@
 use glam::Vec3;
 
 use crate::aabb::Aabb;
+use crate::leaf::LeafAabb;
 use crate::morton::MortonCode;
 use crate::node::BvhNode;
 
@@ -172,6 +173,52 @@ impl<T: Copy> Bvh<T> {
         T: bytemuck::Pod,
     {
         crate::gpu::build::build_gpu(builder, device, queue, items)
+    }
+
+    /// Refit AABBs over the existing topology. `leaf_aabbs[i]` is the
+    /// (possibly-updated) AABB of original-input position `i`, in the
+    /// same order as the items vector handed to [`Self::build`].
+    /// `sorted_indices[k]` is the original-input position of the leaf
+    /// at sorted position `k` (i.e. the leaf node at `nodes[(N-1) + k]`).
+    /// On the GPU path this is the `values_a` permutation captured at
+    /// the last successful build.
+    ///
+    /// Same caller invariants as [`crate::BvhGpuRefit`]:
+    /// - `leaf_aabbs.len() == self.leaf_count()` — cardinality preserved.
+    /// - `sorted_indices` is the permutation from the last successful
+    ///   build (or chained refit). The topology must be the one the
+    ///   permutation describes; a stale `sorted_indices` produces
+    ///   wrong-but-plausible AABBs without panicking.
+    ///
+    /// Used by [`crate::SharedBvhState`] to keep its CPU mirror in
+    /// sync with the GPU refit fast path without paying for a full
+    /// `(2N-1) * 32 B` nodes readback. Pure CPU work; O(N) leaf writes
+    /// + bottom-up propagate.
+    pub fn refit_in_place(&mut self, leaf_aabbs: &[LeafAabb], sorted_indices: &[u32]) {
+        let n = self.leaf_count();
+        debug_assert_eq!(
+            n,
+            leaf_aabbs.len(),
+            "refit_in_place: leaf_aabbs.len() must match leaf_count()",
+        );
+        debug_assert_eq!(
+            n,
+            sorted_indices.len(),
+            "refit_in_place: sorted_indices.len() must match leaf_count()",
+        );
+        if n == 0 {
+            return;
+        }
+        let leaf_offset = n.saturating_sub(1);
+        for k in 0..n {
+            let original = sorted_indices[k] as usize;
+            let new_aabb = &leaf_aabbs[original];
+            self.nodes[leaf_offset + k].aabb_min = new_aabb.aabb_min;
+            self.nodes[leaf_offset + k].aabb_max = new_aabb.aabb_max;
+        }
+        if n > 1 {
+            propagate_aabb(&mut self.nodes, 0);
+        }
     }
 
     /// AABB of the root node — i.e. the union of every leaf bound.
@@ -431,6 +478,98 @@ mod tests {
         for i in (n - 1)..(2 * n - 1) {
             assert!(bvh.nodes[i].is_leaf(), "node {i} should be leaf");
         }
+    }
+
+    fn sorted_indices_from_payload_id_bvh(bvh: &Bvh<u32>) -> Vec<u32> {
+        // Test convenience: when payload T = u32 and the input items
+        // were `(i, ...)` for i in 0..n, then `bvh.leaves[k]` IS the
+        // original position of the leaf at sorted position k.
+        bvh.leaves.clone()
+    }
+
+    fn leaf_aabb_at(centre: Vec3, half: f32) -> LeafAabb {
+        let a = aabb_at(centre, half);
+        LeafAabb {
+            aabb_min: a.min.into(),
+            flags: 0,
+            aabb_max: a.max.into(),
+            entity_id: 0,
+        }
+    }
+
+    #[test]
+    fn refit_in_place_identity_is_noop() {
+        // Identity refit: same leaf_aabbs as the build. Every node's
+        // AABB must come back byte-identical to the original.
+        let items: Vec<(u32, Aabb)> = (0..8u32)
+            .map(|i| (i, aabb_at(Vec3::new(i as f32, 0.0, 0.0), 0.4)))
+            .collect();
+        let original = Bvh::build(items.clone());
+        let leaf_aabbs: Vec<LeafAabb> = items
+            .iter()
+            .map(|(_, a)| leaf_aabb_at(a.center(), 0.4))
+            .collect();
+        let sorted_indices = sorted_indices_from_payload_id_bvh(&original);
+        let mut refitted = original.clone();
+        refitted.refit_in_place(&leaf_aabbs, &sorted_indices);
+        for (i, (a, b)) in original.nodes.iter().zip(refitted.nodes.iter()).enumerate() {
+            assert_eq!(a.aabb_min, b.aabb_min, "node {i} aabb_min drift on identity refit");
+            assert_eq!(a.aabb_max, b.aabb_max, "node {i} aabb_max drift on identity refit");
+        }
+    }
+
+    #[test]
+    fn refit_in_place_matches_full_rebuild_when_centres_preserved() {
+        // Shrink each AABB without moving its centre. Morton ordering
+        // (centre-driven) is preserved → topology unchanged → refit
+        // must produce the same node AABBs as a full rebuild.
+        let centres: Vec<Vec3> = (0..16u32)
+            .map(|i| Vec3::new(i as f32, 0.0, 0.0))
+            .collect();
+        let items_v0: Vec<(u32, Aabb)> = centres
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, c)| (i as u32, aabb_at(c, 0.4)))
+            .collect();
+        let bvh_v0 = Bvh::build(items_v0);
+        let sorted_indices = sorted_indices_from_payload_id_bvh(&bvh_v0);
+
+        // v1: same centres, half the half-extent.
+        let items_v1: Vec<(u32, Aabb)> = centres
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, c)| (i as u32, aabb_at(c, 0.2)))
+            .collect();
+        let leaf_aabbs_v1: Vec<LeafAabb> = items_v1
+            .iter()
+            .map(|(_, a)| leaf_aabb_at(a.center(), 0.2))
+            .collect();
+        let bvh_full_rebuild = Bvh::build(items_v1);
+
+        let mut bvh_refitted = bvh_v0;
+        bvh_refitted.refit_in_place(&leaf_aabbs_v1, &sorted_indices);
+
+        // Topology unchanged (same morton order) → leaves slice must
+        // match. Node AABBs must match the full rebuild.
+        assert_eq!(bvh_refitted.leaves, bvh_full_rebuild.leaves);
+        for (i, (a, b)) in bvh_refitted
+            .nodes
+            .iter()
+            .zip(bvh_full_rebuild.nodes.iter())
+            .enumerate()
+        {
+            assert_eq!(a.aabb_min, b.aabb_min, "node {i} aabb_min mismatch vs full rebuild");
+            assert_eq!(a.aabb_max, b.aabb_max, "node {i} aabb_max mismatch vs full rebuild");
+        }
+    }
+
+    #[test]
+    fn refit_in_place_empty_is_noop() {
+        let mut empty: Bvh<u32> = Bvh::empty();
+        empty.refit_in_place(&[], &[]);
+        assert!(empty.is_empty());
     }
 
     #[test]

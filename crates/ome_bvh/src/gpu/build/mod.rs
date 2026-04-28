@@ -38,7 +38,7 @@ mod lifecycle;
 mod refit;
 
 pub use error::BvhBuildError;
-pub use full::{BvhGpuBuild, build_gpu};
+pub use full::{BvhGpuBuild, BvhGpuBuildResult, build_gpu};
 pub use lifecycle::GpuBvhHandle;
 pub use refit::{BvhGpuRefit, refit_gpu};
 

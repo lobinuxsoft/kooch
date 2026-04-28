@@ -83,8 +83,8 @@ fn run_pair(items: Vec<(u32, Aabb)>, label: &str) {
     let mut builder = BvhGpuBuilder::new(&device, &queue, None);
     let cpu = Bvh::build(items.clone());
     let build = build_gpu::<u32>(&mut builder, &device, &queue, items);
-    let gpu = build.block_on(&device).expect("GPU build failed");
-    assert_gpu_matches_cpu(&gpu, &cpu, label);
+    let result = build.block_on(&device).expect("GPU build failed");
+    assert_gpu_matches_cpu(&result.bvh, &cpu, label);
 }
 
 #[test]

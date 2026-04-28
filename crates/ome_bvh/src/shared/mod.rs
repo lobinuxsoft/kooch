@@ -23,16 +23,20 @@
 //! # Module layout
 //!
 //! - [`slot`] — `OutputSlot` + per-buffer creation helpers.
-//! - [`state`] — `SharedBvhState`, `BuildToken`, `Pending`,
-//!   `PendingKind`, `SwapInfo`. The lifecycle (kick / kick_refit /
-//!   poll_swap) and the type-state handle consumers receive on a
-//!   committed kick.
+//! - [`state`] — `SharedBvhState` + `CpuMirror`. The kick / kick_refit
+//!   / poll_swap orchestrator and the CPU mirror used by CPU consumers
+//!   (physics broadphase et al.).
+//! - [`pending`] — `BuildToken`, `Pending`, `PendingKind`, `PollOutcome`,
+//!   `SwapInfo`. The lifecycle handles the orchestrator hands consumers
+//!   on an accepted kick.
 //! - [`heuristic`] — `should_refit`, the cheap CPU heuristic that
 //!   picks between rebuild and refit.
 
 mod heuristic;
+mod pending;
 mod slot;
 mod state;
 
 pub use heuristic::should_refit;
-pub use state::{BuildToken, SharedBvhState, SwapInfo};
+pub use pending::{BuildToken, SwapInfo};
+pub use state::SharedBvhState;

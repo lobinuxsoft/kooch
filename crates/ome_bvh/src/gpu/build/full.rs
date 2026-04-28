@@ -17,6 +17,21 @@ use crate::node::BvhNode;
 use super::error::BvhBuildError;
 use super::lifecycle::{GpuBvhHandle, MapState};
 
+/// Result of a successfully resolved [`BvhGpuBuild::poll`]. Carries
+/// the byte-identical CPU mirror of the GPU build alongside the
+/// `sorted_indices` permutation the readback already paid for. The
+/// permutation feeds [`Bvh::refit_in_place`] so a CPU consumer
+/// (physics broadphase, debug tooling, ...) can stay in sync with
+/// subsequent refits over the same topology without a fresh nodes
+/// readback.
+pub struct BvhGpuBuildResult<T: Copy> {
+    pub bvh: Bvh<T>,
+    /// `sorted_indices[k]` = original-input position of the leaf at
+    /// sorted position `k` (i.e. `nodes[(N-1) + k]`). Empty for the
+    /// `n == 0` build path.
+    pub sorted_indices: Vec<u32>,
+}
+
 /// Handle to a GPU LBVH build in flight. Drive with
 /// [`Self::poll`] (frame-loop friendly) or [`Self::block_on`] (tests +
 /// tooling, gated behind `cfg(any(test, feature = "block_on"))`).
@@ -56,21 +71,29 @@ impl<T: Copy> BvhGpuBuild<T> {
     /// Non-blocking check. Returns:
     ///
     /// - `None` while either staging buffer is still in flight.
-    /// - `Some(Ok(Bvh<T>))` once both buffers are mapped — the result
-    ///   is byte-identical to `Bvh::build(items)` on the same input.
+    /// - `Some(Ok(BvhGpuBuildResult))` once both buffers are mapped —
+    ///   the `bvh` field is byte-identical to `Bvh::build(items)` and
+    ///   `sorted_indices` is the permutation the readback already
+    ///   produced (re-used by [`Bvh::refit_in_place`] downstream).
     /// - `Some(Err(_))` if the device was lost or a buffer map failed.
     ///
     /// Caller is expected to call `device.poll(PollType::Poll)` once
     /// per frame so wgpu invokes the `map_async` callbacks; this
     /// function only reads the resulting atomic flags.
-    pub fn poll(&mut self, _device: &wgpu::Device) -> Option<Result<Bvh<T>, BvhBuildError>> {
+    pub fn poll(
+        &mut self,
+        _device: &wgpu::Device,
+    ) -> Option<Result<BvhGpuBuildResult<T>, BvhBuildError>> {
         if self.consumed {
             return None;
         }
         if self.submission_index.is_none() {
             // n == 0 path — empty BVH resolves immediately.
             self.consumed = true;
-            return Some(Ok(Bvh::empty()));
+            return Some(Ok(BvhGpuBuildResult {
+                bvh: Bvh::empty(),
+                sorted_indices: Vec::new(),
+            }));
         }
         if self.map_state.nodes_err.load(Ordering::Acquire)
             || self.map_state.indices_err.load(Ordering::Acquire)
@@ -122,7 +145,10 @@ impl<T: Copy> BvhGpuBuild<T> {
             .iter()
             .map(|&i| self.payloads[i as usize])
             .collect();
-        Some(Ok(Bvh { nodes, leaves }))
+        Some(Ok(BvhGpuBuildResult {
+            bvh: Bvh { nodes, leaves },
+            sorted_indices,
+        }))
     }
 
     /// Debug-only AABB convergence check. In release builds this is a
@@ -187,7 +213,10 @@ impl<T: Copy> BvhGpuBuild<T> {
     /// build resolves, then return the result. **Never** call from a
     /// frame loop — `device.poll(Wait)` blocks the calling thread.
     #[cfg(any(test, feature = "block_on"))]
-    pub fn block_on(mut self, device: &wgpu::Device) -> Result<Bvh<T>, BvhBuildError> {
+    pub fn block_on(
+        mut self,
+        device: &wgpu::Device,
+    ) -> Result<BvhGpuBuildResult<T>, BvhBuildError> {
         let Some(idx) = self.submission_index.clone() else {
             // n == 0 short-circuit.
             return self
