@@ -1,46 +1,55 @@
 // Sparse populate pass — for each root cell flagged by classify, pop
 // a free subgrid index off the pool, sample the SDF over the tile's
-// 17³ voxels (16³ data interior + 1 skirt voxel per face for HW
-// trilinear continuity), and write `root_indices[cell_idx] = subgrid_idx`.
-// One workgroup per marked cell; threads inside the workgroup
-// cooperate on the 4913 voxels of that tile via `textureStore`.
+// `tile_dim³` voxels (`subgrid_dim³` data interior + 1 skirt voxel
+// per face for HW trilinear continuity), and write
+// `root_indices[cell_idx] = subgrid_idx`. One workgroup per marked
+// cell; threads inside the workgroup cooperate on the tile voxels via
+// `textureStore`.
 //
 // Concatenation order (built by `PopulatePass::new`):
 //   `SPARSE_FREELIST_WGSL` (group 0 bindings 0/1 + pop helpers)
 // + sampler fragment      (group 1, declares `fn sample_sdf`)
 // + this file             (group 0 bindings 5..9, populate_main)
 //
-// Workgroup-size choice (256): 4913 voxels / 256 threads ≈ 19 voxels
-// per thread, serial inner stride loop. RDNA 2 (Steam Deck) wavefront
-// 64 → 4 waves/wg; RDNA 4 (RX 9070 XT) wavefront 32 → 8 waves/wg.
+// # S7 — per-LOD override constants
 //
-// Indirect dispatch: `dispatch_workgroups_indirect` with x =
-// `needs_count` (the populate finalize pass writes this triple). When
-// the pool is exhausted mid-cell, thread 0 marks
-// `root_indices[cell_idx] = ALLOC_FAILED_SENTINEL` and the whole
-// workgroup early-returns — partially-written tiles are not
-// reachable through the root index, so they cause no harm and a
-// later classify re-marks the cell once the pool drains.
+// Atlas geometry varies per LOD. Pinning the constants below as
+// pipeline overrides keeps a single shader source feeding 4
+// pipelines:
+//
+// ```
+// LOD 0: SUBGRID_DIM=16, TILE_DIM=17, TILE_VOXELS=4913, ATLAS_TILES_X=32
+// LOD 1: SUBGRID_DIM= 8, TILE_DIM= 9, TILE_VOXELS= 729, ATLAS_TILES_X=32
+// LOD 2: SUBGRID_DIM= 4, TILE_DIM= 5, TILE_VOXELS= 125, ATLAS_TILES_X=32
+// LOD 3: SUBGRID_DIM= 2, TILE_DIM= 3, TILE_VOXELS=  27, ATLAS_TILES_X=32
+// ```
+//
+// Workgroup-size stays at 256 across LODs. At LOD 0 each thread covers
+// ~19 voxels (4913/256); at LOD 3 only ~⅒ thread does useful work
+// (27/256), but the over-provisioning saves a per-LOD pipeline-shape
+// check at dispatch time. Compose with the dispatch indirect args
+// `[needs_count, 1, 1]` written by `populate_finalize`.
 //
 // # Atlas tile addressing
 //
-// Atlas is `544 × 17 × 544` R16Float. Tiles are laid out
-// `32 × 1 × 32`. The tile origin for `subgrid_idx` is
-// `(subgrid_idx % 32, 0, subgrid_idx / 32) * 17`. Voxel `(vx, vy, vz)`
-// inside the tile lives at world position
+// Tiles are laid out `ATLAS_TILES_X × 1 × ATLAS_TILES_X` (the Y axis
+// stays at 1 across LODs). Tile origin for `subgrid_idx` is
+// `(subgrid_idx % ATLAS_TILES_X, 0, subgrid_idx / ATLAS_TILES_X) * TILE_DIM`.
+// Voxel `(vx, vy, vz)` inside the tile lives at world position
 // `cell_min + (vx, vy, vz) / SUBGRID_DIM * cell_size`. The skirt
-// voxel at `vx == SUBGRID_DIM` (= 16) therefore evaluates the
-// sampler at `cell_min + cell_size`, i.e. the corner of the
-// neighbouring root cell — analytically coherent with the neighbour's
-// own voxel(0,0,0) by sampler construction.
+// voxel at `vx == SUBGRID_DIM` therefore evaluates the sampler at
+// `cell_min + cell_size`, i.e. the corner of the neighbouring root
+// cell — analytically coherent with the neighbour's own voxel(0,0,0)
+// by sampler construction.
 
 const POPULATE_ROOT_DIM: u32 = 16u;
-const POPULATE_SUBGRID_DIM: u32 = 16u;
-const POPULATE_TILE_DIM: u32 = 17u;
-const POPULATE_TILE_VOXELS: u32 = 4913u;
-const POPULATE_ATLAS_TILES_X: u32 = 32u;
 const POPULATE_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu;
 const POPULATE_WORKGROUP_SIZE: u32 = 256u;
+
+override POPULATE_SUBGRID_DIM: u32 = 16u;
+override POPULATE_TILE_DIM: u32 = 17u;
+override POPULATE_TILE_VOXELS: u32 = 4913u;
+override POPULATE_ATLAS_TILES_X: u32 = 32u;
 
 struct PopulateUniform {
     // `xyz` = chunk-local `bounds_min` (post-`ActiveOrigin`).
@@ -121,10 +130,11 @@ fn populate_main(
         let vz = i / (POPULATE_TILE_DIM * POPULATE_TILE_DIM);
         let vy = (i / POPULATE_TILE_DIM) % POPULATE_TILE_DIM;
         let vx = i % POPULATE_TILE_DIM;
-        // Voxel offset divides by SUBGRID_DIM (16), NOT TILE_DIM (17):
-        // the skirt voxel at vx == 16 lives at cell_min + cell_size,
-        // i.e. the next cell's corner — exactly the sample needed for
-        // C0-continuous trilinear at the subgrid boundary.
+        // Voxel offset divides by SUBGRID_DIM, NOT TILE_DIM:
+        // the skirt voxel at vx == SUBGRID_DIM lives at
+        // cell_min + cell_size, i.e. the next cell's corner — exactly
+        // the sample needed for C0-continuous trilinear at the subgrid
+        // boundary.
         let voxel_offset = vec3<f32>(f32(vx), f32(vy), f32(vz)) * inv_subgrid_dim;
         let world_pos = cell_min_world + voxel_offset * cell_size;
         let texel = tile_origin + vec3<i32>(i32(vx), i32(vy), i32(vz));
@@ -136,11 +146,11 @@ fn populate_main(
         i = i + POPULATE_WORKGROUP_SIZE;
     }
 
-    // Make the 4913 tile writes visible before the root pointer
-    // publishes them. wgpu's inter-pass storage barrier covers
-    // cross-pass ordering; this barrier covers the in-pass
-    // happens-before edge between the cooperative voxel loop and
-    // thread 0's root_indices store.
+    // Make the tile writes visible before the root pointer publishes
+    // them. wgpu's inter-pass storage barrier covers cross-pass
+    // ordering; this barrier covers the in-pass happens-before edge
+    // between the cooperative voxel loop and thread 0's root_indices
+    // store.
     workgroupBarrier();
     if (lid.x == 0u) {
         populate_root_indices[cell_idx] = subgrid_idx;

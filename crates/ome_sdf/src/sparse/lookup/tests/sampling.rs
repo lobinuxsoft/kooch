@@ -2,10 +2,12 @@
 //! through [`super::harness::run_lookup_probes`] and assert the lookup
 //! semantics on the readback. Skip cleanly when no GPU is available.
 
-use super::harness::{cell_min_world, run_lookup_probes, test_bounds};
+use super::harness::{
+    cell_min_world, run_lookup_probes, run_lookup_probes_with_target, test_bounds,
+};
 use crate::sparse::{
-    ALLOC_FAILED_SENTINEL, AnalyticSphereSampler, ROOT_CELLS, ROOT_DIM, SUBGRID_DIM, SUBGRID_VOXELS,
-    test_device,
+    ALLOC_FAILED_SENTINEL, AnalyticSphereSampler, LOD_LEVELS, ROOT_CELLS, ROOT_DIM,
+    SUBGRID_DIM, SUBGRID_VOXELS, test_device,
 };
 use glam::Vec3;
 
@@ -189,6 +191,60 @@ fn lookup_out_of_bounds_returns_far_sentinel() {
     let expected = cell_size.x.max(cell_size.y).max(cell_size.z) * 2.0;
     assert_eq!(run.results[0], expected, "below bounds_min must return far");
     assert_eq!(run.results[1], expected, "above bounds_max must return far");
+}
+
+#[test]
+fn lookup_with_target_voxel_size_selects_correct_lod() {
+    // Probe at a position with two different `target_voxel_size`s
+    // covering distinct LODs. Both must return surface-coherent values
+    // within the LOD's quantisation tolerance — LOD 0 is the finest
+    // (0.25 voxel pitch), LOD 2 is 4× coarser (1.0 voxel pitch).
+    let Some((device, queue)) = test_device::try_acquire() else {
+        eprintln!("skipping lookup_with_target_voxel_size_selects_correct_lod: no GPU");
+        return;
+    };
+    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), 16.0);
+    let bounds = test_bounds();
+    // Probe well inside the chunk so all LOD samples land in
+    // populated cells.
+    let probe = Vec3::splat(24.0);
+    let cell_size = 4.0; // 64.0 / ROOT_DIM
+    let voxel_pitch_lod0 = cell_size / (LOD_LEVELS[0].subgrid_dim as f32);
+    let voxel_pitch_lod2 = voxel_pitch_lod0 * LOD_LEVELS[2].voxel_size_factor;
+
+    let run_lod0 = run_lookup_probes_with_target(
+        &device, &queue, &sampler, bounds, 1024, &[probe], voxel_pitch_lod0,
+    );
+    let run_lod2 = run_lookup_probes_with_target(
+        &device, &queue, &sampler, bounds, 1024, &[probe], voxel_pitch_lod2,
+    );
+
+    let cpu = sampler.sample_cpu(probe);
+    // LOD 0 tolerance: f16 quantum × value (≈ 1e-3 relative).
+    let tol_lod0 = (cpu.abs() * 1.0e-3).max(1.0e-3);
+    assert!(
+        (run_lod0.results[0] - cpu).abs() < tol_lod0,
+        "LOD 0 lookup {} vs CPU {} (tol {tol_lod0})",
+        run_lod0.results[0], cpu,
+    );
+    // LOD 2 is box-filtered 4× — tolerance scales with the LOD's
+    // voxel pitch (the discretisation error of a smooth SDF over a
+    // 4× coarser grid is bounded by the voxel pitch itself).
+    let tol_lod2 = voxel_pitch_lod2 * 2.0;
+    assert!(
+        (run_lod2.results[0] - cpu).abs() < tol_lod2,
+        "LOD 2 lookup {} vs CPU {} (tol {tol_lod2})",
+        run_lod2.results[0], cpu,
+    );
+    // Distinct LODs may yield slightly different values; both must
+    // have the same sign — the surface side is LOD-invariant.
+    assert!(
+        run_lod0.results[0].is_sign_positive() == run_lod2.results[0].is_sign_positive()
+            || run_lod0.results[0].abs() < tol_lod0
+            || run_lod2.results[0].abs() < tol_lod2,
+        "LOD 0 ({}) and LOD 2 ({}) must agree on surface side away from zero",
+        run_lod0.results[0], run_lod2.results[0],
+    );
 }
 
 #[test]

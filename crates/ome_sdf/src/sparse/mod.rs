@@ -51,21 +51,33 @@
 //! responsibility — see issue #309 (Edit Baker)'s atomic-per-chunk
 //! submission contract.
 
+mod chunk_lod;
 mod classify;
+mod downsample;
 mod free_list;
 mod grid;
+mod lod;
+mod lod_pass;
 mod lookup;
 mod populate;
 pub mod sampler;
 
-pub use classify::{
-    CLASSIFY_FINALIZE_WGSL, CLASSIFY_WGSL, CLASSIFY_WORKGROUP_SIZE, ClassifyPass, DEFAULT_MARGIN,
+pub use chunk_lod::{CHUNK_LOD_WGSL, ChunkLodPass, DEFAULT_LOD_DISTANCE_THRESHOLDS};
+pub use classify::{CLASSIFY_WGSL, CLASSIFY_WORKGROUP_SIZE, ClassifyPass, DEFAULT_MARGIN};
+pub use downsample::{
+    CASCADE_COUNT, DOWNSAMPLE_WGSL, DOWNSAMPLE_WORKGROUP_SIZE, DownsamplePass,
 };
 pub use grid::{DISPATCH_INDIRECT_ARGS_SIZE, SparseGrid};
+pub use lod::{
+    LOD_COUNT, LOD_LEVELS, LOD_VOXEL_SIZE_FACTORS, LodConfig, lod_for_voxel_size,
+    lod_voxel_size,
+};
+pub use lod_pass::SparseLodPass;
 pub use lookup::{
-    LOOKUP_BODY_WGSL, LOOKUP_DEFAULT_GROUP, LOOKUP_DEFAULT_POOL_BINDING,
-    LOOKUP_DEFAULT_ROOT_BINDING, LOOKUP_DEFAULT_SAMPLER_BINDING, LOOKUP_DEFAULT_UNIFORM_BINDING,
-    LookupBindings, lookup_wgsl,
+    LOOKUP_BODY_WGSL, LOOKUP_DEFAULT_GROUP, LOOKUP_DEFAULT_MASK_BINDING,
+    LOOKUP_DEFAULT_POOL_BINDINGS, LOOKUP_DEFAULT_ROOT_BINDING,
+    LOOKUP_DEFAULT_SAMPLER_BINDING, LOOKUP_DEFAULT_UNIFORM_BINDING, LookupBindings,
+    lookup_wgsl,
 };
 pub use populate::{POPULATE_WGSL, POPULATE_WORKGROUP_SIZE, PopulatePass};
 pub use sampler::{ANALYTIC_SPHERE_WGSL, AnalyticSphereSampler, SdfSampler};

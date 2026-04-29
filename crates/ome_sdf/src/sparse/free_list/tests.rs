@@ -142,13 +142,13 @@ fn init_writes_identity_permutation_and_counters() {
     let max_subgrids = 32;
     let grid = SparseGrid::new(&device, &queue, unit_bounds(), max_subgrids);
 
-    let free = read_u32s(&device, &queue, grid.free_list_buffer());
+    let free = read_u32s(&device, &queue, grid.free_list_buffer(0));
     assert_eq!(free.len(), max_subgrids as usize);
     for (i, val) in free.iter().enumerate() {
         assert_eq!(*val, i as u32, "free_list[{i}] must be {i}, got {val}");
     }
 
-    let counters = read_u32s(&device, &queue, grid.counters_buffer());
+    let counters = read_u32s(&device, &queue, grid.counters_buffer(0));
     assert_eq!(
         counters,
         vec![max_subgrids, 0, 0, 0],
@@ -194,11 +194,11 @@ fn pop_then_push_round_trip_exhausts_and_restores_pool() {
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: grid.free_list_buffer().as_entire_binding(),
+                resource: grid.free_list_buffer(0).as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: grid.counters_buffer().as_entire_binding(),
+                resource: grid.counters_buffer(0).as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
@@ -219,7 +219,7 @@ fn pop_then_push_round_trip_exhausts_and_restores_pool() {
     );
 
     let popped = read_u32s(&device, &queue, &popped_buffer);
-    let counters = read_u32s(&device, &queue, grid.counters_buffer());
+    let counters = read_u32s(&device, &queue, grid.counters_buffer(0));
     assert_eq!(counters[0], 0, "free_top must be 0 after pop-all");
     assert_eq!(counters[1], 0, "no allocation should have failed");
     let popped_set: HashSet<u32> = popped.iter().copied().collect();
@@ -237,11 +237,11 @@ fn pop_then_push_round_trip_exhausts_and_restores_pool() {
         max_subgrids.div_ceil(64),
     );
 
-    let counters = read_u32s(&device, &queue, grid.counters_buffer());
+    let counters = read_u32s(&device, &queue, grid.counters_buffer(0));
     assert_eq!(counters[0], max_subgrids, "free_top must restore to max");
     assert_eq!(counters[1], 0, "alloc_failed_count must remain 0");
 
-    let free_after: HashSet<u32> = read_u32s(&device, &queue, grid.free_list_buffer())
+    let free_after: HashSet<u32> = read_u32s(&device, &queue, grid.free_list_buffer(0))
         .into_iter()
         .collect();
     assert_eq!(
@@ -289,11 +289,11 @@ fn pop_underflow_reports_alloc_failed_sentinel() {
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: grid.free_list_buffer().as_entire_binding(),
+                resource: grid.free_list_buffer(0).as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: grid.counters_buffer().as_entire_binding(),
+                resource: grid.counters_buffer(0).as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
@@ -313,7 +313,7 @@ fn pop_underflow_reports_alloc_failed_sentinel() {
     );
 
     let popped = read_u32s(&device, &queue, &popped_buffer);
-    let counters = read_u32s(&device, &queue, grid.counters_buffer());
+    let counters = read_u32s(&device, &queue, grid.counters_buffer(0));
 
     let succeeded: HashSet<u32> = popped
         .iter()

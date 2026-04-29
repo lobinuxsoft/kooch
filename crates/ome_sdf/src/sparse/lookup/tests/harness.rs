@@ -1,19 +1,22 @@
 //! Shared probe-pipeline harness for the lookup GPU tests. Encodes
-//! `classify → populate → probe-compute` end-to-end against an
-//! analytic sphere sampler and reads back results + sparse buffers
-//! the per-test assertions need. Lives in `@group(0)` so the
-//! lookup-default `@group(2)` does not collide.
+//! the full LOD cascade (`chunk_lod → classify[0..3] →
+//! populate_finalize[0..3] → populate[0..3] → downsample[0..2]`) plus
+//! a probe compute that calls `sparse_sdf_lookup` once per thread,
+//! reads back results + canonical root_indices the per-test
+//! assertions need. Lives in `@group(0)` so the lookup-default
+//! `@group(2)` does not collide.
 
 use crate::sparse::{
-    AnalyticSphereSampler, ClassifyPass, DEFAULT_MARGIN, PopulatePass, ROOT_DIM, SdfSampler,
-    SparseGrid, test_device,
+    AnalyticSphereSampler, CASCADE_COUNT, ClassifyPass, DEFAULT_MARGIN, DownsamplePass,
+    LOD_COUNT, PopulatePass, ROOT_DIM, SdfSampler, SparseGrid, test_device,
 };
 use glam::Vec3;
 use ome_bvh::Aabb;
 
 use super::super::{
-    LOOKUP_DEFAULT_GROUP, LOOKUP_DEFAULT_POOL_BINDING, LOOKUP_DEFAULT_ROOT_BINDING,
-    LOOKUP_DEFAULT_SAMPLER_BINDING, LOOKUP_DEFAULT_UNIFORM_BINDING, LookupBindings, lookup_wgsl,
+    LOOKUP_DEFAULT_GROUP, LOOKUP_DEFAULT_MASK_BINDING, LOOKUP_DEFAULT_POOL_BINDINGS,
+    LOOKUP_DEFAULT_ROOT_BINDING, LOOKUP_DEFAULT_SAMPLER_BINDING,
+    LOOKUP_DEFAULT_UNIFORM_BINDING, LookupBindings, lookup_wgsl,
 };
 
 pub(super) const TEST_BOUNDS_MIN: Vec3 = Vec3::ZERO;
@@ -26,12 +29,16 @@ pub(super) fn test_bounds() -> Aabb {
 /// Probe pipeline harness — splices `lookup_wgsl(default layout)`
 /// ahead of a tiny compute that calls `sparse_sdf_lookup` once per
 /// thread, writing into a results buffer the host reads back.
+///
+/// The harness pins `target_voxel_size` to `cell_size_base` (LOD 0
+/// pitch) by default — most tests want max-detail lookups.
 pub(super) const PROBE_HARNESS_WGSL: &str = r#"
 struct ProbeUniform {
     count: u32,
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
+    target_voxel_size_xyz: vec4<f32>,
 }
 
 @group(0) @binding(0) var<storage, read> probe_positions: array<vec4<f32>>;
@@ -43,7 +50,8 @@ fn probe_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= probe_uniform.count) {
         return;
     }
-    probe_results[gid.x] = sparse_sdf_lookup(probe_positions[gid.x].xyz);
+    let voxel_size = probe_uniform.target_voxel_size_xyz.x;
+    probe_results[gid.x] = sparse_sdf_lookup(probe_positions[gid.x].xyz, voxel_size);
 }
 "#;
 
@@ -54,18 +62,20 @@ struct ProbeUniformHost {
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
+    target_voxel_size_xyz: [f32; 4],
 }
 
-/// Result bundle from one probe run. The pool is a texture atlas
-/// post-S6 so we no longer expose direct voxel values — semantic
-/// verification goes through `sparse_sdf_lookup` itself, which is
-/// what consumers exercise anyway.
+/// Result bundle from one probe run.
 pub(super) struct ProbeRun {
     pub(super) grid: SparseGrid,
     pub(super) results: Vec<f32>,
+    /// LOD 0 root_indices — the canonical buffer the lookup binds
+    /// (post-cascade all LODs hold the same value).
     pub(super) root_indices: Vec<u32>,
 }
 
+/// Run the full cascade + probe with a default target_voxel_size of
+/// `cell_size / SUBGRID_DIM` (LOD 0 voxel pitch — max detail).
 pub(super) fn run_lookup_probes(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -74,7 +84,30 @@ pub(super) fn run_lookup_probes(
     max_subgrids: u32,
     probe_positions: &[Vec3],
 ) -> ProbeRun {
+    let extent = bounds.max - bounds.min;
+    let cell_size = extent / (ROOT_DIM as f32);
+    let voxel_pitch = cell_size.x.min(cell_size.y).min(cell_size.z) / 16.0;
+    run_lookup_probes_with_target(
+        device, queue, sampler, bounds, max_subgrids, probe_positions, voxel_pitch,
+    )
+}
+
+pub(super) fn run_lookup_probes_with_target(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    sampler: &AnalyticSphereSampler,
+    bounds: Aabb,
+    max_subgrids: u32,
+    probe_positions: &[Vec3],
+    target_voxel_size: f32,
+) -> ProbeRun {
     let grid = SparseGrid::new(device, queue, bounds, max_subgrids);
+    // Force every LOD bit on so the per-LOD classify pipelines all
+    // run, populate fills every atlas at native resolution, and the
+    // lookup's mask-clamp logic can return any LOD the test asks for.
+    let all = (1u32 << LOD_COUNT) - 1;
+    queue.write_buffer(grid.chunk_lod_mask_buffer(), 0, &all.to_le_bytes());
+
     let classify = ClassifyPass::new(
         device,
         sampler.wgsl_source(),
@@ -85,17 +118,13 @@ pub(super) fn run_lookup_probes(
         sampler.wgsl_source(),
         &sampler.bind_group_layout_entries(),
     );
+    let downsample = DownsamplePass::new(device);
     let lookup_bindings = LookupBindings::new(device);
     lookup_bindings.write(queue, bounds);
 
-    let classify_sampler_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("test::probe::classify_sampler_bg"),
+    let sampler_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("test::probe::sampler_bg"),
         layout: classify.sampler_bind_group_layout(),
-        entries: &sampler.bind_group_entries(),
-    });
-    let populate_sampler_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("test::probe::populate_sampler_bg"),
-        layout: populate.sampler_bind_group_layout(),
         entries: &sampler.bind_group_entries(),
     });
 
@@ -135,6 +164,7 @@ pub(super) fn run_lookup_probes(
         _pad0: 0,
         _pad1: 0,
         _pad2: 0,
+        target_voxel_size_xyz: [target_voxel_size, 0.0, 0.0, 0.0],
     };
     let probe_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("test::probe::uniform"),
@@ -185,13 +215,13 @@ pub(super) fn run_lookup_probes(
         ],
     });
 
-    // Bind group 2 — lookup globals (default layout, including
-    // sampler at binding 3).
+    // Bind group 2 — lookup globals (default layout).
     let lookup_layout_entries = LookupBindings::layout_entries(
         LOOKUP_DEFAULT_ROOT_BINDING,
-        LOOKUP_DEFAULT_POOL_BINDING,
+        LOOKUP_DEFAULT_POOL_BINDINGS,
         LOOKUP_DEFAULT_UNIFORM_BINDING,
         LOOKUP_DEFAULT_SAMPLER_BINDING,
+        LOOKUP_DEFAULT_MASK_BINDING,
     );
     let lookup_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("test::probe::lookup_bgl"),
@@ -211,9 +241,10 @@ pub(super) fn run_lookup_probes(
         lookup_wgsl(
             LOOKUP_DEFAULT_GROUP,
             LOOKUP_DEFAULT_ROOT_BINDING,
-            LOOKUP_DEFAULT_POOL_BINDING,
+            LOOKUP_DEFAULT_POOL_BINDINGS,
             LOOKUP_DEFAULT_UNIFORM_BINDING,
             LOOKUP_DEFAULT_SAMPLER_BINDING,
+            LOOKUP_DEFAULT_MASK_BINDING,
         ),
         PROBE_HARNESS_WGSL,
     );
@@ -251,9 +282,10 @@ pub(super) fn run_lookup_probes(
     let lookup_bg_entries = lookup_bindings.bind_group_entries(
         &grid,
         LOOKUP_DEFAULT_ROOT_BINDING,
-        LOOKUP_DEFAULT_POOL_BINDING,
+        LOOKUP_DEFAULT_POOL_BINDINGS,
         LOOKUP_DEFAULT_UNIFORM_BINDING,
         LOOKUP_DEFAULT_SAMPLER_BINDING,
+        LOOKUP_DEFAULT_MASK_BINDING,
     );
     let lookup_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("test::probe::lookup_bg"),
@@ -264,15 +296,28 @@ pub(super) fn run_lookup_probes(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("test::probe::encoder"),
     });
-    classify.record(
-        device,
-        queue,
-        &mut encoder,
-        &grid,
-        &classify_sampler_bg,
-        DEFAULT_MARGIN,
-    );
-    populate.record(device, queue, &mut encoder, &grid, &populate_sampler_bg);
+
+    // Skip chunk_lod here — we already wrote a synthetic all-ones
+    // mask. Running chunk_lod would overwrite it with a
+    // distance-based value (single bit beyond bit 0), which would
+    // gate classify at higher LODs to no-op.
+    for lod_idx in 0..LOD_COUNT {
+        classify.record(
+            device, queue, &mut encoder, &grid, &sampler_bg, lod_idx, DEFAULT_MARGIN,
+        );
+    }
+    for lod_idx in 0..LOD_COUNT {
+        populate.record_finalize(device, &mut encoder, &grid, lod_idx);
+    }
+    for lod_idx in 0..LOD_COUNT {
+        populate.record_populate(
+            device, queue, &mut encoder, &grid, &sampler_bg, lod_idx,
+        );
+    }
+    for cascade_idx in 0..(CASCADE_COUNT as u32) {
+        downsample.record_cascade(device, &mut encoder, &grid, cascade_idx);
+    }
+
     {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("test::probe::pass"),
@@ -291,7 +336,7 @@ pub(super) fn run_lookup_probes(
         .chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
-    let root_bytes = test_device::readback(device, queue, grid.root_indices_buffer());
+    let root_bytes = test_device::readback(device, queue, grid.root_indices_buffer(0));
     let root_indices: Vec<u32> = root_bytes
         .chunks_exact(4)
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))

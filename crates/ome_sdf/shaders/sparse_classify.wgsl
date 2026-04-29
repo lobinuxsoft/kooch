@@ -8,21 +8,36 @@
 // opaque to the sampler implementation — it does not bind any sampler
 // resources directly.
 //
-// Output is an indirect-ready compaction so the allocate pass (S4) can
-// `dispatch_workgroups_indirect` over only the marked cells without a
-// CPU readback in the hot loop:
+// # S7 — per-LOD gating
+//
+// The LOD index this pipeline classifies for is passed as the
+// pipeline-overridable `CLASSIFY_LOD_IDX` constant. Each cell is
+// gated on `chunk_lod_mask & (1 << CLASSIFY_LOD_IDX)`: if bit
+// `CLASSIFY_LOD_IDX` is unset for this chunk, the workgroup
+// early-returns and writes nothing. The actual cone test, the
+// bookkeeping atomic, and the writes to needs_indices /
+// needs_count are otherwise identical across LODs — the root grid
+// resolution is LOD-independent.
+//
+// Output is an indirect-ready compaction so the populate pass
+// (S4) can `dispatch_workgroups_indirect` over only the marked cells
+// without a CPU readback in the hot loop:
 //
 //   classify_needs_indices[0..n] = cell_idx of each marked cell
 //   classify_needs_count          = n
 //
 // The companion `sparse_classify_finalize.wgsl` derives the
-// `[ceil_div(n, 64), 1, 1]` indirect-args triple from
-// `classify_needs_count`.
+// `[ceil_div(n, FINALIZE_WORKGROUP_SIZE), 1, 1]` indirect-args triple
+// from `classify_needs_count`. Populate pins `FINALIZE_WORKGROUP_SIZE`
+// to `1` (1 workgroup per marked cell); other consumers pin their
+// own divisor.
 
 const CLASSIFY_ROOT_DIM: u32 = 16u;
 const CLASSIFY_ROOT_CELLS: u32 = 4096u;
 const CLASSIFY_EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFFu;
 const CLASSIFY_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu;
+
+override CLASSIFY_LOD_IDX: u32 = 0u;
 
 struct ClassifyUniform {
     // `xyz` = chunk-local bounds_min (post-`ActiveOrigin`).
@@ -34,15 +49,28 @@ struct ClassifyUniform {
     bounds_max_scale: vec4<f32>,
 }
 
+struct ClassifyChunkLodMask {
+    value: u32,
+}
+
 @group(0) @binding(0) var<storage, read> classify_root_indices: array<u32>;
 @group(0) @binding(2) var<storage, read_write> classify_needs_indices: array<u32>;
 @group(0) @binding(3) var<storage, read_write> classify_needs_count: atomic<u32>;
 @group(0) @binding(4) var<uniform> classify_uniform: ClassifyUniform;
+@group(0) @binding(5) var<storage, read> classify_chunk_lod_mask: ClassifyChunkLodMask;
 
 @compute @workgroup_size(64)
 fn classify_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let cell_idx = gid.x;
     if (cell_idx >= CLASSIFY_ROOT_CELLS) {
+        return;
+    }
+
+    // S7 LOD gating: skip the entire cell if this LOD is not active for
+    // the chunk. Bit `CLASSIFY_LOD_IDX` is the per-pipeline override
+    // pinned by the host's `ClassifyPass::new` call.
+    let lod_bit = 1u << CLASSIFY_LOD_IDX;
+    if ((classify_chunk_lod_mask.value & lod_bit) == 0u) {
         return;
     }
 
