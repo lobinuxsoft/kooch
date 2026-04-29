@@ -59,6 +59,7 @@ mod grid;
 mod lod;
 mod lod_pass;
 mod lookup;
+mod metrics;
 mod populate;
 pub mod sampler;
 
@@ -67,7 +68,9 @@ pub use classify::{CLASSIFY_WGSL, CLASSIFY_WORKGROUP_SIZE, ClassifyPass, DEFAULT
 pub use downsample::{
     CASCADE_COUNT, DOWNSAMPLE_WGSL, DOWNSAMPLE_WORKGROUP_SIZE, DownsamplePass,
 };
-pub use grid::{DISPATCH_INDIRECT_ARGS_SIZE, SparseGrid};
+pub use grid::{
+    DISPATCH_INDIRECT_ARGS_SIZE, METRICS_BUFFER_SIZE, POOL_TEXTURE_FORMAT, SparseGrid,
+};
 pub use lod::{
     LOD_COUNT, LOD_LEVELS, LOD_VOXEL_SIZE_FACTORS, LodConfig, lod_for_voxel_size,
     lod_voxel_size,
@@ -79,6 +82,7 @@ pub use lookup::{
     LOOKUP_DEFAULT_SAMPLER_BINDING, LOOKUP_DEFAULT_UNIFORM_BINDING, LookupBindings,
     lookup_wgsl,
 };
+pub use metrics::{METRICS_WGSL, Metrics, MetricsPass};
 pub use populate::{POPULATE_WGSL, POPULATE_WORKGROUP_SIZE, PopulatePass};
 pub use sampler::{ANALYTIC_SPHERE_WGSL, AnalyticSphereSampler, SdfSampler};
 

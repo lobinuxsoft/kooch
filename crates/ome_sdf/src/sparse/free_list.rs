@@ -22,13 +22,19 @@ use bytemuck::{Pod, Zeroable};
 
 /// Counters mirror — must match the WGSL `SparseCounters` layout in
 /// `sparse_freelist.wgsl` byte-for-byte (4 × `u32`, 16 B total).
+///
+/// `alloc_count_total` / `free_count_total` are the cumulative
+/// successful pop / push counters (S8 metrics). Repurposed from the
+/// original `_pad0` / `_pad1` slots so the buffer layout stays at
+/// 16 B and existing freelist consumers (populate, free) need no
+/// binding changes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub(super) struct CountersInit {
     pub free_top: u32,
     pub alloc_failed_count: u32,
-    pub _pad0: u32,
-    pub _pad1: u32,
+    pub alloc_count_total: u32,
+    pub free_count_total: u32,
 }
 
 /// Seed `free_list_buffer` with the identity permutation
@@ -49,8 +55,8 @@ pub(super) fn init(
     let counters = CountersInit {
         free_top: max_subgrids,
         alloc_failed_count: 0,
-        _pad0: 0,
-        _pad1: 0,
+        alloc_count_total: 0,
+        free_count_total: 0,
     };
     queue.write_buffer(counters_buffer, 0, bytemuck::bytes_of(&counters));
 }

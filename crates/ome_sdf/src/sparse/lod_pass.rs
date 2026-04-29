@@ -13,10 +13,12 @@
 //! 5. downsample 0→1
 //! 6. downsample 1→2
 //! 7. downsample 2→3
+//! 8. metrics
 //! ```
 //!
-//! 7 compute passes, one queue submission, zero CPU readback in the
-//! hot loop.
+//! 8 compute passes, one queue submission, zero CPU readback in the
+//! hot loop. The metrics pass writes into `metrics_buffer` only —
+//! readback is opt-in async via [`Metrics::read`], never per-frame.
 //!
 //! # Invariant — `base_lod = 0`
 //!
@@ -53,10 +55,10 @@ use glam::Vec3;
 
 use super::{
     CASCADE_COUNT, ChunkLodPass, ClassifyPass, DEFAULT_LOD_DISTANCE_THRESHOLDS,
-    DEFAULT_MARGIN, DownsamplePass, PopulatePass, SparseGrid,
+    DEFAULT_MARGIN, DownsamplePass, MetricsPass, PopulatePass, SparseGrid,
 };
 
-/// Compose all four cascade passes into one orchestrator. One
+/// Compose all five cascade passes into one orchestrator. One
 /// instance per device — bind groups are rebuilt per-record call so
 /// the orchestrator is grid-agnostic.
 pub struct SparseLodPass {
@@ -64,6 +66,7 @@ pub struct SparseLodPass {
     classify: ClassifyPass,
     populate: PopulatePass,
     downsample: DownsamplePass,
+    metrics: MetricsPass,
 }
 
 impl SparseLodPass {
@@ -80,11 +83,13 @@ impl SparseLodPass {
         let classify = ClassifyPass::new(device, sampler_wgsl, sampler_bgl_entries);
         let populate = PopulatePass::new(device, sampler_wgsl, sampler_bgl_entries);
         let downsample = DownsamplePass::new(device);
+        let metrics = MetricsPass::new(device);
         Self {
             chunk_lod,
             classify,
             populate,
             downsample,
+            metrics,
         }
     }
 
@@ -130,6 +135,12 @@ impl SparseLodPass {
         for cascade_idx in 0..(CASCADE_COUNT as u32) {
             self.downsample.record_cascade(device, encoder, grid, cascade_idx);
         }
+
+        // Pass 8: metrics — telemetry sink. Reads each LOD's freelist
+        // counters + cumulative alloc/free totals and writes the 24 B
+        // `SparseMetrics` struct. Lookup hot path never reads it; host
+        // pulls via `Metrics::read` at telemetry cadence (off-thread).
+        self.metrics.record(device, encoder, grid);
     }
 
     /// Convenience overload — runs [`record`] with the
@@ -169,5 +180,8 @@ impl SparseLodPass {
     }
     pub fn downsample_pass(&self) -> &DownsamplePass {
         &self.downsample
+    }
+    pub fn metrics_pass(&self) -> &MetricsPass {
+        &self.metrics
     }
 }

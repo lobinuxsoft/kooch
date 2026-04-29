@@ -21,8 +21,15 @@ struct SparseCounters {
     // free list and returned `SPARSE_ALLOC_FAILED`. Diagnostic only;
     // never read by the lookup path.
     alloc_failed_count: atomic<u32>,
-    _pad0: u32,
-    _pad1: u32,
+    // Cumulative successful pop count. Incremented every time
+    // `sparse_pop_subgrid_index` returns a real index (post-CAS
+    // success). Persists across cascade runs — host clears via
+    // `queue.write_buffer` if a fresh window is needed. Read by the
+    // metrics pass (S8) to surface allocation churn.
+    alloc_count_total: atomic<u32>,
+    // Cumulative push count. Incremented in `sparse_push_subgrid_index`.
+    // Same persistence + read story as `alloc_count_total`.
+    free_count_total: atomic<u32>,
 }
 
 @group(0) @binding(0) var<storage, read_write> sparse_free_list: array<u32>;
@@ -66,6 +73,7 @@ fn sparse_pop_subgrid_index() -> u32 {
         );
         if (result.exchanged) {
             out = sparse_free_list[cur - 1u];
+            atomicAdd(&sparse_counters.alloc_count_total, 1u);
             done = true;
         }
         // Lost the race; another invocation popped first. Retry.
@@ -80,4 +88,5 @@ fn sparse_pop_subgrid_index() -> u32 {
 fn sparse_push_subgrid_index(idx: u32) {
     let slot = atomicAdd(&sparse_counters.free_top, 1u);
     sparse_free_list[slot] = idx;
+    atomicAdd(&sparse_counters.free_count_total, 1u);
 }

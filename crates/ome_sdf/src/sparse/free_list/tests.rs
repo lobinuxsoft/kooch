@@ -152,7 +152,7 @@ fn init_writes_identity_permutation_and_counters() {
     assert_eq!(
         counters,
         vec![max_subgrids, 0, 0, 0],
-        "counters: free_top + alloc_failed + 2 pad",
+        "counters: free_top + alloc_failed + alloc_count_total + free_count_total",
     );
 }
 

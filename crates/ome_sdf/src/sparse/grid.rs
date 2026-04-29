@@ -65,6 +65,11 @@ pub const POOL_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Flo
 /// adjacent-LOD pair — `(0→1, 1→2, 2→3)`.
 pub const DOWNSAMPLE_CASCADES: usize = (LOD_COUNT as usize) - 1;
 
+/// Size in bytes of the metrics buffer written by the metrics pass
+/// (S8). `[active_per_lod[LOD_COUNT], alloc_count_total,
+/// free_count_total]` — `(LOD_COUNT + 2) × u32`.
+pub const METRICS_BUFFER_SIZE: u64 = ((LOD_COUNT as u64) + 2) * 4;
+
 /// Fixed-capacity sparse SDF grid bound to one chunk. See module-level
 /// docs for the layout and encoder-ordering contract.
 pub struct SparseGrid {
@@ -81,6 +86,7 @@ pub struct SparseGrid {
     populate_indirect_args_buffers: [wgpu::Buffer; LOD_COUNT as usize],
     downsample_indirect_args_buffers: [wgpu::Buffer; DOWNSAMPLE_CASCADES],
     chunk_lod_mask_buffer: wgpu::Buffer,
+    metrics_buffer: wgpu::Buffer,
 }
 
 impl SparseGrid {
@@ -146,6 +152,7 @@ impl SparseGrid {
             buffers::make_downsample_indirect_args_buffer(device, i as u32)
         });
         let chunk_lod_mask_buffer = buffers::make_chunk_lod_mask_buffer(device);
+        let metrics_buffer = buffers::make_metrics_buffer(device);
 
         let grid = Self {
             bounds,
@@ -161,6 +168,7 @@ impl SparseGrid {
             populate_indirect_args_buffers,
             downsample_indirect_args_buffers,
             chunk_lod_mask_buffer,
+            metrics_buffer,
         };
 
         for lod_idx in 0..LOD_COUNT {
@@ -263,6 +271,18 @@ impl SparseGrid {
     /// [`ChunkLodPass`]: crate::sparse::ChunkLodPass
     pub fn chunk_lod_mask_buffer(&self) -> &wgpu::Buffer {
         &self.chunk_lod_mask_buffer
+    }
+
+    /// 24-byte metrics buffer. Layout matches the WGSL `SparseMetrics`
+    /// struct in `sparse_metrics.wgsl`:
+    /// `[active_lod0..3, alloc_count_total, free_count_total]`. Written
+    /// by [`MetricsPass::record`] at the tail of the cascade and read
+    /// asynchronously by [`Metrics::read`].
+    ///
+    /// [`MetricsPass::record`]: crate::sparse::MetricsPass::record
+    /// [`Metrics::read`]: crate::sparse::Metrics::read
+    pub fn metrics_buffer(&self) -> &wgpu::Buffer {
+        &self.metrics_buffer
     }
 }
 

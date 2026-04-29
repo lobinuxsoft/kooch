@@ -204,3 +204,20 @@ pub(super) fn make_chunk_lod_mask_buffer(device: &wgpu::Device) -> wgpu::Buffer 
         mapped_at_creation: false,
     })
 }
+
+/// 24-byte metrics buffer written by the metrics pass (S8). Layout:
+/// `[active_lod0, active_lod1, active_lod2, active_lod3,
+/// alloc_count_total, free_count_total]` (6 × u32). `STORAGE` for the
+/// shader write + `COPY_SRC` so the host can copy into a MAP_READ
+/// staging buffer (WebGPU forbids MAP_READ + STORAGE on the same
+/// buffer). Telemetry only — never read by the lookup hot path.
+pub(super) fn make_metrics_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ome_sdf::sparse::metrics"),
+        size: super::METRICS_BUFFER_SIZE,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
