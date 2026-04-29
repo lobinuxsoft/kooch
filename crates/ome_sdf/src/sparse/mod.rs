@@ -44,10 +44,16 @@
 //! responsibility — see issue #309 (Edit Baker)'s atomic-per-chunk
 //! submission contract.
 
+mod classify;
 mod free_list;
 mod grid;
+pub mod sampler;
 
-pub use grid::SparseGrid;
+pub use classify::{
+    CLASSIFY_FINALIZE_WGSL, CLASSIFY_WGSL, CLASSIFY_WORKGROUP_SIZE, ClassifyPass, DEFAULT_MARGIN,
+};
+pub use grid::{DISPATCH_INDIRECT_ARGS_SIZE, SparseGrid};
+pub use sampler::{ANALYTIC_SPHERE_WGSL, AnalyticSphereSampler, SdfSampler};
 
 /// Source of `shaders/sparse_freelist.wgsl` — atomic free-list pop /
 /// push helpers shared by the allocate (#S4) and free (#S7) compute

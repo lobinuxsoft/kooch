@@ -10,6 +10,12 @@ use ome_bvh::Aabb;
 
 use super::{ROOT_CELLS, SUBGRID_VOXELS, free_list};
 
+/// Size in bytes of the dispatch-indirect-args triple
+/// `[x, y, z]` (3 × `u32`). Constant rather than `mem::size_of`-derived
+/// so consumers can match the layout without depending on a host
+/// helper type.
+pub const DISPATCH_INDIRECT_ARGS_SIZE: u64 = 12;
+
 /// Fixed-capacity sparse SDF grid bound to one chunk. See module-level
 /// docs in [`super`] for the layout, capacity, and encoder-ordering
 /// contract.
@@ -20,6 +26,9 @@ pub struct SparseGrid {
     subgrid_pool_buffer: wgpu::Buffer,
     free_list_buffer: wgpu::Buffer,
     counters_buffer: wgpu::Buffer,
+    needs_indices_buffer: wgpu::Buffer,
+    needs_count_buffer: wgpu::Buffer,
+    needs_indirect_args_buffer: wgpu::Buffer,
 }
 
 impl SparseGrid {
@@ -55,6 +64,9 @@ impl SparseGrid {
             subgrid_pool_buffer: make_subgrid_pool_buffer(device, max_subgrids),
             free_list_buffer: make_free_list_buffer(device, max_subgrids),
             counters_buffer: make_counters_buffer(device),
+            needs_indices_buffer: make_needs_indices_buffer(device),
+            needs_count_buffer: make_needs_count_buffer(device),
+            needs_indirect_args_buffer: make_needs_indirect_args_buffer(device),
         };
         free_list::init(queue, &grid.free_list_buffer, &grid.counters_buffer, max_subgrids);
         grid
@@ -82,6 +94,29 @@ impl SparseGrid {
 
     pub fn counters_buffer(&self) -> &wgpu::Buffer {
         &self.counters_buffer
+    }
+
+    /// `ROOT_CELLS × u32` compaction buffer. Filled by the classify
+    /// pass with the linear root-cell indices that need a subgrid
+    /// allocation; the allocate pass (S4) consumes
+    /// `[0..needs_count]` of it via indirect dispatch.
+    pub fn needs_indices_buffer(&self) -> &wgpu::Buffer {
+        &self.needs_indices_buffer
+    }
+
+    /// 4-byte atomic `u32` counter incremented once per marked cell by
+    /// the classify pass. Read by the finalize compute pass to derive
+    /// the indirect dispatch args.
+    pub fn needs_count_buffer(&self) -> &wgpu::Buffer {
+        &self.needs_count_buffer
+    }
+
+    /// 12-byte `[x, y, z]` dispatch-indirect-args buffer written by the
+    /// classify-finalize compute pass. Bound with
+    /// `BufferUsages::INDIRECT` so the allocate pass can call
+    /// `dispatch_workgroups_indirect(&buf, 0)` directly.
+    pub fn needs_indirect_args_buffer(&self) -> &wgpu::Buffer {
+        &self.needs_indirect_args_buffer
     }
 }
 
@@ -144,6 +179,45 @@ fn make_counters_buffer(device: &wgpu::Device) -> wgpu::Buffer {
     })
 }
 
+fn make_needs_indices_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    // Worst case: every root cell needs allocation → ROOT_CELLS × 4 B
+    // = 16 KiB. Fixed-capacity sized to that bound; a smaller capacity
+    // would only complicate the classify shader's slot bookkeeping
+    // without saving meaningful memory.
+    let size = (ROOT_CELLS as u64) * 4;
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ome_sdf::sparse::needs_indices"),
+        size,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}
+
+fn make_needs_count_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ome_sdf::sparse::needs_count"),
+        size: 4,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}
+
+fn make_needs_indirect_args_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ome_sdf::sparse::needs_indirect_args"),
+        size: DISPATCH_INDIRECT_ARGS_SIZE,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::INDIRECT
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,6 +260,12 @@ mod tests {
         );
         assert_eq!(grid.free_list_buffer().size(), (max_subgrids as u64) * 4);
         assert_eq!(grid.counters_buffer().size(), 16);
+        assert_eq!(grid.needs_indices_buffer().size(), (ROOT_CELLS as u64) * 4);
+        assert_eq!(grid.needs_count_buffer().size(), 4);
+        assert_eq!(
+            grid.needs_indirect_args_buffer().size(),
+            DISPATCH_INDIRECT_ARGS_SIZE,
+        );
     }
 
     #[test]
