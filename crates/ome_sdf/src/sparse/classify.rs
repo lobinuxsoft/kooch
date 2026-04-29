@@ -138,12 +138,21 @@ impl ClassifyPass {
             label: Some("ome_sdf::sparse::classify::finalize_shader"),
             source: wgpu::ShaderSource::Wgsl(CLASSIFY_FINALIZE_WGSL.into()),
         });
+        // Pin the `FINALIZE_WORKGROUP_SIZE` override to the classify
+        // consumer's workgroup size so the indirect dispatch derives
+        // `⌈needs_count / 64⌉`. Populate reuses the same shader with
+        // override = 1 (1 workgroup per marked cell).
+        let finalize_constants: &[(&str, f64)] =
+            &[("FINALIZE_WORKGROUP_SIZE", CLASSIFY_WORKGROUP_SIZE as f64)];
         let finalize_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("ome_sdf::sparse::classify::finalize_pipeline"),
             layout: Some(&finalize_layout),
             module: &finalize_module,
             entry_point: Some("finalize_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: finalize_constants,
+                zero_initialize_workgroup_memory: true,
+            },
             cache: None,
         });
 

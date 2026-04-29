@@ -29,6 +29,7 @@ pub struct SparseGrid {
     needs_indices_buffer: wgpu::Buffer,
     needs_count_buffer: wgpu::Buffer,
     needs_indirect_args_buffer: wgpu::Buffer,
+    populate_indirect_args_buffer: wgpu::Buffer,
 }
 
 impl SparseGrid {
@@ -67,6 +68,7 @@ impl SparseGrid {
             needs_indices_buffer: make_needs_indices_buffer(device),
             needs_count_buffer: make_needs_count_buffer(device),
             needs_indirect_args_buffer: make_needs_indirect_args_buffer(device),
+            populate_indirect_args_buffer: make_populate_indirect_args_buffer(device),
         };
         free_list::init(queue, &grid.free_list_buffer, &grid.counters_buffer, max_subgrids);
         grid
@@ -117,6 +119,17 @@ impl SparseGrid {
     /// `dispatch_workgroups_indirect(&buf, 0)` directly.
     pub fn needs_indirect_args_buffer(&self) -> &wgpu::Buffer {
         &self.needs_indirect_args_buffer
+    }
+
+    /// 12-byte `[x, y, z]` dispatch-indirect-args buffer written by the
+    /// populate-finalize compute pass. Distinct from
+    /// `needs_indirect_args_buffer` because the two consumers use
+    /// different workgroup sizes — classify's downstream consumer is
+    /// the allocate pass at `@workgroup_size(64)` (so x = ⌈n / 64⌉),
+    /// populate is `1 workgroup per marked cell` (x = n). Bound with
+    /// `BufferUsages::INDIRECT` for `dispatch_workgroups_indirect`.
+    pub fn populate_indirect_args_buffer(&self) -> &wgpu::Buffer {
+        &self.populate_indirect_args_buffer
     }
 }
 
@@ -218,6 +231,18 @@ fn make_needs_indirect_args_buffer(device: &wgpu::Device) -> wgpu::Buffer {
     })
 }
 
+fn make_populate_indirect_args_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ome_sdf::sparse::populate_indirect_args"),
+        size: DISPATCH_INDIRECT_ARGS_SIZE,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::INDIRECT
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,6 +289,10 @@ mod tests {
         assert_eq!(grid.needs_count_buffer().size(), 4);
         assert_eq!(
             grid.needs_indirect_args_buffer().size(),
+            DISPATCH_INDIRECT_ARGS_SIZE,
+        );
+        assert_eq!(
+            grid.populate_indirect_args_buffer().size(),
             DISPATCH_INDIRECT_ARGS_SIZE,
         );
     }
