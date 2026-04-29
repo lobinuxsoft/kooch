@@ -47,6 +47,7 @@
 mod classify;
 mod free_list;
 mod grid;
+mod lookup;
 mod populate;
 pub mod sampler;
 
@@ -54,6 +55,10 @@ pub use classify::{
     CLASSIFY_FINALIZE_WGSL, CLASSIFY_WGSL, CLASSIFY_WORKGROUP_SIZE, ClassifyPass, DEFAULT_MARGIN,
 };
 pub use grid::{DISPATCH_INDIRECT_ARGS_SIZE, SparseGrid};
+pub use lookup::{
+    LOOKUP_BODY_WGSL, LOOKUP_DEFAULT_GROUP, LOOKUP_DEFAULT_POOL_BINDING,
+    LOOKUP_DEFAULT_ROOT_BINDING, LOOKUP_DEFAULT_UNIFORM_BINDING, LookupBindings, lookup_wgsl,
+};
 pub use populate::{POPULATE_WGSL, POPULATE_WORKGROUP_SIZE, PopulatePass};
 pub use sampler::{ANALYTIC_SPHERE_WGSL, AnalyticSphereSampler, SdfSampler};
 
