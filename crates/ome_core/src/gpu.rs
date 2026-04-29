@@ -117,7 +117,7 @@ impl GpuContext {
         );
 
         let required_limits = elevated_compute_limits(&adapter);
-        let required_features = optional_features(&adapter);
+        let required_features = required_engine_features(&adapter) | optional_features(&adapter);
 
         let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
             label: Some("ome_device"),
@@ -256,6 +256,28 @@ impl Drop for GpuContext {
             tracing::warn!(error = %e, "failed to persist pipeline cache on shutdown");
         }
     }
+}
+
+/// Hard-required engine features. Panics with a clear message if the
+/// adapter does not expose them — none of these are optional and the
+/// engine cannot start without each.
+///
+/// - `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`: needed for the sparse
+///   SDF subgrid pool (issue #136 S6) which lives in a
+///   `texture_storage_3d<r16float, write>` atlas. Without this flag
+///   wgpu refuses storage access on `R16Float`. RDNA 2/4 (Steam Deck,
+///   RX 9070 XT) supports it natively over Vulkan; DX12 / Metal also
+///   expose it on contemporary hardware.
+fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
+    let required = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+    let missing = required - adapter.features();
+    assert!(
+        missing.is_empty(),
+        "GPU adapter is missing required features for oh_my_engine: {missing:?}. \
+         Check #136 S6 — sparse SDF storage needs R16Float storage textures, \
+         which requires TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES on the adapter.",
+    );
+    required
 }
 
 /// Requests optional features whose absence would silently degrade the engine
