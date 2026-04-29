@@ -1,30 +1,44 @@
 // Sparse populate pass — for each root cell flagged by classify, pop
-// a free subgrid index off the pool, sample the SDF over the subgrid's
-// 16³ voxels, and write `root_indices[cell_idx] = subgrid_idx`. One
-// workgroup per marked cell; threads inside the workgroup cooperate on
-// the 4096 voxels of that subgrid.
+// a free subgrid index off the pool, sample the SDF over the tile's
+// 17³ voxels (16³ data interior + 1 skirt voxel per face for HW
+// trilinear continuity), and write `root_indices[cell_idx] = subgrid_idx`.
+// One workgroup per marked cell; threads inside the workgroup
+// cooperate on the 4913 voxels of that tile via `textureStore`.
 //
 // Concatenation order (built by `PopulatePass::new`):
 //   `SPARSE_FREELIST_WGSL` (group 0 bindings 0/1 + pop helpers)
 // + sampler fragment      (group 1, declares `fn sample_sdf`)
 // + this file             (group 0 bindings 5..9, populate_main)
 //
-// Workgroup-size choice (256): 4096 voxels / 256 threads = 16 voxels
-// per thread, serial inner loop. RDNA 2 (Steam Deck) wavefront 64
-// → 4 waves/wg; RDNA 4 (RX 9070 XT) wavefront 32 → 8 waves/wg. Both
-// occupy the SIMD well without over-subscribing register file.
+// Workgroup-size choice (256): 4913 voxels / 256 threads ≈ 19 voxels
+// per thread, serial inner stride loop. RDNA 2 (Steam Deck) wavefront
+// 64 → 4 waves/wg; RDNA 4 (RX 9070 XT) wavefront 32 → 8 waves/wg.
 //
 // Indirect dispatch: `dispatch_workgroups_indirect` with x =
 // `needs_count` (the populate finalize pass writes this triple). When
 // the pool is exhausted mid-cell, thread 0 marks
 // `root_indices[cell_idx] = ALLOC_FAILED_SENTINEL` and the whole
-// workgroup early-returns — partially-written subgrid pool slots are
-// not reachable through the root index, so they cause no harm and a
+// workgroup early-returns — partially-written tiles are not
+// reachable through the root index, so they cause no harm and a
 // later classify re-marks the cell once the pool drains.
+//
+// # Atlas tile addressing
+//
+// Atlas is `544 × 17 × 544` R16Float. Tiles are laid out
+// `32 × 1 × 32`. The tile origin for `subgrid_idx` is
+// `(subgrid_idx % 32, 0, subgrid_idx / 32) * 17`. Voxel `(vx, vy, vz)`
+// inside the tile lives at world position
+// `cell_min + (vx, vy, vz) / SUBGRID_DIM * cell_size`. The skirt
+// voxel at `vx == SUBGRID_DIM` (= 16) therefore evaluates the
+// sampler at `cell_min + cell_size`, i.e. the corner of the
+// neighbouring root cell — analytically coherent with the neighbour's
+// own voxel(0,0,0) by sampler construction.
 
 const POPULATE_ROOT_DIM: u32 = 16u;
 const POPULATE_SUBGRID_DIM: u32 = 16u;
-const POPULATE_SUBGRID_VOXELS: u32 = 4096u;
+const POPULATE_TILE_DIM: u32 = 17u;
+const POPULATE_TILE_VOXELS: u32 = 4913u;
+const POPULATE_ATLAS_TILES_X: u32 = 32u;
 const POPULATE_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu;
 const POPULATE_WORKGROUP_SIZE: u32 = 256u;
 
@@ -41,7 +55,7 @@ struct PopulateNeedsCount {
 }
 
 @group(0) @binding(5) var<storage, read_write> populate_root_indices: array<u32>;
-@group(0) @binding(6) var<storage, read_write> populate_subgrid_pool: array<f32>;
+@group(0) @binding(6) var populate_subgrid_pool: texture_storage_3d<r16float, write>;
 @group(0) @binding(7) var<storage, read> populate_needs_indices: array<u32>;
 @group(0) @binding(8) var<storage, read> populate_needs_count: PopulateNeedsCount;
 @group(0) @binding(9) var<uniform> populate_uniform: PopulateUniform;
@@ -88,27 +102,43 @@ fn populate_main(
     let cell_min_world = bounds_min
         + vec3<f32>(f32(cx), f32(cy), f32(cz)) * cell_size;
 
-    let pool_base = subgrid_idx * POPULATE_SUBGRID_VOXELS;
+    // Atlas tile origin in texel coordinates. `Y = 0` because the
+    // atlas only stacks one row of tiles along Y.
+    let tile_x = subgrid_idx % POPULATE_ATLAS_TILES_X;
+    let tile_z = subgrid_idx / POPULATE_ATLAS_TILES_X;
+    let tile_origin = vec3<i32>(
+        i32(tile_x * POPULATE_TILE_DIM),
+        0,
+        i32(tile_z * POPULATE_TILE_DIM),
+    );
     let inv_subgrid_dim = 1.0 / f32(POPULATE_SUBGRID_DIM);
 
     var i: u32 = lid.x;
     loop {
-        if (i >= POPULATE_SUBGRID_VOXELS) {
+        if (i >= POPULATE_TILE_VOXELS) {
             break;
         }
-        let vz = i / (POPULATE_SUBGRID_DIM * POPULATE_SUBGRID_DIM);
-        let vy = (i / POPULATE_SUBGRID_DIM) % POPULATE_SUBGRID_DIM;
-        let vx = i % POPULATE_SUBGRID_DIM;
-        let voxel_offset =
-            vec3<f32>(f32(vx), f32(vy), f32(vz)) * inv_subgrid_dim;
+        let vz = i / (POPULATE_TILE_DIM * POPULATE_TILE_DIM);
+        let vy = (i / POPULATE_TILE_DIM) % POPULATE_TILE_DIM;
+        let vx = i % POPULATE_TILE_DIM;
+        // Voxel offset divides by SUBGRID_DIM (16), NOT TILE_DIM (17):
+        // the skirt voxel at vx == 16 lives at cell_min + cell_size,
+        // i.e. the next cell's corner — exactly the sample needed for
+        // C0-continuous trilinear at the subgrid boundary.
+        let voxel_offset = vec3<f32>(f32(vx), f32(vy), f32(vz)) * inv_subgrid_dim;
         let world_pos = cell_min_world + voxel_offset * cell_size;
-        populate_subgrid_pool[pool_base + i] = sample_sdf(world_pos);
+        let texel = tile_origin + vec3<i32>(i32(vx), i32(vy), i32(vz));
+        textureStore(
+            populate_subgrid_pool,
+            texel,
+            vec4<f32>(sample_sdf(world_pos), 0.0, 0.0, 0.0),
+        );
         i = i + POPULATE_WORKGROUP_SIZE;
     }
 
-    // Make the 4096 subgrid writes visible to other workgroups before
-    // the root pointer publishes them. wgpu's inter-pass storage barrier
-    // catches cross-pass ordering; this barrier covers the in-pass
+    // Make the 4913 tile writes visible before the root pointer
+    // publishes them. wgpu's inter-pass storage barrier covers
+    // cross-pass ordering; this barrier covers the in-pass
     // happens-before edge between the cooperative voxel loop and
     // thread 0's root_indices store.
     workgroupBarrier();

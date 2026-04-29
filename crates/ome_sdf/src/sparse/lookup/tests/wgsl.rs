@@ -5,10 +5,11 @@
 
 use super::super::{
     LOOKUP_BODY_WGSL, LOOKUP_DEFAULT_GROUP, LOOKUP_DEFAULT_POOL_BINDING,
-    LOOKUP_DEFAULT_ROOT_BINDING, LOOKUP_DEFAULT_UNIFORM_BINDING, lookup_wgsl,
+    LOOKUP_DEFAULT_ROOT_BINDING, LOOKUP_DEFAULT_SAMPLER_BINDING, LOOKUP_DEFAULT_UNIFORM_BINDING,
+    lookup_wgsl,
 };
 use super::harness::PROBE_HARNESS_WGSL;
-use crate::sparse::{ROOT_DIM, SUBGRID_DIM, SUBGRID_VOXELS};
+use crate::sparse::{ROOT_DIM, SUBGRID_DIM, SUBGRID_TILE_DIM};
 
 #[test]
 fn lookup_body_with_default_layout_parses_and_validates() {
@@ -19,6 +20,7 @@ fn lookup_body_with_default_layout_parses_and_validates() {
             LOOKUP_DEFAULT_ROOT_BINDING,
             LOOKUP_DEFAULT_POOL_BINDING,
             LOOKUP_DEFAULT_UNIFORM_BINDING,
+            LOOKUP_DEFAULT_SAMPLER_BINDING,
         ),
         PROBE_HARNESS_WGSL,
     );
@@ -36,9 +38,9 @@ fn lookup_body_with_default_layout_parses_and_validates() {
 #[test]
 fn lookup_body_with_alternative_layout_validates() {
     // Raymarcher-style override — single bind group with the lookup
-    // globals slotted in 5/6/7 alongside other resources. The probe
+    // globals slotted in 5/6/7/8 alongside other resources. The probe
     // harness still binds in `@group(0)`; assemble a stand-alone shim
-    // that exercises only `lookup_wgsl(0, 5, 6, 7)` plus a no-op
+    // that exercises only `lookup_wgsl(0, 5, 6, 7, 8)` plus a no-op
     // entry point so naga walks the `sparse_sdf_lookup` body once.
     let shim = r#"
 @compute @workgroup_size(1)
@@ -46,7 +48,7 @@ fn shim_main() {
     _ = sparse_sdf_lookup(vec3<f32>(0.0, 0.0, 0.0));
 }
 "#;
-    let combined = format!("{}{}", lookup_wgsl(0, 5, 6, 7), shim);
+    let combined = format!("{}{}", lookup_wgsl(0, 5, 6, 7, 8), shim);
     let module = naga::front::wgsl::parse_str(&combined)
         .expect("alternative lookup layout should parse");
     let mut validator = naga::valid::Validator::new(
@@ -71,9 +73,7 @@ fn lookup_wgsl_constants_match_host() {
             .contains(&format!("LOOKUP_SUBGRID_DIM: u32 = {SUBGRID_DIM}u")),
     );
     assert!(
-        LOOKUP_BODY_WGSL.contains(&format!(
-            "LOOKUP_SUBGRID_VOXELS: u32 = {SUBGRID_VOXELS}u",
-        )),
+        LOOKUP_BODY_WGSL.contains(&format!("LOOKUP_TILE_DIM: u32 = {SUBGRID_TILE_DIM}u")),
     );
     assert!(
         LOOKUP_BODY_WGSL.contains("LOOKUP_EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFFu"),

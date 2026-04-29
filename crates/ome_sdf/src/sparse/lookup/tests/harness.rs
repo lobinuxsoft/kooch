@@ -13,7 +13,7 @@ use ome_bvh::Aabb;
 
 use super::super::{
     LOOKUP_DEFAULT_GROUP, LOOKUP_DEFAULT_POOL_BINDING, LOOKUP_DEFAULT_ROOT_BINDING,
-    LOOKUP_DEFAULT_UNIFORM_BINDING, LookupBindings, lookup_wgsl,
+    LOOKUP_DEFAULT_SAMPLER_BINDING, LOOKUP_DEFAULT_UNIFORM_BINDING, LookupBindings, lookup_wgsl,
 };
 
 pub(super) const TEST_BOUNDS_MIN: Vec3 = Vec3::ZERO;
@@ -56,14 +56,14 @@ struct ProbeUniformHost {
     _pad2: u32,
 }
 
-/// Result bundle from one probe run — keeps the readback signature
-/// short while exposing the sparse buffers the per-test assertions
-/// poke into.
+/// Result bundle from one probe run. The pool is a texture atlas
+/// post-S6 so we no longer expose direct voxel values — semantic
+/// verification goes through `sparse_sdf_lookup` itself, which is
+/// what consumers exercise anyway.
 pub(super) struct ProbeRun {
     pub(super) grid: SparseGrid,
     pub(super) results: Vec<f32>,
     pub(super) root_indices: Vec<u32>,
-    pub(super) subgrid_pool: Vec<f32>,
 }
 
 pub(super) fn run_lookup_probes(
@@ -185,11 +185,13 @@ pub(super) fn run_lookup_probes(
         ],
     });
 
-    // Bind group 2 — lookup globals (default layout).
+    // Bind group 2 — lookup globals (default layout, including
+    // sampler at binding 3).
     let lookup_layout_entries = LookupBindings::layout_entries(
         LOOKUP_DEFAULT_ROOT_BINDING,
         LOOKUP_DEFAULT_POOL_BINDING,
         LOOKUP_DEFAULT_UNIFORM_BINDING,
+        LOOKUP_DEFAULT_SAMPLER_BINDING,
     );
     let lookup_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("test::probe::lookup_bgl"),
@@ -211,6 +213,7 @@ pub(super) fn run_lookup_probes(
             LOOKUP_DEFAULT_ROOT_BINDING,
             LOOKUP_DEFAULT_POOL_BINDING,
             LOOKUP_DEFAULT_UNIFORM_BINDING,
+            LOOKUP_DEFAULT_SAMPLER_BINDING,
         ),
         PROBE_HARNESS_WGSL,
     );
@@ -250,6 +253,7 @@ pub(super) fn run_lookup_probes(
         LOOKUP_DEFAULT_ROOT_BINDING,
         LOOKUP_DEFAULT_POOL_BINDING,
         LOOKUP_DEFAULT_UNIFORM_BINDING,
+        LOOKUP_DEFAULT_SAMPLER_BINDING,
     );
     let lookup_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("test::probe::lookup_bg"),
@@ -292,17 +296,11 @@ pub(super) fn run_lookup_probes(
         .chunks_exact(4)
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
-    let pool_bytes = test_device::readback(device, queue, grid.subgrid_pool_buffer());
-    let subgrid_pool: Vec<f32> = pool_bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect();
 
     ProbeRun {
         grid,
         results,
         root_indices,
-        subgrid_pool,
     }
 }
 

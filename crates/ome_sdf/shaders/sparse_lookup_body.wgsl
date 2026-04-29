@@ -1,17 +1,19 @@
 // Sparse SDF lookup — pure WGSL body. Defines `sparse_sdf_lookup`
-// (and the `sparse_sdf_far_value` sentinel helper) reading three
+// (and the `sparse_sdf_far_value` sentinel helper) reading four
 // global resources by FIXED NAMES:
 //
 //   lookup_root_indices : storage<read>  array<u32>
-//   lookup_subgrid_pool : storage<read>  array<f32>
+//   lookup_subgrid_pool : texture_3d<f32>
+//   lookup_pool_sampler : sampler
 //   lookup_uniform      : uniform        LookupUniform
 //
 // This file deliberately does NOT declare `@group/@binding` for those
 // globals. The Rust helper `crate::sparse::lookup_wgsl(group,
-// root_binding, pool_binding, uniform_binding)` prepends the three
-// `var<...>` declarations with the caller's chosen slots. Same body,
-// many host pipelines — raymarchers, the Edit Baker (#309), debug viz
-// — all reuse this without forking the SDF math.
+// root_binding, pool_binding, uniform_binding, sampler_binding)`
+// prepends the four `var<...>` declarations with the caller's chosen
+// slots. Same body, many host pipelines — raymarchers, the Edit
+// Baker (#309), debug viz — all reuse this without forking the SDF
+// math.
 //
 // # Caller invariant
 //
@@ -21,17 +23,16 @@
 // every cell will read as empty (`EMPTY_ROOT_SENTINEL`) and lookup
 // will degrade to the `far_value` sentinel.
 //
-// # C0 artifact at subgrid boundaries — intentional
+// # HW trilinear via texture atlas
 //
-// The trilinear filter clamps `p1` to `(15, 15, 15)` inside the
-// current subgrid. Two adjacent subgrids therefore meet at a C0 (not
-// C1) boundary — values agree at the seam but the gradient does not.
-// This is intentional for S5: keeps the lookup self-contained (no
-// cross-subgrid sampling, no neighbour bind dance) and bounds the
-// raymarch error to one voxel at the seam. The fix lives downstream
-// in S6 (skirt voxels per subgrid) or S7 (Vulkan hardware sampler
-// over a virtual texture). Both are filed as follow-ups in the issue
-// thread; the lookup ABI does not change between #136 and #309.
+// S6 migrated the pool to a `r16float` 3D texture atlas
+// (`544 × 17 × 544`, tiles of `17³` voxels = 16³ data + 1-voxel skirt
+// per face). The lookup samples through `textureSampleLevel` with a
+// `Linear + ClampToEdge` sampler — the GPU's TMU does the 8-corner
+// trilinear blend in one instruction, decoupled from the ALU pipe.
+// The skirt voxel at each tile face stores the neighbouring root
+// cell's corner sample, so the seam between two subgrids is
+// reconstructed C0-continuous without a cross-tile bind dance.
 
 struct LookupUniform {
     // `xyz` = chunk-local `bounds_min` (post-`ActiveOrigin`). `w`
@@ -43,8 +44,11 @@ struct LookupUniform {
 
 const LOOKUP_ROOT_DIM: u32 = 16u;
 const LOOKUP_SUBGRID_DIM: u32 = 16u;
-const LOOKUP_SUBGRID_DIM_MINUS_1: u32 = 15u;
-const LOOKUP_SUBGRID_VOXELS: u32 = 4096u;
+const LOOKUP_TILE_DIM: u32 = 17u;
+const LOOKUP_ATLAS_TILES_X: u32 = 32u;
+const LOOKUP_ATLAS_DIM_X: f32 = 544.0;
+const LOOKUP_ATLAS_DIM_Y: f32 = 17.0;
+const LOOKUP_ATLAS_DIM_Z: f32 = 544.0;
 const LOOKUP_EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFFu;
 const LOOKUP_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu;
 
@@ -58,13 +62,13 @@ fn sparse_sdf_far_value(bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> f32 {
     return max(max(cell_size.x, cell_size.y), cell_size.z) * 2.0;
 }
 
-// Voxel-as-corner indexing — matches `sparse_populate.wgsl`. The voxel
-// at integer coords `(vx, vy, vz)` lives at world position
-// `cell_min + (vx, vy, vz) / SUBGRID_DIM * cell_size`. Trilinear
-// reconstruction is therefore a straight 8-corner box around the
-// fractional offset of `world_pos` inside the cell, with the upper
-// corner clamped to `15` so a sample at the cell's far edge stays
-// inside this subgrid (C0 seam — see file header).
+// Voxel-as-corner indexing — matches `sparse_populate.wgsl`. The
+// voxel at integer coords `(vx, vy, vz)` lives at world position
+// `cell_min + (vx, vy, vz) / SUBGRID_DIM * cell_size`, with the skirt
+// voxel `vx == 16` covering the neighbouring cell's corner. The
+// fractional offset is clamped to `[0, SUBGRID_DIM]` so the texel
+// coord stays inside the current tile (sampling further would hit
+// the next tile in the atlas, which is unrelated in 3D space).
 fn sparse_sdf_lookup(world_pos: vec3<f32>) -> f32 {
     let bounds_min = lookup_uniform.bounds_min.xyz;
     let bounds_max = lookup_uniform.bounds_max.xyz;
@@ -96,35 +100,37 @@ fn sparse_sdf_lookup(world_pos: vec3<f32>) -> f32 {
     }
 
     let cell_min = bounds_min + vec3<f32>(cell) * cell_size;
-    // `local_voxel` ∈ `[0, SUBGRID_DIM)` because we already established
-    // `cell` is the integer floor of `local_in_root` over the same
-    // cell_size — the voxel coords are the fractional remainder
-    // multiplied back into the subgrid's integer grid.
-    let local_voxel = (world_pos - cell_min) / cell_size * f32(LOOKUP_SUBGRID_DIM);
+    let local_voxel =
+        (world_pos - cell_min) / cell_size * f32(LOOKUP_SUBGRID_DIM);
+    // Clamp to `[0, SUBGRID_DIM]` (skirt-inclusive). Without this, a
+    // sample at the cell's far face (local_voxel == SUBGRID_DIM)
+    // could pick up f32 rounding into `> 16` and the sampler would
+    // read into the next atlas tile — which is unrelated in 3D space
+    // (atlas neighbours are not SDF neighbours).
+    let local_voxel_clamped = clamp(
+        local_voxel,
+        vec3<f32>(0.0),
+        vec3<f32>(f32(LOOKUP_SUBGRID_DIM)),
+    );
 
-    let p0 = vec3<u32>(floor(local_voxel));
-    let p0_clamped = min(p0, vec3<u32>(LOOKUP_SUBGRID_DIM_MINUS_1));
-    let p1 = min(p0_clamped + vec3<u32>(1u), vec3<u32>(LOOKUP_SUBGRID_DIM_MINUS_1));
-    let f = local_voxel - vec3<f32>(p0_clamped);
-
-    let pool_base = subgrid_idx * LOOKUP_SUBGRID_VOXELS;
-    let row = LOOKUP_SUBGRID_DIM;
-    let slab = LOOKUP_SUBGRID_DIM * LOOKUP_SUBGRID_DIM;
-
-    let s000 = lookup_subgrid_pool[pool_base + p0_clamped.x + p0_clamped.y * row + p0_clamped.z * slab];
-    let s100 = lookup_subgrid_pool[pool_base + p1.x         + p0_clamped.y * row + p0_clamped.z * slab];
-    let s010 = lookup_subgrid_pool[pool_base + p0_clamped.x + p1.y         * row + p0_clamped.z * slab];
-    let s110 = lookup_subgrid_pool[pool_base + p1.x         + p1.y         * row + p0_clamped.z * slab];
-    let s001 = lookup_subgrid_pool[pool_base + p0_clamped.x + p0_clamped.y * row + p1.z         * slab];
-    let s101 = lookup_subgrid_pool[pool_base + p1.x         + p0_clamped.y * row + p1.z         * slab];
-    let s011 = lookup_subgrid_pool[pool_base + p0_clamped.x + p1.y         * row + p1.z         * slab];
-    let s111 = lookup_subgrid_pool[pool_base + p1.x         + p1.y         * row + p1.z         * slab];
-
-    let c00 = mix(s000, s100, f.x);
-    let c10 = mix(s010, s110, f.x);
-    let c01 = mix(s001, s101, f.x);
-    let c11 = mix(s011, s111, f.x);
-    let c0  = mix(c00,  c10,  f.y);
-    let c1  = mix(c01,  c11,  f.y);
-    return mix(c0, c1, f.z);
+    // Atlas tile origin in texel coordinates. Tiles are laid out
+    // `32 × 1 × 32`; tile origin = `(idx % 32, 0, idx / 32) * 17`.
+    let tile_x = subgrid_idx % LOOKUP_ATLAS_TILES_X;
+    let tile_z = subgrid_idx / LOOKUP_ATLAS_TILES_X;
+    let tile_origin = vec3<f32>(
+        f32(tile_x * LOOKUP_TILE_DIM),
+        0.0,
+        f32(tile_z * LOOKUP_TILE_DIM),
+    );
+    let atlas_dim = vec3<f32>(LOOKUP_ATLAS_DIM_X, LOOKUP_ATLAS_DIM_Y, LOOKUP_ATLAS_DIM_Z);
+    // `+ 0.5` shifts to texel centres so an integer `local_voxel`
+    // (e.g. exactly at voxel `(0,0,0)`) reads that texel's stored
+    // value with no fractional contribution.
+    let tex_coord = (tile_origin + local_voxel_clamped + vec3<f32>(0.5)) / atlas_dim;
+    return textureSampleLevel(
+        lookup_subgrid_pool,
+        lookup_pool_sampler,
+        tex_coord,
+        0.0,
+    ).x;
 }

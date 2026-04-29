@@ -9,13 +9,14 @@
 //!
 //! # Approach D — single-pass populate-and-allocate with SLM coordination
 //!
-//! 1 workgroup per marked cell, 256 threads collaborating on the 4096
-//! voxels of that cell's subgrid (inner serial stride loop, 16 voxels
-//! per thread). Thread 0 pops one subgrid index off the atomic free
-//! list, broadcasts via `var<workgroup>` after a `workgroupBarrier`,
-//! and the rest of the workgroup samples the SDF in parallel. Thread
-//! 0 writes `root_indices[cell_idx] = subgrid_idx` last, after a
-//! second barrier, so the pool writes happen-before the root pointer
+//! 1 workgroup per marked cell, 256 threads collaborating on the
+//! `SUBGRID_TILE_VOXELS = 17³ = 4913` voxels of that cell's atlas
+//! tile (inner serial stride loop, ≈19 voxels per thread). Thread 0
+//! pops one subgrid index off the atomic free list, broadcasts via
+//! `var<workgroup>` after a `workgroupBarrier`, and the rest of the
+//! workgroup samples the SDF in parallel. Thread 0 writes
+//! `root_indices[cell_idx] = subgrid_idx` last, after a second
+//! barrier, so the pool writes happen-before the root pointer
 //! publishes them.
 //!
 //! Why one allocation per workgroup (rather than per-thread / per-cell
@@ -23,12 +24,21 @@
 //! (single indirect dispatch over `needs_count` workgroups), keeps the
 //! pop hot loop confined to 1/256 of the threads (one CAS contender
 //! per workgroup, not per voxel), and keeps the freelist ABI shared
-//! with future allocate / free passes (#S5–S7) without adding a
-//! split-buffer "pending allocation" intermediate.
+//! with future allocate / free passes without adding a split-buffer
+//! "pending allocation" intermediate.
+//!
+//! # Atlas tile layout — skirt voxel at every face
+//!
+//! Each tile is 17³ voxels (16³ data interior + 1 skirt voxel per
+//! face, see [`super::SUBGRID_TILE_DIM`]). The skirt at
+//! `vx == SUBGRID_DIM` evaluates the sampler at the neighbouring
+//! root cell's corner, so the HW trilinear filter in the lookup
+//! reconstructs a C0-continuous SDF across subgrid boundaries
+//! without a cross-tile bind dance.
 //!
 //! # Workgroup-size choice (256)
 //!
-//! 4096 voxels / 256 threads = 16 voxels per thread, serial inner
+//! 4913 voxels / 256 threads ≈ 19 voxels per thread, serial inner
 //! loop. Hits high occupancy on both targets:
 //! - Steam Deck (RDNA 2, wavefront 64) → 4 waves/wg
 //! - RX 9070 XT (RDNA 4, wavefront 32) → 8 waves/wg
@@ -205,7 +215,7 @@ impl PopulatePass {
     /// 1. `finalize_main` dispatch — derive
     ///    `[needs_count, 1, 1]` into `populate_indirect_args_buffer`.
     /// 2. `populate_main` indirect dispatch — one workgroup per marked
-    ///    cell, 256 threads cooperating on the 4096 voxels.
+    ///    cell, 256 threads cooperating on the 4913 atlas tile voxels.
     pub fn record(
         &self,
         device: &wgpu::Device,
@@ -271,7 +281,7 @@ impl PopulatePass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
-                    resource: grid.subgrid_pool_buffer().as_entire_binding(),
+                    resource: wgpu::BindingResource::TextureView(grid.subgrid_pool_view()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,

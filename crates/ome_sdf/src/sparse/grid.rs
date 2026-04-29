@@ -1,20 +1,27 @@
 //! `SparseGrid` — chunk-local sparse SDF voxel storage.
 //!
-//! Owns the four GPU buffers (root indices, subgrid pool, free list,
-//! counters) backing the two-level sparse layout. Mutating compute
-//! passes (classify / allocate / populate / free) live in sibling
-//! modules and bind these buffers; this module is the lifecycle root
-//! that all of them compose against.
+//! Owns the GPU buffers + 3D texture atlas backing the two-level
+//! sparse layout. Mutating compute passes (classify / allocate /
+//! populate / free) live in sibling modules and bind these resources;
+//! this module is the lifecycle root that all of them compose
+//! against.
 
 use ome_bvh::Aabb;
 
-use super::{ROOT_CELLS, SUBGRID_VOXELS, free_list};
+use super::{
+    ATLAS_DIM_X, ATLAS_DIM_Y, ATLAS_DIM_Z, MAX_SUBGRIDS_PER_ATLAS, ROOT_CELLS, free_list,
+};
 
 /// Size in bytes of the dispatch-indirect-args triple
 /// `[x, y, z]` (3 × `u32`). Constant rather than `mem::size_of`-derived
 /// so consumers can match the layout without depending on a host
 /// helper type.
 pub const DISPATCH_INDIRECT_ARGS_SIZE: u64 = 12;
+
+/// `r16float` is the canonical pool-atlas format. Mirrored here so
+/// consumers (populate's storage-write binding, lookup's sampled
+/// binding) match without each carrying its own copy.
+pub const POOL_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 
 /// Fixed-capacity sparse SDF grid bound to one chunk. See module-level
 /// docs in [`super`] for the layout, capacity, and encoder-ordering
@@ -23,7 +30,9 @@ pub struct SparseGrid {
     bounds: Aabb,
     max_subgrids: u32,
     root_indices_buffer: wgpu::Buffer,
-    subgrid_pool_buffer: wgpu::Buffer,
+    subgrid_pool_texture: wgpu::Texture,
+    subgrid_pool_view: wgpu::TextureView,
+    subgrid_pool_sampler: wgpu::Sampler,
     free_list_buffer: wgpu::Buffer,
     counters_buffer: wgpu::Buffer,
     needs_indices_buffer: wgpu::Buffer,
@@ -45,9 +54,10 @@ impl SparseGrid {
     /// and `counters.free_top` is set to `max_subgrids` via
     /// [`free_list::init`].
     ///
-    /// `max_subgrids` must be in `1..=ROOT_CELLS`. Use
-    /// [`super::MAX_SUBGRIDS_DEFAULT`] unless profiling motivates a
-    /// per-chunk override.
+    /// `max_subgrids` must be in `1..=MAX_SUBGRIDS_PER_ATLAS` (1024).
+    /// Use [`super::MAX_SUBGRIDS_DEFAULT`] unless profiling motivates
+    /// a smaller per-chunk override; values above the atlas tile
+    /// capacity panic at construction.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -55,14 +65,18 @@ impl SparseGrid {
         max_subgrids: u32,
     ) -> Self {
         assert!(
-            max_subgrids > 0 && max_subgrids <= ROOT_CELLS,
-            "max_subgrids must be in 1..={ROOT_CELLS}, got {max_subgrids}",
+            max_subgrids > 0 && max_subgrids <= MAX_SUBGRIDS_PER_ATLAS,
+            "max_subgrids must be in 1..={MAX_SUBGRIDS_PER_ATLAS}, got {max_subgrids}",
         );
+        let (subgrid_pool_texture, subgrid_pool_view) = make_subgrid_pool_texture(device);
+        let subgrid_pool_sampler = make_subgrid_pool_sampler(device);
         let grid = Self {
             bounds,
             max_subgrids,
             root_indices_buffer: make_root_indices_buffer(device),
-            subgrid_pool_buffer: make_subgrid_pool_buffer(device, max_subgrids),
+            subgrid_pool_texture,
+            subgrid_pool_view,
+            subgrid_pool_sampler,
             free_list_buffer: make_free_list_buffer(device, max_subgrids),
             counters_buffer: make_counters_buffer(device),
             needs_indices_buffer: make_needs_indices_buffer(device),
@@ -86,8 +100,29 @@ impl SparseGrid {
         &self.root_indices_buffer
     }
 
-    pub fn subgrid_pool_buffer(&self) -> &wgpu::Buffer {
-        &self.subgrid_pool_buffer
+    /// 3D atlas texture (`R16Float`, `544 × 17 × 544`) holding all
+    /// allocated subgrid voxels packed into 17³ tiles. Bound as a
+    /// storage texture by the populate pass and as a sampled texture
+    /// by the lookup helper.
+    pub fn subgrid_pool_texture(&self) -> &wgpu::Texture {
+        &self.subgrid_pool_texture
+    }
+
+    /// Default view over the full pool atlas. Reusable for both
+    /// `STORAGE_BINDING` and `TEXTURE_BINDING` since the texture
+    /// declares both usage flags.
+    pub fn subgrid_pool_view(&self) -> &wgpu::TextureView {
+        &self.subgrid_pool_view
+    }
+
+    /// `Linear` + `ClampToEdge` sampler matching the lookup helper's
+    /// expectations. `MagFilter::Linear` does the trilinear blend in
+    /// hardware; `ClampToEdge` keeps boundary samples inside the
+    /// current tile's voxels (the lookup body additionally clamps the
+    /// fractional offset to `[0, SUBGRID_DIM]` to keep tex coords off
+    /// the next-tile texel boundary).
+    pub fn subgrid_pool_sampler(&self) -> &wgpu::Sampler {
+        &self.subgrid_pool_sampler
     }
 
     pub fn free_list_buffer(&self) -> &wgpu::Buffer {
@@ -156,15 +191,58 @@ fn make_root_indices_buffer(device: &wgpu::Device) -> wgpu::Buffer {
     buffer
 }
 
-fn make_subgrid_pool_buffer(device: &wgpu::Device, max_subgrids: u32) -> wgpu::Buffer {
-    let size = (max_subgrids as u64) * (SUBGRID_VOXELS as u64) * 4;
-    device.create_buffer(&wgpu::BufferDescriptor {
+fn make_subgrid_pool_texture(
+    device: &wgpu::Device,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("ome_sdf::sparse::subgrid_pool"),
-        size,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_DST
-            | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
+        size: wgpu::Extent3d {
+            width: ATLAS_DIM_X,
+            height: ATLAS_DIM_Y,
+            depth_or_array_layers: ATLAS_DIM_Z,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D3,
+        format: POOL_TEXTURE_FORMAT,
+        // STORAGE for populate's `textureStore` writes; TEXTURE for
+        // the lookup's sampled reads via `textureSampleLevel`.
+        // COPY_SRC/COPY_DST keep test readback + future reset paths
+        // available without a second texture allocation.
+        usage: wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("ome_sdf::sparse::subgrid_pool_view"),
+        format: Some(POOL_TEXTURE_FORMAT),
+        dimension: Some(wgpu::TextureViewDimension::D3),
+        usage: None,
+        aspect: wgpu::TextureAspect::All,
+        base_mip_level: 0,
+        mip_level_count: Some(1),
+        base_array_layer: 0,
+        array_layer_count: None,
+    });
+    (texture, view)
+}
+
+fn make_subgrid_pool_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("ome_sdf::sparse::subgrid_pool_sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        lod_min_clamp: 0.0,
+        lod_max_clamp: 0.0,
+        compare: None,
+        anisotropy_clamp: 1,
+        border_color: None,
     })
 }
 
@@ -244,105 +322,4 @@ fn make_populate_indirect_args_buffer(device: &wgpu::Device) -> wgpu::Buffer {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::sparse::{
-        ALLOC_FAILED_SENTINEL, EMPTY_ROOT_SENTINEL, MAX_SUBGRIDS_DEFAULT, ROOT_DIM, SUBGRID_DIM,
-        test_device,
-    };
-    use glam::Vec3;
-
-    fn unit_bounds() -> Aabb {
-        Aabb::new(Vec3::ZERO, Vec3::splat(64.0))
-    }
-
-    #[test]
-    fn constants_consistent() {
-        // `MAX_SUBGRIDS_DEFAULT` bounds are enforced at compile time
-        // by a `const _` assertion in `super`. The runtime checks
-        // here cover the derived-product equalities.
-        assert_eq!(ROOT_CELLS, ROOT_DIM * ROOT_DIM * ROOT_DIM);
-        assert_eq!(SUBGRID_VOXELS, SUBGRID_DIM * SUBGRID_DIM * SUBGRID_DIM);
-        assert_eq!(EMPTY_ROOT_SENTINEL, 0xFFFFFFFF);
-        assert_eq!(ALLOC_FAILED_SENTINEL, 0xFFFFFFFE);
-    }
-
-    #[test]
-    fn buffer_sizes_match_layout() {
-        let Some((device, queue)) = test_device::try_acquire() else {
-            eprintln!("skipping buffer_sizes_match_layout: no GPU available");
-            return;
-        };
-        let max_subgrids = 256;
-        let grid = SparseGrid::new(&device, &queue, unit_bounds(), max_subgrids);
-
-        assert_eq!(grid.max_subgrids(), max_subgrids);
-        assert_eq!(grid.bounds(), unit_bounds());
-        assert_eq!(grid.root_indices_buffer().size(), (ROOT_CELLS as u64) * 4);
-        assert_eq!(
-            grid.subgrid_pool_buffer().size(),
-            (max_subgrids as u64) * (SUBGRID_VOXELS as u64) * 4,
-        );
-        assert_eq!(grid.free_list_buffer().size(), (max_subgrids as u64) * 4);
-        assert_eq!(grid.counters_buffer().size(), 16);
-        assert_eq!(grid.needs_indices_buffer().size(), (ROOT_CELLS as u64) * 4);
-        assert_eq!(grid.needs_count_buffer().size(), 4);
-        assert_eq!(
-            grid.needs_indirect_args_buffer().size(),
-            DISPATCH_INDIRECT_ARGS_SIZE,
-        );
-        assert_eq!(
-            grid.populate_indirect_args_buffer().size(),
-            DISPATCH_INDIRECT_ARGS_SIZE,
-        );
-    }
-
-    #[test]
-    fn root_indices_initialized_to_empty_sentinel() {
-        let Some((device, queue)) = test_device::try_acquire() else {
-            eprintln!("skipping root_indices_initialized_to_empty_sentinel: no GPU available");
-            return;
-        };
-        let grid = SparseGrid::new(&device, &queue, unit_bounds(), 16);
-        let bytes = test_device::readback(&device, &queue, grid.root_indices_buffer());
-        assert_eq!(bytes.len(), (ROOT_CELLS as usize) * 4);
-        for chunk in bytes.chunks_exact(4) {
-            let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            assert_eq!(
-                val, EMPTY_ROOT_SENTINEL,
-                "root cell must initialise to EMPTY_ROOT_SENTINEL",
-            );
-        }
-    }
-
-    #[test]
-    fn default_capacity_is_under_pool_budget() {
-        // `MAX_SUBGRIDS_DEFAULT × SUBGRID_VOXELS × 4 B` must stay near
-        // the issue's `<15 MB` AC. 1024 × 4096 × 4 = 16 MiB — the
-        // small overshoot is intentional power-of-two headroom.
-        let pool_bytes =
-            (MAX_SUBGRIDS_DEFAULT as u64) * (SUBGRID_VOXELS as u64) * 4;
-        assert_eq!(pool_bytes, 16 * 1024 * 1024);
-    }
-
-    #[test]
-    #[should_panic(expected = "max_subgrids must be in")]
-    fn rejects_zero_max_subgrids() {
-        let Some((device, queue)) = test_device::try_acquire() else {
-            // Force the panic path so this test still validates the
-            // assert message format when no GPU is available.
-            panic!("max_subgrids must be in 1..=4096, got 0 (skipped — no GPU)");
-        };
-        let _ = SparseGrid::new(&device, &queue, unit_bounds(), 0);
-    }
-
-    #[test]
-    #[should_panic(expected = "max_subgrids must be in")]
-    fn rejects_oversized_max_subgrids() {
-        let Some((device, queue)) = test_device::try_acquire() else {
-            panic!("max_subgrids must be in 1..=4096, got 9999 (skipped — no GPU)");
-        };
-        let _ = SparseGrid::new(&device, &queue, unit_bounds(), ROOT_CELLS + 1);
-    }
-
-}
+mod tests;

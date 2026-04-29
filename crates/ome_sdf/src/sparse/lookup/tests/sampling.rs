@@ -4,10 +4,22 @@
 
 use super::harness::{cell_min_world, run_lookup_probes, test_bounds};
 use crate::sparse::{
-    ALLOC_FAILED_SENTINEL, AnalyticSphereSampler, ROOT_CELLS, ROOT_DIM, SUBGRID_DIM,
-    SUBGRID_VOXELS, test_device,
+    ALLOC_FAILED_SENTINEL, AnalyticSphereSampler, ROOT_CELLS, ROOT_DIM, SUBGRID_DIM, SUBGRID_VOXELS,
+    test_device,
 };
 use glam::Vec3;
+
+/// Tolerance for sampler-to-lookup comparisons. The pool atlas is
+/// `r16float`: the IEEE 754 half precision quantum at value `x` is
+/// `x * 2^-10 ≈ x * 1e-3`, so a fixed absolute ε under-estimates
+/// permissible error by a factor of `|expected|` when SDF values
+/// scale with chunk size. We therefore match the f16 quantum
+/// pattern: relative `1e-3 × |expected|`, with a `1e-3` absolute
+/// floor so values near the surface (where the SDF passes through
+/// zero) still get a reasonable bound.
+fn f16_lookup_tolerance(expected: f32) -> f32 {
+    (expected.abs() * 1.0e-3).max(1.0e-3)
+}
 
 #[test]
 fn lookup_at_voxel_corners_returns_pool_values() {
@@ -44,7 +56,7 @@ fn lookup_at_voxel_corners_returns_pool_values() {
     // in `rand`, and avoids the corner-most voxels (which the shader
     // clamps and which therefore tell us the least).
     let mut probe_positions: Vec<Vec3> = Vec::new();
-    let mut expected_voxels: Vec<(usize, u32)> = Vec::new();
+    let mut probe_meta: Vec<(usize, u32)> = Vec::new();
     for &cell_idx in &allocated_cells {
         let cell_min = cell_min_world(cell_idx, bounds);
         let mut state: u32 = cell_idx.wrapping_mul(0x9E3779B1).wrapping_add(1);
@@ -57,24 +69,29 @@ fn lookup_at_voxel_corners_returns_pool_values() {
             let voxel_offset =
                 Vec3::new(vx as f32, vy as f32, vz as f32) / (SUBGRID_DIM as f32);
             probe_positions.push(cell_min + voxel_offset * cell_size);
-            expected_voxels.push((cell_idx as usize, voxel_linear));
+            probe_meta.push((cell_idx as usize, voxel_linear));
         }
     }
 
     let run = run_lookup_probes(
         &device, &queue, &sampler, bounds, 1024, &probe_positions,
     );
-    let eps = 1e-5_f32;
-    for (i, &(cell_idx, voxel_linear)) in expected_voxels.iter().enumerate() {
+    // Post-S6 the pool is `r16float` so we no longer compare against a
+    // host readback of the texel; instead probe the analytic CPU
+    // sampler at the same world position. At voxel-corner positions
+    // (integer `local_voxel`) the trilinear filter collapses to a
+    // single texel, so the lookup output equals the populate-write
+    // value modulo f16 quantisation.
+    for (i, &(cell_idx, _voxel_linear)) in probe_meta.iter().enumerate() {
         let subgrid_idx = run.root_indices[cell_idx];
         assert!(subgrid_idx < 1024, "cell {cell_idx} should be allocated");
-        let pool_idx = (subgrid_idx as usize) * (SUBGRID_VOXELS as usize)
-            + voxel_linear as usize;
-        let expected = run.subgrid_pool[pool_idx];
+        let expected = sampler.sample_cpu(probe_positions[i]);
         let actual = run.results[i];
+        let tol = f16_lookup_tolerance(expected);
         assert!(
-            (actual - expected).abs() < eps,
-            "probe {i} cell {cell_idx} voxel {voxel_linear}: GPU lookup {actual} vs pool {expected}",
+            (actual - expected).abs() < tol,
+            "probe {i} cell {cell_idx}: GPU lookup {actual} vs CPU sampler {expected} \
+             (tolerance {tol})",
         );
     }
 }
@@ -115,10 +132,10 @@ fn lookup_trilinear_midpoint_matches_corner_average() {
     let s100 = run.results[1];
     let mid = run.results[2];
     let expected = 0.5 * (s000 + s100);
-    let eps = 1e-5_f32;
+    let tol = f16_lookup_tolerance(expected);
     assert!(
-        (mid - expected).abs() < eps,
-        "trilinear midpoint {mid} vs corner average {expected}",
+        (mid - expected).abs() < tol,
+        "trilinear midpoint {mid} vs corner average {expected} (tolerance {tol})",
     );
 }
 

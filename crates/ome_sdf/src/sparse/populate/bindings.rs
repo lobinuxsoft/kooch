@@ -44,14 +44,15 @@ pub(super) const POPULATE_BGL_ENTRIES: [wgpu::BindGroupLayoutEntry; 7] = [
         },
         count: None,
     },
-    // populate_subgrid_pool (read_write — destination of voxel writes)
+    // populate_subgrid_pool (write-only storage texture — atlas tile
+    // destination, R16Float matches `SparseGrid::POOL_TEXTURE_FORMAT`).
     wgpu::BindGroupLayoutEntry {
         binding: 6,
         visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: false },
-            has_dynamic_offset: false,
-            min_binding_size: None,
+        ty: wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format: wgpu::TextureFormat::R16Float,
+            view_dimension: wgpu::TextureViewDimension::D3,
         },
         count: None,
     },
