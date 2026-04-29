@@ -297,23 +297,17 @@ pub(super) fn run_lookup_probes_with_target(
         label: Some("test::probe::encoder"),
     });
 
-    // Skip chunk_lod here — we already wrote a synthetic all-ones
-    // mask. Running chunk_lod would overwrite it with a
-    // distance-based value (single bit beyond bit 0), which would
-    // gate classify at higher LODs to no-op.
-    for lod_idx in 0..LOD_COUNT {
-        classify.record(
-            device, queue, &mut encoder, &grid, &sampler_bg, lod_idx, DEFAULT_MARGIN,
-        );
-    }
-    for lod_idx in 0..LOD_COUNT {
-        populate.record_finalize(device, &mut encoder, &grid, lod_idx);
-    }
-    for lod_idx in 0..LOD_COUNT {
-        populate.record_populate(
-            device, queue, &mut encoder, &grid, &sampler_bg, lod_idx,
-        );
-    }
+    // Skip chunk_lod — the synthetic all-ones mask written above gives
+    // every LOD activity in the lookup. The cascade producer runs at
+    // LOD 0 only (`base_lod = 0` invariant); the downsample chain
+    // fills LODs 1..3 via the box-filter cascade.
+    classify.record(
+        device, queue, &mut encoder, &grid, &sampler_bg, 0, DEFAULT_MARGIN,
+    );
+    populate.record_finalize(device, &mut encoder, &grid, 0);
+    populate.record_populate(
+        device, queue, &mut encoder, &grid, &sampler_bg, 0,
+    );
     for cascade_idx in 0..(CASCADE_COUNT as u32) {
         downsample.record_cascade(device, &mut encoder, &grid, cascade_idx);
     }

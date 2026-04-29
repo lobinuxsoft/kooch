@@ -1,4 +1,4 @@
-//! 16-pass cascade orchestrator.
+//! 7-pass cascade orchestrator.
 //!
 //! Owns the four constituent passes — [`ChunkLodPass`],
 //! [`ClassifyPass`], [`PopulatePass`], [`DownsamplePass`] — and
@@ -6,20 +6,35 @@
 //! cascade order into one command encoder:
 //!
 //! ```text
-//!  1.  chunk_lod
-//!  2-5  classify[0..3]
-//!  6-9  populate_finalize[0..3]
-//! 10-13 populate[0..3]
-//! 14-16 downsample[0→1, 1→2, 2→3]
+//! 1. chunk_lod
+//! 2. classify_lod0
+//! 3. populate_finalize_lod0
+//! 4. populate_lod0
+//! 5. downsample 0→1
+//! 6. downsample 1→2
+//! 7. downsample 2→3
 //! ```
 //!
-//! 16 compute passes, one queue submission, zero CPU readback in the
-//! hot loop. The split between `populate_finalize[0..3]` and
-//! `populate[0..3]` lets the GPU pipeline finalize-derived indirect
-//! arg writes ahead of the populate dispatches that consume them — wgpu
-//! inserts the implicit storage-buffer barrier between consecutive
-//! compute passes, so all four populate dispatches see fresh args
-//! without the host pinning a fence in between.
+//! 7 compute passes, one queue submission, zero CPU readback in the
+//! hot loop.
+//!
+//! # Invariant — `base_lod = 0`
+//!
+//! Single-chunk today: every cascade always classifies + populates at
+//! LOD 0 only, then box-filters into LODs 1..3 via the downsample
+//! chain. Running classify / populate at LOD > 0 is redundant — the
+//! cell set is identical (root grid is LOD-independent) and the
+//! downsample's writes overwrite anything populate would have produced
+//! at higher LODs anyway. Skipping LOD > 0 producers also kills the
+//! free-list leak that previously stranded slots in
+//! `free_list_lod_{1,2,3}` whenever those LODs were active in the
+//! mask alongside LOD 0.
+//!
+//! Per-LOD classify and populate pipelines stay instantiated in
+//! [`Self::new`] — direct tests of `ClassifyPass` / `PopulatePass`
+//! exercise them, and the per-chunk `base_lod_idx` selector landing
+//! with #313 (multi-chunk) will need them for distant chunks where
+//! the cascade source moves above LOD 0.
 //!
 //! # When to call
 //!
@@ -38,7 +53,7 @@ use glam::Vec3;
 
 use super::{
     CASCADE_COUNT, ChunkLodPass, ClassifyPass, DEFAULT_LOD_DISTANCE_THRESHOLDS,
-    DEFAULT_MARGIN, DownsamplePass, LOD_COUNT, PopulatePass, SparseGrid,
+    DEFAULT_MARGIN, DownsamplePass, PopulatePass, SparseGrid,
 };
 
 /// Compose all four cascade passes into one orchestrator. One
@@ -73,7 +88,7 @@ impl SparseLodPass {
         }
     }
 
-    /// Record the full 16-pass cascade for `grid` into `encoder`.
+    /// Record the full 7-pass cascade for `grid` into `encoder`.
     /// Caller submits the encoder + handles synchronisation with
     /// downstream lookup pipelines.
     pub fn record(
@@ -90,30 +105,28 @@ impl SparseLodPass {
         // Pass 1: chunk_lod — write the per-chunk LOD bitmask.
         self.chunk_lod.record(device, queue, encoder, grid, active_origin, thresholds);
 
-        // Passes 2..=5: classify[0..3] — mark cells per LOD, gated by
-        // the chunk_lod_mask bit for that LOD.
-        for lod_idx in 0..LOD_COUNT {
-            self.classify.record(
-                device, queue, encoder, grid, sampler_bg, lod_idx, margin,
-            );
-        }
+        // Pass 2: classify at LOD 0 — every chunk has bit 0 set in
+        // the mask (cascade invariant), so this is the only producer
+        // run. LODs 1..3 inherit the marked cell set via the
+        // downsample chain.
+        self.classify.record(
+            device, queue, encoder, grid, sampler_bg, 0, margin,
+        );
 
-        // Passes 6..=9: populate_finalize[0..3] — derive per-LOD
-        // indirect args from each LOD's needs_count.
-        for lod_idx in 0..LOD_COUNT {
-            self.populate.record_finalize(device, encoder, grid, lod_idx);
-        }
+        // Pass 3: populate-finalize at LOD 0 — derive
+        // `[needs_count_lod0, 1, 1]` into populate_indirect_args[0].
+        self.populate.record_finalize(device, encoder, grid, 0);
 
-        // Passes 10..=13: populate[0..3] — fill each LOD's atlas via
-        // its indirect dispatch.
-        for lod_idx in 0..LOD_COUNT {
-            self.populate.record_populate(
-                device, queue, encoder, grid, sampler_bg, lod_idx,
-            );
-        }
+        // Pass 4: populate at LOD 0 — fill atlas[0] via indirect
+        // dispatch.
+        self.populate.record_populate(
+            device, queue, encoder, grid, sampler_bg, 0,
+        );
 
-        // Passes 14..=16: downsample[0→1, 1→2, 2→3] — box-filter
-        // cascade fills the higher LODs from LOD 0's populated tiles.
+        // Passes 5..=7: downsample[0→1, 1→2, 2→3] — box-filter
+        // cascade fills LODs 1..3 from LOD 0's populated tiles. Each
+        // cascade reuses populate_indirect_args[lod_src] (already
+        // [needs_count_src, 1, 1]) — no extra finalize needed.
         for cascade_idx in 0..(CASCADE_COUNT as u32) {
             self.downsample.record_cascade(device, encoder, grid, cascade_idx);
         }

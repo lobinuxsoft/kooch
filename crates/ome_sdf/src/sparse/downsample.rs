@@ -1,8 +1,9 @@
 //! Downsample cascade — fills LODs 1..=3 by box-filtering the
 //! preceding LOD. One pipeline per cascade pair, dispatched indirect
-//! over the source LOD's `populate_indirect_args` (so each cascade
-//! sees one workgroup per cell that classify marked at the source
-//! LOD).
+//! over LOD 0's `populate_indirect_args` (so each cascade sees one
+//! workgroup per cell that classify marked at LOD 0 — the only LOD
+//! the orchestrator runs classify + populate on, since the marked
+//! cell set is LOD-independent).
 //!
 //! See `shaders/sparse_downsample.wgsl` for the box-filter math and
 //! the skirt-clamp invariant. This module is the host-side
@@ -93,9 +94,12 @@ impl DownsamplePass {
     }
 
     /// Record the cascade `cascade_idx` (`0` = LOD 0→1, `1` = LOD
-    /// 1→2, `2` = LOD 2→3) into `encoder`. Indirect dispatch over the
-    /// source LOD's `populate_indirect_args` — same dispatch shape
-    /// the populate pass uses.
+    /// 1→2, `2` = LOD 2→3) into `encoder`. All cascades share the
+    /// same dispatch shape (`populate_indirect_args[0]` =
+    /// `[needs_count_lod0, 1, 1]`) and the same `needs_indices` /
+    /// `needs_count` source — LOD 0's, since the marked cell set is
+    /// LOD-independent and only LOD 0 actually runs classify in the
+    /// canonical cascade.
     pub fn record_cascade(
         &self,
         device: &wgpu::Device,
@@ -113,7 +117,7 @@ impl DownsamplePass {
         pass.set_pipeline(&self.pipelines[cascade_idx as usize]);
         pass.set_bind_group(0, &bg, &[]);
         pass.dispatch_workgroups_indirect(
-            grid.populate_indirect_args_buffer(lod_src),
+            grid.populate_indirect_args_buffer(0),
             0,
         );
     }
@@ -151,13 +155,17 @@ impl DownsamplePass {
                         grid.subgrid_pool_view(lod_dst),
                     ),
                 },
+                // needs_indices / needs_count come from LOD 0
+                // regardless of cascade — the canonical cascade only
+                // runs classify at LOD 0, and the marked cell set is
+                // LOD-independent.
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: grid.needs_indices_buffer(lod_src).as_entire_binding(),
+                    resource: grid.needs_indices_buffer(0).as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: grid.needs_count_buffer(lod_src).as_entire_binding(),
+                    resource: grid.needs_count_buffer(0).as_entire_binding(),
                 },
             ],
         })
