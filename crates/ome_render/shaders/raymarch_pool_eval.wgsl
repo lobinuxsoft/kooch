@@ -96,13 +96,21 @@ struct ChunkDescriptor {
     _pad2: f32,
 }
 
-// 16 bytes. Mirrors `ome_bvh::accel::TlasUniforms`. Reduced CPU-side
-// once per frame over the visible chunk set.
+// 32 bytes. Mirrors `ome_bvh::accel::TlasUniforms`. Reduced CPU-side
+// once per frame over the visible chunk set. `has_intersects` /
+// `has_subs` skip the precision-lossy `smooth_intersection` /
+// `smooth_subtraction` final-combine steps when the corresponding
+// role is empty (radv `mix(a, b, t)` lowers as `a + (b - a) * t` and
+// loses the smaller operand at the ±1e6 accumulator identities).
 struct TlasUniforms {
     k_int_global: f32,
     k_sub_global: f32,
     num_chunks: u32,
+    has_intersects: u32,
+    has_subs: u32,
     _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 // =============================================================================
@@ -334,10 +342,23 @@ fn eval_scene_bvh(p: vec3<f32>) -> f32 {
         }
     }
 
-    let k_int = max(tlas_uniforms.k_int_global, 1e-5);
-    let k_sub = max(tlas_uniforms.k_sub_global, 1e-5);
-    var result = sdf_smooth_intersection(acc_add, acc_int, k_int);
-    result = sdf_smooth_subtraction(result, acc_sub, k_sub);
+    // Final per-role combine. Skip the role-side smooth_op when the
+    // scene has no primitive carrying that role: with `±1e6` identities
+    // and radv's `mix(a, b, t) = a + (b - a) * t` lowering, the
+    // identity collapse loses ~`1e-2` of precision against `acc_add`
+    // when `acc_add` has any non-trivial magnitude. Skipping cleanly
+    // keeps the per-role math precise without forcing extra-large
+    // identities (which themselves break the 0-instead-of-value bug
+    // documented in PR-1's `±1e10` fix).
+    var result = acc_add;
+    if tlas_uniforms.has_intersects != 0u {
+        let k_int = max(tlas_uniforms.k_int_global, 1e-5);
+        result = sdf_smooth_intersection(result, acc_int, k_int);
+    }
+    if tlas_uniforms.has_subs != 0u {
+        let k_sub = max(tlas_uniforms.k_sub_global, 1e-5);
+        result = sdf_smooth_subtraction(result, acc_sub, k_sub);
+    }
     return result;
 }
 
