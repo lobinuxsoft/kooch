@@ -3,6 +3,8 @@
 //! cap.
 
 use crate::accel::descriptor::ChunkDescriptor;
+use crate::leaf::LeafAabb;
+use crate::node::BvhNode;
 
 /// Opaque identifier for a chunk currently resident in the pool.
 /// Returned by `insert_chunk` and consumed by `remove_chunk` /
@@ -24,10 +26,24 @@ pub type ChunkKey = u64;
 /// `chunk_descriptors[chunk_idx]` plus the streaming bookkeeping the
 /// GPU never sees.
 ///
-/// `sorted_indices[k]` is the original-position of the BLAS leaf at
-/// sorted position `k`. The value is the absolute pool index
-/// (`first_primitive + original_local_index`) so the WGSL traversal
-/// can read primitives directly without per-chunk fixup.
+/// # CPU mirrors
+///
+/// `cpu_bvh_nodes` and `cpu_leaf_aabbs` shadow the corresponding GPU
+/// pool slices for this chunk. They're written synchronously alongside
+/// the `Queue::write_buffer` calls during `insert_chunk` / `refit_chunk`
+/// — this is **maintained mirror**, not GPU readback, so the
+/// no-readback-in-hot-path constraint stays intact.
+///
+/// CPU consumers (today: `ome_physics::broadphase`; tomorrow: any
+/// CPU-side narrowphase or editor inspector) walk these directly via
+/// `OmeAccel::for_each_overlapping_cpu`. Memory cost is
+/// `O(live_primitives)` — scales with the scene, not with the cap.
+///
+/// `sorted_indices[k]` is the **absolute pool primitive index** of the
+/// BLAS leaf at sorted position `k` (= `first_primitive + original_i`).
+/// Used by `refit_chunk_slice_only` for the topology-preserving fast
+/// path; the WGSL traversal indexes `node.left` directly so the
+/// shader never reads this array.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ChunkSlot {
     pub(crate) descriptor: ChunkDescriptor,
@@ -38,4 +54,12 @@ pub(crate) struct ChunkSlot {
     #[allow(dead_code)]
     pub(crate) key: ChunkKey,
     pub(crate) sorted_indices: Vec<u32>,
+    /// Karras BVH nodes for this chunk's BLAS, in pool layout (post-
+    /// pass applied so leaf nodes carry absolute pool primitive
+    /// indices in `node.left`).
+    pub(crate) cpu_bvh_nodes: Vec<BvhNode>,
+    /// Leaf AABBs in **original-input order**, matching how
+    /// `leaf_aabbs_pool` is laid out on the GPU side. Indexed by
+    /// `(absolute_primitive_index - descriptor.first_primitive)`.
+    pub(crate) cpu_leaf_aabbs: Vec<LeafAabb>,
 }

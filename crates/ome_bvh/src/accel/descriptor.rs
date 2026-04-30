@@ -42,15 +42,28 @@ pub struct ChunkDescriptor {
 /// tail of `eval_scene_bvh`.
 ///
 /// **16 bytes, std430-clean.** Reduced CPU-side over the visible chunk
-/// set once per frame, uploaded as a uniform buffer. `num_chunks` is
-/// the count of *live* TLAS leaves (dead-skip slots excluded).
+/// set once per frame, uploaded as a uniform buffer.
+///
+/// `num_chunks` is the count of *live* TLAS leaves (dead-skip slots
+/// excluded). `has_intersects` / `has_subs` are non-zero iff at least
+/// one chunk in the pool carries a primitive with the corresponding
+/// role bit set; the shader skips the matching `smooth_intersection`
+/// / `smooth_subtraction` step when the flag is zero so the
+/// `±1e6` accumulator identities don't bleed `mix(a, b, t)` precision
+/// into the final distance (radv lowers `mix` as `a + (b - a) * t`,
+/// which loses the smaller operand at extreme magnitudes — AC2 hit
+/// this with diff ≈ 0.03 before the flags landed).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug, PartialEq)]
 pub struct TlasUniforms {
     pub k_int_global: f32,
     pub k_sub_global: f32,
     pub num_chunks: u32,
-    pub _pad: u32,
+    pub has_intersects: u32,
+    pub has_subs: u32,
+    pub _pad0: u32,
+    pub _pad1: u32,
+    pub _pad2: u32,
 }
 
 #[cfg(test)]
@@ -79,8 +92,8 @@ mod tests {
     }
 
     #[test]
-    fn tlas_uniforms_size_is_16_bytes() {
-        assert_eq!(size_of::<TlasUniforms>(), 16);
+    fn tlas_uniforms_size_is_32_bytes() {
+        assert_eq!(size_of::<TlasUniforms>(), 32);
         assert_eq!(align_of::<TlasUniforms>(), 4);
     }
 
@@ -89,7 +102,9 @@ mod tests {
         assert_eq!(offset_of!(TlasUniforms, k_int_global), 0);
         assert_eq!(offset_of!(TlasUniforms, k_sub_global), 4);
         assert_eq!(offset_of!(TlasUniforms, num_chunks), 8);
-        assert_eq!(offset_of!(TlasUniforms, _pad), 12);
+        assert_eq!(offset_of!(TlasUniforms, has_intersects), 12);
+        assert_eq!(offset_of!(TlasUniforms, has_subs), 16);
+        assert_eq!(offset_of!(TlasUniforms, _pad0), 20);
     }
 
     #[test]

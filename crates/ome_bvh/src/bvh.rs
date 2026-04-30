@@ -263,10 +263,11 @@ impl<T: Copy> Bvh<T> {
     ///   permutation describes; a stale `sorted_indices` produces
     ///   wrong-but-plausible AABBs without panicking.
     ///
-    /// Used by [`crate::SharedBvhState`] to keep its CPU mirror in
-    /// sync with the GPU refit fast path without paying for a full
-    /// `(2N-1) * 32 B` nodes readback. Pure CPU work; O(N) leaf writes
-    /// + bottom-up propagate.
+    /// Pure CPU work; O(N) leaf writes + bottom-up propagate.
+    /// `OmeAccel`'s topology-preserving refit hook
+    /// (`refit_chunk_slice_only`) drives this against the per-chunk
+    /// CPU shadow without paying for a full `(2N-1) * 32 B` nodes
+    /// readback.
     pub fn refit_in_place(&mut self, leaf_aabbs: &[LeafAabb], sorted_indices: &[u32]) {
         let n = self.leaf_count();
         refit_slice_in_place(&mut self.nodes, n, leaf_aabbs, sorted_indices);

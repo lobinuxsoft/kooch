@@ -1,12 +1,12 @@
 //! [`BvhState`] — raymarch wrapper around `OmeAccel`.
 //!
-//! PR-2 of #360 swaps the legacy `SharedBvhState` + slot-rotated side
-//! payload buffers for `OmeAccel`, the TLAS+BLAS pool acceleration
-//! structure. The pool's pre-allocated GPU buffers replace the
-//! double-buffered `(BVH, leaf_aabbs, RaymarchPayload, SdfPrimitive)`
-//! slots: every `insert_chunk` / `refit_chunk` writes into the
-//! pre-allocated pool slices via `Queue::write_buffer`, so the bind
-//! group references stay stable for the lifetime of the renderer.
+//! PR-2 of #360 retired the legacy global-BVH path for `OmeAccel`,
+//! the TLAS+BLAS pool acceleration structure. The pool's
+//! pre-allocated GPU buffers replace the prior double-buffered
+//! `(BVH, leaf_aabbs, RaymarchPayload, SdfPrimitive)` slots: every
+//! `insert_chunk` / `refit_chunk` writes into the pre-allocated pool
+//! slices via `Queue::write_buffer`, so the bind group references
+//! stay stable for the lifetime of the renderer.
 //!
 //! # Single-chunk migration
 //!

@@ -34,6 +34,7 @@
 //!   transition before the BLAS slice is freed.
 
 pub mod dtos;
+mod uniforms;
 
 #[cfg(test)]
 mod contract_tests;
@@ -48,8 +49,7 @@ use crate::aabb::Aabb;
 use crate::accel::descriptor::ChunkDescriptor;
 use crate::accel::error::AccelError;
 use crate::accel::state::{ChunkBvhHandle, ChunkKey, ChunkSlot, OmeAccel};
-use crate::accel::tlas;
-use crate::bvh::{Bvh, refit_slice_in_place};
+use crate::bvh::Bvh;
 use crate::leaf::LeafAabb;
 use crate::node::{BVH_LEAF_FLAG, BvhNode};
 
@@ -120,8 +120,8 @@ impl OmeAccel {
         let mut leaves_scratch = vec![0u32; n as usize];
         let meta = Bvh::<u32>::build_into(items, &mut nodes_scratch, &mut leaves_scratch);
 
-        // Post-pass: rewrite leaf-node `left` from sorted-position `k`
-        // (what `Bvh::build_into` emits) to the absolute pool
+        // Post-pass A: rewrite leaf-node `left` from sorted-position
+        // `k` (what `Bvh::build_into` emits) to the absolute pool
         // primitive index `leaves_scratch[k]`. After this, the WGSL
         // traversal at a leaf can do `prim = primitives[node.left]`
         // and `meta = leaf_aabbs[node.left]` without an offset fixup
@@ -129,6 +129,28 @@ impl OmeAccel {
         let leaf_offset = (n.saturating_sub(1)) as usize;
         for k in 0..n as usize {
             nodes_scratch[leaf_offset + k].left = leaves_scratch[k];
+        }
+
+        // Post-pass B: bias every **internal** node's child indices
+        // by `first_node` so they point into absolute `bvh_nodes_pool`
+        // positions. `Bvh::build_into` emits child indices relative
+        // to the local `nodes_dst` slice (range `0..total_nodes`);
+        // when the slice is uploaded at pool offset `first_node` the
+        // shader reads `bvh_nodes_pool[child_idx]` and would land in
+        // the wrong chunk's slice without this bias. Single-chunk
+        // pools have `first_node = 0` so the bias is a no-op (which
+        // is why PR-2's AC1 + AC6 passed despite the bug — the
+        // failure mode requires `chunk_count > 1`, surfaced by AC2).
+        if first_node != 0 {
+            for k in 0..leaf_offset {
+                let internal = &mut nodes_scratch[k];
+                debug_assert!(
+                    internal.right_or_count & crate::node::BVH_LEAF_FLAG == 0,
+                    "post-pass B must only bias internal nodes",
+                );
+                internal.left += first_node;
+                internal.right_or_count += first_node;
+            }
         }
 
         // Inflate root AABB by max_smoothness_radius — TLAS culling
@@ -189,6 +211,8 @@ impl OmeAccel {
             live: true,
             key: insert.key,
             sorted_indices: leaves_scratch,
+            cpu_bvh_nodes: nodes_scratch,
+            cpu_leaf_aabbs: insert.leaf_aabbs.to_vec(),
         };
         self.coord_to_idx.insert(insert.key, chunk_idx);
         self.tlas_dirty_count = self.tlas_dirty_count.saturating_add(1);
@@ -208,9 +232,13 @@ impl OmeAccel {
             return Err(AccelError::UnknownChunk);
         }
         let desc = slot.descriptor;
-        // Mark slot dead first.
+        // Mark slot dead first. Drop the CPU mirrors so traversals
+        // observe the eviction immediately and the slot's previous
+        // memory is released.
         slot.live = false;
         slot.sorted_indices.clear();
+        slot.cpu_bvh_nodes.clear();
+        slot.cpu_leaf_aabbs.clear();
 
         // Return pool ranges. TLAS gets rebuilt on the next
         // `update_gpu` so we don't write the dead-skip flag here —
@@ -276,12 +304,24 @@ impl OmeAccel {
         let mut leaves_scratch = vec![0u32; n as usize];
         let meta = Bvh::<u32>::build_into(items, &mut nodes_scratch, &mut leaves_scratch);
 
-        // Post-pass: same WGSL contract as `insert_chunk` — leaf
-        // `node.left` carries the absolute pool primitive index, not
-        // the sorted-position `k`.
+        // Post-passes A + B: same WGSL contract as `insert_chunk` —
+        // leaf `node.left` carries the absolute pool primitive index;
+        // internal node child indices biased by `first_node` so they
+        // point into absolute `bvh_nodes_pool` positions.
         let leaf_offset = (n.saturating_sub(1)) as usize;
         for k in 0..n as usize {
             nodes_scratch[leaf_offset + k].left = leaves_scratch[k];
+        }
+        if first_node != 0 {
+            for k in 0..leaf_offset {
+                let internal = &mut nodes_scratch[k];
+                debug_assert!(
+                    internal.right_or_count & crate::node::BVH_LEAF_FLAG == 0,
+                    "post-pass B must only bias internal nodes",
+                );
+                internal.left += first_node;
+                internal.right_or_count += first_node;
+            }
         }
 
         let r = refit.max_smoothness_radius.max(0.0);
@@ -315,12 +355,15 @@ impl OmeAccel {
             refit.primitives_bytes,
         );
 
-        // CPU mirror updates — descriptor + cached permutation.
+        // CPU mirror updates — descriptor + cached permutation +
+        // shadowed BLAS nodes / leaf aabbs.
         let slot = &mut self.slots[slot_idx];
         slot.descriptor.aabb_min = new_min;
         slot.descriptor.aabb_max = new_max;
         slot.descriptor.max_smoothness_radius = r;
         slot.sorted_indices = leaves_scratch;
+        slot.cpu_bvh_nodes = nodes_scratch;
+        slot.cpu_leaf_aabbs = refit.leaf_aabbs.to_vec();
 
         let descriptor = slot.descriptor;
         queue.write_buffer(
@@ -333,53 +376,11 @@ impl OmeAccel {
         Ok(())
     }
 
-    /// Drive the TLAS rebuild + uniforms upload. Call once per frame
-    /// before the raymarch dispatch — the streaming layer batches as
-    /// many `insert_chunk` / `remove_chunk` / `refit_chunk` calls as
-    /// it likes between two `update_gpu` calls; the rebuild collapses
-    /// them into a single upload.
-    pub fn update_gpu(&mut self, queue: &wgpu::Queue, k_int_global: f32, k_sub_global: f32) {
-        if self.tlas_dirty_count > 0 {
-            tlas::rebuild(self, queue);
-            self.tlas_dirty_count = 0;
-        }
-        let uniforms = crate::accel::descriptor::TlasUniforms {
-            k_int_global,
-            k_sub_global,
-            num_chunks: self.live_chunk_count(),
-            _pad: 0,
-        };
-        queue.write_buffer(
-            &self.buffers.tlas_uniforms,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
-    }
-
-    /// Topology-preserving slice refit (no rebuild). Lives here as a
-    /// follow-up optimisation hook for `refit_chunk` — kept exposed so
-    /// downstream perf tests can target it directly.
-    #[doc(hidden)]
-    pub fn refit_chunk_slice_only(
-        &mut self,
-        queue: &wgpu::Queue,
-        chunk_idx: u32,
-        leaf_aabbs_perm: &[LeafAabb],
-        nodes_dst: &mut [BvhNode],
-    ) {
-        let slot = &self.slots[chunk_idx as usize];
-        let descriptor = slot.descriptor;
-        let n = descriptor.leaf_count as usize;
-        // The caller-owned `nodes_dst` is the existing pool slice
-        // mirrored to CPU memory; refit in place.
-        refit_slice_in_place(nodes_dst, n, leaf_aabbs_perm, &slot.sorted_indices);
-        queue.write_buffer(
-            &self.buffers.bvh_nodes_pool,
-            descriptor.first_node as u64 * size_of::<BvhNode>() as u64,
-            cast_slice(&nodes_dst[..if n == 1 { 1 } else { 2 * n - 1 }]),
-        );
-    }
 }
+
+// `update_gpu` + `refit_chunk_slice_only` live in the sibling
+// `uniforms.rs` so the per-chunk hot-path file stays under the
+// workspace's 400 LoC monolith cap.
 
 /// Helper exposed for tests / external observability — confirms the
 /// high bit of the encoded TLAS leaf payload aligns with the BLAS
