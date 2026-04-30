@@ -37,13 +37,19 @@
 //!   `chunk_descriptors`. Caps `MAX_CHUNKS` at `2^30 - 1` (≈ 1 G);
 //!   the default cap of `1024` lives well below.
 
+pub mod buffers;
 pub mod descriptor;
 pub mod error;
 pub mod pool;
+pub mod state;
+pub mod streaming;
+pub mod tlas;
 
+pub use buffers::AccelBuffers;
 pub use descriptor::{ChunkDescriptor, TlasUniforms};
 pub use error::{AccelCaps, AccelError};
 pub use pool::{FragmentationMetrics, FreeListPool, FreeRange};
+pub use state::{ChunkBvhHandle, ChunkKey, OmeAccel};
 
 /// Set on TLAS leaves whose chunk has been evicted. Traversal skips
 /// without descending into the BLAS pool.

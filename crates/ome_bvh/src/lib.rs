@@ -34,9 +34,10 @@ pub mod shared;
 
 pub use aabb::Aabb;
 pub use accel::{
-    AccelCaps, AccelError, ChunkDescriptor, FragmentationMetrics, FreeListPool, FreeRange,
-    MAX_BLAS_STACK, MAX_CHUNKS_LIMIT, MAX_TLAS_STACK, TLAS_CHUNK_IDX_MASK, TLAS_DEAD_FLAG,
-    TLAS_REBUILD_THRESHOLD, TlasUniforms,
+    AccelBuffers, AccelCaps, AccelError, ChunkBvhHandle, ChunkDescriptor, ChunkKey,
+    FragmentationMetrics, FreeListPool, FreeRange, MAX_BLAS_STACK, MAX_CHUNKS_LIMIT,
+    MAX_TLAS_STACK, OmeAccel, TLAS_CHUNK_IDX_MASK, TLAS_DEAD_FLAG, TLAS_REBUILD_THRESHOLD,
+    TlasUniforms,
 };
 pub use bvh::Bvh;
 pub use gpu::{
