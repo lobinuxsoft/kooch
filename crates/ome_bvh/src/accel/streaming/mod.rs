@@ -22,6 +22,10 @@
 //! 2. Pool slots returned to the free lists.
 //! 3. CPU mirror cleared, dirty-count bumped.
 
+pub mod dtos;
+
+pub use dtos::{ChunkInsert, ChunkRefit};
+
 use bytemuck::cast_slice;
 use glam::Vec3;
 use std::mem::size_of;
@@ -34,34 +38,6 @@ use crate::accel::tlas;
 use crate::bvh::{Bvh, refit_slice_in_place};
 use crate::leaf::LeafAabb;
 use crate::node::{BVH_LEAF_FLAG, BvhNode};
-
-/// Inputs for one `insert_chunk` call. Borrowed slices — the pool
-/// copies into its GPU buffers and never aliases the caller's
-/// allocations.
-pub struct ChunkInsert<'a> {
-    /// Streaming-layer-stable key. Used to look the chunk back up
-    /// from `remove_chunk` / `refit_chunk`.
-    pub key: ChunkKey,
-    /// Per-primitive `LeafAabb`. `len() = primitive_count` for this
-    /// chunk. `aabb_min` / `aabb_max` already inflated by the
-    /// per-role envelope.
-    pub leaf_aabbs: &'a [LeafAabb],
-    /// Per-primitive opaque payload. Length must equal
-    /// `leaf_aabbs.len() * primitive_stride`.
-    pub primitives_bytes: &'a [u8],
-    /// Conservative envelope used by the TLAS culling — typically
-    /// `max(k_add, k_sub, k_int)` over this chunk's primitives.
-    pub max_smoothness_radius: f32,
-}
-
-/// Inputs for one `refit_chunk` call. Same primitive count as the
-/// chunk's last `insert_chunk` — the topology is preserved.
-pub struct ChunkRefit<'a> {
-    pub key: ChunkKey,
-    pub leaf_aabbs: &'a [LeafAabb],
-    pub primitives_bytes: &'a [u8],
-    pub max_smoothness_radius: f32,
-}
 
 impl OmeAccel {
     /// Bring a new chunk into the pool. Allocates byte slices in the
