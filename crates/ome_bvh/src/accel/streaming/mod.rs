@@ -1,28 +1,42 @@
 //! Hot-path streaming API for `OmeAccel` — `insert_chunk`,
-//! `remove_chunk`, `refit_chunk`, `update_gpu`.
+//! `remove_chunk`, `refit_chunk`, `update_gpu`. Every byte is written
+//! via `Queue::write_buffer` slice writes into the pre-allocated pools;
+//! no GPU-side allocation in the hot path.
 //!
-//! The streaming layer (`WorldStreamingPlugin` + `BvhState` in the
-//! renderer) drives every API on this module. None of these functions
-//! reallocate GPU buffers; every byte is written via
-//! `Queue::write_buffer` slice writes into the pre-allocated pools.
+//! # WGSL contract for the BLAS leaves
 //!
-//! # Order invariants (insert)
+//! The shader reads each BLAS leaf via `primitives_pool[node.first_leaf()]`
+//! and `leaf_aabbs_pool[node.first_leaf()]` directly — no offset fixup,
+//! no separate `sorted_indices` binding. Two invariants make that work:
 //!
-//! 1. `BLAS` write (nodes + leaf_aabbs + primitives) — into the slot
-//!    reserved by the `FreeListPool`s.
-//! 2. `chunk_descriptors[chunk_idx]` — points at the BLAS slice.
-//! 3. TLAS dirty-count bumped. The next `update_gpu` decides between
-//!    incremental refit and full rebuild based on
-//!    [`TLAS_REBUILD_THRESHOLD`](super::TLAS_REBUILD_THRESHOLD).
+//! 1. **`node.left` (== `node.first_leaf()`) carries the *absolute*
+//!    primitive index in `primitives_pool`** — `first_primitive + i`,
+//!    not the morton-sorted local `k`. `Bvh::build_into` emits
+//!    `node.left = k`, so we post-pass leaf nodes to rewrite
+//!    `node.left = leaves_scratch[k]` (the payload, which already
+//!    carries `first_primitive + i`).
+//! 2. **`leaf_aabbs_pool` is written in original-input order**, so
+//!    `leaf_aabbs_pool[first_primitive + i]` resolves to the `LeafAabb`
+//!    of original primitive `i`. No morton permutation on the leaf
+//!    side: the BLAS leaf node already carries the sorted AABB in
+//!    `node.aabb_min/aabb_max`; `leaf_aabbs_pool` only serves the role
+//!    flags / `entity_id` lookup, which keys on the absolute primitive
+//!    index via (1).
 //!
-//! # Order invariants (remove)
+//! # Order invariants
 //!
-//! 1. TLAS leaf marked dead-skip (so any in-flight traversal sees the
-//!    live → dead transition before the BLAS slice is freed).
-//! 2. Pool slots returned to the free lists.
-//! 3. CPU mirror cleared, dirty-count bumped.
+//! - **Insert:** BLAS write (nodes + leaves + primitives) → descriptor
+//!   write → TLAS dirty-count bump. The next `update_gpu` decides
+//!   between incremental refit and full rebuild based on
+//!   [`TLAS_REBUILD_THRESHOLD`](super::TLAS_REBUILD_THRESHOLD).
+//! - **Remove:** mark dead → free pool ranges → clear CPU mirror →
+//!   dirty-count bump. In-flight traversals see the live → dead
+//!   transition before the BLAS slice is freed.
 
 pub mod dtos;
+
+#[cfg(test)]
+mod contract_tests;
 
 pub use dtos::{ChunkInsert, ChunkRefit};
 
@@ -88,9 +102,11 @@ impl OmeAccel {
         };
 
         // Build BLAS into a CPU scratch slice. Payload `T = u32` is
-        // the **absolute pool primitive index**, so the WGSL leaf
-        // traversal reads `primitives[node.first_leaf()]` without
-        // per-chunk offset fixup.
+        // the **absolute pool primitive index**: `leaves_scratch[k] =
+        // first_primitive + i_original` for the leaf at sorted
+        // position `k`. The WGSL contract (see module docstring) wants
+        // that absolute index in `node.left` directly — see post-pass
+        // below.
         let items: Vec<(u32, Aabb)> = insert
             .leaf_aabbs
             .iter()
@@ -104,19 +120,16 @@ impl OmeAccel {
         let mut leaves_scratch = vec![0u32; n as usize];
         let meta = Bvh::<u32>::build_into(items, &mut nodes_scratch, &mut leaves_scratch);
 
-        // Permute leaf_aabbs into Morton order so
-        // `leaf_aabbs_pool[first_leaf + k]` corresponds to the BLAS
-        // leaf at sorted position `k`. The traversal looks up
-        // primitive metadata via `first_leaf + k`, not by original
-        // position — keeping the permutation consistent here means
-        // the shader path is permutation-free.
-        let leaves_perm_aabbs: Vec<LeafAabb> = leaves_scratch
-            .iter()
-            .map(|&pool_prim_idx| {
-                let original_i = (pool_prim_idx - first_primitive) as usize;
-                insert.leaf_aabbs[original_i]
-            })
-            .collect();
+        // Post-pass: rewrite leaf-node `left` from sorted-position `k`
+        // (what `Bvh::build_into` emits) to the absolute pool
+        // primitive index `leaves_scratch[k]`. After this, the WGSL
+        // traversal at a leaf can do `prim = primitives[node.left]`
+        // and `meta = leaf_aabbs[node.left]` without an offset fixup
+        // or an extra `sorted_indices` binding.
+        let leaf_offset = (n.saturating_sub(1)) as usize;
+        for k in 0..n as usize {
+            nodes_scratch[leaf_offset + k].left = leaves_scratch[k];
+        }
 
         // Inflate root AABB by max_smoothness_radius — TLAS culling
         // stays conservative under cross-chunk smooth blends.
@@ -145,7 +158,10 @@ impl OmeAccel {
             _pad: [0.0; 3],
         };
 
-        // GPU writes — three slice writes into the pre-allocated pools.
+        // GPU writes — four slice writes into the pre-allocated pools.
+        // `leaf_aabbs_pool` keeps original-input order so the absolute
+        // primitive index from `node.left` indexes it directly (WGSL
+        // contract — see module docstring).
         queue.write_buffer(
             &self.buffers.bvh_nodes_pool,
             first_node as u64 * size_of::<BvhNode>() as u64,
@@ -154,7 +170,7 @@ impl OmeAccel {
         queue.write_buffer(
             &self.buffers.leaf_aabbs_pool,
             first_leaf as u64 * size_of::<LeafAabb>() as u64,
-            cast_slice(&leaves_perm_aabbs),
+            cast_slice(insert.leaf_aabbs),
         );
         queue.write_buffer(
             &self.buffers.primitives_pool,
@@ -239,25 +255,15 @@ impl OmeAccel {
         let first_leaf = descriptor.first_leaf;
         let first_primitive = descriptor.first_primitive;
 
-        // Reuse the topology — rebuild scratch nodes by reading the
-        // current pool slice via a CPU shadow. We don't hold a CPU
-        // mirror of bvh_nodes_pool; instead, re-emit the nodes from
-        // the build helper using the cached `sorted_indices`. That
-        // path stays topology-preserving exactly when the input
-        // ordering matches the cached permutation, which is the
-        // contract of `refit_chunk`.
+        // Recompute the BLAS via the same Karras path as `insert_chunk`
+        // — the moved-entity case is the typical refit caller, and
+        // entity drift up to a chunk diameter can swap leaf morton
+        // codes. Reusing `Bvh::build_into` on the new AABBs is the
+        // straight-line correct answer; the topology-preserving fast
+        // path stays exposed via `refit_chunk_slice_only` for the
+        // perf hook below. Ordering: `leaves_scratch[k]` = absolute
+        // pool primitive index after the build.
         let mut nodes_scratch = vec![BvhNode::default(); total_nodes as usize];
-        let leaf_offset = (n.saturating_sub(1)) as usize;
-        let sorted_indices = &self.slots[slot_idx].sorted_indices;
-        for (k, &pool_prim_idx) in sorted_indices.iter().enumerate() {
-            let original_i = (pool_prim_idx - first_primitive) as usize;
-            let l = &refit.leaf_aabbs[original_i];
-            nodes_scratch[leaf_offset + k] = BvhNode::leaf(l.aabb_min, l.aabb_max, k as u32, 1);
-        }
-        // Karras internals (parents) — we reconstruct the topology by
-        // reading the current GPU is too expensive; instead, recompute
-        // via Bvh::build_into and discard the topology mismatch when
-        // it differs (rare for entity refit). Fallback: full rebuild.
         let items: Vec<(u32, Aabb)> = refit
             .leaf_aabbs
             .iter()
@@ -270,22 +276,13 @@ impl OmeAccel {
         let mut leaves_scratch = vec![0u32; n as usize];
         let meta = Bvh::<u32>::build_into(items, &mut nodes_scratch, &mut leaves_scratch);
 
-        // If the new permutation matches the cached one, this is a
-        // pure refit (topology preserved). Otherwise the pool slice
-        // is now backed by a fresh build — overwrite the cached
-        // permutation accordingly.
-        let topology_preserved = leaves_scratch.as_slice() == sorted_indices.as_slice();
-        let _ = topology_preserved; // kept for the optimisation hook
-
-        // Permute leaf_aabbs to Morton order for the leaf_aabbs_pool
-        // slice write.
-        let leaves_perm_aabbs: Vec<LeafAabb> = leaves_scratch
-            .iter()
-            .map(|&pool_prim_idx| {
-                let original_i = (pool_prim_idx - first_primitive) as usize;
-                refit.leaf_aabbs[original_i]
-            })
-            .collect();
+        // Post-pass: same WGSL contract as `insert_chunk` — leaf
+        // `node.left` carries the absolute pool primitive index, not
+        // the sorted-position `k`.
+        let leaf_offset = (n.saturating_sub(1)) as usize;
+        for k in 0..n as usize {
+            nodes_scratch[leaf_offset + k].left = leaves_scratch[k];
+        }
 
         let r = refit.max_smoothness_radius.max(0.0);
         let new_min = [
@@ -299,7 +296,9 @@ impl OmeAccel {
             meta.root_aabb.max.z + r,
         ];
 
-        // GPU writes.
+        // GPU writes. `leaf_aabbs_pool` keeps original-input order
+        // (WGSL contract) so the absolute primitive index from
+        // `node.left` indexes it directly.
         queue.write_buffer(
             &self.buffers.bvh_nodes_pool,
             first_node as u64 * size_of::<BvhNode>() as u64,
@@ -308,7 +307,7 @@ impl OmeAccel {
         queue.write_buffer(
             &self.buffers.leaf_aabbs_pool,
             first_leaf as u64 * size_of::<LeafAabb>() as u64,
-            cast_slice(&leaves_perm_aabbs),
+            cast_slice(refit.leaf_aabbs),
         );
         queue.write_buffer(
             &self.buffers.primitives_pool,
@@ -389,3 +388,4 @@ impl OmeAccel {
 pub const fn _tlas_leaf_high_bit_invariant() -> u32 {
     BVH_LEAF_FLAG
 }
+
