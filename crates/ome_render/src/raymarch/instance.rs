@@ -149,9 +149,6 @@ impl Default for SceneMeta {
     }
 }
 
-/// Initial capacity for the SDF primitive storage buffer (grows on demand).
-pub(super) const INITIAL_PRIMITIVE_CAPACITY: u64 = 256;
-
 /// Raymarch-only per-primitive metadata. Lives in a separate storage
 /// buffer (`@group(1) @binding(5)` in `raymarch_main.wgsl`) so non-
 /// raymarch consumers (physics broadphase, frustum culling) don't pay

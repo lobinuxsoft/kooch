@@ -11,6 +11,50 @@ use crate::raymarch::bvh::BvhState;
 use crate::raymarch::instance::{RaymarchPayload, SceneMeta, SdfPrimitive, TYPE_SPHERE};
 use ome_bvh::{IS_RAYMARCH, LeafAabb, ROLE_RAYMARCH_ADD};
 
+/// Read N `Pod` records back from a slot-resident storage buffer.
+/// Used by the regression suite (`move_propagates`, etc.) to assert
+/// the slot's contents match what a kick committed; production never
+/// copies these buffers. The slot factory in
+/// [`super::super::slots`] sets `COPY_SRC` for exactly this path.
+pub(super) fn readback_pod<T: Pod>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    src: &wgpu::Buffer,
+    n: u32,
+    label: &str,
+) -> Vec<T> {
+    let bytes = (n as u64) * std::mem::size_of::<T>() as u64;
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: bytes,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("raymarch_bvh::gpu_tests::readback_pod_encoder"),
+    });
+    encoder.copy_buffer_to_buffer(src, 0, &staging, 0, bytes);
+    queue.submit(std::iter::once(encoder.finish()));
+
+    let slice = staging.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        tx.send(r).ok();
+    });
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(30)),
+        })
+        .expect("poll");
+    rx.recv().expect("map_async sender").expect("map_async result");
+    let data = slice.get_mapped_range();
+    let v: Vec<T> = bytemuck::cast_slice::<u8, T>(&data).to_vec();
+    drop(data);
+    staging.unmap();
+    v
+}
+
 /// Headless GPU acquisition. Returns `None` when no adapter is
 /// available or the timestamp features the BvhGpuBuilder needs are
 /// missing — same skip-not-fail policy as the ome_bvh GPU tests.

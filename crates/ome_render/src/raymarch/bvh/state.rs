@@ -1,98 +1,39 @@
 //! [`BvhState`] — raymarch wrapper around the engine-shared
 //! [`SharedBvhState`].
 //!
-//! Holds the renderer's view of the multi-consumer GPU BVH plus a
-//! parallel double-buffer for the raymarch-only [`RaymarchPayload`]
-//! storage buffer (binding 5 of the raymarch fragment shader). Every
-//! BVH-side concern — nodes / sorted_indices / leaf_aabbs / capacity
-//! growth — is delegated to [`SharedBvhState`]; only the raymarch
-//! side payload lives here.
+//! Holds the renderer's view of the multi-consumer GPU BVH plus the
+//! parallel raymarch-only double-buffers (see [`super::slots`]) for
+//! `SdfPrimitive[]` (binding 1) and `RaymarchPayload[]` (binding 5).
+//! Every BVH-side concern — nodes / sorted_indices / leaf_aabbs /
+//! capacity growth — is delegated to [`SharedBvhState`]; only the
+//! raymarch-side per-slot uploads live here.
 //!
-//! The raymarch payload upload rides the orchestrator's
-//! [`BuildToken::attach_payload`]: it fires atomically on swap success
-//! and is dropped without running on swap failure, so the parallel
-//! payload buffer can never desync from the BVH it was kicked
-//! alongside.
+//! Both side double-buffers ride the orchestrator's
+//! [`BuildToken::attach_payload`]: their captured `Vec`s fire
+//! atomically on swap success and are dropped without running on swap
+//! failure, so each slot's `(BVH, leaf_aabbs, payloads, primitives)`
+//! tuple is consistent with itself by construction. That's the
+//! lockstep #356 needs — see the slots module docstring for the full
+//! contract.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use ome_bvh::{Aabb, BvhBuildError, LeafAabb, SharedBvhState, SwapInfo};
 
-use crate::raymarch::instance::RaymarchPayload;
-
-/// Initial capacity (in primitives) for the raymarch payload double-
-/// buffer. Tracks `INITIAL_SLOT_CAPACITY` in `ome_bvh::shared` so
-/// growth events line up across the two double-buffers.
-const INITIAL_PAYLOAD_CAPACITY: u64 = 256;
-
-/// Per-slot raymarch-only side buffer. Mirrors the shared BVH's slot
-/// rotation; bound by the raymarch fragment shader at binding 5.
-struct PayloadSlot {
-    buffer: wgpu::Buffer,
-    capacity: u64,
-}
-
-impl PayloadSlot {
-    fn new(device: &wgpu::Device, capacity: u64) -> Self {
-        Self {
-            buffer: make_payload_buffer(device, capacity),
-            capacity,
-        }
-    }
-
-    fn ensure_capacity(&mut self, device: &wgpu::Device, n: u64) {
-        if n <= self.capacity {
-            return;
-        }
-        let new_cap = n.next_power_of_two().max(INITIAL_PAYLOAD_CAPACITY);
-        self.buffer = make_payload_buffer(device, new_cap);
-        self.capacity = new_cap;
-    }
-}
-
-/// Grow the target payload slot to fit `token.n()`, then register the
-/// upload closure on the orchestrator's [`BuildToken`]. The closure
-/// captures a refcounted clone of the (possibly freshly-grown)
-/// `wgpu::Buffer` plus the owned payload `Vec`, so any later regrow
-/// on the consumer side cannot redirect the upload to the wrong
-/// buffer — the swap publishes whatever the kick committed to.
-///
-/// Free function (not a method) so the borrow only touches
-/// `payload_slots`, leaving the orchestrator-borrow held by `token`
-/// unaffected. Calling this through `&mut self` would conflict with
-/// the live `&mut self.shared` the token already holds.
-fn attach_payload_upload(
-    payload_slots: &mut [PayloadSlot; 2],
-    device: &wgpu::Device,
-    token: &mut ome_bvh::BuildToken<'_>,
-    raymarch_payloads: Vec<RaymarchPayload>,
-) {
-    let target_slot = token.target_slot();
-    let n = token.n();
-    let needed = (n as u64).max(1);
-    payload_slots[target_slot as usize].ensure_capacity(device, needed);
-    let buf = payload_slots[target_slot as usize].buffer.clone();
-    token.attach_payload(move |queue, _slot| {
-        queue.write_buffer(&buf, 0, bytemuck::cast_slice(&raymarch_payloads));
-    });
-}
-
-fn make_payload_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("raymarch_bvh::payload_slot"),
-        size: capacity * std::mem::size_of::<RaymarchPayload>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
+use super::slots::{
+    INITIAL_SIDE_CAPACITY, PayloadSlot, PrimitiveSlot, attach_payload_upload,
+    attach_primitive_upload,
+};
+use crate::raymarch::instance::{RaymarchPayload, SdfPrimitive};
 
 /// Raymarch-side BVH state. Wraps [`SharedBvhState`] and the parallel
-/// raymarch payload double-buffer. Bound to the renderer as a sub-
-/// resource of `RayMarchRenderer`.
+/// raymarch payload + primitive double-buffers. Bound to the renderer
+/// as a sub-resource of `RayMarchRenderer`.
 pub struct BvhState {
     shared: SharedBvhState,
     payload_slots: [PayloadSlot; 2],
+    primitive_slots: [PrimitiveSlot; 2],
 }
 
 impl BvhState {
@@ -107,8 +48,12 @@ impl BvhState {
         Self {
             shared: SharedBvhState::new(device, queue, pipeline_cache),
             payload_slots: [
-                PayloadSlot::new(device, INITIAL_PAYLOAD_CAPACITY),
-                PayloadSlot::new(device, INITIAL_PAYLOAD_CAPACITY),
+                PayloadSlot::new(device, INITIAL_SIDE_CAPACITY),
+                PayloadSlot::new(device, INITIAL_SIDE_CAPACITY),
+            ],
+            primitive_slots: [
+                PrimitiveSlot::new(device, INITIAL_SIDE_CAPACITY),
+                PrimitiveSlot::new(device, INITIAL_SIDE_CAPACITY),
             ],
         }
     }
@@ -136,22 +81,33 @@ impl BvhState {
         &self.payload_slots[idx].buffer
     }
 
+    /// Borrow the raymarch-only `SdfPrimitive[]` buffer for the
+    /// currently-active slot. Slot-rotated alongside `leaf_aabbs` so
+    /// the BVH cull and the SDF evaluation always agree on the scene
+    /// state; see #356 for why this matters.
+    pub fn current_primitives(&self) -> &wgpu::Buffer {
+        let idx = self.shared.current_slot_index() as usize;
+        &self.primitive_slots[idx].buffer
+    }
+
     /// Number of valid primitives in the currently-active slot. `0`
     /// before any build has resolved.
     pub fn current_n(&self) -> u32 {
         self.shared.current_n()
     }
 
-    /// Compute a stable hash of `(items + leaf_aabbs + raymarch_payloads)`
-    /// so callers can detect whether the scene changed since the last
-    /// build. Hashing the raymarch payload alongside the items + leaves
-    /// is load-bearing: a smoothness change with no AABB / flag delta
-    /// must still trigger a re-upload, otherwise the bound slot keeps
-    /// stale `k` and the smooth blend silently drifts.
+    /// Compute a stable hash of `(items + leaf_aabbs + raymarch_payloads
+    /// + primitives)` so callers can detect whether the scene changed
+    /// since the last build. Hashing the side payloads alongside the
+    /// items + leaves is load-bearing: a smoothness or rotation change
+    /// with no AABB delta must still trigger a re-upload, otherwise the
+    /// bound slot keeps stale data and the rendered output silently
+    /// drifts.
     pub fn hash_scene(
         items: &[(u32, Aabb)],
         leaf_aabbs: &[LeafAabb],
         raymarch_payloads: &[RaymarchPayload],
+        primitives: &[SdfPrimitive],
     ) -> u64 {
         let mut h = DefaultHasher::new();
         items.len().hash(&mut h);
@@ -170,6 +126,22 @@ impl BvhState {
         for rp in raymarch_payloads {
             rp.smoothness.to_bits().hash(&mut h);
         }
+        primitives.len().hash(&mut h);
+        for p in primitives {
+            // Cover every byte the fragment shader reads — a pure
+            // rotation or a type-tag swap with no AABB delta must
+            // still invalidate the cached slot.
+            p.type_tag.hash(&mut h);
+            for c in p
+                .position
+                .iter()
+                .chain(p.rotation.iter())
+                .chain(p.scale.iter())
+                .chain(p.params.iter())
+            {
+                c.to_bits().hash(&mut h);
+            }
+        }
         h.finish()
     }
 
@@ -177,10 +149,9 @@ impl BvhState {
     /// [`Self::kick_auto_if_dirty`] instead — this entry point stays
     /// for tests / tooling that need a deterministic full build.
     ///
-    /// `items` is the BVH builder input; `leaf_aabbs` is the parallel
-    /// per-leaf metadata bound by every consumer; `raymarch_payloads`
-    /// is the raymarch-only metadata bound by the fragment shader.
-    /// All three slices must be the same length and ordering.
+    /// `items`, `leaf_aabbs`, `raymarch_payloads`, and `primitives`
+    /// must all be the same length and ordering: position `i` is the
+    /// same primitive across every slice.
     ///
     /// At most one build is in flight at a time. If a previous build
     /// has not yet been polled to completion, this is a no-op
@@ -194,19 +165,11 @@ impl BvhState {
         items: Vec<(u32, Aabb)>,
         leaf_aabbs: Vec<LeafAabb>,
         raymarch_payloads: Vec<RaymarchPayload>,
+        primitives: Vec<SdfPrimitive>,
     ) -> bool {
-        debug_assert_eq!(
-            items.len(),
-            leaf_aabbs.len(),
-            "items and leaf_aabbs must align 1:1 — one entry per primitive",
-        );
-        debug_assert_eq!(
-            items.len(),
-            raymarch_payloads.len(),
-            "items and raymarch_payloads must align 1:1 — one entry per primitive",
-        );
+        debug_assert_aligned(&items, &leaf_aabbs, &raymarch_payloads, &primitives);
 
-        let scene_hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads);
+        let scene_hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads, &primitives);
         let Some(mut token) = self.shared.kick(device, queue, items, leaf_aabbs, scene_hash) else {
             return false;
         };
@@ -216,6 +179,7 @@ impl BvhState {
             &mut token,
             raymarch_payloads,
         );
+        attach_primitive_upload(&mut self.primitive_slots, device, &mut token, primitives);
         true
     }
 
@@ -237,21 +201,13 @@ impl BvhState {
         items: Vec<(u32, Aabb)>,
         leaf_aabbs: Vec<LeafAabb>,
         raymarch_payloads: Vec<RaymarchPayload>,
+        primitives: Vec<SdfPrimitive>,
         move_threshold_ratio: f32,
         change_threshold_pct: f32,
     ) -> bool {
-        debug_assert_eq!(
-            items.len(),
-            leaf_aabbs.len(),
-            "items and leaf_aabbs must align 1:1 — one entry per primitive",
-        );
-        debug_assert_eq!(
-            items.len(),
-            raymarch_payloads.len(),
-            "items and raymarch_payloads must align 1:1 — one entry per primitive",
-        );
+        debug_assert_aligned(&items, &leaf_aabbs, &raymarch_payloads, &primitives);
 
-        let scene_hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads);
+        let scene_hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads, &primitives);
         let Some(mut token) = self.shared.kick_auto(
             device,
             queue,
@@ -269,16 +225,12 @@ impl BvhState {
             &mut token,
             raymarch_payloads,
         );
+        attach_primitive_upload(&mut self.primitive_slots, device, &mut token, primitives);
         true
     }
 
     /// Refit fast path: rewrite leaves with new AABBs over the
     /// existing topology. Returns `true` when a refit was kicked.
-    ///
-    /// `#[allow(dead_code)]`: the consumer wiring lives in S6 of
-    /// PR-5 (the refit-vs-rebuild policy). The method is part of
-    /// the public-facing API the orchestrator will pick up there.
-    #[allow(dead_code)]
     ///
     /// Suppressed under the same conditions as
     /// [`SharedBvhState::kick_refit`]: a previous build / refit in
@@ -290,8 +242,9 @@ impl BvhState {
     /// Caller invariants — silent corruption otherwise:
     /// - `items[i].0` is at the same array position as in the
     ///   immediately-preceding successful build / refit.
-    /// - `leaf_aabbs[i]` and `raymarch_payloads[i]` align 1:1 with
-    ///   `items[i]`.
+    /// - `leaf_aabbs[i]`, `raymarch_payloads[i]`, and `primitives[i]`
+    ///   align 1:1 with `items[i]`.
+    #[allow(dead_code)]
     pub fn kick_refit_if_dirty(
         &mut self,
         device: &wgpu::Device,
@@ -299,19 +252,11 @@ impl BvhState {
         items: Vec<(u32, Aabb)>,
         leaf_aabbs: Vec<LeafAabb>,
         raymarch_payloads: Vec<RaymarchPayload>,
+        primitives: Vec<SdfPrimitive>,
     ) -> bool {
-        debug_assert_eq!(
-            items.len(),
-            leaf_aabbs.len(),
-            "items and leaf_aabbs must align 1:1 — one entry per primitive",
-        );
-        debug_assert_eq!(
-            items.len(),
-            raymarch_payloads.len(),
-            "items and raymarch_payloads must align 1:1 — one entry per primitive",
-        );
+        debug_assert_aligned(&items, &leaf_aabbs, &raymarch_payloads, &primitives);
 
-        let scene_hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads);
+        let scene_hash = Self::hash_scene(&items, &leaf_aabbs, &raymarch_payloads, &primitives);
         let Some(mut token) =
             self.shared
                 .kick_refit(device, queue, items, leaf_aabbs, scene_hash)
@@ -324,6 +269,7 @@ impl BvhState {
             &mut token,
             raymarch_payloads,
         );
+        attach_primitive_upload(&mut self.primitive_slots, device, &mut token, primitives);
         true
     }
 
@@ -333,11 +279,11 @@ impl BvhState {
     /// - `None` — no pending build, or pending build still in flight.
     /// - `Some(Ok(()))` — pending build resolved; the orchestrator
     ///   copied nodes / sorted_indices / leaf_aabbs to the target
-    ///   slot, the attached payload uploader fired onto the same slot,
-    ///   and `current_slot` flipped.
+    ///   slot, the attached payload + primitive uploaders fired onto
+    ///   the same slot, and `current_slot` flipped.
     /// - `Some(Err(_))` — build failed; pending dropped without
-    ///   touching the slots; the captured payload `Vec` was dropped
-    ///   with the uploader closure. The renderer keeps using the
+    ///   touching the slots; the captured payload `Vec`s were dropped
+    ///   with the uploader closures. The renderer keeps using the
     ///   previous slot's data until the next successful build.
     pub fn poll_swap(
         &mut self,
@@ -349,4 +295,28 @@ impl BvhState {
             Ok(SwapInfo { .. }) => Some(Ok(())),
         }
     }
+}
+
+#[track_caller]
+fn debug_assert_aligned(
+    items: &[(u32, Aabb)],
+    leaf_aabbs: &[LeafAabb],
+    raymarch_payloads: &[RaymarchPayload],
+    primitives: &[SdfPrimitive],
+) {
+    debug_assert_eq!(
+        items.len(),
+        leaf_aabbs.len(),
+        "items and leaf_aabbs must align 1:1 — one entry per primitive",
+    );
+    debug_assert_eq!(
+        items.len(),
+        raymarch_payloads.len(),
+        "items and raymarch_payloads must align 1:1 — one entry per primitive",
+    );
+    debug_assert_eq!(
+        items.len(),
+        primitives.len(),
+        "items and primitives must align 1:1 — one entry per primitive",
+    );
 }

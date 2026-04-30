@@ -136,7 +136,7 @@ fn bvh_cull_matches_fullscan_for_mixed_add_sub_scene() {
     let items = items_from_leaves(&leaves);
 
     let mut state = BvhState::new(&device, &queue, None);
-    state.kick_if_dirty(&device, &queue, items, leaves.clone(), payloads.clone());
+    state.kick_if_dirty(&device, &queue, items, leaves.clone(), payloads.clone(), primitives.clone());
     drive_bvh_to_completion(&mut state, &device, &queue);
     assert_eq!(state.current_n(), SCENE.len() as u32);
 

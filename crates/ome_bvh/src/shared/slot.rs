@@ -80,7 +80,12 @@ fn make_leaf_aabbs_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer 
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("ome_bvh::shared::leaf_aabbs"),
         size: capacity * std::mem::size_of::<LeafAabb>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        // COPY_SRC parallels `nodes_buffer`: lets the regression tests
+        // for #356 read back the post-swap leaf AABBs without forcing
+        // a parallel CPU-side accessor. Production cost is zero.
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     })
 }
