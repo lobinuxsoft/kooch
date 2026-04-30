@@ -53,6 +53,20 @@ const SHADER_SOURCE: &str = concat!(
     include_str!("../../shaders/raymarch_main.wgsl"),
 );
 
+/// Pool-driven scene-SDF evaluator (#360, PR-1). Concatenated source
+/// of the primitives library + the new TLAS+BLAS pool shader.
+///
+/// PR-1 ships this as a standalone compute shader so the WGSL can be
+/// parsed + validated + executed in a smoke test before PR-2 wires
+/// `eval_scene_bvh` into the raymarch fragment path. See
+/// `shaders/raymarch_pool_eval.wgsl` for the WGSL contract + per-role
+/// accumulator invariant.
+pub const POOL_EVAL_SHADER_SOURCE: &str = concat!(
+    include_str!("../../../ome_sdf/shaders/sdf_primitives.wgsl"),
+    "\n",
+    include_str!("../../shaders/raymarch_pool_eval.wgsl"),
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,5 +82,53 @@ mod tests {
         validator
             .validate(&module)
             .expect("concatenated raymarch shader should validate");
+    }
+
+    /// Pool-driven shader (#360): naga must parse the concatenated
+    /// source. PR-2 wires it into the fragment pipeline; this test
+    /// pins the WGSL so the contract survives until then.
+    #[test]
+    fn pool_eval_shader_parses() {
+        let module = naga::front::wgsl::parse_str(POOL_EVAL_SHADER_SOURCE)
+            .expect("concatenated pool-eval shader should parse");
+        let mut validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        );
+        validator
+            .validate(&module)
+            .expect("concatenated pool-eval shader should validate");
+    }
+
+    /// `eval_scene_bvh` and the smoke-test compute entry point must
+    /// both survive parsing + validation. Pinning their presence here
+    /// catches accidental renames in PR-2 before the integration
+    /// tests do.
+    #[test]
+    fn pool_eval_shader_exposes_required_entry_points() {
+        let module = naga::front::wgsl::parse_str(POOL_EVAL_SHADER_SOURCE)
+            .expect("pool-eval shader should parse");
+        let function_names: Vec<&str> = module
+            .functions
+            .iter()
+            .filter_map(|(_, f)| f.name.as_deref())
+            .collect();
+        assert!(
+            function_names.iter().any(|n| *n == "eval_scene_bvh"),
+            "pool-eval shader must expose `eval_scene_bvh`; saw {function_names:?}"
+        );
+        assert!(
+            function_names.iter().any(|n| *n == "descend_blas"),
+            "pool-eval shader must expose `descend_blas` (BLAS traversal); saw {function_names:?}"
+        );
+        let entry_names: Vec<&str> = module
+            .entry_points
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        assert!(
+            entry_names.iter().any(|n| *n == "cs_eval_smoke"),
+            "pool-eval shader must expose `cs_eval_smoke` compute entry point; saw {entry_names:?}"
+        );
     }
 }
