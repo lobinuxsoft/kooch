@@ -45,10 +45,14 @@ pub fn has_any_visible_sdf(resources: &Resources) -> bool {
         || any_visible!(SdfPlane)
 }
 
-/// Fullscreen shader source (primitives library + ray-march main),
-/// concatenated at compile time.
+/// Fullscreen raymarch shader source: primitives library + pool-driven
+/// `eval_scene_bvh` + the fragment-shader entry. Concatenated in this
+/// order so `raymarch_main.wgsl` sees the SDF helpers + pool structs +
+/// pool bindings + `eval_scene_bvh` at parse time.
 const SHADER_SOURCE: &str = concat!(
     include_str!("../../../ome_sdf/shaders/sdf_primitives.wgsl"),
+    "\n",
+    include_str!("../../shaders/raymarch_pool_eval.wgsl"),
     "\n",
     include_str!("../../shaders/raymarch_main.wgsl"),
 );
