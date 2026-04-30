@@ -50,6 +50,22 @@ pub struct Bvh<T: Copy> {
     pub leaves: Vec<T>,
 }
 
+/// Metadata returned by the slice-destination
+/// [`Bvh::build_into`] variant. Mirrors the fields a
+/// `ChunkDescriptor` consumes after the BLAS write.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BuildMeta {
+    /// `2N - 1` for `N >= 1`, zero for empty input.
+    pub node_count: u32,
+    /// Number of input leaves (= number of populated entries in
+    /// `leaves_dst`).
+    pub leaf_count: u32,
+    /// Bounding box of the root, ready to copy into
+    /// `ChunkDescriptor.{aabb_min, aabb_max}` (after envelope
+    /// inflation by `max_smoothness_radius`).
+    pub root_aabb: Aabb,
+}
+
 impl<T: Copy> Bvh<T> {
     pub fn empty() -> Self {
         Self {
@@ -75,11 +91,63 @@ impl<T: Copy> Bvh<T> {
     /// Build a BVH from a list of `(payload, bounds)` items. Empty
     /// input yields [`Self::empty`]. Single-item input yields a tree
     /// with one leaf node at `nodes[0]`.
+    ///
+    /// Allocates owning `Vec`s for the result. When the destination
+    /// is a pool slice (e.g. `OmeAccel::bvh_nodes_pool`), prefer
+    /// [`Self::build_into`] — same algorithm, no allocation.
     pub fn build(items: Vec<(T, Aabb)>) -> Self {
         if items.is_empty() {
             return Self::empty();
         }
         let n = items.len();
+        let total_nodes = 2 * n - 1;
+        let mut nodes: Vec<BvhNode> = vec![BvhNode::default(); total_nodes];
+        let mut leaves: Vec<T> = Vec::with_capacity(n);
+        leaves.resize(n, items[0].0);
+        let _ = Self::build_into(items, &mut nodes, &mut leaves);
+        Self { nodes, leaves }
+    }
+
+    /// Slice-destination variant of [`Self::build`]. Writes the
+    /// `2N - 1` nodes into `nodes_dst[..2N - 1]` and the leaf
+    /// permutation into `leaves_dst[..N]`. Both slices MUST be
+    /// pre-sized to at least `2N - 1` and `N` respectively — the pool
+    /// allocator in `OmeAccel` reserves them via the `FreeListPool`
+    /// before calling.
+    ///
+    /// Returns the build metadata the caller stores into a
+    /// `ChunkDescriptor` (root AABB, populated counts).
+    ///
+    /// Empty input is a no-op and returns
+    /// `BuildMeta { node_count: 0, leaf_count: 0, root_aabb: EMPTY }`.
+    /// Same Karras + propagate algorithm as [`Self::build`] —
+    /// byte-identical output for the same input.
+    pub fn build_into(
+        items: Vec<(T, Aabb)>,
+        nodes_dst: &mut [BvhNode],
+        leaves_dst: &mut [T],
+    ) -> BuildMeta {
+        if items.is_empty() {
+            return BuildMeta {
+                node_count: 0,
+                leaf_count: 0,
+                root_aabb: Aabb::EMPTY,
+            };
+        }
+        let n = items.len();
+        let total_nodes = 2 * n - 1;
+        debug_assert!(
+            nodes_dst.len() >= total_nodes,
+            "build_into: nodes_dst capacity {} < required {}",
+            nodes_dst.len(),
+            total_nodes,
+        );
+        debug_assert!(
+            leaves_dst.len() >= n,
+            "build_into: leaves_dst capacity {} < required {}",
+            leaves_dst.len(),
+            n,
+        );
 
         // 1. Scene bounds.
         let scene_bounds = items
@@ -114,19 +182,18 @@ impl<T: Copy> Bvh<T> {
         // Karras-canonical layout: 2N-1 nodes total (or 1 when N==1).
         // Internals at [0, N-1), leaves at [N-1, 2N-1).
         let leaf_offset = n.saturating_sub(1);
-        let total_nodes = 2 * n - 1;
-        let mut nodes: Vec<BvhNode> = vec![BvhNode::default(); total_nodes];
-        let leaves: Vec<T> = morton_items.iter().map(|(_, p, _)| *p).collect();
 
-        // 4. Write leaves into [leaf_offset, total_nodes).
+        // 4. Write leaves into [leaf_offset, total_nodes) and
+        //    populate the leaves payload permutation.
         for (k, item) in morton_items.iter().enumerate() {
             let aabb = &item.2;
-            nodes[leaf_offset + k] = BvhNode::leaf(
+            nodes_dst[leaf_offset + k] = BvhNode::leaf(
                 aabb.min.into(),
                 aabb.max.into(),
                 k as u32,
                 1,
             );
+            leaves_dst[k] = item.1;
         }
 
         // 5. Compute internals via Karras (skipped when N==1: no
@@ -136,10 +203,8 @@ impl<T: Copy> Bvh<T> {
             for i in 0..(n - 1) {
                 let (first, last, gamma) = karras_range_and_split(&morton, i);
                 let left_idx = if gamma == first {
-                    // Single-leaf left child.
                     (leaf_offset + gamma) as u32
                 } else {
-                    // Internal at position γ.
                     gamma as u32
                 };
                 let right_idx = if gamma + 1 == last {
@@ -147,14 +212,22 @@ impl<T: Copy> Bvh<T> {
                 } else {
                     (gamma + 1) as u32
                 };
-                nodes[i] = BvhNode::internal([0.0; 3], [0.0; 3], left_idx, right_idx);
+                nodes_dst[i] = BvhNode::internal([0.0; 3], [0.0; 3], left_idx, right_idx);
             }
 
             // 6. Bottom-up AABB propagation from root via post-order DFS.
-            propagate_aabb(&mut nodes, 0);
+            propagate_aabb(&mut nodes_dst[..total_nodes], 0);
         }
 
-        Self { nodes, leaves }
+        let root_aabb = Aabb::new(
+            Vec3::from(nodes_dst[0].aabb_min),
+            Vec3::from(nodes_dst[0].aabb_max),
+        );
+        BuildMeta {
+            node_count: total_nodes as u32,
+            leaf_count: n as u32,
+            root_aabb,
+        }
     }
 
     /// Build a BVH on the GPU. Chains morton encoding + onesweep radix
@@ -196,29 +269,7 @@ impl<T: Copy> Bvh<T> {
     /// + bottom-up propagate.
     pub fn refit_in_place(&mut self, leaf_aabbs: &[LeafAabb], sorted_indices: &[u32]) {
         let n = self.leaf_count();
-        debug_assert_eq!(
-            n,
-            leaf_aabbs.len(),
-            "refit_in_place: leaf_aabbs.len() must match leaf_count()",
-        );
-        debug_assert_eq!(
-            n,
-            sorted_indices.len(),
-            "refit_in_place: sorted_indices.len() must match leaf_count()",
-        );
-        if n == 0 {
-            return;
-        }
-        let leaf_offset = n.saturating_sub(1);
-        for k in 0..n {
-            let original = sorted_indices[k] as usize;
-            let new_aabb = &leaf_aabbs[original];
-            self.nodes[leaf_offset + k].aabb_min = new_aabb.aabb_min;
-            self.nodes[leaf_offset + k].aabb_max = new_aabb.aabb_max;
-        }
-        if n > 1 {
-            propagate_aabb(&mut self.nodes, 0);
-        }
+        refit_slice_in_place(&mut self.nodes, n, leaf_aabbs, sorted_indices);
     }
 
     /// AABB of the root node — i.e. the union of every leaf bound.
@@ -231,6 +282,63 @@ impl<T: Copy> Bvh<T> {
             Vec3::from(self.nodes[0].aabb_min),
             Vec3::from(self.nodes[0].aabb_max),
         )
+    }
+}
+
+/// Refit the leaf AABBs of an externally-owned `nodes` slice, then
+/// propagate up. Pool-friendly variant of
+/// [`Bvh::refit_in_place`] — writes through a `&mut [BvhNode]`
+/// destination so `OmeAccel` can refit one chunk's BLAS slice without
+/// rebuilding the whole pool.
+///
+/// # Caller invariants
+///
+/// - `nodes.len() >= 2 * n - 1` (or `nodes.len() >= 1` when `n == 1`).
+/// - `leaf_aabbs.len() >= n`. `leaf_aabbs[i]` is the world-space
+///   AABB of the original-input position `i`.
+/// - `sorted_indices.len() >= n`. `sorted_indices[k]` is the
+///   original-input position of the leaf at sorted position `k`,
+///   i.e. the leaf node at `nodes[(n - 1) + k]`.
+///
+/// Mirrors [`Bvh::refit_in_place`] semantics 1:1 — only the
+/// destination type changes.
+pub fn refit_slice_in_place(
+    nodes: &mut [BvhNode],
+    n: usize,
+    leaf_aabbs: &[LeafAabb],
+    sorted_indices: &[u32],
+) {
+    debug_assert!(
+        leaf_aabbs.len() >= n,
+        "refit_slice_in_place: leaf_aabbs.len() = {} < n = {}",
+        leaf_aabbs.len(),
+        n,
+    );
+    debug_assert!(
+        sorted_indices.len() >= n,
+        "refit_slice_in_place: sorted_indices.len() = {} < n = {}",
+        sorted_indices.len(),
+        n,
+    );
+    if n == 0 {
+        return;
+    }
+    let total_nodes = if n == 1 { 1 } else { 2 * n - 1 };
+    debug_assert!(
+        nodes.len() >= total_nodes,
+        "refit_slice_in_place: nodes.len() = {} < required {}",
+        nodes.len(),
+        total_nodes,
+    );
+    let leaf_offset = n.saturating_sub(1);
+    for k in 0..n {
+        let original = sorted_indices[k] as usize;
+        let new_aabb = &leaf_aabbs[original];
+        nodes[leaf_offset + k].aabb_min = new_aabb.aabb_min;
+        nodes[leaf_offset + k].aabb_max = new_aabb.aabb_max;
+    }
+    if n > 1 {
+        propagate_aabb(&mut nodes[..total_nodes], 0);
     }
 }
 
@@ -570,6 +678,94 @@ mod tests {
         let mut empty: Bvh<u32> = Bvh::empty();
         empty.refit_in_place(&[], &[]);
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn build_into_matches_build_byte_identical() {
+        // The slice variant must produce byte-identical output to the
+        // owning variant for the same input — `OmeAccel` assumes this
+        // when feeding pool slices to `Bvh::build_into`.
+        let items: Vec<(u32, Aabb)> = (0..32u32)
+            .map(|i| {
+                let x = (i % 8) as f32;
+                let y = (i / 8) as f32;
+                (i, aabb_at(Vec3::new(x, y, 0.0), 0.4))
+            })
+            .collect();
+        let owning = Bvh::build(items.clone());
+
+        let n = items.len();
+        let mut nodes_dst = vec![BvhNode::default(); 2 * n - 1];
+        let mut leaves_dst = vec![0u32; n];
+        let meta = Bvh::<u32>::build_into(items, &mut nodes_dst, &mut leaves_dst);
+
+        assert_eq!(meta.node_count, owning.node_count() as u32);
+        assert_eq!(meta.leaf_count, owning.leaf_count() as u32);
+        assert_eq!(nodes_dst, owning.nodes);
+        assert_eq!(leaves_dst, owning.leaves);
+        assert_eq!(meta.root_aabb, owning.root_aabb());
+    }
+
+    #[test]
+    fn build_into_empty_returns_zero_meta() {
+        let mut nodes_dst: Vec<BvhNode> = Vec::new();
+        let mut leaves_dst: Vec<u32> = Vec::new();
+        let meta = Bvh::<u32>::build_into(Vec::new(), &mut nodes_dst, &mut leaves_dst);
+        assert_eq!(meta.node_count, 0);
+        assert_eq!(meta.leaf_count, 0);
+        assert_eq!(meta.root_aabb, Aabb::EMPTY);
+    }
+
+    #[test]
+    fn build_into_single_leaf_writes_one_node() {
+        let items = vec![(7u32, aabb_at(Vec3::ZERO, 1.0))];
+        let mut nodes_dst = vec![BvhNode::default(); 1];
+        let mut leaves_dst = vec![0u32; 1];
+        let meta = Bvh::<u32>::build_into(items, &mut nodes_dst, &mut leaves_dst);
+        assert_eq!(meta.node_count, 1);
+        assert_eq!(meta.leaf_count, 1);
+        assert!(nodes_dst[0].is_leaf());
+        assert_eq!(leaves_dst[0], 7);
+    }
+
+    #[test]
+    fn refit_slice_in_place_matches_owning_refit() {
+        // Slice refit must agree with the owning refit on the same
+        // topology. Build with v0 centres, refit into v1 AABBs, both
+        // paths must produce identical node AABBs.
+        let centres: Vec<Vec3> = (0..16u32)
+            .map(|i| Vec3::new(i as f32, 0.0, 0.0))
+            .collect();
+        let items_v0: Vec<(u32, Aabb)> = centres
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, c)| (i as u32, aabb_at(c, 0.4)))
+            .collect();
+        let bvh_owning = Bvh::build(items_v0.clone());
+        let sorted = sorted_indices_from_payload_id_bvh(&bvh_owning);
+
+        let leaf_aabbs_v1: Vec<LeafAabb> = centres
+            .iter()
+            .copied()
+            .map(|c| leaf_aabb_at(c, 0.2))
+            .collect();
+
+        let mut bvh_owning_refitted = bvh_owning.clone();
+        bvh_owning_refitted.refit_in_place(&leaf_aabbs_v1, &sorted);
+
+        let mut slice_nodes = bvh_owning.nodes.clone();
+        refit_slice_in_place(&mut slice_nodes, 16, &leaf_aabbs_v1, &sorted);
+
+        for (i, (a, b)) in bvh_owning_refitted
+            .nodes
+            .iter()
+            .zip(slice_nodes.iter())
+            .enumerate()
+        {
+            assert_eq!(a.aabb_min, b.aabb_min, "node {i} aabb_min slice/owning mismatch");
+            assert_eq!(a.aabb_max, b.aabb_max, "node {i} aabb_max slice/owning mismatch");
+        }
     }
 
     #[test]

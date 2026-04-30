@@ -39,7 +39,7 @@ pub use accel::{
     MAX_TLAS_STACK, OmeAccel, TLAS_CHUNK_IDX_MASK, TLAS_DEAD_FLAG, TLAS_REBUILD_THRESHOLD,
     TlasUniforms,
 };
-pub use bvh::Bvh;
+pub use bvh::{Bvh, BuildMeta, refit_slice_in_place};
 pub use gpu::{
     BvhBuildError, BvhGpuBuild, BvhGpuBuildResult, BvhGpuBuilder, BvhGpuRefit, BvhTimestamps,
     GpuAabb, GpuBvhHandle, GpuSceneBounds, refit_gpu,
