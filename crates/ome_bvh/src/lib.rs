@@ -23,6 +23,7 @@
 //! 5. **PR-5**: collision broadphase (#40) + frustum / light culling.
 
 pub mod aabb;
+pub mod accel;
 pub mod bvh;
 pub mod gpu;
 pub mod leaf;
@@ -32,6 +33,11 @@ pub mod query;
 pub mod shared;
 
 pub use aabb::Aabb;
+pub use accel::{
+    AccelCaps, AccelError, ChunkDescriptor, FragmentationMetrics, FreeListPool, FreeRange,
+    MAX_BLAS_STACK, MAX_CHUNKS_LIMIT, MAX_TLAS_STACK, TLAS_CHUNK_IDX_MASK, TLAS_DEAD_FLAG,
+    TLAS_REBUILD_THRESHOLD, TlasUniforms,
+};
 pub use bvh::Bvh;
 pub use gpu::{
     BvhBuildError, BvhGpuBuild, BvhGpuBuildResult, BvhGpuBuilder, BvhGpuRefit, BvhTimestamps,
