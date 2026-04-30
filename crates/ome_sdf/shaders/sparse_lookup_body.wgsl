@@ -63,9 +63,16 @@ struct LookupChunkLodMask {
 }
 
 const LOOKUP_LOD_COUNT: u32 = 4u;
-const LOOKUP_ROOT_DIM: u32 = 16u;
 const LOOKUP_EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFFu;
 const LOOKUP_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu;
+
+// `LOOKUP_ROOT_DIM` and `LOOKUP_ATLAS_TILES_{X,Y,Z}` are prepended by
+// the host helper `crate::sparse::lookup_wgsl` so consumers do not
+// need to know the chunk-local sparse geometry to compile their
+// pipeline. The values mirror `crate::sparse::ROOT_DIM`,
+// `ATLAS_TILES_X`, `ATLAS_TILES_Y`, `ATLAS_TILES_Z` at the time the
+// fragment is built — switching the `large-root-grid` feature
+// reshapes the const values without touching this body.
 
 // Per-LOD geometry tables. Mirror `crate::sparse::LOD_LEVELS` on the
 // host. Materialised as helper functions so the shader switches over
@@ -85,13 +92,13 @@ fn lookup_tile_dim(lod: u32) -> u32 {
     return lookup_subgrid_dim(lod) + 1u;
 }
 
-fn lookup_atlas_tiles_x(lod: u32) -> u32 {
-    return 32u;
-}
-
 fn lookup_atlas_dim(lod: u32) -> vec3<f32> {
     let tile = f32(lookup_tile_dim(lod));
-    return vec3<f32>(32.0 * tile, tile, 32.0 * tile);
+    return vec3<f32>(
+        f32(LOOKUP_ATLAS_TILES_X) * tile,
+        f32(LOOKUP_ATLAS_TILES_Y) * tile,
+        f32(LOOKUP_ATLAS_TILES_Z) * tile,
+    );
 }
 
 // LOD voxel-size factor: `2^lod`. Materialised as a switch so the
@@ -219,12 +226,16 @@ fn sparse_sdf_lookup(world_pos: vec3<f32>, target_voxel_size: f32) -> f32 {
     );
 
     let tile_dim = lookup_tile_dim(lod_chosen);
-    let atlas_tiles_x = lookup_atlas_tiles_x(lod_chosen);
-    let tile_x = subgrid_idx % atlas_tiles_x;
-    let tile_z = subgrid_idx / atlas_tiles_x;
+    // Standard 3D index decode: `subgrid_idx = x + y * X + z * X * Y`.
+    // With `LOOKUP_ATLAS_TILES_Y == 1u` (default) this collapses to
+    // the historical `(x, 0, z)` layout; with Y > 1 (large-root-grid)
+    // the Y axis carries the second slab of tiles.
+    let tile_x = subgrid_idx % LOOKUP_ATLAS_TILES_X;
+    let tile_y = (subgrid_idx / LOOKUP_ATLAS_TILES_X) % LOOKUP_ATLAS_TILES_Y;
+    let tile_z = subgrid_idx / (LOOKUP_ATLAS_TILES_X * LOOKUP_ATLAS_TILES_Y);
     let tile_origin = vec3<f32>(
         f32(tile_x * tile_dim),
-        0.0,
+        f32(tile_y * tile_dim),
         f32(tile_z * tile_dim),
     );
     let atlas_dim = lookup_atlas_dim(lod_chosen);

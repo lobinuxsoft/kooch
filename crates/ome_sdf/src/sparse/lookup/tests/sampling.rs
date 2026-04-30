@@ -11,6 +11,17 @@ use crate::sparse::{
 };
 use glam::Vec3;
 
+/// Sphere radius the lookup tests probe. With `large-root-grid` the
+/// grid quadruples in cell count per axis (32³ vs 16³) so the same
+/// sphere shell intersects ~13× more cells. Scaling the radius down
+/// keeps the marked-cell count under the 1024-slot freelist used by
+/// these tests, so atomicAdd allocation never races against pool
+/// exhaustion and `subgrid_idx` stays deterministic across runs.
+#[cfg(not(feature = "large-root-grid"))]
+const TEST_SPHERE_RADIUS: f32 = 16.0;
+#[cfg(feature = "large-root-grid")]
+const TEST_SPHERE_RADIUS: f32 = 8.0;
+
 /// Tolerance for sampler-to-lookup comparisons. The pool atlas is
 /// `r16float`: the IEEE 754 half precision quantum at value `x` is
 /// `x * 2^-10 ≈ x * 1e-3`, so a fixed absolute ε under-estimates
@@ -31,7 +42,7 @@ fn lookup_at_voxel_corners_returns_pool_values() {
     };
     // First run: no probes — used only to discover which cells got
     // allocated, then we craft the corner probes.
-    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), 16.0);
+    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let bounds = test_bounds();
     // Probe at one position (origin of bounds); we will read
     // root_indices to pick allocated cells, then re-run with the
@@ -104,7 +115,7 @@ fn lookup_trilinear_midpoint_matches_corner_average() {
         eprintln!("skipping lookup_trilinear_midpoint_matches_corner_average: no GPU");
         return;
     };
-    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), 16.0);
+    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let bounds = test_bounds();
     // Bootstrap run: discover allocated cells.
     let bootstrap = run_lookup_probes(
@@ -180,7 +191,7 @@ fn lookup_out_of_bounds_returns_far_sentinel() {
         eprintln!("skipping lookup_out_of_bounds_returns_far_sentinel: no GPU");
         return;
     };
-    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), 16.0);
+    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let bounds = test_bounds();
     let below = bounds.min - Vec3::splat(1.0);
     let above = bounds.max + Vec3::splat(1.0);
@@ -203,12 +214,19 @@ fn lookup_with_target_voxel_size_selects_correct_lod() {
         eprintln!("skipping lookup_with_target_voxel_size_selects_correct_lod: no GPU");
         return;
     };
-    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), 16.0);
+    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let bounds = test_bounds();
     // Probe well inside the chunk so all LOD samples land in
-    // populated cells.
+    // populated cells. Default-feature uses radius 16 → probe 8
+    // units from centre lands just inside the surface; with the
+    // smaller `large-root-grid` sphere (radius 8) the probe shifts
+    // to 4 units from centre to keep the same surface adjacency.
+    #[cfg(not(feature = "large-root-grid"))]
     let probe = Vec3::splat(24.0);
-    let cell_size = 4.0; // 64.0 / ROOT_DIM
+    #[cfg(feature = "large-root-grid")]
+    let probe = Vec3::splat(28.0);
+    // 64.0 / ROOT_DIM → 4.0 (default) or 2.0 (large-root-grid).
+    let cell_size = 64.0 / (ROOT_DIM as f32);
     let voxel_pitch_lod0 = cell_size / (LOD_LEVELS[0].subgrid_dim as f32);
     let voxel_pitch_lod2 = voxel_pitch_lod0 * LOD_LEVELS[2].voxel_size_factor;
 
@@ -256,7 +274,7 @@ fn lookup_in_alloc_failed_cell_returns_far_sentinel() {
     // Pool capacity 4 with the 64³ sphere/16 scene → ~780 cells
     // marked, only 4 succeed. Find one that landed on
     // ALLOC_FAILED_SENTINEL and probe its centre.
-    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), 16.0);
+    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let bounds = test_bounds();
     let bootstrap = run_lookup_probes(
         &device, &queue, &sampler, bounds, 4, &[Vec3::splat(0.0)],

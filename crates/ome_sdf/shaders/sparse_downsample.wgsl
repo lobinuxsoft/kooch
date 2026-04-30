@@ -36,10 +36,12 @@
 // # Override constants
 //
 // ```
-// LOD 0→1: DST=(8, 9, 729, 32),  SRC=(17, 32)
-// LOD 1→2: DST=(4, 5, 125, 32),  SRC=(9,  32)
-// LOD 2→3: DST=(2, 3,  27, 32),  SRC=(5,  32)
+// LOD 0→1: DST=(8, 9, 729, 32, Y),  SRC=(17, 32, Y)
+// LOD 1→2: DST=(4, 5, 125, 32, Y),  SRC=(9,  32, Y)
+// LOD 2→3: DST=(2, 3,  27, 32, Y),  SRC=(5,  32, Y)
 // ```
+//
+// `Y` matches `ATLAS_TILES_Y` (default `1`, `2` with `large-root-grid`).
 
 const DOWNSAMPLE_WORKGROUP_SIZE: u32 = 64u;
 const DOWNSAMPLE_EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFFu;
@@ -49,8 +51,10 @@ override DOWNSAMPLE_DST_SUBGRID_DIM: u32 = 8u;
 override DOWNSAMPLE_DST_TILE_DIM: u32 = 9u;
 override DOWNSAMPLE_DST_TILE_VOXELS: u32 = 729u;
 override DOWNSAMPLE_DST_ATLAS_TILES_X: u32 = 32u;
+override DOWNSAMPLE_DST_ATLAS_TILES_Y: u32 = 1u;
 override DOWNSAMPLE_SRC_TILE_DIM: u32 = 17u;
 override DOWNSAMPLE_SRC_ATLAS_TILES_X: u32 = 32u;
+override DOWNSAMPLE_SRC_ATLAS_TILES_Y: u32 = 1u;
 
 struct DownsampleNeedsCount {
     value: u32,
@@ -80,18 +84,28 @@ fn downsample_main(
         return;
     }
 
+    // Standard 3D index decode. Both src and dst share `subgrid_idx`
+    // as the canonical atlas pointer (cascade invariant), so the
+    // (x, y, z) tile coordinates only differ by tile dim — never by
+    // tile-count, which is identical across LODs.
     let src_tile_x = subgrid_idx % DOWNSAMPLE_SRC_ATLAS_TILES_X;
-    let src_tile_z = subgrid_idx / DOWNSAMPLE_SRC_ATLAS_TILES_X;
+    let src_tile_y = (subgrid_idx / DOWNSAMPLE_SRC_ATLAS_TILES_X)
+        % DOWNSAMPLE_SRC_ATLAS_TILES_Y;
+    let src_tile_z = subgrid_idx
+        / (DOWNSAMPLE_SRC_ATLAS_TILES_X * DOWNSAMPLE_SRC_ATLAS_TILES_Y);
     let src_tile_origin = vec3<i32>(
         i32(src_tile_x * DOWNSAMPLE_SRC_TILE_DIM),
-        0,
+        i32(src_tile_y * DOWNSAMPLE_SRC_TILE_DIM),
         i32(src_tile_z * DOWNSAMPLE_SRC_TILE_DIM),
     );
     let dst_tile_x = subgrid_idx % DOWNSAMPLE_DST_ATLAS_TILES_X;
-    let dst_tile_z = subgrid_idx / DOWNSAMPLE_DST_ATLAS_TILES_X;
+    let dst_tile_y = (subgrid_idx / DOWNSAMPLE_DST_ATLAS_TILES_X)
+        % DOWNSAMPLE_DST_ATLAS_TILES_Y;
+    let dst_tile_z = subgrid_idx
+        / (DOWNSAMPLE_DST_ATLAS_TILES_X * DOWNSAMPLE_DST_ATLAS_TILES_Y);
     let dst_tile_origin = vec3<i32>(
         i32(dst_tile_x * DOWNSAMPLE_DST_TILE_DIM),
-        0,
+        i32(dst_tile_y * DOWNSAMPLE_DST_TILE_DIM),
         i32(dst_tile_z * DOWNSAMPLE_DST_TILE_DIM),
     );
 

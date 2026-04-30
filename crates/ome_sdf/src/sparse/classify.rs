@@ -27,7 +27,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use super::{LOD_COUNT, ROOT_CELLS, SparseGrid};
+use super::{LOD_COUNT, ROOT_CELLS, ROOT_DIM, SparseGrid};
 
 /// WGSL source of the classify pass body — `classify_main` plus the
 /// `@group(0)` binding declarations. Concatenated with the sampler
@@ -98,8 +98,11 @@ impl ClassifyPass {
 
         let classify_pipelines = std::array::from_fn(|lod_idx| {
             let label = format!("ome_sdf::sparse::classify::classify_pipeline_lod{lod_idx}");
-            let constants: &[(&str, f64)] =
-                &[("CLASSIFY_LOD_IDX", lod_idx as f64)];
+            let constants: &[(&str, f64)] = &[
+                ("CLASSIFY_LOD_IDX", lod_idx as f64),
+                ("CLASSIFY_ROOT_DIM", ROOT_DIM as f64),
+                ("CLASSIFY_ROOT_CELLS", ROOT_CELLS as f64),
+            ];
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(&label),
                 layout: Some(&classify_layout),

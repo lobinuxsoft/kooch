@@ -25,9 +25,20 @@
 use super::{FINALIZE_WGSL, POPULATE_WGSL, POPULATE_WORKGROUP_SIZE, PopulatePass};
 use crate::sparse::{
     ALLOC_FAILED_SENTINEL, ANALYTIC_SPHERE_WGSL, AnalyticSphereSampler, ClassifyPass,
-    DEFAULT_MARGIN, LOD_COUNT, ROOT_DIM, SPARSE_FREELIST_WGSL, SdfSampler, SparseGrid,
+    DEFAULT_MARGIN, LOD_COUNT, SPARSE_FREELIST_WGSL, SdfSampler, SparseGrid,
     test_device,
 };
+
+/// Sphere radius the populate / lookup tests probe. With the
+/// `large-root-grid` feature the root grid quadruples in cell count
+/// per axis (32³ vs 16³), so the same sphere shell intersects ~13×
+/// more cells. Keeping the marked-cell count under the 1024-slot
+/// freelist (so allocation never races against pool exhaustion in
+/// invariants tests) needs the radius to scale down accordingly.
+#[cfg(not(feature = "large-root-grid"))]
+const TEST_SPHERE_RADIUS: f32 = 16.0;
+#[cfg(feature = "large-root-grid")]
+const TEST_SPHERE_RADIUS: f32 = 8.0;
 use glam::Vec3;
 use ome_bvh::Aabb;
 
@@ -159,22 +170,26 @@ fn populate_finalize_with_override_validates() {
 
 #[test]
 fn populate_wgsl_constants_match_host() {
-    // Override constants are pinned by the host per LOD, but the
-    // workgroup size and root dim are still hardcoded — guard those.
-    assert!(
-        POPULATE_WGSL.contains(&format!("POPULATE_ROOT_DIM: u32 = {ROOT_DIM}u")),
-    );
+    // Workgroup size stays a `const` — wgpu does not allow overriding
+    // `@workgroup_size`. Root dim was promoted to an `override` for
+    // the `large-root-grid` feature; the WGSL default reflects the
+    // no-feature build.
     assert!(
         POPULATE_WGSL.contains(&format!(
             "POPULATE_WORKGROUP_SIZE: u32 = {POPULATE_WORKGROUP_SIZE}u",
         )),
     );
-    // S7 override prefix sanity — the four LOD-specific overrides
-    // must stay declared so the host pinning succeeds at compile.
+    assert!(
+        POPULATE_WGSL.contains("override POPULATE_ROOT_DIM: u32 = 16u"),
+        "POPULATE_ROOT_DIM must remain an override defaulting to 16u",
+    );
+    // Atlas-geometry overrides must stay declared so the per-LOD host
+    // pinning at `PopulatePass::new` succeeds at compile.
     assert!(POPULATE_WGSL.contains("override POPULATE_SUBGRID_DIM"));
     assert!(POPULATE_WGSL.contains("override POPULATE_TILE_DIM"));
     assert!(POPULATE_WGSL.contains("override POPULATE_TILE_VOXELS"));
     assert!(POPULATE_WGSL.contains("override POPULATE_ATLAS_TILES_X"));
+    assert!(POPULATE_WGSL.contains("override POPULATE_ATLAS_TILES_Y"));
 }
 
 #[test]
@@ -184,7 +199,7 @@ fn populate_allocates_subgrid_per_marked_cell() {
         return;
     };
     let max_subgrids = 1024u32;
-    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), 16.0);
+    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let (_grid, out) = run_classify_then_populate(
         &device, &queue, &sampler, test_bounds(), max_subgrids,
     );
@@ -213,7 +228,7 @@ fn populate_decrements_free_top_by_marked_count() {
         eprintln!("skipping populate_decrements_free_top_by_marked_count: no GPU");
         return;
     };
-    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), 16.0);
+    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let max_subgrids = 1024u32;
     let (_grid, out) = run_classify_then_populate(
         &device, &queue, &sampler, test_bounds(), max_subgrids,
@@ -232,7 +247,7 @@ fn populate_handles_pool_exhaustion() {
         return;
     };
     let max_subgrids = 4u32;
-    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), 16.0);
+    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let (_grid, out) = run_classify_then_populate(
         &device, &queue, &sampler, test_bounds(), max_subgrids,
     );
@@ -260,7 +275,7 @@ fn populate_idempotent_with_classify() {
         eprintln!("skipping populate_idempotent_with_classify: no GPU");
         return;
     };
-    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), 16.0);
+    let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let (grid, first) = run_classify_then_populate(
         &device, &queue, &sampler, test_bounds(), 1024,
     );

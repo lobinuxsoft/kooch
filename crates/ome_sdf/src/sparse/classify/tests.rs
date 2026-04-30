@@ -114,11 +114,17 @@ fn classify_concat_parses_and_validates() {
 
 #[test]
 fn classify_wgsl_constants_match_host() {
+    // Defaults are the no-feature-flag values (`ROOT_DIM = 16`,
+    // `ROOT_CELLS = 4096`) — the WGSL declares them as `override`
+    // constants so each `ClassifyPass` pipeline can pin the
+    // host-visible values at compile time.
     assert!(
-        CLASSIFY_WGSL.contains(&format!("CLASSIFY_ROOT_DIM: u32 = {ROOT_DIM}u")),
+        CLASSIFY_WGSL.contains("override CLASSIFY_ROOT_DIM: u32 = 16u"),
+        "CLASSIFY_ROOT_DIM must remain an override defaulting to 16u",
     );
     assert!(
-        CLASSIFY_WGSL.contains(&format!("CLASSIFY_ROOT_CELLS: u32 = {ROOT_CELLS}u")),
+        CLASSIFY_WGSL.contains("override CLASSIFY_ROOT_CELLS: u32 = 4096u"),
+        "CLASSIFY_ROOT_CELLS must remain an override defaulting to 4096u",
     );
 }
 

@@ -92,7 +92,10 @@ fn atlas_constants_consistent() {
     assert_eq!(ATLAS_DIM_Z, super::super::ATLAS_TILES_Z * SUBGRID_TILE_DIM);
     assert_eq!(SUBGRID_TILE_DIM, SUBGRID_DIM + 1);
 
-    // Total cascade VRAM under the issue's 15 MB chunk AC.
+    // Total cascade VRAM. AC1 (#136) caps default at 15 MB / chunk;
+    // AC4 (#347) caps the `large-root-grid` build at 100 MB / chunk.
+    // Lod-level test `total_atlas_vram_under_*` covers the strict
+    // budget — the floor here just guarantees we built four atlases.
     let total: u64 = LOD_LEVELS
         .iter()
         .map(|lod| {
@@ -102,9 +105,14 @@ fn atlas_constants_consistent() {
                 * 2
         })
         .sum();
+    let cap_bytes: u64 = if cfg!(feature = "large-root-grid") {
+        100 * 1024 * 1024
+    } else {
+        15 * 1024 * 1024
+    };
     assert!(
-        total < 15 * 1024 * 1024,
-        "cascade pool atlas size {total} bytes exceeds 15 MiB AC",
+        total < cap_bytes,
+        "cascade pool atlas size {total} bytes exceeds cap {cap_bytes}",
     );
 }
 

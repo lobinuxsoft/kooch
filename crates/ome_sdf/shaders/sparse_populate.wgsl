@@ -32,9 +32,10 @@
 //
 // # Atlas tile addressing
 //
-// Tiles are laid out `ATLAS_TILES_X × 1 × ATLAS_TILES_X` (the Y axis
-// stays at 1 across LODs). Tile origin for `subgrid_idx` is
-// `(subgrid_idx % ATLAS_TILES_X, 0, subgrid_idx / ATLAS_TILES_X) * TILE_DIM`.
+// Tiles are laid out `ATLAS_TILES_X × ATLAS_TILES_Y × ATLAS_TILES_Z`
+// (default `(32, 1, 32)`; with `large-root-grid` the Y axis bumps to
+// 2 so the atlas holds 2048 tiles). Tile origin for `subgrid_idx`
+// follows the standard 3D index decode `(x + y · X + z · X · Y)`.
 // Voxel `(vx, vy, vz)` inside the tile lives at world position
 // `cell_min + (vx, vy, vz) / SUBGRID_DIM * cell_size`. The skirt
 // voxel at `vx == SUBGRID_DIM` therefore evaluates the sampler at
@@ -42,7 +43,6 @@
 // cell — analytically coherent with the neighbour's own voxel(0,0,0)
 // by sampler construction.
 
-const POPULATE_ROOT_DIM: u32 = 16u;
 const POPULATE_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu;
 const POPULATE_WORKGROUP_SIZE: u32 = 256u;
 
@@ -50,6 +50,9 @@ override POPULATE_SUBGRID_DIM: u32 = 16u;
 override POPULATE_TILE_DIM: u32 = 17u;
 override POPULATE_TILE_VOXELS: u32 = 4913u;
 override POPULATE_ATLAS_TILES_X: u32 = 32u;
+override POPULATE_ATLAS_TILES_Y: u32 = 1u;
+// Default matches the no-feature build (`ROOT_DIM = 16`).
+override POPULATE_ROOT_DIM: u32 = 16u;
 
 struct PopulateUniform {
     // `xyz` = chunk-local `bounds_min` (post-`ActiveOrigin`).
@@ -111,13 +114,17 @@ fn populate_main(
     let cell_min_world = bounds_min
         + vec3<f32>(f32(cx), f32(cy), f32(cz)) * cell_size;
 
-    // Atlas tile origin in texel coordinates. `Y = 0` because the
-    // atlas only stacks one row of tiles along Y.
+    // Atlas tile origin in texel coordinates. With
+    // `POPULATE_ATLAS_TILES_Y == 1u` (default) the Y component
+    // collapses to `0` and this matches the historical layout; with
+    // `Y > 1` (large-root-grid) the second slab of tiles lives at
+    // `tile_y == 1`.
     let tile_x = subgrid_idx % POPULATE_ATLAS_TILES_X;
-    let tile_z = subgrid_idx / POPULATE_ATLAS_TILES_X;
+    let tile_y = (subgrid_idx / POPULATE_ATLAS_TILES_X) % POPULATE_ATLAS_TILES_Y;
+    let tile_z = subgrid_idx / (POPULATE_ATLAS_TILES_X * POPULATE_ATLAS_TILES_Y);
     let tile_origin = vec3<i32>(
         i32(tile_x * POPULATE_TILE_DIM),
-        0,
+        i32(tile_y * POPULATE_TILE_DIM),
         i32(tile_z * POPULATE_TILE_DIM),
     );
     let inv_subgrid_dim = 1.0 / f32(POPULATE_SUBGRID_DIM);

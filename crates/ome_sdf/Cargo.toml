@@ -16,6 +16,15 @@ glam.workspace = true
 bytemuck.workspace = true
 tracing.workspace = true
 
+[features]
+default = []
+# Scale chunk-local sparse SDF root grid from 16³ → 32³ (cells 4096 →
+# 32768). Bumps `ATLAS_TILES_Y` 1 → 2 so `MAX_SUBGRIDS_PER_ATLAS` lands
+# at 2048, leaving 25% headroom over the 5% sparsity estimate (1638
+# active subgrids per chunk). Closes AC4 of #136 — see issue #347 for
+# the budget rationale.
+large-root-grid = []
+
 [dev-dependencies]
 naga = { version = "29", features = ["wgsl-in"] }
 pollster.workspace = true
