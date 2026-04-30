@@ -214,3 +214,103 @@ fn dedup_canonicalises_low_high() {
     let pairs = BroadphasePairs::collect(&accel);
     assert_eq!(pairs.pairs(), &[(5, 99)]);
 }
+
+/// AC5 — cross-chunk collision detection.
+///
+/// Two chunks separated by ~6 m, each holding a collider whose AABB
+/// straddles the chunk boundary. The TLAS descend visits both
+/// chunks (their inflated descriptors overlap each collider's
+/// query AABB), the per-chunk BLAS descend yields the matching
+/// leaves, and the canonical `(low, high)` pair surfaces in
+/// `BroadphasePairs::collect`.
+///
+/// Falsely missing this pair was the failure mode the issue body
+/// pinned: a per-chunk broadphase that runs `O(C²)` *inside each
+/// chunk* would never see the cross-chunk overlap. The pool-driven
+/// path inherits the WGSL TLAS topology so the symmetric-query loop
+/// handles cross-chunk implicitly.
+#[test]
+fn ac5_cross_chunk_overlap_detected_via_tlas() {
+    let Some((device, queue)) = skip_if_no_device() else { return; };
+    let mut accel = OmeAccel::new(&device, AccelCaps::TEST, 16).unwrap();
+
+    // Chunk A: collider at x = -3, half-extent 4 → AABB x ∈ [-7, 1].
+    // Chunk B: collider at x =  3, half-extent 4 → AABB x ∈ [-1, 7].
+    // The two AABBs overlap in `[-1, 1]` — one cross-chunk pair.
+    let leaves_a = vec![collider_leaf(Vec3::new(-3.0, 0.0, 0.0), 4.0, 100)];
+    let leaves_b = vec![collider_leaf(Vec3::new( 3.0, 0.0, 0.0), 4.0, 200)];
+    let prims_a = vec![0u8; 16];
+    let prims_b = vec![0u8; 16];
+    accel
+        .insert_chunk(
+            &queue,
+            ChunkInsert {
+                key: 1,
+                leaf_aabbs: &leaves_a,
+                primitives_bytes: &prims_a,
+                max_smoothness_radius: 0.0,
+            },
+        )
+        .unwrap();
+    accel
+        .insert_chunk(
+            &queue,
+            ChunkInsert {
+                key: 2,
+                leaf_aabbs: &leaves_b,
+                primitives_bytes: &prims_b,
+                max_smoothness_radius: 0.0,
+            },
+        )
+        .unwrap();
+    accel.update_gpu(&queue, 0.0, 0.0);
+
+    let pairs = BroadphasePairs::collect(&accel);
+    assert_eq!(
+        pairs.pairs(),
+        &[(100, 200)],
+        "AC5: cross-chunk collider overlap must yield exactly one (100, 200) pair",
+    );
+}
+
+/// Negative case for AC5: same setup but the colliders no longer
+/// overlap (each fits inside its own chunk). The TLAS still descends
+/// into both chunks because the chunk descriptors might overlap the
+/// query AABB inflated by `max_smoothness_radius`, but the BLAS
+/// leaves filter the candidate out — no spurious pair.
+#[test]
+fn ac5_disjoint_cross_chunk_yields_no_pair() {
+    let Some((device, queue)) = skip_if_no_device() else { return; };
+    let mut accel = OmeAccel::new(&device, AccelCaps::TEST, 16).unwrap();
+
+    // Chunks 6 m apart, colliders half-extent 0.5 → no overlap.
+    let leaves_a = vec![collider_leaf(Vec3::new(-3.0, 0.0, 0.0), 0.5, 100)];
+    let leaves_b = vec![collider_leaf(Vec3::new( 3.0, 0.0, 0.0), 0.5, 200)];
+    let prims_a = vec![0u8; 16];
+    let prims_b = vec![0u8; 16];
+    accel
+        .insert_chunk(
+            &queue,
+            ChunkInsert {
+                key: 1,
+                leaf_aabbs: &leaves_a,
+                primitives_bytes: &prims_a,
+                max_smoothness_radius: 0.0,
+            },
+        )
+        .unwrap();
+    accel
+        .insert_chunk(
+            &queue,
+            ChunkInsert {
+                key: 2,
+                leaf_aabbs: &leaves_b,
+                primitives_bytes: &prims_b,
+                max_smoothness_radius: 0.0,
+            },
+        )
+        .unwrap();
+    accel.update_gpu(&queue, 0.0, 0.0);
+    let pairs = BroadphasePairs::collect(&accel);
+    assert!(pairs.is_empty(), "AC5: disjoint colliders must not pair");
+}
