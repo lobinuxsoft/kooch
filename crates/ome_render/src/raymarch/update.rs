@@ -213,9 +213,7 @@ impl RayMarchRenderer {
                 smoothness: blend.smoothness,
             });
             // Pool path consumes per-primitive smoothness inline from
-            // the `SdfPrimitive` instead of via a parallel buffer; the
-            // legacy `raymarch_payloads[]` SSBO stays populated until
-            // the renderer migrates off `SharedBvhState` (#360 PR-2).
+            // the `SdfPrimitive` instead of via a parallel buffer.
             prim.smoothness = blend.smoothness;
             primitives.push(prim);
         }

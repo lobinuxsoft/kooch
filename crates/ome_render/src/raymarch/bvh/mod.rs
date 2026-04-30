@@ -2,10 +2,10 @@
 //!
 //! [`BvhState`] owns one `OmeAccel` (#360) and exposes a single-chunk
 //! drive API consumed by `update_scene`. The pool's pre-allocated GPU
-//! buffers replace the legacy `SharedBvhState` + slot-rotated side
-//! payload buffers — bind-group references stay stable for the
-//! lifetime of the renderer, so the renderer builds the scene bind
-//! group once at construction.
+//! buffers replace the legacy global-BVH path that PR-2 retired —
+//! bind-group references stay stable for the lifetime of the
+//! renderer, so the renderer builds the scene bind group once at
+//! construction.
 //!
 //! # Lifecycle per frame
 //!

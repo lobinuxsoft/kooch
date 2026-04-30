@@ -21,8 +21,9 @@ use super::lifecycle::{GpuBvhHandle, MapState};
 /// the leaves + propagates internal AABBs over an already-built
 /// topology.
 ///
-/// Caller invariants (the orchestrator
-/// [`crate::SharedBvhState::kick_refit`] enforces them):
+/// Caller invariants (every direct caller of this entry point must
+/// uphold them; `OmeAccel::refit_chunk_slice_only` is the production
+/// caller):
 ///
 /// 1. The previous build's outputs are still resident in the
 ///    builder's scratch buffers (`builder.nodes_buffer`,
@@ -163,8 +164,9 @@ impl BvhGpuRefit {
 ///
 /// **Caller invariants** — see [`BvhGpuRefit`] for details. Briefly:
 /// items count and order must match the immediately-preceding build;
-/// only AABBs may change. The orchestrator
-/// [`crate::SharedBvhState::kick_refit`] enforces these.
+/// only AABBs may change. Direct callers (`OmeAccel`, regression
+/// tests) carry the burden; the legacy `SharedBvhState::kick_refit`
+/// orchestrator that used to enforce these is gone in #360 PR-3.
 pub fn refit_gpu<T: Copy + bytemuck::Pod>(
     builder: &mut BvhGpuBuilder,
     device: &wgpu::Device,

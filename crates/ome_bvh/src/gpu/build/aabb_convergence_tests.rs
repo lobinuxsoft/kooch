@@ -16,43 +16,10 @@
 
 use crate::aabb::Aabb;
 use crate::gpu::builder::{BvhGpuBuilder, test_device};
-use crate::leaf::LeafAabb;
-use crate::shared::SharedBvhState;
 
 use super::full::build_gpu;
 
 use glam::Vec3;
-
-fn dummy_leaves(items: &[(u32, Aabb)]) -> Vec<LeafAabb> {
-    items
-        .iter()
-        .map(|(id, a)| LeafAabb {
-            aabb_min: a.min.to_array(),
-            flags: 0,
-            aabb_max: a.max.to_array(),
-            entity_id: *id,
-        })
-        .collect()
-}
-
-fn drive_shared_to_completion(
-    shared: &mut SharedBvhState,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) {
-    loop {
-        match shared.poll_swap(device, queue) {
-            Some(Ok(_)) => return,
-            Some(Err(e)) => panic!("SharedBvhState build failed: {e:?}"),
-            None => {
-                let _ = device.poll(wgpu::PollType::Wait {
-                    submission_index: None,
-                    timeout: Some(std::time::Duration::from_secs(30)),
-                });
-            }
-        }
-    }
-}
 
 /// Wrap raw min/max tuples into the `(payload, Aabb)` pairs the
 /// builder consumes. Payload is the index — irrelevant for
@@ -186,56 +153,14 @@ fn build_gpu_converges_after_empty_build_on_same_builder() {
         .expect("V2 build must succeed AFTER an empty build on the same builder");
 }
 
-/// SharedBvhState path — the orchestrator the editor actually uses.
-/// Walks empty kick → first scene kick → post-edit kick, the way the
-/// editor does at startup → scene load → drag. Reproduces the
-/// convergence panic from a clean orchestrator if the bug is in the
-/// shared state's encoder + slot lifecycle (not in the builder
-/// algorithm itself, which the earlier tests already exonerate).
-#[test]
-fn shared_bvh_state_converges_on_hierarchy_test_post_move_n_6() {
-    let Some((device, queue)) = test_device::try_acquire() else {
-        eprintln!(
-            "ome_bvh::gpu::build: no GPU adapter — skipping #333 SharedBvhState walk"
-        );
-        return;
-    };
-
-    let mut shared = SharedBvhState::new(&device, &queue, None);
-
-    // Empty kick — first frame after Editor spawn, before scene load.
-    let _ = shared.kick(&device, &queue, Vec::new(), Vec::new(), 1);
-    drive_shared_to_completion(&mut shared, &device, &queue);
-
-    // V1: hypothesised "scene as loaded" pose, with the SDF Cylinder
-    // (index 5) at its scene-file home before the user dragged it.
-    // Reconstructed by inverting the captured drag (centre[5]
-    // appears in the V2 dump as roughly (-1.86, 0.28, 0)).
-    let v1 = pairs(&[
-        ([1.498904, -0.53666365, -0.46967244], [3.898904, 1.8633364, 1.9303277]),
-        ([-21.529707, -0.4, -19.742224], [19.070295, 0.4, 20.857779]),
-        ([1.7758889, -0.5121188, -1.3083041], [4.675889, 2.3878813, 1.591696]),
-        ([2.0948467, 1.3200147, -0.9083556], [3.9090605, 2.7200148, 0.9058579]),
-        ([-7.2284794, -0.2626487, -12.553985], [-4.828479, 2.1373515, -10.153985]),
-        ([1.6875455, -0.16579604, -1.45], [4.5875454, 0.73420393, 1.45]),
-    ]);
-    let leaves_v1 = dummy_leaves(&v1);
-    let _ = shared.kick(&device, &queue, v1, leaves_v1, 2);
-    drive_shared_to_completion(&mut shared, &device, &queue);
-
-    // V2: the captured panic seed (post-drag).
-    let v2 = pairs(&[
-        ([1.498904, -0.53666365, -0.46967244], [3.898904, 1.8633364, 1.9303277]),
-        ([-21.529707, -0.4, -19.742224], [19.070295, 0.4, 20.857779]),
-        ([1.7758889, -0.5121188, -1.3083041], [4.675889, 2.3878813, 1.591696]),
-        ([2.0948467, 1.3200147, -0.9083556], [3.9090605, 2.7200148, 0.9058579]),
-        ([-7.2284794, -0.2626487, -12.553985], [-4.828479, 2.1373515, -10.153985]),
-        ([-3.3124545, -0.16579604, -1.45], [-0.41245437, 0.73420393, 1.45]),
-    ]);
-    let leaves_v2 = dummy_leaves(&v2);
-    let _ = shared.kick(&device, &queue, v2, leaves_v2, 3);
-    drive_shared_to_completion(&mut shared, &device, &queue);
-}
+// (Legacy `shared_bvh_state_converges_on_hierarchy_test_post_move_n_6`
+// removed alongside `SharedBvhState` in #360 PR-3. The pure builder
+// regression — the actual convergence path — is already covered by the
+// `build_gpu_*` tests above; the orchestrator-walk test gave no
+// additional coverage now that nothing in the runtime uses
+// SharedBvhState. AC3 streaming round-trip in
+// `crates/ome_render/tests/ac3_streaming_round_trip.rs` exercises the
+// equivalent insert → re-insert cadence through `OmeAccel`.)
 
 /// Inter-build cache-flush regression: any `device.poll` (or
 /// unrelated submission, including the slot-copy `SharedBvhState`

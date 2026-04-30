@@ -30,7 +30,6 @@ pub mod leaf;
 pub mod morton;
 pub mod node;
 pub mod query;
-pub mod shared;
 
 pub use aabb::Aabb;
 pub use accel::{
@@ -51,4 +50,3 @@ pub use leaf::{
 pub use morton::MortonCode;
 pub use node::{BVH_LEAF_FLAG, BVH_VALUE_MASK, BvhNode};
 pub use query::MAX_STACK_DEPTH;
-pub use shared::{BuildToken, SharedBvhState, SwapInfo, should_refit};
