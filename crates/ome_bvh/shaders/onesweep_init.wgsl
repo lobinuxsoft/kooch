@@ -30,9 +30,19 @@ struct InitConfig {
 fn init_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x;
 
-    // Histogram first (small, contiguous).
-    if i < cfg.histogram_count {
-        global_histogram[i] = 0u;
+    // Histogram. Strided loop — `histogram_count` is `4 * 256 = 1024`,
+    // bigger than the 256-thread workgroup, so a flat `if i < count`
+    // would only clear entries 0..255 and leave 256..1023 carrying
+    // residue from the previous build. The next build's
+    // `onesweep_global_histogram.wgsl` adds via `atomicAdd`, so any
+    // residue corrupts every pass after the first byte (#333). The
+    // bug was masked when consecutive builds saw cached zeroes; a
+    // `device.poll` between submissions flushed the cache and
+    // surfaced the partial clear as 2-cycle Karras topologies.
+    var h_idx = i;
+    while h_idx < cfg.histogram_count {
+        global_histogram[h_idx] = 0u;
+        h_idx = h_idx + 256u;
     }
 
     // Then descriptors. May be many more than threads — strided loop

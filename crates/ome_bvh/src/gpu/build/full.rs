@@ -65,6 +65,11 @@ pub struct BvhGpuBuild<T: Copy> {
     /// the build resolves and panics if any internal node has
     /// `done[i] == 0`. See `AABB_ITERATION_SLACK` in `gpu/lbvh.rs`.
     done_staging: Option<wgpu::Buffer>,
+    /// **Debug-only** copy of the input AABBs in original order.
+    /// Captured at `build_gpu` entry so the convergence-failure
+    /// dump (#333) records the exact seed the LBVH builder
+    /// received. `Some` mirrors `done_staging`'s gating.
+    debug_input_aabbs: Option<Vec<Aabb>>,
 }
 
 impl<T: Copy> BvhGpuBuild<T> {
@@ -151,42 +156,15 @@ impl<T: Copy> BvhGpuBuild<T> {
         }))
     }
 
-    /// Debug-only AABB convergence check. In release builds this is a
-    /// no-op (`done_staging` is always `None`). In debug, reads the
-    /// staged copy of the LBVH `done[]` array and panics if any
-    /// internal node has `done[i] == 0` — that means the AABB
-    /// propagation iteration count was insufficient, the resulting
-    /// AABBs are silently wrong, and the caller is about to consume
-    /// a corrupt BVH.
+    /// Debug-only AABB convergence check — see
+    /// [`super::seed_dump::check_aabb_convergence_in_debug`].
     fn check_aabb_convergence_in_debug(&self) {
-        let Some(ref staging) = self.done_staging else {
-            return;
-        };
-        if self.n < 2 {
-            return;
-        }
-        let n_internals = (self.n - 1) as usize;
-        let bytes = n_internals * 4;
-        let slice = staging.slice(..bytes as u64);
-        let data = slice.get_mapped_range();
-        let dones = bytemuck::cast_slice::<u8, u32>(&data);
-        // Find the first un-done internal — its index gives the
-        // operator a precise reproduction handle.
-        let unfinished = dones
-            .iter()
-            .take(n_internals)
-            .position(|&d| d == 0u32);
-        drop(data);
-        staging.unmap();
-        if let Some(idx) = unfinished {
-            let iters = crate::gpu::lbvh::aabb_iterations(self.n);
-            panic!(
-                "AABB iteration slack insufficient for N={} (depth exceeded 2·log_n+4 — \
-                 internal node {idx} of {n_internals} unfinished after {iters} iterations). \
-                 Please file an issue against the LBVH builder with the input seed.",
-                self.n
-            );
-        }
+        super::seed_dump::check_aabb_convergence_in_debug(
+            self.n,
+            self.done_staging.as_ref(),
+            &self.nodes_staging,
+            self.debug_input_aabbs.as_deref(),
+        );
     }
 
     /// GPU-resident view of the (in-flight or completed) tree.
@@ -266,6 +244,16 @@ pub fn build_gpu<T: Copy + bytemuck::Pod>(
     // post-readback permutation; `aabbs` is consumed by the morton
     // upload.
     let (payloads, aabbs): (Vec<T>, Vec<Aabb>) = items.into_iter().unzip();
+
+    // Snapshot the input AABBs in debug for #333's seed-dump path.
+    // The builder's other passes consume `aabbs` by reference, so we
+    // can clone before the morton dispatch without affecting the
+    // build. Vec<Aabb> at N=6 costs ~144 bytes — negligible.
+    let debug_input_aabbs: Option<Vec<Aabb>> = if cfg!(debug_assertions) {
+        Some(aabbs.clone())
+    } else {
+        None
+    };
 
     // Initialise the sort's `values_a` with sequential indices
     // [0, n). Onesweep permutes these in lockstep with the keys, so
@@ -445,6 +433,7 @@ pub fn build_gpu<T: Copy + bytemuck::Pod>(
         payloads,
         consumed: false,
         done_staging,
+        debug_input_aabbs,
     }
 }
 
@@ -471,5 +460,6 @@ fn empty_build<T: Copy>(builder: &BvhGpuBuilder, device: &wgpu::Device) -> BvhGp
         payloads: Vec::new(),
         consumed: false,
         done_staging: None,
+        debug_input_aabbs: None,
     }
 }
