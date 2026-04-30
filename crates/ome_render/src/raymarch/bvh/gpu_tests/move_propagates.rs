@@ -14,14 +14,15 @@
 //! read back the resident `leaf_aabbs` buffer and compare each leaf to
 //! its expected post-move AABB.
 
-use bytemuck::Pod;
 use glam::{Quat, Vec3};
 use ome_bvh::{IS_RAYMARCH, LeafAabb, ROLE_RAYMARCH_ADD};
 
-use super::harness::{drive_bvh_to_completion, items_from_leaves, try_acquire_device};
+use super::harness::{drive_bvh_to_completion, items_from_leaves, readback_pod, try_acquire_device};
 use crate::raymarch::aabb::primitive_aabb;
 use crate::raymarch::bvh::BvhState;
 use crate::raymarch::instance::{RaymarchPayload, SdfPrimitive, TYPE_SPHERE};
+
+const POSITION_EPS: f32 = 1e-4;
 
 /// AABB tolerance: leaf AABBs round-trip through GPU storage as f32,
 /// so bit-equality is fine for axis-aligned sphere primitives. The
@@ -62,51 +63,6 @@ fn three_sphere_scene() -> (Vec<SdfPrimitive>, Vec<LeafAabb>, Vec<RaymarchPayloa
         prims.push(prim);
     }
     (prims, leaves, payloads)
-}
-
-/// Read N `LeafAabb`s back from the slot's currently-bound storage
-/// buffer. The buffer carries `COPY_SRC` for exactly this purpose
-/// (debug tooling / regression tests); production never copies it.
-fn readback_leaf_aabbs(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    src: &wgpu::Buffer,
-    n: u32,
-) -> Vec<LeafAabb> {
-    let bytes = (n as u64) * std::mem::size_of::<LeafAabb>() as u64;
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("move_propagates::leaf_aabbs_staging"),
-        size: bytes,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("move_propagates::readback_encoder"),
-    });
-    encoder.copy_buffer_to_buffer(src, 0, &staging, 0, bytes);
-    queue.submit(std::iter::once(encoder.finish()));
-
-    let slice = staging.slice(..);
-    let (tx, rx) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |r| {
-        tx.send(r).ok();
-    });
-    device
-        .poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: Some(std::time::Duration::from_secs(30)),
-        })
-        .expect("poll");
-    rx.recv().expect("map_async sender").expect("map_async result");
-    let data = slice.get_mapped_range();
-    let v: Vec<LeafAabb> = read_pod_slice(&data);
-    drop(data);
-    staging.unmap();
-    v
-}
-
-fn read_pod_slice<T: Pod>(bytes: &[u8]) -> Vec<T> {
-    bytemuck::cast_slice::<u8, T>(bytes).to_vec()
 }
 
 fn assert_aabb_close(actual: &LeafAabb, expected: &LeafAabb, ctx: &str) {
@@ -158,6 +114,7 @@ fn large_move_propagates_to_leaf_aabbs() {
         items_v1,
         leaves_v1.clone(),
         payloads_v1.clone(),
+        prims_v1.clone(),
         0.25,
         10.0,
     );
@@ -165,7 +122,7 @@ fn large_move_propagates_to_leaf_aabbs() {
     drive_bvh_to_completion(&mut state, &device, &queue);
     assert_eq!(state.current_n(), 3);
 
-    let v1_gpu = readback_leaf_aabbs(&device, &queue, state.current_leaf_aabbs(), 3);
+    let v1_gpu = readback_pod::<LeafAabb>(&device, &queue, state.current_leaf_aabbs(), 3, "move_propagates::leaf_aabbs_staging");
     for i in 0..3 {
         assert_aabb_close(&v1_gpu[i], &leaves_v1[i], &format!("V1 leaf[{i}]"));
     }
@@ -188,6 +145,7 @@ fn large_move_propagates_to_leaf_aabbs() {
         items_v2,
         leaves_v2.clone(),
         payloads_v1,
+        prims_v2.clone(),
         0.25,
         10.0,
     );
@@ -195,7 +153,7 @@ fn large_move_propagates_to_leaf_aabbs() {
     drive_bvh_to_completion(&mut state, &device, &queue);
     assert_eq!(state.current_n(), 3, "rebuild keeps cardinality");
 
-    let v2_gpu = readback_leaf_aabbs(&device, &queue, state.current_leaf_aabbs(), 3);
+    let v2_gpu = readback_pod::<LeafAabb>(&device, &queue, state.current_leaf_aabbs(), 3, "move_propagates::leaf_aabbs_staging");
     assert_aabb_close(&v2_gpu[0], &leaves_v2[0], "V2 leaf[0] (moved entity)");
     assert_aabb_close(&v2_gpu[1], &leaves_v1[1], "V2 leaf[1] (unchanged)");
     assert_aabb_close(&v2_gpu[2], &leaves_v1[2], "V2 leaf[2] (unchanged)");
@@ -224,6 +182,7 @@ fn small_move_through_refit_path_propagates() {
         items_v1,
         leaves_v1.clone(),
         payloads_v1.clone(),
+        prims_v1.clone(),
         0.25,
         10.0,
     );
@@ -249,6 +208,7 @@ fn small_move_through_refit_path_propagates() {
         items_v2,
         leaves_v2.clone(),
         payloads_v1,
+        prims_v2.clone(),
         0.25,
         10.0,
     );
@@ -256,8 +216,112 @@ fn small_move_through_refit_path_propagates() {
     drive_bvh_to_completion(&mut state, &device, &queue);
     assert_eq!(state.current_n(), 3);
 
-    let v2_gpu = readback_leaf_aabbs(&device, &queue, state.current_leaf_aabbs(), 3);
+    let v2_gpu = readback_pod::<LeafAabb>(&device, &queue, state.current_leaf_aabbs(), 3, "move_propagates::leaf_aabbs_staging");
     assert_aabb_close(&v2_gpu[0], &leaves_v2[0], "V2 leaf[0] (refit path)");
     assert_aabb_close(&v2_gpu[1], &leaves_v1[1], "V2 leaf[1] (refit path)");
     assert_aabb_close(&v2_gpu[2], &leaves_v1[2], "V2 leaf[2] (refit path)");
+}
+
+/// Lockstep contract — the slot the renderer binds for primitives
+/// must always match the slot's `leaf_aabbs`. Without this, the BVH
+/// cull and the SDF eval read different scene states, which is
+/// exactly the visibility regression #356 surfaces in the editor.
+///
+/// The test mutates entity 0's position, kicks `kick_auto_if_dirty`,
+/// drives to completion, then reads back BOTH the slot's leaf AABBs
+/// AND the slot's primitives buffer. The position embedded in
+/// `primitives[0]` must match the moved entity's new position, AND
+/// the AABB of `leaf_aabbs[0]` must enclose that position.
+#[test]
+fn primitives_buffer_stays_in_lockstep_with_leaf_aabbs() {
+    let Some((device, queue)) = try_acquire_device() else {
+        eprintln!(
+            "raymarch_bvh::gpu_tests: no GPU adapter — skipping #356 lockstep contract repro"
+        );
+        return;
+    };
+
+    let (prims_v1, leaves_v1, payloads_v1) = three_sphere_scene();
+    let items_v1 = items_from_leaves(&leaves_v1);
+
+    let mut state = BvhState::new(&device, &queue, None);
+    state.kick_auto_if_dirty(
+        &device,
+        &queue,
+        items_v1,
+        leaves_v1.clone(),
+        payloads_v1.clone(),
+        prims_v1.clone(),
+        0.25,
+        10.0,
+    );
+    drive_bvh_to_completion(&mut state, &device, &queue);
+
+    let v1_prims = readback_pod::<SdfPrimitive>(&device, &queue, state.current_primitives(), 3, "move_propagates::primitives_staging");
+    for i in 0..3 {
+        let actual = Vec3::from_array(v1_prims[i].position);
+        let expected = Vec3::from_array(prims_v1[i].position);
+        assert!(
+            (actual - expected).length() < POSITION_EPS,
+            "V1 primitive[{i}] position diverged: actual={actual:?}, expected={expected:?}",
+        );
+    }
+
+    let mut prims_v2 = prims_v1.clone();
+    prims_v2[0].position[0] += 5.0;
+    let mut leaves_v2 = leaves_v1.clone();
+    let new_aabb = primitive_aabb(&prims_v2[0], 0.0);
+    leaves_v2[0].aabb_min = new_aabb.min.to_array();
+    leaves_v2[0].aabb_max = new_aabb.max.to_array();
+    let items_v2 = items_from_leaves(&leaves_v2);
+
+    state.kick_auto_if_dirty(
+        &device,
+        &queue,
+        items_v2,
+        leaves_v2.clone(),
+        payloads_v1,
+        prims_v2.clone(),
+        0.25,
+        10.0,
+    );
+    drive_bvh_to_completion(&mut state, &device, &queue);
+
+    let v2_prims = readback_pod::<SdfPrimitive>(&device, &queue, state.current_primitives(), 3, "move_propagates::primitives_staging");
+    let v2_leaves = readback_pod::<LeafAabb>(&device, &queue, state.current_leaf_aabbs(), 3, "move_propagates::leaf_aabbs_staging");
+
+    // Lockstep #1: primitives[0] reflects the new position.
+    let actual = Vec3::from_array(v2_prims[0].position);
+    let expected = Vec3::from_array(prims_v2[0].position);
+    assert!(
+        (actual - expected).length() < POSITION_EPS,
+        "V2 primitive[0] (moved entity) lost the post-edit position: \
+         actual={actual:?}, expected={expected:?}",
+    );
+
+    // Lockstep #2: leaf_aabbs[0] encloses primitive[0]. With BOTH
+    // buffers slot-rotated together, the cull never rejects an
+    // entity that the SDF eval would render — the disappearance
+    // mode in #356 is impossible by construction.
+    for axis in 0..3 {
+        let pos = actual.to_array()[axis];
+        let lo = v2_leaves[0].aabb_min[axis];
+        let hi = v2_leaves[0].aabb_max[axis];
+        assert!(
+            pos >= lo - POSITION_EPS && pos <= hi + POSITION_EPS,
+            "V2 leaf[0] AABB on axis {axis} ({lo}..={hi}) does not enclose \
+             primitive[0].position[{axis}] = {pos} — slot lockstep broken",
+        );
+    }
+
+    // Sanity: untouched entities are still byte-identical (entity_id
+    // catches it cleanly even if positions happen to coincide).
+    for i in 1..3 {
+        let actual = Vec3::from_array(v2_prims[i].position);
+        let expected = Vec3::from_array(prims_v1[i].position);
+        assert!(
+            (actual - expected).length() < POSITION_EPS,
+            "V2 primitive[{i}] (unchanged) drifted",
+        );
+    }
 }

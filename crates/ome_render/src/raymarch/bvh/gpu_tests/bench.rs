@@ -26,7 +26,7 @@ fn bench_pair(n: u32, iters: u32) {
     let items = items_from_leaves(&leaves);
 
     let mut state = BvhState::new(&device, &queue, None);
-    state.kick_if_dirty(&device, &queue, items, leaves.clone(), payloads.clone());
+    state.kick_if_dirty(&device, &queue, items, leaves.clone(), payloads.clone(), primitives.clone());
     drive_bvh_to_completion(&mut state, &device, &queue);
     assert_eq!(state.current_n(), n);
 

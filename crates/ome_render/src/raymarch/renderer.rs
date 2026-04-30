@@ -4,17 +4,20 @@ use wgpu::util::DeviceExt;
 
 use super::SHADER_SOURCE;
 use super::bvh::BvhState;
-use super::instance::{CameraUniforms, INITIAL_PRIMITIVE_CAPACITY, RayMarchParams, SceneMeta, SdfPrimitive};
+use super::instance::{CameraUniforms, RayMarchParams, SceneMeta};
 use crate::VIEWPORT_DEPTH_FORMAT;
 
 /// Ray-marching pipeline + buffers + bind groups.
+///
+/// The `SdfPrimitive[]` storage buffer used to live here as a single
+/// flat upload. Post-#356 it lives inside [`BvhState`] as a parallel
+/// per-slot double-buffer so the BVH cull and the SDF eval always read
+/// the same scene state — see [`BvhState::current_primitives`].
 pub struct RayMarchRenderer {
     pub(super) pipeline: wgpu::RenderPipeline,
     pub(super) camera_buffer: wgpu::Buffer,
     pub(super) params_buffer: wgpu::Buffer,
     pub(super) scene_meta_buffer: wgpu::Buffer,
-    pub(super) primitives_buffer: wgpu::Buffer,
-    pub(super) primitive_capacity: u64,
     pub(super) scene_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) camera_bind_group: wgpu::BindGroup,
     pub(super) scene_bind_group: wgpu::BindGroup,
@@ -48,12 +51,6 @@ impl RayMarchRenderer {
             label: Some("raymarch_scene_meta_buffer"),
             contents: bytemuck::bytes_of(&SceneMeta::default()),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let primitives_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("raymarch_primitives_buffer"),
-            size: INITIAL_PRIMITIVE_CAPACITY * std::mem::size_of::<SdfPrimitive>() as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
         });
 
         let bvh_state = BvhState::new(device, queue, pipeline_cache);
@@ -167,7 +164,7 @@ impl RayMarchRenderer {
             device,
             &scene_bind_group_layout,
             &scene_meta_buffer,
-            &primitives_buffer,
+            bvh_state.current_primitives(),
             bvh_state.current_nodes(),
             bvh_state.current_sorted_indices(),
             bvh_state.current_leaf_aabbs(),
@@ -228,8 +225,6 @@ impl RayMarchRenderer {
             camera_buffer,
             params_buffer,
             scene_meta_buffer,
-            primitives_buffer,
-            primitive_capacity: INITIAL_PRIMITIVE_CAPACITY,
             scene_bind_group_layout,
             camera_bind_group,
             scene_bind_group,

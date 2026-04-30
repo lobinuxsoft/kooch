@@ -31,6 +31,7 @@
 //! are minimal placeholders. The shader's `bvh_n == 0` branch renders
 //! the sky, mirroring PR-3's `Bvh::empty()` semantics.
 
+mod slots;
 mod state;
 
 pub use state::BvhState;

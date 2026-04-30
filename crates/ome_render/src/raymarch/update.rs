@@ -26,8 +26,8 @@ use ome_ecs::{
 
 use super::aabb::primitive_aabb;
 use super::instance::{
-    INITIAL_PRIMITIVE_CAPACITY, RaymarchPayload, SceneMeta, SdfPrimitive, TYPE_BOX, TYPE_CAPSULE,
-    TYPE_CYLINDER, TYPE_PLANE, TYPE_SPHERE, TYPE_TORUS,
+    RaymarchPayload, SceneMeta, SdfPrimitive, TYPE_BOX, TYPE_CAPSULE, TYPE_CYLINDER, TYPE_PLANE,
+    TYPE_SPHERE, TYPE_TORUS,
 };
 use super::renderer::{RayMarchRenderer, make_scene_bg};
 
@@ -215,37 +215,21 @@ impl RayMarchRenderer {
             primitives.push(prim);
         }
 
-        // Resize the primitives buffer if needed. The leaf-AABB and BVH
-        // node buffers live inside `bvh_state`'s slot management.
-        let mut rebind = false;
-        let prim_needed = primitives.len().max(1) as u64;
-        if prim_needed > self.primitive_capacity {
-            let new_cap = prim_needed
-                .next_power_of_two()
-                .max(INITIAL_PRIMITIVE_CAPACITY);
-            self.primitives_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("raymarch_primitives_buffer"),
-                size: new_cap * std::mem::size_of::<SdfPrimitive>() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.primitive_capacity = new_cap;
-            rebind = true;
-        }
-
-        if !primitives.is_empty() {
-            queue.write_buffer(&self.primitives_buffer, 0, bytemuck::cast_slice(&primitives));
-        }
-
         // Drive the BVH state: poll any in-flight build for completion
         // (potentially flipping `current_slot`), then kick a new build
         // if the scene state changed since the last successful kick.
-        // Both calls are idempotent on stable scenes.
+        // The kick captures `primitives` + `raymarch_payloads` and
+        // attaches per-slot upload closures that fire atomically on
+        // swap success — keeping the BVH cull and the SDF eval in
+        // lockstep so the rendered slot's `(leaf_aabbs, primitives,
+        // payloads)` triple always describes the same scene state
+        // (#356).
         if let Some(Err(e)) = self.bvh_state.poll_swap(device, queue) {
             tracing::warn!(
                 "raymarch BVH build failed: {e}; keeping previous slot's data"
             );
         }
+        let primitive_count = primitives.len() as u32;
         // Production frame loop uses the unified rebuild-vs-refit
         // policy: should_refit-driven decision over the previous
         // CPU mirror's leaf AABBs. Defaults from the PR-5 plan.
@@ -257,6 +241,7 @@ impl RayMarchRenderer {
             bvh_items,
             leaf_aabbs,
             raymarch_payloads,
+            primitives,
             /* move_threshold_ratio */ 0.25,
             /* change_threshold_pct */ 10.0,
         );
@@ -265,13 +250,12 @@ impl RayMarchRenderer {
         // two GPU buffer sets (slot_a ↔ slot_b) and the bind group must
         // point at the slot the renderer is consuming this frame.
         // wgpu treats bind-group creation as cheap; this is the simple
-        // path. Capacity-growth path also flows through here.
-        let _ = rebind;
+        // path.
         self.scene_bind_group = make_scene_bg(
             device,
             &self.scene_bind_group_layout,
             &self.scene_meta_buffer,
-            &self.primitives_buffer,
+            self.bvh_state.current_primitives(),
             self.bvh_state.current_nodes(),
             self.bvh_state.current_sorted_indices(),
             self.bvh_state.current_leaf_aabbs(),
@@ -279,7 +263,7 @@ impl RayMarchRenderer {
         );
 
         let meta = SceneMeta {
-            primitive_count: primitives.len() as u32,
+            primitive_count,
             bvh_n: self.bvh_state.current_n(),
             skip_internal_sky: u32::from(skip_internal_sky),
             has_intersects: u32::from(has_intersects),
