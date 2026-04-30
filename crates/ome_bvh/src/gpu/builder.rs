@@ -78,9 +78,17 @@ pub struct BvhGpuBuilder {
     pub(crate) lbvh_buffers: LbvhBuffers,
 
     /// Timestamp query set + resolve buffer for per-pass profiling.
-    /// Always created; queries are written even if no consumer reads
-    /// them (cost is negligible vs the work being measured).
-    pub(crate) timestamps: BvhTimestamps,
+    /// `None` when the device was not built with
+    /// [`wgpu::Features::TIMESTAMP_QUERY`] +
+    /// [`wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES`] — the engine
+    /// requests these as **optional** features in
+    /// [`ome_core::gpu`](../../../../ome_core/gpu/index.html), so the
+    /// builder must stay correct on adapters that don't expose them.
+    /// Without timestamps the builder skips both `create_query_set` and
+    /// the `timestamp_writes` on the morton pass; the validation error
+    /// otherwise rejects the entire submission and silently corrupts
+    /// downstream `done_buffer` reads (#333).
+    pub(crate) timestamps: Option<BvhTimestamps>,
 }
 
 /// Per-build timestamp infrastructure. Resolved into `resolve_buffer`
@@ -187,7 +195,22 @@ impl BvhGpuBuilder {
             mapped_at_creation: false,
         });
 
-        let timestamps = BvhTimestamps::new(device, queue);
+        // Timestamps are best-effort telemetry; only enable them when
+        // the device exposes both feature flags. `ome_core::gpu`
+        // requests them as optional features so adapters that support
+        // them get per-pass profiling for free; adapters without them
+        // silently drop the instrumentation rather than failing the
+        // build (#333: validation rejects every dispatch on a device
+        // without TIMESTAMP_QUERY, manifesting as a misleading
+        // "AABB iteration slack insufficient" panic).
+        let supports_timestamps = device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY)
+            && device
+                .features()
+                .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES);
+        let timestamps =
+            if supports_timestamps { Some(BvhTimestamps::new(device, queue)) } else { None };
 
         let sort_pipelines = SortPipelines::new(device, pipeline_cache);
         let sort_buffers = SortBuffers::new(device);
@@ -324,14 +347,16 @@ impl BvhGpuBuilder {
             ],
         });
 
-        let timestamp_writes = wgpu::ComputePassTimestampWrites {
-            query_set: &self.timestamps.query_set,
-            beginning_of_pass_write_index: Some(TS_MORTON_START),
-            end_of_pass_write_index: Some(TS_MORTON_END),
-        };
+        let timestamp_writes = self.timestamps.as_ref().map(|ts| {
+            wgpu::ComputePassTimestampWrites {
+                query_set: &ts.query_set,
+                beginning_of_pass_write_index: Some(TS_MORTON_START),
+                end_of_pass_write_index: Some(TS_MORTON_END),
+            }
+        });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("ome_bvh::morton_pass"),
-            timestamp_writes: Some(timestamp_writes),
+            timestamp_writes,
         });
         pass.set_pipeline(&self.morton_pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
