@@ -53,18 +53,25 @@ const SHADER_SOURCE: &str = concat!(
     include_str!("../../shaders/raymarch_main.wgsl"),
 );
 
-/// Pool-driven scene-SDF evaluator (#360, PR-1). Concatenated source
-/// of the primitives library + the new TLAS+BLAS pool shader.
-///
-/// PR-1 ships this as a standalone compute shader so the WGSL can be
-/// parsed + validated + executed in a smoke test before PR-2 wires
-/// `eval_scene_bvh` into the raymarch fragment path. See
-/// `shaders/raymarch_pool_eval.wgsl` for the WGSL contract + per-role
-/// accumulator invariant.
+/// Pool-driven scene-SDF library — `eval_scene_bvh` + `descend_blas`
+/// + the OmeAccel pool bindings (group 1, bindings 5..=10). NO entry
+/// point: concatenate AFTER `sdf_primitives.wgsl` and BEFORE either
+/// the fragment-shader entry in `raymarch_main.wgsl` (production
+/// path) or the compute-shader entry in `raymarch_pool_smoke.wgsl`
+/// (smoke test).
+pub const POOL_EVAL_LIBRARY_WGSL: &str = include_str!("../../shaders/raymarch_pool_eval.wgsl");
+
+/// Standalone compute-kernel smoke test: `sdf_primitives` + pool
+/// library + `cs_eval_smoke`. Drives `eval_scene_bvh` over a caller-
+/// provided sample-point buffer; consumed by
+/// `tests/pool_eval_smoke.rs` to validate the pool shader in
+/// isolation from the renderer pipeline.
 pub const POOL_EVAL_SHADER_SOURCE: &str = concat!(
     include_str!("../../../ome_sdf/shaders/sdf_primitives.wgsl"),
     "\n",
     include_str!("../../shaders/raymarch_pool_eval.wgsl"),
+    "\n",
+    include_str!("../../shaders/raymarch_pool_smoke.wgsl"),
 );
 
 #[cfg(test)]

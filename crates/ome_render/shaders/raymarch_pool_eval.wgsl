@@ -1,16 +1,19 @@
-// raymarch_pool_eval.wgsl — TLAS+BLAS pool-driven scene SDF evaluator.
+// raymarch_pool_eval.wgsl — TLAS+BLAS pool-driven scene SDF library.
 //
-// PR-1 of #360. Concatenated at runtime AFTER `sdf_primitives.wgsl` so
-// `sdf_*`, `transform_point`, and the smooth-CSG helpers are already in
-// scope.
+// Pure shader library: declares the pool-side bindings (group 1,
+// bindings 5..=10) + `descend_blas` + `eval_scene_bvh`. NO entry
+// point and NO I/O bindings — concatenated AFTER `sdf_primitives.wgsl`
+// (so `sdf_*`, `transform_point`, smooth-CSG helpers are in scope) and
+// BEFORE either:
+//   - the fragment shader entry in `raymarch_main.wgsl` (production
+//     raymarch path), or
+//   - the compute-kernel smoke test in `raymarch_pool_smoke.wgsl`
+//     (group 0 I/O, exercised by `tests/pool_eval_smoke.rs`).
 //
-// Ships standalone in PR-1: the only entry point exposed here is the
-// compute-kernel smoke test `cs_eval_smoke` that drives `eval_scene_bvh`
-// over a caller-provided sample-point buffer and writes the resulting
-// SDF distances to an output buffer. PR-2 wires `eval_scene_bvh` into
-// the raymarcher's fragment path, replaces `cs_eval_smoke`'s I/O
-// bindings with the camera + scene-meta uniforms, and drops the
-// legacy global-BVH `eval_scene_bvh` from `raymarch_main.wgsl`.
+// Splitting library vs entry-point lets the smoke test and the
+// renderer share `eval_scene_bvh` byte-for-byte without duplicating
+// the traversal logic and without dragging the smoke-test storage
+// bindings into the production pipeline layout.
 //
 // # Per-role accumulator invariant
 //
@@ -151,16 +154,11 @@ const MAX_TLAS_STACK: u32 = 32u;
 const MAX_BLAS_STACK: u32 = 32u;
 
 // =============================================================================
-// BIND GROUPS
-//
-// Group 0 — smoke-test I/O. Replaced in PR-2 by the camera + scene-meta
-// uniforms when this shader is wired into the raymarch fragment path.
-// Group 1 — pool layout (issue body §Shader/GPU). Bindings 5..=10
-// match the issue spec verbatim.
+// POOL BIND GROUP — issue body §Shader/GPU. Bindings 5..=10 of group 1
+// are reserved for the OmeAccel pool buffers; bindings 0..=4 stay free
+// for the consumer (camera/params/scene_meta on the fragment side, or
+// I/O storage on the compute smoke-test side).
 // =============================================================================
-
-@group(0) @binding(0) var<storage, read> sample_points: array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read_write> sample_distances: array<f32>;
 
 @group(1) @binding(5) var<storage, read> tlas_nodes: array<BvhNode>;
 @group(1) @binding(6) var<storage, read> chunk_descriptors: array<ChunkDescriptor>;
@@ -343,20 +341,3 @@ fn eval_scene_bvh(p: vec3<f32>) -> f32 {
     return result;
 }
 
-// =============================================================================
-// SMOKE-TEST ENTRY POINT
-//
-// Drives `eval_scene_bvh` over `sample_points` and writes the result
-// into `sample_distances`. Lives only in PR-1 — PR-2 deletes this
-// entry point and wires `eval_scene_bvh` into the raymarch fragment
-// shader path.
-// =============================================================================
-
-@compute @workgroup_size(64)
-fn cs_eval_smoke(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x;
-    let n = arrayLength(&sample_points);
-    if i >= n { return; }
-    let p = sample_points[i].xyz;
-    sample_distances[i] = eval_scene_bvh(p);
-}
