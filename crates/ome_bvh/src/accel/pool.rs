@@ -83,6 +83,14 @@ impl FreeListPool {
     /// Allocating zero elements is a no-op and returns `Some(0)` — the
     /// caller has nothing to write but a valid offset for an empty
     /// slice.
+    ///
+    /// **Sort-order preserved.** Removes the picked range with
+    /// `Vec::remove` (not `swap_remove`) so subsequent first-fit
+    /// allocations keep walking left-to-right through the free list.
+    /// `swap_remove` would shuffle the trailing range to position 0
+    /// and steer the next alloc onto fresh capacity even when smaller
+    /// holes are still available, blowing up `high_watermark` and
+    /// regressing AC7 utilisation by ~33%.
     pub fn alloc(&mut self, len: u32) -> Option<u32> {
         if len == 0 {
             return Some(0);
@@ -94,7 +102,7 @@ impl FreeListPool {
         let range = &mut self.free_ranges[pick];
         let start = range.start;
         if range.len == len {
-            self.free_ranges.swap_remove(pick);
+            self.free_ranges.remove(pick);
         } else {
             range.start += len;
             range.len -= len;

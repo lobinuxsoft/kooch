@@ -30,6 +30,14 @@ impl OmeAccel {
             tlas::rebuild(self, queue);
             self.tlas_dirty_count = 0;
         }
+        // Coalesce the BLAS free lists once per frame so post-eviction
+        // re-inserts walk a sorted free list and keep `high_watermark`
+        // tight (AC7's `used / high_watermark` invariant). `O(F log F)`
+        // per pool — `F` is the disjoint range count, typically small
+        // even under aggressive churn.
+        self.free_node_ranges.coalesce();
+        self.free_leaf_ranges.coalesce();
+        self.free_primitive_ranges.coalesce();
         let mut has_intersects = 0u32;
         let mut has_subs = 0u32;
         for slot in &self.slots {
