@@ -3,6 +3,8 @@
 
 use egui_dock::DockArea;
 
+use ome_world::lod::LodRingConfig;
+
 use crate::actions::EditorAction;
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::ViewportInputDelta;
@@ -52,6 +54,7 @@ pub(super) fn run_editor_ui(
     undo: &UndoInfo,
     viewport: ViewportUi<'_>,
     power_profile: ome_core::power::PowerProfile,
+    streaming_config: &mut LodRingConfig,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut last_clicked_index = overlay.last_clicked_index.take();
@@ -102,6 +105,7 @@ pub(super) fn run_editor_ui(
                 snap_settings: &mut overlay.snap_settings,
                 handle_mode,
                 selection_has_transform,
+                streaming_config,
             };
 
             DockArea::new(&mut overlay.dock_state)

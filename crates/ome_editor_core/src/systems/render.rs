@@ -133,6 +133,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut undo_stack = resources
         .remove::<UndoStack>()
         .unwrap_or_else(UndoStack::new);
+    let mut streaming_config = resources
+        .remove::<ome_world::lod::LodRingConfig>()
+        .unwrap_or_default();
 
     // Apply the previous frame's size request before the UI runs so the
     // texture id stays stable through the entire egui pass.
@@ -179,6 +182,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .unwrap_or_default(),
         },
         power_profile,
+        &mut streaming_config,
     );
 
     if let Some(size) = viewport_request {
@@ -244,6 +248,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     if let Some(ps) = project_state {
         resources.insert(ps);
     }
+    resources.insert(streaming_config);
 
     apply_deferred_actions(resources, &actions, &mut undo_stack);
 
