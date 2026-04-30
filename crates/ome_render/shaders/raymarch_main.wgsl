@@ -237,23 +237,40 @@ fn eval_primitive_at(p: vec3<f32>, prim: SdfPrimitive) -> f32 {
     return eval_primitive_kind(local, prim) * s_min;
 }
 
-// Returns true if `p` is inside the AABB defined by `lo`/`hi` (boundary
-// inclusive). Used to cull subtrees during the BVH point-query walk in
-// `eval_scene_bvh`.
-fn point_in_aabb(p: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> bool {
-    return all(p >= lo) && all(p <= hi);
+// Signed distance from `p` to the AABB defined by `lo`/`hi`. Returns
+// `0` when `p` is inside (or on the boundary), and the Euclidean
+// distance to the nearest face when `p` is outside. Used to prune
+// subtrees during sphere-tracing BVH traversal — every primitive
+// inside a node has SDF distance ≥ the node's `aabb_outside_distance`
+// (because the leaf AABBs are pre-inflated by the per-role smooth
+// blend `k_max` on the CPU side), so a subtree whose AABB is farther
+// than the current union accumulator can never improve the result.
+fn aabb_outside_distance(p: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> f32 {
+    let q = max(max(lo - p, p - hi), vec3<f32>(0.0));
+    return length(q);
 }
 
-// BVH-driven scene SDF evaluator. Walks the BVH stack-based, point-
-// querying every leaf whose AABB contains `p`, and accumulates the
-// hit's distance into the role's accumulator (smooth_union for ADD/SUB,
-// smooth_intersection for INTERSECT). Final result combines the three
-// accumulators with the fixed default tree:
+// BVH-driven scene SDF evaluator. Walks the BVH stack-based,
+// SDF-pruning subtrees whose AABB is farther than the current union
+// accumulator (sound for sphere tracing — see [`aabb_outside_distance`]
+// for the bound), and accumulates the hit's distance into the role's
+// accumulator (smooth_union for ADD/SUB, smooth_intersection for
+// INTERSECT). Final result combines the three accumulators with the
+// fixed default tree:
 //
 //   smooth_subtract(smooth_intersect(adds, ints, k_int), subs, k_sub)
 //
 // Branches collapse to the identity element when their role is empty —
 // `has_intersects == 0` skips the intersect step entirely, etc.
+//
+// PRUNE SAFETY: the prune compares `d_aabb` against `min(add_acc,
+// sub_acc)` — both union accumulators that decrease monotonically as
+// closer primitives are visited. INT primitives can only increase
+// `int_acc` (smooth_intersection picks the max), so when the scene
+// has any INT leaf we conservatively skip the prune entirely; we
+// don't track per-subtree role membership, so we can't selectively
+// prune ADD/SUB subtrees in a mixed scene without a per-node role
+// bitmask (future #115 PR-5 work).
 //
 // `bvh_n == 0` short-circuits to the union identity (`1e10`), which
 // the ray-march loop will read as "no surface anywhere" → sky.
@@ -273,8 +290,12 @@ fn eval_scene_bvh(p: vec3<f32>) -> f32 {
     while sp > 0u {
         sp = sp - 1u;
         let node = bvh_nodes[stack[sp]];
-        if !point_in_aabb(p, node.aabb_min, node.aabb_max) {
-            continue;
+        let d_aabb = aabb_outside_distance(p, node.aabb_min, node.aabb_max);
+        if scene_meta.has_intersects == 0u {
+            let union_bound = min(add_acc, sub_acc);
+            if d_aabb > union_bound {
+                continue;
+            }
         }
         let payload = node.right_or_count;
         if (payload & BVH_LEAF_FLAG) != 0u {

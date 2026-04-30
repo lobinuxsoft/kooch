@@ -16,7 +16,10 @@ fn main() {
     // -- Headless wgpu setup (no surface) --
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-        ..Default::default()
+        flags: wgpu::InstanceFlags::default(),
+        backend_options: wgpu::BackendOptions::default(),
+        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+        display: None,
     });
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -29,13 +32,10 @@ fn main() {
     let info = adapter.get_info();
     println!("Adapter: {} ({:?})", info.name, info.backend);
 
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("compute_example_device"),
-            ..Default::default()
-        },
-        None,
-    ))
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("compute_example_device"),
+        ..Default::default()
+    }))
     .expect("failed to create device");
 
     // -- Input data --
@@ -87,7 +87,10 @@ fn main() {
     staging_slice.map_async(wgpu::MapMode::Read, |result| {
         result.expect("failed to map staging buffer");
     });
-    device.poll(wgpu::Maintain::Wait);
+    let _ = device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: Some(std::time::Duration::from_secs(30)),
+    });
 
     let data = staging_slice.get_mapped_range();
     let result: &[f32] = bytemuck::cast_slice(&data);
