@@ -14,6 +14,7 @@ ome_render.workspace = true
 ome_gizmos.workspace = true
 ome_gizmos_handles.workspace = true
 ome_window.workspace = true
+ome_world.workspace = true
 egui.workspace = true
 egui-winit.workspace = true
 egui-wgpu.workspace = true
