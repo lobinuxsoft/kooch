@@ -36,11 +36,15 @@ pub mod error;
 mod full;
 mod lifecycle;
 mod refit;
+mod seed_dump;
 
 pub use error::BvhBuildError;
 pub use full::{BvhGpuBuild, BvhGpuBuildResult, build_gpu};
 pub use lifecycle::GpuBvhHandle;
 pub use refit::{BvhGpuRefit, refit_gpu};
+
+#[cfg(test)]
+mod aabb_convergence_tests;
 
 #[cfg(test)]
 mod tests;
