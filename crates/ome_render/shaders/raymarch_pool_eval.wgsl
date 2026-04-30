@@ -127,8 +127,21 @@ const TLAS_CHUNK_IDX_MASK: u32 = 0x3FFFFFFFu;
 // Per-role accumulator identities. Picked so an empty role collapses
 // cleanly under the final per-role combine — see the note at the top
 // of `eval_scene_bvh`.
-const ACC_UNION_IDENTITY: f32 = 1.0e10;
-const ACC_INTERSECT_IDENTITY: f32 = -1.0e10;
+//
+// `±1e6` instead of `±1e10` because some Vulkan drivers (radv on the
+// development machines) implement `mix(a, b, t)` as `a + (b - a) * t`,
+// which loses precision at extreme magnitudes: with `a = -1e10` and
+// `b = -77` and `t = 1`, the f32 round-off in `(b - a)` swallows `b`
+// and the result evaluates to `0` instead of `-77`. `1e6` keeps the
+// identity well past any practical SDF distance (≥ 1000 km in scene
+// units) while staying inside f32 precision so the identity collapse
+// in the final per-role combine works on every backend. The legacy
+// `raymarch_main.wgsl` carried `1e10` and avoided the bug only via
+// conditional `has_intersects` / `has_subs` branches; we drop those
+// branches here so the math is unconditional and uniform across
+// scenes — and this constant is the lever that makes that safe.
+const ACC_UNION_IDENTITY: f32 = 1.0e6;
+const ACC_INTERSECT_IDENTITY: f32 = -1.0e6;
 
 // Stack depths. Both fit comfortably in registers on Steam Deck-class
 // hardware. `MAX_TLAS_STACK = 32` covers `2^32` TLAS leaves (encoding
@@ -197,9 +210,13 @@ fn aabb_contains(lo: vec3<f32>, hi: vec3<f32>, p: vec3<f32>) -> bool {
 
 // BLAS descend over `[desc.first_node .. desc.first_node + desc.node_count)`.
 //
-// `acc_add` / `acc_sub` / `acc_int` are passed by pointer and updated
-// across leaves. The traversal does NOT reset them on entry — that is
-// the cross-chunk-smoothness invariant pinned at the file head.
+// Returns the updated `(acc_add, acc_sub, acc_int)` triple as a
+// `vec3<f32>` rather than taking pointer args. Pass-by-value + return
+// is the most portable WGSL pattern across backends; the caller
+// threads the previous triple into the next BLAS descend so the
+// per-role accumulators remain scene-wide — they are NOT reset
+// per-chunk, per the cross-chunk-smoothness invariant pinned at the
+// file head.
 //
 // Determinism: pushes left before right, pops right first, matching
 // `eval_scene_bvh`'s TLAS path and the legacy global BVH traversal so
@@ -207,18 +224,24 @@ fn aabb_contains(lo: vec3<f32>, hi: vec3<f32>, p: vec3<f32>) -> bool {
 fn descend_blas(
     p: vec3<f32>,
     desc: ChunkDescriptor,
-    acc_add: ptr<function, f32>,
-    acc_sub: ptr<function, f32>,
-    acc_int: ptr<function, f32>,
-) {
-    var stack: array<u32, MAX_BLAS_STACK>;
+    acc_add_in: f32,
+    acc_sub_in: f32,
+    acc_int_in: f32,
+) -> vec3<f32> {
+    var acc_add = acc_add_in;
+    var acc_sub = acc_sub_in;
+    var acc_int = acc_int_in;
+    var stack: array<u32, 32>;
     stack[0] = desc.first_node;
     var sp: u32 = 1u;
 
     while sp > 0u {
         sp = sp - 1u;
-        let node = bvh_nodes_pool[stack[sp]];
-        if !aabb_contains(node.aabb_min, node.aabb_max, p) { continue; }
+        let node_idx = stack[sp];
+        let node = bvh_nodes_pool[node_idx];
+        let inside = (p.x >= node.aabb_min.x) && (p.y >= node.aabb_min.y) && (p.z >= node.aabb_min.z)
+                  && (p.x <= node.aabb_max.x) && (p.y <= node.aabb_max.y) && (p.z <= node.aabb_max.z);
+        if !inside { continue; }
         let payload = node.right_or_count;
         if (payload & BVH_LEAF_FLAG) != 0u {
             // BLAS leaf — `node.left` carries the **absolute** pool
@@ -231,16 +254,18 @@ fn descend_blas(
             let prim = primitives_pool[prim_idx];
             let d = eval_primitive_at(p, prim);
             let k = max(prim.smoothness, 1e-5);
-            switch (leaf.flags & ROLE_RAYMARCH_MASK) {
-                case 0u: { *acc_add = sdf_smooth_union(*acc_add, d, k); }
-                case 1u: { *acc_int = sdf_smooth_intersection(*acc_int, d, k); }
-                case 2u: { *acc_sub = sdf_smooth_union(*acc_sub, d, k); }
-                default: { *acc_add = sdf_smooth_union(*acc_add, d, k); }
+            let role = leaf.flags & ROLE_RAYMARCH_MASK;
+            if role == ROLE_RAYMARCH_INT {
+                acc_int = sdf_smooth_intersection(acc_int, d, k);
+            } else if role == ROLE_RAYMARCH_SUB {
+                acc_sub = sdf_smooth_union(acc_sub, d, k);
+            } else {
+                acc_add = sdf_smooth_union(acc_add, d, k);
             }
         } else {
             let left = node.left;
             let right = payload & BVH_VALUE_MASK;
-            if sp + 2u <= MAX_BLAS_STACK {
+            if sp + 2u <= 32u {
                 stack[sp] = left;
                 sp = sp + 1u;
                 stack[sp] = right;
@@ -248,6 +273,7 @@ fn descend_blas(
             }
         }
     }
+    return vec3<f32>(acc_add, acc_sub, acc_int);
 }
 
 // =============================================================================
@@ -294,7 +320,10 @@ fn eval_scene_bvh(p: vec3<f32>) -> f32 {
             if (payload & TLAS_DEAD_FLAG) != 0u { continue; }
             let chunk_idx = payload & TLAS_CHUNK_IDX_MASK;
             let desc = chunk_descriptors[chunk_idx];
-            descend_blas(p, desc, &acc_add, &acc_sub, &acc_int);
+            let acc_next = descend_blas(p, desc, acc_add, acc_sub, acc_int);
+            acc_add = acc_next.x;
+            acc_sub = acc_next.y;
+            acc_int = acc_next.z;
         } else {
             let left = node.left;
             let right = payload & BVH_VALUE_MASK;
