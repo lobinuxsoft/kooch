@@ -50,6 +50,7 @@ pub use descriptor::{ChunkDescriptor, TlasUniforms};
 pub use error::{AccelCaps, AccelError};
 pub use pool::{FragmentationMetrics, FreeListPool, FreeRange};
 pub use state::{ChunkBvhHandle, ChunkKey, OmeAccel};
+pub use streaming::{ChunkInsert, ChunkRefit};
 
 /// Set on TLAS leaves whose chunk has been evicted. Traversal skips
 /// without descending into the BLAS pool.
