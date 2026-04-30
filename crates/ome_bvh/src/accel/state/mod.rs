@@ -149,6 +149,18 @@ impl OmeAccel {
             .filter(|s| s.live)
             .map(|s| &s.descriptor)
     }
+
+    /// Iterate `(chunk_idx, &[LeafAabb])` for every live chunk in the
+    /// pool. Skips dead-slot entries waiting for the lazy compactor.
+    /// Used by `ome_physics::broadphase` to enumerate every collider
+    /// leaf across the pool without exposing the internal slot type.
+    pub fn iter_live_leaves(&self) -> impl Iterator<Item = (u32, &[crate::leaf::LeafAabb])> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.live)
+            .map(|(idx, s)| (idx as u32, s.cpu_leaf_aabbs.as_slice()))
+    }
 }
 
 #[cfg(test)]
