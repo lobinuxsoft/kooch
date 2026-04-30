@@ -38,6 +38,7 @@
 //!   the default cap of `1024` lives well below.
 
 pub mod buffers;
+pub mod cpu_traversal;
 pub mod descriptor;
 pub mod error;
 pub mod pool;

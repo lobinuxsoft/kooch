@@ -79,9 +79,12 @@ pub(crate) fn rebuild(accel: &mut OmeAccel, queue: &wgpu::Queue) {
     let n = live_chunks.len();
     if n == 0 {
         // Empty pool: zero the first node so any stale traversal sees
-        // an out-of-bounds AABB and bails out immediately.
+        // an out-of-bounds AABB and bails out immediately. Mirror
+        // cleared so CPU consumers (`for_each_overlapping_cpu`) also
+        // observe an empty TLAS.
         let zero = BvhNode::default();
         queue.write_buffer(&accel.buffers.tlas_nodes, 0, bytemuck::bytes_of(&zero));
+        accel.cpu_tlas_nodes.clear();
         return;
     }
 
@@ -110,6 +113,10 @@ pub(crate) fn rebuild(accel: &mut OmeAccel, queue: &wgpu::Queue) {
         total_nodes * size_of::<BvhNode>() <= 2 * accel.caps.max_chunks as usize * size_of::<BvhNode>(),
         "TLAS rebuild overflowed pre-allocated tlas_nodes buffer",
     );
+
+    // Maintain CPU mirror in lockstep with the GPU upload — CPU
+    // consumers traverse this without ever paying for a readback.
+    accel.cpu_tlas_nodes = nodes_scratch;
 }
 
 #[cfg(test)]

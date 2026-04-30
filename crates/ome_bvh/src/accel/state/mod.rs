@@ -16,15 +16,13 @@ use crate::accel::descriptor::ChunkDescriptor;
 use crate::accel::error::{AccelCaps, AccelError};
 use crate::accel::pool::FreeListPool;
 use crate::accel::{MAX_CHUNKS_LIMIT, TLAS_REBUILD_THRESHOLD};
+use crate::node::BvhNode;
 
-/// TLAS+BLAS pool acceleration structure. One instance per scene.
-///
-/// Owns six GPU buffers (see [`AccelBuffers`]) plus the CPU-only
-/// allocators that decide where each chunk's slice lives in the
-/// pools. Hot-path operations (`insert_chunk`, `remove_chunk`,
-/// `refit_chunk`) thread through CPU coordination only — the GPU
-/// buffers are written via `queue.write_buffer` slice writes; never
-/// reallocated.
+/// TLAS+BLAS pool acceleration structure. Owns six pre-allocated GPU
+/// buffers (see [`AccelBuffers`]) plus the CPU coordinators that
+/// decide where each chunk's slice lives in the pools. Hot-path
+/// operations write through `queue.write_buffer` only — buffers are
+/// never reallocated.
 #[allow(dead_code)]
 pub struct OmeAccel {
     pub(crate) caps: AccelCaps,
@@ -45,6 +43,11 @@ pub struct OmeAccel {
     /// Counter of `inserts + removes` since the last full TLAS
     /// rebuild. Drives the lazy compactor.
     pub(crate) tlas_dirty_count: u32,
+
+    /// CPU mirror of `tlas_nodes`, kept in lockstep by `tlas::rebuild`
+    /// for the CPU traversal helper. Empty when the pool has no live
+    /// chunks. GPU shader still reads `buffers.tlas_nodes`.
+    pub(crate) cpu_tlas_nodes: Vec<BvhNode>,
 
     pub buffers: AccelBuffers,
 }
@@ -97,6 +100,7 @@ impl OmeAccel {
             free_leaf_ranges: FreeListPool::new(caps.max_leaves),
             free_primitive_ranges: FreeListPool::new(caps.max_primitives),
             tlas_dirty_count: 0,
+            cpu_tlas_nodes: Vec::new(),
             buffers,
         })
     }

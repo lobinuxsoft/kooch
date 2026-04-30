@@ -189,6 +189,8 @@ impl OmeAccel {
             live: true,
             key: insert.key,
             sorted_indices: leaves_scratch,
+            cpu_bvh_nodes: nodes_scratch,
+            cpu_leaf_aabbs: insert.leaf_aabbs.to_vec(),
         };
         self.coord_to_idx.insert(insert.key, chunk_idx);
         self.tlas_dirty_count = self.tlas_dirty_count.saturating_add(1);
@@ -208,9 +210,13 @@ impl OmeAccel {
             return Err(AccelError::UnknownChunk);
         }
         let desc = slot.descriptor;
-        // Mark slot dead first.
+        // Mark slot dead first. Drop the CPU mirrors so traversals
+        // observe the eviction immediately and the slot's previous
+        // memory is released.
         slot.live = false;
         slot.sorted_indices.clear();
+        slot.cpu_bvh_nodes.clear();
+        slot.cpu_leaf_aabbs.clear();
 
         // Return pool ranges. TLAS gets rebuilt on the next
         // `update_gpu` so we don't write the dead-skip flag here —
@@ -315,12 +321,15 @@ impl OmeAccel {
             refit.primitives_bytes,
         );
 
-        // CPU mirror updates — descriptor + cached permutation.
+        // CPU mirror updates — descriptor + cached permutation +
+        // shadowed BLAS nodes / leaf aabbs.
         let slot = &mut self.slots[slot_idx];
         slot.descriptor.aabb_min = new_min;
         slot.descriptor.aabb_max = new_max;
         slot.descriptor.max_smoothness_radius = r;
         slot.sorted_indices = leaves_scratch;
+        slot.cpu_bvh_nodes = nodes_scratch;
+        slot.cpu_leaf_aabbs = refit.leaf_aabbs.to_vec();
 
         let descriptor = slot.descriptor;
         queue.write_buffer(
