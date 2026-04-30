@@ -22,4 +22,5 @@ mod bench;
 mod byte_identical;
 mod harness;
 mod lipschitz;
+mod multirole;
 mod shader;

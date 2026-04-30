@@ -250,30 +250,20 @@ fn aabb_outside_distance(p: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> f32 {
     return length(q);
 }
 
-// BVH-driven scene SDF evaluator. Walks the BVH stack-based,
-// SDF-pruning subtrees whose AABB is farther than the current union
-// accumulator (sound for sphere tracing — see [`aabb_outside_distance`]
-// for the bound), and accumulates the hit's distance into the role's
-// accumulator (smooth_union for ADD/SUB, smooth_intersection for
-// INTERSECT). Final result combines the three accumulators with the
-// fixed default tree:
+// BVH-driven scene SDF evaluator. Walks the BVH stack-based, SDF-prunes
+// subtrees whose AABB-outside distance exceeds `max(add_acc, sub_acc)`
+// — the worst-case role accumulator, since we don't have a per-subtree
+// role bitmask. Skipping a leaf of role R is sound iff `d_aabb > acc_R`,
+// and satisfying both simultaneously requires `max`, not `min` (#354
+// regression: PR #352 used `min`, which prematurely pruned SUB subtrees
+// once any ADD leaf had already been visited and the DFS order made
+// visibility view-dependent). With INT leaves the inequality direction
+// flips, so we conservatively skip the prune entirely when the scene
+// has any INT leaf — pending #115 PR-5 (per-node role bitmask).
 //
+// Per-role accumulators combine via the fixed default tree
 //   smooth_subtract(smooth_intersect(adds, ints, k_int), subs, k_sub)
-//
-// Branches collapse to the identity element when their role is empty —
-// `has_intersects == 0` skips the intersect step entirely, etc.
-//
-// PRUNE SAFETY: the prune compares `d_aabb` against `min(add_acc,
-// sub_acc)` — both union accumulators that decrease monotonically as
-// closer primitives are visited. INT primitives can only increase
-// `int_acc` (smooth_intersection picks the max), so when the scene
-// has any INT leaf we conservatively skip the prune entirely; we
-// don't track per-subtree role membership, so we can't selectively
-// prune ADD/SUB subtrees in a mixed scene without a per-node role
-// bitmask (future #115 PR-5 work).
-//
-// `bvh_n == 0` short-circuits to the union identity (`1e10`), which
-// the ray-march loop will read as "no surface anywhere" → sky.
+// and roles with no leaves collapse via their identity element.
 fn eval_scene_bvh(p: vec3<f32>) -> f32 {
     if scene_meta.bvh_n == 0u {
         return ACC_UNION_IDENTITY;
@@ -292,7 +282,7 @@ fn eval_scene_bvh(p: vec3<f32>) -> f32 {
         let node = bvh_nodes[stack[sp]];
         let d_aabb = aabb_outside_distance(p, node.aabb_min, node.aabb_max);
         if scene_meta.has_intersects == 0u {
-            let union_bound = min(add_acc, sub_acc);
+            let union_bound = max(add_acc, sub_acc);
             if d_aabb > union_bound {
                 continue;
             }
