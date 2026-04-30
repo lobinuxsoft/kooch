@@ -54,7 +54,7 @@ mod bindings;
 use bindings::{FINALIZE_BGL_ENTRIES, POPULATE_BGL_ENTRIES};
 use bytemuck::{Pod, Zeroable};
 
-use super::{LOD_COUNT, LOD_LEVELS, SPARSE_FREELIST_WGSL, SparseGrid};
+use super::{LOD_COUNT, LOD_LEVELS, ROOT_DIM, SPARSE_FREELIST_WGSL, SparseGrid};
 
 /// WGSL source of the populate pass body.
 pub const POPULATE_WGSL: &str = include_str!("../../shaders/sparse_populate.wgsl");
@@ -135,6 +135,8 @@ impl PopulatePass {
                 ("POPULATE_TILE_DIM", lod.tile_dim as f64),
                 ("POPULATE_TILE_VOXELS", lod.tile_voxels() as f64),
                 ("POPULATE_ATLAS_TILES_X", lod.atlas_tiles_x as f64),
+                ("POPULATE_ATLAS_TILES_Y", lod.atlas_tiles_y as f64),
+                ("POPULATE_ROOT_DIM", ROOT_DIM as f64),
             ];
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(&label),

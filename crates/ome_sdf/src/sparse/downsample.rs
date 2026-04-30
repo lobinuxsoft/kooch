@@ -74,8 +74,10 @@ impl DownsamplePass {
                 ("DOWNSAMPLE_DST_TILE_DIM", dst.tile_dim as f64),
                 ("DOWNSAMPLE_DST_TILE_VOXELS", dst.tile_voxels() as f64),
                 ("DOWNSAMPLE_DST_ATLAS_TILES_X", dst.atlas_tiles_x as f64),
+                ("DOWNSAMPLE_DST_ATLAS_TILES_Y", dst.atlas_tiles_y as f64),
                 ("DOWNSAMPLE_SRC_TILE_DIM", src.tile_dim as f64),
                 ("DOWNSAMPLE_SRC_ATLAS_TILES_X", src.atlas_tiles_x as f64),
+                ("DOWNSAMPLE_SRC_ATLAS_TILES_Y", src.atlas_tiles_y as f64),
             ];
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(&label),

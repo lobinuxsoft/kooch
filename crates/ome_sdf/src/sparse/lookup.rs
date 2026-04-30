@@ -38,7 +38,7 @@
 use bytemuck::{Pod, Zeroable};
 use ome_bvh::Aabb;
 
-use super::{LOD_LEVELS, SparseGrid};
+use super::{ATLAS_TILES_X, ATLAS_TILES_Y, ATLAS_TILES_Z, LOD_LEVELS, ROOT_DIM, SparseGrid};
 
 /// WGSL source — body only. Declares `LookupUniform`,
 /// `sparse_sdf_far_value`, and `sparse_sdf_lookup`, but not the
@@ -70,6 +70,14 @@ pub const LOOKUP_DEFAULT_UNIFORM_BINDING: u32 = 7;
 /// concatenated with the binding declarations the caller's pipeline
 /// layout specifies. Splice into the consumer's shader source ahead
 /// of any function that calls `sparse_sdf_lookup`.
+///
+/// The fragment also prepends `LOOKUP_ROOT_DIM` and
+/// `LOOKUP_ATLAS_TILES_{X,Y,Z}` as compile-time constants reflecting
+/// the host's [`ROOT_DIM`], [`ATLAS_TILES_X`], [`ATLAS_TILES_Y`], and
+/// [`ATLAS_TILES_Z`] — so consumers do not have to track which
+/// `large-root-grid` variant they were built against. The
+/// `lookup_wgsl(..)` signature is the stable contract; the chunk
+/// geometry follows the feature flag invisibly.
 pub fn lookup_wgsl(
     group: u32,
     root_binding: u32,
@@ -80,7 +88,11 @@ pub fn lookup_wgsl(
 ) -> String {
     let [pool0, pool1, pool2, pool3] = pool_bindings;
     format!(
-        "@group({group}) @binding({root_binding}) var<storage, read> lookup_root_indices: array<u32>;\n\
+        "const LOOKUP_ROOT_DIM: u32 = {ROOT_DIM}u;\n\
+         const LOOKUP_ATLAS_TILES_X: u32 = {ATLAS_TILES_X}u;\n\
+         const LOOKUP_ATLAS_TILES_Y: u32 = {ATLAS_TILES_Y}u;\n\
+         const LOOKUP_ATLAS_TILES_Z: u32 = {ATLAS_TILES_Z}u;\n\
+         @group({group}) @binding({root_binding}) var<storage, read> lookup_root_indices: array<u32>;\n\
          @group({group}) @binding({pool0}) var lookup_subgrid_pool_lod0: texture_3d<f32>;\n\
          @group({group}) @binding({pool1}) var lookup_subgrid_pool_lod1: texture_3d<f32>;\n\
          @group({group}) @binding({pool2}) var lookup_subgrid_pool_lod2: texture_3d<f32>;\n\

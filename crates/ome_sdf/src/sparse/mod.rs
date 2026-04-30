@@ -1,7 +1,8 @@
 //! Chunk-local sparse SDF voxel storage (issue #136).
 //!
 //! A `SparseGrid` is the in-memory backend for one chunk's signed
-//! distance field. Two-level structure:
+//! distance field. Two-level structure (default geometry; see
+//! `# Capacity` below for the `large-root-grid` feature variant):
 //!
 //! ```text
 //! Root grid (16³ = 4096 cells)
@@ -17,12 +18,12 @@
 //!   `ALLOC_FAILED_SENTINEL` (`0xFFFFFFFE`) = pool exhausted at
 //!   allocation time.
 //! - `subgrid_pool_texture` — `texture_3d<r16float>` atlas of shape
-//!   `(ATLAS_DIM_X, ATLAS_DIM_Y, ATLAS_DIM_Z) = (544, 17, 544)`.
-//!   Tiled `ATLAS_TILES_X × ATLAS_TILES_Y × ATLAS_TILES_Z = 32 × 1 × 32`,
-//!   each tile `SUBGRID_TILE_DIM³ = 17³` voxels (16 data + 1 voxel
-//!   skirt per face for HW trilinear continuity at subgrid borders).
-//!   Sampled via a `LINEAR + ClampToEdge` sampler. Total VRAM:
-//!   `544 × 17 × 544 × 2 B ≈ 9.6 MiB` per chunk.
+//!   `(ATLAS_DIM_X, ATLAS_DIM_Y, ATLAS_DIM_Z)`. Default `(544, 17, 544)`
+//!   tiled `32 × 1 × 32 = 1024` tiles. Each tile is
+//!   `SUBGRID_TILE_DIM³ = 17³` voxels (16 data + 1 voxel skirt per
+//!   face for HW trilinear continuity at subgrid borders). Sampled
+//!   via a `LINEAR + ClampToEdge` sampler. Default total VRAM
+//!   `≈ 9.6 MiB / chunk`.
 //! - `free_list_buffer` — `max_subgrids × u32` stack of free pool
 //!   indices; the top of the stack is tracked atomically by
 //!   `counters.free_top`.
@@ -31,14 +32,24 @@
 //!
 //! # Capacity
 //!
-//! `MAX_SUBGRIDS_DEFAULT = MAX_SUBGRIDS_PER_ATLAS = 1024` matches the
-//! atlas tile capacity exactly (32 × 1 × 32 = 1024 tiles). At
-//! `<15 MB / chunk` (issue AC), the 9.6 MiB pool + small bookkeeping
-//! buffers comfortably fit. Real fill is typically 5–20% of the 4096
-//! root cells per the issue body, so 1024 leaves a 25% transient
-//! slack for in-flight bakes. The constructor accepts an override for
-//! chunks that warrant a smaller budget (sparse open ocean, etc.) but
-//! cannot exceed the atlas capacity.
+//! Default: `MAX_SUBGRIDS_DEFAULT = MAX_SUBGRIDS_PER_ATLAS = 1024`
+//! matches the atlas tile capacity exactly (`32 × 1 × 32`). At
+//! `<15 MB / chunk` (issue #136 AC1), the 9.6 MiB pool + small
+//! bookkeeping buffers comfortably fit. Real fill is typically 5–20%
+//! of the 4096 root cells per the issue body, so 1024 leaves a 25%
+//! transient slack for in-flight bakes.
+//!
+//! With the `large-root-grid` Cargo feature (issue #347, AC4 of #136):
+//! `ROOT_DIM = 32` (`32³ = 32768` cells), `ATLAS_TILES_Y = 2`,
+//! `MAX_SUBGRIDS_PER_ATLAS = 2048`. Atlas LOD 0 is `(544, 34, 544)
+//! r16float ≈ 19.2 MiB`; total per-chunk atlas footprint summed
+//! across the 4 LODs ≈ 22.7 MiB, well inside the `<100 MiB / chunk`
+//! AC4 budget. 25% headroom over the same 5% sparsity estimate
+//! (32768 × 0.05 = 1638 active subgrids).
+//!
+//! The constructor accepts an override for chunks that warrant a
+//! smaller budget (sparse open ocean, etc.) but cannot exceed the
+//! atlas capacity.
 //!
 //! # Encoder ordering invariant
 //!
@@ -100,7 +111,14 @@ pub const FREELIST_COUNTERS_SIZE: u64 = 16;
 
 /// Side length (in cells) of the root grid. Each chunk owns one root
 /// grid, addressing `ROOT_CELLS = ROOT_DIM³` subgrid slots.
+///
+/// With `large-root-grid` enabled, scales to `32` (`32³ = 32768` root
+/// cells) per AC4 of #136 / issue #347.
+#[cfg(not(feature = "large-root-grid"))]
 pub const ROOT_DIM: u32 = 16;
+/// See default-feature variant above.
+#[cfg(feature = "large-root-grid")]
+pub const ROOT_DIM: u32 = 32;
 
 /// Side length (in voxels) of one subgrid's data interior. Voxels at
 /// integer coords `(vx, vy, vz)` with `vx,vy,vz ∈ [0, SUBGRID_DIM)`
@@ -118,11 +136,18 @@ pub const SUBGRID_DIM: u32 = 16;
 /// without a cross-tile bind dance.
 pub const SUBGRID_TILE_DIM: u32 = 17;
 
-/// Atlas tile counts along each axis. `Y = 1` because RDNA 2 / 4
-/// `texture_3d` LDS bandwidth favours wide-shallow over deep stacks
-/// for this access pattern.
+/// Atlas tile counts along each axis. Default `Y = 1` because RDNA
+/// 2 / 4 `texture_3d` LDS bandwidth favours wide-shallow over deep
+/// stacks for this access pattern. With `large-root-grid` Y bumps to
+/// 2 so the atlas holds 2048 tiles (matching the 2× root-cell count
+/// at 5% sparsity headroom) without doubling the X/Z extent — that
+/// would have busted the per-axis dimension budget at higher LODs.
 pub const ATLAS_TILES_X: u32 = 32;
+#[cfg(not(feature = "large-root-grid"))]
 pub const ATLAS_TILES_Y: u32 = 1;
+/// See default-feature variant above.
+#[cfg(feature = "large-root-grid")]
+pub const ATLAS_TILES_Y: u32 = 2;
 pub const ATLAS_TILES_Z: u32 = 32;
 
 /// Atlas dimensions in texels (`ATLAS_TILES_* × SUBGRID_TILE_DIM`).

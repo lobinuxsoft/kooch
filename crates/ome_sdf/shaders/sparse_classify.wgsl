@@ -32,12 +32,15 @@
 // to `1` (1 workgroup per marked cell); other consumers pin their
 // own divisor.
 
-const CLASSIFY_ROOT_DIM: u32 = 16u;
-const CLASSIFY_ROOT_CELLS: u32 = 4096u;
 const CLASSIFY_EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFFu;
 const CLASSIFY_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu;
 
 override CLASSIFY_LOD_IDX: u32 = 0u;
+// Default values match the no-feature build (`ROOT_DIM = 16`,
+// `ROOT_CELLS = 4096`). Pinned per pipeline by `ClassifyPass::new`
+// to follow `crate::sparse::ROOT_DIM` and `crate::sparse::ROOT_CELLS`.
+override CLASSIFY_ROOT_DIM: u32 = 16u;
+override CLASSIFY_ROOT_CELLS: u32 = 4096u;
 
 struct ClassifyUniform {
     // `xyz` = chunk-local bounds_min (post-`ActiveOrigin`).

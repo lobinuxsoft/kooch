@@ -1,7 +1,8 @@
 //! Per-LOD geometry table for the sparse SDF cascade (issue #136 S7).
 //!
 //! Each chunk owns four LODs sharing the same root grid (`ROOT_DIM³`)
-//! but with progressively coarser subgrids and atlases:
+//! but with progressively coarser subgrids and atlases. Default
+//! geometry (no `large-root-grid` feature):
 //!
 //! ```text
 //! LOD 0  →  16³ data + 17³ tile  →  544×17×544 atlas (≈9.6 MiB)
@@ -10,10 +11,16 @@
 //! LOD 3  →   2³ data +  3³ tile  →   96× 3× 96 atlas (≈  53 KiB)
 //! ```
 //!
-//! All LODs share the same `MAX_SUBGRIDS = 1024` (32×1×32 tile grid),
-//! so freelist + counters + needs-* bookkeeping buffers have identical
-//! shapes per LOD. Total atlas VRAM ≈ 11.3 MiB per chunk — comfortably
-//! inside the issue's `< 15 MB / chunk` AC.
+//! All LODs share the same `MAX_SUBGRIDS = MAX_SUBGRIDS_PER_ATLAS`
+//! (1024 default, 2048 with `large-root-grid`), so freelist +
+//! counters + needs-* bookkeeping buffers have identical shapes per
+//! LOD. Default total atlas VRAM ≈ 11.3 MiB per chunk — comfortably
+//! inside the issue's `< 15 MB / chunk` AC1.
+//!
+//! With `large-root-grid` enabled, the `Y` axis of every LOD's tile
+//! grid doubles (`32 × 2 × 32 = 2048` tiles). Atlas LOD 0 grows to
+//! `(544, 34, 544) ≈ 19.2 MiB`; total atlas footprint ≈ 22.7 MiB per
+//! chunk, inside the `< 100 MiB / chunk` AC4 budget.
 //!
 //! # Voxel-size factor
 //!
@@ -54,8 +61,10 @@ pub struct LodConfig {
     /// Side length of the tile in the atlas, including the 1-voxel
     /// skirt per face (`subgrid_dim + 1`).
     pub tile_dim: u32,
-    /// Tile counts along each axis. Always `(32, 1, 32)` so the
-    /// freelist capacity is identical across LODs.
+    /// Tile counts along each axis. Same `(ATLAS_TILES_X,
+    /// ATLAS_TILES_Y, ATLAS_TILES_Z)` triple at every LOD so the
+    /// freelist capacity is identical across LODs. Default
+    /// `(32, 1, 32)`; `(32, 2, 32)` with `large-root-grid`.
     pub atlas_tiles_x: u32,
     pub atlas_tiles_y: u32,
     pub atlas_tiles_z: u32,
@@ -101,39 +110,39 @@ const LOD_0: LodConfig = LodConfig {
 const LOD_1: LodConfig = LodConfig {
     subgrid_dim: 8,
     tile_dim: 9,
-    atlas_tiles_x: 32,
-    atlas_tiles_y: 1,
-    atlas_tiles_z: 32,
-    atlas_dim_x: 32 * 9,
-    atlas_dim_y: 9,
-    atlas_dim_z: 32 * 9,
-    max_subgrids: 32 * 1 * 32,
+    atlas_tiles_x: ATLAS_TILES_X,
+    atlas_tiles_y: ATLAS_TILES_Y,
+    atlas_tiles_z: ATLAS_TILES_Z,
+    atlas_dim_x: ATLAS_TILES_X * 9,
+    atlas_dim_y: ATLAS_TILES_Y * 9,
+    atlas_dim_z: ATLAS_TILES_Z * 9,
+    max_subgrids: MAX_SUBGRIDS_PER_ATLAS,
     voxel_size_factor: 2.0,
 };
 
 const LOD_2: LodConfig = LodConfig {
     subgrid_dim: 4,
     tile_dim: 5,
-    atlas_tiles_x: 32,
-    atlas_tiles_y: 1,
-    atlas_tiles_z: 32,
-    atlas_dim_x: 32 * 5,
-    atlas_dim_y: 5,
-    atlas_dim_z: 32 * 5,
-    max_subgrids: 32 * 1 * 32,
+    atlas_tiles_x: ATLAS_TILES_X,
+    atlas_tiles_y: ATLAS_TILES_Y,
+    atlas_tiles_z: ATLAS_TILES_Z,
+    atlas_dim_x: ATLAS_TILES_X * 5,
+    atlas_dim_y: ATLAS_TILES_Y * 5,
+    atlas_dim_z: ATLAS_TILES_Z * 5,
+    max_subgrids: MAX_SUBGRIDS_PER_ATLAS,
     voxel_size_factor: 4.0,
 };
 
 const LOD_3: LodConfig = LodConfig {
     subgrid_dim: 2,
     tile_dim: 3,
-    atlas_tiles_x: 32,
-    atlas_tiles_y: 1,
-    atlas_tiles_z: 32,
-    atlas_dim_x: 32 * 3,
-    atlas_dim_y: 3,
-    atlas_dim_z: 32 * 3,
-    max_subgrids: 32 * 1 * 32,
+    atlas_tiles_x: ATLAS_TILES_X,
+    atlas_tiles_y: ATLAS_TILES_Y,
+    atlas_tiles_z: ATLAS_TILES_Z,
+    atlas_dim_x: ATLAS_TILES_X * 3,
+    atlas_dim_y: ATLAS_TILES_Y * 3,
+    atlas_dim_z: ATLAS_TILES_Z * 3,
+    max_subgrids: MAX_SUBGRIDS_PER_ATLAS,
     voxel_size_factor: 8.0,
 };
 
@@ -204,6 +213,35 @@ const _: () = {
 mod tests {
     use super::*;
 
+    /// AC4 of #136 / issue #347 — the `large-root-grid` build must
+    /// actually deliver `32³ = 32768` root cells with the `(32, 2, 32)`
+    /// atlas layout. Defended here so a stray edit cannot silently
+    /// flip the feature back to the 16³ shape.
+    #[cfg(feature = "large-root-grid")]
+    #[test]
+    fn large_root_grid_constants() {
+        use super::super::{
+            ATLAS_TILES_X, ATLAS_TILES_Y, ATLAS_TILES_Z, MAX_SUBGRIDS_PER_ATLAS,
+            ROOT_CELLS, ROOT_DIM,
+        };
+        assert_eq!(ROOT_DIM, 32, "large-root-grid must set ROOT_DIM = 32");
+        assert_eq!(
+            ROOT_CELLS, 32 * 32 * 32,
+            "large-root-grid must give 32768 root cells",
+        );
+        assert_eq!(ATLAS_TILES_X, 32);
+        assert_eq!(ATLAS_TILES_Y, 2, "large-root-grid must double Y to 2");
+        assert_eq!(ATLAS_TILES_Z, 32);
+        assert_eq!(
+            MAX_SUBGRIDS_PER_ATLAS, 2048,
+            "large-root-grid atlas must hold 2048 tiles",
+        );
+        for lod in &LOD_LEVELS {
+            assert_eq!(lod.atlas_tiles_y, 2);
+            assert_eq!(lod.max_subgrids, 2048);
+        }
+    }
+
     #[test]
     fn lod_levels_consistent() {
         // Geometry derived two ways — direct table read vs. recomputed
@@ -243,6 +281,7 @@ mod tests {
         assert_eq!(lod0.max_subgrids, MAX_SUBGRIDS_PER_ATLAS);
     }
 
+    #[cfg(not(feature = "large-root-grid"))]
     #[test]
     fn total_atlas_vram_under_15_mib() {
         // r16float = 2 bytes per texel.
@@ -257,13 +296,62 @@ mod tests {
             .sum();
         assert!(
             total < 15 * 1024 * 1024,
-            "total LOD atlas VRAM {total} bytes exceeds 15 MiB AC",
+            "total LOD atlas VRAM {total} bytes exceeds 15 MiB AC1 (#136)",
         );
         // And — sanity — at least 11 MiB so we know we built the four
         // atlases (LOD 0 alone is ≈9.6 MiB).
         assert!(
             total > 11 * 1024 * 1024,
             "total LOD atlas VRAM {total} bytes suspiciously small",
+        );
+    }
+
+    /// AC4 of #136 / issue #347 — 32³ root grid path. Sums the four
+    /// per-LOD atlases plus the bookkeeping buffers and asserts the
+    /// total stays inside the `< 100 MiB / chunk` budget.
+    #[cfg(feature = "large-root-grid")]
+    #[test]
+    fn total_atlas_vram_under_100_mib_large_root_grid() {
+        let atlases: u64 = LOD_LEVELS
+            .iter()
+            .map(|lod| {
+                (lod.atlas_dim_x as u64)
+                    * (lod.atlas_dim_y as u64)
+                    * (lod.atlas_dim_z as u64)
+                    * 2
+            })
+            .sum();
+        // Bookkeeping per chunk:
+        //   4 × root_indices       = 4 × ROOT_CELLS × 4
+        //   4 × needs_indices      = 4 × ROOT_CELLS × 4
+        //   4 × free_list          = 4 × MAX_SUBGRIDS × 4
+        //   4 × counters           = 4 × 16
+        //   4 × needs_count        = 4 × 4
+        //   4 × populate_indirect  = 4 × 12
+        //   3 × downsample_indirect= 3 × 12
+        //   1 × chunk_lod_mask     = 4
+        //   1 × metrics            = 24
+        let root_cells = u64::from(super::super::ROOT_CELLS);
+        let max_subgrids = u64::from(super::super::MAX_SUBGRIDS_PER_ATLAS);
+        let bookkeeping: u64 = 4 * root_cells * 4
+            + 4 * root_cells * 4
+            + 4 * max_subgrids * 4
+            + 4 * 16
+            + 4 * 4
+            + 4 * 12
+            + 3 * 12
+            + 4
+            + 24;
+        let total = atlases + bookkeeping;
+        assert!(
+            total < 100 * 1024 * 1024,
+            "total per-chunk VRAM {total} bytes exceeds 100 MiB AC4 (atlases {atlases}, bookkeeping {bookkeeping})",
+        );
+        // Sanity floor — at least 19 MiB so we know LOD 0 atlas is
+        // really at the `(544, 34, 544)` shape.
+        assert!(
+            total > 19 * 1024 * 1024,
+            "total per-chunk VRAM {total} bytes suspiciously small for ROOT_DIM=32",
         );
     }
 

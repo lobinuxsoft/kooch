@@ -9,7 +9,7 @@ use super::super::{
     LOOKUP_DEFAULT_SAMPLER_BINDING, LOOKUP_DEFAULT_UNIFORM_BINDING, lookup_wgsl,
 };
 use super::harness::PROBE_HARNESS_WGSL;
-use crate::sparse::{LOD_COUNT, ROOT_DIM};
+use crate::sparse::{ATLAS_TILES_X, ATLAS_TILES_Y, ATLAS_TILES_Z, LOD_COUNT, ROOT_DIM};
 
 #[test]
 fn lookup_body_with_default_layout_parses_and_validates() {
@@ -61,16 +61,45 @@ fn shim_main() {
 
 #[test]
 fn lookup_wgsl_constants_match_host() {
+    // `LOOKUP_LOD_COUNT` and the sentinels stay baked into the raw
+    // body — they are LOD-architectural invariants, not chunk
+    // geometry.
     assert!(
         LOOKUP_BODY_WGSL.contains(&format!("LOOKUP_LOD_COUNT: u32 = {LOD_COUNT}u")),
-    );
-    assert!(
-        LOOKUP_BODY_WGSL.contains(&format!("LOOKUP_ROOT_DIM: u32 = {ROOT_DIM}u")),
     );
     assert!(
         LOOKUP_BODY_WGSL.contains("LOOKUP_EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFFu"),
     );
     assert!(
         LOOKUP_BODY_WGSL.contains("LOOKUP_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu"),
+    );
+
+    // `LOOKUP_ROOT_DIM` and the atlas tile counts ride the feature
+    // flag — they are prepended by `lookup_wgsl(..)` rather than
+    // baked into the raw body, so the assertion runs against the
+    // helper's output instead.
+    let assembled = lookup_wgsl(
+        LOOKUP_DEFAULT_GROUP,
+        LOOKUP_DEFAULT_ROOT_BINDING,
+        LOOKUP_DEFAULT_POOL_BINDINGS,
+        LOOKUP_DEFAULT_UNIFORM_BINDING,
+        LOOKUP_DEFAULT_SAMPLER_BINDING,
+        LOOKUP_DEFAULT_MASK_BINDING,
+    );
+    assert!(
+        assembled.contains(&format!("LOOKUP_ROOT_DIM: u32 = {ROOT_DIM}u")),
+        "lookup_wgsl output missing LOOKUP_ROOT_DIM = {ROOT_DIM}u",
+    );
+    assert!(
+        assembled.contains(&format!("LOOKUP_ATLAS_TILES_X: u32 = {ATLAS_TILES_X}u")),
+        "lookup_wgsl output missing LOOKUP_ATLAS_TILES_X = {ATLAS_TILES_X}u",
+    );
+    assert!(
+        assembled.contains(&format!("LOOKUP_ATLAS_TILES_Y: u32 = {ATLAS_TILES_Y}u")),
+        "lookup_wgsl output missing LOOKUP_ATLAS_TILES_Y = {ATLAS_TILES_Y}u",
+    );
+    assert!(
+        assembled.contains(&format!("LOOKUP_ATLAS_TILES_Z: u32 = {ATLAS_TILES_Z}u")),
+        "lookup_wgsl output missing LOOKUP_ATLAS_TILES_Z = {ATLAS_TILES_Z}u",
     );
 }

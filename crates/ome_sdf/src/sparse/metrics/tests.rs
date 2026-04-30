@@ -21,6 +21,13 @@ use crate::sparse::{
 use glam::Vec3;
 use ome_bvh::Aabb;
 
+/// Sphere radius the metrics cascade test exercises. Mirrors the
+/// scaling done in `populate/tests.rs` — see the comment there.
+#[cfg(not(feature = "large-root-grid"))]
+const TEST_SPHERE_RADIUS: f32 = 16.0;
+#[cfg(feature = "large-root-grid")]
+const TEST_SPHERE_RADIUS: f32 = 8.0;
+
 #[test]
 fn metrics_wgsl_parses_and_validates() {
     let module = naga::front::wgsl::parse_str(METRICS_WGSL)
@@ -53,8 +60,21 @@ fn metrics_vram_bytes_matches_lod_table() {
         })
         .sum();
     assert_eq!(Metrics::vram_bytes_from_lod_table(), expected);
-    assert!(expected < 15 * 1024 * 1024, "AC: < 15 MiB / chunk");
-    assert!(expected > 11 * 1024 * 1024, "sanity: 4 atlases present");
+    // AC1 (#136) caps default at 15 MiB / chunk; AC4 (#347) caps the
+    // `large-root-grid` build at 100 MiB / chunk. Floor stays the
+    // LOD-0 atlas size so a partial allocation regression trips here.
+    let cap_bytes: u64 = if cfg!(feature = "large-root-grid") {
+        100 * 1024 * 1024
+    } else {
+        15 * 1024 * 1024
+    };
+    let floor_bytes: u64 = if cfg!(feature = "large-root-grid") {
+        19 * 1024 * 1024
+    } else {
+        11 * 1024 * 1024
+    };
+    assert!(expected < cap_bytes, "AC: < {cap_bytes} bytes / chunk");
+    assert!(expected > floor_bytes, "sanity: 4 atlases present");
 }
 
 fn run_cascade_and_read_metrics(
@@ -128,7 +148,8 @@ fn metrics_post_cascade_matches_canonical_invariants() {
         return;
     };
     let bounds = Aabb::new(Vec3::ZERO, Vec3::splat(64.0));
-    let (metrics, needs_count) = run_cascade_and_read_metrics(&device, &queue, bounds, 16.0);
+    let (metrics, needs_count) =
+        run_cascade_and_read_metrics(&device, &queue, bounds, TEST_SPHERE_RADIUS);
 
     assert!(
         needs_count > 0,
@@ -197,7 +218,7 @@ fn orchestrator_records_metrics_pass() {
     };
     let bounds = Aabb::new(Vec3::ZERO, Vec3::splat(64.0));
     let center = (bounds.min + bounds.max) * 0.5;
-    let sampler = AnalyticSphereSampler::new(&device, center, 16.0);
+    let sampler = AnalyticSphereSampler::new(&device, center, TEST_SPHERE_RADIUS);
     let lod_pass = crate::sparse::SparseLodPass::new(
         &device,
         sampler.wgsl_source(),
