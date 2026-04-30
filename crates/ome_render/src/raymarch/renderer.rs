@@ -1,4 +1,18 @@
 //! Ray-march render pipeline + buffers + bind groups.
+//!
+//! PR-2 of #360 wires the renderer to the OmeAccel TLAS+BLAS pool.
+//! Bind group 1 layout follows the issue body verbatim:
+//!   - `(0)` `scene_meta` uniform — sky colours + skip-internal-sky.
+//!   - `(5)` `tlas_nodes`
+//!   - `(6)` `chunk_descriptors`
+//!   - `(7)` `bvh_nodes_pool`
+//!   - `(8)` `leaf_aabbs_pool`
+//!   - `(9)` `primitives_pool`
+//!   - `(10)` `tlas_uniforms`
+//!
+//! Pool buffers are pre-allocated once at `BvhState::new` and never
+//! reallocated, so the scene bind group is built ONCE at construction
+//! and stays valid for the renderer's lifetime — no per-frame rebind.
 
 use wgpu::util::DeviceExt;
 
@@ -8,17 +22,11 @@ use super::instance::{CameraUniforms, RayMarchParams, SceneMeta};
 use crate::VIEWPORT_DEPTH_FORMAT;
 
 /// Ray-marching pipeline + buffers + bind groups.
-///
-/// The `SdfPrimitive[]` storage buffer used to live here as a single
-/// flat upload. Post-#356 it lives inside [`BvhState`] as a parallel
-/// per-slot double-buffer so the BVH cull and the SDF eval always read
-/// the same scene state — see [`BvhState::current_primitives`].
 pub struct RayMarchRenderer {
     pub(super) pipeline: wgpu::RenderPipeline,
     pub(super) camera_buffer: wgpu::Buffer,
     pub(super) params_buffer: wgpu::Buffer,
     pub(super) scene_meta_buffer: wgpu::Buffer,
-    pub(super) scene_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) camera_bind_group: wgpu::BindGroup,
     pub(super) scene_bind_group: wgpu::BindGroup,
     pub(super) bvh_state: BvhState,
@@ -28,7 +36,7 @@ pub struct RayMarchRenderer {
 impl RayMarchRenderer {
     pub fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        _queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
         pipeline_cache: Option<&wgpu::PipelineCache>,
     ) -> Self {
@@ -53,7 +61,7 @@ impl RayMarchRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let bvh_state = BvhState::new(device, queue, pipeline_cache);
+        let bvh_state = BvhState::new(device);
 
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -84,74 +92,7 @@ impl RayMarchRenderer {
         let scene_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("raymarch_scene_bgl"),
-                entries: &[
-                    // 0 — scene metadata uniform.
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // 1 — primitives storage (per-entity SDF parameters).
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // 2 — BVH nodes (flat 2N-1 array of BvhNode).
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // 3 — sorted_indices (Morton-permuted payload indices).
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // 4 — per-leaf AABB + flags + entity_id (multi-consumer).
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // 5 — raymarch-only payload (per-primitive smoothness).
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
+                entries: &pool_scene_bgl_entries(),
             });
 
         let camera_bind_group = make_camera_bg(
@@ -160,15 +101,11 @@ impl RayMarchRenderer {
             &camera_buffer,
             &params_buffer,
         );
-        let scene_bind_group = make_scene_bg(
+        let scene_bind_group = make_pool_scene_bg(
             device,
             &scene_bind_group_layout,
             &scene_meta_buffer,
-            bvh_state.current_primitives(),
-            bvh_state.current_nodes(),
-            bvh_state.current_sorted_indices(),
-            bvh_state.current_leaf_aabbs(),
-            bvh_state.current_raymarch_payloads(),
+            bvh_state.buffers(),
         );
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -225,7 +162,6 @@ impl RayMarchRenderer {
             camera_buffer,
             params_buffer,
             scene_meta_buffer,
-            scene_bind_group_layout,
             camera_bind_group,
             scene_bind_group,
             bvh_state,
@@ -311,47 +247,59 @@ pub(super) fn make_camera_bg(
     })
 }
 
-/// Build the scene bind group from the current frame's buffers. Called
-/// at construction and whenever `update_scene` swaps the BVH slot or
-/// grows a buffer's capacity.
-pub(super) fn make_scene_bg(
+/// Bind-group layout entries for the pool-driven scene bind group.
+/// Group 1 — `(0)` `scene_meta` uniform + `(5..=10)` pool buffers.
+/// Bindings 1..=4 are intentionally absent; the legacy global-BVH
+/// bindings that used to occupy those slots are gone.
+fn pool_scene_bgl_entries() -> [wgpu::BindGroupLayoutEntry; 7] {
+    let storage = wgpu::BindingType::Buffer {
+        ty: wgpu::BufferBindingType::Storage { read_only: true },
+        has_dynamic_offset: false,
+        min_binding_size: None,
+    };
+    let uniform = wgpu::BindingType::Buffer {
+        ty: wgpu::BufferBindingType::Uniform,
+        has_dynamic_offset: false,
+        min_binding_size: None,
+    };
+    let entry = |binding: u32, ty: wgpu::BindingType| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty,
+        count: None,
+    };
+    [
+        entry(0, uniform),  // scene_meta
+        entry(5, storage),  // tlas_nodes
+        entry(6, storage),  // chunk_descriptors
+        entry(7, storage),  // bvh_nodes_pool
+        entry(8, storage),  // leaf_aabbs_pool
+        entry(9, storage),  // primitives_pool
+        entry(10, uniform), // tlas_uniforms
+    ]
+}
+
+/// Build the pool-driven scene bind group. Pool buffers come from
+/// `OmeAccel::buffers()` — pre-allocated at `BvhState::new`, never
+/// reallocated, so this bind group is stable for the renderer's
+/// lifetime and only ever rebuilt on construction.
+pub(super) fn make_pool_scene_bg(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     meta: &wgpu::Buffer,
-    primitives: &wgpu::Buffer,
-    bvh_nodes: &wgpu::Buffer,
-    sorted_indices: &wgpu::Buffer,
-    leaf_aabbs: &wgpu::Buffer,
-    raymarch_payloads: &wgpu::Buffer,
+    pool: &ome_bvh::AccelBuffers,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("raymarch_scene_bg"),
         layout,
         entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: meta.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: primitives.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: bvh_nodes.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: sorted_indices.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: leaf_aabbs.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: raymarch_payloads.as_entire_binding(),
-            },
+            wgpu::BindGroupEntry { binding: 0, resource: meta.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 5, resource: pool.tlas_nodes.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 6, resource: pool.chunk_descriptors.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 7, resource: pool.bvh_nodes_pool.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 8, resource: pool.leaf_aabbs_pool.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 9, resource: pool.primitives_pool.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 10, resource: pool.tlas_uniforms.as_entire_binding() },
         ],
     })
 }

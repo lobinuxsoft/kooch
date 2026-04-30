@@ -1,43 +1,36 @@
-//! Raymarch wrapper around the engine-shared GPU BVH.
+//! Raymarch wrapper around the OmeAccel TLAS+BLAS pool.
 //!
-//! The BVH lifecycle (build / swap / dirty hash) lives in
-//! [`ome_bvh::SharedBvhState`]; this module adds the raymarch-only
-//! [`RaymarchPayload[]`](crate::raymarch::instance::RaymarchPayload)
-//! double-buffer that the fragment shader binds at slot 5.
-//!
-//! [`BvhState`] is the renderer-side handle: it owns a
-//! `SharedBvhState`, mirrors its slot rotation onto the payload
-//! buffer, and folds the raymarch-only smoothness bytes into the
-//! caller-supplied scene hash. Every BVH-side concern (nodes,
-//! sorted_indices, leaf_aabbs, capacity growth) is delegated.
+//! [`BvhState`] owns one `OmeAccel` (#360) and exposes a single-chunk
+//! drive API consumed by `update_scene`. The pool's pre-allocated GPU
+//! buffers replace the legacy `SharedBvhState` + slot-rotated side
+//! payload buffers — bind-group references stay stable for the
+//! lifetime of the renderer, so the renderer builds the scene bind
+//! group once at construction.
 //!
 //! # Lifecycle per frame
 //!
 //! ```text
-//!   1. (frame start) bvh_state.poll_swap(device, queue):
-//!        - drives wgpu's map_async via SharedBvhState::poll_swap
-//!        - if a swap occurred, the captured RaymarchPayload[] is
-//!          uploaded onto the swapped-in slot.
-//!   2. bvh_state.kick_if_dirty(...) — computes a hash that includes
-//!      raymarch_payloads, forwards items + leaf_aabbs + hash to
-//!      SharedBvhState::kick. No-op when the hash matches.
-//!   3. Renderer binds bvh_state.current_*() buffers in the raymarch
-//!      pass — guaranteed to be the last completed build's results.
+//!   1. update_scene collects every visible SDF primitive and folds
+//!      per-role smoothness via `reduce_per_role_smoothness`.
+//!   2. bvh_state.update_single_chunk(...):
+//!        - hashes (leaf_aabbs ⊕ primitives); skips re-upload on hit
+//!        - on miss: removes the prior chunk + reinserts the new one
+//!        - always ticks `update_gpu` so `tlas_uniforms.k_*_global`
+//!          tracks the per-frame reduce
+//!   3. Renderer binds `bvh_state.buffers()` (group 1, bindings 5..=10)
+//!      in the raymarch fragment pass.
 //! ```
 //!
-//! # Empty / first-frame handling
+//! # Empty scenes
 //!
-//! Before any build completes, `current_n() == 0` and the bind buffers
-//! are minimal placeholders. The shader's `bvh_n == 0` branch renders
-//! the sky, mirroring PR-3's `Bvh::empty()` semantics.
+//! `update_single_chunk` evicts the chunk when `leaf_aabbs.is_empty()`
+//! so the GPU sees `tlas_uniforms.num_chunks == 0`; the shader's
+//! `eval_scene_bvh` short-circuit returns the union identity and the
+//! fragment shader draws sky for every pixel.
 
-mod slots;
 mod state;
 
 pub use state::BvhState;
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod gpu_tests;

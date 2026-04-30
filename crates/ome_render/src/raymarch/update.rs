@@ -29,7 +29,7 @@ use super::instance::{
     RaymarchPayload, SceneMeta, SdfPrimitive, TYPE_BOX, TYPE_CAPSULE, TYPE_CYLINDER, TYPE_PLANE,
     TYPE_SPHERE, TYPE_TORUS,
 };
-use super::renderer::{RayMarchRenderer, make_scene_bg};
+use super::renderer::RayMarchRenderer;
 
 /// Per-entity blend metadata captured during ECS collection. Lives only
 /// long enough to be folded into the leaf-AABB table before upload.
@@ -189,7 +189,7 @@ impl RayMarchRenderer {
         let mut leaf_aabbs: Vec<LeafAabb> = Vec::with_capacity(tagged.len());
         let mut raymarch_payloads: Vec<RaymarchPayload> = Vec::with_capacity(tagged.len());
         let mut bvh_items: Vec<(u32, Aabb)> = Vec::with_capacity(tagged.len());
-        for (entity_idx, prim, blend) in tagged {
+        for (entity_idx, mut prim, blend) in tagged {
             let prim_idx = primitives.len() as u32;
             let role_bits = match blend.mode {
                 MODE_SMOOTH_INTERSECTION => ROLE_RAYMARCH_INT,
@@ -212,59 +212,47 @@ impl RayMarchRenderer {
             raymarch_payloads.push(RaymarchPayload {
                 smoothness: blend.smoothness,
             });
+            // Pool path consumes per-primitive smoothness inline from
+            // the `SdfPrimitive` instead of via a parallel buffer; the
+            // legacy `raymarch_payloads[]` SSBO stays populated until
+            // the renderer migrates off `SharedBvhState` (#360 PR-2).
+            prim.smoothness = blend.smoothness;
             primitives.push(prim);
         }
 
-        // Drive the BVH state: poll any in-flight build for completion
-        // (potentially flipping `current_slot`), then kick a new build
-        // if the scene state changed since the last successful kick.
-        // The kick captures `primitives` + `raymarch_payloads` and
-        // attaches per-slot upload closures that fire atomically on
-        // swap success — keeping the BVH cull and the SDF eval in
-        // lockstep so the rendered slot's `(leaf_aabbs, primitives,
-        // payloads)` triple always describes the same scene state
-        // (#356).
-        if let Some(Err(e)) = self.bvh_state.poll_swap(device, queue) {
-            tracing::warn!(
-                "raymarch BVH build failed: {e}; keeping previous slot's data"
-            );
-        }
+        // Discard the now-unused `bvh_items` + `raymarch_payloads`:
+        // the pool path consumes per-primitive smoothness inline from
+        // `prim.smoothness`, and the BVH input pairs are derived
+        // inside `OmeAccel::insert_chunk` from the leaf AABB list.
+        let _ = bvh_items;
+        let _ = raymarch_payloads;
+
+        // Drive the OmeAccel pool with one chunk holding every
+        // visible primitive. PR-3 generalises this to per-chunk
+        // bucketing via `ChunkManager`; the renderer pipeline never
+        // sees that change because the bind group references the
+        // pool buffers directly and the pool is pre-allocated.
+        let envelope = k_add_max.max(k_int_max).max(k_sub_max);
         let primitive_count = primitives.len() as u32;
-        // Production frame loop uses the unified rebuild-vs-refit
-        // policy: should_refit-driven decision over the previous
-        // CPU mirror's leaf AABBs. Defaults from the PR-5 plan.
-        // Goldens / tests that want a forced path call kick_if_dirty
-        // or kick_refit_if_dirty directly.
-        self.bvh_state.kick_auto_if_dirty(
-            device,
+        if let Err(e) = self.bvh_state.update_single_chunk(
             queue,
-            bvh_items,
-            leaf_aabbs,
-            raymarch_payloads,
-            primitives,
-            /* move_threshold_ratio */ 0.25,
-            /* change_threshold_pct */ 10.0,
-        );
+            &leaf_aabbs,
+            &primitives,
+            envelope,
+            k_int_max,
+            k_sub_max,
+        ) {
+            tracing::warn!("OmeAccel single-chunk update failed: {e}; pool unchanged");
+        }
+        let _ = device; // unused in the pool path; keep the signature stable for callers.
 
-        // Rebind every frame: `current_slot` may have flipped between
-        // two GPU buffer sets (slot_a ↔ slot_b) and the bind group must
-        // point at the slot the renderer is consuming this frame.
-        // wgpu treats bind-group creation as cheap; this is the simple
-        // path.
-        self.scene_bind_group = make_scene_bg(
-            device,
-            &self.scene_bind_group_layout,
-            &self.scene_meta_buffer,
-            self.bvh_state.current_primitives(),
-            self.bvh_state.current_nodes(),
-            self.bvh_state.current_sorted_indices(),
-            self.bvh_state.current_leaf_aabbs(),
-            self.bvh_state.current_raymarch_payloads(),
-        );
-
+        // `SceneMeta` keeps the legacy field layout (uniform buffer
+        // contract). Pool path only consumes `skip_internal_sky` +
+        // `sky_top` / `sky_bottom`; the others are upload-once-and-
+        // ignore until PR-3 prunes the struct.
         let meta = SceneMeta {
             primitive_count,
-            bvh_n: self.bvh_state.current_n(),
+            bvh_n: self.bvh_state.primitive_count(),
             skip_internal_sky: u32::from(skip_internal_sky),
             has_intersects: u32::from(has_intersects),
             has_subs: u32::from(has_subs),
@@ -291,7 +279,9 @@ fn make_primitive(
         type_tag,
         rotation: rotation.to_array(),
         scale: scale.to_array(),
-        _pad0: 0.0,
+        // Populated in the second pass — needs the per-role k_max
+        // tally that's not available at primitive-collection time.
+        smoothness: 0.0,
         params,
     };
     (entity.index(), prim, blend)

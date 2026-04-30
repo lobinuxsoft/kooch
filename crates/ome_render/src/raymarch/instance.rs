@@ -76,13 +76,14 @@ impl Default for RayMarchParams {
 /// Field offsets match the WGSL struct byte-for-byte:
 /// - `position` (vec3 at 0) + `type_tag` (u32 at 12) fill the first 16-byte slot.
 /// - `rotation` (vec4 at 16) is naturally 16-aligned.
-/// - `scale` (vec3 at 32) + `_pad0` (f32 at 44) fill the next 16-byte slot.
+/// - `scale` (vec3 at 32) + `smoothness` (f32 at 44) fill the next 16-byte slot.
 /// - `params` (vec4 at 48) holds primitive-specific data; interpretation
 ///   depends on `type_tag`. Closes the struct at 64 bytes (multiple of 16).
 ///
-/// CSG blend metadata used to live here as `blend_mode` / `blend_smoothness`;
-/// composition is now expressed by the token SSBO and lives in
-/// [`super::csg_tree::Token`].
+/// `smoothness` lives in the slot the legacy `_pad0` occupied (#360 PR-2).
+/// The pool-driven shader reads `prim.smoothness` directly during the
+/// per-role accumulator fold, replacing the parallel `RaymarchPayload[]`
+/// binding that the global-BVH path used to carry.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 pub(super) struct SdfPrimitive {
@@ -90,7 +91,7 @@ pub(super) struct SdfPrimitive {
     pub type_tag: u32,
     pub rotation: [f32; 4],
     pub scale: [f32; 3],
-    pub _pad0: f32,
+    pub smoothness: f32,
     pub params: [f32; 4],
 }
 
@@ -172,6 +173,21 @@ mod tests {
     fn sdf_primitive_layout_is_64_bytes() {
         assert_eq!(std::mem::size_of::<SdfPrimitive>(), 64);
         assert_eq!(std::mem::align_of::<SdfPrimitive>(), 4);
+    }
+
+    #[test]
+    fn sdf_primitive_field_offsets_match_wgsl() {
+        use std::mem::offset_of;
+        // The pool-driven `raymarch_pool_eval.wgsl` reads
+        // `prim.smoothness` at byte 44 — pinned here so a future
+        // reorder (or accidental rename back to `_pad0`) breaks
+        // loudly instead of silently corrupting the per-role fold.
+        assert_eq!(offset_of!(SdfPrimitive, position), 0);
+        assert_eq!(offset_of!(SdfPrimitive, type_tag), 12);
+        assert_eq!(offset_of!(SdfPrimitive, rotation), 16);
+        assert_eq!(offset_of!(SdfPrimitive, scale), 32);
+        assert_eq!(offset_of!(SdfPrimitive, smoothness), 44);
+        assert_eq!(offset_of!(SdfPrimitive, params), 48);
     }
 
     #[test]

@@ -1,25 +1,23 @@
-// raymarch_main.wgsl — ray-march fragment shader.
+// raymarch_main.wgsl — fragment-shader entry for the production
+// raymarch pass. Concatenated AFTER `sdf_primitives.wgsl` and
+// `raymarch_pool_eval.wgsl` so:
+//   - `sdf_*`, `transform_point`, smooth-CSG helpers,
+//   - the pool structs (`SdfPrimitive`, `BvhNode`, `LeafAabb`,
+//     `ChunkDescriptor`, `TlasUniforms`),
+//   - the pool bindings (group 1 5..=10) + `eval_scene_bvh`
+// are all already in scope by the time this file is parsed.
 //
-// Concatenated at runtime AFTER `sdf_primitives.wgsl` from ome_sdf, so
-// the `sdf_*`, `transform_point`, and CSG helpers are already in scope.
+// PR-2 of #360. Replaces the legacy global-BVH raymarch with the
+// TLAS+BLAS pool path. The renderer drives a single chunk for the
+// PR-2 single-chunk migration; PR-3 expands `update_scene` to drive
+// per-chunk bucketing without touching this shader.
 //
-// PR-4 of #115: scene composition is BVH-driven. The shader does NOT
-// iterate a postfix CSG token stream any more — the BVH traversal IS
-// the evaluation loop. Each leaf knows its CSG role; the traversal
-// accumulates per-role distances; the final scene SDF is a fixed
-// 3-operator combination (smooth_subtract(smooth_intersect(adds, ints),
-// subs)). Primitives whose AABB does not contain `p` are pruned by the
-// stack-based traversal — never evaluated, never paid for.
-//
-// DETERMINISM: the traversal pushes `left` BEFORE `right` on the stack
-// (so pop order is right-first), and that push order is FIXED across
-// frames. `smooth_union` and `smooth_intersection` are NOT strictly
-// associative in float32 — `smooth_union(smooth_union(a, b), c)` may
-// differ in the last bit from `smooth_union(a, smooth_union(b, c))`.
-// Cross-frame byte-identity (the cull-vs-cull regression test in PR-4
-// subtask S9) requires the accumulator order to never depend on
-// runtime ray geometry. Do not switch to a t-near-sorted children
-// push without re-deriving the determinism story.
+// DETERMINISM: pool-driven `eval_scene_bvh` pushes left before right
+// in both the TLAS and BLAS stacks, popping right-first — same
+// convention as the legacy global BVH so cross-frame byte-identity
+// (PR-2 AC1) survives the migration. The float-imprecise smooth_union
+// is non-associative; the determinism story still requires the
+// accumulator visit order to be fixed across frames.
 
 struct CameraUniforms {
     view: mat4x4<f32>,
@@ -33,79 +31,22 @@ struct CameraUniforms {
 struct RayMarchParams {
     max_steps: u32,
     max_distance: f32,
-    // Hit threshold at distance zero (close-up precision floor).
     surface_threshold: f32,
-    // Adds `epsilon_factor * distance_traveled` to the threshold so far
-    // surfaces don't shimmer and don't waste iterations on sub-pixel
-    // precision the viewer can't see anyway.
     epsilon_factor: f32,
 }
 
-// Matches Rust `SdfPrimitive` byte-for-byte (64 bytes).
-// Field interpretation by type_tag:
-//   0 Sphere   — params.x = radius
-//   1 Box      — params.xyz = half_extents, params.w = rounding
-//   2 Capsule  — params.x = half_height, params.y = radius
-//   3 Cylinder — params.x = half_height, params.y = radius
-//   4 Torus    — params.x = major_radius, params.y = minor_radius
-//   5 Plane    — no params (normal = local Y+ via rotation)
-struct SdfPrimitive {
-    position: vec3<f32>,
-    type_tag: u32,
-    rotation: vec4<f32>,
-    scale: vec3<f32>,
-    _pad0: f32,
-    params: vec4<f32>,
-}
-
-// Matches Rust `BvhNode` byte-for-byte (32 bytes, std430-clean).
-// `right_or_count`'s high bit (`0x80000000`) is the leaf flag:
-//   - clear → internal: `left` + `right_or_count` are child indices.
-//   - set   → leaf: `left` = first leaf-payload idx, `right_or_count &
-//     0x7FFFFFFF` = count of contiguous payloads.
-struct BvhNode {
-    aabb_min: vec3<f32>,
-    left: u32,
-    aabb_max: vec3<f32>,
-    right_or_count: u32,
-}
-
-// Matches Rust `LeafAabb` byte-for-byte (32 bytes, std430-clean).
-// Multi-consumer per-primitive metadata: AABB + bit-packed `flags` +
-// `entity_id`. `flags` is shared across raymarch / physics broadphase /
-// frustum culling — see the `IS_*` / `ROLE_RAYMARCH_*` constants below.
-// `aabb_min/max` are inflated by the per-role smooth-blend k_max so the
-// cull stays conservative under smooth blends.
-struct LeafAabb {
-    aabb_min: vec3<f32>,
-    flags: u32,
-    aabb_max: vec3<f32>,
-    entity_id: u32,
-}
-
-// Matches Rust `RaymarchPayload` byte-for-byte (4 bytes, std430).
-// Raymarch-only per-primitive smoothness — bound separately so the
-// non-raymarch consumers (physics broadphase, frustum culling) don't
-// have to read fields they never use.
-struct RaymarchPayload {
-    smoothness: f32,
-}
-
-// Per-frame scene metadata. 64 bytes, std140-uniform-clean. Field
-// offsets pinned by an `offset_of!` test on the Rust side (see
-// `instance.rs`).
+// `SceneMeta` retains the legacy field layout for compatibility with
+// existing `instance.rs` `offset_of!` tests + uniform buffer write
+// paths. The pool-driven `eval_scene_bvh` ignores `primitive_count`,
+// `bvh_n`, `has_intersects`, `has_subs`, `k_int_scene`, `k_sub_scene`
+// — those concerns moved to `tlas_uniforms`. Only `skip_internal_sky`
+// + `sky_top` / `sky_bottom` are still consumed below.
 struct SceneMeta {
     primitive_count: u32,
     bvh_n: u32,
-    // `1` = a separate sky pass already ran, discard on miss (additive).
-    // `0` = no sky pass, draw the internal vertical gradient on miss.
     skip_internal_sky: u32,
     has_intersects: u32,
     has_subs: u32,
-    // Per-role smoothness maxima for the FINAL combination step (the
-    // outer `smooth_intersect` / `smooth_subtract` of the default tree).
-    // Per-leaf smoothness — used inside the role's own accumulator —
-    // travels in `LeafAabb.smoothness`.
     k_int_scene: f32,
     k_sub_scene: f32,
     _pad0: u32,
@@ -113,48 +54,11 @@ struct SceneMeta {
     sky_bottom: vec4<f32>,
 }
 
-// Multi-consumer leaf-flag scheme. Must match the `IS_*` /
-// `ROLE_RAYMARCH_*` constants in `instance.rs` byte-for-byte.
-const ROLE_RAYMARCH_MASK: u32 = 0x3u;
-const ROLE_RAYMARCH_ADD: u32 = 0x0u;
-const ROLE_RAYMARCH_INT: u32 = 0x1u;
-const ROLE_RAYMARCH_SUB: u32 = 0x2u;
-const IS_RAYMARCH: u32 = 1u << 2u;
-// Reserved consumer bits — defined here for parity with the Rust side.
-// The raymarch shader never reads them; physics + frustum cull have
-// their own shaders.
-const IS_COLLIDER: u32 = 1u << 3u;
-const IS_VISIBLE_MESH: u32 = 1u << 4u;
-const IS_LIGHT: u32 = 1u << 5u;
-
-const BVH_LEAF_FLAG: u32 = 0x80000000u;
-const BVH_VALUE_MASK: u32 = 0x7FFFFFFFu;
-
-// Maximum traversal stack depth. Matches `ome_bvh::query::MAX_STACK_DEPTH`.
-// A balanced BVH up to ~4 B leaves stays within this; pathological
-// inputs would still hit a debug-assertion panic on the Rust side
-// before they reach the shader.
-const BVH_STACK_DEPTH: u32 = 32u;
-
-// Identity values for the three per-role accumulators. Picked so an
-// empty role collapses cleanly under the final combination:
-//
-// - smooth_union(+inf, x, k) ≈ x  (union with nothing = x).
-// - smooth_intersection(-inf, x, k) ≈ x  (intersect with universe = x).
-//
-// `1e10` is the same large-but-finite sentinel `eval_scene` already
-// uses for "no primitive at this point" — keeps the math NaN-free.
-const ACC_UNION_IDENTITY: f32 = 1.0e10;
-const ACC_INTERSECT_IDENTITY: f32 = -1.0e10;
-
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> params: RayMarchParams;
 @group(1) @binding(0) var<uniform> scene_meta: SceneMeta;
-@group(1) @binding(1) var<storage, read> primitives: array<SdfPrimitive>;
-@group(1) @binding(2) var<storage, read> bvh_nodes: array<BvhNode>;
-@group(1) @binding(3) var<storage, read> sorted_indices: array<u32>;
-@group(1) @binding(4) var<storage, read> leaf_aabbs: array<LeafAabb>;
-@group(1) @binding(5) var<storage, read> raymarch_payloads: array<RaymarchPayload>;
+// Pool bindings (group 1 5..=10) are declared in
+// `raymarch_pool_eval.wgsl` and visible here without redeclaration.
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -194,160 +98,6 @@ fn generate_ray(uv: vec2<f32>) -> Ray {
     let near_world = (camera.inverse_view * vec4<f32>(near_view, 1.0)).xyz;
     let far_world  = (camera.inverse_view * vec4<f32>(far_view,  1.0)).xyz;
     return Ray(near_world, normalize(far_world - near_world));
-}
-
-// Evaluates the primitive selected by `type_tag` at local-space point
-// `local`. Returns the local-space signed distance; the caller applies
-// the Lipschitz scaling correction.
-fn eval_primitive_kind(local: vec3<f32>, prim: SdfPrimitive) -> f32 {
-    switch prim.type_tag {
-        case 0u: {
-            return sdf_sphere(local, prim.params.x);
-        }
-        case 1u: {
-            return sdf_rounded_box(local, prim.params.xyz, prim.params.w);
-        }
-        case 2u: {
-            return sdf_capsule_y(local, prim.params.x, prim.params.y);
-        }
-        case 3u: {
-            return sdf_capped_cylinder(local, prim.params.x, prim.params.y);
-        }
-        case 4u: {
-            return sdf_torus(local, prim.params.x, prim.params.y);
-        }
-        case 5u: {
-            return sdf_plane_y(local);
-        }
-        default: {
-            return 1e10;
-        }
-    }
-}
-
-// World-space evaluation of one primitive: transform into local space,
-// scale-correct, evaluate, then re-scale by the smallest axis to get
-// a Lipschitz-conservative distance estimate suitable for sphere
-// tracing. The `s_min` term is the "Lipschitz workaround for non-uniform
-// scale" tracked by #225 — to be replaced by Segment Tracing (#224).
-fn eval_primitive_at(p: vec3<f32>, prim: SdfPrimitive) -> f32 {
-    let scale = max(prim.scale, vec3<f32>(1e-5));
-    let local = transform_point(p, prim.position, prim.rotation) / scale;
-    let s_min = min(scale.x, min(scale.y, scale.z));
-    return eval_primitive_kind(local, prim) * s_min;
-}
-
-// Signed distance from `p` to the AABB defined by `lo`/`hi`. Returns
-// `0` when `p` is inside (or on the boundary), and the Euclidean
-// distance to the nearest face when `p` is outside. Used to prune
-// subtrees during sphere-tracing BVH traversal — every primitive
-// inside a node has SDF distance ≥ the node's `aabb_outside_distance`
-// (because the leaf AABBs are pre-inflated by the per-role smooth
-// blend `k_max` on the CPU side), so a subtree whose AABB is farther
-// than the current union accumulator can never improve the result.
-fn aabb_outside_distance(p: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> f32 {
-    let q = max(max(lo - p, p - hi), vec3<f32>(0.0));
-    return length(q);
-}
-
-// BVH-driven scene SDF evaluator. Walks the BVH stack-based, SDF-prunes
-// subtrees whose AABB-outside distance exceeds `max(add_acc, sub_acc)`
-// — the worst-case role accumulator, since we don't have a per-subtree
-// role bitmask. Skipping a leaf of role R is sound iff `d_aabb > acc_R`,
-// and satisfying both simultaneously requires `max`, not `min` (#354
-// regression: PR #352 used `min`, which prematurely pruned SUB subtrees
-// once any ADD leaf had already been visited and the DFS order made
-// visibility view-dependent). With INT leaves the inequality direction
-// flips, so we conservatively skip the prune entirely when the scene
-// has any INT leaf — pending #115 PR-5 (per-node role bitmask).
-//
-// Per-role accumulators combine via the fixed default tree
-//   smooth_subtract(smooth_intersect(adds, ints, k_int), subs, k_sub)
-// and roles with no leaves collapse via their identity element.
-fn eval_scene_bvh(p: vec3<f32>) -> f32 {
-    if scene_meta.bvh_n == 0u {
-        return ACC_UNION_IDENTITY;
-    }
-
-    var add_acc: f32 = ACC_UNION_IDENTITY;
-    var int_acc: f32 = ACC_INTERSECT_IDENTITY;
-    var sub_acc: f32 = ACC_UNION_IDENTITY;
-
-    var stack: array<u32, 32>;
-    stack[0] = 0u;
-    var sp: u32 = 1u;
-
-    while sp > 0u {
-        sp = sp - 1u;
-        let node = bvh_nodes[stack[sp]];
-        let d_aabb = aabb_outside_distance(p, node.aabb_min, node.aabb_max);
-        if scene_meta.has_intersects == 0u {
-            let union_bound = max(add_acc, sub_acc);
-            if d_aabb > union_bound {
-                continue;
-            }
-        }
-        let payload = node.right_or_count;
-        if (payload & BVH_LEAF_FLAG) != 0u {
-            let count = payload & BVH_VALUE_MASK;
-            let first = node.left;
-            for (var i: u32 = 0u; i < count; i = i + 1u) {
-                let leaf_idx = first + i;
-                let prim_idx = sorted_indices[leaf_idx];
-                let leaf = leaf_aabbs[prim_idx];
-                // Skip leaves that don't participate in the raymarch
-                // consumer. Future-proofs the shader for a single
-                // unified BVH that also indexes colliders / visible
-                // meshes (#115 PR-5).
-                if (leaf.flags & IS_RAYMARCH) == 0u {
-                    continue;
-                }
-                let prim = primitives[prim_idx];
-                let d = eval_primitive_at(p, prim);
-                let k = max(raymarch_payloads[prim_idx].smoothness, 1e-5);
-                switch (leaf.flags & ROLE_RAYMARCH_MASK) {
-                    case 0u: {
-                        add_acc = sdf_smooth_union(add_acc, d, k);
-                    }
-                    case 1u: {
-                        int_acc = sdf_smooth_intersection(int_acc, d, k);
-                    }
-                    case 2u: {
-                        sub_acc = sdf_smooth_union(sub_acc, d, k);
-                    }
-                    default: {
-                        add_acc = sdf_smooth_union(add_acc, d, k);
-                    }
-                }
-            }
-        } else {
-            // Internal node — push left FIRST, then right. Pop order
-            // becomes right-first; both children eventually visited in
-            // a stable, deterministic sequence. See the determinism
-            // note at the top of this file.
-            let left = node.left;
-            let right = payload & BVH_VALUE_MASK;
-            if sp + 2u <= 32u {
-                stack[sp] = left;
-                sp = sp + 1u;
-                stack[sp] = right;
-                sp = sp + 1u;
-            }
-            // Stack overflow theoretically possible for adversarial
-            // topologies; the Rust-side debug invariant catches that
-            // before the BVH ever reaches the shader. Silently skip
-            // here in release rather than corrupt the result.
-        }
-    }
-
-    var result = add_acc;
-    if scene_meta.has_intersects != 0u {
-        result = sdf_smooth_intersection(result, int_acc, max(scene_meta.k_int_scene, 1e-5));
-    }
-    if scene_meta.has_subs != 0u {
-        result = sdf_smooth_subtraction(result, sub_acc, max(scene_meta.k_sub_scene, 1e-5));
-    }
-    return result;
 }
 
 struct HitResult {
