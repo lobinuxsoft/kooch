@@ -75,7 +75,7 @@ fn build_scene() -> (Vec<SdfPrimitive>, Vec<LeafAabb>, Vec<RaymarchPayload>) {
             type_tag: spec.type_tag,
             rotation: Quat::IDENTITY.to_array(),
             scale: [1.0; 3],
-            _pad0: 0.0,
+            smoothness: 0.0,
             params,
         };
         let aabb = primitive_aabb(&prim, 0.0);

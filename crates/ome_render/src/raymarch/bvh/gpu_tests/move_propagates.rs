@@ -49,7 +49,7 @@ fn three_sphere_scene() -> (Vec<SdfPrimitive>, Vec<LeafAabb>, Vec<RaymarchPayloa
             type_tag: TYPE_SPHERE,
             rotation: Quat::IDENTITY.to_array(),
             scale: [1.0; 3],
-            _pad0: 0.0,
+            smoothness: 0.0,
             params: [radius, 0.0, 0.0, 0.0],
         };
         let aabb = primitive_aabb(&prim, 0.0);

@@ -27,7 +27,7 @@ fn dummy_primitive(position: [f32; 3]) -> SdfPrimitive {
         type_tag: TYPE_SPHERE,
         rotation: Quat::IDENTITY.to_array(),
         scale: [1.0; 3],
-        _pad0: 0.0,
+        smoothness: 0.0,
         params: [1.0, 0.0, 0.0, 0.0],
     }
 }

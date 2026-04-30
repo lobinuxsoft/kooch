@@ -189,7 +189,7 @@ impl RayMarchRenderer {
         let mut leaf_aabbs: Vec<LeafAabb> = Vec::with_capacity(tagged.len());
         let mut raymarch_payloads: Vec<RaymarchPayload> = Vec::with_capacity(tagged.len());
         let mut bvh_items: Vec<(u32, Aabb)> = Vec::with_capacity(tagged.len());
-        for (entity_idx, prim, blend) in tagged {
+        for (entity_idx, mut prim, blend) in tagged {
             let prim_idx = primitives.len() as u32;
             let role_bits = match blend.mode {
                 MODE_SMOOTH_INTERSECTION => ROLE_RAYMARCH_INT,
@@ -212,6 +212,11 @@ impl RayMarchRenderer {
             raymarch_payloads.push(RaymarchPayload {
                 smoothness: blend.smoothness,
             });
+            // Pool path consumes per-primitive smoothness inline from
+            // the `SdfPrimitive` instead of via a parallel buffer; the
+            // legacy `raymarch_payloads[]` SSBO stays populated until
+            // the renderer migrates off `SharedBvhState` (#360 PR-2).
+            prim.smoothness = blend.smoothness;
             primitives.push(prim);
         }
 
@@ -291,7 +296,9 @@ fn make_primitive(
         type_tag,
         rotation: rotation.to_array(),
         scale: scale.to_array(),
-        _pad0: 0.0,
+        // Populated in the second pass — needs the per-role k_max
+        // tally that's not available at primitive-collection time.
+        smoothness: 0.0,
         params,
     };
     (entity.index(), prim, blend)

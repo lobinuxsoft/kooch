@@ -117,7 +117,7 @@ mod tests {
             type_tag,
             rotation: rotation.to_array(),
             scale,
-            _pad0: 0.0,
+            smoothness: 0.0,
             params,
         }
     }
