@@ -249,6 +249,96 @@ fn kick_auto_picks_refit_under_sub_threshold_motion() {
     );
 }
 
+/// Acquire a wgpu device WITHOUT [`wgpu::Features::TIMESTAMP_QUERY`]
+/// — matches the production `ome_core::gpu` device, which only requires
+/// `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` (the engine never needs
+/// timestamps for correctness). The default `test_device::try_acquire`
+/// requires timestamps and would mask the regression in #333.
+fn try_acquire_device_without_timestamps() -> Option<(wgpu::Device, wgpu::Queue)> {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::default();
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .ok()?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("ome_bvh::sync_tests::no_timestamp_device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+                experimental_features: wgpu::ExperimentalFeatures::default(),
+            })
+            .await
+            .ok()?;
+        Some((device, queue))
+    })
+}
+
+/// Repro for #333: `raymarch_demo` panics on frame 3 with
+/// "AABB iteration slack insufficient for N=3" when an empty (`N=0`)
+/// kick precedes a populated (`N=3`) kick on a device that does NOT
+/// expose [`wgpu::Features::TIMESTAMP_QUERY`].
+///
+/// The misleading panic message points at the Karras AABB pass, but
+/// the actual cause is upstream: `BvhGpuBuilder` unconditionally
+/// records `timestamp_writes` on the morton compute pass and creates
+/// a `wgpu::QueryType::Timestamp` query set at construction. On a
+/// device without the feature, validation rejects the entire
+/// submission — the LBVH dispatches never run, the `done_buffer`
+/// stays at its zero-initialised state, and the debug convergence
+/// check in `BvhGpuBuild::poll` reads `done[0] == 0` and panics
+/// pretending the iteration slack ran out.
+///
+/// The fix makes the timestamps opt-in based on the device's
+/// available features, so the builder stays correct on every adapter
+/// the engine supports (production `ome_core::gpu` device does NOT
+/// request `TIMESTAMP_QUERY`).
+#[test]
+fn empty_kick_then_populated_kick_succeeds_without_timestamps() {
+    let Some((device, queue)) = try_acquire_device_without_timestamps() else {
+        eprintln!(
+            "ome_bvh::sync_tests: no GPU adapter — skipping #333 repro",
+        );
+        return;
+    };
+
+    let mut shared = SharedBvhState::new(&device, &queue, None);
+
+    // Frame 1: empty kick (Startup hasn't spawned yet in the demo's
+    // ECS schedule). Walks the empty-build lifecycle without
+    // dispatching any compute work.
+    let _ = shared.kick(&device, &queue, Vec::new(), Vec::new(), /* hash */ 1);
+    drive_build_to_completion(&mut shared, &device, &queue);
+
+    // Frame 2: kick the actual scene from `examples/raymarch_demo.rs`
+    // — 3 spheres along x at the exact demo positions / radii.
+    let demo: [(f32, f32); 3] = [(-2.0, 0.8), (0.0, 1.0), (2.0, 0.6)];
+    let items: Vec<(u32, Aabb)> = demo
+        .iter()
+        .enumerate()
+        .map(|(i, (x, r))| {
+            let centre = Vec3::new(*x, 0.0, 0.0);
+            (i as u32, Aabb::from_centre(centre, Vec3::splat(*r)))
+        })
+        .collect();
+    let leaves: Vec<LeafAabb> =
+        items.iter().map(|(id, a)| collider_leaf(a, *id)).collect();
+
+    let _ = shared.kick(&device, &queue, items, leaves, /* hash */ 2);
+    drive_build_to_completion(&mut shared, &device, &queue);
+
+    let bvh = shared
+        .current_cpu_bvh()
+        .expect("CPU mirror populated after the populated build resolved");
+    assert_eq!(
+        bvh.leaf_count(),
+        3,
+        "CPU mirror must mirror the second (N=3) build, not the first (N=0)",
+    );
+}
+
 #[test]
 fn kick_auto_picks_rebuild_under_super_threshold_motion() {
     let Some((device, queue)) = test_device::try_acquire() else {

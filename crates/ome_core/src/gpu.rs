@@ -281,12 +281,27 @@ fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
 }
 
 /// Requests optional features whose absence would silently degrade the engine
-/// (pipeline cache, etc.), falling back to `empty()` when unsupported so
-/// cross-backend builds keep working.
+/// (pipeline cache, BVH-build telemetry timestamps, ...), falling back to
+/// `empty()` when unsupported so cross-backend builds keep working.
+///
+/// `TIMESTAMP_QUERY` + `TIMESTAMP_QUERY_INSIDE_PASSES` enable per-pass GPU
+/// profiling in the LBVH builder ([`ome_bvh::BvhGpuBuilder`]); the builder
+/// stays correct on adapters that don't expose them by skipping the
+/// `timestamp_writes` calls (see #333 — without this opt-in, adapters that
+/// support timestamps would never get the telemetry, even though the
+/// builder is ready to record it).
 fn optional_features(adapter: &Adapter) -> wgpu::Features {
     let mut features = wgpu::Features::empty();
     if adapter.features().contains(wgpu::Features::PIPELINE_CACHE) {
         features |= wgpu::Features::PIPELINE_CACHE;
+    }
+    if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
+        && adapter
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
+    {
+        features |= wgpu::Features::TIMESTAMP_QUERY
+            | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES;
     }
     features
 }
