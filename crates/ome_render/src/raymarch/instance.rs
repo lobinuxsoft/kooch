@@ -1,21 +1,19 @@
-//! GPU primitive + scene metadata layouts for the unified ray-march pipeline.
+//! Render-side scene-metadata + camera uniforms for the unified
+//! ray-march pipeline.
 //!
-//! The byte layout of [`SdfPrimitive`] matches the WGSL `SdfPrimitive`
-//! struct in `raymarch_main.wgsl` under std430 storage-buffer rules.
-//! CSG composition lives in a separate token SSBO (see
-//! [`super::csg_tree`]) — primitives carry only their own intrinsic
-//! geometric data.
+//! The GPU-bound `SdfPrimitive` POD + its `TYPE_*` tags now live in
+//! [`ome_bvh::sdf_primitive`] so producers in any crate (`ome_world`'s
+//! content sources, the future Edit Baker, etc.) can construct
+//! primitive bytes without depending on `ome_render`. This module
+//! re-exports them at the same visibility for the existing
+//! `super::*` callers — the byte layout, WGSL contract, and 64 B size
+//! are pinned by tests in `ome_bvh::sdf_primitive`.
 
 use bytemuck::{Pod, Zeroable};
 
-/// Primitive type tags. Must match the `switch` in
-/// `raymarch_main.wgsl::eval_primitive`.
-pub(super) const TYPE_SPHERE: u32 = 0;
-pub(super) const TYPE_BOX: u32 = 1;
-pub(super) const TYPE_CAPSULE: u32 = 2;
-pub(super) const TYPE_CYLINDER: u32 = 3;
-pub(super) const TYPE_TORUS: u32 = 4;
-pub(super) const TYPE_PLANE: u32 = 5;
+pub(super) use ome_bvh::sdf_primitive::{
+    SdfPrimitive, TYPE_BOX, TYPE_CAPSULE, TYPE_CYLINDER, TYPE_PLANE, TYPE_SPHERE, TYPE_TORUS,
+};
 
 /// Matches `CameraUniforms` in the WGSL shader.
 #[repr(C)]
@@ -69,30 +67,6 @@ impl Default for RayMarchParams {
             epsilon_factor: 0.001,
         }
     }
-}
-
-/// Per-entity SDF primitive (64 bytes).
-///
-/// Field offsets match the WGSL struct byte-for-byte:
-/// - `position` (vec3 at 0) + `type_tag` (u32 at 12) fill the first 16-byte slot.
-/// - `rotation` (vec4 at 16) is naturally 16-aligned.
-/// - `scale` (vec3 at 32) + `smoothness` (f32 at 44) fill the next 16-byte slot.
-/// - `params` (vec4 at 48) holds primitive-specific data; interpretation
-///   depends on `type_tag`. Closes the struct at 64 bytes (multiple of 16).
-///
-/// `smoothness` lives in the slot the legacy `_pad0` occupied (#360 PR-2).
-/// The pool-driven shader reads `prim.smoothness` directly during the
-/// per-role accumulator fold, replacing the parallel `RaymarchPayload[]`
-/// binding that the global-BVH path used to carry.
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable, Default)]
-pub(super) struct SdfPrimitive {
-    pub position: [f32; 3],
-    pub type_tag: u32,
-    pub rotation: [f32; 4],
-    pub scale: [f32; 3],
-    pub smoothness: f32,
-    pub params: [f32; 4],
 }
 
 /// Matches `SceneMeta` in the WGSL shader.
@@ -168,27 +142,6 @@ pub(super) struct RaymarchPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sdf_primitive_layout_is_64_bytes() {
-        assert_eq!(std::mem::size_of::<SdfPrimitive>(), 64);
-        assert_eq!(std::mem::align_of::<SdfPrimitive>(), 4);
-    }
-
-    #[test]
-    fn sdf_primitive_field_offsets_match_wgsl() {
-        use std::mem::offset_of;
-        // The pool-driven `raymarch_pool_eval.wgsl` reads
-        // `prim.smoothness` at byte 44 — pinned here so a future
-        // reorder (or accidental rename back to `_pad0`) breaks
-        // loudly instead of silently corrupting the per-role fold.
-        assert_eq!(offset_of!(SdfPrimitive, position), 0);
-        assert_eq!(offset_of!(SdfPrimitive, type_tag), 12);
-        assert_eq!(offset_of!(SdfPrimitive, rotation), 16);
-        assert_eq!(offset_of!(SdfPrimitive, scale), 32);
-        assert_eq!(offset_of!(SdfPrimitive, smoothness), 44);
-        assert_eq!(offset_of!(SdfPrimitive, params), 48);
-    }
 
     #[test]
     fn raymarch_payload_layout_is_4_bytes() {
