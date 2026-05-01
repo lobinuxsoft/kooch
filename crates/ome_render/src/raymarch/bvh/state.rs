@@ -110,6 +110,10 @@ impl BvhState {
 
     /// Number of primitives currently resident in the lone chunk. `0`
     /// before any scene resolves or when the scene goes empty.
+    /// Public-API accessor; consumers in test harnesses + future
+    /// telemetry hooks read this even though no current call site
+    /// inside the crate does.
+    #[allow(dead_code)]
     pub fn primitive_count(&self) -> u32 {
         self.primitive_count
     }
@@ -126,6 +130,7 @@ impl BvhState {
     /// Number of live streaming chunks currently resident in the pool
     /// (excludes the legacy single-chunk slot). Used by the integration
     /// test to assert the streaming flow round-tripped end-to-end.
+    #[allow(dead_code)]
     pub fn streaming_chunk_count(&self) -> u32 {
         self.accel.live_chunk_count().saturating_sub(
             if self.last_scene_hash.is_some() { 1 } else { 0 },
@@ -135,6 +140,7 @@ impl BvhState {
     /// Look up whether a streaming chunk for `id` is currently resident
     /// in the pool. Used by the integration test + by the editor's
     /// streaming HUD when one lands.
+    #[allow(dead_code)]
     pub fn has_streaming_chunk(&self, id: ChunkId) -> bool {
         self.accel.lookup(chunk_id_to_key(id)).is_some()
     }
@@ -207,6 +213,7 @@ impl BvhState {
     /// from inside [`Self::update_single_chunk`]; streaming callers
     /// drive it explicitly because their `update_scene` already owns
     /// the per-frame reduce values.
+    #[allow(dead_code)]
     pub fn tick_streaming(&mut self, queue: &wgpu::Queue, k_int_global: f32, k_sub_global: f32) {
         self.accel.update_gpu(queue, k_int_global, k_sub_global);
     }

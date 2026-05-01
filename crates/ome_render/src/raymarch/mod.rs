@@ -5,6 +5,7 @@ mod aabb;
 mod bvh;
 mod instance;
 mod renderer;
+mod streaming_bridge;
 mod update;
 
 use ome_core::resource::Resources;
