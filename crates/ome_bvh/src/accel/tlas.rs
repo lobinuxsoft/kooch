@@ -136,45 +136,6 @@ fn rebuild_cpu_mirror(accel: &mut OmeAccel, cpu_descriptors: &[crate::accel::des
     accel.cpu_tlas_nodes = nodes;
 }
 
-/// Legacy CPU-only rebuild preserved for commit 10's ground-truth
-/// comparison. Does NOT touch the GPU buffer — only populates a fresh
-/// `Vec<BvhNode>` matching what `tlas_nodes` should contain after the
-/// GPU dispatch settles. Returns `(nodes, total_node_count)`; `nodes`
-/// is sized `2 * n` (rounded) but only `total_node_count` are valid.
-#[cfg(test)]
-pub(crate) fn rebuild_cpu_legacy(accel: &OmeAccel) -> (Vec<BvhNode>, usize) {
-    let live: Vec<(u32, Aabb)> = accel
-        .slots
-        .iter()
-        .enumerate()
-        .filter_map(|(i, s)| {
-            if !s.live {
-                return None;
-            }
-            Some((
-                i as u32,
-                Aabb::new(Vec3::from(s.descriptor.aabb_min), Vec3::from(s.descriptor.aabb_max)),
-            ))
-        })
-        .collect();
-    let n = live.len();
-    if n == 0 {
-        return (vec![BvhNode::default()], 1);
-    }
-    let total = if n == 1 { 1 } else { 2 * n - 1 };
-    let mut nodes = vec![BvhNode::default(); total];
-    let mut leaves = vec![0u32; n];
-    Bvh::<u32>::build_into(live, &mut nodes, &mut leaves);
-
-    let leaf_offset = n.saturating_sub(1);
-    for k in 0..n {
-        let chunk_idx = leaves[k];
-        nodes[leaf_offset + k].left = 0;
-        nodes[leaf_offset + k].right_or_count = encode_live(chunk_idx);
-    }
-    (nodes, total)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
