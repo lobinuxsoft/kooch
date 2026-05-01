@@ -73,17 +73,16 @@ fn eval_scene_cpu(
             } else if role == 2 {
                 has_subs = true;
             }
-            let lo = Vec3::from_array(leaf.aabb_min);
-            let hi = Vec3::from_array(leaf.aabb_max);
-            let inside = (p.x >= lo.x)
-                && (p.y >= lo.y)
-                && (p.z >= lo.z)
-                && (p.x <= hi.x)
-                && (p.y <= hi.y)
-                && (p.z <= hi.z);
-            if !inside {
-                continue;
-            }
+            // Brute-force ground truth: evaluate every primitive
+            // unconditionally. The shader's BVH descend prunes by
+            // distance-to-AABB (`sdf_aabb(p, node) > acc_add`), which
+            // is sound under the codebase's smoothness-inflated AABB
+            // convention — so the GPU result coincides with this fold
+            // within float tolerance, but the test stays a *correct*
+            // ground truth and is no longer co-buggy with the shader
+            // (the legacy `if !inside { continue; }` was a point-query
+            // mirror of the shader bug fixed in this PR).
+            let _ = leaf;
             let d = sdf_sphere_world(p, prim);
             let k = prim.smoothness.max(1e-5);
             match role {

@@ -272,28 +272,18 @@ fn streaming_key(id: ChunkId) -> u64 {
     x | (y << COORD_BITS) | (z << (COORD_BITS * 2)) | (lvl << (COORD_BITS * 3)) | (1u64 << 63)
 }
 
-/// Scene-wide CPU fold mirroring `eval_scene_bvh` for the procedural
-/// content. ProceduralCitySource emits only ROLE_RAYMARCH_ADD leaves
-/// (no intersect / subtract), with identity rotation and unit scale,
-/// so the fold collapses to a single per-primitive smooth_union. The
-/// fold gates on AABB containment to match the BVH cull on the GPU
-/// — a sample point outside every leaf returns the empty-scene
-/// sentinel on both sides.
+/// Scene-wide CPU fold — brute-force ground truth: evaluates every
+/// primitive unconditionally, no AABB skip. ProceduralCitySource emits
+/// only ROLE_RAYMARCH_ADD leaves (no intersect / subtract), with
+/// identity rotation and unit scale, so the fold collapses to a single
+/// per-primitive smooth_union. The shader's BVH descend prunes by
+/// distance-to-AABB which is sound under the codebase's smoothness-
+/// inflated AABB convention, so the GPU result coincides with this
+/// brute-force fold within float tolerance.
 fn eval_scene_wide(p: Vec3, chunks: &[(ChunkId, ChunkContent)]) -> f32 {
     let mut acc_add = 1.0e6_f32;
     for (_, content) in chunks {
-        for (prim, leaf) in content.primitives.iter().zip(content.leaf_aabbs.iter()) {
-            let lo = Vec3::from_array(leaf.aabb_min);
-            let hi = Vec3::from_array(leaf.aabb_max);
-            let inside = (p.x >= lo.x)
-                && (p.y >= lo.y)
-                && (p.z >= lo.z)
-                && (p.x <= hi.x)
-                && (p.y <= hi.y)
-                && (p.z <= hi.z);
-            if !inside {
-                continue;
-            }
+        for prim in content.primitives.iter() {
             let d = sdf_local(p, prim);
             acc_add = smooth_union(acc_add, d, prim.smoothness.max(1e-5));
         }
