@@ -76,4 +76,30 @@ impl RayMarchRenderer {
     pub fn bvh_state(&self) -> &super::bvh::BvhState {
         &self.bvh_state
     }
+
+    /// Mutable handle to the BVH pool. The headless render-correctness
+    /// AC test in `tests/raymarch_renders_sphere.rs` uses this to seed
+    /// a one-sphere scene without going through the ECS streaming
+    /// path; production code stays on `apply_streaming_delta` and
+    /// `update_scene` instead.
+    pub fn bvh_state_mut(&mut self) -> &mut super::bvh::BvhState {
+        &mut self.bvh_state
+    }
+
+    /// Write raw bytes into the per-frame camera uniforms buffer.
+    /// Lower-level than [`Self::update_camera`], which derives the
+    /// uniforms from the ECS camera entity. The headless render AC
+    /// test populates the buffer directly because there is no ECS
+    /// world in scope.
+    pub fn write_camera_uniforms(&self, queue: &wgpu::Queue, bytes: &[u8]) {
+        queue.write_buffer(&self.camera_buffer, 0, bytes);
+    }
+
+    /// Write raw bytes into the per-frame scene-meta uniforms buffer
+    /// (sky colours + `skip_internal_sky` + per-role smoothness
+    /// summaries). Same lower-level role as
+    /// [`Self::write_camera_uniforms`].
+    pub fn write_scene_meta(&self, queue: &wgpu::Queue, bytes: &[u8]) {
+        queue.write_buffer(&self.scene_meta_buffer, 0, bytes);
+    }
 }

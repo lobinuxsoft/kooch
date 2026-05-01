@@ -168,6 +168,7 @@ impl TlasGpuBuilder {
             encoder,
             &accel_buffers.chunk_descriptors,
             &accel_buffers.tlas_mortons,
+            &accel_buffers.tlas_live_chunk_indices,
             scene,
             n,
         );
@@ -186,6 +187,7 @@ impl TlasGpuBuilder {
             &accel_buffers.tlas_sorted_indices,
             &accel_buffers.chunk_descriptors,
             &accel_buffers.tlas_done,
+            &accel_buffers.tlas_live_chunk_indices,
             n,
         );
         if n >= 2 {

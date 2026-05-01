@@ -27,6 +27,18 @@ fn sdf_box(p: vec3<f32>, half_extents: vec3<f32>) -> f32 {
     return length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
 }
 
+/// Signed distance from `p` to the axis-aligned box defined by `[lo, hi]`.
+/// Negative inside, positive outside, zero on the surface — same convention
+/// as every other primitive. Used as the BVH-pruning lower bound during
+/// sphere-tracing traversal: `aabb_dist(p)` is a strict lower bound on the
+/// distance from `p` to any surface inside the box, so a subtree can be
+/// pruned whenever `sdf_aabb(p, node) > current_min_acc`.
+fn sdf_aabb(p: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> f32 {
+    let centre = 0.5 * (lo + hi);
+    let half = 0.5 * (hi - lo);
+    return sdf_box(p - centre, half);
+}
+
 /// Rounded box. Matches `SdfBox { size, rounding }`.
 /// `rounding == 0.0` degenerates to a regular box.
 fn sdf_rounded_box(p: vec3<f32>, half_extents: vec3<f32>, rounding: f32) -> f32 {

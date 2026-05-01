@@ -98,9 +98,12 @@ fn eval_primitive_at_cpu(p: Vec3, prim: &SmokePrimitive) -> f32 {
 const ACC_UNION_IDENTITY: f32 = 1.0e6;
 const ACC_INTERSECT_IDENTITY: f32 = -1.0e6;
 
-/// CPU mirror of `eval_scene_bvh` for one chunk. Walks `prims` in
-/// input order with the same `IS_RAYMARCH` + AABB-contains gates the
-/// GPU runs at the BLAS-leaf step.
+/// Brute-force CPU ground truth for one chunk. Walks every primitive
+/// unconditionally, only respecting the `IS_RAYMARCH` role gate (the
+/// BVH leaf flag scheme — pure metadata, not a spatial cull). The
+/// shader's BVH descend prunes by distance-to-AABB which is sound
+/// under the codebase's smoothness-inflated AABB convention, so the
+/// GPU result coincides with this fold within float tolerance.
 fn eval_scene_cpu(
     p: Vec3,
     prims: &[SmokePrimitive],
@@ -113,17 +116,6 @@ fn eval_scene_cpu(
     let mut acc_sub = ACC_UNION_IDENTITY;
     for (prim, leaf) in prims.iter().zip(leaves.iter()) {
         if (leaf.flags & IS_RAYMARCH) == 0 {
-            continue;
-        }
-        let lo = Vec3::from_array(leaf.aabb_min);
-        let hi = Vec3::from_array(leaf.aabb_max);
-        let inside = (p.x >= lo.x)
-            && (p.y >= lo.y)
-            && (p.z >= lo.z)
-            && (p.x <= hi.x)
-            && (p.y <= hi.y)
-            && (p.z <= hi.z);
-        if !inside {
             continue;
         }
         let d = eval_primitive_at_cpu(p, prim);

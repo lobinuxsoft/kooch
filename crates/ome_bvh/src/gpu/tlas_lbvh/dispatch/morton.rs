@@ -19,6 +19,7 @@ impl TlasGpuBuilder {
         encoder: &mut wgpu::CommandEncoder,
         chunk_descriptors: &wgpu::Buffer,
         tlas_mortons: &wgpu::Buffer,
+        live_chunk_indices: &wgpu::Buffer,
         scene: GpuSceneBounds,
         n: u32,
     ) {
@@ -54,6 +55,10 @@ impl TlasGpuBuilder {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: self.config_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: live_chunk_indices.as_entire_binding(),
                 },
             ],
         });

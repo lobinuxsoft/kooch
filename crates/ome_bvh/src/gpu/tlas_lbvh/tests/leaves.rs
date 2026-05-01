@@ -18,13 +18,12 @@ fn tlas_leaves_writes_correct_aabb_and_chunk_idx() {
         eprintln!("ome_bvh::gpu::tlas_lbvh: no GPU adapter — skipping");
         return;
     };
-    let (descs, aabbs, chunk_descs_buf, mortons_buf, sorted_indices_buf, n) =
-        prepare_inputs(&device);
-    let (tlas_nodes_buf, tlas_done_buf) = prepare_leaf_outputs(&device, n);
+    let inputs = prepare_inputs(&device);
+    let (tlas_nodes_buf, tlas_done_buf) = prepare_leaf_outputs(&device, inputs.n);
 
-    let scene = GpuSceneBounds::from_aabbs(&aabbs);
+    let scene = GpuSceneBounds::from_aabbs(&inputs.aabbs);
     let mut builder = TlasGpuBuilder::new(&device, None);
-    builder.ensure_capacity(&device, n as u64);
+    builder.ensure_capacity(&device, inputs.n as u64);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("tlas_leaves_test_encoder"),
@@ -33,32 +32,36 @@ fn tlas_leaves_writes_correct_aabb_and_chunk_idx() {
         &device,
         &queue,
         &mut encoder,
-        &chunk_descs_buf,
-        &mortons_buf,
+        &inputs.chunk_descs_buf,
+        &inputs.mortons_buf,
+        &inputs.live_chunk_indices_buf,
         scene,
-        n,
+        inputs.n,
     );
     builder.dispatch_sort(
         &device,
         &queue,
         &mut encoder,
-        &mortons_buf,
-        &sorted_indices_buf,
-        n,
+        &inputs.mortons_buf,
+        &inputs.sorted_indices_buf,
+        inputs.n,
     );
     builder.dispatch_leaves(
         &device,
         &mut encoder,
         &tlas_nodes_buf,
-        &sorted_indices_buf,
-        &chunk_descs_buf,
+        &inputs.sorted_indices_buf,
+        &inputs.chunk_descs_buf,
         &tlas_done_buf,
-        n,
+        &inputs.live_chunk_indices_buf,
+        inputs.n,
     );
     queue.submit(std::iter::once(encoder.finish()));
 
+    let n = inputs.n;
+    let descs = &inputs.descs;
     let nodes_full: Vec<BvhNode> = readback_pod(&device, &queue, &tlas_nodes_buf, 2 * n);
-    let sorted_indices = readback_u32(&device, &queue, &sorted_indices_buf, n);
+    let sorted_indices = readback_u32(&device, &queue, &inputs.sorted_indices_buf, n);
     let dones = readback_u32(&device, &queue, &tlas_done_buf, n);
 
     let leaf_offset = (n - 1) as usize;

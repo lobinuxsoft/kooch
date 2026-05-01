@@ -24,6 +24,7 @@ impl TlasGpuBuilder {
         tlas_sorted_indices: &wgpu::Buffer,
         chunk_descriptors: &wgpu::Buffer,
         tlas_done: &wgpu::Buffer,
+        live_chunk_indices: &wgpu::Buffer,
         n: u32,
     ) {
         if n == 0 {
@@ -53,6 +54,10 @@ impl TlasGpuBuilder {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: self.config_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: live_chunk_indices.as_entire_binding(),
                 },
             ],
         });

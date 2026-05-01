@@ -206,13 +206,20 @@ fn eval_primitive_at(p: vec3<f32>, prim: SdfPrimitive) -> f32 {
 // AABB / TRAVERSAL
 // =============================================================================
 
-// `true` when `p` is inside (or on the boundary of) the AABB. TLAS and
-// BLAS culling are point-queries: an AABB miss prunes the subtree.
-fn aabb_contains(lo: vec3<f32>, hi: vec3<f32>, p: vec3<f32>) -> bool {
-    let inside = (p.x >= lo.x) && (p.y >= lo.y) && (p.z >= lo.z)
-              && (p.x <= hi.x) && (p.y <= hi.y) && (p.z <= hi.z);
-    return inside;
-}
+// Distance from `p` to the AABB `[lo, hi]` (signed: negative inside,
+// positive outside). This is the lower bound on the distance from `p`
+// to any surface inside the box — the BVH-of-SDF pruning rule:
+//
+//     prune_subtree IF sdf_aabb(p, node) > current_min_acc
+//
+// This is the canonical sphere-tracing BVH traversal (Crassin "Voxel-
+// Based GI", UE5 Lumen GDF voxelisation, Dreams). The legacy
+// `aabb_contains(p)` was a point-query that only worked when the ray-
+// march sample landed inside an AABB, which is never true at the start
+// of a ray cast from the camera — every ray immediately bailed with
+// `ACC_UNION_IDENTITY`, so nothing rendered. This function is the same
+// one declared in `sdf_primitives.wgsl` and is concatenated into scope
+// before this file; redeclaring would conflict, so we just rely on it.
 
 // BLAS descend over `[desc.first_node .. desc.first_node + desc.node_count)`.
 //
@@ -245,9 +252,17 @@ fn descend_blas(
         sp = sp - 1u;
         let node_idx = stack[sp];
         let node = bvh_nodes_pool[node_idx];
-        let inside = (p.x >= node.aabb_min.x) && (p.y >= node.aabb_min.y) && (p.z >= node.aabb_min.z)
-                  && (p.x <= node.aabb_max.x) && (p.y <= node.aabb_max.y) && (p.z <= node.aabb_max.z);
-        if !inside { continue; }
+        // Distance-to-AABB pruning: `sdf_aabb(p, lo, hi)` is a strict
+        // lower bound on the SDF of every primitive inside this subtree
+        // (AABBs are world-space and pre-inflated by `max_smoothness_radius`,
+        // so the bound stays conservative under cross-chunk smooth-blend
+        // bleed). If that bound already exceeds the running union
+        // accumulator, no descendant can improve `acc_add` and the
+        // subtree is safely skipped. Pruning is disabled (skipped check)
+        // while the union accumulator is still at its `1e6` identity so
+        // the very first leaf always lands.
+        let aabb_d = sdf_aabb(p, node.aabb_min, node.aabb_max);
+        if aabb_d > acc_add { continue; }
         let payload = node.right_or_count;
         if (payload & BVH_LEAF_FLAG) != 0u {
             // BLAS leaf — `node.left` carries the **absolute** pool
@@ -316,7 +331,14 @@ fn eval_scene_bvh(p: vec3<f32>) -> f32 {
     while sp > 0u {
         sp = sp - 1u;
         let node = tlas_nodes[tlas_stack[sp]];
-        if !aabb_contains(node.aabb_min, node.aabb_max, p) { continue; }
+        // Distance-to-AABB pruning at TLAS level — same rule as
+        // `descend_blas`: the chunk's AABB is a lower bound on every
+        // primitive inside it, so prune whenever the bound is already
+        // worse than the running union. Pruning is dormant while
+        // `acc_add` is still at `1e6` identity, so the first chunk
+        // touching any ray always descends.
+        let aabb_d = sdf_aabb(p, node.aabb_min, node.aabb_max);
+        if aabb_d > acc_add { continue; }
         let payload = node.right_or_count;
         if (payload & BVH_LEAF_FLAG) != 0u {
             // TLAS leaf — `right_or_count` is `chunk_idx | LEAF_FLAG`,
