@@ -12,9 +12,7 @@
 //! encoding primitives so the WGSL header and the CPU `BvhNode`
 //! writer agree on the same constants.
 
-use bytemuck::cast_slice;
 use glam::Vec3;
-use std::mem::size_of;
 
 use crate::aabb::Aabb;
 use crate::accel::state::OmeAccel;
@@ -50,17 +48,65 @@ pub fn is_dead(right_or_count: u32) -> bool {
 }
 
 /// Full TLAS rebuild — invoked by `OmeAccel::update_gpu` whenever
-/// `tlas_dirty_count > 0`. Collects every live chunk's inflated
-/// AABB, builds a Karras topology over `(chunk_idx, aabb)` pairs,
-/// rewrites each leaf's `right_or_count` to encode the live-leaf
-/// payload, and uploads the result in a single
-/// `Queue::write_buffer` call.
+/// `tlas_dirty_count > 0`. As of epic #370 PR-1 the production path
+/// is GPU-driven via [`crate::gpu::tlas_lbvh::TlasGpuBuilder`]:
+/// morton + sort + leaves + internal + aabb passes recorded into the
+/// caller's encoder, no CPU readback in the hot path.
 ///
-/// Writing always happens — even an empty pool clears the GPU buffer
-/// to the canonical zeroed state so a stale TLAS from a previous
-/// frame can never bleed through.
-pub(crate) fn rebuild(accel: &mut OmeAccel, queue: &wgpu::Queue) {
-    let live_chunks: Vec<(u32, Aabb)> = accel
+/// The CPU mirror (`accel.cpu_tlas_nodes`) is rebuilt eagerly via the
+/// legacy [`Bvh::<u32>::build_into`] path so `for_each_overlapping_cpu`
+/// stays correct without an extra signature thread (broadphase queries
+/// take `&OmeAccel`, ruling out a `&mut self` lazy refresh hook).
+///
+/// Empty pool (`live_chunk_count == 0`) writes a zeroed sentinel into
+/// `tlas_nodes[0]` so any stale traversal sees an out-of-bounds AABB
+/// and bails out — same legacy semantics, queue-side only (no encoder
+/// recording needed for the sentinel).
+pub(crate) fn rebuild(
+    accel: &mut OmeAccel,
+    encoder: &mut wgpu::CommandEncoder,
+    queue: &wgpu::Queue,
+) {
+    let n = accel.live_chunk_count();
+    if n == 0 {
+        let zero = BvhNode::default();
+        queue.write_buffer(&accel.buffers.tlas_nodes, 0, bytemuck::bytes_of(&zero));
+        accel.cpu_tlas_nodes.clear();
+        return;
+    }
+
+    // Lazy init of the GPU pipelines on first rebuild — keeps
+    // CPU-only test fixtures (downlevel_defaults limits) usable until
+    // they actually need a rebuild.
+    accel.ensure_tlas_builder();
+
+    // GPU dispatch — records morton + sort + leaves + internal + aabb
+    // into the caller's encoder. Cero CPU readback. Split borrows
+    // pull `tlas_builder`, `buffers`, and `device` independently.
+    let cpu_descriptors = accel.live_chunk_descriptors();
+    let builder = accel.tlas_builder.as_ref().expect("ensure_tlas_builder ran");
+    builder.dispatch_rebuild(
+        &accel.device,
+        queue,
+        encoder,
+        &accel.buffers,
+        &cpu_descriptors,
+        n,
+    );
+
+    // CPU mirror eager rebuild (legacy semantics). Keeps
+    // `for_each_overlapping_cpu` consumers correct without changing
+    // their borrow shape. NLL releases the `builder` shared borrow at
+    // the dispatch above so the `&mut accel` re-borrow here is fine.
+    rebuild_cpu_mirror(accel, &cpu_descriptors);
+}
+
+/// CPU-side rebuild of `cpu_tlas_nodes` using the legacy
+/// [`Bvh::<u32>::build_into`] path. Eagerly mirrors the GPU result
+/// shape (with the chunk_idx-encoded leaf payload via [`encode_live`])
+/// so CPU consumers byte-match what the GPU pipeline produces.
+fn rebuild_cpu_mirror(accel: &mut OmeAccel, cpu_descriptors: &[crate::accel::descriptor::ChunkDescriptor]) {
+    let live: Vec<(u32, Aabb)> = accel
         .slots
         .iter()
         .enumerate()
@@ -68,55 +114,65 @@ pub(crate) fn rebuild(accel: &mut OmeAccel, queue: &wgpu::Queue) {
             if !s.live {
                 return None;
             }
-            let aabb = Aabb::new(
-                Vec3::from(s.descriptor.aabb_min),
-                Vec3::from(s.descriptor.aabb_max),
-            );
-            Some((i as u32, aabb))
+            Some((
+                i as u32,
+                Aabb::new(Vec3::from(s.descriptor.aabb_min), Vec3::from(s.descriptor.aabb_max)),
+            ))
         })
         .collect();
+    debug_assert_eq!(live.len(), cpu_descriptors.len());
+    let n = live.len();
+    let total = if n == 1 { 1 } else { 2 * n - 1 };
+    let mut nodes = vec![BvhNode::default(); total];
+    let mut leaves = vec![0u32; n];
+    Bvh::<u32>::build_into(live, &mut nodes, &mut leaves);
 
-    let n = live_chunks.len();
-    if n == 0 {
-        // Empty pool: zero the first node so any stale traversal sees
-        // an out-of-bounds AABB and bails out immediately. Mirror
-        // cleared so CPU consumers (`for_each_overlapping_cpu`) also
-        // observe an empty TLAS.
-        let zero = BvhNode::default();
-        queue.write_buffer(&accel.buffers.tlas_nodes, 0, bytemuck::bytes_of(&zero));
-        accel.cpu_tlas_nodes.clear();
-        return;
-    }
-
-    let total_nodes = if n == 1 { 1 } else { 2 * n - 1 };
-    let mut nodes_scratch = vec![BvhNode::default(); total_nodes];
-    let mut leaves_scratch = vec![0u32; n];
-    Bvh::<u32>::build_into(live_chunks, &mut nodes_scratch, &mut leaves_scratch);
-
-    // Override each leaf's `right_or_count` to encode the chunk index.
-    // The builder leaves `right_or_count = 1 | BVH_LEAF_FLAG` — we
-    // replace `1` with the actual chunk_idx so the WGSL traversal
-    // resolves a leaf to a chunk descriptor in one fetch.
     let leaf_offset = n.saturating_sub(1);
     for k in 0..n {
-        let chunk_idx = leaves_scratch[k];
-        nodes_scratch[leaf_offset + k].left = 0;
-        nodes_scratch[leaf_offset + k].right_or_count = encode_live(chunk_idx);
+        let chunk_idx = leaves[k];
+        nodes[leaf_offset + k].left = 0;
+        nodes[leaf_offset + k].right_or_count = encode_live(chunk_idx);
     }
+    accel.cpu_tlas_nodes = nodes;
+}
 
-    queue.write_buffer(
-        &accel.buffers.tlas_nodes,
-        0,
-        cast_slice(&nodes_scratch[..total_nodes]),
-    );
-    debug_assert!(
-        total_nodes * size_of::<BvhNode>() <= 2 * accel.caps.max_chunks as usize * size_of::<BvhNode>(),
-        "TLAS rebuild overflowed pre-allocated tlas_nodes buffer",
-    );
+/// Legacy CPU-only rebuild preserved for commit 10's ground-truth
+/// comparison. Does NOT touch the GPU buffer — only populates a fresh
+/// `Vec<BvhNode>` matching what `tlas_nodes` should contain after the
+/// GPU dispatch settles. Returns `(nodes, total_node_count)`; `nodes`
+/// is sized `2 * n` (rounded) but only `total_node_count` are valid.
+#[cfg(test)]
+pub(crate) fn rebuild_cpu_legacy(accel: &OmeAccel) -> (Vec<BvhNode>, usize) {
+    let live: Vec<(u32, Aabb)> = accel
+        .slots
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            if !s.live {
+                return None;
+            }
+            Some((
+                i as u32,
+                Aabb::new(Vec3::from(s.descriptor.aabb_min), Vec3::from(s.descriptor.aabb_max)),
+            ))
+        })
+        .collect();
+    let n = live.len();
+    if n == 0 {
+        return (vec![BvhNode::default()], 1);
+    }
+    let total = if n == 1 { 1 } else { 2 * n - 1 };
+    let mut nodes = vec![BvhNode::default(); total];
+    let mut leaves = vec![0u32; n];
+    Bvh::<u32>::build_into(live, &mut nodes, &mut leaves);
 
-    // Maintain CPU mirror in lockstep with the GPU upload — CPU
-    // consumers traverse this without ever paying for a readback.
-    accel.cpu_tlas_nodes = nodes_scratch;
+    let leaf_offset = n.saturating_sub(1);
+    for k in 0..n {
+        let chunk_idx = leaves[k];
+        nodes[leaf_offset + k].left = 0;
+        nodes[leaf_offset + k].right_or_count = encode_live(chunk_idx);
+    }
+    (nodes, total)
 }
 
 #[cfg(test)]

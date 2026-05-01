@@ -172,7 +172,10 @@ mod tests {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("ome_accel::cpu_traversal_tests"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            // Default (full desktop) limits — `update_gpu` triggers
+            // the GPU TLAS rebuild whose onesweep sort needs 6
+            // storage buffers in one stage, exceeding downlevel.
+            required_limits: wgpu::Limits::default(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
             experimental_features: wgpu::ExperimentalFeatures::default(),

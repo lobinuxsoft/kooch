@@ -169,7 +169,7 @@ fn tlas_rebuild_end_to_end_empty_pool() {
     };
     let accel_buffers = fresh_accel_buffers(&device);
     let descs: Vec<crate::accel::descriptor::ChunkDescriptor> = vec![];
-    let mut builder = TlasGpuBuilder::new(&device, None);
+    let builder = TlasGpuBuilder::new(&device, None);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("tlas_rebuild_empty_test_encoder"),
