@@ -48,9 +48,22 @@ fn eval_primitive_at_cpu(p: Vec3, prim: &SmokePrimitive) -> f32 {
     sdf_sphere_cpu(local, prim.params[0]) * s_min
 }
 
-/// Mirror of `eval_scene_bvh` for one or more chunks fused into a
-/// single per-role fold. Same identities and fold order as the GPU
-/// implementation so backend-numeric noise stays sub-`1e-5`.
+/// Brute-force ground truth for `eval_scene_bvh`: fold every IS_RAYMARCH
+/// primitive into the per-role accumulators with NO leaf-AABB gate.
+///
+/// **Post-#381 change:** the legacy `aabb_contains(p)` point-query
+/// pruning is gone — `eval_scene_bvh` now uses distance-to-AABB
+/// (`sdf_aabb(p, lo, hi) > acc_add`) which never silences a primitive
+/// that could improve the running union. Equivalently: an SDF
+/// primitive's contribution to the scene SDF is well-defined for ALL
+/// points in R³, not just inside its leaf AABB. The GPU's pruning is
+/// purely a performance optimisation that is provably equivalent to
+/// brute-force when the AABBs envelope the primitive support
+/// (which they do, with `max_smoothness_radius` inflation).
+///
+/// So the CPU mirror folds brute-force — that's the contract PR-4
+/// will rely on when it samples the cascade with `textureSampleLevel`
+/// at points far from any leaf AABB.
 pub fn eval_scene_cpu(
     p: Vec3,
     prims: &[SmokePrimitive],
@@ -63,17 +76,6 @@ pub fn eval_scene_cpu(
     let mut acc_sub = ACC_UNION_IDENTITY;
     for (prim, leaf) in prims.iter().zip(leaves.iter()) {
         if (leaf.flags & IS_RAYMARCH) == 0 {
-            continue;
-        }
-        let lo = Vec3::from_array(leaf.aabb_min);
-        let hi = Vec3::from_array(leaf.aabb_max);
-        let inside = (p.x >= lo.x)
-            && (p.y >= lo.y)
-            && (p.z >= lo.z)
-            && (p.x <= hi.x)
-            && (p.y <= hi.y)
-            && (p.z <= hi.z);
-        if !inside {
             continue;
         }
         let d = eval_primitive_at_cpu(p, prim);
@@ -89,6 +91,21 @@ pub fn eval_scene_cpu(
     let k_sub = k_sub_global.max(1e-5);
     let r = smooth_intersection(acc_add, acc_int, k_int);
     smooth_subtraction(r, acc_sub, k_sub)
+}
+
+/// Signed distance from `p` to the axis-aligned box `[lo, hi]`.
+/// Negative inside the box, positive outside, and equals the canonical
+/// `sdf_aabb` the WGSL traversal uses for distance-to-AABB pruning.
+/// Exposed so tests can classify voxels by their relationship to the
+/// leaf AABB (inside / smoothness band / far) without re-deriving the
+/// math at the call site.
+pub fn sdf_aabb_cpu(p: Vec3, lo: Vec3, hi: Vec3) -> f32 {
+    let centre = 0.5 * (lo + hi);
+    let half_extent = 0.5 * (hi - lo);
+    let q = (p - centre).abs() - half_extent;
+    let outside = q.max(Vec3::ZERO).length();
+    let inside = q.x.max(q.y.max(q.z)).min(0.0);
+    outside + inside
 }
 
 /// Flat-buffer voxel layout: `voxels[(z * n + y) * n + x]`.
