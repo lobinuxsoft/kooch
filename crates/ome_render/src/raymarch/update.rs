@@ -23,6 +23,7 @@ use ome_ecs::sdf_blend::{MODE_SMOOTH_INTERSECTION, MODE_SMOOTH_SUBTRACTION};
 use ome_ecs::{
     PerspectiveCamera, SdfBlend, SdfBox, SdfCapsule, SdfCylinder, SdfPlane, SdfSphere, SdfTorus,
 };
+use ome_world::ChunkManager;
 
 use super::aabb::primitive_aabb;
 use super::instance::{
@@ -30,6 +31,55 @@ use super::instance::{
     TYPE_SPHERE, TYPE_TORUS,
 };
 use super::renderer::RayMarchRenderer;
+
+impl RayMarchRenderer {
+    /// Mirror the world streaming layer's pending load/unload delta
+    /// into the GPU pool. Drains `ChunkManager`'s pending queues;
+    /// the streaming layer never sees `wgpu::Queue` (DOD: the trait
+    /// boundary is CPU-only), so this bridge is the renderer's job.
+    ///
+    /// The delta is applied **before** the legacy ECS-driven single-
+    /// chunk pass so the pool's TLAS rebuild inside `tick_streaming`
+    /// reflects the new topology before the renderer continues.
+    /// `tick_streaming` here propagates `k_int_global = k_sub_global =
+    /// 0`: streaming chunks contribute their own `max_smoothness_radius`
+    /// to the chunk descriptor, and the legacy path's per-frame call
+    /// inside `update_single_chunk` overwrites the uniforms with the
+    /// scene-wide reduce values a few lines later.
+    fn apply_streaming_delta(
+        &mut self,
+        queue: &wgpu::Queue,
+        resources: &mut ome_core::resource::Resources,
+    ) {
+        let Some(mut manager) = resources.remove::<ChunkManager>() else {
+            return;
+        };
+
+        let unloads = manager.drain_pending_unloads();
+        let loads = manager.drain_pending_loads();
+
+        for chunk_id in unloads {
+            if let Err(e) = self.bvh_state.remove_streaming_chunk(queue, chunk_id) {
+                tracing::warn!(
+                    target: "ome_render::raymarch",
+                    chunk = ?chunk_id,
+                    "remove_streaming_chunk failed: {e}",
+                );
+            }
+        }
+        for (chunk_id, content) in loads {
+            if let Err(e) = self.bvh_state.insert_streaming_chunk(queue, chunk_id, &content) {
+                tracing::warn!(
+                    target: "ome_render::raymarch",
+                    chunk = ?chunk_id,
+                    "insert_streaming_chunk failed: {e}",
+                );
+            }
+        }
+
+        resources.insert(manager);
+    }
+}
 
 /// Per-entity blend metadata captured during ECS collection. Lives only
 /// long enough to be folded into the leaf-AABB table before upload.
@@ -142,11 +192,18 @@ impl RayMarchRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        resources: &ome_core::resource::Resources,
+        resources: &mut ome_core::resource::Resources,
         sky_top: Vec4,
         sky_bottom: Vec4,
         skip_internal_sky: bool,
     ) {
+        // Multi-chunk streaming pass: drain the world's pending loads
+        // and unloads, mirror them into the pool. The ECS-side single-
+        // chunk authoring path runs after this so authored scenes
+        // continue to render alongside streamed chunks (their keys are
+        // disjoint by construction in `BvhState`).
+        self.apply_streaming_delta(queue, resources);
+
         let mut tagged: Vec<CollectedRow> = Vec::new();
         collect_spheres(resources, &mut tagged);
         collect_boxes(resources, &mut tagged);
@@ -247,10 +304,12 @@ impl RayMarchRenderer {
         // `SceneMeta` keeps the legacy field layout (uniform buffer
         // contract). Pool path only consumes `skip_internal_sky` +
         // `sky_top` / `sky_bottom`; the others are upload-once-and-
-        // ignore until PR-3 prunes the struct.
+        // ignore until PR-3 prunes the struct. `bvh_n` reflects the
+        // pool-wide primitive count so the shader's "scene-empty"
+        // marker stays accurate when only streaming chunks are live.
         let meta = SceneMeta {
             primitive_count,
-            bvh_n: self.bvh_state.primitive_count(),
+            bvh_n: self.bvh_state.total_primitive_count(),
             skip_internal_sky: u32::from(skip_internal_sky),
             has_intersects: u32::from(has_intersects),
             has_subs: u32::from(has_subs),

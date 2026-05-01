@@ -40,7 +40,7 @@ pub(crate) fn render_viewport(
     mesh_gizmo_renderer: &mut MeshGizmoRenderer,
     mesh_gizmo_batch: &MeshBatch,
     target: &ViewportTarget,
-    resources: &Resources,
+    resources: &mut Resources,
     project_loaded: bool,
 ) {
     let mut encoder = gpu

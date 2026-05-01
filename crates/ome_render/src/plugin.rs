@@ -211,7 +211,7 @@ fn acquire_and_render(
     raymarch: &mut RayMarchRenderer,
     mesh_pass: &mut MeshPassRenderer,
     depth_view: &wgpu::TextureView,
-    resources: &Resources,
+    resources: &mut Resources,
     aspect: f32,
 ) -> SurfaceOutcome {
     match gpu.surface().get_current_texture() {
@@ -235,7 +235,7 @@ fn render_passes(
     raymarch: &mut RayMarchRenderer,
     mesh_pass: &mut MeshPassRenderer,
     depth_view: &wgpu::TextureView,
-    resources: &Resources,
+    resources: &mut Resources,
     aspect: f32,
     frame: SurfaceTexture,
 ) {
