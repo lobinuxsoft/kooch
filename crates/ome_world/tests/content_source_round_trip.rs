@@ -83,6 +83,65 @@ fn load_then_unload_in_one_tick_does_not_emit_unload() {
 }
 
 #[test]
+fn churn_100_cycles_keeps_pending_buffers_bounded() {
+    // Camera-movement regression for #369 audit: each frame we ingest a
+    // new chunk on the leading edge and evict the one that just fell
+    // off the trailing edge. The pending_loads / pending_unloads
+    // buffers MUST drain to zero between frames once a (drain → drain)
+    // call pair runs — otherwise the streaming layer accumulates
+    // unbounded CPU memory while the editor moves around.
+    const WINDOW: i32 = 8;
+    let mut manager = ChunkManager::new(64 * 1024 * 1024);
+    manager.register_content_source(Box::new(ProceduralCitySource::new(2026)));
+
+    // Warm up: load `WINDOW` distinct chunks.
+    for x in 0..WINDOW {
+        manager.request_load(id(x, 0, 0), x as f32);
+    }
+    manager.process_queues(WINDOW as usize, 0, None);
+    let _ = manager.drain_pending_loads();
+    assert_eq!(manager.loaded_count(), WINDOW as usize);
+
+    let mut max_pending_loads = 0usize;
+    let mut max_pending_unloads = 0usize;
+
+    // Steady-state cycle: each iteration models a single chunk-side
+    // worth of camera movement. Load the leading-edge chunk, evict
+    // the trailing-edge chunk (the OLDEST one the window left behind).
+    for cycle in 0..100i32 {
+        let lead = WINDOW + cycle;
+        let trail = cycle;
+        manager.request_load(id(lead, 0, 0), lead as f32);
+        manager.request_unload(id(trail, 0, 0));
+        manager.process_queues(WINDOW as usize, WINDOW as usize, None);
+        let loads = manager.drain_pending_loads();
+        let unloads = manager.drain_pending_unloads();
+        max_pending_loads = max_pending_loads.max(loads.len());
+        max_pending_unloads = max_pending_unloads.max(unloads.len());
+        assert!(
+            manager.drain_pending_loads().is_empty(),
+            "cycle {cycle}: drain must zero pending_loads",
+        );
+        assert!(
+            manager.drain_pending_unloads().is_empty(),
+            "cycle {cycle}: drain must zero pending_unloads",
+        );
+    }
+
+    // After 100 cycles the active set must still be bounded by the
+    // window — no leak in `active`. Accumulation past `WINDOW` would
+    // mean unloads aren't propagating.
+    assert_eq!(
+        manager.loaded_count(),
+        WINDOW as usize,
+        "active count drifted: loaded={} should equal WINDOW={WINDOW}",
+        manager.loaded_count(),
+    );
+    assert!(max_pending_loads <= 1, "max pending loads {max_pending_loads}");
+    assert!(max_pending_unloads <= 1, "max pending unloads {max_pending_unloads}");
+}
+
+#[test]
 fn populate_is_seed_stable_across_manager_instances() {
     // AC6 of #360 (TLAS topology byte-identical under reordered loads)
     // requires the content the streaming layer hands to OmeAccel to be

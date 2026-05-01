@@ -26,6 +26,100 @@ const N_CHUNKS_PER_AXIS: i32 = 2;
 const SEED: u64 = 0xA1C2_B0_363u64;
 
 #[test]
+fn streaming_pool_high_watermark_bounded_under_camera_churn() {
+    // #369 audit regression: 100 frames of leading-edge load + trailing-
+    // edge unload simulate a camera moving by one chunk per frame.
+    // The pool's `live_chunk_count` must stay capped at the rolling
+    // window size, the BLAS node pool's `high_watermark` must stop
+    // growing once the steady state stabilises, and `tlas_dirty_count`
+    // must reset to 0 after every `update_gpu`.
+    const WINDOW: i32 = 8;
+    let Some((device, queue)) = try_acquire_device() else {
+        eprintln!("ac_363 churn: no adapter — skipping");
+        return;
+    };
+
+    let source = ProceduralCitySource::new(SEED);
+    let mut accel = OmeAccel::new(
+        &device,
+        AccelCaps::default(),
+        std::mem::size_of::<SdfPrimitive>() as u32,
+    )
+    .unwrap();
+
+    // Warm-up: load WINDOW chunks.
+    for x in 0..WINDOW {
+        let cid = ChunkId::new(IVec3::new(x, 0, 0), 0);
+        let content = source.populate(cid, cid.bounds(&Default::default()));
+        let bytes: &[u8] = cast_slice(&content.primitives);
+        accel
+            .insert_chunk(
+                &queue,
+                ChunkInsert {
+                    key: streaming_key(cid),
+                    leaf_aabbs: &content.leaf_aabbs,
+                    primitives_bytes: bytes,
+                    max_smoothness_radius: content.max_smoothness_radius,
+                },
+            )
+            .unwrap();
+    }
+    accel.update_gpu(&queue, 0.0, 0.0);
+    assert_eq!(accel.tlas_dirty_count(), 0, "warm-up tick must clear dirty");
+    assert_eq!(accel.live_chunk_count(), WINDOW as u32);
+    let warm_high = accel.node_pool_fragmentation().used;
+
+    // Steady-state churn: 100 cycles of (load lead, evict trail,
+    // tick). live count never exceeds WINDOW, and post-warmup
+    // high_watermark must not grow more than the once-per-cycle
+    // alloc + free dance lets it.
+    let mut last_high = warm_high;
+    for cycle in 0..100i32 {
+        let lead = ChunkId::new(IVec3::new(WINDOW + cycle, 0, 0), 0);
+        let trail = ChunkId::new(IVec3::new(cycle, 0, 0), 0);
+        accel
+            .remove_chunk(&queue, streaming_key(trail))
+            .expect("remove must find the trailing chunk");
+        let content = source.populate(lead, lead.bounds(&Default::default()));
+        let bytes: &[u8] = cast_slice(&content.primitives);
+        accel
+            .insert_chunk(
+                &queue,
+                ChunkInsert {
+                    key: streaming_key(lead),
+                    leaf_aabbs: &content.leaf_aabbs,
+                    primitives_bytes: bytes,
+                    max_smoothness_radius: content.max_smoothness_radius,
+                },
+            )
+            .unwrap();
+        accel.update_gpu(&queue, 0.0, 0.0);
+        assert_eq!(
+            accel.tlas_dirty_count(),
+            0,
+            "cycle {cycle}: tlas_dirty_count must reset after update_gpu",
+        );
+        assert_eq!(
+            accel.live_chunk_count(),
+            WINDOW as u32,
+            "cycle {cycle}: live_chunk_count drifted",
+        );
+        let frag = accel.node_pool_fragmentation();
+        last_high = last_high.max(frag.used);
+    }
+
+    // The free-list coalesce path keeps the high-watermark within a
+    // small constant of the warm-up footprint (one cycle's worth of
+    // alloc churn, plus a tiny coalesce slack). 8x is generous; the
+    // observed value sits within 2x in practice.
+    let bound = warm_high.saturating_mul(8).max(64 * 1024);
+    assert!(
+        last_high <= bound,
+        "node-pool used grew unbounded: warm={warm_high} last={last_high} bound={bound}",
+    );
+}
+
+#[test]
 fn streaming_chain_loads_one_chunk_into_pool() {
     let Some((device, queue)) = try_acquire_device() else {
         eprintln!("ac_363: no adapter — skipping");

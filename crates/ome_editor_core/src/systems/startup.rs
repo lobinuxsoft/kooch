@@ -80,6 +80,10 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     // explicitly via their own `register_content_source` call.
     if let Some(manager) = resources.get_mut::<ChunkManager>() {
         manager.register_content_source(Box::new(ProceduralCitySource::default()));
+        tracing::info!(
+            target: "ome_editor_core::systems::startup",
+            "ProceduralCitySource registered as default content source",
+        );
     } else {
         tracing::warn!(
             "ChunkManager resource missing — ProceduralCitySource not registered. \
