@@ -111,11 +111,20 @@ fn raymarch_pipeline_renders_sphere_from_camera_outside_aabb() {
         .tick_uniforms(&queue, &mut encoder, 0.0, 0.0);
     queue.submit(std::iter::once(encoder.finish()));
 
+    // PR-4 of epic #370: production raymarch reads the GDF cascade-0
+    // at every step instead of descending the TLAS. Populate it here
+    // so the sphere actually shows up — without the dispatch the
+    // texture is zero everywhere and the `eval_scene_bvh` cascade
+    // fetch returns SDF=0 at every voxel, making every ray hit
+    // immediately at t=0 with NaN normals (the test would still
+    // pass on radv via implementation-specific NaN clamping but
+    // would silently regress on any conformant backend).
     // --- Camera + scene_meta uniforms (mirror update_camera) ---------
     // Camera at (0, 0, 5) looking at origin, FOV 60°, aspect 1, near
     // 0.1, far 100. Camera-OUTSIDE-AABB on purpose — this is the
     // configuration that exposed the original point-query bug.
     let camera_pos = Vec3::new(0.0, 0.0, 5.0);
+    renderer.dispatch_gdf_populate(&device, &queue, camera_pos);
     let view = Mat4::look_at_rh(camera_pos, Vec3::ZERO, Vec3::Y);
     let projection = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let cam = CameraUniforms {

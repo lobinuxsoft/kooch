@@ -16,6 +16,7 @@
 #![allow(dead_code)] // Each test binary touches a different subset.
 
 pub mod gdf;
+pub mod raymarch_render;
 
 use bytemuck::{Pod, Zeroable};
 use ome_bvh::{IS_RAYMARCH, LeafAabb, OmeAccel, ROLE_RAYMARCH_ADD};
@@ -86,9 +87,24 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
     )
     .ok()?;
+    // PR-4 (epic #370): the GDF cascade fetch uses a linear sampler
+    // on an R32Float texture, which the bind-group validator rejects
+    // unless `FLOAT32_FILTERABLE` is enabled. Tests that build a
+    // `RayMarchRenderer` (`raymarch_renders_sphere`,
+    // `gdf_fragment_sample`) bind the cascade view at construction;
+    // the standalone `pool_eval_smoke` and `gdf_populate` paths don't
+    // bind it but enabling the feature is harmless (size-zero overhead
+    // when unused). Adapters without `FLOAT32_FILTERABLE` are rare on
+    // the engine's target HW; skip the test cleanly when missing
+    // rather than crashing mid-bind-group.
+    let required_features = wgpu::Features::FLOAT32_FILTERABLE;
+    if !adapter.features().contains(required_features) {
+        eprintln!("ome_render::tests: adapter lacks FLOAT32_FILTERABLE — skipping");
+        return None;
+    }
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("ome_render::tests::common"),
-        required_features: wgpu::Features::empty(),
+        required_features,
         required_limits: wgpu::Limits::default(),
         memory_hints: wgpu::MemoryHints::Performance,
         trace: wgpu::Trace::Off,

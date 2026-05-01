@@ -118,10 +118,11 @@ mod tests {
             .expect("concatenated pool-eval shader should validate");
     }
 
-    /// `eval_scene_bvh` and the smoke-test compute entry point must
-    /// both survive parsing + validation. Pinning their presence here
-    /// catches accidental renames in PR-2 before the integration
-    /// tests do.
+    /// `eval_scene_bvh_traversal` (the TLAS+BLAS pool descend, was
+    /// `eval_scene_bvh` pre-PR-4 of epic #370) and the smoke-test
+    /// compute entry point must both survive parsing + validation.
+    /// Pinning their presence here catches accidental renames before
+    /// the integration tests do.
     #[test]
     fn pool_eval_shader_exposes_required_entry_points() {
         let module = naga::front::wgsl::parse_str(POOL_EVAL_SHADER_SOURCE)
@@ -132,8 +133,8 @@ mod tests {
             .filter_map(|(_, f)| f.name.as_deref())
             .collect();
         assert!(
-            function_names.iter().any(|n| *n == "eval_scene_bvh"),
-            "pool-eval shader must expose `eval_scene_bvh`; saw {function_names:?}"
+            function_names.iter().any(|n| *n == "eval_scene_bvh_traversal"),
+            "pool-eval shader must expose `eval_scene_bvh_traversal`; saw {function_names:?}"
         );
         assert!(
             function_names.iter().any(|n| *n == "descend_blas"),

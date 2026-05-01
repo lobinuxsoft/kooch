@@ -190,6 +190,33 @@ impl RayMarchRenderer {
         }
     }
 
+    /// Mutable access to the GDF cascade state. Tests use this to
+    /// dispatch a populate pass before rendering when they don't drive
+    /// the renderer through `update_scene` (which folds the populate
+    /// into the per-frame encoder automatically).
+    pub fn gdf_state_mut(&mut self) -> &mut GdfState {
+        &mut self.gdf_state
+    }
+
+    /// Re-centre the cascade on `camera_pos` and dispatch the GDF
+    /// populate compute pass for a one-shot render. Production code
+    /// goes through `update_scene`; this entry point exists for
+    /// tests + tools that bypass the ECS-driven update.
+    pub fn dispatch_gdf_populate(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        camera_pos: Vec3,
+    ) {
+        self.last_camera_pos = camera_pos;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("raymarch_dispatch_gdf_populate"),
+        });
+        self.gdf_state
+            .dispatch_populate(&mut encoder, queue, camera_pos);
+        queue.submit(std::iter::once(encoder.finish()));
+    }
+
     /// Records the ray-march pass into `encoder` and draws the fullscreen
     /// triangle. The fragment shader writes `@builtin(frag_depth)` from the
     /// world-space hit so later mesh passes can depth-test against the SDF.
