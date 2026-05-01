@@ -64,7 +64,7 @@ fn streaming_pool_high_watermark_bounded_under_camera_churn() {
             )
             .unwrap();
     }
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
     assert_eq!(accel.tlas_dirty_count(), 0, "warm-up tick must clear dirty");
     assert_eq!(accel.live_chunk_count(), WINDOW as u32);
     let warm_high = accel.node_pool_fragmentation().used;
@@ -93,7 +93,7 @@ fn streaming_pool_high_watermark_bounded_under_camera_churn() {
                 },
             )
             .unwrap();
-        accel.update_gpu(&queue, 0.0, 0.0);
+        accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
         assert_eq!(
             accel.tlas_dirty_count(),
             0,
@@ -186,7 +186,7 @@ fn ac_363_demo_scene_matches_scene_wide_cpu_fold() {
     insert_drain_into_pool(&mut manager, &mut accel, &queue);
     let expected_chunks = (N_CHUNKS_PER_AXIS * N_CHUNKS_PER_AXIS) as u32;
     assert_eq!(accel.live_chunk_count(), expected_chunks);
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
     // 1 000 random samples across the demo grid plus a 4 m skirt so
     // the cross-chunk smooth blends past the seam are exercised.
