@@ -59,6 +59,11 @@ pub struct TlasGpuBuilder {
     /// with `right_or_count = chunk_idx | BVH_LEAF_FLAG`.
     pub leaves_pipeline: wgpu::ComputePipeline,
     pub leaves_bgl: wgpu::BindGroupLayout,
+    /// Pass 3 — TLAS internal-node Karras constructor. Builds the
+    /// N-1 internals via delta + range + split, writes parent
+    /// pointers with the TLAS-specific role_idx convention.
+    pub internal_pipeline: wgpu::ComputePipeline,
+    pub internal_bgl: wgpu::BindGroupLayout,
 }
 
 impl TlasGpuBuilder {
@@ -150,6 +155,8 @@ impl TlasGpuBuilder {
         sort_buffers.ensure_capacity(device, INITIAL_TLAS_SORT_CAPACITY, initial_partitions);
 
         let (leaves_pipeline, leaves_bgl) = build_leaves_pipeline(device, pipeline_cache);
+        let (internal_pipeline, internal_bgl) =
+            build_internal_pipeline(device, pipeline_cache);
 
         Self {
             morton_pipeline,
@@ -160,6 +167,8 @@ impl TlasGpuBuilder {
             sort_buffers,
             leaves_pipeline,
             leaves_bgl,
+            internal_pipeline,
+            internal_bgl,
         }
     }
 
@@ -261,6 +270,95 @@ fn build_leaves_pipeline(
         layout: Some(&pl),
         module: &shader,
         entry_point: Some("tlas_leaves_main"),
+        compilation_options: Default::default(),
+        cache: pipeline_cache,
+    });
+    (pipeline, bgl)
+}
+
+/// Compile the TLAS pass 3 (internal-node Karras) pipeline + bind
+/// group layout. Bindings mirror `shaders/tlas_internal.wgsl`:
+///   0 = tlas_nodes (RW storage)
+///   1 = sorted_morton (R storage; same buffer as `tlas_mortons`
+///       post-sort)
+///   2 = parents (RW storage, role_idx-keyed)
+///   3 = done (RW storage, role_idx-keyed)
+///   4 = config (uniform `KarrasConfig`)
+fn build_internal_pipeline(
+    device: &wgpu::Device,
+    pipeline_cache: Option<&wgpu::PipelineCache>,
+) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("ome_bvh::tlas_internal"),
+        source: wgpu::ShaderSource::Wgsl(super::TLAS_INTERNAL_WGSL.into()),
+    });
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ome_bvh::tlas_internal_bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(
+                        std::mem::size_of::<BvhNode>() as u64,
+                    ),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(4),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(4),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(4),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(16),
+                },
+                count: None,
+            },
+        ],
+    });
+    let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("ome_bvh::tlas_internal_pl"),
+        bind_group_layouts: &[Some(&bgl)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("ome_bvh::tlas_internal_pipeline"),
+        layout: Some(&pl),
+        module: &shader,
+        entry_point: Some("tlas_internal_main"),
         compilation_options: Default::default(),
         cache: pipeline_cache,
     });

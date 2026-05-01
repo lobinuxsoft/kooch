@@ -92,3 +92,11 @@ pub(crate) const TLAS_MORTON_WGSL: &str =
 /// dead-skip flag is the job of the eviction path.
 pub(crate) const TLAS_LEAVES_WGSL: &str =
     include_str!("../../shaders/tlas_leaves.wgsl");
+
+/// TLAS pass 3: parallel construction of N-1 internal nodes via
+/// Karras 2012's delta + range + split algorithm. Mirror of
+/// `karras_internal.wgsl` algorithmically — the only divergence is
+/// the `parents[]` / `done[]` indexing convention (TLAS-specific:
+/// leaves at `[0, N)`, internals at `[N, 2N - 1)`).
+pub(crate) const TLAS_INTERNAL_WGSL: &str =
+    include_str!("../../shaders/tlas_internal.wgsl");
