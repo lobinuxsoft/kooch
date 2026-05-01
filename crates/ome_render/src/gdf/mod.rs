@@ -29,12 +29,14 @@
 
 mod state;
 mod uniforms;
+mod update;
 
 pub use state::GdfState;
 pub use uniforms::{
     CASCADE_0_SIDE_METRES, CASCADE_0_VOXELS_PER_AXIS, CASCADE_0_VOXEL_SIZE, CascadeDescriptor,
     POPULATE_WORKGROUP_XY, snap_to_voxel_grid,
 };
+pub use update::{GdfPlugin, update_gdf_system};
 
 /// Concatenated populate compute shader: SDF primitives library +
 /// pool-driven `eval_scene_bvh` library + populate entry point.
