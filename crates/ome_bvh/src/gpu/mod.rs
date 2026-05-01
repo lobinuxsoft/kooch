@@ -21,6 +21,7 @@ pub mod lbvh;
 pub mod morton;
 pub mod sort;
 pub mod sort_types;
+pub mod tlas_lbvh;
 pub mod types;
 
 pub use build::{
@@ -77,3 +78,10 @@ pub(crate) const KARRAS_INTERNAL_WGSL: &str =
 /// node merges both children's AABBs into the parent.
 pub(crate) const KARRAS_AABB_WGSL: &str =
     include_str!("../../shaders/karras_aabb.wgsl");
+
+/// TLAS pass 0: Morton encode every live chunk's centre against the
+/// scene-wide bounds. Mirror of `morton.wgsl` but reads
+/// `array<ChunkDescriptor>` so each chunk reduces to a single Morton
+/// code (the TLAS leaf key).
+pub(crate) const TLAS_MORTON_WGSL: &str =
+    include_str!("../../shaders/tlas_morton.wgsl");
