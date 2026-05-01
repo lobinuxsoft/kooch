@@ -40,7 +40,7 @@ pub(crate) fn render_viewport(
     mesh_gizmo_renderer: &mut MeshGizmoRenderer,
     mesh_gizmo_batch: &MeshBatch,
     target: &ViewportTarget,
-    resources: &Resources,
+    resources: &mut Resources,
     project_loaded: bool,
 ) {
     let mut encoder = gpu
@@ -74,7 +74,19 @@ pub(crate) fn render_viewport(
     };
 
     // Pass 2: Ray-march.
-    let has_sdf = project_loaded && has_any_visible_sdf(resources);
+    //
+    // Drain the world streaming layer's pending load/unload delta into
+    // the GPU pool BEFORE the `has_sdf` gate — `ChunkManager.pending_*`
+    // is CPU memory that grows unbounded if nobody drains it, and a
+    // streaming-only scene (no ECS-side SDFs) would otherwise leave the
+    // whole pipeline asleep with chunks piling up forever. Cheap when
+    // the queues are empty.
+    if project_loaded {
+        raymarch.apply_streaming_delta(gpu.queue(), resources);
+    }
+
+    let has_sdf = project_loaded
+        && (has_any_visible_sdf(resources) || raymarch.bvh_state().streaming_chunk_count() > 0);
     let camera_ok = has_sdf
         && raymarch.update_camera(gpu.device(), gpu.queue(), resources, target.aspect());
 

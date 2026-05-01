@@ -20,7 +20,10 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
+use ome_core::coord::ActiveOrigin;
+
 use crate::chunk::{ChunkData, ChunkId, ChunkState};
+use crate::content::{ChunkContent, ChunkContentSource};
 
 /// Listener invoked when a chunk is about to be evicted (transition
 /// `Loaded → Unloading` in async, or `Loaded → removed` in the
@@ -82,6 +85,24 @@ pub struct ChunkManager {
     /// this at zero).
     pub memory_used_bytes: u64,
     listeners: Vec<Box<dyn ChunkEvictionListener>>,
+    /// Single content source. Loaded-side counterpart to `listeners`.
+    /// Multi-source merge / priority is out of scope for #363; the
+    /// shape stays as `Option<Box<dyn>>` so a future replacement keeps
+    /// the same call site shape (`register_content_source` overwrites).
+    content_source: Option<Box<dyn ChunkContentSource>>,
+    /// Content materialised by `process_queues` on each `Loaded`
+    /// transition, keyed by [`ChunkId`]. Drained by the renderer via
+    /// [`Self::drain_pending_loads`] before `OmeAccel::insert_chunk`
+    /// runs. Empty entries are NOT inserted: the renderer skips chunks
+    /// with no content (the pool rejects empty primitive lists).
+    pending_loads: HashMap<ChunkId, ChunkContent>,
+    /// Chunks that hit `process_queues`'s eviction path since the last
+    /// drain. Renderer reads + clears this list to mirror the pool
+    /// state. Decoupled from the load buffer so a chunk that loads and
+    /// unloads in the same frame produces both a load and an unload
+    /// event — the pool keeps its insert/remove invariants regardless
+    /// of frame rate.
+    pending_unloads: Vec<ChunkId>,
 }
 
 impl ChunkManager {
@@ -93,6 +114,9 @@ impl ChunkManager {
             memory_budget_bytes,
             memory_used_bytes: 0,
             listeners: Vec::new(),
+            content_source: None,
+            pending_loads: HashMap::new(),
+            pending_unloads: Vec::new(),
         }
     }
 
@@ -100,6 +124,35 @@ impl ChunkManager {
     /// order on each evicted chunk.
     pub fn register_listener(&mut self, listener: Box<dyn ChunkEvictionListener>) {
         self.listeners.push(listener);
+    }
+
+    /// Replace the chunk content source. Single source for now; calling
+    /// twice overwrites — multi-source merge is intentionally deferred
+    /// (see #363 out-of-scope notes).
+    pub fn register_content_source(&mut self, source: Box<dyn ChunkContentSource>) {
+        self.content_source = Some(source);
+    }
+
+    /// `true` once a content source has been registered. Useful for
+    /// editor / smoke tests that need to assert the wiring fired.
+    pub fn has_content_source(&self) -> bool {
+        self.content_source.is_some()
+    }
+
+    /// Drain content materialised by the most recent `process_queues`
+    /// pass. The renderer (or whatever owns the GPU pool) uploads each
+    /// `(ChunkId, ChunkContent)` via `OmeAccel::insert_chunk`. Empty
+    /// content entries are NEVER returned — the pool rejects empty
+    /// primitive lists, so they're filtered at insertion time.
+    pub fn drain_pending_loads(&mut self) -> Vec<(ChunkId, ChunkContent)> {
+        self.pending_loads.drain().collect()
+    }
+
+    /// Drain chunks evicted by the most recent `process_queues` pass.
+    /// Caller mirrors the eviction into the GPU pool via
+    /// `OmeAccel::remove_chunk`.
+    pub fn drain_pending_unloads(&mut self) -> Vec<ChunkId> {
+        std::mem::take(&mut self.pending_unloads)
     }
 
     /// Request that the chunk be loaded. Idempotent: requesting an
@@ -124,9 +177,26 @@ impl ChunkManager {
     /// Drain up to `max_loads` and `max_unloads` queued operations.
     /// Returns `(loaded_count, unloaded_count)` — useful for telemetry
     /// and for tuning the per-frame budget.
-    pub fn process_queues(&mut self, max_loads: usize, max_unloads: usize) -> (usize, usize) {
+    ///
+    /// On each load, if a [`ChunkContentSource`] is registered the
+    /// manager calls `populate(chunk_id, world_aabb)` and stashes the
+    /// result in `pending_loads`. The renderer drains that via
+    /// [`Self::drain_pending_loads`] and uploads to the GPU pool.
+    /// Eviction listeners still fire synchronously inside this call —
+    /// they are observation hooks, not GPU coordinators.
+    ///
+    /// `origin` anchors the chunk's world AABB to the simulation
+    /// frame. `None` falls back to [`ActiveOrigin::ZERO`] — appropriate
+    /// for tests and for callers that haven't wired the resource yet.
+    pub fn process_queues(
+        &mut self,
+        max_loads: usize,
+        max_unloads: usize,
+        origin: Option<&ActiveOrigin>,
+    ) -> (usize, usize) {
         let mut loaded = 0;
         let mut unloaded = 0;
+        let active_origin = origin.cloned().unwrap_or(ActiveOrigin::ZERO);
 
         // Unloads first — frees up space for the loads queued behind
         // them.
@@ -138,6 +208,13 @@ impl ChunkManager {
                 if matches!(data.state, ChunkState::Loaded) {
                     for l in &self.listeners {
                         l.on_evict(id);
+                    }
+                    // If the chunk had pending content not yet drained
+                    // by the renderer, drop it — the load never
+                    // reached the GPU. Otherwise emit an unload event
+                    // so the pool's `remove_chunk` runs.
+                    if self.pending_loads.remove(&id).is_none() {
+                        self.pending_unloads.push(id);
                     }
                 }
                 unloaded += 1;
@@ -162,6 +239,17 @@ impl ChunkManager {
                     last_seen_frame: 0,
                 },
             );
+            // Materialise content right after the state transitions to
+            // `Loaded` — keeps the invariant that every entry in
+            // `pending_loads` corresponds to a chunk currently in
+            // `active`.
+            if let Some(source) = &self.content_source {
+                let world_aabb = req.id.bounds(&active_origin);
+                let content = source.populate(req.id, world_aabb);
+                if !content.is_empty() {
+                    self.pending_loads.insert(req.id, content);
+                }
+            }
             loaded += 1;
         }
 
@@ -219,7 +307,7 @@ mod tests {
         let mut m = ChunkManager::new(1024);
         m.request_load(id(0, 0, 0, 0), 1.0);
         assert_eq!(m.pending_load_count(), 1);
-        let (loaded, unloaded) = m.process_queues(10, 10);
+        let (loaded, unloaded) = m.process_queues(10, 10, None);
         assert_eq!(loaded, 1);
         assert_eq!(unloaded, 0);
         assert_eq!(m.loaded_count(), 1);
@@ -229,7 +317,7 @@ mod tests {
     fn request_load_dedupes_against_active() {
         let mut m = ChunkManager::new(1024);
         m.request_load(id(0, 0, 0, 0), 1.0);
-        m.process_queues(10, 10);
+        m.process_queues(10, 10, None);
         // Same chunk requested again — silently dropped.
         m.request_load(id(0, 0, 0, 0), 0.5);
         assert_eq!(m.pending_load_count(), 0);
@@ -242,7 +330,7 @@ mod tests {
         m.request_load(id(1, 0, 0, 0), 1.0);
         m.request_load(id(5, 0, 0, 0), 25.0);
         // Drain ONE — must be the lowest-priority (closest) chunk.
-        m.process_queues(1, 0);
+        m.process_queues(1, 0, None);
         assert!(m.active.contains_key(&id(1, 0, 0, 0)));
         assert!(!m.active.contains_key(&id(10, 0, 0, 0)));
         assert!(!m.active.contains_key(&id(5, 0, 0, 0)));
@@ -261,9 +349,9 @@ mod tests {
         let mut m = ChunkManager::new(1024);
         m.register_listener(Box::new(Listener(counter.clone())));
         m.request_load(id(0, 0, 0, 0), 1.0);
-        m.process_queues(10, 10);
+        m.process_queues(10, 10, None);
         m.request_unload(id(0, 0, 0, 0));
-        m.process_queues(0, 10);
+        m.process_queues(0, 10, None);
 
         assert_eq!(counter.load(AtomicOrdering::Relaxed), 1);
         assert_eq!(m.loaded_count(), 0);
@@ -273,7 +361,7 @@ mod tests {
     fn unload_no_op_when_not_active() {
         let mut m = ChunkManager::new(1024);
         m.request_unload(id(99, 99, 99, 0));
-        let (loaded, unloaded) = m.process_queues(0, 10);
+        let (loaded, unloaded) = m.process_queues(0, 10, None);
         assert_eq!(loaded, 0);
         assert_eq!(unloaded, 0);
     }
@@ -284,7 +372,7 @@ mod tests {
         for i in 0..10 {
             m.request_load(id(i, 0, 0, 0), i as f32);
         }
-        let (loaded, _) = m.process_queues(3, 0);
+        let (loaded, _) = m.process_queues(3, 0, None);
         assert_eq!(loaded, 3);
         assert_eq!(m.loaded_count(), 3);
         assert_eq!(m.pending_load_count(), 7);
