@@ -72,7 +72,7 @@ fn ac7_fragmentation_under_50_percent_eviction_cycle() {
     for key in 0..N_BASELINE as u64 {
         insert_chunk(&mut accel, &queue, key);
     }
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
     let baseline = accel.node_pool_fragmentation();
     assert_eq!(
         baseline.used,
@@ -88,7 +88,7 @@ fn ac7_fragmentation_under_50_percent_eviction_cycle() {
     for key in (0..N_BASELINE as u64).step_by(2) {
         accel.remove_chunk(&queue, key).unwrap();
     }
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
     // Re-insert 500 fresh chunks → 1 000 live again, with the pool
     // forced to reuse free-list ranges interleaved with the surviving
@@ -97,7 +97,7 @@ fn ac7_fragmentation_under_50_percent_eviction_cycle() {
     for key in N_BASELINE as u64..(N_BASELINE as u64 + 500) {
         insert_chunk(&mut accel, &queue, key);
     }
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
     let post_churn = accel.node_pool_fragmentation();
 

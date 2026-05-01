@@ -91,6 +91,7 @@ impl BvhState {
     pub fn update_single_chunk(
         &mut self,
         queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
         leaf_aabbs: &[LeafAabb],
         primitives: &[SdfPrimitive],
         max_smoothness_radius: f32,
@@ -111,7 +112,7 @@ impl BvhState {
                 self.last_scene_hash = None;
                 self.primitive_count = 0;
             }
-            self.accel.update_gpu(queue, k_int_global, k_sub_global);
+            self.accel.update_gpu(queue, encoder, k_int_global, k_sub_global);
             return Ok(());
         }
 
@@ -138,7 +139,7 @@ impl BvhState {
             self.primitive_count = leaf_aabbs.len() as u32;
         }
 
-        self.accel.update_gpu(queue, k_int_global, k_sub_global);
+        self.accel.update_gpu(queue, encoder, k_int_global, k_sub_global);
         Ok(())
     }
 

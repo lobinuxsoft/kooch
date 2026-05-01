@@ -61,7 +61,7 @@ fn pool_with_leaves(
 ) -> OmeAccel {
     let mut accel = OmeAccel::new(device, AccelCaps::TEST, 16).unwrap();
     if leaves.is_empty() {
-        accel.update_gpu(queue, 0.0, 0.0);
+        accel.update_gpu_standalone(device, queue, 0.0, 0.0);
         return accel;
     }
     let prim_bytes = vec![0u8; 16 * leaves.len()];
@@ -76,7 +76,7 @@ fn pool_with_leaves(
             },
         )
         .unwrap();
-    accel.update_gpu(queue, 0.0, 0.0);
+    accel.update_gpu_standalone(device, queue, 0.0, 0.0);
     accel
 }
 
@@ -191,7 +191,7 @@ fn random_1000_colliders_match_brute_force() {
             },
         )
         .unwrap();
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
     let pairs = BroadphasePairs::collect(&accel);
 
     let pool_set: HashSet<CollisionPair> = pairs.pairs().iter().copied().collect();
@@ -263,7 +263,7 @@ fn ac5_cross_chunk_overlap_detected_via_tlas() {
             },
         )
         .unwrap();
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
     let pairs = BroadphasePairs::collect(&accel);
     assert_eq!(
@@ -310,7 +310,7 @@ fn ac5_disjoint_cross_chunk_yields_no_pair() {
             },
         )
         .unwrap();
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
     let pairs = BroadphasePairs::collect(&accel);
     assert!(pairs.is_empty(), "AC5: disjoint colliders must not pair");
 }

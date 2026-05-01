@@ -232,8 +232,17 @@ impl RayMarchRenderer {
         // pool buffers directly and the pool is pre-allocated.
         let envelope = k_add_max.max(k_int_max).max(k_sub_max);
         let primitive_count = primitives.len() as u32;
+        // The TLAS rebuild needs an encoder; the renderer pipeline does
+        // not yet thread one into `update_scene`, so we create an
+        // ad-hoc encoder + submit per `update_scene` call. PR-3+ may
+        // hoist the encoder to a higher-level frame batch when the
+        // renderer pipeline shape settles.
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("ome_render::update_scene_tlas_encoder"),
+        });
         if let Err(e) = self.bvh_state.update_single_chunk(
             queue,
+            &mut encoder,
             &leaf_aabbs,
             &primitives,
             envelope,
@@ -242,7 +251,7 @@ impl RayMarchRenderer {
         ) {
             tracing::warn!("OmeAccel single-chunk update failed: {e}; pool unchanged");
         }
-        let _ = device; // unused in the pool path; keep the signature stable for callers.
+        queue.submit(std::iter::once(encoder.finish()));
 
         // `SceneMeta` keeps the legacy field layout (uniform buffer
         // contract). Pool path only consumes `skip_internal_sky` +

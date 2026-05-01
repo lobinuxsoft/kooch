@@ -222,7 +222,7 @@ mod tests {
                 },
             )
             .unwrap();
-        accel.update_gpu(&queue, 0.0, 0.0);
+        accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
         // Query a tight AABB around centre_x = 2 (leaf 1).
         let mut hit_ids = Vec::new();
@@ -265,7 +265,7 @@ mod tests {
                 },
             )
             .unwrap();
-        accel.update_gpu(&queue, 0.0, 0.0);
+        accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
         // Wide query — overlaps both chunks. Both leaves visited.
         let mut hit_ids = Vec::new();
@@ -302,7 +302,7 @@ mod tests {
                 },
             )
             .unwrap();
-        accel.update_gpu(&queue, 0.0, 0.0);
+        accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
         let mut count = 0;
         accel.for_each_overlapping_cpu(
@@ -312,7 +312,7 @@ mod tests {
         assert_eq!(count, 1);
 
         accel.remove_chunk(&queue, 1).unwrap();
-        accel.update_gpu(&queue, 0.0, 0.0);
+        accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
         let mut count = 0;
         accel.for_each_overlapping_cpu(

@@ -294,7 +294,7 @@ fn populate(
             },
         )
         .unwrap();
-    accel.update_gpu(queue, 0.0, 0.0);
+    accel.update_gpu_standalone(device, queue, 0.0, 0.0);
     accel
 }
 

@@ -198,7 +198,7 @@ fn tlas_dirty_flips_via_update_gpu() {
         )
         .unwrap();
     assert!(accel.tlas_dirty_count() > 0);
-    accel.update_gpu(&queue, 0.1, 0.1);
+    accel.update_gpu_standalone(&device, &queue, 0.1, 0.1);
     assert_eq!(accel.tlas_dirty_count(), 0);
 }
 
