@@ -27,8 +27,10 @@
 //! Same pattern as the production `SHADER_SOURCE` in `raymarch/mod.rs`
 //! and the `POOL_EVAL_SHADER_SOURCE` smoke harness.
 
+mod state;
 mod uniforms;
 
+pub use state::GdfState;
 pub use uniforms::{
     CASCADE_0_SIDE_METRES, CASCADE_0_VOXELS_PER_AXIS, CASCADE_0_VOXEL_SIZE, CascadeDescriptor,
     POPULATE_WORKGROUP_XY, snap_to_voxel_grid,

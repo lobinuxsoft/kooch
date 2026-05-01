@@ -24,7 +24,14 @@ struct CascadeDescriptor {
 };
 
 @group(0) @binding(0) var<uniform> cascade: CascadeDescriptor;
-@group(0) @binding(1) var cascade_storage: texture_storage_3d<r16float, write>;
+// r32float (NOT r16float, despite the plan's pitfall #3 fallback note
+// reading the other way): wgpu 29 / WebGPU core does NOT expose
+// `R16Float` with `STORAGE_BINDING` usage — see
+// `wgpu_types::TextureFormat::guaranteed_format_features`. Granting it
+// would need `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` and per-adapter
+// Vulkan capability probing; not worth the matrix for cascade 0. The
+// 4× VRAM bump is 1 MB total — still trivial for a 64³ cascade.
+@group(0) @binding(1) var cascade_storage: texture_storage_3d<r32float, write>;
 
 // 8×8×1 workgroup = 64 threads = one RDNA wavefront, Z-slabs handled
 // externally by the dispatch grid. 8×8×8 (512 threads) would leave
