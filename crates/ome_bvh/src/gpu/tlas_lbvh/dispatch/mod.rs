@@ -10,6 +10,7 @@
 //! [`super::TlasGpuBuilder`]. They share nothing but the builder type
 //! and a couple of imports, so the split is a clean per-pass boundary.
 
+mod aabb;
 mod internal;
 mod leaves;
 mod morton;

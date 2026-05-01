@@ -8,6 +8,7 @@
 //! divergence is attributable to the dispatch under test, not to
 //! input drift.
 
+mod aabb;
 mod helpers;
 mod internal;
 mod leaves;

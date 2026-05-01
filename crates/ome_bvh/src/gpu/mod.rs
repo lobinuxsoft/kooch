@@ -100,3 +100,9 @@ pub(crate) const TLAS_LEAVES_WGSL: &str =
 /// leaves at `[0, N)`, internals at `[N, 2N - 1)`).
 pub(crate) const TLAS_INTERNAL_WGSL: &str =
     include_str!("../../shaders/tlas_internal.wgsl");
+
+/// TLAS pass 4: bottom-up AABB propagation, one tree level per
+/// dispatch. Mirror of `karras_aabb.wgsl` algorithmically with the
+/// TLAS-specific `done[]` indexing convention.
+pub(crate) const TLAS_AABB_WGSL: &str =
+    include_str!("../../shaders/tlas_aabb.wgsl");
