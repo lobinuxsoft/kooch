@@ -56,7 +56,7 @@ impl RayMarchRenderer {
         }
 
         if load_count > 0 || unload_count > 0 {
-            tracing::debug!(
+            tracing::info!(
                 target: "ome_render::raymarch",
                 loads = load_count,
                 unloads = unload_count,
