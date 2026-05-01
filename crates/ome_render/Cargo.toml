@@ -12,6 +12,7 @@ ome_bvh.workspace = true
 ome_core.workspace = true
 ome_ecs.workspace = true
 ome_sdf.workspace = true
+ome_world.workspace = true
 wgpu.workspace = true
 glam.workspace = true
 bytemuck.workspace = true

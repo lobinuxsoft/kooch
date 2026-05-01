@@ -31,12 +31,38 @@ use ome_bvh::{
     AccelBuffers, AccelCaps, AccelError, ChunkInsert, IS_RAYMARCH, LeafAabb, OmeAccel,
     ROLE_RAYMARCH_MASK,
 };
+use ome_world::{ChunkContent, ChunkId};
 
 use crate::raymarch::instance::SdfPrimitive;
 
-/// Single-chunk `ChunkKey` used for the PR-2 migration. PR-3 drops
-/// this constant and grows `update_scene` into a per-chunk bucketer.
+/// `ChunkKey` reserved for the legacy ECS-driven scene path. Streaming
+/// chunks set bit 63 in their key, so this stays disjoint from any
+/// streaming key by construction.
 const SINGLE_CHUNK_KEY: u64 = 0;
+
+/// Bits per coord in [`chunk_id_to_key`]. 20 bits → ±524 288 chunks
+/// per axis at level 0 = ±33 M m radius, well past the planet-scale
+/// envelope the streaming layer is sized for.
+const STREAMING_KEY_COORD_BITS: u32 = 20;
+const STREAMING_KEY_COORD_MASK: u64 = (1u64 << STREAMING_KEY_COORD_BITS) - 1;
+const STREAMING_KEY_LEVEL_MASK: u64 = 0xF;
+const STREAMING_KEY_FLAG: u64 = 1u64 << 63;
+
+/// Bijective bit-pack of a [`ChunkId`] into the pool's `ChunkKey` (a
+/// `u64`). Bit 63 is forced to 1 so streaming chunks land in a key
+/// space disjoint from [`SINGLE_CHUNK_KEY`] = 0 — the legacy ECS
+/// single-chunk path keeps its `key = 0` slot regardless of how many
+/// streaming chunks coexist with it.
+pub(super) fn chunk_id_to_key(id: ChunkId) -> u64 {
+    let x = (id.coords.x as i64 as u64) & STREAMING_KEY_COORD_MASK;
+    let y = (id.coords.y as i64 as u64) & STREAMING_KEY_COORD_MASK;
+    let z = (id.coords.z as i64 as u64) & STREAMING_KEY_COORD_MASK;
+    let lvl = (id.level as u64) & STREAMING_KEY_LEVEL_MASK;
+    x | (y << STREAMING_KEY_COORD_BITS)
+        | (z << (STREAMING_KEY_COORD_BITS * 2))
+        | (lvl << (STREAMING_KEY_COORD_BITS * 3))
+        | STREAMING_KEY_FLAG
+}
 
 /// Raymarch-side BVH state. Owns one `OmeAccel` plus a CPU-side scene
 /// hash so unchanged frames skip the GPU re-upload entirely.
@@ -49,6 +75,12 @@ pub struct BvhState {
     /// Number of primitives currently resident in the lone chunk. `0`
     /// when the scene is empty.
     primitive_count: u32,
+    /// Total leaf count across **streaming** chunks (excludes the
+    /// legacy single-chunk key 0). Maintained by
+    /// [`Self::insert_streaming_chunk`] / [`Self::remove_streaming_chunk`]
+    /// so the renderer's `bvh_n` "scene-empty" marker stays accurate
+    /// in the multi-chunk world.
+    streaming_primitive_count: u32,
 }
 
 impl BvhState {
@@ -66,6 +98,7 @@ impl BvhState {
             accel,
             last_scene_hash: None,
             primitive_count: 0,
+            streaming_primitive_count: 0,
         }
     }
 
@@ -79,6 +112,103 @@ impl BvhState {
     /// before any scene resolves or when the scene goes empty.
     pub fn primitive_count(&self) -> u32 {
         self.primitive_count
+    }
+
+    /// Sum of primitive counts across the legacy single chunk + every
+    /// streaming chunk. Drives the renderer's `SceneMeta.bvh_n` field
+    /// — `0` here means "no scene", regardless of which path
+    /// produced the primitives.
+    pub fn total_primitive_count(&self) -> u32 {
+        self.primitive_count
+            .saturating_add(self.streaming_primitive_count)
+    }
+
+    /// Number of live streaming chunks currently resident in the pool
+    /// (excludes the legacy single-chunk slot). Used by the integration
+    /// test to assert the streaming flow round-tripped end-to-end.
+    pub fn streaming_chunk_count(&self) -> u32 {
+        self.accel.live_chunk_count().saturating_sub(
+            if self.last_scene_hash.is_some() { 1 } else { 0 },
+        )
+    }
+
+    /// Look up whether a streaming chunk for `id` is currently resident
+    /// in the pool. Used by the integration test + by the editor's
+    /// streaming HUD when one lands.
+    pub fn has_streaming_chunk(&self, id: ChunkId) -> bool {
+        self.accel.lookup(chunk_id_to_key(id)).is_some()
+    }
+
+    /// Bring a streaming chunk into the pool. Empty content is a
+    /// no-op (the pool rejects `EmptyPrimitives`); the streaming layer
+    /// already filters those before calling here, but the guard keeps
+    /// the invariant local to this method.
+    ///
+    /// Idempotent on repeat insertion: if the chunk is already
+    /// resident, the call is a no-op — process_queues' dedup makes
+    /// repeats unlikely, but this lets the renderer drain without
+    /// having to track its own resident-set mirror.
+    pub fn insert_streaming_chunk(
+        &mut self,
+        queue: &wgpu::Queue,
+        chunk_id: ChunkId,
+        content: &ChunkContent,
+    ) -> Result<(), AccelError> {
+        if content.is_empty() {
+            return Ok(());
+        }
+        let key = chunk_id_to_key(chunk_id);
+        if self.accel.lookup(key).is_some() {
+            return Ok(());
+        }
+        let primitives_bytes: &[u8] = bytemuck::cast_slice(&content.primitives);
+        self.accel.insert_chunk(
+            queue,
+            ChunkInsert {
+                key,
+                leaf_aabbs: &content.leaf_aabbs,
+                primitives_bytes,
+                max_smoothness_radius: content.max_smoothness_radius,
+            },
+        )?;
+        self.streaming_primitive_count = self
+            .streaming_primitive_count
+            .saturating_add(content.primitives.len() as u32);
+        Ok(())
+    }
+
+    /// Evict a streaming chunk. No-op when the chunk is not currently
+    /// resident — the streaming layer may double-fire on chunks that
+    /// loaded and unloaded inside the same `process_queues` budget,
+    /// and the renderer doesn't need to filter those before calling.
+    pub fn remove_streaming_chunk(
+        &mut self,
+        queue: &wgpu::Queue,
+        chunk_id: ChunkId,
+    ) -> Result<(), AccelError> {
+        let key = chunk_id_to_key(chunk_id);
+        let Some(handle) = self.accel.lookup(key) else {
+            return Ok(());
+        };
+        let leaves = self
+            .accel
+            .descriptor(handle)
+            .map(|d| d.primitive_count)
+            .unwrap_or(0);
+        self.accel.remove_chunk(queue, key)?;
+        self.streaming_primitive_count =
+            self.streaming_primitive_count.saturating_sub(leaves);
+        Ok(())
+    }
+
+    /// Tick `tlas_uniforms` after a streaming insert/remove batch so
+    /// the next traversal sees the updated TLAS topology + per-frame
+    /// `k_*_global` reduce. The legacy single-chunk path calls this
+    /// from inside [`Self::update_single_chunk`]; streaming callers
+    /// drive it explicitly because their `update_scene` already owns
+    /// the per-frame reduce values.
+    pub fn tick_streaming(&mut self, queue: &wgpu::Queue, k_int_global: f32, k_sub_global: f32) {
+        self.accel.update_gpu(queue, k_int_global, k_sub_global);
     }
 
     /// Drive the pool with a single chunk holding every visible SDF
