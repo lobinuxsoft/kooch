@@ -42,7 +42,13 @@ pub use markers::{EditorCamera, EditorOnly};
 pub const EDITOR_CAMERA_PRIORITY: i32 = 1000;
 
 /// Default world-space spawn position for the editor camera.
-const DEFAULT_EYE: Vec3 = Vec3::new(5.0, 5.0, 5.0);
+///
+/// Per design freeze of issue #371 (Q4): the eye sits inside cascade 0
+/// (the GDF cascade with 0.25 m voxel size, 16 m cube around the
+/// active origin) at startup. `(0, 5, 8)` looking at `Vec3::ZERO` keeps
+/// the eye + focus point inside cascade 0 for any sensible orbit
+/// distance.
+const DEFAULT_EYE: Vec3 = Vec3::new(0.0, 5.0, 8.0);
 
 /// Startup system: registers `EditorOnly` as ephemeral so editor entities
 /// never leak into user scene files.
