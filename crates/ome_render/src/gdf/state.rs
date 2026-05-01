@@ -32,6 +32,11 @@ pub struct GdfState {
     sampler: wgpu::Sampler,
     uniforms_buffer: wgpu::Buffer,
     populate_pipeline: wgpu::ComputePipeline,
+    /// Group 0 layout consumed once at construction. Stored only so a
+    /// future cascade-resize / format-swap path can rebuild the
+    /// cascade-side bind group without re-deriving the layout — PR-5
+    /// territory; PR-3 keeps cascade 0 fixed.
+    #[allow(dead_code)]
     populate_bg_layout_group0: wgpu::BindGroupLayout,
     populate_bg_layout_group1: wgpu::BindGroupLayout,
     populate_bg_group0: wgpu::BindGroup,
