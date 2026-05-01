@@ -85,3 +85,10 @@ pub(crate) const KARRAS_AABB_WGSL: &str =
 /// code (the TLAS leaf key).
 pub(crate) const TLAS_MORTON_WGSL: &str =
     include_str!("../../shaders/tlas_morton.wgsl");
+
+/// TLAS pass 2: write the N leaf nodes into the tail of `tlas_nodes`,
+/// each encoded with `right_or_count = chunk_idx | BVH_LEAF_FLAG`
+/// (`accel::tlas::encode_live`). Lays down live leaves only — the
+/// dead-skip flag is the job of the eviction path.
+pub(crate) const TLAS_LEAVES_WGSL: &str =
+    include_str!("../../shaders/tlas_leaves.wgsl");

@@ -7,6 +7,7 @@
 //! share a single submission and a single CPU side-effect window.
 
 use super::{KarrasConfig, TlasGpuBuilder};
+use crate::gpu::karras_common::KARRAS_WORKGROUP_SIZE;
 use crate::gpu::sort::dispatch_sort_into;
 use crate::gpu::types::GpuSceneBounds;
 
@@ -134,7 +135,10 @@ impl TlasGpuBuilder {
 
         // 3. Run the onesweep: init + histogram + 4 scans + 4 scatters.
         // RADIX_PASSES is 4 (even), so the final result lands back in
-        // the `_a` slot.
+        // the `_a` slot. If anyone ever bumps RADIX_PASSES to an odd
+        // count without updating this consumer, the read-back below
+        // pulls stale bytes from the wrong slot. Hardening tracked in
+        // issue #373 (compile-time gate in sort_types.rs).
         dispatch_sort_into(
             device,
             queue,
@@ -161,5 +165,71 @@ impl TlasGpuBuilder {
             0,
             bytes,
         );
+    }
+
+    /// Pass 2 of the TLAS rebuild: write the N leaf nodes into the tail
+    /// of `tlas_nodes` at indices `[N-1, 2N-1)` (or `[0, 1)` when
+    /// `n == 1`), each encoded with `right_or_count = chunk_idx |
+    /// BVH_LEAF_FLAG`. Sets `tlas_done[k] = 1` so the upcoming AABB
+    /// propagation pass (commit 7) sees finalised leaves.
+    ///
+    /// Caller invariants:
+    /// - `tlas_sorted_indices` was populated by [`Self::dispatch_sort`]
+    ///   in the same encoder.
+    /// - `tlas_nodes` is at least `(2N - 1) * size_of::<BvhNode>` bytes
+    ///   (the `AccelBuffers` allocation rounds to `2N`, so this holds).
+    /// - `tlas_done` is at least `N * 4` bytes (commit 2 sized the
+    ///   scratch to `N`; the AABB pass in commit 7 will revisit this if
+    ///   per-internal done tracking is needed).
+    /// - `n == 0` is a no-op.
+    pub fn dispatch_leaves(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        tlas_nodes: &wgpu::Buffer,
+        tlas_sorted_indices: &wgpu::Buffer,
+        chunk_descriptors: &wgpu::Buffer,
+        tlas_done: &wgpu::Buffer,
+        n: u32,
+    ) {
+        if n == 0 {
+            return;
+        }
+
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ome_bvh::tlas_leaves_bg"),
+            layout: &self.leaves_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: tlas_nodes.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: tlas_sorted_indices.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: chunk_descriptors.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: tlas_done.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.config_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        let workgroups = n.div_ceil(KARRAS_WORKGROUP_SIZE);
+
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("ome_bvh::tlas_leaves_pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.leaves_pipeline);
+        pass.set_bind_group(0, &bg, &[]);
+        pass.dispatch_workgroups(workgroups.max(1), 1, 1);
     }
 }
