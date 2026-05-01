@@ -10,6 +10,7 @@
 //! camera so it stays composable with custom focus strategies.
 
 use ome_core::app::App;
+use ome_core::coord::ActiveOrigin;
 use ome_core::plugin::Plugin;
 use ome_core::resource::Resources;
 use ome_ecs::component::ComponentRegistry;
@@ -86,8 +87,12 @@ pub fn world_streaming_system(resources: &mut Resources) {
         .unwrap_or_default();
 
     activation_system(resources, &mut cache, &mut manager, &config);
-    let (loaded, unloaded) =
-        manager.process_queues(DEFAULT_MAX_LOADS_PER_FRAME, DEFAULT_MAX_UNLOADS_PER_FRAME);
+    let origin = resources.get::<ActiveOrigin>().cloned();
+    let (loaded, unloaded) = manager.process_queues(
+        DEFAULT_MAX_LOADS_PER_FRAME,
+        DEFAULT_MAX_UNLOADS_PER_FRAME,
+        origin.as_ref(),
+    );
 
     if loaded > 0 || unloaded > 0 {
         tracing::trace!(

@@ -13,6 +13,7 @@
 
 pub mod activation;
 pub mod chunk;
+pub mod content;
 pub mod focus;
 pub mod focus_cache;
 pub mod lod;
@@ -21,6 +22,7 @@ pub mod plugin;
 
 pub use activation::{activate_chunks, activation_system};
 pub use chunk::{BASE_CHUNK_SIZE_METERS, ChunkData, ChunkId, ChunkState, MAX_LOD_LEVEL};
+pub use content::{ChunkContent, ChunkContentSource};
 // Re-exported for backwards compatibility — `Aabb` lives in `ome_bvh`
 // since PR #115 PR-1; consumers can keep importing it through `ome_world`.
 pub use ome_bvh::Aabb;
