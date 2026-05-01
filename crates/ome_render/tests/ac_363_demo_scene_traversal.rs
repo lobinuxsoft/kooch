@@ -217,8 +217,18 @@ fn ac_363_demo_scene_matches_scene_wide_cpu_fold() {
         }
     }
     let p = samples[worst];
+    // Tolerance bumped to 5 m (vs the legacy 1e-5 byte-identical pin)
+    // because eval_scene_bvh in PR-4 of epic #370 introduces the GDF
+    // conservative-tracing floor `min(scene_eval, sqrt(min_outside_dist_sq))`
+    // computed over BVH internal-node AABBs that the leaf-only CPU fold
+    // in this test cannot mirror. Bound is sub-2 m in practice for samples
+    // drawn from inside leaf AABBs, with chunk_side (~64 m at level 0)
+    // as theoretical worst-case. 5 m gives plenty of headroom while still
+    // catching gross regressions (entire chunks missing, role mis-routing).
+    // Strict 1e-5 equivalence test moves to a future PR that mirrors the
+    // BVH builder in CPU.
     assert!(
-        max_diff < 1e-5,
+        max_diff < 5.0,
         "demo scene fold mismatch: max |gpu - cpu| = {max_diff} at ({}, {}, {})",
         p.p[0], p.p[1], p.p[2],
     );
