@@ -102,4 +102,13 @@ impl RayMarchRenderer {
     pub fn write_scene_meta(&self, queue: &wgpu::Queue, bytes: &[u8]) {
         queue.write_buffer(&self.scene_meta_buffer, 0, bytes);
     }
+
+    /// Push the current `self.params` (`max_steps`, `max_distance`,
+    /// `surface_threshold`, `epsilon_factor`) into the GPU uniform
+    /// buffer. Production code lets `update_camera` flush the params
+    /// every frame; tests that bypass the ECS path call this after
+    /// mutating `params` so the override actually reaches the shader.
+    pub fn write_raymarch_params(&self, queue: &wgpu::Queue) {
+        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&self.params));
+    }
 }

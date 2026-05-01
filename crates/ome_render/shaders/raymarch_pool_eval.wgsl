@@ -1,19 +1,18 @@
 // raymarch_pool_eval.wgsl — TLAS+BLAS pool-driven scene SDF library.
 //
 // Pure shader library: declares the pool-side bindings (group 1,
-// bindings 5..=10) + `descend_blas` + `eval_scene_bvh`. NO entry
-// point and NO I/O bindings — concatenated AFTER `sdf_primitives.wgsl`
-// (so `sdf_*`, `transform_point`, smooth-CSG helpers are in scope) and
-// BEFORE either:
-//   - the fragment shader entry in `raymarch_main.wgsl` (production
-//     raymarch path), or
-//   - the compute-kernel smoke test in `raymarch_pool_smoke.wgsl`
-//     (group 0 I/O, exercised by `tests/pool_eval_smoke.rs`).
+// bindings 5..=10) + `descend_blas` + `eval_scene_bvh_traversal`. NO
+// entry point. Concatenated AFTER `sdf_primitives.wgsl` and BEFORE one
+// of: `raymarch_gdf_sample.wgsl` + `raymarch_main.wgsl` (production
+// raymarch — `eval_scene_bvh` is the cascade fetch, traversal here is
+// dead code kept for PR-8 hybrid refinement); `gdf_populate.wgsl`
+// (populate path — calls `eval_scene_bvh_traversal` directly to fill
+// the cascade); `raymarch_pool_smoke.wgsl` (compute smoke test,
+// `tests/pool_eval_smoke.rs`).
 //
-// Splitting library vs entry-point lets the smoke test and the
-// renderer share `eval_scene_bvh` byte-for-byte without duplicating
-// the traversal logic and without dragging the smoke-test storage
-// bindings into the production pipeline layout.
+// Splitting library vs entry-point lets the populate pass, the smoke
+// test, and the PR-8 hybrid raymarcher share the traversal byte-for-
+// byte without duplicating the BVH descend.
 //
 // # Per-role accumulator invariant
 //
@@ -232,8 +231,15 @@ fn eval_primitive_at(p: vec3<f32>, prim: SdfPrimitive) -> f32 {
 // file head.
 //
 // Determinism: pushes left before right, pops right first, matching
-// `eval_scene_bvh`'s TLAS path and the legacy global BVH traversal so
-// AC1 byte-identical compares cleanly across the migration.
+// `eval_scene_bvh_traversal`'s TLAS path and the legacy global BVH
+// traversal so AC1 byte-identical compares cleanly across the migration.
+//
+// PR-4 (epic #370): kept for the populate path + PR-8 hybrid surface
+// refinement. `gdf_populate::cs_populate` is the sole live caller via
+// `eval_scene_bvh_traversal`; the production fragment shader replaces
+// `eval_scene_bvh` with a single cascade `textureSampleLevel`, so this
+// function is unreachable from `fs_main` and naga prunes it from the
+// raymarch pipeline. DO NOT DELETE.
 fn descend_blas(
     p: vec3<f32>,
     desc: ChunkDescriptor,
@@ -315,7 +321,11 @@ fn descend_blas(
 // shader carried for `has_intersects` / `has_subs` are unnecessary
 // here — the math reduces to `acc_add` exactly when the int and sub
 // roles are empty.
-fn eval_scene_bvh(p: vec3<f32>) -> f32 {
+//
+// PR-4 (epic #370) rename: was `eval_scene_bvh`. The short name now
+// belongs to the GDF cascade fetch in `raymarch_gdf_sample.wgsl`; the
+// populate compute pass + the PR-8 hybrid path call this version.
+fn eval_scene_bvh_traversal(p: vec3<f32>) -> f32 {
     if tlas_uniforms.num_chunks == 0u {
         return ACC_UNION_IDENTITY;
     }

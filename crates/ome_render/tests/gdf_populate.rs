@@ -22,7 +22,8 @@ mod common;
 
 use common::gdf::{
     ACC_UNION_IDENTITY, build_16_chunk_accel, build_empty_accel, build_single_sphere_accel,
-    dispatch_and_readback, eval_scene_cpu, sdf_aabb_cpu, voxel_centre, voxel_index,
+    build_two_sphere_accel, dispatch_and_readback, eval_scene_cpu, sdf_aabb_cpu, voxel_centre,
+    voxel_index,
 };
 use common::try_acquire_device;
 use glam::Vec3;
@@ -141,6 +142,90 @@ fn gdf_populate_matches_eval_scene_bvh_per_voxel() {
          band={count_band} (max_diff {max_diff_band:.6} m), \
          far={count_far} (max_diff {max_diff_far:.6} m) — \
          Nyquist tolerance {TOLERANCE_NYQUIST} m"
+    );
+}
+
+#[test]
+fn gdf_populate_two_chunks_match_eval_scene_bvh() {
+    // Closes #383: with a single-leaf TLAS the multi-leaf pruning
+    // rule (`if sdf_aabb(p, leaf_far) > acc_add { continue; }`) is
+    // dormant, so a regression that mishandles the bookkeeping
+    // around `acc_add` carry-over between leaves can ride the
+    // `gdf_populate_matches_eval_scene_bvh_per_voxel` test green.
+    // Two non-overlapping spheres on the X axis force one leaf to
+    // descend and the second to either descend (when its AABB is
+    // closer than the running `acc_add`) or be pruned (when the
+    // first leaf's union is already tighter). Both branches must
+    // match brute-force.
+    let Some((device, queue)) = try_acquire_device() else {
+        eprintln!("skipping gdf_populate_two_chunks_match — no adapter");
+        return;
+    };
+    const SEPARATION: f32 = 3.0;
+    const RADIUS: f32 = 1.0;
+    let (accel, prims, leaves, k_int, k_sub) =
+        build_two_sphere_accel(&device, &queue, SEPARATION, RADIUS);
+    let (voxels, descriptor) = dispatch_and_readback(&device, &queue, &accel, Vec3::ZERO);
+
+    // Sample the line `x ∈ [-2 m, 2 m]`, `y = z = 0`. Voxel grid pitch
+    // 0.25 m → 17 samples on the line, all at the y=z=midplane voxel
+    // closest to the origin (cascade is centred on `(0, 0, 0)`, so
+    // index = voxels_per_axis / 2). For each sample the running
+    // `acc_add` after leaf 0 is the SDF of the `-SEPARATION` sphere;
+    // leaf 1's AABB is closer to `+SEPARATION` so its `sdf_aabb` is
+    // small near `x = +SEPARATION` (descend branch) and large near
+    // `x = -SEPARATION` (prune branch). Crossing both branches in
+    // one fixture is the point.
+    let n = CASCADE_0_VOXELS_PER_AXIS;
+    let mid = n / 2;
+    let mut max_diff_descend = 0.0f32;
+    let mut max_diff_prune = 0.0f32;
+    let mut count_descend = 0u32;
+    let mut count_prune = 0u32;
+    for x in 0..n {
+        let centre = voxel_centre(&descriptor, x, mid, mid);
+        if centre.x.abs() > 2.5 {
+            // Outside the [−2 m, 2 m] sample range.
+            continue;
+        }
+        let cpu = eval_scene_cpu(centre, &prims, &leaves, k_int, k_sub);
+        let gpu = voxels[voxel_index(x, mid, mid)];
+        let diff = (gpu - cpu).abs();
+
+        // Pruning branch is fired when leaf 1 (the +SEPARATION sphere)
+        // would not improve the running union after leaf 0 descended.
+        // That happens at voxels strictly closer to leaf 0 than to
+        // leaf 1 — i.e. centre.x < 0 in this fixture.
+        let leaf1 = &leaves[1];
+        let leaf1_lo = Vec3::from_array(leaf1.aabb_min);
+        let leaf1_hi = Vec3::from_array(leaf1.aabb_max);
+        let aabb1 = sdf_aabb_cpu(centre, leaf1_lo, leaf1_hi);
+        let leaf0 = &leaves[0];
+        let leaf0_lo = Vec3::from_array(leaf0.aabb_min);
+        let leaf0_hi = Vec3::from_array(leaf0.aabb_max);
+        let aabb0 = sdf_aabb_cpu(centre, leaf0_lo, leaf0_hi);
+        let label = if aabb1 < aabb0 { "descend" } else { "prune" };
+        if aabb1 < aabb0 {
+            max_diff_descend = max_diff_descend.max(diff);
+            count_descend += 1;
+        } else {
+            max_diff_prune = max_diff_prune.max(diff);
+            count_prune += 1;
+        }
+
+        assert!(
+            diff < TOLERANCE_NYQUIST,
+            "voxel ({x},{mid},{mid}) at {centre:?} ({label}): \
+             gpu={gpu} cpu={cpu} diff={diff} > {TOLERANCE_NYQUIST}"
+        );
+    }
+    assert!(
+        count_descend > 0 && count_prune > 0,
+        "fixture failed to exercise both BVH branches: descend={count_descend} prune={count_prune}"
+    );
+    eprintln!(
+        "gdf_populate_two_chunks_match: descend={count_descend} (max_diff {max_diff_descend:.6} m), \
+         prune={count_prune} (max_diff {max_diff_prune:.6} m) — Nyquist tolerance {TOLERANCE_NYQUIST} m"
     );
 }
 

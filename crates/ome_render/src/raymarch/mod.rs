@@ -3,6 +3,7 @@
 
 mod aabb;
 mod bvh;
+mod collect;
 mod instance;
 mod renderer;
 mod streaming_bridge;
@@ -46,14 +47,19 @@ pub fn has_any_visible_sdf(resources: &Resources) -> bool {
         || any_visible!(SdfPlane)
 }
 
-/// Fullscreen raymarch shader source: primitives library + pool-driven
-/// `eval_scene_bvh` + the fragment-shader entry. Concatenated in this
-/// order so `raymarch_main.wgsl` sees the SDF helpers + pool structs +
-/// pool bindings + `eval_scene_bvh` at parse time.
+/// Fullscreen raymarch shader source: primitives library + pool
+/// traversal library + GDF cascade-sample library + fragment entry.
+/// Concat order matters — `raymarch_pool_eval.wgsl` declares the pool
+/// traversal under the long name `eval_scene_bvh_traversal`, then
+/// `raymarch_gdf_sample.wgsl` (PR-4 of epic #370) declares the short
+/// name `eval_scene_bvh` as a single cascade fetch, which is what
+/// `raymarch_main.wgsl::fs_main` calls every ray-march step.
 const SHADER_SOURCE: &str = concat!(
     include_str!("../../../ome_sdf/shaders/sdf_primitives.wgsl"),
     "\n",
     include_str!("../../shaders/raymarch_pool_eval.wgsl"),
+    "\n",
+    include_str!("../../shaders/raymarch_gdf_sample.wgsl"),
     "\n",
     include_str!("../../shaders/raymarch_main.wgsl"),
 );
@@ -112,10 +118,11 @@ mod tests {
             .expect("concatenated pool-eval shader should validate");
     }
 
-    /// `eval_scene_bvh` and the smoke-test compute entry point must
-    /// both survive parsing + validation. Pinning their presence here
-    /// catches accidental renames in PR-2 before the integration
-    /// tests do.
+    /// `eval_scene_bvh_traversal` (the TLAS+BLAS pool descend, was
+    /// `eval_scene_bvh` pre-PR-4 of epic #370) and the smoke-test
+    /// compute entry point must both survive parsing + validation.
+    /// Pinning their presence here catches accidental renames before
+    /// the integration tests do.
     #[test]
     fn pool_eval_shader_exposes_required_entry_points() {
         let module = naga::front::wgsl::parse_str(POOL_EVAL_SHADER_SOURCE)
@@ -126,8 +133,8 @@ mod tests {
             .filter_map(|(_, f)| f.name.as_deref())
             .collect();
         assert!(
-            function_names.iter().any(|n| *n == "eval_scene_bvh"),
-            "pool-eval shader must expose `eval_scene_bvh`; saw {function_names:?}"
+            function_names.iter().any(|n| *n == "eval_scene_bvh_traversal"),
+            "pool-eval shader must expose `eval_scene_bvh_traversal`; saw {function_names:?}"
         );
         assert!(
             function_names.iter().any(|n| *n == "descend_blas"),

@@ -25,7 +25,7 @@ pub mod sky;
 pub const VIEWPORT_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 pub use fps::FpsTracker;
-pub use gdf::{GdfPlugin, GdfState};
+pub use gdf::GdfState;
 pub use mesh::{Aabb, GpuMesh, MeshLoadError, MeshLoader, MeshPassRenderer, MeshVertex};
 pub use plugin::RenderPlugin;
 pub use raymarch::{RayMarchParams, RayMarchRenderer, has_any_visible_sdf};

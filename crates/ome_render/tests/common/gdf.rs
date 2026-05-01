@@ -255,6 +255,71 @@ pub fn build_single_sphere_accel(
     (accel, prims, leaves, k_int_global, k_sub_global)
 }
 
+/// Two non-overlapping single-sphere chunks: spheres at
+/// `(±separation, 0, 0)` of `radius`, each its own chunk so the TLAS
+/// has two distinct leaves. Returns the accel + per-primitive +
+/// per-leaf data the CPU mirror of `eval_scene_bvh` consumes.
+///
+/// Closes #383: with a single-leaf TLAS the `if sdf_aabb(p, leaf_far) >
+/// acc_add { continue; }` BVH pruning rule never fires, so the AC test
+/// in `gdf_populate_matches_eval_scene_bvh_per_voxel` does not exercise
+/// it. This fixture forces the second leaf to either descend (when its
+/// AABB is closer than the running `acc_add`) or be pruned (when the
+/// first leaf already wins) — both branches must match the brute-force
+/// CPU fold within the Nyquist voxel tolerance.
+pub fn build_two_sphere_accel(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    separation: f32,
+    radius: f32,
+) -> (OmeAccel, Vec<SmokePrimitive>, Vec<LeafAabb>, f32, f32) {
+    const K_LEAF: f32 = 0.25;
+    let mut prims = Vec::with_capacity(2);
+    let mut leaves = Vec::with_capacity(2);
+    let mut accel = OmeAccel::new(
+        device,
+        AccelCaps::TEST,
+        std::mem::size_of::<SmokePrimitive>() as u32,
+    )
+    .expect("OmeAccel::new");
+
+    for (i, x) in [-separation, separation].iter().enumerate() {
+        let prim = SmokePrimitive {
+            position: [*x, 0.0, 0.0],
+            type_tag: TYPE_SPHERE,
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+            smoothness: K_LEAF,
+            params: [radius, 0.0, 0.0, 0.0],
+        };
+        let leaf = LeafAabb {
+            aabb_min: [*x - radius - K_LEAF, -radius - K_LEAF, -radius - K_LEAF],
+            flags: IS_RAYMARCH | ROLE_RAYMARCH_ADD,
+            aabb_max: [*x + radius + K_LEAF, radius + K_LEAF, radius + K_LEAF],
+            entity_id: i as u32,
+        };
+        let bytes = bytemuck::cast_slice::<_, u8>(&[prim]).to_vec();
+        accel
+            .insert_chunk(
+                queue,
+                ChunkInsert {
+                    key: 200 + i as u64,
+                    leaf_aabbs: &[leaf],
+                    primitives_bytes: &bytes,
+                    max_smoothness_radius: K_LEAF,
+                },
+            )
+            .expect("insert_chunk");
+        prims.push(prim);
+        leaves.push(leaf);
+    }
+
+    let k_int_global = K_LEAF;
+    let k_sub_global = K_LEAF;
+    accel.update_gpu_standalone(device, queue, k_int_global, k_sub_global);
+    (accel, prims, leaves, k_int_global, k_sub_global)
+}
+
 /// 16-chunk procedural grid: 4×4 grid of unit-ish spheres in XY,
 /// dense enough that adjacent inflated AABBs overlap several
 /// voxels — exercises the multi-chunk traversal path the

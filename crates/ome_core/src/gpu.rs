@@ -269,13 +269,25 @@ impl Drop for GpuContext {
 ///   RX 9070 XT) supports it natively over Vulkan; DX12 / Metal also
 ///   expose it on contemporary hardware.
 fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
-    let required = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+    // FLOAT32_FILTERABLE is required by PR-4 of epic #370: the GDF
+    // cascade-0 storage texture is `R32Float` (no native R16Float
+    // STORAGE_BINDING in wgpu 29 / WebGPU core), and the production
+    // raymarch fragment shader samples it with a linear sampler so
+    // sub-voxel ray-march steps see a smooth SDF instead of nearest-
+    // neighbour stair-stepping. RX 9070 XT, the target dev HW, and
+    // the Steam Deck APU all advertise this feature; raising it as a
+    // hard-required surfaces unsupported HW at startup rather than a
+    // crash mid-frame inside `create_bind_group`.
+    let required = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+        | wgpu::Features::FLOAT32_FILTERABLE;
     let missing = required - adapter.features();
     assert!(
         missing.is_empty(),
         "GPU adapter is missing required features for oh_my_engine: {missing:?}. \
-         Check #136 S6 — sparse SDF storage needs R16Float storage textures, \
-         which requires TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES on the adapter.",
+         #136 S6 — sparse SDF storage needs R16Float storage textures, \
+         which requires TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES on the adapter. \
+         PR-4 of epic #370 — GDF cascade fetch needs FLOAT32_FILTERABLE for \
+         linear-sampled R32Float textures."
     );
     required
 }

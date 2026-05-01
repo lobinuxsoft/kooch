@@ -217,16 +217,29 @@ fn ac_363_demo_scene_matches_scene_wide_cpu_fold() {
         }
     }
     let p = samples[worst];
-    // Tolerance bumped to 5 m (vs the legacy 1e-5 byte-identical pin)
-    // because eval_scene_bvh in PR-4 of epic #370 introduces the GDF
-    // conservative-tracing floor `min(scene_eval, sqrt(min_outside_dist_sq))`
-    // computed over BVH internal-node AABBs that the leaf-only CPU fold
-    // in this test cannot mirror. Bound is sub-2 m in practice for samples
-    // drawn from inside leaf AABBs, with chunk_side (~64 m at level 0)
-    // as theoretical worst-case. 5 m gives plenty of headroom while still
-    // catching gross regressions (entire chunks missing, role mis-routing).
-    // Strict 1e-5 equivalence test moves to a future PR that mirrors the
-    // BVH builder in CPU.
+    // Tolerance — PR-4 of epic #370 swapped the production raymarch's
+    // `eval_scene_bvh` to a single cascade fetch over a 64³ R32Float
+    // texture at voxel_size = 0.25 m. **This test still drives the
+    // pool TLAS+BLAS path directly** through `pool_eval_smoke.rs`'s
+    // compute kernel (`cs_eval_smoke` calls `eval_scene_bvh_traversal`
+    // post-rename, so the smoke harness is byte-identical to the
+    // pre-PR-4 traversal). The GPU value here is therefore the
+    // brute-force traversal — same as the CPU fold within smooth_union
+    // associativity slack at `k = 0`.
+    //
+    // Sample points span a 2×N_CHUNKS_PER_AXIS × chunk_side cube plus
+    // a 4 m skirt; tolerance stays at 5 m as a gross-regression guard.
+    // Tightening to 1e-5 bytes-identical equivalence requires a CPU
+    // mirror of the BVH builder that lands in a future PR. The 5 m
+    // bound catches "entire chunks missing", role mis-routing, and
+    // descent-stack overflow regressions, which is what this AC was
+    // built to pin.
+    //
+    // The companion AC for the cascade-fetch path lives in
+    // `gdf_fragment_sample.rs` (PR-4) — it asserts visible-pixel ≥ 5%
+    // at the default editor camera and post-quantisation distance
+    // accuracy at voxel_size = 0.25 m → 0.5 m Nyquist. Distinct
+    // contracts; the per-PR audit walks both.
     assert!(
         max_diff < 5.0,
         "demo scene fold mismatch: max |gpu - cpu| = {max_diff} at ({}, {}, {})",
