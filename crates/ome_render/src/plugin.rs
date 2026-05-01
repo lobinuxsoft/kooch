@@ -269,7 +269,13 @@ fn render_passes(
     };
 
     // Pass 2: Ray-march.
-    let has_sdf = crate::raymarch::has_any_visible_sdf(resources);
+    //
+    // Drain the streaming delta first so `ChunkManager.pending_*`
+    // never grows unbounded just because no ECS-side SDFs are visible.
+    raymarch.apply_streaming_delta(gpu.queue(), resources);
+
+    let has_sdf = crate::raymarch::has_any_visible_sdf(resources)
+        || raymarch.bvh_state().streaming_chunk_count() > 0;
     let camera_ok =
         has_sdf && raymarch.update_camera(gpu.device(), gpu.queue(), resources, aspect);
     if camera_ok {

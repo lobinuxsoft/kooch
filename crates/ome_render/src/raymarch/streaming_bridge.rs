@@ -25,13 +25,15 @@ impl RayMarchRenderer {
     /// topology before the renderer continues. Errors are logged at
     /// `warn` and absorbed — a single failed insert/remove must not
     /// poison the rest of the per-frame delta.
-    pub(super) fn apply_streaming_delta(&mut self, queue: &wgpu::Queue, resources: &mut Resources) {
+    pub fn apply_streaming_delta(&mut self, queue: &wgpu::Queue, resources: &mut Resources) {
         let Some(mut manager) = resources.remove::<ChunkManager>() else {
             return;
         };
 
         let unloads = manager.drain_pending_unloads();
         let loads = manager.drain_pending_loads();
+        let unload_count = unloads.len();
+        let load_count = loads.len();
 
         for chunk_id in unloads {
             if let Err(e) = self.bvh_state.remove_streaming_chunk(queue, chunk_id) {
@@ -47,11 +49,31 @@ impl RayMarchRenderer {
                 tracing::warn!(
                     target: "ome_render::raymarch",
                     chunk = ?chunk_id,
+                    primitives = content.primitives.len(),
                     "insert_streaming_chunk failed: {e}",
                 );
             }
         }
 
+        if load_count > 0 || unload_count > 0 {
+            tracing::debug!(
+                target: "ome_render::raymarch",
+                loads = load_count,
+                unloads = unload_count,
+                streaming_chunks = self.bvh_state.streaming_chunk_count(),
+                streaming_prims = self.bvh_state.total_primitive_count(),
+                "applied streaming delta",
+            );
+        }
+
         resources.insert(manager);
+    }
+
+    /// Read-only view of the renderer's BVH pool state. Used by the
+    /// editor's viewport gate to decide whether the raymarch pass needs
+    /// to run (a project may have streaming chunks resident with no
+    /// ECS-side SDFs at all).
+    pub fn bvh_state(&self) -> &super::bvh::BvhState {
+        &self.bvh_state
     }
 }

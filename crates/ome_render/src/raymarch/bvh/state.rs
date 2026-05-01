@@ -207,32 +207,42 @@ impl BvhState {
         Ok(())
     }
 
-    /// Tick `tlas_uniforms` after a streaming insert/remove batch so
-    /// the next traversal sees the updated TLAS topology + per-frame
-    /// `k_*_global` reduce. The legacy single-chunk path calls this
-    /// from inside [`Self::update_single_chunk`]; streaming callers
-    /// drive it explicitly because their `update_scene` already owns
-    /// the per-frame reduce values.
-    #[allow(dead_code)]
-    pub fn tick_streaming(&mut self, queue: &wgpu::Queue, k_int_global: f32, k_sub_global: f32) {
+    /// Tick `tlas_uniforms` once per frame — single source of truth
+    /// for the GPU view of the pool. The caller computes scene-wide
+    /// `k_*_global` (currently the per-frame ECS reduce; streaming
+    /// content sources only emit `ROLE_RAYMARCH_ADD` so they don't
+    /// contribute to `k_int` / `k_sub`).
+    ///
+    /// This is the **only** path that should call
+    /// `OmeAccel::update_gpu` from outside the BVH crate. Both
+    /// [`Self::update_single_chunk`] and the streaming insert/remove
+    /// chain end at the same `tick_uniforms` call so an interleaved
+    /// `apply_streaming_delta + ECS scene change` collapses into a
+    /// single TLAS rebuild + uniforms upload per frame.
+    pub fn tick_uniforms(&mut self, queue: &wgpu::Queue, k_int_global: f32, k_sub_global: f32) {
         self.accel.update_gpu(queue, k_int_global, k_sub_global);
     }
 
     /// Drive the pool with a single chunk holding every visible SDF
     /// primitive. Skips the GPU re-upload when the scene hash matches
-    /// the previous frame; always ticks `update_gpu` so
-    /// `tlas_uniforms.k_*_global` track the per-frame reduce.
+    /// the previous frame.
+    ///
+    /// **Does NOT tick `tlas_uniforms`** — the caller is responsible
+    /// for calling [`Self::tick_uniforms`] once per frame after every
+    /// pool mutation has landed (`apply_streaming_delta` +
+    /// `update_single_chunk`). Centralising the tick keeps the TLAS
+    /// rebuild + uniforms upload to a single pass per frame regardless
+    /// of how many `insert_chunk` / `remove_chunk` calls fired.
     ///
     /// Empty scenes (`leaf_aabbs.is_empty()`) evict the chunk if one
-    /// is resident so subsequent frames see `tlas_uniforms.num_chunks == 0`.
+    /// is resident so subsequent frames see `tlas_uniforms.num_chunks
+    /// == 0` after the next `tick_uniforms`.
     pub fn update_single_chunk(
         &mut self,
         queue: &wgpu::Queue,
         leaf_aabbs: &[LeafAabb],
         primitives: &[SdfPrimitive],
         max_smoothness_radius: f32,
-        k_int_global: f32,
-        k_sub_global: f32,
     ) -> Result<(), AccelError> {
         debug_assert_eq!(
             leaf_aabbs.len(),
@@ -241,20 +251,20 @@ impl BvhState {
         );
 
         if leaf_aabbs.is_empty() {
-            // Empty scene — evict if needed, then upload uniforms so
-            // the GPU sees `num_chunks == 0`.
+            // Empty scene — evict if needed. `tick_uniforms` will run
+            // immediately after and the GPU will see `num_chunks` drop
+            // by one in the same frame.
             if self.last_scene_hash.is_some() {
                 let _ = self.accel.remove_chunk(queue, SINGLE_CHUNK_KEY);
                 self.last_scene_hash = None;
                 self.primitive_count = 0;
             }
-            self.accel.update_gpu(queue, k_int_global, k_sub_global);
             return Ok(());
         }
 
         let scene_hash = Self::hash_scene(leaf_aabbs, primitives);
         if Some(scene_hash) != self.last_scene_hash {
-            // PR-2 always rebuilds on hash change. PR-3 will switch to
+            // Always rebuild on hash change. A future PR can switch to
             // `refit_chunk` when cardinality is preserved (entity
             // movement) and only fall back to remove+insert on
             // primitive add/remove.
@@ -275,7 +285,6 @@ impl BvhState {
             self.primitive_count = leaf_aabbs.len() as u32;
         }
 
-        self.accel.update_gpu(queue, k_int_global, k_sub_global);
         Ok(())
     }
 
