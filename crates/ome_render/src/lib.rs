@@ -12,6 +12,7 @@
 //! Gizmo rendering lives in the dedicated `ome_gizmos` crate.
 
 pub mod fps;
+pub mod gdf;
 pub mod mesh;
 pub mod plugin;
 pub mod raymarch;
