@@ -12,16 +12,28 @@ use crate::accel::descriptor::{ChunkDescriptor, TlasUniforms};
 use crate::leaf::LeafAabb;
 use crate::node::BvhNode;
 
-/// Byte size of one TLAS scratch slot — `morton`, `sorted_indices`,
-/// `parents`, and `done` are each a flat `u32` per chunk.
+/// Byte size of one TLAS scratch slot — every entry of `mortons`,
+/// `sorted_indices`, `parents`, and `done` is a flat `u32`.
 const TLAS_SCRATCH_ENTRY_BYTES: u64 = size_of::<u32>() as u64;
 
-/// Total byte size of a single TLAS scratch buffer for a pool of at
-/// most `max_chunks` chunks. Pulled out of [`AccelBuffers::new`] so a
-/// CPU-only unit test can lock the formula without spinning up a
-/// `wgpu::Device`.
-pub(crate) const fn tlas_scratch_size_bytes(max_chunks: u32) -> u64 {
+/// Per-leaf TLAS scratch size: one `u32` per live chunk, indexed by
+/// the Morton-sorted leaf position `k ∈ [0, N)`. Used by `mortons`
+/// and `sorted_indices`.
+pub(crate) const fn tlas_per_leaf_scratch_size_bytes(max_chunks: u32) -> u64 {
     max_chunks as u64 * TLAS_SCRATCH_ENTRY_BYTES
+}
+
+/// Per-node TLAS scratch size: one `u32` per node in the flat
+/// `2N - 1` Karras tree (rounded to `2N`). Karras `done[]` and
+/// `parents[]` are addressed by node index — leaves at `[0, N)`,
+/// internals at `[N, 2N - 1)` for this TLAS layout — so the AABB
+/// propagation pass (commit 7) can flag each internal as it's
+/// finalised. Same `2N` sizing as the BLAS
+/// [`crate::gpu::lbvh`] `make_aux_u32_buffer`; only the slot-to-node
+/// mapping differs (BLAS Karras places internals at `[0, N - 1)`,
+/// leaves at `[N - 1, 2N - 1)`).
+pub(crate) const fn tlas_per_node_scratch_size_bytes(max_chunks: u32) -> u64 {
+    2 * max_chunks as u64 * TLAS_SCRATCH_ENTRY_BYTES
 }
 
 /// All pool buffers, owned together so the bind group can be rebuilt
@@ -49,13 +61,24 @@ pub struct AccelBuffers {
     // realloc'es; lifecycle is independent of the BLAS Karras scratch
     // (LbvhBuffers) — the TLAS rebuild and a BLAS rebuild can be in
     // flight on the same encoder without aliasing.
+    //
+    // Mortons + sorted_indices are PER-LEAF (`u32 × N`); parents +
+    // done are PER-NODE (`u32 × 2N`) because Karras `done[]` /
+    // `parents[]` are addressed by node index over the flat `2N - 1`
+    // tree. Mirror BLAS sizing in `gpu/lbvh.rs::make_aux_u32_buffer`.
     /// Per-chunk Morton code, written by `tlas_morton.wgsl`.
+    /// `u32 × max_chunks`.
     pub tlas_mortons: wgpu::Buffer,
     /// Onesweep-sorted chunk indices (input to `tlas_leaves.wgsl`).
+    /// `u32 × max_chunks`.
     pub tlas_sorted_indices: wgpu::Buffer,
     /// Parent pointer per TLAS node (written by `tlas_internal.wgsl`).
+    /// `u32 × 2 × max_chunks` — leaves at `[0, N)`, internals at
+    /// `[N, 2N - 1)` (TLAS layout, opposite of BLAS Karras).
     pub tlas_parents: wgpu::Buffer,
     /// `done[node]` flag for the TLAS AABB propagation pass.
+    /// `u32 × 2 × max_chunks` — same per-node addressing as
+    /// [`AccelBuffers::tlas_parents`].
     pub tlas_done: wgpu::Buffer,
 }
 
@@ -68,7 +91,8 @@ impl AccelBuffers {
         max_primitives: u32,
         primitive_stride: u32,
     ) -> Self {
-        let tlas_scratch = tlas_scratch_size_bytes(max_chunks);
+        let tlas_per_leaf = tlas_per_leaf_scratch_size_bytes(max_chunks);
+        let tlas_per_node = tlas_per_node_scratch_size_bytes(max_chunks);
         Self {
             chunk_descriptors: make_storage(
                 device,
@@ -115,7 +139,7 @@ impl AccelBuffers {
             tlas_mortons: make_storage(
                 device,
                 "ome_accel::tlas_mortons",
-                tlas_scratch,
+                tlas_per_leaf,
                 /* copy_src */ true,
             ),
             // COPY_SRC enabled ONLY for test-only readback paths.
@@ -127,7 +151,7 @@ impl AccelBuffers {
             tlas_sorted_indices: make_storage(
                 device,
                 "ome_accel::tlas_sorted_indices",
-                tlas_scratch,
+                tlas_per_leaf,
                 /* copy_src */ true,
             ),
             // COPY_SRC enabled ONLY for test-only readback paths.
@@ -139,7 +163,7 @@ impl AccelBuffers {
             tlas_parents: make_storage(
                 device,
                 "ome_accel::tlas_parents",
-                tlas_scratch,
+                tlas_per_node,
                 /* copy_src */ true,
             ),
             // COPY_SRC enabled ONLY for test-only readback paths.
@@ -151,7 +175,7 @@ impl AccelBuffers {
             tlas_done: make_storage(
                 device,
                 "ome_accel::tlas_done",
-                tlas_scratch,
+                tlas_per_node,
                 /* copy_src */ true,
             ),
         }
@@ -181,24 +205,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tlas_scratch_size_matches_u32_per_chunk() {
-        // Locks the formula `4 B × max_chunks` for every TLAS scratch
-        // slot. Independent of any wgpu device — pure arithmetic check.
-        assert_eq!(tlas_scratch_size_bytes(0), 0);
-        assert_eq!(tlas_scratch_size_bytes(1), 4);
-        assert_eq!(tlas_scratch_size_bytes(1024), 4 * 1024);
-        assert_eq!(tlas_scratch_size_bytes(65_536), 4 * 65_536);
+    fn tlas_per_leaf_scratch_size_matches_u32_per_chunk() {
+        // Locks the formula `4 B × max_chunks` for the per-leaf TLAS
+        // scratch slots (`mortons`, `sorted_indices`). Independent of
+        // any wgpu device — pure arithmetic check.
+        assert_eq!(tlas_per_leaf_scratch_size_bytes(0), 0);
+        assert_eq!(tlas_per_leaf_scratch_size_bytes(1), 4);
+        assert_eq!(tlas_per_leaf_scratch_size_bytes(1024), 4 * 1024);
+        assert_eq!(tlas_per_leaf_scratch_size_bytes(65_536), 4 * 65_536);
     }
 
     #[test]
-    fn tlas_scratch_total_at_default_caps_is_16_kib() {
-        // Four scratch buffers × 4 B × 1024 chunks = 16 KiB constant
-        // VRAM overhead introduced by the TLAS GPU rebuild path.
-        const FOUR_BUFFERS: u64 = 4;
+    fn tlas_per_node_scratch_size_matches_2n_u32_per_chunk() {
+        // Locks the formula `8 B × max_chunks` (== `4 B × 2 × max_chunks`)
+        // for the per-node TLAS scratch slots (`parents`, `done`).
+        // Karras propagation needs one flag / parent-pointer per node
+        // across the flat `2N - 1` tree.
+        assert_eq!(tlas_per_node_scratch_size_bytes(0), 0);
+        assert_eq!(tlas_per_node_scratch_size_bytes(1), 8);
+        assert_eq!(tlas_per_node_scratch_size_bytes(1024), 8 * 1024);
+        assert_eq!(tlas_per_node_scratch_size_bytes(65_536), 8 * 65_536);
+    }
+
+    #[test]
+    fn tlas_scratch_total_at_default_caps_is_24_kib() {
+        // 2 per-leaf buffers × 4 B × 1024 + 2 per-node buffers × 8 B
+        // × 1024 = 24 KiB constant VRAM overhead introduced by the
+        // TLAS GPU rebuild path.
+        const PER_LEAF_BUFFERS: u64 = 2;
+        const PER_NODE_BUFFERS: u64 = 2;
         const DEFAULT_MAX_CHUNKS: u32 = 1024;
-        assert_eq!(
-            FOUR_BUFFERS * tlas_scratch_size_bytes(DEFAULT_MAX_CHUNKS),
-            16 * 1024,
-        );
+        let total = PER_LEAF_BUFFERS
+            * tlas_per_leaf_scratch_size_bytes(DEFAULT_MAX_CHUNKS)
+            + PER_NODE_BUFFERS
+                * tlas_per_node_scratch_size_bytes(DEFAULT_MAX_CHUNKS);
+        assert_eq!(total, 24 * 1024);
     }
 }
