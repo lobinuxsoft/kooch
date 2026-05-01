@@ -16,6 +16,7 @@
 
 pub mod build;
 pub mod builder;
+pub mod karras_common;
 pub mod lbvh;
 pub mod morton;
 pub mod sort;
