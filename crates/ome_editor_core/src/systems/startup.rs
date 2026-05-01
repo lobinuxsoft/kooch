@@ -8,6 +8,7 @@ use ome_core::raw_event::RawEventHandler;
 use ome_core::resource::Resources;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
 use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
+use ome_world::{ChunkManager, ProceduralCitySource};
 
 use crate::state::{EditorOverlay, EguiEventHandler};
 use crate::style::{configure_fonts, configure_style};
@@ -72,6 +73,19 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         snap_settings: ome_gizmos_handles::SnapSettings::default(),
         gizmo_drag_start: None,
     };
+
+    // Wire the procedural city as the editor's default content source —
+    // makes streamed chunks visible the moment a `StreamingFocus` lands
+    // on the camera (#363). Game runtime / headless tests opt in
+    // explicitly via their own `register_content_source` call.
+    if let Some(manager) = resources.get_mut::<ChunkManager>() {
+        manager.register_content_source(Box::new(ProceduralCitySource::default()));
+    } else {
+        tracing::warn!(
+            "ChunkManager resource missing — ProceduralCitySource not registered. \
+             Add WorldStreamingPlugin before EditorPlugin."
+        );
+    }
 
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });
     let power_profile: PowerProfile = power::detect();
