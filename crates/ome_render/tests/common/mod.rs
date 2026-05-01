@@ -15,6 +15,8 @@
 
 #![allow(dead_code)] // Each test binary touches a different subset.
 
+pub mod gdf;
+
 use bytemuck::{Pod, Zeroable};
 use ome_bvh::{IS_RAYMARCH, LeafAabb, OmeAccel, ROLE_RAYMARCH_ADD};
 use ome_render::raymarch::POOL_EVAL_SHADER_SOURCE;
