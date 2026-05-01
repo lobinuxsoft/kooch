@@ -17,10 +17,19 @@
 // builds two distinct bind-group layouts.
 
 struct CascadeDescriptor {
+    // Field order + offsets pinned by `crates/ome_render/src/gdf/uniforms.rs::cascade_descriptor_layout`.
+    // `_pad0/_pad1/_pad2` MUST stay as three scalar `u32`s — declaring
+    // them as a single `vec3<u32>` would push the struct to 48 B in
+    // WGSL uniform layout (vec3 alignment 16 forces realignment from
+    // offset 20 to 32, then struct size rounds up to AlignOf=16 again
+    // = 48). Rust `[u32; 3]` packs at offset 20 with no realignment,
+    // so the only way to keep host=32 / WGSL=32 is per-scalar padding.
     world_origin: vec3<f32>,
     voxel_size: f32,
     voxel_count_per_axis: u32,
-    _pad: vec3<u32>,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 };
 
 @group(0) @binding(0) var<uniform> cascade: CascadeDescriptor;
