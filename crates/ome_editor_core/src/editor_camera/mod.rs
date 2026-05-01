@@ -29,6 +29,7 @@ use ome_ecs::commands::Commands;
 use ome_ecs::EphemeralComponents;
 use ome_ecs::perspective_camera::PerspectiveCamera;
 use ome_ecs::transform::Transform;
+use ome_world::focus::StreamingFocus;
 
 use crate::play_state::PlayState;
 
@@ -89,7 +90,8 @@ pub fn spawn_editor_camera_system(resources: &mut Resources) {
             priority: EDITOR_CAMERA_PRIORITY,
             ..Default::default()
         })
-        .insert(transform);
+        .insert(transform)
+        .insert(StreamingFocus::default());
     commands.apply(resources);
     resources.insert(commands);
 
