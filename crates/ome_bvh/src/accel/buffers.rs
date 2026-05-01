@@ -106,29 +106,48 @@ impl AccelBuffers {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
-            // COPY_SRC enabled on every TLAS scratch buffer so the
-            // GPU integration tests (commit 3 onward) can copy each
-            // pass's output to a MAP_READ staging buffer for byte-id
-            // assertions. Hot-path cost is zero — wgpu only validates
-            // the flag against actual usage at submission time.
+            // COPY_SRC enabled ONLY for test-only readback paths.
+            // wgpu validates COPY_SRC against actual submitted ops, so
+            // the flag is free in production submits (which never use
+            // it). NEVER chain COPY_SRC + readback in production code
+            // — that's a CPU readback in the hot path, banned by the
+            // GPU-driven invariant.
             tlas_mortons: make_storage(
                 device,
                 "ome_accel::tlas_mortons",
                 tlas_scratch,
                 /* copy_src */ true,
             ),
+            // COPY_SRC enabled ONLY for test-only readback paths.
+            // wgpu validates COPY_SRC against actual submitted ops, so
+            // the flag is free in production submits (which never use
+            // it). NEVER chain COPY_SRC + readback in production code
+            // — that's a CPU readback in the hot path, banned by the
+            // GPU-driven invariant.
             tlas_sorted_indices: make_storage(
                 device,
                 "ome_accel::tlas_sorted_indices",
                 tlas_scratch,
                 /* copy_src */ true,
             ),
+            // COPY_SRC enabled ONLY for test-only readback paths.
+            // wgpu validates COPY_SRC against actual submitted ops, so
+            // the flag is free in production submits (which never use
+            // it). NEVER chain COPY_SRC + readback in production code
+            // — that's a CPU readback in the hot path, banned by the
+            // GPU-driven invariant.
             tlas_parents: make_storage(
                 device,
                 "ome_accel::tlas_parents",
                 tlas_scratch,
                 /* copy_src */ true,
             ),
+            // COPY_SRC enabled ONLY for test-only readback paths.
+            // wgpu validates COPY_SRC against actual submitted ops, so
+            // the flag is free in production submits (which never use
+            // it). NEVER chain COPY_SRC + readback in production code
+            // — that's a CPU readback in the hot path, banned by the
+            // GPU-driven invariant.
             tlas_done: make_storage(
                 device,
                 "ome_accel::tlas_done",
