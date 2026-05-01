@@ -19,6 +19,17 @@ bytemuck.workspace = true
 tracing.workspace = true
 gltf.workspace = true
 
+[features]
+# Opt-in debug overlay counters for the GDF cascade populate pass
+# (epic #370, PR-3). Enables CPU readback of the cascade texture so
+# the editor / demo can render `voxels_written_last_frame`,
+# `cascade_world_origin`, and `voxels_with_sdf < 0`. NEVER enable on
+# the hot path — the readback stalls the GPU pipeline.
+#
+# Run feature-gated tests with:
+#     cargo test -p ome_render --features gdf-debug -- --test-threads=1
+gdf-debug = []
+
 [dev-dependencies]
 ome_bvh = { workspace = true, features = ["block_on"] }
 ome_physics.workspace = true
