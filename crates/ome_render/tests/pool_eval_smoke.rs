@@ -193,7 +193,7 @@ fn cs_eval_smoke_matches_cpu_mirror_for_single_chunk() {
 
     let k_int_global: f32 = 0.5;
     let k_sub_global: f32 = 0.5;
-    accel.update_gpu(&queue, k_int_global, k_sub_global);
+    accel.update_gpu_standalone(&device, &queue, k_int_global, k_sub_global);
 
     // Sample points at varied distances — inside one sphere, in the
     // smooth-blend zone between two spheres, and well outside.

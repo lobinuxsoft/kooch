@@ -25,9 +25,15 @@ impl OmeAccel {
     /// lossy `smooth_intersection` / `smooth_subtraction` final-combine
     /// steps when the corresponding role is empty (radv `mix(a, b, t)`
     /// loses the smaller operand at the `±1e6` identities).
-    pub fn update_gpu(&mut self, queue: &wgpu::Queue, k_int_global: f32, k_sub_global: f32) {
+    pub fn update_gpu(
+        &mut self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        k_int_global: f32,
+        k_sub_global: f32,
+    ) {
         if self.tlas_dirty_count > 0 {
-            tlas::rebuild(self, queue);
+            tlas::rebuild(self, encoder, queue);
             self.tlas_dirty_count = 0;
         }
         // Coalesce the BLAS free lists once per frame so post-eviction
@@ -70,6 +76,25 @@ impl OmeAccel {
             0,
             bytemuck::bytes_of(&uniforms),
         );
+    }
+
+    /// Test convenience: creates a one-shot encoder, calls
+    /// [`Self::update_gpu`] inside it, and submits to the queue.
+    /// **NEVER use in production** — the renderer already owns a
+    /// per-frame encoder and `update_gpu` should be called within
+    /// that batch to avoid extra submissions per frame.
+    pub fn update_gpu_standalone(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        k_int_global: f32,
+        k_sub_global: f32,
+    ) {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("ome_accel::update_gpu_standalone"),
+        });
+        self.update_gpu(queue, &mut encoder, k_int_global, k_sub_global);
+        queue.submit(std::iter::once(encoder.finish()));
     }
 
     /// Topology-preserving slice refit (no rebuild). Lives here as a

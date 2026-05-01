@@ -18,6 +18,7 @@ use crate::accel::descriptor::ChunkDescriptor;
 use crate::accel::error::{AccelCaps, AccelError};
 use crate::accel::pool::FreeListPool;
 use crate::accel::{MAX_CHUNKS_LIMIT, TLAS_REBUILD_THRESHOLD};
+use crate::gpu::tlas_lbvh::TlasGpuBuilder;
 use crate::node::BvhNode;
 
 /// TLAS+BLAS pool acceleration structure. Owns six pre-allocated GPU
@@ -52,6 +53,22 @@ pub struct OmeAccel {
     pub(crate) cpu_tlas_nodes: Vec<BvhNode>,
 
     pub buffers: AccelBuffers,
+
+    /// Persistent TLAS GPU rebuild pipelines + scratch (epic #370 PR-1).
+    /// Lazily constructed on the first rebuild — the device limits
+    /// required by the onesweep sort (6 storage buffers in one stage)
+    /// exceed `downlevel_defaults`, so tests that never trigger a
+    /// rebuild (CPU traversal, refit-only paths) keep using the
+    /// minimal device profile. Once built, the builder lives for the
+    /// rest of the `OmeAccel` lifetime.
+    pub(crate) tlas_builder: Option<TlasGpuBuilder>,
+
+    /// Cloned `wgpu::Device` handle (Arc-backed; cheap to clone).
+    /// Cached so `tlas::rebuild` can issue bind groups against the
+    /// builder without threading the device through every public
+    /// API. Commit 9 will hoist the encoder to the caller; the device
+    /// stays cached because the builder uses it on every dispatch.
+    pub(crate) device: wgpu::Device,
 }
 
 impl OmeAccel {
@@ -104,7 +121,31 @@ impl OmeAccel {
             tlas_dirty_count: 0,
             cpu_tlas_nodes: Vec::new(),
             buffers,
+            tlas_builder: None,
+            device: device.clone(),
         })
+    }
+
+    /// Lazily construct the TLAS GPU rebuild pipelines on first use.
+    /// Idempotent — re-runs after a builder already exists are O(1).
+    pub(crate) fn ensure_tlas_builder(&mut self) -> &TlasGpuBuilder {
+        if self.tlas_builder.is_none() {
+            self.tlas_builder = Some(TlasGpuBuilder::new(&self.device, None));
+        }
+        self.tlas_builder.as_ref().unwrap()
+    }
+
+    /// CPU-side fold of every live slot's `ChunkDescriptor`. Consumed
+    /// by `tlas::rebuild` to compute the scene-wide `GpuSceneBounds`
+    /// for the morton normalisation pass — the GPU shader reads
+    /// chunks directly from `buffers.chunk_descriptors`, so the
+    /// caller of `rebuild` only needs the CPU mirror for that fold.
+    pub(crate) fn live_chunk_descriptors(&self) -> Vec<ChunkDescriptor> {
+        self.slots
+            .iter()
+            .filter(|s| s.live)
+            .map(|s| s.descriptor)
+            .collect()
     }
 
     pub fn caps(&self) -> AccelCaps {

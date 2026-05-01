@@ -160,7 +160,7 @@ fn ac2_multi_chunk_traversal_matches_scene_wide_fold() {
             )
             .unwrap();
     }
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
     // 1 000 sample points distributed over the scene volume — covers
     // both inside-leaf and outside-leaf code paths and hits chunk
@@ -232,7 +232,7 @@ fn ac2_evicted_middle_chunk_does_not_pollute_traversal() {
     }
     // Evict middle chunk + rebuild TLAS.
     accel.remove_chunk(&queue, 1).unwrap();
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
     // Sample only inside the surviving chunks — must produce non-
     // identity values.

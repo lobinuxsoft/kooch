@@ -16,10 +16,12 @@
 
 pub mod build;
 pub mod builder;
+pub mod karras_common;
 pub mod lbvh;
 pub mod morton;
 pub mod sort;
 pub mod sort_types;
+pub mod tlas_lbvh;
 pub mod types;
 
 pub use build::{
@@ -76,3 +78,31 @@ pub(crate) const KARRAS_INTERNAL_WGSL: &str =
 /// node merges both children's AABBs into the parent.
 pub(crate) const KARRAS_AABB_WGSL: &str =
     include_str!("../../shaders/karras_aabb.wgsl");
+
+/// TLAS pass 0: Morton encode every live chunk's centre against the
+/// scene-wide bounds. Mirror of `morton.wgsl` but reads
+/// `array<ChunkDescriptor>` so each chunk reduces to a single Morton
+/// code (the TLAS leaf key).
+pub(crate) const TLAS_MORTON_WGSL: &str =
+    include_str!("../../shaders/tlas_morton.wgsl");
+
+/// TLAS pass 2: write the N leaf nodes into the tail of `tlas_nodes`,
+/// each encoded with `right_or_count = chunk_idx | BVH_LEAF_FLAG`
+/// (`accel::tlas::encode_live`). Lays down live leaves only — the
+/// dead-skip flag is the job of the eviction path.
+pub(crate) const TLAS_LEAVES_WGSL: &str =
+    include_str!("../../shaders/tlas_leaves.wgsl");
+
+/// TLAS pass 3: parallel construction of N-1 internal nodes via
+/// Karras 2012's delta + range + split algorithm. Mirror of
+/// `karras_internal.wgsl` algorithmically — the only divergence is
+/// the `parents[]` / `done[]` indexing convention (TLAS-specific:
+/// leaves at `[0, N)`, internals at `[N, 2N - 1)`).
+pub(crate) const TLAS_INTERNAL_WGSL: &str =
+    include_str!("../../shaders/tlas_internal.wgsl");
+
+/// TLAS pass 4: bottom-up AABB propagation, one tree level per
+/// dispatch. Mirror of `karras_aabb.wgsl` algorithmically with the
+/// TLAS-specific `done[]` indexing convention.
+pub(crate) const TLAS_AABB_WGSL: &str =
+    include_str!("../../shaders/tlas_aabb.wgsl");

@@ -71,7 +71,7 @@ fn build_scene(device: &wgpu::Device, queue: &wgpu::Queue) -> OmeAccel {
     for key in 0..N_CHUNKS {
         insert_one(&mut accel, queue, key);
     }
-    accel.update_gpu(queue, 0.0, 0.0);
+    accel.update_gpu_standalone(device, queue, 0.0, 0.0);
     accel
 }
 
@@ -113,7 +113,7 @@ fn ac3_streaming_round_trip_preserves_render_output() {
     for &key in &evicted_keys {
         accel.remove_chunk(&queue, key).unwrap();
     }
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
     // Sanity: half the chunks gone after eviction.
     let half_live = accel.live_chunk_count();
@@ -126,7 +126,7 @@ fn ac3_streaming_round_trip_preserves_render_output() {
     for &key in &evicted_keys {
         insert_one(&mut accel, &queue, key);
     }
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
     assert_eq!(accel.live_chunk_count() as u64, N_CHUNKS);
 
     let post_round_trip = dispatch_eval_pass(&device, &queue, &pipeline, &accel, &samples);
@@ -170,16 +170,16 @@ fn ac3_single_chunk_remove_reinsert_idempotent() {
     )
     .unwrap();
     insert_one(&mut accel, &queue, 7);
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
     let pipeline = EvalPipeline::new(&device);
     let samples = sample_grid();
     let before = dispatch_eval_pass(&device, &queue, &pipeline, &accel, &samples);
 
     accel.remove_chunk(&queue, 7).unwrap();
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
     insert_one(&mut accel, &queue, 7);
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
     let after = dispatch_eval_pass(&device, &queue, &pipeline, &accel, &samples);
     for (i, (a, b)) in before.iter().zip(after.iter()).enumerate() {

@@ -172,7 +172,10 @@ mod tests {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("ome_accel::cpu_traversal_tests"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            // Default (full desktop) limits — `update_gpu` triggers
+            // the GPU TLAS rebuild whose onesweep sort needs 6
+            // storage buffers in one stage, exceeding downlevel.
+            required_limits: wgpu::Limits::default(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
             experimental_features: wgpu::ExperimentalFeatures::default(),
@@ -219,7 +222,7 @@ mod tests {
                 },
             )
             .unwrap();
-        accel.update_gpu(&queue, 0.0, 0.0);
+        accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
         // Query a tight AABB around centre_x = 2 (leaf 1).
         let mut hit_ids = Vec::new();
@@ -262,7 +265,7 @@ mod tests {
                 },
             )
             .unwrap();
-        accel.update_gpu(&queue, 0.0, 0.0);
+        accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
         // Wide query — overlaps both chunks. Both leaves visited.
         let mut hit_ids = Vec::new();
@@ -299,7 +302,7 @@ mod tests {
                 },
             )
             .unwrap();
-        accel.update_gpu(&queue, 0.0, 0.0);
+        accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
         let mut count = 0;
         accel.for_each_overlapping_cpu(
@@ -309,7 +312,7 @@ mod tests {
         assert_eq!(count, 1);
 
         accel.remove_chunk(&queue, 1).unwrap();
-        accel.update_gpu(&queue, 0.0, 0.0);
+        accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
         let mut count = 0;
         accel.for_each_overlapping_cpu(

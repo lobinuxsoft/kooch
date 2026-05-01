@@ -301,7 +301,7 @@ fn run_byte_identical_at(n_primitives: u32, seed: u32, n_samples: u32) {
             },
         )
         .unwrap();
-    accel.update_gpu(&queue, 0.0, 0.0);
+    accel.update_gpu_standalone(&device, &queue, 0.0, 0.0);
 
     let setup = build_cull_setup(&device);
     let samples = sample_points_grid(n_samples);

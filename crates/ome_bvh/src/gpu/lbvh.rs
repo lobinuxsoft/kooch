@@ -33,50 +33,23 @@ use std::num::NonZeroU64;
 
 use wgpu::util::DeviceExt;
 
+use super::karras_common::KARRAS_WORKGROUP_SIZE;
 use crate::node::BvhNode;
 
-/// Workgroup size for the three Karras passes. Matches the
-/// `@workgroup_size(64)` declarations in the WGSL files. 64 is the
-/// AMD wavefront size and an even divisor of NVIDIA / Intel
-/// subgroup widths — portable choice with no per-vendor tuning.
-const LBVH_WORKGROUP_SIZE: u32 = 64;
+/// Re-export so callers and downstream tests keep using
+/// `crate::gpu::lbvh::aabb_iterations` (BLAS-flavoured spelling) while
+/// the implementation lives in [`super::karras_common`].
+pub(crate) use super::karras_common::aabb_iterations;
 
 /// Initial capacity for the LBVH buffers (in leaves count). Grows by
 /// `next_power_of_two` when an upload exceeds capacity.
 const INITIAL_LBVH_CAPACITY: u64 = 1024;
 
-/// Additive slack on top of the `2 × log_n` multiplicative factor in
-/// [`aabb_iterations`]. **EMPIRICAL — not a tight theoretical bound.**
-///
-/// Karras 2012 proves `depth ≤ ⌈log₂ N⌉` for sorted Morton inputs with
-/// strict ordering, but in practice random AABBs at `N >> 1024` produce
-/// sub-trees where the balance proof's small constants matter: at
-/// `N = 65 000` random Karras, the previous `log_n + 4` budget left
-/// the root unconverged. The current `2 × log_n + 4` formula clears
-/// every input we exercise in the golden suite up to `N = 65 000`.
-///
-/// **At `N = 1 M+` an adversarial topology may still exceed this bound
-/// silently and produce wrong-but-plausible AABBs.** The
-/// `cfg(debug_assertions)` invariant check in
-/// [`crate::gpu::build`] catches that case (panics with the offending
-/// `N`); release builds skip the check for zero overhead. The
-/// definitive fix — a single-dispatch atomic-counter bottom-up à la
-/// Karras' CUDA implementation — needs WGSL primitives that don't
-/// exist portably yet (cross-workgroup memory model + subgroup ops
-/// stable across RDNA / Ada / Apple). Tracked as a follow-up; see
-/// `BUG 3` in the project memory for the full rationale.
-const AABB_ITERATION_SLACK: u32 = 4;
-
-/// Uniform configuration for every Karras pass — only the leaf count
-/// `n` is dynamic; padding completes the 16-byte std140/std430 slot.
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
-pub struct LbvhConfig {
-    pub n: u32,
-    pub _pad0: u32,
-    pub _pad1: u32,
-    pub _pad2: u32,
-}
+/// Uniform configuration for every Karras BLAS pass. Re-exported alias
+/// of [`super::karras_common::KarrasConfig`] so the `LbvhConfig` name
+/// stays available to the existing public API and the BLAS-side
+/// shaders that declare `struct LbvhConfig`.
+pub type LbvhConfig = super::karras_common::KarrasConfig;
 
 /// Compiled compute pipelines for the three LBVH passes. Built once
 /// per `BvhGpuBuilder`, reused across builds. `pipeline_cache`
@@ -395,21 +368,6 @@ fn make_aux_u32_buffer(device: &wgpu::Device, suffix: &str, n: u64) -> wgpu::Buf
     })
 }
 
-/// Number of times the AABB propagation pass must be dispatched.
-/// `pub(crate)` so the debug invariant check in [`crate::gpu::build`]
-/// can quote the exact iteration count in its panic message.
-///
-/// See [`AABB_ITERATION_SLACK`] for the rationale behind the
-/// `2 × log_n + 4` formula and the limits of the empirical bound.
-pub(crate) fn aabb_iterations(n: u32) -> u32 {
-    if n <= 1 {
-        return 0;
-    }
-    // Bits required to represent (n - 1) — i.e. ⌈log₂ n⌉.
-    let log_n = 32 - (n - 1).leading_zeros();
-    2 * log_n + AABB_ITERATION_SLACK
-}
-
 /// Pass 1 of the Karras build: write the N leaves into
 /// `nodes[(N-1)..(2N-1))` and set `done[leaf_idx] = 1`. Safe for any
 /// `n >= 1`. The orchestrator calls this unconditionally and then
@@ -441,7 +399,7 @@ pub fn dispatch_lbvh_leaves_into(
     };
     queue.write_buffer(&buffers.config_buffer, 0, bytemuck::bytes_of(&cfg));
 
-    let leaves_workgroups = n.div_ceil(LBVH_WORKGROUP_SIZE);
+    let leaves_workgroups = n.div_ceil(KARRAS_WORKGROUP_SIZE);
 
     let leaves_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("ome_bvh::karras_leaves_bg"),
@@ -497,7 +455,7 @@ pub fn dispatch_lbvh_internal_and_aabb_into(
          orchestrator must skip this for n in {{0, 1}}"
     );
 
-    let internal_workgroups = (n - 1).div_ceil(LBVH_WORKGROUP_SIZE);
+    let internal_workgroups = (n - 1).div_ceil(KARRAS_WORKGROUP_SIZE);
 
     let internal_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("ome_bvh::karras_internal_bg"),
@@ -598,7 +556,7 @@ pub fn dispatch_lbvh_aabb_only_into(
          orchestrator must skip this for n in {{0, 1}}"
     );
 
-    let internal_workgroups = (n - 1).div_ceil(LBVH_WORKGROUP_SIZE);
+    let internal_workgroups = (n - 1).div_ceil(KARRAS_WORKGROUP_SIZE);
     let aabb_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("ome_bvh::karras_aabb_bg_refit"),
         layout: &pipelines.aabb_bgl,
@@ -830,17 +788,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn aabb_iterations_grows_with_log_n() {
-        assert_eq!(aabb_iterations(0), 0);
-        assert_eq!(aabb_iterations(1), 0);
-        // 2 × ⌈log₂ N⌉ + 4 slack.
-        assert_eq!(aabb_iterations(2), 2 * 1 + AABB_ITERATION_SLACK);
-        assert_eq!(aabb_iterations(8), 2 * 3 + AABB_ITERATION_SLACK);
-        assert_eq!(aabb_iterations(1024), 2 * 10 + AABB_ITERATION_SLACK);
-        assert_eq!(aabb_iterations(65536), 2 * 16 + AABB_ITERATION_SLACK);
     }
 
     #[test]

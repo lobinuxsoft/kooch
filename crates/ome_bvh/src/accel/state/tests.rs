@@ -9,7 +9,7 @@ fn skip_if_no_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("ome_accel::tests"),
         required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::downlevel_defaults(),
+        required_limits: wgpu::Limits::default(),
         memory_hints: wgpu::MemoryHints::Performance,
         trace: wgpu::Trace::Off,
         experimental_features: wgpu::ExperimentalFeatures::default(),
@@ -198,7 +198,7 @@ fn tlas_dirty_flips_via_update_gpu() {
         )
         .unwrap();
     assert!(accel.tlas_dirty_count() > 0);
-    accel.update_gpu(&queue, 0.1, 0.1);
+    accel.update_gpu_standalone(&device, &queue, 0.1, 0.1);
     assert_eq!(accel.tlas_dirty_count(), 0);
 }
 
