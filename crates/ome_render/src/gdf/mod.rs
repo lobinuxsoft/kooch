@@ -31,7 +31,6 @@
 mod debug;
 mod state;
 mod uniforms;
-mod update;
 
 #[cfg(feature = "gdf-debug")]
 pub use debug::GdfDebugCounters;
@@ -40,15 +39,21 @@ pub use uniforms::{
     CASCADE_0_SIDE_METRES, CASCADE_0_VOXELS_PER_AXIS, CASCADE_0_VOXEL_SIZE, CascadeDescriptor,
     POPULATE_WORKGROUP_XY, snap_to_voxel_grid,
 };
-pub use update::{GdfPlugin, update_gdf_system};
 
 /// Concatenated populate compute shader: SDF primitives library +
-/// pool-driven `eval_scene_bvh` library + populate entry point.
-/// Matches the concat order the production raymarch + smoke harness use.
+/// pool traversal library + GDF cascade-sample library (struct
+/// declaration only — cascade-fetch eval_scene_bvh is unreachable
+/// from `cs_populate` so naga prunes its bindings out of the
+/// pipeline layout) + populate entry point. Including the sample
+/// library keeps `CascadeDescriptor`'s definition single-sourced
+/// so the populate path's group-0 uniform binding shares the layout
+/// with the raymarch path's group-1 binding 13.
 pub const POPULATE_SHADER_SOURCE: &str = concat!(
     include_str!("../../../ome_sdf/shaders/sdf_primitives.wgsl"),
     "\n",
     include_str!("../../shaders/raymarch_pool_eval.wgsl"),
+    "\n",
+    include_str!("../../shaders/raymarch_gdf_sample.wgsl"),
     "\n",
     include_str!("../../shaders/gdf_populate.wgsl"),
 );

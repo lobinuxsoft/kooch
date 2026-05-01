@@ -17,7 +17,6 @@ use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
 
 use crate::VIEWPORT_DEPTH_FORMAT;
 use crate::fps::FpsTracker;
-use crate::gdf::GdfPlugin;
 use crate::raymarch::RayMarchRenderer;
 
 /// Surface-sized depth texture owned by the standalone plugin (not the
@@ -99,11 +98,11 @@ impl Plugin for RayMarchPlugin {
         app.insert_resource(FpsTracker::new());
         app.add_system(Stage::Startup, init_renderer);
         app.add_system(Stage::Render, raymarch_system);
-        // GDF cascade-0 populate runs independently of the raymarch
-        // frame encoder in PR-3 — the fragment shader does not yet
-        // sample the cascade. PR-4 will swap to a single shared
-        // encoder once the consumer side lands.
-        GdfPlugin.build(app);
+        // PR-4 of epic #370 folded the GDF cascade-0 populate into
+        // `RayMarchRenderer::update_scene` (same encoder + same frame
+        // as the TLAS rebuild + raymarch dispatch), so the standalone
+        // GdfPlugin is gone. Tests still drive `GdfState` directly
+        // when they need a populate-only harness.
     }
 
     fn name(&self) -> &str {

@@ -3,6 +3,7 @@
 
 mod aabb;
 mod bvh;
+mod collect;
 mod instance;
 mod renderer;
 mod streaming_bridge;
@@ -46,14 +47,19 @@ pub fn has_any_visible_sdf(resources: &Resources) -> bool {
         || any_visible!(SdfPlane)
 }
 
-/// Fullscreen raymarch shader source: primitives library + pool-driven
-/// `eval_scene_bvh` + the fragment-shader entry. Concatenated in this
-/// order so `raymarch_main.wgsl` sees the SDF helpers + pool structs +
-/// pool bindings + `eval_scene_bvh` at parse time.
+/// Fullscreen raymarch shader source: primitives library + pool
+/// traversal library + GDF cascade-sample library + fragment entry.
+/// Concat order matters — `raymarch_pool_eval.wgsl` declares the pool
+/// traversal under the long name `eval_scene_bvh_traversal`, then
+/// `raymarch_gdf_sample.wgsl` (PR-4 of epic #370) declares the short
+/// name `eval_scene_bvh` as a single cascade fetch, which is what
+/// `raymarch_main.wgsl::fs_main` calls every ray-march step.
 const SHADER_SOURCE: &str = concat!(
     include_str!("../../../ome_sdf/shaders/sdf_primitives.wgsl"),
     "\n",
     include_str!("../../shaders/raymarch_pool_eval.wgsl"),
+    "\n",
+    include_str!("../../shaders/raymarch_gdf_sample.wgsl"),
     "\n",
     include_str!("../../shaders/raymarch_main.wgsl"),
 );
