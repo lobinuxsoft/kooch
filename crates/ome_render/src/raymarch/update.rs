@@ -134,6 +134,13 @@ impl RayMarchRenderer {
     /// Uploads every visible SDF primitive entity, kicks a BVH rebuild
     /// when the scene changed, and refreshes the scene bind group.
     ///
+    /// **Caller contract:** [`Self::apply_streaming_delta`] must run
+    /// before this method on every frame the renderer ticks — that
+    /// keeps `pending_loads` from growing unbounded when no ECS-side
+    /// SDFs are visible (the streaming chunks themselves are reason
+    /// enough to render). The viewport calls `apply_streaming_delta`
+    /// **before** the `has_sdf` gate so streaming-only scenes light up.
+    ///
     /// `skip_internal_sky = true` tells the fragment shader to discard on
     /// ray miss instead of drawing its internal gradient — use this when a
     /// separate sky pass ran before the raymarch and already filled the
@@ -147,13 +154,6 @@ impl RayMarchRenderer {
         sky_bottom: Vec4,
         skip_internal_sky: bool,
     ) {
-        // Multi-chunk streaming pass: drain the world's pending loads
-        // and unloads, mirror them into the pool. The ECS-side single-
-        // chunk authoring path runs after this so authored scenes
-        // continue to render alongside streamed chunks (their keys are
-        // disjoint by construction in `BvhState`).
-        self.apply_streaming_delta(queue, resources);
-
         let mut tagged: Vec<CollectedRow> = Vec::new();
         collect_spheres(resources, &mut tagged);
         collect_boxes(resources, &mut tagged);
@@ -233,31 +233,31 @@ impl RayMarchRenderer {
         let _ = raymarch_payloads;
 
         // Drive the OmeAccel pool with one chunk holding every
-        // visible primitive. PR-3 generalises this to per-chunk
-        // bucketing via `ChunkManager`; the renderer pipeline never
-        // sees that change because the bind group references the
-        // pool buffers directly and the pool is pre-allocated.
+        // visible ECS primitive. Streaming chunks coexist via the
+        // separate `apply_streaming_delta` → `insert_streaming_chunk`
+        // path; their keys are bit-63-flagged so the legacy
+        // `SINGLE_CHUNK_KEY = 0` slot stays disjoint from streaming.
         let envelope = k_add_max.max(k_int_max).max(k_sub_max);
         let primitive_count = primitives.len() as u32;
-        // The TLAS rebuild needs an encoder; the renderer pipeline does
-        // not yet thread one into `update_scene`, so we create an
-        // ad-hoc encoder + submit per `update_scene` call. PR-3+ may
-        // hoist the encoder to a higher-level frame batch when the
-        // renderer pipeline shape settles.
+        if let Err(e) =
+            self.bvh_state
+                .update_single_chunk(queue, &leaf_aabbs, &primitives, envelope)
+        {
+            tracing::warn!("OmeAccel single-chunk update failed: {e}; pool unchanged");
+        }
+        // Single tick per frame after every pool mutation has landed
+        // (apply_streaming_delta from the viewport, update_single_chunk
+        // above). One TLAS rebuild + uniforms upload regardless of how
+        // many inserts/removes fired this frame. PR-1 of epic #370
+        // threaded an encoder into `update_gpu` for the GPU-driven TLAS
+        // rebuild compute pass, so `tick_uniforms` now opens an ad-hoc
+        // encoder + submits per `update_scene` call until a higher-level
+        // frame batch lands.
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("ome_render::update_scene_tlas_encoder"),
         });
-        if let Err(e) = self.bvh_state.update_single_chunk(
-            queue,
-            &mut encoder,
-            &leaf_aabbs,
-            &primitives,
-            envelope,
-            k_int_max,
-            k_sub_max,
-        ) {
-            tracing::warn!("OmeAccel single-chunk update failed: {e}; pool unchanged");
-        }
+        self.bvh_state
+            .tick_uniforms(queue, &mut encoder, k_int_max, k_sub_max);
         queue.submit(std::iter::once(encoder.finish()));
 
         // `SceneMeta` keeps the legacy field layout (uniform buffer
