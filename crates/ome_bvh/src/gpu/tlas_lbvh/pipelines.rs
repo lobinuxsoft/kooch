@@ -14,6 +14,7 @@ use crate::node::BvhNode;
 ///   1 = scene_bounds (uniform, [`GpuSceneBounds`])
 ///   2 = mortons (RW storage, u32-per-chunk)
 ///   3 = config (uniform, `KarrasConfig`)
+///   4 = live_chunk_indices (R storage, u32-per-chunk)
 pub(super) fn build_morton_pipeline(
     device: &wgpu::Device,
     pipeline_cache: Option<&wgpu::PipelineCache>,
@@ -67,6 +68,16 @@ pub(super) fn build_morton_pipeline(
                 },
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(4),
+                },
+                count: None,
+            },
         ],
     });
     let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -92,6 +103,7 @@ pub(super) fn build_morton_pipeline(
 ///   2 = chunk_descriptors (R storage)
 ///   3 = tlas_done (RW storage)
 ///   4 = config (uniform `KarrasConfig`)
+///   5 = live_chunk_indices (R storage, u32-per-chunk)
 pub(super) fn build_leaves_pipeline(
     device: &wgpu::Device,
     pipeline_cache: Option<&wgpu::PipelineCache>,
@@ -152,6 +164,16 @@ pub(super) fn build_leaves_pipeline(
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: NonZeroU64::new(16),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(4),
                 },
                 count: None,
             },

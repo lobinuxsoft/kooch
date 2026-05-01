@@ -53,6 +53,15 @@ struct TlasConfig {
 @group(0) @binding(1) var<uniform> scene: SceneBounds;
 @group(0) @binding(2) var<storage, read_write> mortons: array<u32>;
 @group(0) @binding(3) var<uniform> cfg: TlasConfig;
+// `live_chunk_indices[k]` is the slot index of the k-th live chunk
+// in `chunk_descriptors`. The TLAS Karras passes index by contiguous
+// `k ∈ [0, n)`, while `chunk_descriptors` stays slot-indexed (so
+// existing `chunk_idx` payloads stored elsewhere keep their identity
+// across evictions). Without this redirection the morton pass would
+// read the slot at index `k` directly and silently pick up an
+// evicted slot whenever `remove_chunk` left a hole between two live
+// entries.
+@group(0) @binding(4) var<storage, read> live_chunk_indices: array<u32>;
 
 // Sean-Anderson bit-twiddling: insert two zero bits between each of
 // the input's low 10 bits. Identical to the CPU `expand_bits_10` and
@@ -73,7 +82,8 @@ fn tlas_morton_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let d = chunk_descriptors[i];
+    let slot_idx = live_chunk_indices[i];
+    let d = chunk_descriptors[slot_idx];
     let centre = (d.aabb_min + d.aabb_max) * 0.5;
 
     let normalized = (centre - scene.min) * scene.inv_extent;

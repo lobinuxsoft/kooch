@@ -80,6 +80,17 @@ pub struct AccelBuffers {
     /// `u32 × 2 × max_chunks` — same per-node addressing as
     /// [`AccelBuffers::tlas_parents`].
     pub tlas_done: wgpu::Buffer,
+    /// Compact mapping `live_chunk_indices[k] = slot_idx` for `k ∈
+    /// [0, n)`, where `n = live_chunk_count()` and `slot_idx` is the
+    /// position of a live chunk inside [`AccelBuffers::chunk_descriptors`].
+    /// Bridges the contiguous-live indexing the TLAS Karras passes use
+    /// (`k`) to the slot-indexed `chunk_descriptors` buffer that
+    /// `remove_chunk` leaves with stale entries between live chunks.
+    /// Without this mapping, a `[live, evicted, live]` slot layout
+    /// makes `tlas_morton.wgsl` read the evicted slot at index 1 and
+    /// silently drop the second live chunk from the TLAS.
+    /// `u32 × max_chunks`.
+    pub tlas_live_chunk_indices: wgpu::Buffer,
 }
 
 impl AccelBuffers {
@@ -178,6 +189,13 @@ impl AccelBuffers {
                 tlas_per_node,
                 /* copy_src */ true,
             ),
+            // COPY_SRC enabled ONLY for test-only readback paths.
+            tlas_live_chunk_indices: make_storage(
+                device,
+                "ome_accel::tlas_live_chunk_indices",
+                tlas_per_leaf,
+                /* copy_src */ true,
+            ),
         }
     }
 }
@@ -228,17 +246,18 @@ mod tests {
     }
 
     #[test]
-    fn tlas_scratch_total_at_default_caps_is_24_kib() {
-        // 2 per-leaf buffers × 4 B × 1024 + 2 per-node buffers × 8 B
-        // × 1024 = 24 KiB constant VRAM overhead introduced by the
-        // TLAS GPU rebuild path.
-        const PER_LEAF_BUFFERS: u64 = 2;
+    fn tlas_scratch_total_at_default_caps_is_28_kib() {
+        // 3 per-leaf buffers × 4 B × 1024 (`mortons`,
+        // `sorted_indices`, `live_chunk_indices`) + 2 per-node buffers
+        // × 8 B × 1024 (`parents`, `done`) = 28 KiB constant VRAM
+        // overhead introduced by the TLAS GPU rebuild path.
+        const PER_LEAF_BUFFERS: u64 = 3;
         const PER_NODE_BUFFERS: u64 = 2;
         const DEFAULT_MAX_CHUNKS: u32 = 1024;
         let total = PER_LEAF_BUFFERS
             * tlas_per_leaf_scratch_size_bytes(DEFAULT_MAX_CHUNKS)
             + PER_NODE_BUFFERS
                 * tlas_per_node_scratch_size_bytes(DEFAULT_MAX_CHUNKS);
-        assert_eq!(total, 24 * 1024);
+        assert_eq!(total, 28 * 1024);
     }
 }

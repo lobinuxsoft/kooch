@@ -138,13 +138,28 @@ impl OmeAccel {
     /// CPU-side fold of every live slot's `ChunkDescriptor`. Consumed
     /// by `tlas::rebuild` to compute the scene-wide `GpuSceneBounds`
     /// for the morton normalisation pass — the GPU shader reads
-    /// chunks directly from `buffers.chunk_descriptors`, so the
+    /// chunks through `buffers.tlas_live_chunk_indices`, so the
     /// caller of `rebuild` only needs the CPU mirror for that fold.
     pub(crate) fn live_chunk_descriptors(&self) -> Vec<ChunkDescriptor> {
         self.slots
             .iter()
             .filter(|s| s.live)
             .map(|s| s.descriptor)
+            .collect()
+    }
+
+    /// Slot indices of every live chunk, in slot order (i.e. the same
+    /// order [`Self::live_chunk_descriptors`] produces). Uploaded into
+    /// `buffers.tlas_live_chunk_indices` so the TLAS Karras passes
+    /// (morton + leaves) can resolve their contiguous `k ∈ [0, n)`
+    /// thread index back to the slot index that
+    /// `buffers.chunk_descriptors` is keyed by — see the slot-vs-Morton
+    /// indirection note in `shaders/tlas_morton.wgsl`.
+    pub(crate) fn live_chunk_indices(&self) -> Vec<u32> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| if s.live { Some(i as u32) } else { None })
             .collect()
     }
 

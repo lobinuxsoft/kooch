@@ -6,12 +6,17 @@
 //   tlas_nodes[N-1..2N-1)  = leaves (written here)
 //
 // Each leaf k:
-//   - reads chunk_descriptors[sorted_indices[k]] (Morton-permuted lookup)
+//   - reads chunk_descriptors[live_chunk_indices[sorted_indices[k]]]
+//     (slot-indexed lookup behind the Morton permutation).
 //   - writes to tlas_nodes[(N-1) + k]
 //   - left            = 0  (TLAS leaves have no leaves-payload offset;
 //                           the BLAS pool is keyed off the chunk index
 //                           encoded in `right_or_count` instead).
-//   - right_or_count  = chunk_idx | BVH_LEAF_FLAG  (encode_live)
+//   - right_or_count  = slot_idx | BVH_LEAF_FLAG  (encode_live with
+//                       the actual `chunk_descriptors` slot index — the
+//                       fragment shader does `chunk_descriptors[chunk_idx]`
+//                       and must hit the live slot, not the contiguous
+//                       Morton position which can change every rebuild).
 //   - sets tlas_done[k] = 1, marking this leaf for the upcoming AABB
 //     propagation pass (commit 7 will read this back).
 //
@@ -53,6 +58,10 @@ struct TlasConfig {
 @group(0) @binding(2) var<storage, read> chunk_descriptors: array<ChunkDescriptor>;
 @group(0) @binding(3) var<storage, read_write> tlas_done: array<u32>;
 @group(0) @binding(4) var<uniform> cfg: TlasConfig;
+// `live_chunk_indices[k]` is the slot index of the k-th live chunk in
+// `chunk_descriptors`. Resolved through `sorted_indices[k]` first so
+// the Morton permutation lands on the right live slot.
+@group(0) @binding(5) var<storage, read> live_chunk_indices: array<u32>;
 
 const BVH_LEAF_FLAG: u32 = 0x80000000u;
 
@@ -66,13 +75,14 @@ fn tlas_leaves_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let leaf_offset = select(cfg.n - 1u, 0u, cfg.n == 0u);
     let leaf_idx = leaf_offset + k;
 
-    let chunk_idx = sorted_indices[k];
-    let desc = chunk_descriptors[chunk_idx];
+    let live_pos = sorted_indices[k];
+    let slot_idx = live_chunk_indices[live_pos];
+    let desc = chunk_descriptors[slot_idx];
 
     tlas_nodes[leaf_idx].aabb_min = desc.aabb_min;
     tlas_nodes[leaf_idx].left = 0u;
     tlas_nodes[leaf_idx].aabb_max = desc.aabb_max;
-    tlas_nodes[leaf_idx].right_or_count = chunk_idx | BVH_LEAF_FLAG;
+    tlas_nodes[leaf_idx].right_or_count = slot_idx | BVH_LEAF_FLAG;
 
     tlas_done[k] = 1u;
 }

@@ -17,12 +17,11 @@ fn tlas_sort_permutation_byte_identical_to_cpu() {
         eprintln!("ome_bvh::gpu::tlas_lbvh: no GPU adapter — skipping");
         return;
     };
-    let (_descs, aabbs, chunk_descs_buf, mortons_buf, sorted_indices_buf, n) =
-        prepare_inputs(&device);
+    let inputs = prepare_inputs(&device);
 
-    let scene = GpuSceneBounds::from_aabbs(&aabbs);
+    let scene = GpuSceneBounds::from_aabbs(&inputs.aabbs);
     let mut builder = TlasGpuBuilder::new(&device, None);
-    builder.ensure_capacity(&device, n as u64);
+    builder.ensure_capacity(&device, inputs.n as u64);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("tlas_sort_test_encoder"),
@@ -31,29 +30,30 @@ fn tlas_sort_permutation_byte_identical_to_cpu() {
         &device,
         &queue,
         &mut encoder,
-        &chunk_descs_buf,
-        &mortons_buf,
+        &inputs.chunk_descs_buf,
+        &inputs.mortons_buf,
+        &inputs.live_chunk_indices_buf,
         scene,
-        n,
+        inputs.n,
     );
     builder.dispatch_sort(
         &device,
         &queue,
         &mut encoder,
-        &mortons_buf,
-        &sorted_indices_buf,
-        n,
+        &inputs.mortons_buf,
+        &inputs.sorted_indices_buf,
+        inputs.n,
     );
     queue.submit(std::iter::once(encoder.finish()));
 
-    let gpu_sorted_keys = readback_u32(&device, &queue, &mortons_buf, n);
-    let gpu_sorted_indices = readback_u32(&device, &queue, &sorted_indices_buf, n);
+    let gpu_sorted_keys = readback_u32(&device, &queue, &inputs.mortons_buf, inputs.n);
+    let gpu_sorted_indices = readback_u32(&device, &queue, &inputs.sorted_indices_buf, inputs.n);
 
     // CPU reference: stable sort of (morton, original_idx) pairs by
     // morton ascending. Index ties broken by original index, which
     // is what `sort_by_key` does (stable sort preserves relative
     // order). The onesweep contract is also stable in the same way.
-    let cpu_unsorted = cpu_mortons(&scene, &aabbs);
+    let cpu_unsorted = cpu_mortons(&scene, &inputs.aabbs);
     let mut cpu_indexed: Vec<(u32, u32)> = cpu_unsorted
         .iter()
         .enumerate()

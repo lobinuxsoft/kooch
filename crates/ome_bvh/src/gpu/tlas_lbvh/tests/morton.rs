@@ -11,10 +11,9 @@ fn tlas_morton_byte_identical_to_cpu() {
         eprintln!("ome_bvh::gpu::tlas_lbvh: no GPU adapter — skipping");
         return;
     };
-    let (_descs, aabbs, chunk_descs_buf, mortons_buf, _sorted_indices_buf, n) =
-        prepare_inputs(&device);
+    let inputs = prepare_inputs(&device);
 
-    let scene = GpuSceneBounds::from_aabbs(&aabbs);
+    let scene = GpuSceneBounds::from_aabbs(&inputs.aabbs);
     let builder = TlasGpuBuilder::new(&device, None);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -24,15 +23,16 @@ fn tlas_morton_byte_identical_to_cpu() {
         &device,
         &queue,
         &mut encoder,
-        &chunk_descs_buf,
-        &mortons_buf,
+        &inputs.chunk_descs_buf,
+        &inputs.mortons_buf,
+        &inputs.live_chunk_indices_buf,
         scene,
-        n,
+        inputs.n,
     );
     queue.submit(std::iter::once(encoder.finish()));
 
-    let gpu_mortons = readback_u32(&device, &queue, &mortons_buf, n);
-    let cpu = cpu_mortons(&scene, &aabbs);
+    let gpu_mortons = readback_u32(&device, &queue, &inputs.mortons_buf, inputs.n);
+    let cpu = cpu_mortons(&scene, &inputs.aabbs);
 
     assert_eq!(gpu_mortons.len(), cpu.len());
     for (i, (g, c)) in gpu_mortons.iter().zip(cpu.iter()).enumerate() {

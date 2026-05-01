@@ -80,6 +80,18 @@ pub(crate) fn rebuild(
     // they actually need a rebuild.
     accel.ensure_tlas_builder();
 
+    // Upload the live-slot lookup table BEFORE the GPU dispatch — the
+    // morton + leaves passes both indirect through it to translate
+    // their contiguous thread index into the slot-indexed
+    // `chunk_descriptors`, so a stale buffer here would put evicted
+    // slots into the rebuilt TLAS.
+    let live_indices = accel.live_chunk_indices();
+    queue.write_buffer(
+        &accel.buffers.tlas_live_chunk_indices,
+        0,
+        bytemuck::cast_slice::<u32, u8>(&live_indices),
+    );
+
     // GPU dispatch — records morton + sort + leaves + internal + aabb
     // into the caller's encoder. Cero CPU readback. Split borrows
     // pull `tlas_builder`, `buffers`, and `device` independently.
@@ -98,6 +110,10 @@ pub(crate) fn rebuild(
     // `for_each_overlapping_cpu` consumers correct without changing
     // their borrow shape. NLL releases the `builder` shared borrow at
     // the dispatch above so the `&mut accel` re-borrow here is fine.
+    // The CPU mirror was already slot-aware (see line 121-134 below),
+    // so the same fix path the GPU shaders just adopted has been the
+    // CPU semantics all along — `cpu_descriptors` is only used to pin
+    // the live-count invariant.
     rebuild_cpu_mirror(accel, &cpu_descriptors);
 }
 

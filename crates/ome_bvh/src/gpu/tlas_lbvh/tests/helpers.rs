@@ -97,16 +97,21 @@ pub(super) const TEST_CENTRES: [Vec3; 16] = [
     Vec3::new(8.0, 1.0, 3.0),
 ];
 
-pub(super) fn prepare_inputs(
-    device: &wgpu::Device,
-) -> (
-    Vec<ChunkDescriptor>,
-    Vec<Aabb>,
-    wgpu::Buffer,
-    wgpu::Buffer,
-    wgpu::Buffer,
-    u32,
-) {
+pub(super) struct TlasTestInputs {
+    pub descs: Vec<ChunkDescriptor>,
+    pub aabbs: Vec<Aabb>,
+    pub chunk_descs_buf: wgpu::Buffer,
+    pub mortons_buf: wgpu::Buffer,
+    pub sorted_indices_buf: wgpu::Buffer,
+    /// Identity mapping `[0, 1, ..., n-1]` — every chunk in
+    /// `TEST_CENTRES` is live. `tlas_live_chunk_indices` lives next to
+    /// `chunk_descriptors` in production, so the test fixture mirrors
+    /// that pairing.
+    pub live_chunk_indices_buf: wgpu::Buffer,
+    pub n: u32,
+}
+
+pub(super) fn prepare_inputs(device: &wgpu::Device) -> TlasTestInputs {
     let descs: Vec<ChunkDescriptor> = TEST_CENTRES
         .iter()
         .map(|c| descriptor_for(*c, 0.4))
@@ -137,14 +142,21 @@ pub(super) fn prepare_inputs(
             | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
-    (
+    let live_indices: Vec<u32> = (0..n).collect();
+    let live_chunk_indices_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("tlas_test_live_chunk_indices"),
+        contents: bytemuck::cast_slice(&live_indices),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    });
+    TlasTestInputs {
         descs,
         aabbs,
         chunk_descs_buf,
         mortons_buf,
         sorted_indices_buf,
+        live_chunk_indices_buf,
         n,
-    )
+    }
 }
 
 pub(super) fn prepare_leaf_outputs(

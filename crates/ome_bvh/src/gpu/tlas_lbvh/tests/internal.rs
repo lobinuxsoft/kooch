@@ -21,12 +21,12 @@ fn tlas_internal_writes_valid_topology() {
         eprintln!("ome_bvh::gpu::tlas_lbvh: no GPU adapter — skipping");
         return;
     };
-    let (_descs, aabbs, chunk_descs_buf, mortons_buf, sorted_indices_buf, n) =
-        prepare_inputs(&device);
+    let inputs = prepare_inputs(&device);
+    let n = inputs.n;
     let (tlas_nodes_buf, tlas_done_buf) = prepare_leaf_outputs(&device, n);
     let tlas_parents_buf = prepare_parents(&device, n);
 
-    let scene = GpuSceneBounds::from_aabbs(&aabbs);
+    let scene = GpuSceneBounds::from_aabbs(&inputs.aabbs);
     let mut builder = TlasGpuBuilder::new(&device, None);
     builder.ensure_capacity(&device, n as u64);
 
@@ -37,8 +37,9 @@ fn tlas_internal_writes_valid_topology() {
         &device,
         &queue,
         &mut encoder,
-        &chunk_descs_buf,
-        &mortons_buf,
+        &inputs.chunk_descs_buf,
+        &inputs.mortons_buf,
+        &inputs.live_chunk_indices_buf,
         scene,
         n,
     );
@@ -46,24 +47,25 @@ fn tlas_internal_writes_valid_topology() {
         &device,
         &queue,
         &mut encoder,
-        &mortons_buf,
-        &sorted_indices_buf,
+        &inputs.mortons_buf,
+        &inputs.sorted_indices_buf,
         n,
     );
     builder.dispatch_leaves(
         &device,
         &mut encoder,
         &tlas_nodes_buf,
-        &sorted_indices_buf,
-        &chunk_descs_buf,
+        &inputs.sorted_indices_buf,
+        &inputs.chunk_descs_buf,
         &tlas_done_buf,
+        &inputs.live_chunk_indices_buf,
         n,
     );
     builder.dispatch_internal(
         &device,
         &mut encoder,
         &tlas_nodes_buf,
-        &mortons_buf,
+        &inputs.mortons_buf,
         &tlas_parents_buf,
         &tlas_done_buf,
         n,
