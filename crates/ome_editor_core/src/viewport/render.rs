@@ -18,9 +18,20 @@ use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::Query;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
+use ome_render::meshlet::{MeshletBlit, MeshletRenderStage};
 use ome_render::{MeshPassRenderer, SkyRenderPass};
 
 use crate::viewport::target::ViewportTarget;
+
+/// Inputs for the meshlet path. When `enabled` is `false` the editor
+/// renders the legacy `MeshPassRenderer`; otherwise the stage drives
+/// cull + raster + deferred and the blit composes it onto the
+/// `ViewportTarget`'s color view.
+pub(crate) struct MeshletPathInputs<'a> {
+    pub stage: &'a mut MeshletRenderStage,
+    pub blit: &'a MeshletBlit,
+    pub enabled: bool,
+}
 
 /// Renders the active scene into the viewport offscreen texture.
 #[allow(clippy::too_many_arguments)]
@@ -35,7 +46,26 @@ pub(crate) fn render_viewport(
     target: &ViewportTarget,
     resources: &mut Resources,
     project_loaded: bool,
+    meshlet: MeshletPathInputs<'_>,
 ) {
+    // The meshlet stage submits its own command buffer (cull + raster
+    // + deferred). Order matters: the blit pass we record below reads
+    // the stage's color view, so the stage's submit must complete
+    // first on the queue.
+    if project_loaded && meshlet.enabled {
+        meshlet.stage.resize(gpu.device(), target.size());
+        meshlet.stage.sync_assets_to_gpu(gpu.device(), resources);
+        let (view_proj, cam_pos) = active_camera_matrices(resources, target.aspect())
+            .unwrap_or((glam::Mat4::IDENTITY, glam::Vec3::ZERO));
+        let _stats = meshlet.stage.render_with_assets(
+            gpu.device(),
+            gpu.queue(),
+            resources,
+            view_proj,
+            cam_pos,
+        );
+    }
+
     let mut encoder = gpu
         .device()
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -72,17 +102,23 @@ pub(crate) fn render_viewport(
         clear_to_black(&mut encoder, target.view(), target.depth_view());
     }
 
-    // Pass 2: Mesh.
-    if project_loaded && has_visible_mesh(resources) {
-        mesh_pass.render(
-            gpu.device(),
-            gpu.queue(),
-            &mut encoder,
-            target.view(),
-            target.depth_view(),
-            resources,
-            target.aspect(),
-        );
+    // Pass 2: Mesh — legacy MeshPassRenderer or meshlet blit composite.
+    if project_loaded {
+        if meshlet.enabled {
+            meshlet
+                .blit
+                .blit(gpu.device(), &mut encoder, meshlet.stage.color_view(), target.view());
+        } else if has_visible_mesh(resources) {
+            mesh_pass.render(
+                gpu.device(),
+                gpu.queue(),
+                &mut encoder,
+                target.view(),
+                target.depth_view(),
+                resources,
+                target.aspect(),
+            );
+        }
     }
 
     // Pass 3: Line gizmos (always-on-top, depth comparison `Always`,
@@ -155,6 +191,33 @@ fn has_visible_mesh(resources: &Resources) -> bool {
         if mr.visible && !mr.mesh.is_empty() {
             found = true;
         }
+    });
+    found
+}
+
+fn active_camera_matrices(
+    resources: &Resources,
+    aspect: f32,
+) -> Option<(glam::Mat4, glam::Vec3)> {
+    use ome_ecs::perspective_camera::PerspectiveCamera;
+
+    let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
+    let mut found: Option<(glam::Mat4, glam::Vec3)> = None;
+    query.for_each(|(cam, gt)| {
+        if found.is_some() || !cam.active {
+            return;
+        }
+        let world = gt.matrix;
+        let view = world.inverse();
+        let fov_y_rad = cam.fov.to_radians().max(1.0_f32.to_radians());
+        let proj = glam::Mat4::perspective_rh(
+            fov_y_rad,
+            aspect.max(0.01),
+            cam.near.max(0.001),
+            cam.far.max(cam.near + 0.001),
+        );
+        let cam_pos = world.w_axis.truncate();
+        found = Some((proj * view, cam_pos));
     });
     found
 }

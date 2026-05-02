@@ -8,7 +8,8 @@ use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
-use ome_render::{MeshPassRenderer, SkyRenderPass};
+use ome_render::meshlet::{MeshletBlit, MeshletRenderStage};
+use ome_render::{MeshPassRenderer, SkyRenderPass, UseMeshletPath};
 
 use crate::actions::{apply_actions, EditorAction};
 use crate::editor_camera::EditorCameraController;
@@ -20,6 +21,7 @@ use crate::project_state::{LauncherStatus, ProjectState};
 use crate::state::EditorOverlay;
 use crate::systems::present::present_editor_frame;
 use crate::undo::UndoStack;
+use crate::viewport::render::MeshletPathInputs;
 use crate::viewport::{render_viewport, ViewportTarget};
 
 use self::frame_display::FrameDisplayData;
@@ -118,6 +120,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut sky_pass = resources
         .remove::<SkyRenderPass>()
         .expect("SkyRenderPass not found");
+    let mut meshlet_stage = resources.remove::<MeshletRenderStage>();
+    let meshlet_blit = resources.remove::<MeshletBlit>();
+    let meshlet_enabled = resources
+        .get::<UseMeshletPath>()
+        .map(|t| t.enabled)
+        .unwrap_or(false);
     let mut gizmo_renderer = resources
         .remove::<GizmoRenderer>()
         .expect("GizmoRenderer not found");
@@ -216,18 +224,50 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         }
     }
 
-    render_viewport(
-        &gpu,
-        &mut sky_pass,
-        &mut mesh_pass,
-        &mut gizmo_renderer,
-        &gizmo_batch,
-        &mut mesh_gizmo_renderer,
-        &mesh_gizmo_batch,
-        &viewport,
-        resources,
-        project_loaded,
-    );
+    {
+        // Build the meshlet inputs as a placeholder when the resources
+        // are missing — never silently drop the toggle, but disable it
+        // so the editor falls back to the legacy path safely.
+        let mut placeholder_stage;
+        let placeholder_blit;
+        let meshlet = match (meshlet_stage.as_mut(), meshlet_blit.as_ref()) {
+            (Some(stage), Some(blit)) => MeshletPathInputs {
+                stage,
+                blit,
+                enabled: meshlet_enabled,
+            },
+            _ => {
+                // Resources missing — stage/blit got removed by another
+                // system. Reconstruct minimal placeholders so the call
+                // still type-checks; `enabled = false` means they're
+                // never read.
+                placeholder_stage = MeshletRenderStage::new(
+                    gpu.device(),
+                    ome_render::meshlet::MeshletRenderStageConfig::default(),
+                );
+                placeholder_blit = MeshletBlit::new(gpu.device(), gpu.format());
+                MeshletPathInputs {
+                    stage: &mut placeholder_stage,
+                    blit: &placeholder_blit,
+                    enabled: false,
+                }
+            }
+        };
+
+        render_viewport(
+            &gpu,
+            &mut sky_pass,
+            &mut mesh_pass,
+            &mut gizmo_renderer,
+            &gizmo_batch,
+            &mut mesh_gizmo_renderer,
+            &mesh_gizmo_batch,
+            &viewport,
+            resources,
+            project_loaded,
+            meshlet,
+        );
+    }
 
     let _presented = present_editor_frame(&gpu, &mut overlay, &window, full_output);
 
@@ -240,6 +280,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     resources.insert(gizmo_batch);
     resources.insert(mesh_gizmo_renderer);
     resources.insert(mesh_gizmo_batch);
+    if let Some(stage) = meshlet_stage {
+        resources.insert(stage);
+    }
+    if let Some(blit) = meshlet_blit {
+        resources.insert(blit);
+    }
     if let Some(ps) = project_state {
         resources.insert(ps);
     }
