@@ -16,6 +16,7 @@ pub mod fps;
 pub mod mesh;
 pub mod plugin;
 pub mod sky;
+pub mod texture;
 
 /// Depth format shared by every renderer that writes into the editor's
 /// offscreen viewport target. `Depth32Float` is universally supported
@@ -26,3 +27,4 @@ pub use fps::FpsTracker;
 pub use mesh::{Aabb, GpuMesh, MeshLoadError, MeshLoader, MeshPassRenderer, MeshVertex};
 pub use plugin::RenderPlugin;
 pub use sky::{ActiveSky, SkyRenderPass};
+pub use texture::{GpuTexture, Image, ImageFormat, ImageLoader};
