@@ -15,6 +15,7 @@
 pub mod fps;
 pub mod graph;
 pub mod mesh;
+pub mod meshlet;
 pub mod plugin;
 pub mod sky;
 pub mod texture;
@@ -27,6 +28,10 @@ pub const VIEWPORT_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Dept
 pub use fps::FpsTracker;
 pub use graph::{FnNode, GraphError, NodeId, RenderContext, RenderGraph, RenderNode};
 pub use mesh::{Aabb, GpuMesh, MeshLoadError, MeshLoader, MeshPassRenderer, MeshVertex};
+pub use meshlet::{
+    build_default_meshlets, build_meshlets_from_mesh, MeshletBuildError, MeshletDescriptor,
+    MeshletMesh,
+};
 pub use plugin::RenderPlugin;
 pub use sky::{ActiveSky, SkyRenderPass};
 pub use texture::{GpuTexture, Image, ImageFormat, ImageLoader};
