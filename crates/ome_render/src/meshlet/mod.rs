@@ -38,6 +38,7 @@ mod drawer;
 mod gpu_meshlet;
 mod pool;
 mod scene;
+mod system;
 mod vis_buffer;
 
 pub use asset::{MeshletDescriptor, MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES};
@@ -56,4 +57,5 @@ pub use scene::{
     decode_scene_visible_id, encode_scene_visible_id, MeshInstance, MeshletScene,
     SceneCullParams,
 };
+pub use system::{handle_from_key, instance_at_origin, key_from_handle, MeshletPipeline};
 pub use vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
