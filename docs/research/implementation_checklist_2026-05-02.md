@@ -17,7 +17,7 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 | Fase 1.A (asset pipeline) | ✅ COMPLETE | #402, #403, #404, #405, #406 |
 | Fase 1.B (subsystem traits) | ✅ COMPLETE | #407, #408, #409, #410 |
 | Fase 1.C (render graph) | ⚠️ FOUNDATION ONLY (migration + lifetime tracking pending) | #411 |
-| Fase 1.D (meshlet pipeline) | 🚧 IN PROGRESS (6/8 sub-PRs) | #412, #413, #414, PR-4, PR-5b, PR-5a |
+| Fase 1.D (meshlet pipeline) | 🚧 IN PROGRESS (7/8 sub-PRs) | #412, #413, #414, PR-4, PR-5b, PR-5a, PR-5c |
 | Fase 2 (virtual geometry + streaming) | ⏳ NOT STARTED | — |
 | Fase 2.5 (voxel + DC) | ⏳ NOT STARTED | — |
 | Fase 3 (planetary scale hybrid) | ⏳ NOT STARTED | — |
@@ -151,11 +151,11 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 - [x] Verificar que cube renderea end-to-end (E2E integration test in `tests/meshlet_render.rs` asserts non-clear pixels with normal-debug shading; faces-away camera asserts zero rasterized pixels)
 - [ ] **No-obvio:** PR-4 uses `draw_indirect` (4×u32) not `draw_indexed_indirect_count` (5×u32 + count buffer). The vertex-pull rasterizer indexes the meshlet pool directly via `@builtin(vertex_index)` / `@builtin(instance_index)` — no host-side index buffer to feed `draw_indexed`. `draw_indirect_count` becomes useful only once we have a hierarchical "visible chunks → many indirect args" structure (PR-9+).
 
-### Sub-fase 1.D.4 — Hi-Z Occlusion Culling (2-pass) ⚠️ PARCIAL (PR-5a builder done; PR-5c wires 2-pass)
-- [ ] Pass 1: render meshlets visibles del frame anterior → depth buffer parcial — PR-5c
+### Sub-fase 1.D.4 — Hi-Z Occlusion Culling ⚠️ PARCIAL (PR-5a builder + PR-5c cull test done; ping-pong 2-pass orchestration deferred to PR-9)
 - [x] Build Hi-Z mip chain (depth pyramid) — PR-5a (`HiZ` struct, R32Float pyramid, `cs_copy_depth` + `cs_reduce_max` compute, multi-pass portable reduction)
-- [ ] Pass 2: re-test todos los meshlets contra Hi-Z, agregar nuevos visibles — PR-5c
-- [ ] Bench: % de meshlets descartados en escena densa — PR-5c
+- [x] Hi-Z occlusion test in cull shader — PR-5c (`cs_cull_hi_z` + `MeshletCull::dispatch_with_hi_z`, single-texel pessimistic projection + mip selection)
+- [ ] Ping-pong "last-frame visible" + 2-pass draw orchestration — deferred to PR-9 (`MeshletDrawer` already takes a depth attachment; PR-9 wires the depth pre-pass + Hi-Z build + final cull cycle)
+- [ ] Bench: % de meshlets descartados en escena densa — PR-9
 
 ### Sub-fase 1.D.4b — Backface Cone Culling ✅ DONE (PR-5b)
 - [x] Extender `meshlet_cull.wgsl` para leer `cone_apex/cone_axis/cone_cutoff` de descriptors y rechazar backfacing — `dot(normalize(camera - cone_apex), cone_axis) >= cone_cutoff`. Honours meshopt's `cone_cutoff == 1.0` "no-cull" sentinel for divergent normal sets. CullParams gains `camera_position` (112B → 128B). Descriptor split into `bounds_center` + real `cone_apex` (80B → 96B) so the cone test reads the right vector. CPU mirror `camera_in_backface_cone` for unit tests + future LOD heuristics.
