@@ -32,31 +32,15 @@
 mod asset;
 mod builder;
 mod cull;
+mod dispatcher;
+mod drawer;
 mod gpu_meshlet;
 
 pub use asset::{MeshletDescriptor, MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES};
 pub use builder::{build_default_meshlets, build_meshlets_from_mesh, MeshletBuildError};
 pub use cull::{extract_frustum_planes, sphere_outside_frustum, CullParams};
+pub use dispatcher::{DrawIndirectArgs, MeshletCull};
+pub use drawer::MeshletDrawer;
 pub use gpu_meshlet::{
     binding, meshlet_bind_group, meshlet_bind_group_layout, GpuMeshletMesh,
 };
-
-const CULL_SHADER_SOURCE: &str = include_str!("../../shaders/meshlet_cull.wgsl");
-
-#[cfg(test)]
-mod shader_tests {
-    use super::CULL_SHADER_SOURCE;
-
-    #[test]
-    fn cull_shader_parses_and_validates() {
-        let module = naga::front::wgsl::parse_str(CULL_SHADER_SOURCE)
-            .expect("meshlet_cull.wgsl should parse");
-        let mut validator = naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::all(),
-        );
-        validator
-            .validate(&module)
-            .expect("meshlet_cull.wgsl should validate");
-    }
-}

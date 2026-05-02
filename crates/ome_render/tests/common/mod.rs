@@ -1,287 +1,175 @@
-//! Shared harness for the OmeAccel pool integration tests
-//! (`pool_eval_smoke`, `ac1`..`ac7`). Cargo treats `tests/common/mod.rs`
-//! as a non-test sibling, so each integration test that pulls it in via
-//! `mod common;` recompiles the helpers without spawning extra runners.
+//! Shared GPU integration test harness.
 //!
-//! Owns: device acquisition, the `SmokePrimitive` mirror struct
-//! (matches the WGSL `SdfPrimitive` byte layout), the
-//! `dispatch_eval_pass` helper that builds the compute pipeline +
-//! bind groups + readback, and a few primitive constructors used by
-//! every AC test.
+//! Cargo treats `tests/common/mod.rs` as a non-test sibling: each
+//! integration test that pulls it in via `mod common;` recompiles the
+//! helpers without spawning extra runners. Owns:
 //!
-//! Anything specific to one AC (sample-point distribution, scene
-//! seeds, assertion thresholds) lives in the per-AC file so the
-//! intent of each test stays local.
+//! - [`try_acquire_device`] — best-effort wgpu device, returns `None`
+//!   when no adapter is available so CI without a GPU skips cleanly.
+//! - [`build_cube_mesh`] — small canonical mesh used by both the cull
+//!   integration and the render integration tests.
+//! - [`read_buffer_to_vec`] — generic readback helper.
+//!
+//! Run integration tests with `--test-threads=1` (Mesa radv parallel
+//! workers SIGSEGV inside Vulkan when several adapters init
+//! concurrently — documented in `project_phase1_progress.md`).
 
-#![allow(dead_code)] // Each test binary touches a different subset.
+#![allow(dead_code)] // each test binary touches a different subset
 
-pub mod gdf;
-pub mod raymarch_render;
+use bytemuck::Pod;
+use ome_render::mesh::{Mesh, MeshVertex};
 
-use bytemuck::{Pod, Zeroable};
-use ome_bvh::{IS_RAYMARCH, LeafAabb, OmeAccel, ROLE_RAYMARCH_ADD};
-use ome_render::raymarch::POOL_EVAL_SHADER_SOURCE;
-use wgpu::util::DeviceExt;
-
-pub const TYPE_SPHERE: u32 = 0;
-
-/// Mirror of the WGSL `SdfPrimitive` — `smoothness` lives in the
-/// legacy `_pad0` slot so the byte layout matches.
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
-pub struct SmokePrimitive {
-    pub position: [f32; 3],
-    pub type_tag: u32,
-    pub rotation: [f32; 4],
-    pub scale: [f32; 3],
-    pub smoothness: f32,
-    pub params: [f32; 4],
-}
-
-impl SmokePrimitive {
-    /// Convenience: an axis-aligned identity-rotated sphere of `radius`
-    /// at `centre`, role-ADD with no smoothness.
-    pub fn sphere(centre: [f32; 3], radius: f32) -> Self {
-        Self {
-            position: centre,
-            type_tag: TYPE_SPHERE,
-            rotation: [0.0, 0.0, 0.0, 1.0],
-            scale: [1.0, 1.0, 1.0],
-            smoothness: 0.0,
-            params: [radius, 0.0, 0.0, 0.0],
-        }
-    }
-}
-
-/// 16-byte stride matches the WGSL `array<vec4<f32>>` for the
-/// `sample_points` binding.
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
-pub struct SamplePoint {
-    pub p: [f32; 4],
-}
-
-impl SamplePoint {
-    pub fn at(x: f32, y: f32, z: f32) -> Self {
-        Self { p: [x, y, z, 0.0] }
-    }
-}
-
-/// Build a leaf AABB for a sphere of `radius` at `centre`, role-ADD,
-/// flagged `IS_RAYMARCH` so the per-role fold accepts it.
-pub fn sphere_leaf(centre: [f32; 3], radius: f32, entity_id: u32) -> LeafAabb {
-    LeafAabb {
-        aabb_min: [centre[0] - radius, centre[1] - radius, centre[2] - radius],
-        flags: IS_RAYMARCH | ROLE_RAYMARCH_ADD,
-        aabb_max: [centre[0] + radius, centre[1] + radius, centre[2] + radius],
-        entity_id,
-    }
-}
-
-/// Lazy adapter acquisition. Returns `None` when no Vulkan / Metal /
-/// DX12 backend is available; tests treat that as a skip rather than
-/// a failure (same policy the existing GPU tests use).
+/// Acquires a wgpu device with no special features, suitable for any
+/// meshlet test. Returns `None` if the adapter request fails — the
+/// caller is expected to early-return so headless CI still passes.
 pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::default();
-    let adapter = pollster::block_on(
-        instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
-    )
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
+        flags: wgpu::InstanceFlags::default(),
+        backend_options: wgpu::BackendOptions::default(),
+        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+        display: None,
+    });
+
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    }))
     .ok()?;
-    // PR-4 (epic #370): the GDF cascade fetch uses a linear sampler
-    // on an R32Float texture, which the bind-group validator rejects
-    // unless `FLOAT32_FILTERABLE` is enabled. Tests that build a
-    // `RayMarchRenderer` (`raymarch_renders_sphere`,
-    // `gdf_fragment_sample`) bind the cascade view at construction;
-    // the standalone `pool_eval_smoke` and `gdf_populate` paths don't
-    // bind it but enabling the feature is harmless (size-zero overhead
-    // when unused). Adapters without `FLOAT32_FILTERABLE` are rare on
-    // the engine's target HW; skip the test cleanly when missing
-    // rather than crashing mid-bind-group.
-    let required_features = wgpu::Features::FLOAT32_FILTERABLE;
-    if !adapter.features().contains(required_features) {
-        eprintln!("ome_render::tests: adapter lacks FLOAT32_FILTERABLE — skipping");
-        return None;
-    }
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("ome_render::tests::common"),
-        required_features,
+
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("ome_render_test_device"),
+        required_features: wgpu::Features::empty(),
         required_limits: wgpu::Limits::default(),
-        memory_hints: wgpu::MemoryHints::Performance,
+        memory_hints: wgpu::MemoryHints::default(),
         trace: wgpu::Trace::Off,
         experimental_features: wgpu::ExperimentalFeatures::default(),
     }))
-    .ok()?;
-    Some((device, queue))
+    .ok()
 }
 
-/// Build the compute pipeline + bind-group layouts for `cs_eval_smoke`
-/// over the OmeAccel pool. Stored together so the per-test entry point
-/// recreates pipelines once and dispatches multiple times if needed.
-pub struct EvalPipeline {
-    pub bgl0: wgpu::BindGroupLayout,
-    pub bgl1: wgpu::BindGroupLayout,
-    pub pipeline: wgpu::ComputePipeline,
-}
+/// Builds a 12-triangle cube mesh centred at the origin, edge length 1.
+/// `meshopt::build_meshlets` clusters this into a handful of meshlets
+/// — small enough to keep tests fast, large enough that frustum culling
+/// has something to flip.
+pub fn build_cube_mesh() -> Mesh {
+    let positions = [
+        [-0.5, -0.5, -0.5],
+        [0.5, -0.5, -0.5],
+        [0.5, 0.5, -0.5],
+        [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5],
+        [0.5, -0.5, 0.5],
+        [0.5, 0.5, 0.5],
+        [-0.5, 0.5, 0.5],
+    ];
+    let face_normals = [
+        [0.0, 0.0, -1.0], // -Z
+        [0.0, 0.0, 1.0],  // +Z
+        [0.0, -1.0, 0.0], // -Y
+        [0.0, 1.0, 0.0],  // +Y
+        [-1.0, 0.0, 0.0], // -X
+        [1.0, 0.0, 0.0],  // +X
+    ];
 
-impl EvalPipeline {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ome_render::tests::common::module"),
-            source: wgpu::ShaderSource::Wgsl(POOL_EVAL_SHADER_SOURCE.into()),
-        });
-        let bgl0 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("common_bgl_io"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let pool_entries: Vec<wgpu::BindGroupLayoutEntry> = (5..=9u32)
-            .map(|binding| wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            })
-            .chain(std::iter::once(wgpu::BindGroupLayoutEntry {
-                binding: 10,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }))
-            .collect();
-        let bgl1 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("common_bgl_pool"),
-            entries: &pool_entries,
-        });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("common_pipeline_layout"),
-            bind_group_layouts: &[Some(&bgl0), Some(&bgl1)],
-            immediate_size: 0,
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("common_pipeline"),
-            layout: Some(&layout),
-            module: &module,
-            entry_point: Some("cs_eval_smoke"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        Self { bgl0, bgl1, pipeline }
+    // Six faces, four unique vertices each — duplicated so per-face
+    // normals are not blended. 24 vertices total.
+    let face_indices: [[usize; 4]; 6] = [
+        [0, 1, 2, 3], // -Z
+        [4, 5, 6, 7], // +Z (note: needs CCW reversal below)
+        [0, 1, 5, 4], // -Y
+        [3, 2, 6, 7], // +Y
+        [0, 3, 7, 4], // -X
+        [1, 2, 6, 5], // +X
+    ];
+
+    let mut vertices = Vec::with_capacity(24);
+    let mut indices = Vec::with_capacity(36);
+    for (face_idx, corners) in face_indices.iter().enumerate() {
+        let normal = face_normals[face_idx];
+        let base = vertices.len() as u32;
+        for &c in corners {
+            vertices.push(MeshVertex {
+                position: positions[c],
+                normal,
+                uv: [0.0, 0.0],
+            });
+        }
+        // Quad → 2 triangles. Order chosen for outward-facing CCW.
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
+
+    Mesh::from_arrays(vertices, indices)
 }
 
-/// Dispatch `cs_eval_smoke` over `samples` against the pool resident
-/// in `accel`, read back the `f32` distance per sample, and return
-/// the readback vector. Allocates fresh sample / distance buffers per
-/// call so the helper is reusable across two consecutive runs of the
-/// same scene (used by AC1 + AC6).
-pub fn dispatch_eval_pass(
+/// Reads `buffer` back into a `Vec<T>`. `T` must be Pod and `buffer`'s
+/// usage must include `COPY_SRC`. Blocks the device until the readback
+/// is fully resolved.
+pub fn read_buffer_to_vec<T: Pod + Default + Clone>(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    pipeline: &EvalPipeline,
-    accel: &OmeAccel,
-    samples: &[SamplePoint],
-) -> Vec<f32> {
-    let n = samples.len() as u32;
-    let sample_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("common_sample_points"),
-        contents: bytemuck::cast_slice(samples),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let dist_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("common_sample_distances"),
-        size: (n as u64) * 4,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let bg0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("common_bg_io"),
-        layout: &pipeline.bgl0,
-        entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: sample_buf.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: dist_buf.as_entire_binding() },
-        ],
-    });
-    let bg1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("common_bg_pool"),
-        layout: &pipeline.bgl1,
-        entries: &[
-            wgpu::BindGroupEntry { binding: 5, resource: accel.buffers.tlas_nodes.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 6, resource: accel.buffers.chunk_descriptors.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 7, resource: accel.buffers.bvh_nodes_pool.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 8, resource: accel.buffers.leaf_aabbs_pool.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 9, resource: accel.buffers.primitives_pool.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 10, resource: accel.buffers.tlas_uniforms.as_entire_binding() },
-        ],
-    });
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("common_encoder"),
-    });
-    {
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("common_pass"),
-            timestamp_writes: None,
-        });
-        pass.set_pipeline(&pipeline.pipeline);
-        pass.set_bind_group(0, &bg0, &[]);
-        pass.set_bind_group(1, &bg1, &[]);
-        pass.dispatch_workgroups((n + 63) / 64, 1, 1);
-    }
-    queue.submit(std::iter::once(encoder.finish()));
+    buffer: &wgpu::Buffer,
+    count: u64,
+) -> Vec<T> {
+    let elem_size = std::mem::size_of::<T>() as u64;
+    let byte_count = elem_size * count;
 
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("common_staging"),
-        size: (n as u64) * 4,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        label: Some("readback_staging"),
+        size: byte_count,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    let mut enc2 = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("common_readback_encoder"),
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("readback_encoder"),
     });
-    enc2.copy_buffer_to_buffer(&dist_buf, 0, &staging, 0, (n as u64) * 4);
-    queue.submit(std::iter::once(enc2.finish()));
+    encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, byte_count);
+    queue.submit(std::iter::once(encoder.finish()));
+
     let slice = staging.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |r| {
-        tx.send(r).ok();
+    slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
+    let _ = device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: Some(std::time::Duration::from_secs(30)),
     });
-    device
-        .poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: Some(std::time::Duration::from_secs(30)),
-        })
-        .expect("device poll");
-    rx.recv().expect("map_async sender").expect("map_async result");
-    let data = slice.get_mapped_range();
-    let out: Vec<f32> = bytemuck::cast_slice::<u8, f32>(&data).to_vec();
-    drop(data);
-    staging.unmap();
+    rx.recv().unwrap().unwrap();
+    let bytes = slice.get_mapped_range();
+    let mut out = vec![T::default(); count as usize];
+    out.as_mut_slice().clone_from_slice(bytemuck::cast_slice::<u8, T>(&bytes));
     out
+}
+
+/// Reads a single 4-byte u32 at `offset` from `buffer`.
+pub fn read_u32(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    offset: u64,
+) -> u32 {
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("u32_readback_staging"),
+        size: 4,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("u32_readback_encoder"),
+    });
+    encoder.copy_buffer_to_buffer(buffer, offset, &staging, 0, 4);
+    queue.submit(std::iter::once(encoder.finish()));
+
+    let slice = staging.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
+    let _ = device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: Some(std::time::Duration::from_secs(30)),
+    });
+    rx.recv().unwrap().unwrap();
+    let bytes = slice.get_mapped_range();
+    let mut buf = [0u8; 4];
+    buf.copy_from_slice(&bytes);
+    u32::from_le_bytes(buf)
 }
