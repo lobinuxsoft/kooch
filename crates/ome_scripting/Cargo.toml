@@ -9,7 +9,6 @@ authors.workspace = true
 
 [dependencies]
 ome_core.workspace = true
-ome_ecs.workspace = true
 rhai.workspace = true
-glam.workspace = true
 tracing.workspace = true
+slotmap = "1.0"
