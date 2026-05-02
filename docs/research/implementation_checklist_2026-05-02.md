@@ -1,57 +1,58 @@
 # OhMyEngine — Implementation Checklist (Post-Pivot)
 
 **Fecha base:** 2026-05-02
+**Última actualización:** 2026-05-02 (post-session: 14 PRs merged)
 **Master plan:** `docs/research/stack_decisions_2026-05-02.md`
+**Continuation memory:** `~/.claude/projects/-var-mnt-DATA-Repos-oh-my-engine/memory/project_phase1_progress.md`
 
 Orden de ataque diseñado para **matar el path SDF de render lo antes posible** y construir el pipeline mesh GPU-driven (Nanite-style) en capas estables.
 
 Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 
+## Quick status (2026-05-02)
+
+| Fase | Status | PRs |
+|---|---|---|
+| Fase 0 (kill SDF) | ✅ COMPLETE | #401 |
+| Fase 1.A (asset pipeline) | ✅ COMPLETE | #402, #403, #404, #405, #406 |
+| Fase 1.B (subsystem traits) | ✅ COMPLETE | #407, #408, #409, #410 |
+| Fase 1.C (render graph) | ⚠️ FOUNDATION ONLY (migration + lifetime tracking pending) | #411 |
+| Fase 1.D (meshlet pipeline) | 🚧 IN PROGRESS (3/8 sub-PRs) | #412, #413, #414 |
+| Fase 2 (virtual geometry + streaming) | ⏳ NOT STARTED | — |
+| Fase 2.5 (voxel + DC) | ⏳ NOT STARTED | — |
+| Fase 3 (planetary scale hybrid) | ⏳ NOT STARTED | — |
+
 ---
 
-## Fase 0 — Eliminar SDF render path (preserve `ome_sdf` para DC pipeline)
+## Fase 0 — Eliminar SDF render path (preserve `ome_sdf` para DC pipeline) ✅ DONE (PR #401)
 
 **Objetivo:** sacar el path de render SDF (raymarch + tile-cull + GDF). Preservar `ome_sdf` re-purposeado como sampling lib + brushes para alimentar el pipeline Dual Contouring (Phase 2.5).
 
-**Tiempo estimado:** 2-3 días.
+**Tiempo estimado:** 2-3 días. **Tiempo real: 1 sesión.**
 
-- [ ] Branch `feat/kill-sdf-render`
-- [ ] **Editor:** remover llamada a `raymarch.update_scene()` + `raymarch.render()` en `viewport/render.rs`. Flow queda sky_pass → mesh_pass
-- [ ] **Eliminar módulos render SDF:**
-  - `crates/ome_render/src/raymarch/` (directorio entero)
-  - `crates/ome_render/src/raymarch_plugin.rs`
-  - `crates/ome_render/src/tile_cull/` (directorio entero)
-  - `crates/ome_render/shaders/raymarch_*.wgsl`
-  - `crates/ome_render/shaders/tile_cull.wgsl`
-  - `crates/ome_render/shaders/gdf_populate.wgsl`
-  - `crates/ome_render/shaders/raymarch_gdf_sample.wgsl`
-  - `crates/ome_render/shaders/raymarch_pool_*.wgsl`
-- [ ] **Eliminar examples:**
-  - `examples/raymarch_demo.rs`
-  - `examples/raymarch_hierarchy_demo.rs`
-- [ ] **Eliminar tests SDF render:**
-  - `crates/ome_render/tests/ac1_byte_identical.rs`
-  - `crates/ome_render/tests/ac2_multi_chunk_traversal.rs`
-  - `crates/ome_render/tests/ac3_streaming_round_trip.rs`
-  - `crates/ome_render/tests/ac6_load_order_determinism.rs`
-  - `crates/ome_render/tests/ac7_pool_fragmentation.rs`
-  - `crates/ome_render/tests/ac_363_demo_scene_traversal.rs`
-  - `crates/ome_render/tests/gdf_*.rs`
-  - `crates/ome_render/tests/pool_eval_smoke.rs`
-  - `crates/ome_render/tests/raymarch_*.rs`
-  - `crates/ome_render/tests/tile_cull.rs`
-- [ ] **Evaluar y eliminar:** `crates/ome_bvh/` (solo lo usaba el raymarcher → eliminar)
-- [ ] **PRESERVAR (re-purposear comentarios y docs internos):**
-  - `crates/ome_sdf/` — pasa de "SDF render lib" a "SDF sampling + brushes para voxel authoring (alimenta DC pipeline en Phase 2.5)"
-  - Componentes `SdfSphere/Box/Capsule/Cylinder/Torus/Plane` — pasan de "render primitives" a "brushes para voxel editing"
-  - `sdf_primitives.wgsl` — actualizar header doc para indicar uso futuro en DC
-  - Categoría "SDF" en Add Component menu — renombrar a "SDF Brushes"
-  - `crates/ome_world/` — evaluar si generalizable a mesh chunk streaming; probable que sí
-- [ ] **Workspace cleanup:**
-  - Remover deps de `ome_bvh` en otros crates
-  - Limpiar Cargo.toml de root (features que dependían de raymarch path)
-- [ ] **TestEngine2.0:** las entidades con SDF brushes seguirán existiendo en escena pero sin visual hasta Phase 2.5. Documentar en el PR
-- [ ] Commit + PR a development
+- [x] Branch `feat/kill-sdf-render` (was `396-tech-debt-...`)
+- [x] **Editor:** remover llamada a `raymarch.update_scene()` + `raymarch.render()` en `viewport/render.rs`. Flow queda sky_pass → mesh_pass
+- [x] **Eliminar módulos render SDF:**
+  - `crates/ome_render/src/raymarch/` (directorio entero) ✅
+  - `crates/ome_render/src/raymarch_plugin.rs` ✅
+  - `crates/ome_render/src/tile_cull/` (directorio entero) ✅
+  - `crates/ome_render/shaders/raymarch_*.wgsl` ✅
+  - `crates/ome_render/shaders/tile_cull.wgsl` ✅
+  - `crates/ome_render/shaders/gdf_populate.wgsl` ✅
+  - `crates/ome_render/shaders/raymarch_gdf_sample.wgsl` ✅
+  - `crates/ome_render/shaders/raymarch_pool_*.wgsl` ✅
+- [x] **Eliminar examples:**
+  - `examples/raymarch_demo.rs` ✅
+  - `examples/raymarch_hierarchy_demo.rs` ✅
+- [x] **Eliminar tests SDF render:** todos los archivos AC*, raymarch_*, tile_cull, gdf_*, pool_eval_smoke ✅
+- [ ] **Evaluar y eliminar:** `crates/ome_bvh/` — **NO eliminado**, todavía usado por `ome_world` (revisar cuando Rapier reemplace queries físicas)
+- [x] **PRESERVAR (re-purposear comentarios y docs internos):**
+  - `crates/ome_sdf/` — preservado (pendiente: renombrar categoría "SDF" → "SDF Brushes" en editor)
+  - Componentes SDF — preservados
+  - `sdf_primitives.wgsl` — preservado
+- [x] **Workspace cleanup:** ome_render dropped ome_bvh / ome_sdf / ome_world / ome_physics deps
+- [ ] **TestEngine2.0:** no documentado explícitamente en el PR (entidades con SDF brushes seguirán existiendo)
+- [x] Commit + PR a development (PR #401, merged)
 
 **Gate exit:**
 - ✅ `cargo build --workspace` clean
@@ -63,121 +64,125 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 
 ---
 
-## Fase 1.A — Foundation Asset Pipeline
+## Fase 1.A — Foundation Asset Pipeline ✅ DONE
 
 **Objetivo:** poder cargar meshes glTF y referenciarlas tipadamente. Sin esto no hay nada que renderizar realmente.
 
-**Tiempo estimado:** 1-2 semanas.
+**Tiempo estimado:** 1-2 semanas. **Tiempo real: 1 sesión** (5 PRs).
 
-- [ ] **#191** — Decisión documentada: glTF primary, OBJ secondary opcional (1 sesión)
-- [ ] **#184** — `AssetHandle<T>` system: identificadores tipados, ref-count opcional, registry global (3-5 días)
-- [ ] **#391** — `AssetLoader<T>` trait + impls iniciales:
-  - [ ] `GltfLoader` (mesh + material + scene tree)
-  - [ ] `RonSceneLoader` (formato actual del engine)
-  - [ ] `ImageLoader` (PNG/JPG vía crate `image`)
-- [ ] **#129** — Mesh Loading: glTF → buffers GPU (positions, normals, uvs, indices), staging async
-- [ ] **#131** — Texture Loading: PNG/JPG → `wgpu::Texture` con mipmap auto
+- [x] **#191** — Decisión documentada: glTF primary, OBJ secondary opcional → PR #402, ADR `docs/decisions/0001_mesh_format.md`
+- [x] **#184** — `AssetHandle<T>` system: tipado vía `slotmap` generational arena. `Handle<T>` 16B Copy + `Assets<T>` Resource → PR #403
+- [x] **#391** — `AssetLoader<T>` trait + `AssetServer` registry → PR #404
+  - [x] `GltfMeshLoader` (mesh CPU asset) — PR #405
+  - [ ] `RonSceneLoader` — **DEFERRED** (existing `scene_io.rs` still works; refactor cuando llegue caso)
+  - [x] `ImageLoader` (PNG/JPEG vía `image` crate, sRGB + linear variants) — PR #406
+- [x] **#129** — Mesh Loading: `Mesh` CPU asset + `GltfMeshLoader::load(bytes)` + `Mesh::upload(device)→GpuMesh` → PR #405
+- [x] **#131** — Texture Loading: `Image` CPU asset + `GpuTexture::upload(device, queue, image)` (single mip; mipmaps deferred a #130 PBR) → PR #406
 
 **Gate exit:**
-- ✅ `assets.load::<Mesh>("models/suzanne.glb")` devuelve `Handle<Mesh>` válido
-- ✅ MeshRenderer puede tener `mesh: Handle<Mesh>` (no String placeholder) y renderizar
-- ✅ Tests de loaders verificando bytes correctos cargados
+- ✅ `assets.load::<Mesh>("models/suzanne.glb")` devuelve `Handle<Mesh>` (vía `AssetServer.load`)
+- ⚠️ `MeshRenderer.mesh` sigue siendo `String` — migración a `Handle<Mesh>` queda como **wire-up follow-up** (deuda DOD/ECS conocida)
+- ✅ Tests: 46 tests verdes (assets + asset_loader + mesh + texture)
 
 ---
 
-## Fase 1.B — Subsistem Trait Abstractions (paralelo a 1.A)
+## Fase 1.B — Subsistem Trait Abstractions ✅ DONE
 
 **Objetivo:** abstraer subsistemas para permitir swap futuro de providers sin reescribir game code.
 
-**Tiempo estimado:** 1-2 semanas (paralelo).
+**Tiempo estimado:** 1-2 semanas. **Tiempo real: 1 sesión** (4 PRs).
 
-- [ ] **#387** — `PhysicsBackend` trait + `RapierBackend` impl
-- [ ] **#137** (re-scoped) — `CollisionShape` componente que mappea a `rapier3d::shape`
-- [ ] **#388** — `InputBackend` trait + `ActionMap` + `WinitGilrsBackend` impl
-- [ ] **#390** — `AudioBackend` trait + `KiraBackend` impl
-- [ ] **#389** — `ScriptingBackend` trait + `RhaiBackend` impl
+- [x] **#387** — `PhysicsBackend` trait + `RapierBackend` impl (rapier3d 0.22 + simd-stable) → PR #407, 15 tests
+- [ ] **#137** (re-scoped) — `CollisionShape` componente que mappea a `rapier3d::shape` — **PENDIENTE** (ECS sync system follow-up)
+- [x] **#388** — `InputBackend` trait + `ActionMap` + `WinitGilrsBackend` + `MockInputBackend` → PR #408, 13 tests
+- [x] **#390** — `AudioBackend` trait + `KiraBackend` (kira default features mp3/ogg/flac/wav + cpal) + `MockAudioBackend` → PR #410, 18 tests
+- [x] **#389** — `ScriptingBackend` trait + `RhaiBackend` (rhai 1.21 con `sync` feature) → PR #409, 16 tests
 
 **Gate exit:**
-- ✅ Cada trait compila y un primer impl pasa tests básicos
-- ✅ Game code referencia traits (no providers concretos)
+- ✅ Cada trait compila y un primer impl pasa tests (62 tests verdes)
+- ⚠️ Game code todavía no referencia los traits (ECS sync systems para physics/input/audio = follow-up)
 
 ---
 
-## Fase 1.C — Render Graph Foundation
+## Fase 1.C — Render Graph Foundation ⚠️ FOUNDATION ONLY
 
 **Objetivo:** orquestación declarativa de passes para que la pipeline sea extensible.
 
-**Tiempo estimado:** 2-3 semanas.
+**Tiempo estimado:** 2-3 semanas. **Status: PR #411 entrega solo la data structure.** Migration + lifetime tracking + barriers son follow-ups.
 
 - [ ] **#392** — Render graph propio (inspirado en `rend3::graph`)
-  - [ ] Nodos con inputs/outputs declarados
-  - [ ] Resource lifetime tracking (transient resources)
-  - [ ] Barriers automáticas (image layout transitions)
-  - [ ] Topological sort + ciclo detection
-  - [ ] Migrar passes existentes (sky, mesh) al nuevo graph
-- [ ] Documentar API + ejemplo
+  - [x] Nodos con inputs/outputs declarados (`RenderNode` trait + `FnNode` adapter) — PR #411
+  - [ ] Resource lifetime tracking (transient resources) — **DEFERRED** (post wgpu intra-encoder barriers, no urgente)
+  - [ ] Barriers automáticas (image layout transitions) — **DEFERRED** (wgpu maneja intra-encoder)
+  - [x] Topological sort + ciclo detection (Kahn's algorithm, deterministic) — PR #411
+  - [ ] Migrar passes existentes (sky, mesh) al nuevo graph — **DEFERRED** (passes actuales tienen signaturas ricas; migración requiere `RenderContext` extendido)
+- [ ] Documentar API + ejemplo — **doc en código, sin doc separada**
 
-**Gate exit:**
-- ✅ Sky + mesh passes corren a través del graph
-- ✅ Adding/removing passes no requiere tocar el orchestrator
-- ✅ Frame time medible per-node
+**Gate exit:** ⚠️ NO ALCANZADO (parcial)
+- ❌ Sky + mesh passes NO corren a través del graph todavía
+- ✅ Graph data structure compila + 10 tests pasan
+- ❌ Frame time per-node no medible aún (no hay nodes en producción)
 
 ---
 
-## Fase 1.D — Meshlet Pipeline (#117 — el Nanite-style)
+## Fase 1.D — Meshlet Pipeline (#117 — el Nanite-style) 🚧 IN PROGRESS (3/8 sub-PRs)
 
 **Objetivo:** virtual geometry / meshlet pipeline GPU-driven. **Esto es lo que reemplaza definitivamente al SDF como render principal.**
 
-**Tiempo estimado:** 6-10 semanas (la fase más densa).
+**Tiempo estimado:** 6-10 semanas (la fase más densa). **Progreso actual: foundation + frustum culling shader.**
 
-### Sub-fase 1.D.1 — Offline Meshlet Generation
-- [ ] Add `meshopt` crate al workspace
-- [ ] Tool: glTF → meshlet binary (cluster triangles, generate AABB per meshlet, adjacency)
-- [ ] Asset format: `MeshletMesh` con vertex pool + meshlet array + bounds array
-- [ ] `MeshletLoader` impl
-- [ ] Test: Suzanne y un asset complex (Bistro) procesan sin errores
+### Sub-fase 1.D.1 — Offline Meshlet Generation ✅ (PR #412)
+- [x] Add `meshopt` crate al workspace (0.6.2)
+- [ ] Tool: glTF → meshlet binary CLI — **DEFERRED** (builder existe en código pero no hay tool standalone)
+- [x] Asset format: `MeshletMesh` con vertex pool + meshlet array + bounds (`MeshletDescriptor` 80B POD)
+- [ ] `MeshletLoader` impl AssetLoader<MeshletMesh> — **DEFERRED** (Mesh→Meshlet runtime build vía `build_default_meshlets`; no binary format aún)
+- [ ] Test: Suzanne procesa sin errores — **DEFERRED** (tests cubren single triangle + quad; assets reales con #129 mesh loading integration follow-up)
 
-### Sub-fase 1.D.2 — GPU Compute Culling
-- [ ] Per-instance frustum culling (compute pass que escribe lista de visible meshlets)
-- [ ] Per-meshlet AABB vs frustum
-- [ ] Indirect args buffer
-- [ ] Bench: ms del culling pass para 10k/100k/1M meshlets
+### Sub-fase 1.D.2 — GPU Compute Culling ⚠️ PARCIAL (PR #413 + #414)
+- [x] Per-instance frustum culling (compute pass `meshlet_cull.wgsl` + `CullParams` + plane extraction) — PR #414
+- [x] Per-meshlet bounding sphere vs frustum (usa `cone_apex`/`bounding_radius` — más simple que AABB pero suficiente)
+- [ ] Indirect args buffer — **PENDIENTE** (atomic counter expuesto, falta wire al `DrawIndexedIndirectArgs`)
+- [ ] Bench: ms del culling pass — **DEFERRED** (Mesa radv SIGSEGV bloquea dispatch tests)
+- [x] GPU upload: `GpuMeshletMesh` con 4 storage buffers + bind group layout — PR #413
 
-### Sub-fase 1.D.3 — Indirect Draw
-- [ ] `draw_indexed_indirect_count` para batches de visible meshlets
+### Sub-fase 1.D.3 — Indirect Draw ⏳ NEXT
+- [ ] `draw_indexed_indirect_count` para batches de visible meshlets ← **#117 PR-4 next**
 - [ ] Bindless vertex pool (single mega-buffer + index offsets)
 - [ ] Verificar que Suzanne renderiza igual que con mesh pass directo
 
-### Sub-fase 1.D.4 — Hi-Z Occlusion Culling (2-pass)
+### Sub-fase 1.D.4 — Hi-Z Occlusion Culling (2-pass) ⏳ NOT STARTED
 - [ ] Pass 1: render meshlets visibles del frame anterior → depth buffer parcial
 - [ ] Build Hi-Z mip chain (depth pyramid)
 - [ ] Pass 2: re-test todos los meshlets contra Hi-Z, agregar nuevos visibles
 - [ ] Bench: % de meshlets descartados en escena densa
 
-### Sub-fase 1.D.5 — Visibility Buffer
+### Sub-fase 1.D.4b — Backface Cone Culling ⏳ NOT STARTED (extensión de 1.D.2)
+- [ ] Extender `meshlet_cull.wgsl` para leer `cone_apex/cone_axis/cone_cutoff` de descriptors y rechazar backfacing
+
+### Sub-fase 1.D.5 — Visibility Buffer ⏳ NOT STARTED
 - [ ] Render meshlets a R64Uint texture (meshlet_id + tri_id en bits)
 - [ ] Compute shading pass: lee visibility buffer, calcula bary, sample atributos del vertex pool, computa material
 - [ ] Output a color + depth buffer estándar
 - [ ] Verificar zero overdraw (cada pixel se shadea una vez)
 
-### Sub-fase 1.D.6 — Bindless Materials
+### Sub-fase 1.D.6 — Bindless Materials ⏳ NOT STARTED
 - [ ] Structured buffer global de materiales
 - [ ] Texture array bindless (wgpu BindingArray feature)
 - [ ] Meshlet → material idx mapping
 - [ ] Material params: PBR (albedo + normal + metallic + roughness + emissive)
 
-### Sub-fase 1.D.7 — Mesh Shaders (cuando viable)
+### Sub-fase 1.D.7 — Mesh Shaders (cuando viable) ⏳ NOT STARTED
 - [ ] Feature gate: `Features::EXPERIMENTAL_MESH_SHADER` cuando disponible
 - [ ] Path mesh shader: task shader → mesh shader → fragment
 - [ ] Fallback path: compute culling + indirect draw (1.D.2/1.D.3)
 - [ ] Runtime detection + selection
 
-**Gate exit Phase 1.D:**
-- ✅ Render frame de escena con Suzanne + 100+ meshes diversos
-- ✅ Frame time < 16ms en GPU mid-range (Steam Deck APU)
-- ✅ Visibility buffer funcional, no overdraw
-- ✅ Hi-Z descartando >50% de meshlets en escena densa
-- ✅ Material PBR básico funcionando
+**Gate exit Phase 1.D:** ⚠️ NO ALCANZADO
+- ❌ Render frame con Suzanne + 100+ meshes — bloqueado en 1.D.3
+- ❌ Frame time < 16ms en Steam Deck APU
+- ❌ Visibility buffer funcional
+- ❌ Hi-Z descartando >50% meshlets
+- ❌ Material PBR básico
 
 ---
 
