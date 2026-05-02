@@ -7,7 +7,8 @@ use ome_core::power::{self, PowerProfile};
 use ome_core::raw_event::RawEventHandler;
 use ome_core::resource::Resources;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
-use ome_render::{MeshPassRenderer, SkyRenderPass};
+use ome_render::meshlet::{MeshletBlit, MeshletRenderStage, MeshletRenderStageConfig};
+use ome_render::{MeshPassRenderer, SkyRenderPass, UseMeshletPath};
 use ome_world::{ChunkManager, ProceduralCitySource};
 
 use crate::state::{EditorOverlay, EguiEventHandler};
@@ -60,6 +61,19 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         INITIAL_VIEWPORT_SIZE,
     );
 
+    // Meshlet pipeline — opt-in via `UseMeshletPath`. Until 1.E.4 visual
+    // confirmation, the editor still defaults to MeshPassRenderer; the
+    // stage is constructed eagerly so the toggle is a single bool flip
+    // away (no init-on-first-toggle latency).
+    let meshlet_stage = MeshletRenderStage::new(
+        gpu.device(),
+        MeshletRenderStageConfig {
+            size: INITIAL_VIEWPORT_SIZE,
+            ..Default::default()
+        },
+    );
+    let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
+
     let overlay = EditorOverlay {
         ctx,
         winit_state: Arc::clone(&winit_state),
@@ -101,6 +115,9 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     resources.insert(GizmoBatch::default());
     resources.insert(MeshBatch::default());
     resources.insert(viewport);
+    resources.insert(meshlet_stage);
+    resources.insert(meshlet_blit);
+    resources.insert(UseMeshletPath::default());
     resources.insert(power_profile);
 
     tracing::info!("Editor overlay initialized");
