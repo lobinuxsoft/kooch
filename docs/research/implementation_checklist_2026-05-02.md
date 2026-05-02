@@ -166,11 +166,11 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 - [x] Output a color (Rgba8Unorm storage texture) + standard depth attachment
 - [x] Verify zero overdraw (cada pixel se shadea una vez vía compute thread per pixel) — implicit in the architecture; bench in PR-9
 
-### Sub-fase 1.D.6 — Bindless Materials ⏳ NOT STARTED
-- [ ] Structured buffer global de materiales
-- [ ] Texture array bindless (wgpu BindingArray feature)
-- [ ] Meshlet → material idx mapping
-- [ ] Material params: PBR (albedo + normal + metallic + roughness + emissive)
+### Sub-fase 1.D.6 — Bindless Materials ⚠️ PARCIAL (PR-7 param-buffer; texture-array follow-up)
+- [x] Structured buffer global de materiales — `MaterialPool` storage buffer of `MaterialParams` (32 B per slot, base_color + packed scalars)
+- [ ] Texture array bindless (wgpu BindingArray feature) — DEFERRED: lands with #130 PBR (texture-mapped shading)
+- [x] Render-call → material idx mapping — `screen.material_id` UBO field; per-meshlet ids land with the texture-array follow-up
+- [x] Material params: PBR (albedo + metallic + roughness + emissive scalars; texture handles deferred)
 
 ### Sub-fase 1.D.7 — Mesh Shaders (cuando viable) ⏳ NOT STARTED
 - [ ] Feature gate: `Features::EXPERIMENTAL_MESH_SHADER` cuando disponible
