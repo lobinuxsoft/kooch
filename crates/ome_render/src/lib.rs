@@ -36,6 +36,6 @@ pub use meshlet::{
     build_default_meshlets, build_meshlets_from_mesh, MeshletBuildError, MeshletDescriptor,
     MeshletMesh,
 };
-pub use plugin::RenderPlugin;
+pub use plugin::{RenderPlugin, UseMeshletPath};
 pub use sky::{ActiveSky, SkyPassNode, SkyRenderPass};
 pub use texture::{GpuTexture, Image, ImageFormat, ImageLoader};
