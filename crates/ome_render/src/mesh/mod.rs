@@ -11,10 +11,14 @@
 //! - Materials are ignored — fragment shader emits world-space normal as RGB.
 //! - No depth buffer; meshes always paint over the SDF image.
 
+mod asset;
+mod gltf_loader;
 mod gpu_mesh;
 mod loader;
 mod renderer;
 
+pub use asset::Mesh;
+pub use gltf_loader::{GltfMeshError, GltfMeshLoader, parse_mesh_bytes};
 pub use gpu_mesh::{Aabb, GpuMesh, MeshVertex};
 pub use loader::{MeshLoadError, MeshLoader};
 pub use renderer::MeshPassRenderer;
