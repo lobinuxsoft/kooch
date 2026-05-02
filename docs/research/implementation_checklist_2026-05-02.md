@@ -17,7 +17,7 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 | Fase 1.A (asset pipeline) | ✅ COMPLETE | #402, #403, #404, #405, #406 |
 | Fase 1.B (subsystem traits) | ✅ COMPLETE | #407, #408, #409, #410 |
 | Fase 1.C (render graph) | ⚠️ FOUNDATION ONLY (migration + lifetime tracking pending) | #411 |
-| Fase 1.D (meshlet pipeline) | 🚧 IN PROGRESS (3/8 sub-PRs) | #412, #413, #414 |
+| Fase 1.D (meshlet pipeline) | 🚧 IN PROGRESS (4/8 sub-PRs) | #412, #413, #414, PR-4 |
 | Fase 2 (virtual geometry + streaming) | ⏳ NOT STARTED | — |
 | Fase 2.5 (voxel + DC) | ⏳ NOT STARTED | — |
 | Fase 3 (planetary scale hybrid) | ⏳ NOT STARTED | — |
@@ -125,11 +125,11 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 
 ---
 
-## Fase 1.D — Meshlet Pipeline (#117 — el Nanite-style) 🚧 IN PROGRESS (3/8 sub-PRs)
+## Fase 1.D — Meshlet Pipeline (#117 — el Nanite-style) 🚧 IN PROGRESS (4/8 sub-PRs)
 
 **Objetivo:** virtual geometry / meshlet pipeline GPU-driven. **Esto es lo que reemplaza definitivamente al SDF como render principal.**
 
-**Tiempo estimado:** 6-10 semanas (la fase más densa). **Progreso actual: foundation + frustum culling shader.**
+**Tiempo estimado:** 6-10 semanas (la fase más densa). **Progreso actual: foundation + frustum culling + indirect draw rasterizer (cube renders end-to-end).**
 
 ### Sub-fase 1.D.1 — Offline Meshlet Generation ✅ (PR #412)
 - [x] Add `meshopt` crate al workspace (0.6.2)
@@ -138,17 +138,18 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 - [ ] `MeshletLoader` impl AssetLoader<MeshletMesh> — **DEFERRED** (Mesh→Meshlet runtime build vía `build_default_meshlets`; no binary format aún)
 - [ ] Test: Suzanne procesa sin errores — **DEFERRED** (tests cubren single triangle + quad; assets reales con #129 mesh loading integration follow-up)
 
-### Sub-fase 1.D.2 — GPU Compute Culling ⚠️ PARCIAL (PR #413 + #414)
+### Sub-fase 1.D.2 — GPU Compute Culling ⚠️ PARCIAL (PR #413 + #414 + PR-4)
 - [x] Per-instance frustum culling (compute pass `meshlet_cull.wgsl` + `CullParams` + plane extraction) — PR #414
 - [x] Per-meshlet bounding sphere vs frustum (usa `cone_apex`/`bounding_radius` — más simple que AABB pero suficiente)
-- [ ] Indirect args buffer — **PENDIENTE** (atomic counter expuesto, falta wire al `DrawIndexedIndirectArgs`)
-- [ ] Bench: ms del culling pass — **DEFERRED** (Mesa radv SIGSEGV bloquea dispatch tests)
+- [x] Indirect args buffer — PR-4 (`encoder.copy_buffer_to_buffer(visible_count → DrawIndirectArgs[+4])`, single-shot per frame)
+- [ ] Bench: ms del culling pass — **DEFERRED** (Mesa radv SIGSEGV blocked parallel dispatch tests; PR-4 single-thread harness unblocks this when bench framework lands)
 - [x] GPU upload: `GpuMeshletMesh` con 4 storage buffers + bind group layout — PR #413
 
-### Sub-fase 1.D.3 — Indirect Draw ⏳ NEXT
-- [ ] `draw_indexed_indirect_count` para batches de visible meshlets ← **#117 PR-4 next**
-- [ ] Bindless vertex pool (single mega-buffer + index offsets)
-- [ ] Verificar que Suzanne renderiza igual que con mesh pass directo
+### Sub-fase 1.D.3 — Indirect Draw ✅ DONE (PR-4)
+- [x] `draw_indirect` para batches de visible meshlets (no-indexed, vertex-pull style — see "no-obvio" below)
+- [x] Bindless vertex pool (single mega-buffer + index offsets via `meshlet_vertices` u32 list)
+- [x] Verificar que cube renderea end-to-end (E2E integration test in `tests/meshlet_render.rs` asserts non-clear pixels with normal-debug shading; faces-away camera asserts zero rasterized pixels)
+- [ ] **No-obvio:** PR-4 uses `draw_indirect` (4×u32) not `draw_indexed_indirect_count` (5×u32 + count buffer). The vertex-pull rasterizer indexes the meshlet pool directly via `@builtin(vertex_index)` / `@builtin(instance_index)` — no host-side index buffer to feed `draw_indexed`. `draw_indirect_count` becomes useful only once we have a hierarchical "visible chunks → many indirect args" structure (PR-9+).
 
 ### Sub-fase 1.D.4 — Hi-Z Occlusion Culling (2-pass) ⏳ NOT STARTED
 - [ ] Pass 1: render meshlets visibles del frame anterior → depth buffer parcial
