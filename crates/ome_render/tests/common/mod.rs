@@ -49,6 +49,49 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     .ok()
 }
 
+/// Builds a UV-sphere with `lat_segments` × `lon_segments` quads. Used
+/// by the end-to-end bench to give meshopt enough geometry to produce
+/// 4+ meshlets — the cube produces ~2 meshlets, which is too small to
+/// stress-test the cull pipeline.
+pub fn build_sphere_mesh(lat_segments: u32, lon_segments: u32) -> Mesh {
+    use std::f32::consts::PI;
+
+    let lat = lat_segments.max(2);
+    let lon = lon_segments.max(3);
+
+    let mut vertices = Vec::with_capacity(((lat + 1) * (lon + 1)) as usize);
+    for j in 0..=lat {
+        let theta = j as f32 / lat as f32 * PI; // [0, π]
+        let sin_t = theta.sin();
+        let cos_t = theta.cos();
+        for i in 0..=lon {
+            let phi = i as f32 / lon as f32 * 2.0 * PI; // [0, 2π]
+            let x = sin_t * phi.cos();
+            let y = cos_t;
+            let z = sin_t * phi.sin();
+            vertices.push(MeshVertex {
+                position: [x, y, z],
+                normal: [x, y, z], // unit sphere → position == normal
+                uv: [i as f32 / lon as f32, j as f32 / lat as f32],
+            });
+        }
+    }
+
+    let mut indices = Vec::with_capacity((lat * lon * 6) as usize);
+    let stride = lon + 1;
+    for j in 0..lat {
+        for i in 0..lon {
+            let a = j * stride + i;
+            let b = a + 1;
+            let c = (j + 1) * stride + i;
+            let d = c + 1;
+            indices.extend_from_slice(&[a, b, c, b, d, c]);
+        }
+    }
+
+    Mesh::from_arrays(vertices, indices)
+}
+
 /// Builds a 12-triangle cube mesh centred at the origin, edge length 1.
 /// `meshopt::build_meshlets` clusters this into a handful of meshlets
 /// — small enough to keep tests fast, large enough that frustum culling
