@@ -22,6 +22,7 @@ use ome_ecs::query::Query;
 use ome_ecs::sdf_blend::{MODE_SMOOTH_INTERSECTION, MODE_SMOOTH_SUBTRACTION};
 
 use super::aabb::primitive_aabb;
+use super::bind_groups::make_tile_cull_bg;
 use super::collect::{CollectedRow, collect_all_visible_sdfs};
 use super::instance::{RaymarchPayload, SceneMeta, SdfPrimitive};
 use super::renderer::RayMarchRenderer;
@@ -247,7 +248,19 @@ impl RayMarchRenderer {
                 self.last_camera_pos,
             );
         }
+        // PR-6 (epic #370): tile cull rides the same encoder, AFTER
+        // the GDF populates so cascade 5 reflects the latest world
+        // state. The fragment-side BG only needs a rebuild when the
+        // SSBO grew (viewport tile-count crossed capacity).
+        let (vw, vh) = self.last_viewport_size;
+        let realloc = self.tile_cull_state.dispatch(
+            device, queue, &mut encoder, &self.camera_buffer, &self.gdf_state, vw, vh,
+        );
         queue.submit(std::iter::once(encoder.finish()));
+        if realloc {
+            self.tile_cull_bind_group =
+                make_tile_cull_bg(device, &self.tile_cull_bgl, &self.tile_cull_state);
+        }
 
         // `SceneMeta` keeps the legacy field layout (uniform buffer
         // contract). Pool path only consumes `skip_internal_sky` +

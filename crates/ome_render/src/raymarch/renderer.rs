@@ -25,11 +25,15 @@ use glam::Vec3;
 use wgpu::util::DeviceExt;
 
 use super::SHADER_SOURCE;
-use super::bind_groups::{make_camera_bg, make_pool_scene_bg, pool_scene_bgl_entries};
+use super::bind_groups::{
+    make_camera_bg, make_pool_scene_bg, make_tile_cull_bg, pool_scene_bgl_entries,
+    tile_cull_bgl_entries,
+};
 use super::bvh::BvhState;
 use super::instance::{CameraUniforms, RayMarchParams, SceneMeta};
 use crate::VIEWPORT_DEPTH_FORMAT;
 use crate::gdf::{GdfScheduler, GdfState};
+use crate::tile_cull::TileCullState;
 
 /// Ray-marching pipeline + buffers + bind groups.
 pub struct RayMarchRenderer {
@@ -46,6 +50,18 @@ pub struct RayMarchRenderer {
     /// frame and dispatches the returned cascades into the same
     /// encoder as the TLAS rebuild.
     pub(super) gdf_scheduler: GdfScheduler,
+    /// Compute pre-pass that walks the coarsest GDF cascade per 8×8
+    /// tile and emits `(t_min, t_max, flags)` for the fragment to
+    /// early-discard sky tiles + clamp the ray-march loop. PR-6 of
+    /// epic #370.
+    pub(super) tile_cull_state: TileCullState,
+    /// BGL retained so the fragment-side tile-cull bind group can be
+    /// rebuilt when the SSBO grows on a viewport resize.
+    pub(super) tile_cull_bgl: wgpu::BindGroupLayout,
+    /// Fragment-side bind group for tile cull (group 2). Rebuilt by
+    /// `update_scene` after a `TileCullState::dispatch` reports a
+    /// reallocation.
+    pub(super) tile_cull_bind_group: wgpu::BindGroup,
     /// Camera world position captured by the most recent
     /// `update_camera` call. `update_scene` reads it to centre the
     /// GDF cascades on the camera before dispatching their populate
@@ -53,6 +69,11 @@ pub struct RayMarchRenderer {
     /// active camera still produces a self-consistent cascade
     /// stack rooted at `(0, 0, 0)`.
     pub(super) last_camera_pos: Vec3,
+    /// Viewport size driven by the host (plugin / editor / tests).
+    /// `update_scene` feeds it to the tile-cull dispatch so the SSBO
+    /// stays sized to the current target. Defaults to `(1, 1)` so a
+    /// zero-sized first frame still produces a valid uniform write.
+    pub(super) last_viewport_size: (u32, u32),
     pub params: RayMarchParams,
 }
 
@@ -118,6 +139,11 @@ impl RayMarchRenderer {
                 label: Some("raymarch_scene_bgl"),
                 entries: &pool_scene_bgl_entries(),
             });
+        let tile_cull_bgl =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("raymarch_tile_cull_bgl"),
+                entries: &tile_cull_bgl_entries(),
+            });
 
         let camera_bind_group = make_camera_bg(
             device,
@@ -132,12 +158,16 @@ impl RayMarchRenderer {
             bvh_state.buffers(),
             &gdf_state,
         );
+        let tile_cull_state = TileCullState::new(device, &camera_buffer, &gdf_state);
+        let tile_cull_bind_group =
+            make_tile_cull_bg(device, &tile_cull_bgl, &tile_cull_state);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("raymarch_pipeline_layout"),
             bind_group_layouts: &[
                 Some(&camera_bind_group_layout),
                 Some(&scene_bind_group_layout),
+                Some(&tile_cull_bgl),
             ],
             immediate_size: 0,
         });
@@ -192,9 +222,56 @@ impl RayMarchRenderer {
             bvh_state,
             gdf_state,
             gdf_scheduler: GdfScheduler::new(),
+            tile_cull_state,
+            tile_cull_bgl,
+            tile_cull_bind_group,
             last_camera_pos: Vec3::ZERO,
+            last_viewport_size: (1, 1),
             params: RayMarchParams::default(),
         }
+    }
+
+    /// Record the current viewport size so the next `update_scene`
+    /// dispatch can size the tile-cull SSBO correctly. Plugin / editor
+    /// / test harnesses call this before driving an `update_scene` +
+    /// `render` pair when the target dimensions are known.
+    pub fn set_viewport_size(&mut self, width: u32, height: u32) {
+        self.last_viewport_size = (width.max(1), height.max(1));
+    }
+
+    /// One-shot tile-cull dispatch driven outside the `update_scene`
+    /// path. Tests + tools that don't run a full ECS update use this
+    /// after seeding `set_viewport_size` + a GDF populate to fill
+    /// `tile_ray_bounds` ahead of an off-screen render. Rebuilds the
+    /// fragment-side bind group when the SSBO grew.
+    pub fn dispatch_tile_cull(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) {
+        let (w, h) = self.last_viewport_size;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("raymarch_dispatch_tile_cull"),
+        });
+        let realloc = self.tile_cull_state.dispatch(
+            device, queue, &mut encoder, &self.camera_buffer, &self.gdf_state, w, h,
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+        if realloc {
+            self.tile_cull_bind_group = make_tile_cull_bg(
+                device, &self.tile_cull_bgl, &self.tile_cull_state,
+            );
+        }
+    }
+
+    /// Mutable accessor for tests + diagnostics.
+    pub fn tile_cull_state_mut(&mut self) -> &mut TileCullState {
+        &mut self.tile_cull_state
+    }
+
+    /// Read-only accessor for tile-cull SSBO inspection in tests.
+    pub fn tile_cull_state(&self) -> &TileCullState {
+        &self.tile_cull_state
     }
 
     /// Mutable access to the GDF cascade state. Tests use this to
@@ -312,6 +389,7 @@ impl RayMarchRenderer {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.camera_bind_group, &[]);
         pass.set_bind_group(1, &self.scene_bind_group, &[]);
+        pass.set_bind_group(2, &self.tile_cull_bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
 }

@@ -7,6 +7,7 @@
 //! `make_camera_bg` consumers reach in here.
 
 use crate::gdf::GdfState;
+use crate::tile_cull::TileCullState;
 
 /// Camera-side group 0 bind group: `(0)` `CameraUniforms`
 /// + `(1)` `RayMarchParams`.
@@ -115,6 +116,62 @@ pub(super) fn make_pool_scene_bg(
             wgpu::BindGroupEntry { binding: 16, resource: wgpu::BindingResource::TextureView(&views[5]) },
             wgpu::BindGroupEntry { binding: 17, resource: wgpu::BindingResource::Sampler(gdf.sampler()) },
             wgpu::BindGroupEntry { binding: 18, resource: gdf.frag_uniforms_buffer().as_entire_binding() },
+        ],
+    })
+}
+
+/// Bind-group layout entries for the fragment-side tile-cull bind
+/// group. Group 2:
+///   - `(0)` `tile_ray_bounds` — read-only storage SSBO written by
+///     the [`TileCullState::dispatch`] compute pass; contains one
+///     [`crate::tile_cull::TileBounds`] entry per tile.
+///   - `(1)` `tile_cull_u` — UBO carrying `viewport_size` +
+///     `tile_count` so the fragment can map a pixel to its tile index.
+pub(super) fn tile_cull_bgl_entries() -> [wgpu::BindGroupLayoutEntry; 2] {
+    [
+        wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+    ]
+}
+
+/// Build the fragment-side tile-cull bind group. Rebuilt by
+/// `RayMarchRenderer::update_scene` whenever the SSBO reallocates
+/// (viewport tile-count grew); the UBO buffer handle is stable.
+pub(super) fn make_tile_cull_bg(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    tile_cull: &TileCullState,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("raymarch_tile_cull_bg"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: tile_cull.tile_bounds_buffer().as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: tile_cull.uniforms_buffer().as_entire_binding(),
+            },
         ],
     })
 }
