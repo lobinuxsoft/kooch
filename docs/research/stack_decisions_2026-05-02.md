@@ -13,20 +13,41 @@
 - **Cascade GDF + tile-cull + TLAS/BLAS pool como infraestructura "Nanite-tier para SDF".** Sin precedente shipeable. Claybook + Dreams + Dual Universe — los 3 engines que más empujaron SDF — terminan extrayendo geometría discreta antes del render final.
 - **Issue #360 (sparse chunk LOD) y #370 (tile-cull) en su forma actual.** El trabajo realizado queda como referencia histórica; no se construye más encima.
 
-### Lo que se elimina además (decisión revisada 2026-05-02)
+### Lo que se elimina (revisión final 2026-05-02 — plan C hybrid)
 
-**SDF se elimina completamente del engine. NO se preserva como autoring tool, NO se mantiene `ome_sdf`, NO habrá dual contouring future.**
+**Solo el path de render SDF se elimina. SDF como representación se preserva y repurposea para alimentar el pipeline Dual Contouring.**
 
-- **`ome_sdf` crate**: deletear entero
-- **Componentes SDF** (`SdfSphere`, `SdfBox`, `SdfCapsule`, `SdfCylinder`, `SdfTorus`, `SdfPlane`): deletear de `ome_ecs`
-- **Primitivas WGSL** (`sdf_primitives.wgsl`): deletear
-- **Categoría "SDF"** del Add Component menu y Spawn menu: deletear
-- **Crates dependientes**: `ome_bvh` y `ome_world` se evalúan — si solo servían al raymarcher, deletear también; si tienen valor general (ECS hierarchy queries, streaming genérico), preservar
+A ELIMINAR:
+- `crates/ome_render/src/raymarch/` (directorio entero)
+- `crates/ome_render/src/raymarch_plugin.rs`
+- `crates/ome_render/src/tile_cull/` (directorio entero)
+- Todos los shaders raymarch_*, tile_cull, gdf_*, raymarch_pool_*
+- `examples/raymarch_demo.rs`, `examples/raymarch_hierarchy_demo.rs`
+- Tests AC1-AC7, raymarch_*, tile_cull, gdf_*, pool_eval_smoke
+- `crates/ome_bvh/` (solo lo usaba el raymarcher)
 
-### Lo que se construye en su lugar
+A PRESERVAR (re-purposeado):
+- `crates/ome_sdf/` — repurposeado como **"SDF sampling lib + brushes para voxel authoring"** (alimenta DC)
+- Componentes SDF (`SdfSphere/Box/Capsule/Cylinder/Torus/Plane`) — son **brushes** que generan SDF samples para voxelizar (no render directo)
+- `sdf_primitives.wgsl` — alimenta el pipeline DC
+- `crates/ome_world/` — generaliza a streaming de mesh chunks (probable que sí)
 
-- **Mesh GPU-driven pipeline** (Nanite-style virtual geometry). Referencias técnicas: Bevy 0.16 `virtual_geometry`, `Firestar99/nanite-at-home`, Karis SIGGRAPH 2021 paper.
-- **Mesh import** vía glTF como camino único de autoría. Tools externas (Blender) generan los assets. Editor procedural sobre mesh primitives es opción futura, pero no SDF.
+### Lo que se construye en su lugar — pipeline híbrido
+
+```
+Heightmap Quadtree (superficie base, escala planetaria)
+        +
+Sparse Voxel Octree + Dual Contouring (caves, destrucción, ciudades subterráneas)
+        ↓
+Mesh GPU-driven pipeline (Phase 1 Nanite-style) — ambos feedean el mismo renderer
+        ↓
+Floating origin / hierarchical reference frames (precisión a escala planetaria)
+```
+
+- **Mesh GPU-driven pipeline** (Nanite-style virtual geometry). Phase 1. Referencias: Bevy 0.16 `virtual_geometry`, `Firestar99/nanite-at-home`, Karis SIGGRAPH 2021.
+- **Sparse Voxel Octree + Dual Contouring** (Phase 2.5). Para zonas de caves / destrucción / edición runtime. Referencias: Dual Universe, Ju et al. 2002.
+- **Cubed Sphere Quadtree heightmap** (Phase 3). Para terreno planetario base. Referencias: Outerra, Star Citizen Terra Firmer.
+- **Mesh import** vía glTF — Blender/external tools para assets propiamente dichos (props, vegetación, edificios). SDF brushes son para autoring procedural / destructible terrain.
 
 ---
 

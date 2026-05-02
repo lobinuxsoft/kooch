@@ -9,15 +9,14 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 
 ---
 
-## Fase 0 — Eliminar SDF completamente (PRIORIDAD MÁXIMA)
+## Fase 0 — Eliminar SDF render path (preserve `ome_sdf` para DC pipeline)
 
-**Objetivo:** SDF afuera del engine. Sin "archivar", sin preservar como autoring tool, sin dual contouring future. Engine mesh-only.
+**Objetivo:** sacar el path de render SDF (raymarch + tile-cull + GDF). Preservar `ome_sdf` re-purposeado como sampling lib + brushes para alimentar el pipeline Dual Contouring (Phase 2.5).
 
-**Tiempo estimado:** 2-4 días.
+**Tiempo estimado:** 2-3 días.
 
-- [ ] Branch `feat/delete-sdf`
+- [ ] Branch `feat/kill-sdf-render`
 - [ ] **Editor:** remover llamada a `raymarch.update_scene()` + `raymarch.render()` en `viewport/render.rs`. Flow queda sky_pass → mesh_pass
-- [ ] **Eliminar crate `crates/ome_sdf/`** completo
 - [ ] **Eliminar módulos render SDF:**
   - `crates/ome_render/src/raymarch/` (directorio entero)
   - `crates/ome_render/src/raymarch_plugin.rs`
@@ -30,7 +29,7 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 - [ ] **Eliminar examples:**
   - `examples/raymarch_demo.rs`
   - `examples/raymarch_hierarchy_demo.rs`
-- [ ] **Eliminar tests SDF:**
+- [ ] **Eliminar tests SDF render:**
   - `crates/ome_render/tests/ac1_byte_identical.rs`
   - `crates/ome_render/tests/ac2_multi_chunk_traversal.rs`
   - `crates/ome_render/tests/ac3_streaming_round_trip.rs`
@@ -41,25 +40,26 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
   - `crates/ome_render/tests/pool_eval_smoke.rs`
   - `crates/ome_render/tests/raymarch_*.rs`
   - `crates/ome_render/tests/tile_cull.rs`
-- [ ] **Eliminar componentes SDF de `ome_ecs`:**
-  - `SdfSphere`, `SdfBox`, `SdfCapsule`, `SdfCylinder`, `SdfTorus`, `SdfPlane`
-  - Categoría "SDF" del Add Component menu
-  - Submenú SDF del Spawn menu
-- [ ] **Evaluar `ome_bvh` y `ome_world`:** si solo servían al raymarcher, eliminar también. Si tienen valor general (ECS hierarchy, streaming genérico), preservar
+- [ ] **Evaluar y eliminar:** `crates/ome_bvh/` (solo lo usaba el raymarcher → eliminar)
+- [ ] **PRESERVAR (re-purposear comentarios y docs internos):**
+  - `crates/ome_sdf/` — pasa de "SDF render lib" a "SDF sampling + brushes para voxel authoring (alimenta DC pipeline en Phase 2.5)"
+  - Componentes `SdfSphere/Box/Capsule/Cylinder/Torus/Plane` — pasan de "render primitives" a "brushes para voxel editing"
+  - `sdf_primitives.wgsl` — actualizar header doc para indicar uso futuro en DC
+  - Categoría "SDF" en Add Component menu — renombrar a "SDF Brushes"
+  - `crates/ome_world/` — evaluar si generalizable a mesh chunk streaming; probable que sí
 - [ ] **Workspace cleanup:**
-  - Remover `ome_sdf` (y crates afectados) de `Cargo.toml` workspace members
-  - Remover features `sdf`, `lighting` (si era SDF-only) del root crate
-  - Remover deps SDF de los demás crates
-- [ ] **TestEngine2.0:** abrir el proyecto de prueba y remover scenas/escripts que referenciaban SDF
+  - Remover deps de `ome_bvh` en otros crates
+  - Limpiar Cargo.toml de root (features que dependían de raymarch path)
+- [ ] **TestEngine2.0:** las entidades con SDF brushes seguirán existiendo en escena pero sin visual hasta Phase 2.5. Documentar en el PR
 - [ ] Commit + PR a development
 
 **Gate exit:**
-- ✅ `cargo build --workspace` clean — sin código SDF en ninguna parte
+- ✅ `cargo build --workspace` clean
 - ✅ `cargo test --workspace` verde
 - ✅ `cargo clippy --workspace -- -D warnings` clean
-- ✅ Editor levanta, renderiza mesh sin diagonales, sin features SDF en menúes
-- ✅ TestEngine2.0 abre limpio (puede tener escenas vacías hasta que carguemos meshes nuevas)
-- ✅ LOC delta documentado en el PR (debería ser reducción significativa)
+- ✅ Editor levanta, renderiza mesh sin diagonales
+- ✅ Componentes SdfSphere/Box/etc spawneables pero sin visual (esperado hasta Phase 2.5)
+- ✅ LOC delta documentado en el PR
 
 ---
 
@@ -205,18 +205,41 @@ Mergeada en Fase 0. La eliminación de SDF se hace upfront, no al final de Phase
 
 ---
 
-## Fase 3 — Planetary Scale (#313)
+## Fase 2.5 — Voxel + Dual Contouring hybrid (#397)
 
-**Objetivo:** escala planetaria real, precisión + LOD.
+**Objetivo:** habilitar zonas de mundo con caves, destrucción, edición de geometría runtime — usando voxel SDF + Dual Contouring que alimenta el mesh pipeline existente.
 
-**Tiempo estimado:** 3-4 meses focused.
+**Tiempo estimado:** 2-3 meses focused.
+
+- [ ] **#398** Sparse Voxel Octree data structure
+- [ ] Voxelización de SDF brushes (`SdfSphere/Box/...` → voxel grid)
+- [ ] **#393** Dual Contouring extraction (Hermite data + QEF solver)
+- [ ] Re-extraction incremental on edit (modificar SDF → invalidar cells → re-extraer)
+- [ ] Streaming de chunks voxel (load/unload por proximidad)
+- [ ] Editor brush tools — autorizar caves / destrucción
+
+**Gate exit:**
+- ✅ Demo: cueva editable runtime, sharp features preservadas en aristas
+- ✅ Re-extraction sub-frame (<5ms para chunk 64³)
+- ✅ Mesh extraído va al pipeline GPU-driven sin pasos especiales
+- ✅ Streaming voxel sin hitches
+
+---
+
+## Fase 3 — Planetary Scale Hybrid (#313)
+
+**Objetivo:** escala planetaria real con heightmap base + voxel zones embebidas.
+
+**Tiempo estimado:** 4-5 meses focused.
 
 - [ ] **#394** — research floating origin / hierarchical reference frames (decisión arquitectónica primero)
 - [ ] **#51** — Camera-relative transform implementación
-- [ ] Cubed sphere quadtree terrain
-- [ ] Heightmap streaming + GPU virtual texture
+- [ ] **#399** — Cubed Sphere Quadtree heightmap terrain (planet base)
+- [ ] Heightmap streaming async + GPU virtual texture
+- [ ] **#400** — Voxel zone system + heightmap-voxel boundary stitching
 - [ ] Atmospheric scattering (Bruneton)
-- [ ] **#341** + **#342** — CelestialBody LOD pipeline + impostor cubemap
+- [ ] **#341** + **#342** — CelestialBody LOD pipeline + impostor cubemap (mid-distance LOD)
+- [ ] **#343** — StarCatalog far-distance starfield
 
 **Gate exit:**
 - ✅ Volar de superficie a órbita sin pop-in ni pérdida de precisión
@@ -245,15 +268,16 @@ Issues que no bloquean fase pero suman:
 
 | Fase | Trabajo | Tiempo focused |
 |---|---|---|
-| **Fase 0** | Eliminar SDF completamente | 2-4 días |
+| **Fase 0** | Eliminar SDF render path (preserva ome_sdf) | 2-3 días |
 | **Fase 1.A** | Asset Pipeline foundation | 1-2 semanas |
 | **Fase 1.B** | Subsystem trait abstractions | 1-2 semanas (paralelo) |
 | **Fase 1.C** | Render graph propio | 2-3 semanas |
 | **Fase 1.D** | Meshlet pipeline (Nanite-style) | 6-10 semanas |
 | **Fase 1 total** | Mesh GPU-driven pipeline operativa | **~3-4 meses** |
 | **Fase 2** | Virtual geometry + streaming | 2-3 meses |
-| **Fase 3** | Planetary scale | 3-4 meses |
-| **Total roadmap** | Engine planetary-scale shipeable | **8-11 meses focused** |
+| **Fase 2.5** | Voxel + Dual Contouring hybrid | 2-3 meses |
+| **Fase 3** | Planetary scale hybrid (heightmap + voxel zones) | 4-5 meses |
+| **Total roadmap** | Engine planetary-scale shipeable con caves/destrucción | **12-18 meses focused** |
 
 Realista con vida normal (tiempo parcial): **18-30 meses**.
 
