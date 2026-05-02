@@ -36,6 +36,7 @@ mod deferred;
 mod dispatcher;
 mod drawer;
 mod gpu_meshlet;
+mod scene;
 mod vis_buffer;
 
 pub use asset::{MeshletDescriptor, MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES};
@@ -48,5 +49,9 @@ pub use dispatcher::{DrawIndirectArgs, HiZTestParams, MeshletCull};
 pub use drawer::MeshletDrawer;
 pub use gpu_meshlet::{
     binding, meshlet_bind_group, meshlet_bind_group_layout, GpuMeshletMesh,
+};
+pub use scene::{
+    decode_scene_visible_id, encode_scene_visible_id, MeshInstance, MeshletScene,
+    SceneCullParams,
 };
 pub use vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
