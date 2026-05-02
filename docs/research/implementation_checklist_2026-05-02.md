@@ -17,7 +17,8 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 | Fase 1.A (asset pipeline) | ✅ COMPLETE | #402, #403, #404, #405, #406 |
 | Fase 1.B (subsystem traits) | ✅ COMPLETE | #407, #408, #409, #410 |
 | Fase 1.C (render graph) | ✅ FOUNDATION + WRAPPERS (lifetime tracking pending) | #411, +RenderNode wrappers |
-| Fase 1.D (meshlet pipeline) | ✅ CORE COMPLETE (mesh-shaders + 2-pass orchestration follow-up) | #412, #413, #414, PR-4, PR-5b, PR-5a, PR-5c, PR-6, PR-7, PR-9 |
+| Fase 1.D (meshlet primitives) | ✅ PER-MESHLET PRIMITIVES (cull stack + vbuf + deferred + materials, all per-mesh single-dispatch) | #412, #413, #414, PR-4, PR-5b, PR-5a, PR-5c, PR-6, PR-7, PR-9 |
+| **Fase 1.E (production wiring + scene-wide GPU-driven)** | 🚧 NEXT — promotes Phase 1.D primitives to a real scene path | — |
 | Fase 2 (virtual geometry + streaming) | ⏳ NOT STARTED | — |
 | Fase 2.5 (voxel + DC) | ⏳ NOT STARTED | — |
 | Fase 3 (planetary scale hybrid) | ⏳ NOT STARTED | — |
@@ -188,9 +189,51 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 
 ---
 
-## Fase 1.E — (eliminada)
+## Fase 1.E — Production wiring + scene-wide GPU-driven 🚧 NEXT
 
-Mergeada en Fase 0. La eliminación de SDF se hace upfront, no al final de Phase 1.
+**Por qué existe esta sub-fase (post Phase 1.D close audit):** Phase 1.D entregó la *infraestructura* per-meshlet correcta DOD-shape, pero todo vive en `tests/` headless. El editor sigue usando el path viejo `MeshPassRenderer`. Y el cull procesa "1 dispatch por mesh" — no es "scene-wide GPU enumeration" como exige el constraint global del proyecto (`feedback_planet_scale_gpu_driven.md`, `feedback_gpu_driven_spirit.md`).
+
+Phase 1.E promueve los primitivos a un pipeline de producción genuino: instance buffer scene-wide, ECS-integrated, single-dispatch cull sobre toda la escena, plugin/viewport drive end-to-end.
+
+**Tiempo estimado:** 3-5 sesiones focused.
+
+### Sub-fase 1.E.1 — Instance buffer + scene-wide cull foundation
+
+- [ ] **`MeshInstance` POD struct** — `{ transform: Mat4, mesh_id: u32, material_id: u32, lod_bias: f32, _pad }` ≈ 80 B per instance, repr(C), Pod+Zeroable.
+- [ ] **`MeshletScene` resource** — owns the instance storage buffer + free-list growth (u32 indices, no `Vec::push` per-frame in hot path; pre-allocate capacity, grow on overflow with explicit recreate).
+- [ ] **Mesh pool (global)** — arrays de meshlets / vertices / triangles indexed by `mesh_id`. Cada mesh registrado se aloja en una sub-region; `MeshHandle` lleva `(mesh_id, first_meshlet, meshlet_count, vertex_offset, vertex_count)`. NO HashMap<MeshId, Mesh> en hot path; storage buffer plano + descriptor index.
+- [ ] **Cull shader extension `cs_cull_scene`** — toma instance buffer + global mesh pool, dispatch enumera (instance, meshlet) pairs (1D dispatch sobre `total_meshlet_instances` o 2D sobre instances × max_meshlets_per_mesh con bounds check). UN solo dispatch para TODA la escena.
+- [ ] **Indirect draw output** — packed `(instance_id, meshlet_id)` en `visible_meshlets`; vertex shader pull-style decodifica al rasterizar.
+- [ ] AC: integration test scene con 4+ instances of 2+ meshes, single dispatch, verify visible_count == sum(meshlets per visible instance).
+
+### Sub-fase 1.E.2 — ECS integration (MeshRenderer migration)
+
+- [ ] **`MeshRenderer.mesh: String` → `Handle<MeshletMesh>`** migration — deuda Phase 1.A reconocida.
+- [ ] **`MeshletAssetServer` / `MeshletLoader`** que tomen `Handle<MeshletMesh>` y mantengan el global mesh pool actualizado on-demand.
+- [ ] **System: collect ECS instances** — `for_each Query<&MeshRenderer, &GlobalTransform>` → builds the frame's `MeshInstance` slice → uploads to instance buffer (CPU-side only at the system boundary; never crosses into hot loop).
+- [ ] AC: editor entity con MeshRenderer aparece en la instance buffer; cambiar transform → instance buffer reflects it next frame.
+
+### Sub-fase 1.E.3 — Plugin + viewport drive end-to-end
+
+- [ ] **`MeshletRenderStage`** — orquestador de la pipeline frame: cull dispatch → vbuf raster → Hi-Z build → final cull dispatch (2-pass, finally) → vbuf raster final → deferred shade → output a viewport texture.
+- [ ] **`RenderPlugin` migra a meshlet path** (o coexiste con el path viejo detrás de un toggle hasta validation).
+- [ ] **Editor viewport** ejerce el meshlet stage; offscreen target ya existe.
+- [ ] AC: levantar editor + spawn entity con MeshRenderer + Suzanne (o sphere) → ver el modelo renderizado por la meshlet pipeline real, sin pasar por `MeshPassRenderer`.
+- [ ] Hi-Z 2-pass ping-pong wiring entra acá (no antes — antes no había scene plumbing donde aterrizarlo).
+
+### Sub-fase 1.E.4 — Validation (real visual confirmation)
+
+- [ ] Run editor, screenshot del scene meshlet-rendered.
+- [ ] Frame time real con sysfs VRAM bound.
+- [ ] Comparar visualmente vs path viejo `MeshPassRenderer` (reference render con mismo asset).
+- [ ] Decisión: deprecate `MeshPassRenderer` o conservar por compatibilidad / testing.
+
+**Gate exit Phase 1.E:** lo que faltaba al cerrar Phase 1.D
+- ✅ MeshRenderer entity en editor renderea por meshlet pipeline real
+- ✅ Single GPU dispatch enumera scene meshlets (no 1-per-mesh)
+- ✅ Instance buffer está vivo, growth-handled, ECS-driven
+- ✅ Visual confirmation desde el editor (screenshot), no logs
+- ✅ Frame time medido en producción path, no headless test
 
 ---
 
