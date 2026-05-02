@@ -27,17 +27,21 @@
 //! Same pattern as the production `SHADER_SOURCE` in `raymarch/mod.rs`
 //! and the `POOL_EVAL_SHADER_SOURCE` smoke harness.
 
+mod build;
 #[cfg(feature = "gdf-debug")]
 mod debug;
+mod scheduler;
 mod state;
 mod uniforms;
 
 #[cfg(feature = "gdf-debug")]
 pub use debug::GdfDebugCounters;
+pub use scheduler::{CAMERA_DRIFT_VOXELS, GdfScheduler, pick_cascade_cpu};
 pub use state::GdfState;
 pub use uniforms::{
-    CASCADE_0_SIDE_METRES, CASCADE_0_VOXELS_PER_AXIS, CASCADE_0_VOXEL_SIZE, CascadeDescriptor,
-    POPULATE_WORKGROUP_XY, snap_to_voxel_grid,
+    CASCADE_0_SIDE_METRES, CASCADE_0_VOXELS_PER_AXIS, CASCADE_0_VOXEL_SIZE, CASCADE_COUNT,
+    CASCADE_VOXEL_SIZES, CASCADE_VOXELS_PER_AXIS, CascadeDescriptor, GdfUniforms,
+    POPULATE_WORKGROUP_XY, cascade_cube_extent, snap_to_voxel_grid,
 };
 
 /// Concatenated populate compute shader: SDF primitives library +

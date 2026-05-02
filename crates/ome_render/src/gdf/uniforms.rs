@@ -1,19 +1,43 @@
-//! Cascade descriptor — host-side mirror of the WGSL uniform that
-//! drives the GDF populate compute pass. 32-byte std140 layout, must
-//! stay byte-for-byte identical to the `CascadeDescriptor` struct
-//! declared in `crates/ome_render/shaders/gdf_populate.wgsl`.
+//! Cascade descriptor + multi-cascade GDF uniforms. Host-side mirror
+//! of the WGSL types in `crates/ome_render/shaders/raymarch_gdf_sample.wgsl`.
+//! Layouts are pinned by `cascade_descriptor_layout` /
+//! `gdf_uniforms_layout` tests so any drift surfaces in CI before
+//! reaching the GPU.
+//!
+//! PR-5 of epic #370 promotes the uniform from a single
+//! `CascadeDescriptor` to `GdfUniforms { cascades: [CascadeDescriptor; 6] }`
+//! (192 B). The fragment shader's `pick_cascade` walks finest →
+//! coarsest and chooses the first cascade whose voxel pitch is at
+//! least the per-step cone radius.
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
-/// Voxel pitch of cascade 0. PR-3 hardcodes the cascade-0 LOD; the
-/// per-cascade pitch table lands with PR-9 alongside the planet-scale
-/// dispatch.
-pub const CASCADE_0_VOXEL_SIZE: f32 = 0.25;
+/// Number of GDF cascades (PR-5 of epic #370). 6 covers `~0.25 m`
+/// near-field through `~512 km` far-field — see [`CASCADE_VOXEL_SIZES`].
+pub const CASCADE_COUNT: usize = 6;
 
-/// Voxel count along one axis of cascade 0 (= `64`). Constant for v1;
-/// the populate dispatch uses `voxel_count_per_axis / WORKGROUP_XY` Z-slabs.
-pub const CASCADE_0_VOXELS_PER_AXIS: u32 = 64;
+/// Per-cascade voxel pitch table. Geometric ratio `8` between
+/// adjacent cascades — finest cascade picks up sub-metre detail at
+/// the camera, coarsest covers the planetary horizon. The 8× ratio
+/// is borrowed from UE5 Lumen's GDF cascade chain and matches the
+/// engine's planet-scale handheld budget: cascade 5 reaches the
+/// LOD-0 streaming radius without leaving holes between cones.
+pub const CASCADE_VOXEL_SIZES: [f32; CASCADE_COUNT] =
+    [0.25, 2.0, 16.0, 128.0, 1024.0, 8192.0];
+
+/// Voxel count along one axis (every cascade is 64³). Constant across
+/// cascades so the populate dispatch grid is the same on every level —
+/// cascade `c`'s cube extent is `CASCADE_VOXEL_SIZES[c] * 64`.
+pub const CASCADE_VOXELS_PER_AXIS: u32 = 64;
+
+/// Cascade 0 voxel pitch — kept as a stable named alias for the PR-3
+/// integration tests that pin numerics against this value.
+pub const CASCADE_0_VOXEL_SIZE: f32 = CASCADE_VOXEL_SIZES[0];
+
+/// Cascade 0 voxel count alias (re-exported as `CASCADE_0_VOXELS_PER_AXIS`
+/// from `gdf/mod.rs`).
+pub const CASCADE_0_VOXELS_PER_AXIS: u32 = CASCADE_VOXELS_PER_AXIS;
 
 /// World-space side length of cascade 0 in metres (16 m, by design).
 pub const CASCADE_0_SIDE_METRES: f32 =
@@ -22,6 +46,11 @@ pub const CASCADE_0_SIDE_METRES: f32 =
 /// Workgroup XY dimension for the populate compute shader (`8`). 8×8×1
 /// = 64 threads = single RDNA wavefront, Z-slabs externalised.
 pub const POPULATE_WORKGROUP_XY: u32 = 8;
+
+/// World-space cube extent of cascade `c` in metres.
+pub const fn cascade_cube_extent(c: usize) -> f32 {
+    CASCADE_VOXEL_SIZES[c] * CASCADE_VOXELS_PER_AXIS as f32
+}
 
 /// Cascade descriptor pushed to the populate compute shader once per
 /// frame. Layout pinned at 32 bytes; `_pad` keeps the trailing 16-byte
@@ -46,12 +75,42 @@ pub struct CascadeDescriptor {
 impl CascadeDescriptor {
     /// Cascade 0 default — 16 m side, voxel_size 0.25 m, 64³ voxels.
     pub fn cascade_0(world_origin: Vec3) -> Self {
+        Self::for_cascade(0, world_origin)
+    }
+
+    /// Build a descriptor for cascade `c` at the supplied snapped
+    /// world origin. Used by the per-cascade populate dispatch.
+    pub fn for_cascade(c: usize, world_origin: Vec3) -> Self {
         Self {
             world_origin: world_origin.to_array(),
-            voxel_size: CASCADE_0_VOXEL_SIZE,
-            voxel_count_per_axis: CASCADE_0_VOXELS_PER_AXIS,
+            voxel_size: CASCADE_VOXEL_SIZES[c],
+            voxel_count_per_axis: CASCADE_VOXELS_PER_AXIS,
             _pad: [0; 3],
         }
+    }
+}
+
+/// Multi-cascade fragment-shader uniform. Mirrors the WGSL
+/// `GdfUniforms` declared in `raymarch_gdf_sample.wgsl`. 192 B
+/// (`6 × CascadeDescriptor`) — already a multiple of the 16 B std140
+/// alignment so no trailing pad is needed.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug, Default)]
+pub struct GdfUniforms {
+    pub cascades: [CascadeDescriptor; CASCADE_COUNT],
+}
+
+impl GdfUniforms {
+    /// Default placement: every cascade rooted at `world_origin = 0`.
+    /// `GdfState::dispatch_populate` overwrites a single descriptor
+    /// each time it advances a cascade, so the fragment shader sees
+    /// per-cascade origins independently.
+    pub fn from_origins(origins: &[Vec3; CASCADE_COUNT]) -> Self {
+        let mut cascades = [CascadeDescriptor::default(); CASCADE_COUNT];
+        for (c, origin) in origins.iter().enumerate() {
+            cascades[c] = CascadeDescriptor::for_cascade(c, *origin);
+        }
+        Self { cascades }
     }
 }
 
@@ -98,6 +157,44 @@ mod tests {
         // axis. Pin the assumption so a future cascade-size bump can't
         // silently break the dispatch.
         assert_eq!(CASCADE_0_VOXELS_PER_AXIS % POPULATE_WORKGROUP_XY, 0);
+    }
+
+    #[test]
+    fn gdf_uniforms_layout() {
+        // 6 cascades × 32 B = 192 B; alignment 4 (Pod from `[CD; 6]`).
+        // WGSL std140 will see this as `array<CascadeDescriptor, 6>`
+        // with stride 32 (= 16-aligned, no padding round-up needed).
+        assert_eq!(size_of::<GdfUniforms>(), 32 * CASCADE_COUNT);
+        assert_eq!(align_of::<GdfUniforms>(), 4);
+        assert_eq!(offset_of!(GdfUniforms, cascades), 0);
+    }
+
+    #[test]
+    fn cascade_voxel_sizes_geometric_ratio() {
+        // 8× ratio between adjacent cascades; deviating breaks
+        // `pick_cascade`'s "first cascade with voxel_size >= cone_radius"
+        // guarantee — non-monotonic voxel sizes would let coarser
+        // cascades win for close rays. Pin the ratio.
+        for c in 1..CASCADE_COUNT {
+            let ratio = CASCADE_VOXEL_SIZES[c] / CASCADE_VOXEL_SIZES[c - 1];
+            assert!(
+                (ratio - 8.0).abs() < 1.0e-3,
+                "cascade {c} voxel ratio {ratio} != 8.0"
+            );
+        }
+    }
+
+    #[test]
+    fn cascade_cube_extents_cover_planet_scale_horizon() {
+        // Cascade 5 must cover the LOD-0 streaming radius (~256 m for
+        // chunks at level 0) by orders of magnitude — handheld view
+        // distance peaks ~16 km, planet horizon ~~5000 km. 524 km of
+        // cascade-5 reach covers both without falling back to the
+        // coarsest-AABB sphere-trace floor.
+        assert!(cascade_cube_extent(5) > 100_000.0);
+        // Cascade 0 must keep voxel pitch sub-metre so the editor's
+        // close-up gizmos render without aliasing.
+        assert!(CASCADE_VOXEL_SIZES[0] < 1.0);
     }
 
     #[test]

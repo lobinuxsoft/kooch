@@ -153,13 +153,13 @@ fn raymarch_system(resources: &mut Resources) {
 
     let (w, h) = gpu.size();
     depth.ensure(gpu.device(), (w, h));
-    let aspect = w as f32 / h.max(1) as f32;
     // Drain world-streaming pending deltas before the ECS-side scene
     // collect — keeps `ChunkManager.pending_*` from growing unbounded
     // when the demo runs without ECS SDFs (the streaming chunks are
     // reason enough to render).
     renderer.apply_streaming_delta(gpu.queue(), resources);
-    let has_camera = renderer.update_camera(gpu.device(), gpu.queue(), resources, aspect);
+    let aspect = w as f32 / h.max(1) as f32;
+    let has_camera = renderer.update_camera(gpu.device(), gpu.queue(), resources, aspect, h);
     // Standalone demo has no separate sky pass — raymarch owns the sky via
     // its internal gradient, so `skip_internal_sky = false` and it clears
     // the targets itself.

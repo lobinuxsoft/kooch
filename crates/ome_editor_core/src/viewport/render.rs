@@ -88,7 +88,13 @@ pub(crate) fn render_viewport(
     let has_sdf = project_loaded
         && (has_any_visible_sdf(resources) || raymarch.bvh_state().streaming_chunk_count() > 0);
     let camera_ok = has_sdf
-        && raymarch.update_camera(gpu.device(), gpu.queue(), resources, target.aspect());
+        && raymarch.update_camera(
+            gpu.device(),
+            gpu.queue(),
+            resources,
+            target.aspect(),
+            target.size().1,
+        );
 
     if camera_ok {
         raymarch.update_scene(

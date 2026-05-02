@@ -25,7 +25,11 @@ struct CameraUniforms {
     inverse_view: mat4x4<f32>,
     inverse_projection: mat4x4<f32>,
     position: vec3<f32>,
-    _pad0: f32,
+    // Per-pixel cone half-angle in radians at unit `t`. Drives
+    // `pick_cascade`'s cone-radius matching: at distance `t` along
+    // the ray, cone footprint = `t * pixel_cone_angle`. PR-5 of epic
+    // #370 — replaces the legacy `_pad0` slot, layout unchanged.
+    pixel_cone_angle: f32,
 }
 
 struct RayMarchParams {
@@ -115,7 +119,7 @@ fn ray_march(ray: Ray) -> HitResult {
     for (var i = 0u; i < params.max_steps; i = i + 1u) {
         result.steps = i;
         let p = ray.origin + ray.direction * t;
-        let d = eval_scene_bvh(p);
+        let d = eval_scene_bvh(p, camera.position, camera.pixel_cone_angle);
         // Adaptive epsilon: threshold widens linearly with distance to
         // approximate a pixel-cone footprint. Rays converge faster on
         // far surfaces without losing close-up precision.
@@ -140,10 +144,15 @@ fn calc_normal(p: vec3<f32>, dist: f32) -> vec3<f32> {
     // future SDF-normal shader (pathtracer, debug viz, etc.) reuses the
     // same value and inherits the CSG-seam guarantee from #225.
     let eps = sdf_normal_eps(dist, params.surface_threshold, params.epsilon_factor);
+    let cam_pos = camera.position;
+    let cone = camera.pixel_cone_angle;
     let n = vec3<f32>(
-        eval_scene_bvh(p + vec3<f32>(eps, 0.0, 0.0)) - eval_scene_bvh(p - vec3<f32>(eps, 0.0, 0.0)),
-        eval_scene_bvh(p + vec3<f32>(0.0, eps, 0.0)) - eval_scene_bvh(p - vec3<f32>(0.0, eps, 0.0)),
-        eval_scene_bvh(p + vec3<f32>(0.0, 0.0, eps)) - eval_scene_bvh(p - vec3<f32>(0.0, 0.0, eps)),
+        eval_scene_bvh(p + vec3<f32>(eps, 0.0, 0.0), cam_pos, cone)
+            - eval_scene_bvh(p - vec3<f32>(eps, 0.0, 0.0), cam_pos, cone),
+        eval_scene_bvh(p + vec3<f32>(0.0, eps, 0.0), cam_pos, cone)
+            - eval_scene_bvh(p - vec3<f32>(0.0, eps, 0.0), cam_pos, cone),
+        eval_scene_bvh(p + vec3<f32>(0.0, 0.0, eps), cam_pos, cone)
+            - eval_scene_bvh(p - vec3<f32>(0.0, 0.0, eps), cam_pos, cone),
     );
     return normalize(n);
 }
