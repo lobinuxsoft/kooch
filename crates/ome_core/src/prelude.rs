@@ -5,6 +5,7 @@
 //! ```
 
 pub use crate::app::App;
+pub use crate::assets::{Asset, Assets, Handle};
 pub use crate::buffer::{BufferPool, GpuBuffer, StagingBuffer, UniformBuffer};
 pub use crate::event::{AppExit, EventReader, EventRegistry, Events};
 pub use crate::gpu::{GpuContext, GpuError};

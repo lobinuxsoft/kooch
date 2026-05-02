@@ -16,6 +16,10 @@ pollster.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+# Asset handles use slotmap (generational arena: dense Vec storage,
+# u32 indices, generation counter for stale-handle detection — DOD-friendly).
+slotmap = "1.0"
+
 # Dynamic plugin support (optional)
 stabby = { workspace = true, features = ["libloading"], optional = true }
 libloading = { workspace = true, optional = true }
