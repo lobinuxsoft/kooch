@@ -41,7 +41,7 @@ pub use builder::{build_default_meshlets, build_meshlets_from_mesh, MeshletBuild
 pub use cull::{
     camera_in_backface_cone, extract_frustum_planes, sphere_outside_frustum, CullParams,
 };
-pub use dispatcher::{DrawIndirectArgs, MeshletCull};
+pub use dispatcher::{DrawIndirectArgs, HiZTestParams, MeshletCull};
 pub use drawer::MeshletDrawer;
 pub use gpu_meshlet::{
     binding, meshlet_bind_group, meshlet_bind_group_layout, GpuMeshletMesh,
