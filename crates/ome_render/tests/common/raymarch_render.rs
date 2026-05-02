@@ -14,6 +14,7 @@ use glam::{Mat4, Vec3, Vec4};
 use ome_bvh::sdf_primitive::{SdfPrimitive, TYPE_SPHERE};
 use ome_bvh::{IS_RAYMARCH, LeafAabb, ROLE_RAYMARCH_ADD};
 use ome_render::raymarch::RayMarchRenderer;
+use ome_render::tile_cull::TileBounds;
 use ome_world::{ChunkContent, ChunkId};
 
 pub const TARGET_SIZE: u32 = 64;
@@ -271,4 +272,61 @@ pub fn pixel_is_sky(pixel: [u8; 4]) -> bool {
 pub fn pixel_at(pixels: &[u8], bytes_per_row: u32, x: u32, y: u32) -> [u8; 4] {
     let idx = ((y * bytes_per_row) + x * 4) as usize;
     [pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]]
+}
+
+/// Run a tile-cull dispatch off the renderer's stored viewport size +
+/// read the resulting SSBO back into a `Vec<TileBounds>` indexed
+/// `[tile_y * tile_count_x + tile_x]`. Caller must have driven a
+/// camera + GDF populate before calling — the compute samples cascade
+/// 5 of `GdfState`, so unpopulated cascades produce empty tiles.
+pub fn dispatch_and_readback_tile_bounds(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut RayMarchRenderer,
+) -> Vec<TileBounds> {
+    renderer.dispatch_tile_cull(device, queue);
+    let state = renderer.tile_cull_state();
+    let total = state.last_uniforms().tile_count_total();
+    assert!(total > 0, "tile_count_total must be > 0 — call set_viewport_size first");
+    let entry_bytes = std::mem::size_of::<TileBounds>() as u64;
+    let total_bytes = u64::from(total) * entry_bytes;
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("common::raymarch_render::tile_bounds_staging"),
+        size: total_bytes,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("common::raymarch_render::tile_bounds_readback"),
+    });
+    encoder.copy_buffer_to_buffer(
+        state.tile_bounds_buffer(),
+        0,
+        &staging,
+        0,
+        total_bytes,
+    );
+    queue.submit(std::iter::once(encoder.finish()));
+
+    let slice = staging.slice(..);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |res| {
+        sender.send(res).ok();
+    });
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(30)),
+        })
+        .expect("device poll");
+    receiver
+        .recv()
+        .expect("map_async sender dropped")
+        .expect("map_async failed");
+    let bounds: Vec<TileBounds> = {
+        let view = slice.get_mapped_range();
+        bytemuck::cast_slice::<u8, TileBounds>(&view).to_vec()
+    };
+    staging.unmap();
+    bounds
 }

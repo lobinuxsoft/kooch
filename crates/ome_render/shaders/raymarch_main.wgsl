@@ -64,6 +64,28 @@ struct SceneMeta {
 // Pool bindings (group 1 5..=10) are declared in
 // `raymarch_pool_eval.wgsl` and visible here without redeclaration.
 
+// PR-6 (epic #370): tile-cull pre-pass output. The compute pass writes
+// one entry per 8×8 tile of the viewport; the fragment looks up its
+// own tile to early-discard sky tiles + clamp the ray-march loop to
+// `[t_min, t_max]`. Mirror of host-side `TileBounds` (16 B std140).
+struct TileBounds {
+    t_min: f32,
+    t_max: f32,
+    flags: u32,
+    _pad: u32,
+}
+
+struct TileCullParams {
+    viewport_size: vec2<u32>,
+    tile_count: vec2<u32>,
+}
+
+@group(2) @binding(0) var<storage, read> tile_ray_bounds: array<TileBounds>;
+@group(2) @binding(1) var<uniform> tile_cull_u: TileCullParams;
+
+const TILE_FLAG_NON_EMPTY: u32 = 1u;
+const TILE_WORKGROUP_XY: u32 = 8u;
+
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -111,11 +133,18 @@ struct HitResult {
     steps: u32,
 }
 
-fn ray_march(ray: Ray) -> HitResult {
+// PR-6 (epic #370): bounds-aware ray-march. `t_start` jump-starts past
+// any leading empty space the tile-cull pass already rejected; `t_end`
+// terminates the loop the moment the ray leaves cascade 5 (or hits the
+// user-set `max_distance` floor, whichever is closer). Falls back to
+// the original `[0, params.max_distance]` window when the caller passes
+// `t_start = 0, t_end = params.max_distance`.
+fn ray_march_clamped(ray: Ray, t_start: f32, t_end: f32) -> HitResult {
     var result: HitResult;
     result.hit = false;
     result.steps = 0u;
-    var t = 0.0;
+    var t = max(t_start, 0.0);
+    let t_limit = min(t_end, params.max_distance);
     for (var i = 0u; i < params.max_steps; i = i + 1u) {
         result.steps = i;
         let p = ray.origin + ray.direction * t;
@@ -130,7 +159,7 @@ fn ray_march(ray: Ray) -> HitResult {
             result.distance = t;
             return result;
         }
-        if t > params.max_distance {
+        if t > t_limit {
             break;
         }
         t = t + d;
@@ -176,15 +205,38 @@ fn world_to_ndc_depth(world: vec3<f32>) -> f32 {
 @fragment
 fn fs_main(in: VertexOutput) -> FsOut {
     let ray = generate_ray(in.uv);
-    let hit = ray_march(ray);
+
+    // PR-6 (epic #370): tile-cull lookup. `flags == 0` means no ray of
+    // this tile hit anything in cascade 5 — the entire 8×8 block is
+    // sky. Skip the ray-march loop entirely and take the sky branch
+    // directly. Non-empty tiles march only the `[t_min, t_max]` window
+    // the compute pre-pass identified, leaving the rest of the ray
+    // unconditionally skipped.
+    let pixel = vec2<u32>(u32(in.position.x), u32(in.position.y));
+    let tile_id = pixel / TILE_WORKGROUP_XY;
+    let tile_idx = tile_id.x + tile_id.y * tile_cull_u.tile_count.x;
+    let bounds = tile_ray_bounds[tile_idx];
+    let tile_non_empty = (bounds.flags & TILE_FLAG_NON_EMPTY) != 0u;
 
     var out: FsOut;
 
-    if !hit.hit {
+    if !tile_non_empty {
         if scene_meta.skip_internal_sky != 0u {
             // A separate sky pass already wrote color + depth=1.0 for
-            // every pixel; do nothing. `discard` skips both color and
-            // depth writes, preserving whatever the sky pass left.
+            // every pixel; do nothing.
+            discard;
+        }
+        let t = clamp(ray.direction.y * 0.5 + 0.5, 0.0, 1.0);
+        let sky = mix(scene_meta.sky_bottom.rgb, scene_meta.sky_top.rgb, t);
+        out.color = vec4<f32>(sky, 1.0);
+        out.depth = 1.0;
+        return out;
+    }
+
+    let hit = ray_march_clamped(ray, bounds.t_min, bounds.t_max);
+
+    if !hit.hit {
+        if scene_meta.skip_internal_sky != 0u {
             discard;
         }
         let t = clamp(ray.direction.y * 0.5 + 0.5, 0.0, 1.0);

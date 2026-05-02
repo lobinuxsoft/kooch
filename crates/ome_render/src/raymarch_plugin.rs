@@ -153,6 +153,9 @@ fn raymarch_system(resources: &mut Resources) {
 
     let (w, h) = gpu.size();
     depth.ensure(gpu.device(), (w, h));
+    // PR-6 (epic #370): tile-cull dispatch needs viewport pixels to
+    // size its SSBO; plumb the surface dimensions before update_scene.
+    renderer.set_viewport_size(w, h);
     // Drain world-streaming pending deltas before the ECS-side scene
     // collect — keeps `ChunkManager.pending_*` from growing unbounded
     // when the demo runs without ECS SDFs (the streaming chunks are
