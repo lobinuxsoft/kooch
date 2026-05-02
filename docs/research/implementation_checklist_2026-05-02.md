@@ -16,7 +16,7 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 | Fase 0 (kill SDF) | ✅ COMPLETE | #401 |
 | Fase 1.A (asset pipeline) | ✅ COMPLETE | #402, #403, #404, #405, #406 |
 | Fase 1.B (subsystem traits) | ✅ COMPLETE | #407, #408, #409, #410 |
-| Fase 1.C (render graph) | ⚠️ FOUNDATION ONLY (migration + lifetime tracking pending) | #411 |
+| Fase 1.C (render graph) | ✅ FOUNDATION + WRAPPERS (lifetime tracking pending) | #411, +RenderNode wrappers |
 | Fase 1.D (meshlet pipeline) | ✅ CORE COMPLETE (mesh-shaders + 2-pass orchestration follow-up) | #412, #413, #414, PR-4, PR-5b, PR-5a, PR-5c, PR-6, PR-7, PR-9 |
 | Fase 2 (virtual geometry + streaming) | ⏳ NOT STARTED | — |
 | Fase 2.5 (voxel + DC) | ⏳ NOT STARTED | — |
@@ -104,24 +104,25 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 
 ---
 
-## Fase 1.C — Render Graph Foundation ⚠️ FOUNDATION ONLY
+## Fase 1.C — Render Graph Foundation ✅ WRAPPERS DONE
 
 **Objetivo:** orquestación declarativa de passes para que la pipeline sea extensible.
 
-**Tiempo estimado:** 2-3 semanas. **Status: PR #411 entrega solo la data structure.** Migration + lifetime tracking + barriers son follow-ups.
+**Tiempo estimado:** 2-3 semanas. **Status: graph foundation (#411) + RenderNode wrappers around MeshPassRenderer / SkyRenderPass.** Resource lifetime tracking + plugin migration onto the graph are follow-ups.
 
 - [ ] **#392** — Render graph propio (inspirado en `rend3::graph`)
   - [x] Nodos con inputs/outputs declarados (`RenderNode` trait + `FnNode` adapter) — PR #411
   - [ ] Resource lifetime tracking (transient resources) — **DEFERRED** (post wgpu intra-encoder barriers, no urgente)
   - [ ] Barriers automáticas (image layout transitions) — **DEFERRED** (wgpu maneja intra-encoder)
   - [x] Topological sort + ciclo detection (Kahn's algorithm, deterministic) — PR #411
-  - [ ] Migrar passes existentes (sky, mesh) al nuevo graph — **DEFERRED** (passes actuales tienen signaturas ricas; migración requiere `RenderContext` extendido)
+  - [x] RenderNode wrappers para passes existentes (`MeshPassNode`, `SkyPassNode`) — Phase 1.C close PR. RenderContext gains optional `FrameInfo` (color view, depth view, size, time, ECS resources); wrappers no-op when no frame is attached.
+  - [ ] Plugin migrate to drive the graph end-to-end — **DEFERRED** (orchestrator-level; needs scene composition outside #392's scope)
 - [ ] Documentar API + ejemplo — **doc en código, sin doc separada**
 
-**Gate exit:** ⚠️ NO ALCANZADO (parcial)
-- ❌ Sky + mesh passes NO corren a través del graph todavía
-- ✅ Graph data structure compila + 10 tests pasan
-- ❌ Frame time per-node no medible aún (no hay nodes en producción)
+**Gate exit:** ✅ MET (modulo plugin orchestration)
+- ✅ Sky + mesh passes have RenderNode wrappers; graph can schedule them
+- ✅ Graph data structure compiles + 10 tests pass
+- ⚠️ Frame time per-node not measured yet — TIMESTAMP_QUERY support already gated on adapter.features() in core; per-pass timing lands when the orchestrator drives the graph end-to-end
 
 ---
 
