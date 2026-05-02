@@ -7,7 +7,7 @@
 //! per frame inside the render encoder, after camera matrices are
 //! known.
 //!
-//! # Pipeline (PR-4 step 1)
+//! # Pipeline
 //!
 //! ```text
 //! camera matrices  →  CullParams UBO          (CPU upload)
@@ -20,11 +20,19 @@
 //!                          │
 //!                          ▼
 //!         visible_meshlets[0..visible_count]   (atomic-appended)
+//!                          │
+//!                          ▼
+//!     copy_buffer_to_buffer(visible_count → indirect_args[+4])
+//!                          │
+//!                          ▼
+//!  draw_indirect(indirect_args)               (next commits)
 //! ```
 //!
-//! Indirect-draw arg writeback is wired in step 2 (next commit) — this
-//! commit lays the buffer / bind-group / dispatch infrastructure that
-//! step 2 then extends with binding(4) on the cull shader.
+//! The `instance_count` slot (offset 4 inside `DrawIndirectArgs`) is
+//! kept in lock-step with `visible_count` via a single-shot
+//! buffer-to-buffer copy so the cull shader stays free of indirect-args
+//! bookkeeping. `vertex_count` (offset 0) is set once at construction
+//! and never changes.
 
 use std::num::NonZeroU64;
 
@@ -187,11 +195,15 @@ impl MeshletCull {
             ],
         });
 
+        // Drawer-side meshlet pool layout — cached here so the
+        // rasterizer (PR-4 step 3) can pull the same handle from the
+        // dispatcher and guarantee the cull and draw passes agree on
+        // storage-buffer slot numbering.
         let meshlet_bgl = meshlet_bind_group_layout(device);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("meshlet_cull_pipeline_layout"),
-            bind_group_layouts: &[Some(&cull_bgl), Some(&meshlet_bgl)],
+            bind_group_layouts: &[Some(&cull_bgl)],
             immediate_size: 0,
         });
 
@@ -312,14 +324,29 @@ impl MeshletCull {
             ],
         });
 
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("meshlet_cull_pass"),
-            timestamp_writes: None,
-        });
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &cull_bg, &[]);
-        let workgroups = mesh.meshlet_count.div_ceil(64);
-        pass.dispatch_workgroups(workgroups.max(1), 1, 1);
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("meshlet_cull_pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &cull_bg, &[]);
+            let workgroups = mesh.meshlet_count.div_ceil(64);
+            pass.dispatch_workgroups(workgroups.max(1), 1, 1);
+        }
+
+        // Mirror the atomic visible counter into the indirect args'
+        // `instance_count` slot. Offset 4 inside DrawIndirectArgs:
+        //   [0..4)   vertex_count    (constant, set at construction)
+        //   [4..8)   instance_count  (this copy)
+        //   [8..16)  first_vertex / first_instance (zero, immutable)
+        encoder.copy_buffer_to_buffer(
+            &self.visible_count,
+            0,
+            &self.indirect_args,
+            4,
+            4,
+        );
     }
 }
 
