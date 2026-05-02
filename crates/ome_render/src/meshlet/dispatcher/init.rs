@@ -6,6 +6,7 @@ use wgpu::util::DeviceExt;
 
 use crate::meshlet::cull::CullParams;
 use crate::meshlet::gpu_meshlet::meshlet_bind_group_layout;
+use crate::meshlet::scene::{MeshletScene, SceneCullParams};
 
 use super::types::{DrawIndirectArgs, HiZTestParams};
 use super::MeshletCull;
@@ -31,6 +32,7 @@ impl MeshletCull {
 
         let cull_bgl = build_cull_bgl(device);
         let hi_z_bgl = build_hi_z_bgl(device);
+        let scene_bgl = MeshletScene::bind_group_layout(device);
         let meshlet_bgl = meshlet_bind_group_layout(device);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -61,6 +63,24 @@ impl MeshletCull {
             cache: None,
         });
 
+        // Scene-wide cull pipeline (`cs_cull_scene`) — group(0) cull
+        // shared with the per-mesh path, group(2) instance buffer +
+        // SceneCullParams. group(1) is unused here so the layout array
+        // marks it None.
+        let pipeline_layout_scene = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("meshlet_cull_scene_pipeline_layout"),
+            bind_group_layouts: &[Some(&cull_bgl), None, Some(&scene_bgl)],
+            immediate_size: 0,
+        });
+        let pipeline_scene = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("meshlet_cull_scene_pipeline"),
+            layout: Some(&pipeline_layout_scene),
+            module: &shader,
+            entry_point: Some("cs_cull_scene"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_cull_params"),
             size: std::mem::size_of::<CullParams>() as u64,
@@ -70,6 +90,12 @@ impl MeshletCull {
         let hi_z_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_cull_hi_z_params"),
             size: std::mem::size_of::<HiZTestParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let scene_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_cull_scene_params"),
+            size: std::mem::size_of::<SceneCullParams>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -109,11 +135,14 @@ impl MeshletCull {
         Self {
             pipeline,
             pipeline_hi_z,
+            pipeline_scene,
             cull_bgl,
             hi_z_bgl,
+            scene_bgl,
             meshlet_bgl,
             params_buffer,
             hi_z_params_buffer,
+            scene_params_buffer,
             visible_meshlets,
             visible_count,
             indirect_args,

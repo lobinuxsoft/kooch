@@ -46,12 +46,15 @@ pub use types::{DrawIndirectArgs, HiZTestParams};
 pub struct MeshletCull {
     pub(super) pipeline: wgpu::ComputePipeline,
     pub(super) pipeline_hi_z: wgpu::ComputePipeline,
+    pub(super) pipeline_scene: wgpu::ComputePipeline,
     pub(super) cull_bgl: wgpu::BindGroupLayout,
     pub(super) hi_z_bgl: wgpu::BindGroupLayout,
+    pub(super) scene_bgl: wgpu::BindGroupLayout,
     pub(super) meshlet_bgl: wgpu::BindGroupLayout,
 
     pub(super) params_buffer: wgpu::Buffer,
     pub(super) hi_z_params_buffer: wgpu::Buffer,
+    pub(super) scene_params_buffer: wgpu::Buffer,
     pub(super) visible_meshlets: wgpu::Buffer,
     pub(super) visible_count: wgpu::Buffer,
     pub(super) indirect_args: wgpu::Buffer,
@@ -114,6 +117,12 @@ impl MeshletCull {
     /// Bind group layout for the Hi-Z test (group 1 of `cs_cull_hi_z`).
     pub fn hi_z_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.hi_z_bgl
+    }
+
+    /// Bind group layout for the scene-wide cull (group 2 of
+    /// `cs_cull_scene`): instance storage + `SceneCullParams` UBO.
+    pub fn scene_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.scene_bgl
     }
 }
 
