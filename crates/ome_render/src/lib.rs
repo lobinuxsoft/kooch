@@ -13,6 +13,7 @@
 //! Gizmo rendering lives in the dedicated `ome_gizmos` crate.
 
 pub mod fps;
+pub mod graph;
 pub mod mesh;
 pub mod plugin;
 pub mod sky;
@@ -24,6 +25,7 @@ pub mod texture;
 pub const VIEWPORT_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 pub use fps::FpsTracker;
+pub use graph::{FnNode, GraphError, NodeId, RenderContext, RenderGraph, RenderNode};
 pub use mesh::{Aabb, GpuMesh, MeshLoadError, MeshLoader, MeshPassRenderer, MeshVertex};
 pub use plugin::RenderPlugin;
 pub use sky::{ActiveSky, SkyRenderPass};

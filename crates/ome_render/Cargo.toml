@@ -16,6 +16,7 @@ bytemuck.workspace = true
 tracing.workspace = true
 gltf.workspace = true
 image.workspace = true
+slotmap = "1.0"
 
 [dev-dependencies]
 naga = { version = "29", features = ["wgsl-in"] }
