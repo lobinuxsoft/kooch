@@ -11,4 +11,5 @@ authors.workspace = true
 ome_core.workspace = true
 winit.workspace = true
 gilrs.workspace = true
+glam.workspace = true
 tracing.workspace = true
