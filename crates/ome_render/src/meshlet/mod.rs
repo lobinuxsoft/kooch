@@ -33,12 +33,14 @@ mod asset;
 mod builder;
 mod cull;
 mod dispatcher;
+mod drawer;
 mod gpu_meshlet;
 
 pub use asset::{MeshletDescriptor, MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES};
 pub use builder::{build_default_meshlets, build_meshlets_from_mesh, MeshletBuildError};
 pub use cull::{extract_frustum_planes, sphere_outside_frustum, CullParams};
 pub use dispatcher::{DrawIndirectArgs, MeshletCull};
+pub use drawer::MeshletDrawer;
 pub use gpu_meshlet::{
     binding, meshlet_bind_group, meshlet_bind_group_layout, GpuMeshletMesh,
 };
