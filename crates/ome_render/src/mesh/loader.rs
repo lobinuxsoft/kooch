@@ -1,43 +1,65 @@
-//! glTF 2.0 mesh loader with an in-memory cache keyed by file path.
+//! Legacy path-based mesh cache (`MeshLoader`).
 //!
-//! MVP scope (issue #129): loads the **first primitive** of the **first
-//! mesh** in the document. Materials, scenes, node hierarchy, skinning,
-//! morph targets and multi-primitive meshes are out of scope and ignored.
+//! Wraps the [`GltfMeshLoader`](super::GltfMeshLoader) parser + the
+//! upload helper on [`Mesh`](super::Mesh) so the existing
+//! [`MeshPassRenderer`](super::MeshPassRenderer) keeps working unchanged
+//! while the asset pipeline migrates to `AssetServer + Assets<Mesh>`.
+//!
+//! NEW code SHOULD use:
+//! ```ignore
+//! let mut server = AssetServer::new();
+//! server.register_loader::<Mesh, _>(GltfMeshLoader);
+//! resources.insert(Assets::<Mesh>::new());
+//! let handle = server.load::<Mesh>("models/cube.glb", &mut resources)?;
+//! ```
+//!
+//! `MeshLoader` itself is scheduled for removal once the renderer flips
+//! to the new flow (follow-up issue).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use glam::Vec3;
-use wgpu::util::DeviceExt;
+use super::asset::Mesh;
+use super::gltf_loader::{GltfMeshError, parse_mesh_bytes};
+use super::gpu_mesh::GpuMesh;
 
-use super::gpu_mesh::{Aabb, GpuMesh, MeshVertex};
-
-/// Errors produced while loading a glTF asset into a [`GpuMesh`].
+/// Errors produced while loading a glTF asset into a [`GpuMesh`] via the
+/// legacy path-based cache.
 #[derive(Debug)]
 pub enum MeshLoadError {
-    /// The `gltf` crate failed to parse or import the file.
-    Gltf(gltf::Error),
-    /// Required vertex attribute was missing from the primitive.
-    MissingAttribute(&'static str),
-    /// The document contained no meshes (or no primitives).
-    EmptyDocument,
+    /// File could not be read from disk.
+    Io(std::io::Error),
+    /// Underlying parser error from the glTF asset loader.
+    Parse(GltfMeshError),
 }
 
 impl std::fmt::Display for MeshLoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Gltf(e) => write!(f, "gltf import failed: {e}"),
-            Self::MissingAttribute(name) => write!(f, "primitive missing required attribute: {name}"),
-            Self::EmptyDocument => write!(f, "gltf document contains no mesh primitives"),
+            Self::Io(e) => write!(f, "mesh load I/O failed: {e}"),
+            Self::Parse(e) => write!(f, "{e}"),
         }
     }
 }
 
-impl std::error::Error for MeshLoadError {}
+impl std::error::Error for MeshLoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            Self::Parse(e) => Some(e),
+        }
+    }
+}
 
-impl From<gltf::Error> for MeshLoadError {
-    fn from(value: gltf::Error) -> Self {
-        Self::Gltf(value)
+impl From<std::io::Error> for MeshLoadError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<GltfMeshError> for MeshLoadError {
+    fn from(e: GltfMeshError) -> Self {
+        Self::Parse(e)
     }
 }
 
@@ -56,7 +78,10 @@ impl MeshLoader {
         Self::default()
     }
 
-    /// Returns the cached mesh for `path`, or loads and caches it on demand.
+    /// Returns the cached mesh for `path`, or loads + caches it on demand.
+    ///
+    /// Internally: read bytes → `parse_mesh_bytes` → [`Mesh::upload`] →
+    /// `Arc<GpuMesh>` cache insert.
     pub fn get_or_load(
         &mut self,
         device: &wgpu::Device,
@@ -65,10 +90,17 @@ impl MeshLoader {
         if let Some(cached) = self.cache.get(path) {
             return Ok(cached.clone());
         }
-        let mesh = load_from_disk(device, path)?;
-        let arc = Arc::new(mesh);
+        let bytes = std::fs::read(path)?;
+        let mesh: Mesh = parse_mesh_bytes(&bytes)?;
+        let gpu = mesh.upload(device);
+        let arc = Arc::new(gpu);
         self.cache.insert(path.to_string(), arc.clone());
-        tracing::info!(path, vertices = arc.vertex_count, indices = arc.index_count, "loaded glTF mesh");
+        tracing::info!(
+            path,
+            vertices = arc.vertex_count,
+            indices = arc.index_count,
+            "loaded glTF mesh",
+        );
         Ok(arc)
     }
 
@@ -76,71 +108,4 @@ impl MeshLoader {
     pub fn cached_count(&self) -> usize {
         self.cache.len()
     }
-}
-
-fn load_from_disk(device: &wgpu::Device, path: &str) -> Result<GpuMesh, MeshLoadError> {
-    let (document, buffers, _images) = gltf::import(path)?;
-
-    let primitive = document
-        .meshes()
-        .next()
-        .and_then(|m| m.primitives().next())
-        .ok_or(MeshLoadError::EmptyDocument)?;
-
-    let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-
-    let positions: Vec<[f32; 3]> = reader
-        .read_positions()
-        .ok_or(MeshLoadError::MissingAttribute("POSITION"))?
-        .collect();
-
-    let vertex_count = positions.len();
-
-    let normals: Vec<[f32; 3]> = reader
-        .read_normals()
-        .map(|iter| iter.collect())
-        .unwrap_or_else(|| vec![[0.0, 1.0, 0.0]; vertex_count]);
-
-    let uvs: Vec<[f32; 2]> = reader
-        .read_tex_coords(0)
-        .map(|coords| coords.into_f32().collect())
-        .unwrap_or_else(|| vec![[0.0, 0.0]; vertex_count]);
-
-    let mut aabb = Aabb::empty();
-    let vertices: Vec<MeshVertex> = (0..vertex_count)
-        .map(|i| {
-            let p = positions[i];
-            aabb.expand(Vec3::from_array(p));
-            MeshVertex {
-                position: p,
-                normal: normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
-                uv: uvs.get(i).copied().unwrap_or([0.0, 0.0]),
-            }
-        })
-        .collect();
-
-    let indices: Vec<u32> = match reader.read_indices() {
-        Some(idx) => idx.into_u32().collect(),
-        None => (0..vertex_count as u32).collect(),
-    };
-
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("mesh_vertex_buffer"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("mesh_index_buffer"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-
-    Ok(GpuMesh {
-        vertex_buffer,
-        index_buffer,
-        vertex_count: vertex_count as u32,
-        index_count: indices.len() as u32,
-        index_format: wgpu::IndexFormat::Uint32,
-        aabb,
-    })
 }
