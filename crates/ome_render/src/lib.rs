@@ -14,6 +14,7 @@
 
 pub mod fps;
 pub mod graph;
+pub mod hi_z;
 pub mod mesh;
 pub mod meshlet;
 pub mod plugin;
@@ -27,6 +28,7 @@ pub const VIEWPORT_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Dept
 
 pub use fps::FpsTracker;
 pub use graph::{FnNode, GraphError, NodeId, RenderContext, RenderGraph, RenderNode};
+pub use hi_z::HiZ;
 pub use mesh::{Aabb, GpuMesh, MeshLoadError, MeshLoader, MeshPassRenderer, MeshVertex};
 pub use meshlet::{
     build_default_meshlets, build_meshlets_from_mesh, MeshletBuildError, MeshletDescriptor,
