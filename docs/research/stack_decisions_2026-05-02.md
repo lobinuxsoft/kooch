@@ -13,16 +13,20 @@
 - **Cascade GDF + tile-cull + TLAS/BLAS pool como infraestructura "Nanite-tier para SDF".** Sin precedente shipeable. Claybook + Dreams + Dual Universe — los 3 engines que más empujaron SDF — terminan extrayendo geometría discreta antes del render final.
 - **Issue #360 (sparse chunk LOD) y #370 (tile-cull) en su forma actual.** El trabajo realizado queda como referencia histórica; no se construye más encima.
 
-### Lo que se preserva
+### Lo que se elimina además (decisión revisada 2026-05-02)
 
-- **`ome_sdf` como autoring tool / brushes / source-of-truth para CSG suave.** El SDF es la representación de autoría. El render final es mesh.
-- **Componentes SDF existentes** (`SdfSphere`, `SdfBox`, `SdfCapsule`, `SdfCylinder`, `SdfTorus`, `SdfPlane`). Se usan para autoría y como input al pipeline de extracción de mesh.
-- **Primitivas WGSL en `sdf_primitives.wgsl`.** Reutilizables tanto para physics queries (collision contra terreno SDF) como para pipeline de dual contouring offline/runtime.
+**SDF se elimina completamente del engine. NO se preserva como autoring tool, NO se mantiene `ome_sdf`, NO habrá dual contouring future.**
+
+- **`ome_sdf` crate**: deletear entero
+- **Componentes SDF** (`SdfSphere`, `SdfBox`, `SdfCapsule`, `SdfCylinder`, `SdfTorus`, `SdfPlane`): deletear de `ome_ecs`
+- **Primitivas WGSL** (`sdf_primitives.wgsl`): deletear
+- **Categoría "SDF"** del Add Component menu y Spawn menu: deletear
+- **Crates dependientes**: `ome_bvh` y `ome_world` se evalúan — si solo servían al raymarcher, deletear también; si tienen valor general (ECS hierarchy queries, streaming genérico), preservar
 
 ### Lo que se construye en su lugar
 
 - **Mesh GPU-driven pipeline** (Nanite-style virtual geometry). Referencias técnicas: Bevy 0.16 `virtual_geometry`, `Firestar99/nanite-at-home`, Karis SIGGRAPH 2021 paper.
-- **Bridge SDF → Mesh** vía dual contouring (futuro, no inmediato). Permite que la autoría siga siendo SDF y el render sea mesh.
+- **Mesh import** vía glTF como camino único de autoría. Tools externas (Blender) generan los assets. Editor procedural sobre mesh primitives es opción futura, pero no SDF.
 
 ---
 
@@ -100,7 +104,6 @@ meshopt = "..."
 - **Trait `PhysicsBackend`** en `ome_physics/lib.rs` — métodos `step`, `add_body`, `query_ray`, `query_shape`. Primer impl: `RapierBackend`.
 - **Sistema de acciones** en `ome_input` — desbloquea issues #55, #56-61.
 - **Render graph** en `ome_render` — nodos con inputs/outputs, transient resources, automatic barriers.
-- **Bridge SDF → Mesh** vía dual contouring (Fase 2+).
 
 ---
 
@@ -125,7 +128,6 @@ meshopt = "..."
 - [ ] DAG meshlet jerárquico (cluster groups + LOD boundary error metric)
 - [ ] Streaming async (tokio + binary mesh format)
 - [ ] Software rasterizer GPU compute para meshlets sub-pixel (Nanite trick)
-- [ ] Bridge SDF → Mesh vía dual contouring (autoría SDF, runtime extracción)
 
 ### Fase 3 — Planetary scale
 **Tiempo estimado:** 3-4 meses

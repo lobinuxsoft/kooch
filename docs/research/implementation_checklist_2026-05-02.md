@@ -9,25 +9,57 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 
 ---
 
-## Fase 0 — Kill SDF render path (PRIORIDAD MÁXIMA)
+## Fase 0 — Eliminar SDF completamente (PRIORIDAD MÁXIMA)
 
-**Objetivo:** sacar SDF raymarching del path de render del editor. Mesh-only desde ya. SDF queda como autoring tool sin visual.
+**Objetivo:** SDF afuera del engine. Sin "archivar", sin preservar como autoring tool, sin dual contouring future. Engine mesh-only.
 
-**Tiempo estimado:** 1-3 días.
+**Tiempo estimado:** 2-4 días.
 
-- [ ] Branch `feat/kill-sdf-render`
-- [ ] Editor: remover llamada a `raymarch.update_scene()` + `raymarch.render()` en `viewport/render.rs`
-- [ ] Editor: el flow queda sky_pass → mesh_pass (sin raymarch en el medio)
-- [ ] `RayMarchPlugin` y `examples/raymarch_demo.rs` quedan FUNCIONALES (standalone) pero no se usan en el editor
-- [ ] Verificar que la escena de prueba TestEngine2.0 muestre solo mesh (Suzanne) sin diagonales
-- [ ] Add comentario en `RayMarchRenderer` señalando que entra en mantenimiento mínimo
+- [ ] Branch `feat/delete-sdf`
+- [ ] **Editor:** remover llamada a `raymarch.update_scene()` + `raymarch.render()` en `viewport/render.rs`. Flow queda sky_pass → mesh_pass
+- [ ] **Eliminar crate `crates/ome_sdf/`** completo
+- [ ] **Eliminar módulos render SDF:**
+  - `crates/ome_render/src/raymarch/` (directorio entero)
+  - `crates/ome_render/src/raymarch_plugin.rs`
+  - `crates/ome_render/src/tile_cull/` (directorio entero)
+  - `crates/ome_render/shaders/raymarch_*.wgsl`
+  - `crates/ome_render/shaders/tile_cull.wgsl`
+  - `crates/ome_render/shaders/gdf_populate.wgsl`
+  - `crates/ome_render/shaders/raymarch_gdf_sample.wgsl`
+  - `crates/ome_render/shaders/raymarch_pool_*.wgsl`
+- [ ] **Eliminar examples:**
+  - `examples/raymarch_demo.rs`
+  - `examples/raymarch_hierarchy_demo.rs`
+- [ ] **Eliminar tests SDF:**
+  - `crates/ome_render/tests/ac1_byte_identical.rs`
+  - `crates/ome_render/tests/ac2_multi_chunk_traversal.rs`
+  - `crates/ome_render/tests/ac3_streaming_round_trip.rs`
+  - `crates/ome_render/tests/ac6_load_order_determinism.rs`
+  - `crates/ome_render/tests/ac7_pool_fragmentation.rs`
+  - `crates/ome_render/tests/ac_363_demo_scene_traversal.rs`
+  - `crates/ome_render/tests/gdf_*.rs`
+  - `crates/ome_render/tests/pool_eval_smoke.rs`
+  - `crates/ome_render/tests/raymarch_*.rs`
+  - `crates/ome_render/tests/tile_cull.rs`
+- [ ] **Eliminar componentes SDF de `ome_ecs`:**
+  - `SdfSphere`, `SdfBox`, `SdfCapsule`, `SdfCylinder`, `SdfTorus`, `SdfPlane`
+  - Categoría "SDF" del Add Component menu
+  - Submenú SDF del Spawn menu
+- [ ] **Evaluar `ome_bvh` y `ome_world`:** si solo servían al raymarcher, eliminar también. Si tienen valor general (ECS hierarchy, streaming genérico), preservar
+- [ ] **Workspace cleanup:**
+  - Remover `ome_sdf` (y crates afectados) de `Cargo.toml` workspace members
+  - Remover features `sdf`, `lighting` (si era SDF-only) del root crate
+  - Remover deps SDF de los demás crates
+- [ ] **TestEngine2.0:** abrir el proyecto de prueba y remover scenas/escripts que referenciaban SDF
 - [ ] Commit + PR a development
 
 **Gate exit:**
-- ✅ Editor levanta y renderiza mesh sin diagonales
-- ✅ `cargo build -p ome_editor` clean
-- ✅ Las entidades SDF (cylinder, torus, etc.) en la escena ya no aparecen visualmente — esperado, queda como TODO hasta dual contouring
-- ⚠️ NO se borra código todavía — solo desconexión
+- ✅ `cargo build --workspace` clean — sin código SDF en ninguna parte
+- ✅ `cargo test --workspace` verde
+- ✅ `cargo clippy --workspace -- -D warnings` clean
+- ✅ Editor levanta, renderiza mesh sin diagonales, sin features SDF en menúes
+- ✅ TestEngine2.0 abre limpio (puede tener escenas vacías hasta que carguemos meshes nuevas)
+- ✅ LOC delta documentado en el PR (debería ser reducción significativa)
 
 ---
 
@@ -149,28 +181,13 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 
 ---
 
-## Fase 1.E — Polish + Stop SDF Code
+## Fase 1.E — (eliminada)
 
-**Objetivo:** archivar el código SDF de render y dejar el engine limpio.
-
-**Tiempo estimado:** 1-2 semanas.
-
-- [ ] **#396** — archive raymarch + tile-cull modules
-  - [ ] Mover `crates/ome_render/src/raymarch/` a `crates/ome_render/src/_archived_raymarch/` o branch separado
-  - [ ] Mover `crates/ome_render/src/tile_cull/` igual
-  - [ ] Eliminar `RayMarchPlugin` del default features
-  - [ ] Deprecar `examples/raymarch_demo.rs` y `examples/raymarch_hierarchy_demo.rs`
-  - [ ] Limpiar tests: AC1-AC7 + raymarch_* + tile_cull + gdf_* + pool_eval_smoke
-- [ ] PRESERVAR: `crates/ome_sdf/` (autoring + dual contouring future), `sdf_primitives.wgsl` (reusado)
-
-**Gate exit:**
-- ✅ `cargo build --workspace` clean sin código SDF de render
-- ✅ Tests verdes
-- ✅ Engine size reducido (medir LOC delta)
+Mergeada en Fase 0. La eliminación de SDF se hace upfront, no al final de Phase 1.
 
 ---
 
-## Fase 2 — Virtual Geometry + Streaming + Dual Contouring (#395)
+## Fase 2 — Virtual Geometry + Streaming (#395)
 
 **Objetivo:** alcanzar 60-70% de Nanite (Bevy 0.16 equivalente).
 
@@ -180,13 +197,11 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 - [ ] DAG meshlet jerárquico (cluster groups + LOD boundary error metric)
 - [ ] Software rasterizer GPU compute para meshlets sub-pixel (Nanite trick)
 - [ ] Streaming async (tokio + binary mesh format propio)
-- [ ] **#393** — Bridge SDF → Mesh via dual contouring (devuelve la identidad SDF como autoring)
 - [ ] Speculative LOD fade-in / fade-out
 
 **Gate exit:**
 - ✅ Escenas de millones de triángulos a 60fps
 - ✅ Streaming de chunks sin hitches
-- ✅ Autor en SDF en editor → ve mesh extraído renderizando
 
 ---
 
@@ -230,14 +245,13 @@ Issues que no bloquean fase pero suman:
 
 | Fase | Trabajo | Tiempo focused |
 |---|---|---|
-| **Fase 0** | Kill SDF render path | 1-3 días |
+| **Fase 0** | Eliminar SDF completamente | 2-4 días |
 | **Fase 1.A** | Asset Pipeline foundation | 1-2 semanas |
 | **Fase 1.B** | Subsystem trait abstractions | 1-2 semanas (paralelo) |
 | **Fase 1.C** | Render graph propio | 2-3 semanas |
 | **Fase 1.D** | Meshlet pipeline (Nanite-style) | 6-10 semanas |
-| **Fase 1.E** | Archive SDF render code | 1-2 semanas |
 | **Fase 1 total** | Mesh GPU-driven pipeline operativa | **~3-4 meses** |
-| **Fase 2** | Virtual geometry + streaming + dual contouring | 2-3 meses |
+| **Fase 2** | Virtual geometry + streaming | 2-3 meses |
 | **Fase 3** | Planetary scale | 3-4 meses |
 | **Total roadmap** | Engine planetary-scale shipeable | **8-11 meses focused** |
 
