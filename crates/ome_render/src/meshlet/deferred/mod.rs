@@ -1,17 +1,28 @@
 //! Visibility-buffer compute shading pass.
 //!
-//! Reads the packed `(meshlet_id, triangle_id)` from a R32Uint
-//! visibility buffer (output by [`super::MeshletVisRasterizer`]), looks
-//! up the triangle's three vertex normals in the meshlet pool,
-//! averages them (PR-6 minimal — bary-correct interpolation in PR-7),
-//! and writes a normal-debug RGBA8 color.
+//! Reads the packed value from a R32Uint visibility buffer (output by
+//! [`super::MeshletVisRasterizer`]), looks up the triangle's three
+//! vertex normals in the meshlet pool, averages them, and writes a
+//! normal-debug RGBA8 color modulated by the material's base colour.
+//!
+//! # Two paths share the shader
+//!
+//! - **Single-mesh** (`shade`, shader entry `cs_shade`): packed pixel
+//!   carries `meshlet_id+1`. Per-render-call `model` matrix +
+//!   `material_id` come from UBOs.
+//! - **Scene-wide** (`shade_scene`, shader entry `cs_shade_scene`):
+//!   packed pixel carries `visible_slot+1`. The shader resolves
+//!   `(instance_id, meshlet_idx)` via `visible_meshlets[]` and reads
+//!   per-instance transform / material_id from `instances[]`.
+
+mod scene;
 
 use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-const SHADER_SOURCE: &str = include_str!("../../shaders/meshlet_deferred.wgsl");
+const SHADER_SOURCE: &str = include_str!("../../../shaders/meshlet_deferred.wgsl");
 
 /// Output color format the deferred shader writes through a storage
 /// texture binding. Rgba8Unorm matches the forward path so tests can
@@ -20,32 +31,35 @@ pub const DEFERRED_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
-struct CameraUbo {
-    view_proj: [[f32; 4]; 4],
+pub(super) struct CameraUbo {
+    pub view_proj: [[f32; 4]; 4],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
-struct ModelUbo {
-    model: [[f32; 4]; 4],
+pub(super) struct ModelUbo {
+    pub model: [[f32; 4]; 4],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
-struct ScreenUbo {
-    size: [u32; 2],
-    material_id: u32,
-    _pad: u32,
+pub(super) struct ScreenUbo {
+    pub size: [u32; 2],
+    pub material_id: u32,
+    pub _pad: u32,
 }
 
-/// Owns the deferred-shading compute pipeline and its UBOs.
+/// Owns the deferred-shading compute pipelines (single-mesh + scene)
+/// and their UBOs.
 pub struct MeshletDeferredShader {
-    pipeline: wgpu::ComputePipeline,
-    shading_bgl: wgpu::BindGroupLayout,
+    pub(super) pipeline: wgpu::ComputePipeline,
+    pub(super) pipeline_scene: wgpu::ComputePipeline,
+    pub(super) shading_bgl: wgpu::BindGroupLayout,
+    pub(super) scene_bgl: wgpu::BindGroupLayout,
 
-    camera_buffer: wgpu::Buffer,
-    model_buffer: wgpu::Buffer,
-    screen_buffer: wgpu::Buffer,
+    pub(super) camera_buffer: wgpu::Buffer,
+    pub(super) model_buffer: wgpu::Buffer,
+    pub(super) screen_buffer: wgpu::Buffer,
 }
 
 impl MeshletDeferredShader {
@@ -105,9 +119,45 @@ impl MeshletDeferredShader {
 
         let material_bgl = crate::material::MaterialPool::bind_group_layout(device);
 
+        let scene_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("meshlet_deferred_scene_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("meshlet_deferred_pipeline_layout"),
             bind_group_layouts: &[Some(&shading_bgl), Some(meshlet_bgl), Some(&material_bgl)],
+            immediate_size: 0,
+        });
+        let pipeline_layout_scene = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("meshlet_deferred_pipeline_layout_scene"),
+            bind_group_layouts: &[
+                Some(&shading_bgl),
+                Some(meshlet_bgl),
+                Some(&material_bgl),
+                Some(&scene_bgl),
+            ],
             immediate_size: 0,
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -118,14 +168,31 @@ impl MeshletDeferredShader {
             compilation_options: Default::default(),
             cache: None,
         });
+        let pipeline_scene = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("meshlet_deferred_pipeline_scene"),
+            layout: Some(&pipeline_layout_scene),
+            module: &shader,
+            entry_point: Some("cs_shade_scene"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
 
         Self {
             pipeline,
+            pipeline_scene,
             shading_bgl,
+            scene_bgl,
             camera_buffer,
             model_buffer,
             screen_buffer,
         }
+    }
+
+    /// Bind-group layout for the scene path's `group(3)` —
+    /// `visible_meshlets` storage at binding 0 + `instances` storage
+    /// at binding 1.
+    pub fn scene_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.scene_bgl
     }
 
     /// Records the compute shading pass into `encoder`. `vbuf_view`

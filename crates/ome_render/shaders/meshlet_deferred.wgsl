@@ -1,15 +1,22 @@
 // meshlet_deferred.wgsl — visibility-buffer compute shading.
 //
-// One thread per pixel of the output target. Reads the packed
-// (meshlet_id+1, triangle_id) from the visibility buffer; if 0 the
-// pixel is background and gets the clear color. Otherwise the
-// shader re-derives the triangle's three vertices, averages their
-// world-space normals, and emits the same normal-debug RGB the
-// forward path would.
+// Two entry points:
 //
-// Bary-correct interpolation lands in PR-7 with materials. PR-6
-// stays minimal: the asserts target shading parity (within a tight
-// tolerance) between forward-rasterized and deferred-shaded cubes.
+// (cs_shade) — single-mesh path (Phase 1.D):
+//   Reads packed `((meshlet_id+1) << 7) | tri_idx` from the visibility
+//   buffer. Uses the per-call `model: ModelUniforms` for world-space
+//   normal transform. `screen.material_id` is per-render-call.
+//
+// (cs_shade_scene) — scene-wide path (Phase 1.E):
+//   Reads packed `((visible_slot+1) << 7) | tri_idx` from the
+//   visibility buffer. Resolves (instance_id, meshlet_idx) via
+//   `visible_meshlets[visible_slot]`, then fetches per-instance
+//   transform + material_id from `instances[]`. Background pixels
+//   keep the clear color.
+//
+// Both paths average the triangle's three vertex normals and modulate
+// the resulting normal-debug shading by the material's base colour.
+// Bary-correct interpolation lands when textures need real UV interp.
 
 struct CameraUniforms {
     view_proj: mat4x4<f32>,
@@ -66,6 +73,17 @@ struct MeshletDescriptor {
 @group(1) @binding(2) var<storage, read> meshlet_triangles: array<u32>;
 @group(1) @binding(3) var<storage, read> descriptors: array<MeshletDescriptor>;
 
+// Scene-path bindings (group 3) — only bound for cs_shade_scene.
+struct MeshInstance {
+    transform: mat4x4<f32>,
+    mesh_id: u32,
+    material_id: u32,
+    lod_bias: f32,
+    _pad: u32,
+}
+@group(3) @binding(0) var<storage, read> visible_meshlets: array<u32>;
+@group(3) @binding(1) var<storage, read> instances: array<MeshInstance>;
+
 fn fetch_local_vertex_index(byte_offset: u32) -> u32 {
     let word_idx = byte_offset / 4u;
     let byte_in_word = byte_offset & 3u;
@@ -112,6 +130,43 @@ fn cs_shade(@builtin(global_invocation_id) gid: vec3<u32>) {
         // with bindless textures in a follow-up.
         let normal_debug = n * 0.5 + 0.5;
         let m = materials[screen.material_id];
+        color = vec4<f32>(normal_debug * m.base_color.rgb, m.base_color.a);
+    }
+
+    textureStore(color_out, vec2<i32>(i32(pixel.x), i32(pixel.y)), color);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= screen.size.x || gid.y >= screen.size.y) {
+        return;
+    }
+    let pixel = vec2<u32>(gid.x, gid.y);
+    let packed = textureLoad(vis_buffer, pixel, 0).r;
+
+    var color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    if (packed != 0u) {
+        // Decode visible-slot index (vbuf scene path packs +1 to keep
+        // 0 = background). One indirection through visible_meshlets[]
+        // recovers (instance_id, meshlet_idx).
+        let visible_slot = (packed >> 7u) - 1u;
+        let tri_idx = packed & 0x7Fu;
+        let packed_visible = visible_meshlets[visible_slot];
+        let inst_id = packed_visible >> 16u;
+        let meshlet_id = packed_visible & 0xffffu;
+
+        let inst = instances[inst_id];
+        let desc = descriptors[meshlet_id];
+
+        let n0 = corner_normal(desc, tri_idx, 0u);
+        let n1 = corner_normal(desc, tri_idx, 1u);
+        let n2 = corner_normal(desc, tri_idx, 2u);
+        let avg = (n0 + n1 + n2) / 3.0;
+        let world_n = (inst.transform * vec4<f32>(avg, 0.0)).xyz;
+        let n = normalize(world_n);
+
+        let normal_debug = n * 0.5 + 0.5;
+        let m = materials[inst.material_id];
         color = vec4<f32>(normal_debug * m.base_color.rgb, m.base_color.a);
     }
 

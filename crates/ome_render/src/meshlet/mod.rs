@@ -37,6 +37,7 @@ mod dispatcher;
 mod drawer;
 mod gpu_meshlet;
 mod pool;
+mod render_stage;
 mod scene;
 mod system;
 mod vis_buffer;
@@ -53,6 +54,9 @@ pub use gpu_meshlet::{
     binding, meshlet_bind_group, meshlet_bind_group_layout, GpuMeshletMesh,
 };
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshDescriptor, MeshHandle};
+pub use render_stage::{
+    MeshletRenderStage, MeshletRenderStageConfig, MeshletRenderStats,
+};
 pub use scene::{
     decode_scene_visible_id, encode_scene_visible_id, MeshInstance, MeshletScene,
     SceneCullParams,

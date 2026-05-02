@@ -2,24 +2,24 @@
 //!
 //! Drop-in alternative to [`super::MeshletDrawer`]: rasterizes visible
 //! meshlets to a R32Uint visibility-buffer target instead of a color
-//! attachment. The fragment shader writes a packed
-//! `(meshlet_id + 1) << 7 | tri_idx` value; PR-6's
-//! [`super::MeshletDeferredShader`] decodes it in compute.
+//! attachment.
 //!
-//! # Pipeline
+//! # Two paths share the rasterizer
 //!
-//! ```text
-//! visible_meshlets[]  →  vs_vbuf  (vertex pull, identical to forward)
-//!         │
-//!         ▼
-//!   draw_indirect      (single call, instance_count = visible_count)
-//!         │
-//!         ▼
-//! fs_vbuf → R32Uint visibility buffer + depth attachment
-//! ```
+//! - **Single-mesh** (`render`, vbuf shader's `vs_vbuf`/`fs_vbuf`): the
+//!   classic Phase 1.D path. `visible_meshlets[]` carries raw meshlet
+//!   ids and the fragment writes `((meshlet_id + 1) << 7) | tri_idx`.
+//! - **Scene-wide** (`render_scene`, `vs_vbuf_scene`/`fs_vbuf_scene`):
+//!   Phase 1.E path. `visible_meshlets[]` packs
+//!   `(instance_id << 16) | meshlet_idx`, the vertex shader fetches the
+//!   transform from `instances[]`, and the fragment writes
+//!   `((visible_slot + 1) << 7) | tri_idx` so the deferred shader can
+//!   recover both instance and meshlet via one indirection.
 //!
-//! Standard depth test culls near-then-far meshlets; the surviving
-//! pixel keeps the closest meshlet's packed id.
+//! Both paths share `meshlet_bgl` (group 1) — the same global pool
+//! lookups feed cull / vbuf / deferred.
+
+mod scene;
 
 use std::num::NonZeroU64;
 
@@ -28,32 +28,35 @@ use wgpu::util::DeviceExt;
 
 use super::dispatcher::MeshletCull;
 
-const SHADER_SOURCE: &str = include_str!("../../shaders/meshlet_vbuf.wgsl");
+const SHADER_SOURCE: &str = include_str!("../../../shaders/meshlet_vbuf.wgsl");
 
 /// Visibility-buffer texture format. R32Uint = one packed id per pixel.
 pub const VISIBILITY_BUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
-struct CameraUbo {
-    view_proj: [[f32; 4]; 4],
+pub(super) struct CameraUbo {
+    pub view_proj: [[f32; 4]; 4],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
-struct ModelUbo {
-    model: [[f32; 4]; 4],
+pub(super) struct ModelUbo {
+    pub model: [[f32; 4]; 4],
 }
 
-/// Owns the vbuf rasterizer pipeline + camera/model UBOs + the
-/// `visible_meshlets` bind-group layout.
+/// Owns the vbuf rasterizer pipelines (single-mesh + scene) + camera /
+/// model UBOs + the `visible_meshlets` and `instances` bind-group
+/// layouts.
 pub struct MeshletVisRasterizer {
-    pipeline: wgpu::RenderPipeline,
-    camera_bgl: wgpu::BindGroupLayout,
-    visible_bgl: wgpu::BindGroupLayout,
-    camera_buffer: wgpu::Buffer,
-    model_buffer: wgpu::Buffer,
-    camera_bg: wgpu::BindGroup,
+    pub(super) pipeline: wgpu::RenderPipeline,
+    pub(super) pipeline_scene: wgpu::RenderPipeline,
+    pub(super) camera_bgl: wgpu::BindGroupLayout,
+    pub(super) visible_bgl: wgpu::BindGroupLayout,
+    pub(super) instances_bgl: wgpu::BindGroupLayout,
+    pub(super) camera_buffer: wgpu::Buffer,
+    pub(super) model_buffer: wgpu::Buffer,
+    pub(super) camera_bg: wgpu::BindGroup,
 }
 
 impl MeshletVisRasterizer {
@@ -91,21 +94,26 @@ impl MeshletVisRasterizer {
         });
         let visible_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("meshlet_vbuf_visible_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
+            entries: &[storage_entry_vertex(0)],
+        });
+        let instances_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("meshlet_vbuf_instances_bgl"),
+            entries: &[storage_entry_vertex(0)],
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("meshlet_vbuf_pipeline_layout"),
             bind_group_layouts: &[Some(&camera_bgl), Some(meshlet_bgl), Some(&visible_bgl)],
+            immediate_size: 0,
+        });
+        let pipeline_layout_scene = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("meshlet_vbuf_pipeline_layout_scene"),
+            bind_group_layouts: &[
+                Some(&camera_bgl),
+                Some(meshlet_bgl),
+                Some(&visible_bgl),
+                Some(&instances_bgl),
+            ],
             immediate_size: 0,
         });
 
@@ -117,35 +125,26 @@ impl MeshletVisRasterizer {
             bias: wgpu::DepthBiasState::default(),
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("meshlet_vbuf_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_vbuf"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_vbuf"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: VISIBILITY_BUFFER_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
+        let pipeline = build_pipeline(
+            device,
+            &shader,
+            &pipeline_layout,
+            "meshlet_vbuf_pipeline",
+            "vs_vbuf",
+            "fs_vbuf",
+            depth_stencil.clone(),
+            pipeline_cache,
+        );
+        let pipeline_scene = build_pipeline(
+            device,
+            &shader,
+            &pipeline_layout_scene,
+            "meshlet_vbuf_pipeline_scene",
+            "vs_vbuf_scene",
+            "fs_vbuf_scene",
             depth_stencil,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: pipeline_cache,
-        });
+            pipeline_cache,
+        );
 
         let camera_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_vbuf_camera_bg"),
@@ -164,8 +163,10 @@ impl MeshletVisRasterizer {
 
         Self {
             pipeline,
+            pipeline_scene,
             camera_bgl,
             visible_bgl,
+            instances_bgl,
             camera_buffer,
             model_buffer,
             camera_bg,
@@ -178,6 +179,12 @@ impl MeshletVisRasterizer {
 
     pub fn visible_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.visible_bgl
+    }
+
+    /// Bind-group layout for the scene path's `group(3)` — a single
+    /// read-only storage buffer of `MeshInstance` records.
+    pub fn instances_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.instances_bgl
     }
 
     /// Records one indirect-draw render pass that writes the
@@ -271,6 +278,61 @@ fn ubo_entry(binding: u32, size: u64) -> wgpu::BindGroupLayoutEntry {
         },
         count: None,
     }
+}
+
+pub(super) fn storage_entry_vertex(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::VERTEX,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    label: &str,
+    vs: &str,
+    fs: &str,
+    depth_stencil: Option<wgpu::DepthStencilState>,
+    cache: Option<&wgpu::PipelineCache>,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some(vs),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some(fs),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: VISIBILITY_BUFFER_FORMAT,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache,
+    })
 }
 
 #[cfg(test)]
