@@ -29,29 +29,65 @@ use glam::{Mat4, Vec3, Vec4};
 
 /// Per-frame culling parameters uploaded to the compute shader.
 ///
-/// Six frustum planes packed as `(normal, distance)` — plane equation
-/// `dot(normal, p) + distance >= 0` means inside. Visibility is the
-/// AND of all six.
+/// - `planes`: six frustum planes packed as `(normal, distance)` —
+///   plane equation `dot(normal, p) + distance >= 0` means inside.
+///   Visibility against the frustum is the AND of all six.
+/// - `camera_position`: world-space camera position used by the
+///   backface cone test. The shader rejects a meshlet when
+///   `dot(normalize(camera - cone_apex), cone_axis) >= cone_cutoff`
+///   (the camera lies in the meshlet's back-facing half-space).
+///
+/// Layout is 128 bytes — multiple of 16 to keep std140-friendly
+/// alignment for the host-side `bytemuck::cast_slice` upload.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct CullParams {
     pub planes: [[f32; 4]; 6],
+    pub camera_position: [f32; 3],
     pub meshlet_count: u32,
     pub _pad0: u32,
     pub _pad1: u32,
     pub _pad2: u32,
+    pub _pad3: u32,
 }
 
 impl CullParams {
-    pub fn new(view_projection: Mat4, meshlet_count: u32) -> Self {
+    pub fn new(view_projection: Mat4, camera_position: Vec3, meshlet_count: u32) -> Self {
         Self {
             planes: extract_frustum_planes(view_projection),
+            camera_position: camera_position.to_array(),
             meshlet_count,
             _pad0: 0,
             _pad1: 0,
             _pad2: 0,
+            _pad3: 0,
         }
     }
+}
+
+/// CPU mirror of the WGSL backface cone test. Returns `true` when the
+/// camera lies in the meshlet's normal cone — i.e. the meshlet is
+/// fully back-facing and can be skipped.
+///
+/// Uses `cone_cutoff == 1.0` as the "no cull" sentinel that
+/// `meshopt::compute_meshlet_bounds` returns for degenerate / divergent
+/// normal sets — those meshlets must always survive cone cull.
+pub fn camera_in_backface_cone(
+    cone_apex: Vec3,
+    cone_axis: Vec3,
+    cone_cutoff: f32,
+    camera_position: Vec3,
+) -> bool {
+    if cone_cutoff >= 1.0 {
+        return false;
+    }
+    let to_camera = camera_position - cone_apex;
+    let len = to_camera.length();
+    if len == 0.0 {
+        return false;
+    }
+    let view = to_camera / len;
+    view.dot(cone_axis) >= cone_cutoff
 }
 
 /// Extracts six frustum planes from a combined `view_projection` matrix.
@@ -115,9 +151,9 @@ mod tests {
 
     #[test]
     fn cull_params_layout_is_pod() {
-        // 6 planes (4 floats each) = 96 bytes, plus meshlet_count + 3 pads = 16
-        // Total: 112 bytes
-        assert_eq!(std::mem::size_of::<CullParams>(), 112);
+        // 6 planes (4 floats each) = 96 bytes, camera_position + meshlet_count = 16,
+        // four u32 pads = 16. Total: 128 bytes.
+        assert_eq!(std::mem::size_of::<CullParams>(), 128);
     }
 
     #[test]
@@ -178,10 +214,54 @@ mod tests {
     }
 
     #[test]
-    fn cull_params_carries_meshlet_count() {
+    fn cull_params_carries_meshlet_count_and_camera() {
         let vp = Mat4::IDENTITY;
-        let params = CullParams::new(vp, 1234);
+        let cam = Vec3::new(2.0, 3.0, 4.0);
+        let params = CullParams::new(vp, cam, 1234);
         assert_eq!(params.meshlet_count, 1234);
+        assert_eq!(params.camera_position, [2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn camera_outside_back_cone_passes_cone_test() {
+        // Cone pointing +Z (axis = +Z, half-angle small → cutoff close to 1).
+        // Camera at (0,0,5) is in front — view dir is (0,0,+1).
+        // dot(view, axis) = 1.0 >= cutoff(0.9) → camera is in backward cone.
+        // To be "in front" the camera must be on the OPPOSITE side of
+        // the apex from the axis: view dir = (0,0,-1). dot = -1 < 0.9 → not culled.
+        let apex = Vec3::ZERO;
+        let axis = Vec3::Z; // meshlet faces +Z; back cone opens towards +Z.
+        let cutoff = 0.9;
+
+        let cam_in_back = Vec3::new(0.0, 0.0, 5.0);
+        assert!(camera_in_backface_cone(apex, axis, cutoff, cam_in_back));
+
+        let cam_in_front = Vec3::new(0.0, 0.0, -5.0);
+        assert!(!camera_in_backface_cone(apex, axis, cutoff, cam_in_front));
+    }
+
+    #[test]
+    fn degenerate_cone_cutoff_disables_cull() {
+        // meshopt sets cone_cutoff = 1.0 for divergent normal sets;
+        // those meshlets must never be cone-culled regardless of cam pos.
+        assert!(!camera_in_backface_cone(
+            Vec3::ZERO,
+            Vec3::Z,
+            1.0,
+            Vec3::new(0.0, 0.0, 5.0),
+        ));
+    }
+
+    #[test]
+    fn camera_at_apex_is_never_cone_culled() {
+        // Length-zero view vector → cull test is undefined.
+        // Conservative: keep the meshlet (camera is right on top of it).
+        assert!(!camera_in_backface_cone(
+            Vec3::new(1.0, 2.0, 3.0),
+            Vec3::Z,
+            0.5,
+            Vec3::new(1.0, 2.0, 3.0),
+        ));
     }
 
     #[test]

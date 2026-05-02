@@ -56,9 +56,10 @@ fn indirect_args_instance_count_matches_visible_meshlets_when_all_in_frustum() {
 
     let cull = MeshletCull::new(&device, gpu_mesh.meshlet_count.max(1) * 2, 124);
 
-    let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y);
+    let cam = Vec3::new(0.0, 0.0, 3.0);
+    let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
     let proj = Mat4::perspective_rh(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
-    let params = CullParams::new(proj * view, gpu_mesh.meshlet_count);
+    let params = CullParams::new(proj * view, cam, gpu_mesh.meshlet_count);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("meshlet_cull_test_encoder"),
@@ -69,9 +70,15 @@ fn indirect_args_instance_count_matches_visible_meshlets_when_all_in_frustum() {
     let visible_count = read_u32(&device, &queue, cull.visible_count_buffer(), 0);
     let args = read_indirect_args(&device, &queue, cull.indirect_args_buffer());
 
-    assert_eq!(
-        visible_count, gpu_mesh.meshlet_count,
-        "every meshlet should pass the frustum test for an in-front camera"
+    // Backface cone cull may drop meshlets whose normals all face away
+    // from the camera (e.g. the +Z, +X, -X, +Y, -Y faces of a cube
+    // viewed from -Z). Frustum-only would have kept them; that's
+    // exactly the win we want from PR-5b.
+    assert!(
+        visible_count >= 1 && visible_count <= gpu_mesh.meshlet_count,
+        "expected at least one front-facing meshlet visible: visible={visible_count} \
+         total={total}",
+        total = gpu_mesh.meshlet_count
     );
     assert_eq!(
         args.instance_count, visible_count,
@@ -95,13 +102,10 @@ fn indirect_args_instance_count_is_zero_when_camera_faces_away() {
 
     let cull = MeshletCull::new(&device, gpu_mesh.meshlet_count.max(1) * 2, 124);
 
-    let view = Mat4::look_at_rh(
-        Vec3::new(0.0, 0.0, 3.0),
-        Vec3::new(0.0, 0.0, 100.0),
-        Vec3::Y,
-    );
+    let cam = Vec3::new(0.0, 0.0, 3.0);
+    let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 100.0), Vec3::Y);
     let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 50.0);
-    let params = CullParams::new(proj * view, gpu_mesh.meshlet_count);
+    let params = CullParams::new(proj * view, cam, gpu_mesh.meshlet_count);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("meshlet_cull_test_encoder"),
@@ -129,20 +133,16 @@ fn indirect_args_resets_between_dispatches() {
 
     let cull = MeshletCull::new(&device, gpu_mesh.meshlet_count.max(1) * 2, 124);
 
-    let visible_view =
-        Mat4::look_at_rh(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y);
+    let cam = Vec3::new(0.0, 0.0, 3.0);
+    let visible_view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
     let visible_proj =
         Mat4::perspective_rh(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let visible_params =
-        CullParams::new(visible_proj * visible_view, gpu_mesh.meshlet_count);
+        CullParams::new(visible_proj * visible_view, cam, gpu_mesh.meshlet_count);
 
-    let occluded_view = Mat4::look_at_rh(
-        Vec3::new(0.0, 0.0, 3.0),
-        Vec3::new(0.0, 0.0, 100.0),
-        Vec3::Y,
-    );
+    let occluded_view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 100.0), Vec3::Y);
     let occluded_params =
-        CullParams::new(visible_proj * occluded_view, gpu_mesh.meshlet_count);
+        CullParams::new(visible_proj * occluded_view, cam, gpu_mesh.meshlet_count);
 
     let mut encoder_a = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("meshlet_cull_frame_a"),
