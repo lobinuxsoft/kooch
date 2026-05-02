@@ -217,7 +217,7 @@ Phase 1.E promueve los primitivos a un pipeline de producción genuino: instance
 
 - [x] **`MeshletRenderStage` (1.E.3a)** — orquestador headless: scene cull → vbuf raster scene-path → deferred shade scene-path → ouput Rgba8Unorm view. Integration test corre 2 ECS entities (distinct GlobalTransform / material id) y assert non-clear pixels en ambos lados de la pantalla.
 - [x] **`RenderPlugin` toggle (1.E.3b)** — `UseMeshletPath { enabled: bool }` resource (default off). `init_renderers` construye `MeshletRenderStage` + `MeshletBlit`; `render_frame_system` enruta entre legacy y meshlet+blit según el toggle. `MeshletBlit` compone `Rgba8Unorm` → surface format (`Bgra8Unorm`/etc.) vía full-screen triangle. `sync_assets_to_gpu` bridges `Assets<MeshletMesh>` → GPU cache.
-- [ ] **Editor viewport (1.E.3c)** ejerce el meshlet stage en `ome_editor_core::viewport::render`. Mismo toggle, mismo blit; ViewportTarget ya tiene RENDER_ATTACHMENT.
+- [x] **Editor viewport (1.E.3c)** — `ome_editor_core::systems::startup` construye `MeshletRenderStage` + `MeshletBlit` + `UseMeshletPath::default()`. `viewport::render::render_viewport` recibe `MeshletPathInputs` y, cuando el toggle está ON, corre stage (con `resize` al `ViewportTarget` size) + blit a `target.view()` en lugar del legacy `MeshPassRenderer`. Visual confirmation diferida a 1.E.4.
 - [ ] AC: levantar editor + spawn entity con MeshRenderer + Suzanne (o sphere) → ver el modelo renderizado por la meshlet pipeline real, sin pasar por `MeshPassRenderer`.
 - [ ] **Multi-mesh path (1.E.3c)** — `cs_cull_scene_pool` shader entry + `GpuGlobalMeshPool` bind group para escenas con varios meshes registrados.
 - [ ] Hi-Z 2-pass ping-pong wiring entra acá (no antes — antes no había scene plumbing donde aterrizarlo).
