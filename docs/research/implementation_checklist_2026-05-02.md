@@ -215,10 +215,11 @@ Phase 1.E promueve los primitivos a un pipeline de producción genuino: instance
 
 ### Sub-fase 1.E.3 — Plugin + viewport drive end-to-end
 
-- [ ] **`MeshletRenderStage`** — orquestador de la pipeline frame: cull dispatch → vbuf raster → Hi-Z build → final cull dispatch (2-pass, finally) → vbuf raster final → deferred shade → output a viewport texture.
-- [ ] **`RenderPlugin` migra a meshlet path** (o coexiste con el path viejo detrás de un toggle hasta validation).
-- [ ] **Editor viewport** ejerce el meshlet stage; offscreen target ya existe.
+- [x] **`MeshletRenderStage` (1.E.3a)** — orquestador headless: scene cull → vbuf raster scene-path → deferred shade scene-path → ouput Rgba8Unorm view. Integration test corre 2 ECS entities (distinct GlobalTransform / material id) y assert non-clear pixels en ambos lados de la pantalla.
+- [ ] **`RenderPlugin` migra a meshlet path (1.E.3b)** — o coexiste con el path viejo detrás de un toggle hasta validation.
+- [ ] **Editor viewport (1.E.3b/c)** ejerce el meshlet stage; offscreen target ya existe.
 - [ ] AC: levantar editor + spawn entity con MeshRenderer + Suzanne (o sphere) → ver el modelo renderizado por la meshlet pipeline real, sin pasar por `MeshPassRenderer`.
+- [ ] **Multi-mesh path (1.E.3c)** — `cs_cull_scene_pool` shader entry + `GpuGlobalMeshPool` bind group para escenas con varios meshes registrados.
 - [ ] Hi-Z 2-pass ping-pong wiring entra acá (no antes — antes no había scene plumbing donde aterrizarlo).
 
 ### Sub-fase 1.E.4 — Validation (real visual confirmation)
