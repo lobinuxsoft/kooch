@@ -94,7 +94,8 @@ fn meshlet_pipeline_renders_visible_cube_pixels() {
     // ------------------------------------------------------------------
     // Camera in front of the cube
     // ------------------------------------------------------------------
-    let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 2.0), Vec3::ZERO, Vec3::Y);
+    let cam = Vec3::new(0.0, 0.0, 2.0);
+    let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
     let proj = Mat4::perspective_rh(
         60.0_f32.to_radians(),
         RT_WIDTH as f32 / RT_HEIGHT as f32,
@@ -103,7 +104,7 @@ fn meshlet_pipeline_renders_visible_cube_pixels() {
     );
     let view_proj = proj * view;
     let model = Mat4::IDENTITY;
-    let cull_params = CullParams::new(view_proj, gpu_mesh.meshlet_count);
+    let cull_params = CullParams::new(view_proj, cam, gpu_mesh.meshlet_count);
 
     // ------------------------------------------------------------------
     // Encode + submit
@@ -256,15 +257,12 @@ fn meshlet_pipeline_renders_nothing_when_camera_faces_away() {
     // Camera looking the other way — every meshlet is culled, the
     // indirect draw runs with `instance_count = 0` and the rasterizer
     // emits exactly the clear color.
-    let view = Mat4::look_at_rh(
-        Vec3::new(0.0, 0.0, 2.0),
-        Vec3::new(0.0, 0.0, 100.0),
-        Vec3::Y,
-    );
+    let cam = Vec3::new(0.0, 0.0, 2.0);
+    let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 100.0), Vec3::Y);
     let proj =
         Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 50.0);
     let view_proj = proj * view;
-    let cull_params = CullParams::new(view_proj, gpu_mesh.meshlet_count);
+    let cull_params = CullParams::new(view_proj, cam, gpu_mesh.meshlet_count);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("meshlet_render_encoder_empty"),

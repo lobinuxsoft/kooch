@@ -44,10 +44,12 @@ struct MeshletDescriptor {
     _pad0: u32,
     aabb_max: vec3<f32>,
     _pad1: u32,
-    cone_apex: vec3<f32>,
+    bounds_center: vec3<f32>,
     bounding_radius: f32,
-    cone_axis: vec3<f32>,
+    cone_apex: vec3<f32>,
     cone_cutoff: f32,
+    cone_axis: vec3<f32>,
+    _pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;

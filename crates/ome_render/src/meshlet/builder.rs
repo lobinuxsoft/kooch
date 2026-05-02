@@ -94,10 +94,12 @@ pub fn build_meshlets_from_mesh(
             _pad0: 0,
             aabb_max,
             _pad1: 0,
-            cone_apex: bounds.center,
+            bounds_center: bounds.center,
             bounding_radius: bounds.radius,
-            cone_axis: bounds.cone_axis,
+            cone_apex: bounds.cone_apex,
             cone_cutoff: bounds.cone_cutoff,
+            cone_axis: bounds.cone_axis,
+            _pad2: 0,
         });
     }
 

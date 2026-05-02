@@ -17,7 +17,7 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 | Fase 1.A (asset pipeline) | ✅ COMPLETE | #402, #403, #404, #405, #406 |
 | Fase 1.B (subsystem traits) | ✅ COMPLETE | #407, #408, #409, #410 |
 | Fase 1.C (render graph) | ⚠️ FOUNDATION ONLY (migration + lifetime tracking pending) | #411 |
-| Fase 1.D (meshlet pipeline) | 🚧 IN PROGRESS (4/8 sub-PRs) | #412, #413, #414, PR-4 |
+| Fase 1.D (meshlet pipeline) | 🚧 IN PROGRESS (5/8 sub-PRs) | #412, #413, #414, PR-4, PR-5b |
 | Fase 2 (virtual geometry + streaming) | ⏳ NOT STARTED | — |
 | Fase 2.5 (voxel + DC) | ⏳ NOT STARTED | — |
 | Fase 3 (planetary scale hybrid) | ⏳ NOT STARTED | — |
@@ -125,11 +125,11 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 
 ---
 
-## Fase 1.D — Meshlet Pipeline (#117 — el Nanite-style) 🚧 IN PROGRESS (4/8 sub-PRs)
+## Fase 1.D — Meshlet Pipeline (#117 — el Nanite-style) 🚧 IN PROGRESS (5/8 sub-PRs)
 
 **Objetivo:** virtual geometry / meshlet pipeline GPU-driven. **Esto es lo que reemplaza definitivamente al SDF como render principal.**
 
-**Tiempo estimado:** 6-10 semanas (la fase más densa). **Progreso actual: foundation + frustum culling + indirect draw rasterizer (cube renders end-to-end).**
+**Tiempo estimado:** 6-10 semanas (la fase más densa). **Progreso actual: foundation + frustum cull + indirect-draw rasterizer + backface cone cull (cull stack complete except Hi-Z).**
 
 ### Sub-fase 1.D.1 — Offline Meshlet Generation ✅ (PR #412)
 - [x] Add `meshopt` crate al workspace (0.6.2)
@@ -157,8 +157,8 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 - [ ] Pass 2: re-test todos los meshlets contra Hi-Z, agregar nuevos visibles
 - [ ] Bench: % de meshlets descartados en escena densa
 
-### Sub-fase 1.D.4b — Backface Cone Culling ⏳ NOT STARTED (extensión de 1.D.2)
-- [ ] Extender `meshlet_cull.wgsl` para leer `cone_apex/cone_axis/cone_cutoff` de descriptors y rechazar backfacing
+### Sub-fase 1.D.4b — Backface Cone Culling ✅ DONE (PR-5b)
+- [x] Extender `meshlet_cull.wgsl` para leer `cone_apex/cone_axis/cone_cutoff` de descriptors y rechazar backfacing — `dot(normalize(camera - cone_apex), cone_axis) >= cone_cutoff`. Honours meshopt's `cone_cutoff == 1.0` "no-cull" sentinel for divergent normal sets. CullParams gains `camera_position` (112B → 128B). Descriptor split into `bounds_center` + real `cone_apex` (80B → 96B) so the cone test reads the right vector. CPU mirror `camera_in_backface_cone` for unit tests + future LOD heuristics.
 
 ### Sub-fase 1.D.5 — Visibility Buffer ⏳ NOT STARTED
 - [ ] Render meshlets a R64Uint texture (meshlet_id + tri_id en bits)
