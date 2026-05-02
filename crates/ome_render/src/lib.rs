@@ -18,6 +18,7 @@ pub mod plugin;
 pub mod raymarch;
 pub mod raymarch_plugin;
 pub mod sky;
+pub mod tile_cull;
 
 /// Depth format shared by every renderer that writes into the editor's
 /// offscreen viewport target. `Depth32Float` is universally supported
