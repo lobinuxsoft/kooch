@@ -205,24 +205,40 @@ Mergeada en Fase 0. La eliminación de SDF se hace upfront, no al final de Phase
 
 ---
 
-## Fase 2.5 — Voxel + Dual Contouring hybrid (#397)
+## Fase 2.5 — Voxel + Mesh extraction hybrid (#397)
 
-**Objetivo:** habilitar zonas de mundo con caves, destrucción, edición de geometría runtime — usando voxel SDF + Dual Contouring que alimenta el mesh pipeline existente.
+**Objetivo:** habilitar zonas de mundo con caves, destrucción, edición de geometría runtime.
 
-**Tiempo estimado:** 2-3 meses focused.
+**Tiempo estimado:** 4-6 semanas focused (reducido por dep adoption).
 
-- [ ] **#398** Sparse Voxel Octree data structure
-- [ ] Voxelización de SDF brushes (`SdfSphere/Box/...` → voxel grid)
-- [ ] **#393** Dual Contouring extraction (Hermite data + QEF solver)
-- [ ] Re-extraction incremental on edit (modificar SDF → invalidar cells → re-extraer)
-- [ ] Streaming de chunks voxel (load/unload por proximidad)
-- [ ] Editor brush tools — autorizar caves / destrucción
+### Deps a adoptar (drop-in)
+
+- [ ] `cargo add fast-surface-nets` — primary mesh extraction (~20M tri/seg, sparse chunk seams)
+- [ ] `cargo add transvoxel` — LOD seam stitching entre chunks resolution-distinta
+- [ ] `cargo add mesh_to_sdf` — pipeline offline para bakear glTF → voxel SDF (importar terreno custom)
+- [ ] (opcional) `cargo add block-mesh` — si querés feature de destrucción cubic-style
+
+### Implementación propia (mínima)
+
+- [ ] **#398** Voxel storage — dense chunks `[f32; CHUNK³]` initialmente, NO SVO. SVO solo cuando memoria sea problema medible
+- [ ] Voxelización de SDF brushes (`SdfSphere/Box/...` componentes → voxel chunk samples)
+- [ ] Bridge: dense chunk → `fast-surface-nets` → mesh chunk → `meshopt::build_meshlets` → mesh pipeline
+- [ ] Re-extraction incremental on edit (chunk dirty → re-run surface_nets → upload)
+- [ ] Streaming load/unload por proximidad (custom, simple chunk grid)
+- [ ] Editor brush tools — pintar SDF en zona, automáticamente voxeliza + re-extrae
+
+### Follow-up (Phase 2.5.B, opcional)
+
+- [ ] **#393** Custom Dual Contouring para sharp features (estudiar `WilstonOreo/sdf2mesh` source)
+  - Solo si Surface Nets nos limita en zonas con cliffs / cubos / aristas afiladas
+  - Side-by-side con fast-surface-nets, no replacement
 
 **Gate exit:**
-- ✅ Demo: cueva editable runtime, sharp features preservadas en aristas
-- ✅ Re-extraction sub-frame (<5ms para chunk 64³)
-- ✅ Mesh extraído va al pipeline GPU-driven sin pasos especiales
+- ✅ Demo: cueva editable runtime con `fast-surface-nets`
+- ✅ Re-extraction sub-frame (<5ms para chunk 32³)
+- ✅ Mesh extraído va al pipeline GPU-driven (Phase 1)
 - ✅ Streaming voxel sin hitches
+- ✅ Transvoxel resuelve seams entre LODs
 
 ---
 
@@ -275,9 +291,15 @@ Issues que no bloquean fase pero suman:
 | **Fase 1.D** | Meshlet pipeline (Nanite-style) | 6-10 semanas |
 | **Fase 1 total** | Mesh GPU-driven pipeline operativa | **~3-4 meses** |
 | **Fase 2** | Virtual geometry + streaming | 2-3 meses |
-| **Fase 2.5** | Voxel + Dual Contouring hybrid | 2-3 meses |
+| **Fase 2.5** | Voxel + mesh extraction hybrid (deps adoption) | 4-6 semanas |
 | **Fase 3** | Planetary scale hybrid (heightmap + voxel zones) | 4-5 meses |
-| **Total roadmap** | Engine planetary-scale shipeable con caves/destrucción | **12-18 meses focused** |
+| **Total roadmap** | Engine planetary-scale shipeable con caves/destrucción | **10-14 meses focused** |
+
+### Política de adopción de deps (regla global)
+
+Usar deps drop-in cuando cubran ≥80% del use case. Custom solo donde la integración es específica O ningún crate maintained existe. Si estás escribiendo algo que tomaría >4 semanas alcanzar feature parity con un crate maintained, **investigaste mal antes de codear** — volvé a buscar en crates.io / lib.rs / GitHub topics.
+
+Ver `~/.claude/rules/code-standards.md` sección "Dependency Adoption" para la regla completa global.
 
 Realista con vida normal (tiempo parcial): **18-30 meses**.
 

@@ -126,6 +126,24 @@ meshopt = "..."
 - **Sistema de acciones** en `ome_input` — desbloquea issues #55, #56-61.
 - **Render graph** en `ome_render` — nodos con inputs/outputs, transient resources, automatic barriers.
 
+### Estrategia de adopción de deps (Phase 2.5 + Phase 3 hybrid)
+
+**Política**: usar deps existentes drop-in cuando hagan ≥80% de lo que necesitamos. Custom solo donde el use case no encaja.
+
+| Crate | Uso | Path | Justificación |
+|---|---|---|---|
+| `fast-surface-nets` ([bonsairobo](https://github.com/bonsairobo/fast-surface-nets-rs)) | Mesh extraction primary (Phase 2.5) | DROP-IN | 20M tri/seg, glam SIMD, sparse chunk seams. Cubre 90% del use case |
+| `transvoxel` ([Gnurfos](https://github.com/Gnurfos/transvoxel_rs)) | LOD seam stitching | DROP-IN | Resolver cracks entre chunks LOD diff es un problema gigante. Lengyel paper proven |
+| `block-mesh` ([bonsairobo](https://github.com/bonsairobo/block-mesh-rs)) | Cubic voxel meshing | DROP-IN si feature | Para zonas voxel-cube específicas (Minecraft-style debris) |
+| `mesh_to_sdf` ([Azkellas](https://github.com/Azkellas/mesh_to_sdf)) | Bake glTF → voxel SDF | DROP-IN | Pipeline offline para importar terrain custom desde Blender |
+| `meshopt` (Arseny Kapoulkine bindings) | Meshlet generation | DROP-IN | Industry-standard, no debate |
+| `voxelis` ([crates.io](https://crates.io/crates/voxelis)) | Sparse Voxel Octree DAG | EVALUATE | 99.999% compresión pero asume static-mostly. Adopt si fits, custom si no |
+| `WilstonOreo/sdf2mesh` | Custom DC reference | STUDY SOURCE | CLI tool, no es library runtime. Copiamos diseño no la dep |
+| `davids91/shocovox` | SVO GPU brick storage reference | STUDY SOURCE | No publicado como crate, pero patrón GPU SVO es valioso |
+| `ext-sakamoro/ALICE-SDF` | Interval arithmetic + JIT reference | STUDY SOURCE | Para optimización futura: pruning de octree nodes vacíos |
+
+**Regla mental**: si pasamos 4+ semanas implementando algo que ya existe maintenido en crate, fuimos vagos en investigar antes.
+
 ---
 
 ## 4. Roadmap de fases
