@@ -1,13 +1,10 @@
-//! End-to-end GPU integration: meshlet visibility-buffer + deferred
-//! shading renders the cube test scene with non-clear pixels.
+//! GPU integration test: deferred shading modulates by material id.
 //!
-//! Same camera + cube setup as `meshlet_render.rs`, but the pipeline
-//! goes:
-//!   cull → vbuf rasterize (R32Uint + depth) → deferred shade (compute
-//!   into Rgba8Unorm storage texture).
+//! Renders the same cube + camera setup with two different material
+//! ids and asserts the resulting colors differ.
 //!
 //! Run with:
-//!   cargo test -p ome_render --test meshlet_deferred -- --test-threads=1
+//!   cargo test -p ome_render --test meshlet_materials -- --test-threads=1
 
 mod common;
 
@@ -25,11 +22,9 @@ const RT_HEIGHT: u32 = 64;
 const ROW_BYTES: u32 = 64 * 4;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-#[test]
-fn vis_buffer_plus_deferred_paints_visible_cube_pixels() {
+fn render_with_material(material_id: u32) -> Vec<u8> {
     let Some((device, queue)) = try_acquire_device() else {
-        eprintln!("no GPU adapter available; skipping");
-        return;
+        return Vec::new();
     };
 
     let mesh = build_cube_mesh();
@@ -52,9 +47,19 @@ fn vis_buffer_plus_deferred_paints_visible_cube_pixels() {
     let meshlet_bgl = meshlet_bind_group_layout(&device);
     let meshlet_bg = meshlet_bind_group(&device, &meshlet_bgl, &gpu_mesh);
 
-    // Targets
+    let materials = MaterialPool::new(
+        &device,
+        &[
+            // slot 0 — pure red
+            MaterialParams::new([1.0, 0.0, 0.0, 1.0], 0.0, 0.5, 0.0),
+            // slot 1 — pure blue
+            MaterialParams::new([0.0, 0.0, 1.0, 1.0], 0.0, 0.5, 0.0),
+        ],
+    );
+    let material_bg = materials.bind_group(&device);
+
     let vbuf_tex = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("vbuf_test"),
+        label: Some("vbuf_mat_test"),
         size: wgpu::Extent3d {
             width: RT_WIDTH,
             height: RT_HEIGHT,
@@ -70,7 +75,7 @@ fn vis_buffer_plus_deferred_paints_visible_cube_pixels() {
     let vbuf_view = vbuf_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
     let color_tex = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("deferred_color"),
+        label: Some("color_mat_test"),
         size: wgpu::Extent3d {
             width: RT_WIDTH,
             height: RT_HEIGHT,
@@ -86,7 +91,7 @@ fn vis_buffer_plus_deferred_paints_visible_cube_pixels() {
     let color_view = color_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
     let depth_tex = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("vbuf_depth"),
+        label: Some("depth_mat_test"),
         size: wgpu::Extent3d {
             width: RT_WIDTH,
             height: RT_HEIGHT,
@@ -109,7 +114,7 @@ fn vis_buffer_plus_deferred_paints_visible_cube_pixels() {
     let cull_params = CullParams::new(view_proj, cam, gpu_mesh.meshlet_count);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("vbuf_deferred_encoder"),
+        label: Some("mat_test_encoder"),
     });
     cull.dispatch(&device, &queue, &mut encoder, &gpu_mesh, &cull_params);
     vbuf_raster.render(
@@ -124,11 +129,6 @@ fn vis_buffer_plus_deferred_paints_visible_cube_pixels() {
         model,
         0,
     );
-    let materials = MaterialPool::new(
-        &device,
-        &[MaterialParams::new([1.0, 1.0, 1.0, 1.0], 0.0, 0.5, 0.0)],
-    );
-    let material_bg = materials.bind_group(&device);
     deferred.shade(
         &device,
         &queue,
@@ -140,12 +140,11 @@ fn vis_buffer_plus_deferred_paints_visible_cube_pixels() {
         view_proj,
         model,
         (RT_WIDTH, RT_HEIGHT),
-        0,
+        material_id,
     );
 
-    // Readback color
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("deferred_color_staging"),
+        label: Some("mat_test_staging"),
         size: (ROW_BYTES * RT_HEIGHT) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
@@ -181,29 +180,57 @@ fn vis_buffer_plus_deferred_paints_visible_cube_pixels() {
         timeout: Some(std::time::Duration::from_secs(30)),
     });
     rx.recv().unwrap().unwrap();
-    let bytes = slice.get_mapped_range().to_vec();
+    slice.get_mapped_range().to_vec()
+}
 
-    let mut non_clear = 0usize;
-    let mut max_channel = 0u8;
-    for y in 0..RT_HEIGHT {
-        for x in 0..RT_WIDTH {
-            let off = (y * ROW_BYTES + x * 4) as usize;
-            let r = bytes[off];
-            let g = bytes[off + 1];
-            let b = bytes[off + 2];
-            if r != 0 || g != 0 || b != 0 {
-                non_clear += 1;
-            }
-            max_channel = max_channel.max(r.max(g).max(b));
+#[test]
+fn distinct_material_ids_produce_distinct_pixel_colors() {
+    let red_pixels = render_with_material(0);
+    let blue_pixels = render_with_material(1);
+
+    if red_pixels.is_empty() || blue_pixels.is_empty() {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    }
+
+    // Find one non-clear pixel in the red render whose RGB channel
+    // ordering signals red dominance (R > B, R > 0).
+    let mut found_red = false;
+    for chunk in red_pixels.chunks_exact(4) {
+        let r = chunk[0] as u32;
+        let g = chunk[1] as u32;
+        let b = chunk[2] as u32;
+        if r > 0 && r > b + 16 {
+            // Material is pure red, so green/blue should be heavily
+            // attenuated. Tolerance accounts for normal-debug shading
+            // (red = normal_debug.r * 1.0; green/blue zero).
+            assert!(
+                g < r,
+                "red material should not raise green above red (saw r={r}, g={g}, b={b})"
+            );
+            found_red = true;
+            break;
         }
     }
-    let total = (RT_WIDTH * RT_HEIGHT) as usize;
-    assert!(
-        non_clear > total / 100,
-        "vbuf+deferred should paint > 1% of the frame; got {non_clear}/{total}"
-    );
-    assert!(
-        max_channel > 64,
-        "expected at least one well-lit pixel; max channel was {max_channel}"
-    );
+    assert!(found_red, "red material id should produce some red-dominant pixels");
+
+    // And the blue render should produce blue-dominant pixels.
+    let mut found_blue = false;
+    for chunk in blue_pixels.chunks_exact(4) {
+        let r = chunk[0] as u32;
+        let g = chunk[1] as u32;
+        let b = chunk[2] as u32;
+        if b > 0 && b > r + 16 {
+            assert!(
+                g < b,
+                "blue material should not raise green above blue (saw r={r}, g={g}, b={b})"
+            );
+            found_blue = true;
+            break;
+        }
+    }
+    assert!(found_blue, "blue material id should produce some blue-dominant pixels");
+
+    // Sanity: red pixels are not the same as blue pixels.
+    assert_ne!(red_pixels, blue_pixels);
 }

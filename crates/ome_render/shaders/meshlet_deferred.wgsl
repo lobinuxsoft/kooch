@@ -21,7 +21,13 @@ struct ModelUniforms {
 
 struct ScreenUniforms {
     size: vec2<u32>,
-    _pad: vec2<u32>,
+    material_id: u32,
+    _pad: u32,
+}
+
+struct MaterialParams {
+    base_color: vec4<f32>,
+    metallic_roughness_emissive_pad: vec4<f32>,
 }
 
 struct MeshVertexStored {
@@ -52,6 +58,8 @@ struct MeshletDescriptor {
 @group(0) @binding(2) var<uniform> screen: ScreenUniforms;
 @group(0) @binding(3) var vis_buffer: texture_2d<u32>;
 @group(0) @binding(4) var color_out: texture_storage_2d<rgba8unorm, write>;
+
+@group(2) @binding(0) var<storage, read> materials: array<MaterialParams>;
 
 @group(1) @binding(0) var<storage, read> vertices: array<MeshVertexStored>;
 @group(1) @binding(1) var<storage, read> meshlet_vertices: array<u32>;
@@ -87,16 +95,24 @@ fn cs_shade(@builtin(global_invocation_id) gid: vec3<u32>) {
         let tri_idx = packed & 0x7Fu;
         let desc = descriptors[meshlet_id];
 
-        // Average the triangle's three vertex normals — keeps PR-6's
-        // shading visually identical to the forward path's flat-shaded
-        // output. Bary-correct interpolation is PR-7 territory.
+        // Average the triangle's three vertex normals — visually
+        // identical to flat-shaded forward output. Bary-correct
+        // interpolation lands when materials need real UV interp
+        // (texture-mapped PBR follow-up).
         let n0 = corner_normal(desc, tri_idx, 0u);
         let n1 = corner_normal(desc, tri_idx, 1u);
         let n2 = corner_normal(desc, tri_idx, 2u);
         let avg = (n0 + n1 + n2) / 3.0;
         let world_n = (model.model * vec4<f32>(avg, 0.0)).xyz;
         let n = normalize(world_n);
-        color = vec4<f32>(n * 0.5 + 0.5, 1.0);
+
+        // PR-7: modulate normal-debug shading by the material's base
+        // colour. Materials pool is indexed via `screen.material_id`
+        // (per-render-call assignment); per-meshlet material ids land
+        // with bindless textures in a follow-up.
+        let normal_debug = n * 0.5 + 0.5;
+        let m = materials[screen.material_id];
+        color = vec4<f32>(normal_debug * m.base_color.rgb, m.base_color.a);
     }
 
     textureStore(color_out, vec2<i32>(i32(pixel.x), i32(pixel.y)), color);
