@@ -35,12 +35,16 @@
 //! (1.E.3b) will hand the color view back to the editor's offscreen
 //! target via a copy or by binding the stage's view directly.
 
+use std::collections::HashMap;
+
 use glam::{Mat4, Vec3};
 
+use ome_core::assets::{Assets, Handle};
 use ome_core::resource::Resources;
 
 use crate::material::{MaterialParams, MaterialPool};
 
+use super::asset::MeshletMesh;
 use super::cull::CullParams;
 use super::deferred::{MeshletDeferredShader, DEFERRED_COLOR_FORMAT};
 use super::dispatcher::MeshletCull;
@@ -100,6 +104,16 @@ pub struct MeshletRenderStage {
     rasterizer: MeshletVisRasterizer,
     deferred: MeshletDeferredShader,
     material_pool: MaterialPool,
+
+    /// GPU mirrors of every meshlet mesh that's been registered via
+    /// [`Self::ensure_gpu_mesh`]. Single-mesh path (1.E.3a/b) uses the
+    /// first cached entry; the multi-mesh `cs_cull_scene_pool` variant
+    /// (1.E.3c) will iterate this map and bind a `GpuGlobalMeshPool`.
+    gpu_meshes: HashMap<Handle<MeshletMesh>, GpuMeshletMesh>,
+    /// Single-mesh path's "active" handle — populated by
+    /// [`Self::ensure_gpu_mesh`] (first call) so [`Self::render_with_assets`]
+    /// can look up the gpu mesh without an explicit argument.
+    active_handle: Option<Handle<MeshletMesh>>,
 
     meshlet_bgl: wgpu::BindGroupLayout,
 
@@ -175,6 +189,8 @@ impl MeshletRenderStage {
             rasterizer,
             deferred,
             material_pool,
+            gpu_meshes: HashMap::new(),
+            active_handle: None,
             meshlet_bgl,
             vbuf_view,
             depth_view,
@@ -227,6 +243,83 @@ impl MeshletRenderStage {
 
     pub fn instance_capacity(&self) -> u32 {
         self.instance_capacity
+    }
+
+    /// Ensures `mesh` is uploaded to GPU under `handle`. Idempotent —
+    /// repeat calls with the same handle skip re-upload. Also registers
+    /// the CPU-side asset with the [`MeshletPipeline`] so the ECS query
+    /// can pick the entity up.
+    ///
+    /// The first ensured handle becomes the "active" mesh used by
+    /// [`Self::render_with_assets`]. Multi-mesh scenes (1.E.3c) will
+    /// extend the lookup to `MeshInstance::mesh_id`.
+    pub fn ensure_gpu_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        handle: Handle<MeshletMesh>,
+        mesh: &MeshletMesh,
+    ) {
+        self.pipeline.register_mesh(handle, mesh);
+        if !self.gpu_meshes.contains_key(&handle) {
+            self.gpu_meshes.insert(handle, mesh.upload(device));
+        }
+        if self.active_handle.is_none() {
+            self.active_handle = Some(handle);
+        }
+    }
+
+    /// Number of `Handle<MeshletMesh>` entries currently uploaded to GPU.
+    pub fn gpu_mesh_count(&self) -> u32 {
+        self.gpu_meshes.len() as u32
+    }
+
+    pub fn active_handle(&self) -> Option<Handle<MeshletMesh>> {
+        self.active_handle
+    }
+
+    /// Walks `Assets<MeshletMesh>` and uploads any meshlet mesh
+    /// referenced by a visible `MeshRenderer` that is not yet cached.
+    /// Bridges the gap between asset loading (CPU) and the GPU pool
+    /// without forcing the caller to hand-register each handle.
+    pub fn sync_assets_to_gpu(&mut self, device: &wgpu::Device, resources: &Resources) {
+        let Some(assets) = resources.get::<Assets<MeshletMesh>>() else {
+            return;
+        };
+        let visible = self.pipeline.collect_referenced_handles(resources);
+        for handle in visible {
+            if self.gpu_meshes.contains_key(&handle) {
+                continue;
+            }
+            if let Some(mesh) = assets.get(handle) {
+                let gpu = mesh.upload(device);
+                self.pipeline.register_mesh(handle, mesh);
+                self.gpu_meshes.insert(handle, gpu);
+                if self.active_handle.is_none() {
+                    self.active_handle = Some(handle);
+                }
+            }
+        }
+    }
+
+    /// Convenience wrapper that pulls the active gpu mesh from the
+    /// internal cache, then forwards to [`Self::render`]. Returns
+    /// [`MeshletRenderStats::default`] if no mesh is active or no
+    /// instances were collected.
+    pub fn render_with_assets(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        resources: &Resources,
+        view_proj: Mat4,
+        cam_pos: Vec3,
+    ) -> MeshletRenderStats {
+        let Some(handle) = self.active_handle else {
+            return MeshletRenderStats::default();
+        };
+        let Some(gpu_mesh) = self.gpu_meshes.get(&handle) else {
+            return MeshletRenderStats::default();
+        };
+        self.render(device, queue, resources, gpu_mesh, view_proj, cam_pos)
     }
 
     /// Records + submits one frame of the meshlet pipeline driven by

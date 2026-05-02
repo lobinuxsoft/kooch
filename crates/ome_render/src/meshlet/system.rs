@@ -82,6 +82,28 @@ impl MeshletPipeline {
         mesh_handle
     }
 
+    /// Walks the ECS query and returns every distinct
+    /// `Handle<MeshletMesh>` referenced by a visible `MeshRenderer`.
+    /// Order is unspecified — duplicates collapse — useful as the input
+    /// for "ensure all referenced meshes are GPU-resident".
+    pub fn collect_referenced_handles(
+        &self,
+        resources: &Resources,
+    ) -> Vec<Handle<MeshletMesh>> {
+        use std::collections::HashSet;
+        let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
+        let mut seen: HashSet<Handle<MeshletMesh>> = HashSet::new();
+        query.for_each(|(renderer, _)| {
+            if !renderer.visible {
+                return;
+            }
+            if let Some(raw) = renderer.meshlet_mesh {
+                seen.insert(handle_from_key(raw));
+            }
+        });
+        seen.into_iter().collect()
+    }
+
     /// Walks `Query<&MeshRenderer, &GlobalTransform>` from the ECS
     /// world (`resources`) and returns the per-frame `MeshInstance`
     /// slice the scene cull dispatch should consume.

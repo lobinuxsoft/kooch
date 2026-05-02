@@ -14,6 +14,8 @@
 //! Post-pivot 2026-05-02: SDF raymarch pass removed. Engine is mesh-only;
 //! voxel + DC pipeline (Phase 2.5) will feed mesh chunks into pass 2.
 
+mod path;
+
 use glam::Vec4;
 use ome_core::app::App;
 use ome_core::event::{AppExit, Events};
@@ -21,21 +23,35 @@ use ome_core::gpu::GpuContext;
 use ome_core::plugin::Plugin;
 use ome_core::resource::Resources;
 use ome_core::stage::Stage;
-use ome_core::time::Time;
-use ome_ecs::hierarchy::GlobalTransform;
-use ome_ecs::mesh_renderer::MeshRenderer;
-use ome_ecs::query::Query;
-use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
 
 use crate::VIEWPORT_DEPTH_FORMAT;
 use crate::fps::FpsTracker;
 use crate::mesh::MeshPassRenderer;
+use crate::meshlet::{MeshletBlit, MeshletRenderStage, MeshletRenderStageConfig};
 use crate::sky::SkyRenderPass;
+
+use path::{acquire_and_render, RenderPath, SurfaceOutcome};
 
 /// Fallback clear color when no `SkyRenderer` entity is active. Matches the
 /// `SkyRenderer` component's default bottom gradient so play and edit modes
 /// look identical out of the box.
-const SKY_FALLBACK: Vec4 = Vec4::new(0.1, 0.2, 0.4, 1.0);
+pub(super) const SKY_FALLBACK: Vec4 = Vec4::new(0.1, 0.2, 0.4, 1.0);
+
+/// Runtime toggle that decides whether [`RenderPlugin`] runs the legacy
+/// `MeshPassRenderer` path or the new meshlet GPU-driven pipeline.
+///
+/// Default is `enabled = false` — the meshlet path is opt-in until
+/// Phase 1.E.4 visual validation in the editor. When `enabled = true`,
+/// the plugin still runs sky + clear, but replaces the mesh pass with
+/// `MeshletRenderStage::render_with_assets` followed by a
+/// [`MeshletBlit`] composite onto the surface.
+///
+/// Toggle at runtime by mutating the resource:
+/// `resources.get_mut::<UseMeshletPath>().unwrap().enabled = true;`
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UseMeshletPath {
+    pub enabled: bool,
+}
 
 /// Plugin that installs the full render pipeline.
 ///
@@ -48,6 +64,7 @@ pub struct RenderPlugin;
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(FpsTracker::new());
+        app.insert_resource(UseMeshletPath::default());
         app.add_system(Stage::Startup, init_renderers);
         app.add_system(Stage::Render, render_frame_system);
     }
@@ -117,10 +134,20 @@ fn init_renderers(resources: &mut Resources) {
     let mesh_pass = MeshPassRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
     let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format(), pipeline_cache);
     let depth = GameDepth::new(gpu.device(), gpu.size());
+    let meshlet_stage = MeshletRenderStage::new(
+        gpu.device(),
+        MeshletRenderStageConfig {
+            size: gpu.size(),
+            ..Default::default()
+        },
+    );
+    let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
     resources.insert(mesh_pass);
     resources.insert(sky_pass);
     resources.insert(depth);
-    tracing::info!("RenderPlugin: renderers initialized");
+    resources.insert(meshlet_stage);
+    resources.insert(meshlet_blit);
+    tracing::info!("RenderPlugin: renderers initialized (legacy + meshlet)");
 }
 
 fn render_frame_system(resources: &mut Resources) {
@@ -133,6 +160,11 @@ fn render_frame_system(resources: &mut Resources) {
     if resources.get::<MeshPassRenderer>().is_none() {
         init_renderers(resources);
     }
+
+    let use_meshlet = resources
+        .get::<UseMeshletPath>()
+        .map(|t| t.enabled)
+        .unwrap_or(false);
 
     let Some(mut mesh_pass) = resources.remove::<MeshPassRenderer>() else {
         return;
@@ -150,9 +182,27 @@ fn render_frame_system(resources: &mut Resources) {
         .remove::<GameDepth>()
         .unwrap_or_else(|| GameDepth::new(gpu.device(), gpu.size()));
 
+    let mut meshlet_stage = resources.remove::<MeshletRenderStage>();
+    let meshlet_blit = resources.remove::<MeshletBlit>();
+
+    if use_meshlet {
+        if let Some(stage) = meshlet_stage.as_mut() {
+            stage.sync_assets_to_gpu(gpu.device(), resources);
+        }
+    }
+
     let (w, h) = gpu.size();
     depth.ensure(gpu.device(), (w, h));
     let aspect = w as f32 / h.max(1) as f32;
+
+    let path = if use_meshlet {
+        match (meshlet_stage.as_ref(), meshlet_blit.as_ref()) {
+            (Some(stage), Some(blit)) => RenderPath::Meshlet { stage, blit },
+            _ => RenderPath::Legacy,
+        }
+    } else {
+        RenderPath::Legacy
+    };
 
     let outcome = acquire_and_render(
         &gpu,
@@ -161,12 +211,19 @@ fn render_frame_system(resources: &mut Resources) {
         &depth.view,
         resources,
         aspect,
+        path,
     );
 
     resources.insert(gpu);
     resources.insert(mesh_pass);
     resources.insert(sky_pass);
     resources.insert(depth);
+    if let Some(stage) = meshlet_stage {
+        resources.insert(stage);
+    }
+    if let Some(blit) = meshlet_blit {
+        resources.insert(blit);
+    }
 
     match outcome {
         SurfaceOutcome::Presented | SurfaceOutcome::Skip => {}
@@ -186,137 +243,4 @@ fn render_frame_system(resources: &mut Resources) {
     }
 }
 
-enum SurfaceOutcome {
-    Presented,
-    Skip,
-    NeedsReconfigure,
-    Error,
-}
-
-fn acquire_and_render(
-    gpu: &GpuContext,
-    sky_pass: &mut SkyRenderPass,
-    mesh_pass: &mut MeshPassRenderer,
-    depth_view: &wgpu::TextureView,
-    resources: &mut Resources,
-    aspect: f32,
-) -> SurfaceOutcome {
-    match gpu.surface().get_current_texture() {
-        CurrentSurfaceTexture::Success(tex) | CurrentSurfaceTexture::Suboptimal(tex) => {
-            render_passes(gpu, sky_pass, mesh_pass, depth_view, resources, aspect, tex);
-            SurfaceOutcome::Presented
-        }
-        CurrentSurfaceTexture::Outdated | CurrentSurfaceTexture::Lost => {
-            SurfaceOutcome::NeedsReconfigure
-        }
-        CurrentSurfaceTexture::Occluded | CurrentSurfaceTexture::Timeout => SurfaceOutcome::Skip,
-        CurrentSurfaceTexture::Validation => SurfaceOutcome::Error,
-    }
-}
-
-fn render_passes(
-    gpu: &GpuContext,
-    sky_pass: &mut SkyRenderPass,
-    mesh_pass: &mut MeshPassRenderer,
-    depth_view: &wgpu::TextureView,
-    resources: &mut Resources,
-    aspect: f32,
-    frame: SurfaceTexture,
-) {
-    let view = frame
-        .texture
-        .create_view(&wgpu::TextureViewDescriptor::default());
-    let mut encoder = gpu
-        .device()
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("game_render_encoder"),
-        });
-
-    // Pass 1: Sky.
-    let sky_drawn = if let Some(active_sky) = SkyRenderPass::active_sky(resources) {
-        let time_secs = resources
-            .get::<Time>()
-            .map(|t| t.elapsed_secs())
-            .unwrap_or(0.0);
-        sky_pass.render(
-            gpu.queue(),
-            &mut encoder,
-            &view,
-            depth_view,
-            resources,
-            aspect,
-            active_sky,
-            time_secs,
-        )
-    } else {
-        false
-    };
-
-    // No sky? Clear to fallback gradient via direct buffer fill.
-    if !sky_drawn {
-        clear_with_gradient(&mut encoder, &view, depth_view);
-    }
-
-    // Pass 2: Mesh.
-    if has_visible_mesh(resources) {
-        mesh_pass.render(
-            gpu.device(),
-            gpu.queue(),
-            &mut encoder,
-            &view,
-            depth_view,
-            resources,
-            aspect,
-        );
-    }
-
-    gpu.queue().submit(Some(encoder.finish()));
-    frame.present();
-}
-
-fn clear_with_gradient(
-    encoder: &mut wgpu::CommandEncoder,
-    view: &wgpu::TextureView,
-    depth: &wgpu::TextureView,
-) {
-    let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("game_clear_pass"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color {
-                    r: SKY_FALLBACK.x as f64,
-                    g: SKY_FALLBACK.y as f64,
-                    b: SKY_FALLBACK.z as f64,
-                    a: SKY_FALLBACK.w as f64,
-                }),
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-            view: depth,
-            depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(1.0),
-                store: wgpu::StoreOp::Store,
-            }),
-            stencil_ops: None,
-        }),
-        timestamp_writes: None,
-        occlusion_query_set: None,
-        multiview_mask: None,
-    });
-}
-
-fn has_visible_mesh(resources: &Resources) -> bool {
-    let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
-    let mut found = false;
-    query.for_each(|(mr, _)| {
-        if mr.visible && !mr.mesh.is_empty() {
-            found = true;
-        }
-    });
-    found
-}
 
