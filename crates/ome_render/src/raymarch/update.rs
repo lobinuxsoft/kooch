@@ -38,6 +38,7 @@ impl RayMarchRenderer {
         queue: &wgpu::Queue,
         resources: &ome_core::resource::Resources,
         aspect: f32,
+        screen_height: u32,
     ) -> bool {
         let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
         let mut best: Option<(i32, PerspectiveCamera, Mat4)> = None;
@@ -86,13 +87,21 @@ impl RayMarchRenderer {
             );
         }
 
+        // PR-5 (epic #370): per-pixel cone half-angle at unit `t`.
+        // `tan(fov_y / 2.0) * 2.0 / screen_height` — vertical-axis
+        // formulation matches the projection's vertical FOV. The
+        // fragment shader's `pick_cascade` multiplies this by
+        // `length(p - camera.position)` to compare against the
+        // cascade voxel pitch table.
+        let pixel_cone_angle =
+            (cam.fov.to_radians() * 0.5).tan() * 2.0 / screen_height.max(1) as f32;
         let uniforms = super::instance::CameraUniforms {
             view: view.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),
             inverse_view: view.inverse().to_cols_array_2d(),
             inverse_projection: projection.inverse().to_cols_array_2d(),
             position: translation.to_array(),
-            _pad0: 0.0,
+            pixel_cone_angle,
         };
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniforms));
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&self.params));
@@ -222,14 +231,22 @@ impl RayMarchRenderer {
         });
         self.bvh_state
             .tick_uniforms(queue, &mut encoder, k_int_max, k_sub_max);
-        // PR-4 (epic #370): populate the GDF cascade-0 *after* the
-        // TLAS rebuild for this frame's pool state, *before* the
-        // raymarch fragment shader reads the cascade. The populate
-        // pass runs `eval_scene_bvh_traversal` over the just-ticked
-        // TLAS uniforms, so cascade contents match the pool state
-        // the production raymarch sees on the same frame.
-        self.gdf_state
-            .dispatch_populate(&mut encoder, queue, self.last_camera_pos);
+        // PR-5 (epic #370): round-robin populate. The scheduler
+        // returns the cascade indices that need a redispatch this
+        // frame (cascade 0 every frame, cascade `c` every `2^c`
+        // frames in steady state, plus on-demand triggers for
+        // dirtied chunks and camera drift). All dispatches land in
+        // the same encoder, so the fragment shader sees a coherent
+        // multi-cascade SDF in the next render pass.
+        let cascades = self.gdf_scheduler.cascades_to_update(self.last_camera_pos);
+        for cascade_idx in cascades {
+            self.gdf_state.dispatch_populate_cascade(
+                &mut encoder,
+                queue,
+                cascade_idx as usize,
+                self.last_camera_pos,
+            );
+        }
         queue.submit(std::iter::once(encoder.finish()));
 
         // `SceneMeta` keeps the legacy field layout (uniform buffer

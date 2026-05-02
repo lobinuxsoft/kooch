@@ -332,7 +332,11 @@ fn frame_time_smoke_bench() {
     let mut samples = Vec::with_capacity(FRAMES);
     for _ in 0..FRAMES {
         let start = std::time::Instant::now();
-        renderer.dispatch_gdf_populate(&device, &queue, camera_pos);
+        // PR-5 (epic #370): drive the round-robin scheduler so the
+        // bench captures the full multi-cascade populate cost
+        // (cascade 0 every frame, cascade `c` every `2^c` frames in
+        // steady state). PR-4's bench dispatched cascade 0 only.
+        renderer.dispatch_gdf_populate_scheduled(&device, &queue, camera_pos);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame_time_bench_render"),
         });

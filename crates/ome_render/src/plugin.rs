@@ -172,6 +172,7 @@ fn render_frame_system(resources: &mut Resources) {
         &depth.view,
         resources,
         aspect,
+        h,
     );
 
     resources.insert(gpu);
@@ -213,11 +214,13 @@ fn acquire_and_render(
     depth_view: &wgpu::TextureView,
     resources: &mut Resources,
     aspect: f32,
+    screen_height: u32,
 ) -> SurfaceOutcome {
     match gpu.surface().get_current_texture() {
         CurrentSurfaceTexture::Success(tex) | CurrentSurfaceTexture::Suboptimal(tex) => {
             render_passes(
-                gpu, sky_pass, raymarch, mesh_pass, depth_view, resources, aspect, tex,
+                gpu, sky_pass, raymarch, mesh_pass, depth_view, resources, aspect, screen_height,
+                tex,
             );
             SurfaceOutcome::Presented
         }
@@ -237,6 +240,7 @@ fn render_passes(
     depth_view: &wgpu::TextureView,
     resources: &mut Resources,
     aspect: f32,
+    screen_height: u32,
     frame: SurfaceTexture,
 ) {
     let view = frame
@@ -276,8 +280,8 @@ fn render_passes(
 
     let has_sdf = crate::raymarch::has_any_visible_sdf(resources)
         || raymarch.bvh_state().streaming_chunk_count() > 0;
-    let camera_ok =
-        has_sdf && raymarch.update_camera(gpu.device(), gpu.queue(), resources, aspect);
+    let camera_ok = has_sdf
+        && raymarch.update_camera(gpu.device(), gpu.queue(), resources, aspect, screen_height);
     if camera_ok {
         raymarch.update_scene(
             gpu.device(),

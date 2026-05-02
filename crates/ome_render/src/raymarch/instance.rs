@@ -16,6 +16,13 @@ pub(super) use ome_bvh::sdf_primitive::{
 };
 
 /// Matches `CameraUniforms` in the WGSL shader.
+///
+/// PR-5 of epic #370 reuses the legacy trailing `_pad0: f32` slot
+/// for `pixel_cone_angle`, the per-pixel cone half-angle in radians
+/// at unit distance. The fragment shader's `pick_cascade` multiplies
+/// this by `t = length(p - camera.position)` to get the per-step
+/// cone radius and matches it against the cascade voxel pitch table
+/// to choose the LOD that doesn't over- or under-sample.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 pub(super) struct CameraUniforms {
@@ -24,7 +31,7 @@ pub(super) struct CameraUniforms {
     pub inverse_view: [[f32; 4]; 4],
     pub inverse_projection: [[f32; 4]; 4],
     pub position: [f32; 3],
-    pub _pad0: f32,
+    pub pixel_cone_angle: f32,
 }
 
 /// Matches `RayMarchParams` in the WGSL shader.

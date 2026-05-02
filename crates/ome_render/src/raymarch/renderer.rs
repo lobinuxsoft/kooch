@@ -25,10 +25,11 @@ use glam::Vec3;
 use wgpu::util::DeviceExt;
 
 use super::SHADER_SOURCE;
+use super::bind_groups::{make_camera_bg, make_pool_scene_bg, pool_scene_bgl_entries};
 use super::bvh::BvhState;
 use super::instance::{CameraUniforms, RayMarchParams, SceneMeta};
 use crate::VIEWPORT_DEPTH_FORMAT;
-use crate::gdf::GdfState;
+use crate::gdf::{GdfScheduler, GdfState};
 
 /// Ray-marching pipeline + buffers + bind groups.
 pub struct RayMarchRenderer {
@@ -40,12 +41,17 @@ pub struct RayMarchRenderer {
     pub(super) scene_bind_group: wgpu::BindGroup,
     pub(super) bvh_state: BvhState,
     pub(super) gdf_state: GdfState,
+    /// Round-robin scheduler picking which cascades to populate this
+    /// frame. PR-5 of epic #370. `update_scene` queries it once per
+    /// frame and dispatches the returned cascades into the same
+    /// encoder as the TLAS rebuild.
+    pub(super) gdf_scheduler: GdfScheduler,
     /// Camera world position captured by the most recent
     /// `update_camera` call. `update_scene` reads it to centre the
-    /// GDF cascade-0 voxel grid on the camera before dispatching the
-    /// populate compute pass. Defaults to origin so a first-frame
-    /// render with no active camera still produces a self-consistent
-    /// cascade centred on `(0, 0, 0)`.
+    /// GDF cascades on the camera before dispatching their populate
+    /// passes. Defaults to origin so a first-frame render with no
+    /// active camera still produces a self-consistent cascade
+    /// stack rooted at `(0, 0, 0)`.
     pub(super) last_camera_pos: Vec3,
     pub params: RayMarchParams,
 }
@@ -185,6 +191,7 @@ impl RayMarchRenderer {
             scene_bind_group,
             bvh_state,
             gdf_state,
+            gdf_scheduler: GdfScheduler::new(),
             last_camera_pos: Vec3::ZERO,
             params: RayMarchParams::default(),
         }
@@ -198,10 +205,11 @@ impl RayMarchRenderer {
         &mut self.gdf_state
     }
 
-    /// Re-centre the cascade on `camera_pos` and dispatch the GDF
+    /// Re-centre cascade 0 on `camera_pos` and dispatch its GDF
     /// populate compute pass for a one-shot render. Production code
     /// goes through `update_scene`; this entry point exists for
-    /// tests + tools that bypass the ECS-driven update.
+    /// tests + tools that bypass the ECS-driven update. Forces the
+    /// dispatch — does NOT consult the round-robin scheduler.
     pub fn dispatch_gdf_populate(
         &mut self,
         device: &wgpu::Device,
@@ -215,6 +223,41 @@ impl RayMarchRenderer {
         self.gdf_state
             .dispatch_populate(&mut encoder, queue, camera_pos);
         queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Drive the round-robin scheduler one frame: ask which cascades
+    /// need a populate dispatch and submit them all in a single
+    /// encoder. Mirrors the GDF half of `update_scene` for tests +
+    /// benchmarks that don't build an ECS world.
+    pub fn dispatch_gdf_populate_scheduled(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        camera_pos: Vec3,
+    ) {
+        self.last_camera_pos = camera_pos;
+        let cascades = self.gdf_scheduler.cascades_to_update(camera_pos);
+        if cascades.is_empty() {
+            return;
+        }
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("raymarch_dispatch_gdf_populate_scheduled"),
+        });
+        for cascade_idx in cascades {
+            self.gdf_state.dispatch_populate_cascade(
+                &mut encoder,
+                queue,
+                cascade_idx as usize,
+                camera_pos,
+            );
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Mutable accessor to the GDF round-robin scheduler. Tests use
+    /// it to seed dirty marks or inspect the current frame index.
+    pub fn gdf_scheduler_mut(&mut self) -> &mut GdfScheduler {
+        &mut self.gdf_scheduler
     }
 
     /// Records the ray-march pass into `encoder` and draws the fullscreen
@@ -273,108 +316,3 @@ impl RayMarchRenderer {
     }
 }
 
-pub(super) fn make_camera_bg(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    camera: &wgpu::Buffer,
-    params: &wgpu::Buffer,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("raymarch_camera_bg"),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: params.as_entire_binding(),
-            },
-        ],
-    })
-}
-
-/// Bind-group layout entries for the pool-driven scene bind group.
-/// Group 1 — `(0)` `scene_meta` uniform + `(5..=10)` pool buffers +
-/// `(11..=13)` GDF cascade fetch (PR-4 of epic #370). Bindings 1..=4
-/// stay absent; the legacy global-BVH bindings that used to occupy
-/// those slots are gone. Pool buffers stay even though `eval_scene_bvh`
-/// no longer references them — PR-8 will resurrect the traversal for
-/// hybrid surface refinement, and naga happily accepts the unreferenced
-/// bindings via reachability pruning during pipeline creation.
-fn pool_scene_bgl_entries() -> [wgpu::BindGroupLayoutEntry; 10] {
-    let storage = wgpu::BindingType::Buffer {
-        ty: wgpu::BufferBindingType::Storage { read_only: true },
-        has_dynamic_offset: false,
-        min_binding_size: None,
-    };
-    let uniform = wgpu::BindingType::Buffer {
-        ty: wgpu::BufferBindingType::Uniform,
-        has_dynamic_offset: false,
-        min_binding_size: None,
-    };
-    let cascade_texture = wgpu::BindingType::Texture {
-        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-        view_dimension: wgpu::TextureViewDimension::D3,
-        multisampled: false,
-    };
-    let cascade_sampler = wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering);
-    let entry = |binding: u32, ty: wgpu::BindingType| wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty,
-        count: None,
-    };
-    [
-        entry(0, uniform),          // scene_meta
-        entry(5, storage),          // tlas_nodes
-        entry(6, storage),          // chunk_descriptors
-        entry(7, storage),          // bvh_nodes_pool
-        entry(8, storage),          // leaf_aabbs_pool
-        entry(9, storage),          // primitives_pool
-        entry(10, uniform),         // tlas_uniforms
-        entry(11, cascade_texture), // gdf_cascade
-        entry(12, cascade_sampler), // gdf_sampler
-        entry(13, uniform),         // gdf_uniforms (CascadeDescriptor)
-    ]
-}
-
-/// Build the pool-driven scene bind group. Pool buffers come from
-/// `OmeAccel::buffers()` — pre-allocated at `BvhState::new`, never
-/// reallocated. The GDF cascade texture + sampler + uniform buffer
-/// come from `GdfState`, also stable for the renderer's lifetime.
-/// This bind group is built ONCE at construction.
-pub(super) fn make_pool_scene_bg(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    meta: &wgpu::Buffer,
-    pool: &ome_bvh::AccelBuffers,
-    gdf: &GdfState,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("raymarch_scene_bg"),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: meta.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: pool.tlas_nodes.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 6, resource: pool.chunk_descriptors.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 7, resource: pool.bvh_nodes_pool.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 8, resource: pool.leaf_aabbs_pool.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 9, resource: pool.primitives_pool.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 10, resource: pool.tlas_uniforms.as_entire_binding() },
-            wgpu::BindGroupEntry {
-                binding: 11,
-                resource: wgpu::BindingResource::TextureView(gdf.cascade_view()),
-            },
-            wgpu::BindGroupEntry {
-                binding: 12,
-                resource: wgpu::BindingResource::Sampler(gdf.sampler()),
-            },
-            wgpu::BindGroupEntry {
-                binding: 13,
-                resource: gdf.uniforms_buffer().as_entire_binding(),
-            },
-        ],
-    })
-}
