@@ -28,14 +28,14 @@ pub mod texture;
 pub const VIEWPORT_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 pub use fps::FpsTracker;
-pub use graph::{FnNode, GraphError, NodeId, RenderContext, RenderGraph, RenderNode};
+pub use graph::{FnNode, FrameInfo, GraphError, NodeId, RenderContext, RenderGraph, RenderNode};
 pub use hi_z::HiZ;
 pub use material::{MaterialParams, MaterialPool};
-pub use mesh::{Aabb, GpuMesh, MeshLoadError, MeshLoader, MeshPassRenderer, MeshVertex};
+pub use mesh::{Aabb, GpuMesh, MeshLoadError, MeshLoader, MeshPassNode, MeshPassRenderer, MeshVertex};
 pub use meshlet::{
     build_default_meshlets, build_meshlets_from_mesh, MeshletBuildError, MeshletDescriptor,
     MeshletMesh,
 };
 pub use plugin::RenderPlugin;
-pub use sky::{ActiveSky, SkyRenderPass};
+pub use sky::{ActiveSky, SkyPassNode, SkyRenderPass};
 pub use texture::{GpuTexture, Image, ImageFormat, ImageLoader};
