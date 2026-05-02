@@ -27,8 +27,6 @@
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 
-use super::asset::MeshletDescriptor;
-
 /// Per-frame culling parameters uploaded to the compute shader.
 ///
 /// Six frustum planes packed as `(normal, distance)` — plane equation
@@ -111,6 +109,8 @@ pub fn sphere_outside_frustum(planes: &[[f32; 4]; 6], center: Vec3, radius: f32)
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use super::super::asset::MeshletDescriptor;
     use glam::Quat;
 
     #[test]
@@ -185,13 +185,16 @@ mod tests {
     }
 
     #[test]
-    fn unused_descriptor_field_is_addressable() {
-        // Defensive: confirm MeshletDescriptor's bounding_radius field
-        // matches what the cull shader reads. If the layout drifts,
-        // this test fails before the shader runs in production.
+    fn descriptor_cull_fields_are_addressable() {
+        // Defensive: confirm MeshletDescriptor exposes the fields the
+        // cull shader reads. If the layout drifts, this test fails
+        // before the shader runs in production.
         let d = MeshletDescriptor::zeroed();
-        let _ = d.cone_apex;
+        let _ = d.bounds_center;
         let _ = d.bounding_radius;
+        let _ = d.cone_apex;
+        let _ = d.cone_axis;
+        let _ = d.cone_cutoff;
     }
 
     #[test]

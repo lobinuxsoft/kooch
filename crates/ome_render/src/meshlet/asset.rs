@@ -17,22 +17,33 @@ pub const DEFAULT_MAX_VERTICES: usize = 64;
 /// of 4 ≤ 128 (`meshopt` requires `max_triangles` divisible by 4).
 pub const DEFAULT_MAX_TRIANGLES: usize = 124;
 
-/// Per-meshlet metadata. POD, repr(C), 80 bytes — packs into a uniform
-/// storage buffer for compute culling without a single `if let` on
-/// upload. Layout fields:
+/// Per-meshlet metadata. POD, repr(C), 96 bytes — packs into a storage
+/// buffer for compute culling without a single `if let` on upload.
 ///
-/// - `vertex_offset` / `triangle_offset` index into the parent
-///   [`MeshletMesh::meshlet_vertices`] / `meshlet_triangles` arrays.
-/// - `vertex_count` ≤ [`DEFAULT_MAX_VERTICES`], `triangle_count` ≤
-///   [`DEFAULT_MAX_TRIANGLES`].
-/// - `aabb_min` / `aabb_max` are world-local. The compute shader
-///   transforms them into world space per-instance.
-/// - `cone_apex` / `cone_axis` / `cone_cutoff` form a normal cone
-///   for backface culling: if the camera is in the half-space
-///   defined by the cone, the meshlet is fully back-facing and can
-///   skip both rasterization and visibility-buffer emission.
-/// - `bounding_radius` covers all of the meshlet's vertices from
-///   `cone_apex` — used by frustum and occlusion (Hi-Z) culling.
+/// Layout (offsets in bytes):
+/// ```text
+///  0  vertex_offset (u32)        index into MeshletMesh::meshlet_vertices
+///  4  triangle_offset (u32)      byte offset into MeshletMesh::meshlet_triangles
+///  8  vertex_count (u32)         ≤ DEFAULT_MAX_VERTICES
+/// 12  triangle_count (u32)       ≤ DEFAULT_MAX_TRIANGLES
+/// 16  aabb_min ([f32;3])         local-space, render pass transforms per-instance
+/// 28  _pad0 (u32)
+/// 32  aabb_max ([f32;3])
+/// 44  _pad1 (u32)
+/// 48  bounds_center ([f32;3])    bounding sphere centre (frustum + Hi-Z cull)
+/// 60  bounding_radius (f32)
+/// 64  cone_apex ([f32;3])        normal-cone apex (backface cull)
+/// 76  cone_cutoff (f32)          cosine of half-angle
+/// 80  cone_axis ([f32;3])        normalized cone axis
+/// 92  _pad2 (u32)
+/// ```
+///
+/// `bounds_center` and `cone_apex` are deliberately separate: meshopt
+/// returns them as distinct vectors and the cone test
+/// `dot(normalize(camera - cone_apex), cone_axis) >= cone_cutoff` is
+/// only correct against the real apex, not the sphere centre. The
+/// frustum cull keeps using `bounds_center` + `bounding_radius` as
+/// before.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MeshletDescriptor {
@@ -44,10 +55,12 @@ pub struct MeshletDescriptor {
     pub _pad0: u32,
     pub aabb_max: [f32; 3],
     pub _pad1: u32,
-    pub cone_apex: [f32; 3],
+    pub bounds_center: [f32; 3],
     pub bounding_radius: f32,
-    pub cone_axis: [f32; 3],
+    pub cone_apex: [f32; 3],
     pub cone_cutoff: f32,
+    pub cone_axis: [f32; 3],
+    pub _pad2: u32,
 }
 
 impl MeshletDescriptor {
@@ -107,8 +120,29 @@ mod tests {
 
     #[test]
     fn descriptor_layout_is_repr_c_pod() {
-        // Fixed size lets the GPU upload assume a stride.
-        assert_eq!(MeshletDescriptor::SIZE, 80);
+        // Fixed size lets the GPU upload assume a stride. Bumped from
+        // 80B to 96B in PR-5b to fit a real cone_apex separate from the
+        // bounding-sphere centre.
+        assert_eq!(MeshletDescriptor::SIZE, 96);
+    }
+
+    #[test]
+    fn descriptor_field_offsets_match_shader_layout() {
+        use std::mem::offset_of;
+        // Drift here would break meshlet_cull.wgsl / meshlet_main.wgsl
+        // bind reads silently. The asserts mirror the WGSL `struct
+        // MeshletDescriptor` declaration.
+        assert_eq!(offset_of!(MeshletDescriptor, vertex_offset), 0);
+        assert_eq!(offset_of!(MeshletDescriptor, triangle_offset), 4);
+        assert_eq!(offset_of!(MeshletDescriptor, vertex_count), 8);
+        assert_eq!(offset_of!(MeshletDescriptor, triangle_count), 12);
+        assert_eq!(offset_of!(MeshletDescriptor, aabb_min), 16);
+        assert_eq!(offset_of!(MeshletDescriptor, aabb_max), 32);
+        assert_eq!(offset_of!(MeshletDescriptor, bounds_center), 48);
+        assert_eq!(offset_of!(MeshletDescriptor, bounding_radius), 60);
+        assert_eq!(offset_of!(MeshletDescriptor, cone_apex), 64);
+        assert_eq!(offset_of!(MeshletDescriptor, cone_cutoff), 76);
+        assert_eq!(offset_of!(MeshletDescriptor, cone_axis), 80);
     }
 
     #[test]

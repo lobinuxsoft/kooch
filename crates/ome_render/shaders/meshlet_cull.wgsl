@@ -31,10 +31,12 @@ struct MeshletDescriptor {
     _pad0: u32,
     aabb_max: vec3<f32>,
     _pad1: u32,
-    cone_apex: vec3<f32>,
+    bounds_center: vec3<f32>,
     bounding_radius: f32,
-    cone_axis: vec3<f32>,
+    cone_apex: vec3<f32>,
     cone_cutoff: f32,
+    cone_axis: vec3<f32>,
+    _pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: CullParams;
@@ -50,8 +52,8 @@ fn cs_cull(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let desc = descriptors[meshlet_id];
-    let center = desc.cone_apex;          // bounding sphere center (meshopt convention)
-    let radius = desc.bounding_radius;    // bounding sphere radius
+    let center = desc.bounds_center;
+    let radius = desc.bounding_radius;
 
     // Frustum cull: reject if the bounding sphere is fully outside ANY plane.
     var visible = true;
