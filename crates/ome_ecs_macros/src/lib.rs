@@ -81,13 +81,26 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         let field_name_str = field_name.to_string();
         let ty = &field.ty;
 
+        // `#[reflect(skip)]` opts the field out of the inspector +
+        // get/set paths entirely. Used for handle-style fields that
+        // hold opaque keys (Option<DefaultKey>, etc.) which the
+        // editor inspector has no representation for.
+        let skip = match parse_field_skip(field) {
+            Ok(skip) => skip,
+            Err(e) => return e,
+        };
+        if skip {
+            continue;
+        }
+
         let Some((kind_variant, type_name_str, needs_clone)) = type_mapping(ty) else {
             return syn::Error::new_spanned(
                 ty,
                 format!(
                     "Reflect derive: unsupported field type `{}`. \
                      Supported: f32, f64, u8..u64, i8..i64, bool, String, \
-                     Vec2, Vec3, Vec4, Quat, Mat4.",
+                     Vec2, Vec3, Vec4, Quat, Mat4. \
+                     Use `#[reflect(skip)]` to opt out.",
                     quote!(#ty),
                 ),
             )
@@ -324,6 +337,32 @@ fn parse_inspector_attr(input: &DeriveInput) -> Result<Option<proc_macro2::Ident
         }
     }
     Ok(None)
+}
+
+/// Parses `#[reflect(skip)]` on a field. Returns `true` when present,
+/// `false` otherwise. Skipped fields are omitted from the FieldMeta
+/// list and from the get/set match arms — opaque handle fields use
+/// this to stay out of the editor inspector.
+fn parse_field_skip(field: &syn::Field) -> Result<bool, TokenStream> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("reflect") {
+            continue;
+        }
+        let nested = match attr.parse_args_with(
+            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
+        ) {
+            Ok(n) => n,
+            Err(e) => return Err(e.to_compile_error().into()),
+        };
+        for meta in nested {
+            if let Meta::Path(path) = meta
+                && path.is_ident("skip")
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Parses `#[reflect(choices = PATH)]` from a field's attributes.
