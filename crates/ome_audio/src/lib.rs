@@ -1,15 +1,31 @@
-//! ome_audio - Audio system for oh_my_engine
+//! ome_audio — audio subsystem.
 //!
-//! Provides audio playback via kira, spatial audio,
-//! gravity-aware audio orientation, and sound pooling.
+//! [`AudioBackend`] is the trait the engine consumes; concrete impls
+//! ([`KiraBackend`] today, future SDL_mixer / WebAudio / oddio) plug
+//! behind it. [`MockAudioBackend`] is the headless test backend.
 //!
-//! Enable the `audio` feature to include kira support.
+//! # Architecture
+//!
+//! - [`backend`] — trait + cross-backend types (SoundHandle,
+//!   InstanceHandle, PlayParams, AudioError)
+//! - [`kira_backend`] — concrete [`KiraBackend`] (Kira 0.9 with
+//!   default mp3/ogg/flac/wav decoders)
+//! - [`mock_backend`] — [`MockAudioBackend`] for tests + tooling
+//!
+//! # Out of scope (follow-ups)
+//!
+//! - Spatial audio (kira `SpatialTrack` integration) — #64
+//! - Sound pooling / object pool for low-latency SFX — #66
+//! - Mixer bus hierarchy (music vs SFX vs voice)
+//! - Real-time effects (reverb, lowpass, etc.)
+//! - Async / streaming sounds for long music tracks
 
-/// Placeholder for future implementation
-pub fn init() {
-    #[cfg(feature = "audio")]
-    tracing::info!("ome_audio initialized with kira");
+pub mod backend;
+pub mod kira_backend;
+pub mod mock_backend;
 
-    #[cfg(not(feature = "audio"))]
-    tracing::info!("ome_audio initialized (audio feature disabled)");
-}
+pub use backend::{
+    AudioBackend, AudioError, InstanceHandle, PlayParams, SoundHandle,
+};
+pub use kira_backend::KiraBackend;
+pub use mock_backend::MockAudioBackend;
