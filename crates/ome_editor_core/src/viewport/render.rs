@@ -1,15 +1,15 @@
 //! Viewport render orchestration.
 //!
-//! Three passes share one encoder and the offscreen target, in this order:
+//! Post-pivot 2026-05-02 (Plan C): mesh-only render. SDF raymarch pass
+//! removed; voxel + DC pipeline (Phase 2.5) will feed mesh chunks into
+//! the mesh pass when ready.
+//!
+//! Passes share one encoder and the offscreen target, in this order:
 //! 1. **Sky pass** (optional) — runs when an active `SkyRenderer` entity
 //!    exists. Clears color + depth and draws the procedural sky.
-//! 2. **Ray-march pass** — draws SDF shapes. If the sky pass ran first,
-//!    loads the targets (preserving the sky) and discards on ray miss;
-//!    otherwise clears the targets and draws its internal gradient.
-//! 3. **Mesh pass** — paints visible `MeshRenderer + GlobalTransform`
-//!    entities on top, depth-testing against the SDF depth buffer.
-
-use glam::Vec4;
+//! 2. **Mesh pass** — paints visible `MeshRenderer + GlobalTransform`
+//!    entities, depth-testing against the depth buffer.
+//! 3. **Gizmo passes** — line + mesh gizmos, always on top.
 
 use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
@@ -18,22 +18,15 @@ use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::Query;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
-use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass, has_any_visible_sdf};
+use ome_render::{MeshPassRenderer, SkyRenderPass};
 
 use crate::viewport::target::ViewportTarget;
-
-/// Fallback sky gradient used when no `SkyRenderer` entity exists.
-/// Kept in sync with the defaults of `SkyGradient` in
-/// `ome_render::raymarch_plugin` and the `SkyRenderer` component defaults.
-const SKY_TOP: Vec4 = Vec4::new(0.5, 0.7, 1.0, 1.0);
-const SKY_BOTTOM: Vec4 = Vec4::new(0.1, 0.2, 0.4, 1.0);
 
 /// Renders the active scene into the viewport offscreen texture.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_viewport(
     gpu: &GpuContext,
     sky_pass: &mut SkyRenderPass,
-    raymarch: &mut RayMarchRenderer,
     mesh_pass: &mut MeshPassRenderer,
     gizmo_renderer: &mut GizmoRenderer,
     gizmo_batch: &GizmoBatch,
@@ -73,45 +66,13 @@ pub(crate) fn render_viewport(
         false
     };
 
-    // Pass 2: Ray-march.
-    //
-    // Drain the world streaming layer's pending load/unload delta into
-    // the GPU pool BEFORE the `has_sdf` gate — `ChunkManager.pending_*`
-    // is CPU memory that grows unbounded if nobody drains it, and a
-    // streaming-only scene (no ECS-side SDFs) would otherwise leave the
-    // whole pipeline asleep with chunks piling up forever. Cheap when
-    // the queues are empty.
-    if project_loaded {
-        raymarch.apply_streaming_delta(gpu.queue(), resources);
-    }
-
-    let has_sdf = project_loaded
-        && (has_any_visible_sdf(resources) || raymarch.bvh_state().streaming_chunk_count() > 0);
-    let camera_ok = has_sdf
-        && raymarch.update_camera(
-            gpu.device(),
-            gpu.queue(),
-            resources,
-            target.aspect(),
-            target.size().1,
-        );
-
-    if camera_ok {
-        raymarch.update_scene(
-            gpu.device(),
-            gpu.queue(),
-            resources,
-            SKY_TOP,
-            SKY_BOTTOM,
-            sky_drawn,
-        );
-        // When sky drew first, preserve its output; otherwise clear.
-        raymarch.render(&mut encoder, target.view(), target.depth_view(), !sky_drawn);
-    } else if !sky_drawn {
+    // No raymarch pass post-pivot. If sky didn't draw, we need a clear
+    // so the offscreen target starts in a defined state.
+    if !sky_drawn {
         clear_to_black(&mut encoder, target.view(), target.depth_view());
     }
 
-    // Pass 3: Mesh.
+    // Pass 2: Mesh.
     if project_loaded && has_visible_mesh(resources) {
         mesh_pass.render(
             gpu.device(),
@@ -124,7 +85,7 @@ pub(crate) fn render_viewport(
         );
     }
 
-    // Pass 4: Line gizmos (always-on-top, depth comparison `Always`,
+    // Pass 3: Line gizmos (always-on-top, depth comparison `Always`,
     // screen-space thick lines).
     if project_loaded {
         gizmo_renderer.render(
@@ -139,7 +100,7 @@ pub(crate) fn render_viewport(
         );
     }
 
-    // Pass 5: Mesh gizmos (always-on-top, alpha-blended triangles for
+    // Pass 4: Mesh gizmos (always-on-top, alpha-blended triangles for
     // filled plane handles, future rotate tori, custom 3D shapes).
     if project_loaded {
         mesh_gizmo_renderer.render(

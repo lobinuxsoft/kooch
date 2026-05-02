@@ -151,11 +151,6 @@ name = "compute_vector_add"
 path = "examples/compute_vector_add.rs"
 
 [[example]]
-name = "raymarch_demo"
-path = "examples/raymarch_demo.rs"
-required-features = ["render", "window"]
-
-[[example]]
 name = "dynamic_plugin"
 path = "examples/dynamic_plugin.rs"
 required-features = ["dynamic"]
