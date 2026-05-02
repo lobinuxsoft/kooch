@@ -15,12 +15,14 @@ mod asset;
 mod gltf_loader;
 mod gpu_mesh;
 mod loader;
+mod node;
 mod renderer;
 
 pub use asset::Mesh;
 pub use gltf_loader::{GltfMeshError, GltfMeshLoader, parse_mesh_bytes};
 pub use gpu_mesh::{Aabb, GpuMesh, MeshVertex};
 pub use loader::{MeshLoadError, MeshLoader};
+pub use node::MeshPassNode;
 pub use renderer::MeshPassRenderer;
 
 const SHADER_SOURCE: &str = include_str!("../../shaders/mesh_main.wgsl");
