@@ -1,18 +1,18 @@
 //! [`RenderPlugin`] — full game render pipeline targeting the surface.
 //!
 //! Mirrors `ome_editor_core::viewport::render::render_viewport` but writes
-//! to the swapchain surface instead of an offscreen texture. Three passes
+//! to the swapchain surface instead of an offscreen texture. Two passes
 //! share one encoder per frame:
 //!
 //! 1. **Sky** (when an active `SkyRenderer` entity exists) — clears color +
 //!    depth, draws procedural gradient + volumetric clouds.
-//! 2. **Ray-march** — sphere-traces visible SDF entities. Loads the sky
-//!    output if it ran first, otherwise clears with internal gradient.
-//! 3. **Mesh** — depth-tested rasterization of `MeshRenderer +
+//! 2. **Mesh** — depth-tested rasterization of `MeshRenderer +
 //!    GlobalTransform` entities.
 //!
-//! Used by play-mode binaries via `oh_my_engine::DefaultPlugins`. The
-//! `raymarch_demo` example uses the simpler [`crate::RayMarchPlugin`].
+//! Used by play-mode binaries via `oh_my_engine::DefaultPlugins`.
+//!
+//! Post-pivot 2026-05-02: SDF raymarch pass removed. Engine is mesh-only;
+//! voxel + DC pipeline (Phase 2.5) will feed mesh chunks into pass 2.
 
 use glam::Vec4;
 use ome_core::app::App;
@@ -30,20 +30,18 @@ use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
 use crate::VIEWPORT_DEPTH_FORMAT;
 use crate::fps::FpsTracker;
 use crate::mesh::MeshPassRenderer;
-use crate::raymarch::RayMarchRenderer;
 use crate::sky::SkyRenderPass;
 
-/// Fallback sky gradient when no `SkyRenderer` entity is active.
-/// Matches the defaults used by the editor viewport and the `SkyRenderer`
-/// component so play and edit modes look identical out of the box.
-const SKY_TOP: Vec4 = Vec4::new(0.5, 0.7, 1.0, 1.0);
-const SKY_BOTTOM: Vec4 = Vec4::new(0.1, 0.2, 0.4, 1.0);
+/// Fallback clear color when no `SkyRenderer` entity is active. Matches the
+/// `SkyRenderer` component's default bottom gradient so play and edit modes
+/// look identical out of the box.
+const SKY_FALLBACK: Vec4 = Vec4::new(0.1, 0.2, 0.4, 1.0);
 
 /// Plugin that installs the full render pipeline.
 ///
-/// Inserts [`RayMarchRenderer`], [`MeshPassRenderer`], [`SkyRenderPass`]
-/// and a surface-sized depth texture as resources at `Stage::Startup`,
-/// and runs the per-frame orchestrator at `Stage::Render`.
+/// Inserts [`MeshPassRenderer`], [`SkyRenderPass`] and a surface-sized
+/// depth texture as resources at `Stage::Startup`, and runs the per-frame
+/// orchestrator at `Stage::Render`.
 #[derive(Default)]
 pub struct RenderPlugin;
 
@@ -108,7 +106,7 @@ fn create_depth(device: &wgpu::Device, size: (u32, u32)) -> (wgpu::Texture, wgpu
 }
 
 fn init_renderers(resources: &mut Resources) {
-    if resources.get::<RayMarchRenderer>().is_some() {
+    if resources.get::<MeshPassRenderer>().is_some() {
         return;
     }
     let Some(gpu) = resources.get::<GpuContext>() else {
@@ -116,11 +114,9 @@ fn init_renderers(resources: &mut Resources) {
         return;
     };
     let pipeline_cache = gpu.pipeline_cache();
-    let raymarch = RayMarchRenderer::new(gpu.device(), gpu.queue(), gpu.format(), pipeline_cache);
     let mesh_pass = MeshPassRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
     let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format(), pipeline_cache);
     let depth = GameDepth::new(gpu.device(), gpu.size());
-    resources.insert(raymarch);
     resources.insert(mesh_pass);
     resources.insert(sky_pass);
     resources.insert(depth);
@@ -134,24 +130,18 @@ fn render_frame_system(resources: &mut Resources) {
         tracing::debug!(fps = format!("{fps:.1}"), "FPS");
     }
 
-    if resources.get::<RayMarchRenderer>().is_none() {
+    if resources.get::<MeshPassRenderer>().is_none() {
         init_renderers(resources);
     }
 
-    let Some(mut raymarch) = resources.remove::<RayMarchRenderer>() else {
-        return;
-    };
     let Some(mut mesh_pass) = resources.remove::<MeshPassRenderer>() else {
-        resources.insert(raymarch);
         return;
     };
     let Some(mut sky_pass) = resources.remove::<SkyRenderPass>() else {
-        resources.insert(raymarch);
         resources.insert(mesh_pass);
         return;
     };
     let Some(gpu) = resources.remove::<GpuContext>() else {
-        resources.insert(raymarch);
         resources.insert(mesh_pass);
         resources.insert(sky_pass);
         return;
@@ -167,16 +157,13 @@ fn render_frame_system(resources: &mut Resources) {
     let outcome = acquire_and_render(
         &gpu,
         &mut sky_pass,
-        &mut raymarch,
         &mut mesh_pass,
         &depth.view,
         resources,
         aspect,
-        h,
     );
 
     resources.insert(gpu);
-    resources.insert(raymarch);
     resources.insert(mesh_pass);
     resources.insert(sky_pass);
     resources.insert(depth);
@@ -209,19 +196,14 @@ enum SurfaceOutcome {
 fn acquire_and_render(
     gpu: &GpuContext,
     sky_pass: &mut SkyRenderPass,
-    raymarch: &mut RayMarchRenderer,
     mesh_pass: &mut MeshPassRenderer,
     depth_view: &wgpu::TextureView,
     resources: &mut Resources,
     aspect: f32,
-    screen_height: u32,
 ) -> SurfaceOutcome {
     match gpu.surface().get_current_texture() {
         CurrentSurfaceTexture::Success(tex) | CurrentSurfaceTexture::Suboptimal(tex) => {
-            render_passes(
-                gpu, sky_pass, raymarch, mesh_pass, depth_view, resources, aspect, screen_height,
-                tex,
-            );
+            render_passes(gpu, sky_pass, mesh_pass, depth_view, resources, aspect, tex);
             SurfaceOutcome::Presented
         }
         CurrentSurfaceTexture::Outdated | CurrentSurfaceTexture::Lost => {
@@ -235,12 +217,10 @@ fn acquire_and_render(
 fn render_passes(
     gpu: &GpuContext,
     sky_pass: &mut SkyRenderPass,
-    raymarch: &mut RayMarchRenderer,
     mesh_pass: &mut MeshPassRenderer,
     depth_view: &wgpu::TextureView,
     resources: &mut Resources,
     aspect: f32,
-    screen_height: u32,
     frame: SurfaceTexture,
 ) {
     let view = frame
@@ -272,31 +252,12 @@ fn render_passes(
         false
     };
 
-    // Pass 2: Ray-march.
-    //
-    // Drain the streaming delta first so `ChunkManager.pending_*`
-    // never grows unbounded just because no ECS-side SDFs are visible.
-    raymarch.apply_streaming_delta(gpu.queue(), resources);
-
-    let has_sdf = crate::raymarch::has_any_visible_sdf(resources)
-        || raymarch.bvh_state().streaming_chunk_count() > 0;
-    let camera_ok = has_sdf
-        && raymarch.update_camera(gpu.device(), gpu.queue(), resources, aspect, screen_height);
-    if camera_ok {
-        raymarch.update_scene(
-            gpu.device(),
-            gpu.queue(),
-            resources,
-            SKY_TOP,
-            SKY_BOTTOM,
-            sky_drawn,
-        );
-        raymarch.render(&mut encoder, &view, depth_view, !sky_drawn);
-    } else if !sky_drawn {
-        clear_to_black(&mut encoder, &view, depth_view);
+    // No sky? Clear to fallback gradient via direct buffer fill.
+    if !sky_drawn {
+        clear_with_gradient(&mut encoder, &view, depth_view);
     }
 
-    // Pass 3: Mesh.
+    // Pass 2: Mesh.
     if has_visible_mesh(resources) {
         mesh_pass.render(
             gpu.device(),
@@ -313,7 +274,7 @@ fn render_passes(
     frame.present();
 }
 
-fn clear_to_black(
+fn clear_with_gradient(
     encoder: &mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
     depth: &wgpu::TextureView,
@@ -325,7 +286,12 @@ fn clear_to_black(
             depth_slice: None,
             resolve_target: None,
             ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                load: wgpu::LoadOp::Clear(wgpu::Color {
+                    r: SKY_FALLBACK.x as f64,
+                    g: SKY_FALLBACK.y as f64,
+                    b: SKY_FALLBACK.z as f64,
+                    a: SKY_FALLBACK.w as f64,
+                }),
                 store: wgpu::StoreOp::Store,
             },
         })],
@@ -353,3 +319,4 @@ fn has_visible_mesh(resources: &Resources) -> bool {
     });
     found
 }
+

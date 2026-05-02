@@ -7,7 +7,7 @@ use ome_core::power::{self, PowerProfile};
 use ome_core::raw_event::RawEventHandler;
 use ome_core::resource::Resources;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
-use ome_render::{MeshPassRenderer, RayMarchRenderer, SkyRenderPass};
+use ome_render::{MeshPassRenderer, SkyRenderPass};
 use ome_world::{ChunkManager, ProceduralCitySource};
 
 use crate::state::{EditorOverlay, EguiEventHandler};
@@ -49,7 +49,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     );
 
     let pipeline_cache = gpu.pipeline_cache();
-    let raymarch = RayMarchRenderer::new(gpu.device(), gpu.queue(), gpu.format(), pipeline_cache);
     let mesh_pass = MeshPassRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
     let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format(), pipeline_cache);
     let gizmo_renderer = GizmoRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
@@ -95,7 +94,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     let power_profile: PowerProfile = power::detect();
     resources.insert(overlay);
     resources.insert(handler);
-    resources.insert(raymarch);
     resources.insert(mesh_pass);
     resources.insert(sky_pass);
     resources.insert(gizmo_renderer);
