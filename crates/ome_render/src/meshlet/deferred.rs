@@ -34,7 +34,8 @@ struct ModelUbo {
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 struct ScreenUbo {
     size: [u32; 2],
-    _pad: [u32; 2],
+    material_id: u32,
+    _pad: u32,
 }
 
 /// Owns the deferred-shading compute pipeline and its UBOs.
@@ -102,9 +103,11 @@ impl MeshletDeferredShader {
             ],
         });
 
+        let material_bgl = crate::material::MaterialPool::bind_group_layout(device);
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("meshlet_deferred_pipeline_layout"),
-            bind_group_layouts: &[Some(&shading_bgl), Some(meshlet_bgl)],
+            bind_group_layouts: &[Some(&shading_bgl), Some(meshlet_bgl), Some(&material_bgl)],
             immediate_size: 0,
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -127,8 +130,9 @@ impl MeshletDeferredShader {
 
     /// Records the compute shading pass into `encoder`. `vbuf_view`
     /// reads the visibility buffer; `color_view` is the
-    /// storage-texture write target. `meshlet_bg` is the same handle
-    /// the vbuf rasterizer used.
+    /// storage-texture write target. `material_bg` is built from a
+    /// [`crate::material::MaterialPool`]; `material_id` selects which
+    /// pool slot drives this render call.
     #[allow(clippy::too_many_arguments)]
     pub fn shade(
         &self,
@@ -138,9 +142,11 @@ impl MeshletDeferredShader {
         vbuf_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
         meshlet_bg: &wgpu::BindGroup,
+        material_bg: &wgpu::BindGroup,
         view_proj: glam::Mat4,
         model: glam::Mat4,
         screen_size: (u32, u32),
+        material_id: u32,
     ) {
         queue.write_buffer(
             &self.camera_buffer,
@@ -161,7 +167,8 @@ impl MeshletDeferredShader {
             0,
             bytemuck::bytes_of(&ScreenUbo {
                 size: [screen_size.0, screen_size.1],
-                _pad: [0, 0],
+                material_id,
+                _pad: 0,
             }),
         );
 
@@ -199,6 +206,7 @@ impl MeshletDeferredShader {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &shading_bg, &[]);
         pass.set_bind_group(1, meshlet_bg, &[]);
+        pass.set_bind_group(2, material_bg, &[]);
         pass.dispatch_workgroups(screen_size.0.div_ceil(8), screen_size.1.div_ceil(8), 1);
     }
 }
