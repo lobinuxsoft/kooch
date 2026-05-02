@@ -15,7 +15,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use super::uniforms::{TileBounds, TileCullUniforms};
+use super::uniforms::{TILE_FLAG_NON_EMPTY, TileBounds, TileCullUniforms};
 use crate::gdf::GdfState;
 
 const COMPUTE_SHADER_SOURCE: &str = include_str!("../../shaders/tile_cull.wgsl");
@@ -194,13 +194,32 @@ fn create_uniforms_buffer(device: &wgpu::Device, init: &TileCullUniforms) -> wgp
 }
 
 fn create_tile_bounds_buffer(device: &wgpu::Device, tile_count: u32) -> wgpu::Buffer {
-    let size = u64::from(tile_count) * std::mem::size_of::<TileBounds>() as u64;
-    device.create_buffer(&wgpu::BufferDescriptor {
+    let entry_count = tile_count.max(1) as usize;
+    let size_bytes = (entry_count * std::mem::size_of::<TileBounds>()) as u64;
+    // Initialize permissive: every tile non-empty, full ray-march range.
+    // Tests that bypass `dispatch()` (e.g. `raymarch_renders_sphere`) get
+    // a no-op tile-cull pass: the fragment marches `[0, max_distance]`
+    // every pixel, byte-identical to the pre-PR-6 behaviour. The next
+    // `dispatch()` overwrites the entire buffer.
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("ome_render::tile_cull::tile_bounds_buffer"),
-        size,
+        size: size_bytes,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    })
+        mapped_at_creation: true,
+    });
+    let permissive = TileBounds {
+        t_min: 0.0,
+        t_max: f32::MAX,
+        flags: TILE_FLAG_NON_EMPTY,
+        _pad: 0,
+    };
+    let init: Vec<TileBounds> = std::iter::repeat_n(permissive, entry_count).collect();
+    buffer
+        .slice(..)
+        .get_mapped_range_mut()
+        .copy_from_slice(bytemuck::cast_slice(&init));
+    buffer.unmap();
+    buffer
 }
 
 #[allow(clippy::too_many_arguments)]
