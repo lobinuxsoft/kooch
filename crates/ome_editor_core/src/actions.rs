@@ -26,6 +26,14 @@ pub(crate) enum EditorAction {
         extra: Vec<TypeId>,
         name: Option<String>,
     },
+    /// Spawn an entity bound to a meshlet asset. The asset path is
+    /// resolved through the AssetServer (auto-generates a `.meta`
+    /// sidecar at first import, registers the GUID in `AssetDatabase`)
+    /// and the resulting GUID lands in `MeshRenderer.mesh`.
+    SpawnMesh {
+        path: PathBuf,
+        name: String,
+    },
     Despawn(Entity),
     SetField {
         entity: Entity,

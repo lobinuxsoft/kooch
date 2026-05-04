@@ -426,7 +426,12 @@ impl AssetServer {
         );
     }
 
-    fn resolve_path(&self, path: &Path) -> PathBuf {
+    /// Resolves a caller-provided path against the configured asset
+    /// root. Absolute paths bypass the root and pass through unchanged;
+    /// relative paths are joined onto `asset_root`. Public so other
+    /// systems (scene loaders, asset pickers) can mirror the same
+    /// resolution rule when looking up entries in `AssetDatabase`.
+    pub fn resolve_path(&self, path: &Path) -> PathBuf {
         if path.is_absolute() {
             path.to_path_buf()
         } else if let Some(root) = &self.asset_root {
