@@ -1,4 +1,9 @@
-//! GPU-resident mesh data and vertex layout.
+//! Shared vertex layout + local AABB for CPU and GPU meshes.
+//!
+//! `MeshVertex` is the interleaved POD vertex consumed by both the
+//! CPU-side `Mesh` asset and the meshlet builder (which feeds the
+//! GPU-driven pipeline). `Aabb` is the mesh-local axis-aligned bounding
+//! box, used by mesh imports and meshlet bounding-sphere derivation.
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
@@ -49,52 +54,13 @@ impl Default for Aabb {
     }
 }
 
-/// GPU-resident mesh: vertex buffer, index buffer, vertex/index counts,
-/// and a local-space AABB. Created by [`super::MeshLoader`].
-pub struct GpuMesh {
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
-    pub vertex_count: u32,
-    pub index_count: u32,
-    pub index_format: wgpu::IndexFormat,
-    pub aabb: Aabb,
-}
-
-/// Vertex buffer layout descriptor used by the mesh pipeline.
-pub(super) const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = [
-    wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32x3,
-        offset: 0,
-        shader_location: 0,
-    },
-    wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32x3,
-        offset: 12,
-        shader_location: 1,
-    },
-    wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32x2,
-        offset: 24,
-        shader_location: 2,
-    },
-];
-
-pub(super) fn vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
-    wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<MeshVertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &VERTEX_ATTRIBUTES,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn vertex_size_matches_layout_stride() {
+    fn vertex_size_is_32_bytes() {
         assert_eq!(std::mem::size_of::<MeshVertex>(), 32);
-        assert_eq!(vertex_buffer_layout().array_stride, 32);
     }
 
     #[test]

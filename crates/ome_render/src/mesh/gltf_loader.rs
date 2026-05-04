@@ -12,7 +12,7 @@ use glam::Vec3;
 use ome_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 
 use super::asset::Mesh;
-use super::gpu_mesh::{Aabb, MeshVertex};
+use super::vertex::{Aabb, MeshVertex};
 
 /// Loader handling `*.glb` and `*.gltf` (with embedded buffers / data URIs).
 ///
@@ -73,9 +73,7 @@ impl From<gltf::Error> for GltfMeshError {
     }
 }
 
-/// Parses a glTF / GLB byte slice into a [`Mesh`]. Public so the legacy
-/// `MeshLoader` (path-based) can route through the same parsing logic
-/// during the migration window.
+/// Parses a glTF / GLB byte slice into a [`Mesh`].
 pub fn parse_mesh_bytes(bytes: &[u8]) -> Result<Mesh, GltfMeshError> {
     let gltf = gltf::Gltf::from_slice(bytes)?;
     let blob = gltf.blob.as_deref();

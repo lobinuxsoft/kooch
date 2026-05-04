@@ -112,9 +112,10 @@ pub struct LoadContext<'a> {
 
 /// Trait every asset loader implements.
 ///
-/// Generic over the asset type `T` so a `MeshLoader` returns `Mesh`, an
-/// `ImageLoader` returns `Image`, etc. `Send + Sync + 'static` lets the
-/// `AssetServer` store them across threads when async/streaming arrives.
+/// Generic over the asset type `T` so a `GltfMeshLoader` returns `Mesh`,
+/// an `ImageLoader` returns `Image`, etc. `Send + Sync + 'static` lets
+/// the `AssetServer` store them across threads when async/streaming
+/// arrives.
 pub trait AssetLoader<T: Asset>: Send + Sync + 'static {
     /// Lower-case extensions handled by this loader (no leading dot).
     /// `["glb", "gltf"]`, `["png", "jpg", "jpeg"]`, etc.
