@@ -1,18 +1,19 @@
-//! [`RenderPlugin`] — full game render pipeline targeting the surface.
+//! Engine render plugins.
 //!
-//! Mirrors `ome_editor_core::viewport::render::render_viewport` but writes
-//! to the swapchain surface instead of an offscreen texture. Two passes
-//! share one encoder per frame:
-//!
-//! 1. **Sky** (when an active `SkyRenderer` entity exists) — clears color +
-//!    depth, draws procedural gradient + volumetric clouds.
-//! 2. **Meshlet** — GPU-driven cull + visibility raster + deferred shade,
-//!    composited onto the surface via [`MeshletBlit`].
-//!
-//! Used by play-mode binaries via `oh_my_engine::DefaultPlugins`.
+//! - [`RenderPlugin`] — full game render pipeline targeting the surface
+//!   (sky + meshlet stage + blit). Used by play-mode binaries via
+//!   `oh_my_engine::DefaultPlugins`.
+//! - [`AssetPlugin`] (in [`assets`]) — installs `AssetServer`,
+//!   `AssetDatabase`, and the `Assets<T>` storages for every asset type
+//!   the engine knows how to load. Independent of the GPU pipeline,
+//!   so headless tools can install asset loading without rendering.
 //!
 //! Post-pivot 2026-05-02: SDF raymarch pass removed. Engine is mesh-only;
 //! voxel + DC pipeline (Phase 2.5) will feed mesh chunks into pass 2.
+
+pub mod assets;
+
+pub use assets::AssetPlugin;
 
 use glam::Vec4;
 use ome_core::app::App;
