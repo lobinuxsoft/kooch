@@ -4,26 +4,23 @@
 //! (non-SDF). The render pipeline iterates entities with `MeshRenderer`
 //! plus [`Transform`](crate::Transform) to draw meshes.
 
+use ome_core::Guid;
+
 use crate::component::Component;
 
 #[allow(unused_imports)]
 use crate::Reflect;
 
-/// Type-erased asset key used to point a `MeshRenderer` at a meshlet
-/// mesh entry in `Assets<MeshletMesh>` without `ome_ecs` having to
-/// import `ome_render` or `slotmap`. The raw u64 round-trips through
-/// `slotmap::KeyData::as_ffi()` / `from_ffi()` — `ome_render`'s scene
-/// system converts back into a typed `Handle<MeshletMesh>` at lookup
-/// time.
-pub type MeshletAssetKey = u64;
-
 /// Component that binds an entity to a mesh and a material for rendering.
 ///
-/// `mesh` is the asset key into `Assets<MeshletMesh>` — the meshlet
-/// pipeline picks the entity up via the scene cull when `Some`. The key
-/// is opaque to `ome_ecs` (kept as `u64` so this crate stays free of an
-/// `ome_render` dependency); `ome_render`'s scene system converts it
-/// into a typed `Handle<MeshletMesh>` at lookup time.
+/// `mesh` references a mesh asset by its persistent [`Guid`] — the same
+/// identifier the asset's `.meta` sidecar carries. The meshlet pipeline
+/// resolves the GUID to a GPU-resident mesh through the `AssetServer` +
+/// `AssetDatabase` resources at sync time. Storing the GUID (not a
+/// runtime `Handle<T>`) keeps the component **persistible**: scene
+/// serialization round-trips cleanly across runs and the reference
+/// stays valid even if the source file is moved (as long as its
+/// sidecar follows it).
 ///
 /// `material` is a legacy string and currently unused — the material
 /// system migrates to `Assets<Material>` in a follow-up PR. It remains
@@ -41,10 +38,10 @@ pub type MeshletAssetKey = u64;
 #[reflect(category = "Rendering")]
 pub struct MeshRenderer {
     /// When `Some`, the meshlet pipeline picks this entity up via the
-    /// scene cull. Stored type-erased so `ome_ecs` stays independent of
-    /// `ome_render`'s typed handle wrapper.
+    /// scene cull. Persistent across runs — the GUID lives in the
+    /// asset's `.meta` sidecar.
     #[reflect(skip)]
-    pub mesh: Option<MeshletAssetKey>,
+    pub mesh: Option<Guid>,
     /// Asset path for the material (legacy `String`, unused — pending
     /// migration to `Assets<Material>` once that asset exists).
     pub material: String,
@@ -90,11 +87,21 @@ mod tests {
         let r = MeshRenderer::default();
         let fields = r.reflect_fields();
         let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
-        // `mesh` is `#[reflect(skip)]` — opaque key, not editor-inspector
-        // friendly until the asset-picker UI lands.
+        // `mesh` is `#[reflect(skip)]` — opaque GUID, not editor-
+        // inspector friendly until the asset-picker UI lands.
         assert_eq!(
             names,
             &["material", "visible", "cast_shadows", "receive_shadows"]
         );
+    }
+
+    #[test]
+    fn mesh_field_round_trips_a_guid() {
+        let g = Guid::new_v4();
+        let r = MeshRenderer {
+            mesh: Some(g),
+            ..Default::default()
+        };
+        assert_eq!(r.mesh, Some(g));
     }
 }

@@ -26,10 +26,10 @@ use ome_ecs::component::registry::ComponentRegistry;
 use ome_ecs::hierarchy::global_transform::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::AccessTracker;
+use ome_core::Guid;
 use ome_render::material::MaterialParams;
 use ome_render::meshlet::{
-    build_default_meshlets, key_from_handle, MeshletMesh, MeshletRenderStage,
-    MeshletRenderStageConfig,
+    build_default_meshlets, MeshletMesh, MeshletRenderStage, MeshletRenderStageConfig,
 };
 
 fn ecs_test_resources() -> Resources {
@@ -120,9 +120,6 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
     let gpu_mesh = meshlet_mesh.upload(&device);
 
     let mut resources = ecs_test_resources();
-    let mut assets: Assets<MeshletMesh> = Assets::new();
-    let asset_handle = assets.insert(meshlet_mesh.clone());
-    resources.insert(assets);
 
     let config = MeshletRenderStageConfig {
         size: (256, 256),
@@ -134,11 +131,13 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
         ],
     };
     let mut stage = MeshletRenderStage::new(&device, config);
-    stage
-        .pipeline_mut()
-        .register_mesh(asset_handle, &meshlet_mesh);
 
-    let raw_key = key_from_handle(asset_handle);
+    // Pretend a startup loader registered this asset under a fresh
+    // GUID. PR3 wires this through the `AssetServer + AssetDatabase +
+    // Assets<MeshletMesh>` resources; the test exercises the same
+    // `(guid, &mesh) → MeshHandle` registry contract directly.
+    let mesh_guid = Guid::new_v4();
+    stage.pipeline_mut().register_mesh(mesh_guid, &meshlet_mesh);
 
     // Two entities — one to the left, one to the right of the origin.
     // Same registered mesh, distinct material ids so the deferred
@@ -147,7 +146,7 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
     commands
         .spawn(&mut resources)
         .insert(MeshRenderer {
-            mesh: Some(raw_key),
+            mesh: Some(mesh_guid),
             visible: true,
             ..Default::default()
         })
@@ -157,7 +156,7 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
     commands
         .spawn(&mut resources)
         .insert(MeshRenderer {
-            mesh: Some(raw_key),
+            mesh: Some(mesh_guid),
             visible: true,
             ..Default::default()
         })

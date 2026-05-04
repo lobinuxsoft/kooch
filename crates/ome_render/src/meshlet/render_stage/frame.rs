@@ -6,7 +6,7 @@
 
 use glam::{Mat4, Vec3};
 
-use ome_core::assets::{Assets, Handle};
+use ome_core::Guid;
 use ome_core::resource::Resources;
 
 use crate::meshlet::asset::MeshletMesh;
@@ -68,60 +68,49 @@ impl MeshletRenderStage {
         self.size = new_size;
     }
 
-    /// Ensures `mesh` is uploaded to GPU under `handle`. Idempotent —
-    /// repeat calls with the same handle skip re-upload. Also registers
+    /// Ensures `mesh` is uploaded to GPU under `guid`. Idempotent —
+    /// repeat calls with the same GUID skip re-upload. Also registers
     /// the CPU-side asset with the [`MeshletPipeline`](super::MeshletPipeline)
     /// so the ECS query can pick the entity up.
     ///
-    /// The first ensured handle becomes the "active" mesh used by
+    /// The first ensured GUID becomes the "active" mesh used by
     /// [`Self::render_with_assets`]. Multi-mesh scenes (1.E.3c) will
     /// extend the lookup to `MeshInstance::mesh_id`.
     pub fn ensure_gpu_mesh(
         &mut self,
         device: &wgpu::Device,
-        handle: Handle<MeshletMesh>,
+        guid: Guid,
         mesh: &MeshletMesh,
     ) {
-        self.pipeline.register_mesh(handle, mesh);
-        if !self.gpu_meshes.contains_key(&handle) {
-            self.gpu_meshes.insert(handle, mesh.upload(device));
+        self.pipeline.register_mesh(guid, mesh);
+        if !self.gpu_meshes.contains_key(&guid) {
+            self.gpu_meshes.insert(guid, mesh.upload(device));
         }
-        if self.active_handle.is_none() {
-            self.active_handle = Some(handle);
+        if self.active_guid.is_none() {
+            self.active_guid = Some(guid);
         }
     }
 
-    /// Number of `Handle<MeshletMesh>` entries currently uploaded to GPU.
+    /// Number of distinct meshlet meshes currently uploaded to GPU
+    /// (one per registered GUID).
     pub fn gpu_mesh_count(&self) -> u32 {
         self.gpu_meshes.len() as u32
     }
 
-    pub fn active_handle(&self) -> Option<Handle<MeshletMesh>> {
-        self.active_handle
+    pub fn active_guid(&self) -> Option<Guid> {
+        self.active_guid
     }
 
-    /// Walks `Assets<MeshletMesh>` and uploads any meshlet mesh
-    /// referenced by a visible `MeshRenderer` that is not yet cached.
-    /// Bridges the gap between asset loading (CPU) and the GPU pool
-    /// without forcing the caller to hand-register each handle.
-    pub fn sync_assets_to_gpu(&mut self, device: &wgpu::Device, resources: &Resources) {
-        let Some(assets) = resources.get::<Assets<MeshletMesh>>() else {
-            return;
-        };
-        let visible = self.pipeline.collect_referenced_handles(resources);
-        for handle in visible {
-            if self.gpu_meshes.contains_key(&handle) {
-                continue;
-            }
-            if let Some(mesh) = assets.get(handle) {
-                let gpu = mesh.upload(device);
-                self.pipeline.register_mesh(handle, mesh);
-                self.gpu_meshes.insert(handle, gpu);
-                if self.active_handle.is_none() {
-                    self.active_handle = Some(handle);
-                }
-            }
-        }
+    /// Placeholder for the asset-server-driven GPU upload sync. PR3
+    /// will resolve every visible `MeshRenderer.mesh` GUID through
+    /// `AssetServer::load_by_guid::<MeshletMesh>`, fetch the meshlet
+    /// asset from `Assets<MeshletMesh>`, upload it via
+    /// [`Self::ensure_gpu_mesh`], and tear down stale entries. PR2
+    /// keeps the function on the public surface so the editor's per-
+    /// frame caller compiles unchanged; nothing is uploaded yet.
+    pub fn sync_assets_to_gpu(&mut self, _device: &wgpu::Device, _resources: &Resources) {
+        // Intentionally empty until PR3 wires AssetServer →
+        // Assets<MeshletMesh> → ensure_gpu_mesh.
     }
 
     /// Convenience wrapper that pulls the active gpu mesh from the
@@ -136,10 +125,10 @@ impl MeshletRenderStage {
         view_proj: Mat4,
         cam_pos: Vec3,
     ) -> MeshletRenderStats {
-        let Some(handle) = self.active_handle else {
+        let Some(guid) = self.active_guid else {
             return MeshletRenderStats::default();
         };
-        let Some(gpu_mesh) = self.gpu_meshes.get(&handle) else {
+        let Some(gpu_mesh) = self.gpu_meshes.get(&guid) else {
             return MeshletRenderStats::default();
         };
         self.render(device, queue, resources, gpu_mesh, view_proj, cam_pos)

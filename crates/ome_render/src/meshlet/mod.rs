@@ -63,5 +63,5 @@ pub use scene::{
     decode_scene_visible_id, encode_scene_visible_id, MeshInstance, MeshletScene,
     SceneCullParams,
 };
-pub use system::{handle_from_key, instance_at_origin, key_from_handle, MeshletPipeline};
+pub use system::{instance_at_origin, MeshletPipeline};
 pub use vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
