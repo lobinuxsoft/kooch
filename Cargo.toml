@@ -78,6 +78,13 @@ rapier3d = { version = "0.22", features = ["simd-stable"] }
 rfd = "0.15"
 # Directories
 dirs = "6"
+# Asset GUID — Unity-style 128-bit identity persisted in `<asset>.meta`
+# sidecars. v4 (random) feature for first-import generation; serde for
+# scene serialization round-trip.
+uuid = { version = "1", features = ["v4", "serde"] }
+# Asset metadata sidecar format. Editable by humans (Unity ships YAML;
+# we ship TOML — same readable spirit, native Rust ecosystem).
+toml = "0.8"
 # Dynamic plugins
 stabby = "72.1"
 libloading = "0.8"
