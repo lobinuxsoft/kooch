@@ -64,6 +64,10 @@ pub enum AssetError {
     /// `Assets<T>` storage was missing from the resource set when the
     /// load completed. Caller forgot to insert it before driving a load.
     MissingAssetStorage(&'static str),
+    /// `load_by_guid` was called for a [`Guid`] not registered in the
+    /// project's [`AssetDatabase`]. The asset either has no `.meta`
+    /// sidecar yet or was never scanned/loaded.
+    UnknownGuid(Guid),
     /// Domain error returned by the loader itself (parser failure, etc.).
     Loader(Box<dyn std::error::Error + Send + Sync>),
 }
@@ -81,6 +85,9 @@ impl fmt::Display for AssetError {
             ),
             AssetError::MissingAssetStorage(name) => {
                 write!(f, "Assets<{name}> resource missing — insert it first")
+            }
+            AssetError::UnknownGuid(guid) => {
+                write!(f, "GUID {guid} is not registered in AssetDatabase")
             }
             AssetError::Loader(e) => write!(f, "loader error: {e}"),
         }
@@ -331,6 +338,40 @@ impl AssetServer {
         let handle = assets.insert(asset);
         self.cache.insert(cache_key, handle.key());
         Ok(handle)
+    }
+
+    /// Loads an asset of type `T` referenced by [`Guid`]. The
+    /// [`AssetDatabase`] resource must hold an entry for the GUID
+    /// (typically populated by [`AssetDatabase::scan_directory`] at
+    /// startup, or by a prior [`AssetServer::load`] call that triggered
+    /// `.meta` registration).
+    ///
+    /// Internally resolves `guid → path` and delegates to
+    /// [`AssetServer::load`], which means the per-path cache short-
+    /// circuits repeat calls — `load_by_guid` of an already-loaded
+    /// asset returns the cached handle without re-reading bytes.
+    ///
+    /// # Errors
+    ///
+    /// - [`AssetError::MissingAssetStorage`] when no `AssetDatabase`
+    ///   resource is present.
+    /// - [`AssetError::UnknownGuid`] when the database has no entry
+    ///   for `guid`.
+    /// - Any error [`AssetServer::load`] would surface (loader
+    ///   missing, bytes unreadable, etc.).
+    pub fn load_by_guid<T: Asset>(
+        &mut self,
+        guid: Guid,
+        resources: &mut Resources,
+    ) -> AssetResult<Handle<T>> {
+        let path = {
+            let db = resources
+                .get::<AssetDatabase>()
+                .ok_or(AssetError::MissingAssetStorage("AssetDatabase"))?;
+            let entry = db.entry(guid).ok_or(AssetError::UnknownGuid(guid))?;
+            entry.path.clone()
+        };
+        self.load::<T>(path, resources)
     }
 
     /// Returns the cached handle for `path` if `T` was loaded already,
@@ -679,6 +720,69 @@ mod tests {
             .load::<PlainText>(&path, &mut resources)
             .expect("load should succeed without AssetDatabase");
         assert!(meta_path.exists());
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&meta_path);
+    }
+
+    /// `load_by_guid` requires an `AssetDatabase` resource — without
+    /// one, it cannot resolve GUID → path.
+    #[test]
+    fn load_by_guid_without_database_errs() {
+        let mut server = AssetServer::new();
+        server.register_loader::<PlainText, _>(TextLoader);
+        let mut resources = Resources::new();
+        resources.insert(Assets::<PlainText>::new());
+        let err = server
+            .load_by_guid::<PlainText>(Guid::new_v4(), &mut resources)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            AssetError::MissingAssetStorage(name) if name.contains("AssetDatabase")
+        ));
+    }
+
+    /// Unknown GUIDs surface as `UnknownGuid`.
+    #[test]
+    fn load_by_guid_unknown_guid_errs() {
+        let mut server = AssetServer::new();
+        server.register_loader::<PlainText, _>(TextLoader);
+        let mut resources = Resources::new();
+        resources.insert(Assets::<PlainText>::new());
+        resources.insert(AssetDatabase::new());
+        let stranger = Guid::new_v4();
+        let err = server
+            .load_by_guid::<PlainText>(stranger, &mut resources)
+            .unwrap_err();
+        assert!(matches!(err, AssetError::UnknownGuid(g) if g == stranger));
+    }
+
+    /// `load` followed by `load_by_guid` for the same asset must
+    /// return the same handle — the path-keyed cache short-circuits
+    /// the second call.
+    #[test]
+    fn load_then_load_by_guid_returns_cached_handle() {
+        let mut server = AssetServer::new();
+        server.register_loader::<PlainText, _>(TextLoader);
+        let mut resources = Resources::new();
+        resources.insert(Assets::<PlainText>::new());
+        resources.insert(AssetDatabase::new());
+        let path = temp_file_with("hello", "txt");
+        let meta_path = asset_meta::meta_path_for(&path);
+
+        let h_via_path = server.load::<PlainText>(&path, &mut resources).unwrap();
+        let guid = resources
+            .get::<AssetDatabase>()
+            .unwrap()
+            .guid_for(&path)
+            .unwrap();
+        let h_via_guid = server
+            .load_by_guid::<PlainText>(guid, &mut resources)
+            .unwrap();
+
+        assert_eq!(h_via_path, h_via_guid);
+        let assets = resources.get::<Assets<PlainText>>().unwrap();
+        assert_eq!(assets.len(), 1, "no duplicate insert");
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&meta_path);
