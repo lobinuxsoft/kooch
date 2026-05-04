@@ -9,6 +9,7 @@
 use ome_core::prelude::*;
 use ome_ecs::EcsPlugin;
 use ome_editor_core::EditorPlugin;
+use ome_render::plugin::AssetPlugin;
 use ome_window::WindowPlugin;
 use ome_world::WorldStreamingPlugin;
 
@@ -86,6 +87,7 @@ fn main() {
         height: 720,
     });
     app.add_plugin(EcsPlugin);
+    app.add_plugin(AssetPlugin::default());
     app.add_plugin(WorldStreamingPlugin);
     app.add_plugin(EditorPlugin);
     app.add_system(Stage::Startup, set_engine_root);
