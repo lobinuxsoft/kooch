@@ -33,13 +33,17 @@
 //! - Async / background loading: arrives when streaming demands it.
 //! - Hot-reload: file-watcher integration is its own feature.
 
+use crate::asset_database::{AssetDatabase, AssetEntry};
+use crate::asset_meta;
 use crate::assets::{Asset, Assets, Handle};
+use crate::guid::Guid;
 use crate::resource::Resources;
 use std::any::{Any, TypeId, type_name};
 use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// Result alias for asset operations.
 pub type AssetResult<T> = Result<T, AssetError>;
@@ -280,6 +284,13 @@ impl AssetServer {
             return Ok(Handle::<T>::from_key(*key));
         }
 
+        // First-time load: ensure the asset has a `.meta` sidecar (one
+        // is generated on the spot if missing) and register the
+        // resulting GUID in the `AssetDatabase` resource if it exists.
+        // Failures here only emit warnings — a missing or malformed
+        // sidecar must not block byte-level loading.
+        Self::ensure_guid_identity(&path, resources);
+
         let loader = self
             .loaders
             .get(&TypeId::of::<T>())
@@ -336,6 +347,42 @@ impl AssetServer {
     /// fresh assets.
     pub fn clear_cache(&mut self) {
         self.cache.clear();
+    }
+
+    /// Guarantees that `path` has a `.meta` sidecar with a stable
+    /// [`Guid`] and that, if an `AssetDatabase` resource is present,
+    /// the resulting `(guid, path)` pair is registered. Best-effort:
+    /// missing source file is a no-op; sidecar I/O errors are logged
+    /// but not surfaced (callers care about asset bytes, not metadata).
+    fn ensure_guid_identity(path: &Path, resources: &mut Resources) {
+        if !path.exists() {
+            return;
+        }
+        let meta = match asset_meta::read_or_create(path) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    target: "ome_core::asset_loader",
+                    path = %path.display(),
+                    error = %e,
+                    "failed to read or create .meta sidecar; continuing without GUID identity"
+                );
+                return;
+            }
+        };
+        let Some(db) = resources.get_mut::<AssetDatabase>() else {
+            return;
+        };
+        let mtime = std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        db.register(
+            meta.guid,
+            AssetEntry {
+                path: path.to_path_buf(),
+                mtime,
+            },
+        );
     }
 
     fn resolve_path(&self, path: &Path) -> PathBuf {
@@ -572,5 +619,102 @@ mod tests {
         let assets = resources.get::<Assets<PlainText>>().unwrap();
         assert_eq!(assets.len(), 1);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Load on a path with no `.meta` adjacent should generate one
+    /// transparently; the sidecar must exist after the call.
+    #[test]
+    fn load_generates_meta_on_first_call() {
+        let mut server = AssetServer::new();
+        server.register_loader::<PlainText, _>(TextLoader);
+        let mut resources = Resources::new();
+        resources.insert(Assets::<PlainText>::new());
+        let path = temp_file_with("hello", "txt");
+        let meta_path = asset_meta::meta_path_for(&path);
+        assert!(!meta_path.exists(), "test fixture must start without sidecar");
+
+        server.load::<PlainText>(&path, &mut resources).unwrap();
+        assert!(meta_path.exists(), "load should have generated the sidecar");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&meta_path);
+    }
+
+    /// When `AssetDatabase` is in resources, a successful load must
+    /// register the asset under the GUID found in the `.meta`.
+    #[test]
+    fn load_registers_in_database_when_present() {
+        let mut server = AssetServer::new();
+        server.register_loader::<PlainText, _>(TextLoader);
+        let mut resources = Resources::new();
+        resources.insert(Assets::<PlainText>::new());
+        resources.insert(AssetDatabase::new());
+        let path = temp_file_with("hello", "txt");
+        let meta_path = asset_meta::meta_path_for(&path);
+
+        server.load::<PlainText>(&path, &mut resources).unwrap();
+
+        let db = resources.get::<AssetDatabase>().unwrap();
+        let guid = db.guid_for(&path).expect("path should be registered");
+        let entry = db.entry(guid).expect("guid should resolve");
+        assert_eq!(entry.path, path);
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&meta_path);
+    }
+
+    /// Load must not require an `AssetDatabase` resource — the
+    /// integration is opportunistic. Without one, the sidecar still
+    /// gets generated but no registration happens.
+    #[test]
+    fn load_works_without_database() {
+        let mut server = AssetServer::new();
+        server.register_loader::<PlainText, _>(TextLoader);
+        let mut resources = Resources::new();
+        resources.insert(Assets::<PlainText>::new());
+        let path = temp_file_with("hello", "txt");
+        let meta_path = asset_meta::meta_path_for(&path);
+
+        let _ = server
+            .load::<PlainText>(&path, &mut resources)
+            .expect("load should succeed without AssetDatabase");
+        assert!(meta_path.exists());
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&meta_path);
+    }
+
+    /// Reloading the same asset must reuse the existing sidecar — the
+    /// GUID must remain stable.
+    #[test]
+    fn second_load_keeps_same_guid() {
+        let mut server = AssetServer::new();
+        server.register_loader::<PlainText, _>(TextLoader);
+        let mut resources = Resources::new();
+        resources.insert(Assets::<PlainText>::new());
+        resources.insert(AssetDatabase::new());
+        let path = temp_file_with("hello", "txt");
+        let meta_path = asset_meta::meta_path_for(&path);
+
+        server.load::<PlainText>(&path, &mut resources).unwrap();
+        let first_guid = resources
+            .get::<AssetDatabase>()
+            .unwrap()
+            .guid_for(&path)
+            .unwrap();
+
+        // Force a re-load (clear path cache; sidecar persists on disk).
+        server.clear_cache();
+        server.load::<PlainText>(&path, &mut resources).unwrap();
+        let second_guid = resources
+            .get::<AssetDatabase>()
+            .unwrap()
+            .guid_for(&path)
+            .unwrap();
+
+        assert_eq!(first_guid, second_guid, "GUID must be stable across loads");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&meta_path);
     }
 }
