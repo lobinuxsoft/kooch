@@ -1,45 +1,46 @@
 //! Scene-builder system: ECS query → MeshInstance buffer.
 //!
 //! Phase 1.E.2 wiring. Bridges `MeshRenderer` components (whose
-//! `mesh: Option<MeshletAssetKey>` field points at an entry in
-//! `Assets<MeshletMesh>`) onto the scene-wide cull pipeline by:
+//! `mesh: Option<Guid>` field references a persistent asset GUID)
+//! onto the scene-wide cull pipeline by:
 //!
-//! 1. Maintaining a `Handle<MeshletMesh>` → `MeshHandle` registry.
-//!    The first time an entity references a particular meshlet mesh
-//!    asset, [`MeshletPipeline::register_mesh`] adds it to the
+//! 1. Maintaining a `Guid → MeshHandle` registry. The first time an
+//!    entity references a particular mesh, the caller invokes
+//!    [`MeshletPipeline::register_mesh`] which adds it to the
 //!    [`GlobalMeshPool`] and remembers the resulting pool index.
 //! 2. Each frame, [`MeshletPipeline::collect_scene_instances`] walks
 //!    `Query<&MeshRenderer, &GlobalTransform>` and emits a
 //!    `Vec<MeshInstance>` ready for upload to a [`MeshletScene`].
 //!
-//! This module deliberately does *not* drive the GPU: PR-1.E.3 plumbs
-//! the resulting buffer through the cull dispatcher + vbuf rasterizer.
-//! Keeping the building block standalone lets the system be
-//! lib-tested without a wgpu device.
+//! GUID-based addressing (this PR) replaces the slotmap-key bridging
+//! that lived here previously; the new model matches Unity's GUID +
+//! AssetDatabase pattern. Resolving GUID → bytes (via `AssetServer +
+//! AssetDatabase + Assets<MeshletMesh>`) is the responsibility of the
+//! caller — typically a startup or asset-load system that calls
+//! [`MeshletPipeline::register_mesh`] once an asset is GPU-resident.
+//! Wiring that caller is PR3's job; this module only owns the
+//! registry + ECS walk.
 
 use std::collections::HashMap;
 
 use glam::Mat4;
-use ome_core::assets::{Assets, Handle};
+use ome_core::Guid;
 use ome_core::resource::Resources;
 use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::Query;
-use slotmap::{DefaultKey, Key, KeyData};
 
 use super::asset::MeshletMesh;
 use super::pool::{GlobalMeshPool, MeshHandle};
 use super::scene::MeshInstance;
 
 /// Owns the CPU-side state that bridges the ECS to the meshlet
-/// pipeline: the global mesh pool + a registry of which assets have
-/// already been registered.
+/// pipeline: the global mesh pool + a registry of which assets
+/// (keyed by `Guid`) have already been registered.
 #[derive(Default)]
 pub struct MeshletPipeline {
     pool: GlobalMeshPool,
-    /// `Handle<MeshletMesh>` → `MeshHandle` so repeat lookups don't
-    /// re-register the same asset.
-    registry: HashMap<Handle<MeshletMesh>, MeshHandle>,
+    registry: HashMap<Guid, MeshHandle>,
 }
 
 impl MeshletPipeline {
@@ -59,46 +60,38 @@ impl MeshletPipeline {
         self.registry.len() as u32
     }
 
-    /// Returns the `MeshHandle` previously assigned to `handle`, if
-    /// any. `None` means the asset has not been registered with the
-    /// pool yet.
-    pub fn lookup(&self, handle: Handle<MeshletMesh>) -> Option<MeshHandle> {
-        self.registry.get(&handle).copied()
+    /// Returns the `MeshHandle` previously assigned to `guid`, or
+    /// `None` if the asset has not been registered with the pool yet.
+    pub fn lookup(&self, guid: Guid) -> Option<MeshHandle> {
+        self.registry.get(&guid).copied()
     }
 
-    /// Registers `mesh` under `handle` and returns the resulting
-    /// `MeshHandle`. Idempotent — repeat calls with the same
-    /// `(handle, mesh)` pair return the cached pool entry.
-    pub fn register_mesh(
-        &mut self,
-        handle: Handle<MeshletMesh>,
-        mesh: &MeshletMesh,
-    ) -> MeshHandle {
-        if let Some(cached) = self.registry.get(&handle).copied() {
+    /// Registers `mesh` under `guid` and returns the resulting
+    /// `MeshHandle`. Idempotent — repeat calls with the same `guid`
+    /// return the cached pool entry without re-uploading.
+    pub fn register_mesh(&mut self, guid: Guid, mesh: &MeshletMesh) -> MeshHandle {
+        if let Some(cached) = self.registry.get(&guid).copied() {
             return cached;
         }
         let mesh_handle = self.pool.register(mesh);
-        self.registry.insert(handle, mesh_handle);
+        self.registry.insert(guid, mesh_handle);
         mesh_handle
     }
 
-    /// Walks the ECS query and returns every distinct
-    /// `Handle<MeshletMesh>` referenced by a visible `MeshRenderer`.
-    /// Order is unspecified — duplicates collapse — useful as the input
-    /// for "ensure all referenced meshes are GPU-resident".
-    pub fn collect_referenced_handles(
-        &self,
-        resources: &Resources,
-    ) -> Vec<Handle<MeshletMesh>> {
+    /// Walks the ECS query and returns every distinct `Guid`
+    /// referenced by a visible `MeshRenderer`. Useful as the input to
+    /// "ensure all referenced meshes are GPU-resident" — duplicates
+    /// collapse, order is unspecified.
+    pub fn collect_referenced_guids(&self, resources: &Resources) -> Vec<Guid> {
         use std::collections::HashSet;
         let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
-        let mut seen: HashSet<Handle<MeshletMesh>> = HashSet::new();
+        let mut seen: HashSet<Guid> = HashSet::new();
         query.for_each(|(renderer, _)| {
             if !renderer.visible {
                 return;
             }
-            if let Some(raw) = renderer.mesh {
-                seen.insert(handle_from_key(raw));
+            if let Some(guid) = renderer.mesh {
+                seen.insert(guid);
             }
         });
         seen.into_iter().collect()
@@ -109,39 +102,24 @@ impl MeshletPipeline {
     /// slice the scene cull dispatch should consume.
     ///
     /// Filtering rules:
-    /// - `mesh` must be `Some` and the resulting handle must
-    ///   already be registered (call [`Self::register_mesh`] before
-    ///   the entity goes live; production paths can hook this off the
-    ///   asset-server load callback).
+    /// - `mesh` must be `Some(guid)` and the GUID must already be
+    ///   registered (call [`Self::register_mesh`] before the entity
+    ///   goes live; production paths can hook this off the asset-
+    ///   server load callback in PR3).
     /// - `visible` must be `true`.
-    /// - The `Handle<MeshletMesh>` must still resolve in
-    ///   `Assets<MeshletMesh>` — stale handles are silently dropped.
+    /// - GUIDs not in the registry are silently dropped — emitting a
+    ///   warning per skipped entity per frame would spam the log.
     pub fn collect_scene_instances(&self, resources: &Resources) -> Vec<MeshInstance> {
-        let assets = match resources.get::<Assets<MeshletMesh>>() {
-            Some(a) => a,
-            None => {
-                tracing::warn!(
-                    target: "ome_render::meshlet::system",
-                    "Assets<MeshletMesh> resource missing; emitting zero instances"
-                );
-                return Vec::new();
-            }
-        };
-
         let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut out = Vec::new();
         query.for_each(|(renderer, transform)| {
             if !renderer.visible {
                 return;
             }
-            let Some(raw_key) = renderer.mesh else {
+            let Some(guid) = renderer.mesh else {
                 return;
             };
-            let handle = handle_from_key(raw_key);
-            if assets.get(handle).is_none() {
-                return;
-            }
-            let Some(mesh_handle) = self.lookup(handle) else {
+            let Some(mesh_handle) = self.lookup(guid) else {
                 return;
             };
             out.push(MeshInstance::new(
@@ -152,19 +130,6 @@ impl MeshletPipeline {
         });
         out
     }
-}
-
-/// Round-trip a `MeshletAssetKey` (u64 stored on `MeshRenderer`) back
-/// into a typed [`Handle<MeshletMesh>`].
-pub fn handle_from_key(raw: u64) -> Handle<MeshletMesh> {
-    let key: DefaultKey = KeyData::from_ffi(raw).into();
-    Handle::from_key(key)
-}
-
-/// Inverse of [`handle_from_key`] — extract the FFI-safe u64 from a
-/// typed handle so it can be stored in the ECS component.
-pub fn key_from_handle(handle: Handle<MeshletMesh>) -> u64 {
-    handle.key().data().as_ffi()
 }
 
 /// Convenience: identity transform + a fresh material id 0. Used by
@@ -179,7 +144,6 @@ mod tests {
     use super::*;
     use crate::mesh::{Mesh, MeshVertex};
     use crate::meshlet::build_default_meshlets;
-    use ome_core::assets::Assets;
 
     fn cube_mesh() -> Mesh {
         let positions = [
@@ -217,37 +181,34 @@ mod tests {
     }
 
     #[test]
-    fn key_round_trip_through_u64() {
-        let mut assets: Assets<MeshletMesh> = Assets::new();
-        let mesh = build_default_meshlets(&cube_mesh()).expect("build");
-        let h = assets.insert(mesh);
-
-        let raw = key_from_handle(h);
-        let recovered = handle_from_key(raw);
-        assert_eq!(h, recovered);
-    }
-
-    #[test]
     fn register_is_idempotent() {
         let mut pipeline = MeshletPipeline::new();
         let mesh = build_default_meshlets(&cube_mesh()).expect("build");
+        let guid = Guid::new_v4();
 
-        let mut assets: Assets<MeshletMesh> = Assets::new();
-        let handle = assets.insert(mesh.clone());
-
-        let h0 = pipeline.register_mesh(handle, &mesh);
-        let h1 = pipeline.register_mesh(handle, &mesh);
+        let h0 = pipeline.register_mesh(guid, &mesh);
+        let h1 = pipeline.register_mesh(guid, &mesh);
         assert_eq!(h0, h1);
         assert_eq!(pipeline.registered_count(), 1);
     }
 
     #[test]
+    fn distinct_guids_get_distinct_pool_handles() {
+        let mut pipeline = MeshletPipeline::new();
+        let mesh = build_default_meshlets(&cube_mesh()).expect("build");
+
+        let g1 = Guid::new_v4();
+        let g2 = Guid::new_v4();
+        let h1 = pipeline.register_mesh(g1, &mesh);
+        let h2 = pipeline.register_mesh(g2, &mesh);
+        assert_ne!(h1, h2);
+        assert_eq!(pipeline.registered_count(), 2);
+    }
+
+    #[test]
     fn lookup_returns_none_before_register() {
         let pipeline = MeshletPipeline::new();
-        let mut assets: Assets<MeshletMesh> = Assets::new();
-        let mesh = build_default_meshlets(&cube_mesh()).expect("build");
-        let handle = assets.insert(mesh);
-        assert!(pipeline.lookup(handle).is_none());
+        assert!(pipeline.lookup(Guid::new_v4()).is_none());
     }
 
     #[test]

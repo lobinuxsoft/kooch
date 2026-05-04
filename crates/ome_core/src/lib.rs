@@ -43,13 +43,16 @@
 //! ```
 
 pub mod app;
+pub mod asset_database;
 pub mod asset_loader;
+pub mod asset_meta;
 pub mod assets;
 pub mod buffer;
 pub mod compute;
 pub mod coord;
 pub mod event;
 pub mod gpu;
+pub mod guid;
 pub mod pipeline_cache;
 pub mod plugin;
 pub mod power;
@@ -61,6 +64,8 @@ pub mod schedule;
 pub mod stage;
 pub mod system;
 pub mod time;
+
+pub use guid::Guid;
 
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
