@@ -85,9 +85,9 @@ impl MeshletRenderStage {
         mesh: &MeshletMesh,
     ) {
         self.pipeline.register_mesh(guid, mesh);
-        if !self.gpu_meshes.contains_key(&guid) {
-            self.gpu_meshes.insert(guid, mesh.upload(device));
-        }
+        self.gpu_meshes
+            .entry(guid)
+            .or_insert_with(|| mesh.upload(device));
         if self.active_guid.is_none() {
             self.active_guid = Some(guid);
         }
