@@ -1,8 +1,8 @@
 //! Scene-builder system: ECS query → MeshInstance buffer.
 //!
-//! Phase 1.E.2 wiring. Bridges `MeshRenderer` components (with the
-//! new `meshlet_mesh: Option<MeshletAssetKey>` field) onto the
-//! scene-wide cull pipeline by:
+//! Phase 1.E.2 wiring. Bridges `MeshRenderer` components (whose
+//! `mesh: Option<MeshletAssetKey>` field points at an entry in
+//! `Assets<MeshletMesh>`) onto the scene-wide cull pipeline by:
 //!
 //! 1. Maintaining a `Handle<MeshletMesh>` → `MeshHandle` registry.
 //!    The first time an entity references a particular meshlet mesh
@@ -97,7 +97,7 @@ impl MeshletPipeline {
             if !renderer.visible {
                 return;
             }
-            if let Some(raw) = renderer.meshlet_mesh {
+            if let Some(raw) = renderer.mesh {
                 seen.insert(handle_from_key(raw));
             }
         });
@@ -109,7 +109,7 @@ impl MeshletPipeline {
     /// slice the scene cull dispatch should consume.
     ///
     /// Filtering rules:
-    /// - `meshlet_mesh` must be `Some` and the resulting handle must
+    /// - `mesh` must be `Some` and the resulting handle must
     ///   already be registered (call [`Self::register_mesh`] before
     ///   the entity goes live; production paths can hook this off the
     ///   asset-server load callback).
@@ -134,7 +134,7 @@ impl MeshletPipeline {
             if !renderer.visible {
                 return;
             }
-            let Some(raw_key) = renderer.meshlet_mesh else {
+            let Some(raw_key) = renderer.mesh else {
                 return;
             };
             let handle = handle_from_key(raw_key);
