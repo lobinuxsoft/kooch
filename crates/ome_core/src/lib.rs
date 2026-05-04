@@ -43,6 +43,7 @@
 //! ```
 
 pub mod app;
+pub mod asset_database;
 pub mod asset_loader;
 pub mod asset_meta;
 pub mod assets;
