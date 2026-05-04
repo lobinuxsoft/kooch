@@ -8,7 +8,7 @@ use ome_core::raw_event::RawEventHandler;
 use ome_core::resource::Resources;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
 use ome_render::meshlet::{MeshletBlit, MeshletRenderStage, MeshletRenderStageConfig};
-use ome_render::{MeshPassRenderer, SkyRenderPass, UseMeshletPath};
+use ome_render::SkyRenderPass;
 use ome_world::{ChunkManager, ProceduralCitySource};
 
 use crate::state::{EditorOverlay, EguiEventHandler};
@@ -50,7 +50,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     );
 
     let pipeline_cache = gpu.pipeline_cache();
-    let mesh_pass = MeshPassRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
     let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format(), pipeline_cache);
     let gizmo_renderer = GizmoRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
     let mesh_gizmo_renderer = MeshGizmoRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
@@ -61,10 +60,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         INITIAL_VIEWPORT_SIZE,
     );
 
-    // Meshlet pipeline — opt-in via `UseMeshletPath`. Until 1.E.4 visual
-    // confirmation, the editor still defaults to MeshPassRenderer; the
-    // stage is constructed eagerly so the toggle is a single bool flip
-    // away (no init-on-first-toggle latency).
     let meshlet_stage = MeshletRenderStage::new(
         gpu.device(),
         MeshletRenderStageConfig {
@@ -108,7 +103,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     let power_profile: PowerProfile = power::detect();
     resources.insert(overlay);
     resources.insert(handler);
-    resources.insert(mesh_pass);
     resources.insert(sky_pass);
     resources.insert(gizmo_renderer);
     resources.insert(mesh_gizmo_renderer);
@@ -117,7 +111,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     resources.insert(viewport);
     resources.insert(meshlet_stage);
     resources.insert(meshlet_blit);
-    resources.insert(UseMeshletPath::default());
     resources.insert(power_profile);
 
     tracing::info!("Editor overlay initialized");

@@ -19,35 +19,35 @@ pub type MeshletAssetKey = u64;
 
 /// Component that binds an entity to a mesh and a material for rendering.
 ///
-/// `mesh` and `material` are legacy asset paths (strings); the
-/// `meshlet_mesh` field is the post-Phase-1.E migration target — set
-/// it to a `MeshletAssetKey` (extracted from a `Handle<MeshletMesh>`)
-/// and the meshlet pipeline picks the entity up.
+/// `mesh` is the asset key into `Assets<MeshletMesh>` — the meshlet
+/// pipeline picks the entity up via the scene cull when `Some`. The key
+/// is opaque to `ome_ecs` (kept as `u64` so this crate stays free of an
+/// `ome_render` dependency); `ome_render`'s scene system converts it
+/// into a typed `Handle<MeshletMesh>` at lookup time.
 ///
-/// Both code paths coexist during the migration so existing entities
-/// keep rendering through the legacy `MeshPassRenderer` until they
-/// move over.
+/// `material` is a legacy string and currently unused — the material
+/// system migrates to `Assets<Material>` in a follow-up PR. It remains
+/// here so scene serialization round-trips today; the typed migration
+/// will land alongside the material asset infrastructure.
 ///
 /// # Default
 ///
-/// - `mesh`: `""`
+/// - `mesh`: `None`
 /// - `material`: `""`
-/// - `meshlet_mesh`: `None`
 /// - `visible`: true
 /// - `cast_shadows`: true
 /// - `receive_shadows`: true
 #[derive(Debug, Clone, Reflect)]
 #[reflect(category = "Rendering")]
 pub struct MeshRenderer {
-    /// Asset path or handle key for the legacy mesh path.
-    pub mesh: String,
-    /// Asset path or handle key for the material (legacy).
-    pub material: String,
     /// When `Some`, the meshlet pipeline picks this entity up via the
-    /// Phase 1.E scene cull. Stored type-erased so `ome_ecs` stays
-    /// independent of `ome_render`'s typed handle wrapper.
+    /// scene cull. Stored type-erased so `ome_ecs` stays independent of
+    /// `ome_render`'s typed handle wrapper.
     #[reflect(skip)]
-    pub meshlet_mesh: Option<MeshletAssetKey>,
+    pub mesh: Option<MeshletAssetKey>,
+    /// Asset path for the material (legacy `String`, unused — pending
+    /// migration to `Assets<Material>` once that asset exists).
+    pub material: String,
     /// Whether this renderer is drawn.
     pub visible: bool,
     /// Whether this renderer casts shadows.
@@ -59,9 +59,8 @@ pub struct MeshRenderer {
 impl Default for MeshRenderer {
     fn default() -> Self {
         Self {
-            mesh: String::new(),
+            mesh: None,
             material: String::new(),
-            meshlet_mesh: None,
             visible: true,
             cast_shadows: true,
             receive_shadows: true,
@@ -79,7 +78,7 @@ mod tests {
     #[test]
     fn default_values() {
         let r = MeshRenderer::default();
-        assert!(r.mesh.is_empty());
+        assert!(r.mesh.is_none());
         assert!(r.material.is_empty());
         assert!(r.visible);
         assert!(r.cast_shadows);
@@ -91,18 +90,11 @@ mod tests {
         let r = MeshRenderer::default();
         let fields = r.reflect_fields();
         let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
-        // `meshlet_mesh` is `#[reflect(skip)]` — it's an opaque key, not
-        // editor-inspector friendly. Reflect surface stays the same as
-        // pre-1.E to keep scene-serialization compatibility.
+        // `mesh` is `#[reflect(skip)]` — opaque key, not editor-inspector
+        // friendly until the asset-picker UI lands.
         assert_eq!(
             names,
-            &["mesh", "material", "visible", "cast_shadows", "receive_shadows"]
+            &["material", "visible", "cast_shadows", "receive_shadows"]
         );
-    }
-
-    #[test]
-    fn meshlet_mesh_defaults_to_none() {
-        let r = MeshRenderer::default();
-        assert!(r.meshlet_mesh.is_none());
     }
 }

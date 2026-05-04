@@ -2,35 +2,31 @@
 //!
 //! Post-pivot 2026-05-02 (Plan C): mesh-only render. SDF raymarch pass
 //! removed; voxel + DC pipeline (Phase 2.5) will feed mesh chunks into
-//! the mesh pass when ready.
+//! the meshlet stage when ready.
 //!
 //! Passes share one encoder and the offscreen target, in this order:
 //! 1. **Sky pass** (optional) — runs when an active `SkyRenderer` entity
 //!    exists. Clears color + depth and draws the procedural sky.
-//! 2. **Mesh pass** — paints visible `MeshRenderer + GlobalTransform`
-//!    entities, depth-testing against the depth buffer.
+//! 2. **Meshlet blit** — composites the meshlet stage's color output
+//!    (cull + visibility raster + deferred shade) onto the viewport.
 //! 3. **Gizmo passes** — line + mesh gizmos, always on top.
 
 use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
 use ome_core::time::Time;
 use ome_ecs::hierarchy::GlobalTransform;
-use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::Query;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
+use ome_render::SkyRenderPass;
 use ome_render::meshlet::{MeshletBlit, MeshletRenderStage};
-use ome_render::{MeshPassRenderer, SkyRenderPass};
 
 use crate::viewport::target::ViewportTarget;
 
-/// Inputs for the meshlet path. When `enabled` is `false` the editor
-/// renders the legacy `MeshPassRenderer`; otherwise the stage drives
-/// cull + raster + deferred and the blit composes it onto the
-/// `ViewportTarget`'s color view.
+/// Inputs for the meshlet path. The stage drives cull + raster +
+/// deferred; the blit composes it onto the `ViewportTarget`'s color view.
 pub(crate) struct MeshletPathInputs<'a> {
     pub stage: &'a mut MeshletRenderStage,
     pub blit: &'a MeshletBlit,
-    pub enabled: bool,
 }
 
 /// Renders the active scene into the viewport offscreen texture.
@@ -38,7 +34,6 @@ pub(crate) struct MeshletPathInputs<'a> {
 pub(crate) fn render_viewport(
     gpu: &GpuContext,
     sky_pass: &mut SkyRenderPass,
-    mesh_pass: &mut MeshPassRenderer,
     gizmo_renderer: &mut GizmoRenderer,
     gizmo_batch: &GizmoBatch,
     mesh_gizmo_renderer: &mut MeshGizmoRenderer,
@@ -52,7 +47,7 @@ pub(crate) fn render_viewport(
     // + deferred). Order matters: the blit pass we record below reads
     // the stage's color view, so the stage's submit must complete
     // first on the queue.
-    if project_loaded && meshlet.enabled {
+    if project_loaded {
         meshlet.stage.resize(gpu.device(), target.size());
         meshlet.stage.sync_assets_to_gpu(gpu.device(), resources);
         let (view_proj, cam_pos) = active_camera_matrices(resources, target.aspect())
@@ -96,29 +91,15 @@ pub(crate) fn render_viewport(
         false
     };
 
-    // No raymarch pass post-pivot. If sky didn't draw, we need a clear
-    // so the offscreen target starts in a defined state.
     if !sky_drawn {
         clear_to_black(&mut encoder, target.view(), target.depth_view());
     }
 
-    // Pass 2: Mesh — legacy MeshPassRenderer or meshlet blit composite.
+    // Pass 2: Meshlet blit composite.
     if project_loaded {
-        if meshlet.enabled {
-            meshlet
-                .blit
-                .blit(gpu.device(), &mut encoder, meshlet.stage.color_view(), target.view());
-        } else if has_visible_mesh(resources) {
-            mesh_pass.render(
-                gpu.device(),
-                gpu.queue(),
-                &mut encoder,
-                target.view(),
-                target.depth_view(),
-                resources,
-                target.aspect(),
-            );
-        }
+        meshlet
+            .blit
+            .blit(gpu.device(), &mut encoder, meshlet.stage.color_view(), target.view());
     }
 
     // Pass 3: Line gizmos (always-on-top, depth comparison `Always`,
@@ -182,17 +163,6 @@ fn clear_to_black(
         occlusion_query_set: None,
         multiview_mask: None,
     });
-}
-
-fn has_visible_mesh(resources: &Resources) -> bool {
-    let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
-    let mut found = false;
-    query.for_each(|(mr, _)| {
-        if mr.visible && !mr.mesh.is_empty() {
-            found = true;
-        }
-    });
-    found
 }
 
 fn active_camera_matrices(

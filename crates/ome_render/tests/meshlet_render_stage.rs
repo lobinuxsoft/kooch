@@ -147,7 +147,7 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
     commands
         .spawn(&mut resources)
         .insert(MeshRenderer {
-            meshlet_mesh: Some(raw_key),
+            mesh: Some(raw_key),
             visible: true,
             ..Default::default()
         })
@@ -157,7 +157,7 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
     commands
         .spawn(&mut resources)
         .insert(MeshRenderer {
-            meshlet_mesh: Some(raw_key),
+            mesh: Some(raw_key),
             visible: true,
             ..Default::default()
         })

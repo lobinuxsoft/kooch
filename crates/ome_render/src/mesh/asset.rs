@@ -1,19 +1,13 @@
 //! `Mesh` — CPU-side asset type loaded from glTF.
 //!
 //! A `Mesh` holds geometry data parsed from disk. It is the type
-//! `GltfMeshLoader` produces and the type [`Assets<Mesh>`] stores. GPU
-//! upload happens separately via [`Mesh::upload`], yielding a [`GpuMesh`]
-//! the render pass consumes.
-//!
-//! Splitting CPU `Mesh` from GPU [`GpuMesh`] lets the same asset be:
-//! - Loaded once, uploaded once
-//! - Inspected by tools (mesh viewer, exporter, baker) without GPU context
-//! - Re-uploaded after edits without re-parsing the source file
+//! `GltfMeshLoader` produces and the type [`Assets<Mesh>`] stores. The
+//! meshlet builder consumes it directly to produce GPU-resident
+//! `MeshletMesh` data — there is no separate raw-mesh GPU upload.
 
 use glam::Vec3;
-use wgpu::util::DeviceExt;
 
-use super::gpu_mesh::{Aabb, GpuMesh, MeshVertex};
+use super::vertex::{Aabb, MeshVertex};
 
 /// CPU-side mesh data: interleaved vertex array + 32-bit indices + AABB.
 ///
@@ -63,29 +57,6 @@ impl Mesh {
     /// Index count.
     pub fn index_count(&self) -> u32 {
         self.indices.len() as u32
-    }
-
-    /// Uploads `self` into GPU buffers, returning a [`GpuMesh`] ready for
-    /// draw calls. Allocates two `wgpu::Buffer`s: one VERTEX, one INDEX.
-    pub fn upload(&self, device: &wgpu::Device) -> GpuMesh {
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh_vertex_buffer"),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh_index_buffer"),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        GpuMesh {
-            vertex_buffer,
-            index_buffer,
-            vertex_count: self.vertex_count(),
-            index_count: self.index_count(),
-            index_format: wgpu::IndexFormat::Uint32,
-            aabb: self.aabb,
-        }
     }
 }
 
