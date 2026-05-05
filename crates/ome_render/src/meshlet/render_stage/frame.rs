@@ -118,6 +118,22 @@ impl MeshletRenderStage {
     /// - Loader rejects the bytes → log warn, skip entity.
     /// - `Assets<MeshletMesh>` missing or stale handle → log warn, skip.
     pub fn sync_assets_to_gpu(&mut self, device: &wgpu::Device, resources: &mut Resources) {
+        // Material pool sync first: the meshlet scene system reads
+        // `MaterialPipeline.lookup_or_fallback` when assembling
+        // `MeshInstance.material_id`, so any newly-picked GUID has
+        // to be in the registry before the cull dispatch fires.
+        // Pull the GPU queue out of GpuContext so we can drive the
+        // sync without expanding this method's signature.
+        if let Some(mut material_pipeline) =
+            resources.remove::<crate::material::MaterialPipeline>()
+        {
+            if let Some(gpu) = resources.remove::<ome_core::gpu::GpuContext>() {
+                material_pipeline.sync_from_resources(gpu.queue(), resources);
+                resources.insert(gpu);
+            }
+            resources.insert(material_pipeline);
+        }
+
         let referenced = self.pipeline.collect_referenced_guids(resources);
         let pending: Vec<Guid> = referenced
             .iter()
@@ -257,7 +273,14 @@ impl MeshletRenderStage {
             SceneCullParams::new(instances.len() as u32, meshlets_per_mesh);
 
         let meshlet_bg = meshlet_bind_group(device, &self.meshlet_bgl, gpu_mesh);
-        let material_bg = self.material_pool.bind_group(device);
+        // Prefer the GUID-keyed `MaterialPipeline` pool when it's
+        // present in resources — that's the buffer the asset picker
+        // writes into. Falls back to the stage-local pool (used by
+        // GPU integration tests that bypass the asset system).
+        let material_bg = match resources.get::<crate::material::MaterialPipeline>() {
+            Some(pipeline) => pipeline.pool().bind_group(device),
+            None => self.material_pool.bind_group(device),
+        };
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("meshlet_render_stage_encoder"),
