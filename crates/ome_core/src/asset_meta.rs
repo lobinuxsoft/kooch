@@ -160,6 +160,35 @@ pub fn read_or_create(asset_path: &Path) -> Result<AssetMeta, AssetMetaError> {
     Ok(meta)
 }
 
+/// Type-aware variant of [`read_or_create`]. Same flow with three
+/// extra guarantees:
+///
+/// - Sidecars created here always carry `asset_type = type_name`.
+/// - Sidecars that already exist but lack `asset_type` get the field
+///   back-filled and rewritten to disk.
+/// - Sidecars whose existing `asset_type` differs from `type_name`
+///   are left as-is and returned untouched — the caller decides
+///   whether to treat the mismatch as an error (typically yes for
+///   `AssetServer::load::<T>` because `T` ought to match the file's
+///   recorded type).
+pub fn read_or_create_typed(
+    asset_path: &Path,
+    type_name: &str,
+) -> Result<AssetMeta, AssetMetaError> {
+    let path = meta_path_for(asset_path);
+    if !path.exists() {
+        let meta = AssetMeta::with_type(type_name);
+        write_meta(asset_path, &meta)?;
+        return Ok(meta);
+    }
+    let mut meta = read_meta(asset_path)?;
+    if meta.asset_type.is_none() {
+        meta.asset_type = Some(type_name.to_owned());
+        write_meta(asset_path, &meta)?;
+    }
+    Ok(meta)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,6 +308,68 @@ mod tests {
         assert_eq!(
             parsed.asset_type.as_deref(),
             Some("ome_render::meshlet::MeshletMesh"),
+        );
+    }
+
+    #[test]
+    fn read_or_create_typed_writes_type_on_first_create() {
+        let dir = TempDir::new("typed_create");
+        let asset = dir.path.join("foo.glb");
+        touch(&asset);
+
+        let meta = read_or_create_typed(&asset, "ome_render::meshlet::MeshletMesh")
+            .expect("create typed");
+        assert_eq!(
+            meta.asset_type.as_deref(),
+            Some("ome_render::meshlet::MeshletMesh"),
+        );
+
+        // Sidecar on disk also carries the type.
+        let raw = fs::read_to_string(meta_path_for(&asset)).unwrap();
+        assert!(raw.contains("asset_type"));
+    }
+
+    #[test]
+    fn read_or_create_typed_backfills_existing_untyped_sidecar() {
+        let dir = TempDir::new("typed_backfill");
+        let asset = dir.path.join("legacy.glb");
+        touch(&asset);
+        let raw = "guid = \"550e8400e29b41d4a716446655440000\"\n";
+        fs::write(meta_path_for(&asset), raw).expect("seed legacy meta");
+
+        let meta = read_or_create_typed(&asset, "ome_render::texture::Image")
+            .expect("read existing then backfill");
+        assert_eq!(
+            meta.asset_type.as_deref(),
+            Some("ome_render::texture::Image"),
+        );
+
+        // Re-read to confirm the change persisted to disk.
+        let on_disk = read_meta(&asset).expect("re-read");
+        assert_eq!(
+            on_disk.asset_type.as_deref(),
+            Some("ome_render::texture::Image"),
+        );
+    }
+
+    #[test]
+    fn read_or_create_typed_preserves_existing_type_mismatch() {
+        // The function intentionally does NOT overwrite an existing
+        // type — it backfills only when the field is None. The
+        // caller can detect a mismatch by comparing the returned
+        // value to the type they passed.
+        let dir = TempDir::new("typed_mismatch");
+        let asset = dir.path.join("typed.glb");
+        touch(&asset);
+        let original = AssetMeta::with_type("ome_render::meshlet::MeshletMesh");
+        write_meta(&asset, &original).expect("seed typed meta");
+
+        let parsed = read_or_create_typed(&asset, "ome_render::texture::Image")
+            .expect("read existing typed");
+        assert_eq!(
+            parsed.asset_type.as_deref(),
+            Some("ome_render::meshlet::MeshletMesh"),
+            "must NOT overwrite an existing recorded type",
         );
     }
 

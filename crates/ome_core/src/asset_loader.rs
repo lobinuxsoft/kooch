@@ -294,9 +294,11 @@ impl AssetServer {
         // First-time load: ensure the asset has a `.meta` sidecar (one
         // is generated on the spot if missing) and register the
         // resulting GUID in the `AssetDatabase` resource if it exists.
-        // Failures here only emit warnings — a missing or malformed
-        // sidecar must not block byte-level loading.
-        Self::ensure_guid_identity(&path, resources);
+        // The type-aware path back-fills `asset_type` whenever an
+        // existing sidecar predates the field. Failures here only emit
+        // warnings — a missing or malformed sidecar must not block
+        // byte-level loading.
+        Self::ensure_guid_identity(&path, resources, type_name::<T>());
 
         let loader = self
             .loaders
@@ -391,15 +393,16 @@ impl AssetServer {
     }
 
     /// Guarantees that `path` has a `.meta` sidecar with a stable
-    /// [`Guid`] and that, if an `AssetDatabase` resource is present,
-    /// the resulting `(guid, path)` pair is registered. Best-effort:
+    /// [`Guid`] and the recorded `asset_type` set to `type_name`, and
+    /// that, if an `AssetDatabase` resource is present, the resulting
+    /// `(guid, path, type_name)` triple is registered. Best-effort:
     /// missing source file is a no-op; sidecar I/O errors are logged
     /// but not surfaced (callers care about asset bytes, not metadata).
-    fn ensure_guid_identity(path: &Path, resources: &mut Resources) {
+    fn ensure_guid_identity(path: &Path, resources: &mut Resources, type_name: &'static str) {
         if !path.exists() {
             return;
         }
-        let meta = match asset_meta::read_or_create(path) {
+        let meta = match asset_meta::read_or_create_typed(path, type_name) {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(
@@ -417,6 +420,12 @@ impl AssetServer {
         let mtime = std::fs::metadata(path)
             .and_then(|m| m.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);
+        // The sidecar's recorded type wins. If the loader was the
+        // first to assign one, `read_or_create_typed` already
+        // back-filled it; if a previous load with a different `T`
+        // wrote a different type, we honour that here and the
+        // caller's `Assets<T>` insert downstream will fail loudly
+        // (downcast mismatch) rather than us silently relabel.
         db.register(
             meta.guid,
             AssetEntry {
@@ -425,6 +434,11 @@ impl AssetServer {
                 type_name: meta.asset_type.clone(),
             },
         );
+        // Re-entrant safety: if the entry already existed under the
+        // same GUID with no type yet (scanned at startup before any
+        // `load::<T>`), `register` keeps the freshly-typed entry; if
+        // it already had a type, the new entry's type matches what
+        // the sidecar carries.
     }
 
     /// Resolves a caller-provided path against the configured asset
