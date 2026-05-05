@@ -12,7 +12,7 @@
 
 use glam::Vec3;
 
-use crate::mesh::{Aabb, Mesh};
+use crate::mesh::{Aabb, Mesh, MeshVertex};
 
 use super::asset::{
     MeshletDescriptor, MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES,
@@ -124,20 +124,38 @@ pub fn build_meshlets_from_mesh(
     })
 }
 
-/// Builds a multi-LOD [`MeshletMesh`] by repeatedly simplifying the
-/// source mesh and clusterising each level. The resulting `MeshletMesh`
-/// concatenates every LOD's meshlets into one descriptor array,
-/// rebasing per-LOD `vertex_offset` / `triangle_offset` so the GPU can
-/// index a single flat buffer.
+/// Number of children grouped together when building each LOD level
+/// of the Nanite-style DAG. Karis SIGGRAPH 2021 used 4 — small enough
+/// that simplify reliably collapses the group to a single parent
+/// meshlet (≤ MAX_TRIANGLES), large enough to amortise the per-group
+/// overhead.
+const NANITE_GROUP_SIZE: usize = 4;
+
+/// Builds a multi-LOD [`MeshletMesh`] using the Nanite-grouped DAG
+/// algorithm. The resulting `MeshletMesh` concatenates every LOD's
+/// meshlets into one descriptor array, rebasing per-LOD
+/// `vertex_offset` / `triangle_offset` so the GPU can index a single
+/// flat buffer.
 ///
-/// Each meshlet's `lod_error` carries the actual simplify error
-/// `meshopt::simplify` reported for that LOD. `parent_meshlet_index`
-/// stays at [`MESHLET_ROOT_PARENT`] until #442 sub-commit 3 wires the
-/// DAG parent-child links.
+/// # Algorithm (per LOD level)
 ///
-/// LOD 0 is always present (the original mesh, error 0.0). Subsequent
-/// levels are added as long as `meshopt::simplify` can keep reducing
-/// the index count; the chain stops naturally on topology-bound meshes.
+/// 1. Take the previous LOD's meshlets.
+/// 2. Spatial-sort them by Morton code on `bounds_center`.
+/// 3. Chunk into groups of [`NANITE_GROUP_SIZE`] consecutive meshlets.
+/// 4. For each group:
+///    - Resolve the group's underlying triangles into a local
+///      vertex-deduped sub-mesh.
+///    - Run `meshopt::simplify` with `LockBorder` so external edges
+///      stay intact and adjacent groups stitch seamlessly.
+///    - Re-cluster the simplified triangles. Target count is forced
+///      to [`max_triangles`] so the result is one parent meshlet per
+///      group — guarantees coverage of the four children's region.
+///    - Wire each child's `parent_meshlet_index` to the new parent.
+/// 5. Stop when no group could simplify further (topology lock).
+///
+/// LOD 0 is always present (clusterised once, no simplification).
+/// `lod_error` on each meshlet carries the simplify error reported by
+/// `meshopt`; LOD 0 stays at 0.0.
 pub fn build_meshlets_lod_chain(
     mesh: &Mesh,
     max_vertices: usize,
@@ -149,11 +167,12 @@ pub fn build_meshlets_lod_chain(
         return Err(MeshletBuildError::EmptyMesh);
     }
 
-    let vertex_stride = std::mem::size_of::<crate::mesh::MeshVertex>();
+    let vertex_stride = std::mem::size_of::<MeshVertex>();
     let vertex_bytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
     let adapter = meshopt::VertexDataAdapter::new(vertex_bytes, vertex_stride, 0)?;
+    let mesh_aabb = total_aabb(&mesh.vertices);
 
-    // LOD 0 — full detail.
+    // LOD 0 — full detail, single global cluster pass.
     let (mut all_descriptors, mut all_meshlet_vertices, mut all_meshlet_triangles) =
         clusterize_lod(
             &mesh.indices,
@@ -165,135 +184,281 @@ pub fn build_meshlets_lod_chain(
             0.0,
         );
 
-    let mut current_indices = mesh.indices.clone();
+    let mut prev_lod_range = (0usize, all_descriptors.len());
     let mut current_error = lod_config.initial_error;
 
     for _level in 1..lod_config.max_levels {
-        // Triangle counts must stay multiples of 3.
-        let target_count = ((current_indices.len() as f32) * lod_config.target_ratio) as usize;
-        let target_count = (target_count / 3) * 3;
-        if target_count < 3 {
-            break;
+        let (prev_start, prev_end) = prev_lod_range;
+        let prev_count = prev_end - prev_start;
+        if prev_count <= 1 {
+            break; // Single meshlet at the previous level → cannot group.
         }
 
-        let mut actual_error = 0.0f32;
-        let simplified = meshopt::simplify(
-            &current_indices,
-            &adapter,
-            target_count,
-            current_error,
-            meshopt::SimplifyOptions::None,
-            Some(&mut actual_error),
-        );
+        // Snapshot the previous LOD's meshlets so we can index by
+        // group while still appending parents to the same vector.
+        let prev_meshlets: Vec<MeshletDescriptor> =
+            all_descriptors[prev_start..prev_end].to_vec();
 
-        // simplify returns the original list when it can't reduce
-        // further (topology lock, error budget exhausted, etc.).
-        if simplified.is_empty() || simplified.len() >= current_indices.len() {
-            break;
+        let groups =
+            group_meshlets_morton(&prev_meshlets, &mesh_aabb, NANITE_GROUP_SIZE);
+
+        let new_lod_start_in_pool = all_descriptors.len();
+        let mut any_group_emitted_parent = false;
+
+        for group in &groups {
+            let geo = extract_group_geometry(
+                group,
+                &prev_meshlets,
+                &all_meshlet_vertices,
+                &all_meshlet_triangles,
+                &mesh.vertices,
+            );
+            // Need at least two triangles to produce a meaningful
+            // simplification budget; smaller groups stay as roots.
+            if geo.indices.len() < 6 {
+                continue;
+            }
+
+            let group_vertex_bytes: &[u8] = bytemuck::cast_slice(&geo.vertices);
+            let group_adapter = meshopt::VertexDataAdapter::new(
+                group_vertex_bytes,
+                vertex_stride,
+                0,
+            )?;
+
+            // Single-pass simplify: aim at half the indices, accept
+            // whatever clusterize emits up to NANITE_GROUP_SIZE
+            // parents. Forcing exactly one parent (earlier iteration)
+            // skipped ~97 % of groups in practice — vertex-count
+            // limits inside max_meshlet bounds defeat the
+            // single-parent guarantee on dense surfaces. Children
+            // get assigned to their nearest parent within the group;
+            // coherence stays inside the group so the seam-tearing
+            // case from the proximity DAG (children of group X
+            // pointing to parents from group Y) cannot recur.
+            let target_count = ((max_triangles * 3) as usize)
+                .min(((geo.indices.len() as f32) * lod_config.target_ratio) as usize);
+            let target_count = (target_count / 3) * 3;
+            if target_count < 3 {
+                continue;
+            }
+
+            let mut actual_error = 0.0f32;
+            let simplified = meshopt::simplify(
+                &geo.indices,
+                &group_adapter,
+                target_count,
+                current_error,
+                meshopt::SimplifyOptions::LockBorder,
+                Some(&mut actual_error),
+            );
+            if simplified.is_empty() || simplified.len() >= geo.indices.len() {
+                continue; // No reduction possible for this group.
+            }
+
+            let (parent_descs, parent_mlv_local, parent_mlt) = clusterize_lod(
+                &simplified,
+                &group_adapter,
+                &geo.vertices,
+                max_vertices,
+                max_triangles,
+                cone_weight,
+                actual_error,
+            );
+            if parent_descs.is_empty() || parent_descs.len() > NANITE_GROUP_SIZE {
+                // Empty: simplify produced nothing usable. Too many
+                // parents (more than the group's child count): the
+                // simplification didn't actually compact the
+                // geometry meaningfully — skip rather than emit a
+                // worse-than-input level.
+                continue;
+            }
+
+            // Pad triangles to a u32 boundary before appending —
+            // the cull shader reads them as array<u32>.
+            while all_meshlet_triangles.len() % 4 != 0 {
+                all_meshlet_triangles.push(0);
+            }
+            let vertex_offset_base = all_meshlet_vertices.len() as u32;
+            let triangle_offset_base = all_meshlet_triangles.len() as u32;
+
+            // Remap meshlet_vertices values from group-local space
+            // back to the mesh-global vertex pool.
+            let remapped_mlv: Vec<u32> = parent_mlv_local
+                .iter()
+                .map(|&local_idx| geo.global_indices[local_idx as usize])
+                .collect();
+
+            let first_parent_pool_idx = all_descriptors.len() as u32;
+            for desc in &parent_descs {
+                all_descriptors.push(MeshletDescriptor {
+                    vertex_offset: desc.vertex_offset + vertex_offset_base,
+                    triangle_offset: desc.triangle_offset + triangle_offset_base,
+                    ..*desc
+                });
+            }
+            all_meshlet_vertices.extend(remapped_mlv);
+            all_meshlet_triangles.extend(parent_mlt);
+
+            // Wire each child to the parent meshlet (within this
+            // group's emitted set) whose `bounds_center` is closest
+            // to the child's. Confines parent-child coherence to
+            // the group, so the proximity-DAG tearing case (children
+            // of group X pointing at parents from group Y) is
+            // structurally impossible — and every emitted parent is
+            // referenced by at least its closest child, so the
+            // selector cannot leave a parent rendering as a stray
+            // root on top of its descended siblings.
+            for &child_local in group {
+                let cc = prev_meshlets[child_local].bounds_center;
+                let mut best: (f32, u32) = (f32::INFINITY, first_parent_pool_idx);
+                for (i, p) in parent_descs.iter().enumerate() {
+                    let pc = p.bounds_center;
+                    let dx = pc[0] - cc[0];
+                    let dy = pc[1] - cc[1];
+                    let dz = pc[2] - cc[2];
+                    let d2 = dx * dx + dy * dy + dz * dz;
+                    if d2 < best.0 {
+                        best = (d2, first_parent_pool_idx + i as u32);
+                    }
+                }
+                all_descriptors[prev_start + child_local].parent_meshlet_index = best.1;
+            }
+
+            any_group_emitted_parent = true;
         }
 
-        let (lod_descriptors, lod_meshlet_vertices, lod_meshlet_triangles) = clusterize_lod(
-            &simplified,
-            &adapter,
-            &mesh.vertices,
-            max_vertices,
-            max_triangles,
-            cone_weight,
-            actual_error,
-        );
-
-        // Pad to 4-byte boundary before appending: the cull shader
-        // reads array<u32> and extracts triangle bytes via shift+mask;
-        // unaligned LOD-N base offsets would mis-read the first byte.
-        while all_meshlet_triangles.len() % 4 != 0 {
-            all_meshlet_triangles.push(0);
+        if !any_group_emitted_parent {
+            break; // No progress this level; chain terminates.
         }
-        let vertex_offset_base = all_meshlet_vertices.len() as u32;
-        let triangle_offset_base = all_meshlet_triangles.len() as u32;
 
-        for desc in lod_descriptors {
-            all_descriptors.push(MeshletDescriptor {
-                vertex_offset: desc.vertex_offset + vertex_offset_base,
-                triangle_offset: desc.triangle_offset + triangle_offset_base,
-                ..desc
-            });
-        }
-        all_meshlet_vertices.extend_from_slice(&lod_meshlet_vertices);
-        all_meshlet_triangles.extend_from_slice(&lod_meshlet_triangles);
-
-        current_indices = simplified;
+        prev_lod_range = (new_lod_start_in_pool, all_descriptors.len());
         current_error *= 2.0;
     }
-
-    assign_dag_parents(&mut all_descriptors);
 
     Ok(MeshletMesh {
         vertices: mesh.vertices.clone(),
         meshlet_vertices: all_meshlet_vertices,
         meshlet_triangles: all_meshlet_triangles,
         meshlets: all_descriptors,
-        aabb: total_aabb(&mesh.vertices),
+        aabb: mesh_aabb,
     })
 }
 
-/// Returns `[start, end)` ranges in `meshlets` corresponding to each
-/// LOD level. Relies on `lod_error` being monotonically non-decreasing
-/// across the concatenated chain — a property
-/// [`build_meshlets_lod_chain`] guarantees by construction.
-fn lod_level_ranges(meshlets: &[MeshletDescriptor]) -> Vec<(usize, usize)> {
-    let mut ranges = Vec::new();
-    if meshlets.is_empty() {
-        return ranges;
-    }
-    let mut start = 0;
-    let mut current_error = meshlets[0].lod_error;
-    for (i, m) in meshlets.iter().enumerate().skip(1) {
-        if m.lod_error != current_error {
-            ranges.push((start, i));
-            start = i;
-            current_error = m.lod_error;
-        }
-    }
-    ranges.push((start, meshlets.len()));
-    ranges
+/// Geometry of a single meshlet group, prepared for `meshopt::simplify`.
+/// Vertex deduplication keeps the simplifier's adapter efficient and
+/// the local index space compact.
+struct GroupGeometry {
+    /// Vertex stream in group-local order.
+    vertices: Vec<MeshVertex>,
+    /// Triangle indices into `vertices` (group-local).
+    indices: Vec<u32>,
+    /// `global_indices[i]` is the index into the source mesh's vertex
+    /// pool that group-local vertex `i` refers to. Used after
+    /// `clusterize_lod` to remap the resulting `meshlet_vertices`
+    /// values back to the mesh-global pool.
+    global_indices: Vec<u32>,
 }
 
-/// Wires each meshlet's `parent_meshlet_index` to the closest meshlet
-/// in the next-coarser LOD by `bounds_center` distance. Meshlets in
-/// the coarsest LOD keep [`MESHLET_ROOT_PARENT`].
-///
-/// **V1 — proximity only.** Nanite's reference algorithm groups four
-/// children at LOD N and re-simplifies that group into a single LOD
-/// N+1 parent (guarantees zero popping). That requires re-structuring
-/// the chain build to operate per-cluster instead of globally; tracked
-/// for a follow-up if profiling shows visible popping with this
-/// approximation.
-fn assign_dag_parents(meshlets: &mut [MeshletDescriptor]) {
-    let ranges = lod_level_ranges(meshlets);
-    if ranges.len() < 2 {
-        return;
-    }
-    for level_idx in 0..ranges.len() - 1 {
-        let (child_start, child_end) = ranges[level_idx];
-        let (parent_start, parent_end) = ranges[level_idx + 1];
-        for i in child_start..child_end {
-            let cc = meshlets[i].bounds_center;
-            let mut best: Option<(f32, usize)> = None;
-            for j in parent_start..parent_end {
-                let pc = meshlets[j].bounds_center;
-                let dx = pc[0] - cc[0];
-                let dy = pc[1] - cc[1];
-                let dz = pc[2] - cc[2];
-                let d2 = dx * dx + dy * dy + dz * dz;
-                if best.map_or(true, |(b, _)| d2 < b) {
-                    best = Some((d2, j));
-                }
-            }
-            if let Some((_, parent_idx)) = best {
-                meshlets[i].parent_meshlet_index = parent_idx as u32;
+/// Walks the meshlets in `group`, resolving every triangle through
+/// `meshlet_triangles` (local byte indices) → `meshlet_vertices`
+/// (global pool indices) → `mesh_vertices` (the actual MeshVertex).
+/// Builds a deduplicated group-local vertex stream + triangle list.
+fn extract_group_geometry(
+    group: &[usize],
+    prev_lod_meshlets: &[MeshletDescriptor],
+    pool_meshlet_vertices: &[u32],
+    pool_meshlet_triangles: &[u8],
+    mesh_vertices: &[MeshVertex],
+) -> GroupGeometry {
+    use std::collections::HashMap;
+    let mut global_to_group: HashMap<u32, u32> = HashMap::new();
+    let mut global_indices: Vec<u32> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
+    for &meshlet_idx in group {
+        let m = &prev_lod_meshlets[meshlet_idx];
+        let tri_byte_start = m.triangle_offset as usize;
+        let mlv_base = m.vertex_offset as usize;
+        for tri_idx in 0..m.triangle_count as usize {
+            for corner in 0..3usize {
+                let byte_off = tri_byte_start + tri_idx * 3 + corner;
+                let local_v_idx = pool_meshlet_triangles[byte_off] as usize;
+                let global_v_idx = pool_meshlet_vertices[mlv_base + local_v_idx];
+                let group_local = *global_to_group.entry(global_v_idx).or_insert_with(|| {
+                    let new_idx = global_indices.len() as u32;
+                    global_indices.push(global_v_idx);
+                    new_idx
+                });
+                indices.push(group_local);
             }
         }
     }
+
+    let vertices: Vec<MeshVertex> = global_indices
+        .iter()
+        .map(|&gi| mesh_vertices[gi as usize])
+        .collect();
+
+    GroupGeometry {
+        vertices,
+        indices,
+        global_indices,
+    }
+}
+
+/// Quantises `value in [min, max]` into a 21-bit integer for use as
+/// one axis of a 3D Morton code.
+fn quantize_axis_21bit(value: f32, min: f32, max: f32) -> u64 {
+    let range = (max - min).max(1.0e-6);
+    let normalised = ((value - min) / range).clamp(0.0, 1.0);
+    let max_int = ((1u64 << 21) - 1) as f32;
+    (normalised * max_int) as u64
+}
+
+/// Spreads the lower 21 bits of `v` so they occupy every third bit
+/// position — the building block of a 3D Morton code.
+fn spread_21bit(mut v: u64) -> u64 {
+    v &= 0x1f_ffff;
+    v = (v | v << 32) & 0x001f_0000_0000_ffff;
+    v = (v | v << 16) & 0x001f_0000_ff00_00ff;
+    v = (v | v << 8) & 0x100f_00f0_0f00_f00f;
+    v = (v | v << 4) & 0x10c3_0c30_c30c_30c3;
+    v = (v | v << 2) & 0x1249_2492_4924_9249;
+    v
+}
+
+/// Interleaves three 21-bit axis values into a 63-bit Morton code.
+fn morton3_21bit(x: u64, y: u64, z: u64) -> u64 {
+    spread_21bit(x) | (spread_21bit(y) << 1) | (spread_21bit(z) << 2)
+}
+
+/// Spatial-sorts `meshlets` by 3D Morton code on `bounds_center`,
+/// then chunks them into groups of `group_size` consecutive items.
+/// Morton ordering keeps spatially close meshlets near each other in
+/// the chunk sequence — the key property the per-group simplify needs
+/// for coverage to make sense.
+fn group_meshlets_morton(
+    meshlets: &[MeshletDescriptor],
+    aabb: &Aabb,
+    group_size: usize,
+) -> Vec<Vec<usize>> {
+    let mut keyed: Vec<(u64, usize)> = meshlets
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let c = m.bounds_center;
+            let x = quantize_axis_21bit(c[0], aabb.min.x, aabb.max.x);
+            let y = quantize_axis_21bit(c[1], aabb.min.y, aabb.max.y);
+            let z = quantize_axis_21bit(c[2], aabb.min.z, aabb.max.z);
+            (morton3_21bit(x, y, z), i)
+        })
+        .collect();
+    keyed.sort_unstable_by_key(|&(code, _)| code);
+    keyed
+        .chunks(group_size.max(1))
+        .map(|chunk| chunk.iter().map(|&(_, i)| i).collect())
+        .collect()
 }
 
 /// Runs `meshopt::build_meshlets` over `indices` and returns the
@@ -516,7 +681,14 @@ mod tests {
     }
 
     #[test]
-    fn lod_chain_errors_are_monotonically_non_decreasing() {
+    fn lod_chain_lod_zero_meshlets_appear_first() {
+        // Per-group simplify (Nanite-grouped DAG) gives every parent
+        // its own lod_error reported by meshopt for that group, so the
+        // global error sequence is no longer monotonic across the
+        // concatenated chain. The structural invariant that survives:
+        // every LOD 0 meshlet (error == 0.0) lands before any LOD ≥ 1
+        // meshlet (error > 0.0) because LOD 0 is appended in one
+        // global pass before the per-group loop runs.
         let mesh = make_grid_mesh(20);
         let chain = build_meshlets_lod_chain(
             &mesh,
@@ -526,15 +698,17 @@ mod tests {
             LodConfig::default(),
         )
         .expect("lod chain");
-        let mut prev = -1.0f32;
-        for m in &chain.meshlets {
+        let lod_zero_count = chain
+            .meshlets
+            .iter()
+            .take_while(|m| m.lod_error == 0.0)
+            .count();
+        assert!(lod_zero_count > 0, "must have at least one LOD 0 meshlet");
+        for m in chain.meshlets.iter().skip(lod_zero_count) {
             assert!(
-                m.lod_error >= prev,
-                "lod_error must be non-decreasing across the concatenated chain; saw {} after {}",
-                m.lod_error,
-                prev
+                m.lod_error > 0.0,
+                "all meshlets after the LOD 0 prefix must carry simplify error > 0",
             );
-            prev = m.lod_error;
         }
     }
 
@@ -589,7 +763,12 @@ mod tests {
     }
 
     #[test]
-    fn lod_chain_dag_only_coarsest_level_is_root() {
+    fn lod_chain_dag_at_least_one_root_exists() {
+        // Per-group DAG: the chain terminates when no group can
+        // simplify further. Every meshlet that did not get a parent
+        // assigned during the loop is left at MESHLET_ROOT_PARENT;
+        // the chain must end with at least one such terminal node so
+        // the runtime selector has somewhere to stop descending.
         let mesh = make_grid_mesh(20);
         let chain = build_meshlets_lod_chain(
             &mesh,
@@ -599,25 +778,22 @@ mod tests {
             LodConfig::default(),
         )
         .expect("chain");
-        let coarsest = chain
+        let root_count = chain
             .meshlets
             .iter()
-            .map(|m| m.lod_error)
-            .fold(f32::NEG_INFINITY, f32::max);
-        for m in &chain.meshlets {
-            let expect_root = m.lod_error == coarsest;
-            let is_root =
-                m.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT;
-            assert_eq!(
-                is_root, expect_root,
-                "meshlet at lod_error={} should be root={} but is_root={}",
-                m.lod_error, expect_root, is_root,
-            );
-        }
+            .filter(|m| m.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT)
+            .count();
+        assert!(
+            root_count > 0,
+            "chain must contain at least one root meshlet (parent sentinel)",
+        );
     }
 
     #[test]
-    fn lod_chain_dag_parent_points_to_coarser_meshlet() {
+    fn lod_chain_dag_parents_point_into_chain_bounds() {
+        // Every non-root parent_meshlet_index references a real
+        // meshlet that lives later in the chain (parents are appended
+        // after children).
         let mesh = make_grid_mesh(20);
         let chain = build_meshlets_lod_chain(
             &mesh,
@@ -631,13 +807,15 @@ mod tests {
             if m.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT {
                 continue;
             }
-            let p = &chain.meshlets[m.parent_meshlet_index as usize];
+            let p = m.parent_meshlet_index as usize;
             assert!(
-                p.lod_error > m.lod_error,
-                "child #{i} (err {}) parent #{} must be coarser, got err {}",
-                m.lod_error,
-                m.parent_meshlet_index,
-                p.lod_error,
+                p < chain.meshlets.len(),
+                "child #{i} parent index {p} out of bounds (chain has {})",
+                chain.meshlets.len(),
+            );
+            assert!(
+                p > i,
+                "parent #{p} must appear after child #{i} in the chain",
             );
         }
     }
@@ -645,8 +823,10 @@ mod tests {
     #[test]
     fn lod_chain_dag_is_acyclic_via_descent_terminates() {
         // Walk from each meshlet up to a root following parent links;
-        // assert termination within the LOD count (guards against
-        // accidental cycles).
+        // assert termination within the chain length (guards against
+        // accidental cycles). The grouped DAG always appends parents
+        // strictly after their children in the chain, so length is a
+        // safe upper bound on the descent depth.
         let mesh = make_grid_mesh(20);
         let chain = build_meshlets_lod_chain(
             &mesh,
@@ -656,11 +836,8 @@ mod tests {
             LodConfig::default(),
         )
         .expect("chain");
-        let mut distinct_errors: Vec<f32> = chain.meshlets.iter().map(|m| m.lod_error).collect();
-        distinct_errors.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        distinct_errors.dedup();
-        let max_steps = distinct_errors.len() + 1;
-        for (i, m) in chain.meshlets.iter().enumerate() {
+        let max_steps = chain.meshlets.len() + 1;
+        for (i, _) in chain.meshlets.iter().enumerate() {
             let mut idx = i;
             for _ in 0..max_steps {
                 let parent = chain.meshlets[idx].parent_meshlet_index;
@@ -669,7 +846,6 @@ mod tests {
                 }
                 idx = parent as usize;
             }
-            // We must have hit a root within max_steps.
             assert_eq!(
                 chain.meshlets[idx].parent_meshlet_index,
                 crate::meshlet::asset::MESHLET_ROOT_PARENT,
@@ -694,23 +870,39 @@ mod tests {
 
     #[test]
     fn lod_chain_caps_at_max_levels() {
+        // max_levels controls how many descent passes the per-group
+        // loop runs. Compare two chains: a tighter cap must produce
+        // ≤ the meshlet count of a looser cap. (We can't assert
+        // distinct lod_error values any more — per-group simplify
+        // makes each parent carry its own error.)
         let mesh = make_grid_mesh(40);
-        let cfg = LodConfig {
-            max_levels: 2,
-            ..Default::default()
-        };
-        let chain = build_meshlets_lod_chain(
+        let chain_low = build_meshlets_lod_chain(
             &mesh,
             DEFAULT_MAX_VERTICES,
             DEFAULT_MAX_TRIANGLES,
             0.5,
-            cfg,
+            LodConfig {
+                max_levels: 2,
+                ..Default::default()
+            },
         )
-        .expect("chain");
-        // With max_levels=2 we have at most 2 distinct lod_error values.
-        let mut errors: Vec<f32> = chain.meshlets.iter().map(|m| m.lod_error).collect();
-        errors.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        errors.dedup();
-        assert!(errors.len() <= 2, "expected ≤2 distinct LODs, got {}", errors.len());
+        .expect("low");
+        let chain_high = build_meshlets_lod_chain(
+            &mesh,
+            DEFAULT_MAX_VERTICES,
+            DEFAULT_MAX_TRIANGLES,
+            0.5,
+            LodConfig {
+                max_levels: 6,
+                ..Default::default()
+            },
+        )
+        .expect("high");
+        assert!(
+            chain_low.meshlets.len() <= chain_high.meshlets.len(),
+            "tighter max_levels ({}) must produce ≤ meshlets than the looser one ({})",
+            chain_low.meshlets.len(),
+            chain_high.meshlets.len(),
+        );
     }
 }

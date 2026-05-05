@@ -13,7 +13,7 @@ use ome_core::resource::Resources;
 
 use crate::meshlet::asset::MeshletMesh;
 use crate::meshlet::cull::CullParams;
-use crate::meshlet::debug::MeshletDebugMode;
+use crate::meshlet::debug::{MeshletDebugMode, MeshletLodSettings};
 use crate::meshlet::deferred::DEFERRED_COLOR_FORMAT;
 use crate::meshlet::gpu_meshlet::pool_meshlet_bind_group;
 use crate::meshlet::scene::SceneCullParams;
@@ -291,8 +291,14 @@ impl MeshletRenderStage {
         // 1-pixel target tolerance absorbs.
         let proj_scale_y = view_proj.y_axis.y.abs();
         let viewport_h_px = self.size.1 as f32;
+        let lod_target = resources
+            .get::<MeshletLodSettings>()
+            .copied()
+            .unwrap_or_default()
+            .target_error_pixels
+            .max(0.01);
         let cull_params = CullParams::new(view_proj, cam_pos, max_meshlets_per_mesh)
-            .with_lod(viewport_h_px, proj_scale_y, 1.0);
+            .with_lod(viewport_h_px, proj_scale_y, lod_target);
         let scene_params =
             SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
 
@@ -364,9 +370,22 @@ impl MeshletRenderStage {
 
         queue.submit(std::iter::once(encoder.finish()));
 
+        let pool = self.pipeline.pool();
+        let pool_meshlets_total = pool.meshlets.len() as u32;
+        let pool_meshlets_roots = pool
+            .meshlets
+            .iter()
+            .filter(|m| {
+                m.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT
+            })
+            .count() as u32;
+
         MeshletRenderStats {
             instances_uploaded: instances.len() as u32,
             cull_threads: scene_params.instance_count * scene_params.meshlets_per_mesh,
+            cam_pos: cam_pos.to_array(),
+            pool_meshlets_total,
+            pool_meshlets_roots,
         }
     }
 }

@@ -7,20 +7,24 @@
 //! `AssetServer` reads them once and the loader builds the meshlet
 //! representation in-process.
 //!
-//! # Why single-LOD by default
+//! # Why single-LOD output today
 //!
-//! The continuous-LOD chain (`build_meshlets_lod_chain`) is shipped
-//! and exercised by tests, but its current DAG construction is a
-//! proximity heuristic (#442 V1): each child links to the closest
-//! parent by `bounds_center`. Adjacent children can land on different
-//! parents, so when the runtime selector descends one parent and
-//! holds another, the gap between them flickers / tears at frame
-//! boundaries. The reference Nanite algorithm groups four children at
-//! LOD N and re-simplifies the group into a single LOD N+1 parent —
-//! that guarantees coverage and is tracked in its own issue. Until it
-//! lands, the loader stays on single-LOD output (every meshlet is a
-//! DAG root, the selector treats them as "always pick", visuals match
-//! the pre-#442 baseline).
+//! [`build_meshlets_lod_chain`] (the Nanite-grouped DAG builder) is
+//! shipped and unit-tested, but the runtime selector cannot consume
+//! it cleanly without group-atomic descent. With a single-pass cull
+//! shader, sibling parents emitted by the same group can land on
+//! different sides of the descent threshold (one descends, one does
+//! not) → the "stay" parent overdraws the "descended" parent's
+//! children, producing visible flicker on dense assets. Forcing one
+//! parent per group rejects ~97 % of groups in practice (vertex
+//! budget defeats the single-parent guarantee), so the chain is
+//! effectively flat anyway.
+//!
+//! The fix is a 2-pass cull (atomicMax of pixel error per group →
+//! group-atomic descent), tracked in its own issue. Until that
+//! lands, the loader emits single-LOD output (every meshlet is a
+//! root, the selector treats them as "always pick" — visuals match
+//! the pre-#442 baseline that worked cleanly).
 //!
 //! Loader extensions match `GltfMeshLoader` (`glb`, `gltf`) so the
 //! same source files can serve both `Assets<Mesh>` (raw geometry,

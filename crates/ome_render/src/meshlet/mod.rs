@@ -57,7 +57,7 @@ pub use builder::{
 pub use cull::{
     camera_in_backface_cone, extract_frustum_planes, sphere_outside_frustum, CullParams,
 };
-pub use debug::MeshletDebugMode;
+pub use debug::{MeshletDebugMode, MeshletLodSettings};
 pub use deferred::{MeshletDeferredShader, DEFERRED_COLOR_FORMAT};
 pub use dispatcher::{DrawIndirectArgs, HiZTestParams, MeshletCull};
 pub use drawer::MeshletDrawer;

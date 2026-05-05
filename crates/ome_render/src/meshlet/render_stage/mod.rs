@@ -94,6 +94,23 @@ pub struct MeshletRenderStats {
     /// the cull dispatch saw — equals the upper bound on surviving
     /// meshlets before any cull rejection.
     pub cull_threads: u32,
+    /// World-space camera position the cull / LOD selector saw this
+    /// frame. Surfaced in the View toolbar so the artist can confirm
+    /// the selector is actually following the active camera (the LOD
+    /// boundary rule is distance-driven; if this stays static while
+    /// the editor camera moves, the selector is reading the wrong
+    /// view matrix).
+    pub cam_pos: [f32; 3],
+    /// Total meshlet count across the entire `GlobalMeshPool` (every
+    /// LOD of every registered mesh, concatenated).
+    pub pool_meshlets_total: u32,
+    /// Subset of `pool_meshlets_total` whose `parent_meshlet_index`
+    /// is the sentinel — terminal stops for the runtime selector.
+    /// `roots == total` ⇒ the chain has no usable depth (every mesh
+    /// is single-LOD or every group failed to simplify). `roots <<
+    /// total` ⇒ the chain has depth and the selector should be able
+    /// to descend / ascend across distance.
+    pub pool_meshlets_roots: u32,
 }
 
 /// End-to-end meshlet render stage. See module docs for the per-frame

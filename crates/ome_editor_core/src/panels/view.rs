@@ -14,7 +14,7 @@
 //! extra wiring.
 
 use ome_gizmos_handles::{HandleMode, SnapSettings};
-use ome_render::meshlet::{MeshletDebugMode, MeshletRenderStats};
+use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
 
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
@@ -38,6 +38,7 @@ pub(crate) fn draw_view_content(
     snap_settings: &mut SnapSettings,
     selection_has_transform: bool,
     meshlet_debug_mode: &mut MeshletDebugMode,
+    meshlet_lod_settings: &mut MeshletLodSettings,
     meshlet_stats: MeshletRenderStats,
 ) {
     let available = ui.available_size();
@@ -176,24 +177,58 @@ pub(crate) fn draw_view_content(
                     "Meshlet pipeline visualization mode. Off = production shading.",
                 );
 
+            // LOD threshold slider — drives meshlet_lod_settings.target_error_pixels.
+            // Logarithmic-feel: 0.1 keeps maximum detail, ≥10 forces
+            // coarse roots even at close range. Lives next to the
+            // debug dropdown so artists can sanity-check chain
+            // behaviour without leaving the viewport.
+            ui.separator();
+            ui.label(egui::RichText::new("LOD ≤").small())
+                .on_hover_text("Pixel-error threshold for the continuous-LOD selector.");
+            ui.add(
+                egui::DragValue::new(&mut meshlet_lod_settings.target_error_pixels)
+                    .speed(0.05)
+                    .range(0.1_f32..=50.0_f32)
+                    .max_decimals(2)
+                    .suffix("px"),
+            )
+            .on_hover_text(
+                "Lower values keep more meshlets at any given distance. \
+                 Crank this up to force coarser LOD selection and \
+                 visually confirm the chain is being descended.",
+            );
+
             // Stats overlay — only when a debug mode is active so the
             // toolbar stays minimal during normal editing. Per-stage
             // cull survivors (frustum / backface / hi-z) ship in #451b
-            // alongside the reject-reason tagging buffer.
+            // alongside the reject-reason tagging buffer. cam_pos is
+            // surfaced so the artist can verify the LOD selector is
+            // actually following the active camera while moving in
+            // the viewport.
             if *meshlet_debug_mode != MeshletDebugMode::Off {
                 ui.separator();
+                let [cx, cy, cz] = meshlet_stats.cam_pos;
+                let total = meshlet_stats.pool_meshlets_total;
+                let roots = meshlet_stats.pool_meshlets_roots;
                 ui.label(
                     egui::RichText::new(format!(
-                        "instances {} · dispatched {}",
+                        "instances {} · disp {} · pool {}/{} roots · cam ({:.1}, {:.1}, {:.1})",
                         meshlet_stats.instances_uploaded,
                         meshlet_stats.cull_threads,
+                        roots,
+                        total,
+                        cx, cy, cz,
                     ))
                     .monospace()
                     .small(),
                 )
                 .on_hover_text(
-                    "Meshlet pipeline counters (previous frame). \
-                     Per-stage cull survivors land in #451b.",
+                    "Meshlet pipeline counters (previous frame).\n\
+                     pool: roots/total — total meshlets in the global pool, \
+                     of which `roots` are terminal (selector stops there).\n\
+                     If roots == total the chain has no LOD depth.\n\
+                     cam: world-space position the LOD selector saw — \
+                     should follow the active editor camera.",
                 );
             }
         });
