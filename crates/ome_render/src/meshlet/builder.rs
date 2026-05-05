@@ -226,70 +226,53 @@ pub fn build_meshlets_lod_chain(
                 0,
             )?;
 
-            // Atomicity invariant: each group must produce EXACTLY
-            // ONE parent meshlet. If clusterize emits 2+ parents
-            // (because the simplified vertex set still exceeds
-            // max_vertices) then children would have to split
-            // between parents — and selector decisions to descend
-            // one but hold the other tear coverage at the seam,
-            // causing flicker. We loop with a progressively tighter
-            // target until clusterize lands at 1 parent. If we run
-            // out of budget, the group is skipped: children stay as
-            // roots, conservative loss of simplification but no
-            // visual artefacts.
-            let mut current_target = ((max_triangles * 3) as usize)
+            // Single-pass simplify: aim at half the indices, accept
+            // whatever clusterize emits up to NANITE_GROUP_SIZE
+            // parents. Forcing exactly one parent (earlier iteration)
+            // skipped ~97 % of groups in practice — vertex-count
+            // limits inside max_meshlet bounds defeat the
+            // single-parent guarantee on dense surfaces. Children
+            // get assigned to their nearest parent within the group;
+            // coherence stays inside the group so the seam-tearing
+            // case from the proximity DAG (children of group X
+            // pointing to parents from group Y) cannot recur.
+            let target_count = ((max_triangles * 3) as usize)
                 .min(((geo.indices.len() as f32) * lod_config.target_ratio) as usize);
-            current_target = (current_target / 3) * 3;
-            let mut emitted: Option<(
-                Vec<MeshletDescriptor>,
-                Vec<u32>,
-                Vec<u8>,
-                f32,
-            )> = None;
-
-            while current_target >= 3 {
-                let mut actual_error = 0.0f32;
-                let simplified = meshopt::simplify(
-                    &geo.indices,
-                    &group_adapter,
-                    current_target,
-                    current_error,
-                    meshopt::SimplifyOptions::LockBorder,
-                    Some(&mut actual_error),
-                );
-                if simplified.is_empty() || simplified.len() >= geo.indices.len() {
-                    break; // simplify cannot reduce further at any target
-                }
-
-                let (descs, mlv, mlt) = clusterize_lod(
-                    &simplified,
-                    &group_adapter,
-                    &geo.vertices,
-                    max_vertices,
-                    max_triangles,
-                    cone_weight,
-                    actual_error,
-                );
-                match descs.len() {
-                    1 => {
-                        emitted = Some((descs, mlv, mlt, actual_error));
-                        break;
-                    }
-                    0 => break,
-                    _ => {
-                        // Tighten and retry. Roughly halve the budget
-                        // (kept multiple of 3) — exponential decrease
-                        // converges in a few iterations even for very
-                        // dense groups.
-                        current_target = (current_target / 2 / 3) * 3;
-                    }
-                }
+            let target_count = (target_count / 3) * 3;
+            if target_count < 3 {
+                continue;
             }
 
-            let Some((parent_descs, parent_mlv_local, parent_mlt, actual_error)) = emitted
-            else {
+            let mut actual_error = 0.0f32;
+            let simplified = meshopt::simplify(
+                &geo.indices,
+                &group_adapter,
+                target_count,
+                current_error,
+                meshopt::SimplifyOptions::LockBorder,
+                Some(&mut actual_error),
+            );
+            if simplified.is_empty() || simplified.len() >= geo.indices.len() {
+                continue; // No reduction possible for this group.
+            }
+
+            let (parent_descs, parent_mlv_local, parent_mlt) = clusterize_lod(
+                &simplified,
+                &group_adapter,
+                &geo.vertices,
+                max_vertices,
+                max_triangles,
+                cone_weight,
+                actual_error,
+            );
+            if parent_descs.is_empty() || parent_descs.len() > NANITE_GROUP_SIZE {
+                // Empty: simplify produced nothing usable. Too many
+                // parents (more than the group's child count): the
+                // simplification didn't actually compact the
+                // geometry meaningfully — skip rather than emit a
+                // worse-than-input level.
                 continue;
-            };
+            }
 
             // Pad triangles to a u32 boundary before appending —
             // the cull shader reads them as array<u32>.
@@ -317,17 +300,29 @@ pub fn build_meshlets_lod_chain(
             all_meshlet_vertices.extend(remapped_mlv);
             all_meshlet_triangles.extend(parent_mlt);
 
-            // Wire every child of this group to the first parent
-            // meshlet. With target_count clamped to ≤max_triangles
-            // the group almost always collapses to exactly one
-            // parent, so the "first" choice loses no coverage; if
-            // the simplifier produced multiple, the first one still
-            // covers the group's centroid which is the dominant
-            // overlap. A finer per-child closest-parent assignment
-            // can land later if profiling shows it matters.
+            // Wire each child to the parent meshlet (within this
+            // group's emitted set) whose `bounds_center` is closest
+            // to the child's. Confines parent-child coherence to
+            // the group, so the proximity-DAG tearing case (children
+            // of group X pointing at parents from group Y) is
+            // structurally impossible — and every emitted parent is
+            // referenced by at least its closest child, so the
+            // selector cannot leave a parent rendering as a stray
+            // root on top of its descended siblings.
             for &child_local in group {
-                all_descriptors[prev_start + child_local].parent_meshlet_index =
-                    first_parent_pool_idx;
+                let cc = prev_meshlets[child_local].bounds_center;
+                let mut best: (f32, u32) = (f32::INFINITY, first_parent_pool_idx);
+                for (i, p) in parent_descs.iter().enumerate() {
+                    let pc = p.bounds_center;
+                    let dx = pc[0] - cc[0];
+                    let dy = pc[1] - cc[1];
+                    let dz = pc[2] - cc[2];
+                    let d2 = dx * dx + dy * dy + dz * dz;
+                    if d2 < best.0 {
+                        best = (d2, first_parent_pool_idx + i as u32);
+                    }
+                }
+                all_descriptors[prev_start + child_local].parent_meshlet_index = best.1;
             }
 
             any_group_emitted_parent = true;
