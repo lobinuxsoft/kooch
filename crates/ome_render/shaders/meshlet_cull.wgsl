@@ -355,11 +355,12 @@ struct PoolMeshDescriptor {
 
 @group(1) @binding(0) var<storage, read> pool_mesh_descriptors: array<PoolMeshDescriptor>;
 @group(1) @binding(1) var<storage, read> pool_meshlets: array<MeshletDescriptor>;
-// Bindings 2-4 (vertices, meshlet_vertices, meshlet_triangles) are
-// declared on the pool's bind-group layout for the rasterizer +
-// deferred shader to share, but the cull pass does not need them.
-// Naga's per-entry-point binding walk keeps them out of this
-// pipeline's required set.
+// The pool's full bind-group layout exposes vertices /
+// meshlet_vertices / meshlet_triangles at bindings 2-4 for the
+// rasterizer + deferred shader. The cull pass omits them entirely
+// (declaring them here would push the COMPUTE-stage storage-buffer
+// count past the wgpu limit of 8), and uses a dedicated cull-only
+// pool BGL on the Rust side that matches this two-binding set.
 
 fn lod_pixel_error_pool(lod_error: f32, world_center: vec3<f32>) -> f32 {
     let to_cam = world_center - params.camera_position;

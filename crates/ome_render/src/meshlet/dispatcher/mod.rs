@@ -47,10 +47,12 @@ pub struct MeshletCull {
     pub(super) pipeline: wgpu::ComputePipeline,
     pub(super) pipeline_hi_z: wgpu::ComputePipeline,
     pub(super) pipeline_scene: wgpu::ComputePipeline,
+    pub(super) pipeline_scene_pool: wgpu::ComputePipeline,
     pub(super) cull_bgl: wgpu::BindGroupLayout,
     pub(super) hi_z_bgl: wgpu::BindGroupLayout,
     pub(super) scene_bgl: wgpu::BindGroupLayout,
     pub(super) meshlet_bgl: wgpu::BindGroupLayout,
+    pub(super) pool_bgl: wgpu::BindGroupLayout,
 
     pub(super) params_buffer: wgpu::Buffer,
     pub(super) hi_z_params_buffer: wgpu::Buffer,
@@ -123,6 +125,17 @@ impl MeshletCull {
     /// `cs_cull_scene`): instance storage + `SceneCullParams` UBO.
     pub fn scene_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.scene_bgl
+    }
+
+    /// Bind group layout for the cull-only subset of the multi-mesh
+    /// pool (group 1 of `cs_cull_scene_pool`): mesh_descriptors at
+    /// binding 0 + meshlets at binding 1. The cull pass omits the
+    /// vertex / meshlet_vertex / meshlet_triangle bindings exposed
+    /// by [`crate::meshlet::pool::GpuGlobalMeshPool::bind_group_layout`]
+    /// to stay under the wgpu compute-stage storage-buffer limit;
+    /// the rasterizer + deferred shaders use the full layout.
+    pub fn pool_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.pool_bgl
     }
 }
 
