@@ -305,15 +305,23 @@ impl AssetServer {
             .get(&TypeId::of::<T>())
             .ok_or_else(|| AssetError::NoLoaderForType(type_name::<T>()))?;
 
-        let extension = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.to_ascii_lowercase());
-        let supports = match extension.as_deref() {
-            Some(ext) => loader
-                .extensions()
-                .iter()
-                .any(|e| e.eq_ignore_ascii_case(ext)),
+        // Match the file name's lowercased basename against every
+        // suffix the loader claims. Single-segment extensions
+        // (`"glb"`, `"png"`) match `Path::extension`; compound
+        // extensions (`"ome_material.ron"`) match the trailing
+        // segment of the file name. Both cases compare as a
+        // suffix of the lowercased name with a `.` separator
+        // prepended, so `"glb"` does not accidentally match
+        // `foo.fxglb`.
+        let file_name_lower = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|s| s.to_ascii_lowercase());
+        let supports = match file_name_lower.as_deref() {
+            Some(name) => loader.extensions().iter().any(|ext| {
+                let suffix = format!(".{}", ext.to_ascii_lowercase());
+                name.ends_with(&suffix)
+            }),
             None => false,
         };
         if !supports {

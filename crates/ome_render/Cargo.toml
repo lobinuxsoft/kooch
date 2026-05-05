@@ -19,6 +19,11 @@ image.workspace = true
 meshopt.workspace = true
 slotmap = "1.0"
 
+# Material assets are authored as RON. `serde` hooks the derive macros
+# the asset uses; both already live in the workspace deps.
+ron.workspace = true
+serde.workspace = true
+
 [dev-dependencies]
 naga = { version = "29", features = ["wgsl-in"] }
 pollster.workspace = true

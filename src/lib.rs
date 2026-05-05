@@ -98,6 +98,44 @@ pub mod prelude {
 ///     app.run();
 /// }
 /// ```
+/// Builds the engine-side `AssetPlugin` honoring the `OME_ENGINE_ROOT`
+/// and `OME_PROJECT_ROOT` env vars the editor's launcher injects when
+/// it spawns a game binary in Play mode. With both set, the plugin's
+/// primary `asset_root` is `<engine>/assets` (so engine GUIDs resolve)
+/// and `<project>/assets` rides as a secondary scan target (so project-
+/// authored assets are visible too).
+///
+/// Without the env vars (game binary launched outside the editor) the
+/// plugin falls back to `<exe_dir>/assets` if it exists, otherwise
+/// the historical `assets/` working-directory default.
+#[cfg(feature = "render")]
+fn default_asset_plugin() -> ome_render::plugin::AssetPlugin {
+    use std::path::PathBuf;
+
+    let engine_root = std::env::var_os("OME_ENGINE_ROOT").map(PathBuf::from);
+    let project_root = std::env::var_os("OME_PROJECT_ROOT").map(PathBuf::from);
+
+    let primary = engine_root
+        .as_ref()
+        .map(|p| p.join("assets"))
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|e| e.parent().map(|p| p.join("assets")))
+                .filter(|p| p.exists())
+        })
+        .unwrap_or_else(|| PathBuf::from("assets"));
+
+    let mut plugin = ome_render::plugin::AssetPlugin::new().with_root(primary);
+    if let Some(project) = project_root {
+        let project_assets = project.join("assets");
+        if project_assets.exists() {
+            plugin = plugin.with_extra_root(project_assets);
+        }
+    }
+    plugin
+}
+
 pub struct DefaultPlugins;
 
 impl ome_core::plugin::PluginGroup for DefaultPlugins {
@@ -110,9 +148,7 @@ impl ome_core::plugin::PluginGroup for DefaultPlugins {
         let builder = builder.add(ome_window::WindowPlugin::default());
 
         #[cfg(feature = "render")]
-        let builder = builder
-            .add(ome_render::plugin::AssetPlugin::default())
-            .add(ome_render::RenderPlugin);
+        let builder = builder.add(default_asset_plugin()).add(ome_render::RenderPlugin);
 
         #[cfg(feature = "world")]
         let builder = builder.add(ome_world::WorldStreamingPlugin);

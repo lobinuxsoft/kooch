@@ -733,4 +733,118 @@ mod tests {
         assert_eq!(results[0].hp, 77);
         assert_eq!(results[0].max_hp, 200);
     }
+
+    // -- AssetRef round-trip ---------------------------------------------
+
+    /// Component with the new typed asset reference fields. Mirrors the
+    /// shape of `MeshRenderer.mesh` / `.material` without pulling
+    /// `ome_render` into the test scope (would create a dep cycle).
+    #[derive(Default, Clone, Debug, PartialEq, ome_ecs_macros::Reflect)]
+    struct TestAssetHolder {
+        #[reflect(asset = "test::FakeMesh")]
+        pub mesh: Option<ome_core::Guid>,
+        #[reflect(asset = "test::FakeMaterial")]
+        pub material: Option<ome_core::Guid>,
+    }
+
+    impl Component for TestAssetHolder {}
+
+    /// End-to-end: spawn an entity with both AssetRef fields populated,
+    /// snapshot the world to a `SceneDocument`, save to RON, load it
+    /// back, and sync into a fresh world. Both GUIDs must survive the
+    /// round-trip — otherwise scenes that reference engine assets
+    /// silently lose their bindings on reload.
+    #[test]
+    fn assetref_fields_round_trip_through_scene_save_load() {
+        use ome_core::Guid;
+        use std::path::PathBuf;
+
+        let mesh_guid = Guid::new_v4();
+        let material_guid = Guid::new_v4();
+
+        // 1. Build source world + spawn one entity with both fields.
+        let mut src = setup_resources();
+        src.get_mut::<ComponentRegistry>()
+            .unwrap()
+            .register_cpu_reflected::<TestAssetHolder>();
+        {
+            let mut commands = src.remove::<Commands>().unwrap();
+            commands
+                .spawn(&mut src)
+                .insert_reflected(TestAssetHolder {
+                    mesh: Some(mesh_guid),
+                    material: Some(material_guid),
+                });
+            commands.apply(&mut src);
+            src.insert(commands);
+        }
+
+        // 2. Snapshot + RON round-trip via on-disk file.
+        let doc = SceneDocument::from_ecs(&src);
+        let tmp_dir = std::env::temp_dir();
+        let scene_path: PathBuf = tmp_dir.join(format!(
+            "ome_assetref_round_trip_{}.ron",
+            std::process::id(),
+        ));
+        doc.save(&scene_path).expect("scene save");
+        let reloaded = SceneDocument::load(&scene_path).expect("scene load");
+        let _ = std::fs::remove_file(&scene_path);
+
+        // 3. Sync into a fresh world.
+        let mut dst = setup_resources();
+        dst.get_mut::<ComponentRegistry>()
+            .unwrap()
+            .register_cpu_reflected::<TestAssetHolder>();
+        sync_scene_to_ecs(&reloaded, &mut dst).expect("sync");
+
+        // 4. Assert the GUIDs round-trip into the new component.
+        let query = Query::<&TestAssetHolder>::new(&dst);
+        let results: Vec<_> = query.iter().collect();
+        assert_eq!(results.len(), 1, "exactly one entity must be reconstructed");
+        assert_eq!(
+            results[0].mesh,
+            Some(mesh_guid),
+            "mesh GUID must survive scene round-trip",
+        );
+        assert_eq!(
+            results[0].material,
+            Some(material_guid),
+            "material GUID must survive scene round-trip",
+        );
+    }
+
+    /// `None` AssetRefs must round-trip too — defensive against a
+    /// serializer that conflates `Some(uuid)` and `None`.
+    #[test]
+    fn assetref_none_round_trip() {
+        let mut src = setup_resources();
+        src.get_mut::<ComponentRegistry>()
+            .unwrap()
+            .register_cpu_reflected::<TestAssetHolder>();
+        {
+            let mut commands = src.remove::<Commands>().unwrap();
+            commands
+                .spawn(&mut src)
+                .insert_reflected(TestAssetHolder::default());
+            commands.apply(&mut src);
+            src.insert(commands);
+        }
+
+        let doc = SceneDocument::from_ecs(&src);
+        // Direct in-memory round-trip via RON to avoid the temp file.
+        let serialized = ron::ser::to_string(&doc).expect("serialize");
+        let reloaded: SceneDocument = ron::from_str(&serialized).expect("deserialize");
+
+        let mut dst = setup_resources();
+        dst.get_mut::<ComponentRegistry>()
+            .unwrap()
+            .register_cpu_reflected::<TestAssetHolder>();
+        sync_scene_to_ecs(&reloaded, &mut dst).expect("sync");
+
+        let query = Query::<&TestAssetHolder>::new(&dst);
+        let results: Vec<_> = query.iter().collect();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].mesh.is_none(), "None mesh must survive round-trip");
+        assert!(results[0].material.is_none(), "None material must survive round-trip");
+    }
 }

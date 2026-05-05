@@ -13,24 +13,19 @@ use crate::Reflect;
 
 /// Component that binds an entity to a mesh and a material for rendering.
 ///
-/// `mesh` references a mesh asset by its persistent [`Guid`] — the same
-/// identifier the asset's `.meta` sidecar carries. The meshlet pipeline
-/// resolves the GUID to a GPU-resident mesh through the `AssetServer` +
+/// Both `mesh` and `material` reference assets by their persistent
+/// [`Guid`] — the same identifier the asset's `.meta` sidecar carries.
+/// The render pipeline resolves each GUID through the `AssetServer` +
 /// `AssetDatabase` resources at sync time. Storing the GUID (not a
 /// runtime `Handle<T>`) keeps the component **persistible**: scene
 /// serialization round-trips cleanly across runs and the reference
 /// stays valid even if the source file is moved (as long as its
 /// sidecar follows it).
 ///
-/// `material` is a legacy string and currently unused — the material
-/// system migrates to `Assets<Material>` in a follow-up PR. It remains
-/// here so scene serialization round-trips today; the typed migration
-/// will land alongside the material asset infrastructure.
-///
 /// # Default
 ///
 /// - `mesh`: `None`
-/// - `material`: `""`
+/// - `material`: `None`
 /// - `visible`: true
 /// - `cast_shadows`: true
 /// - `receive_shadows`: true
@@ -49,9 +44,13 @@ pub struct MeshRenderer {
     /// inspector picker filters entries by exact match.
     #[reflect(asset = "ome_render::meshlet::asset::MeshletMesh")]
     pub mesh: Option<Guid>,
-    /// Asset path for the material (legacy `String`, unused — pending
-    /// migration to `Assets<Material>` once that asset exists).
-    pub material: String,
+    /// When `Some`, the meshlet scene system resolves the GUID to a
+    /// `MaterialPool` slot via the `MaterialPipeline` resource. The
+    /// inspector renders this as a typed dropdown of every
+    /// `Material` registered with the asset database. `None` falls
+    /// back to the white-diffuse default at slot 0.
+    #[reflect(asset = "ome_render::material::asset::Material")]
+    pub material: Option<Guid>,
     /// Whether this renderer is drawn.
     pub visible: bool,
     /// Whether this renderer casts shadows.
@@ -64,7 +63,7 @@ impl Default for MeshRenderer {
     fn default() -> Self {
         Self {
             mesh: None,
-            material: String::new(),
+            material: None,
             visible: true,
             cast_shadows: true,
             receive_shadows: true,
@@ -83,10 +82,27 @@ mod tests {
     fn default_values() {
         let r = MeshRenderer::default();
         assert!(r.mesh.is_none());
-        assert!(r.material.is_empty());
+        assert!(r.material.is_none());
         assert!(r.visible);
         assert!(r.cast_shadows);
         assert!(r.receive_shadows);
+    }
+
+    #[test]
+    fn material_field_is_asset_ref_with_canonical_type() {
+        use crate::reflect::FieldKind;
+        let r = MeshRenderer::default();
+        let mat_meta = r
+            .reflect_fields()
+            .iter()
+            .find(|f| f.name == "material")
+            .expect("material field reflected");
+        assert_eq!(mat_meta.kind, FieldKind::AssetRef);
+        assert_eq!(
+            mat_meta.asset_type,
+            "ome_render::material::asset::Material",
+            "attribute must equal `type_name::<Material>()` so the picker filter matches sidecar entries",
+        );
     }
 
     #[test]

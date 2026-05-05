@@ -7,6 +7,7 @@ use std::any::TypeId;
 
 use ome_core::power::PowerProfile;
 use ome_core::resource::Resources;
+use ome_ecs::EphemeralComponents;
 use ome_ecs::allocator::EntityAllocator;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
 use ome_ecs::component::ComponentRegistry;
@@ -87,9 +88,15 @@ fn handle_open_scene(resources: &mut Resources, undo_stack: &mut UndoStack) {
 }
 
 fn handle_play(resources: &mut Resources) {
-    let manifest_path = resources
-        .get::<ProjectState>()
-        .and_then(|ps| ps.active_project.as_ref().map(|p| p.root_path.join("Cargo.toml")));
+    let (manifest_path, engine_root) = match resources.get::<ProjectState>() {
+        Some(ps) => (
+            ps.active_project
+                .as_ref()
+                .map(|p| p.root_path.join("Cargo.toml")),
+            ps.engine_root.clone(),
+        ),
+        None => (None, None),
+    };
     let Some(manifest_path) = manifest_path else {
         tracing::error!("Play: no active project — open a project first");
         return;
@@ -106,7 +113,8 @@ fn handle_play(resources: &mut Resources) {
     if let Err(e) = doc.save(&scene_path) {
         tracing::error!("failed to save play scene: {e}");
     } else if let Some(play_state) = resources.get_mut::<PlayState>()
-        && let Err(e) = play_state.launch(&manifest_path, &scene_path)
+        && let Err(e) =
+            play_state.launch(&manifest_path, &scene_path, engine_root.as_deref())
     {
         tracing::error!("failed to launch game: {e}");
     }
@@ -195,17 +203,29 @@ fn handle_create_project(
 }
 
 fn handle_close_project(resources: &mut Resources, undo_stack: &mut UndoStack) {
-    let all_entities: Vec<Entity> = resources
+    // Respect the ephemeral marker registry — editor-owned entities
+    // (camera, gizmo helpers, …) carry an `EditorOnly`-style marker
+    // and must survive the close so the next project open finds
+    // them already spawned. `spawn_editor_camera_system` is a Stage::
+    // Startup one-shot; without this filter the close path despawned
+    // the camera and reopening the project left the viewport with
+    // only the project's gameplay camera, no editor controls.
+    let ephemeral = resources
+        .get::<EphemeralComponents>()
+        .cloned()
+        .unwrap_or_default();
+    let target_entities: Vec<Entity> = resources
         .get::<ArchetypeRegistry>()
         .map(|archetypes| {
             archetypes
                 .iter_matching(&[])
+                .filter(|arch| !ephemeral.intersects(arch.components()))
                 .flat_map(|a| a.entities().to_vec())
                 .collect()
         })
         .unwrap_or_default();
 
-    for entity in &all_entities {
+    for entity in &target_entities {
         if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
             alloc.despawn(*entity);
         }

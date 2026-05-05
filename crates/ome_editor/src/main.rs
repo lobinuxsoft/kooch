@@ -13,16 +13,57 @@ use ome_render::plugin::AssetPlugin;
 use ome_window::WindowPlugin;
 use ome_world::WorldStreamingPlugin;
 
-/// Path to the engine repository root (resolved at compile time).
+/// Resolves the engine's root directory at runtime, in this order:
 ///
-/// `CARGO_MANIFEST_DIR` points to `crates/ome_editor/`, so we go two
-/// levels up to reach the workspace root.
+/// 1. `OME_ENGINE_ROOT` env var if set — explicit override for
+///    custom installations and CI.
+/// 2. The directory containing the running executable, if it has a
+///    sibling `assets/` (the production layout: editor binary plus
+///    its assets shipped together).
+/// 3. The first ancestor of the executable that contains `assets/`
+///    (covers the dev layout where the binary is in
+///    `target/release/` or `target/debug/` and the assets live at
+///    the workspace root).
+/// 4. Compile-time `CARGO_MANIFEST_DIR` walk — last-resort fallback
+///    that only works for local source checkouts.
+///
+/// Panics if none of the above resolves to an existing directory:
+/// the editor cannot run without locating its bundled assets.
 fn engine_root() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    if let Ok(env) = std::env::var("OME_ENGINE_ROOT") {
+        let p = std::path::PathBuf::from(env);
+        if p.exists() {
+            return p;
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            if dir.join("assets").is_dir() {
+                return dir.to_path_buf();
+            }
+            for ancestor in dir.ancestors().skip(1) {
+                if ancestor.join("assets").is_dir() {
+                    return ancestor.to_path_buf();
+                }
+            }
+        }
+    }
+
+    let manifest_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
-        .expect("ome_editor must live inside <engine_root>/crates/ome_editor")
-        .to_path_buf()
+        .map(|p| p.to_path_buf());
+    if let Some(p) = manifest_root
+        && p.join("assets").is_dir()
+    {
+        return p;
+    }
+
+    panic!(
+        "engine_root could not be resolved: set OME_ENGINE_ROOT, ship assets/ next \
+         to the executable, or run from a source checkout that contains assets/",
+    );
 }
 
 /// Startup system that tells the editor where the engine source lives,

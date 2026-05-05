@@ -1,16 +1,29 @@
-//! PBR material parameters + GPU pool.
+//! PBR material parameters + GPU pool + typed [`Material`] asset.
 //!
-//! PR-7 lands the param-buffer half of the bindless materials story:
-//! a single storage buffer of [`MaterialParams`] indexed by an integer
-//! material id. The deferred shader reads
-//! `materials[material_id].base_color` and modulates the normal-debug
-//! shading by it, so meshlets shaded with material 0 vs material 1
-//! produce visibly different colours.
+//! Three layers stack here:
+//! - [`MaterialParams`] — the 32-byte POD the GPU shader reads from
+//!   the `MaterialPool` storage buffer. Indexed by `material_id`.
+//! - [`Material`] — the CPU-side asset users author / pick from the
+//!   inspector. RON-serializable; survives in `Assets<Material>` and
+//!   is referenced by GUID from `MeshRenderer.material`.
+//! - [`MaterialPool`] — the GPU buffer. The runtime sync system keeps
+//!   it in lockstep with `Assets<Material>`; the deferred shader
+//!   reads `materials[inst.material_id].base_color` and modulates
+//!   the normal-debug shading by it.
 //!
 //! Texture arrays / true bindless sampling lands in the Phase 1 follow-
 //! up alongside #130 PBR shading, when wgpu's [`Features::
 //! TEXTURE_BINDING_ARRAY`] + non-uniform indexing become a hard
 //! requirement.
+
+mod asset;
+mod pipeline;
+
+pub use asset::{Material, MaterialLoader, MaterialParseError};
+pub use pipeline::{
+    MaterialPipeline, DEFAULT_CAPACITY as MATERIAL_POOL_DEFAULT_CAPACITY, FALLBACK_MATERIAL_ID,
+    MATERIAL_TYPE_NAME,
+};
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
