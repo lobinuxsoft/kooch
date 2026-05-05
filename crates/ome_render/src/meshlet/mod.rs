@@ -33,6 +33,7 @@ mod asset;
 mod blit;
 mod builder;
 mod cull;
+mod debug;
 mod deferred;
 mod dispatcher;
 mod drawer;
@@ -50,6 +51,7 @@ pub use builder::{build_default_meshlets, build_meshlets_from_mesh, MeshletBuild
 pub use cull::{
     camera_in_backface_cone, extract_frustum_planes, sphere_outside_frustum, CullParams,
 };
+pub use debug::MeshletDebugMode;
 pub use deferred::{MeshletDeferredShader, DEFERRED_COLOR_FORMAT};
 pub use dispatcher::{DrawIndirectArgs, HiZTestParams, MeshletCull};
 pub use drawer::MeshletDrawer;

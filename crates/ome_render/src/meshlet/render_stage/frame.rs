@@ -13,6 +13,7 @@ use ome_core::resource::Resources;
 
 use crate::meshlet::asset::MeshletMesh;
 use crate::meshlet::cull::CullParams;
+use crate::meshlet::debug::MeshletDebugMode;
 use crate::meshlet::deferred::DEFERRED_COLOR_FORMAT;
 use crate::meshlet::gpu_meshlet::{meshlet_bind_group, GpuMeshletMesh};
 use crate::meshlet::scene::SceneCullParams;
@@ -307,6 +308,14 @@ impl MeshletRenderStage {
             view_proj,
             0,
         );
+        // Editor / game tools insert MeshletDebugMode when they want to
+        // override the production shading path. Absence = Off (no-op
+        // visual), so headless tests never have to register it.
+        let debug_mode = resources
+            .get::<MeshletDebugMode>()
+            .copied()
+            .unwrap_or_default()
+            .as_u32();
         self.deferred.shade_scene(
             device,
             queue,
@@ -319,6 +328,7 @@ impl MeshletRenderStage {
             &self.scene,
             view_proj,
             self.size,
+            debug_mode,
         );
 
         queue.submit(std::iter::once(encoder.finish()));

@@ -20,6 +20,10 @@ impl MeshletDeferredShader {
     /// Unlike [`Self::shade`], this method does NOT take a per-call
     /// `model` matrix or `material_id` — those are per-instance state
     /// the shader pulls from the scene buffer.
+    ///
+    /// `debug_mode` is the raw [`MeshletDebugMode`](crate::meshlet::MeshletDebugMode)
+    /// discriminant; 0 selects the production path. The shader
+    /// branches on this uniform without an extra dispatch.
     #[allow(clippy::too_many_arguments)]
     pub fn shade_scene(
         &self,
@@ -34,6 +38,7 @@ impl MeshletDeferredShader {
         scene: &MeshletScene,
         view_proj: glam::Mat4,
         screen_size: (u32, u32),
+        debug_mode: u32,
     ) {
         queue.write_buffer(
             &self.camera_buffer,
@@ -51,7 +56,7 @@ impl MeshletDeferredShader {
             bytes_of(&ScreenUbo {
                 size: [screen_size.0, screen_size.1],
                 material_id: 0,
-                _pad: 0,
+                debug_mode,
             }),
         );
 

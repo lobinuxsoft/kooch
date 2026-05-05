@@ -29,7 +29,9 @@ struct ModelUniforms {
 struct ScreenUniforms {
     size: vec2<u32>,
     material_id: u32,
-    _pad: u32,
+    // Debug visualization mode (#451). Stable u32 discriminants from
+    // MeshletDebugMode in Rust; 0 = Off (production path).
+    debug_mode: u32,
 }
 
 struct MaterialParams {
