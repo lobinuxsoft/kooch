@@ -86,10 +86,12 @@ pub fn scan_project_assets_system(resources: &mut Resources) {
                     "project asset scan complete",
                 );
             }
-            // eager_import_with fires the typed loaders for every
-            // path the database now sees, so brand-new sidecars get
-            // their `asset_type` back-filled and registered.
-            eager_import_with(resources);
+            // eager_import_with walks the project's assets/ tree and
+            // loads every file with a recognised typed extension —
+            // generating fresh sidecars where missing and back-filling
+            // `asset_type` on legacy ones. The picker sees the
+            // entries tagged [project] on the next frame.
+            eager_import_with(resources, &assets_root);
         } else {
             tracing::debug!(
                 target: "ome_editor_core::project_assets",

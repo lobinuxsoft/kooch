@@ -77,13 +77,20 @@ fn default_roughness() -> f32 {
     0.5
 }
 
-/// `AssetLoader<Material>` for `*.ome_material.ron` files.
+/// `AssetLoader<Material>` for `*.ron` files.
+///
+/// PR5 carries only `Material` as a RON-authored asset, so the
+/// extension is unambiguous. When other RON-authored asset types
+/// arrive (`Scene`, `Prefab`, …) we discriminate by inspecting the
+/// nominal struct tag at the head of the file (`Material(...)` vs
+/// `Scene(...)`) and the eager-import logic gains a per-type tier.
+/// Until then, every `.ron` under `assets/` is parsed as a Material.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MaterialLoader;
 
 impl AssetLoader<Material> for MaterialLoader {
     fn extensions(&self) -> &[&'static str] {
-        &["ome_material.ron"]
+        &["ron"]
     }
 
     fn load(
@@ -130,8 +137,8 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn extension_is_ome_material_ron() {
-        assert_eq!(MaterialLoader.extensions(), &["ome_material.ron"]);
+    fn extension_is_ron() {
+        assert_eq!(MaterialLoader.extensions(), &["ron"]);
     }
 
     #[test]

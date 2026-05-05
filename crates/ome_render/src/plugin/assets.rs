@@ -112,6 +112,8 @@ impl Plugin for AssetPlugin {
         // ever leaves us without a context.
         app.add_system(Stage::Startup, init_material_pipeline_system);
 
+        let root = self.asset_root.clone();
+
         // Eager-load every `.glb` / `.gltf` in the asset root as a
         // `MeshletMesh`. Two effects we want at first frame:
         // 1. Sidecars created before PR4 (no `asset_type`) get
@@ -128,28 +130,26 @@ impl Plugin for AssetPlugin {
         // in through the same loop as their loaders register; only
         // glb is wired today because nothing else has a typed asset
         // story yet.
-        eager_import_typed_assets(app);
+        eager_import_typed_assets(app, &root);
     }
 }
 
-fn eager_import_typed_assets(app: &mut App) {
+fn eager_import_typed_assets(app: &mut App, root: &std::path::Path) {
     let resources = app.resources_mut();
-    eager_import_with(resources);
+    eager_import_with(resources, root);
 }
 
-/// Stand-alone version of [`eager_import_typed_assets`] callable
-/// against a `&mut Resources` — used by the project-side scan system
-/// after a fresh project root is added to the database.
-pub fn eager_import_with(resources: &mut Resources) {
-    // Snapshot every registered asset path before we start mutating
-    // resources — we need to release the database borrow before
-    // calling `AssetServer::load`, which in turn touches the
-    // database via `ensure_guid_identity`.
-    let scanned: Vec<PathBuf> = resources
-        .get::<AssetDatabase>()
-        .map(|db| db.path_iter().map(|(p, _)| p.to_path_buf()).collect())
-        .unwrap_or_default();
-
+/// Walks `root` recursively and loads every file with a recognised
+/// typed extension through the `AssetServer`. The load step generates
+/// `.meta` sidecars on the fly for assets that do not yet have one,
+/// back-fills `asset_type` on legacy sidecars, and registers the
+/// entry in the `AssetDatabase` — exactly what the inspector picker
+/// needs to surface a new asset at first frame.
+///
+/// Public so the project-side scan system can rerun the same import
+/// pass after a project opens.
+pub fn eager_import_with(resources: &mut Resources, root: &std::path::Path) {
+    let scanned = collect_typed_files(root);
     if scanned.is_empty() {
         return;
     }
@@ -189,28 +189,24 @@ pub fn eager_import_with(resources: &mut Resources) {
                     counts.image += 1;
                 }
             }
-            _ => {
-                // RON files use the *compound* extension
-                // `.ome_material.ron`; `Path::extension` only sees
-                // the last segment (`ron`). Match on the suffix
-                // string instead.
-                if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|s| s.ends_with(".ome_material.ron"))
-                {
-                    if let Err(e) = server.load::<Material>(path, resources) {
-                        tracing::warn!(
-                            target: "ome_render::plugin::assets",
-                            path = %path.display(),
-                            error = %e,
-                            "eager Material import failed",
-                        );
-                    } else {
-                        counts.material += 1;
-                    }
+            "ron" => {
+                // PR5 invariant: every `.ron` under `assets/` is a
+                // Material. When other RON-authored asset types
+                // arrive, this branch grows a discriminator that
+                // peeks the nominal struct tag at the head of the
+                // file before dispatching to the matching loader.
+                if let Err(e) = server.load::<Material>(path, resources) {
+                    tracing::warn!(
+                        target: "ome_render::plugin::assets",
+                        path = %path.display(),
+                        error = %e,
+                        "eager Material import failed",
+                    );
+                } else {
+                    counts.material += 1;
                 }
             }
+            _ => {}
         }
     }
     resources.insert(server);
@@ -223,6 +219,52 @@ pub fn eager_import_with(resources: &mut Resources) {
             material = counts.material,
             "eager-imported typed assets",
         );
+    }
+}
+
+/// Recursive filesystem walk that collects every file under `root`
+/// with a known typed extension. Stays alongside the importer
+/// because both share the extension allowlist.
+fn collect_typed_files(root: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    walk_collect(root, &mut out);
+    out
+}
+
+fn walk_collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            walk_collect(&path, out);
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        // Skip the sidecar files themselves — only consider their
+        // source assets.
+        if path.extension().is_some_and(|e| e == "meta") {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let lower = name.to_ascii_lowercase();
+        let typed = lower.ends_with(".glb")
+            || lower.ends_with(".gltf")
+            || lower.ends_with(".png")
+            || lower.ends_with(".jpg")
+            || lower.ends_with(".jpeg")
+            || lower.ends_with(".ron");
+        if typed {
+            out.push(path);
+        }
     }
 }
 
