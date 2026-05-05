@@ -211,8 +211,14 @@ pub fn build_meshlets_lod_chain(
         let prev_meshlets: Vec<MeshletDescriptor> =
             all_descriptors[prev_start..prev_end].to_vec();
 
-        let groups =
-            group_meshlets_morton(&prev_meshlets, &mesh_aabb, NANITE_GROUP_SIZE);
+        // V-partition grouping (Ponchio §3.5). Target `prev_count /
+        // NANITE_GROUP_SIZE` Voronoi cells so each group averages ~4
+        // meshlets — same ratio as the Morton chunker but with
+        // boundaries that come from the partition cells (consistent
+        // across LODs by construction) instead of arbitrary
+        // chunk-of-4 cuts.
+        let target_groups = (prev_count / NANITE_GROUP_SIZE).max(1);
+        let groups = group_meshlets_voronoi(&prev_meshlets, target_groups);
 
         let new_lod_start_in_pool = all_descriptors.len();
         let mut any_group_emitted_parent = false;
@@ -444,58 +450,138 @@ fn extract_group_geometry(
     }
 }
 
-/// Quantises `value in [min, max]` into a 21-bit integer for use as
-/// one axis of a 3D Morton code.
-fn quantize_axis_21bit(value: f32, min: f32, max: f32) -> u64 {
-    let range = (max - min).max(1.0e-6);
-    let normalised = ((value - min) / range).clamp(0.0, 1.0);
-    let max_int = ((1u64 << 21) - 1) as f32;
-    (normalised * max_int) as u64
-}
+/// Picks `k` seed positions from `points` using farthest-point
+/// sampling: starts with `points[0]`, then repeatedly picks the
+/// point furthest from any already-selected seed. Deterministic,
+/// O(n × k), and produces well-spread seeds without an RNG.
+///
+/// The output drives the V-partition grouper (#469): each meshlet
+/// joins the group whose seed is nearest its `bounds_center`.
+/// Lloyd's relaxation refines the seed positions afterwards so
+/// each Voronoi cell ends up roughly equal-area.
+fn pick_initial_seeds_farthest(points: &[Vec3], k: usize) -> Vec<Vec3> {
+    if points.is_empty() || k == 0 {
+        return Vec::new();
+    }
+    let k = k.min(points.len());
+    let mut seeds = Vec::with_capacity(k);
+    seeds.push(points[0]);
 
-/// Spreads the lower 21 bits of `v` so they occupy every third bit
-/// position — the building block of a 3D Morton code.
-fn spread_21bit(mut v: u64) -> u64 {
-    v &= 0x1f_ffff;
-    v = (v | v << 32) & 0x001f_0000_0000_ffff;
-    v = (v | v << 16) & 0x001f_0000_ff00_00ff;
-    v = (v | v << 8) & 0x100f_00f0_0f00_f00f;
-    v = (v | v << 4) & 0x10c3_0c30_c30c_30c3;
-    v = (v | v << 2) & 0x1249_2492_4924_9249;
-    v
-}
-
-/// Interleaves three 21-bit axis values into a 63-bit Morton code.
-fn morton3_21bit(x: u64, y: u64, z: u64) -> u64 {
-    spread_21bit(x) | (spread_21bit(y) << 1) | (spread_21bit(z) << 2)
-}
-
-/// Spatial-sorts `meshlets` by 3D Morton code on `bounds_center`,
-/// then chunks them into groups of `group_size` consecutive items.
-/// Morton ordering keeps spatially close meshlets near each other in
-/// the chunk sequence — the key property the per-group simplify needs
-/// for coverage to make sense.
-fn group_meshlets_morton(
-    meshlets: &[MeshletDescriptor],
-    aabb: &Aabb,
-    group_size: usize,
-) -> Vec<Vec<usize>> {
-    let mut keyed: Vec<(u64, usize)> = meshlets
+    // For each input point, track its squared distance to the
+    // nearest already-chosen seed. The next seed is whichever
+    // point has the largest such distance.
+    let mut min_dist_sq: Vec<f32> = points
         .iter()
-        .enumerate()
-        .map(|(i, m)| {
-            let c = m.bounds_center;
-            let x = quantize_axis_21bit(c[0], aabb.min.x, aabb.max.x);
-            let y = quantize_axis_21bit(c[1], aabb.min.y, aabb.max.y);
-            let z = quantize_axis_21bit(c[2], aabb.min.z, aabb.max.z);
-            (morton3_21bit(x, y, z), i)
-        })
+        .map(|p| (*p - seeds[0]).length_squared())
         .collect();
-    keyed.sort_unstable_by_key(|&(code, _)| code);
-    keyed
-        .chunks(group_size.max(1))
-        .map(|chunk| chunk.iter().map(|&(_, i)| i).collect())
-        .collect()
+
+    while seeds.len() < k {
+        let (idx, _) = min_dist_sq
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap();
+        let new_seed = points[idx];
+        seeds.push(new_seed);
+        for (i, p) in points.iter().enumerate() {
+            let d = (*p - new_seed).length_squared();
+            if d < min_dist_sq[i] {
+                min_dist_sq[i] = d;
+            }
+        }
+    }
+    seeds
+}
+
+/// Returns the index of the seed closest to `p`. Linear scan; for the
+/// meshlet counts we work with (a few thousand per LOD) this is well
+/// within budget for offline build time.
+fn nearest_seed_index(p: Vec3, seeds: &[Vec3]) -> usize {
+    let mut best = (f32::INFINITY, 0usize);
+    for (i, s) in seeds.iter().enumerate() {
+        let d = (p - *s).length_squared();
+        if d < best.0 {
+            best = (d, i);
+        }
+    }
+    best.1
+}
+
+/// Runs `iterations` of Lloyd's relaxation: assign each point to its
+/// nearest seed, move each seed to the barycenter of its assignment,
+/// repeat. Empty cells (no assigned points) keep their previous seed
+/// position so the seed count never collapses.
+///
+/// Converges fast — Ponchio §3.5.3 recommends 3-5 iterations for the
+/// V-partition use case. After convergence the Voronoi cells
+/// partition the mesh into roughly equal-area, compact patches.
+fn lloyd_relaxation(points: &[Vec3], initial_seeds: Vec<Vec3>, iterations: usize) -> Vec<Vec3> {
+    let mut seeds = initial_seeds;
+    if seeds.is_empty() || points.is_empty() {
+        return seeds;
+    }
+    let n = seeds.len();
+    let mut sums = vec![Vec3::ZERO; n];
+    let mut counts = vec![0u32; n];
+    for _ in 0..iterations {
+        sums.iter_mut().for_each(|s| *s = Vec3::ZERO);
+        counts.iter_mut().for_each(|c| *c = 0);
+        for &p in points {
+            let cell = nearest_seed_index(p, &seeds);
+            sums[cell] += p;
+            counts[cell] += 1;
+        }
+        for i in 0..n {
+            if counts[i] > 0 {
+                seeds[i] = sums[i] / counts[i] as f32;
+            }
+            // else: keep previous seed position; an empty cell would
+            // otherwise drift to (0,0,0) which biases the partition.
+        }
+    }
+    seeds
+}
+
+/// Number of Lloyd's relaxation iterations applied to the V-partition
+/// seed sets. Ponchio §3.5.3 recommends 3-5; converges quickly and
+/// extra iterations don't move the seeds appreciably.
+const LLOYD_ITERATIONS: usize = 5;
+
+/// Voronoi V-partition grouping (Ponchio §3.5, #469). Picks
+/// `target_groups` seeds via farthest-point sampling, refines them
+/// with Lloyd's relaxation so each cell ends up roughly equal-area,
+/// then assigns every meshlet to its nearest seed by `bounds_center`.
+///
+/// Replaces the Morton-chunk grouping (#465 V1) which spatial-sorted
+/// meshlets and chopped them into 4-tuples regardless of cluster
+/// shape — that produced groups with arbitrary boundaries and the
+/// boundary-management problem (Ponchio §3.4.3) bit us on coarse
+/// LODs (visible holes when sibling parents collapsed their shared
+/// non-topological border differently).
+fn group_meshlets_voronoi(
+    meshlets: &[MeshletDescriptor],
+    target_groups: usize,
+) -> Vec<Vec<usize>> {
+    if meshlets.is_empty() || target_groups == 0 {
+        return Vec::new();
+    }
+    let centroids: Vec<Vec3> = meshlets
+        .iter()
+        .map(|m| Vec3::from_array(m.bounds_center))
+        .collect();
+    let initial = pick_initial_seeds_farthest(&centroids, target_groups);
+    let seeds = lloyd_relaxation(&centroids, initial, LLOYD_ITERATIONS);
+
+    let mut groups: Vec<Vec<usize>> = vec![Vec::new(); seeds.len()];
+    for (i, c) in centroids.iter().enumerate() {
+        let cell = nearest_seed_index(*c, &seeds);
+        groups[cell].push(i);
+    }
+    // Drop empty cells — they happen when Lloyd's leaves a seed
+    // with no nearest point (rare for well-distributed inputs but
+    // guarded against here).
+    groups.retain(|g| !g.is_empty());
+    groups
 }
 
 /// Runs `meshopt::build_meshlets` over `indices` and returns the
@@ -990,6 +1076,126 @@ mod tests {
             );
             assert_eq!(m.lod_error, 0.0);
         }
+    }
+
+    #[test]
+    fn farthest_point_seeds_are_well_spread() {
+        // Inputs along a 1D line (x = 0..=9); farthest-point seeding
+        // with k=4 picks the extremes first then fills the interior.
+        // The exact interior picks depend on tie-breaking, so the
+        // assertion focuses on what the algorithm guarantees:
+        //   1. requested count of unique seeds returned;
+        //   2. the diameter of the input is covered (extremes
+        //      included);
+        //   3. no two seeds are duplicated.
+        let pts: Vec<Vec3> = (0..10).map(|i| Vec3::new(i as f32, 0.0, 0.0)).collect();
+        let seeds = pick_initial_seeds_farthest(&pts, 4);
+        assert_eq!(seeds.len(), 4);
+        let mut xs: Vec<f32> = seeds.iter().map(|s| s.x).collect();
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(xs[0], 0.0, "smallest seed should be at x=0");
+        assert_eq!(xs[3], 9.0, "largest seed should be at x=9");
+        // No duplicates.
+        for w in xs.windows(2) {
+            assert_ne!(w[0], w[1], "seeds {:?} contain a duplicate", xs);
+        }
+        // Interior seeds lie strictly between the endpoints.
+        assert!(xs[1] > 0.0 && xs[1] < 9.0);
+        assert!(xs[2] > 0.0 && xs[2] < 9.0);
+    }
+
+    #[test]
+    fn lloyd_relaxation_settles_seeds_toward_barycenters() {
+        // Two clusters of 4 points each, 10 units apart on X. Two
+        // seeds initialised badly (both near the left cluster) —
+        // Lloyd's should pull one of them to the right cluster's
+        // barycentre.
+        let mut pts = Vec::new();
+        for &x in &[-5.0_f32, -4.5, -4.0, -3.5] {
+            pts.push(Vec3::new(x, 0.0, 0.0));
+        }
+        for &x in &[5.0_f32, 5.5, 6.0, 6.5] {
+            pts.push(Vec3::new(x, 0.0, 0.0));
+        }
+        let initial = vec![Vec3::new(-5.0, 0.0, 0.0), Vec3::new(-3.5, 0.0, 0.0)];
+        let seeds = lloyd_relaxation(&pts, initial, 10);
+        // After relaxation, one seed should sit near each cluster's
+        // barycentre (~-4.25 and ~5.75).
+        let mut xs: Vec<f32> = seeds.iter().map(|s| s.x).collect();
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(
+            xs[0] < -3.0,
+            "left seed should sit near -4.25, got {}",
+            xs[0]
+        );
+        assert!(
+            xs[1] > 4.0,
+            "right seed should sit near 5.75, got {}",
+            xs[1]
+        );
+    }
+
+    #[test]
+    fn voronoi_groups_are_spatially_coherent() {
+        // Build a real chain and verify that meshlets in the same
+        // group are spatially closer (mean pairwise distance) than
+        // a random sample across the whole mesh. The grouping is
+        // an internal invariant of the V-partition build — without
+        // spatial coherence the per-group simplify falls apart.
+        let mesh = make_grid_mesh(20);
+        let chain = build_meshlets_lod_chain(
+            &mesh,
+            DEFAULT_MAX_VERTICES,
+            DEFAULT_MAX_TRIANGLES,
+            0.5,
+            LodConfig::default(),
+        )
+        .expect("chain");
+        // Compare mean intra-group distance vs mean overall distance
+        // among the LOD 0 meshlets (all share lod_error == 0).
+        let lod_zero: Vec<&MeshletDescriptor> =
+            chain.meshlets.iter().filter(|m| m.lod_error == 0.0).collect();
+        if lod_zero.len() < 4 {
+            return; // Not enough data for a meaningful comparison.
+        }
+
+        // Bucket LOD-0 meshlets by group_index (skip roots).
+        use std::collections::HashMap;
+        let mut by_group: HashMap<u32, Vec<Vec3>> = HashMap::new();
+        for m in &lod_zero {
+            if m.group_index == crate::meshlet::asset::MESHLET_GROUP_NONE {
+                continue;
+            }
+            by_group
+                .entry(m.group_index)
+                .or_default()
+                .push(Vec3::from_array(m.bounds_center));
+        }
+        if by_group.is_empty() {
+            return;
+        }
+
+        let intra_mean = mean_pairwise_distance(by_group.values().flat_map(|g| {
+            g.windows(2).map(|w| (w[0] - w[1]).length())
+        }));
+        let all_centroids: Vec<Vec3> =
+            lod_zero.iter().map(|m| Vec3::from_array(m.bounds_center)).collect();
+        let global_mean = mean_pairwise_distance(
+            all_centroids.windows(2).map(|w| (w[0] - w[1]).length()),
+        );
+
+        assert!(
+            intra_mean <= global_mean,
+            "Voronoi groups should be spatially coherent: intra-group mean \
+             distance {} must be ≤ global mean {}",
+            intra_mean,
+            global_mean,
+        );
+    }
+
+    fn mean_pairwise_distance<I: Iterator<Item = f32>>(iter: I) -> f32 {
+        let (sum, n) = iter.fold((0.0_f32, 0u32), |(s, c), d| (s + d, c + 1));
+        if n == 0 { 0.0 } else { sum / n as f32 }
     }
 
     #[test]
