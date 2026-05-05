@@ -370,10 +370,22 @@ impl MeshletRenderStage {
 
         queue.submit(std::iter::once(encoder.finish()));
 
+        let pool = self.pipeline.pool();
+        let pool_meshlets_total = pool.meshlets.len() as u32;
+        let pool_meshlets_roots = pool
+            .meshlets
+            .iter()
+            .filter(|m| {
+                m.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT
+            })
+            .count() as u32;
+
         MeshletRenderStats {
             instances_uploaded: instances.len() as u32,
             cull_threads: scene_params.instance_count * scene_params.meshlets_per_mesh,
             cam_pos: cam_pos.to_array(),
+            pool_meshlets_total,
+            pool_meshlets_roots,
         }
     }
 }

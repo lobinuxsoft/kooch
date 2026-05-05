@@ -208,20 +208,27 @@ pub(crate) fn draw_view_content(
             if *meshlet_debug_mode != MeshletDebugMode::Off {
                 ui.separator();
                 let [cx, cy, cz] = meshlet_stats.cam_pos;
+                let total = meshlet_stats.pool_meshlets_total;
+                let roots = meshlet_stats.pool_meshlets_roots;
                 ui.label(
                     egui::RichText::new(format!(
-                        "instances {} · dispatched {} · cam ({:.1}, {:.1}, {:.1})",
+                        "instances {} · disp {} · pool {}/{} roots · cam ({:.1}, {:.1}, {:.1})",
                         meshlet_stats.instances_uploaded,
                         meshlet_stats.cull_threads,
+                        roots,
+                        total,
                         cx, cy, cz,
                     ))
                     .monospace()
                     .small(),
                 )
                 .on_hover_text(
-                    "Meshlet pipeline counters (previous frame). cam shows \
-                     the world-space position the LOD selector saw — should \
-                     follow the active editor camera.",
+                    "Meshlet pipeline counters (previous frame).\n\
+                     pool: roots/total — total meshlets in the global pool, \
+                     of which `roots` are terminal (selector stops there).\n\
+                     If roots == total the chain has no LOD depth.\n\
+                     cam: world-space position the LOD selector saw — \
+                     should follow the active editor camera.",
                 );
             }
         });
