@@ -26,13 +26,15 @@ use std::collections::HashMap;
 use glam::Mat4;
 use ome_core::Guid;
 use ome_core::resource::Resources;
+use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::GlobalTransform;
+use ome_ecs::lod_force_level::LodForceLevel;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::Query;
 
 use super::asset::MeshletMesh;
 use super::pool::{GlobalMeshPool, MeshHandle};
-use super::scene::MeshInstance;
+use super::scene::{MeshInstance, LOD_FORCE_NONE};
 
 /// Owns the CPU-side state that bridges the ECS to the meshlet
 /// pipeline: the global mesh pool + a registry of which assets
@@ -115,9 +117,15 @@ impl MeshletPipeline {
     /// slot 0 (the white-diffuse default).
     pub fn collect_scene_instances(&self, resources: &Resources) -> Vec<MeshInstance> {
         let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
+        // Side-channel lookup of optional LodForceLevel components.
+        // The MeshRenderer query is the primary walk; per-entity we
+        // do a separate point query for LodForceLevel so absence
+        // costs nothing (most entities don't carry the override).
+        let lod_force_lookup =
+            collect_lod_force_levels(resources);
         let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut out = Vec::new();
-        query.for_each(|(renderer, transform)| {
+        query.for_each_entity(|entity, (renderer, transform)| {
             if !renderer.visible {
                 return;
             }
@@ -131,14 +139,35 @@ impl MeshletPipeline {
                 Some(mp) => mp.lookup_or_fallback(renderer.material),
                 None => crate::material::FALLBACK_MATERIAL_ID,
             };
-            out.push(MeshInstance::new(
+            let mut instance = MeshInstance::new(
                 transform.matrix,
                 mesh_handle.mesh_id,
                 material_id,
-            ));
+            );
+            if let Some(force_level) = lod_force_lookup.get(&entity).copied() {
+                instance.lod_force_level = force_level as i32;
+            } else {
+                instance.lod_force_level = LOD_FORCE_NONE;
+            }
+            out.push(instance);
         });
         out
     }
+}
+
+/// Snapshot every entity that carries a [`LodForceLevel`] component
+/// into a hashmap so the scene-instance collector can stamp the
+/// override on the matching `MeshInstance`. Empty when no entity
+/// uses the LOD inspector.
+fn collect_lod_force_levels(
+    resources: &Resources,
+) -> HashMap<Entity, u32> {
+    let mut out = HashMap::new();
+    let query = Query::<&LodForceLevel>::new(resources);
+    query.for_each_entity(|entity, force| {
+        out.insert(entity, force.level);
+    });
+    out
 }
 
 /// Convenience: identity transform + a fresh material id 0. Used by
