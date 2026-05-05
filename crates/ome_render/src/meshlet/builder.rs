@@ -91,9 +91,12 @@ pub fn build_meshlets_from_mesh(
             vertex_count: ffi.vertex_count,
             triangle_count: ffi.triangle_count,
             aabb_min,
-            _pad0: 0,
+            // Single-LOD output: every meshlet is a DAG root with no
+            // simplification error. The continuous-LOD path (#442
+            // sub-commits 2-3) overwrites these as the chain is built.
+            parent_meshlet_index: crate::meshlet::asset::MESHLET_ROOT_PARENT,
             aabb_max,
-            _pad1: 0,
+            lod_error: 0.0,
             bounds_center: bounds.center,
             bounding_radius: bounds.radius,
             cone_apex: bounds.cone_apex,
