@@ -269,7 +269,16 @@ impl MeshletRenderStage {
 
         self.scene.upload_instances(queue, &instances);
         let meshlets_per_mesh = gpu_mesh.meshlet_count;
-        let cull_params = CullParams::new(view_proj, cam_pos, meshlets_per_mesh);
+        // Approximate proj_scale_y by the absolute value of `view_proj.y_axis.y`.
+        // For an ortho-normal view (look_at_rh with up=Y) the camera basis
+        // contributes 1 to that component and the projection's `1 / tan(fovy/2)`
+        // is preserved exactly. Skewed cameras pay a small error that the
+        // 1-pixel target tolerance absorbs. A future refactor can pass
+        // proj separately when #441 lands its full camera surface.
+        let proj_scale_y = view_proj.y_axis.y.abs();
+        let viewport_h_px = self.size.1 as f32;
+        let cull_params = CullParams::new(view_proj, cam_pos, meshlets_per_mesh)
+            .with_lod(viewport_h_px, proj_scale_y, 1.0);
         let scene_params =
             SceneCullParams::new(instances.len() as u32, meshlets_per_mesh);
 
