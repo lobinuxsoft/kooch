@@ -220,6 +220,16 @@ pub fn build_meshlets_lod_chain(
         let target_groups = (prev_count / NANITE_GROUP_SIZE).max(1);
         let groups = group_meshlets_voronoi(&prev_meshlets, target_groups);
 
+        // V-partition boundary management (Ponchio §3.4.3 + §3.5.1):
+        // identify every vertex shared between ≥ 2 groups and lock
+        // them in the per-group simplify call below. `LockBorder`
+        // alone only locks topological mesh borders (open edges) —
+        // it does NOT know about the Voronoi cell boundaries we
+        // just drew, so without explicit locks adjacent groups
+        // collapse their shared border differently and tear holes.
+        let group_boundary_globals =
+            collect_group_boundary_vertices(&groups, &prev_meshlets, &all_meshlet_vertices);
+
         let new_lod_start_in_pool = all_descriptors.len();
         let mut any_group_emitted_parent = false;
 
@@ -231,6 +241,15 @@ pub fn build_meshlets_lod_chain(
                 &all_meshlet_triangles,
                 &mesh.vertices,
             );
+            // Build the lock mask paralleling `geo.vertices`: any
+            // group-local vertex whose original mesh-pool index is in
+            // the cell-boundary set must survive simplification so
+            // adjacent groups remain stitched.
+            let vertex_lock: Vec<bool> = geo
+                .global_indices
+                .iter()
+                .map(|gi| group_boundary_globals.contains(gi))
+                .collect();
             // Need at least two triangles to produce a meaningful
             // simplification budget; smaller groups stay as roots.
             if geo.indices.len() < 6 {
@@ -262,9 +281,16 @@ pub fn build_meshlets_lod_chain(
             }
 
             let mut actual_error = 0.0f32;
-            let simplified = meshopt::simplify(
+            // simplify_with_locks: explicit per-vertex locks force
+            // cell-boundary vertices to survive collapse, complementing
+            // LockBorder which only handles topological mesh borders.
+            // Together: every patch boundary (Voronoi cell + open mesh
+            // edge) is preserved, so adjacent groups stitch cleanly
+            // across LODs.
+            let simplified = meshopt::simplify_with_locks(
                 &geo.indices,
                 &group_adapter,
+                &vertex_lock,
                 target_count,
                 current_error,
                 meshopt::SimplifyOptions::LockBorder,
@@ -448,6 +474,48 @@ fn extract_group_geometry(
         indices,
         global_indices,
     }
+}
+
+/// Walks every group and returns the set of mesh-pool vertex indices
+/// that appear in ≥ 2 groups. Those vertices live on a Voronoi cell
+/// boundary and must be locked during the per-group simplify so that
+/// adjacent cells collapse identically along the shared border.
+///
+/// Without this lock, two neighbouring groups can collapse the same
+/// boundary edge to different parent vertices — Ponchio §3.4.3
+/// (boundary management problem). The visible symptom is holes /
+/// Z-fighting strips along cell seams in coarse LODs.
+fn collect_group_boundary_vertices(
+    groups: &[Vec<usize>],
+    prev_lod_meshlets: &[MeshletDescriptor],
+    pool_meshlet_vertices: &[u32],
+) -> std::collections::HashSet<u32> {
+    use std::collections::{HashMap, HashSet};
+    // For each pool vertex, the bitset of groups that touch it. We
+    // only need "touched by ≥ 2 distinct groups", so a single u8
+    // counter (saturating at 2) is enough.
+    let mut touched_by_n_groups: HashMap<u32, u8> = HashMap::new();
+    for group in groups {
+        // Dedupe inside the group first so a vertex shared by N
+        // sibling meshlets in the SAME group still counts as +1.
+        let mut group_vertices: HashSet<u32> = HashSet::new();
+        for &meshlet_idx in group {
+            let m = &prev_lod_meshlets[meshlet_idx];
+            let base = m.vertex_offset as usize;
+            for i in 0..m.vertex_count as usize {
+                group_vertices.insert(pool_meshlet_vertices[base + i]);
+            }
+        }
+        for v in group_vertices {
+            let counter = touched_by_n_groups.entry(v).or_insert(0);
+            *counter = counter.saturating_add(1);
+        }
+    }
+    touched_by_n_groups
+        .into_iter()
+        .filter(|(_, n)| *n >= 2)
+        .map(|(v, _)| v)
+        .collect()
 }
 
 /// Picks `k` seed positions from `points` using farthest-point
@@ -1190,6 +1258,98 @@ mod tests {
              distance {} must be ≤ global mean {}",
             intra_mean,
             global_mean,
+        );
+    }
+
+    #[test]
+    fn collect_group_boundary_vertices_flags_only_shared_globals() {
+        // Two synthetic meshlets share vertex pool indices 10 and 11.
+        // Group A = {meshlet 0}, Group B = {meshlet 1}. Vertices 10
+        // and 11 must be flagged as cell-boundary; the rest must not.
+        let pool_meshlet_vertices: Vec<u32> = vec![
+            // meshlet 0: globals 1, 2, 10, 11
+            1, 2, 10, 11,
+            // meshlet 1: globals 5, 6, 10, 11
+            5, 6, 10, 11,
+        ];
+        let mk_descriptor = |vertex_offset: u32, vertex_count: u32| MeshletDescriptor {
+            vertex_offset,
+            triangle_offset: 0,
+            vertex_count,
+            triangle_count: 0,
+            aabb_min: [0.0; 3],
+            parent_meshlet_index: MESHLET_ROOT_PARENT,
+            aabb_max: [0.0; 3],
+            lod_error: 0.0,
+            bounds_center: [0.0; 3],
+            bounding_radius: 0.0,
+            cone_apex: [0.0; 3],
+            cone_cutoff: 1.0,
+            cone_axis: [0.0, 0.0, 1.0],
+            group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+            children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+            lod_level: 0,
+            _pad4: 0,
+            _pad5: 0,
+        };
+        let prev_meshlets = vec![mk_descriptor(0, 4), mk_descriptor(4, 4)];
+        let groups = vec![vec![0usize], vec![1usize]];
+        let boundary = collect_group_boundary_vertices(
+            &groups,
+            &prev_meshlets,
+            &pool_meshlet_vertices,
+        );
+        assert!(boundary.contains(&10), "vertex 10 shared between groups must be flagged");
+        assert!(boundary.contains(&11), "vertex 11 shared between groups must be flagged");
+        assert!(!boundary.contains(&1), "vertex 1 (only in group A) must NOT be flagged");
+        assert!(!boundary.contains(&5), "vertex 5 (only in group B) must NOT be flagged");
+        assert_eq!(boundary.len(), 2, "exactly 2 shared vertices expected");
+    }
+
+    #[test]
+    fn collect_group_boundary_vertices_dedups_repeats_inside_a_group() {
+        // A vertex appearing N times within the SAME group's meshlets
+        // must NOT be counted as cell-boundary unless it ALSO appears
+        // in another group.
+        let pool_meshlet_vertices: Vec<u32> = vec![
+            // meshlet 0: globals 1, 2
+            1, 2,
+            // meshlet 1: globals 2, 3 (vertex 2 is intra-group repeat)
+            2, 3,
+            // meshlet 2: globals 4, 5 (different group)
+            4, 5,
+        ];
+        let mk = |off: u32| MeshletDescriptor {
+            vertex_offset: off,
+            triangle_offset: 0,
+            vertex_count: 2,
+            triangle_count: 0,
+            aabb_min: [0.0; 3],
+            parent_meshlet_index: MESHLET_ROOT_PARENT,
+            aabb_max: [0.0; 3],
+            lod_error: 0.0,
+            bounds_center: [0.0; 3],
+            bounding_radius: 0.0,
+            cone_apex: [0.0; 3],
+            cone_cutoff: 1.0,
+            cone_axis: [0.0, 0.0, 1.0],
+            group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+            children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+            lod_level: 0,
+            _pad4: 0,
+            _pad5: 0,
+        };
+        let prev_meshlets = vec![mk(0), mk(2), mk(4)];
+        let groups = vec![vec![0usize, 1usize], vec![2usize]];
+        let boundary = collect_group_boundary_vertices(
+            &groups,
+            &prev_meshlets,
+            &pool_meshlet_vertices,
+        );
+        assert!(
+            boundary.is_empty(),
+            "no vertex is actually shared across groups; got {:?}",
+            boundary
         );
     }
 
