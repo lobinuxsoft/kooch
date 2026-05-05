@@ -140,16 +140,23 @@ const NANITE_GROUP_SIZE: usize = 4;
 /// # Algorithm (per LOD level)
 ///
 /// 1. Take the previous LOD's meshlets.
-/// 2. Spatial-sort them by Morton code on `bounds_center`.
-/// 3. Chunk into groups of [`NANITE_GROUP_SIZE`] consecutive meshlets.
+/// 2. Build the meshlet connectivity graph (nodes = meshlets, edges
+///    weighted by shared-vertex count) and partition it with METIS
+///    k-way multilevel partitioning into ~prev_count / GROUP_SIZE
+///    groups. Minimising edge-cut directly minimises the shared
+///    border each group will have to lock during simplify.
+/// 3. Identify the cell-boundary vertex set (vertices touched by
+///    ≥ 2 groups) so the per-group simplify call below can lock
+///    them — adjacent groups must collapse the shared border
+///    identically (Ponchio §3.4.3 boundary management).
 /// 4. For each group:
 ///    - Resolve the group's underlying triangles into a local
-///      vertex-deduped sub-mesh.
-///    - Run `meshopt::simplify` with `LockBorder` so external edges
-///      stay intact and adjacent groups stitch seamlessly.
-///    - Re-cluster the simplified triangles. Target count is forced
-///      to [`max_triangles`] so the result is one parent meshlet per
-///      group — guarantees coverage of the four children's region.
+///      vertex-deduped sub-mesh + per-vertex lock mask.
+///    - Run `meshopt::simplify_with_locks` with `LockBorder` so the
+///      mesh's topological edges AND the cell border both survive
+///      the collapse — adjacent groups stitch seamlessly.
+///    - Re-cluster the simplified triangles into ≤ NANITE_GROUP_SIZE
+///      parent meshlets covering the children's region.
 ///    - Wire each child's `parent_meshlet_index` to the new parent.
 /// 5. Stop when no group could simplify further (topology lock).
 ///
@@ -211,8 +218,31 @@ pub fn build_meshlets_lod_chain(
         let prev_meshlets: Vec<MeshletDescriptor> =
             all_descriptors[prev_start..prev_end].to_vec();
 
-        let groups =
-            group_meshlets_morton(&prev_meshlets, &mesh_aabb, NANITE_GROUP_SIZE);
+        // METIS k-way graph partitioning (Karis SIGGRAPH 2021,
+        // confirmed by Scthe/nanite-webgpu and pettett/multires).
+        // Target `prev_count / NANITE_GROUP_SIZE` partitions so each
+        // group averages ~4 meshlets, same ratio as the original
+        // Morton chunker — but the cuts now follow the connectivity
+        // graph (minimising shared-vertex edge cut between groups)
+        // instead of either spatial chunks (Morton, #465) or spatial
+        // Voronoi cells (#469 V1, both produced coverage holes on
+        // coarse LODs because they ignored topology).
+        let target_groups = (prev_count / NANITE_GROUP_SIZE).max(1);
+        let groups = group_meshlets_metis(
+            &prev_meshlets,
+            &all_meshlet_vertices,
+            target_groups,
+        );
+
+        // V-partition boundary management (Ponchio §3.4.3 + §3.5.1):
+        // identify every vertex shared between ≥ 2 groups and lock
+        // them in the per-group simplify call below. `LockBorder`
+        // alone only locks topological mesh borders (open edges) —
+        // it does NOT know about the Voronoi cell boundaries we
+        // just drew, so without explicit locks adjacent groups
+        // collapse their shared border differently and tear holes.
+        let group_boundary_globals =
+            collect_group_boundary_vertices(&groups, &prev_meshlets, &all_meshlet_vertices);
 
         let new_lod_start_in_pool = all_descriptors.len();
         let mut any_group_emitted_parent = false;
@@ -225,6 +255,15 @@ pub fn build_meshlets_lod_chain(
                 &all_meshlet_triangles,
                 &mesh.vertices,
             );
+            // Build the lock mask paralleling `geo.vertices`: any
+            // group-local vertex whose original mesh-pool index is in
+            // the cell-boundary set must survive simplification so
+            // adjacent groups remain stitched.
+            let vertex_lock: Vec<bool> = geo
+                .global_indices
+                .iter()
+                .map(|gi| group_boundary_globals.contains(gi))
+                .collect();
             // Need at least two triangles to produce a meaningful
             // simplification budget; smaller groups stay as roots.
             if geo.indices.len() < 6 {
@@ -256,9 +295,16 @@ pub fn build_meshlets_lod_chain(
             }
 
             let mut actual_error = 0.0f32;
-            let simplified = meshopt::simplify(
+            // simplify_with_locks: explicit per-vertex locks force
+            // cell-boundary vertices to survive collapse, complementing
+            // LockBorder which only handles topological mesh borders.
+            // Together: every patch boundary (Voronoi cell + open mesh
+            // edge) is preserved, so adjacent groups stitch cleanly
+            // across LODs.
+            let simplified = meshopt::simplify_with_locks(
                 &geo.indices,
                 &group_adapter,
+                &vertex_lock,
                 target_count,
                 current_error,
                 meshopt::SimplifyOptions::LockBorder,
@@ -444,58 +490,174 @@ fn extract_group_geometry(
     }
 }
 
-/// Quantises `value in [min, max]` into a 21-bit integer for use as
-/// one axis of a 3D Morton code.
-fn quantize_axis_21bit(value: f32, min: f32, max: f32) -> u64 {
-    let range = (max - min).max(1.0e-6);
-    let normalised = ((value - min) / range).clamp(0.0, 1.0);
-    let max_int = ((1u64 << 21) - 1) as f32;
-    (normalised * max_int) as u64
-}
-
-/// Spreads the lower 21 bits of `v` so they occupy every third bit
-/// position — the building block of a 3D Morton code.
-fn spread_21bit(mut v: u64) -> u64 {
-    v &= 0x1f_ffff;
-    v = (v | v << 32) & 0x001f_0000_0000_ffff;
-    v = (v | v << 16) & 0x001f_0000_ff00_00ff;
-    v = (v | v << 8) & 0x100f_00f0_0f00_f00f;
-    v = (v | v << 4) & 0x10c3_0c30_c30c_30c3;
-    v = (v | v << 2) & 0x1249_2492_4924_9249;
-    v
-}
-
-/// Interleaves three 21-bit axis values into a 63-bit Morton code.
-fn morton3_21bit(x: u64, y: u64, z: u64) -> u64 {
-    spread_21bit(x) | (spread_21bit(y) << 1) | (spread_21bit(z) << 2)
-}
-
-/// Spatial-sorts `meshlets` by 3D Morton code on `bounds_center`,
-/// then chunks them into groups of `group_size` consecutive items.
-/// Morton ordering keeps spatially close meshlets near each other in
-/// the chunk sequence — the key property the per-group simplify needs
-/// for coverage to make sense.
-fn group_meshlets_morton(
-    meshlets: &[MeshletDescriptor],
-    aabb: &Aabb,
-    group_size: usize,
-) -> Vec<Vec<usize>> {
-    let mut keyed: Vec<(u64, usize)> = meshlets
-        .iter()
-        .enumerate()
-        .map(|(i, m)| {
-            let c = m.bounds_center;
-            let x = quantize_axis_21bit(c[0], aabb.min.x, aabb.max.x);
-            let y = quantize_axis_21bit(c[1], aabb.min.y, aabb.max.y);
-            let z = quantize_axis_21bit(c[2], aabb.min.z, aabb.max.z);
-            (morton3_21bit(x, y, z), i)
-        })
-        .collect();
-    keyed.sort_unstable_by_key(|&(code, _)| code);
-    keyed
-        .chunks(group_size.max(1))
-        .map(|chunk| chunk.iter().map(|&(_, i)| i).collect())
+/// Walks every group and returns the set of mesh-pool vertex indices
+/// that appear in ≥ 2 groups. Those vertices live on a Voronoi cell
+/// boundary and must be locked during the per-group simplify so that
+/// adjacent cells collapse identically along the shared border.
+///
+/// Without this lock, two neighbouring groups can collapse the same
+/// boundary edge to different parent vertices — Ponchio §3.4.3
+/// (boundary management problem). The visible symptom is holes /
+/// Z-fighting strips along cell seams in coarse LODs.
+fn collect_group_boundary_vertices(
+    groups: &[Vec<usize>],
+    prev_lod_meshlets: &[MeshletDescriptor],
+    pool_meshlet_vertices: &[u32],
+) -> std::collections::HashSet<u32> {
+    use std::collections::{HashMap, HashSet};
+    // For each pool vertex, the bitset of groups that touch it. We
+    // only need "touched by ≥ 2 distinct groups", so a single u8
+    // counter (saturating at 2) is enough.
+    let mut touched_by_n_groups: HashMap<u32, u8> = HashMap::new();
+    for group in groups {
+        // Dedupe inside the group first so a vertex shared by N
+        // sibling meshlets in the SAME group still counts as +1.
+        let mut group_vertices: HashSet<u32> = HashSet::new();
+        for &meshlet_idx in group {
+            let m = &prev_lod_meshlets[meshlet_idx];
+            let base = m.vertex_offset as usize;
+            for i in 0..m.vertex_count as usize {
+                group_vertices.insert(pool_meshlet_vertices[base + i]);
+            }
+        }
+        for v in group_vertices {
+            let counter = touched_by_n_groups.entry(v).or_insert(0);
+            *counter = counter.saturating_add(1);
+        }
+    }
+    touched_by_n_groups
+        .into_iter()
+        .filter(|(_, n)| *n >= 2)
+        .map(|(v, _)| v)
         .collect()
+}
+
+/// METIS graph-partition grouping (Karis SIGGRAPH 2021 / Ponchio §3.5,
+/// the actually-correct path). Builds a graph whose:
+/// - **nodes** are meshlets at the previous LOD,
+/// - **edges** join meshlets that share ≥ 1 mesh-pool vertex,
+/// - **edge weight** = number of vertices the two meshlets share.
+///
+/// Then calls METIS k-way multilevel partitioning to split the graph
+/// into `target_groups` parts while **minimising the edge cut**
+/// (sum of weights of cross-partition edges). Result: groups whose
+/// internal connectivity is dense and whose shared-vertex border with
+/// neighbours is as small as possible — leaves the per-group simplify
+/// the maximum interior surface to reduce while keeping the locked
+/// boundary minimal.
+///
+/// Why this replaces the Voronoi spatial grouping (#469 V1 attempt):
+/// nearest-seed by `bounds_center` partitions 3D space, NOT the
+/// connectivity graph. Two meshlets can sit close in space without
+/// being topologically connected (opposite sides of thin geometry,
+/// disjoint shells, etc.) — they end up in adjacent cells sharing
+/// many "accidental" boundary edges, simplify can barely reduce
+/// anything, coarse LODs go full of holes. Confirmed by inspecting
+/// the two open-source state-of-art implementations:
+/// `Scthe/nanite-webgpu` and `pettett/multires` — both METIS.
+///
+/// Edge cases:
+/// - `target_groups < 2` → single group (METIS rejects k=1).
+/// - Fewer meshlets than `target_groups` → cap k at meshlet count.
+/// - Isolated meshlets (no shared verts with anyone) → METIS still
+///   places them in some partition; they may end up alone.
+fn group_meshlets_metis(
+    meshlets: &[MeshletDescriptor],
+    pool_meshlet_vertices: &[u32],
+    target_groups: usize,
+) -> Vec<Vec<usize>> {
+    use std::collections::HashMap;
+
+    let n = meshlets.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let k = target_groups.min(n).max(1);
+    if k == 1 {
+        return vec![(0..n).collect()];
+    }
+
+    // Build vertex → meshlets index. A vertex shared by M meshlets
+    // generates M·(M-1)/2 graph edges (one per pair).
+    let mut vertex_to_meshlets: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, m) in meshlets.iter().enumerate() {
+        let base = m.vertex_offset as usize;
+        for v_off in 0..m.vertex_count as usize {
+            let global_v = pool_meshlet_vertices[base + v_off];
+            vertex_to_meshlets.entry(global_v).or_default().push(i);
+        }
+    }
+
+    // Accumulate pair → shared-vertex count.
+    let mut pair_weight: HashMap<(usize, usize), i32> = HashMap::new();
+    for owners in vertex_to_meshlets.values() {
+        // Dedup: a single meshlet could legitimately list a vertex
+        // twice if its meshlet_vertices entry was duplicated (rare
+        // but defensive).
+        let mut owners = owners.clone();
+        owners.sort_unstable();
+        owners.dedup();
+        for a in 0..owners.len() {
+            for b in (a + 1)..owners.len() {
+                let key = (owners[a], owners[b]);
+                *pair_weight.entry(key).or_insert(0) += 1;
+            }
+        }
+    }
+
+    // Convert to CSR for METIS. Each undirected edge contributes
+    // entries on BOTH endpoints' adjacency lists.
+    let mut adj: Vec<Vec<(i32, i32)>> = vec![Vec::new(); n];
+    for ((i, j), w) in pair_weight {
+        adj[i].push((j as i32, w));
+        adj[j].push((i as i32, w));
+    }
+
+    let mut xadj: Vec<i32> = Vec::with_capacity(n + 1);
+    let mut adjncy: Vec<i32> = Vec::new();
+    let mut adjwgt: Vec<i32> = Vec::new();
+    xadj.push(0);
+    for neighbours in &adj {
+        for &(j, w) in neighbours {
+            adjncy.push(j);
+            adjwgt.push(w);
+        }
+        xadj.push(adjncy.len() as i32);
+    }
+
+    // METIS rejects graphs with no edges (every meshlet isolated) —
+    // partition naively in that pathological case.
+    if adjncy.is_empty() {
+        let mut groups: Vec<Vec<usize>> = vec![Vec::new(); k];
+        for i in 0..n {
+            groups[i % k].push(i);
+        }
+        groups.retain(|g| !g.is_empty());
+        return groups;
+    }
+
+    let mut part = vec![0i32; n];
+    let metis_result = metis::Graph::new(1, k as i32, &xadj, &adjncy)
+        .ok()
+        .and_then(|g| g.set_adjwgt(&adjwgt).part_kway(&mut part).ok());
+    if metis_result.is_none() {
+        // METIS hit some internal limit — degrade gracefully to
+        // round-robin so the build still produces SOMETHING rather
+        // than panicking. Should be unreachable on well-formed input.
+        let mut groups: Vec<Vec<usize>> = vec![Vec::new(); k];
+        for i in 0..n {
+            groups[i % k].push(i);
+        }
+        groups.retain(|g| !g.is_empty());
+        return groups;
+    }
+
+    let mut groups: Vec<Vec<usize>> = vec![Vec::new(); k];
+    for (i, p) in part.iter().enumerate() {
+        groups[*p as usize].push(i);
+    }
+    groups.retain(|g| !g.is_empty());
+    groups
 }
 
 /// Runs `meshopt::build_meshlets` over `indices` and returns the
@@ -990,6 +1152,207 @@ mod tests {
             );
             assert_eq!(m.lod_error, 0.0);
         }
+    }
+
+    #[test]
+    fn metis_groups_minimise_cross_partition_edges_on_chain_graph() {
+        // Synthetic chain graph: 8 meshlets where adjacent meshlets
+        // share exactly one vertex. The optimal 2-partition splits
+        // the chain in the middle, cutting exactly one edge — any
+        // other split cuts more.
+        //
+        // Pool layout: meshlet i covers global verts [i, i+1].
+        //   meshlet 0: 0,1
+        //   meshlet 1: 1,2  <- shares vert 1 with meshlet 0
+        //   meshlet 2: 2,3
+        //   ...
+        //   meshlet 7: 7,8
+        let mut pool_meshlet_vertices: Vec<u32> = Vec::new();
+        let mut prev_meshlets: Vec<MeshletDescriptor> = Vec::new();
+        for i in 0..8u32 {
+            let off = pool_meshlet_vertices.len() as u32;
+            pool_meshlet_vertices.push(i);
+            pool_meshlet_vertices.push(i + 1);
+            prev_meshlets.push(MeshletDescriptor {
+                vertex_offset: off,
+                triangle_offset: 0,
+                vertex_count: 2,
+                triangle_count: 0,
+                aabb_min: [0.0; 3],
+                parent_meshlet_index: MESHLET_ROOT_PARENT,
+                aabb_max: [0.0; 3],
+                lod_error: 0.0,
+                bounds_center: [i as f32, 0.0, 0.0],
+                bounding_radius: 0.0,
+                cone_apex: [0.0; 3],
+                cone_cutoff: 1.0,
+                cone_axis: [0.0, 0.0, 1.0],
+                group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+                children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+                lod_level: 0,
+                _pad4: 0,
+                _pad5: 0,
+            });
+        }
+
+        let groups = group_meshlets_metis(
+            &prev_meshlets,
+            &pool_meshlet_vertices,
+            2,
+        );
+        assert_eq!(groups.len(), 2, "must produce exactly two non-empty groups");
+
+        // Count cross-partition edges. The chain has 7 edges total;
+        // the optimal cut is exactly 1.
+        let mut group_of: Vec<usize> = vec![usize::MAX; 8];
+        for (g_id, members) in groups.iter().enumerate() {
+            for &m in members {
+                group_of[m] = g_id;
+            }
+        }
+        let mut cross = 0;
+        for i in 0..7 {
+            if group_of[i] != group_of[i + 1] {
+                cross += 1;
+            }
+        }
+        assert_eq!(
+            cross, 1,
+            "METIS k-way must find the optimal single-edge cut on a chain graph; \
+             got {cross} cross edges with assignment {:?}",
+            group_of
+        );
+    }
+
+    #[test]
+    fn metis_groups_isolated_meshlets_round_robin() {
+        // No shared vertices anywhere → graph has zero edges.
+        // METIS rejects edge-less graphs, so the helper must fall
+        // back to round-robin and still produce K non-empty groups.
+        let mut pool_meshlet_vertices: Vec<u32> = Vec::new();
+        let mut prev_meshlets: Vec<MeshletDescriptor> = Vec::new();
+        for i in 0..6u32 {
+            let off = pool_meshlet_vertices.len() as u32;
+            // Each meshlet uses a vertex range that is unique to it.
+            pool_meshlet_vertices.push(100 + i * 2);
+            pool_meshlet_vertices.push(100 + i * 2 + 1);
+            prev_meshlets.push(MeshletDescriptor {
+                vertex_offset: off,
+                triangle_offset: 0,
+                vertex_count: 2,
+                triangle_count: 0,
+                aabb_min: [0.0; 3],
+                parent_meshlet_index: MESHLET_ROOT_PARENT,
+                aabb_max: [0.0; 3],
+                lod_error: 0.0,
+                bounds_center: [0.0; 3],
+                bounding_radius: 0.0,
+                cone_apex: [0.0; 3],
+                cone_cutoff: 1.0,
+                cone_axis: [0.0, 0.0, 1.0],
+                group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+                children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+                lod_level: 0,
+                _pad4: 0,
+                _pad5: 0,
+            });
+        }
+        let groups = group_meshlets_metis(&prev_meshlets, &pool_meshlet_vertices, 3);
+        assert_eq!(groups.len(), 3, "round-robin must populate every requested partition");
+        let total: usize = groups.iter().map(|g| g.len()).sum();
+        assert_eq!(total, 6, "every meshlet must be assigned to exactly one group");
+    }
+
+    #[test]
+    fn collect_group_boundary_vertices_flags_only_shared_globals() {
+        // Two synthetic meshlets share vertex pool indices 10 and 11.
+        // Group A = {meshlet 0}, Group B = {meshlet 1}. Vertices 10
+        // and 11 must be flagged as cell-boundary; the rest must not.
+        let pool_meshlet_vertices: Vec<u32> = vec![
+            // meshlet 0: globals 1, 2, 10, 11
+            1, 2, 10, 11,
+            // meshlet 1: globals 5, 6, 10, 11
+            5, 6, 10, 11,
+        ];
+        let mk_descriptor = |vertex_offset: u32, vertex_count: u32| MeshletDescriptor {
+            vertex_offset,
+            triangle_offset: 0,
+            vertex_count,
+            triangle_count: 0,
+            aabb_min: [0.0; 3],
+            parent_meshlet_index: MESHLET_ROOT_PARENT,
+            aabb_max: [0.0; 3],
+            lod_error: 0.0,
+            bounds_center: [0.0; 3],
+            bounding_radius: 0.0,
+            cone_apex: [0.0; 3],
+            cone_cutoff: 1.0,
+            cone_axis: [0.0, 0.0, 1.0],
+            group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+            children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+            lod_level: 0,
+            _pad4: 0,
+            _pad5: 0,
+        };
+        let prev_meshlets = vec![mk_descriptor(0, 4), mk_descriptor(4, 4)];
+        let groups = vec![vec![0usize], vec![1usize]];
+        let boundary = collect_group_boundary_vertices(
+            &groups,
+            &prev_meshlets,
+            &pool_meshlet_vertices,
+        );
+        assert!(boundary.contains(&10), "vertex 10 shared between groups must be flagged");
+        assert!(boundary.contains(&11), "vertex 11 shared between groups must be flagged");
+        assert!(!boundary.contains(&1), "vertex 1 (only in group A) must NOT be flagged");
+        assert!(!boundary.contains(&5), "vertex 5 (only in group B) must NOT be flagged");
+        assert_eq!(boundary.len(), 2, "exactly 2 shared vertices expected");
+    }
+
+    #[test]
+    fn collect_group_boundary_vertices_dedups_repeats_inside_a_group() {
+        // A vertex appearing N times within the SAME group's meshlets
+        // must NOT be counted as cell-boundary unless it ALSO appears
+        // in another group.
+        let pool_meshlet_vertices: Vec<u32> = vec![
+            // meshlet 0: globals 1, 2
+            1, 2,
+            // meshlet 1: globals 2, 3 (vertex 2 is intra-group repeat)
+            2, 3,
+            // meshlet 2: globals 4, 5 (different group)
+            4, 5,
+        ];
+        let mk = |off: u32| MeshletDescriptor {
+            vertex_offset: off,
+            triangle_offset: 0,
+            vertex_count: 2,
+            triangle_count: 0,
+            aabb_min: [0.0; 3],
+            parent_meshlet_index: MESHLET_ROOT_PARENT,
+            aabb_max: [0.0; 3],
+            lod_error: 0.0,
+            bounds_center: [0.0; 3],
+            bounding_radius: 0.0,
+            cone_apex: [0.0; 3],
+            cone_cutoff: 1.0,
+            cone_axis: [0.0, 0.0, 1.0],
+            group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+            children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+            lod_level: 0,
+            _pad4: 0,
+            _pad5: 0,
+        };
+        let prev_meshlets = vec![mk(0), mk(2), mk(4)];
+        let groups = vec![vec![0usize, 1usize], vec![2usize]];
+        let boundary = collect_group_boundary_vertices(
+            &groups,
+            &prev_meshlets,
+            &pool_meshlet_vertices,
+        );
+        assert!(
+            boundary.is_empty(),
+            "no vertex is actually shared across groups; got {:?}",
+            boundary
+        );
     }
 
     #[test]

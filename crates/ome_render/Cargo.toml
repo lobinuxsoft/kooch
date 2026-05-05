@@ -18,6 +18,12 @@ gltf.workspace = true
 image.workspace = true
 meshopt.workspace = true
 slotmap = "1.0"
+# METIS graph partitioning — used by build_meshlets_lod_chain to group
+# meshlets by minimising the inter-group shared-vertex edge cut
+# (Karis SIGGRAPH 2021 / Ponchio §3.5). `vendored` builds METIS from
+# source statically so no system libmetis-devel is required (Bazzite
+# atomic compatibility).
+metis = { version = "0.2", default-features = false, features = ["vendored"] }
 
 # Material assets are authored as RON. `serde` hooks the derive macros
 # the asset uses; both already live in the workspace deps.
