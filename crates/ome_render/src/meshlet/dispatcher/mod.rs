@@ -67,11 +67,47 @@ pub struct MeshletCull {
 
 impl MeshletCull {
     /// Storage capacity (in meshlets) of the visible-output buffer.
-    /// Dispatching against a `GpuMeshletMesh` with more meshlets than
-    /// this is a programmer error — the cull shader bounds-checks
-    /// `meshlet_count`, so the excess are simply ignored.
+    /// Use [`Self::ensure_capacity`] before dispatching to grow the
+    /// buffer when a scene exceeds the current allocation.
     pub fn capacity(&self) -> u32 {
         self.capacity
+    }
+
+    /// Grows `visible_meshlets` so it can hold at least `required`
+    /// surviving meshlets. No-op when current capacity already
+    /// covers the request. Growth is geometric (doubles) and rounds
+    /// up to the next power of two to absorb subsequent jumps without
+    /// reallocating every frame.
+    ///
+    /// The replaced buffer is dropped at the end of this frame's
+    /// command submission — wgpu's resource lifetime tracking keeps
+    /// it alive until in-flight command buffers no longer reference
+    /// it.
+    pub fn ensure_capacity(&mut self, device: &wgpu::Device, required: u32) {
+        if required <= self.capacity {
+            return;
+        }
+        let new_capacity = required
+            .checked_next_power_of_two()
+            .unwrap_or(required)
+            .max(self.capacity.saturating_mul(2));
+        let visible_meshlets = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_visible_ids"),
+            size: new_capacity as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        tracing::info!(
+            target: "ome_render::meshlet::cull",
+            old_capacity = self.capacity,
+            new_capacity,
+            required,
+            "grew visible_meshlets buffer to fit scene",
+        );
+        self.visible_meshlets = visible_meshlets;
+        self.capacity = new_capacity;
     }
 
     /// Number of vertices the rasterizer fetches per meshlet instance.

@@ -239,8 +239,13 @@ impl MeshletRenderStage {
     /// before invoking. Returns zero stats when the ECS query yields
     /// no instances; the stage does not clear in that case so the
     /// previous frame's color stays on the offscreen target.
+    ///
+    /// Takes `&mut self` because the cull dispatcher's
+    /// `visible_meshlets` buffer is grown on demand to fit the
+    /// scene's worst-case (instances × max_meshlets/mesh) thread
+    /// count.
     pub fn render(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         resources: &Resources,
@@ -290,6 +295,14 @@ impl MeshletRenderStage {
             .with_lod(viewport_h_px, proj_scale_y, 1.0);
         let scene_params =
             SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
+
+        // Grow visible_meshlets if the scene now needs more slots
+        // than the dispatcher was sized for. Geometric growth absorbs
+        // future jumps without per-frame reallocation.
+        let required_capacity = scene_params
+            .instance_count
+            .saturating_mul(scene_params.meshlets_per_mesh);
+        self.cull.ensure_capacity(device, required_capacity);
 
         let meshlet_bg = pool_meshlet_bind_group(device, &self.meshlet_bgl, gpu_pool);
         // Prefer the GUID-keyed `MaterialPipeline` pool when it's
