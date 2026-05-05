@@ -66,12 +66,19 @@ impl CullParams {
 }
 
 /// CPU mirror of the WGSL backface cone test. Returns `true` when the
-/// camera lies in the meshlet's normal cone — i.e. the meshlet is
-/// fully back-facing and can be skipped.
+/// meshlet is fully back-facing relative to the camera and can be
+/// skipped.
 ///
-/// Uses `cone_cutoff == 1.0` as the "no cull" sentinel that
-/// `meshopt::compute_meshlet_bounds` returns for degenerate / divergent
-/// normal sets — those meshlets must always survive cone cull.
+/// `cone_axis` follows meshopt's convention: it points along the
+/// meshlet's average front-face normal. The test forms the
+/// camera-to-apex vector and accepts the cull when its alignment with
+/// the axis exceeds `cone_cutoff` — that is the sign Bevy / UE5 / the
+/// meshoptimizer documentation use.
+///
+/// `cone_cutoff == 1.0` is the "no cull" sentinel that
+/// `meshopt::compute_meshlet_bounds` returns for degenerate /
+/// divergent normal sets — those meshlets must always survive cone
+/// cull.
 pub fn camera_in_backface_cone(
     cone_apex: Vec3,
     cone_axis: Vec3,
@@ -81,12 +88,12 @@ pub fn camera_in_backface_cone(
     if cone_cutoff >= 1.0 {
         return false;
     }
-    let to_camera = camera_position - cone_apex;
-    let len = to_camera.length();
+    let to_apex = cone_apex - camera_position;
+    let len = to_apex.length();
     if len == 0.0 {
         return false;
     }
-    let view = to_camera / len;
+    let view = to_apex / len;
     view.dot(cone_axis) >= cone_cutoff
 }
 
@@ -223,21 +230,27 @@ mod tests {
     }
 
     #[test]
-    fn camera_outside_back_cone_passes_cone_test() {
-        // Cone pointing +Z (axis = +Z, half-angle small → cutoff close to 1).
-        // Camera at (0,0,5) is in front — view dir is (0,0,+1).
-        // dot(view, axis) = 1.0 >= cutoff(0.9) → camera is in backward cone.
-        // To be "in front" the camera must be on the OPPOSITE side of
-        // the apex from the axis: view dir = (0,0,-1). dot = -1 < 0.9 → not culled.
+    fn camera_in_front_of_meshlet_is_not_culled() {
+        // meshopt convention: `cone_axis` points along the meshlet's
+        // average front-face normal. With `axis = +Z` the meshlet's
+        // front faces look towards +Z, so a camera at +Z is IN FRONT
+        // and must keep rendering. A camera at -Z is behind the
+        // meshlet (backface side) and gets culled.
         let apex = Vec3::ZERO;
-        let axis = Vec3::Z; // meshlet faces +Z; back cone opens towards +Z.
+        let axis = Vec3::Z;
         let cutoff = 0.9;
 
-        let cam_in_back = Vec3::new(0.0, 0.0, 5.0);
-        assert!(camera_in_backface_cone(apex, axis, cutoff, cam_in_back));
+        let cam_in_front = Vec3::new(0.0, 0.0, 5.0);
+        assert!(
+            !camera_in_backface_cone(apex, axis, cutoff, cam_in_front),
+            "camera in front (+Z) must not be culled when front normals point +Z",
+        );
 
-        let cam_in_front = Vec3::new(0.0, 0.0, -5.0);
-        assert!(!camera_in_backface_cone(apex, axis, cutoff, cam_in_front));
+        let cam_behind = Vec3::new(0.0, 0.0, -5.0);
+        assert!(
+            camera_in_backface_cone(apex, axis, cutoff, cam_behind),
+            "camera behind (-Z) must be culled when front normals point +Z",
+        );
     }
 
     #[test]
@@ -249,6 +262,12 @@ mod tests {
             Vec3::Z,
             1.0,
             Vec3::new(0.0, 0.0, 5.0),
+        ));
+        assert!(!camera_in_backface_cone(
+            Vec3::ZERO,
+            Vec3::Z,
+            1.0,
+            Vec3::new(0.0, 0.0, -5.0),
         ));
     }
 

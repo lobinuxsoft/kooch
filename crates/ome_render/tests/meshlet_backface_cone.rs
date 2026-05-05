@@ -41,11 +41,12 @@ fn synthetic_meshlet_facing(normal: Vec3) -> MeshletMesh {
     let meshlet_vertices = vec![0u32, 1, 2];
     let meshlet_triangles = vec![0u8, 1, 2];
 
-    // cone_axis points to the side from which the meshlet looks
-    // back-facing. For a triangle whose normal is `normal`, the cone
-    // axis is `-normal`: a camera placed on the `-normal` side sees
-    // the back of the triangle.
-    let cone_axis = (-normal).normalize();
+    // meshopt convention: `cone_axis` points along the meshlet's
+    // average front-face normal. For a triangle whose normal is
+    // `normal`, the cone axis IS `normal`. A camera sitting on the
+    // `-normal` side of the apex sees the meshlet from behind and
+    // gets culled by the shader's backface test.
+    let cone_axis = normal.normalize();
     let descriptor = MeshletDescriptor {
         vertex_offset: 0,
         triangle_offset: 0,
@@ -121,8 +122,9 @@ fn meshlet_facing_away_is_culled_by_cone() {
         return;
     };
 
-    // Triangle still facing +Z, but camera placed behind (-Z) so its
-    // view direction lines up with cone_axis (also -Z) → backface cull.
+    // Triangle still facing +Z (so cone_axis is also +Z, meshopt
+    // convention). Camera placed behind (-Z): the camera-to-apex
+    // vector aligns with cone_axis → backface cull triggers.
     let mesh = synthetic_meshlet_facing(Vec3::Z);
     let gpu_mesh = mesh.upload(&device);
 
