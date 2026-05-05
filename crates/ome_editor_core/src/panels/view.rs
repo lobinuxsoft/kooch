@@ -14,7 +14,7 @@
 //! extra wiring.
 
 use ome_gizmos_handles::{HandleMode, SnapSettings};
-use ome_render::meshlet::MeshletDebugMode;
+use ome_render::meshlet::{MeshletDebugMode, MeshletRenderStats};
 
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
@@ -38,6 +38,7 @@ pub(crate) fn draw_view_content(
     snap_settings: &mut SnapSettings,
     selection_has_transform: bool,
     meshlet_debug_mode: &mut MeshletDebugMode,
+    meshlet_stats: MeshletRenderStats,
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -174,6 +175,27 @@ pub(crate) fn draw_view_content(
                 .on_hover_text(
                     "Meshlet pipeline visualization mode. Off = production shading.",
                 );
+
+            // Stats overlay — only when a debug mode is active so the
+            // toolbar stays minimal during normal editing. Per-stage
+            // cull survivors (frustum / backface / hi-z) ship in #451b
+            // alongside the reject-reason tagging buffer.
+            if *meshlet_debug_mode != MeshletDebugMode::Off {
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!(
+                        "instances {} · dispatched {}",
+                        meshlet_stats.instances_uploaded,
+                        meshlet_stats.cull_threads,
+                    ))
+                    .monospace()
+                    .small(),
+                )
+                .on_hover_text(
+                    "Meshlet pipeline counters (previous frame). \
+                     Per-stage cull survivors land in #451b.",
+                );
+            }
         });
 
     *input = Some(delta);

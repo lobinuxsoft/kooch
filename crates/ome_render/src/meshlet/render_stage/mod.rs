@@ -82,13 +82,19 @@ impl Default for MeshletRenderStageConfig {
 }
 
 /// Per-frame return value reporting how the stage spent its budget.
-/// Useful for the integration test — and later for the editor HUD.
+/// Surfaced through the editor's debug-stats overlay (#451) and used
+/// by the integration test as a render side-effect.
+///
+/// Per-stage cull survivor counts (frustum / backface / hi-z) require
+/// a 4-byte CPU readback per frame and ship in #451b together with
+/// the reject-reason tagging buffer.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct MeshletRenderStats {
     /// Number of `MeshInstance` records uploaded this frame.
     pub instances_uploaded: u32,
     /// Worst-case `(instance_count × meshlets_per_mesh)` thread budget
-    /// the cull dispatch saw — `instance_count * meshlets_per_mesh`.
+    /// the cull dispatch saw — equals the upper bound on surviving
+    /// meshlets before any cull rejection.
     pub cull_threads: u32,
 }
 
