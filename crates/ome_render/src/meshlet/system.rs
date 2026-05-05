@@ -109,7 +109,12 @@ impl MeshletPipeline {
     /// - `visible` must be `true`.
     /// - GUIDs not in the registry are silently dropped — emitting a
     ///   warning per skipped entity per frame would spam the log.
+    ///
+    /// `material_id` is resolved through the [`MaterialPipeline`]
+    /// resource if present; otherwise every instance falls back to
+    /// slot 0 (the white-diffuse default).
     pub fn collect_scene_instances(&self, resources: &Resources) -> Vec<MeshInstance> {
+        let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
         let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut out = Vec::new();
         query.for_each(|(renderer, transform)| {
@@ -122,10 +127,14 @@ impl MeshletPipeline {
             let Some(mesh_handle) = self.lookup(guid) else {
                 return;
             };
+            let material_id = match material_pipeline.as_deref() {
+                Some(mp) => mp.lookup_or_fallback(renderer.material),
+                None => crate::material::FALLBACK_MATERIAL_ID,
+            };
             out.push(MeshInstance::new(
                 transform.matrix,
                 mesh_handle.mesh_id,
-                /* material_id */ 0,
+                material_id,
             ));
         });
         out
