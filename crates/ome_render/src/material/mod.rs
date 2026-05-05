@@ -17,8 +17,13 @@
 //! requirement.
 
 mod asset;
+mod pipeline;
 
 pub use asset::{Material, MaterialLoader, MaterialParseError};
+pub use pipeline::{
+    MaterialPipeline, DEFAULT_CAPACITY as MATERIAL_POOL_DEFAULT_CAPACITY, FALLBACK_MATERIAL_ID,
+    MATERIAL_TYPE_NAME,
+};
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
