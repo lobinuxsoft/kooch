@@ -95,8 +95,11 @@ pub(crate) fn render_viewport(
         clear_to_black(&mut encoder, target.view(), target.depth_view());
     }
 
-    // Pass 2: Meshlet blit composite.
-    if project_loaded {
+    // Pass 2: Meshlet blit composite — only when the stage actually
+    // has GPU-resident meshes to draw. Otherwise the blit would copy
+    // the stage's empty color buffer (all zeros) on top of the sky we
+    // just rendered, blanking the viewport.
+    if project_loaded && meshlet.stage.gpu_mesh_count() > 0 {
         meshlet
             .blit
             .blit(gpu.device(), &mut encoder, meshlet.stage.color_view(), target.view());
@@ -171,10 +174,19 @@ fn active_camera_matrices(
 ) -> Option<(glam::Mat4, glam::Vec3)> {
     use ome_ecs::perspective_camera::PerspectiveCamera;
 
+    // Pick the highest-priority active camera. The editor camera ships
+    // with `priority = EDITOR_CAMERA_PRIORITY (1000)` so it outranks
+    // user-spawned `PerspectiveCamera` defaults whenever both are
+    // active simultaneously.
     let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
-    let mut found: Option<(glam::Mat4, glam::Vec3)> = None;
+    let mut best: Option<(i32, glam::Mat4, glam::Vec3)> = None;
     query.for_each(|(cam, gt)| {
-        if found.is_some() || !cam.active {
+        if !cam.active {
+            return;
+        }
+        if let Some((p, _, _)) = best
+            && cam.priority <= p
+        {
             return;
         }
         let world = gt.matrix;
@@ -187,7 +199,7 @@ fn active_camera_matrices(
             cam.far.max(cam.near + 0.001),
         );
         let cam_pos = world.w_axis.truncate();
-        found = Some((proj * view, cam_pos));
+        best = Some((cam.priority, proj * view, cam_pos));
     });
-    found
+    best.map(|(_, vp, p)| (vp, p))
 }

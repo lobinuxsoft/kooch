@@ -7,6 +7,8 @@
 use glam::{Mat4, Vec3};
 
 use ome_core::Guid;
+use ome_core::asset_loader::AssetServer;
+use ome_core::assets::Assets;
 use ome_core::resource::Resources;
 
 use crate::meshlet::asset::MeshletMesh;
@@ -83,9 +85,9 @@ impl MeshletRenderStage {
         mesh: &MeshletMesh,
     ) {
         self.pipeline.register_mesh(guid, mesh);
-        if !self.gpu_meshes.contains_key(&guid) {
-            self.gpu_meshes.insert(guid, mesh.upload(device));
-        }
+        self.gpu_meshes
+            .entry(guid)
+            .or_insert_with(|| mesh.upload(device));
         if self.active_guid.is_none() {
             self.active_guid = Some(guid);
         }
@@ -101,16 +103,91 @@ impl MeshletRenderStage {
         self.active_guid
     }
 
-    /// Placeholder for the asset-server-driven GPU upload sync. PR3
-    /// will resolve every visible `MeshRenderer.mesh` GUID through
-    /// `AssetServer::load_by_guid::<MeshletMesh>`, fetch the meshlet
-    /// asset from `Assets<MeshletMesh>`, upload it via
-    /// [`Self::ensure_gpu_mesh`], and tear down stale entries. PR2
-    /// keeps the function on the public surface so the editor's per-
-    /// frame caller compiles unchanged; nothing is uploaded yet.
-    pub fn sync_assets_to_gpu(&mut self, _device: &wgpu::Device, _resources: &Resources) {
-        // Intentionally empty until PR3 wires AssetServer →
-        // Assets<MeshletMesh> → ensure_gpu_mesh.
+    /// Resolves every visible `MeshRenderer.mesh` GUID through the
+    /// `AssetServer`, fetches the meshlet asset from
+    /// `Assets<MeshletMesh>`, and uploads any GUID that is not yet
+    /// GPU-resident.
+    ///
+    /// Idempotent: GUIDs already present in `gpu_meshes` are skipped
+    /// without touching the AssetServer or Assets storage. Per-frame
+    /// cost when steady-state is one ECS query + N hashmap lookups.
+    ///
+    /// Failure modes (logged, never panic):
+    /// - `AssetServer` resource missing → noop, log warn.
+    /// - GUID not registered in `AssetDatabase` → log warn, skip entity.
+    /// - Loader rejects the bytes → log warn, skip entity.
+    /// - `Assets<MeshletMesh>` missing or stale handle → log warn, skip.
+    pub fn sync_assets_to_gpu(&mut self, device: &wgpu::Device, resources: &mut Resources) {
+        let referenced = self.pipeline.collect_referenced_guids(resources);
+        let pending: Vec<Guid> = referenced
+            .iter()
+            .copied()
+            .filter(|guid| !self.gpu_meshes.contains_key(guid))
+            .collect();
+        if !referenced.is_empty() {
+            tracing::debug!(
+                target: "ome_render::meshlet::sync",
+                referenced = referenced.len(),
+                pending = pending.len(),
+                cached = self.gpu_meshes.len(),
+                "meshlet asset sync tick",
+            );
+        }
+        if pending.is_empty() {
+            return;
+        }
+
+        for guid in pending {
+            // Take the AssetServer out so we can pass `resources`
+            // (which holds `Assets<MeshletMesh>`) by &mut into the
+            // load call. Re-insert before any continue/return so we
+            // never leak the resource.
+            let Some(mut server) = resources.remove::<AssetServer>() else {
+                tracing::warn!(
+                    target: "ome_render::meshlet::sync",
+                    "AssetServer resource missing; skipping meshlet asset sync",
+                );
+                return;
+            };
+            let load_result = server.load_by_guid::<MeshletMesh>(guid, resources);
+            resources.insert(server);
+
+            let handle = match load_result {
+                Ok(h) => h,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "ome_render::meshlet::sync",
+                        guid = %guid,
+                        error = %e,
+                        "failed to load meshlet asset by GUID",
+                    );
+                    continue;
+                }
+            };
+
+            let Some(assets) = resources.get::<Assets<MeshletMesh>>() else {
+                tracing::warn!(
+                    target: "ome_render::meshlet::sync",
+                    "Assets<MeshletMesh> resource missing after load; aborting sync",
+                );
+                return;
+            };
+            let Some(mesh) = assets.get(handle) else {
+                tracing::warn!(
+                    target: "ome_render::meshlet::sync",
+                    guid = %guid,
+                    "loaded handle resolved to empty Assets<MeshletMesh> entry",
+                );
+                continue;
+            };
+
+            self.ensure_gpu_mesh(device, guid, mesh);
+            tracing::info!(
+                target: "ome_render::meshlet::sync",
+                guid = %guid,
+                "uploaded meshlet asset to GPU",
+            );
+        }
     }
 
     /// Convenience wrapper that pulls the active gpu mesh from the
@@ -153,8 +230,19 @@ impl MeshletRenderStage {
     ) -> MeshletRenderStats {
         let instances = self.pipeline.collect_scene_instances(resources);
         if instances.is_empty() {
+            tracing::debug!(
+                target: "ome_render::meshlet::render",
+                pipeline_registered = self.pipeline.registered_count(),
+                gpu_meshes = self.gpu_meshes.len(),
+                "render skipped: zero instances",
+            );
             return MeshletRenderStats::default();
         }
+        tracing::debug!(
+            target: "ome_render::meshlet::render",
+            instances = instances.len(),
+            "render dispatching meshlet pipeline",
+        );
         assert!(
             (instances.len() as u32) <= self.instance_capacity,
             "MeshletRenderStage: collected {} instances exceeds capacity {}",

@@ -19,7 +19,7 @@ use ome_ecs::reflect::ReflectValue;
 
 pub(crate) use commands::{
     AddComponentCommand, DespawnCommand, RemoveComponentCommand, SetFieldCommand, SpawnCommand,
-    TransformEditCommand,
+    SpawnMeshCommand, TransformEditCommand,
 };
 
 /// A snapshot of all reflected field values for a single component on an entity.

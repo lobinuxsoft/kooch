@@ -2,8 +2,11 @@
 //
 // One thread per meshlet. Each thread reads its descriptor and runs:
 //   1. frustum: bounding sphere vs the camera's six planes.
-//   2. backface cone: dot(normalize(camera - cone_apex), cone_axis) >= cone_cutoff
-//      → the camera lies in the meshlet's back-facing half-space; cull.
+//   2. backface cone: dot(normalize(cone_apex - camera), cone_axis) >= cone_cutoff
+//      → the camera lies on the meshlet's back-facing side; cull.
+//      `cone_axis` follows meshopt's convention (points along the
+//      front-face normals). The test direction is camera→apex, matching
+//      Bevy's `view_to_meshlet` formulation.
 //   3. (cs_cull_hi_z only) Hi-Z occlusion: project the bounding sphere
 //      to screen, pick a mip whose texel covers it, and reject when
 //      the sphere's NDC depth lies past the tile's max depth (sphere
@@ -74,16 +77,25 @@ fn sphere_outside_frustum(center: vec3<f32>, radius: f32) -> bool {
 fn camera_in_cone(apex: vec3<f32>, axis: vec3<f32>, cutoff: f32) -> bool {
     // meshopt sets cone_cutoff to 1.0 when the meshlet's normals are
     // too divergent for a meaningful cone. Treat that as a no-cull
-    // sentinel — the test would otherwise reject everything in front.
+    // sentinel — the test would otherwise reject everything.
     if (cutoff >= 1.0) {
         return false;
     }
-    let to_camera = params.camera_position - apex;
-    let len_sq = dot(to_camera, to_camera);
+    // `axis` follows meshopt's convention: it points along the
+    // average front-face normal of the meshlet. Bevy/UE5-style
+    // backface test: form the camera-to-apex vector and compare its
+    // alignment with the axis. When the camera sits on the back-facing
+    // half-space, `camera_to_apex` aligns with `axis` (both point
+    // outwards from the meshlet's surface relative to the camera) and
+    // `dot >= cutoff` triggers the cull. When the camera is in front
+    // the two vectors are opposed, the dot product is negative, and
+    // the meshlet renders.
+    let to_apex = apex - params.camera_position;
+    let len_sq = dot(to_apex, to_apex);
     if (len_sq == 0.0) {
         return false;
     }
-    let view = to_camera / sqrt(len_sq);
+    let view = to_apex / sqrt(len_sq);
     return dot(view, axis) >= cutoff;
 }
 

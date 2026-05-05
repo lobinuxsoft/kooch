@@ -37,6 +37,7 @@ mod deferred;
 mod dispatcher;
 mod drawer;
 mod gpu_meshlet;
+mod loader;
 mod pool;
 mod render_stage;
 mod scene;
@@ -55,6 +56,7 @@ pub use drawer::MeshletDrawer;
 pub use gpu_meshlet::{
     binding, meshlet_bind_group, meshlet_bind_group_layout, GpuMeshletMesh,
 };
+pub use loader::MeshletMeshLoader;
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshDescriptor, MeshHandle};
 pub use render_stage::{
     MeshletRenderStage, MeshletRenderStageConfig, MeshletRenderStats,

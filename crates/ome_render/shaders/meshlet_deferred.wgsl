@@ -107,7 +107,10 @@ fn cs_shade(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel = vec2<u32>(gid.x, gid.y);
     let packed = textureLoad(vis_buffer, pixel, 0).r;
 
-    var color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    // Alpha = 0 is the background sentinel: the blit composes this
+    // texture over whatever was rendered before (sky / clear), so
+    // pixels untouched by any meshlet must not overwrite it.
+    var color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     if (packed != 0u) {
         let meshlet_id = (packed >> 7u) - 1u;
         let tri_idx = packed & 0x7Fu;
@@ -130,7 +133,11 @@ fn cs_shade(@builtin(global_invocation_id) gid: vec3<u32>) {
         // with bindless textures in a follow-up.
         let normal_debug = n * 0.5 + 0.5;
         let m = materials[screen.material_id];
-        color = vec4<f32>(normal_debug * m.base_color.rgb, m.base_color.a);
+        // Force alpha = 1 for any pixel covered by a meshlet — the
+        // alpha = 0 sentinel is reserved for the background-pass-through
+        // path the blit composes. Material's own alpha will land back
+        // here once translucency / cutout is wired up.
+        color = vec4<f32>(normal_debug * m.base_color.rgb, 1.0);
     }
 
     textureStore(color_out, vec2<i32>(i32(pixel.x), i32(pixel.y)), color);
@@ -144,7 +151,10 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel = vec2<u32>(gid.x, gid.y);
     let packed = textureLoad(vis_buffer, pixel, 0).r;
 
-    var color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    // Alpha = 0 is the background sentinel: the blit composes this
+    // texture over whatever was rendered before (sky / clear), so
+    // pixels untouched by any meshlet must not overwrite it.
+    var color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     if (packed != 0u) {
         // Decode visible-slot index (vbuf scene path packs +1 to keep
         // 0 = background). One indirection through visible_meshlets[]
@@ -167,7 +177,11 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         let normal_debug = n * 0.5 + 0.5;
         let m = materials[inst.material_id];
-        color = vec4<f32>(normal_debug * m.base_color.rgb, m.base_color.a);
+        // Force alpha = 1 for any pixel covered by a meshlet — the
+        // alpha = 0 sentinel is reserved for the background-pass-through
+        // path the blit composes. Material's own alpha will land back
+        // here once translucency / cutout is wired up.
+        color = vec4<f32>(normal_debug * m.base_color.rgb, 1.0);
     }
 
     textureStore(color_out, vec2<i32>(i32(pixel.x), i32(pixel.y)), color);

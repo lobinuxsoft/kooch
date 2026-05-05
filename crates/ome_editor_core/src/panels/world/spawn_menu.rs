@@ -95,6 +95,15 @@ pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>
             });
             ui.close();
         }
+        ui.menu_button("3D Object", |ui| {
+            if ui.button("Suzanne (demo)").clicked() {
+                actions.push(EditorAction::SpawnMesh {
+                    path: std::path::PathBuf::from("meshes/suzanne.glb"),
+                    name: "Suzanne".to_owned(),
+                });
+                ui.close();
+            }
+        });
         if ui.button("Sky").clicked() {
             actions.push(EditorAction::Spawn {
                 extra: vec![TypeId::of::<SkyRenderer>()],

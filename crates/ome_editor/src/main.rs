@@ -9,6 +9,7 @@
 use ome_core::prelude::*;
 use ome_ecs::EcsPlugin;
 use ome_editor_core::EditorPlugin;
+use ome_render::plugin::AssetPlugin;
 use ome_window::WindowPlugin;
 use ome_world::WorldStreamingPlugin;
 
@@ -86,6 +87,10 @@ fn main() {
         height: 720,
     });
     app.add_plugin(EcsPlugin);
+    // Engine assets (demo glb, default sky textures, etc.) live in the
+    // engine repo's `assets/` tree — resolved against an ABSOLUTE path
+    // because the editor's cwd shifts when the user opens a project.
+    app.add_plugin(AssetPlugin::new().with_root(engine_root().join("assets")));
     app.add_plugin(WorldStreamingPlugin);
     app.add_plugin(EditorPlugin);
     app.add_system(Stage::Startup, set_engine_root);
