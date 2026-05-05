@@ -2,9 +2,25 @@
 //! GPU-ready meshlet asset.
 //!
 //! Pipeline: bytes → [`parse_mesh_bytes`] (CPU `Mesh`) →
-//! [`build_default_meshlets`] (`meshopt` clusterisation) → [`MeshletMesh`].
-//! Asset bytes never touch disk twice — the `AssetServer` reads them
-//! once and the loader builds the meshlet representation in-process.
+//! [`build_default_meshlets`] (`meshopt` clusterisation, single-LOD)
+//! → [`MeshletMesh`]. Asset bytes never touch disk twice — the
+//! `AssetServer` reads them once and the loader builds the meshlet
+//! representation in-process.
+//!
+//! # Why single-LOD by default
+//!
+//! The continuous-LOD chain (`build_meshlets_lod_chain`) is shipped
+//! and exercised by tests, but its current DAG construction is a
+//! proximity heuristic (#442 V1): each child links to the closest
+//! parent by `bounds_center`. Adjacent children can land on different
+//! parents, so when the runtime selector descends one parent and
+//! holds another, the gap between them flickers / tears at frame
+//! boundaries. The reference Nanite algorithm groups four children at
+//! LOD N and re-simplifies the group into a single LOD N+1 parent —
+//! that guarantees coverage and is tracked in its own issue. Until it
+//! lands, the loader stays on single-LOD output (every meshlet is a
+//! DAG root, the selector treats them as "always pick", visuals match
+//! the pre-#442 baseline).
 //!
 //! Loader extensions match `GltfMeshLoader` (`glb`, `gltf`) so the
 //! same source files can serve both `Assets<Mesh>` (raw geometry,
