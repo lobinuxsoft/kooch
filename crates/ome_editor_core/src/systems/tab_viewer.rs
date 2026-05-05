@@ -50,6 +50,9 @@ pub(crate) struct EditorTabViewer<'a> {
     /// writes through here so the activation system reacts on the
     /// next tick without a duplicate state copy.
     pub(crate) streaming_config: &'a mut LodRingConfig,
+    /// Per-frame snapshot of the `AssetDatabase` consumed by the
+    /// inspector's typed asset picker.
+    pub(crate) asset_catalog: &'a [crate::panels::inspector::AssetCatalogEntry],
 }
 
 impl<'a> TabViewer for EditorTabViewer<'a> {
@@ -91,6 +94,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.actions,
                 self.rotation_euler_cache,
                 self.rotation_display_mode,
+                self.asset_catalog,
             ),
             EditorTab::Archetypes => draw_archetypes_content(ui, self.archetypes),
             EditorTab::Components => draw_components_content(ui, self.component_types),

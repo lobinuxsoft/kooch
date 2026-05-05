@@ -162,6 +162,34 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<ome_core::power::PowerProfile>()
         .copied()
         .unwrap_or_default();
+
+    // Snapshot the AssetDatabase once per frame for the inspector's
+    // typed asset picker. Empty when the database is missing — the
+    // picker dropdown will simply show "(no <Type> assets registered)".
+    // The two roots drive the `[engine]` / `[project]` source tag
+    // shown next to each entry — read from the already-extracted
+    // `project_state` local because `ProjectState` was removed from
+    // resources earlier in this function.
+    let (engine_root_owned, project_root_owned) = match project_state.as_ref() {
+        Some(ps) => (
+            ps.engine_root.as_ref().map(|p| p.join("assets")),
+            ps.active_project
+                .as_ref()
+                .map(|ap| ap.root_path.join("assets")),
+        ),
+        None => (None, None),
+    };
+    let asset_catalog = resources
+        .get::<ome_core::asset_database::AssetDatabase>()
+        .map(|db| {
+            crate::panels::inspector::AssetCatalogEntry::collect_from_database(
+                db,
+                engine_root_owned.as_deref(),
+                project_root_owned.as_deref(),
+            )
+        })
+        .unwrap_or_default();
+
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
@@ -181,6 +209,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         },
         power_profile,
         &mut streaming_config,
+        &asset_catalog,
     );
 
     if let Some(size) = viewport_request {

@@ -10,7 +10,7 @@ use crate::actions::EditorAction;
 use crate::icons;
 use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
 
-use super::widgets::{choices_for, draw_readonly_value, draw_value_widget};
+use super::widgets::{choices_for, draw_readonly_value, draw_value_widget, AssetCatalogEntry};
 
 /// A field value across multiple selected entities.
 pub(super) enum MultiFieldValue {
@@ -161,6 +161,7 @@ pub(super) fn draw_multi_entity_inspector(
     selected: &[Entity],
     reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
+    asset_catalog: &[AssetCatalogEntry],
 ) {
     ui.label(format!("{} entities selected", selected.len()));
     ui.separator();
@@ -260,6 +261,7 @@ pub(super) fn draw_multi_entity_inspector(
                             &targets,
                             is_read_only,
                             actions,
+                            asset_catalog,
                         );
                     }
                 } else {
@@ -271,6 +273,7 @@ pub(super) fn draw_multi_entity_inspector(
 }
 
 /// Renders merged fields for multi-entity editing.
+#[allow(clippy::too_many_arguments)]
 fn draw_multi_reflected_fields(
     ui: &mut egui::Ui,
     type_id: TypeId,
@@ -279,6 +282,7 @@ fn draw_multi_reflected_fields(
     targets: &[Entity],
     read_only: bool,
     actions: &mut Vec<EditorAction>,
+    asset_catalog: &[AssetCatalogEntry],
 ) {
     egui::Grid::new(format!("multi_fields_{:?}", type_id))
         .num_columns(2)
@@ -292,7 +296,7 @@ fn draw_multi_reflected_fields(
                         if read_only {
                             draw_readonly_value(ui, value, choices);
                         } else if let Some(new_value) =
-                            draw_value_widget(ui, value, name, choices)
+                            draw_value_widget(ui, value, name, choices, asset_catalog)
                         {
                             for &entity in targets {
                                 actions.push(EditorAction::SetField {
@@ -309,7 +313,7 @@ fn draw_multi_reflected_fields(
                         if read_only {
                             draw_readonly_value(ui, base, choices);
                         } else if let Some(new_value) =
-                            draw_value_widget(ui, base, name, choices)
+                            draw_value_widget(ui, base, name, choices, asset_catalog)
                         {
                             for &entity in targets {
                                 actions.push(EditorAction::SetField {

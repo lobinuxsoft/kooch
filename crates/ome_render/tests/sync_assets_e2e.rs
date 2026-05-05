@@ -154,6 +154,7 @@ fn sync_resolves_guid_to_gpu_mesh() {
         AssetEntry {
             path: asset_path.clone(),
             mtime: std::time::SystemTime::now(),
+            type_name: Some("ome_render::meshlet::MeshletMesh".to_owned()),
         },
     );
 

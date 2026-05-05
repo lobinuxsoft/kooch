@@ -28,6 +28,8 @@ use crate::state::{
     RotationDisplayMode,
 };
 
+pub(crate) use widgets::AssetCatalogEntry;
+
 /// Threshold for considering a cached Euler still in sync with the
 /// underlying quaternion. Compared against `|dot(actual, reconstructed)|`
 /// since `q` and `-q` represent the same rotation.
@@ -58,6 +60,7 @@ impl RotationContext {
 }
 
 /// Content of the "Inspector" tab — component details for selected entities.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_inspector_content(
     ui: &mut egui::Ui,
     entities: &[EntityDisplayInfo],
@@ -66,6 +69,7 @@ pub(crate) fn draw_inspector_content(
     actions: &mut Vec<EditorAction>,
     euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
     rotation_display_mode: &mut RotationDisplayMode,
+    asset_catalog: &[AssetCatalogEntry],
 ) {
     // Evict cache entries for entities that are no longer selected.
     euler_cache.retain(|(entity, _, _, _), _| selected.contains(entity));
@@ -86,6 +90,7 @@ pub(crate) fn draw_inspector_content(
             actions,
             euler_cache,
             rotation_display_mode,
+            asset_catalog,
         ),
     );
 
@@ -102,6 +107,7 @@ pub(crate) fn draw_inspector_content(
 /// Inspector body — everything below the rotation-mode toggle. Split out
 /// so it can be wrapped by a `dnd_drop_zone` without disturbing the
 /// early-return control flow the old function used.
+#[allow(clippy::too_many_arguments)]
 fn draw_inspector_body(
     ui: &mut egui::Ui,
     entities: &[EntityDisplayInfo],
@@ -110,6 +116,7 @@ fn draw_inspector_body(
     actions: &mut Vec<EditorAction>,
     euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
     rotation_display_mode: &mut RotationDisplayMode,
+    asset_catalog: &[AssetCatalogEntry],
 ) {
     if selected.is_empty() {
         ui.weak("No entity selected");
@@ -117,7 +124,14 @@ fn draw_inspector_body(
     }
 
     if selected.len() > 1 {
-        multi::draw_multi_entity_inspector(ui, entities, selected, reflected_types, actions);
+        multi::draw_multi_entity_inspector(
+            ui,
+            entities,
+            selected,
+            reflected_types,
+            actions,
+            asset_catalog,
+        );
         return;
     }
 
@@ -251,6 +265,7 @@ fn draw_inspector_body(
                             euler_cache,
                             rotation_ctx,
                             actions,
+                            asset_catalog,
                         );
                     }
                 } else {

@@ -32,6 +32,13 @@ pub struct AssetEntry {
     /// Last-modified time of the source file when registered. Used
     /// (later) by hot-reload to detect external edits.
     pub mtime: SystemTime,
+    /// Concrete asset type the loader produced (e.g.
+    /// `"ome_render::meshlet::MeshletMesh"`). Mirrors
+    /// `AssetMeta::asset_type` from the sidecar. `None` means the
+    /// scanner saw the sidecar but no `AssetServer::load::<T>` has
+    /// run for the path yet — once it does, the field is filled in
+    /// and stays put.
+    pub type_name: Option<String>,
 }
 
 /// Errors produced while scanning or registering with the database.
@@ -129,17 +136,73 @@ impl AssetDatabase {
         self.by_guid.is_empty()
     }
 
-    /// Registers `(guid, path)` with the database. Idempotent — the
-    /// same call repeated is a no-op. Returns `true` if a new entry
-    /// was actually added.
+    /// Iterates `(path, guid)` pairs across every registered asset.
+    /// Used by editor-side snapshot collectors that need to walk the
+    /// whole database once per frame.
+    pub fn path_iter(&self) -> impl Iterator<Item = (&Path, Guid)> + '_ {
+        self.by_path.iter().map(|(p, g)| (p.as_path(), *g))
+    }
+
+    /// Iterates `(Guid, &AssetEntry)` pairs whose `type_name` matches
+    /// `name`. Used by the inspector's asset picker to populate the
+    /// dropdown for a typed `AssetRef` field. Order is unspecified —
+    /// callers that need a stable presentation should collect + sort.
+    pub fn entries_of_type<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> impl Iterator<Item = (Guid, &'a AssetEntry)> + 'a {
+        self.by_guid
+            .iter()
+            .filter(move |(_, entry)| entry.type_name.as_deref() == Some(name))
+            .map(|(guid, entry)| (*guid, entry))
+    }
+
+    /// Sets `type_name` on an existing entry. Returns `true` if the
+    /// entry was found and the type was updated (or already matched);
+    /// `false` if the GUID is unknown. Idempotent: writing the same
+    /// type twice is a no-op.
+    pub fn set_type_name(&mut self, guid: Guid, type_name: &str) -> bool {
+        let Some(entry) = self.by_guid.get_mut(&guid) else {
+            return false;
+        };
+        match entry.type_name.as_deref() {
+            Some(existing) if existing == type_name => true,
+            _ => {
+                entry.type_name = Some(type_name.to_owned());
+                true
+            }
+        }
+    }
+
+    /// Registers `(guid, path)` with the database. Idempotent on the
+    /// path↔GUID mapping; returns `true` if a brand-new entry was
+    /// added.
     ///
     /// If `path` was previously registered under a *different* GUID
     /// (e.g. its `.meta` was rewritten), the previous binding is
     /// replaced and the old GUID's entry is removed; this keeps the
     /// bidirectional map consistent.
+    ///
+    /// When the path↔GUID pair already exists, the stored entry's
+    /// **`type_name` and `mtime` are upgraded if the incoming entry
+    /// carries fresher data**:
+    /// - `type_name`: prefer `Some` over `None` (initial scans see
+    ///   sidecars before any `load::<T>` and leave the type unknown;
+    ///   the first typed load fills it in — we must not lose that).
+    /// - `mtime`: take the newer timestamp.
+    /// The `path` itself is immutable for an existing entry and is
+    /// not overwritten.
     pub fn register(&mut self, guid: Guid, entry: AssetEntry) -> bool {
         if let Some(existing_guid) = self.by_path.get(&entry.path).copied() {
             if existing_guid == guid {
+                if let Some(existing) = self.by_guid.get_mut(&guid) {
+                    if existing.type_name.is_none() && entry.type_name.is_some() {
+                        existing.type_name = entry.type_name;
+                    }
+                    if entry.mtime > existing.mtime {
+                        existing.mtime = entry.mtime;
+                    }
+                }
                 return false;
             }
             // Path's GUID changed (manual .meta edit). Replace.
@@ -198,6 +261,7 @@ fn scan_recursive(
         let asset_entry = AssetEntry {
             path: path.clone(),
             mtime,
+            type_name: meta.asset_type.clone(),
         };
 
         if let Some(prev) = db.by_guid.get(&meta.guid)
@@ -331,6 +395,146 @@ mod tests {
     }
 
     #[test]
+    fn entries_of_type_filters_correctly() {
+        let mut db = AssetDatabase::new();
+        let g_mesh = Guid::new_v4();
+        let g_image = Guid::new_v4();
+        let g_other = Guid::new_v4();
+        db.register(
+            g_mesh,
+            AssetEntry {
+                path: PathBuf::from("a.glb"),
+                mtime: SystemTime::UNIX_EPOCH,
+                type_name: Some("ome_render::meshlet::MeshletMesh".to_owned()),
+            },
+        );
+        db.register(
+            g_image,
+            AssetEntry {
+                path: PathBuf::from("a.png"),
+                mtime: SystemTime::UNIX_EPOCH,
+                type_name: Some("ome_render::texture::Image".to_owned()),
+            },
+        );
+        db.register(
+            g_other,
+            AssetEntry {
+                path: PathBuf::from("untyped.glb"),
+                mtime: SystemTime::UNIX_EPOCH,
+                type_name: None,
+            },
+        );
+
+        let meshes: Vec<_> = db
+            .entries_of_type("ome_render::meshlet::MeshletMesh")
+            .collect();
+        assert_eq!(meshes.len(), 1);
+        assert_eq!(meshes[0].0, g_mesh);
+
+        let images: Vec<_> = db.entries_of_type("ome_render::texture::Image").collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].0, g_image);
+
+        let unknown: Vec<_> = db.entries_of_type("does::not::Exist").collect();
+        assert!(unknown.is_empty());
+
+        // Untyped entries do not match any type name — they show up
+        // only when the picker explicitly looks for "" or via a
+        // different surface that surfaces them.
+        let none_filter: Vec<_> = db.entries_of_type("").collect();
+        assert!(none_filter.is_empty());
+    }
+
+    #[test]
+    fn re_register_upgrades_type_name_from_none_to_some() {
+        // Mirrors the real flow: scan_directory registers an asset
+        // with `type_name = None` because the sidecar predates the
+        // field. Later, `AssetServer::load::<MeshletMesh>` re-
+        // registers the same `(path, guid)` pair with the freshly
+        // back-filled type. The entry must end up typed.
+        let mut db = AssetDatabase::new();
+        let g = Guid::new_v4();
+        let path = PathBuf::from("foo.glb");
+        db.register(
+            g,
+            AssetEntry {
+                path: path.clone(),
+                mtime: SystemTime::UNIX_EPOCH,
+                type_name: None,
+            },
+        );
+        // Idempotent re-register with the same guid + path BUT a
+        // populated type_name.
+        let added = db.register(
+            g,
+            AssetEntry {
+                path: path.clone(),
+                mtime: SystemTime::UNIX_EPOCH,
+                type_name: Some("ome_render::meshlet::MeshletMesh".to_owned()),
+            },
+        );
+        assert!(!added, "second register is not a brand-new entry");
+        assert_eq!(
+            db.entry(g).unwrap().type_name.as_deref(),
+            Some("ome_render::meshlet::MeshletMesh"),
+            "type_name must upgrade from None to Some on re-register",
+        );
+    }
+
+    #[test]
+    fn re_register_does_not_clobber_existing_type_name() {
+        // Defensive: once a type is recorded, an idempotent re-
+        // register that arrives without a type must NOT erase it.
+        let mut db = AssetDatabase::new();
+        let g = Guid::new_v4();
+        let path = PathBuf::from("foo.glb");
+        db.register(
+            g,
+            AssetEntry {
+                path: path.clone(),
+                mtime: SystemTime::UNIX_EPOCH,
+                type_name: Some("KnownType".to_owned()),
+            },
+        );
+        db.register(
+            g,
+            AssetEntry {
+                path: path.clone(),
+                mtime: SystemTime::UNIX_EPOCH,
+                type_name: None,
+            },
+        );
+        assert_eq!(
+            db.entry(g).unwrap().type_name.as_deref(),
+            Some("KnownType"),
+            "untyped re-register must not erase a known type",
+        );
+    }
+
+    #[test]
+    fn set_type_name_updates_existing_entry() {
+        let mut db = AssetDatabase::new();
+        let g = Guid::new_v4();
+        db.register(
+            g,
+            AssetEntry {
+                path: PathBuf::from("x.glb"),
+                mtime: SystemTime::UNIX_EPOCH,
+                type_name: None,
+            },
+        );
+        assert!(db.set_type_name(g, "ome_render::meshlet::MeshletMesh"));
+        assert_eq!(
+            db.entry(g).unwrap().type_name.as_deref(),
+            Some("ome_render::meshlet::MeshletMesh"),
+        );
+        // Idempotent re-write returns true and does not allocate.
+        assert!(db.set_type_name(g, "ome_render::meshlet::MeshletMesh"));
+        // Unknown GUID returns false without registering anything new.
+        assert!(!db.set_type_name(Guid::new_v4(), "Whatever"));
+    }
+
+    #[test]
     fn register_replaces_when_path_guid_changes() {
         let mut db = AssetDatabase::new();
         let path = PathBuf::from("foo.glb");
@@ -341,6 +545,7 @@ mod tests {
             AssetEntry {
                 path: path.clone(),
                 mtime: SystemTime::UNIX_EPOCH,
+                type_name: None,
             },
         );
         db.register(
@@ -348,6 +553,7 @@ mod tests {
             AssetEntry {
                 path: path.clone(),
                 mtime: SystemTime::UNIX_EPOCH,
+                type_name: None,
             },
         );
         assert_eq!(db.len(), 1);

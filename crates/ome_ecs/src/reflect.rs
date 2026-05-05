@@ -16,6 +16,8 @@
 
 use std::fmt;
 
+use ome_core::Guid;
+
 /// Metadata describing a single field of a reflected component.
 #[derive(Debug, Clone, Copy)]
 pub struct FieldMeta {
@@ -29,6 +31,11 @@ pub struct FieldMeta {
     /// the editor inspector renders the field as a dropdown instead of
     /// a free-form numeric input. Ignored for non-integer `kind`s.
     pub choices: &'static [FieldChoice],
+    /// For [`FieldKind::AssetRef`] fields, the static asset type the
+    /// field expects (e.g. `"ome_render::meshlet::MeshletMesh"`). The
+    /// inspector passes this to `AssetDatabase::entries_of_type` to
+    /// build the picker dropdown. `""` for non-asset fields.
+    pub asset_type: &'static str,
 }
 
 /// A labelled value in a [`FieldMeta::choices`] set.
@@ -64,6 +71,10 @@ pub enum FieldKind {
     Vec4,
     Quat,
     Mat4,
+    /// Reference to an asset, addressed by [`Guid`]. The inspector
+    /// renders this as a typed dropdown picker (filtered by
+    /// [`FieldMeta::asset_type`]) rather than a free-form text field.
+    AssetRef,
     /// Struct that also implements [`Reflect`].
     Nested,
 }
@@ -100,6 +111,15 @@ pub enum ReflectValue {
     Vec4(glam::Vec4),
     Quat(glam::Quat),
     Mat4(glam::Mat4),
+    /// Typed asset reference. `guid` is `None` when the field is
+    /// unassigned. `asset_type` is the static type name the field
+    /// expects (e.g. `"ome_render::meshlet::MeshletMesh"`); the
+    /// inspector uses it to filter `AssetDatabase::entries_of_type`
+    /// when populating the picker.
+    AssetRef {
+        guid: Option<Guid>,
+        asset_type: String,
+    },
 }
 
 impl ReflectValue {
@@ -123,6 +143,7 @@ impl ReflectValue {
             Self::Vec4(_) => FieldKind::Vec4,
             Self::Quat(_) => FieldKind::Quat,
             Self::Mat4(_) => FieldKind::Mat4,
+            Self::AssetRef { .. } => FieldKind::AssetRef,
         }
     }
 }
@@ -147,6 +168,10 @@ impl fmt::Display for ReflectValue {
             Self::Vec4(v) => write!(f, "({}, {}, {}, {})", v.x, v.y, v.z, v.w),
             Self::Quat(v) => write!(f, "({}, {}, {}, {})", v.x, v.y, v.z, v.w),
             Self::Mat4(_) => write!(f, "[Mat4]"),
+            Self::AssetRef { guid, asset_type } => match guid {
+                Some(g) => write!(f, "{asset_type}({g})"),
+                None => write!(f, "{asset_type}(none)"),
+            },
         }
     }
 }
@@ -453,12 +478,14 @@ mod tests {
                     type_name: "u32",
                     kind: FieldKind::U32,
                     choices: &[],
+                    asset_type: "",
                 },
                 FieldMeta {
                     name: "max_hp",
                     type_name: "u32",
                     kind: FieldKind::U32,
                     choices: &[],
+                    asset_type: "",
                 },
             ];
             FIELDS
@@ -529,18 +556,21 @@ mod tests {
                     type_name: "f32",
                     kind: FieldKind::F32,
                     choices: &[],
+                    asset_type: "",
                 },
                 FieldMeta {
                     name: "y",
                     type_name: "f32",
                     kind: FieldKind::F32,
                     choices: &[],
+                    asset_type: "",
                 },
                 FieldMeta {
                     name: "z",
                     type_name: "f32",
                     kind: FieldKind::F32,
                     choices: &[],
+                    asset_type: "",
                 },
             ];
             FIELDS
