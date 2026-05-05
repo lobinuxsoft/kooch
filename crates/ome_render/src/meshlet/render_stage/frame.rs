@@ -367,6 +367,7 @@ impl MeshletRenderStage {
         MeshletRenderStats {
             instances_uploaded: instances.len() as u32,
             cull_threads: scene_params.instance_count * scene_params.meshlets_per_mesh,
+            cam_pos: cam_pos.to_array(),
         }
     }
 }

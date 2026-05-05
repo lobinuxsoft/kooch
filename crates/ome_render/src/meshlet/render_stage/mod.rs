@@ -94,6 +94,13 @@ pub struct MeshletRenderStats {
     /// the cull dispatch saw — equals the upper bound on surviving
     /// meshlets before any cull rejection.
     pub cull_threads: u32,
+    /// World-space camera position the cull / LOD selector saw this
+    /// frame. Surfaced in the View toolbar so the artist can confirm
+    /// the selector is actually following the active camera (the LOD
+    /// boundary rule is distance-driven; if this stays static while
+    /// the editor camera moves, the selector is reading the wrong
+    /// view matrix).
+    pub cam_pos: [f32; 3],
 }
 
 /// End-to-end meshlet render stage. See module docs for the per-frame

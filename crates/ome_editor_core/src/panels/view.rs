@@ -179,21 +179,27 @@ pub(crate) fn draw_view_content(
             // Stats overlay — only when a debug mode is active so the
             // toolbar stays minimal during normal editing. Per-stage
             // cull survivors (frustum / backface / hi-z) ship in #451b
-            // alongside the reject-reason tagging buffer.
+            // alongside the reject-reason tagging buffer. cam_pos is
+            // surfaced so the artist can verify the LOD selector is
+            // actually following the active camera while moving in
+            // the viewport.
             if *meshlet_debug_mode != MeshletDebugMode::Off {
                 ui.separator();
+                let [cx, cy, cz] = meshlet_stats.cam_pos;
                 ui.label(
                     egui::RichText::new(format!(
-                        "instances {} · dispatched {}",
+                        "instances {} · dispatched {} · cam ({:.1}, {:.1}, {:.1})",
                         meshlet_stats.instances_uploaded,
                         meshlet_stats.cull_threads,
+                        cx, cy, cz,
                     ))
                     .monospace()
                     .small(),
                 )
                 .on_hover_text(
-                    "Meshlet pipeline counters (previous frame). \
-                     Per-stage cull survivors land in #451b.",
+                    "Meshlet pipeline counters (previous frame). cam shows \
+                     the world-space position the LOD selector saw — should \
+                     follow the active editor camera.",
                 );
             }
         });
