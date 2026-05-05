@@ -7,7 +7,9 @@ use ome_core::power::{self, PowerProfile};
 use ome_core::raw_event::RawEventHandler;
 use ome_core::resource::Resources;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
-use ome_render::meshlet::{MeshletBlit, MeshletRenderStage, MeshletRenderStageConfig};
+use ome_render::meshlet::{
+    MeshletBlit, MeshletDebugMode, MeshletRenderStage, MeshletRenderStageConfig,
+};
 use ome_render::SkyRenderPass;
 use ome_world::{ChunkManager, ProceduralCitySource};
 
@@ -111,6 +113,10 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     resources.insert(viewport);
     resources.insert(meshlet_stage);
     resources.insert(meshlet_blit);
+    // Debug-view selector for the meshlet pipeline (#451). Default
+    // Off keeps the production normal-debug path; the View toolbar
+    // dropdown writes through this resource per-frame.
+    resources.insert(MeshletDebugMode::default());
     resources.insert(power_profile);
 
     tracing::info!("Editor overlay initialized");

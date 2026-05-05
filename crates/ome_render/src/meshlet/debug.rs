@@ -44,6 +44,28 @@ impl MeshletDebugMode {
     pub const fn as_u32(self) -> u32 {
         self as u32
     }
+
+    /// Modes whose shader implementation is wired and visually
+    /// validated. The editor's debug-view dropdown iterates this so
+    /// users never select a mode that silently falls back to `Off`.
+    /// Extend as new modes ship per-commit.
+    pub fn all_implemented() -> &'static [Self] {
+        &[Self::Off, Self::MeshletIds, Self::InstanceIds]
+    }
+
+    /// Human-readable label for the editor dropdown / tooltips.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::MeshletIds => "Meshlet IDs",
+            Self::InstanceIds => "Instance IDs",
+            Self::TriangleDensity => "Triangle Density",
+            Self::Overdraw => "Overdraw",
+            Self::HiZRejected => "Hi-Z Rejected",
+            Self::BackfaceRejected => "Backface Rejected",
+            Self::CullPassthrough => "Cull Passthrough",
+        }
+    }
 }
 
 #[cfg(test)]

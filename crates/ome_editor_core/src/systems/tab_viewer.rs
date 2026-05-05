@@ -6,6 +6,7 @@ use egui_dock::TabViewer;
 use glam::Vec3;
 
 use ome_ecs::entity::Entity;
+use ome_render::meshlet::MeshletDebugMode;
 use ome_world::lod::LodRingConfig;
 
 use ome_gizmos_handles::{HandleMode, SnapSettings};
@@ -53,6 +54,9 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Per-frame snapshot of the `AssetDatabase` consumed by the
     /// inspector's typed asset picker.
     pub(crate) asset_catalog: &'a [crate::panels::inspector::AssetCatalogEntry],
+    /// Selector for the meshlet pipeline's debug visualization
+    /// (#451). Mutated by the View toolbar dropdown.
+    pub(crate) meshlet_debug_mode: &'a mut MeshletDebugMode,
 }
 
 impl<'a> TabViewer for EditorTabViewer<'a> {
@@ -85,6 +89,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.rotation_display_mode,
                 self.snap_settings,
                 self.selection_has_transform,
+                self.meshlet_debug_mode,
             ),
             EditorTab::Inspector => draw_inspector_content(
                 ui,

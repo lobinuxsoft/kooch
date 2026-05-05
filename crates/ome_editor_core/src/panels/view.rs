@@ -14,6 +14,7 @@
 //! extra wiring.
 
 use ome_gizmos_handles::{HandleMode, SnapSettings};
+use ome_render::meshlet::MeshletDebugMode;
 
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
@@ -36,6 +37,7 @@ pub(crate) fn draw_view_content(
     rotation_mode: &mut RotationDisplayMode,
     snap_settings: &mut SnapSettings,
     selection_has_transform: bool,
+    meshlet_debug_mode: &mut MeshletDebugMode,
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -61,21 +63,12 @@ pub(crate) fn draw_view_content(
     );
     let mut delta = collect_viewport_input(&response, ui, controller);
 
-    // The whole toolbar only operates on Transforms — gizmo modes,
-    // Local/World, all of it. Hide it entirely when no selected entity
-    // carries one.
-    if !selection_has_transform {
-        *input = Some(delta);
-        return;
-    }
-
-    // Horizontal toolbar at the top edge of the viewport. Three
-    // sections separated by vertical bars: gizmo mode, basis mode,
-    // snap steps. Width is set generous so egui auto-shrinks the
-    // frame to fit content; height holds one button row.
+    // Horizontal toolbar at the top edge of the viewport. Sections
+    // separated by vertical bars: (transform-only) gizmo mode + basis
+    // + snap steps, then the always-on debug-view selector.
     let toolbar_rect = egui::Rect::from_min_size(
         panel_origin + TOOLBAR_OFFSET,
-        egui::vec2(420.0, TOOLBAR_BUTTON_SIZE + TOOLBAR_PADDING * 2.0),
+        egui::vec2(560.0, TOOLBAR_BUTTON_SIZE + TOOLBAR_PADDING * 2.0),
     );
     let mut toolbar_ui = ui.new_child(
         egui::UiBuilder::new()
@@ -90,73 +83,97 @@ pub(crate) fn draw_view_content(
         .show(&mut toolbar_ui, |ui| {
             ui.spacing_mut().item_spacing.x = TOOLBAR_PADDING * 0.5;
 
-            if mode_button(
-                ui,
-                icons::ARROWS_OUT_CARDINAL,
-                "Move (W)",
-                current_mode == HandleMode::Translate,
-            ) {
-                delta.mode_request = Some(HandleModeRequest::Translate);
-            }
-            if mode_button(
-                ui,
-                icons::ARROWS_CLOCKWISE,
-                "Rotate (E)",
-                current_mode == HandleMode::Rotate,
-            ) {
-                delta.mode_request = Some(HandleModeRequest::Rotate);
-            }
-            if mode_button(
-                ui,
-                icons::ARROWS_OUT_SIMPLE,
-                "Scale (R)",
-                current_mode == HandleMode::Scale,
-            ) {
-                delta.mode_request = Some(HandleModeRequest::Scale);
+            // Gizmo + basis + snap clusters only operate on Transforms;
+            // hide them when no selected entity carries one. The debug
+            // selector below always renders so the user can flip viz
+            // modes without an entity selected.
+            if selection_has_transform {
+                if mode_button(
+                    ui,
+                    icons::ARROWS_OUT_CARDINAL,
+                    "Move (W)",
+                    current_mode == HandleMode::Translate,
+                ) {
+                    delta.mode_request = Some(HandleModeRequest::Translate);
+                }
+                if mode_button(
+                    ui,
+                    icons::ARROWS_CLOCKWISE,
+                    "Rotate (E)",
+                    current_mode == HandleMode::Rotate,
+                ) {
+                    delta.mode_request = Some(HandleModeRequest::Rotate);
+                }
+                if mode_button(
+                    ui,
+                    icons::ARROWS_OUT_SIMPLE,
+                    "Scale (R)",
+                    current_mode == HandleMode::Scale,
+                ) {
+                    delta.mode_request = Some(HandleModeRequest::Scale);
+                }
+
+                ui.separator();
+
+                if mode_button(
+                    ui,
+                    icons::MAP_PIN_SIMPLE_AREA,
+                    "Local — handles follow entity rotation",
+                    *rotation_mode == RotationDisplayMode::Local,
+                ) {
+                    *rotation_mode = RotationDisplayMode::Local;
+                }
+                if mode_button(
+                    ui,
+                    icons::GLOBE_SIMPLE,
+                    "World — handles aligned to world axes",
+                    *rotation_mode == RotationDisplayMode::World,
+                ) {
+                    *rotation_mode = RotationDisplayMode::World;
+                }
+
+                ui.separator();
+
+                // Snap step values. Reuse the move / rotate glyphs as
+                // prefixes so users associate each spinner with the
+                // matching gizmo mode without spending toolbar width on
+                // text labels.
+                ui.add(
+                    egui::DragValue::new(&mut snap_settings.translate)
+                        .speed(0.01)
+                        .range(0.001..=10.0)
+                        .max_decimals(3)
+                        .prefix(format!("{} ", icons::ARROWS_OUT_CARDINAL)),
+                )
+                .on_hover_text("Translate snap step (world units, hold Ctrl while dragging)");
+
+                ui.add(
+                    egui::DragValue::new(&mut snap_settings.rotate_deg)
+                        .speed(0.1)
+                        .range(0.1..=180.0)
+                        .suffix("°")
+                        .max_decimals(1)
+                        .prefix(format!("{} ", icons::ARROWS_CLOCKWISE)),
+                )
+                .on_hover_text("Rotate snap step (degrees, hold Ctrl while dragging)");
+
+                ui.separator();
             }
 
-            ui.separator();
-
-            if mode_button(
-                ui,
-                icons::MAP_PIN_SIMPLE_AREA,
-                "Local — handles follow entity rotation",
-                *rotation_mode == RotationDisplayMode::Local,
-            ) {
-                *rotation_mode = RotationDisplayMode::Local;
-            }
-            if mode_button(
-                ui,
-                icons::GLOBE_SIMPLE,
-                "World — handles aligned to world axes",
-                *rotation_mode == RotationDisplayMode::World,
-            ) {
-                *rotation_mode = RotationDisplayMode::World;
-            }
-
-            ui.separator();
-
-            // Snap step values. Reuse the move / rotate glyphs as
-            // prefixes so users associate each spinner with the matching
-            // gizmo mode without spending toolbar width on text labels.
-            ui.add(
-                egui::DragValue::new(&mut snap_settings.translate)
-                    .speed(0.01)
-                    .range(0.001..=10.0)
-                    .max_decimals(3)
-                    .prefix(format!("{} ", icons::ARROWS_OUT_CARDINAL)),
-            )
-            .on_hover_text("Translate snap step (world units, hold Ctrl while dragging)");
-
-            ui.add(
-                egui::DragValue::new(&mut snap_settings.rotate_deg)
-                    .speed(0.1)
-                    .range(0.1..=180.0)
-                    .suffix("°")
-                    .max_decimals(1)
-                    .prefix(format!("{} ", icons::ARROWS_CLOCKWISE)),
-            )
-            .on_hover_text("Rotate snap step (degrees, hold Ctrl while dragging)");
+            // Debug-view dropdown (#451). Iterates the modes that have
+            // shipped shader behaviour so the user never lands on a
+            // silent no-op.
+            egui::ComboBox::from_id_salt("meshlet_debug_view")
+                .selected_text(format!("Debug: {}", meshlet_debug_mode.label()))
+                .show_ui(ui, |ui| {
+                    for &mode in MeshletDebugMode::all_implemented() {
+                        ui.selectable_value(meshlet_debug_mode, mode, mode.label());
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Meshlet pipeline visualization mode. Off = production shading.",
+                );
         });
 
     *input = Some(delta);

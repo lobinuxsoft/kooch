@@ -3,6 +3,7 @@
 
 use egui_dock::DockArea;
 
+use ome_render::meshlet::MeshletDebugMode;
 use ome_world::lod::LodRingConfig;
 
 use crate::actions::EditorAction;
@@ -57,6 +58,7 @@ pub(super) fn run_editor_ui(
     power_profile: ome_core::power::PowerProfile,
     streaming_config: &mut LodRingConfig,
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
+    meshlet_debug_mode: &mut MeshletDebugMode,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut last_clicked_index = overlay.last_clicked_index.take();
@@ -109,6 +111,7 @@ pub(super) fn run_editor_ui(
                 selection_has_transform,
                 streaming_config,
                 asset_catalog,
+                meshlet_debug_mode,
             };
 
             DockArea::new(&mut overlay.dock_state)

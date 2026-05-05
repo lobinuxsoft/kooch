@@ -8,7 +8,7 @@ use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
-use ome_render::meshlet::{MeshletBlit, MeshletRenderStage};
+use ome_render::meshlet::{MeshletBlit, MeshletDebugMode, MeshletRenderStage};
 use ome_render::SkyRenderPass;
 
 use crate::actions::{apply_actions, EditorAction};
@@ -134,6 +134,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut streaming_config = resources
         .remove::<ome_world::lod::LodRingConfig>()
         .unwrap_or_default();
+    // Debug-mode resource is owned by the UI thread for the egui pass
+    // so the View dropdown can mutate it directly. Re-inserted before
+    // the meshlet stage runs so render_with_assets sees the new value.
+    let mut meshlet_debug_mode = resources.remove::<MeshletDebugMode>().unwrap_or_default();
 
     // Apply the previous frame's size request before the UI runs so the
     // texture id stays stable through the entire egui pass.
@@ -210,7 +214,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         power_profile,
         &mut streaming_config,
         &asset_catalog,
+        &mut meshlet_debug_mode,
     );
+
+    // Hand the (possibly toggled) debug mode back to the resource map
+    // before the viewport render pass picks it up.
+    resources.insert(meshlet_debug_mode);
 
     if let Some(size) = viewport_request {
         viewport.request_size(size);
