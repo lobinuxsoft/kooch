@@ -36,6 +36,14 @@ use glam::{Mat4, Vec3, Vec4};
 ///   backface cone test. The shader rejects a meshlet when
 ///   `dot(normalize(camera - cone_apex), cone_axis) >= cone_cutoff`
 ///   (the camera lies in the meshlet's back-facing half-space).
+/// - `lod_target_error_pixels`: continuous-LOD threshold (#442). The
+///   selector picks the meshlet whose `lod_error` projects to
+///   `≤ this many pixels` AND whose parent projects to `> this many
+///   pixels`. Default 1.0.
+/// - `lod_error_to_pixel_factor`: precomputed
+///   `0.5 * viewport_height_px * proj_scale_y` so the shader recovers
+///   pixel error as `lod_error / distance * factor`. Avoids passing
+///   the full projection matrix or the viewport size separately.
 ///
 /// Layout is 128 bytes — multiple of 16 to keep std140-friendly
 /// alignment for the host-side `bytemuck::cast_slice` upload.
@@ -45,23 +53,45 @@ pub struct CullParams {
     pub planes: [[f32; 4]; 6],
     pub camera_position: [f32; 3],
     pub meshlet_count: u32,
-    pub _pad0: u32,
-    pub _pad1: u32,
+    pub lod_target_error_pixels: f32,
+    pub lod_error_to_pixel_factor: f32,
     pub _pad2: u32,
     pub _pad3: u32,
 }
 
 impl CullParams {
+    /// Builds with LOD selection effectively disabled — the pixel
+    /// factor is `0`, so every meshlet's projected error is `0`,
+    /// which (combined with the test `my_err <= threshold && parent_err > threshold`)
+    /// makes only root-level meshlets pass. Legacy single-LOD assets
+    /// have every meshlet at root, so behaviour stays identical.
+    /// Multi-LOD assets need [`Self::with_lod`].
     pub fn new(view_projection: Mat4, camera_position: Vec3, meshlet_count: u32) -> Self {
         Self {
             planes: extract_frustum_planes(view_projection),
             camera_position: camera_position.to_array(),
             meshlet_count,
-            _pad0: 0,
-            _pad1: 0,
+            lod_target_error_pixels: 1.0,
+            lod_error_to_pixel_factor: 0.0,
             _pad2: 0,
             _pad3: 0,
         }
+    }
+
+    /// Configures the continuous-LOD selector with a non-zero
+    /// projection factor. `proj_scale_y` is `1 / tan(fovy/2)` — for a
+    /// `Mat4` produced by [`glam::Mat4::perspective_rh`] you can read
+    /// it directly from `proj.y_axis.y`. `viewport_height_pixels` is
+    /// the destination framebuffer height in physical pixels.
+    pub fn with_lod(
+        mut self,
+        viewport_height_pixels: f32,
+        proj_scale_y: f32,
+        lod_target_error_pixels: f32,
+    ) -> Self {
+        self.lod_target_error_pixels = lod_target_error_pixels;
+        self.lod_error_to_pixel_factor = 0.5 * viewport_height_pixels * proj_scale_y;
+        self
     }
 }
 

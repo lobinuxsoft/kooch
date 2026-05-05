@@ -25,8 +25,18 @@ struct CullParams {
     planes: array<vec4<f32>, 6>,
     camera_position: vec3<f32>,
     meshlet_count: u32,
-    _pad0: u32,
-    _pad1: u32,
+    // Continuous-LOD selector (#442). A meshlet survives selection when
+    //   my_pixel_error <= lod_target_error_pixels &&
+    //   parent_pixel_error > lod_target_error_pixels
+    // Roots (parent == 0xFFFFFFFFu) always pass.
+    lod_target_error_pixels: f32,
+    // Precomputed `0.5 * viewport_height_px * proj_scale_y` so each
+    // shader thread recovers the pixel error as
+    // `lod_error / distance * factor`. Set to 0 to disable the
+    // selector — every root meshlet then passes (legacy single-LOD
+    // behaviour) and non-roots are rejected because their parent's
+    // pixel error collapses to 0 ≤ threshold.
+    lod_error_to_pixel_factor: f32,
     _pad2: u32,
     _pad3: u32,
 }
@@ -237,6 +247,16 @@ struct SceneCullParams {
 @group(2) @binding(0) var<storage, read> instances: array<MeshInstance>;
 @group(2) @binding(1) var<uniform> scene_params: SceneCullParams;
 
+// Projects a meshlet's world-space LOD error to pixels at the camera.
+// Standard perspective formula: `error * scale_y * viewport_h / (2 * dist)`,
+// where `scale_y = 1 / tan(fovy/2)`. The CPU side rolls
+// `0.5 * viewport_h * scale_y` into `lod_error_to_pixel_factor`.
+fn lod_pixel_error(lod_error: f32, world_center: vec3<f32>) -> f32 {
+    let to_cam = world_center - params.camera_position;
+    let dist = max(length(to_cam), 0.0001);
+    return lod_error * params.lod_error_to_pixel_factor / dist;
+}
+
 fn run_cull_scene(thread_id: u32) {
     let total_threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
     if (thread_id >= total_threads) {
@@ -255,6 +275,27 @@ fn run_cull_scene(thread_id: u32) {
 
     let inst = instances[instance_id];
     let desc = descriptors[meshlet_idx];
+
+    // Continuous-LOD selection (#442). For each meshlet:
+    //   - Roots (parent == 0xFFFFFFFFu) always pass — there is no
+    //     coarser option to descend from. Single-LOD assets land here
+    //     for every meshlet, preserving the legacy behaviour.
+    //   - Non-roots pass only when their own pixel error is at or below
+    //     the target AND their parent's pixel error is above the
+    //     target. That is the cluster-DAG "boundary" rule: pick the
+    //     finest level whose parent is too coarse.
+    if (desc.parent_meshlet_index != 0xFFFFFFFFu) {
+        let parent = descriptors[desc.parent_meshlet_index];
+        let world_center_self = (inst.transform * vec4<f32>(desc.bounds_center, 1.0)).xyz;
+        let world_center_parent = (inst.transform * vec4<f32>(parent.bounds_center, 1.0)).xyz;
+        let my_err_px = lod_pixel_error(desc.lod_error, world_center_self);
+        let parent_err_px = lod_pixel_error(parent.lod_error, world_center_parent);
+        if (!(my_err_px <= params.lod_target_error_pixels
+            && parent_err_px > params.lod_target_error_pixels))
+        {
+            return;
+        }
+    }
 
     // Transform per-meshlet bounds to world space via the instance's
     // transform. Uniform-scale assumption keeps `bounding_radius`
