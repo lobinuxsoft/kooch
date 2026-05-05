@@ -40,6 +40,7 @@ impl MeshletCull {
         // rasterizer + deferred where storage-buffer headroom is
         // larger and vertex/triangle buffers are needed.
         let pool_bgl = build_cull_pool_bgl(device);
+        let group_err_bgl = build_group_err_bgl(device);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("meshlet_cull_pipeline_layout"),
@@ -107,6 +108,41 @@ impl MeshletCull {
                 cache: None,
             });
 
+        // 2-pass cull (#465). Both entries share the same pipeline
+        // layout: cull group(0), pool group(1), scene group(2),
+        // group_err group(3). Pass 1 atomicMaxes pixel error per
+        // group_index; pass 2 reads the same buffer to drive
+        // group-atomic descent decisions.
+        let pipeline_layout_atomic =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("meshlet_cull_scene_pool_atomic_pipeline_layout"),
+                bind_group_layouts: &[
+                    Some(&cull_bgl),
+                    Some(&pool_bgl),
+                    Some(&scene_bgl),
+                    Some(&group_err_bgl),
+                ],
+                immediate_size: 0,
+            });
+        let pipeline_lod_compute_group_max_err =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("meshlet_lod_compute_group_max_err_pipeline"),
+                layout: Some(&pipeline_layout_atomic),
+                module: &shader,
+                entry_point: Some("cs_lod_compute_group_max_err"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let pipeline_cull_scene_pool_atomic =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("meshlet_cull_scene_pool_atomic_pipeline"),
+                layout: Some(&pipeline_layout_atomic),
+                module: &shader,
+                entry_point: Some("cs_cull_scene_pool_atomic"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_cull_params"),
             size: std::mem::size_of::<CullParams>() as u64,
@@ -143,6 +179,18 @@ impl MeshletCull {
             mapped_at_creation: false,
         });
 
+        // Initial group_max_err buffer. Sized to a small power of
+        // two; the dispatcher grows it geometrically when a scene's
+        // group_capacity exceeds this. Storage + COPY_DST so we can
+        // clear it each frame before pass 1 of the 2-pass cull.
+        let initial_group_capacity: u32 = 256;
+        let group_max_err = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_group_max_err"),
+            size: initial_group_capacity as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let vertex_count_per_instance = max_triangles_per_meshlet * 3;
         let indirect_args = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("meshlet_indirect_args"),
@@ -163,21 +211,48 @@ impl MeshletCull {
             pipeline_hi_z,
             pipeline_scene,
             pipeline_scene_pool,
+            pipeline_lod_compute_group_max_err,
+            pipeline_cull_scene_pool_atomic,
             cull_bgl,
             hi_z_bgl,
             scene_bgl,
             meshlet_bgl,
             pool_bgl,
+            group_err_bgl,
             params_buffer,
             hi_z_params_buffer,
             scene_params_buffer,
             visible_meshlets,
             visible_count,
             indirect_args,
+            group_max_err,
+            group_capacity: initial_group_capacity,
             capacity,
             vertex_count_per_instance,
         }
     }
+}
+
+/// Single-binding BGL for the per-group `group_max_err` buffer.
+/// Storage + read_write because pass 1 atomicMaxes into it; pass 2
+/// also binds it as read_write (its access is atomicLoad, but WGSL
+/// requires the storage variable to declare write access whenever
+/// any entry of the pipeline writes through it — sharing the same
+/// pipeline_layout between both pipelines).
+fn build_group_err_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("meshlet_group_err_bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    })
 }
 
 fn build_cull_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {

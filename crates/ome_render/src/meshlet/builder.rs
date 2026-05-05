@@ -186,6 +186,13 @@ pub fn build_meshlets_lod_chain(
 
     let mut prev_lod_range = (0usize, all_descriptors.len());
     let mut current_error = lod_config.initial_error;
+    // Sequential id assigned per group as the chain is built. Every
+    // (children, parents) pair from the same simplification step
+    // shares the same group_id — children store it as `group_index`
+    // ("the group I'm a child of"), parents store it as
+    // `children_group_index` ("the group I'm a parent of"). The
+    // 2-pass cull (#465) keys group_max_err by this id.
+    let mut next_group_id: u32 = 0;
 
     for _level in 1..lod_config.max_levels {
         let (prev_start, prev_end) = prev_lod_range;
@@ -289,11 +296,25 @@ pub fn build_meshlets_lod_chain(
                 .map(|&local_idx| geo.global_indices[local_idx as usize])
                 .collect();
 
+            // Allocate the group id BEFORE pushing parents so we can
+            // stamp it on both sides of the relationship below.
+            let group_id = next_group_id;
+            next_group_id += 1;
+
             let first_parent_pool_idx = all_descriptors.len() as u32;
             for desc in &parent_descs {
                 all_descriptors.push(MeshletDescriptor {
                     vertex_offset: desc.vertex_offset + vertex_offset_base,
                     triangle_offset: desc.triangle_offset + triangle_offset_base,
+                    // Parents share `children_group_index = group_id`
+                    // ("the group I'm a parent of"). Pass 2 reads
+                    // group_max_err[children_group_index] for the
+                    // "below_fine" descent test. The parent's own
+                    // `group_index` ("group I'm a child of") will be
+                    // populated when this parent is processed as a
+                    // child in the next-level transition; it stays at
+                    // MESHLET_GROUP_NONE for now (root behaviour).
+                    children_group_index: group_id,
                     ..*desc
                 });
             }
@@ -309,6 +330,11 @@ pub fn build_meshlets_lod_chain(
             // referenced by at least its closest child, so the
             // selector cannot leave a parent rendering as a stray
             // root on top of its descended siblings.
+            //
+            // Children also receive `group_index = group_id`. All
+            // siblings in the group share it, so pass 1's atomicMax
+            // converges to the true per-group parent_err max
+            // regardless of which closest-parent each child picked.
             for &child_local in group {
                 let cc = prev_meshlets[child_local].bounds_center;
                 let mut best: (f32, u32) = (f32::INFINITY, first_parent_pool_idx);
@@ -322,7 +348,9 @@ pub fn build_meshlets_lod_chain(
                         best = (d2, first_parent_pool_idx + i as u32);
                     }
                 }
-                all_descriptors[prev_start + child_local].parent_meshlet_index = best.1;
+                let child = &mut all_descriptors[prev_start + child_local];
+                child.parent_meshlet_index = best.1;
+                child.group_index = group_id;
             }
 
             any_group_emitted_parent = true;
@@ -500,7 +528,15 @@ fn clusterize_lod(
             cone_apex: bounds.cone_apex,
             cone_cutoff: bounds.cone_cutoff,
             cone_axis: bounds.cone_axis,
-            _pad2: 0,
+            // Group ids are wired during the LOD chain build; for
+            // single-LOD output and freshly clusterised LOD 0 they
+            // remain at the sentinel until the chain pass overwrites
+            // them.
+            group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+            children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+            _pad3: 0,
+            _pad4: 0,
+            _pad5: 0,
         });
     }
     (descriptors, raw.vertices, raw.triangles)
@@ -851,6 +887,83 @@ mod tests {
                 crate::meshlet::asset::MESHLET_ROOT_PARENT,
                 "DAG descent from #{i} did not terminate within {max_steps} steps",
             );
+        }
+    }
+
+    #[test]
+    fn lod_chain_dag_group_ids_propagate_to_both_sides() {
+        // For every group emitted during chain construction, the
+        // group's children share `group_index = id` and the group's
+        // parents share `children_group_index = id`. Validates the
+        // 2-pass cull contract: every meshlet that points at a real
+        // parent_meshlet_index also has a real group_index, and vice
+        // versa for parent meshlets that own children below.
+        let mesh = make_grid_mesh(20);
+        let chain = build_meshlets_lod_chain(
+            &mesh,
+            DEFAULT_MAX_VERTICES,
+            DEFAULT_MAX_TRIANGLES,
+            0.5,
+            LodConfig::default(),
+        )
+        .expect("chain");
+        for m in &chain.meshlets {
+            // A meshlet that has a parent must also have a group
+            // (the group whose parents include `m.parent_meshlet_index`).
+            if m.parent_meshlet_index != crate::meshlet::asset::MESHLET_ROOT_PARENT {
+                assert_ne!(
+                    m.group_index,
+                    crate::meshlet::asset::MESHLET_GROUP_NONE,
+                    "meshlet with parent must have a non-NONE group_index",
+                );
+            }
+        }
+        // Every meshlet referenced as a parent_meshlet_index by some
+        // child must carry a non-NONE children_group_index.
+        for m in &chain.meshlets {
+            if m.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT {
+                continue;
+            }
+            let parent = &chain.meshlets[m.parent_meshlet_index as usize];
+            assert_ne!(
+                parent.children_group_index,
+                crate::meshlet::asset::MESHLET_GROUP_NONE,
+                "any meshlet referenced as a parent must have a non-NONE children_group_index",
+            );
+        }
+    }
+
+    #[test]
+    fn lod_chain_dag_group_siblings_share_group_id() {
+        // All children pointing at parents with the same
+        // children_group_index must themselves share the same
+        // group_index. The 2-pass cull's atomicMax convergence
+        // depends on this.
+        let mesh = make_grid_mesh(20);
+        let chain = build_meshlets_lod_chain(
+            &mesh,
+            DEFAULT_MAX_VERTICES,
+            DEFAULT_MAX_TRIANGLES,
+            0.5,
+            LodConfig::default(),
+        )
+        .expect("chain");
+        use std::collections::HashMap;
+        let mut group_of_children: HashMap<u32, u32> = HashMap::new();
+        for m in &chain.meshlets {
+            if m.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT {
+                continue;
+            }
+            let parent = &chain.meshlets[m.parent_meshlet_index as usize];
+            let parents_group = parent.children_group_index;
+            if let Some(&prev_group) = group_of_children.get(&parents_group) {
+                assert_eq!(
+                    prev_group, m.group_index,
+                    "children sharing a parents-group must share group_index",
+                );
+            } else {
+                group_of_children.insert(parents_group, m.group_index);
+            }
         }
     }
 

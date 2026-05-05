@@ -297,8 +297,14 @@ impl MeshletRenderStage {
             .unwrap_or_default()
             .target_error_pixels
             .max(0.01);
+        let debug_mode = resources
+            .get::<MeshletDebugMode>()
+            .copied()
+            .unwrap_or_default()
+            .as_u32();
         let cull_params = CullParams::new(view_proj, cam_pos, max_meshlets_per_mesh)
-            .with_lod(viewport_h_px, proj_scale_y, lod_target);
+            .with_lod(viewport_h_px, proj_scale_y, lod_target)
+            .with_debug_mode(debug_mode);
         let scene_params =
             SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
 
@@ -309,6 +315,11 @@ impl MeshletRenderStage {
             .instance_count
             .saturating_mul(scene_params.meshlets_per_mesh);
         self.cull.ensure_capacity(device, required_capacity);
+        // group_max_err sized to the pool's current group_capacity
+        // (sum of 1 + max_group_id across all registered meshes).
+        // Same geometric-growth pattern as the visible buffer.
+        self.cull
+            .ensure_group_capacity(device, self.pipeline.pool().group_capacity.max(1));
 
         let meshlet_bg = pool_meshlet_bind_group(device, &self.meshlet_bgl, gpu_pool);
         // Prefer the GUID-keyed `MaterialPipeline` pool when it's
@@ -324,7 +335,7 @@ impl MeshletRenderStage {
             label: Some("meshlet_render_stage_encoder"),
         });
 
-        self.cull.dispatch_scene_pool(
+        self.cull.dispatch_scene_pool_atomic(
             device,
             queue,
             &mut encoder,
@@ -426,7 +437,11 @@ mod tests {
                 cone_apex: [0.0; 3],
                 cone_cutoff: 1.0,
                 cone_axis: [0.0; 3],
-                _pad2: 0,
+                group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+                children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+                _pad3: 0,
+                _pad4: 0,
+                _pad5: 0,
             }],
             aabb: crate::mesh::Aabb::empty(),
         };

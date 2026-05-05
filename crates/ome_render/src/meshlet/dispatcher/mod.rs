@@ -48,11 +48,14 @@ pub struct MeshletCull {
     pub(super) pipeline_hi_z: wgpu::ComputePipeline,
     pub(super) pipeline_scene: wgpu::ComputePipeline,
     pub(super) pipeline_scene_pool: wgpu::ComputePipeline,
+    pub(super) pipeline_lod_compute_group_max_err: wgpu::ComputePipeline,
+    pub(super) pipeline_cull_scene_pool_atomic: wgpu::ComputePipeline,
     pub(super) cull_bgl: wgpu::BindGroupLayout,
     pub(super) hi_z_bgl: wgpu::BindGroupLayout,
     pub(super) scene_bgl: wgpu::BindGroupLayout,
     pub(super) meshlet_bgl: wgpu::BindGroupLayout,
     pub(super) pool_bgl: wgpu::BindGroupLayout,
+    pub(super) group_err_bgl: wgpu::BindGroupLayout,
 
     pub(super) params_buffer: wgpu::Buffer,
     pub(super) hi_z_params_buffer: wgpu::Buffer,
@@ -60,6 +63,12 @@ pub struct MeshletCull {
     pub(super) visible_meshlets: wgpu::Buffer,
     pub(super) visible_count: wgpu::Buffer,
     pub(super) indirect_args: wgpu::Buffer,
+    /// Per-group atomic<u32> buffer the 2-pass cull (#465) writes
+    /// in pass 1 and reads in pass 2. Sized to `group_capacity`,
+    /// resized geometrically by [`Self::ensure_group_capacity`] when
+    /// a scene's pool grows past it. Cleared each frame before pass 1.
+    pub(super) group_max_err: wgpu::Buffer,
+    pub(super) group_capacity: u32,
 
     pub(super) capacity: u32,
     pub(super) vertex_count_per_instance: u32,
@@ -71,6 +80,41 @@ impl MeshletCull {
     /// buffer when a scene exceeds the current allocation.
     pub fn capacity(&self) -> u32 {
         self.capacity
+    }
+
+    /// Storage capacity (in u32 slots) of the per-group `group_max_err`
+    /// buffer. Use [`Self::ensure_group_capacity`] before dispatching
+    /// the 2-pass atomic cull when a scene's pool exceeds the current
+    /// allocation.
+    pub fn group_capacity(&self) -> u32 {
+        self.group_capacity
+    }
+
+    /// Grows `group_max_err` so it covers at least `required` group
+    /// ids. No-op when current capacity already covers the request.
+    /// Geometric growth — same pattern as [`Self::ensure_capacity`].
+    pub fn ensure_group_capacity(&mut self, device: &wgpu::Device, required: u32) {
+        if required <= self.group_capacity {
+            return;
+        }
+        let new_capacity = required
+            .checked_next_power_of_two()
+            .unwrap_or(required)
+            .max(self.group_capacity.saturating_mul(2));
+        self.group_max_err = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_group_max_err"),
+            size: new_capacity as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        tracing::info!(
+            target: "ome_render::meshlet::cull",
+            old_capacity = self.group_capacity,
+            new_capacity,
+            required,
+            "grew group_max_err buffer to fit scene",
+        );
+        self.group_capacity = new_capacity;
     }
 
     /// Grows `visible_meshlets` so it can hold at least `required`
@@ -172,6 +216,13 @@ impl MeshletCull {
     /// the rasterizer + deferred shaders use the full layout.
     pub fn pool_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.pool_bgl
+    }
+
+    /// Bind group layout for the 2-pass cull's per-group err buffer
+    /// (group 3 of `cs_lod_compute_group_max_err` /
+    /// `cs_cull_scene_pool_atomic`).
+    pub fn group_err_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.group_err_bgl
     }
 }
 
