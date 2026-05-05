@@ -2,25 +2,29 @@
 //! GPU-ready meshlet asset.
 //!
 //! Pipeline: bytes → [`parse_mesh_bytes`] (CPU `Mesh`) →
-//! [`build_meshlets_lod_chain`] (Nanite-grouped DAG) → [`MeshletMesh`].
-//! Asset bytes never touch disk twice — the `AssetServer` reads them
-//! once and the loader builds the meshlet representation in-process.
+//! [`build_default_meshlets`] (`meshopt` clusterisation, single-LOD)
+//! → [`MeshletMesh`]. Asset bytes never touch disk twice — the
+//! `AssetServer` reads them once and the loader builds the meshlet
+//! representation in-process.
 //!
-//! # LOD chain by default
+//! # Why single-LOD output today
 //!
-//! `build_meshlets_lod_chain` (post-#462) generates a Nanite-grouped
-//! DAG: each parent at LOD N+1 is the simplified union of four
-//! spatially-grouped children at LOD N, with `LockBorder` keeping
-//! external edges intact so adjacent groups stitch seamlessly. Every
-//! loaded asset gets the runtime selector (#442) descending across
-//! distance with no flicker and no LOD-0 starvation that the previous
-//! proximity heuristic exhibited.
+//! [`build_meshlets_lod_chain`] (the Nanite-grouped DAG builder) is
+//! shipped and unit-tested, but the runtime selector cannot consume
+//! it cleanly without group-atomic descent. With a single-pass cull
+//! shader, sibling parents emitted by the same group can land on
+//! different sides of the descent threshold (one descends, one does
+//! not) → the "stay" parent overdraws the "descended" parent's
+//! children, producing visible flicker on dense assets. Forcing one
+//! parent per group rejects ~97 % of groups in practice (vertex
+//! budget defeats the single-parent guarantee), so the chain is
+//! effectively flat anyway.
 //!
-//! Per-asset overrides (disable LOD chain, custom `LodConfig`) land
-//! alongside the `.meta`-driven import settings system (Plan B
-//! part 2). The minimal triangle fixture used by the tests collapses
-//! naturally to a single-level chain because `meshopt::simplify`
-//! cannot reduce a single triangle further.
+//! The fix is a 2-pass cull (atomicMax of pixel error per group →
+//! group-atomic descent), tracked in its own issue. Until that
+//! lands, the loader emits single-LOD output (every meshlet is a
+//! root, the selector treats them as "always pick" — visuals match
+//! the pre-#442 baseline that worked cleanly).
 //!
 //! Loader extensions match `GltfMeshLoader` (`glb`, `gltf`) so the
 //! same source files can serve both `Assets<Mesh>` (raw geometry,
@@ -33,8 +37,8 @@ use ome_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 
 use crate::mesh::parse_mesh_bytes;
 
-use super::asset::{MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES};
-use super::builder::{build_meshlets_lod_chain, LodConfig, MeshletBuildError};
+use super::asset::MeshletMesh;
+use super::builder::{build_default_meshlets, MeshletBuildError};
 
 /// Loads `.glb` / `.gltf` files directly into [`MeshletMesh`].
 #[derive(Debug, Default, Clone, Copy)]
@@ -51,14 +55,9 @@ impl AssetLoader<MeshletMesh> for MeshletMeshLoader {
         _ctx: &mut LoadContext<'_>,
     ) -> AssetResult<MeshletMesh> {
         let mesh = parse_mesh_bytes(bytes).map_err(|e| AssetError::Loader(Box::new(e)))?;
-        build_meshlets_lod_chain(
-            &mesh,
-            DEFAULT_MAX_VERTICES,
-            DEFAULT_MAX_TRIANGLES,
-            0.5,
-            LodConfig::default(),
-        )
-        .map_err(|e: MeshletBuildError| AssetError::Loader(Box::new(e)))
+        build_default_meshlets(&mesh).map_err(|e: MeshletBuildError| {
+            AssetError::Loader(Box::new(e))
+        })
     }
 }
 
