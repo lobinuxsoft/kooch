@@ -18,7 +18,7 @@ use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::query::Query;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
 use ome_render::SkyRenderPass;
-use ome_render::meshlet::{MeshletBlit, MeshletRenderStage};
+use ome_render::meshlet::{MeshletBlit, MeshletRenderStage, MeshletRenderStats};
 
 use crate::viewport::target::ViewportTarget;
 
@@ -52,13 +52,19 @@ pub(crate) fn render_viewport(
         meshlet.stage.sync_assets_to_gpu(gpu.device(), resources);
         let (view_proj, cam_pos) = active_camera_matrices(resources, target.aspect())
             .unwrap_or((glam::Mat4::IDENTITY, glam::Vec3::ZERO));
-        let _stats = meshlet.stage.render_with_assets(
+        let stats = meshlet.stage.render_with_assets(
             gpu.device(),
             gpu.queue(),
             resources,
             view_proj,
             cam_pos,
         );
+        // Republish per-frame so the editor's debug-stats overlay (#451)
+        // can read it next tick. Stats from a frame the meshlet stage
+        // skipped (no project loaded) reset to default.
+        resources.insert(stats);
+    } else {
+        resources.insert(MeshletRenderStats::default());
     }
 
     let mut encoder = gpu

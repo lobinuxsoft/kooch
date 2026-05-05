@@ -29,7 +29,9 @@ struct ModelUniforms {
 struct ScreenUniforms {
     size: vec2<u32>,
     material_id: u32,
-    _pad: u32,
+    // Debug visualization mode (#451). Stable u32 discriminants from
+    // MeshletDebugMode in Rust; 0 = Off (production path).
+    debug_mode: u32,
 }
 
 struct MaterialParams {
@@ -99,6 +101,23 @@ fn corner_normal(desc: MeshletDescriptor, tri_idx: u32, corner: u32) -> vec3<f32
     return vec3<f32>(v.normal[0], v.normal[1], v.normal[2]);
 }
 
+// PCG-style hash → vec3 rgb in [0.2, 1.0]. The 0.2 floor keeps any
+// id from collapsing to black (which the alpha=0 background uses).
+// Same constants as Bevy's meshlet_visualizer; adequate for visual
+// distinguishability at cluster / instance scale.
+fn hash_to_rgb(x: u32) -> vec3<f32> {
+    var h = x;
+    h ^= h >> 16u;
+    h = h * 0x7feb352du;
+    h ^= h >> 15u;
+    h = h * 0x846ca68bu;
+    h ^= h >> 16u;
+    let r = f32(h & 0xffu) / 255.0;
+    let g = f32((h >> 8u) & 0xffu) / 255.0;
+    let b = f32((h >> 16u) & 0xffu) / 255.0;
+    return vec3<f32>(r, g, b) * 0.8 + 0.2;
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn cs_shade(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= screen.size.x || gid.y >= screen.size.y) {
@@ -165,23 +184,39 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
         let inst_id = packed_visible >> 16u;
         let meshlet_id = packed_visible & 0xffffu;
 
-        let inst = instances[inst_id];
-        let desc = descriptors[meshlet_id];
+        // Debug-mode short-circuit: skip the per-triangle normal fetch
+        // when the mode does not need it. Cluster/instance id paint
+        // the entire meshlet a flat colour so the cluster boundaries
+        // are the dominant visual feature.
+        var rgb: vec3<f32>;
+        if (screen.debug_mode == 1u) {
+            // MeshletIds — use the global meshlet descriptor index so
+            // two instances of the same mesh share the cluster colour
+            // (the cluster identity is what's being visualized).
+            rgb = hash_to_rgb(meshlet_id);
+        } else if (screen.debug_mode == 2u) {
+            // InstanceIds — colour by entity coverage.
+            rgb = hash_to_rgb(inst_id);
+        } else {
+            let inst = instances[inst_id];
+            let desc = descriptors[meshlet_id];
 
-        let n0 = corner_normal(desc, tri_idx, 0u);
-        let n1 = corner_normal(desc, tri_idx, 1u);
-        let n2 = corner_normal(desc, tri_idx, 2u);
-        let avg = (n0 + n1 + n2) / 3.0;
-        let world_n = (inst.transform * vec4<f32>(avg, 0.0)).xyz;
-        let n = normalize(world_n);
+            let n0 = corner_normal(desc, tri_idx, 0u);
+            let n1 = corner_normal(desc, tri_idx, 1u);
+            let n2 = corner_normal(desc, tri_idx, 2u);
+            let avg = (n0 + n1 + n2) / 3.0;
+            let world_n = (inst.transform * vec4<f32>(avg, 0.0)).xyz;
+            let n = normalize(world_n);
 
-        let normal_debug = n * 0.5 + 0.5;
-        let m = materials[inst.material_id];
+            let normal_debug = n * 0.5 + 0.5;
+            let m = materials[inst.material_id];
+            rgb = normal_debug * m.base_color.rgb;
+        }
+
         // Force alpha = 1 for any pixel covered by a meshlet — the
         // alpha = 0 sentinel is reserved for the background-pass-through
-        // path the blit composes. Material's own alpha will land back
-        // here once translucency / cutout is wired up.
-        color = vec4<f32>(normal_debug * m.base_color.rgb, 1.0);
+        // path the blit composes.
+        color = vec4<f32>(rgb, 1.0);
     }
 
     textureStore(color_out, vec2<i32>(i32(pixel.x), i32(pixel.y)), color);

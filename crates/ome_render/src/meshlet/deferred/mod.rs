@@ -46,7 +46,8 @@ pub(super) struct ModelUbo {
 pub(super) struct ScreenUbo {
     pub size: [u32; 2],
     pub material_id: u32,
-    pub _pad: u32,
+    /// Debug-visualization mode discriminant (#451). 0 = Off.
+    pub debug_mode: u32,
 }
 
 /// Owns the deferred-shading compute pipelines (single-mesh + scene)
@@ -235,7 +236,9 @@ impl MeshletDeferredShader {
             bytemuck::bytes_of(&ScreenUbo {
                 size: [screen_size.0, screen_size.1],
                 material_id,
-                _pad: 0,
+                // Single-mesh path is always production-shaded; debug
+                // modes only ship through the scene path.
+                debug_mode: 0,
             }),
         );
 
