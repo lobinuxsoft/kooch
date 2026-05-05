@@ -149,11 +149,12 @@ impl MeshletCull {
         );
     }
 
-    /// Scene-wide cull (Phase 1.E.1). Drives `cs_cull_scene`: ONE
-    /// dispatch enumerates every (instance, meshlet) pair across all
-    /// instances of a single registered mesh. Visible meshlets land in
-    /// `visible_meshlets[]` packed as
-    /// `(instance_id << 16) | meshlet_idx`.
+    /// Scene-wide cull against a SINGLE [`GpuMeshletMesh`]
+    /// (Phase 1.E.1). Drives `cs_cull_scene` directly without going
+    /// through the [`GpuGlobalMeshPool`]; production code uses
+    /// [`Self::dispatch_scene_pool`] instead, but tests retain this
+    /// path to validate the cull shader at low level without
+    /// constructing a pool. New callers should prefer the pool path.
     ///
     /// # Capacity
     ///
