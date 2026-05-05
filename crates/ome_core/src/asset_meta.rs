@@ -30,13 +30,36 @@ pub struct AssetMeta {
     /// Stable identifier for this asset. Survives renames and moves as
     /// long as the `.meta` file follows the source.
     pub guid: Guid,
+    /// Concrete asset type the loader produced — `type_name::<T>()`
+    /// from the loader registration. Optional because:
+    /// 1. Sidecars created before this field existed must keep
+    ///    parsing (back-compat with PR2 fixtures).
+    /// 2. The directory scanner only reads `.meta` and does not
+    ///    actually load the asset; type knowledge arrives the first
+    ///    time `AssetServer::load::<T>` runs against the path.
+    /// `AssetServer::load` back-fills the field whenever it finds an
+    /// existing sidecar without one, so the steady state is always
+    /// `Some(type_name)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_type: Option<String>,
 }
 
 impl AssetMeta {
-    /// Builds metadata for a brand-new asset (fresh random GUID).
+    /// Builds metadata for a brand-new asset (fresh random GUID, no
+    /// known type yet — `AssetServer::load::<T>` populates the type
+    /// before serializing the sidecar to disk).
     pub fn new() -> Self {
         Self {
             guid: Guid::new_v4(),
+            asset_type: None,
+        }
+    }
+
+    /// Builds metadata with a fresh GUID and a known asset type.
+    pub fn with_type(asset_type: impl Into<String>) -> Self {
+        Self {
+            guid: Guid::new_v4(),
+            asset_type: Some(asset_type.into()),
         }
     }
 }
@@ -226,5 +249,50 @@ mod tests {
 
         let err = read_meta(&asset).expect_err("garbage should fail to parse");
         assert!(matches!(err, AssetMetaError::De(_)));
+    }
+
+    #[test]
+    fn legacy_sidecar_without_asset_type_still_parses() {
+        // Pre-PR4 sidecars only carry `guid`. New code must continue
+        // to read them — the missing field falls through to None.
+        let dir = TempDir::new("legacy");
+        let asset = dir.path.join("legacy.glb");
+        touch(&asset);
+        let raw = "guid = \"550e8400e29b41d4a716446655440000\"\n";
+        fs::write(meta_path_for(&asset), raw).expect("write legacy meta");
+
+        let meta = read_meta(&asset).expect("legacy meta must parse");
+        assert!(meta.asset_type.is_none());
+    }
+
+    #[test]
+    fn with_type_round_trips_asset_type_field() {
+        let dir = TempDir::new("typed");
+        let asset = dir.path.join("typed.glb");
+        touch(&asset);
+
+        let original = AssetMeta::with_type("ome_render::meshlet::MeshletMesh");
+        write_meta(&asset, &original).expect("write");
+        let parsed = read_meta(&asset).expect("read");
+
+        assert_eq!(parsed, original);
+        assert_eq!(
+            parsed.asset_type.as_deref(),
+            Some("ome_render::meshlet::MeshletMesh"),
+        );
+    }
+
+    #[test]
+    fn untyped_meta_omits_asset_type_in_toml() {
+        // Sidecars generated before the loader knows the type must
+        // not pollute the file with `asset_type = ""` — they should
+        // only carry `guid`. Confirmed by checking the serialized form.
+        let meta = AssetMeta::new();
+        let text = toml::to_string(&meta).expect("serialize");
+        assert!(text.contains("guid"));
+        assert!(
+            !text.contains("asset_type"),
+            "untyped meta must skip the asset_type field, got:\n{text}",
+        );
     }
 }
