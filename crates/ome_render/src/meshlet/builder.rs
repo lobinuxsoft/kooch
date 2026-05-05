@@ -225,6 +225,8 @@ pub fn build_meshlets_lod_chain(
         current_error *= 2.0;
     }
 
+    assign_dag_parents(&mut all_descriptors);
+
     Ok(MeshletMesh {
         vertices: mesh.vertices.clone(),
         meshlet_vertices: all_meshlet_vertices,
@@ -232,6 +234,66 @@ pub fn build_meshlets_lod_chain(
         meshlets: all_descriptors,
         aabb: total_aabb(&mesh.vertices),
     })
+}
+
+/// Returns `[start, end)` ranges in `meshlets` corresponding to each
+/// LOD level. Relies on `lod_error` being monotonically non-decreasing
+/// across the concatenated chain — a property
+/// [`build_meshlets_lod_chain`] guarantees by construction.
+fn lod_level_ranges(meshlets: &[MeshletDescriptor]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    if meshlets.is_empty() {
+        return ranges;
+    }
+    let mut start = 0;
+    let mut current_error = meshlets[0].lod_error;
+    for (i, m) in meshlets.iter().enumerate().skip(1) {
+        if m.lod_error != current_error {
+            ranges.push((start, i));
+            start = i;
+            current_error = m.lod_error;
+        }
+    }
+    ranges.push((start, meshlets.len()));
+    ranges
+}
+
+/// Wires each meshlet's `parent_meshlet_index` to the closest meshlet
+/// in the next-coarser LOD by `bounds_center` distance. Meshlets in
+/// the coarsest LOD keep [`MESHLET_ROOT_PARENT`].
+///
+/// **V1 — proximity only.** Nanite's reference algorithm groups four
+/// children at LOD N and re-simplifies that group into a single LOD
+/// N+1 parent (guarantees zero popping). That requires re-structuring
+/// the chain build to operate per-cluster instead of globally; tracked
+/// for a follow-up if profiling shows visible popping with this
+/// approximation.
+fn assign_dag_parents(meshlets: &mut [MeshletDescriptor]) {
+    let ranges = lod_level_ranges(meshlets);
+    if ranges.len() < 2 {
+        return;
+    }
+    for level_idx in 0..ranges.len() - 1 {
+        let (child_start, child_end) = ranges[level_idx];
+        let (parent_start, parent_end) = ranges[level_idx + 1];
+        for i in child_start..child_end {
+            let cc = meshlets[i].bounds_center;
+            let mut best: Option<(f32, usize)> = None;
+            for j in parent_start..parent_end {
+                let pc = meshlets[j].bounds_center;
+                let dx = pc[0] - cc[0];
+                let dy = pc[1] - cc[1];
+                let dz = pc[2] - cc[2];
+                let d2 = dx * dx + dy * dy + dz * dz;
+                if best.map_or(true, |(b, _)| d2 < b) {
+                    best = Some((d2, j));
+                }
+            }
+            if let Some((_, parent_idx)) = best {
+                meshlets[i].parent_meshlet_index = parent_idx as u32;
+            }
+        }
+    }
 }
 
 /// Runs `meshopt::build_meshlets` over `indices` and returns the
@@ -527,11 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn lod_chain_root_parent_sentinel_preserved() {
-        // Sub-commit 442.3 will overwrite parent_meshlet_index with
-        // real DAG links. Until then every meshlet must carry the
-        // root sentinel so the runtime selector treats them as
-        // "always pick" (legacy behaviour).
+    fn lod_chain_dag_only_coarsest_level_is_root() {
         let mesh = make_grid_mesh(20);
         let chain = build_meshlets_lod_chain(
             &mesh,
@@ -541,11 +599,96 @@ mod tests {
             LodConfig::default(),
         )
         .expect("chain");
+        let coarsest = chain
+            .meshlets
+            .iter()
+            .map(|m| m.lod_error)
+            .fold(f32::NEG_INFINITY, f32::max);
         for m in &chain.meshlets {
+            let expect_root = m.lod_error == coarsest;
+            let is_root =
+                m.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT;
+            assert_eq!(
+                is_root, expect_root,
+                "meshlet at lod_error={} should be root={} but is_root={}",
+                m.lod_error, expect_root, is_root,
+            );
+        }
+    }
+
+    #[test]
+    fn lod_chain_dag_parent_points_to_coarser_meshlet() {
+        let mesh = make_grid_mesh(20);
+        let chain = build_meshlets_lod_chain(
+            &mesh,
+            DEFAULT_MAX_VERTICES,
+            DEFAULT_MAX_TRIANGLES,
+            0.5,
+            LodConfig::default(),
+        )
+        .expect("chain");
+        for (i, m) in chain.meshlets.iter().enumerate() {
+            if m.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT {
+                continue;
+            }
+            let p = &chain.meshlets[m.parent_meshlet_index as usize];
+            assert!(
+                p.lod_error > m.lod_error,
+                "child #{i} (err {}) parent #{} must be coarser, got err {}",
+                m.lod_error,
+                m.parent_meshlet_index,
+                p.lod_error,
+            );
+        }
+    }
+
+    #[test]
+    fn lod_chain_dag_is_acyclic_via_descent_terminates() {
+        // Walk from each meshlet up to a root following parent links;
+        // assert termination within the LOD count (guards against
+        // accidental cycles).
+        let mesh = make_grid_mesh(20);
+        let chain = build_meshlets_lod_chain(
+            &mesh,
+            DEFAULT_MAX_VERTICES,
+            DEFAULT_MAX_TRIANGLES,
+            0.5,
+            LodConfig::default(),
+        )
+        .expect("chain");
+        let mut distinct_errors: Vec<f32> = chain.meshlets.iter().map(|m| m.lod_error).collect();
+        distinct_errors.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        distinct_errors.dedup();
+        let max_steps = distinct_errors.len() + 1;
+        for (i, m) in chain.meshlets.iter().enumerate() {
+            let mut idx = i;
+            for _ in 0..max_steps {
+                let parent = chain.meshlets[idx].parent_meshlet_index;
+                if parent == crate::meshlet::asset::MESHLET_ROOT_PARENT {
+                    break;
+                }
+                idx = parent as usize;
+            }
+            // We must have hit a root within max_steps.
+            assert_eq!(
+                chain.meshlets[idx].parent_meshlet_index,
+                crate::meshlet::asset::MESHLET_ROOT_PARENT,
+                "DAG descent from #{i} did not terminate within {max_steps} steps",
+            );
+        }
+    }
+
+    #[test]
+    fn single_lod_meshes_keep_root_sentinel_and_zero_error() {
+        // Default builder is unchanged: every meshlet a root, error 0.
+        let mesh = make_grid_mesh(20);
+        let single = build_default_meshlets(&mesh).expect("build");
+        for m in &single.meshlets {
             assert_eq!(
                 m.parent_meshlet_index,
                 crate::meshlet::asset::MESHLET_ROOT_PARENT
             );
+            assert_eq!(m.lod_error, 0.0);
         }
     }
 
