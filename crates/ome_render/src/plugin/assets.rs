@@ -18,10 +18,10 @@
 
 use std::path::PathBuf;
 
+use ome_core::app::App;
 use ome_core::asset_database::AssetDatabase;
 use ome_core::asset_loader::AssetServer;
 use ome_core::assets::Assets;
-use ome_core::app::App;
 use ome_core::plugin::Plugin;
 
 use crate::mesh::{GltfMeshLoader, Mesh};
@@ -97,7 +97,75 @@ impl Plugin for AssetPlugin {
         app.insert_resource(Assets::<Mesh>::new());
         app.insert_resource(Assets::<MeshletMesh>::new());
         app.insert_resource(Assets::<Image>::new());
+
+        // Eager-load every `.glb` / `.gltf` in the asset root as a
+        // `MeshletMesh`. Two effects we want at first frame:
+        // 1. Sidecars created before PR4 (no `asset_type`) get
+        //    back-filled by `read_or_create_typed`, so the database
+        //    registers them with the correct type and the inspector
+        //    picker can list them.
+        // 2. The GPU-side cache (`MeshletRenderStage::sync_assets_to_gpu`)
+        //    short-circuits: by the time the user picks an asset the
+        //    bytes are already through the loader, with the upload
+        //    deferred to whichever entity references the GUID.
+        //
+        // Mirrors Unity's "every Asset gets imported on project load"
+        // contract. Other typed extensions (PNG → Image, etc.) plug
+        // in through the same loop as their loaders register; only
+        // glb is wired today because nothing else has a typed asset
+        // story yet.
+        eager_import_typed_assets(app);
     }
+}
+
+fn eager_import_typed_assets(app: &mut App) {
+    use std::path::PathBuf;
+
+    let resources = app.resources_mut();
+
+    // Snapshot every registered asset path before we start mutating
+    // resources — we need to release the database borrow before
+    // calling `AssetServer::load`, which in turn touches the
+    // database via `ensure_guid_identity`.
+    let scanned: Vec<PathBuf> = resources
+        .get::<AssetDatabase>()
+        .map(|db| db.path_iter().map(|(p, _)| p.to_path_buf()).collect())
+        .unwrap_or_default();
+
+    let glb_paths: Vec<PathBuf> = scanned
+        .into_iter()
+        .filter(|p| {
+            p.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("glb") || e.eq_ignore_ascii_case("gltf"))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if glb_paths.is_empty() {
+        return;
+    }
+
+    let Some(mut server) = resources.remove::<AssetServer>() else {
+        return;
+    };
+    for path in &glb_paths {
+        if let Err(e) = server.load::<MeshletMesh>(path, resources) {
+            tracing::warn!(
+                target: "ome_render::plugin::assets",
+                path = %path.display(),
+                error = %e,
+                "eager MeshletMesh import failed",
+            );
+        }
+    }
+    resources.insert(server);
+
+    tracing::info!(
+        target: "ome_render::plugin::assets",
+        count = glb_paths.len(),
+        "eager-imported MeshletMesh assets",
+    );
 }
 
 #[cfg(test)]

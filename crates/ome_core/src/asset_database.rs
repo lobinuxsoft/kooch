@@ -174,17 +174,35 @@ impl AssetDatabase {
         }
     }
 
-    /// Registers `(guid, path)` with the database. Idempotent — the
-    /// same call repeated is a no-op. Returns `true` if a new entry
-    /// was actually added.
+    /// Registers `(guid, path)` with the database. Idempotent on the
+    /// path↔GUID mapping; returns `true` if a brand-new entry was
+    /// added.
     ///
     /// If `path` was previously registered under a *different* GUID
     /// (e.g. its `.meta` was rewritten), the previous binding is
     /// replaced and the old GUID's entry is removed; this keeps the
     /// bidirectional map consistent.
+    ///
+    /// When the path↔GUID pair already exists, the stored entry's
+    /// **`type_name` and `mtime` are upgraded if the incoming entry
+    /// carries fresher data**:
+    /// - `type_name`: prefer `Some` over `None` (initial scans see
+    ///   sidecars before any `load::<T>` and leave the type unknown;
+    ///   the first typed load fills it in — we must not lose that).
+    /// - `mtime`: take the newer timestamp.
+    /// The `path` itself is immutable for an existing entry and is
+    /// not overwritten.
     pub fn register(&mut self, guid: Guid, entry: AssetEntry) -> bool {
         if let Some(existing_guid) = self.by_path.get(&entry.path).copied() {
             if existing_guid == guid {
+                if let Some(existing) = self.by_guid.get_mut(&guid) {
+                    if existing.type_name.is_none() && entry.type_name.is_some() {
+                        existing.type_name = entry.type_name;
+                    }
+                    if entry.mtime > existing.mtime {
+                        existing.mtime = entry.mtime;
+                    }
+                }
                 return false;
             }
             // Path's GUID changed (manual .meta edit). Replace.
@@ -425,6 +443,72 @@ mod tests {
         // different surface that surfaces them.
         let none_filter: Vec<_> = db.entries_of_type("").collect();
         assert!(none_filter.is_empty());
+    }
+
+    #[test]
+    fn re_register_upgrades_type_name_from_none_to_some() {
+        // Mirrors the real flow: scan_directory registers an asset
+        // with `type_name = None` because the sidecar predates the
+        // field. Later, `AssetServer::load::<MeshletMesh>` re-
+        // registers the same `(path, guid)` pair with the freshly
+        // back-filled type. The entry must end up typed.
+        let mut db = AssetDatabase::new();
+        let g = Guid::new_v4();
+        let path = PathBuf::from("foo.glb");
+        db.register(
+            g,
+            AssetEntry {
+                path: path.clone(),
+                mtime: SystemTime::UNIX_EPOCH,
+                type_name: None,
+            },
+        );
+        // Idempotent re-register with the same guid + path BUT a
+        // populated type_name.
+        let added = db.register(
+            g,
+            AssetEntry {
+                path: path.clone(),
+                mtime: SystemTime::UNIX_EPOCH,
+                type_name: Some("ome_render::meshlet::MeshletMesh".to_owned()),
+            },
+        );
+        assert!(!added, "second register is not a brand-new entry");
+        assert_eq!(
+            db.entry(g).unwrap().type_name.as_deref(),
+            Some("ome_render::meshlet::MeshletMesh"),
+            "type_name must upgrade from None to Some on re-register",
+        );
+    }
+
+    #[test]
+    fn re_register_does_not_clobber_existing_type_name() {
+        // Defensive: once a type is recorded, an idempotent re-
+        // register that arrives without a type must NOT erase it.
+        let mut db = AssetDatabase::new();
+        let g = Guid::new_v4();
+        let path = PathBuf::from("foo.glb");
+        db.register(
+            g,
+            AssetEntry {
+                path: path.clone(),
+                mtime: SystemTime::UNIX_EPOCH,
+                type_name: Some("KnownType".to_owned()),
+            },
+        );
+        db.register(
+            g,
+            AssetEntry {
+                path: path.clone(),
+                mtime: SystemTime::UNIX_EPOCH,
+                type_name: None,
+            },
+        );
+        assert_eq!(
+            db.entry(g).unwrap().type_name.as_deref(),
+            Some("KnownType"),
+            "untyped re-register must not erase a known type",
+        );
     }
 
     #[test]
