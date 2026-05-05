@@ -34,6 +34,12 @@ impl MeshletCull {
         let hi_z_bgl = build_hi_z_bgl(device);
         let scene_bgl = MeshletScene::bind_group_layout(device);
         let meshlet_bgl = meshlet_bind_group_layout(device);
+        // Two-binding subset of the pool BGL — keeps the cull
+        // entry under the wgpu max_storage_buffers_per_shader_stage
+        // limit (8). The full 5-binding pool BGL is used by the
+        // rasterizer + deferred where storage-buffer headroom is
+        // larger and vertex/triangle buffers are needed.
+        let pool_bgl = build_cull_pool_bgl(device);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("meshlet_cull_pipeline_layout"),
@@ -80,6 +86,26 @@ impl MeshletCull {
             compilation_options: Default::default(),
             cache: None,
         });
+
+        // Multi-mesh scene cull (`cs_cull_scene_pool`) — group(0) cull
+        // shared with the per-mesh path (the `descriptors` binding at
+        // group(0)@1 stays bound but the entry point ignores it),
+        // group(1) the GlobalMeshPool, group(2) the scene buffers.
+        let pipeline_layout_scene_pool =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("meshlet_cull_scene_pool_pipeline_layout"),
+                bind_group_layouts: &[Some(&cull_bgl), Some(&pool_bgl), Some(&scene_bgl)],
+                immediate_size: 0,
+            });
+        let pipeline_scene_pool =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("meshlet_cull_scene_pool_pipeline"),
+                layout: Some(&pipeline_layout_scene_pool),
+                module: &shader,
+                entry_point: Some("cs_cull_scene_pool"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_cull_params"),
@@ -136,10 +162,12 @@ impl MeshletCull {
             pipeline,
             pipeline_hi_z,
             pipeline_scene,
+            pipeline_scene_pool,
             cull_bgl,
             hi_z_bgl,
             scene_bgl,
             meshlet_bgl,
+            pool_bgl,
             params_buffer,
             hi_z_params_buffer,
             scene_params_buffer,
@@ -196,6 +224,35 @@ fn build_cull_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                     has_dynamic_offset: false,
                     min_binding_size: NonZeroU64::new(4),
                 },
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Two-binding pool BGL the cull pass uses (mesh_descriptors +
+/// meshlets). Matches bindings 0-1 of [`crate::meshlet::pool::GpuGlobalMeshPool::bind_group_layout`]
+/// so a single pool object can be sliced into either layout via
+/// `bind_group_with_layout`-style construction at dispatch time.
+fn build_cull_pool_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let read_only = wgpu::BindingType::Buffer {
+        ty: wgpu::BufferBindingType::Storage { read_only: true },
+        has_dynamic_offset: false,
+        min_binding_size: None,
+    };
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("meshlet_cull_pool_bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: read_only,
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: read_only,
                 count: None,
             },
         ],
