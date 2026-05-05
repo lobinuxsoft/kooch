@@ -162,6 +162,17 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<ome_core::power::PowerProfile>()
         .copied()
         .unwrap_or_default();
+
+    // Snapshot the AssetDatabase once per frame for the inspector's
+    // typed asset picker. Empty when the database is missing — the
+    // picker dropdown will simply show "(no <Type> assets registered)".
+    let asset_catalog = resources
+        .get::<ome_core::asset_database::AssetDatabase>()
+        .map(|db| {
+            crate::panels::inspector::AssetCatalogEntry::collect_from_database(db)
+        })
+        .unwrap_or_default();
+
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
@@ -181,6 +192,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         },
         power_profile,
         &mut streaming_config,
+        &asset_catalog,
     );
 
     if let Some(size) = viewport_request {

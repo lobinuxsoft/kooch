@@ -45,6 +45,7 @@ pub(super) struct ViewportUi<'a> {
 // which is a structural change to the editor's render loop. Out of
 // scope for the #299 cleanup.
 #[allow(deprecated)]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run_editor_ui(
     overlay: &mut EditorOverlay,
     project_state: &mut Option<ProjectState>,
@@ -55,6 +56,7 @@ pub(super) fn run_editor_ui(
     viewport: ViewportUi<'_>,
     power_profile: ome_core::power::PowerProfile,
     streaming_config: &mut LodRingConfig,
+    asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut last_clicked_index = overlay.last_clicked_index.take();
@@ -106,6 +108,7 @@ pub(super) fn run_editor_ui(
                 handle_mode,
                 selection_has_transform,
                 streaming_config,
+                asset_catalog,
             };
 
             DockArea::new(&mut overlay.dock_state)

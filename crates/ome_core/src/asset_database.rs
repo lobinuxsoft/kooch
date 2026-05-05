@@ -136,6 +136,13 @@ impl AssetDatabase {
         self.by_guid.is_empty()
     }
 
+    /// Iterates `(path, guid)` pairs across every registered asset.
+    /// Used by editor-side snapshot collectors that need to walk the
+    /// whole database once per frame.
+    pub fn path_iter(&self) -> impl Iterator<Item = (&Path, Guid)> + '_ {
+        self.by_path.iter().map(|(p, g)| (p.as_path(), *g))
+    }
+
     /// Iterates `(Guid, &AssetEntry)` pairs whose `type_name` matches
     /// `name`. Used by the inspector's asset picker to populate the
     /// dropdown for a typed `AssetRef` field. Order is unspecified —

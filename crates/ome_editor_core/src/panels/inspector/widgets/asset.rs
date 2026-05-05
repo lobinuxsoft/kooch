@@ -1,6 +1,8 @@
 //! Asset-path detection: name-based heuristic that maps `String`
 //! reflected fields like `mesh_path` / `texture_handle` to a file
-//! picker dialog filter.
+//! picker dialog filter — plus the typed [`AssetCatalogEntry`] the
+//! `ReflectValue::AssetRef` widget consumes when rendering its
+//! `AssetDatabase`-backed dropdown.
 //!
 //! Format choices favour open standards with no licensing friction and
 //! formats the engine actually plans to support:
@@ -20,6 +22,67 @@
 //!
 //! Bridge until the asset handle system (#184) makes this explicit via
 //! typed handles.
+
+use ome_core::Guid;
+use ome_core::asset_database::AssetDatabase;
+
+/// Snapshot of one `AssetDatabase` entry exposed to the inspector.
+///
+/// Pre-collected per frame because the inspector renders inside the
+/// egui callback closure, which cannot freely borrow the
+/// `&Resources` that owns the database. Cheap to clone (small
+/// strings); the catalog rebuild happens once per frame.
+#[derive(Clone, Debug)]
+pub(crate) struct AssetCatalogEntry {
+    pub guid: Guid,
+    /// Human-readable label shown in the dropdown — the asset's
+    /// path (display form). Falls back to the GUID when the path
+    /// is somehow empty.
+    pub label: String,
+    /// The asset's recorded type, used by the picker to filter the
+    /// catalog by the field's `asset_type`. Untyped entries (no
+    /// `load::<T>` ever ran) are skipped during collection.
+    pub type_name: String,
+}
+
+impl AssetCatalogEntry {
+    /// Collects every typed entry from `db`. Untyped entries
+    /// (sidecars whose `asset_type` is `None`) are skipped — the
+    /// inspector picker has no way to filter them, so listing them
+    /// would leak unfiltered noise into every typed dropdown.
+    pub(crate) fn collect_from_database(db: &AssetDatabase) -> Vec<Self> {
+        let mut out: Vec<Self> = Vec::new();
+        // No public iter on AssetDatabase yet; collect by scanning
+        // every type the database currently sees. We rely on the
+        // (Guid, &AssetEntry) pairs the database exposes through
+        // `entries_of_type` for each known type, but to avoid a
+        // double-iteration pass we walk the bidirectional map
+        // directly via `entry()` keyed by the path map's GUIDs.
+        // Simpler: iterate all entries of *any* type by collecting
+        // the union over the path index.
+        // (`AssetDatabase` does not expose `iter()` yet; if more
+        // surfaces need it, promote this loop to a public iterator.)
+        let mut seen_guids: std::collections::HashSet<Guid> =
+            std::collections::HashSet::new();
+        // Iterate through the path index — every registered asset
+        // sits in `by_path`, so this gives us each GUID exactly once.
+        for guid in db.path_iter().map(|(_, g)| g) {
+            if !seen_guids.insert(guid) {
+                continue;
+            }
+            let Some(entry) = db.entry(guid) else { continue };
+            let Some(type_name) = entry.type_name.clone() else {
+                continue;
+            };
+            out.push(AssetCatalogEntry {
+                guid,
+                label: entry.path.display().to_string(),
+                type_name,
+            });
+        }
+        out
+    }
+}
 
 /// Returns `(label, extensions)` when a String field's name suggests
 /// it holds an asset path.

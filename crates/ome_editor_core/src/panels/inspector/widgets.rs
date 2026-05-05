@@ -9,22 +9,83 @@
 mod asset;
 mod choices;
 
+use ome_core::Guid;
 use ome_ecs::reflect::{FieldChoice, ReflectValue};
 
+pub(crate) use self::asset::AssetCatalogEntry;
 pub(super) use self::choices::{choices_for, draw_readonly_value};
 
 use self::asset::asset_filter_for;
 use self::choices::draw_choice_dropdown;
 
+/// Renders the typed asset-reference picker for a `ReflectValue::AssetRef`
+/// field. Returns `Some(new_value)` when the user picks a different
+/// asset (or clears the field), otherwise `None`.
+fn draw_asset_picker(
+    ui: &mut egui::Ui,
+    current: Option<Guid>,
+    asset_type: &str,
+    catalog: &[AssetCatalogEntry],
+) -> Option<ReflectValue> {
+    // Filter the catalog to the entries that match this field's type.
+    let filtered: Vec<&AssetCatalogEntry> = catalog
+        .iter()
+        .filter(|e| e.type_name == asset_type)
+        .collect();
+
+    let current_label = current
+        .and_then(|g| filtered.iter().find(|e| e.guid == g))
+        .map(|e| e.label.clone())
+        .unwrap_or_else(|| match current {
+            Some(g) => format!("(missing: {g})"),
+            None => "(None)".to_owned(),
+        });
+
+    let mut new_value: Option<ReflectValue> = None;
+
+    egui::ComboBox::from_id_salt(("asset_picker", asset_type))
+        .selected_text(&current_label)
+        .show_ui(ui, |ui| {
+            // The "(None)" entry — clears the assignment.
+            if ui.selectable_label(current.is_none(), "(None)").clicked()
+                && current.is_some()
+            {
+                new_value = Some(ReflectValue::AssetRef {
+                    guid: None,
+                    asset_type: asset_type.to_owned(),
+                });
+            }
+            if filtered.is_empty() {
+                ui.weak(format!("(no {asset_type} assets registered)"));
+            }
+            for entry in &filtered {
+                let selected = current == Some(entry.guid);
+                if ui.selectable_label(selected, &entry.label).clicked()
+                    && !selected
+                {
+                    new_value = Some(ReflectValue::AssetRef {
+                        guid: Some(entry.guid),
+                        asset_type: asset_type.to_owned(),
+                    });
+                }
+            }
+        });
+
+    new_value
+}
+
 /// Draws an editable widget for a single reflected value.
 /// Returns `Some(new_value)` if the user modified it.
 /// `field_name` is used to detect color fields and show a color picker.
 /// `choices` renders integer fields as a dropdown when non-empty.
+/// `asset_catalog` is the per-frame snapshot of `AssetDatabase` the
+/// `AssetRef` widget filters when populating its picker dropdown.
 pub(super) fn draw_value_widget(
     ui: &mut egui::Ui,
     value: &ReflectValue,
     field_name: &str,
     choices: &'static [FieldChoice],
+    asset_catalog: &[AssetCatalogEntry],
 ) -> Option<ReflectValue> {
     if !choices.is_empty()
         && let Some(new_value) = draw_choice_dropdown(ui, value, choices, field_name)
@@ -241,18 +302,7 @@ pub(super) fn draw_value_widget(
             )))
         }
         ReflectValue::AssetRef { guid, asset_type } => {
-            // PR4 task #26 wires the typed picker dropdown here. For
-            // now the inspector renders the field as read-only so the
-            // build stays green and existing reflect-value handling
-            // is unchanged. The placeholder is intentionally minimal:
-            // we do not want to ship a half-functional picker that
-            // pretends to edit the value.
-            let label = match guid {
-                Some(g) => format!("{asset_type}({g})"),
-                None => format!("{asset_type}(none — picker pending)"),
-            };
-            ui.label(label);
-            None
+            draw_asset_picker(ui, *guid, asset_type, asset_catalog)
         }
         ReflectValue::Mat4(m) => {
             let (scale, rotation, translation) = m.to_scale_rotation_translation();
