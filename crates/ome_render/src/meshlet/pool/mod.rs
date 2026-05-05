@@ -73,6 +73,13 @@ pub struct GlobalMeshPool {
     pub vertices: Vec<MeshVertex>,
     pub meshlet_vertices: Vec<u32>,
     pub meshlet_triangles: Vec<u8>,
+    /// Sum of `1 + max_group_id` across registered meshes — the size
+    /// of the per-frame `group_max_err` buffer the 2-pass cull (#465)
+    /// indexes by `MeshletDescriptor::group_index`. Pooled meshes
+    /// each generate group_ids starting at 0; [`Self::register`]
+    /// shifts incoming group_ids by the running total so collisions
+    /// across meshes cannot occur.
+    pub group_capacity: u32,
 }
 
 impl GlobalMeshPool {
@@ -132,12 +139,38 @@ impl GlobalMeshPool {
         }
 
         // Re-base each meshlet's offsets into pool-global coordinates.
+        // Same rebase applies to group_index / children_group_index:
+        // every mesh's builder allocated group ids starting at 0, so
+        // without shifting they would collide across meshes in the
+        // shared `group_max_err` buffer the 2-pass cull (#465) keys
+        // by these ids.
+        let group_offset = self.group_capacity;
+        let mut max_local_group: i64 = -1;
         for desc in &mesh.meshlets {
+            let new_group_index = if desc.group_index == crate::meshlet::asset::MESHLET_GROUP_NONE
+            {
+                desc.group_index
+            } else {
+                max_local_group = max_local_group.max(desc.group_index as i64);
+                desc.group_index + group_offset
+            };
+            let new_children_group_index =
+                if desc.children_group_index == crate::meshlet::asset::MESHLET_GROUP_NONE {
+                    desc.children_group_index
+                } else {
+                    max_local_group = max_local_group.max(desc.children_group_index as i64);
+                    desc.children_group_index + group_offset
+                };
             self.meshlets.push(MeshletDescriptor {
                 vertex_offset: desc.vertex_offset + meshlet_vertex_offset,
                 triangle_offset: desc.triangle_offset + meshlet_triangle_offset,
+                group_index: new_group_index,
+                children_group_index: new_children_group_index,
                 ..*desc
             });
+        }
+        if max_local_group >= 0 {
+            self.group_capacity += (max_local_group as u32) + 1;
         }
 
         self.mesh_descriptors.push(MeshDescriptor {
