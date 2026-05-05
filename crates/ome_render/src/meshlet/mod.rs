@@ -47,7 +47,10 @@ mod vis_buffer;
 
 pub use asset::{MeshletDescriptor, MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES};
 pub use blit::MeshletBlit;
-pub use builder::{build_default_meshlets, build_meshlets_from_mesh, MeshletBuildError};
+pub use builder::{
+    build_default_meshlets, build_meshlets_from_mesh, build_meshlets_lod_chain, LodConfig,
+    MeshletBuildError,
+};
 pub use cull::{
     camera_in_backface_cone, extract_frustum_planes, sphere_outside_frustum, CullParams,
 };

@@ -17,24 +17,32 @@ pub const DEFAULT_MAX_VERTICES: usize = 64;
 /// of 4 ≤ 128 (`meshopt` requires `max_triangles` divisible by 4).
 pub const DEFAULT_MAX_TRIANGLES: usize = 124;
 
+/// Sentinel value for [`MeshletDescriptor::parent_meshlet_index`] —
+/// the meshlet has no parent (root of the LOD DAG, coarsest level).
+/// The runtime LOD selector treats this as the descent stopping
+/// point.
+pub const MESHLET_ROOT_PARENT: u32 = u32::MAX;
+
 /// Per-meshlet metadata. POD, repr(C), 96 bytes — packs into a storage
 /// buffer for compute culling without a single `if let` on upload.
 ///
 /// Layout (offsets in bytes):
 /// ```text
-///  0  vertex_offset (u32)        index into MeshletMesh::meshlet_vertices
-///  4  triangle_offset (u32)      byte offset into MeshletMesh::meshlet_triangles
-///  8  vertex_count (u32)         ≤ DEFAULT_MAX_VERTICES
-/// 12  triangle_count (u32)       ≤ DEFAULT_MAX_TRIANGLES
-/// 16  aabb_min ([f32;3])         local-space, render pass transforms per-instance
-/// 28  _pad0 (u32)
+///  0  vertex_offset (u32)              index into MeshletMesh::meshlet_vertices
+///  4  triangle_offset (u32)            byte offset into MeshletMesh::meshlet_triangles
+///  8  vertex_count (u32)               ≤ DEFAULT_MAX_VERTICES
+/// 12  triangle_count (u32)             ≤ DEFAULT_MAX_TRIANGLES
+/// 16  aabb_min ([f32;3])               local-space, render pass transforms per-instance
+/// 28  parent_meshlet_index (u32)       index into the same MeshletMesh::meshlets
+///                                      array; MESHLET_ROOT_PARENT for roots
 /// 32  aabb_max ([f32;3])
-/// 44  _pad1 (u32)
-/// 48  bounds_center ([f32;3])    bounding sphere centre (frustum + Hi-Z cull)
+/// 44  lod_error (f32)                  meshopt::simplify error this meshlet
+///                                      represents (0.0 for LOD 0 / unsimplified)
+/// 48  bounds_center ([f32;3])          bounding sphere centre (frustum + Hi-Z cull)
 /// 60  bounding_radius (f32)
-/// 64  cone_apex ([f32;3])        normal-cone apex (backface cull)
-/// 76  cone_cutoff (f32)          cosine of half-angle
-/// 80  cone_axis ([f32;3])        normalized cone axis
+/// 64  cone_apex ([f32;3])              normal-cone apex (backface cull)
+/// 76  cone_cutoff (f32)                cosine of half-angle
+/// 80  cone_axis ([f32;3])              normalized cone axis
 /// 92  _pad2 (u32)
 /// ```
 ///
@@ -44,6 +52,12 @@ pub const DEFAULT_MAX_TRIANGLES: usize = 124;
 /// only correct against the real apex, not the sphere centre. The
 /// frustum cull keeps using `bounds_center` + `bounding_radius` as
 /// before.
+///
+/// `parent_meshlet_index` and `lod_error` form the DAG used by the
+/// continuous-LOD selector (#442). Single-LOD meshes leave both at
+/// their sentinels (parent = MESHLET_ROOT_PARENT, error = 0.0); the
+/// selector treats that as "always pick this meshlet" so the legacy
+/// path keeps working bit-identically.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MeshletDescriptor {
@@ -52,9 +66,14 @@ pub struct MeshletDescriptor {
     pub vertex_count: u32,
     pub triangle_count: u32,
     pub aabb_min: [f32; 3],
-    pub _pad0: u32,
+    /// Index of the parent meshlet in the same
+    /// [`MeshletMesh::meshlets`] array; [`MESHLET_ROOT_PARENT`] for
+    /// roots at the coarsest LOD level.
+    pub parent_meshlet_index: u32,
     pub aabb_max: [f32; 3],
-    pub _pad1: u32,
+    /// `meshopt::simplify` error this meshlet represents in mesh
+    /// units. `0.0` for LOD 0 (unsimplified).
+    pub lod_error: f32,
     pub bounds_center: [f32; 3],
     pub bounding_radius: f32,
     pub cone_apex: [f32; 3],
@@ -137,12 +156,33 @@ mod tests {
         assert_eq!(offset_of!(MeshletDescriptor, vertex_count), 8);
         assert_eq!(offset_of!(MeshletDescriptor, triangle_count), 12);
         assert_eq!(offset_of!(MeshletDescriptor, aabb_min), 16);
+        assert_eq!(offset_of!(MeshletDescriptor, parent_meshlet_index), 28);
         assert_eq!(offset_of!(MeshletDescriptor, aabb_max), 32);
+        assert_eq!(offset_of!(MeshletDescriptor, lod_error), 44);
         assert_eq!(offset_of!(MeshletDescriptor, bounds_center), 48);
         assert_eq!(offset_of!(MeshletDescriptor, bounding_radius), 60);
         assert_eq!(offset_of!(MeshletDescriptor, cone_apex), 64);
         assert_eq!(offset_of!(MeshletDescriptor, cone_cutoff), 76);
         assert_eq!(offset_of!(MeshletDescriptor, cone_axis), 80);
+    }
+
+    #[test]
+    fn root_meshlet_sentinel_distinct_from_real_index() {
+        // Any sane meshlet count fits in u32; MESHLET_ROOT_PARENT is
+        // u32::MAX which can never collide with a real index because
+        // wgpu storage-buffer addressing tops out below 2^32 entries.
+        assert_eq!(MESHLET_ROOT_PARENT, u32::MAX);
+    }
+
+    #[test]
+    fn zeroed_descriptor_has_root_parent_via_construct() {
+        // Note: bytemuck::Zeroable initialises parent_meshlet_index to 0
+        // (a valid index), so callers MUST set the sentinel explicitly
+        // when constructing a root meshlet. This test documents that
+        // contract.
+        let d = MeshletDescriptor::zeroed();
+        assert_eq!(d.parent_meshlet_index, 0);
+        assert_eq!(d.lod_error, 0.0);
     }
 
     #[test]

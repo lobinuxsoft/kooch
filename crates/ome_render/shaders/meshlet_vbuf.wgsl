@@ -42,9 +42,11 @@ struct MeshletDescriptor {
     vertex_count: u32,
     triangle_count: u32,
     aabb_min: vec3<f32>,
-    _pad0: u32,
+    // DAG: parent meshlet index (#442). u32::MAX sentinel = root.
+    parent_meshlet_index: u32,
     aabb_max: vec3<f32>,
-    _pad1: u32,
+    // DAG: meshopt::simplify error this meshlet represents.
+    lod_error: f32,
     bounds_center: vec3<f32>,
     bounding_radius: f32,
     cone_apex: vec3<f32>,
