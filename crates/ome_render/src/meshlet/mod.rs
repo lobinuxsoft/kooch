@@ -47,7 +47,7 @@ mod vis_buffer;
 
 pub use asset::{
     MeshletDescriptor, MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES,
-    MESHLET_ROOT_PARENT,
+    MESHLET_GROUP_NONE, MESHLET_ROOT_PARENT,
 };
 pub use blit::MeshletBlit;
 pub use builder::{

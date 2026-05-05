@@ -57,7 +57,15 @@ struct MeshletDescriptor {
     cone_apex: vec3<f32>,
     cone_cutoff: f32,
     cone_axis: vec3<f32>,
-    _pad2: u32,
+    // #465 group ids — atomicMax pixel error per group in pass 1, then
+    // pass 2 reads group_max_err[group_index] for "above_too_coarse"
+    // and group_max_err[children_group_index] for "below_fine".
+    // 0xFFFFFFFFu sentinel = no group on that side (root or LOD 0).
+    group_index: u32,
+    children_group_index: u32,
+    _pad3: u32,
+    _pad4: u32,
+    _pad5: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: CullParams;

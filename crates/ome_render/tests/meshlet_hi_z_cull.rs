@@ -60,7 +60,11 @@ fn synthetic_meshlet_at_ndc_depth(z: f32) -> MeshletMesh {
         cone_apex: [0.0, 0.0, z],
         cone_cutoff: 1.0, // disable cone cull (sentinel)
         cone_axis: [0.0, 0.0, 1.0],
-        _pad2: 0,
+        group_index: ome_render::meshlet::MESHLET_GROUP_NONE,
+        children_group_index: ome_render::meshlet::MESHLET_GROUP_NONE,
+        _pad3: 0,
+        _pad4: 0,
+        _pad5: 0,
     };
     MeshletMesh {
         vertices,

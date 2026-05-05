@@ -64,7 +64,11 @@ fn synthetic_meshlet_facing(normal: Vec3) -> MeshletMesh {
         // to be culled.
         cone_cutoff: 0.7,
         cone_axis: cone_axis.to_array(),
-        _pad2: 0,
+        group_index: ome_render::meshlet::MESHLET_GROUP_NONE,
+        children_group_index: ome_render::meshlet::MESHLET_GROUP_NONE,
+        _pad3: 0,
+        _pad4: 0,
+        _pad5: 0,
     };
 
     MeshletMesh {

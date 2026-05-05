@@ -426,7 +426,11 @@ mod tests {
                 cone_apex: [0.0; 3],
                 cone_cutoff: 1.0,
                 cone_axis: [0.0; 3],
-                _pad2: 0,
+                group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+                children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+                _pad3: 0,
+                _pad4: 0,
+                _pad5: 0,
             }],
             aabb: crate::mesh::Aabb::empty(),
         };

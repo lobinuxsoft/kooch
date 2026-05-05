@@ -500,7 +500,15 @@ fn clusterize_lod(
             cone_apex: bounds.cone_apex,
             cone_cutoff: bounds.cone_cutoff,
             cone_axis: bounds.cone_axis,
-            _pad2: 0,
+            // Group ids are wired during the LOD chain build; for
+            // single-LOD output and freshly clusterised LOD 0 they
+            // remain at the sentinel until the chain pass overwrites
+            // them.
+            group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+            children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+            _pad3: 0,
+            _pad4: 0,
+            _pad5: 0,
         });
     }
     (descriptors, raw.vertices, raw.triangles)
