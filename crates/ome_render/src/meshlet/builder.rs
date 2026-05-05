@@ -140,16 +140,23 @@ const NANITE_GROUP_SIZE: usize = 4;
 /// # Algorithm (per LOD level)
 ///
 /// 1. Take the previous LOD's meshlets.
-/// 2. Spatial-sort them by Morton code on `bounds_center`.
-/// 3. Chunk into groups of [`NANITE_GROUP_SIZE`] consecutive meshlets.
+/// 2. Build the meshlet connectivity graph (nodes = meshlets, edges
+///    weighted by shared-vertex count) and partition it with METIS
+///    k-way multilevel partitioning into ~prev_count / GROUP_SIZE
+///    groups. Minimising edge-cut directly minimises the shared
+///    border each group will have to lock during simplify.
+/// 3. Identify the cell-boundary vertex set (vertices touched by
+///    ≥ 2 groups) so the per-group simplify call below can lock
+///    them — adjacent groups must collapse the shared border
+///    identically (Ponchio §3.4.3 boundary management).
 /// 4. For each group:
 ///    - Resolve the group's underlying triangles into a local
-///      vertex-deduped sub-mesh.
-///    - Run `meshopt::simplify` with `LockBorder` so external edges
-///      stay intact and adjacent groups stitch seamlessly.
-///    - Re-cluster the simplified triangles. Target count is forced
-///      to [`max_triangles`] so the result is one parent meshlet per
-///      group — guarantees coverage of the four children's region.
+///      vertex-deduped sub-mesh + per-vertex lock mask.
+///    - Run `meshopt::simplify_with_locks` with `LockBorder` so the
+///      mesh's topological edges AND the cell border both survive
+///      the collapse — adjacent groups stitch seamlessly.
+///    - Re-cluster the simplified triangles into ≤ NANITE_GROUP_SIZE
+///      parent meshlets covering the children's region.
 ///    - Wire each child's `parent_meshlet_index` to the new parent.
 /// 5. Stop when no group could simplify further (topology lock).
 ///
@@ -211,14 +218,21 @@ pub fn build_meshlets_lod_chain(
         let prev_meshlets: Vec<MeshletDescriptor> =
             all_descriptors[prev_start..prev_end].to_vec();
 
-        // V-partition grouping (Ponchio §3.5). Target `prev_count /
-        // NANITE_GROUP_SIZE` Voronoi cells so each group averages ~4
-        // meshlets — same ratio as the Morton chunker but with
-        // boundaries that come from the partition cells (consistent
-        // across LODs by construction) instead of arbitrary
-        // chunk-of-4 cuts.
+        // METIS k-way graph partitioning (Karis SIGGRAPH 2021,
+        // confirmed by Scthe/nanite-webgpu and pettett/multires).
+        // Target `prev_count / NANITE_GROUP_SIZE` partitions so each
+        // group averages ~4 meshlets, same ratio as the original
+        // Morton chunker — but the cuts now follow the connectivity
+        // graph (minimising shared-vertex edge cut between groups)
+        // instead of either spatial chunks (Morton, #465) or spatial
+        // Voronoi cells (#469 V1, both produced coverage holes on
+        // coarse LODs because they ignored topology).
         let target_groups = (prev_count / NANITE_GROUP_SIZE).max(1);
-        let groups = group_meshlets_voronoi(&prev_meshlets, target_groups);
+        let groups = group_meshlets_metis(
+            &prev_meshlets,
+            &all_meshlet_vertices,
+            target_groups,
+        );
 
         // V-partition boundary management (Ponchio §3.4.3 + §3.5.1):
         // identify every vertex shared between ≥ 2 groups and lock
@@ -518,136 +532,130 @@ fn collect_group_boundary_vertices(
         .collect()
 }
 
-/// Picks `k` seed positions from `points` using farthest-point
-/// sampling: starts with `points[0]`, then repeatedly picks the
-/// point furthest from any already-selected seed. Deterministic,
-/// O(n × k), and produces well-spread seeds without an RNG.
+/// METIS graph-partition grouping (Karis SIGGRAPH 2021 / Ponchio §3.5,
+/// the actually-correct path). Builds a graph whose:
+/// - **nodes** are meshlets at the previous LOD,
+/// - **edges** join meshlets that share ≥ 1 mesh-pool vertex,
+/// - **edge weight** = number of vertices the two meshlets share.
 ///
-/// The output drives the V-partition grouper (#469): each meshlet
-/// joins the group whose seed is nearest its `bounds_center`.
-/// Lloyd's relaxation refines the seed positions afterwards so
-/// each Voronoi cell ends up roughly equal-area.
-fn pick_initial_seeds_farthest(points: &[Vec3], k: usize) -> Vec<Vec3> {
-    if points.is_empty() || k == 0 {
-        return Vec::new();
-    }
-    let k = k.min(points.len());
-    let mut seeds = Vec::with_capacity(k);
-    seeds.push(points[0]);
-
-    // For each input point, track its squared distance to the
-    // nearest already-chosen seed. The next seed is whichever
-    // point has the largest such distance.
-    let mut min_dist_sq: Vec<f32> = points
-        .iter()
-        .map(|p| (*p - seeds[0]).length_squared())
-        .collect();
-
-    while seeds.len() < k {
-        let (idx, _) = min_dist_sq
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .unwrap();
-        let new_seed = points[idx];
-        seeds.push(new_seed);
-        for (i, p) in points.iter().enumerate() {
-            let d = (*p - new_seed).length_squared();
-            if d < min_dist_sq[i] {
-                min_dist_sq[i] = d;
-            }
-        }
-    }
-    seeds
-}
-
-/// Returns the index of the seed closest to `p`. Linear scan; for the
-/// meshlet counts we work with (a few thousand per LOD) this is well
-/// within budget for offline build time.
-fn nearest_seed_index(p: Vec3, seeds: &[Vec3]) -> usize {
-    let mut best = (f32::INFINITY, 0usize);
-    for (i, s) in seeds.iter().enumerate() {
-        let d = (p - *s).length_squared();
-        if d < best.0 {
-            best = (d, i);
-        }
-    }
-    best.1
-}
-
-/// Runs `iterations` of Lloyd's relaxation: assign each point to its
-/// nearest seed, move each seed to the barycenter of its assignment,
-/// repeat. Empty cells (no assigned points) keep their previous seed
-/// position so the seed count never collapses.
+/// Then calls METIS k-way multilevel partitioning to split the graph
+/// into `target_groups` parts while **minimising the edge cut**
+/// (sum of weights of cross-partition edges). Result: groups whose
+/// internal connectivity is dense and whose shared-vertex border with
+/// neighbours is as small as possible — leaves the per-group simplify
+/// the maximum interior surface to reduce while keeping the locked
+/// boundary minimal.
 ///
-/// Converges fast — Ponchio §3.5.3 recommends 3-5 iterations for the
-/// V-partition use case. After convergence the Voronoi cells
-/// partition the mesh into roughly equal-area, compact patches.
-fn lloyd_relaxation(points: &[Vec3], initial_seeds: Vec<Vec3>, iterations: usize) -> Vec<Vec3> {
-    let mut seeds = initial_seeds;
-    if seeds.is_empty() || points.is_empty() {
-        return seeds;
-    }
-    let n = seeds.len();
-    let mut sums = vec![Vec3::ZERO; n];
-    let mut counts = vec![0u32; n];
-    for _ in 0..iterations {
-        sums.iter_mut().for_each(|s| *s = Vec3::ZERO);
-        counts.iter_mut().for_each(|c| *c = 0);
-        for &p in points {
-            let cell = nearest_seed_index(p, &seeds);
-            sums[cell] += p;
-            counts[cell] += 1;
-        }
-        for i in 0..n {
-            if counts[i] > 0 {
-                seeds[i] = sums[i] / counts[i] as f32;
-            }
-            // else: keep previous seed position; an empty cell would
-            // otherwise drift to (0,0,0) which biases the partition.
-        }
-    }
-    seeds
-}
-
-/// Number of Lloyd's relaxation iterations applied to the V-partition
-/// seed sets. Ponchio §3.5.3 recommends 3-5; converges quickly and
-/// extra iterations don't move the seeds appreciably.
-const LLOYD_ITERATIONS: usize = 5;
-
-/// Voronoi V-partition grouping (Ponchio §3.5, #469). Picks
-/// `target_groups` seeds via farthest-point sampling, refines them
-/// with Lloyd's relaxation so each cell ends up roughly equal-area,
-/// then assigns every meshlet to its nearest seed by `bounds_center`.
+/// Why this replaces the Voronoi spatial grouping (#469 V1 attempt):
+/// nearest-seed by `bounds_center` partitions 3D space, NOT the
+/// connectivity graph. Two meshlets can sit close in space without
+/// being topologically connected (opposite sides of thin geometry,
+/// disjoint shells, etc.) — they end up in adjacent cells sharing
+/// many "accidental" boundary edges, simplify can barely reduce
+/// anything, coarse LODs go full of holes. Confirmed by inspecting
+/// the two open-source state-of-art implementations:
+/// `Scthe/nanite-webgpu` and `pettett/multires` — both METIS.
 ///
-/// Replaces the Morton-chunk grouping (#465 V1) which spatial-sorted
-/// meshlets and chopped them into 4-tuples regardless of cluster
-/// shape — that produced groups with arbitrary boundaries and the
-/// boundary-management problem (Ponchio §3.4.3) bit us on coarse
-/// LODs (visible holes when sibling parents collapsed their shared
-/// non-topological border differently).
-fn group_meshlets_voronoi(
+/// Edge cases:
+/// - `target_groups < 2` → single group (METIS rejects k=1).
+/// - Fewer meshlets than `target_groups` → cap k at meshlet count.
+/// - Isolated meshlets (no shared verts with anyone) → METIS still
+///   places them in some partition; they may end up alone.
+fn group_meshlets_metis(
     meshlets: &[MeshletDescriptor],
+    pool_meshlet_vertices: &[u32],
     target_groups: usize,
 ) -> Vec<Vec<usize>> {
-    if meshlets.is_empty() || target_groups == 0 {
+    use std::collections::HashMap;
+
+    let n = meshlets.len();
+    if n == 0 {
         return Vec::new();
     }
-    let centroids: Vec<Vec3> = meshlets
-        .iter()
-        .map(|m| Vec3::from_array(m.bounds_center))
-        .collect();
-    let initial = pick_initial_seeds_farthest(&centroids, target_groups);
-    let seeds = lloyd_relaxation(&centroids, initial, LLOYD_ITERATIONS);
-
-    let mut groups: Vec<Vec<usize>> = vec![Vec::new(); seeds.len()];
-    for (i, c) in centroids.iter().enumerate() {
-        let cell = nearest_seed_index(*c, &seeds);
-        groups[cell].push(i);
+    let k = target_groups.min(n).max(1);
+    if k == 1 {
+        return vec![(0..n).collect()];
     }
-    // Drop empty cells — they happen when Lloyd's leaves a seed
-    // with no nearest point (rare for well-distributed inputs but
-    // guarded against here).
+
+    // Build vertex → meshlets index. A vertex shared by M meshlets
+    // generates M·(M-1)/2 graph edges (one per pair).
+    let mut vertex_to_meshlets: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, m) in meshlets.iter().enumerate() {
+        let base = m.vertex_offset as usize;
+        for v_off in 0..m.vertex_count as usize {
+            let global_v = pool_meshlet_vertices[base + v_off];
+            vertex_to_meshlets.entry(global_v).or_default().push(i);
+        }
+    }
+
+    // Accumulate pair → shared-vertex count.
+    let mut pair_weight: HashMap<(usize, usize), i32> = HashMap::new();
+    for owners in vertex_to_meshlets.values() {
+        // Dedup: a single meshlet could legitimately list a vertex
+        // twice if its meshlet_vertices entry was duplicated (rare
+        // but defensive).
+        let mut owners = owners.clone();
+        owners.sort_unstable();
+        owners.dedup();
+        for a in 0..owners.len() {
+            for b in (a + 1)..owners.len() {
+                let key = (owners[a], owners[b]);
+                *pair_weight.entry(key).or_insert(0) += 1;
+            }
+        }
+    }
+
+    // Convert to CSR for METIS. Each undirected edge contributes
+    // entries on BOTH endpoints' adjacency lists.
+    let mut adj: Vec<Vec<(i32, i32)>> = vec![Vec::new(); n];
+    for ((i, j), w) in pair_weight {
+        adj[i].push((j as i32, w));
+        adj[j].push((i as i32, w));
+    }
+
+    let mut xadj: Vec<i32> = Vec::with_capacity(n + 1);
+    let mut adjncy: Vec<i32> = Vec::new();
+    let mut adjwgt: Vec<i32> = Vec::new();
+    xadj.push(0);
+    for neighbours in &adj {
+        for &(j, w) in neighbours {
+            adjncy.push(j);
+            adjwgt.push(w);
+        }
+        xadj.push(adjncy.len() as i32);
+    }
+
+    // METIS rejects graphs with no edges (every meshlet isolated) —
+    // partition naively in that pathological case.
+    if adjncy.is_empty() {
+        let mut groups: Vec<Vec<usize>> = vec![Vec::new(); k];
+        for i in 0..n {
+            groups[i % k].push(i);
+        }
+        groups.retain(|g| !g.is_empty());
+        return groups;
+    }
+
+    let mut part = vec![0i32; n];
+    let metis_result = metis::Graph::new(1, k as i32, &xadj, &adjncy)
+        .ok()
+        .and_then(|g| g.set_adjwgt(&adjwgt).part_kway(&mut part).ok());
+    if metis_result.is_none() {
+        // METIS hit some internal limit — degrade gracefully to
+        // round-robin so the build still produces SOMETHING rather
+        // than panicking. Should be unreachable on well-formed input.
+        let mut groups: Vec<Vec<usize>> = vec![Vec::new(); k];
+        for i in 0..n {
+            groups[i % k].push(i);
+        }
+        groups.retain(|g| !g.is_empty());
+        return groups;
+    }
+
+    let mut groups: Vec<Vec<usize>> = vec![Vec::new(); k];
+    for (i, p) in part.iter().enumerate() {
+        groups[*p as usize].push(i);
+    }
     groups.retain(|g| !g.is_empty());
     groups
 }
@@ -1147,118 +1155,112 @@ mod tests {
     }
 
     #[test]
-    fn farthest_point_seeds_are_well_spread() {
-        // Inputs along a 1D line (x = 0..=9); farthest-point seeding
-        // with k=4 picks the extremes first then fills the interior.
-        // The exact interior picks depend on tie-breaking, so the
-        // assertion focuses on what the algorithm guarantees:
-        //   1. requested count of unique seeds returned;
-        //   2. the diameter of the input is covered (extremes
-        //      included);
-        //   3. no two seeds are duplicated.
-        let pts: Vec<Vec3> = (0..10).map(|i| Vec3::new(i as f32, 0.0, 0.0)).collect();
-        let seeds = pick_initial_seeds_farthest(&pts, 4);
-        assert_eq!(seeds.len(), 4);
-        let mut xs: Vec<f32> = seeds.iter().map(|s| s.x).collect();
-        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        assert_eq!(xs[0], 0.0, "smallest seed should be at x=0");
-        assert_eq!(xs[3], 9.0, "largest seed should be at x=9");
-        // No duplicates.
-        for w in xs.windows(2) {
-            assert_ne!(w[0], w[1], "seeds {:?} contain a duplicate", xs);
+    fn metis_groups_minimise_cross_partition_edges_on_chain_graph() {
+        // Synthetic chain graph: 8 meshlets where adjacent meshlets
+        // share exactly one vertex. The optimal 2-partition splits
+        // the chain in the middle, cutting exactly one edge — any
+        // other split cuts more.
+        //
+        // Pool layout: meshlet i covers global verts [i, i+1].
+        //   meshlet 0: 0,1
+        //   meshlet 1: 1,2  <- shares vert 1 with meshlet 0
+        //   meshlet 2: 2,3
+        //   ...
+        //   meshlet 7: 7,8
+        let mut pool_meshlet_vertices: Vec<u32> = Vec::new();
+        let mut prev_meshlets: Vec<MeshletDescriptor> = Vec::new();
+        for i in 0..8u32 {
+            let off = pool_meshlet_vertices.len() as u32;
+            pool_meshlet_vertices.push(i);
+            pool_meshlet_vertices.push(i + 1);
+            prev_meshlets.push(MeshletDescriptor {
+                vertex_offset: off,
+                triangle_offset: 0,
+                vertex_count: 2,
+                triangle_count: 0,
+                aabb_min: [0.0; 3],
+                parent_meshlet_index: MESHLET_ROOT_PARENT,
+                aabb_max: [0.0; 3],
+                lod_error: 0.0,
+                bounds_center: [i as f32, 0.0, 0.0],
+                bounding_radius: 0.0,
+                cone_apex: [0.0; 3],
+                cone_cutoff: 1.0,
+                cone_axis: [0.0, 0.0, 1.0],
+                group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+                children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+                lod_level: 0,
+                _pad4: 0,
+                _pad5: 0,
+            });
         }
-        // Interior seeds lie strictly between the endpoints.
-        assert!(xs[1] > 0.0 && xs[1] < 9.0);
-        assert!(xs[2] > 0.0 && xs[2] < 9.0);
-    }
 
-    #[test]
-    fn lloyd_relaxation_settles_seeds_toward_barycenters() {
-        // Two clusters of 4 points each, 10 units apart on X. Two
-        // seeds initialised badly (both near the left cluster) —
-        // Lloyd's should pull one of them to the right cluster's
-        // barycentre.
-        let mut pts = Vec::new();
-        for &x in &[-5.0_f32, -4.5, -4.0, -3.5] {
-            pts.push(Vec3::new(x, 0.0, 0.0));
-        }
-        for &x in &[5.0_f32, 5.5, 6.0, 6.5] {
-            pts.push(Vec3::new(x, 0.0, 0.0));
-        }
-        let initial = vec![Vec3::new(-5.0, 0.0, 0.0), Vec3::new(-3.5, 0.0, 0.0)];
-        let seeds = lloyd_relaxation(&pts, initial, 10);
-        // After relaxation, one seed should sit near each cluster's
-        // barycentre (~-4.25 and ~5.75).
-        let mut xs: Vec<f32> = seeds.iter().map(|s| s.x).collect();
-        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        assert!(
-            xs[0] < -3.0,
-            "left seed should sit near -4.25, got {}",
-            xs[0]
+        let groups = group_meshlets_metis(
+            &prev_meshlets,
+            &pool_meshlet_vertices,
+            2,
         );
-        assert!(
-            xs[1] > 4.0,
-            "right seed should sit near 5.75, got {}",
-            xs[1]
-        );
-    }
+        assert_eq!(groups.len(), 2, "must produce exactly two non-empty groups");
 
-    #[test]
-    fn voronoi_groups_are_spatially_coherent() {
-        // Build a real chain and verify that meshlets in the same
-        // group are spatially closer (mean pairwise distance) than
-        // a random sample across the whole mesh. The grouping is
-        // an internal invariant of the V-partition build — without
-        // spatial coherence the per-group simplify falls apart.
-        let mesh = make_grid_mesh(20);
-        let chain = build_meshlets_lod_chain(
-            &mesh,
-            DEFAULT_MAX_VERTICES,
-            DEFAULT_MAX_TRIANGLES,
-            0.5,
-            LodConfig::default(),
-        )
-        .expect("chain");
-        // Compare mean intra-group distance vs mean overall distance
-        // among the LOD 0 meshlets (all share lod_error == 0).
-        let lod_zero: Vec<&MeshletDescriptor> =
-            chain.meshlets.iter().filter(|m| m.lod_error == 0.0).collect();
-        if lod_zero.len() < 4 {
-            return; // Not enough data for a meaningful comparison.
-        }
-
-        // Bucket LOD-0 meshlets by group_index (skip roots).
-        use std::collections::HashMap;
-        let mut by_group: HashMap<u32, Vec<Vec3>> = HashMap::new();
-        for m in &lod_zero {
-            if m.group_index == crate::meshlet::asset::MESHLET_GROUP_NONE {
-                continue;
+        // Count cross-partition edges. The chain has 7 edges total;
+        // the optimal cut is exactly 1.
+        let mut group_of: Vec<usize> = vec![usize::MAX; 8];
+        for (g_id, members) in groups.iter().enumerate() {
+            for &m in members {
+                group_of[m] = g_id;
             }
-            by_group
-                .entry(m.group_index)
-                .or_default()
-                .push(Vec3::from_array(m.bounds_center));
         }
-        if by_group.is_empty() {
-            return;
+        let mut cross = 0;
+        for i in 0..7 {
+            if group_of[i] != group_of[i + 1] {
+                cross += 1;
+            }
         }
-
-        let intra_mean = mean_pairwise_distance(by_group.values().flat_map(|g| {
-            g.windows(2).map(|w| (w[0] - w[1]).length())
-        }));
-        let all_centroids: Vec<Vec3> =
-            lod_zero.iter().map(|m| Vec3::from_array(m.bounds_center)).collect();
-        let global_mean = mean_pairwise_distance(
-            all_centroids.windows(2).map(|w| (w[0] - w[1]).length()),
+        assert_eq!(
+            cross, 1,
+            "METIS k-way must find the optimal single-edge cut on a chain graph; \
+             got {cross} cross edges with assignment {:?}",
+            group_of
         );
+    }
 
-        assert!(
-            intra_mean <= global_mean,
-            "Voronoi groups should be spatially coherent: intra-group mean \
-             distance {} must be ≤ global mean {}",
-            intra_mean,
-            global_mean,
-        );
+    #[test]
+    fn metis_groups_isolated_meshlets_round_robin() {
+        // No shared vertices anywhere → graph has zero edges.
+        // METIS rejects edge-less graphs, so the helper must fall
+        // back to round-robin and still produce K non-empty groups.
+        let mut pool_meshlet_vertices: Vec<u32> = Vec::new();
+        let mut prev_meshlets: Vec<MeshletDescriptor> = Vec::new();
+        for i in 0..6u32 {
+            let off = pool_meshlet_vertices.len() as u32;
+            // Each meshlet uses a vertex range that is unique to it.
+            pool_meshlet_vertices.push(100 + i * 2);
+            pool_meshlet_vertices.push(100 + i * 2 + 1);
+            prev_meshlets.push(MeshletDescriptor {
+                vertex_offset: off,
+                triangle_offset: 0,
+                vertex_count: 2,
+                triangle_count: 0,
+                aabb_min: [0.0; 3],
+                parent_meshlet_index: MESHLET_ROOT_PARENT,
+                aabb_max: [0.0; 3],
+                lod_error: 0.0,
+                bounds_center: [0.0; 3],
+                bounding_radius: 0.0,
+                cone_apex: [0.0; 3],
+                cone_cutoff: 1.0,
+                cone_axis: [0.0, 0.0, 1.0],
+                group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+                children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
+                lod_level: 0,
+                _pad4: 0,
+                _pad5: 0,
+            });
+        }
+        let groups = group_meshlets_metis(&prev_meshlets, &pool_meshlet_vertices, 3);
+        assert_eq!(groups.len(), 3, "round-robin must populate every requested partition");
+        let total: usize = groups.iter().map(|g| g.len()).sum();
+        assert_eq!(total, 6, "every meshlet must be assigned to exactly one group");
     }
 
     #[test]
@@ -1351,11 +1353,6 @@ mod tests {
             "no vertex is actually shared across groups; got {:?}",
             boundary
         );
-    }
-
-    fn mean_pairwise_distance<I: Iterator<Item = f32>>(iter: I) -> f32 {
-        let (sum, n) = iter.fold((0.0_f32, 0u32), |(s, c), d| (s + d, c + 1));
-        if n == 0 { 0.0 } else { sum / n as f32 }
     }
 
     #[test]
