@@ -139,14 +139,29 @@ impl GlobalMeshPool {
         }
 
         // Re-base each meshlet's offsets into pool-global coordinates.
-        // Same rebase applies to group_index / children_group_index:
-        // every mesh's builder allocated group ids starting at 0, so
-        // without shifting they would collide across meshes in the
-        // shared `group_max_err` buffer the 2-pass cull (#465) keys
-        // by these ids.
+        // Three indices need shifting on top of the byte-offset
+        // rebases above:
+        //
+        // - `parent_meshlet_index`: a meshlet index INTO the same
+        //   chain. Without `+ first_meshlet`, mesh #2's parent ids
+        //   silently reference mesh #1's slice in the concatenated
+        //   pool — the 2-pass cull then reads wrong parents in pass 1
+        //   and the LOD selector behaves randomly per mesh.
+        // - `group_index` / `children_group_index`: every mesh's
+        //   builder allocated group ids starting at 0, so without
+        //   shifting they would collide across meshes in the shared
+        //   `group_max_err` buffer the 2-pass cull (#465) keys by
+        //   these ids.
         let group_offset = self.group_capacity;
         let mut max_local_group: i64 = -1;
         for desc in &mesh.meshlets {
+            let new_parent = if desc.parent_meshlet_index
+                == crate::meshlet::asset::MESHLET_ROOT_PARENT
+            {
+                desc.parent_meshlet_index
+            } else {
+                desc.parent_meshlet_index + first_meshlet
+            };
             let new_group_index = if desc.group_index == crate::meshlet::asset::MESHLET_GROUP_NONE
             {
                 desc.group_index
@@ -164,6 +179,7 @@ impl GlobalMeshPool {
             self.meshlets.push(MeshletDescriptor {
                 vertex_offset: desc.vertex_offset + meshlet_vertex_offset,
                 triangle_offset: desc.triangle_offset + meshlet_triangle_offset,
+                parent_meshlet_index: new_parent,
                 group_index: new_group_index,
                 children_group_index: new_children_group_index,
                 ..*desc
@@ -289,6 +305,44 @@ mod tests {
         let original = mesh.meshlets[0];
         assert_eq!(mp.vertex_offset, original.vertex_offset + len_mv);
         assert_eq!(mp.triangle_offset, original.triangle_offset + len_mt);
+    }
+
+    #[test]
+    fn parent_meshlet_index_values_are_rebased_into_pool_meshlet_space() {
+        // Regression: `parent_meshlet_index` is a meshlet index into
+        // the SAME chain. When the pool concatenates a second mesh,
+        // its parents land inside the second mesh's slice — the
+        // values must be shifted by the first_meshlet offset so the
+        // 2-pass cull's pass 1 reads the correct parent's pixel
+        // error. Before the fix, mesh #2's parents silently
+        // referenced mesh #1's meshlets and the LOD selector
+        // behaved randomly per mesh.
+        use crate::meshlet::asset::MESHLET_ROOT_PARENT;
+        let mesh = build_default_meshlets(&cube_mesh()).expect("build");
+        let mut pool = GlobalMeshPool::new();
+        pool.register(&mesh);
+        let first_mesh_meshlet_count = pool.meshlets.len() as u32;
+        pool.register(&mesh);
+
+        // Every parent index in the second registration's slice must
+        // be either the root sentinel or land in the second mesh's
+        // own range [first_mesh_meshlet_count, total).
+        for m in &pool.meshlets[first_mesh_meshlet_count as usize..] {
+            if m.parent_meshlet_index == MESHLET_ROOT_PARENT {
+                continue;
+            }
+            assert!(
+                m.parent_meshlet_index >= first_mesh_meshlet_count,
+                "parent index {} in second mesh's slice must be >= {}",
+                m.parent_meshlet_index,
+                first_mesh_meshlet_count,
+            );
+            assert!(
+                (m.parent_meshlet_index as usize) < pool.meshlets.len(),
+                "parent index {} must stay within the pool",
+                m.parent_meshlet_index,
+            );
+        }
     }
 
     #[test]
