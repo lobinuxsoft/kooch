@@ -45,7 +45,10 @@ mod scene;
 mod system;
 mod vis_buffer;
 
-pub use asset::{MeshletDescriptor, MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES};
+pub use asset::{
+    MeshletDescriptor, MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES,
+    MESHLET_ROOT_PARENT,
+};
 pub use blit::MeshletBlit;
 pub use builder::{
     build_default_meshlets, build_meshlets_from_mesh, build_meshlets_lod_chain, LodConfig,
@@ -59,7 +62,8 @@ pub use deferred::{MeshletDeferredShader, DEFERRED_COLOR_FORMAT};
 pub use dispatcher::{DrawIndirectArgs, HiZTestParams, MeshletCull};
 pub use drawer::MeshletDrawer;
 pub use gpu_meshlet::{
-    binding, meshlet_bind_group, meshlet_bind_group_layout, GpuMeshletMesh,
+    binding, meshlet_bind_group, meshlet_bind_group_layout, pool_meshlet_bind_group,
+    GpuMeshletMesh,
 };
 pub use loader::MeshletMeshLoader;
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshDescriptor, MeshHandle};

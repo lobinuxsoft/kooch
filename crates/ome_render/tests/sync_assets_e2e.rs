@@ -186,12 +186,18 @@ fn sync_resolves_guid_to_gpu_mesh() {
         },
     );
     assert_eq!(stage.gpu_mesh_count(), 0);
-    assert!(stage.active_guid().is_none());
 
     stage.sync_assets_to_gpu(&device, &mut resources);
 
-    assert_eq!(stage.gpu_mesh_count(), 1, "one GUID should be uploaded");
-    assert_eq!(stage.active_guid(), Some(guid), "active GUID set on first ensure");
+    assert_eq!(
+        stage.gpu_mesh_count(),
+        1,
+        "one GUID should be registered in the pool",
+    );
+    assert!(
+        stage.pipeline().lookup(guid).is_some(),
+        "pool registry must hold the registered GUID",
+    );
 
     // Second sync must be a no-op — already cached.
     stage.sync_assets_to_gpu(&device, &mut resources);

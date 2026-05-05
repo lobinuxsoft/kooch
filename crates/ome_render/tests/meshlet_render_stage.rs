@@ -117,7 +117,6 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
 
     let cube = build_cube_mesh();
     let meshlet_mesh = build_default_meshlets(&cube).expect("build meshlets");
-    let gpu_mesh = meshlet_mesh.upload(&device);
 
     let mut resources = ecs_test_resources();
 
@@ -132,12 +131,12 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
     };
     let mut stage = MeshletRenderStage::new(&device, config);
 
-    // Pretend a startup loader registered this asset under a fresh
-    // GUID. PR3 wires this through the `AssetServer + AssetDatabase +
-    // Assets<MeshletMesh>` resources; the test exercises the same
-    // `(guid, &mesh) → MeshHandle` registry contract directly.
+    // Pool registration via the public ensure_gpu_mesh path — this is
+    // what production code does when AssetServer resolves the GUID.
+    // The first render call rebuilds the GpuGlobalMeshPool because
+    // pool_dirty is set.
     let mesh_guid = Guid::new_v4();
-    stage.pipeline_mut().register_mesh(mesh_guid, &meshlet_mesh);
+    stage.ensure_gpu_mesh(&device, mesh_guid, &meshlet_mesh);
 
     // Two entities — one to the left, one to the right of the origin.
     // Same registered mesh, distinct material ids so the deferred
@@ -169,11 +168,10 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
     let view = Mat4::look_at_rh(cam_pos, Vec3::ZERO, Vec3::Y);
     let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
 
-    let stats = stage.render(
+    let stats = stage.render_with_assets(
         &device,
         &queue,
         &resources,
-        &gpu_mesh,
         proj * view,
         cam_pos,
     );
@@ -232,15 +230,11 @@ fn render_stage_with_no_entities_returns_zero_stats() {
         return;
     };
 
-    let cube = build_cube_mesh();
-    let meshlet_mesh = build_default_meshlets(&cube).expect("build meshlets");
-    let gpu_mesh = meshlet_mesh.upload(&device);
-
     let mut resources = ecs_test_resources();
     let assets: Assets<MeshletMesh> = Assets::new();
     resources.insert(assets);
 
-    let stage = MeshletRenderStage::new(
+    let mut stage = MeshletRenderStage::new(
         &device,
         MeshletRenderStageConfig {
             size: (64, 64),
@@ -254,11 +248,10 @@ fn render_stage_with_no_entities_returns_zero_stats() {
     let view = Mat4::look_at_rh(cam_pos, Vec3::ZERO, Vec3::Y);
     let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
 
-    let stats = stage.render(
+    let stats = stage.render_with_assets(
         &device,
         &queue,
         &resources,
-        &gpu_mesh,
         proj * view,
         cam_pos,
     );
