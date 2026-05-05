@@ -240,6 +240,20 @@ pub(super) fn draw_value_widget(
                 dz.to_radians(),
             )))
         }
+        ReflectValue::AssetRef { guid, asset_type } => {
+            // PR4 task #26 wires the typed picker dropdown here. For
+            // now the inspector renders the field as read-only so the
+            // build stays green and existing reflect-value handling
+            // is unchanged. The placeholder is intentionally minimal:
+            // we do not want to ship a half-functional picker that
+            // pretends to edit the value.
+            let label = match guid {
+                Some(g) => format!("{asset_type}({g})"),
+                None => format!("{asset_type}(none — picker pending)"),
+            };
+            ui.label(label);
+            None
+        }
         ReflectValue::Mat4(m) => {
             let (scale, rotation, translation) = m.to_scale_rotation_translation();
             let (ex, ey, ez) = rotation.to_euler(glam::EulerRot::XYZ);

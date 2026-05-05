@@ -461,12 +461,14 @@ mod tests {
                     type_name: "u32",
                     kind: FieldKind::U32,
                     choices: &[],
+                    asset_type: "",
                 },
                 FieldMeta {
                     name: "max_hp",
                     type_name: "u32",
                     kind: FieldKind::U32,
                     choices: &[],
+                    asset_type: "",
                 },
             ];
             FIELDS

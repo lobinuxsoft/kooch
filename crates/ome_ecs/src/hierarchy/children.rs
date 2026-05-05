@@ -22,6 +22,7 @@ impl Reflect for Children {
             type_name: "Vec<Entity>",
             kind: FieldKind::String,
             choices: &[],
+            asset_type: "",
         }];
         FIELDS
     }

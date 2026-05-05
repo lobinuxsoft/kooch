@@ -93,6 +93,46 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             continue;
         }
 
+        // `#[reflect(asset = "TypeName")]` annotates an
+        // `Option<Guid>` field as a typed asset reference. The
+        // inspector picks it up via FieldKind::AssetRef and renders
+        // a dropdown filtered by `TypeName`.
+        let asset_type = match parse_field_asset_type(field) {
+            Ok(opt) => opt,
+            Err(e) => return e,
+        };
+        if let Some(asset_type) = asset_type {
+            field_metas.push(quote! {
+                ::ome_ecs::reflect::FieldMeta {
+                    name: #field_name_str,
+                    type_name: "Option<ome_core::Guid>",
+                    kind: ::ome_ecs::reflect::FieldKind::AssetRef,
+                    choices: &[],
+                    asset_type: #asset_type,
+                }
+            });
+            get_arms.push(quote! {
+                #field_name_str => Some(::ome_ecs::reflect::ReflectValue::AssetRef {
+                    guid: self.#field_name,
+                    asset_type: #asset_type.to_owned(),
+                }),
+            });
+            set_arms.push(quote! {
+                #field_name_str => match value {
+                    ::ome_ecs::reflect::ReflectValue::AssetRef { guid, .. } => {
+                        self.#field_name = guid;
+                        Ok(())
+                    }
+                    other => Err(::ome_ecs::reflect::ReflectError::TypeMismatch {
+                        field: #field_name_str.into(),
+                        expected: ::ome_ecs::reflect::FieldKind::AssetRef,
+                        got: other.kind(),
+                    }),
+                },
+            });
+            continue;
+        }
+
         let Some((kind_variant, type_name_str, needs_clone)) = type_mapping(ty) else {
             return syn::Error::new_spanned(
                 ty,
@@ -124,6 +164,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 type_name: #type_name_str,
                 kind: ::ome_ecs::reflect::FieldKind::#kind_ident,
                 choices: #choices_expr,
+                asset_type: "",
             }
         });
 
@@ -333,6 +374,37 @@ fn parse_inspector_attr(input: &DeriveInput) -> Result<Option<proc_macro2::Ident
                     variant_name,
                     proc_macro2::Span::call_site(),
                 )));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Parses `#[reflect(asset = "TypeName")]` on a field. The annotated
+/// field must be an `Option<ome_core::Guid>` and is exposed to the
+/// inspector as a typed asset reference (renderered as a dropdown
+/// picker filtered by `TypeName`).
+fn parse_field_asset_type(field: &syn::Field) -> Result<Option<String>, TokenStream> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("reflect") {
+            continue;
+        }
+        let nested = match attr.parse_args_with(
+            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
+        ) {
+            Ok(n) => n,
+            Err(e) => return Err(e.to_compile_error().into()),
+        };
+        for meta in nested {
+            if let Meta::NameValue(MetaNameValue {
+                path,
+                value: syn::Expr::Lit(expr_lit),
+                ..
+            }) = meta
+                && path.is_ident("asset")
+                && let Lit::Str(lit_str) = &expr_lit.lit
+            {
+                return Ok(Some(lit_str.value()));
             }
         }
     }
