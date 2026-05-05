@@ -212,15 +212,16 @@ fn lod_selector_at_extreme_distance_collapses_to_root_set() {
         proj_scale_y,
         1.0,
     );
-    let coarsest_error = chain
-        .meshlets
-        .iter()
-        .map(|m| m.lod_error)
-        .fold(f32::NEG_INFINITY, f32::max);
+    // Post-#462 (Nanite-grouped DAG): roots are meshlets whose
+    // parent_meshlet_index is the sentinel — these are the terminal
+    // descent stops, regardless of which LOD level they ended up at.
+    // At extreme distance every parent's pixel error collapses
+    // below the threshold, so the selector never descends past the
+    // root set.
     let root_count = chain
         .meshlets
         .iter()
-        .filter(|m| m.lod_error == coarsest_error)
+        .filter(|m| m.parent_meshlet_index == u32::MAX)
         .count();
     assert_eq!(
         count, root_count,
