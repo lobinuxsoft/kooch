@@ -3,8 +3,8 @@
 use ome_core::resource::Resources;
 
 use crate::undo::{
-    AddComponentCommand, DespawnCommand, EditorCommand, RemoveComponentCommand, SetFieldCommand,
-    SpawnCommand, SpawnMeshCommand, TransformEditCommand,
+    AddComponentCommand, DespawnCommand, DuplicateCommand, EditorCommand, RemoveComponentCommand,
+    SetFieldCommand, SpawnCommand, SpawnMeshCommand, TransformEditCommand,
 };
 
 use super::EditorAction;
@@ -24,6 +24,9 @@ pub(super) fn action_to_command(
             Some(Box::new(SpawnMeshCommand::new(path.clone(), name.clone())))
         }
         EditorAction::Despawn(entity) => Some(Box::new(DespawnCommand::new(resources, *entity))),
+        EditorAction::Duplicate(entity) => {
+            Some(Box::new(DuplicateCommand::new(resources, *entity)))
+        }
         EditorAction::SetField {
             entity,
             type_id,
@@ -59,6 +62,7 @@ pub(super) fn batch_description(actions: &[EditorAction]) -> String {
         Some(EditorAction::Spawn { .. }) => format!("Spawn {count} Entities"),
         Some(EditorAction::SpawnMesh { .. }) => format!("Spawn {count} Mesh Entities"),
         Some(EditorAction::Despawn(_)) => format!("Despawn {count} Entities"),
+        Some(EditorAction::Duplicate(_)) => format!("Duplicate {count} Entities"),
         Some(EditorAction::SetField { .. }) => format!("Set {count} Fields"),
         Some(EditorAction::AddComponent { .. }) => format!("Add {count} Components"),
         Some(EditorAction::RemoveComponent { .. }) => format!("Remove {count} Components"),
@@ -73,6 +77,7 @@ pub(super) fn same_ecs_variant(a: &EditorAction, b: &EditorAction) -> bool {
         (EditorAction::Spawn { .. }, EditorAction::Spawn { .. })
             | (EditorAction::SpawnMesh { .. }, EditorAction::SpawnMesh { .. })
             | (EditorAction::Despawn(_), EditorAction::Despawn(_))
+            | (EditorAction::Duplicate(_), EditorAction::Duplicate(_))
             | (EditorAction::SetField { .. }, EditorAction::SetField { .. })
             | (EditorAction::AddComponent { .. }, EditorAction::AddComponent { .. })
             | (EditorAction::RemoveComponent { .. }, EditorAction::RemoveComponent { .. })

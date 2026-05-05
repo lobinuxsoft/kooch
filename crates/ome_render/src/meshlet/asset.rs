@@ -60,7 +60,8 @@ pub const MESHLET_GROUP_NONE: u32 = u32::MAX;
 ///  96  children_group_index (u32)       #465 — id of the group this meshlet
 ///                                       is a parent of (siblings share it).
 ///                                       MESHLET_GROUP_NONE for LOD 0 meshlets.
-/// 100  _pad3 (u32)
+/// 100  lod_level (u32)              #467 — chain depth, 0 = LOD 0,
+///                                      incremented per simplification step
 /// 104  _pad4 (u32)
 /// 108  _pad5 (u32)
 /// ```
@@ -120,7 +121,11 @@ pub struct MeshletDescriptor {
     /// descending further into the children). [`MESHLET_GROUP_NONE`]
     /// for LOD 0 meshlets (no group below).
     pub children_group_index: u32,
-    pub _pad3: u32,
+    /// Chain depth: 0 = LOD 0 (full detail), 1 = parents from the
+    /// first per-group simplification, etc. Drives the LOD-stack
+    /// debug inspector (#467) and `MeshInstance.lod_force_level`
+    /// filtering in the cull shader.
+    pub lod_level: u32,
     pub _pad4: u32,
     pub _pad5: u32,
 }
@@ -211,6 +216,7 @@ mod tests {
         assert_eq!(offset_of!(MeshletDescriptor, cone_axis), 80);
         assert_eq!(offset_of!(MeshletDescriptor, group_index), 92);
         assert_eq!(offset_of!(MeshletDescriptor, children_group_index), 96);
+        assert_eq!(offset_of!(MeshletDescriptor, lod_level), 100);
     }
 
     #[test]

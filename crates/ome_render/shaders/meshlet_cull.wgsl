@@ -66,7 +66,9 @@ struct MeshletDescriptor {
     // 0xFFFFFFFFu sentinel = no group on that side (root or LOD 0).
     group_index: u32,
     children_group_index: u32,
-    _pad3: u32,
+    // Chain depth for LOD-stack inspector + per-instance level lock
+    // (#467). 0 = LOD 0, increments per simplification step.
+    lod_level: u32,
     _pad4: u32,
     _pad5: u32,
 }
@@ -245,7 +247,11 @@ struct MeshInstance {
     mesh_id: u32,
     material_id: u32,
     lod_bias: f32,
-    _pad: u32,
+    // i32 stored as u32 over the wire — bitcast<i32> in the shader.
+    // < 0 (LOD_FORCE_NONE = i32::MIN sentinel) = normal selector;
+    // ≥ 0 = render only meshlets with lod_level == this value (#467
+    // LOD-stack inspector).
+    lod_force_level: i32,
 }
 
 struct SceneCullParams {
@@ -537,16 +543,22 @@ fn run_cull_scene_pool_atomic(thread_id: u32) {
     let global_meshlet_idx = mesh_desc.first_meshlet + meshlet_offset;
     let m = pool_meshlets[global_meshlet_idx];
 
-    // Debug-mode override: force-render only meshlets at one
-    // extreme of the chain so the artist can audit each level in
-    // isolation. Skips the normal LOD selector entirely.
-    //   8 = OnlyLod0  → emit iff lod_error == 0.0
-    //   9 = OnlyRoots → emit iff parent_meshlet_index == sentinel
-    if (params.debug_mode == 8u) {
+    // Per-instance LOD level lock (#467). When the editor's LOD-
+    // stack inspector spawns ghost copies of an entity, each copy
+    // sets `lod_force_level >= 0` to render only its own slice of
+    // the chain. Short-circuits both the debug-mode overrides and
+    // the normal selector below.
+    if (inst.lod_force_level >= 0) {
+        if (i32(m.lod_level) != inst.lod_force_level) {
+            return;
+        }
+    } else if (params.debug_mode == 8u) {
+        // 8 = OnlyLod0 → emit iff lod_error == 0.0
         if (m.lod_error != 0.0) {
             return;
         }
     } else if (params.debug_mode == 9u) {
+        // 9 = OnlyRoots → emit iff parent_meshlet_index == sentinel
         if (m.parent_meshlet_index != 0xFFFFFFFFu) {
             return;
         }

@@ -66,7 +66,7 @@ fn synthetic_meshlet_facing(normal: Vec3) -> MeshletMesh {
         cone_axis: cone_axis.to_array(),
         group_index: ome_render::meshlet::MESHLET_GROUP_NONE,
         children_group_index: ome_render::meshlet::MESHLET_GROUP_NONE,
-        _pad3: 0,
+        lod_level: 0,
         _pad4: 0,
         _pad5: 0,
     };

@@ -32,10 +32,26 @@ pub(crate) fn draw_world_content(
 
     ui.horizontal(|ui| {
         draw_spawn_menu(ui, actions);
-        let can_despawn = !selected.is_empty();
+        let any_selected = !selected.is_empty();
         if ui
             .add_enabled(
-                can_despawn,
+                any_selected,
+                egui::Button::new(format!("{} Duplicate", icons::COPY)),
+            )
+            .on_hover_text(
+                "Clone the selected entity (or entities) with every \
+                 component value preserved. The new entity gets a fresh \
+                 handle; nothing about the source is touched.",
+            )
+            .clicked()
+        {
+            for &entity in selected.iter() {
+                actions.push(EditorAction::Duplicate(entity));
+            }
+        }
+        if ui
+            .add_enabled(
+                any_selected,
                 egui::Button::new(format!("{} Despawn", icons::TRASH)),
             )
             .clicked()

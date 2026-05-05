@@ -136,6 +136,22 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
             }
         }
     }
+
+    /// Same as [`Self::for_each`] but the closure also receives the
+    /// matched [`Entity`]. Use when downstream code needs to cross-
+    /// reference the iterated row against another component lookup
+    /// (e.g. an optional override component checked via
+    /// [`Self::get`]).
+    pub fn for_each_entity(&self, mut func: impl FnMut(Entity, Q::Item<'w>)) {
+        for archetype in &self.matched_archetypes {
+            for &entity in archetype.entities() {
+                // SAFETY: Archetype guarantees required components exist.
+                if let Some(item) = unsafe { Q::fetch(&self.fetch, entity) } {
+                    func(entity, item);
+                }
+            }
+        }
+    }
 }
 
 impl<Q: WorldQuery, F: QueryFilter> Drop for Query<'_, Q, F> {

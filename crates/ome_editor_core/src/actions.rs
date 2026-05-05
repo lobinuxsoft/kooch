@@ -35,6 +35,12 @@ pub(crate) enum EditorAction {
         name: String,
     },
     Despawn(Entity),
+    /// Clones an existing entity's full component set (including
+    /// reflected field values) into a new entity. The source stays
+    /// untouched. Used by the World panel "Duplicate" button to
+    /// quickly bring up parallel test entities (e.g. the LOD-stack
+    /// inspector workflow needs N copies of one mesh entity).
+    Duplicate(Entity),
     SetField {
         entity: Entity,
         type_id: TypeId,

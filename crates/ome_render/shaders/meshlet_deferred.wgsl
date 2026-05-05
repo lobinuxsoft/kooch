@@ -63,7 +63,7 @@ struct MeshletDescriptor {
     cone_axis: vec3<f32>,
     group_index: u32,
     children_group_index: u32,
-    _pad3: u32,
+    lod_level: u32,
     _pad4: u32,
     _pad5: u32,
 }
@@ -87,7 +87,7 @@ struct MeshInstance {
     mesh_id: u32,
     material_id: u32,
     lod_bias: f32,
-    _pad: u32,
+    lod_force_level: i32,
 }
 @group(3) @binding(0) var<storage, read> visible_meshlets: array<u32>;
 @group(3) @binding(1) var<storage, read> instances: array<MeshInstance>;
