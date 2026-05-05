@@ -38,6 +38,28 @@ pub enum MeshletDebugMode {
     CullPassthrough = 7,
 }
 
+/// Runtime knob for the cull / LOD selector. Lives as a
+/// [`Resource`](ome_core::resource::Resources) so the editor can
+/// adjust it in flight without rebuilding the meshlet stage.
+///
+/// `target_error_pixels` is the boundary the per-meshlet selector
+/// compares against: a meshlet is picked when its own pixel-projected
+/// `lod_error` falls under the target AND its parent's exceeds it.
+/// Lower values keep more detail at any given distance; higher values
+/// drop to coarser parents earlier.
+#[derive(Copy, Clone, Debug)]
+pub struct MeshletLodSettings {
+    pub target_error_pixels: f32,
+}
+
+impl Default for MeshletLodSettings {
+    fn default() -> Self {
+        Self {
+            target_error_pixels: 1.0,
+        }
+    }
+}
+
 impl MeshletDebugMode {
     /// Stable raw discriminant the deferred shader pattern-matches on.
     #[inline]

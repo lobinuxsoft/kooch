@@ -14,7 +14,7 @@
 //! extra wiring.
 
 use ome_gizmos_handles::{HandleMode, SnapSettings};
-use ome_render::meshlet::{MeshletDebugMode, MeshletRenderStats};
+use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
 
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
@@ -38,6 +38,7 @@ pub(crate) fn draw_view_content(
     snap_settings: &mut SnapSettings,
     selection_has_transform: bool,
     meshlet_debug_mode: &mut MeshletDebugMode,
+    meshlet_lod_settings: &mut MeshletLodSettings,
     meshlet_stats: MeshletRenderStats,
 ) {
     let available = ui.available_size();
@@ -175,6 +176,27 @@ pub(crate) fn draw_view_content(
                 .on_hover_text(
                     "Meshlet pipeline visualization mode. Off = production shading.",
                 );
+
+            // LOD threshold slider — drives meshlet_lod_settings.target_error_pixels.
+            // Logarithmic-feel: 0.1 keeps maximum detail, ≥10 forces
+            // coarse roots even at close range. Lives next to the
+            // debug dropdown so artists can sanity-check chain
+            // behaviour without leaving the viewport.
+            ui.separator();
+            ui.label(egui::RichText::new("LOD ≤").small())
+                .on_hover_text("Pixel-error threshold for the continuous-LOD selector.");
+            ui.add(
+                egui::DragValue::new(&mut meshlet_lod_settings.target_error_pixels)
+                    .speed(0.05)
+                    .range(0.1_f32..=50.0_f32)
+                    .max_decimals(2)
+                    .suffix("px"),
+            )
+            .on_hover_text(
+                "Lower values keep more meshlets at any given distance. \
+                 Crank this up to force coarser LOD selection and \
+                 visually confirm the chain is being descended.",
+            );
 
             // Stats overlay — only when a debug mode is active so the
             // toolbar stays minimal during normal editing. Per-stage

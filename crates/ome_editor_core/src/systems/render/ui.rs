@@ -3,7 +3,7 @@
 
 use egui_dock::DockArea;
 
-use ome_render::meshlet::{MeshletDebugMode, MeshletRenderStats};
+use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
 use ome_world::lod::LodRingConfig;
 
 use crate::actions::EditorAction;
@@ -59,6 +59,7 @@ pub(super) fn run_editor_ui(
     streaming_config: &mut LodRingConfig,
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
     meshlet_debug_mode: &mut MeshletDebugMode,
+    meshlet_lod_settings: &mut MeshletLodSettings,
     meshlet_stats: MeshletRenderStats,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
@@ -113,6 +114,7 @@ pub(super) fn run_editor_ui(
                 streaming_config,
                 asset_catalog,
                 meshlet_debug_mode,
+                meshlet_lod_settings,
                 meshlet_stats,
             };
 

@@ -8,7 +8,8 @@ use ome_core::raw_event::RawEventHandler;
 use ome_core::resource::Resources;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
 use ome_render::meshlet::{
-    MeshletBlit, MeshletDebugMode, MeshletRenderStage, MeshletRenderStageConfig,
+    MeshletBlit, MeshletDebugMode, MeshletLodSettings, MeshletRenderStage,
+    MeshletRenderStageConfig,
 };
 use ome_render::SkyRenderPass;
 use ome_world::{ChunkManager, ProceduralCitySource};
@@ -117,6 +118,11 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     // Off keeps the production normal-debug path; the View toolbar
     // dropdown writes through this resource per-frame.
     resources.insert(MeshletDebugMode::default());
+    // Continuous-LOD threshold (#462). Default 1.0 px is the
+    // production target; the View toolbar exposes a slider so
+    // artists can crank it higher to force coarser LOD selection
+    // at editor distances and visually sanity-check the chain.
+    resources.insert(MeshletLodSettings::default());
     resources.insert(power_profile);
 
     tracing::info!("Editor overlay initialized");
