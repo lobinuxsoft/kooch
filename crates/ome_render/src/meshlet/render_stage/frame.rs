@@ -297,8 +297,14 @@ impl MeshletRenderStage {
             .unwrap_or_default()
             .target_error_pixels
             .max(0.01);
+        let debug_mode = resources
+            .get::<MeshletDebugMode>()
+            .copied()
+            .unwrap_or_default()
+            .as_u32();
         let cull_params = CullParams::new(view_proj, cam_pos, max_meshlets_per_mesh)
-            .with_lod(viewport_h_px, proj_scale_y, lod_target);
+            .with_lod(viewport_h_px, proj_scale_y, lod_target)
+            .with_debug_mode(debug_mode);
         let scene_params =
             SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
 

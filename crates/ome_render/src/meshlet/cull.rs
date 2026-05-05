@@ -55,7 +55,13 @@ pub struct CullParams {
     pub meshlet_count: u32,
     pub lod_target_error_pixels: f32,
     pub lod_error_to_pixel_factor: f32,
-    pub _pad2: u32,
+    /// Mirrors [`crate::meshlet::MeshletDebugMode`] discriminant.
+    /// Most values are inert in the cull pass (the deferred shader
+    /// is the consumer); but `OnlyLod0 = 8` and `OnlyRoots = 9`
+    /// override the LOD selector so the cull emits only meshlets at
+    /// a specific extreme of the chain — useful for visually
+    /// auditing each chain layer in isolation.
+    pub debug_mode: u32,
     pub _pad3: u32,
 }
 
@@ -73,9 +79,17 @@ impl CullParams {
             meshlet_count,
             lod_target_error_pixels: 1.0,
             lod_error_to_pixel_factor: 0.0,
-            _pad2: 0,
+            debug_mode: 0,
             _pad3: 0,
         }
+    }
+
+    /// Sets the cull-side debug mode. Mirrors the deferred shader's
+    /// `MeshletDebugMode` discriminant so a single resource drives
+    /// both shading and cull behaviour.
+    pub fn with_debug_mode(mut self, debug_mode: u32) -> Self {
+        self.debug_mode = debug_mode;
+        self
     }
 
     /// Configures the continuous-LOD selector with a non-zero

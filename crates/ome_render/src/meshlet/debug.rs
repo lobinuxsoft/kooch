@@ -36,6 +36,21 @@ pub enum MeshletDebugMode {
     /// Bright green on meshlets that survived every cull stage and
     /// reached the visibility buffer.
     CullPassthrough = 7,
+    /// Force-render ONLY meshlets at LOD 0 (the highest-detail
+    /// chain entry, `lod_error == 0`). Bypasses the normal selector
+    /// so the artist can inspect what the finest-LOD geometry looks
+    /// like in isolation, free of any chain-descent overlap.
+    /// Pairs with `OnlyRoots` for visual sanity-checking the
+    /// LOD chain's two extremes.
+    OnlyLod0 = 8,
+    /// Force-render ONLY meshlets that are roots in the LOD DAG
+    /// (`parent_meshlet_index == MESHLET_ROOT_PARENT`). Shows the
+    /// coarsest-available representation of each registered mesh
+    /// in isolation. Useful for distinguishing real LOD descent
+    /// (transition between LOD 0 and roots as distance grows) from
+    /// chain-construction failures (where everything is a root and
+    /// the distance threshold has nothing to descend into).
+    OnlyRoots = 9,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -72,7 +87,13 @@ impl MeshletDebugMode {
     /// users never select a mode that silently falls back to `Off`.
     /// Extend as new modes ship per-commit.
     pub fn all_implemented() -> &'static [Self] {
-        &[Self::Off, Self::MeshletIds, Self::InstanceIds]
+        &[
+            Self::Off,
+            Self::MeshletIds,
+            Self::InstanceIds,
+            Self::OnlyLod0,
+            Self::OnlyRoots,
+        ]
     }
 
     /// Human-readable label for the editor dropdown / tooltips.
@@ -86,6 +107,8 @@ impl MeshletDebugMode {
             Self::HiZRejected => "Hi-Z Rejected",
             Self::BackfaceRejected => "Backface Rejected",
             Self::CullPassthrough => "Cull Passthrough",
+            Self::OnlyLod0 => "Only LOD 0",
+            Self::OnlyRoots => "Only Roots",
         }
     }
 }
@@ -112,5 +135,7 @@ mod tests {
         assert_eq!(MeshletDebugMode::HiZRejected.as_u32(), 5);
         assert_eq!(MeshletDebugMode::BackfaceRejected.as_u32(), 6);
         assert_eq!(MeshletDebugMode::CullPassthrough.as_u32(), 7);
+        assert_eq!(MeshletDebugMode::OnlyLod0.as_u32(), 8);
+        assert_eq!(MeshletDebugMode::OnlyRoots.as_u32(), 9);
     }
 }

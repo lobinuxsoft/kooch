@@ -37,7 +37,10 @@ struct CullParams {
     // behaviour) and non-roots are rejected because their parent's
     // pixel error collapses to 0 ≤ threshold.
     lod_error_to_pixel_factor: f32,
-    _pad2: u32,
+    // Mirrors MeshletDebugMode discriminant. Value 8 (OnlyLod0) and
+    // 9 (OnlyRoots) override the LOD selector — see
+    // cs_cull_scene_pool_atomic.
+    debug_mode: u32,
     _pad3: u32,
 }
 
@@ -534,33 +537,48 @@ fn run_cull_scene_pool_atomic(thread_id: u32) {
     let global_meshlet_idx = mesh_desc.first_meshlet + meshlet_offset;
     let m = pool_meshlets[global_meshlet_idx];
 
-    // Group-atomic descent decisions.
-    let target_px = params.lod_target_error_pixels;
-
-    var above_too_coarse: bool;
-    if (m.group_index == 0xFFFFFFFFu) {
-        // Root or no above-group → above is trivially "too coarse"
-        // so the meshlet is the only available level.
-        above_too_coarse = true;
+    // Debug-mode override: force-render only meshlets at one
+    // extreme of the chain so the artist can audit each level in
+    // isolation. Skips the normal LOD selector entirely.
+    //   8 = OnlyLod0  → emit iff lod_error == 0.0
+    //   9 = OnlyRoots → emit iff parent_meshlet_index == sentinel
+    if (params.debug_mode == 8u) {
+        if (m.lod_error != 0.0) {
+            return;
+        }
+    } else if (params.debug_mode == 9u) {
+        if (m.parent_meshlet_index != 0xFFFFFFFFu) {
+            return;
+        }
     } else {
-        let bits = atomicLoad(&group_max_err[m.group_index]);
-        let group_err_px = bitcast<f32>(bits);
-        above_too_coarse = group_err_px > target_px;
-    }
+        // Normal group-atomic descent decisions.
+        let target_px = params.lod_target_error_pixels;
 
-    var below_fine: bool;
-    if (m.children_group_index == 0xFFFFFFFFu) {
-        // LOD 0 or no children → no further descent possible, this
-        // level is the floor.
-        below_fine = true;
-    } else {
-        let bits = atomicLoad(&group_max_err[m.children_group_index]);
-        let group_err_px = bitcast<f32>(bits);
-        below_fine = group_err_px <= target_px;
-    }
+        var above_too_coarse: bool;
+        if (m.group_index == 0xFFFFFFFFu) {
+            // Root or no above-group → above is trivially "too
+            // coarse" so the meshlet is the only available level.
+            above_too_coarse = true;
+        } else {
+            let bits = atomicLoad(&group_max_err[m.group_index]);
+            let group_err_px = bitcast<f32>(bits);
+            above_too_coarse = group_err_px > target_px;
+        }
 
-    if (!(above_too_coarse && below_fine)) {
-        return;
+        var below_fine: bool;
+        if (m.children_group_index == 0xFFFFFFFFu) {
+            // LOD 0 or no children → no further descent possible,
+            // this level is the floor.
+            below_fine = true;
+        } else {
+            let bits = atomicLoad(&group_max_err[m.children_group_index]);
+            let group_err_px = bitcast<f32>(bits);
+            below_fine = group_err_px <= target_px;
+        }
+
+        if (!(above_too_coarse && below_fine)) {
+            return;
+        }
     }
 
     // Frustum + cone tests, then emit.
