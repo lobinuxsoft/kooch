@@ -422,6 +422,7 @@ impl AssetServer {
             AssetEntry {
                 path: path.to_path_buf(),
                 mtime,
+                type_name: meta.asset_type.clone(),
             },
         );
     }
