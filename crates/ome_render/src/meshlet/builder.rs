@@ -219,17 +219,6 @@ pub fn build_meshlets_lod_chain(
                 continue;
             }
 
-            // Force one parent per group: target ≤ max_triangles
-            // worth of indices. Coverage of the four children's
-            // region is then guaranteed because the parent is
-            // literally the simplified union of their geometry.
-            let target_count = ((max_triangles * 3) as usize)
-                .min(((geo.indices.len() as f32) * lod_config.target_ratio) as usize);
-            let target_count = (target_count / 3) * 3;
-            if target_count < 3 {
-                continue;
-            }
-
             let group_vertex_bytes: &[u8] = bytemuck::cast_slice(&geo.vertices);
             let group_adapter = meshopt::VertexDataAdapter::new(
                 group_vertex_bytes,
@@ -237,31 +226,70 @@ pub fn build_meshlets_lod_chain(
                 0,
             )?;
 
-            let mut actual_error = 0.0f32;
-            let simplified = meshopt::simplify(
-                &geo.indices,
-                &group_adapter,
-                target_count,
-                current_error,
-                meshopt::SimplifyOptions::LockBorder,
-                Some(&mut actual_error),
-            );
-            if simplified.is_empty() || simplified.len() >= geo.indices.len() {
-                continue; // No reduction possible for this group.
+            // Atomicity invariant: each group must produce EXACTLY
+            // ONE parent meshlet. If clusterize emits 2+ parents
+            // (because the simplified vertex set still exceeds
+            // max_vertices) then children would have to split
+            // between parents — and selector decisions to descend
+            // one but hold the other tear coverage at the seam,
+            // causing flicker. We loop with a progressively tighter
+            // target until clusterize lands at 1 parent. If we run
+            // out of budget, the group is skipped: children stay as
+            // roots, conservative loss of simplification but no
+            // visual artefacts.
+            let mut current_target = ((max_triangles * 3) as usize)
+                .min(((geo.indices.len() as f32) * lod_config.target_ratio) as usize);
+            current_target = (current_target / 3) * 3;
+            let mut emitted: Option<(
+                Vec<MeshletDescriptor>,
+                Vec<u32>,
+                Vec<u8>,
+                f32,
+            )> = None;
+
+            while current_target >= 3 {
+                let mut actual_error = 0.0f32;
+                let simplified = meshopt::simplify(
+                    &geo.indices,
+                    &group_adapter,
+                    current_target,
+                    current_error,
+                    meshopt::SimplifyOptions::LockBorder,
+                    Some(&mut actual_error),
+                );
+                if simplified.is_empty() || simplified.len() >= geo.indices.len() {
+                    break; // simplify cannot reduce further at any target
+                }
+
+                let (descs, mlv, mlt) = clusterize_lod(
+                    &simplified,
+                    &group_adapter,
+                    &geo.vertices,
+                    max_vertices,
+                    max_triangles,
+                    cone_weight,
+                    actual_error,
+                );
+                match descs.len() {
+                    1 => {
+                        emitted = Some((descs, mlv, mlt, actual_error));
+                        break;
+                    }
+                    0 => break,
+                    _ => {
+                        // Tighten and retry. Roughly halve the budget
+                        // (kept multiple of 3) — exponential decrease
+                        // converges in a few iterations even for very
+                        // dense groups.
+                        current_target = (current_target / 2 / 3) * 3;
+                    }
+                }
             }
 
-            let (parent_descs, parent_mlv_local, parent_mlt) = clusterize_lod(
-                &simplified,
-                &group_adapter,
-                &geo.vertices,
-                max_vertices,
-                max_triangles,
-                cone_weight,
-                actual_error,
-            );
-            if parent_descs.is_empty() {
+            let Some((parent_descs, parent_mlv_local, parent_mlt, actual_error)) = emitted
+            else {
                 continue;
-            }
+            };
 
             // Pad triangles to a u32 boundary before appending —
             // the cull shader reads them as array<u32>.
