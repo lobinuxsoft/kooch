@@ -42,10 +42,18 @@ impl PlayState {
     /// Cargo handles the build (incremental, cached) and runs the resulting
     /// binary with `--scene <abs-path>`. The play binary picks up the scene
     /// through `oh_my_engine::SceneBootstrapPlugin`.
+    ///
+    /// `engine_root` is forwarded as `OME_ENGINE_ROOT` so the spawned
+    /// binary's `DefaultPlugins::AssetPlugin` can resolve engine-shipped
+    /// assets (Suzanne, sample materials) even though its CWD points at
+    /// the project. Without it the asset database scans `<project>/assets`
+    /// only, every engine GUID fails `load_by_guid`, and the game window
+    /// renders a clear sky with no meshes.
     pub fn launch(
         &mut self,
         manifest_path: &Path,
         scene_path: &Path,
+        engine_root: Option<&Path>,
     ) -> Result<(), PlayError> {
         if self.is_playing() {
             return Err(PlayError::AlreadyPlaying);
@@ -55,15 +63,25 @@ impl PlayState {
             out.clear();
         }
 
-        let mut child = Command::new("cargo")
-            .arg("run")
+        let mut cmd = Command::new("cargo");
+        cmd.arg("run")
             .arg("--manifest-path")
             .arg(manifest_path)
             .arg("--")
             .arg("--scene")
             .arg(scene_path)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(engine_root) = engine_root {
+            cmd.env("OME_ENGINE_ROOT", engine_root);
+        }
+        if let Some(project_root) = manifest_path.parent() {
+            cmd.env("OME_PROJECT_ROOT", project_root);
+        }
+        if std::env::var_os("RUST_LOG").is_none() {
+            cmd.env("RUST_LOG", "info");
+        }
+        let mut child = cmd
             .spawn()
             .map_err(|e| PlayError::Spawn(e.to_string()))?;
 

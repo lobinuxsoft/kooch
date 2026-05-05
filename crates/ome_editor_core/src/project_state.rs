@@ -59,6 +59,11 @@ pub struct LauncherProcess {
     binary_path: PathBuf,
     /// Root of the project directory (needed to launch the binary).
     project_root: PathBuf,
+    /// Root of the engine repository / install. Forwarded to the
+    /// game binary as `OME_ENGINE_ROOT` so its asset plugin can
+    /// locate engine-shipped assets even when the binary's CWD
+    /// points at the project root.
+    engine_root: Option<PathBuf>,
 }
 
 /// Spawns reader threads that drain stdout/stderr into the shared buffer.
@@ -90,7 +95,14 @@ fn spawn_output_readers(child: &mut Child, output: &Arc<Mutex<Vec<String>>>) {
 
 impl LauncherProcess {
     /// Starts phase 1: `cargo build --manifest-path <path>`.
-    pub fn spawn(project_root: &Path) -> Result<Self, String> {
+    ///
+    /// `engine_root` is forwarded to the spawned game binary as the
+    /// `OME_ENGINE_ROOT` env var so its `DefaultPlugins` can locate
+    /// the engine-shipped assets (Suzanne, default sky textures, the
+    /// committed sample materials). Without it the binary would only
+    /// see `<project>/assets/`, miss every engine asset the scene
+    /// references, and render nothing.
+    pub fn spawn(project_root: &Path, engine_root: Option<&Path>) -> Result<Self, String> {
         let manifest_path = project_root.join("Cargo.toml");
         let output = Arc::new(Mutex::new(Vec::new()));
 
@@ -127,6 +139,7 @@ impl LauncherProcess {
             status: LauncherStatus::Compiling,
             binary_path,
             project_root: project_root.to_owned(),
+            engine_root: engine_root.map(|p| p.to_owned()),
         })
     }
 
@@ -179,12 +192,29 @@ impl LauncherProcess {
             buf.push(format!("--- Launching {} ---", self.binary_path.display()));
         }
 
-        // Spawn fully detached: inherit stdio so the binary is independent.
-        Command::new(&self.binary_path)
-            .current_dir(&self.project_root)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
+        // Spawn the binary with stdout/stderr inherited so engine
+        // logs (asset scan summaries, render-stage warnings, …)
+        // surface in whatever terminal the editor itself is running
+        // in. Trade-off: closing the editor before the binary exits
+        // can leave the binary writing to a vanished pipe; we accept
+        // that until the launcher routes the output through its own
+        // captured-output channel like the cargo-build phase does.
+        let mut cmd = Command::new(&self.binary_path);
+        cmd.current_dir(&self.project_root)
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        if let Some(engine_root) = &self.engine_root {
+            cmd.env("OME_ENGINE_ROOT", engine_root);
+        }
+        cmd.env("OME_PROJECT_ROOT", &self.project_root);
+        // Default to info-level logs unless the user already set
+        // RUST_LOG; gives us asset_scan, render warnings, and the
+        // editor camera trace without forcing the user to know the
+        // tracing-subscriber env var.
+        if std::env::var_os("RUST_LOG").is_none() {
+            cmd.env("RUST_LOG", "info");
+        }
+        cmd.spawn()
             .map_err(|e| format!("failed to launch binary: {e}"))?;
 
         Ok(())
@@ -291,7 +321,7 @@ impl ProjectState {
     /// Spawns the launcher process for a project.
     pub fn spawn_launcher(&mut self, project_root: &Path) {
         self.launcher_output.clear();
-        match LauncherProcess::spawn(project_root) {
+        match LauncherProcess::spawn(project_root, self.engine_root.as_deref()) {
             Ok(proc) => {
                 tracing::info!("launcher: building {}", project_root.display());
                 self.launcher_process = Some(proc);
