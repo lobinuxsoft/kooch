@@ -22,8 +22,12 @@ use ome_core::app::App;
 use ome_core::asset_database::AssetDatabase;
 use ome_core::asset_loader::AssetServer;
 use ome_core::assets::Assets;
+use ome_core::gpu::GpuContext;
 use ome_core::plugin::Plugin;
+use ome_core::resource::Resources;
+use ome_core::stage::Stage;
 
+use crate::material::{Material, MaterialLoader, MaterialPipeline};
 use crate::mesh::{GltfMeshLoader, Mesh};
 use crate::meshlet::{MeshletMesh, MeshletMeshLoader};
 use crate::texture::{Image, ImageLoader};
@@ -69,6 +73,7 @@ impl Plugin for AssetPlugin {
         server.register_loader::<Mesh, _>(GltfMeshLoader);
         server.register_loader::<MeshletMesh, _>(MeshletMeshLoader);
         server.register_loader::<Image, _>(ImageLoader::srgb());
+        server.register_loader::<Material, _>(MaterialLoader);
 
         let mut database = AssetDatabase::new();
         match database.scan_directory(&self.asset_root) {
@@ -97,6 +102,15 @@ impl Plugin for AssetPlugin {
         app.insert_resource(Assets::<Mesh>::new());
         app.insert_resource(Assets::<MeshletMesh>::new());
         app.insert_resource(Assets::<Image>::new());
+        app.insert_resource(Assets::<Material>::new());
+
+        // The `MaterialPipeline` needs a `wgpu::Device`, which is
+        // not available at plugin-build time. Defer construction to
+        // a Stage::Startup system that runs after WindowPlugin
+        // inserts the `GpuContext`. The system also re-runs lazily
+        // from inside the editor render path if startup ordering
+        // ever leaves us without a context.
+        app.add_system(Stage::Startup, init_material_pipeline_system);
 
         // Eager-load every `.glb` / `.gltf` in the asset root as a
         // `MeshletMesh`. Two effects we want at first frame:
@@ -119,10 +133,14 @@ impl Plugin for AssetPlugin {
 }
 
 fn eager_import_typed_assets(app: &mut App) {
-    use std::path::PathBuf;
-
     let resources = app.resources_mut();
+    eager_import_with(resources);
+}
 
+/// Stand-alone version of [`eager_import_typed_assets`] callable
+/// against a `&mut Resources` — used by the project-side scan system
+/// after a fresh project root is added to the database.
+pub(crate) fn eager_import_with(resources: &mut Resources) {
     // Snapshot every registered asset path before we start mutating
     // resources — we need to release the database borrow before
     // calling `AssetServer::load`, which in turn touches the
@@ -132,40 +150,109 @@ fn eager_import_typed_assets(app: &mut App) {
         .map(|db| db.path_iter().map(|(p, _)| p.to_path_buf()).collect())
         .unwrap_or_default();
 
-    let glb_paths: Vec<PathBuf> = scanned
-        .into_iter()
-        .filter(|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("glb") || e.eq_ignore_ascii_case("gltf"))
-                .unwrap_or(false)
-        })
-        .collect();
-
-    if glb_paths.is_empty() {
+    if scanned.is_empty() {
         return;
     }
 
     let Some(mut server) = resources.remove::<AssetServer>() else {
         return;
     };
-    for path in &glb_paths {
-        if let Err(e) = server.load::<MeshletMesh>(path, resources) {
-            tracing::warn!(
-                target: "ome_render::plugin::assets",
-                path = %path.display(),
-                error = %e,
-                "eager MeshletMesh import failed",
-            );
+
+    let mut counts = ImportCounts::default();
+    for path in &scanned {
+        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+            continue;
+        };
+        let ext_lower = ext.to_ascii_lowercase();
+        match ext_lower.as_str() {
+            "glb" | "gltf" => {
+                if let Err(e) = server.load::<MeshletMesh>(path, resources) {
+                    tracing::warn!(
+                        target: "ome_render::plugin::assets",
+                        path = %path.display(),
+                        error = %e,
+                        "eager MeshletMesh import failed",
+                    );
+                } else {
+                    counts.meshlet += 1;
+                }
+            }
+            "png" | "jpg" | "jpeg" => {
+                if let Err(e) = server.load::<Image>(path, resources) {
+                    tracing::warn!(
+                        target: "ome_render::plugin::assets",
+                        path = %path.display(),
+                        error = %e,
+                        "eager Image import failed",
+                    );
+                } else {
+                    counts.image += 1;
+                }
+            }
+            _ => {
+                // RON files use the *compound* extension
+                // `.ome_material.ron`; `Path::extension` only sees
+                // the last segment (`ron`). Match on the suffix
+                // string instead.
+                if path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|s| s.ends_with(".ome_material.ron"))
+                {
+                    if let Err(e) = server.load::<Material>(path, resources) {
+                        tracing::warn!(
+                            target: "ome_render::plugin::assets",
+                            path = %path.display(),
+                            error = %e,
+                            "eager Material import failed",
+                        );
+                    } else {
+                        counts.material += 1;
+                    }
+                }
+            }
         }
     }
     resources.insert(server);
 
-    tracing::info!(
-        target: "ome_render::plugin::assets",
-        count = glb_paths.len(),
-        "eager-imported MeshletMesh assets",
-    );
+    if counts.any() {
+        tracing::info!(
+            target: "ome_render::plugin::assets",
+            meshlet = counts.meshlet,
+            image = counts.image,
+            material = counts.material,
+            "eager-imported typed assets",
+        );
+    }
+}
+
+#[derive(Default)]
+struct ImportCounts {
+    meshlet: usize,
+    image: usize,
+    material: usize,
+}
+
+impl ImportCounts {
+    fn any(&self) -> bool {
+        self.meshlet + self.image + self.material > 0
+    }
+}
+
+fn init_material_pipeline_system(resources: &mut Resources) {
+    if resources.get::<MaterialPipeline>().is_some() {
+        return;
+    }
+    let Some(gpu) = resources.get::<GpuContext>() else {
+        tracing::warn!(
+            target: "ome_render::plugin::assets",
+            "GpuContext missing at Startup; MaterialPipeline init deferred",
+        );
+        return;
+    };
+    let pipeline = MaterialPipeline::new(gpu.device());
+    drop(gpu);
+    resources.insert(pipeline);
 }
 
 #[cfg(test)]
