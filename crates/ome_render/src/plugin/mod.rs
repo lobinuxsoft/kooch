@@ -298,7 +298,13 @@ fn render_passes(
         clear_with_gradient(&mut encoder, &view, depth_view);
     }
 
-    meshlet_blit.blit(gpu.device(), &mut encoder, meshlet_stage.color_view(), &view);
+    // Composite the meshlet stage's color over the sky only when the
+    // stage has GPU-resident meshes. Without this guard the blit would
+    // copy the stage's empty color buffer over the sky every frame,
+    // blanking the surface to black until something is registered.
+    if meshlet_stage.gpu_mesh_count() > 0 {
+        meshlet_blit.blit(gpu.device(), &mut encoder, meshlet_stage.color_view(), &view);
+    }
 
     gpu.queue().submit(Some(encoder.finish()));
     frame.present();
@@ -308,10 +314,18 @@ fn active_camera_matrices(
     resources: &Resources,
     aspect: f32,
 ) -> Option<(glam::Mat4, glam::Vec3)> {
+    // Highest-priority active `PerspectiveCamera` wins. Game runtime
+    // ties the same way the editor does: priority is the contract,
+    // not iteration order.
     let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
-    let mut found: Option<(glam::Mat4, glam::Vec3)> = None;
+    let mut best: Option<(i32, glam::Mat4, glam::Vec3)> = None;
     query.for_each(|(cam, gt)| {
-        if found.is_some() || !cam.active {
+        if !cam.active {
+            return;
+        }
+        if let Some((p, _, _)) = best
+            && cam.priority <= p
+        {
             return;
         }
         let world = gt.matrix;
@@ -324,9 +338,9 @@ fn active_camera_matrices(
             cam.far.max(cam.near + 0.001),
         );
         let cam_pos = world.w_axis.truncate();
-        found = Some((proj * view, cam_pos));
+        best = Some((cam.priority, proj * view, cam_pos));
     });
-    found
+    best.map(|(_, vp, p)| (vp, p))
 }
 
 fn clear_with_gradient(

@@ -118,12 +118,21 @@ impl MeshletRenderStage {
     /// - Loader rejects the bytes → log warn, skip entity.
     /// - `Assets<MeshletMesh>` missing or stale handle → log warn, skip.
     pub fn sync_assets_to_gpu(&mut self, device: &wgpu::Device, resources: &mut Resources) {
-        let pending: Vec<Guid> = self
-            .pipeline
-            .collect_referenced_guids(resources)
-            .into_iter()
+        let referenced = self.pipeline.collect_referenced_guids(resources);
+        let pending: Vec<Guid> = referenced
+            .iter()
+            .copied()
             .filter(|guid| !self.gpu_meshes.contains_key(guid))
             .collect();
+        if !referenced.is_empty() {
+            tracing::debug!(
+                target: "ome_render::meshlet::sync",
+                referenced = referenced.len(),
+                pending = pending.len(),
+                cached = self.gpu_meshes.len(),
+                "meshlet asset sync tick",
+            );
+        }
         if pending.is_empty() {
             return;
         }
@@ -173,6 +182,11 @@ impl MeshletRenderStage {
             };
 
             self.ensure_gpu_mesh(device, guid, mesh);
+            tracing::info!(
+                target: "ome_render::meshlet::sync",
+                guid = %guid,
+                "uploaded meshlet asset to GPU",
+            );
         }
     }
 
@@ -216,8 +230,19 @@ impl MeshletRenderStage {
     ) -> MeshletRenderStats {
         let instances = self.pipeline.collect_scene_instances(resources);
         if instances.is_empty() {
+            tracing::debug!(
+                target: "ome_render::meshlet::render",
+                pipeline_registered = self.pipeline.registered_count(),
+                gpu_meshes = self.gpu_meshes.len(),
+                "render skipped: zero instances",
+            );
             return MeshletRenderStats::default();
         }
+        tracing::debug!(
+            target: "ome_render::meshlet::render",
+            instances = instances.len(),
+            "render dispatching meshlet pipeline",
+        );
         assert!(
             (instances.len() as u32) <= self.instance_capacity,
             "MeshletRenderStage: collected {} instances exceeds capacity {}",
