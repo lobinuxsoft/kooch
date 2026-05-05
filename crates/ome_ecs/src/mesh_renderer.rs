@@ -39,8 +39,10 @@ use crate::Reflect;
 pub struct MeshRenderer {
     /// When `Some`, the meshlet pipeline picks this entity up via the
     /// scene cull. Persistent across runs — the GUID lives in the
-    /// asset's `.meta` sidecar.
-    #[reflect(skip)]
+    /// asset's `.meta` sidecar. The inspector renders this as a typed
+    /// dropdown picker that lists every `MeshletMesh` the
+    /// `AssetDatabase` has registered.
+    #[reflect(asset = "ome_render::meshlet::MeshletMesh")]
     pub mesh: Option<Guid>,
     /// Asset path for the material (legacy `String`, unused — pending
     /// migration to `Assets<Material>` once that asset exists).
@@ -87,11 +89,52 @@ mod tests {
         let r = MeshRenderer::default();
         let fields = r.reflect_fields();
         let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
-        // `mesh` is `#[reflect(skip)]` — opaque GUID, not editor-
-        // inspector friendly until the asset-picker UI lands.
+        // `mesh` is reflected as a typed AssetRef — the inspector
+        // renders it via the asset-picker dropdown.
         assert_eq!(
             names,
-            &["material", "visible", "cast_shadows", "receive_shadows"]
+            &["mesh", "material", "visible", "cast_shadows", "receive_shadows"],
+        );
+    }
+
+    #[test]
+    fn mesh_field_is_asset_ref_with_meshlet_type() {
+        use crate::reflect::FieldKind;
+        let r = MeshRenderer::default();
+        let mesh_meta = r
+            .reflect_fields()
+            .iter()
+            .find(|f| f.name == "mesh")
+            .expect("mesh field should be reflected");
+        assert_eq!(mesh_meta.kind, FieldKind::AssetRef);
+        assert_eq!(mesh_meta.asset_type, "ome_render::meshlet::MeshletMesh");
+    }
+
+    #[test]
+    fn reflect_get_and_set_round_trip_guid() {
+        use crate::reflect::{Reflect, ReflectValue};
+        let mut r = MeshRenderer::default();
+        let g = Guid::new_v4();
+
+        // Set via reflection.
+        r.reflect_set(
+            "mesh",
+            ReflectValue::AssetRef {
+                guid: Some(g),
+                asset_type: "ome_render::meshlet::MeshletMesh".to_owned(),
+            },
+        )
+        .expect("set should succeed");
+        assert_eq!(r.mesh, Some(g));
+
+        // Get via reflection.
+        let got = r.reflect_get("mesh").expect("get should succeed");
+        assert_eq!(
+            got,
+            ReflectValue::AssetRef {
+                guid: Some(g),
+                asset_type: "ome_render::meshlet::MeshletMesh".to_owned(),
+            },
         );
     }
 
