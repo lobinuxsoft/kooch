@@ -16,7 +16,7 @@
 //! servers, and headless test harnesses can install asset loading
 //! without pulling in the GPU render pipeline.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ome_core::app::App;
 use ome_core::asset_database::AssetDatabase;
@@ -34,26 +34,51 @@ use crate::texture::{Image, ImageLoader};
 
 /// Plugin that installs the engine-wide asset pipeline.
 ///
-/// Configure the asset root via [`AssetPlugin::with_root`]. Defaults
-/// to `assets/` (project-relative).
+/// `roots` is the list of directories that get scanned + eager-
+/// imported at plugin build time. The first entry is the
+/// `AssetServer`'s primary `asset_root` (relative paths the user
+/// passes to `load(path)` resolve against it); additional entries
+/// only contribute to scan + eager-import. Typical layout:
+///
+/// - **Editor**: a single root pointing at `<engine>/assets`. The
+///   project's own `assets/` is mirrored later by
+///   `scan_project_assets_system` once the user opens a project.
+/// - **Game runtime / Play mode**: two roots — `<engine>/assets`
+///   first (primary), then `<project>/assets` (secondary). Both
+///   get scanned at startup so the runtime can resolve every GUID
+///   the scene references.
 #[derive(Debug, Clone)]
 pub struct AssetPlugin {
-    asset_root: PathBuf,
+    roots: Vec<PathBuf>,
 }
 
 impl AssetPlugin {
-    /// Constructs the plugin with the default asset root (`assets/`).
+    /// Constructs the plugin with the default asset root (`assets/`,
+    /// relative to the working directory).
     pub fn new() -> Self {
         Self {
-            asset_root: PathBuf::from("assets"),
+            roots: vec![PathBuf::from("assets")],
         }
     }
 
-    /// Overrides the asset root. Useful for tests (point at a tempdir)
-    /// and for tools that ship their own asset trees.
+    /// Replaces the primary asset root with `root` and clears any
+    /// extras. Equivalent to constructing the plugin from scratch.
     pub fn with_root(mut self, root: impl Into<PathBuf>) -> Self {
-        self.asset_root = root.into();
+        self.roots = vec![root.into()];
         self
+    }
+
+    /// Appends another directory the plugin should scan + eager-
+    /// import without overriding the primary `asset_root`. Used to
+    /// stack the project's `assets/` on top of the engine's at game
+    /// runtime so the binary sees both at first frame.
+    pub fn with_extra_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.roots.push(root.into());
+        self
+    }
+
+    fn primary_root(&self) -> &Path {
+        self.roots.first().map(|p| p.as_path()).unwrap_or_else(|| Path::new("assets"))
     }
 }
 
@@ -69,31 +94,33 @@ impl Plugin for AssetPlugin {
     }
 
     fn build(&self, app: &mut App) {
-        let mut server = AssetServer::new().with_asset_root(self.asset_root.clone());
+        let mut server = AssetServer::new().with_asset_root(self.primary_root().to_path_buf());
         server.register_loader::<Mesh, _>(GltfMeshLoader);
         server.register_loader::<MeshletMesh, _>(MeshletMeshLoader);
         server.register_loader::<Image, _>(ImageLoader::srgb());
         server.register_loader::<Material, _>(MaterialLoader);
 
         let mut database = AssetDatabase::new();
-        match database.scan_directory(&self.asset_root) {
-            Ok(report) => {
-                tracing::info!(
-                    target: "ome_render::plugin::assets",
-                    root = %self.asset_root.display(),
-                    registered = report.registered,
-                    orphans = report.orphans,
-                    duplicates = report.duplicates,
-                    "asset database initial scan complete",
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "ome_render::plugin::assets",
-                    root = %self.asset_root.display(),
-                    error = %e,
-                    "asset database initial scan failed; continuing with empty registry"
-                );
+        for root in &self.roots {
+            match database.scan_directory(root) {
+                Ok(report) => {
+                    tracing::info!(
+                        target: "ome_render::plugin::assets",
+                        root = %root.display(),
+                        registered = report.registered,
+                        orphans = report.orphans,
+                        duplicates = report.duplicates,
+                        "asset database scan complete",
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "ome_render::plugin::assets",
+                        root = %root.display(),
+                        error = %e,
+                        "asset database scan failed; continuing",
+                    );
+                }
             }
         }
 
@@ -112,10 +139,9 @@ impl Plugin for AssetPlugin {
         // ever leaves us without a context.
         app.add_system(Stage::Startup, init_material_pipeline_system);
 
-        let root = self.asset_root.clone();
+        let roots = self.roots.clone();
 
-        // Eager-load every `.glb` / `.gltf` in the asset root as a
-        // `MeshletMesh`. Two effects we want at first frame:
+        // Eager-load every typed file in each configured root. Two effects we want at first frame:
         // 1. Sidecars created before PR4 (no `asset_type`) get
         //    back-filled by `read_or_create_typed`, so the database
         //    registers them with the correct type and the inspector
@@ -130,11 +156,13 @@ impl Plugin for AssetPlugin {
         // in through the same loop as their loaders register; only
         // glb is wired today because nothing else has a typed asset
         // story yet.
-        eager_import_typed_assets(app, &root);
+        for root in &roots {
+            eager_import_typed_assets(app, root);
+        }
     }
 }
 
-fn eager_import_typed_assets(app: &mut App, root: &std::path::Path) {
+fn eager_import_typed_assets(app: &mut App, root: &Path) {
     let resources = app.resources_mut();
     eager_import_with(resources, root);
 }
@@ -148,7 +176,7 @@ fn eager_import_typed_assets(app: &mut App, root: &std::path::Path) {
 ///
 /// Public so the project-side scan system can rerun the same import
 /// pass after a project opens.
-pub fn eager_import_with(resources: &mut Resources, root: &std::path::Path) {
+pub fn eager_import_with(resources: &mut Resources, root: &Path) {
     let scanned = collect_typed_files(root);
     if scanned.is_empty() {
         return;
@@ -225,13 +253,13 @@ pub fn eager_import_with(resources: &mut Resources, root: &std::path::Path) {
 /// Recursive filesystem walk that collects every file under `root`
 /// with a known typed extension. Stays alongside the importer
 /// because both share the extension allowlist.
-fn collect_typed_files(root: &std::path::Path) -> Vec<PathBuf> {
+fn collect_typed_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     walk_collect(root, &mut out);
     out
 }
 
-fn walk_collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+fn walk_collect(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
