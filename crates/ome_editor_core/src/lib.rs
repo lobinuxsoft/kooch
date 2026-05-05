@@ -19,6 +19,7 @@
 pub mod editor_camera;
 pub mod icons;
 pub mod launch_screen;
+pub mod perf;
 pub mod play_state;
 pub mod project;
 pub mod project_state;
@@ -40,6 +41,7 @@ use ome_core::plugin::Plugin;
 use ome_core::stage::Stage;
 
 pub use editor_camera::{EditorCamera, EditorCameraController, EditorOnly};
+pub use perf::EditorPerfStats;
 pub use state::EditorOverlay;
 pub use play_state::PlayState;
 pub use project::{EditorConfig, ProjectManifest};
@@ -60,6 +62,12 @@ impl Plugin for EditorPlugin {
         app.insert_resource(PlayState::new());
         app.insert_resource(project_state::ProjectState::new());
         app.insert_resource(undo::UndoStack::new());
+        // #463 perf HUD — populated incrementally by per-metric
+        // systems (frame timer, sysinfo poller, GPU timestamp
+        // readback, render-side counters). Inserted at zero so the
+        // toolbar can read it on the very first frame without any
+        // metric system having run yet.
+        app.insert_resource(perf::EditorPerfStats::default());
         app.insert_resource(editor_camera::EditorCameraController::default());
         app.insert_resource(layout::LayoutPersistence::default());
         app.add_system(Stage::Startup, systems::editor_startup_system);
