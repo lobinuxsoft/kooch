@@ -439,7 +439,7 @@ mod tests {
                 cone_axis: [0.0; 3],
                 group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
                 children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
-                _pad3: 0,
+                lod_level: 0,
                 _pad4: 0,
                 _pad5: 0,
             }],

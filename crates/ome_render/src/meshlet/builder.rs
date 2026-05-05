@@ -194,7 +194,12 @@ pub fn build_meshlets_lod_chain(
     // 2-pass cull (#465) keys group_max_err by this id.
     let mut next_group_id: u32 = 0;
 
-    for _level in 1..lod_config.max_levels {
+    for level in 1..lod_config.max_levels {
+        // The chain depth for parents emitted in this iteration —
+        // LOD 0 sits at level 0; parents from the first simplify are
+        // level 1; etc. The LOD-stack inspector (#467) and
+        // MeshInstance.lod_force_level filter by this value.
+        let parent_lod_level = level as u32;
         let (prev_start, prev_end) = prev_lod_range;
         let prev_count = prev_end - prev_start;
         if prev_count <= 1 {
@@ -315,6 +320,10 @@ pub fn build_meshlets_lod_chain(
                     // child in the next-level transition; it stays at
                     // MESHLET_GROUP_NONE for now (root behaviour).
                     children_group_index: group_id,
+                    // Chain depth for these parents — first iteration
+                    // emits level 1, next 2, etc. clusterize_lod
+                    // defaults to 0; we override here.
+                    lod_level: parent_lod_level,
                     ..*desc
                 });
             }
@@ -531,10 +540,12 @@ fn clusterize_lod(
             // Group ids are wired during the LOD chain build; for
             // single-LOD output and freshly clusterised LOD 0 they
             // remain at the sentinel until the chain pass overwrites
-            // them.
+            // them. lod_level defaults to 0 (LOD 0 / unsimplified)
+            // — chain pass overwrites for parents emitted at deeper
+            // levels.
             group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
             children_group_index: crate::meshlet::asset::MESHLET_GROUP_NONE,
-            _pad3: 0,
+            lod_level: 0,
             _pad4: 0,
             _pad5: 0,
         });

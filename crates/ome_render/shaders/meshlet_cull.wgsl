@@ -66,7 +66,9 @@ struct MeshletDescriptor {
     // 0xFFFFFFFFu sentinel = no group on that side (root or LOD 0).
     group_index: u32,
     children_group_index: u32,
-    _pad3: u32,
+    // Chain depth for LOD-stack inspector + per-instance level lock
+    // (#467). 0 = LOD 0, increments per simplification step.
+    lod_level: u32,
     _pad4: u32,
     _pad5: u32,
 }
