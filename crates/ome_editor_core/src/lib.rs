@@ -67,6 +67,11 @@ impl Plugin for EditorPlugin {
         // overlay's default. Must run AFTER editor_startup_system so the
         // overlay exists.
         app.add_system(Stage::Startup, layout::load_layout_system);
+        // React to project open / close: rescan the project's assets/
+        // tree into the AssetDatabase + eager-import. PreUpdate runs
+        // before the inspector renders, so the picker sees [project]
+        // entries the same frame the user opens a project.
+        app.add_system(Stage::PreUpdate, systems::scan_project_assets_system);
         // Register the EditorOnly marker as ephemeral *before* the camera
         // is spawned, so the entity is filtered from any save that races
         // the spawn (e.g. play-mode snapshot triggered immediately).

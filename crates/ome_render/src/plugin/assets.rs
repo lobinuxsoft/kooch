@@ -140,7 +140,7 @@ fn eager_import_typed_assets(app: &mut App) {
 /// Stand-alone version of [`eager_import_typed_assets`] callable
 /// against a `&mut Resources` — used by the project-side scan system
 /// after a fresh project root is added to the database.
-pub(crate) fn eager_import_with(resources: &mut Resources) {
+pub fn eager_import_with(resources: &mut Resources) {
     // Snapshot every registered asset path before we start mutating
     // resources — we need to release the database borrow before
     // calling `AssetServer::load`, which in turn touches the
