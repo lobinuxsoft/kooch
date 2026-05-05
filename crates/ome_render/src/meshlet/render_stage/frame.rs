@@ -309,6 +309,11 @@ impl MeshletRenderStage {
             .instance_count
             .saturating_mul(scene_params.meshlets_per_mesh);
         self.cull.ensure_capacity(device, required_capacity);
+        // group_max_err sized to the pool's current group_capacity
+        // (sum of 1 + max_group_id across all registered meshes).
+        // Same geometric-growth pattern as the visible buffer.
+        self.cull
+            .ensure_group_capacity(device, self.pipeline.pool().group_capacity.max(1));
 
         let meshlet_bg = pool_meshlet_bind_group(device, &self.meshlet_bgl, gpu_pool);
         // Prefer the GUID-keyed `MaterialPipeline` pool when it's
@@ -324,7 +329,7 @@ impl MeshletRenderStage {
             label: Some("meshlet_render_stage_encoder"),
         });
 
-        self.cull.dispatch_scene_pool(
+        self.cull.dispatch_scene_pool_atomic(
             device,
             queue,
             &mut encoder,
