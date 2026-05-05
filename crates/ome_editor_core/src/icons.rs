@@ -42,6 +42,9 @@ pub const MINUS: &str = "\u{e3d0}";
 /// Trash icon — used for despawn/delete buttons.
 pub const TRASH: &str = "\u{e4a6}";
 
+/// Copy icon — used for the World panel's "Duplicate Entity" button.
+pub const COPY: &str = "\u{e1c6}";
+
 /// X/Close icon — used for remove component buttons.
 pub const X: &str = "\u{e4f6}";
 
