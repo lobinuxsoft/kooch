@@ -42,7 +42,12 @@ pub struct MeshRenderer {
     /// asset's `.meta` sidecar. The inspector renders this as a typed
     /// dropdown picker that lists every `MeshletMesh` the
     /// `AssetDatabase` has registered.
-    #[reflect(asset = "ome_render::meshlet::MeshletMesh")]
+    ///
+    /// The string MUST match `std::any::type_name::<T>()` of the
+    /// pointed-at asset, not the re-exported path: the asset server
+    /// records the canonical type name on the sidecar, and the
+    /// inspector picker filters entries by exact match.
+    #[reflect(asset = "ome_render::meshlet::asset::MeshletMesh")]
     pub mesh: Option<Guid>,
     /// Asset path for the material (legacy `String`, unused — pending
     /// migration to `Assets<Material>` once that asset exists).
@@ -97,6 +102,33 @@ mod tests {
         );
     }
 
+    /// Regression: the `asset_type` string MUST match
+    /// `std::any::type_name::<T>()` exactly, because the asset server
+    /// uses that as the sidecar's `asset_type` value and the inspector
+    /// picker filters by exact-match string. Re-exported paths
+    /// (e.g. `ome_render::meshlet::MeshletMesh` vs the canonical
+    /// `ome_render::meshlet::asset::MeshletMesh`) are NOT equivalent
+    /// from the type-system's point of view.
+    ///
+    /// We can't reach `MeshletMesh` from `ome_ecs` (would create a
+    /// dep cycle), but we can encode the canonical path the macro
+    /// must emit and trust the assertion to fire if someone edits
+    /// the attribute and breaks the contract.
+    #[test]
+    fn mesh_asset_type_matches_canonical_type_name() {
+        let r = MeshRenderer::default();
+        let mesh_meta = r
+            .reflect_fields()
+            .iter()
+            .find(|f| f.name == "mesh")
+            .expect("mesh field reflected");
+        assert_eq!(
+            mesh_meta.asset_type,
+            "ome_render::meshlet::asset::MeshletMesh",
+            "attribute string must equal `type_name::<MeshletMesh>()` so the picker filter matches the AssetEntry's type_name",
+        );
+    }
+
     #[test]
     fn mesh_field_is_asset_ref_with_meshlet_type() {
         use crate::reflect::FieldKind;
@@ -107,7 +139,7 @@ mod tests {
             .find(|f| f.name == "mesh")
             .expect("mesh field should be reflected");
         assert_eq!(mesh_meta.kind, FieldKind::AssetRef);
-        assert_eq!(mesh_meta.asset_type, "ome_render::meshlet::MeshletMesh");
+        assert_eq!(mesh_meta.asset_type, "ome_render::meshlet::asset::MeshletMesh");
     }
 
     #[test]
@@ -121,7 +153,7 @@ mod tests {
             "mesh",
             ReflectValue::AssetRef {
                 guid: Some(g),
-                asset_type: "ome_render::meshlet::MeshletMesh".to_owned(),
+                asset_type: "ome_render::meshlet::asset::MeshletMesh".to_owned(),
             },
         )
         .expect("set should succeed");
@@ -133,7 +165,7 @@ mod tests {
             got,
             ReflectValue::AssetRef {
                 guid: Some(g),
-                asset_type: "ome_render::meshlet::MeshletMesh".to_owned(),
+                asset_type: "ome_render::meshlet::asset::MeshletMesh".to_owned(),
             },
         );
     }
