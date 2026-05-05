@@ -1,4 +1,4 @@
-//! End-to-end meshlet render stage — Phase 1.E.3a orchestrator.
+//! End-to-end meshlet render stage — Phase 1.E.3c orchestrator.
 //!
 //! Owns the full per-frame meshlet pipeline state and runs the
 //! cull → vbuf → deferred chain off ECS data:
@@ -10,7 +10,7 @@
 //! Vec<MeshInstance>  ──► MeshletScene.upload_instances
 //!         │
 //!         ▼
-//! MeshletCull.dispatch_scene  (compute, one dispatch over instance×meshlet)
+//! MeshletCull.dispatch_scene_pool  (one dispatch over the entire GpuGlobalMeshPool)
 //!         │
 //!         ▼
 //! MeshletVisRasterizer.render_scene  (R32Uint visibility buffer + depth)
@@ -19,14 +19,15 @@
 //! MeshletDeferredShader.shade_scene  (compute → Rgba8Unorm color view)
 //! ```
 //!
-//! # Single-mesh constraint (1.E.3a)
+//! # Multi-mesh path (#446 / #457)
 //!
-//! [`Self::render`] takes one [`GpuMeshletMesh`] and dispatches the
-//! scene cull against it. Multi-mesh scenes need
-//! `cs_cull_scene_pool` + the `GpuGlobalMeshPool`; that's Phase
-//! 1.E.3c. Until then every visible entity must reference the same
-//! registered `MeshletMesh` (the ECS bridge already enforces
-//! "registered" via [`MeshletPipeline::register_mesh`]).
+//! [`Self::ensure_gpu_mesh`] registers a `MeshletMesh` into the
+//! [`MeshletPipeline`]'s `GlobalMeshPool` and marks the GPU mirror
+//! dirty. [`Self::render_with_assets`] rebuilds the
+//! [`GpuGlobalMeshPool`] when dirty, then dispatches
+//! `cs_cull_scene_pool` over every (instance, meshlet) pair across
+//! the whole pool — one cull dispatch per frame regardless of how
+//! many distinct meshes the scene references.
 //!
 //! # Owning vs borrowing
 //!
@@ -37,15 +38,12 @@
 
 mod frame;
 
-use std::collections::HashMap;
-
-use ome_core::Guid;
-
 use crate::material::{MaterialParams, MaterialPool};
 
 use super::deferred::{MeshletDeferredShader, DEFERRED_COLOR_FORMAT};
 use super::dispatcher::MeshletCull;
-use super::gpu_meshlet::{meshlet_bind_group_layout, GpuMeshletMesh};
+use super::gpu_meshlet::meshlet_bind_group_layout;
+use super::pool::GpuGlobalMeshPool;
 use super::scene::MeshletScene;
 use super::system::MeshletPipeline;
 use super::vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
@@ -108,18 +106,14 @@ pub struct MeshletRenderStage {
     pub(super) deferred: MeshletDeferredShader,
     pub(super) material_pool: MaterialPool,
 
-    /// GPU mirrors of every meshlet mesh that's been registered via
-    /// [`Self::ensure_gpu_mesh`]. Keyed by [`Guid`] so the GPU cache
-    /// shares the asset identity model with the rest of the engine.
-    /// Single-mesh path (1.E.3a/b) uses the first cached entry; the
-    /// multi-mesh `cs_cull_scene_pool` variant (1.E.3c) will iterate
-    /// this map and bind a `GpuGlobalMeshPool`.
-    pub(super) gpu_meshes: HashMap<Guid, GpuMeshletMesh>,
-    /// Single-mesh path's "active" GUID — populated by
-    /// [`Self::ensure_gpu_mesh`] (first call) so
-    /// [`Self::render_with_assets`] can look up the gpu mesh without
-    /// an explicit argument.
-    pub(super) active_guid: Option<Guid>,
+    /// GPU mirror of [`MeshletPipeline::pool`]. Lazy-rebuilt by
+    /// [`Self::render_with_assets`] when [`Self::pool_dirty`] is set,
+    /// which happens whenever [`Self::ensure_gpu_mesh`] introduces a
+    /// new GUID. `None` until the first registration.
+    pub(super) gpu_pool: Option<GpuGlobalMeshPool>,
+    /// `true` when the CPU pool has changed since the last
+    /// `gpu_pool` rebuild. Cheap to check before each frame.
+    pub(super) pool_dirty: bool,
 
     pub(super) meshlet_bgl: wgpu::BindGroupLayout,
 
@@ -195,8 +189,8 @@ impl MeshletRenderStage {
             rasterizer,
             deferred,
             material_pool,
-            gpu_meshes: HashMap::new(),
-            active_guid: None,
+            gpu_pool: None,
+            pool_dirty: false,
             meshlet_bgl,
             vbuf_view,
             depth_view,

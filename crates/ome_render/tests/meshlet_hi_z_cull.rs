@@ -51,9 +51,9 @@ fn synthetic_meshlet_at_ndc_depth(z: f32) -> MeshletMesh {
         vertex_count: 3,
         triangle_count: 1,
         aabb_min: [-0.05, -0.05, z - 0.05],
-        _pad0: 0,
+        parent_meshlet_index: ome_render::meshlet::MESHLET_ROOT_PARENT,
         aabb_max: [0.05, 0.05, z + 0.05],
-        _pad1: 0,
+        lod_error: 0.0,
         // Bounds_center in "NDC space" because we pass view_proj = identity.
         bounds_center: [0.0, 0.0, z],
         bounding_radius: 0.05,

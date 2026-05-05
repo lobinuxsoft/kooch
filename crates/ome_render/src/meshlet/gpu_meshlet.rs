@@ -184,6 +184,42 @@ pub fn meshlet_bind_group(
     })
 }
 
+/// Builds the meshlet bind group from the multi-mesh
+/// [`super::pool::GpuGlobalMeshPool`] using the same
+/// [`meshlet_bind_group_layout`]. Per-meshlet `vertex_offset` and
+/// `triangle_offset` were already rebased into pool-global coordinates
+/// by [`super::pool::GlobalMeshPool::register`], so the rasterizer +
+/// deferred shaders need no per-mesh remapping — they index the
+/// concatenated buffers as if every meshlet lived in one giant mesh.
+pub fn pool_meshlet_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    pool: &super::pool::GpuGlobalMeshPool,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("pool_meshlet_bg"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: binding::VERTICES,
+                resource: pool.vertices.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: binding::MESHLET_VERTICES,
+                resource: pool.meshlet_vertices.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: binding::MESHLET_TRIANGLES,
+                resource: pool.meshlet_triangles.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: binding::DESCRIPTORS,
+                resource: pool.meshlets.as_entire_binding(),
+            },
+        ],
+    })
+}
+
 /// Used by tests + descriptor placeholder construction.
 pub fn zeroed_descriptor() -> MeshletDescriptor {
     MeshletDescriptor::zeroed()

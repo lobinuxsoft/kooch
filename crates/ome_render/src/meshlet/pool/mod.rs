@@ -108,7 +108,18 @@ impl GlobalMeshPool {
         let meshlet_count = mesh.meshlet_count();
 
         self.vertices.extend_from_slice(&mesh.vertices);
-        self.meshlet_vertices.extend_from_slice(&mesh.meshlet_vertices);
+        // meshlet_vertices stores indices INTO the global vertex pool.
+        // Each appended value must be shifted by `vertex_offset`
+        // (where this mesh's vertices land in the pool) so the GPU
+        // shader's `vertices[meshlet_vertices[...]]` lookup hits the
+        // correct mesh's vertex slice. Without this rebase the second
+        // and later registered meshes silently read vertices from the
+        // first mesh — geometry collapses into apparent random spikes.
+        self.meshlet_vertices.extend(
+            mesh.meshlet_vertices
+                .iter()
+                .map(|&local_index| local_index + vertex_offset),
+        );
         self.meshlet_triangles
             .extend_from_slice(&mesh.meshlet_triangles);
 
@@ -245,5 +256,35 @@ mod tests {
         let original = mesh.meshlets[0];
         assert_eq!(mp.vertex_offset, original.vertex_offset + len_mv);
         assert_eq!(mp.triangle_offset, original.triangle_offset + len_mt);
+    }
+
+    #[test]
+    fn meshlet_vertices_values_are_rebased_into_pool_vertex_space() {
+        // Regression: the pool used to extend_from_slice(meshlet_vertices)
+        // verbatim, which left the second mesh's local indices pointing
+        // back at the first mesh's vertices in the concatenated pool.
+        // The shader's vertices[meshlet_vertices[..]] lookup then
+        // produced random geometry. The fix shifts each value by the
+        // mesh's vertex base offset on append.
+        let mesh = build_default_meshlets(&cube_mesh()).expect("build");
+        let mut pool = GlobalMeshPool::new();
+        pool.register(&mesh);
+        let first_mesh_vertex_count = pool.vertices.len() as u32;
+        let first_mesh_meshlet_vertex_count = pool.meshlet_vertices.len();
+        pool.register(&mesh);
+
+        // Every value the second registration appended must reach into
+        // the pool slice [first_mesh_vertex_count, 2 * first_mesh_vertex_count).
+        for &v in &pool.meshlet_vertices[first_mesh_meshlet_vertex_count..] {
+            assert!(
+                v >= first_mesh_vertex_count,
+                "meshlet_vertices value {v} from second mesh must point past the first mesh's slice (>= {first_mesh_vertex_count})",
+            );
+            assert!(
+                (v as usize) < pool.vertices.len(),
+                "meshlet_vertices value {v} must stay within the pool's vertex range ({})",
+                pool.vertices.len(),
+            );
+        }
     }
 }
