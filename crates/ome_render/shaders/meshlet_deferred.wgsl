@@ -87,7 +87,7 @@ struct MeshInstance {
     mesh_id: u32,
     material_id: u32,
     lod_bias: f32,
-    _pad: u32,
+    lod_force_level: i32,
 }
 @group(3) @binding(0) var<storage, read> visible_meshlets: array<u32>;
 @group(3) @binding(1) var<storage, read> instances: array<MeshInstance>;

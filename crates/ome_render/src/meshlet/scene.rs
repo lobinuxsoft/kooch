@@ -19,6 +19,12 @@
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 
+/// Sentinel value for [`MeshInstance::lod_force_level`] meaning
+/// "no force — let the normal LOD selector decide". Stored as
+/// `i32::MIN` so any sensible level (positive small int) cannot
+/// collide with it.
+pub const LOD_FORCE_NONE: i32 = i32::MIN;
+
 /// Per-instance scene record consumed by `cs_cull_scene`.
 ///
 /// Layout (80 B, multiple of 16):
@@ -28,7 +34,10 @@ use glam::Mat4;
 /// - `material_id` (u32): material pool index this instance shades against.
 /// - `lod_bias` (f32): per-instance LOD bias for the screen-space-error
 ///   selector (1.E follow-up).
-/// - `_pad` (u32): keeps the struct 16-byte aligned.
+/// - `lod_force_level` (i32): when ≥ 0, the cull short-circuits the
+///   LOD selector and emits only meshlets whose `lod_level` matches
+///   this value. [`LOD_FORCE_NONE`] = normal selector. Drives the
+///   side-by-side LOD inspector (#467).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MeshInstance {
@@ -36,7 +45,7 @@ pub struct MeshInstance {
     pub mesh_id: u32,
     pub material_id: u32,
     pub lod_bias: f32,
-    pub _pad: u32,
+    pub lod_force_level: i32,
 }
 
 impl MeshInstance {
@@ -46,8 +55,16 @@ impl MeshInstance {
             mesh_id,
             material_id,
             lod_bias: 0.0,
-            _pad: 0,
+            lod_force_level: LOD_FORCE_NONE,
         }
+    }
+
+    /// Convenience: instance with the LOD selector overridden to
+    /// emit only meshlets at `level`. Used by the editor's side-by-
+    /// side LOD inspector to render each chain layer in isolation.
+    pub fn with_lod_force_level(mut self, level: i32) -> Self {
+        self.lod_force_level = level;
+        self
     }
 
     pub fn transform_mat4(&self) -> Mat4 {
