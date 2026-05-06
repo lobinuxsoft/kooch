@@ -65,6 +65,9 @@ pub(crate) struct EditorTabViewer<'a> {
     /// the viewport render. Read-only, surfaced through the View
     /// toolbar's stats overlay.
     pub(crate) meshlet_stats: MeshletRenderStats,
+    /// Per-frame perf HUD counters (#463). Read-only, surfaced
+    /// through the View toolbar's perf overlay (always visible).
+    pub(crate) perf_stats: crate::perf::EditorPerfStats,
 }
 
 impl<'a> TabViewer for EditorTabViewer<'a> {
@@ -100,6 +103,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.meshlet_debug_mode,
                 self.meshlet_lod_settings,
                 self.meshlet_stats,
+                self.perf_stats,
             ),
             EditorTab::Inspector => draw_inspector_content(
                 ui,

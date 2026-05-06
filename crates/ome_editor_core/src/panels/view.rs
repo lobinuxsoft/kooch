@@ -19,6 +19,7 @@ use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings, MeshletRenderSta
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
 use crate::icons;
+use crate::perf::EditorPerfStats;
 use crate::state::RotationDisplayMode;
 
 const TOOLBAR_BUTTON_SIZE: f32 = 28.0;
@@ -40,6 +41,7 @@ pub(crate) fn draw_view_content(
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_lod_settings: &mut MeshletLodSettings,
     meshlet_stats: MeshletRenderStats,
+    perf_stats: EditorPerfStats,
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -231,6 +233,52 @@ pub(crate) fn draw_view_content(
                      should follow the active editor camera.",
                 );
             }
+
+            // #463.7 — perf HUD. Always visible (production-grade
+            // metric, not a debug overlay): one monospace label
+            // cluster anchored to the right end of the toolbar with
+            // FPS / CPU / GPU / RAM / VRAM / draws. The numbers come
+            // from EditorPerfStats which the per-metric systems
+            // populate every frame; this widget is read-only.
+            ui.separator();
+            let gpu_text = perf_stats
+                .gpu_frame_ms
+                .map(|ms| format!("GPU {:.1}ms", ms))
+                .unwrap_or_else(|| "GPU n/a".to_string());
+            ui.label(
+                egui::RichText::new(format!(
+                    "{:.0}fps ({:.0} avg) · CPU {:.1}ms ({:.0}%) · {} · RAM {} MB · VRAM {} MB · {} draws",
+                    perf_stats.fps_instant,
+                    perf_stats.fps_avg,
+                    perf_stats.cpu_frame_ms,
+                    perf_stats.cpu_percent,
+                    gpu_text,
+                    perf_stats.ram_rss_mb(),
+                    perf_stats.vram_tracked_mb(),
+                    perf_stats.draw_calls,
+                ))
+                .monospace()
+                .small(),
+            )
+            .on_hover_text(
+                "Editor performance HUD (#463).\n\
+                 - FPS: instantaneous + 60-frame moving average.\n\
+                 - CPU: editor render-system duration (ms) and process \
+                   CPU usage (%, 500 ms refresh).\n\
+                 - GPU: cull → vbuf raster → deferred shade pass time, \
+                   measured via wgpu timestamp queries. \"n/a\" on \
+                   adapters without TIMESTAMP_QUERY support.\n\
+                 - RAM: process resident set size (MB).\n\
+                 - VRAM: bytes the engine has allocated through wgpu \
+                   for the GlobalMeshPool + render targets. Does NOT \
+                   include driver overhead — that requires per-backend \
+                   queries no portable Rust crate exposes today.\n\
+                 - draws: dispatch / render-pass operations per frame. \
+                   Steady state with default editor layout: meshlet \
+                   pipeline 3 (cull + raster + shade, indirect — \
+                   instance count does not grow this) + 5 fixed \
+                   editor passes (sky + 2 gizmos + blit + egui) = 8.",
+            );
         });
 
     *input = Some(delta);

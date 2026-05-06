@@ -260,6 +260,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut meshlet_debug_mode,
         &mut meshlet_lod_settings,
         meshlet_stats,
+        resources
+            .get::<crate::perf::EditorPerfStats>()
+            .copied()
+            .unwrap_or_default(),
     );
 
     // Hand the (possibly toggled) debug mode + LOD threshold back to

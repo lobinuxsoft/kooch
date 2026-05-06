@@ -61,6 +61,7 @@ pub(super) fn run_editor_ui(
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_lod_settings: &mut MeshletLodSettings,
     meshlet_stats: MeshletRenderStats,
+    perf_stats: crate::perf::EditorPerfStats,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut last_clicked_index = overlay.last_clicked_index.take();
@@ -116,6 +117,7 @@ pub(super) fn run_editor_ui(
                 meshlet_debug_mode,
                 meshlet_lod_settings,
                 meshlet_stats,
+                perf_stats,
             };
 
             DockArea::new(&mut overlay.dock_state)
