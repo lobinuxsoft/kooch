@@ -180,8 +180,34 @@ fn build_rig() -> Option<BenchRig> {
     });
 
     let hiz_prev = HiZ::new(&device, RT_SIZE, RT_SIZE);
-    hiz_prev.clear_to_far(&queue);
     let hiz_curr = HiZ::new(&device, RT_SIZE, RT_SIZE);
+    // Seed hiz_prev to "far" via the same init path render_with_assets
+    // uses: clear depth + run the pyramid build over the cleared
+    // contents.
+    {
+        let mut init_enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("bench_hi_z_init"),
+        });
+        {
+            let _clear = init_enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("bench_hi_z_init_depth_clear"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        }
+        hiz_prev.init_to_far(&device, &mut init_enc, &depth_sample_view);
+        queue.submit(std::iter::once(init_enc.finish()));
+    }
 
     let cam = Vec3::new(0.0, 0.0, 3.0);
     let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);

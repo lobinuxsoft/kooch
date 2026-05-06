@@ -387,15 +387,34 @@ impl MeshletRenderStage {
 
         // ── Hi-Z 2-pass cull (#445) ────────────────────────────────
         // First-frame init: hiz_prev is freshly allocated and its
-        // R32Float texels are undefined. Clear to 1.0 (far) so the
-        // conservative Hi-Z reject test treats every pass-A sample
-        // as "nothing in front of me" and lets every meshlet through;
-        // the depth that pass-A's raster writes then seeds hiz_curr
-        // for pass B and (after swap) frame 2's hiz_prev. Skipping
-        // this step makes pass A reject everything on frame 0 and
-        // the screen comes up black.
+        // R32Float texels are undefined. Seed it to 1.0 ("nothing
+        // occluded") via a one-shot render-pass clear of the depth
+        // attachment + the standard Hi-Z build over that depth, so
+        // pass A's first sample reads the conservative far value.
+        // Without this, the shader's Hi-Z test against undefined
+        // bytes typically reads zeros and rejects every meshlet,
+        // bringing up a black frame.
         if !self.hi_z_initialized {
-            self.hiz_prev.clear_to_far(queue);
+            {
+                let _depth_clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("meshlet_hi_z_first_frame_depth_clear"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                // Empty pass — the LoadOp::Clear is the work.
+            }
+            self.hiz_prev
+                .init_to_far(device, &mut encoder, &self.depth_sample_view);
             self.hi_z_initialized = true;
         }
 
