@@ -165,47 +165,8 @@ pub(crate) fn draw_view_content(
                 ui.separator();
             }
 
-            // Debug-view dropdown (#451). Iterates the modes that have
-            // shipped shader behaviour so the user never lands on a
-            // silent no-op.
-            egui::ComboBox::from_id_salt("meshlet_debug_view")
-                .selected_text(format!("Debug: {}", meshlet_debug_mode.label()))
-                .show_ui(ui, |ui| {
-                    for &mode in MeshletDebugMode::all_implemented() {
-                        ui.selectable_value(meshlet_debug_mode, mode, mode.label());
-                    }
-                })
-                .response
-                .on_hover_text(
-                    "Meshlet pipeline visualization mode. Off = production shading.",
-                );
-
-            // LOD threshold slider — drives meshlet_lod_settings.target_error_pixels.
-            // Logarithmic-feel: 0.1 keeps maximum detail, ≥10 forces
-            // coarse roots even at close range. Lives next to the
-            // debug dropdown so artists can sanity-check chain
-            // behaviour without leaving the viewport.
-            ui.separator();
-            ui.label(egui::RichText::new("LOD ≤").small())
-                .on_hover_text("Pixel-error threshold for the continuous-LOD selector.");
-            ui.add(
-                egui::DragValue::new(&mut meshlet_lod_settings.target_error_pixels)
-                    .speed(0.05)
-                    .range(0.1_f32..=50.0_f32)
-                    .max_decimals(2)
-                    .suffix("px"),
-            )
-            .on_hover_text(
-                "Lower values keep more meshlets at any given distance. \
-                 Crank this up to force coarser LOD selection and \
-                 visually confirm the chain is being descended.",
-            );
-
-            // Meshlet pipeline counters + perf HUD live in the
-            // vertical sidebar drawn just below — see PERF_SIDEBAR
-            // wiring for the right-edge anchor logic. Tab variant
-            // EditorTab::Performance still routes to the same
-            // panel for users who want it dockable.
+            // Debug dropdown + LOD slider moved to the perf sidebar
+            // (Debug section). Toolbar now hosts gizmo controls only.
         });
 
     // Vertical perf sidebar anchored to the right edge of the
@@ -232,7 +193,13 @@ pub(crate) fn draw_view_content(
         .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
         .show(&mut sidebar_ui, |ui| {
             ui.set_max_width(PERF_SIDEBAR_WIDTH - TOOLBAR_PADDING * 2.0);
-            draw_performance_content(ui, perf_stats, meshlet_stats);
+            draw_performance_content(
+                ui,
+                perf_stats,
+                meshlet_stats,
+                meshlet_debug_mode,
+                meshlet_lod_settings,
+            );
         });
 
     *input = Some(delta);

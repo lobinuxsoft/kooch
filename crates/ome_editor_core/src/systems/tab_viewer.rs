@@ -119,9 +119,13 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             EditorTab::Archetypes => draw_archetypes_content(ui, self.archetypes),
             EditorTab::Components => draw_components_content(ui, self.component_types),
             EditorTab::Streaming => draw_streaming_content(ui, self.streaming_config),
-            EditorTab::Performance => {
-                draw_performance_content(ui, self.perf_stats, self.meshlet_stats)
-            }
+            EditorTab::Performance => draw_performance_content(
+                ui,
+                self.perf_stats,
+                self.meshlet_stats,
+                self.meshlet_debug_mode,
+                self.meshlet_lod_settings,
+            ),
         }
     }
 
