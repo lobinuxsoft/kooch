@@ -61,6 +61,13 @@ pub struct MeshletCull {
     /// the previous frame's pyramid; rejects land in `culled_meshlets`
     /// for pass B to retest.
     pub(super) pipeline_cull_scene_pool_atomic_hi_z: wgpu::ComputePipeline,
+    /// Pass B (#445). Drains `culled_meshlets[0..culled_count]`,
+    /// re-tests each entry against this frame's freshly-built
+    /// pyramid, and appends survivors to `visible_meshlets`. Same
+    /// pipeline_layout as pass A so the orchestrator reuses the
+    /// extended cull / scene-with-hi-z bind groups (with the pyramid
+    /// view swapped from `hiz_prev` to `hiz_curr`).
+    pub(super) pipeline_cull_pass_b: wgpu::ComputePipeline,
     pub(super) cull_bgl: wgpu::BindGroupLayout,
     /// Cull BGL used by the Hi-Z 2-pass path. Identical to `cull_bgl`
     /// for bindings 0-3 plus two read_write storage slots at 4-5 for

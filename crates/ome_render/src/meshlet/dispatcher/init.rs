@@ -182,6 +182,15 @@ impl MeshletCull {
                 compilation_options: Default::default(),
                 cache: None,
             });
+        let pipeline_cull_pass_b =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("meshlet_cull_pass_b_pipeline"),
+                layout: Some(&pipeline_layout_atomic_hi_z),
+                module: &shader,
+                entry_point: Some("cs_cull_pass_b"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_cull_params"),
@@ -275,6 +284,7 @@ impl MeshletCull {
             pipeline_cull_scene_pool_atomic,
             pipeline_lod_compute_group_max_err_hi_z,
             pipeline_cull_scene_pool_atomic_hi_z,
+            pipeline_cull_pass_b,
             cull_bgl,
             extended_cull_bgl,
             hi_z_bgl,

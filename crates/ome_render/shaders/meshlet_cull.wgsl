@@ -798,3 +798,52 @@ fn run_cull_scene_pool_atomic_hi_z(thread_id: u32) {
 fn cs_cull_scene_pool_atomic_hi_z(@builtin(global_invocation_id) gid: vec3<u32>) {
     run_cull_scene_pool_atomic_hi_z(gid.x);
 }
+
+// ---------------------------------------------------------------
+// Pass B (#445).
+//
+// Iterates the compact `culled_meshlets[]` array pass A populated
+// and re-tests every entry against the *current* frame's Hi-Z
+// pyramid (orchestrator binds `hi_z_pyramid_atomic` to `hiz_curr`
+// for this dispatch). Survivors append to `visible_meshlets`.
+//
+// Frustum / cone / LOD are NOT re-checked — pass A already cleared
+// those; the only reason a meshlet landed in `culled_meshlets` is
+// the previous frame's Hi-Z said it was occluded, which can be a
+// false negative if geometry moved or rotated into view.
+//
+// Dispatch shape: workgroup count = `ceil(capacity / 64)` — the
+// worst case where every meshlet was occluded. Threads past
+// `culled_count` early-out, paying only an atomic load. This
+// avoids a CPU readback of culled_count + a separate indirect
+// dispatch buffer; with `wgpu::DispatchIndirect` we could trim the
+// dispatch tighter, but the early-out cost is ~one atomic load per
+// surplus thread and the readback would be a CPU stall.
+// ---------------------------------------------------------------
+
+fn run_cull_pass_b(thread_id: u32) {
+    let count = atomicLoad(&culled_count);
+    if (thread_id >= count) {
+        return;
+    }
+    let packed = culled_meshlets[thread_id];
+    let instance_id = packed >> 16u;
+    let global_meshlet_idx = packed & 0xffffu;
+
+    let inst = instances[instance_id];
+    let m = pool_meshlets[global_meshlet_idx];
+
+    let world_center = (inst.transform * vec4<f32>(m.bounds_center, 1.0)).xyz;
+    if (occluded_by_hi_z_atomic(world_center, m.bounding_radius)) {
+        // Still occluded against this frame's pyramid → drop.
+        return;
+    }
+
+    let slot = atomicAdd(&visible_count, 1u);
+    visible_meshlets[slot] = packed;
+}
+
+@compute @workgroup_size(64, 1, 1)
+fn cs_cull_pass_b(@builtin(global_invocation_id) gid: vec3<u32>) {
+    run_cull_pass_b(gid.x);
+}
