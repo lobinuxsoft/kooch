@@ -80,6 +80,9 @@ impl MeshletRenderStage {
         self.color_view = color_view;
         self.hiz_prev = hiz_prev;
         self.hiz_curr = hiz_curr;
+        // Both pyramids are fresh — they need clear_to_far before the
+        // next render_with_assets samples them in pass A.
+        self.hi_z_initialized = false;
         self.size = new_size;
 
         if let Some(tracker) = &self.vram_tracker {
@@ -383,6 +386,19 @@ impl MeshletRenderStage {
         }
 
         // ── Hi-Z 2-pass cull (#445) ────────────────────────────────
+        // First-frame init: hiz_prev is freshly allocated and its
+        // R32Float texels are undefined. Clear to 1.0 (far) so the
+        // conservative Hi-Z reject test treats every pass-A sample
+        // as "nothing in front of me" and lets every meshlet through;
+        // the depth that pass-A's raster writes then seeds hiz_curr
+        // for pass B and (after swap) frame 2's hiz_prev. Skipping
+        // this step makes pass A reject everything on frame 0 and
+        // the screen comes up black.
+        if !self.hi_z_initialized {
+            self.hiz_prev.clear_to_far(queue);
+            self.hi_z_initialized = true;
+        }
+
         // Both passes share the same view_proj / pyramid dimensions
         // (the camera doesn't change inside the frame; resize is the
         // only thing that flips dims and that triggers a new HiZ).

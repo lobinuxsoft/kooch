@@ -43,9 +43,14 @@ impl HiZ {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HI_Z_FORMAT,
+            // COPY_DST is needed for the post-creation clear to "far"
+            // depth (1.0) so the very first frame's Hi-Z sample
+            // doesn't read undefined contents and reject everything
+            // (#445 first-frame correctness).
             usage: wgpu::TextureUsages::STORAGE_BINDING
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
 
@@ -296,6 +301,53 @@ impl HiZ {
             total += (w as u64) * (h as u64) * 4;
         }
         total
+    }
+
+    /// Initialises every mip to 1.0 (the "far" value the conservative
+    /// Hi-Z reject test treats as "nothing occluded"). Required on
+    /// the first-ever frame using the 2-pass cull (#445), since the
+    /// previous-frame pyramid has no real depth data and the
+    /// underlying R32Float texture would otherwise hand out undefined
+    /// bytes — typically zeros, which the shader would interpret as
+    /// "everything is at depth 0" and reject every meshlet.
+    ///
+    /// Cost: one `Queue::write_texture` per mip with a single tile of
+    /// f32 = 1.0 bits, broadcast across the mip via the standard
+    /// row-stride layout. ~`width * height * 4 / 3` bytes total —
+    /// `4MB / 3 ≈ 1.3 MB` at 1024² . Only invoked at startup or on
+    /// resize, never per-frame.
+    pub fn clear_to_far(&self, queue: &wgpu::Queue) {
+        const FAR_BITS: [u8; 4] = 1.0_f32.to_le_bytes();
+        for level in 0..self.mip_count {
+            let (w, h) = mip_size(self.width, self.height, level);
+            // wgpu requires a contiguous bytes buffer matching the
+            // declared row stride — generate per-mip so storage stays
+            // bounded by the largest mip rather than the full chain.
+            let row_stride = (w as usize) * 4;
+            let mut tile = Vec::with_capacity(row_stride * h as usize);
+            for _ in 0..(w as usize) * (h as usize) {
+                tile.extend_from_slice(&FAR_BITS);
+            }
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.texture,
+                    mip_level: level,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &tile,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row_stride as u32),
+                    rows_per_image: Some(h),
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
 
     /// Bind-group layout the cull shader (PR-5c) consumes when

@@ -177,12 +177,19 @@ pub struct MeshletRenderStage {
     /// the frame the orchestrator swaps `hiz_prev <- hiz_curr` so the
     /// next frame's pass A reads the freshest pyramid we have.
     ///
-    /// First-frame: `hiz_prev` is empty (cleared to far depth on
-    /// creation), so pass A trivially keeps every meshlet, the raster
+    /// First-frame: `hiz_prev` is initialised to 1.0 (far depth) on
+    /// the very first call to `render_with_assets` so pass A's
+    /// conservative Hi-Z reject keeps every meshlet, the raster
     /// fills depth, pass B builds `hiz_curr` and re-tests an empty
     /// reject set. From frame 2 onward both pyramids carry signal.
     pub(super) hiz_prev: HiZ,
     pub(super) hiz_curr: HiZ,
+    /// `false` until the orchestrator has called `clear_to_far` on
+    /// the freshly-created `hiz_prev`. Reset to `false` on `resize()`
+    /// because both pyramids are recreated and need re-init. The
+    /// next call to `render_with_assets` after that bump runs the
+    /// init upload so pass A samples a "nothing occluded" pyramid.
+    pub(super) hi_z_initialized: bool,
 
     /// GPU frame timing via wgpu timestamp queries. Disabled by
     /// default (see [`Self::enable_gpu_timers`]). Tests don't pay
@@ -282,6 +289,7 @@ impl MeshletRenderStage {
             vram_tracker: None,
             hiz_prev,
             hiz_curr,
+            hi_z_initialized: false,
         }
     }
 
@@ -354,6 +362,14 @@ impl MeshletRenderStage {
 
     pub fn material_pool(&self) -> &MaterialPool {
         &self.material_pool
+    }
+
+    /// Read-only access to the cull dispatcher. Mainly here so
+    /// integration tests can read back `visible_count` /
+    /// `culled_count` to verify the Hi-Z 2-pass cull behaviour
+    /// (#445) frame-to-frame.
+    pub fn cull(&self) -> &MeshletCull {
+        &self.cull
     }
 
     pub fn color_view(&self) -> &wgpu::TextureView {
