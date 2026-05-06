@@ -63,13 +63,17 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         INITIAL_VIEWPORT_SIZE,
     );
 
-    let meshlet_stage = MeshletRenderStage::new(
+    let mut meshlet_stage = MeshletRenderStage::new(
         gpu.device(),
         MeshletRenderStageConfig {
             size: INITIAL_VIEWPORT_SIZE,
             ..Default::default()
         },
     );
+    // #463.4 — opt the editor in to GPU timestamp queries. No-op
+    // when the adapter does not expose `Features::TIMESTAMP_QUERY`;
+    // the perf HUD then reports "GPU: n/a".
+    meshlet_stage.enable_gpu_timers(gpu.device(), gpu.queue(), gpu.adapter());
     let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
 
     let overlay = EditorOverlay {

@@ -157,6 +157,13 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .copied()
         .unwrap_or_default();
 
+    // #463.4 — last frame's GPU timing (when adapter exposes
+    // TIMESTAMP_QUERY) propagates from the render stage into the
+    // perf HUD Resource so the View toolbar reads a single source.
+    if let Some(stats) = resources.get_mut::<crate::perf::EditorPerfStats>() {
+        stats.gpu_frame_ms = meshlet_stats.gpu_frame_ms;
+    }
+
     // Apply the previous frame's size request before the UI runs so the
     // texture id stays stable through the entire egui pass.
     viewport.resize_if_needed(gpu.device(), &mut overlay.renderer);

@@ -331,9 +331,22 @@ impl MeshletRenderStage {
             None => self.material_pool.bind_group(device),
         };
 
+        // #463.4 — drain any GPU timer slots that completed since
+        // last frame, then acquire a fresh slot for this frame's
+        // start/end timestamps. `None` means timers are disabled or
+        // every ring slot is in flight; either way the render path
+        // proceeds normally and the HUD keeps the previously-sampled
+        // value.
+        self.gpu_timers.drain_ready();
+        let timer_slot = self.gpu_timers.acquire_slot();
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("meshlet_render_stage_encoder"),
         });
+
+        if timer_slot.is_some() {
+            self.gpu_timers.write_start(&mut encoder);
+        }
 
         self.cull.dispatch_scene_pool_atomic(
             device,
@@ -379,7 +392,21 @@ impl MeshletRenderStage {
             debug_mode,
         );
 
+        // Close the GPU timing window AFTER the deferred shade pass
+        // but BEFORE submit, so the resolve + copy land in the same
+        // command buffer.
+        if let Some(slot_idx) = timer_slot {
+            self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
+        }
+
         queue.submit(std::iter::once(encoder.finish()));
+
+        // Hand the slot off to the async readback path. wgpu fires
+        // the callback when the GPU has finished and the buffer is
+        // host-visible — typically 1-2 frames out.
+        if let Some(slot_idx) = timer_slot {
+            self.gpu_timers.submit_readback(slot_idx);
+        }
 
         let pool = self.pipeline.pool();
         let pool_meshlets_total = pool.meshlets.len() as u32;
@@ -397,6 +424,7 @@ impl MeshletRenderStage {
             cam_pos: cam_pos.to_array(),
             pool_meshlets_total,
             pool_meshlets_roots,
+            gpu_frame_ms: self.gpu_timers.last_frame_ms(),
         }
     }
 }

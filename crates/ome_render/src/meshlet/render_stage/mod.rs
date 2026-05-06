@@ -43,6 +43,7 @@ use crate::material::{MaterialParams, MaterialPool};
 use super::deferred::{MeshletDeferredShader, DEFERRED_COLOR_FORMAT};
 use super::dispatcher::MeshletCull;
 use super::gpu_meshlet::meshlet_bind_group_layout;
+use super::gpu_timers::MeshletGpuTimers;
 use super::pool::GpuGlobalMeshPool;
 use super::scene::MeshletScene;
 use super::system::MeshletPipeline;
@@ -111,6 +112,12 @@ pub struct MeshletRenderStats {
     /// total` ⇒ the chain has depth and the selector should be able
     /// to descend / ascend across distance.
     pub pool_meshlets_roots: u32,
+    /// Wall-clock duration of the cull → vbuf raster → deferred
+    /// shade chain on the GPU, in milliseconds. `None` when GPU
+    /// timers are disabled (no `Features::TIMESTAMP_QUERY` support
+    /// or `enable_gpu_timers` was never called) or the first ring
+    /// readback hasn't landed yet (1-2 frames after enable).
+    pub gpu_frame_ms: Option<f32>,
 }
 
 /// End-to-end meshlet render stage. See module docs for the per-frame
@@ -144,6 +151,11 @@ pub struct MeshletRenderStage {
 
     pub(super) size: (u32, u32),
     pub(super) instance_capacity: u32,
+
+    /// GPU frame timing via wgpu timestamp queries. Disabled by
+    /// default (see [`Self::enable_gpu_timers`]). Tests don't pay
+    /// for this; the editor / game runtime opts in at startup.
+    pub(super) gpu_timers: MeshletGpuTimers,
 }
 
 impl MeshletRenderStage {
@@ -217,7 +229,33 @@ impl MeshletRenderStage {
             color_texture,
             size,
             instance_capacity,
+            // GPU timers default to disabled — tests don't pay for
+            // them, and the editor / game runtime opts in via
+            // [`Self::enable_gpu_timers`] at startup once the queue
+            // and adapter are available.
+            gpu_timers: MeshletGpuTimers::new_disabled_for_default(),
         }
+    }
+
+    /// Activates the GPU frame timer (#463.4). Call this once at
+    /// startup from the editor / game runtime, passing the engine's
+    /// [`GpuContext`](ome_core::gpu::GpuContext) device + queue +
+    /// adapter. Adapters without `Features::TIMESTAMP_QUERY` get a
+    /// no-op instance — the call is always safe.
+    pub fn enable_gpu_timers(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        adapter: &wgpu::Adapter,
+    ) {
+        self.gpu_timers = MeshletGpuTimers::new(device, queue, adapter);
+    }
+
+    /// Most recent GPU frame time in milliseconds, or `None` if the
+    /// adapter does not expose `TIMESTAMP_QUERY` or the first
+    /// readback hasn't completed yet.
+    pub fn gpu_frame_ms(&self) -> Option<f32> {
+        self.gpu_timers.last_frame_ms()
     }
 
     pub fn pipeline(&self) -> &MeshletPipeline {
