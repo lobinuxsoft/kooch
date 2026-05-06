@@ -168,33 +168,22 @@ impl MeshletPipeline {
         out
     }
 
-    /// Total `group_max_err` slots the current scene needs across all
-    /// emitted instances. Equals `Σ over instances of
-    /// mesh_descriptors[mesh_id].group_count`. The cull dispatcher uses
-    /// this to size the atomic buffer (#474). Computed by re-running
-    /// the same filtered walk as [`Self::collect_scene_instances`] so
-    /// the size is exact, never an upper bound.
-    pub fn instance_group_capacity(&self, resources: &Resources) -> u32 {
-        let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
-        let mesh_descriptors = &self.pool.mesh_descriptors;
-        let mut total: u32 = 0;
-        query.for_each(|(renderer, _)| {
-            if !renderer.visible {
-                return;
-            }
-            let Some(guid) = renderer.mesh else {
-                return;
-            };
-            let Some(mesh_handle) = self.lookup(guid) else {
-                return;
-            };
-            let group_count = mesh_descriptors
-                .get(mesh_handle.mesh_id as usize)
-                .map(|d| d.group_count)
-                .unwrap_or(0);
-            total = total.saturating_add(group_count);
-        });
-        total
+    /// Total `group_max_err` slots the scene needs given an already-
+    /// collected `MeshInstance` slice. Equivalent to walking each
+    /// instance and summing `mesh_descriptors[mesh_id].group_count`,
+    /// but reads it from the prefix sum already stamped on each
+    /// instance: `last.group_base + last.group_count`. O(1).
+    pub fn instance_group_capacity(&self, instances: &[MeshInstance]) -> u32 {
+        let Some(last) = instances.last() else {
+            return 0;
+        };
+        let last_count = self
+            .pool
+            .mesh_descriptors
+            .get(last.mesh_id as usize)
+            .map(|d| d.group_count)
+            .unwrap_or(0);
+        last.group_base.saturating_add(last_count)
     }
 }
 
