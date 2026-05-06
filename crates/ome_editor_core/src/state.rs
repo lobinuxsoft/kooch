@@ -35,6 +35,7 @@ pub(crate) enum EditorTab {
     Archetypes,
     Components,
     Streaming,
+    Performance,
 }
 
 /// All tab variants, used for the Window menu.
@@ -45,6 +46,7 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::Archetypes,
     EditorTab::Components,
     EditorTab::Streaming,
+    EditorTab::Performance,
 ];
 
 impl EditorTab {
@@ -57,6 +59,7 @@ impl EditorTab {
             Self::Archetypes => format!("{} Archetypes", crate::icons::TREE_STRUCTURE),
             Self::Components => format!("{} Components", crate::icons::LIST_BULLETS),
             Self::Streaming => format!("{} Streaming", crate::icons::FADERS),
+            Self::Performance => format!("{} Performance", crate::icons::CHART_BAR),
         }
     }
 }
@@ -68,6 +71,10 @@ impl std::fmt::Display for EditorTab {
 }
 
 /// Creates the default 3-panel dock layout: World | View | Inspector.
+/// Performance lives as a second tab in the right-side panel
+/// alongside Inspector — the artist clicks the tab when they care
+/// about diagnostics; the rest of the time the inspector takes
+/// the screen real estate.
 pub(crate) fn default_dock_state() -> DockState<EditorTab> {
     let mut state = DockState::new(vec![EditorTab::View]);
 
@@ -75,7 +82,11 @@ pub(crate) fn default_dock_state() -> DockState<EditorTab> {
     surface.split_left(NodeIndex::root(), 0.2, vec![EditorTab::World]);
 
     let surface = state.main_surface_mut();
-    surface.split_right(NodeIndex::root(), 0.7, vec![EditorTab::Inspector]);
+    surface.split_right(
+        NodeIndex::root(),
+        0.7,
+        vec![EditorTab::Inspector, EditorTab::Performance],
+    );
 
     state
 }

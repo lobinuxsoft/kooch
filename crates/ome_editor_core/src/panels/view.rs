@@ -14,12 +14,11 @@
 //! extra wiring.
 
 use ome_gizmos_handles::{HandleMode, SnapSettings};
-use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
+use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings};
 
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
 use crate::icons;
-use crate::perf::EditorPerfStats;
 use crate::state::RotationDisplayMode;
 
 const TOOLBAR_BUTTON_SIZE: f32 = 28.0;
@@ -40,8 +39,6 @@ pub(crate) fn draw_view_content(
     selection_has_transform: bool,
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_lod_settings: &mut MeshletLodSettings,
-    meshlet_stats: MeshletRenderStats,
-    perf_stats: EditorPerfStats,
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -200,86 +197,11 @@ pub(crate) fn draw_view_content(
                  visually confirm the chain is being descended.",
             );
 
-            // Stats overlay — only when a debug mode is active so the
-            // toolbar stays minimal during normal editing. Per-stage
-            // cull survivors (frustum / backface / hi-z) ship in #451b
-            // alongside the reject-reason tagging buffer. cam_pos is
-            // surfaced so the artist can verify the LOD selector is
-            // actually following the active camera while moving in
-            // the viewport.
-            if *meshlet_debug_mode != MeshletDebugMode::Off {
-                ui.separator();
-                let [cx, cy, cz] = meshlet_stats.cam_pos;
-                let total = meshlet_stats.pool_meshlets_total;
-                let roots = meshlet_stats.pool_meshlets_roots;
-                ui.label(
-                    egui::RichText::new(format!(
-                        "instances {} · disp {} · pool {}/{} roots · cam ({:.1}, {:.1}, {:.1})",
-                        meshlet_stats.instances_uploaded,
-                        meshlet_stats.cull_threads,
-                        roots,
-                        total,
-                        cx, cy, cz,
-                    ))
-                    .monospace()
-                    .small(),
-                )
-                .on_hover_text(
-                    "Meshlet pipeline counters (previous frame).\n\
-                     pool: roots/total — total meshlets in the global pool, \
-                     of which `roots` are terminal (selector stops there).\n\
-                     If roots == total the chain has no LOD depth.\n\
-                     cam: world-space position the LOD selector saw — \
-                     should follow the active editor camera.",
-                );
-            }
-
-            // #463.7 — perf HUD. Always visible (production-grade
-            // metric, not a debug overlay): one monospace label
-            // cluster anchored to the right end of the toolbar with
-            // FPS / CPU / GPU / RAM / VRAM / draws. The numbers come
-            // from EditorPerfStats which the per-metric systems
-            // populate every frame; this widget is read-only.
-            ui.separator();
-            let gpu_text = perf_stats
-                .gpu_frame_ms
-                .map(|ms| format!("GPU {:.1}ms", ms))
-                .unwrap_or_else(|| "GPU n/a".to_string());
-            ui.label(
-                egui::RichText::new(format!(
-                    "{:.0}fps ({:.0} avg) · CPU {:.1}ms ({:.0}%) · {} · RAM {} MB · VRAM {} MB · {} draws",
-                    perf_stats.fps_instant,
-                    perf_stats.fps_avg,
-                    perf_stats.cpu_frame_ms,
-                    perf_stats.cpu_percent,
-                    gpu_text,
-                    perf_stats.ram_rss_mb(),
-                    perf_stats.vram_tracked_mb(),
-                    perf_stats.draw_calls,
-                ))
-                .monospace()
-                .small(),
-            )
-            .on_hover_text(
-                "Editor performance HUD (#463).\n\
-                 - FPS: instantaneous + 60-frame moving average.\n\
-                 - CPU: editor render-system duration (ms) and process \
-                   CPU usage (%, 500 ms refresh).\n\
-                 - GPU: cull → vbuf raster → deferred shade pass time, \
-                   measured via wgpu timestamp queries. \"n/a\" on \
-                   adapters without TIMESTAMP_QUERY support.\n\
-                 - RAM: process resident set size (MB).\n\
-                 - VRAM: bytes the engine has allocated through wgpu \
-                   for the GlobalMeshPool + render targets. Does NOT \
-                   include driver overhead — that requires per-backend \
-                   queries no portable Rust crate exposes today.\n\
-                 - draws: dispatch / render-pass operations per frame. \
-                   Empty scene: 3 (sky + blit + egui). With at least \
-                   one MeshRenderer: +3 from the meshlet pipeline \
-                   (cull + raster + shade, indirect — instance count \
-                   does NOT grow this). Gizmo batches add when \
-                   visualizing a selection.",
-            );
+            // Meshlet pipeline counters + perf HUD live in the
+            // dedicated Performance panel (#463 redesign). The
+            // toolbar keeps gizmo controls + debug-view selector +
+            // LOD slider — diagnostics belong vertically in their
+            // own dockable tab where they have room to breathe.
         });
 
     *input = Some(delta);
