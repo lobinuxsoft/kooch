@@ -125,6 +125,14 @@ impl MeshletPipeline {
             collect_lod_force_levels(resources);
         let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut out = Vec::new();
+        let mesh_descriptors = &self.pool.mesh_descriptors;
+        // Per-instance prefix sum into `group_max_err`: each instance
+        // reserves `mesh_descriptors[mesh_id].group_count` consecutive
+        // slots starting at `running_base`. Without this, two
+        // instances of the same mesh share the same slot range and
+        // `atomicMax` collapses every instance's LOD to the closest
+        // one's verdict (#474).
+        let mut running_base: u32 = 0;
         query.for_each_entity(|entity, (renderer, transform)| {
             if !renderer.visible {
                 return;
@@ -149,9 +157,44 @@ impl MeshletPipeline {
             } else {
                 instance.lod_force_level = LOD_FORCE_NONE;
             }
+            instance.group_base = running_base;
+            let group_count = mesh_descriptors
+                .get(mesh_handle.mesh_id as usize)
+                .map(|d| d.group_count)
+                .unwrap_or(0);
+            running_base = running_base.saturating_add(group_count);
             out.push(instance);
         });
         out
+    }
+
+    /// Total `group_max_err` slots the current scene needs across all
+    /// emitted instances. Equals `Σ over instances of
+    /// mesh_descriptors[mesh_id].group_count`. The cull dispatcher uses
+    /// this to size the atomic buffer (#474). Computed by re-running
+    /// the same filtered walk as [`Self::collect_scene_instances`] so
+    /// the size is exact, never an upper bound.
+    pub fn instance_group_capacity(&self, resources: &Resources) -> u32 {
+        let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
+        let mesh_descriptors = &self.pool.mesh_descriptors;
+        let mut total: u32 = 0;
+        query.for_each(|(renderer, _)| {
+            if !renderer.visible {
+                return;
+            }
+            let Some(guid) = renderer.mesh else {
+                return;
+            };
+            let Some(mesh_handle) = self.lookup(guid) else {
+                return;
+            };
+            let group_count = mesh_descriptors
+                .get(mesh_handle.mesh_id as usize)
+                .map(|d| d.group_count)
+                .unwrap_or(0);
+            total = total.saturating_add(group_count);
+        });
+        total
     }
 }
 
