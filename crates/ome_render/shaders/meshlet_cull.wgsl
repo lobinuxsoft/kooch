@@ -644,3 +644,157 @@ fn run_cull_scene_pool_atomic(thread_id: u32) {
 fn cs_cull_scene_pool_atomic(@builtin(global_invocation_id) gid: vec3<u32>) {
     run_cull_scene_pool_atomic(gid.x);
 }
+
+// ---------------------------------------------------------------
+// Hi-Z 2-pass scene-pool cull (#445).
+//
+// Pass A (`cs_cull_scene_pool_atomic_hi_z`) mirrors
+// `cs_cull_scene_pool_atomic` exactly but adds a Hi-Z test against
+// the *previous frame's* pyramid (`hi_z_pyramid_atomic`) at the very
+// tail. Meshlets that survive frustum + cone but fail Hi-Z are
+// appended to `culled_meshlets[]`; pass B (lands in T3) re-tests
+// them against this frame's freshly-built pyramid so anything that
+// became visible since the previous frame slips back in.
+//
+// New bindings (consumed only by this entry + pass B):
+//   group(0) @ binding(4): culled_meshlets — append target for
+//     Hi-Z rejects, packed identically to visible_meshlets.
+//   group(0) @ binding(5): culled_count — atomic counter for the
+//     above; pass B reads it as a workgroup count.
+//   group(2) @ binding(2): hi_z_params_atomic — view_proj +
+//     pyramid dimensions for the previous-frame pyramid sample.
+//   group(2) @ binding(3): hi_z_pyramid_atomic — multi-mip R32Float
+//     view of the previous-frame pyramid.
+//
+// Existing entry points keep their old layout (cull_bgl / scene_bgl
+// unchanged); the Hi-Z entry uses extended layouts the dispatcher
+// builds separately so the shader file can host both shapes.
+// ---------------------------------------------------------------
+
+@group(0) @binding(4) var<storage, read_write> culled_meshlets: array<u32>;
+@group(0) @binding(5) var<storage, read_write> culled_count: atomic<u32>;
+@group(2) @binding(2) var<uniform> hi_z_params_atomic: HiZParams;
+@group(2) @binding(3) var hi_z_pyramid_atomic: texture_2d<f32>;
+
+// Same body as `occluded_by_hi_z` but bound to the scene-pool path's
+// group(2) Hi-Z slots. Kept duplicated rather than parameterised
+// because WGSL has no template / generic over storage bindings.
+fn occluded_by_hi_z_atomic(center_world: vec3<f32>, radius: f32) -> bool {
+    let clip = hi_z_params_atomic.view_proj * vec4<f32>(center_world, 1.0);
+    if (clip.w <= radius) {
+        return false;
+    }
+    let ndc = clip.xyz / clip.w;
+    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0) {
+        return false;
+    }
+    let uv = vec2<f32>((ndc.x + 1.0) * 0.5, (1.0 - ndc.y) * 0.5);
+    let sphere_pixel_radius = max(
+        radius / clip.w * hi_z_params_atomic.hi_z_size.x * 0.5,
+        1.0,
+    );
+    let mip_f = ceil(log2(sphere_pixel_radius * 2.0));
+    let mip = clamp(u32(mip_f), 0u, hi_z_params_atomic.hi_z_mip_count - 1u);
+    let mip_w = max(u32(hi_z_params_atomic.hi_z_size.x) >> mip, 1u);
+    let mip_h = max(u32(hi_z_params_atomic.hi_z_size.y) >> mip, 1u);
+    let px = clamp(u32(uv.x * f32(mip_w)), 0u, mip_w - 1u);
+    let py = clamp(u32(uv.y * f32(mip_h)), 0u, mip_h - 1u);
+    let max_depth = textureLoad(hi_z_pyramid_atomic, vec2<u32>(px, py), i32(mip)).r;
+    return ndc.z > max_depth;
+}
+
+fn run_cull_scene_pool_atomic_hi_z(thread_id: u32) {
+    // Mirror of run_cull_scene_pool_atomic with a Hi-Z test injected
+    // before the visible-emit. Keep these two functions in lock-step
+    // when LOD / frustum / cone logic changes — there is no shared
+    // helper because the only difference is the tail decision and a
+    // shared helper would have to take every binding by parameter.
+    let max_meshlets = scene_params.meshlets_per_mesh;
+    let total_threads = scene_params.instance_count * max_meshlets;
+    if (thread_id >= total_threads) {
+        return;
+    }
+    let instance_id = thread_id / max_meshlets;
+    let meshlet_offset = thread_id % max_meshlets;
+
+    let inst = instances[instance_id];
+    let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
+    if (meshlet_offset >= mesh_desc.meshlet_count) {
+        return;
+    }
+
+    let global_meshlet_idx = mesh_desc.first_meshlet + meshlet_offset;
+    let m = pool_meshlets[global_meshlet_idx];
+
+    if (inst.lod_force_level >= 0) {
+        if (i32(m.lod_level) != inst.lod_force_level) {
+            return;
+        }
+    } else if (params.debug_mode == 8u) {
+        if (m.lod_error != 0.0) {
+            return;
+        }
+    } else if (params.debug_mode == 9u) {
+        if (m.parent_meshlet_index != 0xFFFFFFFFu) {
+            return;
+        }
+    } else {
+        let target_px = params.lod_target_error_pixels;
+
+        var above_too_coarse: bool;
+        if (m.group_index == 0xFFFFFFFFu) {
+            above_too_coarse = true;
+        } else {
+            let local_group = m.group_index - mesh_desc.group_base;
+            let slot = inst.group_base + local_group;
+            let bits = atomicLoad(&group_max_err[slot]);
+            let group_err_px = bitcast<f32>(bits);
+            above_too_coarse = group_err_px > target_px;
+        }
+
+        var below_fine: bool;
+        if (m.children_group_index == 0xFFFFFFFFu) {
+            below_fine = true;
+        } else {
+            let local_group = m.children_group_index - mesh_desc.group_base;
+            let slot = inst.group_base + local_group;
+            let bits = atomicLoad(&group_max_err[slot]);
+            let group_err_px = bitcast<f32>(bits);
+            below_fine = group_err_px <= target_px;
+        }
+
+        if (!(above_too_coarse && below_fine)) {
+            return;
+        }
+    }
+
+    let world_center = (inst.transform * vec4<f32>(m.bounds_center, 1.0)).xyz;
+    if (sphere_outside_frustum(world_center, m.bounding_radius)) {
+        return;
+    }
+
+    let world_apex = (inst.transform * vec4<f32>(m.cone_apex, 1.0)).xyz;
+    let world_axis = normalize(
+        (inst.transform * vec4<f32>(m.cone_axis, 0.0)).xyz
+    );
+    if (camera_in_cone(world_apex, world_axis, m.cone_cutoff)) {
+        return;
+    }
+
+    let packed = (instance_id << 16u) | (global_meshlet_idx & 0xffffu);
+
+    if (occluded_by_hi_z_atomic(world_center, m.bounding_radius)) {
+        // Hi-Z reject: defer to pass B with this frame's pyramid.
+        let slot = atomicAdd(&culled_count, 1u);
+        culled_meshlets[slot] = packed;
+        return;
+    }
+
+    let slot = atomicAdd(&visible_count, 1u);
+    visible_meshlets[slot] = packed;
+}
+
+@compute @workgroup_size(64, 1, 1)
+fn cs_cull_scene_pool_atomic_hi_z(@builtin(global_invocation_id) gid: vec3<u32>) {
+    run_cull_scene_pool_atomic_hi_z(gid.x);
+}

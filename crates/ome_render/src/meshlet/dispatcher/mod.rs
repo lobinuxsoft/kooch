@@ -50,9 +50,29 @@ pub struct MeshletCull {
     pub(super) pipeline_scene_pool: wgpu::ComputePipeline,
     pub(super) pipeline_lod_compute_group_max_err: wgpu::ComputePipeline,
     pub(super) pipeline_cull_scene_pool_atomic: wgpu::ComputePipeline,
+    /// Pass-1 (`cs_lod_compute_group_max_err`) recompiled against the
+    /// extended cull layout the Hi-Z 2-pass entry uses (#445). Same
+    /// shader entry point — only the pipeline_layout changes so
+    /// `culled_meshlets` / `culled_count` and `hi_z_*` slots are
+    /// declared even though pass 1 doesn't touch them.
+    pub(super) pipeline_lod_compute_group_max_err_hi_z: wgpu::ComputePipeline,
+    /// Pass A of the 2-pass Hi-Z cull (#445). Mirror of
+    /// `cs_cull_scene_pool_atomic` plus a Hi-Z occlusion test against
+    /// the previous frame's pyramid; rejects land in `culled_meshlets`
+    /// for pass B to retest.
+    pub(super) pipeline_cull_scene_pool_atomic_hi_z: wgpu::ComputePipeline,
     pub(super) cull_bgl: wgpu::BindGroupLayout,
+    /// Cull BGL used by the Hi-Z 2-pass path. Identical to `cull_bgl`
+    /// for bindings 0-3 plus two read_write storage slots at 4-5 for
+    /// `culled_meshlets` + `culled_count`. Existing entry points keep
+    /// using `cull_bgl` so their dispatches stay binary-compatible.
+    pub(super) extended_cull_bgl: wgpu::BindGroupLayout,
     pub(super) hi_z_bgl: wgpu::BindGroupLayout,
     pub(super) scene_bgl: wgpu::BindGroupLayout,
+    /// Scene BGL used by the Hi-Z 2-pass path. Identical to `scene_bgl`
+    /// for bindings 0-1 plus a uniform `HiZParams` at 2 and the multi-
+    /// mip pyramid texture at 3.
+    pub(super) scene_with_hi_z_bgl: wgpu::BindGroupLayout,
     pub(super) meshlet_bgl: wgpu::BindGroupLayout,
     pub(super) pool_bgl: wgpu::BindGroupLayout,
     pub(super) group_err_bgl: wgpu::BindGroupLayout,
@@ -62,6 +82,14 @@ pub struct MeshletCull {
     pub(super) scene_params_buffer: wgpu::Buffer,
     pub(super) visible_meshlets: wgpu::Buffer,
     pub(super) visible_count: wgpu::Buffer,
+    /// Pass-A reject queue for the Hi-Z 2-pass cull (#445). Sized to
+    /// the same capacity as `visible_meshlets` so the worst case where
+    /// every meshlet is occluded fits without overflow. Cleared each
+    /// frame before pass A.
+    pub(super) culled_meshlets: wgpu::Buffer,
+    /// Atomic counter for `culled_meshlets`. Pass B reads this both
+    /// as the workgroup count and the loop bound.
+    pub(super) culled_count: wgpu::Buffer,
     pub(super) indirect_args: wgpu::Buffer,
     /// Per-group atomic<u32> buffer the 2-pass cull (#465) writes
     /// in pass 1 and reads in pass 2. Sized to `group_capacity`,
@@ -181,6 +209,34 @@ impl MeshletCull {
     /// args' `instance_count` slot.
     pub fn visible_count_buffer(&self) -> &wgpu::Buffer {
         &self.visible_count
+    }
+
+    /// Pass-A reject queue for the Hi-Z 2-pass cull (#445). Each
+    /// element is a `(instance_id << 16) | global_meshlet_idx` packed
+    /// just like `visible_meshlets`. Pass B re-tests every entry up
+    /// to `culled_count` against the freshly-built pyramid.
+    pub fn culled_meshlets_buffer(&self) -> &wgpu::Buffer {
+        &self.culled_meshlets
+    }
+
+    /// Atomic counter for `culled_meshlets`. Doubles as the pass-B
+    /// dispatch length.
+    pub fn culled_count_buffer(&self) -> &wgpu::Buffer {
+        &self.culled_count
+    }
+
+    /// Bind group layout for the Hi-Z 2-pass entry's group(0) — the
+    /// 4-binding `cull_bgl` plus `culled_meshlets` (4) and
+    /// `culled_count` (5).
+    pub fn extended_cull_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.extended_cull_bgl
+    }
+
+    /// Bind group layout for the Hi-Z 2-pass entry's group(2) — the
+    /// 2-binding `scene_bgl` plus the `HiZParams` UBO at 2 and the
+    /// pyramid texture at 3.
+    pub fn scene_with_hi_z_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.scene_with_hi_z_bgl
     }
 
     /// Bind group layout describing the cull shader's group(0).
