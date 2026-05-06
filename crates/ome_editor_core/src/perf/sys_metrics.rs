@@ -26,6 +26,12 @@ pub(crate) struct SysMetricsState {
     system: System,
     pid: Pid,
     last_refresh: Option<Instant>,
+    /// How many refresh cycles have run since boot. sysinfo's
+    /// `cpu_usage()` returns 0.0 on the very first refresh because
+    /// it has no prior sample to delta against — we suppress writing
+    /// stats until at least two refreshes have established a real
+    /// baseline. RAM is exempt; one refresh is enough for it.
+    samples_taken: u32,
 }
 
 impl Default for SysMetricsState {
@@ -35,19 +41,13 @@ impl Default for SysMetricsState {
         // keeps each refresh under a millisecond on Linux.
         let refresh_kind =
             RefreshKind::new().with_processes(ProcessRefreshKind::new().with_cpu().with_memory());
-        let mut system = System::new_with_specifics(refresh_kind);
+        let system = System::new_with_specifics(refresh_kind);
         let pid = Pid::from_u32(std::process::id());
-        // Seed the process snapshot so the FIRST refresh has a
-        // baseline to delta against (CPU % needs two samples).
-        system.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&[pid]),
-            true,
-            ProcessRefreshKind::new().with_cpu().with_memory(),
-        );
         Self {
             system,
             pid,
             last_refresh: None,
+            samples_taken: 0,
         }
     }
 }
@@ -75,15 +75,29 @@ pub(crate) fn sys_metrics_system(resources: &mut Resources) {
             ProcessRefreshKind::new().with_cpu().with_memory(),
         );
         state.last_refresh = Some(Instant::now());
+        state.samples_taken = state.samples_taken.saturating_add(1);
 
         if let Some(proc) = state.system.process(state.pid) {
-            let cpu_percent = proc.cpu_usage();
-            // sysinfo returns memory in bytes (0.32+).
+            // RAM is a snapshot — usable from the very first sample.
             let ram_bytes = proc.memory();
             let ram_rss_mb = (ram_bytes / (1024 * 1024)) as u32;
+            // CPU usage requires a baseline + delta. The first sysinfo
+            // refresh records the baseline and `cpu_usage()` returns
+            // 0.0; the second refresh produces a real delta. Skipping
+            // the first sample means the HUD shows the previous
+            // (zero) value for the first interval and a real number
+            // afterward, instead of a misleading "0% forever" if the
+            // baseline write happens to be the only sample seen.
+            let cpu_percent = if state.samples_taken >= 2 {
+                Some(proc.cpu_usage())
+            } else {
+                None
+            };
             if let Some(stats) = resources.get_mut::<EditorPerfStats>() {
-                stats.cpu_percent = cpu_percent;
                 stats.ram_rss_mb = ram_rss_mb;
+                if let Some(c) = cpu_percent {
+                    stats.cpu_percent = c;
+                }
             }
         }
     }
@@ -132,5 +146,29 @@ mod tests {
             .last_refresh
             .unwrap();
         assert_eq!(first, second, "back-to-back call must not refresh again");
+    }
+
+    #[test]
+    fn first_sample_does_not_overwrite_cpu_percent() {
+        // sysinfo's first refresh always reports cpu_usage = 0.0
+        // because there's no prior sample to delta against. If the
+        // HUD reads this value it will display a stuck "0.0 %"
+        // until enough idle time passes for a second refresh — the
+        // user reported exactly this. Verify the first refresh does
+        // not overwrite an existing non-zero value.
+        let mut resources = Resources::default();
+        let mut seeded_stats = EditorPerfStats::default();
+        seeded_stats.cpu_percent = 42.0; // simulate prior reading
+        resources.insert(seeded_stats);
+        sys_metrics_system(&mut resources);
+        let stats = resources.get::<EditorPerfStats>().unwrap();
+        assert_eq!(
+            stats.cpu_percent, 42.0,
+            "first sample must NOT overwrite a non-zero cpu_percent (sysinfo returns 0 \
+             on the first refresh; only the second has a real delta)"
+        );
+        // RAM, in contrast, is a snapshot — should populate even
+        // from the first sample.
+        assert!(stats.ram_rss_mb > 0, "RAM must populate from the very first sample");
     }
 }
