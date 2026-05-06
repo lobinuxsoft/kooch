@@ -82,7 +82,18 @@ impl MeshletGpuTimers {
     /// instance. Caller passes `device + queue + adapter` from the
     /// engine's [`GpuContext`](ome_core::gpu::GpuContext).
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, adapter: &wgpu::Adapter) -> Self {
-        if !adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+        // Two distinct features are required:
+        // - TIMESTAMP_QUERY: lets us create the QuerySet itself.
+        // - TIMESTAMP_QUERY_INSIDE_ENCODERS: lets us call
+        //   `encoder.write_timestamp(...)` BETWEEN passes, which is
+        //   what we do (start before cull, end after deferred shade,
+        //   no `timestamp_writes` plumbed inside any pass descriptor).
+        // Either one missing → no-op instance; the HUD reports
+        // "GPU n/a" instead of crashing in queue submit.
+        let f = adapter.features();
+        let supported = f.contains(wgpu::Features::TIMESTAMP_QUERY)
+            && f.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
+        if !supported {
             return Self::disabled();
         }
         let query_set = device.create_query_set(&wgpu::QuerySetDescriptor {

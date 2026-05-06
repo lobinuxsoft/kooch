@@ -315,6 +315,17 @@ fn optional_features(adapter: &Adapter) -> wgpu::Features {
         features |= wgpu::Features::TIMESTAMP_QUERY
             | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES;
     }
+    // #463.4 — `encoder.write_timestamp` (called between passes by
+    // MeshletGpuTimers in the meshlet render stage) requires this
+    // separate feature in wgpu 29. Without it the encoder validates
+    // and the queue submission fails with "Features
+    // TIMESTAMP_QUERY_INSIDE_ENCODERS are required but not enabled".
+    if adapter
+        .features()
+        .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
+    {
+        features |= wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+    }
     features
 }
 
