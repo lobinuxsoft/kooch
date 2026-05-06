@@ -50,8 +50,9 @@ impl MeshletRenderStage {
             "meshlet_render_stage_depth",
             new_size,
             wgpu::TextureFormat::Depth32Float,
-            wgpu::TextureUsages::RENDER_ATTACHMENT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
+        let depth_sample_view = super::depth_sample_view(&depth_texture);
         let (color_texture, color_view) = create_2d_attachment(
             device,
             "meshlet_render_stage_color",
@@ -74,6 +75,7 @@ impl MeshletRenderStage {
         self.vbuf_view = vbuf_view;
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
+        self.depth_sample_view = depth_sample_view;
         self.color_texture = color_texture;
         self.color_view = color_view;
         self.hiz_prev = hiz_prev;
@@ -380,7 +382,24 @@ impl MeshletRenderStage {
             self.gpu_timers.write_start(&mut encoder);
         }
 
-        self.cull.dispatch_scene_pool_atomic(
+        // ── Hi-Z 2-pass cull (#445) ────────────────────────────────
+        // Both passes share the same view_proj / pyramid dimensions
+        // (the camera doesn't change inside the frame; resize is the
+        // only thing that flips dims and that triggers a new HiZ).
+        let (hiz_w, hiz_h) = self.hiz_prev.dimensions();
+        let mip_count = self.hiz_prev.mip_count();
+        let hi_z_params = crate::meshlet::dispatcher::HiZTestParams::new(
+            view_proj,
+            hiz_w,
+            hiz_h,
+            mip_count,
+        );
+
+        // Pass A: cull against the previous frame's pyramid. Frustum
+        // + cone + LOD survivors that pass Hi-Z append to
+        // visible_meshlets; Hi-Z rejects park in culled_meshlets for
+        // pass B to retest.
+        self.cull.dispatch_scene_pool_atomic_hi_z(
             device,
             queue,
             &mut encoder,
@@ -388,7 +407,10 @@ impl MeshletRenderStage {
             &self.scene,
             &cull_params,
             &scene_params,
+            &hi_z_params,
+            self.hiz_prev.full_view(),
         );
+        // Raster A: clear vbuf + depth, draw pass A's survivors.
         self.rasterizer.render_scene(
             device,
             queue,
@@ -400,6 +422,41 @@ impl MeshletRenderStage {
             &self.scene,
             view_proj,
             0,
+            /* clear */ true,
+        );
+        // Build the current frame's Hi-Z pyramid from the just-
+        // written depth so pass B has fresh occlusion data for the
+        // entries pass A's stale pyramid wrongly rejected.
+        self.hiz_curr
+            .build_from_depth(device, &mut encoder, &self.depth_sample_view);
+        // Pass B: re-test culled_meshlets[] against hiz_curr; survivors
+        // append to the same visible_meshlets buffer.
+        self.cull.dispatch_cull_pass_b(
+            device,
+            queue,
+            &mut encoder,
+            gpu_pool,
+            &self.scene,
+            &hi_z_params,
+            self.hiz_curr.full_view(),
+        );
+        // Raster B: load (preserve pass-A vbuf + depth) and draw the
+        // union of pass A + B. Pass A's set is re-rasterised because
+        // a single indirect_args buffer drives both draws; the depth
+        // test trivially keeps fragments idempotent. Splitting the
+        // first_instance offset is an optimisation tracked in T6.
+        self.rasterizer.render_scene(
+            device,
+            queue,
+            &mut encoder,
+            &self.vbuf_view,
+            &self.depth_view,
+            &meshlet_bg,
+            &self.cull,
+            &self.scene,
+            view_proj,
+            0,
+            /* clear */ false,
         );
         // Editor / game tools insert MeshletDebugMode when they want to
         // override the production shading path. Absence = Off (no-op
@@ -440,6 +497,12 @@ impl MeshletRenderStage {
             self.gpu_timers.submit_readback(slot_idx);
         }
 
+        // Rotate Hi-Z pyramids: this frame's hiz_curr (built from
+        // the depth pass A wrote into) becomes next frame's hiz_prev.
+        // Done after submit so the GPU has finished sampling hiz_prev
+        // by the time the underlying texture moves to the curr slot.
+        self.swap_hi_z_pyramids();
+
         let pool = self.pipeline.pool();
         let pool_meshlets_total = pool.meshlets.len() as u32;
         let pool_meshlets_roots = pool
@@ -450,15 +513,13 @@ impl MeshletRenderStage {
             })
             .count() as u32;
 
-        // #463.6 — meshlet pipeline emits 3 dispatches / passes when
-        // there's actually something to draw (cull + vbuf raster +
-        // deferred shade). With zero instances the dispatches still
-        // execute but conceptually no work is done; the HUD reports
-        // 0 so the artist sees the count drop to nothing when every
-        // MeshRenderer is despawned. Indirect dispatch means once
-        // there IS at least one instance, the count stays at 3
-        // regardless of how many entities pile up.
-        let meshlet_draw_calls = if instances.is_empty() { 0 } else { 3 };
+        // Hi-Z 2-pass cull (#445) emits 6 ordered units of work per
+        // frame: cull pass A, raster A, Hi-Z pyramid build, cull pass
+        // B, raster B, deferred shade. Pyramid build is itself a
+        // chain of one copy + (mip_count − 1) reductions but the HUD
+        // counts it as a single logical pass. With zero instances we
+        // skip everything and report 0.
+        let meshlet_draw_calls = if instances.is_empty() { 0 } else { 6 };
 
         MeshletRenderStats {
             instances_uploaded: instances.len() as u32,

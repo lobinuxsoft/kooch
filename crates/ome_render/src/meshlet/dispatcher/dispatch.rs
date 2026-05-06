@@ -622,11 +622,14 @@ impl MeshletCull {
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
-        // NOTE: deliberately *not* mirroring visible_count → indirect
-        // args here. The orchestrator runs pass B before any raster,
-        // so the indirect mirror lives at the end of pass B in
-        // `dispatch_cull_pass_b`. Mirroring here would force a tiny
-        // copy that pass B's mirror would immediately overwrite.
+        // Mirror visible_count → indirect_args.instance_count so the
+        // pass-A raster has a draw count covering exactly pass A's
+        // survivors. Pass B re-mirrors at the end with the union
+        // total, and the pass-B raster (LoadOp::Load on the vbuf +
+        // depth) re-rasterises pass A's set as well — the depth test
+        // makes that idempotent for correctness, and the overhead is
+        // bounded by `count_a` extra fragment-shader invocations.
+        self.mirror_count_to_indirect_args(encoder);
     }
 
     /// Hi-Z 2-pass cull (#445), pass B. Drains

@@ -22,6 +22,11 @@ impl MeshletVisRasterizer {
     /// "background"). The depth attachment is mandatory for the scene
     /// path — multiple instances at different depths absolutely need
     /// it.
+    ///
+    /// `clear` selects the load op for both attachments. Use `true`
+    /// for the first raster of a frame and `false` for any append
+    /// pass (e.g. Hi-Z 2-pass cull's pass B raster, #445) so prior
+    /// fragments survive.
     #[allow(clippy::too_many_arguments)]
     pub fn render_scene(
         &self,
@@ -35,6 +40,7 @@ impl MeshletVisRasterizer {
         scene: &MeshletScene,
         view_proj: glam::Mat4,
         clear_id: u32,
+        clear: bool,
     ) {
         queue.write_buffer(
             &self.camera_buffer,
@@ -61,6 +67,22 @@ impl MeshletVisRasterizer {
             }],
         });
 
+        let color_load = if clear {
+            wgpu::LoadOp::Clear(wgpu::Color {
+                r: clear_id as f64,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0,
+            })
+        } else {
+            wgpu::LoadOp::Load
+        };
+        let depth_load = if clear {
+            wgpu::LoadOp::Clear(1.0)
+        } else {
+            wgpu::LoadOp::Load
+        };
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("meshlet_vbuf_scene_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -68,19 +90,14 @@ impl MeshletVisRasterizer {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: clear_id as f64,
-                        g: 0.0,
-                        b: 0.0,
-                        a: 0.0,
-                    }),
+                    load: color_load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
+                    load: depth_load,
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,

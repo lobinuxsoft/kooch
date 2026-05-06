@@ -154,6 +154,12 @@ pub struct MeshletRenderStage {
 
     pub(super) vbuf_view: wgpu::TextureView,
     pub(super) depth_view: wgpu::TextureView,
+    /// Depth-only view of the same depth texture, suitable for
+    /// `cs_copy_depth` in the Hi-Z builder. Sampling-bind requires
+    /// `TextureAspect::DepthOnly` whereas the render attachment uses
+    /// `TextureAspect::All`; sharing one view across both roles
+    /// would fail wgpu validation in the worst case.
+    pub(super) depth_sample_view: wgpu::TextureView,
     pub(super) color_view: wgpu::TextureView,
 
     pub(super) vbuf_texture: wgpu::Texture,
@@ -231,8 +237,9 @@ impl MeshletRenderStage {
             "meshlet_render_stage_depth",
             size,
             wgpu::TextureFormat::Depth32Float,
-            wgpu::TextureUsages::RENDER_ATTACHMENT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
+        let depth_sample_view = depth_sample_view(&depth_texture);
         let (color_texture, color_view) = create_2d_attachment(
             device,
             "meshlet_render_stage_color",
@@ -260,6 +267,7 @@ impl MeshletRenderStage {
             meshlet_bgl,
             vbuf_view,
             depth_view,
+            depth_sample_view,
             color_view,
             vbuf_texture,
             depth_texture,
@@ -387,6 +395,23 @@ fn render_target_byte_estimate(size: (u32, u32)) -> u64 {
     // vbuf: R32Uint = 4 bpp; depth: Depth32Float = 4 bpp;
     // color: Rgba8Unorm = 4 bpp. Total: 12 bytes/pixel.
     pixels * 12
+}
+
+/// Creates a `TextureAspect::DepthOnly` view of a depth attachment so
+/// the same texture can be sampled by the Hi-Z builder while the
+/// `_view` (with `aspect: All`) drives the render pass attachment.
+pub(super) fn depth_sample_view(texture: &wgpu::Texture) -> wgpu::TextureView {
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("meshlet_render_stage_depth_sample"),
+        format: Some(wgpu::TextureFormat::Depth32Float),
+        dimension: Some(wgpu::TextureViewDimension::D2),
+        usage: None,
+        aspect: wgpu::TextureAspect::DepthOnly,
+        base_mip_level: 0,
+        mip_level_count: Some(1),
+        base_array_layer: 0,
+        array_layer_count: Some(1),
+    })
 }
 
 pub(super) fn create_2d_attachment(
