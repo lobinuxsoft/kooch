@@ -103,6 +103,8 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.selection_has_transform,
                 self.meshlet_debug_mode,
                 self.meshlet_lod_settings,
+                self.meshlet_stats,
+                self.perf_stats,
             ),
             EditorTab::Inspector => draw_inspector_content(
                 ui,

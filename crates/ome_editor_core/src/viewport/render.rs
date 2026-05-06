@@ -47,7 +47,7 @@ pub(crate) fn render_viewport(
     // + deferred). Order matters: the blit pass we record below reads
     // the stage's color view, so the stage's submit must complete
     // first on the queue.
-    if project_loaded {
+    let frame_stats = if project_loaded {
         meshlet.stage.resize(gpu.device(), target.size());
         meshlet.stage.sync_assets_to_gpu(gpu.device(), resources);
         let (view_proj, cam_pos) = active_camera_matrices(resources, target.aspect())
@@ -63,9 +63,12 @@ pub(crate) fn render_viewport(
         // can read it next tick. Stats from a frame the meshlet stage
         // skipped (no project loaded) reset to default.
         resources.insert(stats);
+        stats
     } else {
-        resources.insert(MeshletRenderStats::default());
-    }
+        let s = MeshletRenderStats::default();
+        resources.insert(s);
+        s
+    };
 
     let mut encoder = gpu
         .device()
@@ -101,11 +104,18 @@ pub(crate) fn render_viewport(
         clear_to_black(&mut encoder, target.view(), target.depth_view());
     }
 
-    // Pass 2: Meshlet blit composite — only when the stage actually
-    // has GPU-resident meshes to draw. Otherwise the blit would copy
-    // the stage's empty color buffer (all zeros) on top of the sky we
-    // just rendered, blanking the viewport.
-    if project_loaded && meshlet.stage.gpu_mesh_count() > 0 {
+    // Pass 2: Meshlet blit composite — only when this frame actually
+    // produced meshlet output. Gating on `gpu_mesh_count > 0` was
+    // wrong: that counts assets registered in the pool (which
+    // persist after entities are despawned), not the live ECS
+    // instances that drove a real submit. Once an asset was
+    // registered, the blit kept copying the stage's color view —
+    // which the meshlet stage intentionally does NOT clear when it
+    // skips on zero instances — leaving a ghost of the last
+    // rendered frame on top of the sky. `instances_uploaded` is
+    // the per-frame truth: > 0 iff the meshlet pipeline ran a real
+    // dispatch this frame.
+    if project_loaded && frame_stats.instances_uploaded > 0 {
         meshlet
             .blit
             .blit(gpu.device(), &mut encoder, meshlet.stage.color_view(), target.view());

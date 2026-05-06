@@ -71,10 +71,13 @@ impl std::fmt::Display for EditorTab {
 }
 
 /// Creates the default 3-panel dock layout: World | View | Inspector.
-/// Performance lives as a second tab in the right-side panel
-/// alongside Inspector — the artist clicks the tab when they care
-/// about diagnostics; the rest of the time the inspector takes
-/// the screen real estate.
+/// Performance is NOT in the default dock because its content is
+/// per-frame and view-specific — the View panel renders an
+/// equivalent vertical overlay anchored to its right edge so the
+/// metrics are always visible alongside what the artist is
+/// looking at. The tab variant remains in `ALL_TABS` so the
+/// Window menu can still spawn a dockable copy for users who
+/// want it detached.
 pub(crate) fn default_dock_state() -> DockState<EditorTab> {
     let mut state = DockState::new(vec![EditorTab::View]);
 
@@ -82,11 +85,7 @@ pub(crate) fn default_dock_state() -> DockState<EditorTab> {
     surface.split_left(NodeIndex::root(), 0.2, vec![EditorTab::World]);
 
     let surface = state.main_surface_mut();
-    surface.split_right(
-        NodeIndex::root(),
-        0.7,
-        vec![EditorTab::Inspector, EditorTab::Performance],
-    );
+    surface.split_right(NodeIndex::root(), 0.7, vec![EditorTab::Inspector]);
 
     state
 }

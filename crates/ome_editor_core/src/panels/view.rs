@@ -14,11 +14,13 @@
 //! extra wiring.
 
 use ome_gizmos_handles::{HandleMode, SnapSettings};
-use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings};
+use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
 
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
 use crate::icons;
+use crate::panels::performance::draw_performance_content;
+use crate::perf::EditorPerfStats;
 use crate::state::RotationDisplayMode;
 
 const TOOLBAR_BUTTON_SIZE: f32 = 28.0;
@@ -39,6 +41,8 @@ pub(crate) fn draw_view_content(
     selection_has_transform: bool,
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_lod_settings: &mut MeshletLodSettings,
+    meshlet_stats: MeshletRenderStats,
+    perf_stats: EditorPerfStats,
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -198,14 +202,47 @@ pub(crate) fn draw_view_content(
             );
 
             // Meshlet pipeline counters + perf HUD live in the
-            // dedicated Performance panel (#463 redesign). The
-            // toolbar keeps gizmo controls + debug-view selector +
-            // LOD slider — diagnostics belong vertically in their
-            // own dockable tab where they have room to breathe.
+            // vertical sidebar drawn just below — see PERF_SIDEBAR
+            // wiring for the right-edge anchor logic. Tab variant
+            // EditorTab::Performance still routes to the same
+            // panel for users who want it dockable.
+        });
+
+    // Vertical perf sidebar anchored to the right edge of the
+    // viewport. Mirrors the toolbar's overlay pattern (Frame +
+    // child UI) but laid out top-to-bottom so each metric gets a
+    // full row. Lives inside the View panel because its content
+    // is per-frame and tracks what the artist is currently
+    // looking at — the artist asked for it pegged to the view,
+    // not floating in the dock.
+    let sidebar_size = egui::vec2(PERF_SIDEBAR_WIDTH, available.y - TOOLBAR_OFFSET.y * 2.0);
+    let sidebar_origin = egui::pos2(
+        panel_origin.x + available.x - sidebar_size.x - TOOLBAR_OFFSET.x,
+        panel_origin.y + TOOLBAR_OFFSET.y,
+    );
+    let sidebar_rect = egui::Rect::from_min_size(sidebar_origin, sidebar_size);
+    let mut sidebar_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(sidebar_rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    egui::Frame::new()
+        .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
+        .show(&mut sidebar_ui, |ui| {
+            ui.set_max_width(PERF_SIDEBAR_WIDTH - TOOLBAR_PADDING * 2.0);
+            draw_performance_content(ui, perf_stats, meshlet_stats);
         });
 
     *input = Some(delta);
 }
+
+/// Width of the perf sidebar overlay anchored to the right edge of
+/// the viewport. 260 px fits the widest "n/a (TIMESTAMP_QUERY
+/// unavailable)" GPU-frame-time row without wrapping while leaving
+/// room to read the actual viewport.
+const PERF_SIDEBAR_WIDTH: f32 = 260.0;
 
 /// Renders one toolbar button. Highlights when `active`. Returns
 /// `true` the frame the button is clicked.
