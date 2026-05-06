@@ -252,6 +252,15 @@ struct MeshInstance {
     // ≥ 0 = render only meshlets with lod_level == this value (#467
     // LOD-stack inspector).
     lod_force_level: i32,
+    // Per-instance prefix-sum base into `group_max_err`. Pass 1 / pass 2
+    // both compute `slot = group_base + (m.group_index - mesh_desc.group_base)`
+    // so two instances of the same mesh write to disjoint slot ranges
+    // and pick LOD independently (#474). 0 is valid when the scene has
+    // at most one instance per mesh.
+    group_base: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 struct SceneCullParams {
@@ -365,9 +374,16 @@ struct PoolMeshDescriptor {
     vertex_offset: u32,
     meshlet_vertex_offset: u32,
     meshlet_triangle_offset: u32,
+    // Pool-global base id this mesh's meshlet group_index values were
+    // shifted by at registration. Subtract from `m.group_index` to
+    // recover the mesh-local group id when computing the per-instance
+    // slot in `group_max_err` (#474).
+    group_base: u32,
+    // Distinct group_ids this mesh contributes (`max_local + 1`); each
+    // instance reserves this many slots in `group_max_err` starting at
+    // `inst.group_base` (#474). Mirrors Rust `MeshDescriptor.group_count`.
+    group_count: u32,
     _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
 }
 
 @group(1) @binding(0) var<storage, read> pool_mesh_descriptors: array<PoolMeshDescriptor>;
