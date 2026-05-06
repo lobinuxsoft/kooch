@@ -10,9 +10,11 @@
 //! systems wired by [`crate::EditorPlugin`]. Reads are zero-cost: a
 //! single `resources.get::<EditorPerfStats>()` from the View toolbar.
 
+pub(crate) mod sys_metrics;
 pub(crate) mod timing;
 
 pub use timing::record_cpu_frame_ms;
+pub(crate) use sys_metrics::{sys_metrics_system, SysMetricsState};
 pub(crate) use timing::{frame_timer_system, PerfTimingState};
 
 /// Sampled-once-per-frame perf counters surfaced by the View toolbar

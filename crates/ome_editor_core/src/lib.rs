@@ -69,6 +69,7 @@ impl Plugin for EditorPlugin {
         // metric system having run yet.
         app.insert_resource(perf::EditorPerfStats::default());
         app.insert_resource(perf::PerfTimingState::default());
+        app.insert_resource(perf::SysMetricsState::default());
         app.insert_resource(editor_camera::EditorCameraController::default());
         app.insert_resource(layout::LayoutPersistence::default());
         app.add_system(Stage::Startup, systems::editor_startup_system);
@@ -93,6 +94,10 @@ impl Plugin for EditorPlugin {
         // Runs in PreRender so the timestamp it captures matches the
         // frame the Render stage is about to start.
         app.add_system(Stage::PreRender, perf::frame_timer_system);
+        // #463.3 — refresh CPU% / RAM RSS at most twice per second.
+        // PreRender keeps the metric and the FPS timer phase-locked
+        // so both update before the toolbar reads them.
+        app.add_system(Stage::PreRender, perf::sys_metrics_system);
         // Register built-in visualizers (Transform, ...) into the
         // VisualizerRegistry. Must run BEFORE the first gizmo batch build.
         app.add_system(Stage::Startup, gizmos::register_builtin_visualizers_system);
