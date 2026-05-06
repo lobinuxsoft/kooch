@@ -171,15 +171,18 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     if let Some(stats) = resources.get_mut::<crate::perf::EditorPerfStats>() {
         stats.gpu_frame_ms = meshlet_stats.gpu_frame_ms;
         stats.vram_tracked_bytes = vram_bytes;
-        // #463.6 — meshlet pipeline emits a fixed 3 (cull + raster +
-        // shade) regardless of instance count thanks to indirect
-        // dispatch. The editor adds 4 stable passes on top: sky
-        // pass, gizmo lines batch, mesh-gizmo batch, viewport blit.
-        // The egui paint pass count is variable (one per egui pass
-        // group); approximated as 1 here. Total: 8 in the steady
-        // state with the default editor layout.
-        const EDITOR_FIXED_PASSES: u32 = 5;
-        stats.draw_calls = meshlet_stats.draw_calls + EDITOR_FIXED_PASSES;
+        // #463.6 — three editor passes always run regardless of
+        // scene contents: sky background, viewport blit, egui
+        // paint. Gizmo line / mesh batches only emit when the
+        // selection actually has something to visualize, so they
+        // are NOT included in the fixed budget — counting them
+        // here would inflate the number when there's nothing to
+        // draw and confuse the artist who just despawned every
+        // MeshRenderer. The meshlet stage already returns 0 when
+        // there are no instances; combined with EDITOR_BASE_PASSES
+        // the HUD shows a clean 3-draws floor in an empty scene.
+        const EDITOR_BASE_PASSES: u32 = 3;
+        stats.draw_calls = meshlet_stats.draw_calls + EDITOR_BASE_PASSES;
     }
 
     // Apply the previous frame's size request before the UI runs so the

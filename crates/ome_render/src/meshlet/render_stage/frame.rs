@@ -428,6 +428,16 @@ impl MeshletRenderStage {
             })
             .count() as u32;
 
+        // #463.6 — meshlet pipeline emits 3 dispatches / passes when
+        // there's actually something to draw (cull + vbuf raster +
+        // deferred shade). With zero instances the dispatches still
+        // execute but conceptually no work is done; the HUD reports
+        // 0 so the artist sees the count drop to nothing when every
+        // MeshRenderer is despawned. Indirect dispatch means once
+        // there IS at least one instance, the count stays at 3
+        // regardless of how many entities pile up.
+        let meshlet_draw_calls = if instances.is_empty() { 0 } else { 3 };
+
         MeshletRenderStats {
             instances_uploaded: instances.len() as u32,
             cull_threads: scene_params.instance_count * scene_params.meshlets_per_mesh,
@@ -435,15 +445,7 @@ impl MeshletRenderStage {
             pool_meshlets_total,
             pool_meshlets_roots,
             gpu_frame_ms: self.gpu_timers.last_frame_ms(),
-            // #463.6 — fixed at 3 for the meshlet pipeline because
-            // every dispatch and render pass is indirect over the
-            // GPU pool: one cull (cs_cull_scene_pool_atomic, which
-            // is itself a 2-pass with internal lod_compute +
-            // emit dispatches), one vbuf raster (render_scene),
-            // one deferred shade (shade_scene). Adding instances
-            // does NOT grow this number — that's the whole point
-            // of GPU-driven indirect dispatch.
-            draw_calls: 3,
+            draw_calls: meshlet_draw_calls,
         }
     }
 }

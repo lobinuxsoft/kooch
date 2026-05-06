@@ -274,10 +274,11 @@ pub(crate) fn draw_view_content(
                    include driver overhead — that requires per-backend \
                    queries no portable Rust crate exposes today.\n\
                  - draws: dispatch / render-pass operations per frame. \
-                   Steady state with default editor layout: meshlet \
-                   pipeline 3 (cull + raster + shade, indirect — \
-                   instance count does not grow this) + 5 fixed \
-                   editor passes (sky + 2 gizmos + blit + egui) = 8.",
+                   Empty scene: 3 (sky + blit + egui). With at least \
+                   one MeshRenderer: +3 from the meshlet pipeline \
+                   (cull + raster + shade, indirect — instance count \
+                   does NOT grow this). Gizmo batches add when \
+                   visualizing a selection.",
             );
         });
 
