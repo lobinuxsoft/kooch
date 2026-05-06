@@ -14,8 +14,7 @@
 //! 3. **System**           — process CPU%, RAM RSS
 //! 4. **Render**           — engine-tracked VRAM, draw calls
 //! 5. **Meshlet pipeline** — instances uploaded, dispatch threads,
-//!                           pool size + roots, last camera position the LOD
-//!                           selector saw
+//!                           pool size + roots
 
 use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
 
@@ -61,10 +60,13 @@ pub(crate) fn draw_performance_content(
 
             collapsing(ui, "System", true, |ui| {
                 grid(ui, "perf_grid_system", |ui| {
+                    // {:.2} so sub-1 % (typical for an idle editor
+                    // at 60 FPS waiting on vsync) is visible
+                    // instead of rounding to 0.0 %.
                     metric(
                         ui,
                         "CPU usage (process)",
-                        &format!("{:.1} %", perf_stats.cpu_percent),
+                        &format!("{:.2} %", perf_stats.cpu_percent),
                     );
                     metric(
                         ui,
@@ -106,12 +108,6 @@ pub(crate) fn draw_performance_content(
                         ui,
                         "Pool meshlets (roots)",
                         &meshlet_stats.pool_meshlets_roots.to_string(),
-                    );
-                    let [cx, cy, cz] = meshlet_stats.cam_pos;
-                    metric(
-                        ui,
-                        "Camera position",
-                        &format!("({:.2}, {:.2}, {:.2})", cx, cy, cz),
                     );
                 });
             });

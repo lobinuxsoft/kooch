@@ -68,31 +68,29 @@ pub(crate) fn draw_view_content(
     );
     let mut delta = collect_viewport_input(&response, ui, controller);
 
-    // Horizontal toolbar at the top edge of the viewport. Sections
-    // separated by vertical bars: (transform-only) gizmo mode + basis
-    // + snap steps, then the always-on debug-view selector.
-    let toolbar_rect = egui::Rect::from_min_size(
-        panel_origin + TOOLBAR_OFFSET,
-        egui::vec2(560.0, TOOLBAR_BUTTON_SIZE + TOOLBAR_PADDING * 2.0),
-    );
-    let mut toolbar_ui = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(toolbar_rect)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
+    // Horizontal toolbar at the top edge of the viewport. Hosts only
+    // gizmo controls (mode + basis + snap), shown when a Transform is
+    // actually selected. Without a selection there is nothing to put
+    // here — debug + perf knobs all live in the right sidebar — so we
+    // skip the entire Frame to avoid leaving an empty padded
+    // rectangle floating in the viewport's top-left.
+    if selection_has_transform {
+        let toolbar_rect = egui::Rect::from_min_size(
+            panel_origin + TOOLBAR_OFFSET,
+            egui::vec2(560.0, TOOLBAR_BUTTON_SIZE + TOOLBAR_PADDING * 2.0),
+        );
+        let mut toolbar_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(toolbar_rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
 
-    egui::Frame::new()
-        .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
-        .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
-        .show(&mut toolbar_ui, |ui| {
-            ui.spacing_mut().item_spacing.x = TOOLBAR_PADDING * 0.5;
-
-            // Gizmo + basis + snap clusters only operate on Transforms;
-            // hide them when no selected entity carries one. The debug
-            // selector below always renders so the user can flip viz
-            // modes without an entity selected.
-            if selection_has_transform {
+        egui::Frame::new()
+            .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
+            .corner_radius(egui::CornerRadius::same(6))
+            .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
+            .show(&mut toolbar_ui, |ui| {
+                ui.spacing_mut().item_spacing.x = TOOLBAR_PADDING * 0.5;
                 if mode_button(
                     ui,
                     icons::ARROWS_OUT_CARDINAL,
@@ -161,13 +159,8 @@ pub(crate) fn draw_view_content(
                         .prefix(format!("{} ", icons::ARROWS_CLOCKWISE)),
                 )
                 .on_hover_text("Rotate snap step (degrees, hold Ctrl while dragging)");
-
-                ui.separator();
-            }
-
-            // Debug dropdown + LOD slider moved to the perf sidebar
-            // (Debug section). Toolbar now hosts gizmo controls only.
-        });
+            });
+    }
 
     // Vertical perf sidebar anchored to the right edge of the
     // viewport. The toggle chevron sits at the very top-right

@@ -10,7 +10,7 @@
 use std::time::{Duration, Instant};
 
 use ome_core::resource::Resources;
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 
 use super::EditorPerfStats;
 
@@ -39,8 +39,16 @@ impl Default for SysMetricsState {
         // Build the System with the minimum refresh kinds we'll
         // actually query. Skipping disks / networks / components
         // keeps each refresh under a millisecond on Linux.
-        let refresh_kind =
-            RefreshKind::new().with_processes(ProcessRefreshKind::new().with_cpu().with_memory());
+        //
+        // Note the explicit `with_cpu(...)`: per-process cpu_usage
+        // is computed against the GLOBAL cpu time baseline that
+        // `System` tracks. Without enabling CPU on RefreshKind the
+        // baseline never gets populated and `process.cpu_usage()`
+        // returns 0.0 forever. The `with_processes(...)` part is
+        // for memory + per-process times.
+        let refresh_kind = RefreshKind::new()
+            .with_cpu(CpuRefreshKind::new().with_cpu_usage())
+            .with_processes(ProcessRefreshKind::new().with_cpu().with_memory());
         let system = System::new_with_specifics(refresh_kind);
         let pid = Pid::from_u32(std::process::id());
         Self {
@@ -69,6 +77,14 @@ pub(crate) fn sys_metrics_system(resources: &mut Resources) {
     };
 
     if should_refresh {
+        // Refresh global CPU usage FIRST so the per-process delta
+        // computed below has a fresh global baseline to compare
+        // against. Without this, `process.cpu_usage()` returns
+        // 0.0 even after multiple refreshes — empirically observed
+        // on Linux during #463 manual validation.
+        state
+            .system
+            .refresh_cpu_specifics(CpuRefreshKind::new().with_cpu_usage());
         state.system.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[state.pid]),
             true,
