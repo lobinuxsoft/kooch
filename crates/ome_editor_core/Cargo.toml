@@ -27,3 +27,4 @@ rfd.workspace = true
 dirs.workspace = true
 serde.workspace = true
 ron.workspace = true
+sysinfo.workspace = true

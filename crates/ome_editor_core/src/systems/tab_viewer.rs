@@ -17,6 +17,7 @@ use crate::editor_camera::input::ViewportInputDelta;
 use crate::panels::archetypes::draw_archetypes_content;
 use crate::panels::components::draw_components_content;
 use crate::panels::inspector::draw_inspector_content;
+use crate::panels::performance::draw_performance_content;
 use crate::panels::streaming::draw_streaming_content;
 use crate::panels::view::draw_view_content;
 use crate::panels::world::draw_world_content;
@@ -65,6 +66,9 @@ pub(crate) struct EditorTabViewer<'a> {
     /// the viewport render. Read-only, surfaced through the View
     /// toolbar's stats overlay.
     pub(crate) meshlet_stats: MeshletRenderStats,
+    /// Per-frame perf HUD counters (#463). Read-only, surfaced
+    /// through the View toolbar's perf overlay (always visible).
+    pub(crate) perf_stats: crate::perf::EditorPerfStats,
 }
 
 impl<'a> TabViewer for EditorTabViewer<'a> {
@@ -100,6 +104,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.meshlet_debug_mode,
                 self.meshlet_lod_settings,
                 self.meshlet_stats,
+                self.perf_stats,
             ),
             EditorTab::Inspector => draw_inspector_content(
                 ui,
@@ -114,6 +119,13 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             EditorTab::Archetypes => draw_archetypes_content(ui, self.archetypes),
             EditorTab::Components => draw_components_content(ui, self.component_types),
             EditorTab::Streaming => draw_streaming_content(ui, self.streaming_config),
+            EditorTab::Performance => draw_performance_content(
+                ui,
+                self.perf_stats,
+                self.meshlet_stats,
+                self.meshlet_debug_mode,
+                self.meshlet_lod_settings,
+            ),
         }
     }
 

@@ -19,6 +19,7 @@
 pub mod editor_camera;
 pub mod icons;
 pub mod launch_screen;
+pub mod perf;
 pub mod play_state;
 pub mod project;
 pub mod project_state;
@@ -40,6 +41,7 @@ use ome_core::plugin::Plugin;
 use ome_core::stage::Stage;
 
 pub use editor_camera::{EditorCamera, EditorCameraController, EditorOnly};
+pub use perf::EditorPerfStats;
 pub use state::EditorOverlay;
 pub use play_state::PlayState;
 pub use project::{EditorConfig, ProjectManifest};
@@ -60,6 +62,14 @@ impl Plugin for EditorPlugin {
         app.insert_resource(PlayState::new());
         app.insert_resource(project_state::ProjectState::new());
         app.insert_resource(undo::UndoStack::new());
+        // #463 perf HUD — populated incrementally by per-metric
+        // systems (frame timer, sysinfo poller, GPU timestamp
+        // readback, render-side counters). Inserted at zero so the
+        // toolbar can read it on the very first frame without any
+        // metric system having run yet.
+        app.insert_resource(perf::EditorPerfStats::default());
+        app.insert_resource(perf::PerfTimingState::default());
+        app.insert_resource(perf::SysMetricsState::default());
         app.insert_resource(editor_camera::EditorCameraController::default());
         app.insert_resource(layout::LayoutPersistence::default());
         app.add_system(Stage::Startup, systems::editor_startup_system);
@@ -79,6 +89,15 @@ impl Plugin for EditorPlugin {
         app.add_system(Stage::Startup, editor_camera::spawn_editor_camera_system);
         // Hand the viewport over to the gameplay camera in play mode.
         app.add_system(Stage::PreRender, editor_camera::sync_editor_camera_active_system);
+        // #463 perf HUD — sample wall-clock delta between successive
+        // editor render invocations and update FPS instant/avg.
+        // Runs in PreRender so the timestamp it captures matches the
+        // frame the Render stage is about to start.
+        app.add_system(Stage::PreRender, perf::frame_timer_system);
+        // #463.3 — refresh CPU% / RAM RSS at most twice per second.
+        // PreRender keeps the metric and the FPS timer phase-locked
+        // so both update before the toolbar reads them.
+        app.add_system(Stage::PreRender, perf::sys_metrics_system);
         // Register built-in visualizers (Transform, ...) into the
         // VisualizerRegistry. Must run BEFORE the first gizmo batch build.
         app.add_system(Stage::Startup, gizmos::register_builtin_visualizers_system);

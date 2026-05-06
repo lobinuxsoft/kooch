@@ -18,6 +18,7 @@ use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{
     ViewportInputDelta, apply_viewport_input, entity_world_position,
 };
+use crate::perf::record_cpu_frame_ms;
 use crate::play_state::PlayState;
 use crate::project_state::{LauncherStatus, ProjectState};
 use crate::state::EditorOverlay;
@@ -77,6 +78,12 @@ fn apply_deferred_actions(
 
 /// Render system: runs egui UI and renders the overlay to the surface.
 pub(crate) fn editor_render_system(resources: &mut Resources) {
+    // #463.2 — capture the start of the CPU-side render work so the
+    // perf HUD can report `cpu_frame_ms` (excludes GPU + present).
+    // The matching `record_cpu_frame_ms` call lives at the end of
+    // this function.
+    let frame_cpu_start = std::time::Instant::now();
+
     let is_playing = if let Some(play_state) = resources.get_mut::<PlayState>() {
         play_state.poll();
         for line in play_state.drain_output() {
@@ -149,6 +156,34 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<MeshletRenderStats>()
         .copied()
         .unwrap_or_default();
+
+    // #463.4 — last frame's GPU timing (when adapter exposes
+    // TIMESTAMP_QUERY) propagates from the render stage into the
+    // perf HUD Resource so the View toolbar reads a single source.
+    // #463.5 — same single-write site for the engine VRAM counter:
+    // read the shared Arc<EngineVramTracker> and stamp the byte
+    // total. Both end up in EditorPerfStats so the toolbar reads
+    // exactly one Resource.
+    let vram_bytes = resources
+        .get::<std::sync::Arc<ome_render::EngineVramTracker>>()
+        .map(|t| t.bytes())
+        .unwrap_or(0);
+    if let Some(stats) = resources.get_mut::<crate::perf::EditorPerfStats>() {
+        stats.gpu_frame_ms = meshlet_stats.gpu_frame_ms;
+        stats.vram_tracked_bytes = vram_bytes;
+        // #463.6 — three editor passes always run regardless of
+        // scene contents: sky background, viewport blit, egui
+        // paint. Gizmo line / mesh batches only emit when the
+        // selection actually has something to visualize, so they
+        // are NOT included in the fixed budget — counting them
+        // here would inflate the number when there's nothing to
+        // draw and confuse the artist who just despawned every
+        // MeshRenderer. The meshlet stage already returns 0 when
+        // there are no instances; combined with EDITOR_BASE_PASSES
+        // the HUD shows a clean 3-draws floor in an empty scene.
+        const EDITOR_BASE_PASSES: u32 = 3;
+        stats.draw_calls = meshlet_stats.draw_calls + EDITOR_BASE_PASSES;
+    }
 
     // Apply the previous frame's size request before the UI runs so the
     // texture id stays stable through the entire egui pass.
@@ -228,6 +263,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut meshlet_debug_mode,
         &mut meshlet_lod_settings,
         meshlet_stats,
+        resources
+            .get::<crate::perf::EditorPerfStats>()
+            .copied()
+            .unwrap_or_default(),
     );
 
     // Hand the (possibly toggled) debug mode + LOD threshold back to
@@ -330,4 +369,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     apply_deferred_actions(resources, &actions, &mut undo_stack);
 
     resources.insert(undo_stack);
+
+    // #463.2 — write the CPU side of the frame budget into the perf
+    // HUD Resource. Last call so the elapsed measurement covers
+    // every CPU branch above (early returns excepted; those are
+    // wall-clock-trivial).
+    record_cpu_frame_ms(resources, frame_cpu_start);
 }

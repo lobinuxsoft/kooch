@@ -63,13 +63,24 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         INITIAL_VIEWPORT_SIZE,
     );
 
-    let meshlet_stage = MeshletRenderStage::new(
+    let mut meshlet_stage = MeshletRenderStage::new(
         gpu.device(),
         MeshletRenderStageConfig {
             size: INITIAL_VIEWPORT_SIZE,
             ..Default::default()
         },
     );
+    // #463.4 — opt the editor in to GPU timestamp queries. No-op
+    // when the adapter does not expose `Features::TIMESTAMP_QUERY`;
+    // the perf HUD then reports "GPU: n/a".
+    meshlet_stage.enable_gpu_timers(gpu.device(), gpu.queue(), gpu.adapter());
+    // #463.5 — share the engine VRAM tracker so the meshlet stage
+    // bumps the counter on every persistent allocation it owns
+    // (pool register, render-target resize, …). The Arc is also
+    // inserted as a Resource further down so the perf HUD's
+    // update path reads from the same shared counter.
+    let vram_tracker = std::sync::Arc::new(ome_render::EngineVramTracker::new());
+    meshlet_stage.set_vram_tracker(vram_tracker.clone());
     let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
 
     let overlay = EditorOverlay {
@@ -114,6 +125,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     resources.insert(viewport);
     resources.insert(meshlet_stage);
     resources.insert(meshlet_blit);
+    resources.insert(vram_tracker);
     // Debug-view selector for the meshlet pipeline (#451). Default
     // Off keeps the production normal-debug path; the View toolbar
     // dropdown writes through this resource per-frame.

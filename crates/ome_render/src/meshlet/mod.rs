@@ -38,6 +38,7 @@ mod deferred;
 mod dispatcher;
 mod drawer;
 mod gpu_meshlet;
+mod gpu_timers;
 mod loader;
 mod pool;
 mod render_stage;
@@ -65,6 +66,7 @@ pub use gpu_meshlet::{
     binding, meshlet_bind_group, meshlet_bind_group_layout, pool_meshlet_bind_group,
     GpuMeshletMesh,
 };
+pub use gpu_timers::MeshletGpuTimers;
 pub use loader::MeshletMeshLoader;
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshDescriptor, MeshHandle};
 pub use render_stage::{

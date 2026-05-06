@@ -87,10 +87,20 @@ impl MeshletRenderStage {
         mesh: &MeshletMesh,
     ) {
         let before = self.pipeline.registered_count();
+        let bytes_before = self.pipeline.pool().byte_size();
         self.pipeline.register_mesh(guid, mesh);
         let after = self.pipeline.registered_count();
         if after > before {
             self.pool_dirty = true;
+            // #463.5 — credit the freshly-appended pool bytes to the
+            // engine VRAM tracker (when wired). Idempotent calls to
+            // register_mesh with the same GUID return the cached
+            // handle without growing the pool, so `bytes_after ==
+            // bytes_before` and the diff is zero.
+            if let Some(tracker) = &self.vram_tracker {
+                let bytes_after = self.pipeline.pool().byte_size();
+                tracker.add(bytes_after.saturating_sub(bytes_before));
+            }
         }
     }
 
@@ -331,9 +341,22 @@ impl MeshletRenderStage {
             None => self.material_pool.bind_group(device),
         };
 
+        // #463.4 — drain any GPU timer slots that completed since
+        // last frame, then acquire a fresh slot for this frame's
+        // start/end timestamps. `None` means timers are disabled or
+        // every ring slot is in flight; either way the render path
+        // proceeds normally and the HUD keeps the previously-sampled
+        // value.
+        self.gpu_timers.drain_ready();
+        let timer_slot = self.gpu_timers.acquire_slot();
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("meshlet_render_stage_encoder"),
         });
+
+        if timer_slot.is_some() {
+            self.gpu_timers.write_start(&mut encoder);
+        }
 
         self.cull.dispatch_scene_pool_atomic(
             device,
@@ -379,7 +402,21 @@ impl MeshletRenderStage {
             debug_mode,
         );
 
+        // Close the GPU timing window AFTER the deferred shade pass
+        // but BEFORE submit, so the resolve + copy land in the same
+        // command buffer.
+        if let Some(slot_idx) = timer_slot {
+            self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
+        }
+
         queue.submit(std::iter::once(encoder.finish()));
+
+        // Hand the slot off to the async readback path. wgpu fires
+        // the callback when the GPU has finished and the buffer is
+        // host-visible — typically 1-2 frames out.
+        if let Some(slot_idx) = timer_slot {
+            self.gpu_timers.submit_readback(slot_idx);
+        }
 
         let pool = self.pipeline.pool();
         let pool_meshlets_total = pool.meshlets.len() as u32;
@@ -391,12 +428,24 @@ impl MeshletRenderStage {
             })
             .count() as u32;
 
+        // #463.6 — meshlet pipeline emits 3 dispatches / passes when
+        // there's actually something to draw (cull + vbuf raster +
+        // deferred shade). With zero instances the dispatches still
+        // execute but conceptually no work is done; the HUD reports
+        // 0 so the artist sees the count drop to nothing when every
+        // MeshRenderer is despawned. Indirect dispatch means once
+        // there IS at least one instance, the count stays at 3
+        // regardless of how many entities pile up.
+        let meshlet_draw_calls = if instances.is_empty() { 0 } else { 3 };
+
         MeshletRenderStats {
             instances_uploaded: instances.len() as u32,
             cull_threads: scene_params.instance_count * scene_params.meshlets_per_mesh,
             cam_pos: cam_pos.to_array(),
             pool_meshlets_total,
             pool_meshlets_roots,
+            gpu_frame_ms: self.gpu_timers.last_frame_ms(),
+            draw_calls: meshlet_draw_calls,
         }
     }
 }

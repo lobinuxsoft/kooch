@@ -66,6 +66,9 @@ pub const STACK: &str = "\u{e466}";
 /// List bullets icon — used for Components tab.
 pub const LIST_BULLETS: &str = "\u{e2f2}";
 
+/// Chart bar icon — used for "Performance" panel tab (#463).
+pub const CHART_BAR: &str = "\u{e102}";
+
 /// Folder open icon — used for "Open Project" button.
 pub const FOLDER_OPEN: &str = "\u{e244}";
 

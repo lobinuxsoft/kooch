@@ -88,6 +88,12 @@ toml = "0.8"
 # Dynamic plugins
 stabby = "72.1"
 libloading = "0.8"
+# System metrics (CPU%, RAM RSS) for the editor performance HUD.
+# Cross-platform (Linux/Windows/macOS), used by Bevy's
+# SystemInformationDiagnosticsPlugin internally. Default features
+# pull in everything; we trim to just `system` (no networks/disks/
+# components) — keeps the dep light and binary small.
+sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 
 # Internal crates
 ome_core = { path = "crates/ome_core" }

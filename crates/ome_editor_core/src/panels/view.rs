@@ -19,6 +19,8 @@ use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings, MeshletRenderSta
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
 use crate::icons;
+use crate::panels::performance::draw_performance_content;
+use crate::perf::EditorPerfStats;
 use crate::state::RotationDisplayMode;
 
 const TOOLBAR_BUTTON_SIZE: f32 = 28.0;
@@ -40,6 +42,7 @@ pub(crate) fn draw_view_content(
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_lod_settings: &mut MeshletLodSettings,
     meshlet_stats: MeshletRenderStats,
+    perf_stats: EditorPerfStats,
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -65,31 +68,29 @@ pub(crate) fn draw_view_content(
     );
     let mut delta = collect_viewport_input(&response, ui, controller);
 
-    // Horizontal toolbar at the top edge of the viewport. Sections
-    // separated by vertical bars: (transform-only) gizmo mode + basis
-    // + snap steps, then the always-on debug-view selector.
-    let toolbar_rect = egui::Rect::from_min_size(
-        panel_origin + TOOLBAR_OFFSET,
-        egui::vec2(560.0, TOOLBAR_BUTTON_SIZE + TOOLBAR_PADDING * 2.0),
-    );
-    let mut toolbar_ui = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(toolbar_rect)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
+    // Horizontal toolbar at the top edge of the viewport. Hosts only
+    // gizmo controls (mode + basis + snap), shown when a Transform is
+    // actually selected. Without a selection there is nothing to put
+    // here — debug + perf knobs all live in the right sidebar — so we
+    // skip the entire Frame to avoid leaving an empty padded
+    // rectangle floating in the viewport's top-left.
+    if selection_has_transform {
+        let toolbar_rect = egui::Rect::from_min_size(
+            panel_origin + TOOLBAR_OFFSET,
+            egui::vec2(560.0, TOOLBAR_BUTTON_SIZE + TOOLBAR_PADDING * 2.0),
+        );
+        let mut toolbar_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(toolbar_rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
 
-    egui::Frame::new()
-        .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
-        .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
-        .show(&mut toolbar_ui, |ui| {
-            ui.spacing_mut().item_spacing.x = TOOLBAR_PADDING * 0.5;
-
-            // Gizmo + basis + snap clusters only operate on Transforms;
-            // hide them when no selected entity carries one. The debug
-            // selector below always renders so the user can flip viz
-            // modes without an entity selected.
-            if selection_has_transform {
+        egui::Frame::new()
+            .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
+            .corner_radius(egui::CornerRadius::same(6))
+            .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
+            .show(&mut toolbar_ui, |ui| {
+                ui.spacing_mut().item_spacing.x = TOOLBAR_PADDING * 0.5;
                 if mode_button(
                     ui,
                     icons::ARROWS_OUT_CARDINAL,
@@ -158,83 +159,103 @@ pub(crate) fn draw_view_content(
                         .prefix(format!("{} ", icons::ARROWS_CLOCKWISE)),
                 )
                 .on_hover_text("Rotate snap step (degrees, hold Ctrl while dragging)");
+            });
+    }
 
-                ui.separator();
-            }
+    // Vertical perf sidebar anchored to the right edge of the
+    // viewport. The toggle chevron sits at the very top-right
+    // corner (always visible); the panel itself only renders when
+    // toggled on. State is stored in egui memory so it survives
+    // across frames without an extra Resource.
+    let sidebar_visible_id = egui::Id::new("perf_sidebar_visible");
+    let mut sidebar_visible = ui
+        .ctx()
+        .memory(|m| m.data.get_temp::<bool>(sidebar_visible_id))
+        .unwrap_or(true);
 
-            // Debug-view dropdown (#451). Iterates the modes that have
-            // shipped shader behaviour so the user never lands on a
-            // silent no-op.
-            egui::ComboBox::from_id_salt("meshlet_debug_view")
-                .selected_text(format!("Debug: {}", meshlet_debug_mode.label()))
-                .show_ui(ui, |ui| {
-                    for &mode in MeshletDebugMode::all_implemented() {
-                        ui.selectable_value(meshlet_debug_mode, mode, mode.label());
-                    }
-                })
-                .response
-                .on_hover_text(
-                    "Meshlet pipeline visualization mode. Off = production shading.",
-                );
+    let panel_top_right =
+        panel_origin + egui::vec2(available.x - TOOLBAR_OFFSET.x, TOOLBAR_OFFSET.y);
 
-            // LOD threshold slider — drives meshlet_lod_settings.target_error_pixels.
-            // Logarithmic-feel: 0.1 keeps maximum detail, ≥10 forces
-            // coarse roots even at close range. Lives next to the
-            // debug dropdown so artists can sanity-check chain
-            // behaviour without leaving the viewport.
-            ui.separator();
-            ui.label(egui::RichText::new("LOD ≤").small())
-                .on_hover_text("Pixel-error threshold for the continuous-LOD selector.");
-            ui.add(
-                egui::DragValue::new(&mut meshlet_lod_settings.target_error_pixels)
-                    .speed(0.05)
-                    .range(0.1_f32..=50.0_f32)
-                    .max_decimals(2)
-                    .suffix("px"),
-            )
-            .on_hover_text(
-                "Lower values keep more meshlets at any given distance. \
-                 Crank this up to force coarser LOD selection and \
-                 visually confirm the chain is being descended.",
-            );
-
-            // Stats overlay — only when a debug mode is active so the
-            // toolbar stays minimal during normal editing. Per-stage
-            // cull survivors (frustum / backface / hi-z) ship in #451b
-            // alongside the reject-reason tagging buffer. cam_pos is
-            // surfaced so the artist can verify the LOD selector is
-            // actually following the active camera while moving in
-            // the viewport.
-            if *meshlet_debug_mode != MeshletDebugMode::Off {
-                ui.separator();
-                let [cx, cy, cz] = meshlet_stats.cam_pos;
-                let total = meshlet_stats.pool_meshlets_total;
-                let roots = meshlet_stats.pool_meshlets_roots;
-                ui.label(
-                    egui::RichText::new(format!(
-                        "instances {} · disp {} · pool {}/{} roots · cam ({:.1}, {:.1}, {:.1})",
-                        meshlet_stats.instances_uploaded,
-                        meshlet_stats.cull_threads,
-                        roots,
-                        total,
-                        cx, cy, cz,
-                    ))
-                    .monospace()
-                    .small(),
-                )
-                .on_hover_text(
-                    "Meshlet pipeline counters (previous frame).\n\
-                     pool: roots/total — total meshlets in the global pool, \
-                     of which `roots` are terminal (selector stops there).\n\
-                     If roots == total the chain has no LOD depth.\n\
-                     cam: world-space position the LOD selector saw — \
-                     should follow the active editor camera.",
-                );
+    // Toggle chevron — left-pointing when expanded (click to
+    // collapse to the right), right-pointing when collapsed (click
+    // to expand back). Always rendered so the user has a way back
+    // even after hiding the panel.
+    let toggle_size = egui::vec2(TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+    let toggle_pos = panel_top_right - egui::vec2(toggle_size.x, 0.0);
+    let toggle_rect = egui::Rect::from_min_size(toggle_pos, toggle_size);
+    let mut toggle_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(toggle_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    egui::Frame::new()
+        .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
+        .corner_radius(egui::CornerRadius::same(6))
+        .show(&mut toggle_ui, |ui| {
+            let glyph = if sidebar_visible { "\u{27e9}" } else { "\u{27e8}" };
+            let button = egui::Button::new(egui::RichText::new(glyph).size(16.0))
+                .min_size(toggle_size)
+                .fill(egui::Color32::TRANSPARENT)
+                .stroke(egui::Stroke::NONE);
+            let resp = ui.add(button).on_hover_text(if sidebar_visible {
+                "Hide performance sidebar"
+            } else {
+                "Show performance sidebar"
+            });
+            if resp.clicked() {
+                sidebar_visible = !sidebar_visible;
+                ui.ctx()
+                    .memory_mut(|m| m.data.insert_temp(sidebar_visible_id, sidebar_visible));
             }
         });
 
+    if sidebar_visible {
+        // Panel sits below the toggle chevron, anchored to the
+        // right edge. max_rect height is bounded by the viewport
+        // so the inner ScrollArea can clip when sections overflow;
+        // auto_shrink in `draw_performance_content` keeps the
+        // Frame tight around the actually-visible content so
+        // collapsing every section doesn't leave a giant black
+        // box on the viewport.
+        let panel_top = toggle_pos.y + toggle_size.y + 4.0;
+        let panel_max_height = (available.y - 2.0 * TOOLBAR_OFFSET.y - toggle_size.y - 4.0)
+            .max(0.0);
+        let sidebar_max_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                panel_top_right.x - PERF_SIDEBAR_WIDTH,
+                panel_top,
+            ),
+            egui::vec2(PERF_SIDEBAR_WIDTH, panel_max_height),
+        );
+        let mut sidebar_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(sidebar_max_rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        egui::Frame::new()
+            .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
+            .corner_radius(egui::CornerRadius::same(6))
+            .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
+            .show(&mut sidebar_ui, |ui| {
+                ui.set_max_width(PERF_SIDEBAR_WIDTH - TOOLBAR_PADDING * 2.0);
+                draw_performance_content(
+                    ui,
+                    perf_stats,
+                    meshlet_stats,
+                    meshlet_debug_mode,
+                    meshlet_lod_settings,
+                );
+            });
+    }
+
     *input = Some(delta);
 }
+
+/// Width of the perf sidebar overlay anchored to the right edge of
+/// the viewport. 260 px fits the widest "n/a (TIMESTAMP_QUERY
+/// unavailable)" GPU-frame-time row without wrapping while leaving
+/// room to read the actual viewport.
+const PERF_SIDEBAR_WIDTH: f32 = 260.0;
 
 /// Renders one toolbar button. Highlights when `active`. Returns
 /// `true` the frame the button is clicked.
