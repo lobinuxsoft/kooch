@@ -18,6 +18,7 @@ use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{
     ViewportInputDelta, apply_viewport_input, entity_world_position,
 };
+use crate::perf::record_cpu_frame_ms;
 use crate::play_state::PlayState;
 use crate::project_state::{LauncherStatus, ProjectState};
 use crate::state::EditorOverlay;
@@ -77,6 +78,12 @@ fn apply_deferred_actions(
 
 /// Render system: runs egui UI and renders the overlay to the surface.
 pub(crate) fn editor_render_system(resources: &mut Resources) {
+    // #463.2 — capture the start of the CPU-side render work so the
+    // perf HUD can report `cpu_frame_ms` (excludes GPU + present).
+    // The matching `record_cpu_frame_ms` call lives at the end of
+    // this function.
+    let frame_cpu_start = std::time::Instant::now();
+
     let is_playing = if let Some(play_state) = resources.get_mut::<PlayState>() {
         play_state.poll();
         for line in play_state.drain_output() {
@@ -330,4 +337,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     apply_deferred_actions(resources, &actions, &mut undo_stack);
 
     resources.insert(undo_stack);
+
+    // #463.2 — write the CPU side of the frame budget into the perf
+    // HUD Resource. Last call so the elapsed measurement covers
+    // every CPU branch above (early returns excepted; those are
+    // wall-clock-trivial).
+    record_cpu_frame_ms(resources, frame_cpu_start);
 }

@@ -1,4 +1,4 @@
-//! Editor performance HUD — counters Resource (#463).
+//! Editor performance HUD — counters Resource + per-metric systems (#463).
 //!
 //! Cross-platform stack: every metric here lands via portable
 //! mechanisms (manual frame timer, `sysinfo` for process CPU/RAM,
@@ -9,6 +9,11 @@
 //! The Resource is pure data — population happens in dedicated
 //! systems wired by [`crate::EditorPlugin`]. Reads are zero-cost: a
 //! single `resources.get::<EditorPerfStats>()` from the View toolbar.
+
+pub(crate) mod timing;
+
+pub use timing::record_cpu_frame_ms;
+pub(crate) use timing::{frame_timer_system, PerfTimingState};
 
 /// Sampled-once-per-frame perf counters surfaced by the View toolbar
 /// HUD. Every field defaults to zero so callers can read it before

@@ -68,6 +68,7 @@ impl Plugin for EditorPlugin {
         // toolbar can read it on the very first frame without any
         // metric system having run yet.
         app.insert_resource(perf::EditorPerfStats::default());
+        app.insert_resource(perf::PerfTimingState::default());
         app.insert_resource(editor_camera::EditorCameraController::default());
         app.insert_resource(layout::LayoutPersistence::default());
         app.add_system(Stage::Startup, systems::editor_startup_system);
@@ -87,6 +88,11 @@ impl Plugin for EditorPlugin {
         app.add_system(Stage::Startup, editor_camera::spawn_editor_camera_system);
         // Hand the viewport over to the gameplay camera in play mode.
         app.add_system(Stage::PreRender, editor_camera::sync_editor_camera_active_system);
+        // #463 perf HUD — sample wall-clock delta between successive
+        // editor render invocations and update FPS instant/avg.
+        // Runs in PreRender so the timestamp it captures matches the
+        // frame the Render stage is about to start.
+        app.add_system(Stage::PreRender, perf::frame_timer_system);
         // Register built-in visualizers (Transform, ...) into the
         // VisualizerRegistry. Must run BEFORE the first gizmo batch build.
         app.add_system(Stage::Startup, gizmos::register_builtin_visualizers_system);
