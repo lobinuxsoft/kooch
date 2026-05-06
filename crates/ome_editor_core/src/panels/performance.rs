@@ -29,8 +29,14 @@ pub(crate) fn draw_performance_content(
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_lod_settings: &mut MeshletLodSettings,
 ) {
+    // auto_shrink=[true, true] lets the ScrollArea report only the
+    // height its content actually needs, so the surrounding Frame
+    // sizes to the visible sections (collapsing one shrinks the
+    // dark container too). Width is bounded by the parent's
+    // `set_max_width`; vertical scroll kicks in only when the
+    // sections together exceed the viewport.
     egui::ScrollArea::vertical()
-        .auto_shrink([false; 2])
+        .auto_shrink([true, true])
         .show(ui, |ui| {
             collapsing(ui, "Debug", true, |ui| {
                 debug_controls(ui, meshlet_debug_mode, meshlet_lod_settings);

@@ -170,37 +170,90 @@ pub(crate) fn draw_view_content(
         });
 
     // Vertical perf sidebar anchored to the right edge of the
-    // viewport. Mirrors the toolbar's overlay pattern (Frame +
-    // child UI) but laid out top-to-bottom so each metric gets a
-    // full row. Lives inside the View panel because its content
-    // is per-frame and tracks what the artist is currently
-    // looking at — the artist asked for it pegged to the view,
-    // not floating in the dock.
-    let sidebar_size = egui::vec2(PERF_SIDEBAR_WIDTH, available.y - TOOLBAR_OFFSET.y * 2.0);
-    let sidebar_origin = egui::pos2(
-        panel_origin.x + available.x - sidebar_size.x - TOOLBAR_OFFSET.x,
-        panel_origin.y + TOOLBAR_OFFSET.y,
-    );
-    let sidebar_rect = egui::Rect::from_min_size(sidebar_origin, sidebar_size);
-    let mut sidebar_ui = ui.new_child(
+    // viewport. The toggle chevron sits at the very top-right
+    // corner (always visible); the panel itself only renders when
+    // toggled on. State is stored in egui memory so it survives
+    // across frames without an extra Resource.
+    let sidebar_visible_id = egui::Id::new("perf_sidebar_visible");
+    let mut sidebar_visible = ui
+        .ctx()
+        .memory(|m| m.data.get_temp::<bool>(sidebar_visible_id))
+        .unwrap_or(true);
+
+    let panel_top_right =
+        panel_origin + egui::vec2(available.x - TOOLBAR_OFFSET.x, TOOLBAR_OFFSET.y);
+
+    // Toggle chevron — left-pointing when expanded (click to
+    // collapse to the right), right-pointing when collapsed (click
+    // to expand back). Always rendered so the user has a way back
+    // even after hiding the panel.
+    let toggle_size = egui::vec2(TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+    let toggle_pos = panel_top_right - egui::vec2(toggle_size.x, 0.0);
+    let toggle_rect = egui::Rect::from_min_size(toggle_pos, toggle_size);
+    let mut toggle_ui = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(sidebar_rect)
-            .layout(egui::Layout::top_down(egui::Align::Min)),
+            .max_rect(toggle_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     egui::Frame::new()
         .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
         .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
-        .show(&mut sidebar_ui, |ui| {
-            ui.set_max_width(PERF_SIDEBAR_WIDTH - TOOLBAR_PADDING * 2.0);
-            draw_performance_content(
-                ui,
-                perf_stats,
-                meshlet_stats,
-                meshlet_debug_mode,
-                meshlet_lod_settings,
-            );
+        .show(&mut toggle_ui, |ui| {
+            let glyph = if sidebar_visible { "\u{27e9}" } else { "\u{27e8}" };
+            let button = egui::Button::new(egui::RichText::new(glyph).size(16.0))
+                .min_size(toggle_size)
+                .fill(egui::Color32::TRANSPARENT)
+                .stroke(egui::Stroke::NONE);
+            let resp = ui.add(button).on_hover_text(if sidebar_visible {
+                "Hide performance sidebar"
+            } else {
+                "Show performance sidebar"
+            });
+            if resp.clicked() {
+                sidebar_visible = !sidebar_visible;
+                ui.ctx()
+                    .memory_mut(|m| m.data.insert_temp(sidebar_visible_id, sidebar_visible));
+            }
         });
+
+    if sidebar_visible {
+        // Panel sits below the toggle chevron, anchored to the
+        // right edge. max_rect height is bounded by the viewport
+        // so the inner ScrollArea can clip when sections overflow;
+        // auto_shrink in `draw_performance_content` keeps the
+        // Frame tight around the actually-visible content so
+        // collapsing every section doesn't leave a giant black
+        // box on the viewport.
+        let panel_top = toggle_pos.y + toggle_size.y + 4.0;
+        let panel_max_height = (available.y - 2.0 * TOOLBAR_OFFSET.y - toggle_size.y - 4.0)
+            .max(0.0);
+        let sidebar_max_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                panel_top_right.x - PERF_SIDEBAR_WIDTH,
+                panel_top,
+            ),
+            egui::vec2(PERF_SIDEBAR_WIDTH, panel_max_height),
+        );
+        let mut sidebar_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(sidebar_max_rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        egui::Frame::new()
+            .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
+            .corner_radius(egui::CornerRadius::same(6))
+            .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
+            .show(&mut sidebar_ui, |ui| {
+                ui.set_max_width(PERF_SIDEBAR_WIDTH - TOOLBAR_PADDING * 2.0);
+                draw_performance_content(
+                    ui,
+                    perf_stats,
+                    meshlet_stats,
+                    meshlet_debug_mode,
+                    meshlet_lod_settings,
+                );
+            });
+    }
 
     *input = Some(delta);
 }
