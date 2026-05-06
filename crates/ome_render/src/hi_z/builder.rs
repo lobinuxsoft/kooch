@@ -285,6 +285,19 @@ impl HiZ {
         (self.width, self.height)
     }
 
+    /// Approximate persistent VRAM footprint of the pyramid texture
+    /// across all mips. R32Float = 4 bytes per pixel, summed over the
+    /// `mip_count_for(width, height)` mip chain. Used by the engine
+    /// VRAM tracker (#463.5) when the render stage owns the pyramid.
+    pub fn byte_size(&self) -> u64 {
+        let mut total: u64 = 0;
+        for level in 0..self.mip_count {
+            let (w, h) = mip_size(self.width, self.height, level);
+            total += (w as u64) * (h as u64) * 4;
+        }
+        total
+    }
+
     /// Bind-group layout the cull shader (PR-5c) consumes when
     /// sampling Hi-Z. Caller assembles a bind group with `full_view`
     /// at `binding(0)`.

@@ -62,13 +62,27 @@ impl MeshletRenderStage {
                 | wgpu::TextureUsages::COPY_SRC,
         );
 
+        // Hi-Z pyramids must match the depth attachment dimensions —
+        // recreate both. Bumps the VRAM tracker by the new pyramid
+        // bytes minus the old (drop happens through assignment).
+        let old_pyramid_bytes = self.hiz_prev.byte_size() + self.hiz_curr.byte_size();
+        let hiz_prev = crate::hi_z::HiZ::new(device, new_size.0, new_size.1);
+        let hiz_curr = crate::hi_z::HiZ::new(device, new_size.0, new_size.1);
+        let new_pyramid_bytes = hiz_prev.byte_size() + hiz_curr.byte_size();
+
         self.vbuf_texture = vbuf_texture;
         self.vbuf_view = vbuf_view;
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
         self.color_texture = color_texture;
         self.color_view = color_view;
+        self.hiz_prev = hiz_prev;
+        self.hiz_curr = hiz_curr;
         self.size = new_size;
+
+        if let Some(tracker) = &self.vram_tracker {
+            tracker.add(new_pyramid_bytes.saturating_sub(old_pyramid_bytes));
+        }
     }
 
     /// Registers `mesh` under `guid` in the global mesh pool.

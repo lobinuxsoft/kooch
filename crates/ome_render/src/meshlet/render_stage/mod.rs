@@ -51,6 +51,7 @@ use super::scene::MeshletScene;
 use super::system::MeshletPipeline;
 use super::vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
 use super::DEFAULT_MAX_TRIANGLES;
+use crate::hi_z::HiZ;
 use crate::perf::EngineVramTracker;
 
 /// Construction parameters for [`MeshletRenderStage`]. All sizes are
@@ -162,6 +163,21 @@ pub struct MeshletRenderStage {
     pub(super) size: (u32, u32),
     pub(super) instance_capacity: u32,
 
+    /// Twin Hi-Z pyramids for the 2-pass cull (#445). Pass A samples
+    /// `hiz_prev` (last frame's depth, may have false negatives on
+    /// newly-revealed geometry); pass B rebuilds `hiz_curr` from the
+    /// pass-A raster's depth and re-tests the pass-A rejects to
+    /// recover anything that became visible this frame. At the end of
+    /// the frame the orchestrator swaps `hiz_prev <- hiz_curr` so the
+    /// next frame's pass A reads the freshest pyramid we have.
+    ///
+    /// First-frame: `hiz_prev` is empty (cleared to far depth on
+    /// creation), so pass A trivially keeps every meshlet, the raster
+    /// fills depth, pass B builds `hiz_curr` and re-tests an empty
+    /// reject set. From frame 2 onward both pyramids carry signal.
+    pub(super) hiz_prev: HiZ,
+    pub(super) hiz_curr: HiZ,
+
     /// GPU frame timing via wgpu timestamp queries. Disabled by
     /// default (see [`Self::enable_gpu_timers`]). Tests don't pay
     /// for this; the editor / game runtime opts in at startup.
@@ -227,6 +243,11 @@ impl MeshletRenderStage {
                 | wgpu::TextureUsages::COPY_SRC,
         );
 
+        // Twin Hi-Z pyramids match the depth attachment dimensions.
+        // resize() recreates both whenever `size` changes.
+        let hiz_prev = HiZ::new(device, size.0, size.1);
+        let hiz_curr = HiZ::new(device, size.0, size.1);
+
         Self {
             pipeline: MeshletPipeline::new(),
             scene,
@@ -251,7 +272,29 @@ impl MeshletRenderStage {
             // and adapter are available.
             gpu_timers: MeshletGpuTimers::new_disabled_for_default(),
             vram_tracker: None,
+            hiz_prev,
+            hiz_curr,
         }
+    }
+
+    /// Swaps the current Hi-Z pyramid into the `prev` slot. Called by
+    /// [`Self::render_with_assets`] at the end of every frame so the
+    /// next frame's pass A reads the pyramid this frame just built.
+    pub(super) fn swap_hi_z_pyramids(&mut self) {
+        std::mem::swap(&mut self.hiz_prev, &mut self.hiz_curr);
+    }
+
+    /// Read-only access to the pyramid pass A samples this frame.
+    /// Mainly here so integration tests can confirm the swap
+    /// happened — the orchestrator binds it through field access.
+    pub fn hi_z_prev(&self) -> &HiZ {
+        &self.hiz_prev
+    }
+
+    /// Read-only access to the pyramid pass B samples (= the one
+    /// rebuilt from this frame's depth between cull A and cull B).
+    pub fn hi_z_curr(&self) -> &HiZ {
+        &self.hiz_curr
     }
 
     /// Wires a shared engine VRAM tracker (#463.5). Called once at
@@ -263,10 +306,12 @@ impl MeshletRenderStage {
     /// state for THIS stage's contribution (use sparingly).
     pub fn set_vram_tracker(&mut self, tracker: Arc<EngineVramTracker>) {
         // Account for the persistent attachments we already created
-        // in `new()` — vbuf, depth, color. Any tracker setup AFTER
-        // construction must still see those bytes.
+        // in `new()` — vbuf, depth, color, plus the twin Hi-Z
+        // pyramids. Any tracker setup AFTER construction must still
+        // see those bytes.
         let attachment_bytes = render_target_byte_estimate(self.size);
-        tracker.add(attachment_bytes);
+        let pyramid_bytes = self.hiz_prev.byte_size() + self.hiz_curr.byte_size();
+        tracker.add(attachment_bytes + pyramid_bytes);
         self.vram_tracker = Some(tracker);
     }
 
@@ -387,5 +432,22 @@ mod tests {
         let s = MeshletRenderStats::default();
         assert_eq!(s.instances_uploaded, 0);
         assert_eq!(s.cull_threads, 0);
+    }
+
+    #[test]
+    fn hi_z_byte_size_matches_summed_mips() {
+        // Pure-CPU verification of the pyramid-byte arithmetic that
+        // set_vram_tracker / resize rely on. R32Float = 4 bpp summed
+        // over the mip chain — for a square power-of-two pyramid this
+        // converges to base * 4/3 (geometric series factor 1/4).
+        // 64x64 → 7 mips, exact total = (4096+1024+256+64+16+4+1) * 4 = 21844.
+        let expected = (4096 + 1024 + 256 + 64 + 16 + 4 + 1) * 4u64;
+        let mip_count = crate::hi_z::mip_count_for(64, 64);
+        let mut total: u64 = 0;
+        for level in 0..mip_count {
+            let (w, h) = crate::hi_z::mip_size(64, 64, level);
+            total += (w as u64) * (h as u64) * 4;
+        }
+        assert_eq!(total, expected);
     }
 }
