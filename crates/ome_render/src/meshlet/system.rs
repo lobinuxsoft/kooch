@@ -125,6 +125,14 @@ impl MeshletPipeline {
             collect_lod_force_levels(resources);
         let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut out = Vec::new();
+        let mesh_descriptors = &self.pool.mesh_descriptors;
+        // Per-instance prefix sum into `group_max_err`: each instance
+        // reserves `mesh_descriptors[mesh_id].group_count` consecutive
+        // slots starting at `running_base`. Without this, two
+        // instances of the same mesh share the same slot range and
+        // `atomicMax` collapses every instance's LOD to the closest
+        // one's verdict (#474).
+        let mut running_base: u32 = 0;
         query.for_each_entity(|entity, (renderer, transform)| {
             if !renderer.visible {
                 return;
@@ -149,9 +157,33 @@ impl MeshletPipeline {
             } else {
                 instance.lod_force_level = LOD_FORCE_NONE;
             }
+            instance.group_base = running_base;
+            let group_count = mesh_descriptors
+                .get(mesh_handle.mesh_id as usize)
+                .map(|d| d.group_count)
+                .unwrap_or(0);
+            running_base = running_base.saturating_add(group_count);
             out.push(instance);
         });
         out
+    }
+
+    /// Total `group_max_err` slots the scene needs given an already-
+    /// collected `MeshInstance` slice. Equivalent to walking each
+    /// instance and summing `mesh_descriptors[mesh_id].group_count`,
+    /// but reads it from the prefix sum already stamped on each
+    /// instance: `last.group_base + last.group_count`. O(1).
+    pub fn instance_group_capacity(&self, instances: &[MeshInstance]) -> u32 {
+        let Some(last) = instances.last() else {
+            return 0;
+        };
+        let last_count = self
+            .pool
+            .mesh_descriptors
+            .get(last.mesh_id as usize)
+            .map(|d| d.group_count)
+            .unwrap_or(0);
+        last.group_base.saturating_add(last_count)
     }
 }
 

@@ -27,7 +27,7 @@ pub const LOD_FORCE_NONE: i32 = i32::MIN;
 
 /// Per-instance scene record consumed by `cs_cull_scene`.
 ///
-/// Layout (80 B, multiple of 16):
+/// Layout (96 B, multiple of 16):
 /// - `transform` (mat4, 64 B): world-space transform of this instance.
 /// - `mesh_id` (u32): index into the global mesh pool (stub for 1.E.1b
 ///   — single-mesh path ignores this).
@@ -38,6 +38,12 @@ pub const LOD_FORCE_NONE: i32 = i32::MIN;
 ///   LOD selector and emits only meshlets whose `lod_level` matches
 ///   this value. [`LOD_FORCE_NONE`] = normal selector. Drives the
 ///   side-by-side LOD inspector (#467).
+/// - `group_base` (u32): per-instance prefix-sum base into the
+///   `group_max_err` atomic buffer (#474). The shader resolves a
+///   group's slot as `group_base + (m.group_index - mesh_desc.group_base)`,
+///   which guarantees that two instances of the same mesh write to
+///   disjoint slot ranges and pick LOD independently. `0` is valid
+///   when the scene has at most one instance per mesh.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MeshInstance {
@@ -46,6 +52,10 @@ pub struct MeshInstance {
     pub material_id: u32,
     pub lod_bias: f32,
     pub lod_force_level: i32,
+    pub group_base: u32,
+    pub _pad0: u32,
+    pub _pad1: u32,
+    pub _pad2: u32,
 }
 
 impl MeshInstance {
@@ -56,6 +66,10 @@ impl MeshInstance {
             material_id,
             lod_bias: 0.0,
             lod_force_level: LOD_FORCE_NONE,
+            group_base: 0,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
         }
     }
 
@@ -217,8 +231,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mesh_instance_layout_is_pod_80_bytes() {
-        assert_eq!(std::mem::size_of::<MeshInstance>(), 80);
+    fn mesh_instance_layout_is_pod_96_bytes() {
+        assert_eq!(std::mem::size_of::<MeshInstance>(), 96);
     }
 
     #[test]

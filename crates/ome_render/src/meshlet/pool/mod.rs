@@ -46,9 +46,17 @@ pub struct MeshDescriptor {
     pub meshlet_vertex_offset: u32,
     /// Base byte offset into `meshlet_triangles`.
     pub meshlet_triangle_offset: u32,
+    /// Pool-global base id this mesh's group_index values were shifted
+    /// by at registration. The shader subtracts it to recover the
+    /// mesh-local group id when computing the per-instance slot in
+    /// `group_max_err` (#474). `0` for meshes with no LOD groups.
+    pub group_base: u32,
+    /// Number of distinct group_ids this mesh contributes (`max_local +
+    /// 1`). Used by the CPU prefix-sum that lays out each instance's
+    /// reserved range in `group_max_err` (#474). `0` for meshes
+    /// without LOD groups.
+    pub group_count: u32,
     pub _pad0: u32,
-    pub _pad1: u32,
-    pub _pad2: u32,
 }
 
 impl MeshDescriptor {
@@ -200,9 +208,13 @@ impl GlobalMeshPool {
                 ..*desc
             });
         }
-        if max_local_group >= 0 {
-            self.group_capacity += (max_local_group as u32) + 1;
-        }
+        let group_count = if max_local_group >= 0 {
+            let count = (max_local_group as u32) + 1;
+            self.group_capacity += count;
+            count
+        } else {
+            0
+        };
 
         self.mesh_descriptors.push(MeshDescriptor {
             first_meshlet,
@@ -210,9 +222,9 @@ impl GlobalMeshPool {
             vertex_offset,
             meshlet_vertex_offset,
             meshlet_triangle_offset,
+            group_base: group_offset,
+            group_count,
             _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
         });
 
         MeshHandle { mesh_id }
