@@ -435,6 +435,15 @@ impl MeshletRenderStage {
             pool_meshlets_total,
             pool_meshlets_roots,
             gpu_frame_ms: self.gpu_timers.last_frame_ms(),
+            // #463.6 — fixed at 3 for the meshlet pipeline because
+            // every dispatch and render pass is indirect over the
+            // GPU pool: one cull (cs_cull_scene_pool_atomic, which
+            // is itself a 2-pass with internal lod_compute +
+            // emit dispatches), one vbuf raster (render_scene),
+            // one deferred shade (shade_scene). Adding instances
+            // does NOT grow this number — that's the whole point
+            // of GPU-driven indirect dispatch.
+            draw_calls: 3,
         }
     }
 }

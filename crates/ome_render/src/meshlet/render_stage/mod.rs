@@ -121,6 +121,13 @@ pub struct MeshletRenderStats {
     /// or `enable_gpu_timers` was never called) or the first ring
     /// readback hasn't landed yet (1-2 frames after enable).
     pub gpu_frame_ms: Option<f32>,
+    /// Number of dispatch / render-pass operations emitted by the
+    /// meshlet pipeline this frame (#463.6). Indirect dispatch
+    /// means this is bounded — one cull, one vbuf raster, one
+    /// deferred shade — regardless of instance count. Sky / gizmo /
+    /// blit / egui passes outside the meshlet stage are counted
+    /// separately by the editor render system.
+    pub draw_calls: u32,
 }
 
 /// End-to-end meshlet render stage. See module docs for the per-frame
