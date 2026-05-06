@@ -82,12 +82,21 @@ struct MeshletDescriptor {
 @group(1) @binding(3) var<storage, read> descriptors: array<MeshletDescriptor>;
 
 // Scene-path bindings (group 3) — only bound for cs_shade_scene.
+// Must mirror the cull-side struct (stride 96 B) so `instances[i]`
+// reads from the correct byte offset. The deferred shader doesn't
+// consume group_base; the trailing fields are padding-equivalent
+// here but the layout has to stay byte-identical (#474 grew this
+// struct from 80 → 96 B).
 struct MeshInstance {
     transform: mat4x4<f32>,
     mesh_id: u32,
     material_id: u32,
     lod_bias: f32,
     lod_force_level: i32,
+    group_base: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 @group(3) @binding(0) var<storage, read> visible_meshlets: array<u32>;
 @group(3) @binding(1) var<storage, read> instances: array<MeshInstance>;

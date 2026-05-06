@@ -70,12 +70,21 @@ struct MeshletDescriptor {
 @group(2) @binding(0) var<storage, read> visible_meshlets: array<u32>;
 
 // Scene-path bind group — only bound for vs_vbuf_scene / fs_vbuf_scene.
+// Must mirror the cull-side struct (stride 96 B) so `instances[i]`
+// reads from the correct byte offset. The vbuf path doesn't consume
+// group_base / lod_force_level itself; the trailing fields are
+// padding-equivalent here but the layout has to stay byte-identical
+// (#474 grew this struct from 80 → 96 B).
 struct MeshInstance {
     transform: mat4x4<f32>,
     mesh_id: u32,
     material_id: u32,
     lod_bias: f32,
     lod_force_level: i32,
+    group_base: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 @group(3) @binding(0) var<storage, read> instances: array<MeshInstance>;
 
