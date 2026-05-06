@@ -103,6 +103,21 @@ impl GlobalMeshPool {
             .unwrap_or(0)
     }
 
+    /// Approximate bytes the persistent storage of this pool occupies
+    /// when uploaded to wgpu (vertex + meshlet index + triangle byte
+    /// pool + descriptor pool). Used by the perf HUD's VRAM-tracked
+    /// counter (#463.5). Not every byte will hit GPU memory exactly
+    /// (alignment / driver padding can grow it), but the value is
+    /// the closest portable estimate.
+    pub fn byte_size(&self) -> u64 {
+        let v = (self.vertices.len() * std::mem::size_of::<crate::mesh::MeshVertex>()) as u64;
+        let mlv = (self.meshlet_vertices.len() * std::mem::size_of::<u32>()) as u64;
+        let mlt = self.meshlet_triangles.len() as u64;
+        let m = (self.meshlets.len() * std::mem::size_of::<MeshletDescriptor>()) as u64;
+        let md = (self.mesh_descriptors.len() * std::mem::size_of::<MeshDescriptor>()) as u64;
+        v + mlv + mlt + m + md
+    }
+
     /// Appends `mesh` to the pool. Returns the handle whose `mesh_id`
     /// the caller should write into `MeshInstance::mesh_id`.
     pub fn register(&mut self, mesh: &MeshletMesh) -> MeshHandle {

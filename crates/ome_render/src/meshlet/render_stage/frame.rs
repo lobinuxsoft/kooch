@@ -87,10 +87,20 @@ impl MeshletRenderStage {
         mesh: &MeshletMesh,
     ) {
         let before = self.pipeline.registered_count();
+        let bytes_before = self.pipeline.pool().byte_size();
         self.pipeline.register_mesh(guid, mesh);
         let after = self.pipeline.registered_count();
         if after > before {
             self.pool_dirty = true;
+            // #463.5 — credit the freshly-appended pool bytes to the
+            // engine VRAM tracker (when wired). Idempotent calls to
+            // register_mesh with the same GUID return the cached
+            // handle without growing the pool, so `bytes_after ==
+            // bytes_before` and the diff is zero.
+            if let Some(tracker) = &self.vram_tracker {
+                let bytes_after = self.pipeline.pool().byte_size();
+                tracker.add(bytes_after.saturating_sub(bytes_before));
+            }
         }
     }
 

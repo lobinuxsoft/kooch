@@ -160,8 +160,17 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // #463.4 — last frame's GPU timing (when adapter exposes
     // TIMESTAMP_QUERY) propagates from the render stage into the
     // perf HUD Resource so the View toolbar reads a single source.
+    // #463.5 — same single-write site for the engine VRAM counter:
+    // read the shared Arc<EngineVramTracker> and stamp the byte
+    // total. Both end up in EditorPerfStats so the toolbar reads
+    // exactly one Resource.
+    let vram_bytes = resources
+        .get::<std::sync::Arc<ome_render::EngineVramTracker>>()
+        .map(|t| t.bytes())
+        .unwrap_or(0);
     if let Some(stats) = resources.get_mut::<crate::perf::EditorPerfStats>() {
         stats.gpu_frame_ms = meshlet_stats.gpu_frame_ms;
+        stats.vram_tracked_bytes = vram_bytes;
     }
 
     // Apply the previous frame's size request before the UI runs so the

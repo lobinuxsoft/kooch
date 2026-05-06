@@ -40,6 +40,8 @@ mod frame;
 
 use crate::material::{MaterialParams, MaterialPool};
 
+use std::sync::Arc;
+
 use super::deferred::{MeshletDeferredShader, DEFERRED_COLOR_FORMAT};
 use super::dispatcher::MeshletCull;
 use super::gpu_meshlet::meshlet_bind_group_layout;
@@ -49,6 +51,7 @@ use super::scene::MeshletScene;
 use super::system::MeshletPipeline;
 use super::vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
 use super::DEFAULT_MAX_TRIANGLES;
+use crate::perf::EngineVramTracker;
 
 /// Construction parameters for [`MeshletRenderStage`]. All sizes are
 /// upper bounds — the actual per-frame instance count comes from the
@@ -156,6 +159,12 @@ pub struct MeshletRenderStage {
     /// default (see [`Self::enable_gpu_timers`]). Tests don't pay
     /// for this; the editor / game runtime opts in at startup.
     pub(super) gpu_timers: MeshletGpuTimers,
+
+    /// Cross-module engine VRAM counter (#463.5). Optional —
+    /// `None` means the editor / game has not registered a tracker
+    /// and the stage skips bookkeeping. Wired via
+    /// [`Self::set_vram_tracker`] at startup.
+    pub(super) vram_tracker: Option<Arc<EngineVramTracker>>,
 }
 
 impl MeshletRenderStage {
@@ -234,7 +243,24 @@ impl MeshletRenderStage {
             // [`Self::enable_gpu_timers`] at startup once the queue
             // and adapter are available.
             gpu_timers: MeshletGpuTimers::new_disabled_for_default(),
+            vram_tracker: None,
         }
+    }
+
+    /// Wires a shared engine VRAM tracker (#463.5). Called once at
+    /// startup from the editor / game runtime; subsequent buffer +
+    /// texture creations / pool registrations the stage controls
+    /// will bump the counter so the perf HUD can report a meaningful
+    /// engine footprint. Idempotent — replacing the tracker with a
+    /// different `Arc` is safe but discards the previous counter
+    /// state for THIS stage's contribution (use sparingly).
+    pub fn set_vram_tracker(&mut self, tracker: Arc<EngineVramTracker>) {
+        // Account for the persistent attachments we already created
+        // in `new()` — vbuf, depth, color. Any tracker setup AFTER
+        // construction must still see those bytes.
+        let attachment_bytes = render_target_byte_estimate(self.size);
+        tracker.add(attachment_bytes);
+        self.vram_tracker = Some(tracker);
     }
 
     /// Activates the GPU frame timer (#463.4). Call this once at
@@ -299,6 +325,16 @@ impl MeshletRenderStage {
     pub fn instance_capacity(&self) -> u32 {
         self.instance_capacity
     }
+}
+
+/// Approximate bytes occupied by the stage's three render targets at
+/// the given resolution. Used by [`MeshletRenderStage::set_vram_tracker`]
+/// to seed the counter with what `new()` already allocated.
+fn render_target_byte_estimate(size: (u32, u32)) -> u64 {
+    let pixels = size.0 as u64 * size.1 as u64;
+    // vbuf: R32Uint = 4 bpp; depth: Depth32Float = 4 bpp;
+    // color: Rgba8Unorm = 4 bpp. Total: 12 bytes/pixel.
+    pixels * 12
 }
 
 pub(super) fn create_2d_attachment(
