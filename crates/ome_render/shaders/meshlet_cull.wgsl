@@ -538,7 +538,15 @@ fn cs_lod_compute_group_max_err(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // bitcast preserves ordering for non-negative IEEE-754 floats.
     let parent_err_bits = bitcast<u32>(max(parent_err_px, 0.0));
-    atomicMax(&group_max_err[m.group_index], parent_err_bits);
+    // Per-instance slot: m.group_index was pool-shifted by
+    // mesh_desc.group_base at register(); subtract to recover the
+    // mesh-local id, then offset by inst.group_base so each instance
+    // owns a disjoint slot range. Without this every instance of the
+    // mesh atomicMaxes into the same slot and pass 2 collapses every
+    // instance's LOD to the closest one's verdict (#474).
+    let local_group = m.group_index - mesh_desc.group_base;
+    let slot = inst.group_base + local_group;
+    atomicMax(&group_max_err[slot], parent_err_bits);
 }
 
 fn run_cull_scene_pool_atomic(thread_id: u32) {
@@ -588,7 +596,10 @@ fn run_cull_scene_pool_atomic(thread_id: u32) {
             // coarse" so the meshlet is the only available level.
             above_too_coarse = true;
         } else {
-            let bits = atomicLoad(&group_max_err[m.group_index]);
+            // See pass 1: per-instance slot decoding (#474).
+            let local_group = m.group_index - mesh_desc.group_base;
+            let slot = inst.group_base + local_group;
+            let bits = atomicLoad(&group_max_err[slot]);
             let group_err_px = bitcast<f32>(bits);
             above_too_coarse = group_err_px > target_px;
         }
@@ -599,7 +610,9 @@ fn run_cull_scene_pool_atomic(thread_id: u32) {
             // this level is the floor.
             below_fine = true;
         } else {
-            let bits = atomicLoad(&group_max_err[m.children_group_index]);
+            let local_group = m.children_group_index - mesh_desc.group_base;
+            let slot = inst.group_base + local_group;
+            let bits = atomicLoad(&group_max_err[slot]);
             let group_err_px = bitcast<f32>(bits);
             below_fine = group_err_px <= target_px;
         }
