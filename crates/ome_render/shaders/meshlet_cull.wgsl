@@ -173,10 +173,9 @@ fn occluded_by_hi_z(center_world: vec3<f32>, radius: f32) -> bool {
 
     let max_depth = textureLoad(hi_z_pyramid, vec2<u32>(px, py), i32(mip)).r;
     // Conservative: shift the centre depth toward the camera by the
-    // sphere's depth extent (≈ radius / clip.w in NDC). Without
-    // this, a meshlet whose centre depth equals the tile's max
-    // gets marginally rejected on floating-point round-off.
-    let sphere_min_depth = ndc.z - radius / clip.w;
+    // sphere's depth extent (≈ radius / clip.w in NDC), with 2×
+    // safety factor for floating-point drift + tile-boundary spread.
+    let sphere_min_depth = ndc.z - 2.0 * radius / clip.w;
     return sphere_min_depth > max_depth;
 }
 
@@ -694,22 +693,31 @@ fn occluded_by_hi_z_atomic(center_world: vec3<f32>, radius: f32) -> bool {
         radius / clip.w * hi_z_params_atomic.hi_z_size.x * 0.5,
         1.0,
     );
-    let mip_f = ceil(log2(sphere_pixel_radius * 2.0));
+    // Pick a mip whose ONE tile covers the sphere, then 2×2-tap to
+    // cover the case where the sphere straddles a tile boundary.
+    // Without the 2×2 tap, a meshlet that lands between tiles can
+    // sample only the FAR tile and get marginally rejected when the
+    // adjacent NEAR tile would have kept it.
+    let mip_f = ceil(log2(sphere_pixel_radius));
     let mip = clamp(u32(mip_f), 0u, hi_z_params_atomic.hi_z_mip_count - 1u);
     let mip_w = max(u32(hi_z_params_atomic.hi_z_size.x) >> mip, 1u);
     let mip_h = max(u32(hi_z_params_atomic.hi_z_size.y) >> mip, 1u);
     let px = clamp(u32(uv.x * f32(mip_w)), 0u, mip_w - 1u);
     let py = clamp(u32(uv.y * f32(mip_h)), 0u, mip_h - 1u);
-    let max_depth = textureLoad(hi_z_pyramid_atomic, vec2<u32>(px, py), i32(mip)).r;
+    let px1 = min(px + 1u, mip_w - 1u);
+    let py1 = min(py + 1u, mip_h - 1u);
+    let d00 = textureLoad(hi_z_pyramid_atomic, vec2<u32>(px,  py),  i32(mip)).r;
+    let d10 = textureLoad(hi_z_pyramid_atomic, vec2<u32>(px1, py),  i32(mip)).r;
+    let d01 = textureLoad(hi_z_pyramid_atomic, vec2<u32>(px,  py1), i32(mip)).r;
+    let d11 = textureLoad(hi_z_pyramid_atomic, vec2<u32>(px1, py1), i32(mip)).r;
+    let max_depth = max(max(d00, d10), max(d01, d11));
     // Conservative test: shift the centre depth toward the camera by
-    // the sphere's depth extent (≈ radius / clip.w in NDC). Without
-    // this, a meshlet whose centre depth equals the tile's max
-    // (e.g. front+back faces of the same skull falling in the same
-    // tile) gets marginally rejected on floating-point round-off.
-    // Holes in the rendered skull pre-#486 came from exactly this
-    // case (the SPD path made the cull pipeline actually fire for
-    // the first time and surfaced the latent conservatism bug).
-    let nearest_depth = ndc.z - radius / clip.w;
+    // the sphere's depth extent. `radius / clip.w` is a small-angle
+    // approximation; multiply by 2 to absorb floating-point drift +
+    // the depth divergence between sphere centre and farthest sphere
+    // point in NDC for spheres whose silhouette stretches across mip
+    // tile boundaries.
+    let nearest_depth = ndc.z - 2.0 * radius / clip.w;
     return nearest_depth > max_depth;
 }
 
