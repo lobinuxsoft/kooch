@@ -45,4 +45,7 @@ pub use plugin::RenderPlugin;
 pub use projection::perspective_rh_reverse_z;
 pub use sky::{ActiveSky, SkyPassNode, SkyRenderPass};
 pub use texture::{GpuTexture, Image, ImageFormat, ImageLoader};
-pub use vbuf64::Vbuf64Support;
+pub use vbuf64::{
+    pack_visibility, unpack_visibility, Vbuf64Support, CLUSTER_ID_BITS, MAX_CLUSTER_ID,
+    TRI_ID_BITS, TRI_ID_MASK,
+};
