@@ -35,12 +35,6 @@ impl MeshletRenderStage {
             new_size.0 > 0 && new_size.1 > 0,
             "MeshletRenderStage::resize requires non-zero dimensions"
         );
-        tracing::info!(
-            target: "ome_render::meshlet::render_stage",
-            old = ?self.size,
-            new = ?new_size,
-            "MeshletRenderStage::resize triggered — pyramids will be recreated"
-        );
 
         let (vbuf_texture, vbuf_view) = create_2d_attachment(
             device,
@@ -401,102 +395,31 @@ impl MeshletRenderStage {
             self.gpu_timers.write_start(&mut encoder);
         }
 
-        // ── Hi-Z 2-pass cull (#445) ────────────────────────────────
-        // First-frame init: hiz_prev is freshly allocated and its
-        // R32Float texels are undefined. Seed it to 1.0 ("nothing
-        // occluded") via a one-shot render-pass clear of the depth
-        // attachment + the standard Hi-Z build over that depth, so
-        // pass A's first sample reads the conservative far value.
+        // ── Single-pass cull (#445 follow-up) ──────────────────────
+        // The Hi-Z 2-pass orchestration this PR introduced (cull A
+        // vs hiz_prev → raster A → build hiz_curr → cull B vs
+        // hiz_curr → raster B) hits a Mesa radv (RX 9070 XT) bug in
+        // the per-mip pyramid build path: the storage-write →
+        // texture-read transition between mip[k] write and mip[k+1]
+        // sample inside the same encoder leaves the views "invalid"
+        // for the next bind-group construction.
         //
-        // Lives in its OWN encoder + submit, separate from the frame
-        // encoder below, because Mesa radv (RX 9070 XT) rejects the
-        // storage-write → texture-read transition on the pyramid
-        // texture inside a single encoder — the views land in an
-        // "invalid" state for the next bind group construction. The
-        // submit boundary forces a hardware barrier so pass A sees a
-        // stable pyramid.
-        // Triple-buffered bind-group arena (#445 Mesa radv workaround).
-        // Rotate to the slot that's at least 2 frames old, then
-        // clear it — those bind groups' GPU work has finished by
-        // now, so dropping the Rust handles is safe. wgpu does not
-        // Arc-clone bind groups on `set_bind_group`, so we must
-        // outlive the GPU's use of them, not just the CPU's record
-        // → submit window.
-        self.frame_bind_groups_index = (self.frame_bind_groups_index + 1) % 3;
-        let arena_idx = self.frame_bind_groups_index;
-        self.frame_bind_groups[arena_idx].clear();
-        // Same triple-buffer rule for pyramids retired by resize():
-        // the resize() that ran this frame retired them, so the slot
-        // that's 2 frames stale here is safe to drop.
-        self.retired_pyramids[arena_idx].clear();
-
-        if !self.hi_z_initialized {
-            // Two separate submits: depth clear + pyramid build. Mesa
-            // radv (RX 9070 XT) needs a queue boundary between the
-            // depth-attachment write (clear) and the depth texture
-            // read (cs_copy_depth in the build). An isolated GPU
-            // test (`hi_z_build_from_depth`) confirmed build_from_depth
-            // works when these are split across submits but errors
-            // with "TextureView invalid" when they share an encoder.
-            {
-                let mut clear_encoder = device.create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor {
-                        label: Some("meshlet_hi_z_init_depth_clear_encoder"),
-                    },
-                );
-                let _depth_clear =
-                    clear_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("meshlet_hi_z_first_frame_depth_clear"),
-                        color_attachments: &[],
-                        depth_stencil_attachment: Some(
-                            wgpu::RenderPassDepthStencilAttachment {
-                                view: &self.depth_view,
-                                depth_ops: Some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(1.0),
-                                    store: wgpu::StoreOp::Store,
-                                }),
-                                stencil_ops: None,
-                            },
-                        ),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                drop(_depth_clear);
-                queue.submit(std::iter::once(clear_encoder.finish()));
-            }
-            let mut build_encoder = device.create_command_encoder(
-                &wgpu::CommandEncoderDescriptor {
-                    label: Some("meshlet_hi_z_init_build_encoder"),
-                },
-            );
-            self.hiz_prev.init_to_far(
-                device,
-                &mut build_encoder,
-                &self.depth_sample_view,
-                Some(&mut self.frame_bind_groups[arena_idx]),
-            );
-            queue.submit(std::iter::once(build_encoder.finish()));
-            self.hi_z_initialized = true;
-        }
-
-        // Both passes share the same view_proj / pyramid dimensions
-        // (the camera doesn't change inside the frame; resize is the
-        // only thing that flips dims and that triggers a new HiZ).
-        let (hiz_w, hiz_h) = self.hiz_prev.dimensions();
-        let mip_count = self.hiz_prev.mip_count();
-        let hi_z_params = crate::meshlet::dispatcher::HiZTestParams::new(
-            view_proj,
-            hiz_w,
-            hiz_h,
-            mip_count,
-        );
-
-        // Pass A: cull against the previous frame's pyramid. Frustum
-        // + cone + LOD survivors that pass Hi-Z append to
-        // visible_meshlets; Hi-Z rejects park in culled_meshlets for
-        // pass B to retest.
-        self.cull.dispatch_scene_pool_atomic_hi_z(
+        // Bevy avoids this by porting AMD's FidelityFX Single-Pass
+        // Downsampler (SPD), which writes every mip in ONE compute
+        // dispatch via workgroup memory + atomics. No per-mip bind
+        // groups, no transitions to invalidate. That port is the
+        // proper fix and is tracked as a follow-up issue.
+        //
+        // Until SPD lands, the orchestrator falls back to the
+        // single-pass scene-pool atomic dispatch — the same path
+        // that production was on before this PR. The 2-pass
+        // primitives (`dispatch_scene_pool_atomic_hi_z`,
+        // `dispatch_cull_pass_b`, the culled SSBO + cull_pass_b
+        // shader entry) all stay in the codebase and are exercised
+        // by `tests/meshlet_bench_hi_z_two_pass.rs` and
+        // `tests/meshlet_hi_z_two_pass.rs`; only this orchestrator
+        // call site is gated.
+        self.cull.dispatch_scene_pool_atomic(
             device,
             queue,
             &mut encoder,
@@ -504,11 +427,7 @@ impl MeshletRenderStage {
             &self.scene,
             &cull_params,
             &scene_params,
-            &hi_z_params,
-            self.hiz_prev.full_view(),
-            &mut self.frame_bind_groups[arena_idx],
         );
-        // Raster A: clear vbuf + depth, draw pass A's survivors.
         self.rasterizer.render_scene(
             device,
             queue,
@@ -521,79 +440,6 @@ impl MeshletRenderStage {
             view_proj,
             0,
             /* clear */ true,
-        );
-
-        // Submit boundary 1: raster A's depth-attachment WRITE must
-        // land before the Hi-Z build samples that depth as a TEXTURE
-        // BINDING. Mesa radv leaves the depth view "invalid" inside
-        // a single encoder; an isolated GPU test
-        // (`hi_z_build_from_depth`) confirmed the build path is OK
-        // once the boundary is in place.
-        if let Some(slot_idx) = timer_slot {
-            self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
-        }
-        queue.submit(std::iter::once(encoder.finish()));
-        if let Some(slot_idx) = timer_slot {
-            self.gpu_timers.submit_readback(slot_idx);
-        }
-
-        // Build the current frame's Hi-Z pyramid from the just-
-        // written depth so pass B has fresh occlusion data for the
-        // entries pass A's stale pyramid wrongly rejected. Lives in
-        // its own submit so the storage→texture transition on
-        // hiz_curr's mips that pass B then samples is also forced
-        // through a queue boundary.
-        let mut build_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("meshlet_hi_z_build_encoder"),
-        });
-        self.hiz_curr.build_from_depth(
-            device,
-            &mut build_encoder,
-            &self.depth_sample_view,
-            Some(&mut self.frame_bind_groups[arena_idx]),
-        );
-        queue.submit(std::iter::once(build_encoder.finish()));
-
-        // Submit boundary 2: pass B + raster B + deferred. The
-        // pyramid build (storage write on hiz_curr's mips) above
-        // must complete before pass B samples hiz_curr.full_view()
-        // as TEXTURE_BINDING. The frame's GPU timer window already
-        // closed at boundary 1 — measuring just cull A + raster A
-        // is representative; widening the window needs a second
-        // timer slot (tracked as follow-up).
-        encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("meshlet_render_stage_encoder_pass_b"),
-        });
-
-        // Pass B: re-test culled_meshlets[] against hiz_curr; survivors
-        // append to the same visible_meshlets buffer.
-        self.cull.dispatch_cull_pass_b(
-            device,
-            queue,
-            &mut encoder,
-            gpu_pool,
-            &self.scene,
-            &hi_z_params,
-            self.hiz_curr.full_view(),
-            &mut self.frame_bind_groups[arena_idx],
-        );
-        // Raster B: load (preserve pass-A vbuf + depth) and draw the
-        // union of pass A + B. Pass A's set is re-rasterised because
-        // a single indirect_args buffer drives both draws; the depth
-        // test trivially keeps fragments idempotent. Splitting the
-        // first_instance offset is an optimisation tracked in T6.
-        self.rasterizer.render_scene(
-            device,
-            queue,
-            &mut encoder,
-            &self.vbuf_view,
-            &self.depth_view,
-            &meshlet_bg,
-            &self.cull,
-            &self.scene,
-            view_proj,
-            0,
-            /* clear */ false,
         );
         // Editor / game tools insert MeshletDebugMode when they want to
         // override the production shading path. Absence = Off (no-op
@@ -618,17 +464,18 @@ impl MeshletRenderStage {
             debug_mode,
         );
 
-        // GPU timer end-and-copy already happened at the encoder-A
-        // boundary; this second submit covers pass B + raster B +
-        // deferred without timer instrumentation (see the boundary
-        // comment above for why).
+        // Close the GPU timing window AFTER the deferred shade pass
+        // but BEFORE submit, so the resolve + copy land in the same
+        // command buffer.
+        if let Some(slot_idx) = timer_slot {
+            self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
+        }
+
         queue.submit(std::iter::once(encoder.finish()));
 
-        // Rotate Hi-Z pyramids: this frame's hiz_curr (built from
-        // the depth pass A wrote into) becomes next frame's hiz_prev.
-        // Done after submit so the GPU has finished sampling hiz_prev
-        // by the time the underlying texture moves to the curr slot.
-        self.swap_hi_z_pyramids();
+        if let Some(slot_idx) = timer_slot {
+            self.gpu_timers.submit_readback(slot_idx);
+        }
 
         let pool = self.pipeline.pool();
         let pool_meshlets_total = pool.meshlets.len() as u32;
@@ -640,13 +487,10 @@ impl MeshletRenderStage {
             })
             .count() as u32;
 
-        // Hi-Z 2-pass cull (#445) emits 6 ordered units of work per
-        // frame: cull pass A, raster A, Hi-Z pyramid build, cull pass
-        // B, raster B, deferred shade. Pyramid build is itself a
-        // chain of one copy + (mip_count − 1) reductions but the HUD
-        // counts it as a single logical pass. With zero instances we
-        // skip everything and report 0.
-        let meshlet_draw_calls = if instances.is_empty() { 0 } else { 6 };
+        // Single-pass orchestrator (#445 fallback while SPD is in
+        // flight): cull + vbuf raster + deferred shade. Same draw
+        // count as the pre-2-pass baseline.
+        let meshlet_draw_calls = if instances.is_empty() { 0 } else { 3 };
 
         MeshletRenderStats {
             instances_uploaded: instances.len() as u32,

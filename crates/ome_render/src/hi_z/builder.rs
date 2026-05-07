@@ -17,6 +17,7 @@ pub struct HiZ {
     reduce_pipeline: wgpu::ComputePipeline,
     copy_depth_bgl: wgpu::BindGroupLayout,
     copy_r32_bgl: wgpu::BindGroupLayout,
+    #[allow(dead_code)] // kept alive so cached `reduce_bgs` stay valid
     reduce_bgl: wgpu::BindGroupLayout,
 
     /// Pre-built bind groups for the per-mip reduction passes. One

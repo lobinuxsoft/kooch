@@ -190,21 +190,26 @@ pub struct MeshletRenderStage {
     /// next call to `render_with_assets` after that bump runs the
     /// init upload so pass A samples a "nothing occluded" pyramid.
     pub(super) hi_z_initialized: bool,
-    /// Triple-buffered per-frame arena that keeps every cull /
-    /// pyramid bind group alive PAST the GPU finishing the frame
-    /// they were submitted with. wgpu does not Arc-clone bind groups
-    /// on `set_bind_group`, and Mesa radv rejects bind groups whose
-    /// referenced views drop while the GPU is still in flight. Three
-    /// slots ≥ wgpu's typical max in-flight-frames headroom; the
-    /// slot rotated into the current frame is always at least 2 GPU
-    /// frames old and safe to drop.
+    /// Triple-buffered per-frame arena reserved for the future SPD
+    /// follow-up that activates the Hi-Z 2-pass orchestrator. The
+    /// orchestrator currently uses `dispatch_scene_pool_atomic`
+    /// (no Hi-Z), so the arena stays empty in production. When the
+    /// SPD-backed pyramid build lands and the orchestrator switches
+    /// to `dispatch_scene_pool_atomic_hi_z` + `dispatch_cull_pass_b`,
+    /// each per-frame bind group parks here so it outlives the GPU's
+    /// use of it (Mesa radv invalidates bind groups dropped while
+    /// in flight). Three slots ≥ wgpu's max in-flight-frames headroom.
+    #[allow(dead_code)]
     pub(super) frame_bind_groups: [Vec<wgpu::BindGroup>; 3],
-    /// Round-robin index over `frame_bind_groups`. Bumped at the
-    /// start of every render before the slot is cleared and reused.
+    /// Round-robin index for `frame_bind_groups`.
+    #[allow(dead_code)]
     pub(super) frame_bind_groups_index: usize,
     /// Pyramids retired by `resize()` that may still be in flight on
-    /// the GPU. Same triple-buffer logic as `frame_bind_groups`.
-    /// Empty in steady state when the viewport size doesn't change.
+    /// the GPU. Triple-buffered to defer the drop until after the
+    /// GPU has stopped using the views — same Mesa radv lifetime
+    /// rule as `frame_bind_groups`. Currently no-op since the
+    /// orchestrator doesn't sample the pyramids.
+    #[allow(dead_code)]
     pub(super) retired_pyramids: [Vec<HiZ>; 3],
 
     /// GPU frame timing via wgpu timestamp queries. Disabled by
@@ -312,9 +317,12 @@ impl MeshletRenderStage {
         }
     }
 
-    /// Swaps the current Hi-Z pyramid into the `prev` slot. Called by
-    /// [`Self::render_with_assets`] at the end of every frame so the
-    /// next frame's pass A reads the pyramid this frame just built.
+    /// Swaps the current Hi-Z pyramid into the `prev` slot. The
+    /// SPD-backed orchestrator follow-up will call this at end of
+    /// frame so the next frame's pass A reads the pyramid this
+    /// frame just built. The current single-pass orchestrator
+    /// doesn't sample the pyramids, so this is a no-op call site.
+    #[allow(dead_code)]
     pub(super) fn swap_hi_z_pyramids(&mut self) {
         std::mem::swap(&mut self.hiz_prev, &mut self.hiz_curr);
     }
