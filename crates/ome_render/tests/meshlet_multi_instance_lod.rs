@@ -155,7 +155,7 @@ fn three_instances_pick_distinct_lod_bands() {
     // pixel-error factor the real renderer uses.
     let cam = Vec3::new(0.0, 0.0, 0.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, -1.0), Vec3::Y);
-    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 5000.0);
+    let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 5000.0);
     let viewport_h = 1080.0_f32;
     let proj_scale_y = 1.0_f32 / (30.0_f32.to_radians()).tan();
     let cull_params = CullParams::new(proj * view, cam, meshlets_per_mesh)

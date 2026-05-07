@@ -313,7 +313,7 @@ impl SkyRenderPass {
         };
 
         let view = world_matrix.inverse();
-        let projection = Mat4::perspective_rh(
+        let projection = crate::projection::perspective_rh_reverse_z(
             cam.fov.to_radians(),
             aspect.max(0.001),
             cam.near.max(0.001),

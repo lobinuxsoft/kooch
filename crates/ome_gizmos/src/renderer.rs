@@ -458,7 +458,7 @@ fn active_camera_view_proj(resources: &Resources, aspect: f32) -> Option<Mat4> {
 
     let (_, cam, world) = best?;
     let view = world.inverse();
-    let projection = Mat4::perspective_rh(
+    let projection = ome_render::perspective_rh_reverse_z(
         cam.fov.to_radians(),
         aspect.max(0.001),
         cam.near.max(0.001),

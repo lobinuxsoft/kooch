@@ -96,7 +96,7 @@ fn meshlet_pipeline_renders_visible_cube_pixels() {
     // ------------------------------------------------------------------
     let cam = Vec3::new(0.0, 0.0, 2.0);
     let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
-    let proj = Mat4::perspective_rh(
+    let proj = ome_render::perspective_rh_reverse_z(
         60.0_f32.to_radians(),
         RT_WIDTH as f32 / RT_HEIGHT as f32,
         0.1,
@@ -260,7 +260,7 @@ fn meshlet_pipeline_renders_nothing_when_camera_faces_away() {
     let cam = Vec3::new(0.0, 0.0, 2.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 100.0), Vec3::Y);
     let proj =
-        Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 50.0);
+        ome_render::perspective_rh_reverse_z(45.0_f32.to_radians(), 1.0, 0.1, 50.0);
     let view_proj = proj * view;
     let cull_params = CullParams::new(view_proj, cam, gpu_mesh.meshlet_count);
 

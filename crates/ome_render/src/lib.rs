@@ -21,6 +21,7 @@ pub mod mesh;
 pub mod meshlet;
 pub mod perf;
 pub mod plugin;
+pub mod projection;
 pub mod sky;
 pub mod texture;
 
@@ -40,5 +41,6 @@ pub use meshlet::{
 };
 pub use perf::EngineVramTracker;
 pub use plugin::RenderPlugin;
+pub use projection::perspective_rh_reverse_z;
 pub use sky::{ActiveSky, SkyPassNode, SkyRenderPass};
 pub use texture::{GpuTexture, Image, ImageFormat, ImageLoader};

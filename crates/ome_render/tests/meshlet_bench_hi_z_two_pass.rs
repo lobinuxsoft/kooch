@@ -215,7 +215,7 @@ fn build_rig() -> Option<BenchRig> {
 
     let cam = Vec3::new(0.0, 0.0, 3.0);
     let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
-    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let view_proj = proj * view;
     let cull_params = CullParams::new(view_proj, cam, max_meshlets_per_mesh);
     let scene_params = SceneCullParams::new(1, max_meshlets_per_mesh);

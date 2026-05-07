@@ -106,7 +106,7 @@ fn meshlet_facing_camera_passes_cone_cull() {
 
     let cam = Vec3::new(0.5, 0.5, 5.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.5, 0.5, 0.0), Vec3::Y);
-    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let params = CullParams::new(proj * view, cam, 1);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -136,7 +136,7 @@ fn meshlet_facing_away_is_culled_by_cone() {
 
     let cam = Vec3::new(0.5, 0.5, -5.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.5, 0.5, 0.0), Vec3::Y);
-    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let params = CullParams::new(proj * view, cam, 1);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -170,7 +170,7 @@ fn cone_cutoff_one_disables_cull_even_when_camera_aligned() {
 
     let cam = Vec3::new(0.5, 0.5, -5.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.5, 0.5, 0.0), Vec3::Y);
-    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let params = CullParams::new(proj * view, cam, 1);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

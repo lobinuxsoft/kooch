@@ -108,7 +108,7 @@ fn render_with_material(material_id: u32) -> Vec<u8> {
 
     let cam = Vec3::new(0.0, 0.0, 2.0);
     let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
-    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let view_proj = proj * view;
     let model = Mat4::IDENTITY;
     let cull_params = CullParams::new(view_proj, cam, gpu_mesh.meshlet_count);

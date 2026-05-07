@@ -114,7 +114,7 @@ fn single_frame_first_render_does_not_crash_with_empty_prev_pyramid() {
 
     let cam = Vec3::new(0.0, 0.0, 4.0);
     let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
-    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let stats = stage.render_with_assets(&device, &queue, &resources, proj * view, cam);
     assert_eq!(stats.instances_uploaded, 1, "single visible cube must upload");
     assert_eq!(
@@ -204,7 +204,7 @@ fn two_pass_visible_set_stays_stable_across_frames_in_static_scene() {
 
     let cam = Vec3::new(0.0, 0.0, 4.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, -10.0), Vec3::Y);
-    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let view_proj = proj * view;
 
     // Render N frames of a static scene. The visible-meshlet set
