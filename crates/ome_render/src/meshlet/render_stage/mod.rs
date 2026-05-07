@@ -177,13 +177,15 @@ pub struct MeshletRenderStage {
     /// the frame the orchestrator swaps `hiz_prev <- hiz_curr` so the
     /// next frame's pass A reads the freshest pyramid we have.
     ///
-    /// First-frame: `hiz_prev` is initialised to 1.0 (far depth) on
-    /// the very first call to `render_with_assets` so pass A's
-    /// conservative Hi-Z reject keeps every meshlet, the raster
-    /// fills depth, pass B builds `hiz_curr` and re-tests an empty
-    /// reject set. From frame 2 onward both pyramids carry signal.
-    pub(super) hiz_prev: HiZ,
-    pub(super) hiz_curr: HiZ,
+    /// Lazy Hi-Z pyramids. The 2-pass orchestrator that samples
+    /// these is parked behind the SPD follow-up (#486); the current
+    /// single-pass orchestrator never reads them, so allocating them
+    /// at `new()` time wastes VRAM and surfaces wgpu validation
+    /// noise from the editor's per-frame placeholder stage. They
+    /// stay `None` until the SPD-backed orchestrator switches them
+    /// on via `ensure_hi_z_pyramids()`.
+    pub(super) hiz_prev: Option<HiZ>,
+    pub(super) hiz_curr: Option<HiZ>,
     /// `false` until the orchestrator has called `clear_to_far` on
     /// the freshly-created `hiz_prev`. Reset to `false` on `resize()`
     /// because both pyramids are recreated and need re-init. The
@@ -278,10 +280,13 @@ impl MeshletRenderStage {
                 | wgpu::TextureUsages::COPY_SRC,
         );
 
-        // Twin Hi-Z pyramids match the depth attachment dimensions.
-        // resize() recreates both whenever `size` changes.
-        let hiz_prev = HiZ::new(device, size.0, size.1);
-        let hiz_curr = HiZ::new(device, size.0, size.1);
+        // Hi-Z pyramids stay None until the SPD-backed orchestrator
+        // (#486) toggles them on. The single-pass orchestrator never
+        // samples them — allocating at construction would just waste
+        // VRAM and surface wgpu noise from the editor's per-frame
+        // placeholder stage.
+        let hiz_prev: Option<HiZ> = None;
+        let hiz_curr: Option<HiZ> = None;
 
         Self {
             pipeline: MeshletPipeline::new(),
@@ -318,26 +323,26 @@ impl MeshletRenderStage {
     }
 
     /// Swaps the current Hi-Z pyramid into the `prev` slot. The
-    /// SPD-backed orchestrator follow-up will call this at end of
-    /// frame so the next frame's pass A reads the pyramid this
-    /// frame just built. The current single-pass orchestrator
-    /// doesn't sample the pyramids, so this is a no-op call site.
+    /// SPD-backed orchestrator follow-up (#486) will call this at
+    /// end of frame so the next frame's pass A reads the pyramid
+    /// this frame just built. No-op when pyramids haven't been
+    /// allocated yet.
     #[allow(dead_code)]
     pub(super) fn swap_hi_z_pyramids(&mut self) {
         std::mem::swap(&mut self.hiz_prev, &mut self.hiz_curr);
     }
 
     /// Read-only access to the pyramid pass A samples this frame.
-    /// Mainly here so integration tests can confirm the swap
-    /// happened — the orchestrator binds it through field access.
-    pub fn hi_z_prev(&self) -> &HiZ {
-        &self.hiz_prev
+    /// `None` until the SPD orchestrator (#486) allocates them.
+    pub fn hi_z_prev(&self) -> Option<&HiZ> {
+        self.hiz_prev.as_ref()
     }
 
     /// Read-only access to the pyramid pass B samples (= the one
     /// rebuilt from this frame's depth between cull A and cull B).
-    pub fn hi_z_curr(&self) -> &HiZ {
-        &self.hiz_curr
+    /// `None` until the SPD orchestrator (#486) allocates them.
+    pub fn hi_z_curr(&self) -> Option<&HiZ> {
+        self.hiz_curr.as_ref()
     }
 
     /// Wires a shared engine VRAM tracker (#463.5). Called once at
@@ -349,11 +354,17 @@ impl MeshletRenderStage {
     /// state for THIS stage's contribution (use sparingly).
     pub fn set_vram_tracker(&mut self, tracker: Arc<EngineVramTracker>) {
         // Account for the persistent attachments we already created
-        // in `new()` — vbuf, depth, color, plus the twin Hi-Z
-        // pyramids. Any tracker setup AFTER construction must still
-        // see those bytes.
+        // in `new()` — vbuf, depth, color. Hi-Z pyramids are lazy
+        // (`None` until the SPD orchestrator #486 turns them on);
+        // the pyramid allocation will bump the tracker on its own
+        // when it runs.
         let attachment_bytes = render_target_byte_estimate(self.size);
-        let pyramid_bytes = self.hiz_prev.byte_size() + self.hiz_curr.byte_size();
+        let pyramid_bytes = self
+            .hiz_prev
+            .as_ref()
+            .map(|p| p.byte_size())
+            .unwrap_or(0)
+            + self.hiz_curr.as_ref().map(|p| p.byte_size()).unwrap_or(0);
         tracker.add(attachment_bytes + pyramid_bytes);
         self.vram_tracker = Some(tracker);
     }

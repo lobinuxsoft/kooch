@@ -63,13 +63,27 @@ impl MeshletRenderStage {
                 | wgpu::TextureUsages::COPY_SRC,
         );
 
-        // Hi-Z pyramids must match the depth attachment dimensions —
-        // recreate both. Bumps the VRAM tracker by the new pyramid
-        // bytes minus the old (drop happens through assignment).
-        let old_pyramid_bytes = self.hiz_prev.byte_size() + self.hiz_curr.byte_size();
-        let hiz_prev = crate::hi_z::HiZ::new(device, new_size.0, new_size.1);
-        let hiz_curr = crate::hi_z::HiZ::new(device, new_size.0, new_size.1);
-        let new_pyramid_bytes = hiz_prev.byte_size() + hiz_curr.byte_size();
+        // Hi-Z pyramids stay lazy (#486) — only recreate them on
+        // resize when they were already allocated by some prior
+        // SPD-orchestrator hook.
+        let old_pyramid_bytes = self
+            .hiz_prev
+            .as_ref()
+            .map(|p| p.byte_size())
+            .unwrap_or(0)
+            + self.hiz_curr.as_ref().map(|p| p.byte_size()).unwrap_or(0);
+        let hiz_prev = if self.hiz_prev.is_some() {
+            Some(crate::hi_z::HiZ::new(device, new_size.0, new_size.1))
+        } else {
+            None
+        };
+        let hiz_curr = if self.hiz_curr.is_some() {
+            Some(crate::hi_z::HiZ::new(device, new_size.0, new_size.1))
+        } else {
+            None
+        };
+        let new_pyramid_bytes = hiz_prev.as_ref().map(|p| p.byte_size()).unwrap_or(0)
+            + hiz_curr.as_ref().map(|p| p.byte_size()).unwrap_or(0);
 
         self.vbuf_texture = vbuf_texture;
         self.vbuf_view = vbuf_view;
@@ -78,18 +92,20 @@ impl MeshletRenderStage {
         self.depth_sample_view = depth_sample_view;
         self.color_texture = color_texture;
         self.color_view = color_view;
-        // Retire the OLD pyramids into the current slot of the
-        // triple-buffer rather than dropping them inline. The next
-        // frame's render() rotates the index and clears the slot
-        // that is now 2 frames old, by which point the GPU is
-        // guaranteed to be done with them. Dropping inline would
-        // invalidate views still referenced by in-flight cmd
-        // buffers — Mesa radv catches that as "TextureView invalid".
+        // Retire the OLD pyramids (if any) into the current slot of
+        // the triple-buffer rather than dropping them inline. The
+        // next frame's render() rotates the index and clears the
+        // slot that is now 2 frames old, by which point the GPU is
+        // guaranteed to be done. Currently a no-op since the lazy
+        // pyramids are still `None`; activates when SPD (#486)
+        // turns them on.
         let retire_idx = self.frame_bind_groups_index;
-        let prev_pyramid = std::mem::replace(&mut self.hiz_prev, hiz_prev);
-        let curr_pyramid = std::mem::replace(&mut self.hiz_curr, hiz_curr);
-        self.retired_pyramids[retire_idx].push(prev_pyramid);
-        self.retired_pyramids[retire_idx].push(curr_pyramid);
+        if let Some(prev_pyramid) = std::mem::replace(&mut self.hiz_prev, hiz_prev) {
+            self.retired_pyramids[retire_idx].push(prev_pyramid);
+        }
+        if let Some(curr_pyramid) = std::mem::replace(&mut self.hiz_curr, hiz_curr) {
+            self.retired_pyramids[retire_idx].push(curr_pyramid);
+        }
         // Both pyramids are fresh — they need clear_to_far before the
         // next render_with_assets samples them in pass A.
         self.hi_z_initialized = false;
