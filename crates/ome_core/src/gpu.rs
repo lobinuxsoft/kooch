@@ -334,6 +334,11 @@ fn optional_features(adapter: &Adapter) -> wgpu::Features {
 /// Clamped against adapter-reported limits so older GPUs fall back gracefully.
 const TARGET_MAX_COMPUTE_INVOCATIONS_PER_WORKGROUP: u32 = 1024;
 const TARGET_MAX_COMPUTE_WORKGROUP_STORAGE_SIZE: u32 = 32_768;
+/// Hi-Z SPD (#486) binds 12 storage texture slots in one bind
+/// group. wgpu's default `max_storage_textures_per_shader_stage` is
+/// 4, so the SPD pipeline-layout creation rejects without raising
+/// it. Most desktop GPUs (RX 9070 XT included) advertise ≥ 16.
+const TARGET_MAX_STORAGE_TEXTURES_PER_STAGE: u32 = 16;
 
 fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
     let adapter_limits = adapter.limits();
@@ -342,6 +347,8 @@ fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
         .min(adapter_limits.max_compute_invocations_per_workgroup);
     let storage = TARGET_MAX_COMPUTE_WORKGROUP_STORAGE_SIZE
         .min(adapter_limits.max_compute_workgroup_storage_size);
+    let storage_textures = TARGET_MAX_STORAGE_TEXTURES_PER_STAGE
+        .min(adapter_limits.max_storage_textures_per_shader_stage);
 
     if invocations < TARGET_MAX_COMPUTE_INVOCATIONS_PER_WORKGROUP {
         tracing::warn!(
@@ -357,10 +364,18 @@ fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
             "adapter clamped max_compute_workgroup_storage_size; tile-based compute passes may need smaller tiles"
         );
     }
+    if storage_textures < TARGET_MAX_STORAGE_TEXTURES_PER_STAGE {
+        tracing::warn!(
+            requested = TARGET_MAX_STORAGE_TEXTURES_PER_STAGE,
+            granted = storage_textures,
+            "adapter clamped max_storage_textures_per_shader_stage; Hi-Z SPD pyramid build (#486) requires ≥ 12"
+        );
+    }
 
     wgpu::Limits {
         max_compute_invocations_per_workgroup: invocations,
         max_compute_workgroup_storage_size: storage,
+        max_storage_textures_per_shader_stage: storage_textures,
         ..wgpu::Limits::default()
     }
 }

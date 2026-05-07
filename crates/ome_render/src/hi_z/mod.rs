@@ -51,7 +51,16 @@ pub fn mip_size(width: u32, height: u32, level: u32) -> (u32, u32) {
     ((width >> shift).max(1), (height >> shift).max(1))
 }
 
-pub(crate) const MAX_MIP_COUNT: u32 = 16;
+/// SPD's bind-group layout (`hi_z_spd.wgsl`) declares slots `mip_1`
+/// through `mip_12`, capping the pyramid at 12 mip levels (max
+/// 4096² source). Slots beyond what the actual pyramid uses are
+/// bound to a dummy 1×1 texture and the shader early-outs against
+/// the `max_mip_level` constant.
+pub(crate) const MAX_MIP_COUNT: u32 = 12;
+/// SPD writes mips `1..=12` (= up to `MAX_MIP_COUNT` levels), but
+/// the shader's bind group always lists 12 storage slots. Anything
+/// past `mip_count_for(width, height)` gets bound to a dummy.
+pub(crate) const SPD_PYRAMID_SLOT_COUNT: usize = 12;
 pub(crate) const HI_Z_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 pub(crate) const WORKGROUP_SIZE: u32 = 8;
 
