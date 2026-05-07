@@ -118,11 +118,10 @@ fn single_frame_first_render_does_not_crash_with_empty_prev_pyramid() {
     let stats = stage.render_with_assets(&device, &queue, &resources, proj * view, cam);
     assert_eq!(stats.instances_uploaded, 1, "single visible cube must upload");
     assert_eq!(
-        stats.draw_calls, 3,
-        "single-pass orchestrator should report 3 logical passes per frame \
-         (cull + raster + deferred). The 2-pass primitives stay in the \
-         codebase but the orchestrator falls back to single-pass while the \
-         Mesa radv pyramid-build path is unblocked via the SPD follow-up."
+        stats.draw_calls, 6,
+        "Hi-Z 2-pass orchestrator (#486 SPD landed) should report 6 \
+         logical passes per frame (cull A + raster A + SPD pyramid build \
+         + cull B + raster B + deferred shade)."
     );
 
     // First frame: hiz_prev is fresh / uninitialised. The conservative
