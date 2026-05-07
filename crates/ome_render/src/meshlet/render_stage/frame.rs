@@ -399,6 +399,13 @@ impl MeshletRenderStage {
         // "invalid" state for the next bind group construction. The
         // submit boundary forces a hardware barrier so pass A sees a
         // stable pyramid.
+        // Clear the previous frame's bind-group arena now that any
+        // submits referencing those groups have completed (the next
+        // queue.submit waits implicitly on prior submissions). Bind
+        // groups created this frame park here so they outlive their
+        // `set_bind_group` calls (#445 Mesa radv workaround).
+        self.frame_bind_groups.clear();
+
         if !self.hi_z_initialized {
             // Two separate submits: depth clear + pyramid build. Mesa
             // radv (RX 9070 XT) needs a queue boundary between the
@@ -439,8 +446,12 @@ impl MeshletRenderStage {
                     label: Some("meshlet_hi_z_init_build_encoder"),
                 },
             );
-            self.hiz_prev
-                .init_to_far(device, &mut build_encoder, &self.depth_sample_view);
+            self.hiz_prev.init_to_far(
+                device,
+                &mut build_encoder,
+                &self.depth_sample_view,
+                Some(&mut self.frame_bind_groups),
+            );
             queue.submit(std::iter::once(build_encoder.finish()));
             self.hi_z_initialized = true;
         }
@@ -471,6 +482,7 @@ impl MeshletRenderStage {
             &scene_params,
             &hi_z_params,
             self.hiz_prev.full_view(),
+            &mut self.frame_bind_groups,
         );
         // Raster A: clear vbuf + depth, draw pass A's survivors.
         self.rasterizer.render_scene(
@@ -510,8 +522,12 @@ impl MeshletRenderStage {
         let mut build_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("meshlet_hi_z_build_encoder"),
         });
-        self.hiz_curr
-            .build_from_depth(device, &mut build_encoder, &self.depth_sample_view);
+        self.hiz_curr.build_from_depth(
+            device,
+            &mut build_encoder,
+            &self.depth_sample_view,
+            Some(&mut self.frame_bind_groups),
+        );
         queue.submit(std::iter::once(build_encoder.finish()));
 
         // Submit boundary 2: pass B + raster B + deferred. The
@@ -535,6 +551,7 @@ impl MeshletRenderStage {
             &self.scene,
             &hi_z_params,
             self.hiz_curr.full_view(),
+            &mut self.frame_bind_groups,
         );
         // Raster B: load (preserve pass-A vbuf + depth) and draw the
         // union of pass A + B. Pass A's set is re-rasterised because

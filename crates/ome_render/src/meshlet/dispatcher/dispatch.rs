@@ -500,6 +500,7 @@ impl MeshletCull {
         scene_params: &SceneCullParams,
         hi_z_params: &HiZTestParams,
         hi_z_view: &wgpu::TextureView,
+        arena: &mut Vec<wgpu::BindGroup>,
     ) {
         let total_threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
         debug_assert!(
@@ -630,6 +631,17 @@ impl MeshletCull {
         // makes that idempotent for correctness, and the overhead is
         // bounded by `count_a` extra fragment-shader invocations.
         self.mirror_count_to_indirect_args(encoder);
+
+        // Park the bind groups in the caller's arena so they outlive
+        // the encoder's submit. wgpu does not internally Arc-clone
+        // bind groups on `set_bind_group`; dropping them between
+        // record and submit makes the bound views "invalid" on Mesa
+        // radv. Caller clears the arena after the queue.submit cycle
+        // completes for this frame.
+        arena.push(extended_cull_bg);
+        arena.push(pool_bg);
+        arena.push(scene_with_hi_z_bg);
+        arena.push(group_err_bg);
     }
 
     /// Hi-Z 2-pass cull (#445), pass B. Drains
@@ -654,6 +666,7 @@ impl MeshletCull {
         scene: &MeshletScene,
         hi_z_params: &HiZTestParams,
         hi_z_view: &wgpu::TextureView,
+        arena: &mut Vec<wgpu::BindGroup>,
     ) {
         // hi_z_params for pass B targets the freshly-built pyramid;
         // the view_proj / pyramid dims may differ from pass A only
@@ -753,5 +766,10 @@ impl MeshletCull {
         // Final mirror: visible_count now reflects pass A + pass B
         // contributions, so the indirect draw picks up the full set.
         self.mirror_count_to_indirect_args(encoder);
+
+        arena.push(extended_cull_bg);
+        arena.push(pool_bg);
+        arena.push(scene_with_hi_z_bg);
+        arena.push(group_err_bg);
     }
 }

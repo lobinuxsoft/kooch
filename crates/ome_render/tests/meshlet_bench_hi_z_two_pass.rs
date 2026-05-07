@@ -205,7 +205,7 @@ fn build_rig() -> Option<BenchRig> {
                 multiview_mask: None,
             });
         }
-        hiz_prev.init_to_far(&device, &mut init_enc, &depth_sample_view);
+        hiz_prev.init_to_far(&device, &mut init_enc, &depth_sample_view, None);
         queue.submit(std::iter::once(init_enc.finish()));
     }
 
@@ -287,7 +287,7 @@ fn render_single_pass(rig: &BenchRig) {
     });
 }
 
-fn render_two_pass(rig: &mut BenchRig) {
+fn render_two_pass(rig: &mut BenchRig, arena: &mut Vec<wgpu::BindGroup>) {
     let (hiz_w, hiz_h) = rig.hiz_prev.dimensions();
     let mip_count = rig.hiz_prev.mip_count();
     let hi_z_params = HiZTestParams::new(rig.view_proj, hiz_w, hiz_h, mip_count);
@@ -307,6 +307,7 @@ fn render_two_pass(rig: &mut BenchRig) {
         &rig.scene_params,
         &hi_z_params,
         rig.hiz_prev.full_view(),
+        arena,
     );
     rig.vbuf_raster.render_scene(
         &rig.device,
@@ -321,8 +322,12 @@ fn render_two_pass(rig: &mut BenchRig) {
         0,
         true,
     );
-    rig.hiz_curr
-        .build_from_depth(&rig.device, &mut enc, &rig.depth_sample_view);
+    rig.hiz_curr.build_from_depth(
+        &rig.device,
+        &mut enc,
+        &rig.depth_sample_view,
+        Some(arena),
+    );
     rig.cull.dispatch_cull_pass_b(
         &rig.device,
         &rig.queue,
@@ -331,6 +336,7 @@ fn render_two_pass(rig: &mut BenchRig) {
         &rig.scene,
         &hi_z_params,
         rig.hiz_curr.full_view(),
+        arena,
     );
     rig.vbuf_raster.render_scene(
         &rig.device,
@@ -393,7 +399,11 @@ fn hi_z_two_pass_overhead_within_budget() {
     };
 
     let single_median = measure("single-pass", || render_single_pass(&rig));
-    let two_pass_median = measure("two-pass   ", || render_two_pass(&mut rig));
+    let mut arena: Vec<wgpu::BindGroup> = Vec::new();
+    let two_pass_median = measure("two-pass   ", || {
+        arena.clear();
+        render_two_pass(&mut rig, &mut arena);
+    });
 
     let ratio = two_pass_median / single_median;
     eprintln!(
