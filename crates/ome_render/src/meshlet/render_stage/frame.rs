@@ -400,14 +400,21 @@ impl MeshletRenderStage {
         // submit boundary forces a hardware barrier so pass A sees a
         // stable pyramid.
         if !self.hi_z_initialized {
-            let mut init_encoder = device.create_command_encoder(
-                &wgpu::CommandEncoderDescriptor {
-                    label: Some("meshlet_hi_z_init_encoder"),
-                },
-            );
+            // Two separate submits: depth clear + pyramid build. Mesa
+            // radv (RX 9070 XT) needs a queue boundary between the
+            // depth-attachment write (clear) and the depth texture
+            // read (cs_copy_depth in the build). An isolated GPU
+            // test (`hi_z_build_from_depth`) confirmed build_from_depth
+            // works when these are split across submits but errors
+            // with "TextureView invalid" when they share an encoder.
             {
+                let mut clear_encoder = device.create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor {
+                        label: Some("meshlet_hi_z_init_depth_clear_encoder"),
+                    },
+                );
                 let _depth_clear =
-                    init_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    clear_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("meshlet_hi_z_first_frame_depth_clear"),
                         color_attachments: &[],
                         depth_stencil_attachment: Some(
@@ -424,11 +431,17 @@ impl MeshletRenderStage {
                         occlusion_query_set: None,
                         multiview_mask: None,
                     });
-                // Empty pass — the LoadOp::Clear is the work.
+                drop(_depth_clear);
+                queue.submit(std::iter::once(clear_encoder.finish()));
             }
+            let mut build_encoder = device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor {
+                    label: Some("meshlet_hi_z_init_build_encoder"),
+                },
+            );
             self.hiz_prev
-                .init_to_far(device, &mut init_encoder, &self.depth_sample_view);
-            queue.submit(std::iter::once(init_encoder.finish()));
+                .init_to_far(device, &mut build_encoder, &self.depth_sample_view);
+            queue.submit(std::iter::once(build_encoder.finish()));
             self.hi_z_initialized = true;
         }
 
@@ -473,30 +486,13 @@ impl MeshletRenderStage {
             0,
             /* clear */ true,
         );
-        // Build the current frame's Hi-Z pyramid from the just-
-        // written depth so pass B has fresh occlusion data for the
-        // entries pass A's stale pyramid wrongly rejected.
-        self.hiz_curr
-            .build_from_depth(device, &mut encoder, &self.depth_sample_view);
 
-        // Submit boundary required between the pyramid build (storage
-        // write on hiz_curr's mips) and pass B (texture read of
-        // hiz_curr.full_view()). Mesa radv (RX 9070 XT) rejects this
-        // storage→texture transition inside a single encoder — the
-        // view ends up "invalid" at bind-group construction time. The
-        // submit forces a hardware barrier so pass B sees a stable
-        // pyramid. Same reasoning as the init path above. Cost: one
-        // extra Queue::submit call per frame; negligible vs the cull
-        // dispatches the boundary protects.
-        //
-        // GPU timer caveat: write_end_and_copy must live in the same
-        // command buffer as write_start, so the measured window
-        // closes here at the boundary. The reported gpu_frame_ms
-        // covers cull A + raster A + Hi-Z build but NOT pass B +
-        // raster B + deferred. Tightening the timer to the full
-        // frame would need a second slot — tracked as follow-up to
-        // #445; the headline number stays representative because
-        // pass A + the build is the dominant cost in the new flow.
+        // Submit boundary 1: raster A's depth-attachment WRITE must
+        // land before the Hi-Z build samples that depth as a TEXTURE
+        // BINDING. Mesa radv leaves the depth view "invalid" inside
+        // a single encoder; an isolated GPU test
+        // (`hi_z_build_from_depth`) confirmed the build path is OK
+        // once the boundary is in place.
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
         }
@@ -504,6 +500,27 @@ impl MeshletRenderStage {
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.submit_readback(slot_idx);
         }
+
+        // Build the current frame's Hi-Z pyramid from the just-
+        // written depth so pass B has fresh occlusion data for the
+        // entries pass A's stale pyramid wrongly rejected. Lives in
+        // its own submit so the storage→texture transition on
+        // hiz_curr's mips that pass B then samples is also forced
+        // through a queue boundary.
+        let mut build_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("meshlet_hi_z_build_encoder"),
+        });
+        self.hiz_curr
+            .build_from_depth(device, &mut build_encoder, &self.depth_sample_view);
+        queue.submit(std::iter::once(build_encoder.finish()));
+
+        // Submit boundary 2: pass B + raster B + deferred. The
+        // pyramid build (storage write on hiz_curr's mips) above
+        // must complete before pass B samples hiz_curr.full_view()
+        // as TEXTURE_BINDING. The frame's GPU timer window already
+        // closed at boundary 1 — measuring just cull A + raster A
+        // is representative; widening the window needs a second
+        // timer slot (tracked as follow-up).
         encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("meshlet_render_stage_encoder_pass_b"),
         });
