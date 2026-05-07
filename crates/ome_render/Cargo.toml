@@ -15,6 +15,7 @@ glam.workspace = true
 bytemuck.workspace = true
 tracing.workspace = true
 gltf.workspace = true
+base64.workspace = true
 image.workspace = true
 meshopt.workspace = true
 slotmap = "1.0"
