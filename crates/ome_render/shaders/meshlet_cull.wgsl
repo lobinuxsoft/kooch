@@ -172,10 +172,11 @@ fn occluded_by_hi_z(center_world: vec3<f32>, radius: f32) -> bool {
     let py = clamp(u32(uv.y * f32(mip_h)), 0u, mip_h - 1u);
 
     let max_depth = textureLoad(hi_z_pyramid, vec2<u32>(px, py), i32(mip)).r;
-    // Sphere's closest-to-camera depth in NDC. Conservative: skip the
-    // radius extension and use the centre depth — gives slightly fewer
-    // cull successes but never false-positives.
-    let sphere_min_depth = ndc.z;
+    // Conservative: shift the centre depth toward the camera by the
+    // sphere's depth extent (≈ radius / clip.w in NDC). Without
+    // this, a meshlet whose centre depth equals the tile's max
+    // gets marginally rejected on floating-point round-off.
+    let sphere_min_depth = ndc.z - radius / clip.w;
     return sphere_min_depth > max_depth;
 }
 
@@ -700,7 +701,16 @@ fn occluded_by_hi_z_atomic(center_world: vec3<f32>, radius: f32) -> bool {
     let px = clamp(u32(uv.x * f32(mip_w)), 0u, mip_w - 1u);
     let py = clamp(u32(uv.y * f32(mip_h)), 0u, mip_h - 1u);
     let max_depth = textureLoad(hi_z_pyramid_atomic, vec2<u32>(px, py), i32(mip)).r;
-    return ndc.z > max_depth;
+    // Conservative test: shift the centre depth toward the camera by
+    // the sphere's depth extent (≈ radius / clip.w in NDC). Without
+    // this, a meshlet whose centre depth equals the tile's max
+    // (e.g. front+back faces of the same skull falling in the same
+    // tile) gets marginally rejected on floating-point round-off.
+    // Holes in the rendered skull pre-#486 came from exactly this
+    // case (the SPD path made the cull pipeline actually fire for
+    // the first time and surfaced the latent conservatism bug).
+    let nearest_depth = ndc.z - radius / clip.w;
+    return nearest_depth > max_depth;
 }
 
 fn run_cull_scene_pool_atomic_hi_z(thread_id: u32) {
