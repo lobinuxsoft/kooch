@@ -411,30 +411,22 @@ impl MeshletRenderStage {
             self.gpu_timers.write_start(&mut encoder);
         }
 
-        // ── Single-pass cull (#445 follow-up) ──────────────────────
-        // The Hi-Z 2-pass orchestration this PR introduced (cull A
-        // vs hiz_prev → raster A → build hiz_curr → cull B vs
-        // hiz_curr → raster B) hits a Mesa radv (RX 9070 XT) bug in
-        // the per-mip pyramid build path: the storage-write →
-        // texture-read transition between mip[k] write and mip[k+1]
-        // sample inside the same encoder leaves the views "invalid"
-        // for the next bind-group construction.
-        //
-        // Bevy avoids this by porting AMD's FidelityFX Single-Pass
-        // Downsampler (SPD), which writes every mip in ONE compute
-        // dispatch via workgroup memory + atomics. No per-mip bind
-        // groups, no transitions to invalidate. That port is the
-        // proper fix and is tracked as a follow-up issue.
-        //
-        // Until SPD lands, the orchestrator falls back to the
-        // single-pass scene-pool atomic dispatch — the same path
-        // that production was on before this PR. The 2-pass
-        // primitives (`dispatch_scene_pool_atomic_hi_z`,
-        // `dispatch_cull_pass_b`, the culled SSBO + cull_pass_b
-        // shader entry) all stay in the codebase and are exercised
-        // by `tests/meshlet_bench_hi_z_two_pass.rs` and
-        // `tests/meshlet_hi_z_two_pass.rs`; only this orchestrator
-        // call site is gated.
+        // ── Single-pass cull (#486 fallback while AABB cull port lands) ──
+        // The Hi-Z 2-pass orchestrator was wired up here in PR #487
+        // and produced the right numbers in tests + bench, but the
+        // sphere-bounds occlusion test in `occluded_by_hi_z_atomic`
+        // turned out to be too imprecise for production use — close
+        // models showed silhouette-edge holes that no amount of
+        // conservative-shift tuning could close cleanly. The proper
+        // fix is to port Bevy's AABB 8-corner projection +
+        // `occlusion_cull_screen_aabb` 16-tap sample, which means
+        // the engine has to migrate to reversed-Z first
+        // (Bevy's algorithm assumes that depth orientation). That's
+        // the scope of the follow-up issue; until it lands, the
+        // orchestrator falls back to single-pass and the SPD
+        // primitives + tests stay in the codebase, exercised by
+        // `tests/hi_z_build_from_depth.rs` and
+        // `tests/meshlet_bench_hi_z_two_pass.rs`.
         self.cull.dispatch_scene_pool_atomic(
             device,
             queue,
@@ -457,9 +449,6 @@ impl MeshletRenderStage {
             0,
             /* clear */ true,
         );
-        // Editor / game tools insert MeshletDebugMode when they want to
-        // override the production shading path. Absence = Off (no-op
-        // visual), so headless tests never have to register it.
         let debug_mode = resources
             .get::<MeshletDebugMode>()
             .copied()
@@ -480,15 +469,10 @@ impl MeshletRenderStage {
             debug_mode,
         );
 
-        // Close the GPU timing window AFTER the deferred shade pass
-        // but BEFORE submit, so the resolve + copy land in the same
-        // command buffer.
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
         }
-
         queue.submit(std::iter::once(encoder.finish()));
-
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.submit_readback(slot_idx);
         }
@@ -503,9 +487,10 @@ impl MeshletRenderStage {
             })
             .count() as u32;
 
-        // Single-pass orchestrator (#445 fallback while SPD is in
-        // flight): cull + vbuf raster + deferred shade. Same draw
-        // count as the pre-2-pass baseline.
+        // Single-pass orchestrator: cull + vbuf raster + deferred
+        // shade. The 2-pass + SPD path stays in the codebase for
+        // when the AABB cull port from Bevy lands (depends on
+        // engine-wide reversed-Z migration first).
         let meshlet_draw_calls = if instances.is_empty() { 0 } else { 3 };
 
         MeshletRenderStats {

@@ -120,9 +120,9 @@ fn single_frame_first_render_does_not_crash_with_empty_prev_pyramid() {
     assert_eq!(
         stats.draw_calls, 3,
         "single-pass orchestrator should report 3 logical passes per frame \
-         (cull + raster + deferred). The 2-pass primitives stay in the \
-         codebase but the orchestrator falls back to single-pass while the \
-         Mesa radv pyramid-build path is unblocked via the SPD follow-up."
+         (cull + raster + deferred). The 2-pass primitives (Hi-Z dispatchers, \
+         SPD pyramid build) stay in the codebase but the orchestrator falls \
+         back to single-pass while the AABB cull port from Bevy is in flight."
     );
 
     // First frame: hiz_prev is fresh / uninitialised. The conservative

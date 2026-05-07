@@ -205,8 +205,12 @@ fn build_rig() -> Option<BenchRig> {
                 multiview_mask: None,
             });
         }
-        hiz_prev.init_to_far(&device, &mut init_enc, &depth_sample_view, None);
+        let mut init_arena: Vec<wgpu::BindGroup> = Vec::new();
+        hiz_prev.init_to_far(&device, &mut init_enc, &depth_sample_view, &mut init_arena);
         queue.submit(std::iter::once(init_enc.finish()));
+        // Keep init_arena alive across submit by leaking it for the
+        // bench's lifetime. The bench drops at end-of-test anyway.
+        std::mem::forget(init_arena);
     }
 
     let cam = Vec3::new(0.0, 0.0, 3.0);
@@ -326,7 +330,7 @@ fn render_two_pass(rig: &mut BenchRig, arena: &mut Vec<wgpu::BindGroup>) {
         &rig.device,
         &mut enc,
         &rig.depth_sample_view,
-        Some(arena),
+        arena,
     );
     rig.cull.dispatch_cull_pass_b(
         &rig.device,

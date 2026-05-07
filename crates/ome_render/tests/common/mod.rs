@@ -38,10 +38,16 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     }))
     .ok()?;
 
+    // Hi-Z SPD pyramid build (#486) needs 12 storage texture slots
+    // in one bind group; default wgpu limit is 4. Raise it here
+    // mirroring the production GpuContext setup.
+    let mut limits = wgpu::Limits::default();
+    limits.max_storage_textures_per_shader_stage = 16
+        .min(adapter.limits().max_storage_textures_per_shader_stage);
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("ome_render_test_device"),
         required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::default(),
+        required_limits: limits,
         memory_hints: wgpu::MemoryHints::default(),
         trace: wgpu::Trace::Off,
         experimental_features: wgpu::ExperimentalFeatures::default(),

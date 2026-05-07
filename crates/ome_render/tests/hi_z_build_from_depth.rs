@@ -86,7 +86,8 @@ fn build_from_depth_roundtrip_with_cleared_depth_attachment() {
     let mut build_enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("test_hi_z_build_enc"),
     });
-    hi_z.build_from_depth(&device, &mut build_enc, &depth_sample_view, None);
+    let mut arena: Vec<wgpu::BindGroup> = Vec::new();
+    hi_z.build_from_depth(&device, &mut build_enc, &depth_sample_view, &mut arena);
     queue.submit(std::iter::once(build_enc.finish()));
 
     let _ = device.poll(wgpu::PollType::Wait {
