@@ -172,11 +172,13 @@ fn occluded_by_hi_z(center_world: vec3<f32>, radius: f32) -> bool {
     let py = clamp(u32(uv.y * f32(mip_h)), 0u, mip_h - 1u);
 
     let max_depth = textureLoad(hi_z_pyramid, vec2<u32>(px, py), i32(mip)).r;
-    // Conservative: shift the centre depth toward the camera by the
-    // sphere's depth extent (≈ radius / clip.w in NDC), with 2×
-    // safety factor for floating-point drift + tile-boundary spread.
-    let sphere_min_depth = ndc.z - 2.0 * radius / clip.w;
-    return sphere_min_depth > max_depth;
+    // Reversed-Z (#488): closer to cam = larger ndc.z. The legacy
+    // pyramid uses `cs_reduce_max` so its tile value under reversed
+    // depth = the CLOSEST fragment in the tile. Conservative test:
+    // sphere's NEAREST ndc.z (= centre + radius extent) is BEHIND
+    // (smaller than) the tile's nearest → occluded.
+    let sphere_nearest_depth = ndc.z + 2.0 * radius / clip.w;
+    return sphere_nearest_depth < max_depth;
 }
 
 // Naga's pipeline-layout validation walks the call graph of each entry
@@ -676,49 +678,159 @@ fn cs_cull_scene_pool_atomic(@builtin(global_invocation_id) gid: vec3<u32>) {
 @group(2) @binding(2) var<uniform> hi_z_params_atomic: HiZParams;
 @group(2) @binding(3) var hi_z_pyramid_atomic: texture_2d<f32>;
 
-// Same body as `occluded_by_hi_z` but bound to the scene-pool path's
-// group(2) Hi-Z slots. Kept duplicated rather than parameterised
-// because WGSL has no template / generic over storage bindings.
-fn occluded_by_hi_z_atomic(center_world: vec3<f32>, radius: f32) -> bool {
-    let clip = hi_z_params_atomic.view_proj * vec4<f32>(center_world, 1.0);
-    if (clip.w <= radius) {
+// AABB-based occlusion test ported from Bevy's
+// `crates/bevy_pbr/src/meshlet/meshlet_cull_shared.wgsl`
+// (`should_occlusion_cull_aabb` family). Sphere-bounds + small-angle
+// approximation produced silhouette holes on close-up models in
+// PR #487 that no amount of conservative-shift tuning could close
+// cleanly; AABB 8-corner projection (zeux's algorithm,
+// https://zeux.io/2023/01/12/approximate-projected-bounds/) plus a
+// 16-tap min sample is the standard fix.
+//
+// Reversed-Z (#488): the depth pyramid stores the FARTHEST fragment
+// per tile as the SMALLEST ndc.z value (because near=1, far=0). The
+// conservative occlusion test becomes "is the closest point of the
+// AABB (= max ndc.z in reversed-Z) BEHIND the farthest tile fragment
+// (= tile min)?" → `aabb.max.z <= tile_min`.
+
+struct ScreenAabb {
+    min: vec3<f32>,
+    max: vec3<f32>,
+}
+
+fn min8_atomic(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>, e: vec3<f32>, f: vec3<f32>, g: vec3<f32>, h: vec3<f32>) -> vec3<f32> {
+    return min(min(min(a, b), min(c, d)), min(min(e, f), min(g, h)));
+}
+
+fn max8_atomic(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>, e: vec3<f32>, f: vec3<f32>, g: vec3<f32>, h: vec3<f32>) -> vec3<f32> {
+    return max(max(max(a, b), max(c, d)), max(max(e, f), max(g, h)));
+}
+
+fn min8_4_atomic(a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4<f32>, f: vec4<f32>, g: vec4<f32>, h: vec4<f32>) -> vec4<f32> {
+    return min(min(min(a, b), min(c, d)), min(min(e, f), min(g, h)));
+}
+
+// Projects an AABB's 8 corners to clip space, divides by w, and
+// returns the screen-space [0,1] rectangle + min/max NDC depth.
+// Returns `false` when the camera lies INSIDE the AABB (one or more
+// corners cross the near plane), in which case occlusion culling
+// must NOT happen — the perspective divide would flip signs.
+fn project_aabb_atomic(
+    clip_from_local: mat4x4<f32>,
+    near: f32,
+    aabb_min_local: vec3<f32>,
+    aabb_max_local: vec3<f32>,
+    out: ptr<function, ScreenAabb>,
+) -> bool {
+    let extent = aabb_max_local - aabb_min_local;
+    let sx = clip_from_local * vec4<f32>(extent.x, 0.0, 0.0, 0.0);
+    let sy = clip_from_local * vec4<f32>(0.0, extent.y, 0.0, 0.0);
+    let sz = clip_from_local * vec4<f32>(0.0, 0.0, extent.z, 0.0);
+
+    let p0 = clip_from_local * vec4<f32>(aabb_min_local, 1.0);
+    let p1 = p0 + sz;
+    let p2 = p0 + sy;
+    let p3 = p2 + sz;
+    let p4 = p0 + sx;
+    let p5 = p4 + sz;
+    let p6 = p4 + sy;
+    let p7 = p6 + sz;
+
+    let depth = min8_4_atomic(p0, p1, p2, p3, p4, p5, p6, p7).w;
+    if (depth < near) {
         return false;
     }
-    let ndc = clip.xyz / clip.w;
-    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0) {
-        return false;
+
+    let dp0 = p0.xyz / p0.w;
+    let dp1 = p1.xyz / p1.w;
+    let dp2 = p2.xyz / p2.w;
+    let dp3 = p3.xyz / p3.w;
+    let dp4 = p4.xyz / p4.w;
+    let dp5 = p5.xyz / p5.w;
+    let dp6 = p6.xyz / p6.w;
+    let dp7 = p7.xyz / p7.w;
+    let mn = min8_atomic(dp0, dp1, dp2, dp3, dp4, dp5, dp6, dp7);
+    let mx = max8_atomic(dp0, dp1, dp2, dp3, dp4, dp5, dp6, dp7);
+    var vaabb = vec4<f32>(mn.xy, mx.xy);
+    // ndc → texture UV: rescale to [0, 1] and flip Y.
+    vaabb = vaabb.xwzy * vec4<f32>(0.5, -0.5, 0.5, -0.5) + 0.5;
+    (*out).min = vec3<f32>(vaabb.xy, mn.z);
+    (*out).max = vec3<f32>(vaabb.zw, mx.z);
+    return true;
+}
+
+fn sample_hzb_row_atomic(sx: vec4<u32>, sy: u32, mip: i32) -> f32 {
+    let a = textureLoad(hi_z_pyramid_atomic, vec2(sx.x, sy), mip).x;
+    let b = textureLoad(hi_z_pyramid_atomic, vec2(sx.y, sy), mip).x;
+    let c = textureLoad(hi_z_pyramid_atomic, vec2(sx.z, sy), mip).x;
+    let d = textureLoad(hi_z_pyramid_atomic, vec2(sx.w, sy), mip).x;
+    return min(min(a, b), min(c, d));
+}
+
+fn sample_hzb_atomic(smin: vec2<u32>, smax: vec2<u32>, mip: i32) -> f32 {
+    let texel = vec4<u32>(0u, 1u, 2u, 3u);
+    let sx = min(smin.x + texel, smax.xxxx);
+    let sy = min(smin.y + texel, smax.yyyy);
+    // 4×4 = 16-tap: covers the AABB's screen footprint at the chosen
+    // mip with conservative neighbour overlap.
+    let a = sample_hzb_row_atomic(sx, sy.x, mip);
+    let b = sample_hzb_row_atomic(sx, sy.y, mip);
+    let c = sample_hzb_row_atomic(sx, sy.z, mip);
+    let d = sample_hzb_row_atomic(sx, sy.w, mip);
+    return min(min(a, b), min(c, d));
+}
+
+fn occlusion_cull_screen_aabb_atomic(aabb: ScreenAabb) -> bool {
+    let hzb_size = hi_z_params_atomic.hi_z_size;
+    let aabb_min = aabb.min.xy * hzb_size;
+    let aabb_max = aabb.max.xy * hzb_size;
+
+    let min_texel = vec2<u32>(max(aabb_min, vec2<f32>(0.0)));
+    let max_texel = vec2<u32>(min(aabb_max, hzb_size - 1.0));
+    let size = max_texel - min_texel;
+    let max_size = max(size.x, size.y);
+
+    // firstLeadingBit(0) wraps to ~0u; +1 then -2u rolls the
+    // overflow into the small-mip case the 4×4 tap already covers.
+    var mip = max(firstLeadingBit(max_size) + 1u, 2u) - 2u;
+    if (any((max_texel >> vec2(mip)) > (min_texel >> vec2(mip)) + 3u)) {
+        mip += 1u;
     }
-    let uv = vec2<f32>((ndc.x + 1.0) * 0.5, (1.0 - ndc.y) * 0.5);
-    let sphere_pixel_radius = max(
-        radius / clip.w * hi_z_params_atomic.hi_z_size.x * 0.5,
-        1.0,
-    );
-    // Pick a mip whose ONE tile covers the sphere, then 2×2-tap to
-    // cover the case where the sphere straddles a tile boundary.
-    // Without the 2×2 tap, a meshlet that lands between tiles can
-    // sample only the FAR tile and get marginally rejected when the
-    // adjacent NEAR tile would have kept it.
-    let mip_f = ceil(log2(sphere_pixel_radius));
-    let mip = clamp(u32(mip_f), 0u, hi_z_params_atomic.hi_z_mip_count - 1u);
-    let mip_w = max(u32(hi_z_params_atomic.hi_z_size.x) >> mip, 1u);
-    let mip_h = max(u32(hi_z_params_atomic.hi_z_size.y) >> mip, 1u);
-    let px = clamp(u32(uv.x * f32(mip_w)), 0u, mip_w - 1u);
-    let py = clamp(u32(uv.y * f32(mip_h)), 0u, mip_h - 1u);
-    let px1 = min(px + 1u, mip_w - 1u);
-    let py1 = min(py + 1u, mip_h - 1u);
-    let d00 = textureLoad(hi_z_pyramid_atomic, vec2<u32>(px,  py),  i32(mip)).r;
-    let d10 = textureLoad(hi_z_pyramid_atomic, vec2<u32>(px1, py),  i32(mip)).r;
-    let d01 = textureLoad(hi_z_pyramid_atomic, vec2<u32>(px,  py1), i32(mip)).r;
-    let d11 = textureLoad(hi_z_pyramid_atomic, vec2<u32>(px1, py1), i32(mip)).r;
-    let max_depth = max(max(d00, d10), max(d01, d11));
-    // Conservative test: shift the centre depth toward the camera by
-    // the sphere's depth extent. `radius / clip.w` is a small-angle
-    // approximation; multiply by 2 to absorb floating-point drift +
-    // the depth divergence between sphere centre and farthest sphere
-    // point in NDC for spheres whose silhouette stretches across mip
-    // tile boundaries.
-    let nearest_depth = ndc.z - 2.0 * radius / clip.w;
-    return nearest_depth > max_depth;
+    mip = min(mip, hi_z_params_atomic.hi_z_mip_count - 1u);
+
+    let smin = min_texel >> vec2<u32>(mip);
+    let smax = max_texel >> vec2<u32>(mip);
+
+    let curr_depth = sample_hzb_atomic(smin, smax, i32(mip));
+    // Reversed-Z conservative test: closest point of AABB (max ndc.z)
+    // is BEHIND tile's farthest fragment (min sample) → occluded.
+    return aabb.max.z <= curr_depth;
+}
+
+// AABB-based occlusion entry point used by pass A + pass B in the
+// scene-pool 2-pass cull. `world_from_local = inst.transform`,
+// `clip_from_world = hi_z_params_atomic.view_proj`.
+fn occluded_by_hi_z_atomic(
+    world_from_local: mat4x4<f32>,
+    aabb_min_local: vec3<f32>,
+    aabb_max_local: vec3<f32>,
+) -> bool {
+    let projection = hi_z_params_atomic.view_proj;
+    // Bevy's near-plane extraction handles ortho vs perspective; under
+    // reversed-Z perspective the reading is still proj[3][2].
+    var near: f32;
+    if (projection[3][3] == 1.0) {
+        near = projection[3][2] / projection[2][2];
+    } else {
+        near = projection[3][2];
+    }
+
+    let clip_from_local = projection * world_from_local;
+    var screen_aabb = ScreenAabb(vec3<f32>(0.0), vec3<f32>(0.0));
+    if (project_aabb_atomic(clip_from_local, near, aabb_min_local, aabb_max_local, &screen_aabb)) {
+        return occlusion_cull_screen_aabb_atomic(screen_aabb);
+    }
+    return false;
 }
 
 fn run_cull_scene_pool_atomic_hi_z(thread_id: u32) {
@@ -801,7 +913,7 @@ fn run_cull_scene_pool_atomic_hi_z(thread_id: u32) {
 
     let packed = (instance_id << 16u) | (global_meshlet_idx & 0xffffu);
 
-    if (occluded_by_hi_z_atomic(world_center, m.bounding_radius)) {
+    if (occluded_by_hi_z_atomic(inst.transform, m.aabb_min, m.aabb_max)) {
         // Hi-Z reject: defer to pass B with this frame's pyramid.
         let slot = atomicAdd(&culled_count, 1u);
         culled_meshlets[slot] = packed;
@@ -852,7 +964,7 @@ fn run_cull_pass_b(thread_id: u32) {
     let m = pool_meshlets[global_meshlet_idx];
 
     let world_center = (inst.transform * vec4<f32>(m.bounds_center, 1.0)).xyz;
-    if (occluded_by_hi_z_atomic(world_center, m.bounding_radius)) {
+    if (occluded_by_hi_z_atomic(inst.transform, m.aabb_min, m.aabb_max)) {
         // Still occluded against this frame's pyramid → drop.
         return;
     }

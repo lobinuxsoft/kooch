@@ -344,10 +344,14 @@ fn reduce_load_mip_6(tex: vec2u) -> f32 {
     ));
 }
 
-// Max-reduce: keep the FARTHEST depth per tile so the conservative
-// occlusion test (`meshlet_centre_depth > tile_max`) is exact.
+// Min-reduce under reversed-Z (#488): NDC depth 1 = near, 0 = far,
+// so the FARTHEST fragment has the SMALLEST depth value. The Hi-Z
+// conservative occlusion test on a reversed-Z pyramid is
+// `aabb.max.z <= tile_min` — meshlet's nearest depth (= max ndc.z
+// in reversed-Z) lies behind the tile's farthest fragment (= tile
+// min). `min` keeps the right value.
 fn reduce_4(v: vec4f) -> f32 {
-    return max(max(v.x, v.y), max(v.z, v.w));
+    return min(min(v.x, v.y), min(v.z, v.w));
 }
 
 // Returns the next power of two of x. If x is a power of two,

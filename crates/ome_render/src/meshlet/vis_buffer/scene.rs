@@ -78,7 +78,7 @@ impl MeshletVisRasterizer {
             wgpu::LoadOp::Load
         };
         let depth_load = if clear {
-            wgpu::LoadOp::Clear(1.0)
+            wgpu::LoadOp::Clear(0.0)
         } else {
             wgpu::LoadOp::Load
         };
