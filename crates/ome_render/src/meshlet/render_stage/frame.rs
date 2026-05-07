@@ -304,6 +304,35 @@ impl MeshletRenderStage {
     /// `visible_meshlets` buffer is grown on demand to fit the
     /// scene's worst-case (instances × max_meshlets/mesh) thread
     /// count.
+    ///
+    /// # Draw-call accounting (#492)
+    ///
+    /// `MeshletRenderStats::draw_calls` reports **only the meshlet
+    /// stage's contribution**:
+    /// - `0` when the ECS query yields no instances (early return below
+    ///   skips both the cull dispatch and every raster / deferred
+    ///   submit).
+    /// - `4` on the atomic R64 vbuf path (#493): cull + clear + raster
+    ///   + deferred shade, all single-pass.
+    /// - `6` on the legacy R32 + Hi-Z 2-pass path: cull A + raster A +
+    ///   SPD pyramid build + cull B + raster B + deferred shade.
+    ///
+    /// The editor surface adds 3 fixed passes (sky background +
+    /// viewport blit + egui paint) outside this stage; the perf-HUD
+    /// `Draw calls / frame` field sums both contributions. An empty
+    /// scene therefore reports `3`, not `0` — that is the editor base,
+    /// not a leak.
+    ///
+    /// # Visibility filtering (#492)
+    ///
+    /// `MeshRenderer.visible == false` is filtered upstream at
+    /// [`MeshletPipeline::collect_scene_instances`], so an invisible
+    /// entity never enters the `Vec<MeshInstance>` and never reaches
+    /// the cull dispatch. Same filter runs in
+    /// [`MeshletPipeline::collect_referenced_guids`] so an invisible
+    /// mesh is also not pulled into the GPU pool. There is no
+    /// per-instance visibility flag inside the cull shader because the
+    /// upstream filter makes one redundant.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
