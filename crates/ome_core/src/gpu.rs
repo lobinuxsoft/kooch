@@ -326,7 +326,47 @@ fn optional_features(adapter: &Adapter) -> wgpu::Features {
     {
         features |= wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
     }
+    // #493 — Bevy-style atomic R64 visibility buffer requires three
+    // interdependent features (you cannot atomicMax a u64 storage
+    // texture without int64 in the shader, and you cannot store the
+    // u64 atomic at all without TEXTURE_INT64_ATOMIC). Request the
+    // bundle as all-or-nothing; the meshlet stage falls back to the
+    // legacy R32Uint vbuf when any of the three is missing.
+    let vbuf64 = vbuf64_features();
+    if adapter.features().contains(vbuf64) {
+        features |= vbuf64;
+        tracing::info!(
+            "vbuf64 features available — atomic R64 visibility buffer path enabled \
+             (TEXTURE_INT64_ATOMIC + SHADER_INT64 + SHADER_INT64_ATOMIC_MIN_MAX)"
+        );
+    } else {
+        let missing = vbuf64 - adapter.features();
+        tracing::info!(
+            ?missing,
+            "vbuf64 features unavailable — meshlet visibility buffer will use R32Uint fallback \
+             (coplanar meshlets may z-fight)"
+        );
+    }
     features
+}
+
+/// Returns the feature bundle required for the Bevy-style atomic R64
+/// visibility buffer (#493). All four flags must be present together;
+/// any one missing forces the legacy `R32Uint` fallback path in the
+/// meshlet render stage.
+///
+/// - `TEXTURE_ATOMIC` gates `StorageTextureAccess::Atomic` for any
+///   format (the validation error message names
+///   `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` but the actual gate is
+///   `TEXTURE_ATOMIC` in wgpu 29).
+/// - `TEXTURE_INT64_ATOMIC` adds the R64 format on top.
+/// - `SHADER_INT64` enables `u64` in the shader.
+/// - `SHADER_INT64_ATOMIC_MIN_MAX` enables `textureAtomicMax` on `u64`.
+pub fn vbuf64_features() -> wgpu::Features {
+    wgpu::Features::TEXTURE_ATOMIC
+        | wgpu::Features::TEXTURE_INT64_ATOMIC
+        | wgpu::Features::SHADER_INT64
+        | wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX
 }
 
 /// Targets from wgpu capabilities audit §C.1: SSAO tiles (8×8×16 = 1024 invocations)
@@ -339,6 +379,12 @@ const TARGET_MAX_COMPUTE_WORKGROUP_STORAGE_SIZE: u32 = 32_768;
 /// 4, so the SPD pipeline-layout creation rejects without raising
 /// it. Most desktop GPUs (RX 9070 XT included) advertise ≥ 16.
 const TARGET_MAX_STORAGE_TEXTURES_PER_STAGE: u32 = 16;
+/// The atomic R64 visibility-buffer raster pipeline (#493) uses bind
+/// groups 0..4 (camera, meshlet pool, visible_meshlets, instances,
+/// vbuf64). wgpu's default `max_bind_groups` is 4 (group indices 0..3),
+/// so the BGL creation rejects without raising it. RDNA 2+ desktop /
+/// handheld + DX12 + Metal all advertise ≥ 8.
+const TARGET_MAX_BIND_GROUPS: u32 = 5;
 
 fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
     let adapter_limits = adapter.limits();
@@ -349,6 +395,7 @@ fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
         .min(adapter_limits.max_compute_workgroup_storage_size);
     let storage_textures = TARGET_MAX_STORAGE_TEXTURES_PER_STAGE
         .min(adapter_limits.max_storage_textures_per_shader_stage);
+    let bind_groups = TARGET_MAX_BIND_GROUPS.min(adapter_limits.max_bind_groups);
 
     if invocations < TARGET_MAX_COMPUTE_INVOCATIONS_PER_WORKGROUP {
         tracing::warn!(
@@ -371,11 +418,19 @@ fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
             "adapter clamped max_storage_textures_per_shader_stage; Hi-Z SPD pyramid build (#486) requires ≥ 12"
         );
     }
+    if bind_groups < TARGET_MAX_BIND_GROUPS {
+        tracing::warn!(
+            requested = TARGET_MAX_BIND_GROUPS,
+            granted = bind_groups,
+            "adapter clamped max_bind_groups; atomic R64 vbuf raster (#493) requires ≥ 5"
+        );
+    }
 
     wgpu::Limits {
         max_compute_invocations_per_workgroup: invocations,
         max_compute_workgroup_storage_size: storage,
         max_storage_textures_per_shader_stage: storage_textures,
+        max_bind_groups: bind_groups,
         ..wgpu::Limits::default()
     }
 }

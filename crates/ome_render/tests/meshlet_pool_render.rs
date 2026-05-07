@@ -119,6 +119,7 @@ fn three_distinct_meshes_render_in_single_cull_dispatch() {
                 MaterialParams::new([0.2, 0.6, 1.0, 1.0], 0.0, 0.5, 0.0),
                 MaterialParams::new([0.3, 1.0, 0.4, 1.0], 0.0, 0.5, 0.0),
             ],
+            ..Default::default()
         },
     );
 

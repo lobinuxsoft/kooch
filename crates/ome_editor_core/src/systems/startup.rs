@@ -7,6 +7,7 @@ use ome_core::power::{self, PowerProfile};
 use ome_core::raw_event::RawEventHandler;
 use ome_core::resource::Resources;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
+use ome_render::Vbuf64Support;
 use ome_render::meshlet::{
     MeshletBlit, MeshletDebugMode, MeshletLodSettings, MeshletRenderStage,
     MeshletRenderStageConfig,
@@ -63,10 +64,12 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         INITIAL_VIEWPORT_SIZE,
     );
 
+    let vbuf64 = Vbuf64Support::detect(gpu.device());
     let mut meshlet_stage = MeshletRenderStage::new(
         gpu.device(),
         MeshletRenderStageConfig {
             size: INITIAL_VIEWPORT_SIZE,
+            vbuf64,
             ..Default::default()
         },
     );

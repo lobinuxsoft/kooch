@@ -94,6 +94,7 @@ fn single_frame_first_render_does_not_crash_with_empty_prev_pyramid() {
             instance_capacity: 8,
             meshlet_capacity: 4096,
             materials: vec![MaterialParams::new([1.0, 1.0, 1.0, 1.0], 0.0, 0.5, 0.0)],
+            ..Default::default()
         },
     );
     stage.ensure_gpu_mesh(&device, cube_guid, &cube_meshlets);
@@ -161,6 +162,7 @@ fn two_pass_visible_set_stays_stable_across_frames_in_static_scene() {
             // reserve the worst-case stride headroom across the pool.
             meshlet_capacity: 4096,
             materials: vec![MaterialParams::new([0.6, 0.6, 0.6, 1.0], 0.0, 0.5, 0.0)],
+            ..Default::default()
         },
     );
     stage.ensure_gpu_mesh(&device, cube_guid, &cube_meshlets);

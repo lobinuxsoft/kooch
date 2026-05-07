@@ -49,10 +49,12 @@ use super::gpu_timers::MeshletGpuTimers;
 use super::pool::GpuGlobalMeshPool;
 use super::scene::MeshletScene;
 use super::system::MeshletPipeline;
+use super::vbuf64_stage::Vbuf64Stage;
 use super::vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
 use super::DEFAULT_MAX_TRIANGLES;
 use crate::hi_z::HiZ;
 use crate::perf::EngineVramTracker;
+use crate::vbuf64::Vbuf64Support;
 
 /// Construction parameters for [`MeshletRenderStage`]. All sizes are
 /// upper bounds — the actual per-frame instance count comes from the
@@ -71,6 +73,12 @@ pub struct MeshletRenderStageConfig {
     /// Initial material pool. Must be non-empty (wgpu rejects
     /// zero-sized storage buffer bindings).
     pub materials: Vec<MaterialParams>,
+    /// Runtime decision of whether the atomic R64 visibility-buffer
+    /// path (#493) is available. When `is_supported()` returns true
+    /// the stage owns a [`Vbuf64Stage`] alongside the legacy R32Uint
+    /// resources and the per-frame orchestrator picks the atomic
+    /// path; otherwise only the R32Uint path is built.
+    pub vbuf64: Vbuf64Support,
 }
 
 impl Default for MeshletRenderStageConfig {
@@ -80,6 +88,7 @@ impl Default for MeshletRenderStageConfig {
             instance_capacity: 256,
             meshlet_capacity: 4096,
             materials: vec![MaterialParams::default()],
+            vbuf64: Vbuf64Support::from_supported(false),
         }
     }
 }
@@ -151,6 +160,15 @@ pub struct MeshletRenderStage {
     pub(super) pool_dirty: bool,
 
     pub(super) meshlet_bgl: wgpu::BindGroupLayout,
+
+    /// Atomic R64 visibility-buffer pipeline (#493). `Some` only when
+    /// the device supports `TEXTURE_INT64_ATOMIC | SHADER_INT64 |
+    /// SHADER_INT64_ATOMIC_MIN_MAX` (see [`Vbuf64Support`]). When set,
+    /// the per-frame orchestrator routes the scene draw through it
+    /// instead of the legacy R32Uint color-attachment vbuf — fixes the
+    /// coplanar-meshlet z-fighting that the legacy path exhibits, with
+    /// no functional difference for the rest of the engine.
+    pub(super) vbuf64_stage: Option<Vbuf64Stage>,
 
     pub(super) vbuf_view: wgpu::TextureView,
     pub(super) depth_view: wgpu::TextureView,
@@ -233,6 +251,7 @@ impl MeshletRenderStage {
             instance_capacity,
             meshlet_capacity,
             materials,
+            vbuf64,
         } = config;
         assert!(size.0 > 0 && size.1 > 0, "MeshletRenderStage size must be > 0");
         assert!(
@@ -288,6 +307,22 @@ impl MeshletRenderStage {
         let hiz_prev: Option<HiZ> = None;
         let hiz_curr: Option<HiZ> = None;
 
+        // #493: opportunistic atomic R64 vbuf path. The legacy R32Uint
+        // resources above stay live regardless — this is purely an
+        // additional pipeline the orchestrator picks when the device
+        // supports it.
+        let vbuf64_stage = if vbuf64.is_supported() {
+            Some(Vbuf64Stage::new(
+                device,
+                cull.meshlet_bind_group_layout(),
+                wgpu::TextureFormat::Depth32Float,
+                size,
+                None,
+            ))
+        } else {
+            None
+        };
+
         Self {
             pipeline: MeshletPipeline::new(),
             scene,
@@ -298,6 +333,7 @@ impl MeshletRenderStage {
             gpu_pool: None,
             pool_dirty: false,
             meshlet_bgl,
+            vbuf64_stage,
             vbuf_view,
             depth_view,
             depth_sample_view,

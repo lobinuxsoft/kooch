@@ -109,6 +109,11 @@ impl MeshletRenderStage {
         // Both pyramids are fresh — they need clear_to_far before the
         // next render_with_assets samples them in pass A.
         self.hi_z_initialized = false;
+        // #493: keep the atomic R64 vbuf in lockstep with the legacy
+        // attachments so both paths stay valid post-resize.
+        if let Some(stage) = self.vbuf64_stage.as_mut() {
+            stage.resize(device, new_size);
+        }
         self.size = new_size;
 
         if let Some(tracker) = &self.vram_tracker {
@@ -409,6 +414,74 @@ impl MeshletRenderStage {
 
         if timer_slot.is_some() {
             self.gpu_timers.write_start(&mut encoder);
+        }
+
+        // ── Atomic R64 vbuf path (#493) ────────────────────────────
+        // When the device exposes the int64-atomic feature bundle,
+        // route the scene through Bevy-style winner-takes-all vbuf
+        // (clear + raster + deferred). This path is single-pass cull
+        // for now — the Hi-Z 2-pass orchestrator below stays on the
+        // R32 fallback until #444 follow-up ports it onto R64. The
+        // payoff is the elimination of coplanar-meshlet z-fighting
+        // visible since #491's dragon import.
+        if let Some(vbuf64) = self.vbuf64_stage.as_ref() {
+            self.cull.dispatch_scene_pool_atomic(
+                device,
+                queue,
+                &mut encoder,
+                gpu_pool,
+                &self.scene,
+                &cull_params,
+                &scene_params,
+            );
+            let debug_mode = resources
+                .get::<MeshletDebugMode>()
+                .copied()
+                .unwrap_or_default()
+                .as_u32();
+            vbuf64.render(
+                device,
+                queue,
+                &mut encoder,
+                &self.depth_view,
+                &self.color_view,
+                &meshlet_bg,
+                &material_bg,
+                &self.cull,
+                &self.scene,
+                view_proj,
+                debug_mode,
+                /* clear_depth */ true,
+            );
+
+            if let Some(slot_idx) = timer_slot {
+                self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+            if let Some(slot_idx) = timer_slot {
+                self.gpu_timers.submit_readback(slot_idx);
+            }
+
+            let pool = self.pipeline.pool();
+            let pool_meshlets_total = pool.meshlets.len() as u32;
+            let pool_meshlets_roots = pool
+                .meshlets
+                .iter()
+                .filter(|m| {
+                    m.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT
+                })
+                .count() as u32;
+            // R64 path: cull + clear + raster + deferred.
+            let meshlet_draw_calls = if instances.is_empty() { 0 } else { 4 };
+            return MeshletRenderStats {
+                instances_uploaded: instances.len() as u32,
+                cull_threads: scene_params.instance_count * scene_params.meshlets_per_mesh,
+                cam_pos: cam_pos.to_array(),
+                pool_meshlets_total,
+                pool_meshlets_roots,
+                gpu_frame_ms: self.gpu_timers.last_frame_ms(),
+                draw_calls: meshlet_draw_calls,
+            };
         }
 
         // ── Hi-Z 2-pass cull (#445 + #486 SPD + #488 AABB cull) ────
