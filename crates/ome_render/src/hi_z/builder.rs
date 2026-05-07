@@ -462,4 +462,18 @@ mod tests {
             .validate(&module)
             .expect("hi_z_build.wgsl should validate");
     }
+
+    #[test]
+    fn spd_shader_parses_and_validates() {
+        const SPD_SOURCE: &str = include_str!("../../shaders/hi_z_spd.wgsl");
+        let module = naga::front::wgsl::parse_str(SPD_SOURCE)
+            .expect("hi_z_spd.wgsl should parse");
+        let mut validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        );
+        validator
+            .validate(&module)
+            .expect("hi_z_spd.wgsl should validate");
+    }
 }
