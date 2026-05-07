@@ -166,7 +166,7 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
 
     let cam_pos = Vec3::new(0.0, 0.5, 5.0);
     let view = Mat4::look_at_rh(cam_pos, Vec3::ZERO, Vec3::Y);
-    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
 
     let stats = stage.render_with_assets(
         &device,
@@ -246,7 +246,7 @@ fn render_stage_with_no_entities_returns_zero_stats() {
 
     let cam_pos = Vec3::new(0.0, 0.0, 5.0);
     let view = Mat4::look_at_rh(cam_pos, Vec3::ZERO, Vec3::Y);
-    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
 
     let stats = stage.render_with_assets(
         &device,

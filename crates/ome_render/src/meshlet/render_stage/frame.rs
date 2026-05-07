@@ -411,23 +411,93 @@ impl MeshletRenderStage {
             self.gpu_timers.write_start(&mut encoder);
         }
 
-        // ── Single-pass cull (#486 fallback while AABB cull port lands) ──
-        // The Hi-Z 2-pass orchestrator was wired up here in PR #487
-        // and produced the right numbers in tests + bench, but the
-        // sphere-bounds occlusion test in `occluded_by_hi_z_atomic`
-        // turned out to be too imprecise for production use — close
-        // models showed silhouette-edge holes that no amount of
-        // conservative-shift tuning could close cleanly. The proper
-        // fix is to port Bevy's AABB 8-corner projection +
-        // `occlusion_cull_screen_aabb` 16-tap sample, which means
-        // the engine has to migrate to reversed-Z first
-        // (Bevy's algorithm assumes that depth orientation). That's
-        // the scope of the follow-up issue; until it lands, the
-        // orchestrator falls back to single-pass and the SPD
-        // primitives + tests stay in the codebase, exercised by
-        // `tests/hi_z_build_from_depth.rs` and
-        // `tests/meshlet_bench_hi_z_two_pass.rs`.
-        self.cull.dispatch_scene_pool_atomic(
+        // ── Hi-Z 2-pass cull (#445 + #486 SPD + #488 AABB cull) ────
+        // Triple-buffer arena rotation (#445 PR #479 Mesa radv
+        // workaround): pick the slot 2 frames stale, clear it, and
+        // park this frame's bind groups there so they outlive GPU
+        // execution.
+        self.frame_bind_groups_index = (self.frame_bind_groups_index + 1) % 3;
+        let arena_idx = self.frame_bind_groups_index;
+        self.frame_bind_groups[arena_idx].clear();
+        self.retired_pyramids[arena_idx].clear();
+
+        if self.hiz_prev.is_none() {
+            let pyr = crate::hi_z::HiZ::new(device, self.size.0, self.size.1);
+            if let Some(tracker) = &self.vram_tracker {
+                tracker.add(pyr.byte_size());
+            }
+            self.hiz_prev = Some(pyr);
+        }
+        if self.hiz_curr.is_none() {
+            let pyr = crate::hi_z::HiZ::new(device, self.size.0, self.size.1);
+            if let Some(tracker) = &self.vram_tracker {
+                tracker.add(pyr.byte_size());
+            }
+            self.hiz_curr = Some(pyr);
+        }
+        let hiz_prev = self.hiz_prev.as_ref().expect("just allocated");
+        let hiz_curr = self.hiz_curr.as_ref().expect("just allocated");
+
+        // First-frame init under reversed-Z: hiz_prev needs to be
+        // seeded so pass A's first sample doesn't read undefined
+        // R32Float bytes. Clear depth to 0.0 (= far in reversed-Z)
+        // then SPD-build over it; the resulting pyramid says "every
+        // tile's farthest fragment is at the far plane", which is
+        // the conservative "nothing in front" baseline.
+        if !self.hi_z_initialized {
+            {
+                let mut clear_enc = device.create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor {
+                        label: Some("meshlet_hi_z_init_depth_clear_encoder"),
+                    },
+                );
+                let _depth_clear =
+                    clear_enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("meshlet_hi_z_first_frame_depth_clear"),
+                        color_attachments: &[],
+                        depth_stencil_attachment: Some(
+                            wgpu::RenderPassDepthStencilAttachment {
+                                view: &self.depth_view,
+                                depth_ops: Some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(0.0),
+                                    store: wgpu::StoreOp::Store,
+                                }),
+                                stencil_ops: None,
+                            },
+                        ),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                drop(_depth_clear);
+                queue.submit(std::iter::once(clear_enc.finish()));
+            }
+            let mut init_enc = device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor {
+                    label: Some("meshlet_hi_z_init_build_encoder"),
+                },
+            );
+            hiz_prev.init_to_far(
+                device,
+                &mut init_enc,
+                &self.depth_sample_view,
+                &mut self.frame_bind_groups[arena_idx],
+            );
+            queue.submit(std::iter::once(init_enc.finish()));
+            self.hi_z_initialized = true;
+        }
+
+        let (hiz_w, hiz_h) = hiz_prev.dimensions();
+        let mip_count = hiz_prev.mip_count();
+        let hi_z_params = crate::meshlet::dispatcher::HiZTestParams::new(
+            view_proj,
+            hiz_w,
+            hiz_h,
+            mip_count,
+        );
+
+        // Pass A: AABB-based cull against hiz_prev.
+        self.cull.dispatch_scene_pool_atomic_hi_z(
             device,
             queue,
             &mut encoder,
@@ -435,7 +505,11 @@ impl MeshletRenderStage {
             &self.scene,
             &cull_params,
             &scene_params,
+            &hi_z_params,
+            hiz_prev.full_view(),
+            &mut self.frame_bind_groups[arena_idx],
         );
+        // Raster A: clear vbuf + depth, draw pass A's survivors.
         self.rasterizer.render_scene(
             device,
             queue,
@@ -448,6 +522,54 @@ impl MeshletRenderStage {
             view_proj,
             0,
             /* clear */ true,
+        );
+
+        if let Some(slot_idx) = timer_slot {
+            self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+        if let Some(slot_idx) = timer_slot {
+            self.gpu_timers.submit_readback(slot_idx);
+        }
+
+        let mut build_enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("meshlet_hi_z_build_encoder"),
+        });
+        hiz_curr.build_from_depth(
+            device,
+            &mut build_enc,
+            &self.depth_sample_view,
+            &mut self.frame_bind_groups[arena_idx],
+        );
+        queue.submit(std::iter::once(build_enc.finish()));
+
+        encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("meshlet_render_stage_encoder_pass_b"),
+        });
+        self.cull.dispatch_cull_pass_b(
+            device,
+            queue,
+            &mut encoder,
+            gpu_pool,
+            &self.scene,
+            &hi_z_params,
+            hiz_curr.full_view(),
+            &mut self.frame_bind_groups[arena_idx],
+        );
+        // Raster B: load (preserve pass-A vbuf + depth) and draw
+        // pass A + B contributions.
+        self.rasterizer.render_scene(
+            device,
+            queue,
+            &mut encoder,
+            &self.vbuf_view,
+            &self.depth_view,
+            &meshlet_bg,
+            &self.cull,
+            &self.scene,
+            view_proj,
+            0,
+            /* clear */ false,
         );
         let debug_mode = resources
             .get::<MeshletDebugMode>()
@@ -468,14 +590,10 @@ impl MeshletRenderStage {
             self.size,
             debug_mode,
         );
-
-        if let Some(slot_idx) = timer_slot {
-            self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
-        }
         queue.submit(std::iter::once(encoder.finish()));
-        if let Some(slot_idx) = timer_slot {
-            self.gpu_timers.submit_readback(slot_idx);
-        }
+
+        // Rotate pyramids: next frame's hiz_prev = this frame's hiz_curr.
+        self.swap_hi_z_pyramids();
 
         let pool = self.pipeline.pool();
         let pool_meshlets_total = pool.meshlets.len() as u32;
@@ -487,11 +605,10 @@ impl MeshletRenderStage {
             })
             .count() as u32;
 
-        // Single-pass orchestrator: cull + vbuf raster + deferred
-        // shade. The 2-pass + SPD path stays in the codebase for
-        // when the AABB cull port from Bevy lands (depends on
-        // engine-wide reversed-Z migration first).
-        let meshlet_draw_calls = if instances.is_empty() { 0 } else { 3 };
+        // Hi-Z 2-pass orchestrator (#445 + #486 + #488): 6 logical
+        // passes per frame — cull A, raster A, SPD pyramid build,
+        // cull B, raster B, deferred shade.
+        let meshlet_draw_calls = if instances.is_empty() { 0 } else { 6 };
 
         MeshletRenderStats {
             instances_uploaded: instances.len() as u32,

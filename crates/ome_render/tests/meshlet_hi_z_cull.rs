@@ -159,6 +159,13 @@ fn run_cull_with_hi_z(
     common::read_u32(device, queue, cull.visible_count_buffer(), 0)
 }
 
+// All depth values below are in REVERSED-Z (#488): NDC depth 1 =
+// near, 0 = far. Hi-Z occluder at depth d means "the closest
+// fragment in the tile is at d"; a meshlet behind it has SMALLER
+// ndc.z. The legacy `occluded_by_hi_z` test is now
+// `sphere_nearest < tile_max` (max-reduced pyramid keeps closest
+// fragment under reversed-Z).
+
 #[test]
 fn meshlet_behind_occluder_is_hi_z_culled() {
     let Some((device, queue)) = try_acquire_device() else {
@@ -166,12 +173,14 @@ fn meshlet_behind_occluder_is_hi_z_culled() {
         return;
     };
 
-    // Occluder at NDC depth 0.5; meshlet at NDC depth 0.7 — behind it.
-    let mesh = synthetic_meshlet_at_ndc_depth(0.7);
+    // Occluder Hi-Z at 0.5 (closest fragment in tile); meshlet at
+    // 0.3 — farther than occluder under reversed-Z → culled.
+    let mesh = synthetic_meshlet_at_ndc_depth(0.3);
     let visible = run_cull_with_hi_z(&device, &queue, &mesh, 0.5);
     assert_eq!(
         visible, 0,
-        "meshlet behind the Hi-Z occluder should be rejected"
+        "meshlet behind (smaller ndc.z under reversed-Z) the occluder \
+         should be rejected"
     );
 }
 
@@ -182,12 +191,14 @@ fn meshlet_in_front_of_occluder_is_kept() {
         return;
     };
 
-    // Occluder at NDC depth 0.5; meshlet at 0.3 — closer to camera, visible.
-    let mesh = synthetic_meshlet_at_ndc_depth(0.3);
+    // Occluder Hi-Z at 0.5; meshlet at 0.7 — closer (larger ndc.z)
+    // than the occluder under reversed-Z → visible.
+    let mesh = synthetic_meshlet_at_ndc_depth(0.7);
     let visible = run_cull_with_hi_z(&device, &queue, &mesh, 0.5);
     assert_eq!(
         visible, 1,
-        "meshlet in front of the Hi-Z occluder should survive"
+        "meshlet in front (larger ndc.z under reversed-Z) of the \
+         occluder should survive"
     );
 }
 
@@ -198,12 +209,13 @@ fn meshlet_at_far_plane_with_zero_occluder_is_culled() {
         return;
     };
 
-    // Occluder Hi-Z = 0 (everything in front); meshlet at 0.9 → behind.
-    let mesh = synthetic_meshlet_at_ndc_depth(0.9);
-    let visible = run_cull_with_hi_z(&device, &queue, &mesh, 0.0);
+    // Occluder Hi-Z saturated to 1.0 (= near plane in reversed-Z);
+    // meshlet at 0.1 (far) → behind everything → culled.
+    let mesh = synthetic_meshlet_at_ndc_depth(0.1);
+    let visible = run_cull_with_hi_z(&device, &queue, &mesh, 1.0);
     assert_eq!(
         visible, 0,
-        "occluder at depth 0 culls everything beyond"
+        "occluder at near plane (1.0 in reversed-Z) culls everything farther"
     );
 }
 
@@ -214,12 +226,13 @@ fn empty_hi_z_one_does_not_cull_close_meshlets() {
         return;
     };
 
-    // Hi-Z saturated to 1.0 (no closer geometry has been rendered);
-    // any meshlet with depth < 1.0 must survive.
+    // Hi-Z initialised to 0.0 (= far plane in reversed-Z, i.e. "no
+    // closer geometry rendered yet"); any meshlet with ndc.z > 0
+    // must survive.
     let mesh = synthetic_meshlet_at_ndc_depth(0.5);
-    let visible = run_cull_with_hi_z(&device, &queue, &mesh, 1.0);
+    let visible = run_cull_with_hi_z(&device, &queue, &mesh, 0.0);
     assert_eq!(
         visible, 1,
-        "Hi-Z initialised to far-plane should cull nothing"
+        "Hi-Z initialised to far plane (0.0 in reversed-Z) should cull nothing"
     );
 }

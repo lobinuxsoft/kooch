@@ -120,7 +120,7 @@ impl MeshletVisRasterizer {
         let depth_stencil = depth_format.map(|format| wgpu::DepthStencilState {
             format,
             depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
+            depth_compare: Some(wgpu::CompareFunction::Greater),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         });
@@ -232,7 +232,7 @@ impl MeshletVisRasterizer {
         let depth_attachment = depth.map(|view| wgpu::RenderPassDepthStencilAttachment {
             view,
             depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(1.0),
+                load: wgpu::LoadOp::Clear(0.0),
                 store: wgpu::StoreOp::Store,
             }),
             stencil_ops: None,

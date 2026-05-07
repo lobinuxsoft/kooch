@@ -94,7 +94,7 @@ impl CullParams {
 
     /// Configures the continuous-LOD selector with a non-zero
     /// projection factor. `proj_scale_y` is `1 / tan(fovy/2)` — for a
-    /// `Mat4` produced by [`glam::Mat4::perspective_rh`] you can read
+    /// `Mat4` produced by [`crate::projection::perspective_rh_reverse_z`] you can read
     /// it directly from `proj.y_axis.y`. `viewport_height_pixels` is
     /// the destination framebuffer height in physical pixels.
     pub fn with_lod(
@@ -156,13 +156,25 @@ pub fn extract_frustum_planes(vp: Mat4) -> [[f32; 4]; 6] {
     let row2 = row(2);
     let row3 = row(3);
 
+    // D3D / wgpu / Vulkan [0, 1] depth — works for BOTH standard-Z
+    // (near→0, far→1) and reversed-Z (near→1, far→0). The two
+    // formulas are derived directly from the clip-space constraints
+    // `clip.z >= 0` (= row2) and `clip.w - clip.z >= 0` (= row3-row2);
+    // both stay valid regardless of which plane is which under the
+    // chosen depth orientation. The OpenGL formula `row3 + row2`
+    // (which #488 had inherited) only cuts at `ndc.z >= -1`, so
+    // points with `0 > ndc.z > -1` slipped through — invisible
+    // under standard-Z but exposed by reversed-Z where beyond-far
+    // points have negative ndc.z naturally.
     let raw = [
         row3 + row0, // left
         row3 - row0, // right
         row3 + row1, // bottom
         row3 - row1, // top
-        row3 + row2, // near (assumes wgpu/D3D-style [0, 1] depth)
-        row3 - row2, // far
+        row2,        // ndc.z >= 0 plane (call it "near" or "far"
+                     // depending on depth orientation — geometrically
+                     // it's the plane where the depth hits 0).
+        row3 - row2, // ndc.z <= 1 plane.
     ];
 
     let mut out = [[0.0f32; 4]; 6];
@@ -209,7 +221,7 @@ mod tests {
 
     #[test]
     fn extracted_planes_are_normalised() {
-        let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 16.0 / 9.0, 0.1, 100.0);
+        let proj = crate::projection::perspective_rh_reverse_z(60.0_f32.to_radians(), 16.0 / 9.0, 0.1, 100.0);
         let view = Mat4::IDENTITY;
         let vp = proj * view;
 
@@ -225,7 +237,7 @@ mod tests {
 
     #[test]
     fn sphere_at_origin_inside_default_frustum() {
-        let proj = Mat4::perspective_rh(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
+        let proj = crate::projection::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
         let view = Mat4::look_at_rh(
             Vec3::new(0.0, 0.0, 5.0),
             Vec3::ZERO,
@@ -240,7 +252,7 @@ mod tests {
 
     #[test]
     fn sphere_far_behind_camera_is_culled() {
-        let proj = Mat4::perspective_rh(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
+        let proj = crate::projection::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
         let view = Mat4::look_at_rh(
             Vec3::new(0.0, 0.0, 5.0),
             Vec3::new(0.0, 0.0, 0.0),
@@ -255,7 +267,7 @@ mod tests {
 
     #[test]
     fn sphere_far_to_the_side_is_culled() {
-        let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+        let proj = crate::projection::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
         let view = Mat4::look_at_rh(Vec3::ZERO, -Vec3::Z, Vec3::Y);
         let planes = extract_frustum_planes(proj * view);
 
@@ -342,7 +354,7 @@ mod tests {
 
     #[test]
     fn rotated_camera_still_normalises_planes() {
-        let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.5, 1.0, 1000.0);
+        let proj = crate::projection::perspective_rh_reverse_z(45.0_f32.to_radians(), 1.5, 1.0, 1000.0);
         let view = Mat4::from_rotation_translation(
             Quat::from_rotation_y(1.2),
             Vec3::new(10.0, 5.0, -3.0),

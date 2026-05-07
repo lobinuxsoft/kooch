@@ -114,15 +114,14 @@ fn single_frame_first_render_does_not_crash_with_empty_prev_pyramid() {
 
     let cam = Vec3::new(0.0, 0.0, 4.0);
     let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
-    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let stats = stage.render_with_assets(&device, &queue, &resources, proj * view, cam);
     assert_eq!(stats.instances_uploaded, 1, "single visible cube must upload");
     assert_eq!(
-        stats.draw_calls, 3,
-        "single-pass orchestrator should report 3 logical passes per frame \
-         (cull + raster + deferred). The 2-pass primitives (Hi-Z dispatchers, \
-         SPD pyramid build) stay in the codebase but the orchestrator falls \
-         back to single-pass while the AABB cull port from Bevy is in flight."
+        stats.draw_calls, 6,
+        "Hi-Z 2-pass orchestrator (post-#488 with AABB cull + reversed-Z) \
+         should report 6 logical passes per frame (cull A + raster A + SPD \
+         pyramid build + cull B + raster B + deferred shade)."
     );
 
     // First frame: hiz_prev is fresh / uninitialised. The conservative
@@ -204,7 +203,7 @@ fn two_pass_visible_set_stays_stable_across_frames_in_static_scene() {
 
     let cam = Vec3::new(0.0, 0.0, 4.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, -10.0), Vec3::Y);
-    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let view_proj = proj * view;
 
     // Render N frames of a static scene. The visible-meshlet set
@@ -218,18 +217,32 @@ fn two_pass_visible_set_stays_stable_across_frames_in_static_scene() {
         let visible = read_u32(&device, &queue, stage.cull().visible_count_buffer());
         counts.push(visible);
     }
-    let first = counts[0];
+    // Frame 0 is the init transient: hiz_prev was just cleared to
+    // 0.0 (= far in reversed-Z), so pass A's conservative test
+    // `aabb.max.z <= tile_min` rejects nothing and visible_count
+    // covers the full instance set. From frame 1 onward hiz_prev
+    // carries real depth from the previous raster A and the cull
+    // settles into a stable subset (whatever pass A + pass B agree
+    // on — could be the full set on a sparse scene, or a strict
+    // subset when occluders are present).
     assert!(
-        first > 0,
+        counts[0] > 0,
         "first frame must produce visible meshlets, got 0 — orchestration broken"
     );
-    for (i, &c) in counts.iter().enumerate().skip(1) {
+    let steady = counts[1];
+    assert!(
+        steady > 0,
+        "steady-state frame 1 must still draw at least one meshlet, got 0 \
+         (counts so far: {:?})",
+        counts
+    );
+    for (i, &c) in counts.iter().enumerate().skip(2) {
         assert_eq!(
-            c, first,
-            "frame {} visible_count {} diverged from frame 0 ({}); \
-             Hi-Z 2-pass swap or pass-B retest is leaking instability \
-             into the rendered set. Full counts: {:?}",
-            i, c, first, counts
+            c, steady,
+            "frame {} visible_count {} diverged from steady-state frame 1 ({}); \
+             Hi-Z 2-pass swap or pass-B retest is leaking instability into the \
+             rendered set. Full counts: {:?}",
+            i, c, steady, counts
         );
     }
 }

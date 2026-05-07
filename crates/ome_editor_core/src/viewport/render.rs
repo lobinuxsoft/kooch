@@ -173,7 +173,7 @@ fn clear_to_black(
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
             view: depth,
             depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(1.0),
+                load: wgpu::LoadOp::Clear(0.0),
                 store: wgpu::StoreOp::Store,
             }),
             stencil_ops: None,
@@ -208,7 +208,7 @@ fn active_camera_matrices(
         let world = gt.matrix;
         let view = world.inverse();
         let fov_y_rad = cam.fov.to_radians().max(1.0_f32.to_radians());
-        let proj = glam::Mat4::perspective_rh(
+        let proj = ome_render::perspective_rh_reverse_z(
             fov_y_rad,
             aspect.max(0.01),
             cam.near.max(0.001),

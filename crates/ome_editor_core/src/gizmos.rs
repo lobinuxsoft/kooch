@@ -303,7 +303,7 @@ fn build_world_ray(resources: &Resources, delta: ViewportInputDelta) -> Option<R
     let (camera, gt) = active_camera(resources)?;
 
     let view = gt.matrix.inverse();
-    let proj = Mat4::perspective_rh(
+    let proj = ome_render::perspective_rh_reverse_z(
         camera.fov.to_radians(),
         aspect.max(0.001),
         camera.near.max(0.001),
@@ -316,7 +316,8 @@ fn build_world_ray(resources: &Resources, delta: ViewportInputDelta) -> Option<R
     let ndc_y = 1.0 - 2.0 * (cursor.y / viewport_size.y);
 
     // Project a point on the far plane back to world space.
-    let far_world = inv_vp * Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+    // Reversed-Z (#488): far plane is ndc.z = 0, near is 1.
+    let far_world = inv_vp * Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
     if far_world.w.abs() < 1e-6 {
         return None;
     }
