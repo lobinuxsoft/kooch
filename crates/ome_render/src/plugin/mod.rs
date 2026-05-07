@@ -123,6 +123,7 @@ fn init_renderers(resources: &mut Resources) {
         gpu.device(),
         MeshletRenderStageConfig {
             size: gpu.size(),
+            vbuf64,
             ..Default::default()
         },
     );

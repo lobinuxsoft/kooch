@@ -128,6 +128,7 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
             MaterialParams::new([1.0, 0.4, 0.2, 1.0], 0.0, 0.5, 0.0),
             MaterialParams::new([0.2, 0.6, 1.0, 1.0], 0.0, 0.5, 0.0),
         ],
+        ..Default::default()
     };
     let mut stage = MeshletRenderStage::new(&device, config);
 
@@ -241,6 +242,7 @@ fn render_stage_with_no_entities_returns_zero_stats() {
             instance_capacity: 8,
             meshlet_capacity: 256,
             materials: vec![MaterialParams::default()],
+            ..Default::default()
         },
     );
 

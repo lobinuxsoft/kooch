@@ -44,6 +44,7 @@ mod pool;
 mod render_stage;
 mod scene;
 mod system;
+mod vbuf64_stage;
 mod vis_buffer;
 
 pub use asset::{
@@ -77,4 +78,5 @@ pub use scene::{
     SceneCullParams,
 };
 pub use system::{instance_at_origin, MeshletPipeline};
+pub use vbuf64_stage::Vbuf64Stage;
 pub use vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
