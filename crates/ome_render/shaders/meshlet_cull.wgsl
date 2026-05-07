@@ -710,6 +710,50 @@ fn min8_4_atomic(a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4
     return min(min(min(a, b), min(c, d)), min(min(e, f), min(g, h)));
 }
 
+// AABB-vs-frustum (positive-vertex test). Ports Bevy's
+// `aabb_in_frustum` from meshlet_cull_shared.wgsl. Uses 5 planes
+// only (4 lateral + ndc.z >= 0); the second z-plane is dropped
+// intentionally so meshlets straddling near don't get rejected
+// by the cull — the rasterizer clips them against near anyway,
+// and rejecting here causes silhouette holes at viewport edges
+// where projected AABBs partially leave the frustum (#488 follow-up).
+//
+// Planes are extracted GPU-side from `clip_from_local`. The
+// `transpose` puts row-i of the matrix into `row_major[i]`, then
+// Gribb-Hartmann gives the 6 standard planes; we keep only 5.
+//
+// `flipped = half_extent * sign(plane.xyz)` is the offset from
+// AABB centre to its "positive vertex" w.r.t. the plane normal.
+// If the positive vertex is outside the half-space, the entire
+// AABB is outside.
+//
+// Returns true iff AABB is outside the frustum (= reject).
+fn aabb_outside_frustum_atomic(
+    world_from_local: mat4x4<f32>,
+    aabb_min_local: vec3<f32>,
+    aabb_max_local: vec3<f32>,
+) -> bool {
+    let center = (aabb_min_local + aabb_max_local) * 0.5;
+    let half_extent = (aabb_max_local - aabb_min_local) * 0.5;
+    let clip_from_local = hi_z_params_atomic.view_proj * world_from_local;
+    let row_major = transpose(clip_from_local);
+    let planes = array<vec4<f32>, 5>(
+        row_major[3] + row_major[0],
+        row_major[3] - row_major[0],
+        row_major[3] + row_major[1],
+        row_major[3] - row_major[1],
+        row_major[2],
+    );
+    for (var i = 0u; i < 5u; i = i + 1u) {
+        let plane = planes[i] / length(planes[i].xyz);
+        let flipped = half_extent * sign(plane.xyz);
+        if (dot(center + flipped, plane.xyz) <= -plane.w) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Projects an AABB's 8 corners to clip space, divides by w, and
 // returns the screen-space [0,1] rectangle + min/max NDC depth.
 // Returns `false` when the camera lies INSIDE the AABB (one or more
@@ -898,8 +942,11 @@ fn run_cull_scene_pool_atomic_hi_z(thread_id: u32) {
         }
     }
 
-    let world_center = (inst.transform * vec4<f32>(m.bounds_center, 1.0)).xyz;
-    if (sphere_outside_frustum(world_center, m.bounding_radius)) {
+    // AABB-vs-frustum (Bevy parity). Sphere bounds were rejecting
+    // meshlets at viewport edges whose AABB still overlapped the
+    // frustum — caused silhouette holes on close-up models. Drops
+    // far plane on purpose; rasterizer clips at near.
+    if (aabb_outside_frustum_atomic(inst.transform, m.aabb_min, m.aabb_max)) {
         return;
     }
 
