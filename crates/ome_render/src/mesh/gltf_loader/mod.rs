@@ -82,9 +82,10 @@ pub enum GltfMeshError {
         uri: String,
         source: std::io::Error,
     },
-    /// `data:` URI buffer encountered before its decoder lands. Removed
-    /// when the base64 path implements (commit follow-up of #490).
-    DataUriUnsupported,
+    /// `data:` URI buffer was present but its payload could not be
+    /// decoded (missing separator, unsupported encoding, malformed
+    /// base64). The static reason describes which gate tripped.
+    MalformedDataUri(&'static str),
 }
 
 impl std::fmt::Display for GltfMeshError {
@@ -105,7 +106,7 @@ impl std::fmt::Display for GltfMeshError {
             Self::BufferIo { uri, source } => {
                 write!(f, "failed to read buffer at {uri}: {source}")
             }
-            Self::DataUriUnsupported => write!(f, "data: URIs not yet supported"),
+            Self::MalformedDataUri(reason) => write!(f, "malformed data URI ({reason})"),
         }
     }
 }

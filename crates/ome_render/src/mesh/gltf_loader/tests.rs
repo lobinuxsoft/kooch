@@ -344,22 +344,88 @@ fn separate_gltf_with_absolute_uri_is_rejected() {
 }
 
 #[test]
-fn data_uri_buffer_currently_returns_unsupported_error() {
-    // Stubbed for the next commit — until base64 lands the loader
-    // surfaces `DataUriUnsupported` so the failure is observable
-    // and distinguishable from a missing-attribute case.
+fn embedded_gltf_loads_with_data_uri_buffer() {
+    // Mirrors Blender's *glTF Embedded* export: the binary payload
+    // is base64-encoded inline in the JSON via a `data:` URI. No
+    // sidecar, no filesystem touch — base_dir can be `None`.
+    let json = build_data_uri_gltf();
+    let mesh = parse_mesh_bytes_full(json.as_bytes(), 1.0, None)
+        .expect("embedded data URI buffer must decode");
+
+    assert_eq!(mesh.vertex_count(), 3);
+    assert_eq!(mesh.indices, vec![0, 1, 2]);
+    let positions: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.position).collect();
+    assert_eq!(
+        positions,
+        vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+    );
+}
+
+#[test]
+fn malformed_data_uri_surfaces_specific_error() {
+    // Truncated base64 payload — the decoder reports the failure
+    // through `MalformedDataUri`, not a generic missing-attribute.
     let json = r#"{
   "asset": { "version": "2.0" },
-  "buffers": [{ "uri": "data:application/octet-stream;base64,AAAAAA==", "byteLength": 4 }],
+  "buffers": [{ "uri": "data:application/octet-stream;base64,!!!", "byteLength": 4 }],
   "bufferViews": [],
   "accessors": [],
   "meshes": []
 }"#;
     let err = parse_mesh_bytes_full(json.as_bytes(), 1.0, None).unwrap_err();
     assert!(
-        matches!(err, GltfMeshError::DataUriUnsupported),
-        "expected DataUriUnsupported, got {err:?}",
+        matches!(err, GltfMeshError::MalformedDataUri(_)),
+        "expected MalformedDataUri, got {err:?}",
     );
+}
+
+/// Builds a `.gltf` JSON whose single buffer is a `data:` URI with
+/// base64-encoded triangle bytes. Equivalent payload to
+/// [`build_minimal_triangle_glb`] — used to exercise the embedded path
+/// without touching the filesystem.
+fn build_data_uri_gltf() -> String {
+    use base64::Engine;
+
+    let indices: [u32; 3] = [0, 1, 2];
+    let positions: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let normals: [[f32; 3]; 3] = [[0.0, 0.0, 1.0]; 3];
+    let uvs: [[f32; 2]; 3] = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
+
+    let mut bin = Vec::new();
+    bin.extend_from_slice(bytemuck::cast_slice(&indices));
+    let positions_offset = bin.len();
+    bin.extend_from_slice(bytemuck::cast_slice(&positions));
+    let normals_offset = bin.len();
+    bin.extend_from_slice(bytemuck::cast_slice(&normals));
+    let uvs_offset = bin.len();
+    bin.extend_from_slice(bytemuck::cast_slice(&uvs));
+    let bin_len = bin.len();
+
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bin);
+
+    format!(
+        r#"{{
+  "asset": {{ "version": "2.0" }},
+  "buffers": [{{ "uri": "data:application/octet-stream;base64,{encoded}", "byteLength": {bin_len} }}],
+  "bufferViews": [
+    {{ "buffer": 0, "byteOffset": 0, "byteLength": 12, "target": 34963 }},
+    {{ "buffer": 0, "byteOffset": {positions_offset}, "byteLength": 36, "target": 34962 }},
+    {{ "buffer": 0, "byteOffset": {normals_offset}, "byteLength": 36, "target": 34962 }},
+    {{ "buffer": 0, "byteOffset": {uvs_offset}, "byteLength": 24, "target": 34962 }}
+  ],
+  "accessors": [
+    {{ "bufferView": 0, "componentType": 5125, "count": 3, "type": "SCALAR" }},
+    {{ "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0] }},
+    {{ "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3" }},
+    {{ "bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC2" }}
+  ],
+  "meshes": [
+    {{ "primitives": [
+      {{ "attributes": {{ "POSITION": 1, "NORMAL": 2, "TEXCOORD_0": 3 }}, "indices": 0 }}
+    ] }}
+  ]
+}}"#,
+    )
 }
 
 // Per-test tmpdir naming: process pid + atomic counter keeps the

@@ -64,6 +64,12 @@ serde = { version = "1", features = ["derive"] }
 ron = "0.8"
 # glTF mesh loading
 gltf = { version = "1.4", default-features = false, features = ["import", "utils", "names"] }
+# Base64 — RFC 4648 standard / URL-safe alphabet decoder. Used to
+# decode `data:application/octet-stream;base64,...` buffer URIs that
+# Blender's glTF Embedded export emits. Marshallow/data-encoding were
+# alternatives; `base64` is the de-facto Rust crate (used by reqwest,
+# ring, the `gltf` crate's own `import` feature, etc.).
+base64 = "0.22"
 # Image decoding — PNG + JPEG only for PR-1; HDR/EXR/KTX2 follow up when
 # IBL / compressed pipelines arrive
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
