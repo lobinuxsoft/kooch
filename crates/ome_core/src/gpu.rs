@@ -351,11 +351,20 @@ fn optional_features(adapter: &Adapter) -> wgpu::Features {
 }
 
 /// Returns the feature bundle required for the Bevy-style atomic R64
-/// visibility buffer (#493). All three flags must be present together;
+/// visibility buffer (#493). All four flags must be present together;
 /// any one missing forces the legacy `R32Uint` fallback path in the
 /// meshlet render stage.
+///
+/// - `TEXTURE_ATOMIC` gates `StorageTextureAccess::Atomic` for any
+///   format (the validation error message names
+///   `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` but the actual gate is
+///   `TEXTURE_ATOMIC` in wgpu 29).
+/// - `TEXTURE_INT64_ATOMIC` adds the R64 format on top.
+/// - `SHADER_INT64` enables `u64` in the shader.
+/// - `SHADER_INT64_ATOMIC_MIN_MAX` enables `textureAtomicMax` on `u64`.
 pub fn vbuf64_features() -> wgpu::Features {
-    wgpu::Features::TEXTURE_INT64_ATOMIC
+    wgpu::Features::TEXTURE_ATOMIC
+        | wgpu::Features::TEXTURE_INT64_ATOMIC
         | wgpu::Features::SHADER_INT64
         | wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX
 }

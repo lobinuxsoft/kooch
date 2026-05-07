@@ -122,8 +122,16 @@ impl Vbuf64Support {
 /// Feature bundle required for the atomic R64 visibility buffer. Mirrors
 /// [`ome_core::gpu::vbuf64_features`]; duplicated here to avoid a hard
 /// dependency from `ome_render` on `ome_core::gpu` for this single helper.
+///
+/// `TEXTURE_ATOMIC` is the gate on `StorageTextureAccess::Atomic` in
+/// wgpu 29 (the validation error message historically said
+/// `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`, which is misleading —
+/// the real check is `TEXTURE_ATOMIC`). `TEXTURE_INT64_ATOMIC` adds the
+/// R64 format on top. `SHADER_INT64` enables `u64` in the shader.
+/// `SHADER_INT64_ATOMIC_MIN_MAX` enables `textureAtomicMax(u64)`.
 fn required_features() -> Features {
-    Features::TEXTURE_INT64_ATOMIC
+    Features::TEXTURE_ATOMIC
+        | Features::TEXTURE_INT64_ATOMIC
         | Features::SHADER_INT64
         | Features::SHADER_INT64_ATOMIC_MIN_MAX
 }
@@ -139,8 +147,9 @@ mod tests {
     }
 
     #[test]
-    fn required_bundle_is_three_flags() {
+    fn required_bundle_is_four_flags() {
         let bundle = required_features();
+        assert!(bundle.contains(Features::TEXTURE_ATOMIC));
         assert!(bundle.contains(Features::TEXTURE_INT64_ATOMIC));
         assert!(bundle.contains(Features::SHADER_INT64));
         assert!(bundle.contains(Features::SHADER_INT64_ATOMIC_MIN_MAX));
