@@ -190,13 +190,22 @@ pub struct MeshletRenderStage {
     /// next call to `render_with_assets` after that bump runs the
     /// init upload so pass A samples a "nothing occluded" pyramid.
     pub(super) hi_z_initialized: bool,
-    /// Per-frame arena that keeps every cull / pyramid bind group
-    /// alive past its `set_bind_group` call. wgpu does not Arc-clone
-    /// bind groups internally — without this, locals dropped between
-    /// `record` and `submit` invalidate the bound texture views on
-    /// Mesa radv (RX 9070 XT). Cleared at the start of every render
-    /// after the previous frame's submits have settled.
-    pub(super) frame_bind_groups: Vec<wgpu::BindGroup>,
+    /// Triple-buffered per-frame arena that keeps every cull /
+    /// pyramid bind group alive PAST the GPU finishing the frame
+    /// they were submitted with. wgpu does not Arc-clone bind groups
+    /// on `set_bind_group`, and Mesa radv rejects bind groups whose
+    /// referenced views drop while the GPU is still in flight. Three
+    /// slots ≥ wgpu's typical max in-flight-frames headroom; the
+    /// slot rotated into the current frame is always at least 2 GPU
+    /// frames old and safe to drop.
+    pub(super) frame_bind_groups: [Vec<wgpu::BindGroup>; 3],
+    /// Round-robin index over `frame_bind_groups`. Bumped at the
+    /// start of every render before the slot is cleared and reused.
+    pub(super) frame_bind_groups_index: usize,
+    /// Pyramids retired by `resize()` that may still be in flight on
+    /// the GPU. Same triple-buffer logic as `frame_bind_groups`.
+    /// Empty in steady state when the viewport size doesn't change.
+    pub(super) retired_pyramids: [Vec<HiZ>; 3],
 
     /// GPU frame timing via wgpu timestamp queries. Disabled by
     /// default (see [`Self::enable_gpu_timers`]). Tests don't pay
@@ -297,7 +306,9 @@ impl MeshletRenderStage {
             hiz_prev,
             hiz_curr,
             hi_z_initialized: false,
-            frame_bind_groups: Vec::new(),
+            frame_bind_groups: [Vec::new(), Vec::new(), Vec::new()],
+            frame_bind_groups_index: 0,
+            retired_pyramids: [Vec::new(), Vec::new(), Vec::new()],
         }
     }
 

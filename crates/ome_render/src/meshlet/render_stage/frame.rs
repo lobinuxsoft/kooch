@@ -35,6 +35,12 @@ impl MeshletRenderStage {
             new_size.0 > 0 && new_size.1 > 0,
             "MeshletRenderStage::resize requires non-zero dimensions"
         );
+        tracing::info!(
+            target: "ome_render::meshlet::render_stage",
+            old = ?self.size,
+            new = ?new_size,
+            "MeshletRenderStage::resize triggered — pyramids will be recreated"
+        );
 
         let (vbuf_texture, vbuf_view) = create_2d_attachment(
             device,
@@ -78,8 +84,18 @@ impl MeshletRenderStage {
         self.depth_sample_view = depth_sample_view;
         self.color_texture = color_texture;
         self.color_view = color_view;
-        self.hiz_prev = hiz_prev;
-        self.hiz_curr = hiz_curr;
+        // Retire the OLD pyramids into the current slot of the
+        // triple-buffer rather than dropping them inline. The next
+        // frame's render() rotates the index and clears the slot
+        // that is now 2 frames old, by which point the GPU is
+        // guaranteed to be done with them. Dropping inline would
+        // invalidate views still referenced by in-flight cmd
+        // buffers — Mesa radv catches that as "TextureView invalid".
+        let retire_idx = self.frame_bind_groups_index;
+        let prev_pyramid = std::mem::replace(&mut self.hiz_prev, hiz_prev);
+        let curr_pyramid = std::mem::replace(&mut self.hiz_curr, hiz_curr);
+        self.retired_pyramids[retire_idx].push(prev_pyramid);
+        self.retired_pyramids[retire_idx].push(curr_pyramid);
         // Both pyramids are fresh — they need clear_to_far before the
         // next render_with_assets samples them in pass A.
         self.hi_z_initialized = false;
@@ -399,12 +415,20 @@ impl MeshletRenderStage {
         // "invalid" state for the next bind group construction. The
         // submit boundary forces a hardware barrier so pass A sees a
         // stable pyramid.
-        // Clear the previous frame's bind-group arena now that any
-        // submits referencing those groups have completed (the next
-        // queue.submit waits implicitly on prior submissions). Bind
-        // groups created this frame park here so they outlive their
-        // `set_bind_group` calls (#445 Mesa radv workaround).
-        self.frame_bind_groups.clear();
+        // Triple-buffered bind-group arena (#445 Mesa radv workaround).
+        // Rotate to the slot that's at least 2 frames old, then
+        // clear it — those bind groups' GPU work has finished by
+        // now, so dropping the Rust handles is safe. wgpu does not
+        // Arc-clone bind groups on `set_bind_group`, so we must
+        // outlive the GPU's use of them, not just the CPU's record
+        // → submit window.
+        self.frame_bind_groups_index = (self.frame_bind_groups_index + 1) % 3;
+        let arena_idx = self.frame_bind_groups_index;
+        self.frame_bind_groups[arena_idx].clear();
+        // Same triple-buffer rule for pyramids retired by resize():
+        // the resize() that ran this frame retired them, so the slot
+        // that's 2 frames stale here is safe to drop.
+        self.retired_pyramids[arena_idx].clear();
 
         if !self.hi_z_initialized {
             // Two separate submits: depth clear + pyramid build. Mesa
@@ -450,7 +474,7 @@ impl MeshletRenderStage {
                 device,
                 &mut build_encoder,
                 &self.depth_sample_view,
-                Some(&mut self.frame_bind_groups),
+                Some(&mut self.frame_bind_groups[arena_idx]),
             );
             queue.submit(std::iter::once(build_encoder.finish()));
             self.hi_z_initialized = true;
@@ -482,7 +506,7 @@ impl MeshletRenderStage {
             &scene_params,
             &hi_z_params,
             self.hiz_prev.full_view(),
-            &mut self.frame_bind_groups,
+            &mut self.frame_bind_groups[arena_idx],
         );
         // Raster A: clear vbuf + depth, draw pass A's survivors.
         self.rasterizer.render_scene(
@@ -526,7 +550,7 @@ impl MeshletRenderStage {
             device,
             &mut build_encoder,
             &self.depth_sample_view,
-            Some(&mut self.frame_bind_groups),
+            Some(&mut self.frame_bind_groups[arena_idx]),
         );
         queue.submit(std::iter::once(build_encoder.finish()));
 
@@ -551,7 +575,7 @@ impl MeshletRenderStage {
             &self.scene,
             &hi_z_params,
             self.hiz_curr.full_view(),
-            &mut self.frame_bind_groups,
+            &mut self.frame_bind_groups[arena_idx],
         );
         // Raster B: load (preserve pass-A vbuf + depth) and draw the
         // union of pass A + B. Pass A's set is re-rasterised because
