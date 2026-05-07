@@ -38,6 +38,12 @@ use raster::Vbuf64Rasterizer;
 /// Storage texture format for the atomic visibility buffer.
 pub(super) const VBUF64_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R64Uint;
 
+/// Format of the dummy color attachment the R64 raster pipeline declares
+/// to satisfy wgpu's "fragment stage requires ≥ 1 color target" rule.
+/// `R8Uint` keeps memory at 1 byte/pixel; the pipeline's `write_mask` is
+/// empty so no fragment writes ever land here.
+pub(super) const DUMMY_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub(super) struct CameraUbo {
@@ -62,6 +68,8 @@ pub struct Vbuf64Stage {
     deferred: Vbuf64Deferred,
     vbuf_texture: wgpu::Texture,
     vbuf_view: wgpu::TextureView,
+    dummy_color_texture: wgpu::Texture,
+    dummy_color_view: wgpu::TextureView,
     size: (u32, u32),
 }
 
@@ -74,6 +82,7 @@ impl Vbuf64Stage {
         pipeline_cache: Option<&wgpu::PipelineCache>,
     ) -> Self {
         let (vbuf_texture, vbuf_view) = create_vbuf64_texture(device, size);
+        let (dummy_color_texture, dummy_color_view) = create_dummy_color_texture(device, size);
         let clear = Vbuf64Clear::new(device);
         let rasterizer = Vbuf64Rasterizer::new(device, meshlet_bgl, depth_format, pipeline_cache);
         let deferred = Vbuf64Deferred::new(device, meshlet_bgl);
@@ -83,6 +92,8 @@ impl Vbuf64Stage {
             deferred,
             vbuf_texture,
             vbuf_view,
+            dummy_color_texture,
+            dummy_color_view,
             size,
         }
     }
@@ -94,6 +105,9 @@ impl Vbuf64Stage {
         let (texture, view) = create_vbuf64_texture(device, size);
         self.vbuf_texture = texture;
         self.vbuf_view = view;
+        let (dummy_tex, dummy_view) = create_dummy_color_texture(device, size);
+        self.dummy_color_texture = dummy_tex;
+        self.dummy_color_view = dummy_view;
         self.size = size;
     }
 
@@ -132,6 +146,7 @@ impl Vbuf64Stage {
             queue,
             encoder,
             &self.vbuf_view,
+            &self.dummy_color_view,
             depth_view,
             meshlet_bg,
             cull,
@@ -166,6 +181,19 @@ fn create_vbuf64_texture(
         size,
         VBUF64_FORMAT,
         wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+    )
+}
+
+fn create_dummy_color_texture(
+    device: &wgpu::Device,
+    size: (u32, u32),
+) -> (wgpu::Texture, wgpu::TextureView) {
+    create_2d_attachment(
+        device,
+        "meshlet_vbuf64_dummy_color",
+        size,
+        DUMMY_COLOR_FORMAT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT,
     )
 }
 

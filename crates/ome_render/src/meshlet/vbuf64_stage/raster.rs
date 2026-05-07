@@ -111,9 +111,19 @@ impl Vbuf64Rasterizer {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_vbuf64_scene"),
-                // No color attachment: the fragment writes via
-                // textureAtomicMax through the storage binding.
-                targets: &[],
+                // Bevy convention (#493): wgpu / Vulkan reject a render
+                // pipeline with zero color targets when there is a
+                // fragment stage, even though our fragment writes via
+                // textureAtomicMax through a storage binding instead of
+                // a return value. Declaring a dummy R8Uint target with
+                // an empty write_mask satisfies the validation; the
+                // attachment is bound at render-pass time but every
+                // write is masked off so it stays cleared / undefined.
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: super::DUMMY_COLOR_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::empty(),
+                })],
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
@@ -162,6 +172,7 @@ impl Vbuf64Rasterizer {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         vbuf64_view: &wgpu::TextureView,
+        dummy_color: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         meshlet_bg: &wgpu::BindGroup,
         cull: &MeshletCull,
@@ -210,7 +221,19 @@ impl Vbuf64Rasterizer {
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("meshlet_vbuf64_pass"),
-            color_attachments: &[],
+            // Dummy color attachment to match the pipeline's declared
+            // target. Every write is masked off so the load/store ops
+            // are immaterial — `LoadOp::Clear(0)` keeps the texture in
+            // a defined state if anything else samples it.
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: dummy_color,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Discard,
+                },
+            })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth,
                 depth_ops: Some(wgpu::Operations {
