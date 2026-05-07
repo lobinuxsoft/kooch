@@ -33,7 +33,7 @@
 
 use ome_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 
-use crate::mesh::parse_mesh_bytes;
+use crate::mesh::parse_mesh_bytes_full;
 
 use super::asset::{MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES};
 use super::builder::{build_meshlets_lod_chain, LodConfig, MeshletBuildError};
@@ -50,9 +50,10 @@ impl AssetLoader<MeshletMesh> for MeshletMeshLoader {
     fn load(
         &self,
         bytes: &[u8],
-        _ctx: &mut LoadContext<'_>,
+        ctx: &mut LoadContext<'_>,
     ) -> AssetResult<MeshletMesh> {
-        let mesh = parse_mesh_bytes(bytes).map_err(|e| AssetError::Loader(Box::new(e)))?;
+        let mesh = parse_mesh_bytes_full(bytes, 1.0, ctx.path.parent())
+            .map_err(|e| AssetError::Loader(Box::new(e)))?;
         build_meshlets_lod_chain(
             &mesh,
             DEFAULT_MAX_VERTICES,

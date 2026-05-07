@@ -1,6 +1,7 @@
 use super::*;
 use glam::Vec3;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[test]
 fn extensions_includes_glb_and_gltf() {
@@ -260,6 +261,175 @@ pub(super) fn build_two_translated_triangles_glb() -> Vec<u8> {
     out.extend_from_slice(b"BIN\0");
     out.extend_from_slice(&bin);
     out
+}
+
+// ---------------------------------------------------------------------------
+// External-URI buffer tests (#490)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn separate_gltf_loads_with_sidecar_buffer() {
+    // Mirrors Blender's *glTF Separate* export: a `.gltf` JSON document
+    // alongside a `.bin` sidecar. parse_mesh_bytes_full resolves the
+    // URI relative to the document's directory.
+    let dir = make_tmpdir("separate_load");
+    let (gltf_path, _bin_path) = write_separate_gltf_pair(&dir, "scene", "scene.bin");
+
+    let bytes = std::fs::read(&gltf_path).expect("read gltf");
+    let mesh = parse_mesh_bytes_full(&bytes, 1.0, Some(&dir))
+        .expect("sidecar buffer must resolve");
+
+    assert_eq!(mesh.vertex_count(), 3);
+    assert_eq!(mesh.indices, vec![0, 1, 2]);
+    cleanup_tmpdir(&dir);
+}
+
+#[test]
+fn separate_gltf_without_base_dir_reports_unresolvable() {
+    // No directory anchor → the sidecar URI cannot be located. The
+    // load fails loudly so callers know to plumb the path through.
+    let dir = make_tmpdir("unresolvable");
+    let (gltf_path, _) = write_separate_gltf_pair(&dir, "scene", "scene.bin");
+    let bytes = std::fs::read(&gltf_path).expect("read gltf");
+
+    let err = parse_mesh_bytes_full(&bytes, 1.0, None).unwrap_err();
+    assert!(
+        matches!(err, GltfMeshError::BufferUriUnresolvable),
+        "expected BufferUriUnresolvable, got {err:?}",
+    );
+    cleanup_tmpdir(&dir);
+}
+
+#[test]
+fn separate_gltf_with_traversal_uri_is_rejected() {
+    // A doctored .gltf claiming `"uri": "../../../etc/passwd"` must be
+    // rejected before any filesystem read happens. Validates the URI
+    // hygiene gate end-to-end through parse_mesh_bytes_full.
+    let dir = make_tmpdir("traversal");
+    let (gltf_path, _) = write_separate_gltf_pair(&dir, "scene", "../../../etc/passwd");
+    let bytes = std::fs::read(&gltf_path).expect("read gltf");
+
+    let err = parse_mesh_bytes_full(&bytes, 1.0, Some(&dir)).unwrap_err();
+    match err {
+        GltfMeshError::BufferUriRejected { ref uri, reason } => {
+            assert_eq!(uri, "../../../etc/passwd");
+            assert!(
+                reason.contains(".."),
+                "reason should mention `..` traversal, got `{reason}`",
+            );
+        }
+        other => panic!("expected BufferUriRejected, got {other:?}"),
+    }
+    cleanup_tmpdir(&dir);
+}
+
+#[test]
+fn separate_gltf_with_absolute_uri_is_rejected() {
+    // POSIX absolute paths in `uri` are rejected even when `base_dir`
+    // would technically allow Path::join to swallow them. Defends
+    // against malicious `.gltf` files that try to read host files.
+    let dir = make_tmpdir("absolute");
+    let (gltf_path, _) = write_separate_gltf_pair(&dir, "scene", "/etc/passwd");
+    let bytes = std::fs::read(&gltf_path).expect("read gltf");
+
+    let err = parse_mesh_bytes_full(&bytes, 1.0, Some(&dir)).unwrap_err();
+    match err {
+        GltfMeshError::BufferUriRejected { ref uri, reason } => {
+            assert_eq!(uri, "/etc/passwd");
+            assert_eq!(reason, "absolute path");
+        }
+        other => panic!("expected BufferUriRejected, got {other:?}"),
+    }
+    cleanup_tmpdir(&dir);
+}
+
+#[test]
+fn data_uri_buffer_currently_returns_unsupported_error() {
+    // Stubbed for the next commit — until base64 lands the loader
+    // surfaces `DataUriUnsupported` so the failure is observable
+    // and distinguishable from a missing-attribute case.
+    let json = r#"{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "data:application/octet-stream;base64,AAAAAA==", "byteLength": 4 }],
+  "bufferViews": [],
+  "accessors": [],
+  "meshes": []
+}"#;
+    let err = parse_mesh_bytes_full(json.as_bytes(), 1.0, None).unwrap_err();
+    assert!(
+        matches!(err, GltfMeshError::DataUriUnsupported),
+        "expected DataUriUnsupported, got {err:?}",
+    );
+}
+
+// Per-test tmpdir naming: process pid + atomic counter keeps the
+// names distinct even across `--test-threads=N` runs.
+fn make_tmpdir(label: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "ome_gltf_test_{}_{}_{}",
+        std::process::id(),
+        label,
+        n,
+    ));
+    std::fs::create_dir_all(&dir).expect("tmpdir create");
+    dir
+}
+
+fn cleanup_tmpdir(dir: &Path) {
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Writes a glTF *Separate* pair into `dir`: `<name>.gltf` referencing
+/// the supplied URI for buffer 0, plus `<dir>/scene.bin` containing the
+/// triangle's binary payload. The URI is the verbatim string the
+/// document uses — useful for traversal / absolute-path hostile cases.
+fn write_separate_gltf_pair(dir: &Path, name: &str, uri: &str) -> (PathBuf, PathBuf) {
+    let indices: [u32; 3] = [0, 1, 2];
+    let positions: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let normals: [[f32; 3]; 3] = [[0.0, 0.0, 1.0]; 3];
+    let uvs: [[f32; 2]; 3] = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
+
+    let mut bin = Vec::new();
+    bin.extend_from_slice(bytemuck::cast_slice(&indices));
+    let positions_offset = bin.len();
+    bin.extend_from_slice(bytemuck::cast_slice(&positions));
+    let normals_offset = bin.len();
+    bin.extend_from_slice(bytemuck::cast_slice(&normals));
+    let uvs_offset = bin.len();
+    bin.extend_from_slice(bytemuck::cast_slice(&uvs));
+    let bin_len = bin.len();
+
+    let json = format!(
+        r#"{{
+  "asset": {{ "version": "2.0" }},
+  "buffers": [{{ "uri": "{uri}", "byteLength": {bin_len} }}],
+  "bufferViews": [
+    {{ "buffer": 0, "byteOffset": 0, "byteLength": 12, "target": 34963 }},
+    {{ "buffer": 0, "byteOffset": {positions_offset}, "byteLength": 36, "target": 34962 }},
+    {{ "buffer": 0, "byteOffset": {normals_offset}, "byteLength": 36, "target": 34962 }},
+    {{ "buffer": 0, "byteOffset": {uvs_offset}, "byteLength": 24, "target": 34962 }}
+  ],
+  "accessors": [
+    {{ "bufferView": 0, "componentType": 5125, "count": 3, "type": "SCALAR" }},
+    {{ "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0] }},
+    {{ "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3" }},
+    {{ "bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC2" }}
+  ],
+  "meshes": [
+    {{ "primitives": [
+      {{ "attributes": {{ "POSITION": 1, "NORMAL": 2, "TEXCOORD_0": 3 }}, "indices": 0 }}
+    ] }}
+  ]
+}}"#,
+    );
+
+    let gltf_path = dir.join(format!("{name}.gltf"));
+    let bin_path = dir.join("scene.bin");
+    std::fs::write(&gltf_path, json).expect("write gltf");
+    std::fs::write(&bin_path, &bin).expect("write bin");
+    (gltf_path, bin_path)
 }
 
 pub(super) fn pad_to_4(input: &[u8]) -> Vec<u8> {

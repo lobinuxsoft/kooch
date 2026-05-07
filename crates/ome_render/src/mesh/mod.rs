@@ -15,5 +15,8 @@ mod gltf_loader;
 mod vertex;
 
 pub use asset::Mesh;
-pub use gltf_loader::{GltfMeshError, GltfMeshLoader, parse_mesh_bytes};
+pub use gltf_loader::{
+    GltfMeshError, GltfMeshLoader, parse_mesh_bytes, parse_mesh_bytes_full,
+    parse_mesh_bytes_with_scale,
+};
 pub use vertex::{Aabb, MeshVertex};

@@ -1,9 +1,12 @@
 //! glTF 2.0 / GLB loader implementing [`AssetLoader<Mesh>`].
 //!
-//! Parses bytes (no filesystem touch — the [`AssetServer`] provides them)
-//! and emits a CPU-side [`Mesh`] suitable for upload + render.
+//! Parses bytes (the [`AssetServer`] reads them from disk) and emits
+//! a CPU-side [`Mesh`] suitable for upload + render. The source path
+//! travels in [`LoadContext::path`] so external buffer URIs can be
+//! resolved relative to the document — sidecar `.bin` files for
+//! glTF *Separate*, base64 payloads for *Embedded*.
 //!
-//! # Coverage (post-#460)
+//! # Coverage
 //!
 //! - Walks the default scene's node tree top-down, composing per-node
 //!   transforms. Vertex positions are baked into world space (relative
@@ -17,6 +20,11 @@
 //!   transforms — lets the editor / artists normalise units without
 //!   touching the source asset. Persistence of the scale via `.meta`
 //!   files is the next PR (Plan B part 2).
+//! - External buffer URIs (sidecar / data:) resolved when the loader
+//!   has a base directory; rejected with hygiene failures for absolute
+//!   paths, `..` traversal, or non-`data:` schemes.
+
+use std::path::Path;
 
 use glam::{Mat4, Vec3};
 use ome_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
@@ -25,18 +33,16 @@ use super::asset::Mesh;
 use super::vertex::{Aabb, MeshVertex};
 
 mod buffers;
+mod data_uri;
 mod walk;
 
 #[cfg(test)]
 mod tests;
 
-/// Loader handling `*.glb` and `*.gltf` (with embedded buffers / data URIs).
-///
-/// External `.bin` sidecars are NOT supported in PR-1 because the
-/// [`AssetServer`](ome_core::asset_loader::AssetServer) hands the loader a
-/// flat byte slice — sidecar resolution requires a follow-up that exposes
-/// the source path's directory to the loader. GLB is the recommended format
-/// for production assets (everything in one file).
+/// Loader handling `*.glb` and `*.gltf`. GLB packages every buffer in
+/// the same file; `.gltf` documents may reference external buffers
+/// either as sidecar files (relative path) or inline `data:` URIs —
+/// both resolved through [`LoadContext::path`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GltfMeshLoader;
 
@@ -45,8 +51,9 @@ impl AssetLoader<Mesh> for GltfMeshLoader {
         &["glb", "gltf"]
     }
 
-    fn load(&self, bytes: &[u8], _ctx: &mut LoadContext<'_>) -> AssetResult<Mesh> {
-        parse_mesh_bytes(bytes).map_err(|e| AssetError::Loader(Box::new(e)))
+    fn load(&self, bytes: &[u8], ctx: &mut LoadContext<'_>) -> AssetResult<Mesh> {
+        parse_mesh_bytes_full(bytes, 1.0, ctx.path.parent())
+            .map_err(|e| AssetError::Loader(Box::new(e)))
     }
 }
 
@@ -60,6 +67,24 @@ pub enum GltfMeshError {
     MissingAttribute(&'static str),
     /// The document contained no meshes (or no primitives).
     EmptyDocument,
+    /// External buffer URI requested but no base directory was
+    /// supplied (bytes loaded from memory have no anchor for
+    /// relative-path resolution).
+    BufferUriUnresolvable,
+    /// Buffer URI rejected for hygiene reasons (absolute path, `..`
+    /// traversal, unsupported scheme).
+    BufferUriRejected {
+        uri: String,
+        reason: &'static str,
+    },
+    /// Filesystem read failed for a sidecar buffer.
+    BufferIo {
+        uri: String,
+        source: std::io::Error,
+    },
+    /// `data:` URI buffer encountered before its decoder lands. Removed
+    /// when the base64 path implements (commit follow-up of #490).
+    DataUriUnsupported,
 }
 
 impl std::fmt::Display for GltfMeshError {
@@ -70,6 +95,17 @@ impl std::fmt::Display for GltfMeshError {
                 write!(f, "primitive missing required attribute: {name}")
             }
             Self::EmptyDocument => write!(f, "gltf document contains no mesh primitives"),
+            Self::BufferUriUnresolvable => write!(
+                f,
+                "external buffer URI cannot be resolved without a document directory",
+            ),
+            Self::BufferUriRejected { uri, reason } => {
+                write!(f, "buffer URI rejected ({reason}): {uri}")
+            }
+            Self::BufferIo { uri, source } => {
+                write!(f, "failed to read buffer at {uri}: {source}")
+            }
+            Self::DataUriUnsupported => write!(f, "data: URIs not yet supported"),
         }
     }
 }
@@ -78,6 +114,7 @@ impl std::error::Error for GltfMeshError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Gltf(e) => Some(e),
+            Self::BufferIo { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -90,9 +127,22 @@ impl From<gltf::Error> for GltfMeshError {
 }
 
 /// Parses a glTF / GLB byte slice into a [`Mesh`] using identity
-/// import-scale. Convenience wrapper over [`parse_mesh_bytes_with_scale`].
+/// import-scale and no base directory. GLB documents work; `.gltf`
+/// documents that reference external buffers will fail because there
+/// is no directory to resolve them against — load via
+/// [`parse_mesh_bytes_full`] when sidecars or filesystem-relative
+/// paths matter.
 pub fn parse_mesh_bytes(bytes: &[u8]) -> Result<Mesh, GltfMeshError> {
-    parse_mesh_bytes_with_scale(bytes, 1.0)
+    parse_mesh_bytes_full(bytes, 1.0, None)
+}
+
+/// Parses a glTF / GLB byte slice into a [`Mesh`] with a custom
+/// import scale. Memory-only convenience over [`parse_mesh_bytes_full`].
+pub fn parse_mesh_bytes_with_scale(
+    bytes: &[u8],
+    import_scale: f32,
+) -> Result<Mesh, GltfMeshError> {
+    parse_mesh_bytes_full(bytes, import_scale, None)
 }
 
 /// Parses a glTF / GLB byte slice into a [`Mesh`]. The default scene's
@@ -102,17 +152,22 @@ pub fn parse_mesh_bytes(bytes: &[u8]) -> Result<Mesh, GltfMeshError> {
 /// transforms apply — a single knob to convert mm-authored assets into
 /// metric world units without modifying the source `.glb`.
 ///
+/// `base_dir` anchors external buffer URIs (sidecar `.bin` files).
+/// When `Some`, sidecar URIs resolve against it; when `None`, any
+/// non-GLB buffer reference fails with [`GltfMeshError::BufferUriUnresolvable`].
+///
 /// Documents without an explicit scene fall back to enumerating every
 /// mesh under the implicit identity transform — matches the gltf-rs
 /// crate's `default_scene` lookup convention.
-pub fn parse_mesh_bytes_with_scale(
+pub fn parse_mesh_bytes_full(
     bytes: &[u8],
     import_scale: f32,
+    base_dir: Option<&Path>,
 ) -> Result<Mesh, GltfMeshError> {
     let gltf = gltf::Gltf::from_slice(bytes)?;
     let blob = gltf.blob.as_deref();
     let document = gltf.document;
-    let buffers = buffers::collect_buffers(&document, blob)?;
+    let buffers = buffers::collect_buffers(&document, blob, base_dir)?;
 
     let mut out_vertices: Vec<MeshVertex> = Vec::new();
     let mut out_indices: Vec<u32> = Vec::new();
