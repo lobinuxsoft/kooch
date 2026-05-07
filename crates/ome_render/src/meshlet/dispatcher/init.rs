@@ -31,8 +31,10 @@ impl MeshletCull {
         });
 
         let cull_bgl = build_cull_bgl(device);
+        let extended_cull_bgl = build_extended_cull_bgl(device);
         let hi_z_bgl = build_hi_z_bgl(device);
         let scene_bgl = MeshletScene::bind_group_layout(device);
+        let scene_with_hi_z_bgl = build_scene_with_hi_z_bgl(device);
         let meshlet_bgl = meshlet_bind_group_layout(device);
         // Two-binding subset of the pool BGL — keeps the cull
         // entry under the wgpu max_storage_buffers_per_shader_stage
@@ -143,6 +145,53 @@ impl MeshletCull {
                 cache: None,
             });
 
+        // Hi-Z 2-pass cull (#445). Same shader, but pass 1 + pass A
+        // bind under an extended layout: cull group(0) gains
+        // culled_meshlets + culled_count, scene group(2) gains
+        // hi_z_params + pyramid texture. Pass 1 (`cs_lod_compute_*`)
+        // recompiles against this layout because both passes are
+        // dispatched in lock-step from `dispatch_scene_pool_atomic_hi_z`
+        // and binding the same cull bind group between them is the
+        // path of least resistance.
+        let pipeline_layout_atomic_hi_z =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("meshlet_cull_scene_pool_atomic_hi_z_pipeline_layout"),
+                bind_group_layouts: &[
+                    Some(&extended_cull_bgl),
+                    Some(&pool_bgl),
+                    Some(&scene_with_hi_z_bgl),
+                    Some(&group_err_bgl),
+                ],
+                immediate_size: 0,
+            });
+        let pipeline_lod_compute_group_max_err_hi_z =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("meshlet_lod_compute_group_max_err_hi_z_pipeline"),
+                layout: Some(&pipeline_layout_atomic_hi_z),
+                module: &shader,
+                entry_point: Some("cs_lod_compute_group_max_err"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let pipeline_cull_scene_pool_atomic_hi_z =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("meshlet_cull_scene_pool_atomic_hi_z_pipeline"),
+                layout: Some(&pipeline_layout_atomic_hi_z),
+                module: &shader,
+                entry_point: Some("cs_cull_scene_pool_atomic_hi_z"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let pipeline_cull_pass_b =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("meshlet_cull_pass_b_pipeline"),
+                layout: Some(&pipeline_layout_atomic_hi_z),
+                module: &shader,
+                entry_point: Some("cs_cull_pass_b"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_cull_params"),
             size: std::mem::size_of::<CullParams>() as u64,
@@ -176,6 +225,26 @@ impl MeshletCull {
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // Hi-Z 2-pass cull reject queue (#445). Worst-case capacity
+        // matches the visible buffer (every meshlet occluded). Pass A
+        // appends; pass B drains via the atomic counter.
+        let culled_meshlets = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_culled_ids"),
+            size: capacity as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let culled_count = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_culled_count"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::INDIRECT,
             mapped_at_creation: false,
         });
 
@@ -213,9 +282,14 @@ impl MeshletCull {
             pipeline_scene_pool,
             pipeline_lod_compute_group_max_err,
             pipeline_cull_scene_pool_atomic,
+            pipeline_lod_compute_group_max_err_hi_z,
+            pipeline_cull_scene_pool_atomic_hi_z,
+            pipeline_cull_pass_b,
             cull_bgl,
+            extended_cull_bgl,
             hi_z_bgl,
             scene_bgl,
+            scene_with_hi_z_bgl,
             meshlet_bgl,
             pool_bgl,
             group_err_bgl,
@@ -224,6 +298,8 @@ impl MeshletCull {
             scene_params_buffer,
             visible_meshlets,
             visible_count,
+            culled_meshlets,
+            culled_count,
             indirect_args,
             group_max_err,
             group_capacity: initial_group_capacity,
@@ -328,6 +404,123 @@ fn build_cull_pool_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 binding: 1,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: read_only,
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Cull BGL for the Hi-Z 2-pass entry. Drops binding 1 (`descriptors`,
+/// per-mesh path) because the scene-pool Hi-Z entry never reads it,
+/// and adds `culled_meshlets` (4) + `culled_count` (5). Bindings 0,
+/// 2, 3 match `cull_bgl`. Total storage buffers in the pipeline layout:
+/// 4 here + 2 in pool_bgl + 1 in scene_with_hi_z + 1 in group_err = 8,
+/// exactly at the wgpu COMPUTE-stage limit.
+fn build_extended_cull_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let rw_storage = wgpu::BindingType::Buffer {
+        ty: wgpu::BufferBindingType::Storage { read_only: false },
+        has_dynamic_offset: false,
+        min_binding_size: None,
+    };
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("meshlet_cull_extended_bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(
+                        std::mem::size_of::<CullParams>() as u64,
+                    ),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: rw_storage,
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(4),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: rw_storage,
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(4),
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Scene BGL extended with the previous-frame Hi-Z UBO (binding 2)
+/// and pyramid texture (binding 3) for the Hi-Z 2-pass cull entry.
+fn build_scene_with_hi_z_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("meshlet_scene_with_hi_z_bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(
+                        std::mem::size_of::<SceneCullParams>() as u64,
+                    ),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(
+                        std::mem::size_of::<HiZTestParams>() as u64,
+                    ),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
                 count: None,
             },
         ],

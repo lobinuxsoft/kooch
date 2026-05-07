@@ -17,7 +17,17 @@ pub struct HiZ {
     reduce_pipeline: wgpu::ComputePipeline,
     copy_depth_bgl: wgpu::BindGroupLayout,
     copy_r32_bgl: wgpu::BindGroupLayout,
+    #[allow(dead_code)] // kept alive so cached `reduce_bgs` stay valid
     reduce_bgl: wgpu::BindGroupLayout,
+
+    /// Pre-built bind groups for the per-mip reduction passes. One
+    /// per (src_mip, dst_mip) pair, indexed by `dst_mip - 1`. Cached
+    /// at construction so they outlive any single frame's submit —
+    /// wgpu does not internally Arc-clone bind groups on
+    /// `set_bind_group`, so creating them inline per dispatch and
+    /// dropping the locals between record and submit invalidates the
+    /// view references on Mesa radv (RX 9070 XT).
+    reduce_bgs: Vec<wgpu::BindGroup>,
 
     width: u32,
     height: u32,
@@ -129,6 +139,34 @@ impl HiZ {
             cache: None,
         });
 
+        // Pre-build the per-mip reduce bind groups so they live as
+        // long as the HiZ struct. Inline creation in dispatch_reductions
+        // had the bind groups going out of scope between encoder
+        // record and queue.submit, which Mesa radv (RX 9070 XT)
+        // surfaces as "TextureView is invalid" at submit time.
+        let reduce_bgs: Vec<wgpu::BindGroup> = (1..mip_count)
+            .map(|mip| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("hi_z_reduce_bg"),
+                    layout: &reduce_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(
+                                &mip_views[(mip - 1) as usize],
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(
+                                &mip_views[mip as usize],
+                            ),
+                        },
+                    ],
+                })
+            })
+            .collect();
+
         Self {
             texture,
             mip_views,
@@ -139,6 +177,7 @@ impl HiZ {
             copy_depth_bgl,
             copy_r32_bgl,
             reduce_bgl,
+            reduce_bgs,
             width,
             height,
             mip_count,
@@ -148,11 +187,22 @@ impl HiZ {
     /// Records the entire pyramid build into `encoder`. `depth_view`
     /// must reference a Depth32Float texture matching the dimensions
     /// passed to [`Self::new`].
+    ///
+    /// The `arena` is an optional out-param the caller passes when it
+    /// needs to keep the per-frame `copy_bg` alive past the call.
+    /// wgpu does not internally Arc-clone bind groups on
+    /// `set_bind_group`, so a bind group created inline + dropped
+    /// before `queue.submit` ends up "invalid" on Mesa radv (RX 9070
+    /// XT). Pass `Some(&mut arena)` from the orchestrator and clear
+    /// the arena after the submit. `None` is fine for tests where
+    /// the call site already keeps the encoder + submit + drop tight
+    /// enough that the wgpu driver hasn't lost the reference yet.
     pub fn build_from_depth(
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
+        arena: Option<&mut Vec<wgpu::BindGroup>>,
     ) {
         let copy_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("hi_z_copy_depth_bg"),
@@ -170,6 +220,9 @@ impl HiZ {
         });
         self.dispatch_copy(encoder, &self.copy_depth_pipeline, &copy_bg, 0);
         self.dispatch_reductions(device, encoder);
+        if let Some(arena) = arena {
+            arena.push(copy_bg);
+        }
     }
 
     /// Same as [`Self::build_from_depth`] but takes an `R32Float`
@@ -223,35 +276,18 @@ impl HiZ {
 
     fn dispatch_reductions(
         &self,
-        device: &wgpu::Device,
+        _device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
     ) {
         for mip in 1..self.mip_count {
             let (dst_w, dst_h) = mip_size(self.width, self.height, mip);
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("hi_z_reduce_bg"),
-                layout: &self.reduce_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(
-                            &self.mip_views[(mip - 1) as usize],
-                        ),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(
-                            &self.mip_views[mip as usize],
-                        ),
-                    },
-                ],
-            });
+            let bg = &self.reduce_bgs[(mip - 1) as usize];
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("hi_z_reduce_pass"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.reduce_pipeline);
-            pass.set_bind_group(1, &bg, &[]);
+            pass.set_bind_group(1, bg, &[]);
             pass.dispatch_workgroups(
                 dst_w.div_ceil(WORKGROUP_SIZE),
                 dst_h.div_ceil(WORKGROUP_SIZE),
@@ -283,6 +319,52 @@ impl HiZ {
 
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    /// Approximate persistent VRAM footprint of the pyramid texture
+    /// across all mips. R32Float = 4 bytes per pixel, summed over the
+    /// `mip_count_for(width, height)` mip chain. Used by the engine
+    /// VRAM tracker (#463.5) when the render stage owns the pyramid.
+    pub fn byte_size(&self) -> u64 {
+        let mut total: u64 = 0;
+        for level in 0..self.mip_count {
+            let (w, h) = mip_size(self.width, self.height, level);
+            total += (w as u64) * (h as u64) * 4;
+        }
+        total
+    }
+
+    /// Initialises the pyramid to 1.0 (the "far" value the
+    /// conservative Hi-Z reject test treats as "nothing occluded")
+    /// using the existing build pipeline — `cs_copy_depth` from a
+    /// freshly-cleared depth view writes 1.0 to mip 0, then
+    /// `cs_reduce_max` propagates that across the chain. Required on
+    /// the first-ever frame using the 2-pass cull (#445), since the
+    /// previous-frame pyramid has no real depth data and undefined
+    /// R32Float bytes would otherwise read as "everything at depth
+    /// 0" and reject every meshlet.
+    ///
+    /// `cleared_depth_view` must be a depth-only view of a
+    /// Depth32Float texture whose contents are 1.0 everywhere — the
+    /// caller arranges that with a one-shot render pass using
+    /// `LoadOp::Clear(1.0)` and no draws into the same encoder
+    /// before this call.
+    ///
+    /// Done via the encoder rather than a `Queue::write_texture`
+    /// because the latter triggers wgpu validation churn around
+    /// `STORAGE_BINDING + TEXTURE_BINDING` view aliasing on Mesa
+    /// (RX 9070 XT radv) — the views land in an "invalid" state for
+    /// the next bind-group construction. The build path is the
+    /// known-good code path; reusing it costs one render-pass clear
+    /// + the standard pyramid build, both already in the hot path.
+    pub fn init_to_far(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        cleared_depth_view: &wgpu::TextureView,
+        arena: Option<&mut Vec<wgpu::BindGroup>>,
+    ) {
+        self.build_from_depth(device, encoder, cleared_depth_view, arena);
     }
 
     /// Bind-group layout the cull shader (PR-5c) consumes when

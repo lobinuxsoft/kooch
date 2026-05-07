@@ -51,6 +51,7 @@ use super::scene::MeshletScene;
 use super::system::MeshletPipeline;
 use super::vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
 use super::DEFAULT_MAX_TRIANGLES;
+use crate::hi_z::HiZ;
 use crate::perf::EngineVramTracker;
 
 /// Construction parameters for [`MeshletRenderStage`]. All sizes are
@@ -153,6 +154,12 @@ pub struct MeshletRenderStage {
 
     pub(super) vbuf_view: wgpu::TextureView,
     pub(super) depth_view: wgpu::TextureView,
+    /// Depth-only view of the same depth texture, suitable for
+    /// `cs_copy_depth` in the Hi-Z builder. Sampling-bind requires
+    /// `TextureAspect::DepthOnly` whereas the render attachment uses
+    /// `TextureAspect::All`; sharing one view across both roles
+    /// would fail wgpu validation in the worst case.
+    pub(super) depth_sample_view: wgpu::TextureView,
     pub(super) color_view: wgpu::TextureView,
 
     pub(super) vbuf_texture: wgpu::Texture,
@@ -161,6 +168,51 @@ pub struct MeshletRenderStage {
 
     pub(super) size: (u32, u32),
     pub(super) instance_capacity: u32,
+
+    /// Twin Hi-Z pyramids for the 2-pass cull (#445). Pass A samples
+    /// `hiz_prev` (last frame's depth, may have false negatives on
+    /// newly-revealed geometry); pass B rebuilds `hiz_curr` from the
+    /// pass-A raster's depth and re-tests the pass-A rejects to
+    /// recover anything that became visible this frame. At the end of
+    /// the frame the orchestrator swaps `hiz_prev <- hiz_curr` so the
+    /// next frame's pass A reads the freshest pyramid we have.
+    ///
+    /// Lazy Hi-Z pyramids. The 2-pass orchestrator that samples
+    /// these is parked behind the SPD follow-up (#486); the current
+    /// single-pass orchestrator never reads them, so allocating them
+    /// at `new()` time wastes VRAM and surfaces wgpu validation
+    /// noise from the editor's per-frame placeholder stage. They
+    /// stay `None` until the SPD-backed orchestrator switches them
+    /// on via `ensure_hi_z_pyramids()`.
+    pub(super) hiz_prev: Option<HiZ>,
+    pub(super) hiz_curr: Option<HiZ>,
+    /// `false` until the orchestrator has called `clear_to_far` on
+    /// the freshly-created `hiz_prev`. Reset to `false` on `resize()`
+    /// because both pyramids are recreated and need re-init. The
+    /// next call to `render_with_assets` after that bump runs the
+    /// init upload so pass A samples a "nothing occluded" pyramid.
+    pub(super) hi_z_initialized: bool,
+    /// Triple-buffered per-frame arena reserved for the future SPD
+    /// follow-up that activates the Hi-Z 2-pass orchestrator. The
+    /// orchestrator currently uses `dispatch_scene_pool_atomic`
+    /// (no Hi-Z), so the arena stays empty in production. When the
+    /// SPD-backed pyramid build lands and the orchestrator switches
+    /// to `dispatch_scene_pool_atomic_hi_z` + `dispatch_cull_pass_b`,
+    /// each per-frame bind group parks here so it outlives the GPU's
+    /// use of it (Mesa radv invalidates bind groups dropped while
+    /// in flight). Three slots ≥ wgpu's max in-flight-frames headroom.
+    #[allow(dead_code)]
+    pub(super) frame_bind_groups: [Vec<wgpu::BindGroup>; 3],
+    /// Round-robin index for `frame_bind_groups`.
+    #[allow(dead_code)]
+    pub(super) frame_bind_groups_index: usize,
+    /// Pyramids retired by `resize()` that may still be in flight on
+    /// the GPU. Triple-buffered to defer the drop until after the
+    /// GPU has stopped using the views — same Mesa radv lifetime
+    /// rule as `frame_bind_groups`. Currently no-op since the
+    /// orchestrator doesn't sample the pyramids.
+    #[allow(dead_code)]
+    pub(super) retired_pyramids: [Vec<HiZ>; 3],
 
     /// GPU frame timing via wgpu timestamp queries. Disabled by
     /// default (see [`Self::enable_gpu_timers`]). Tests don't pay
@@ -215,8 +267,9 @@ impl MeshletRenderStage {
             "meshlet_render_stage_depth",
             size,
             wgpu::TextureFormat::Depth32Float,
-            wgpu::TextureUsages::RENDER_ATTACHMENT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
+        let depth_sample_view = depth_sample_view(&depth_texture);
         let (color_texture, color_view) = create_2d_attachment(
             device,
             "meshlet_render_stage_color",
@@ -226,6 +279,14 @@ impl MeshletRenderStage {
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
         );
+
+        // Hi-Z pyramids stay None until the SPD-backed orchestrator
+        // (#486) toggles them on. The single-pass orchestrator never
+        // samples them — allocating at construction would just waste
+        // VRAM and surface wgpu noise from the editor's per-frame
+        // placeholder stage.
+        let hiz_prev: Option<HiZ> = None;
+        let hiz_curr: Option<HiZ> = None;
 
         Self {
             pipeline: MeshletPipeline::new(),
@@ -239,6 +300,7 @@ impl MeshletRenderStage {
             meshlet_bgl,
             vbuf_view,
             depth_view,
+            depth_sample_view,
             color_view,
             vbuf_texture,
             depth_texture,
@@ -251,7 +313,36 @@ impl MeshletRenderStage {
             // and adapter are available.
             gpu_timers: MeshletGpuTimers::new_disabled_for_default(),
             vram_tracker: None,
+            hiz_prev,
+            hiz_curr,
+            hi_z_initialized: false,
+            frame_bind_groups: [Vec::new(), Vec::new(), Vec::new()],
+            frame_bind_groups_index: 0,
+            retired_pyramids: [Vec::new(), Vec::new(), Vec::new()],
         }
+    }
+
+    /// Swaps the current Hi-Z pyramid into the `prev` slot. The
+    /// SPD-backed orchestrator follow-up (#486) will call this at
+    /// end of frame so the next frame's pass A reads the pyramid
+    /// this frame just built. No-op when pyramids haven't been
+    /// allocated yet.
+    #[allow(dead_code)]
+    pub(super) fn swap_hi_z_pyramids(&mut self) {
+        std::mem::swap(&mut self.hiz_prev, &mut self.hiz_curr);
+    }
+
+    /// Read-only access to the pyramid pass A samples this frame.
+    /// `None` until the SPD orchestrator (#486) allocates them.
+    pub fn hi_z_prev(&self) -> Option<&HiZ> {
+        self.hiz_prev.as_ref()
+    }
+
+    /// Read-only access to the pyramid pass B samples (= the one
+    /// rebuilt from this frame's depth between cull A and cull B).
+    /// `None` until the SPD orchestrator (#486) allocates them.
+    pub fn hi_z_curr(&self) -> Option<&HiZ> {
+        self.hiz_curr.as_ref()
     }
 
     /// Wires a shared engine VRAM tracker (#463.5). Called once at
@@ -263,10 +354,18 @@ impl MeshletRenderStage {
     /// state for THIS stage's contribution (use sparingly).
     pub fn set_vram_tracker(&mut self, tracker: Arc<EngineVramTracker>) {
         // Account for the persistent attachments we already created
-        // in `new()` — vbuf, depth, color. Any tracker setup AFTER
-        // construction must still see those bytes.
+        // in `new()` — vbuf, depth, color. Hi-Z pyramids are lazy
+        // (`None` until the SPD orchestrator #486 turns them on);
+        // the pyramid allocation will bump the tracker on its own
+        // when it runs.
         let attachment_bytes = render_target_byte_estimate(self.size);
-        tracker.add(attachment_bytes);
+        let pyramid_bytes = self
+            .hiz_prev
+            .as_ref()
+            .map(|p| p.byte_size())
+            .unwrap_or(0)
+            + self.hiz_curr.as_ref().map(|p| p.byte_size()).unwrap_or(0);
+        tracker.add(attachment_bytes + pyramid_bytes);
         self.vram_tracker = Some(tracker);
     }
 
@@ -301,6 +400,14 @@ impl MeshletRenderStage {
 
     pub fn material_pool(&self) -> &MaterialPool {
         &self.material_pool
+    }
+
+    /// Read-only access to the cull dispatcher. Mainly here so
+    /// integration tests can read back `visible_count` /
+    /// `culled_count` to verify the Hi-Z 2-pass cull behaviour
+    /// (#445) frame-to-frame.
+    pub fn cull(&self) -> &MeshletCull {
+        &self.cull
     }
 
     pub fn color_view(&self) -> &wgpu::TextureView {
@@ -342,6 +449,23 @@ fn render_target_byte_estimate(size: (u32, u32)) -> u64 {
     // vbuf: R32Uint = 4 bpp; depth: Depth32Float = 4 bpp;
     // color: Rgba8Unorm = 4 bpp. Total: 12 bytes/pixel.
     pixels * 12
+}
+
+/// Creates a `TextureAspect::DepthOnly` view of a depth attachment so
+/// the same texture can be sampled by the Hi-Z builder while the
+/// `_view` (with `aspect: All`) drives the render pass attachment.
+pub(super) fn depth_sample_view(texture: &wgpu::Texture) -> wgpu::TextureView {
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("meshlet_render_stage_depth_sample"),
+        format: Some(wgpu::TextureFormat::Depth32Float),
+        dimension: Some(wgpu::TextureViewDimension::D2),
+        usage: None,
+        aspect: wgpu::TextureAspect::DepthOnly,
+        base_mip_level: 0,
+        mip_level_count: Some(1),
+        base_array_layer: 0,
+        array_layer_count: Some(1),
+    })
 }
 
 pub(super) fn create_2d_attachment(
@@ -387,5 +511,22 @@ mod tests {
         let s = MeshletRenderStats::default();
         assert_eq!(s.instances_uploaded, 0);
         assert_eq!(s.cull_threads, 0);
+    }
+
+    #[test]
+    fn hi_z_byte_size_matches_summed_mips() {
+        // Pure-CPU verification of the pyramid-byte arithmetic that
+        // set_vram_tracker / resize rely on. R32Float = 4 bpp summed
+        // over the mip chain — for a square power-of-two pyramid this
+        // converges to base * 4/3 (geometric series factor 1/4).
+        // 64x64 → 7 mips, exact total = (4096+1024+256+64+16+4+1) * 4 = 21844.
+        let expected = (4096 + 1024 + 256 + 64 + 16 + 4 + 1) * 4u64;
+        let mip_count = crate::hi_z::mip_count_for(64, 64);
+        let mut total: u64 = 0;
+        for level in 0..mip_count {
+            let (w, h) = crate::hi_z::mip_size(64, 64, level);
+            total += (w as u64) * (h as u64) * 4;
+        }
+        assert_eq!(total, expected);
     }
 }

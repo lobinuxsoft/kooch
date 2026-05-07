@@ -50,8 +50,9 @@ impl MeshletRenderStage {
             "meshlet_render_stage_depth",
             new_size,
             wgpu::TextureFormat::Depth32Float,
-            wgpu::TextureUsages::RENDER_ATTACHMENT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
+        let depth_sample_view = super::depth_sample_view(&depth_texture);
         let (color_texture, color_view) = create_2d_attachment(
             device,
             "meshlet_render_stage_color",
@@ -62,13 +63,57 @@ impl MeshletRenderStage {
                 | wgpu::TextureUsages::COPY_SRC,
         );
 
+        // Hi-Z pyramids stay lazy (#486) — only recreate them on
+        // resize when they were already allocated by some prior
+        // SPD-orchestrator hook.
+        let old_pyramid_bytes = self
+            .hiz_prev
+            .as_ref()
+            .map(|p| p.byte_size())
+            .unwrap_or(0)
+            + self.hiz_curr.as_ref().map(|p| p.byte_size()).unwrap_or(0);
+        let hiz_prev = if self.hiz_prev.is_some() {
+            Some(crate::hi_z::HiZ::new(device, new_size.0, new_size.1))
+        } else {
+            None
+        };
+        let hiz_curr = if self.hiz_curr.is_some() {
+            Some(crate::hi_z::HiZ::new(device, new_size.0, new_size.1))
+        } else {
+            None
+        };
+        let new_pyramid_bytes = hiz_prev.as_ref().map(|p| p.byte_size()).unwrap_or(0)
+            + hiz_curr.as_ref().map(|p| p.byte_size()).unwrap_or(0);
+
         self.vbuf_texture = vbuf_texture;
         self.vbuf_view = vbuf_view;
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
+        self.depth_sample_view = depth_sample_view;
         self.color_texture = color_texture;
         self.color_view = color_view;
+        // Retire the OLD pyramids (if any) into the current slot of
+        // the triple-buffer rather than dropping them inline. The
+        // next frame's render() rotates the index and clears the
+        // slot that is now 2 frames old, by which point the GPU is
+        // guaranteed to be done. Currently a no-op since the lazy
+        // pyramids are still `None`; activates when SPD (#486)
+        // turns them on.
+        let retire_idx = self.frame_bind_groups_index;
+        if let Some(prev_pyramid) = std::mem::replace(&mut self.hiz_prev, hiz_prev) {
+            self.retired_pyramids[retire_idx].push(prev_pyramid);
+        }
+        if let Some(curr_pyramid) = std::mem::replace(&mut self.hiz_curr, hiz_curr) {
+            self.retired_pyramids[retire_idx].push(curr_pyramid);
+        }
+        // Both pyramids are fresh — they need clear_to_far before the
+        // next render_with_assets samples them in pass A.
+        self.hi_z_initialized = false;
         self.size = new_size;
+
+        if let Some(tracker) = &self.vram_tracker {
+            tracker.add(new_pyramid_bytes.saturating_sub(old_pyramid_bytes));
+        }
     }
 
     /// Registers `mesh` under `guid` in the global mesh pool.
@@ -366,6 +411,30 @@ impl MeshletRenderStage {
             self.gpu_timers.write_start(&mut encoder);
         }
 
+        // ── Single-pass cull (#445 follow-up) ──────────────────────
+        // The Hi-Z 2-pass orchestration this PR introduced (cull A
+        // vs hiz_prev → raster A → build hiz_curr → cull B vs
+        // hiz_curr → raster B) hits a Mesa radv (RX 9070 XT) bug in
+        // the per-mip pyramid build path: the storage-write →
+        // texture-read transition between mip[k] write and mip[k+1]
+        // sample inside the same encoder leaves the views "invalid"
+        // for the next bind-group construction.
+        //
+        // Bevy avoids this by porting AMD's FidelityFX Single-Pass
+        // Downsampler (SPD), which writes every mip in ONE compute
+        // dispatch via workgroup memory + atomics. No per-mip bind
+        // groups, no transitions to invalidate. That port is the
+        // proper fix and is tracked as a follow-up issue.
+        //
+        // Until SPD lands, the orchestrator falls back to the
+        // single-pass scene-pool atomic dispatch — the same path
+        // that production was on before this PR. The 2-pass
+        // primitives (`dispatch_scene_pool_atomic_hi_z`,
+        // `dispatch_cull_pass_b`, the culled SSBO + cull_pass_b
+        // shader entry) all stay in the codebase and are exercised
+        // by `tests/meshlet_bench_hi_z_two_pass.rs` and
+        // `tests/meshlet_hi_z_two_pass.rs`; only this orchestrator
+        // call site is gated.
         self.cull.dispatch_scene_pool_atomic(
             device,
             queue,
@@ -386,6 +455,7 @@ impl MeshletRenderStage {
             &self.scene,
             view_proj,
             0,
+            /* clear */ true,
         );
         // Editor / game tools insert MeshletDebugMode when they want to
         // override the production shading path. Absence = Off (no-op
@@ -419,9 +489,6 @@ impl MeshletRenderStage {
 
         queue.submit(std::iter::once(encoder.finish()));
 
-        // Hand the slot off to the async readback path. wgpu fires
-        // the callback when the GPU has finished and the buffer is
-        // host-visible — typically 1-2 frames out.
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.submit_readback(slot_idx);
         }
@@ -436,14 +503,9 @@ impl MeshletRenderStage {
             })
             .count() as u32;
 
-        // #463.6 — meshlet pipeline emits 3 dispatches / passes when
-        // there's actually something to draw (cull + vbuf raster +
-        // deferred shade). With zero instances the dispatches still
-        // execute but conceptually no work is done; the HUD reports
-        // 0 so the artist sees the count drop to nothing when every
-        // MeshRenderer is despawned. Indirect dispatch means once
-        // there IS at least one instance, the count stays at 3
-        // regardless of how many entities pile up.
+        // Single-pass orchestrator (#445 fallback while SPD is in
+        // flight): cull + vbuf raster + deferred shade. Same draw
+        // count as the pre-2-pass baseline.
         let meshlet_draw_calls = if instances.is_empty() { 0 } else { 3 };
 
         MeshletRenderStats {
