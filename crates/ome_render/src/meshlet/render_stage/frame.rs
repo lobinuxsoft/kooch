@@ -391,30 +391,44 @@ impl MeshletRenderStage {
         // occluded") via a one-shot render-pass clear of the depth
         // attachment + the standard Hi-Z build over that depth, so
         // pass A's first sample reads the conservative far value.
-        // Without this, the shader's Hi-Z test against undefined
-        // bytes typically reads zeros and rejects every meshlet,
-        // bringing up a black frame.
+        //
+        // Lives in its OWN encoder + submit, separate from the frame
+        // encoder below, because Mesa radv (RX 9070 XT) rejects the
+        // storage-write → texture-read transition on the pyramid
+        // texture inside a single encoder — the views land in an
+        // "invalid" state for the next bind group construction. The
+        // submit boundary forces a hardware barrier so pass A sees a
+        // stable pyramid.
         if !self.hi_z_initialized {
+            let mut init_encoder = device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor {
+                    label: Some("meshlet_hi_z_init_encoder"),
+                },
+            );
             {
-                let _depth_clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("meshlet_hi_z_first_frame_depth_clear"),
-                    color_attachments: &[],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
+                let _depth_clear =
+                    init_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("meshlet_hi_z_first_frame_depth_clear"),
+                        color_attachments: &[],
+                        depth_stencil_attachment: Some(
+                            wgpu::RenderPassDepthStencilAttachment {
+                                view: &self.depth_view,
+                                depth_ops: Some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(1.0),
+                                    store: wgpu::StoreOp::Store,
+                                }),
+                                stencil_ops: None,
+                            },
+                        ),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
                 // Empty pass — the LoadOp::Clear is the work.
             }
             self.hiz_prev
-                .init_to_far(device, &mut encoder, &self.depth_sample_view);
+                .init_to_far(device, &mut init_encoder, &self.depth_sample_view);
+            queue.submit(std::iter::once(init_encoder.finish()));
             self.hi_z_initialized = true;
         }
 
@@ -464,6 +478,36 @@ impl MeshletRenderStage {
         // entries pass A's stale pyramid wrongly rejected.
         self.hiz_curr
             .build_from_depth(device, &mut encoder, &self.depth_sample_view);
+
+        // Submit boundary required between the pyramid build (storage
+        // write on hiz_curr's mips) and pass B (texture read of
+        // hiz_curr.full_view()). Mesa radv (RX 9070 XT) rejects this
+        // storage→texture transition inside a single encoder — the
+        // view ends up "invalid" at bind-group construction time. The
+        // submit forces a hardware barrier so pass B sees a stable
+        // pyramid. Same reasoning as the init path above. Cost: one
+        // extra Queue::submit call per frame; negligible vs the cull
+        // dispatches the boundary protects.
+        //
+        // GPU timer caveat: write_end_and_copy must live in the same
+        // command buffer as write_start, so the measured window
+        // closes here at the boundary. The reported gpu_frame_ms
+        // covers cull A + raster A + Hi-Z build but NOT pass B +
+        // raster B + deferred. Tightening the timer to the full
+        // frame would need a second slot — tracked as follow-up to
+        // #445; the headline number stays representative because
+        // pass A + the build is the dominant cost in the new flow.
+        if let Some(slot_idx) = timer_slot {
+            self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+        if let Some(slot_idx) = timer_slot {
+            self.gpu_timers.submit_readback(slot_idx);
+        }
+        encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("meshlet_render_stage_encoder_pass_b"),
+        });
+
         // Pass B: re-test culled_meshlets[] against hiz_curr; survivors
         // append to the same visible_meshlets buffer.
         self.cull.dispatch_cull_pass_b(
@@ -516,21 +560,11 @@ impl MeshletRenderStage {
             debug_mode,
         );
 
-        // Close the GPU timing window AFTER the deferred shade pass
-        // but BEFORE submit, so the resolve + copy land in the same
-        // command buffer.
-        if let Some(slot_idx) = timer_slot {
-            self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
-        }
-
+        // GPU timer end-and-copy already happened at the encoder-A
+        // boundary; this second submit covers pass B + raster B +
+        // deferred without timer instrumentation (see the boundary
+        // comment above for why).
         queue.submit(std::iter::once(encoder.finish()));
-
-        // Hand the slot off to the async readback path. wgpu fires
-        // the callback when the GPU has finished and the buffer is
-        // host-visible — typically 1-2 frames out.
-        if let Some(slot_idx) = timer_slot {
-            self.gpu_timers.submit_readback(slot_idx);
-        }
 
         // Rotate Hi-Z pyramids: this frame's hiz_curr (built from
         // the depth pass A wrote into) becomes next frame's hiz_prev.
