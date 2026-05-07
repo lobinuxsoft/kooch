@@ -326,7 +326,38 @@ fn optional_features(adapter: &Adapter) -> wgpu::Features {
     {
         features |= wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
     }
+    // #493 — Bevy-style atomic R64 visibility buffer requires three
+    // interdependent features (you cannot atomicMax a u64 storage
+    // texture without int64 in the shader, and you cannot store the
+    // u64 atomic at all without TEXTURE_INT64_ATOMIC). Request the
+    // bundle as all-or-nothing; the meshlet stage falls back to the
+    // legacy R32Uint vbuf when any of the three is missing.
+    let vbuf64 = vbuf64_features();
+    if adapter.features().contains(vbuf64) {
+        features |= vbuf64;
+        tracing::info!(
+            "vbuf64 features available — atomic R64 visibility buffer path enabled \
+             (TEXTURE_INT64_ATOMIC + SHADER_INT64 + SHADER_INT64_ATOMIC_MIN_MAX)"
+        );
+    } else {
+        let missing = vbuf64 - adapter.features();
+        tracing::info!(
+            ?missing,
+            "vbuf64 features unavailable — meshlet visibility buffer will use R32Uint fallback \
+             (coplanar meshlets may z-fight)"
+        );
+    }
     features
+}
+
+/// Returns the feature bundle required for the Bevy-style atomic R64
+/// visibility buffer (#493). All three flags must be present together;
+/// any one missing forces the legacy `R32Uint` fallback path in the
+/// meshlet render stage.
+pub fn vbuf64_features() -> wgpu::Features {
+    wgpu::Features::TEXTURE_INT64_ATOMIC
+        | wgpu::Features::SHADER_INT64
+        | wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX
 }
 
 /// Targets from wgpu capabilities audit §C.1: SSAO tiles (8×8×16 = 1024 invocations)

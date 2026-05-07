@@ -24,6 +24,7 @@ pub mod plugin;
 pub mod projection;
 pub mod sky;
 pub mod texture;
+pub mod vbuf64;
 
 /// Depth format shared by every renderer that writes into the editor's
 /// offscreen viewport target. `Depth32Float` is universally supported
@@ -44,3 +45,4 @@ pub use plugin::RenderPlugin;
 pub use projection::perspective_rh_reverse_z;
 pub use sky::{ActiveSky, SkyPassNode, SkyRenderPass};
 pub use texture::{GpuTexture, Image, ImageFormat, ImageLoader};
+pub use vbuf64::Vbuf64Support;
