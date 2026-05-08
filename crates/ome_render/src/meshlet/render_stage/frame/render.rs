@@ -194,14 +194,18 @@ impl MeshletRenderStage {
             let gpu_pool = self.gpu_pool.as_ref().expect("checked above");
             pool_meshlet_bind_group(device, &self.meshlet_bgl, gpu_pool)
         };
-        // Prefer the GUID-keyed `MaterialPipeline` pool when it's
-        // present in resources — that's the buffer the asset picker
-        // writes into. Falls back to the stage-local pool (used by
-        // GPU integration tests that bypass the asset system).
-        let material_bg = match resources.get::<crate::material::MaterialPipeline>() {
-            Some(pipeline) => pipeline.pool().bind_group(device),
-            None => self.material_pool.bind_group(device),
-        };
+        // `MaterialPipeline` is the single source of truth for the
+        // material pool — see #447. Headless tests must insert one
+        // via `Resources::insert(MaterialPipeline::with_capacity(...))`
+        // before calling `render_with_assets`.
+        let material_bg = resources
+            .get::<crate::material::MaterialPipeline>()
+            .expect(
+                "MaterialPipeline missing in Resources; \
+                 insert one before calling render_with_assets",
+            )
+            .pool()
+            .bind_group(device);
 
         // #463.4 — drain any GPU timer slots that completed since
         // last frame, then acquire a fresh slot for this frame's

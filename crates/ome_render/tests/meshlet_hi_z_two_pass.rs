@@ -37,10 +37,21 @@ use ome_ecs::component::registry::ComponentRegistry;
 use ome_ecs::hierarchy::global_transform::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::AccessTracker;
-use ome_render::material::MaterialParams;
+use ome_render::material::{Material, MaterialPipeline};
 use ome_render::meshlet::{
     build_default_meshlets, MeshletRenderStage, MeshletRenderStageConfig,
 };
+
+fn install_material_pipeline(
+    resources: &mut Resources,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    material: Material,
+) {
+    let mut pipeline = MaterialPipeline::with_capacity(device, 4);
+    pipeline.register(queue, Guid::new_v4(), &material);
+    resources.insert(pipeline);
+}
 
 fn ecs_test_resources() -> Resources {
     let mut r = Resources::new();
@@ -93,13 +104,18 @@ fn single_frame_first_render_does_not_crash_with_empty_prev_pyramid() {
             size: (256, 256),
             instance_capacity: 8,
             meshlet_capacity: 4096,
-            materials: vec![MaterialParams::new([1.0, 1.0, 1.0, 1.0], 0.0, 0.5, 0.0)],
             ..Default::default()
         },
     );
     stage.ensure_gpu_mesh(&device, cube_guid, &cube_meshlets);
 
     let mut resources = ecs_test_resources();
+    install_material_pipeline(
+        &mut resources,
+        &device,
+        &queue,
+        Material::new([1.0, 1.0, 1.0, 1.0], 0.0, 0.5, 0.0),
+    );
     let mut commands = Commands::new();
     commands
         .spawn(&mut resources)
@@ -161,7 +177,6 @@ fn two_pass_visible_set_stays_stable_across_frames_in_static_scene() {
             // Each instance is a single-meshlet cube, but we still
             // reserve the worst-case stride headroom across the pool.
             meshlet_capacity: 4096,
-            materials: vec![MaterialParams::new([0.6, 0.6, 0.6, 1.0], 0.0, 0.5, 0.0)],
             ..Default::default()
         },
     );
@@ -173,6 +188,12 @@ fn two_pass_visible_set_stays_stable_across_frames_in_static_scene() {
     // by frame 2 hiz_prev is the wall and pass A's Hi-Z test against
     // the back-row cubes' projected centres should reject.
     let mut resources = ecs_test_resources();
+    install_material_pipeline(
+        &mut resources,
+        &device,
+        &queue,
+        Material::new([0.6, 0.6, 0.6, 1.0], 0.0, 0.5, 0.0),
+    );
     let mut commands = Commands::new();
 
     // Wall: scaled cube at z = -2 (in front of the back row).

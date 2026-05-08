@@ -27,7 +27,7 @@ use ome_ecs::hierarchy::global_transform::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::AccessTracker;
 use ome_core::Guid;
-use ome_render::material::MaterialParams;
+use ome_render::material::{Material, MaterialPipeline};
 use ome_render::meshlet::{
     build_default_meshlets, MeshletMesh, MeshletRenderStage, MeshletRenderStageConfig,
 };
@@ -124,13 +124,18 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
         size: (256, 256),
         instance_capacity: 16,
         meshlet_capacity: 1024,
-        materials: vec![
-            MaterialParams::new([1.0, 0.4, 0.2, 1.0], 0.0, 0.5, 0.0),
-            MaterialParams::new([0.2, 0.6, 1.0, 1.0], 0.0, 0.5, 0.0),
-        ],
         ..Default::default()
     };
     let mut stage = MeshletRenderStage::new(&device, config);
+
+    let mut material_pipeline = MaterialPipeline::with_capacity(&device, 8);
+    for mat in [
+        Material::new([1.0, 0.4, 0.2, 1.0], 0.0, 0.5, 0.0),
+        Material::new([0.2, 0.6, 1.0, 1.0], 0.0, 0.5, 0.0),
+    ] {
+        material_pipeline.register(&queue, Guid::new_v4(), &mat);
+    }
+    resources.insert(material_pipeline);
 
     // Pool registration via the public ensure_gpu_mesh path — this is
     // what production code does when AssetServer resolves the GUID.
@@ -235,13 +240,16 @@ fn render_stage_with_no_entities_returns_zero_stats() {
     let assets: Assets<MeshletMesh> = Assets::new();
     resources.insert(assets);
 
+    let mut material_pipeline = MaterialPipeline::with_capacity(&device, 4);
+    material_pipeline.register(&queue, Guid::new_v4(), &Material::default());
+    resources.insert(material_pipeline);
+
     let mut stage = MeshletRenderStage::new(
         &device,
         MeshletRenderStageConfig {
             size: (64, 64),
             instance_capacity: 8,
             meshlet_capacity: 256,
-            materials: vec![MaterialParams::default()],
             ..Default::default()
         },
     );

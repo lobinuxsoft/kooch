@@ -9,18 +9,23 @@ use super::super::system::MeshletPipeline;
 use super::super::vbuf64_stage::Vbuf64Stage;
 use super::super::vis_buffer::MeshletVisRasterizer;
 use crate::hi_z::HiZ;
-use crate::material::MaterialPool;
 use crate::perf::EngineVramTracker;
 
 /// End-to-end meshlet render stage. See module docs for the per-frame
 /// flow.
+///
+/// Material data lives in `MaterialPipeline` (a `Resources` entry
+/// owned by the asset plugin) — the stage borrows its bind group at
+/// render time. Callers MUST insert a `MaterialPipeline` before
+/// calling `render_with_assets`; headless tests construct one with
+/// `MaterialPipeline::with_capacity(device, n)` and `register` the
+/// materials they need.
 pub struct MeshletRenderStage {
     pub(super) pipeline: MeshletPipeline,
     pub(super) scene: MeshletScene,
     pub(super) cull: MeshletCull,
     pub(super) rasterizer: MeshletVisRasterizer,
     pub(super) deferred: MeshletDeferredShader,
-    pub(super) material_pool: MaterialPool,
 
     /// GPU mirror of [`MeshletPipeline::pool`]. Lazy-rebuilt by
     /// [`Self::render_with_assets`] when [`Self::pool_dirty`] is set,

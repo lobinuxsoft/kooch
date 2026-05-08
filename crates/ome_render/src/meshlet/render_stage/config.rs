@@ -1,4 +1,3 @@
-use crate::material::MaterialParams;
 use crate::vbuf64::Vbuf64Support;
 
 /// Construction parameters for [`MeshletRenderStage`]. All sizes are
@@ -15,9 +14,6 @@ pub struct MeshletRenderStageConfig {
     /// least `instance_capacity * meshlets_per_mesh` so no thread loses
     /// its slot to atomic-overflow.
     pub meshlet_capacity: u32,
-    /// Initial material pool. Must be non-empty (wgpu rejects
-    /// zero-sized storage buffer bindings).
-    pub materials: Vec<MaterialParams>,
     /// Runtime decision of whether the atomic R64 visibility-buffer
     /// path (#493) is available. When `is_supported()` returns true
     /// the stage owns a [`Vbuf64Stage`] alongside the legacy R32Uint
@@ -32,7 +28,6 @@ impl Default for MeshletRenderStageConfig {
             size: (256, 256),
             instance_capacity: 256,
             meshlet_capacity: 4096,
-            materials: vec![MaterialParams::default()],
             vbuf64: Vbuf64Support::from_supported(false),
         }
     }
