@@ -1,122 +1,11 @@
-use super::*;
-use glam::Vec3;
+//! Shared fixtures for the gltf_loader test sub-modules.
+//!
+//! Builders fabricate hand-crafted GLB / glTF documents so the tests
+//! never depend on real-asset binaries. Filesystem helpers manage
+//! per-test tmpdirs that survive `--test-threads=N` runs.
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-
-#[test]
-fn extensions_includes_glb_and_gltf() {
-    let loader = GltfMeshLoader;
-    assert_eq!(loader.extensions(), &["glb", "gltf"]);
-}
-
-#[test]
-fn invalid_bytes_return_loader_error() {
-    let loader = GltfMeshLoader;
-    let mut ctx = LoadContext {
-        path: Path::new("bogus.glb"),
-    };
-    let err = loader.load(b"not a real glb", &mut ctx).unwrap_err();
-    match err {
-        AssetError::Loader(_) => {}
-        other => panic!("expected Loader error, got {other:?}"),
-    }
-}
-
-#[test]
-fn minimal_glb_round_trip() {
-    let glb = build_minimal_triangle_glb();
-    let loader = GltfMeshLoader;
-    let mut ctx = LoadContext {
-        path: Path::new("triangle.glb"),
-    };
-    let mesh = loader
-        .load(&glb, &mut ctx)
-        .expect("loader should accept minimal glb");
-
-    assert_eq!(mesh.vertex_count(), 3);
-    assert_eq!(mesh.index_count(), 3);
-    assert_eq!(mesh.indices, vec![0, 1, 2]);
-
-    // Vertex positions match what we encoded.
-    let positions: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.position).collect();
-    assert_eq!(
-        positions,
-        vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-    );
-
-    // AABB envelops the triangle.
-    assert_eq!(mesh.aabb.min, Vec3::new(0.0, 0.0, 0.0));
-    assert_eq!(mesh.aabb.max, Vec3::new(1.0, 1.0, 0.0));
-}
-
-#[test]
-fn scene_walk_concatenates_two_translated_triangles() {
-    // Two-node scene: each node holds a single-triangle mesh, the
-    // first translated +X by 10, the second translated -X by 10.
-    // Validates: scene walk picks both, transforms are applied to
-    // vertex positions, indices are rebased into the concatenated
-    // pool.
-    let glb = build_two_translated_triangles_glb();
-    let mesh = parse_mesh_bytes(&glb).expect("multi-node load");
-
-    assert_eq!(mesh.vertex_count(), 6, "two triangles → six vertices");
-    assert_eq!(mesh.index_count(), 6);
-    // Indices of the second triangle must reference vertices 3..6
-    // (rebased), not 0..3 (the per-primitive local indices).
-    assert_eq!(mesh.indices, vec![0, 1, 2, 3, 4, 5]);
-
-    // First triangle's first vertex sits at local origin (0,0,0)
-    // → world (+10, 0, 0). Second triangle's first vertex at world
-    // (-10, 0, 0). AABB envelopes both.
-    assert!(
-        (mesh.vertices[0].position[0] - 10.0).abs() < 1e-4,
-        "first node translated +X by 10",
-    );
-    assert!(
-        (mesh.vertices[3].position[0] + 10.0).abs() < 1e-4,
-        "second node translated -X by 10",
-    );
-    assert!(
-        mesh.aabb.min.x < -9.0 && mesh.aabb.max.x > 9.0,
-        "AABB must span both translated triangles",
-    );
-}
-
-#[test]
-fn import_scale_multiplies_positions() {
-    // The minimal triangle spans x in [0, 1]. import_scale = 100
-    // makes it span [0, 100]. Validates the scale knob applies
-    // before any scene transform composes.
-    let glb = build_minimal_triangle_glb();
-    let mesh = parse_mesh_bytes_with_scale(&glb, 100.0).expect("load with scale");
-    let xs: Vec<f32> = mesh.vertices.iter().map(|v| v.position[0]).collect();
-    let max_x = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    assert!(
-        (max_x - 100.0).abs() < 1e-3,
-        "scaled max X should be 100, got {max_x}",
-    );
-}
-
-#[test]
-fn parse_mesh_bytes_rejects_empty_document() {
-    // A minimal valid glTF JSON with NO meshes.
-    let json = r#"{"asset":{"version":"2.0"}}"#;
-    let mut bin = Vec::new();
-    bin.extend_from_slice(b"glTF"); // magic
-    bin.extend_from_slice(&2u32.to_le_bytes()); // version
-    let json_padded = pad_to_4(json.as_bytes());
-    let total_len = 12 + 8 + json_padded.len() as u32;
-    bin.extend_from_slice(&total_len.to_le_bytes());
-    bin.extend_from_slice(&(json_padded.len() as u32).to_le_bytes());
-    bin.extend_from_slice(b"JSON");
-    bin.extend_from_slice(&json_padded);
-
-    let err = parse_mesh_bytes(&bin).unwrap_err();
-    match err {
-        GltfMeshError::EmptyDocument => {}
-        other => panic!("expected EmptyDocument, got {other:?}"),
-    }
-}
 
 /// Builds a hand-crafted GLB containing exactly one triangle. Used by
 /// the round-trip test above to exercise the full parser without
@@ -263,127 +152,11 @@ pub(super) fn build_two_translated_triangles_glb() -> Vec<u8> {
     out
 }
 
-// ---------------------------------------------------------------------------
-// External-URI buffer tests (#490)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn separate_gltf_loads_with_sidecar_buffer() {
-    // Mirrors Blender's *glTF Separate* export: a `.gltf` JSON document
-    // alongside a `.bin` sidecar. parse_mesh_bytes_full resolves the
-    // URI relative to the document's directory.
-    let dir = make_tmpdir("separate_load");
-    let (gltf_path, _bin_path) = write_separate_gltf_pair(&dir, "scene", "scene.bin");
-
-    let bytes = std::fs::read(&gltf_path).expect("read gltf");
-    let mesh = parse_mesh_bytes_full(&bytes, 1.0, Some(&dir))
-        .expect("sidecar buffer must resolve");
-
-    assert_eq!(mesh.vertex_count(), 3);
-    assert_eq!(mesh.indices, vec![0, 1, 2]);
-    cleanup_tmpdir(&dir);
-}
-
-#[test]
-fn separate_gltf_without_base_dir_reports_unresolvable() {
-    // No directory anchor → the sidecar URI cannot be located. The
-    // load fails loudly so callers know to plumb the path through.
-    let dir = make_tmpdir("unresolvable");
-    let (gltf_path, _) = write_separate_gltf_pair(&dir, "scene", "scene.bin");
-    let bytes = std::fs::read(&gltf_path).expect("read gltf");
-
-    let err = parse_mesh_bytes_full(&bytes, 1.0, None).unwrap_err();
-    assert!(
-        matches!(err, GltfMeshError::BufferUriUnresolvable),
-        "expected BufferUriUnresolvable, got {err:?}",
-    );
-    cleanup_tmpdir(&dir);
-}
-
-#[test]
-fn separate_gltf_with_traversal_uri_is_rejected() {
-    // A doctored .gltf claiming `"uri": "../../../etc/passwd"` must be
-    // rejected before any filesystem read happens. Validates the URI
-    // hygiene gate end-to-end through parse_mesh_bytes_full.
-    let dir = make_tmpdir("traversal");
-    let (gltf_path, _) = write_separate_gltf_pair(&dir, "scene", "../../../etc/passwd");
-    let bytes = std::fs::read(&gltf_path).expect("read gltf");
-
-    let err = parse_mesh_bytes_full(&bytes, 1.0, Some(&dir)).unwrap_err();
-    match err {
-        GltfMeshError::BufferUriRejected { ref uri, reason } => {
-            assert_eq!(uri, "../../../etc/passwd");
-            assert!(
-                reason.contains(".."),
-                "reason should mention `..` traversal, got `{reason}`",
-            );
-        }
-        other => panic!("expected BufferUriRejected, got {other:?}"),
-    }
-    cleanup_tmpdir(&dir);
-}
-
-#[test]
-fn separate_gltf_with_absolute_uri_is_rejected() {
-    // POSIX absolute paths in `uri` are rejected even when `base_dir`
-    // would technically allow Path::join to swallow them. Defends
-    // against malicious `.gltf` files that try to read host files.
-    let dir = make_tmpdir("absolute");
-    let (gltf_path, _) = write_separate_gltf_pair(&dir, "scene", "/etc/passwd");
-    let bytes = std::fs::read(&gltf_path).expect("read gltf");
-
-    let err = parse_mesh_bytes_full(&bytes, 1.0, Some(&dir)).unwrap_err();
-    match err {
-        GltfMeshError::BufferUriRejected { ref uri, reason } => {
-            assert_eq!(uri, "/etc/passwd");
-            assert_eq!(reason, "absolute path");
-        }
-        other => panic!("expected BufferUriRejected, got {other:?}"),
-    }
-    cleanup_tmpdir(&dir);
-}
-
-#[test]
-fn embedded_gltf_loads_with_data_uri_buffer() {
-    // Mirrors Blender's *glTF Embedded* export: the binary payload
-    // is base64-encoded inline in the JSON via a `data:` URI. No
-    // sidecar, no filesystem touch — base_dir can be `None`.
-    let json = build_data_uri_gltf();
-    let mesh = parse_mesh_bytes_full(json.as_bytes(), 1.0, None)
-        .expect("embedded data URI buffer must decode");
-
-    assert_eq!(mesh.vertex_count(), 3);
-    assert_eq!(mesh.indices, vec![0, 1, 2]);
-    let positions: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.position).collect();
-    assert_eq!(
-        positions,
-        vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-    );
-}
-
-#[test]
-fn malformed_data_uri_surfaces_specific_error() {
-    // Truncated base64 payload — the decoder reports the failure
-    // through `MalformedDataUri`, not a generic missing-attribute.
-    let json = r#"{
-  "asset": { "version": "2.0" },
-  "buffers": [{ "uri": "data:application/octet-stream;base64,!!!", "byteLength": 4 }],
-  "bufferViews": [],
-  "accessors": [],
-  "meshes": []
-}"#;
-    let err = parse_mesh_bytes_full(json.as_bytes(), 1.0, None).unwrap_err();
-    assert!(
-        matches!(err, GltfMeshError::MalformedDataUri(_)),
-        "expected MalformedDataUri, got {err:?}",
-    );
-}
-
 /// Builds a `.gltf` JSON whose single buffer is a `data:` URI with
 /// base64-encoded triangle bytes. Equivalent payload to
 /// [`build_minimal_triangle_glb`] — used to exercise the embedded path
 /// without touching the filesystem.
-fn build_data_uri_gltf() -> String {
+pub(super) fn build_data_uri_gltf() -> String {
     use base64::Engine;
 
     let indices: [u32; 3] = [0, 1, 2];
@@ -430,7 +203,7 @@ fn build_data_uri_gltf() -> String {
 
 // Per-test tmpdir naming: process pid + atomic counter keeps the
 // names distinct even across `--test-threads=N` runs.
-fn make_tmpdir(label: &str) -> PathBuf {
+pub(super) fn make_tmpdir(label: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
@@ -443,7 +216,7 @@ fn make_tmpdir(label: &str) -> PathBuf {
     dir
 }
 
-fn cleanup_tmpdir(dir: &Path) {
+pub(super) fn cleanup_tmpdir(dir: &Path) {
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -451,7 +224,11 @@ fn cleanup_tmpdir(dir: &Path) {
 /// the supplied URI for buffer 0, plus `<dir>/scene.bin` containing the
 /// triangle's binary payload. The URI is the verbatim string the
 /// document uses — useful for traversal / absolute-path hostile cases.
-fn write_separate_gltf_pair(dir: &Path, name: &str, uri: &str) -> (PathBuf, PathBuf) {
+pub(super) fn write_separate_gltf_pair(
+    dir: &Path,
+    name: &str,
+    uri: &str,
+) -> (PathBuf, PathBuf) {
     let indices: [u32; 3] = [0, 1, 2];
     let positions: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     let normals: [[f32; 3]; 3] = [[0.0, 0.0, 1.0]; 3];
