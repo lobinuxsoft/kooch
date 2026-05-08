@@ -2,7 +2,7 @@
 //! measuring wall-clock frame time over N iterations.
 //!
 //! Marked `#[ignore]` by default; run with:
-//!   cargo test -p ome_render --test meshlet_bench -- --ignored --test-threads=1
+//!   cargo test -p ome_render --test meshlet_bench -- --ignored
 //!
 //! The test asserts the median frame time stays below a generous
 //! target (16 ms = 60 Hz). Real numbers on RX 9070 XT for the

@@ -17,6 +17,7 @@
 //! `gpu/tlas_lbvh/tests/morton.rs`. Promoting it here would not add
 //! distinct setup, so it is intentionally not duplicated.
 
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use glam::Vec3;
@@ -29,26 +30,34 @@ use ome_bvh::node::{BVH_LEAF_FLAG, BVH_VALUE_MASK, BvhNode};
 
 const PRIMITIVE_STRIDE: u32 = 16;
 
+// Mesa radv races on parallel `request_adapter` (issue #334). One
+// shared device per test binary keeps the call serialised.
+static SHARED_DEVICE: OnceLock<Option<(wgpu::Device, wgpu::Queue)>> = OnceLock::new();
+
 fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    pollster::block_on(async {
-        let instance = wgpu::Instance::default();
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions::default())
-            .await
-            .ok()?;
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("ome_bvh::tlas_gpu_rebuild_test_device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::Performance,
-                trace: wgpu::Trace::Off,
-                experimental_features: wgpu::ExperimentalFeatures::default(),
+    SHARED_DEVICE
+        .get_or_init(|| {
+            pollster::block_on(async {
+                let instance = wgpu::Instance::default();
+                let adapter = instance
+                    .request_adapter(&wgpu::RequestAdapterOptions::default())
+                    .await
+                    .ok()?;
+                let (device, queue) = adapter
+                    .request_device(&wgpu::DeviceDescriptor {
+                        label: Some("ome_bvh::tlas_gpu_rebuild_test_device"),
+                        required_features: wgpu::Features::empty(),
+                        required_limits: wgpu::Limits::default(),
+                        memory_hints: wgpu::MemoryHints::Performance,
+                        trace: wgpu::Trace::Off,
+                        experimental_features: wgpu::ExperimentalFeatures::default(),
+                    })
+                    .await
+                    .ok()?;
+                Some((device, queue))
             })
-            .await
-            .ok()?;
-        Some((device, queue))
-    })
+        })
+        .clone()
 }
 
 fn fresh_accel(device: &wgpu::Device) -> OmeAccel {

@@ -7,7 +7,7 @@
 //!   - the top mip (1×1) carries the global max.
 //!
 //! Run with:
-//!   cargo test -p ome_render --test hi_z_build -- --test-threads=1
+//!   cargo test -p ome_render --test hi_z_build
 
 mod common;
 

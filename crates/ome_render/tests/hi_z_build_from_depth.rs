@@ -7,7 +7,7 @@
 //! orchestrator tries to use it.
 //!
 //! Run with:
-//!   cargo test -p ome_render --test hi_z_build_from_depth -- --test-threads=1
+//!   cargo test -p ome_render --test hi_z_build_from_depth
 
 mod common;
 

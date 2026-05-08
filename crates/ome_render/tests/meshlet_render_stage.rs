@@ -11,7 +11,7 @@
 //!   actually drive different screen positions
 //!
 //! Run with:
-//!   cargo test -p ome_render --test meshlet_render_stage -- --test-threads=1
+//!   cargo test -p ome_render --test meshlet_render_stage
 
 mod common;
 

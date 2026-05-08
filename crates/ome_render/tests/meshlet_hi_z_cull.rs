@@ -11,7 +11,7 @@
 //! greater than the occluder.
 //!
 //! Run with:
-//!   cargo test -p ome_render --test meshlet_hi_z_cull -- --test-threads=1
+//!   cargo test -p ome_render --test meshlet_hi_z_cull
 
 mod common;
 

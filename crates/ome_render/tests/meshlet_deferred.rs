@@ -7,7 +7,7 @@
 //!   into Rgba8Unorm storage texture).
 //!
 //! Run with:
-//!   cargo test -p ome_render --test meshlet_deferred -- --test-threads=1
+//!   cargo test -p ome_render --test meshlet_deferred
 
 mod common;
 

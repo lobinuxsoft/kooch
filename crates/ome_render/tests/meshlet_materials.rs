@@ -4,7 +4,7 @@
 //! ids and asserts the resulting colors differ.
 //!
 //! Run with:
-//!   cargo test -p ome_render --test meshlet_materials -- --test-threads=1
+//!   cargo test -p ome_render --test meshlet_materials
 
 mod common;
 

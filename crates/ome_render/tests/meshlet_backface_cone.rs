@@ -6,7 +6,7 @@
 //! on `meshopt`'s clustering heuristics for the assertion.
 //!
 //! Run with:
-//!   cargo test -p ome_render --test meshlet_backface_cone -- --test-threads=1
+//!   cargo test -p ome_render --test meshlet_backface_cone
 
 mod common;
 

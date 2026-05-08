@@ -22,7 +22,7 @@
 //!    that's an internal-pipeline metric, not a correctness one.
 //!
 //! Run with:
-//!   cargo test -p ome_render --test meshlet_hi_z_two_pass -- --test-threads=1
+//!   cargo test -p ome_render --test meshlet_hi_z_two_pass
 
 mod common;
 

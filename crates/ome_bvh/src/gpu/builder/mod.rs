@@ -49,6 +49,13 @@ pub(super) const INITIAL_MORTON_CAPACITY: u64 = 256;
 
 #[cfg(test)]
 pub(crate) mod test_device {
+    use std::sync::OnceLock;
+
+    // Mesa radv SIGSEGVs when many threads concurrently call
+    // `wgpu::Instance::default().request_adapter(...)`. Acquire once
+    // per test binary and clone handles for every call.
+    static SHARED: OnceLock<Option<(wgpu::Device, wgpu::Queue)>> = OnceLock::new();
+
     /// Acquire a wgpu device + queue for unit tests. Picks any
     /// available adapter (vulkan / metal / dx12 / gl). Returns `None`
     /// when no GPU is available — the test in that case skips itself
@@ -59,34 +66,39 @@ pub(crate) mod test_device {
     /// in every dispatch and would fail to validate a pipeline without
     /// them. Adapters that don't expose the feature are skipped.
     pub fn try_acquire() -> Option<(wgpu::Device, wgpu::Queue)> {
-        pollster::block_on(async {
-            let instance = wgpu::Instance::default();
-            let adapter = instance
-                .request_adapter(&wgpu::RequestAdapterOptions::default())
-                .await
-                .ok()?;
+        SHARED
+            .get_or_init(|| {
+                pollster::block_on(async {
+                    let instance = wgpu::Instance::default();
+                    let adapter = instance
+                        .request_adapter(&wgpu::RequestAdapterOptions::default())
+                        .await
+                        .ok()?;
 
-            let supports_ts =
-                adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
-            let supports_ts_inside =
-                adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES);
-            if !supports_ts || !supports_ts_inside {
-                return None;
-            }
+                    let supports_ts =
+                        adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+                    let supports_ts_inside = adapter
+                        .features()
+                        .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES);
+                    if !supports_ts || !supports_ts_inside {
+                        return None;
+                    }
 
-            let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor {
-                    label: Some("ome_bvh::test_device"),
-                    required_features: wgpu::Features::TIMESTAMP_QUERY
-                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::Performance,
-                    trace: wgpu::Trace::Off,
-                    experimental_features: wgpu::ExperimentalFeatures::default(),
+                    let (device, queue) = adapter
+                        .request_device(&wgpu::DeviceDescriptor {
+                            label: Some("ome_bvh::test_device"),
+                            required_features: wgpu::Features::TIMESTAMP_QUERY
+                                | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+                            required_limits: wgpu::Limits::default(),
+                            memory_hints: wgpu::MemoryHints::Performance,
+                            trace: wgpu::Trace::Off,
+                            experimental_features: wgpu::ExperimentalFeatures::default(),
+                        })
+                        .await
+                        .ok()?;
+                    Some((device, queue))
                 })
-                .await
-                .ok()?;
-            Some((device, queue))
-        })
+            })
+            .clone()
     }
 }
