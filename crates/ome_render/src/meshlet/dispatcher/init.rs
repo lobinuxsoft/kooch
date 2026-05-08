@@ -11,7 +11,14 @@ use crate::meshlet::scene::{MeshletScene, SceneCullParams};
 use super::types::{DrawIndirectArgs, HiZTestParams};
 use super::MeshletCull;
 
-const CULL_SHADER_SOURCE: &str = include_str!("../../../shaders/meshlet_cull.wgsl");
+const CULL_SHADER_SOURCE: &str = concat!(
+    include_str!("../../../shaders/meshlet_cull/common.wgsl"),
+    include_str!("../../../shaders/meshlet_cull/basic.wgsl"),
+    include_str!("../../../shaders/meshlet_cull/scene.wgsl"),
+    include_str!("../../../shaders/meshlet_cull/pool.wgsl"),
+    include_str!("../../../shaders/meshlet_cull/atomic.wgsl"),
+    include_str!("../../../shaders/meshlet_cull/atomic_hi_z.wgsl"),
+);
 
 impl MeshletCull {
     /// Creates a dispatcher sized for at most `capacity` visible
