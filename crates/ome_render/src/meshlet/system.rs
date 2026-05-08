@@ -288,4 +288,81 @@ mod tests {
         let m = inst.transform_mat4();
         assert_eq!(m, Mat4::IDENTITY);
     }
+
+    /// #492 regression: `MeshRenderer.visible == false` must be
+    /// filtered at the scene-collection step so the cull dispatch
+    /// never sees the entity. Same rule applies to
+    /// `collect_referenced_guids` — an invisible mesh should not be
+    /// pulled into the GPU pool either.
+    #[test]
+    fn invisible_mesh_renderer_is_filtered_at_collect() {
+        use ome_ecs::allocator::EntityAllocator;
+        use ome_ecs::archetype_registry::ArchetypeRegistry;
+        use ome_ecs::commands::Commands;
+        use ome_ecs::component::registry::ComponentRegistry;
+        use ome_ecs::query::AccessTracker;
+
+        let mut pipeline = MeshletPipeline::new();
+        let mesh = build_default_meshlets(&cube_mesh()).expect("build");
+        let guid = Guid::new_v4();
+        pipeline.register_mesh(guid, &mesh);
+
+        let mut resources = Resources::new();
+        resources.insert(EntityAllocator::new());
+        resources.insert(ComponentRegistry::new());
+        resources.insert(ArchetypeRegistry::new());
+        resources.insert(AccessTracker::new());
+
+        let mut commands = Commands::new();
+        // A — visible, valid mesh → should land in the instance vec.
+        commands
+            .spawn(&mut resources)
+            .insert(MeshRenderer {
+                mesh: Some(guid),
+                visible: true,
+                ..Default::default()
+            })
+            .insert(GlobalTransform {
+                matrix: Mat4::from_translation(glam::Vec3::ZERO),
+            });
+        // B — invisible: must be dropped at sync time.
+        commands
+            .spawn(&mut resources)
+            .insert(MeshRenderer {
+                mesh: Some(guid),
+                visible: false,
+                ..Default::default()
+            })
+            .insert(GlobalTransform {
+                matrix: Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)),
+            });
+        // C — control: visible but mesh = None, must also be dropped
+        // (separate filter inside collect_scene_instances).
+        commands
+            .spawn(&mut resources)
+            .insert(MeshRenderer {
+                mesh: None,
+                visible: true,
+                ..Default::default()
+            })
+            .insert(GlobalTransform {
+                matrix: Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 0.0)),
+            });
+        commands.apply(&mut resources);
+
+        let instances = pipeline.collect_scene_instances(&resources);
+        assert_eq!(
+            instances.len(),
+            1,
+            "only entity A (visible + valid mesh) should reach the instance vec"
+        );
+
+        let referenced = pipeline.collect_referenced_guids(&resources);
+        assert_eq!(
+            referenced.len(),
+            1,
+            "the invisible entity must not pull its mesh into the GPU pool"
+        );
+        assert_eq!(referenced[0], guid);
+    }
 }

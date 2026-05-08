@@ -83,7 +83,21 @@ pub(crate) fn draw_performance_content(
                         "VRAM (engine-tracked)",
                         &format!("{} MB", perf_stats.vram_tracked_mb()),
                     );
-                    metric(ui, "Draw calls / frame", &perf_stats.draw_calls.to_string());
+                    metric_with_tooltip(
+                        ui,
+                        "Draw calls / frame",
+                        &perf_stats.draw_calls.to_string(),
+                        // #492 audit: explain why the empty-scene floor
+                        // is non-zero so the artist doesn't read it as
+                        // a leak.
+                        "Editor base passes (sky + viewport blit + egui paint = 3) \
+                         plus the meshlet stage's per-frame draw count \
+                         (0 = empty scene, 4 = R64 atomic vbuf path, \
+                         6 = R32 + Hi-Z 2-pass path). \
+                         MeshRenderer.visible = false drops the entity at sync \
+                         time, so an invisible mesh never reaches the cull \
+                         pipeline and never bumps this number.",
+                    );
                 });
             });
 
@@ -179,5 +193,16 @@ fn grid(ui: &mut egui::Ui, salt: &str, body: impl FnOnce(&mut egui::Ui)) {
 fn metric(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.label(label);
     ui.label(egui::RichText::new(value).monospace());
+    ui.end_row();
+}
+
+/// Same as [`metric`] but attaches `tooltip` on hover for both the label
+/// and the value, used when the metric's number alone is misleading
+/// without context (e.g. fixed editor passes that produce a non-zero
+/// floor in an empty scene).
+fn metric_with_tooltip(ui: &mut egui::Ui, label: &str, value: &str, tooltip: &str) {
+    ui.label(label).on_hover_text(tooltip);
+    ui.label(egui::RichText::new(value).monospace())
+        .on_hover_text(tooltip);
     ui.end_row();
 }
