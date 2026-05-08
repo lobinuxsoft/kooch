@@ -13,7 +13,6 @@ use super::config::MeshletRenderStageConfig;
 use super::helpers::{create_2d_attachment, depth_sample_view, render_target_byte_estimate};
 use super::stage::MeshletRenderStage;
 use crate::hi_z::HiZ;
-use crate::material::MaterialPool;
 use crate::perf::EngineVramTracker;
 
 impl MeshletRenderStage {
@@ -22,7 +21,6 @@ impl MeshletRenderStage {
             size,
             instance_capacity,
             meshlet_capacity,
-            materials,
             vbuf64,
         } = config;
         assert!(size.0 > 0 && size.1 > 0, "MeshletRenderStage size must be > 0");
@@ -42,7 +40,6 @@ impl MeshletRenderStage {
             None,
         );
         let deferred = MeshletDeferredShader::new(device, cull.meshlet_bind_group_layout());
-        let material_pool = MaterialPool::new(device, &materials);
 
         let (vbuf_texture, vbuf_view) = create_2d_attachment(
             device,
@@ -101,7 +98,6 @@ impl MeshletRenderStage {
             cull,
             rasterizer,
             deferred,
-            material_pool,
             gpu_pool: None,
             pool_dirty: false,
             meshlet_bgl,
@@ -204,10 +200,6 @@ impl MeshletRenderStage {
 
     pub fn pipeline_mut(&mut self) -> &mut MeshletPipeline {
         &mut self.pipeline
-    }
-
-    pub fn material_pool(&self) -> &MaterialPool {
-        &self.material_pool
     }
 
     /// Read-only access to the cull dispatcher. Mainly here so

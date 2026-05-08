@@ -20,7 +20,7 @@ use ome_ecs::hierarchy::global_transform::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::AccessTracker;
 use ome_core::resource::Resources;
-use ome_render::material::MaterialParams;
+use ome_render::material::{Material, MaterialPipeline};
 use ome_render::mesh::{Mesh, MeshVertex};
 use ome_render::meshlet::{
     build_default_meshlets, MeshletRenderStage, MeshletRenderStageConfig,
@@ -114,11 +114,6 @@ fn three_distinct_meshes_render_in_single_cull_dispatch() {
             // build_default_meshlets, so meshlet_capacity must cover
             // instances * pool.max_meshlets_per_mesh.
             meshlet_capacity: 4096,
-            materials: vec![
-                MaterialParams::new([1.0, 0.4, 0.2, 1.0], 0.0, 0.5, 0.0),
-                MaterialParams::new([0.2, 0.6, 1.0, 1.0], 0.0, 0.5, 0.0),
-                MaterialParams::new([0.3, 1.0, 0.4, 1.0], 0.0, 0.5, 0.0),
-            ],
             ..Default::default()
         },
     );
@@ -134,6 +129,15 @@ fn three_distinct_meshes_render_in_single_cull_dispatch() {
     );
 
     let mut resources = ecs_test_resources();
+    let mut material_pipeline = MaterialPipeline::with_capacity(&device, 8);
+    for mat in [
+        Material::new([1.0, 0.4, 0.2, 1.0], 0.0, 0.5, 0.0),
+        Material::new([0.2, 0.6, 1.0, 1.0], 0.0, 0.5, 0.0),
+        Material::new([0.3, 1.0, 0.4, 1.0], 0.0, 0.5, 0.0),
+    ] {
+        material_pipeline.register(&queue, Guid::new_v4(), &mat);
+    }
+    resources.insert(material_pipeline);
     let mut commands = Commands::new();
     commands
         .spawn(&mut resources)

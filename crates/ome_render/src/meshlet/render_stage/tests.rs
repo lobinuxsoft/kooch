@@ -6,7 +6,6 @@ fn config_defaults_are_non_zero() {
     assert!(cfg.size.0 > 0 && cfg.size.1 > 0);
     assert!(cfg.instance_capacity > 0);
     assert!(cfg.meshlet_capacity > 0);
-    assert!(!cfg.materials.is_empty());
 }
 
 #[test]
