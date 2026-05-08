@@ -10,7 +10,8 @@ mod common;
 
 use common::{build_cube_mesh, try_acquire_device};
 use glam::{Mat4, Vec3};
-use ome_render::material::{MaterialParams, MaterialPool};
+use ome_core::Guid;
+use ome_render::material::{Material, MaterialPipeline};
 use ome_render::meshlet::{
     build_default_meshlets, meshlet_bind_group, meshlet_bind_group_layout, CullParams,
     MeshletCull, MeshletDeferredShader, MeshletVisRasterizer, DEFAULT_MAX_TRIANGLES,
@@ -47,16 +48,20 @@ fn render_with_material(material_id: u32) -> Vec<u8> {
     let meshlet_bgl = meshlet_bind_group_layout(&device);
     let meshlet_bg = meshlet_bind_group(&device, &meshlet_bgl, &gpu_mesh);
 
-    let materials = MaterialPool::new(
-        &device,
-        &[
-            // slot 0 — pure red
-            MaterialParams::new([1.0, 0.0, 0.0, 1.0], 0.0, 0.5, 0.0),
-            // slot 1 — pure blue
-            MaterialParams::new([0.0, 0.0, 1.0, 1.0], 0.0, 0.5, 0.0),
-        ],
+    // slot 0 is the MaterialPipeline fallback (white). Pure-red and
+    // pure-blue land in slots 1 and 2 — see the call sites below.
+    let mut materials = MaterialPipeline::with_capacity(&device, 4);
+    materials.register(
+        &queue,
+        Guid::new_v4(),
+        &Material::new([1.0, 0.0, 0.0, 1.0], 0.0, 0.5, 0.0),
     );
-    let material_bg = materials.bind_group(&device);
+    materials.register(
+        &queue,
+        Guid::new_v4(),
+        &Material::new([0.0, 0.0, 1.0, 1.0], 0.0, 0.5, 0.0),
+    );
+    let material_bg = materials.pool().bind_group(&device);
 
     let vbuf_tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("vbuf_mat_test"),
@@ -185,8 +190,8 @@ fn render_with_material(material_id: u32) -> Vec<u8> {
 
 #[test]
 fn distinct_material_ids_produce_distinct_pixel_colors() {
-    let red_pixels = render_with_material(0);
-    let blue_pixels = render_with_material(1);
+    let red_pixels = render_with_material(1);
+    let blue_pixels = render_with_material(2);
 
     if red_pixels.is_empty() || blue_pixels.is_empty() {
         eprintln!("no GPU adapter available; skipping");

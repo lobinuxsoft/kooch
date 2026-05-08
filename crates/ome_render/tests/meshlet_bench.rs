@@ -14,7 +14,8 @@ mod common;
 
 use common::{build_sphere_mesh, try_acquire_device};
 use glam::{Mat4, Vec3};
-use ome_render::material::{MaterialParams, MaterialPool};
+use ome_core::Guid;
+use ome_render::material::{Material, MaterialPipeline};
 use ome_render::meshlet::{
     build_default_meshlets, meshlet_bind_group, meshlet_bind_group_layout, CullParams,
     MeshletCull, MeshletDeferredShader, MeshletVisRasterizer, DEFAULT_MAX_TRIANGLES,
@@ -64,11 +65,13 @@ fn meshlet_bench_sphere_renders_under_target_frame_time() {
     let meshlet_bgl = meshlet_bind_group_layout(&device);
     let meshlet_bg = meshlet_bind_group(&device, &meshlet_bgl, &gpu_mesh);
 
-    let materials = MaterialPool::new(
-        &device,
-        &[MaterialParams::new([0.8, 0.6, 0.4, 1.0], 0.0, 0.4, 0.0)],
+    let mut materials = MaterialPipeline::with_capacity(&device, 4);
+    materials.register(
+        &queue,
+        Guid::new_v4(),
+        &Material::new([0.8, 0.6, 0.4, 1.0], 0.0, 0.4, 0.0),
     );
-    let material_bg = materials.bind_group(&device);
+    let material_bg = materials.pool().bind_group(&device);
 
     let vbuf_tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("bench_vbuf"),

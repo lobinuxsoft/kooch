@@ -1,6 +1,7 @@
 use glam::{Mat4, Vec3};
+use ome_core::Guid;
 use ome_render::hi_z::HiZ;
-use ome_render::material::{MaterialParams, MaterialPool};
+use ome_render::material::{Material, MaterialPipeline};
 use ome_render::mesh::Mesh;
 use ome_render::meshlet::{
     build_default_meshlets, meshlet_bind_group_layout, pool_meshlet_bind_group, CullParams,
@@ -61,11 +62,13 @@ pub(crate) fn build_rig() -> Option<BenchRig> {
     let meshlet_bgl = meshlet_bind_group_layout(&device);
     let meshlet_bg = pool_meshlet_bind_group(&device, &meshlet_bgl, &gpu_pool);
 
-    let materials = MaterialPool::new(
-        &device,
-        &[MaterialParams::new([0.8, 0.6, 0.4, 1.0], 0.0, 0.4, 0.0)],
+    let mut materials = MaterialPipeline::with_capacity(&device, 4);
+    materials.register(
+        &queue,
+        Guid::new_v4(),
+        &Material::new([0.8, 0.6, 0.4, 1.0], 0.0, 0.4, 0.0),
     );
-    let material_bg = materials.bind_group(&device);
+    let material_bg = materials.pool().bind_group(&device);
 
     let vbuf_tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("bench_two_pass_vbuf"),
