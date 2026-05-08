@@ -1,16 +1,5 @@
-//! [`BvhGpuBuilder`] — owns the GPU compute pipelines and reusable
-//! buffers for the LBVH build (Morton encoding → onesweep radix sort
-//! → Karras parallel construction).
-//!
-//! Single source of truth for state that survives across builds:
-//! pipelines (cached via the optional [`wgpu::PipelineCache`] handle),
-//! storage buffers (grow-on-demand, never realloc per build), and the
-//! timestamp query set (per-pass profiling). The `Bvh::build_gpu` API
-//! threads its work through this struct.
-//!
-//! Designed for **production use day one** (per session 2026-04-26
-//! quater feedback): `wgpu::PipelineCache` integration, reusable
-//! buffers, async API surface, timestamp query instrumentation.
+//! `impl BvhGpuBuilder` — pipeline creation, buffer growth, and the
+//! Morton dispatch entry points used by `Bvh::build_gpu`.
 
 use std::num::NonZeroU64;
 
@@ -21,91 +10,11 @@ use crate::gpu::sort::{SortBuffers, SortPipelines};
 use crate::gpu::sort_types::ITEMS_PER_TILE;
 use crate::gpu::types::{GpuAabb, GpuSceneBounds};
 
-/// Number of timestamp slots: one pair (start/end) per compute pass.
-/// Order in the buffer:
-///   `[morton_start, morton_end, sort_start, sort_end, build_start, build_end]`.
-const TIMESTAMP_QUERY_COUNT: u32 = 6;
-
-/// Per-pass timestamp slot indices. Used by every dispatch helper to
-/// write the same query set positions consistently.
-const TS_MORTON_START: u32 = 0;
-#[allow(dead_code)]
-const TS_MORTON_END: u32 = 1;
-#[allow(dead_code)]
-const TS_SORT_START: u32 = 2;
-#[allow(dead_code)]
-const TS_SORT_END: u32 = 3;
-#[allow(dead_code)]
-const TS_BUILD_START: u32 = 4;
-#[allow(dead_code)]
-const TS_BUILD_END: u32 = 5;
-
-/// Workgroup size for the Morton compute shader. Matches the
-/// `@workgroup_size(256)` declaration in `morton.wgsl`. Conservative
-/// for portability — RDNA 4 / RTX 4070 happily run 256.
-const MORTON_WORKGROUP_SIZE: u32 = 256;
-
-/// Owns the GPU compute infrastructure for the LBVH build pipeline.
-///
-/// Built once per app instance, reused across every BVH build. Hold
-/// it in a long-lived resource (e.g. a `wgpu::Device`-scoped struct
-/// in `ome_render` or as a `Resources` entry).
-pub struct BvhGpuBuilder {
-    pub(crate) morton_pipeline: wgpu::ComputePipeline,
-    pub(crate) morton_bgl: wgpu::BindGroupLayout,
-
-    // Reusable buffers — capacities are tracked separately so we only
-    // grow (never shrink). All buffers use `STORAGE | COPY_DST`; the
-    // staging readback path uses `MAP_READ | COPY_DST`.
-    pub(crate) aabbs_buffer: wgpu::Buffer,
-    pub(crate) aabbs_capacity: u64,
-
-    pub(crate) scene_bounds_buffer: wgpu::Buffer,
-
-    pub(crate) morton_codes_buffer: wgpu::Buffer,
-    pub(crate) morton_codes_capacity: u64,
-
-    /// Onesweep radix sort pipelines + reusable buffers. Driven by
-    /// [`Self::dispatch_sort_into`] (pass-through wrapper around
-    /// [`crate::gpu::sort::dispatch_sort_into`]).
-    pub(crate) sort_pipelines: SortPipelines,
-    pub(crate) sort_buffers: SortBuffers,
-
-    /// Karras LBVH constructor pipelines + reusable buffers. Driven by
-    /// [`Self::dispatch_lbvh_into`] (pass-through wrapper around
-    /// [`crate::gpu::lbvh::dispatch_lbvh_build`]).
-    pub(crate) lbvh_pipelines: LbvhPipelines,
-    pub(crate) lbvh_buffers: LbvhBuffers,
-
-    /// Timestamp query set + resolve buffer for per-pass profiling.
-    /// `None` when the device was not built with
-    /// [`wgpu::Features::TIMESTAMP_QUERY`] +
-    /// [`wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES`] — the engine
-    /// requests these as **optional** features in
-    /// [`ome_core::gpu`](../../../../ome_core/gpu/index.html), so the
-    /// builder must stay correct on adapters that don't expose them.
-    /// Without timestamps the builder skips both `create_query_set` and
-    /// the `timestamp_writes` on the morton pass; the validation error
-    /// otherwise rejects the entire submission and silently corrupts
-    /// downstream `done_buffer` reads (#333).
-    pub(crate) timestamps: Option<BvhTimestamps>,
-}
-
-/// Per-build timestamp infrastructure. Resolved into `resolve_buffer`
-/// which can be mapped + read for per-pass timing.
-pub struct BvhTimestamps {
-    pub query_set: wgpu::QuerySet,
-    pub resolve_buffer: wgpu::Buffer,
-    pub readback_buffer: wgpu::Buffer,
-    /// `period_ns` reported by the queue. Multiply raw timestamp
-    /// deltas by this to get nanoseconds.
-    pub period_ns: f32,
-}
-
-/// Initial capacity for storage buffers (in items). Grows by
-/// `next_power_of_two` when an upload exceeds capacity.
-const INITIAL_AABB_CAPACITY: u64 = 256;
-const INITIAL_MORTON_CAPACITY: u64 = 256;
+use super::types::{BvhGpuBuilder, BvhTimestamps};
+use super::{
+    INITIAL_AABB_CAPACITY, INITIAL_MORTON_CAPACITY, MORTON_WORKGROUP_SIZE, TS_MORTON_END,
+    TS_MORTON_START,
+};
 
 impl BvhGpuBuilder {
     /// Build the BVH GPU compute infrastructure. `pipeline_cache` is
@@ -115,7 +24,7 @@ impl BvhGpuBuilder {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, pipeline_cache: Option<&wgpu::PipelineCache>) -> Self {
         let morton_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ome_bvh::morton"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/morton.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../../shaders/morton.wgsl").into()),
         });
 
         let morton_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -429,78 +338,5 @@ impl BvhGpuBuilder {
         drop(data);
         staging.unmap();
         codes
-    }
-}
-
-impl BvhTimestamps {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
-            label: Some("ome_bvh::timestamps"),
-            ty: wgpu::QueryType::Timestamp,
-            count: TIMESTAMP_QUERY_COUNT,
-        });
-        let resolve_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ome_bvh::timestamps_resolve"),
-            size: (TIMESTAMP_QUERY_COUNT as u64) * 8,
-            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ome_bvh::timestamps_readback"),
-            size: (TIMESTAMP_QUERY_COUNT as u64) * 8,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let period_ns = queue.get_timestamp_period();
-        Self {
-            query_set,
-            resolve_buffer,
-            readback_buffer,
-            period_ns,
-        }
-    }
-}
-
-#[cfg(test)]
-pub(crate) mod test_device {
-    /// Acquire a wgpu device + queue for unit tests. Picks any
-    /// available adapter (vulkan / metal / dx12 / gl). Returns `None`
-    /// when no GPU is available — the test in that case skips itself
-    /// rather than failing (CI without a display falls into this path).
-    ///
-    /// `TIMESTAMP_QUERY` and `TIMESTAMP_QUERY_INSIDE_PASSES` features
-    /// are requested unconditionally — the BVH builder writes timestamps
-    /// in every dispatch and would fail to validate a pipeline without
-    /// them. Adapters that don't expose the feature are skipped.
-    pub fn try_acquire() -> Option<(wgpu::Device, wgpu::Queue)> {
-        pollster::block_on(async {
-            let instance = wgpu::Instance::default();
-            let adapter = instance
-                .request_adapter(&wgpu::RequestAdapterOptions::default())
-                .await
-                .ok()?;
-
-            let supports_ts =
-                adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
-            let supports_ts_inside =
-                adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES);
-            if !supports_ts || !supports_ts_inside {
-                return None;
-            }
-
-            let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor {
-                    label: Some("ome_bvh::test_device"),
-                    required_features: wgpu::Features::TIMESTAMP_QUERY
-                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::Performance,
-                    trace: wgpu::Trace::Off,
-                    experimental_features: wgpu::ExperimentalFeatures::default(),
-                })
-                .await
-                .ok()?;
-            Some((device, queue))
-        })
     }
 }
