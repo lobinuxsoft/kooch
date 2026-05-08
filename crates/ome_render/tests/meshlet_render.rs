@@ -6,7 +6,7 @@
 //! (i.e. at least some non-clear pixels carry a recognisable normal-
 //! debug color).
 //!
-//! Run with: `cargo test -p ome_render --test meshlet_render -- --test-threads=1`
+//! Run with: `cargo test -p ome_render --test meshlet_render`
 
 mod common;
 

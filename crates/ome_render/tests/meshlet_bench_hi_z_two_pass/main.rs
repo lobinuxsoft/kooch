@@ -2,7 +2,7 @@
 //! on the sphere fixture.
 //!
 //! Marked `#[ignore]` by default; run with:
-//!   cargo test -p ome_render --test meshlet_bench_hi_z_two_pass -- --ignored --test-threads=1
+//!   cargo test -p ome_render --test meshlet_bench_hi_z_two_pass -- --ignored
 //!
 //! Both paths render the same scene (one sphere instance) for N
 //! frames after a warm-up. The test reports the median frame time of

@@ -1,6 +1,6 @@
 //! GPU integration tests: meshlet cull writes the indirect-draw args.
 //!
-//! Run with: `cargo test -p ome_render --test meshlet_indirect -- --test-threads=1`
+//! Run with: `cargo test -p ome_render --test meshlet_indirect`
 
 mod common;
 

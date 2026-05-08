@@ -217,29 +217,43 @@ impl MaterialPipeline {
 mod tests {
     use super::*;
 
+    use std::sync::OnceLock;
+
+    // Shared device per test binary — see issue #334. Mesa radv races
+    // when many threads invoke `request_adapter` concurrently.
+    static SHARED_DEVICE: OnceLock<Option<(wgpu::Device, wgpu::Queue)>> = OnceLock::new();
+
     fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-            flags: wgpu::InstanceFlags::default(),
-            backend_options: wgpu::BackendOptions::default(),
-            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-            display: None,
-        });
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("material_pipeline_test_device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-            experimental_features: wgpu::ExperimentalFeatures::default(),
-        }))
-        .ok()
+        SHARED_DEVICE
+            .get_or_init(|| {
+                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::VULKAN
+                        | wgpu::Backends::DX12
+                        | wgpu::Backends::METAL,
+                    flags: wgpu::InstanceFlags::default(),
+                    backend_options: wgpu::BackendOptions::default(),
+                    memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+                    display: None,
+                });
+                let adapter = pollster::block_on(instance.request_adapter(
+                    &wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    },
+                ))
+                .ok()?;
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                    label: Some("material_pipeline_test_device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: wgpu::MemoryHints::default(),
+                    trace: wgpu::Trace::Off,
+                    experimental_features: wgpu::ExperimentalFeatures::default(),
+                }))
+                .ok()
+            })
+            .clone()
     }
 
     #[test]

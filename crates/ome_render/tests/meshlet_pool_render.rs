@@ -5,7 +5,7 @@
 //! Validates the #446 + #457 migration end-to-end on the GPU.
 //!
 //! Run with:
-//!   cargo test -p ome_render --test meshlet_pool_render -- --test-threads=1
+//!   cargo test -p ome_render --test meshlet_pool_render
 
 mod common;
 

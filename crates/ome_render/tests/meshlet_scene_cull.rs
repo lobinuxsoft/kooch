@@ -9,7 +9,7 @@
 //!     CPU mirror in `meshlet::scene::decode_scene_visible_id`
 //!
 //! Run with:
-//!   cargo test -p ome_render --test meshlet_scene_cull -- --test-threads=1
+//!   cargo test -p ome_render --test meshlet_scene_cull
 
 mod common;
 

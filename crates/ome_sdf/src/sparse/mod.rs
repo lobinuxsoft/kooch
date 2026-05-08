@@ -202,6 +202,12 @@ const _: () = assert!(
 
 #[cfg(test)]
 pub(crate) mod test_device {
+    use std::sync::OnceLock;
+
+    // Mesa radv races on parallel `request_adapter` (issue #334).
+    // Acquire once per test binary and clone handles for every call.
+    static SHARED: OnceLock<Option<(wgpu::Device, wgpu::Queue)>> = OnceLock::new();
+
     /// Acquire a wgpu device + queue for unit tests. Returns `None`
     /// when no GPU is available so the test can skip itself rather
     /// than fail (CI without a display falls into this path).
@@ -212,32 +218,36 @@ pub(crate) mod test_device {
     /// "no GPU" and the test skips — same behaviour CI without a
     /// display already gets.
     pub fn try_acquire() -> Option<(wgpu::Device, wgpu::Queue)> {
-        pollster::block_on(async {
-            let instance = wgpu::Instance::default();
-            let adapter = instance
-                .request_adapter(&wgpu::RequestAdapterOptions::default())
-                .await
-                .ok()?;
-            let required = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
-            if !adapter.features().contains(required) {
-                eprintln!(
-                    "skipping sparse GPU test: adapter missing {required:?}",
-                );
-                return None;
-            }
-            let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor {
-                    label: Some("ome_sdf::sparse::test_device"),
-                    required_features: required,
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::Performance,
-                    trace: wgpu::Trace::Off,
-                    experimental_features: wgpu::ExperimentalFeatures::default(),
+        SHARED
+            .get_or_init(|| {
+                pollster::block_on(async {
+                    let instance = wgpu::Instance::default();
+                    let adapter = instance
+                        .request_adapter(&wgpu::RequestAdapterOptions::default())
+                        .await
+                        .ok()?;
+                    let required = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+                    if !adapter.features().contains(required) {
+                        eprintln!(
+                            "skipping sparse GPU test: adapter missing {required:?}",
+                        );
+                        return None;
+                    }
+                    let (device, queue) = adapter
+                        .request_device(&wgpu::DeviceDescriptor {
+                            label: Some("ome_sdf::sparse::test_device"),
+                            required_features: required,
+                            required_limits: wgpu::Limits::default(),
+                            memory_hints: wgpu::MemoryHints::Performance,
+                            trace: wgpu::Trace::Off,
+                            experimental_features: wgpu::ExperimentalFeatures::default(),
+                        })
+                        .await
+                        .ok()?;
+                    Some((device, queue))
                 })
-                .await
-                .ok()?;
-            Some((device, queue))
-        })
+            })
+            .clone()
     }
 
     /// Synchronous full-buffer readback helper for tests. `src` must

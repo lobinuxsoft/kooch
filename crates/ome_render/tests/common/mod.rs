@@ -6,53 +6,63 @@
 //!
 //! - [`try_acquire_device`] — best-effort wgpu device, returns `None`
 //!   when no adapter is available so CI without a GPU skips cleanly.
+//!   Adapter is acquired once per test binary via `OnceLock` to dodge
+//!   the Mesa radv `request_adapter` race documented in issue #334.
 //! - [`build_cube_mesh`] — small canonical mesh used by both the cull
 //!   integration and the render integration tests.
 //! - [`read_buffer_to_vec`] — generic readback helper.
-//!
-//! Run integration tests with `--test-threads=1` (Mesa radv parallel
-//! workers SIGSEGV inside Vulkan when several adapters init
-//! concurrently — documented in `project_phase1_progress.md`).
 
 #![allow(dead_code)] // each test binary touches a different subset
 
+use std::sync::OnceLock;
+
 use bytemuck::Pod;
 use ome_render::mesh::{Mesh, MeshVertex};
+
+static SHARED_DEVICE: OnceLock<Option<(wgpu::Device, wgpu::Queue)>> = OnceLock::new();
 
 /// Acquires a wgpu device with no special features, suitable for any
 /// meshlet test. Returns `None` if the adapter request fails — the
 /// caller is expected to early-return so headless CI still passes.
 pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-        flags: wgpu::InstanceFlags::default(),
-        backend_options: wgpu::BackendOptions::default(),
-        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-        display: None,
-    });
+    SHARED_DEVICE
+        .get_or_init(|| {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::VULKAN
+                    | wgpu::Backends::DX12
+                    | wgpu::Backends::METAL,
+                flags: wgpu::InstanceFlags::default(),
+                backend_options: wgpu::BackendOptions::default(),
+                memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+                display: None,
+            });
 
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .ok()?;
+            let adapter = pollster::block_on(instance.request_adapter(
+                &wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                },
+            ))
+            .ok()?;
 
-    // Hi-Z SPD pyramid build (#486) needs 12 storage texture slots
-    // in one bind group; default wgpu limit is 4. Raise it here
-    // mirroring the production GpuContext setup.
-    let mut limits = wgpu::Limits::default();
-    limits.max_storage_textures_per_shader_stage = 16
-        .min(adapter.limits().max_storage_textures_per_shader_stage);
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("ome_render_test_device"),
-        required_features: wgpu::Features::empty(),
-        required_limits: limits,
-        memory_hints: wgpu::MemoryHints::default(),
-        trace: wgpu::Trace::Off,
-        experimental_features: wgpu::ExperimentalFeatures::default(),
-    }))
-    .ok()
+            // Hi-Z SPD pyramid build (#486) needs 12 storage texture
+            // slots in one bind group; default wgpu limit is 4. Raise
+            // it here mirroring the production GpuContext setup.
+            let mut limits = wgpu::Limits::default();
+            limits.max_storage_textures_per_shader_stage = 16
+                .min(adapter.limits().max_storage_textures_per_shader_stage);
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                label: Some("ome_render_test_device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: limits,
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::Off,
+                experimental_features: wgpu::ExperimentalFeatures::default(),
+            }))
+            .ok()
+        })
+        .clone()
 }
 
 /// Builds a UV-sphere with `lat_segments` × `lon_segments` quads. Used

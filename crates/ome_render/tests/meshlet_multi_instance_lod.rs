@@ -11,7 +11,7 @@
 //! instance must emit strictly fewer meshlets than the near one.
 //!
 //! Run with:
-//!   cargo test -p ome_render --test meshlet_multi_instance_lod -- --test-threads=1
+//!   cargo test -p ome_render --test meshlet_multi_instance_lod
 
 mod common;
 
