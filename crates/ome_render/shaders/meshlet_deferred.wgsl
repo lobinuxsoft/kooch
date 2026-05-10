@@ -212,6 +212,13 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
         } else if (screen.debug_mode == 2u) {
             // InstanceIds — colour by entity coverage.
             rgb = hash_to_rgb(inst_id);
+        } else if (screen.debug_mode == 7u) {
+            // CullPassthrough — any pixel reaching this branch is one
+            // the meshlet pipeline classified as visible (passed cull,
+            // landed in the vbuf, won its atomicMax). Flat green.
+            // Useful for confirming silhouette coverage and for cross-
+            // referencing with reject overlays.
+            rgb = vec3<f32>(0.0, 1.0, 0.0);
         } else {
             let inst = instances[inst_id];
             let desc = descriptors[meshlet_id];

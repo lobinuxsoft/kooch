@@ -133,6 +133,10 @@ fn cs_shade_scene_r64(@builtin(global_invocation_id) gid: vec3<u32>) {
             rgb = hash_to_rgb(meshlet_id);
         } else if (screen.debug_mode == 2u) {
             rgb = hash_to_rgb(inst_id);
+        } else if (screen.debug_mode == 7u) {
+            // CullPassthrough — flat green for every vbuf-covered
+            // pixel. See meshlet_deferred.wgsl for the rationale.
+            rgb = vec3<f32>(0.0, 1.0, 0.0);
         } else {
             let inst = instances[inst_id];
             let desc = descriptors[meshlet_id];
