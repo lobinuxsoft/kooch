@@ -131,7 +131,7 @@ impl Drop for TempDir {
 
 #[test]
 fn sync_resolves_guid_to_gpu_mesh() {
-    let Some((device, _queue)) = try_acquire_device() else {
+    let Some((device, queue)) = try_acquire_device() else {
         eprintln!("no GPU adapter; skipping");
         return;
     };
@@ -187,7 +187,7 @@ fn sync_resolves_guid_to_gpu_mesh() {
     );
     assert_eq!(stage.gpu_mesh_count(), 0);
 
-    stage.sync_assets_to_gpu(&device, &mut resources);
+    stage.sync_assets_to_gpu(&device, &queue, &mut resources);
 
     assert_eq!(
         stage.gpu_mesh_count(),
@@ -200,13 +200,13 @@ fn sync_resolves_guid_to_gpu_mesh() {
     );
 
     // Second sync must be a no-op — already cached.
-    stage.sync_assets_to_gpu(&device, &mut resources);
+    stage.sync_assets_to_gpu(&device, &queue, &mut resources);
     assert_eq!(stage.gpu_mesh_count(), 1, "second sync must not duplicate");
 }
 
 #[test]
 fn sync_skips_when_asset_database_lacks_guid() {
-    let Some((device, _queue)) = try_acquire_device() else {
+    let Some((device, queue)) = try_acquire_device() else {
         eprintln!("no GPU adapter; skipping");
         return;
     };
@@ -240,13 +240,13 @@ fn sync_skips_when_asset_database_lacks_guid() {
     );
 
     // GUID is dangling. Sync must log + skip without panicking.
-    stage.sync_assets_to_gpu(&device, &mut resources);
+    stage.sync_assets_to_gpu(&device, &queue, &mut resources);
     assert_eq!(stage.gpu_mesh_count(), 0);
 }
 
 #[test]
 fn sync_without_asset_server_is_noop() {
-    let Some((device, _queue)) = try_acquire_device() else {
+    let Some((device, queue)) = try_acquire_device() else {
         eprintln!("no GPU adapter; skipping");
         return;
     };
@@ -275,6 +275,6 @@ fn sync_without_asset_server_is_noop() {
             ..Default::default()
         },
     );
-    stage.sync_assets_to_gpu(&device, &mut resources);
+    stage.sync_assets_to_gpu(&device, &queue, &mut resources);
     assert_eq!(stage.gpu_mesh_count(), 0);
 }

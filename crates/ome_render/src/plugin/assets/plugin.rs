@@ -148,6 +148,10 @@ impl Plugin for AssetPlugin {
 
 fn init_material_pipeline_system(resources: &mut Resources) {
     if resources.get::<MaterialPipeline>().is_some() {
+        tracing::debug!(
+            target: "ome_render::plugin::assets",
+            "init_material_pipeline_system: pipeline already present",
+        );
         return;
     }
     let Some(gpu) = resources.get::<GpuContext>() else {
@@ -158,6 +162,10 @@ fn init_material_pipeline_system(resources: &mut Resources) {
         return;
     };
     let pipeline = MaterialPipeline::new(gpu.device());
-    drop(gpu);
+    let _ = gpu;
     resources.insert(pipeline);
+    tracing::info!(
+        target: "ome_render::plugin::assets",
+        "init_material_pipeline_system: MaterialPipeline inserted into Resources",
+    );
 }

@@ -72,21 +72,32 @@ impl MeshletRenderStage {
     /// - GUID not registered in `AssetDatabase` → log warn, skip entity.
     /// - Loader rejects the bytes → log warn, skip entity.
     /// - `Assets<MeshletMesh>` missing or stale handle → log warn, skip.
-    pub fn sync_assets_to_gpu(&mut self, device: &wgpu::Device, resources: &mut Resources) {
+    pub fn sync_assets_to_gpu(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        resources: &mut Resources,
+    ) {
         // Material pool sync first: the meshlet scene system reads
         // `MaterialPipeline.lookup_or_fallback` when assembling
         // `MeshInstance.material_id`, so any newly-picked GUID has
         // to be in the registry before the cull dispatch fires.
-        // Pull the GPU queue out of GpuContext so we can drive the
-        // sync without expanding this method's signature.
+        // `queue` is now an explicit parameter so the caller never
+        // has to leave `GpuContext` in `Resources` while we're here —
+        // the editor render system removes it for the whole frame, and
+        // the previous in-method `resources.remove::<GpuContext>()`
+        // returned `None` silently in that path, dropping every
+        // material picked through the inspector (bug #533).
         if let Some(mut material_pipeline) =
             resources.remove::<crate::material::MaterialPipeline>()
         {
-            if let Some(gpu) = resources.remove::<ome_core::gpu::GpuContext>() {
-                material_pipeline.sync_from_resources(gpu.queue(), resources);
-                resources.insert(gpu);
-            }
+            material_pipeline.sync_from_resources(queue, resources);
             resources.insert(material_pipeline);
+        } else {
+            tracing::debug!(
+                target: "ome_render::material::sync",
+                "sync_assets_to_gpu: MaterialPipeline absent from Resources; material sync skipped",
+            );
         }
 
         let referenced = self.pipeline.collect_referenced_guids(resources);

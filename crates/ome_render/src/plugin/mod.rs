@@ -174,7 +174,7 @@ fn render_frame_system(resources: &mut Resources) {
     let aspect = w as f32 / h.max(1) as f32;
 
     meshlet_stage.resize(gpu.device(), (w, h));
-    meshlet_stage.sync_assets_to_gpu(gpu.device(), resources);
+    meshlet_stage.sync_assets_to_gpu(gpu.device(), gpu.queue(), resources);
 
     let outcome = acquire_and_render(
         &gpu,
