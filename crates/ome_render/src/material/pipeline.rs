@@ -100,8 +100,21 @@ impl MaterialPipeline {
     /// [`FALLBACK_MATERIAL_ID`] when the GUID is unknown. Used by
     /// the meshlet scene system when assembling `MeshInstance`s.
     pub fn lookup_or_fallback(&self, guid: Option<Guid>) -> u32 {
-        guid.and_then(|g| self.lookup(g))
-            .unwrap_or(FALLBACK_MATERIAL_ID)
+        let Some(g) = guid else {
+            return FALLBACK_MATERIAL_ID;
+        };
+        match self.registry.get(&g) {
+            Some(&slot) => slot,
+            None => {
+                tracing::debug!(
+                    target: "ome_render::material::sync",
+                    guid = %g,
+                    registered = self.registry.len(),
+                    "lookup_or_fallback miss; using FALLBACK_MATERIAL_ID",
+                );
+                FALLBACK_MATERIAL_ID
+            }
+        }
     }
 
     /// Writes `material`'s packed params into the GPU pool and
@@ -118,6 +131,12 @@ impl MaterialPipeline {
         let params = material.to_params();
         if let Some(&slot) = self.registry.get(&guid) {
             self.pool.write(queue, slot, &params);
+            tracing::debug!(
+                target: "ome_render::material::sync",
+                guid = %guid,
+                slot,
+                "MaterialPipeline.register: refreshed existing slot",
+            );
             return slot;
         }
         if self.next_slot >= self.capacity {
@@ -133,6 +152,13 @@ impl MaterialPipeline {
         self.next_slot += 1;
         self.pool.write(queue, slot, &params);
         self.registry.insert(guid, slot);
+        tracing::debug!(
+            target: "ome_render::material::sync",
+            guid = %guid,
+            slot,
+            registered = self.registry.len(),
+            "MaterialPipeline.register: assigned new slot",
+        );
         slot
     }
 
@@ -158,6 +184,12 @@ impl MaterialPipeline {
                 .collect(),
             None => return,
         };
+        tracing::debug!(
+            target: "ome_render::material::sync",
+            pending = pending.len(),
+            type_name = MATERIAL_TYPE_NAME,
+            "sync_from_resources: pending materials from AssetDatabase",
+        );
         if pending.is_empty() {
             return;
         }
@@ -199,14 +231,17 @@ impl MaterialPipeline {
             );
             return;
         };
-        let snapshots: Vec<(Guid, Material)> = handles
-            .into_iter()
-            .filter_map(|(guid, handle)| assets.get(handle).map(|m| (guid, m.clone())))
-            .collect();
-        // Drop the immutable borrow on `assets` before we touch `self`
-        // — registering writes to the GPU queue, which is independent
-        // of resources, but the borrow checker tracks the lifetime.
-        drop(assets);
+        let mut snapshots: Vec<(Guid, Material)> = Vec::with_capacity(handles.len());
+        for (guid, handle) in handles {
+            match assets.get(handle) {
+                Some(m) => snapshots.push((guid, m.clone())),
+                None => tracing::debug!(
+                    target: "ome_render::material::sync",
+                    guid = %guid,
+                    "sync_from_resources: handle resolved but Assets<Material>.get returned None — material dropped from this frame's snapshot",
+                ),
+            }
+        }
         for (guid, mat) in snapshots {
             self.register(queue, guid, &mat);
         }
