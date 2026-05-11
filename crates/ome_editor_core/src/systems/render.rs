@@ -9,7 +9,8 @@ use ome_core::resource::Resources;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
 use ome_render::meshlet::{
-    MeshletBlit, MeshletDebugMode, MeshletLodSettings, MeshletRenderStage, MeshletRenderStats,
+    MeshletBlit, MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStage,
+    MeshletRenderStats,
 };
 use ome_render::SkyRenderPass;
 
@@ -147,6 +148,13 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // so the View dropdown can mutate it directly. Re-inserted before
     // the meshlet stage runs so render_with_assets sees the new value.
     let mut meshlet_debug_mode = resources.remove::<MeshletDebugMode>().unwrap_or_default();
+    // Capability probe (#454) drives the dropdown filter. Default is
+    // conservative — when the resource is missing the filter falls
+    // back to the baseline-safe subset of modes.
+    let meshlet_debug_caps = resources
+        .get::<MeshletDebugCaps>()
+        .copied()
+        .unwrap_or_default();
     let mut meshlet_lod_settings =
         resources.remove::<MeshletLodSettings>().unwrap_or_default();
     // Stats are produced by last frame's viewport render and re-published
@@ -261,6 +269,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut streaming_config,
         &asset_catalog,
         &mut meshlet_debug_mode,
+        meshlet_debug_caps,
         &mut meshlet_lod_settings,
         meshlet_stats,
         resources
