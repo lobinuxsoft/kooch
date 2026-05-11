@@ -166,6 +166,18 @@ fn cs_shade_scene_r64(@builtin(global_invocation_id) gid: vec3<u32>) {
             const MAX_DENSITY: f32 = 32.0;
             let t = clamp(f32(count) / MAX_DENSITY, 0.0, 1.0);
             rgb = density_heatmap(t);
+        } else if (screen.debug_mode == 4u) {
+            // Overdraw — count of times this pixel's depth buffer
+            // was overwritten by a closer fragment. Same accumulator
+            // as TriangleDensity but the raster path runs in mode 2,
+            // so each cell stores winning fragments only. Lower
+            // saturation cap because overdraw above 8 wasted
+            // shadings is already an aggressive LOD-selector
+            // failure signal.
+            let wins = textureLoad(density_accumulator, pixel).x;
+            const MAX_OVERDRAW: f32 = 8.0;
+            let t = clamp(f32(wins) / MAX_OVERDRAW, 0.0, 1.0);
+            rgb = density_heatmap(t);
         } else if (screen.debug_mode == 7u) {
             // CullPassthrough — flat green for every vbuf-covered
             // pixel. See meshlet_deferred.wgsl for the rationale.

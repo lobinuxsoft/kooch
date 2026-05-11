@@ -33,9 +33,11 @@ pub(super) struct Vbuf64Rasterizer {
     density_bgl: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
     camera_bg: wgpu::BindGroup,
-    /// 16-byte UBO storing the per-frame density-enable flag (only
-    /// `.x` is read by the shader). Written from `render_scene` so the
-    /// production path leaves the atomicAdd dormant.
+    /// 16-byte UBO storing the per-frame accumulator mode (only `.x`
+    /// is read by the shader): 0 = disabled, 1 = TriangleDensity
+    /// (count all fragments), 2 = Overdraw (count winning fragments
+    /// only). Written from `render_scene` so the production path
+    /// leaves the atomicAdd dormant.
     density_enable_buffer: wgpu::Buffer,
 }
 
@@ -219,7 +221,7 @@ impl Vbuf64Rasterizer {
         dummy_color: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         density_view: &wgpu::TextureView,
-        density_enable: bool,
+        density_mode: u32,
         meshlet_bg: &wgpu::BindGroup,
         cull: &MeshletCull,
         scene: &MeshletScene,
@@ -234,9 +236,10 @@ impl Vbuf64Rasterizer {
             }),
         );
         // `vec4<u32>` so the shader-side layout matches a 16-byte UBO
-        // (uniform std140 minimum). Only `.x` is read.
-        let density_flag = [u32::from(density_enable), 0u32, 0u32, 0u32];
-        queue.write_buffer(&self.density_enable_buffer, 0, bytes_of(&density_flag));
+        // (uniform std140 minimum). Only `.x` is read — see the
+        // shader's `density_mode` declaration for the value table.
+        let mode_flag = [density_mode, 0u32, 0u32, 0u32];
+        queue.write_buffer(&self.density_enable_buffer, 0, bytes_of(&mode_flag));
 
         let visible_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_vbuf64_visible_bg"),

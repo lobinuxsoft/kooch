@@ -94,6 +94,7 @@ impl MeshletDebugMode {
             Self::MeshletIds,
             Self::InstanceIds,
             Self::TriangleDensity,
+            Self::Overdraw,
             Self::CullPassthrough,
             Self::OnlyLod0,
             Self::OnlyRoots,
