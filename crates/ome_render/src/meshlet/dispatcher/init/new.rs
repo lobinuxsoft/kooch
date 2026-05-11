@@ -39,6 +39,7 @@ impl MeshletCull {
         // larger and vertex/triangle buffers are needed.
         let pool_bgl = build_cull_pool_bgl(device);
         let group_err_bgl = build_group_err_bgl(device);
+        let debug_bgl = build_debug_bgl(device);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("meshlet_cull_pipeline_layout"),
@@ -106,11 +107,20 @@ impl MeshletCull {
                 cache: None,
             });
 
-        // 2-pass cull (#465). Both entries share the same pipeline
-        // layout: cull group(0), pool group(1), scene group(2),
-        // group_err group(3). Pass 1 atomicMaxes pixel error per
-        // group_index; pass 2 reads the same buffer to drive
-        // group-atomic descent decisions.
+        // 2-pass cull (#465 + #454.4). Both entries share the same
+        // pipeline layout: cull group(0), pool group(1), scene
+        // group(2), group_err group(3), debug-reject group(4). Pass 1
+        // atomicMaxes pixel error per group_index; pass 2 reads the
+        // same buffer to drive group-atomic descent decisions and
+        // (when `params.debug_active != 0`) writes per-thread reject
+        // reasons into `reject_reasons[]` for the overlay raster
+        // pass to colourise.
+        //
+        // Group(4)'s `reject_reasons` SSBO is only referenced by the
+        // cull entry; naga emits no requirement for it from
+        // `cs_lod_compute_group_max_err`. The dispatcher binds it for
+        // both passes anyway because the pipeline layout is shared
+        // and the bind cost is a single table write per pass.
         let pipeline_layout_atomic =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("meshlet_cull_scene_pool_atomic_pipeline_layout"),
@@ -119,6 +129,7 @@ impl MeshletCull {
                     Some(&pool_bgl),
                     Some(&scene_bgl),
                     Some(&group_err_bgl),
+                    Some(&debug_bgl),
                 ],
                 immediate_size: 0,
             });
@@ -255,6 +266,20 @@ impl MeshletCull {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // Per-thread reject_reasons buffer (#454.4). Sized to the
+        // same `capacity` as `visible_meshlets` because it is
+        // indexed by the cull thread id, which equals
+        // `instance_count × meshlets_per_mesh` — exactly the same
+        // dispatch shape that drives the visible-output buffer.
+        // `ensure_capacity` recreates both in lock-step.
+        let reject_reasons = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_reject_reasons"),
+            size: capacity as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let vertex_count_per_instance = max_triangles_per_meshlet * 3;
         let indirect_args = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -289,6 +314,7 @@ impl MeshletCull {
             meshlet_bgl,
             pool_bgl,
             group_err_bgl,
+            debug_bgl,
             params_buffer,
             hi_z_params_buffer,
             scene_params_buffer,
@@ -299,6 +325,7 @@ impl MeshletCull {
             indirect_args,
             group_max_err,
             group_capacity: initial_group_capacity,
+            reject_reasons,
             capacity,
             vertex_count_per_instance,
         }

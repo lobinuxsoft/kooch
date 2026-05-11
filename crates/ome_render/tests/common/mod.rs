@@ -52,6 +52,11 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
             let mut limits = wgpu::Limits::default();
             limits.max_storage_textures_per_shader_stage = 16
                 .min(adapter.limits().max_storage_textures_per_shader_stage);
+            // #454.4 cull pipeline binds 5 groups (cull, pool, scene,
+            // group_err, debug); the production GpuContext clamps to
+            // 6 (TARGET_MAX_BIND_GROUPS in ome_core). Mirror it here
+            // so the cull shader compiles against the test device.
+            limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("ome_render_test_device"),
                 required_features: wgpu::Features::empty(),

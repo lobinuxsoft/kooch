@@ -93,6 +93,43 @@ impl MeshletRenderStage {
             /* clear_depth */ true,
         );
 
+        // Reject-reason overlay (#454.4). Dispatched only when the
+        // current debug mode is one the cull pass tagged into
+        // `reject_reasons[]` AND the stage owns the overlay pipeline
+        // (i.e. `MeshletDebugCaps::supports_texture_atomic` was true
+        // at construction). The dropdown filter prevents the user
+        // from selecting a mode for which one of those is false, but
+        // we re-check defensively so a runtime resource swap can't
+        // dispatch into nothing.
+        if let (Some(reject_code), Some(overlay), Some(gpu_pool)) = (
+            debug_mode.reject_reason_code(),
+            self.reject_overlay.as_ref(),
+            self.gpu_pool.as_ref(),
+        ) {
+            let total_threads =
+                scene_params.instance_count * scene_params.meshlets_per_mesh;
+            let reason = match reject_code {
+                2 => crate::meshlet::RejectReason::Frustum,
+                3 => crate::meshlet::RejectReason::Backface,
+                4 => crate::meshlet::RejectReason::HiZ,
+                _ => crate::meshlet::RejectReason::Skipped,
+            };
+            overlay.dispatch(
+                device,
+                queue,
+                &mut encoder,
+                &self.color_view,
+                &self.cull,
+                &self.scene,
+                gpu_pool,
+                view_proj,
+                self.size,
+                reason,
+                /* line_thickness_px */ 2,
+                total_threads,
+            );
+        }
+
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
         }

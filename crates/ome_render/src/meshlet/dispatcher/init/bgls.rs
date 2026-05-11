@@ -5,6 +5,31 @@ use crate::meshlet::scene::SceneCullParams;
 
 use super::super::types::HiZTestParams;
 
+/// Single-binding BGL for the per-thread `reject_reasons` buffer
+/// (#454.4). One u32 slot per cull thread — the cull pass writes the
+/// reason code on every return path when `params.debug_active != 0`,
+/// and the reject-overlay raster pass reads it back to paint
+/// rejection bounding boxes on top of the shaded image. Storage +
+/// read_write because the cull entry writes through it and the same
+/// pipeline_layout is shared with `cs_lod_compute_group_max_err`
+/// (which never references the global, so naga emits nothing for it
+/// in that pipeline).
+pub(super) fn build_debug_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("meshlet_cull_debug_bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: NonZeroU64::new(4),
+            },
+            count: None,
+        }],
+    })
+}
+
 /// Single-binding BGL for the per-group `group_max_err` buffer.
 /// Storage + read_write because pass 1 atomicMaxes into it; pass 2
 /// also binds it as read_write (its access is atomicLoad, but WGSL

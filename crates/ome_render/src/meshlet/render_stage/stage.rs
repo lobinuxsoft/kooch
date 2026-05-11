@@ -4,6 +4,7 @@ use super::super::deferred::MeshletDeferredShader;
 use super::super::dispatcher::MeshletCull;
 use super::super::gpu_timers::MeshletGpuTimers;
 use super::super::pool::GpuGlobalMeshPool;
+use super::super::reject_overlay::MeshletRejectOverlay;
 use super::super::scene::MeshletScene;
 use super::super::system::MeshletPipeline;
 use super::super::vbuf64_stage::Vbuf64Stage;
@@ -71,6 +72,15 @@ pub struct MeshletRenderStage {
     /// to zero before every raster pass that writes through it.
     pub(super) triangle_density_texture: Option<wgpu::Texture>,
     pub(super) triangle_density_view: Option<wgpu::TextureView>,
+
+    /// Reject-reason overlay compute pipeline (#454.4). `Some` only
+    /// when `MeshletDebugCaps::supports_texture_atomic` is true — the
+    /// same gate the density / overdraw modes ride. The orchestrator
+    /// dispatches it after the deferred shade only when the current
+    /// frame's [`MeshletDebugMode`](super::super::debug::MeshletDebugMode)
+    /// selects a reject-reason mode AND the cull pass actually wrote
+    /// `reject_reasons[]` (controlled via `CullParams.debug_active`).
+    pub(super) reject_overlay: Option<MeshletRejectOverlay>,
 
     pub(super) size: (u32, u32),
     pub(super) instance_capacity: u32,

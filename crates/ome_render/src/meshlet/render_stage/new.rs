@@ -102,6 +102,18 @@ impl MeshletRenderStage {
                 (None, None)
             };
 
+        // Reject-reason overlay (#454.4). Same atomic gate as the
+        // density texture above — both ride the
+        // `MeshletDebugCaps::supports_texture_atomic` baseline split.
+        // Pre-baseline adapters get `None`; the dropdown filter keeps
+        // the user from selecting a mode that would dispatch into
+        // empty space.
+        let reject_overlay = if debug_caps.supports_texture_atomic() {
+            Some(super::super::reject_overlay::MeshletRejectOverlay::new(device, &cull))
+        } else {
+            None
+        };
+
         let vbuf64_stage = if vbuf64.is_supported() {
             Some(Vbuf64Stage::new(
                 device,
@@ -133,6 +145,7 @@ impl MeshletRenderStage {
             color_texture,
             triangle_density_texture,
             triangle_density_view,
+            reject_overlay,
             size,
             instance_capacity,
             // GPU timers default to disabled — tests don't pay for

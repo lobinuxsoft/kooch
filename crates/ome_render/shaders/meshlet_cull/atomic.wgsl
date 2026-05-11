@@ -32,6 +32,76 @@
 
 @group(3) @binding(0) var<storage, read_write> group_max_err: array<atomic<u32>>;
 
+// #454.4 — per-thread reject-reason tag buffer. One u32 slot per cull
+// thread (= instance_count × meshlets_per_mesh, sized in lock-step
+// with visible_meshlets). Values:
+//   0 = thread skipped (out of bounds for instance's mesh meshlet
+//       count, or for total_threads).
+//   1 = passed every cull stage and was emitted into visible_meshlets.
+//   2 = rejected by frustum.
+//   3 = rejected by backface cone.
+//   4 = rejected by Hi-Z occlusion (pass A only — the Hi-Z 2-pass
+//       entry doesn't write reject_reasons in #454.4 scope; reserved
+//       for the follow-up that wires it).
+// All writes are gated to `params.debug_active != 0`. Production
+// rendering pays exactly one uniform compare per thread + zero
+// stores. The buffer is cleared by the dispatcher at frame start so
+// stale entries from the previous frame never bleed through.
+@group(4) @binding(0) var<storage, read_write> reject_reasons: array<u32>;
+
+const REJECT_REASON_SKIPPED: u32 = 0u;
+const REJECT_REASON_PASSED: u32 = 1u;
+const REJECT_REASON_FRUSTUM: u32 = 2u;
+const REJECT_REASON_BACKFACE: u32 = 3u;
+// LOD selector dropped the meshlet (above_too_coarse / below_fine
+// / debug-mode override). Same colour as "skipped" in the overlay
+// LUT today; surfaced separately so the debug HUD can split LOD
+// drops from genuinely out-of-range threads later.
+const REJECT_REASON_LOD: u32 = 5u;
+
+fn record_reject(thread_id: u32, reason: u32) {
+    if (params.debug_active != 0u) {
+        reject_reasons[thread_id] = reason;
+    }
+}
+
+// AABB-vs-frustum (positive-vertex test). Ports atomic_hi_z's
+// `aabb_outside_frustum_atomic` to the non-Hi-Z R64 path so both
+// entries reject identically. Sphere-bounds + plane-distance left
+// silhouette holes at viewport edges where projected AABBs
+// partially leave the frustum (#488 documented this fix for the
+// Hi-Z path; the R64 path inherits it here).
+//
+// Drops the far plane on purpose (5 planes: 4 lateral + ndc.z >= 0).
+// Meshlets straddling the near plane stay in — the rasterizer clips
+// them naturally, and rejecting at the cull would re-introduce the
+// same silhouette holes the AABB switch was meant to close.
+fn aabb_outside_frustum_local(
+    world_from_local: mat4x4<f32>,
+    aabb_min_local: vec3<f32>,
+    aabb_max_local: vec3<f32>,
+) -> bool {
+    let center = (aabb_min_local + aabb_max_local) * 0.5;
+    let half_extent = (aabb_max_local - aabb_min_local) * 0.5;
+    let clip_from_local = params.view_proj * world_from_local;
+    let row_major = transpose(clip_from_local);
+    let planes = array<vec4<f32>, 5>(
+        row_major[3] + row_major[0],
+        row_major[3] - row_major[0],
+        row_major[3] + row_major[1],
+        row_major[3] - row_major[1],
+        row_major[2],
+    );
+    for (var i = 0u; i < 5u; i = i + 1u) {
+        let plane = planes[i] / length(planes[i].xyz);
+        let flipped = half_extent * sign(plane.xyz);
+        if (dot(center + flipped, plane.xyz) <= -plane.w) {
+            return true;
+        }
+    }
+    return false;
+}
+
 fn lod_pixel_error_world_pool(lod_error: f32, world_center: vec3<f32>) -> f32 {
     let to_cam = world_center - params.camera_position;
     let dist = max(length(to_cam), 0.0001);
@@ -88,6 +158,8 @@ fn cs_lod_compute_group_max_err(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn run_cull_scene_pool_atomic(thread_id: u32) {
     let max_meshlets = scene_params.meshlets_per_mesh;
     let total_threads = scene_params.instance_count * max_meshlets;
+    // Out-of-dispatch threads have no reject_reasons[] slot to claim
+    // (the buffer is sized to total_threads). Bail before touching it.
     if (thread_id >= total_threads) {
         return;
     }
@@ -97,6 +169,7 @@ fn run_cull_scene_pool_atomic(thread_id: u32) {
     let inst = instances[instance_id];
     let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
     if (meshlet_offset >= mesh_desc.meshlet_count) {
+        record_reject(thread_id, REJECT_REASON_SKIPPED);
         return;
     }
 
@@ -110,16 +183,19 @@ fn run_cull_scene_pool_atomic(thread_id: u32) {
     // the normal selector below.
     if (inst.lod_force_level >= 0) {
         if (i32(m.lod_level) != inst.lod_force_level) {
+            record_reject(thread_id, REJECT_REASON_LOD);
             return;
         }
     } else if (params.debug_mode == 8u) {
         // 8 = OnlyLod0 → emit iff lod_error == 0.0
         if (m.lod_error != 0.0) {
+            record_reject(thread_id, REJECT_REASON_LOD);
             return;
         }
     } else if (params.debug_mode == 9u) {
         // 9 = OnlyRoots → emit iff parent_meshlet_index == sentinel
         if (m.parent_meshlet_index != 0xFFFFFFFFu) {
+            record_reject(thread_id, REJECT_REASON_LOD);
             return;
         }
     } else {
@@ -154,13 +230,15 @@ fn run_cull_scene_pool_atomic(thread_id: u32) {
         }
 
         if (!(above_too_coarse && below_fine)) {
+            record_reject(thread_id, REJECT_REASON_LOD);
             return;
         }
     }
 
-    // Frustum + cone tests, then emit.
-    let world_center = (inst.transform * vec4<f32>(m.bounds_center, 1.0)).xyz;
-    if (sphere_outside_frustum(world_center, m.bounding_radius)) {
+    // AABB-vs-frustum: tighter than sphere bounds; closes silhouette
+    // holes at viewport edges (#488 parity for the R64 path).
+    if (aabb_outside_frustum_local(inst.transform, m.aabb_min, m.aabb_max)) {
+        record_reject(thread_id, REJECT_REASON_FRUSTUM);
         return;
     }
 
@@ -169,9 +247,11 @@ fn run_cull_scene_pool_atomic(thread_id: u32) {
         (inst.transform * vec4<f32>(m.cone_axis, 0.0)).xyz
     );
     if (camera_in_cone(world_apex, world_axis, m.cone_cutoff)) {
+        record_reject(thread_id, REJECT_REASON_BACKFACE);
         return;
     }
 
+    record_reject(thread_id, REJECT_REASON_PASSED);
     let slot = atomicAdd(&visible_count, 1u);
     visible_meshlets[slot] = (instance_id << 16u) | (global_meshlet_idx & 0xffffu);
 }
