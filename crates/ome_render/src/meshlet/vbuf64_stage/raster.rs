@@ -30,8 +30,13 @@ pub(super) struct Vbuf64Rasterizer {
     visible_bgl: wgpu::BindGroupLayout,
     instances_bgl: wgpu::BindGroupLayout,
     vbuf_bgl: wgpu::BindGroupLayout,
+    density_bgl: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
     camera_bg: wgpu::BindGroup,
+    /// 16-byte UBO storing the per-frame density-enable flag (only
+    /// `.x` is read by the shader). Written from `render_scene` so the
+    /// production path leaves the atomicAdd dormant.
+    density_enable_buffer: wgpu::Buffer,
 }
 
 impl Vbuf64Rasterizer {
@@ -86,6 +91,37 @@ impl Vbuf64Rasterizer {
                 count: None,
             }],
         });
+        // #454 — Bind group 5: triangle-density accumulator + the
+        // uniform that gates the atomicAdd. Both are bound on every
+        // frame regardless of the active debug mode; the uniform
+        // disables the accumulation for production rendering so the
+        // hot path costs at most one uniform fetch and a predicted
+        // branch.
+        let density_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("meshlet_vbuf64_density_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::Atomic,
+                        format: wgpu::TextureFormat::R32Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(16),
+                    },
+                    count: None,
+                },
+            ],
+        });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("meshlet_vbuf64_pipeline_layout"),
@@ -95,6 +131,7 @@ impl Vbuf64Rasterizer {
                 Some(&visible_bgl),
                 Some(&instances_bgl),
                 Some(&vbuf_bgl),
+                Some(&density_bgl),
             ],
             immediate_size: 0,
         });
@@ -154,14 +191,21 @@ impl Vbuf64Rasterizer {
                 resource: camera_buffer.as_entire_binding(),
             }],
         });
+        let density_enable_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("meshlet_vbuf64_density_enable_ubo"),
+            contents: bytes_of(&[0u32; 4]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
         Self {
             pipeline,
             visible_bgl,
             instances_bgl,
             vbuf_bgl,
+            density_bgl,
             camera_buffer,
             camera_bg,
+            density_enable_buffer,
         }
     }
 
@@ -174,6 +218,8 @@ impl Vbuf64Rasterizer {
         vbuf64_view: &wgpu::TextureView,
         dummy_color: &wgpu::TextureView,
         depth: &wgpu::TextureView,
+        density_view: &wgpu::TextureView,
+        density_enable: bool,
         meshlet_bg: &wgpu::BindGroup,
         cull: &MeshletCull,
         scene: &MeshletScene,
@@ -187,6 +233,10 @@ impl Vbuf64Rasterizer {
                 view_proj: view_proj.to_cols_array_2d(),
             }),
         );
+        // `vec4<u32>` so the shader-side layout matches a 16-byte UBO
+        // (uniform std140 minimum). Only `.x` is read.
+        let density_flag = [u32::from(density_enable), 0u32, 0u32, 0u32];
+        queue.write_buffer(&self.density_enable_buffer, 0, bytes_of(&density_flag));
 
         let visible_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_vbuf64_visible_bg"),
@@ -211,6 +261,20 @@ impl Vbuf64Rasterizer {
                 binding: 0,
                 resource: wgpu::BindingResource::TextureView(vbuf64_view),
             }],
+        });
+        let density_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("meshlet_vbuf64_density_bg"),
+            layout: &self.density_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(density_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.density_enable_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         let depth_load = if clear_depth {
@@ -252,6 +316,7 @@ impl Vbuf64Rasterizer {
         pass.set_bind_group(2, &visible_bg, &[]);
         pass.set_bind_group(3, &instances_bg, &[]);
         pass.set_bind_group(4, &vbuf_bg, &[]);
+        pass.set_bind_group(5, &density_bg, &[]);
         pass.draw_indirect(cull.indirect_args_buffer(), 0);
     }
 }

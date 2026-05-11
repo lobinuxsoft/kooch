@@ -77,6 +77,21 @@ struct MeshInstance {
 
 @group(4) @binding(0) var vbuf64: texture_storage_2d<r64uint, atomic>;
 
+// #454 — Per-pixel triangle-density accumulator. Every fragment
+// reaching the atomic-max raster increments this counter, so the
+// final value at each pixel is the number of cluster fragments
+// that contributed to it. Read at deferred time when the
+// TriangleDensity debug mode is active.
+//
+// `density_enable.x` gates the accumulation so the production
+// path skips the atomicAdd entirely (uniform branch, predictable
+// across the wavefront). The accumulator + uniform are always
+// bound — vbuf64 path requires `TEXTURE_ATOMIC` (subset of the
+// vbuf64 feature bundle) so the pipeline shape can stay
+// monomorphic.
+@group(5) @binding(0) var density_accumulator: texture_storage_2d<r32uint, atomic>;
+@group(5) @binding(1) var<uniform> density_enable: vec4<u32>;
+
 struct VsOut {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) @interpolate(flat) packed_id: u32,
@@ -133,11 +148,19 @@ fn vs_vbuf64_scene(
 
 @fragment
 fn fs_vbuf64_scene(input: VsOut) {
+    let pixel = vec2<u32>(u32(input.clip_position.x), u32(input.clip_position.y));
     let depth_bits = bitcast<u32>(input.clip_position.z);
     let visibility = (u64(depth_bits) << 32u) | u64(input.packed_id);
-    textureAtomicMax(
-        vbuf64,
-        vec2<u32>(u32(input.clip_position.x), u32(input.clip_position.y)),
-        visibility,
-    );
+    textureAtomicMax(vbuf64, pixel, visibility);
+
+    // Per-pixel triangle-density accumulator (#454). One atomic
+    // increment per fragment, regardless of who wins the vbuf
+    // atomicMax — the heatmap mode wants "how many cluster fragments
+    // wrote to this pixel", which is the contribution count not the
+    // winner count. Gated by a uniform so production rendering
+    // (debug_mode == Off / MeshletIds / InstanceIds / CullPassthrough
+    // / OnlyLod0 / OnlyRoots) skips the atomicAdd entirely.
+    if (density_enable.x != 0u) {
+        textureAtomicAdd(density_accumulator, pixel, 1u);
+    }
 }
