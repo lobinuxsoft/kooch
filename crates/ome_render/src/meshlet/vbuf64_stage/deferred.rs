@@ -73,6 +73,20 @@ impl Vbuf64Deferred {
                     },
                     count: None,
                 },
+                // #454: density accumulator readback. Declared atomic
+                // for symmetry with the raster pass; the deferred
+                // shader only does a plain `textureLoad`, which is
+                // permitted on atomic storage textures.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::Atomic,
+                        format: wgpu::TextureFormat::R32Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -140,6 +154,7 @@ impl Vbuf64Deferred {
         encoder: &mut wgpu::CommandEncoder,
         vbuf64_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
+        density_view: &wgpu::TextureView,
         meshlet_bg: &wgpu::BindGroup,
         material_bg: &wgpu::BindGroup,
         cull: &MeshletCull,
@@ -184,6 +199,10 @@ impl Vbuf64Deferred {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(density_view),
                 },
             ],
         });

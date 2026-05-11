@@ -21,6 +21,7 @@
 
 mod clear;
 mod deferred;
+mod density_clear;
 mod raster;
 
 use bytemuck::{Pod, Zeroable};
@@ -33,6 +34,7 @@ use crate::meshlet::scene::MeshletScene;
 
 use clear::Vbuf64Clear;
 use deferred::Vbuf64Deferred;
+use density_clear::DensityClear;
 use raster::Vbuf64Rasterizer;
 
 /// Storage texture format for the atomic visibility buffer.
@@ -64,6 +66,12 @@ pub(super) struct ScreenUbo {
 /// instance buffer + material pool BG from the surrounding render stage.
 pub struct Vbuf64Stage {
     clear: Vbuf64Clear,
+    /// Compute clear for the triangle-density accumulator (#454).
+    /// Allocated unconditionally inside `Vbuf64Stage::new` because
+    /// the vbuf64 feature bundle already implies `TEXTURE_ATOMIC`
+    /// support (R32Uint atomic is a subset of the R64Uint atomic
+    /// the rest of the stage needs).
+    density_clear: DensityClear,
     rasterizer: Vbuf64Rasterizer,
     deferred: Vbuf64Deferred,
     vbuf_texture: wgpu::Texture,
@@ -84,10 +92,12 @@ impl Vbuf64Stage {
         let (vbuf_texture, vbuf_view) = create_vbuf64_texture(device, size);
         let (dummy_color_texture, dummy_color_view) = create_dummy_color_texture(device, size);
         let clear = Vbuf64Clear::new(device);
+        let density_clear = DensityClear::new(device);
         let rasterizer = Vbuf64Rasterizer::new(device, meshlet_bgl, depth_format, pipeline_cache);
         let deferred = Vbuf64Deferred::new(device, meshlet_bgl);
         Self {
             clear,
+            density_clear,
             rasterizer,
             deferred,
             vbuf_texture,
@@ -131,6 +141,8 @@ impl Vbuf64Stage {
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
+        density_view: &wgpu::TextureView,
+        density_mode: u32,
         meshlet_bg: &wgpu::BindGroup,
         material_bg: &wgpu::BindGroup,
         cull: &MeshletCull,
@@ -141,6 +153,13 @@ impl Vbuf64Stage {
     ) {
         self.clear
             .dispatch(device, queue, encoder, &self.vbuf_view, self.size);
+        // Clear the density accumulator before each frame's raster
+        // pass so the heatmap reflects only the current frame's
+        // contribution count. Cost is negligible (one 8×8-tiled
+        // compute dispatch per frame, masked off in production by the
+        // density-enable uniform on the raster fragment).
+        self.density_clear
+            .dispatch(device, queue, encoder, density_view, self.size);
         self.rasterizer.render_scene(
             device,
             queue,
@@ -148,6 +167,8 @@ impl Vbuf64Stage {
             &self.vbuf_view,
             &self.dummy_color_view,
             depth_view,
+            density_view,
+            density_mode,
             meshlet_bg,
             cull,
             scene,
@@ -160,6 +181,7 @@ impl Vbuf64Stage {
             encoder,
             &self.vbuf_view,
             color_view,
+            density_view,
             meshlet_bg,
             material_bg,
             cull,

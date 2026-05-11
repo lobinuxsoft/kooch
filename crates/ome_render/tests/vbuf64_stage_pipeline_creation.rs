@@ -39,9 +39,11 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     limits.max_storage_textures_per_shader_stage = 16
         .min(adapter.limits().max_storage_textures_per_shader_stage);
     // #493 vbuf64 raster pipeline uses 5 bind groups (camera, pool,
-    // visible, instances, vbuf64) — default is 4. Mirror the production
-    // GpuContext setup.
-    limits.max_bind_groups = 5.min(adapter.limits().max_bind_groups);
+    // visible, instances, vbuf64); #454 adds bind group 5 for the
+    // triangle-density accumulator + the uniform that gates the
+    // atomicAdd, raising the total to 6. Default is 4. Mirror the
+    // production GpuContext setup in `elevated_compute_limits`.
+    limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
 
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("vbuf64_stage_creation_test_device"),

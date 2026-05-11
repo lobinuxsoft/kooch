@@ -61,6 +61,17 @@ pub struct MeshletRenderStage {
     pub(super) depth_texture: wgpu::Texture,
     pub(super) color_texture: wgpu::Texture,
 
+    /// Per-pixel R32Uint atomic accumulator (#454) backing the
+    /// `TriangleDensity` / `Overdraw` heatmap modes and the reject
+    /// overlay raster pass. `Some` only when the device exposes
+    /// `Features::TEXTURE_ATOMIC` (mirrored through
+    /// [`MeshletDebugCaps`]); otherwise stays `None` and the dropdown
+    /// filter never lets the user pick a mode that would read it.
+    /// Resized in lock-step with the vbuf / color targets and cleared
+    /// to zero before every raster pass that writes through it.
+    pub(super) triangle_density_texture: Option<wgpu::Texture>,
+    pub(super) triangle_density_view: Option<wgpu::TextureView>,
+
     pub(super) size: (u32, u32),
     pub(super) instance_capacity: u32,
 

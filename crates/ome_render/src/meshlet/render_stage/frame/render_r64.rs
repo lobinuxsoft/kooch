@@ -55,20 +55,41 @@ impl MeshletRenderStage {
         let debug_mode = resources
             .get::<MeshletDebugMode>()
             .copied()
-            .unwrap_or_default()
-            .as_u32();
+            .unwrap_or_default();
+        // #454: the modal accumulator runs in TriangleDensity /
+        // Overdraw modes (and falls back to the TriangleDensity
+        // count for the reject overlay modes still being wired in
+        // later subtasks). Production rendering (`Off`, `MeshletIds`,
+        // `InstanceIds`, `CullPassthrough`, `OnlyLod0`, `OnlyRoots`)
+        // leaves the uniform at 0 so the hot path skips the atomic
+        // increment. The density texture is allocated in lockstep
+        // with the stage's render targets; it is `Some` whenever
+        // the vbuf64 path is selectable.
+        let density_mode: u32 = match debug_mode {
+            MeshletDebugMode::TriangleDensity
+            | MeshletDebugMode::HiZRejected
+            | MeshletDebugMode::BackfaceRejected => 1,
+            MeshletDebugMode::Overdraw => 2,
+            _ => 0,
+        };
+        let density_view = self
+            .triangle_density_view
+            .as_ref()
+            .expect("density texture must be allocated whenever vbuf64 path is active");
         vbuf64.render(
             device,
             queue,
             &mut encoder,
             &self.depth_view,
             &self.color_view,
+            density_view,
+            density_mode,
             meshlet_bg,
             material_bg,
             &self.cull,
             &self.scene,
             view_proj,
-            debug_mode,
+            debug_mode.as_u32(),
             /* clear_depth */ true,
         );
 

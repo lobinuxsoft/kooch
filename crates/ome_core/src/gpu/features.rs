@@ -89,6 +89,21 @@ pub(super) fn optional_features(adapter: &Adapter) -> wgpu::Features {
              (coplanar meshlets may z-fight)"
         );
     }
+    // #454 — R32Uint atomic storage textures back the advanced debug
+    // modes (TriangleDensity, Overdraw, reject overlays). This is
+    // broader than the full vbuf64 bundle: many baseline adapters
+    // (RDNA 2 without INT64 atomic, Adreno X1) expose TEXTURE_ATOMIC
+    // standalone. Pick it up independently so the debug pipeline
+    // lights up on every adapter that can actually run it, not just
+    // those that also have the four-flag int64 atomic bundle.
+    if adapter.features().contains(wgpu::Features::TEXTURE_ATOMIC)
+        && !features.contains(wgpu::Features::TEXTURE_ATOMIC)
+    {
+        features |= wgpu::Features::TEXTURE_ATOMIC;
+        tracing::info!(
+            "TEXTURE_ATOMIC available standalone — advanced debug modes enabled (R32Uint atomic)"
+        );
+    }
     features
 }
 

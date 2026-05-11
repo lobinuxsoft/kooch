@@ -14,7 +14,7 @@
 //! extra wiring.
 
 use ome_gizmos_handles::{HandleMode, SnapSettings};
-use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
+use ome_render::meshlet::{MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
 
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
@@ -40,6 +40,7 @@ pub(crate) fn draw_view_content(
     snap_settings: &mut SnapSettings,
     selection_has_transform: bool,
     meshlet_debug_mode: &mut MeshletDebugMode,
+    meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
     meshlet_stats: MeshletRenderStats,
     perf_stats: EditorPerfStats,
@@ -243,6 +244,7 @@ pub(crate) fn draw_view_content(
                     perf_stats,
                     meshlet_stats,
                     meshlet_debug_mode,
+                    meshlet_debug_caps,
                     meshlet_lod_settings,
                 );
             });

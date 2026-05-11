@@ -12,10 +12,12 @@ pub(super) const TARGET_MAX_COMPUTE_WORKGROUP_STORAGE_SIZE: u32 = 32_768;
 pub(super) const TARGET_MAX_STORAGE_TEXTURES_PER_STAGE: u32 = 16;
 /// The atomic R64 visibility-buffer raster pipeline (#493) uses bind
 /// groups 0..4 (camera, meshlet pool, visible_meshlets, instances,
-/// vbuf64). wgpu's default `max_bind_groups` is 4 (group indices 0..3),
-/// so the BGL creation rejects without raising it. RDNA 2+ desktop /
+/// vbuf64). #454 adds bind group 5 for the triangle-density
+/// accumulator + the uniform that gates the atomicAdd in production.
+/// wgpu's default `max_bind_groups` is 4 (group indices 0..3), so the
+/// BGL creation rejects without raising it. RDNA 2+ desktop /
 /// handheld + DX12 + Metal all advertise ≥ 8.
-pub(super) const TARGET_MAX_BIND_GROUPS: u32 = 5;
+pub(super) const TARGET_MAX_BIND_GROUPS: u32 = 6;
 
 pub(super) fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
     let adapter_limits = adapter.limits();
@@ -53,7 +55,7 @@ pub(super) fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
         tracing::warn!(
             requested = TARGET_MAX_BIND_GROUPS,
             granted = bind_groups,
-            "adapter clamped max_bind_groups; atomic R64 vbuf raster (#493) requires ≥ 5"
+            "adapter clamped max_bind_groups; meshlet pipeline requires ≥ 6 (atomic R64 vbuf #493 + density accumulator #454)"
         );
     }
 

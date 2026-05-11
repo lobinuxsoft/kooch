@@ -9,6 +9,8 @@
 //! `u32` and exhaustive shader coverage relies on the discriminants
 //! never being reordered. Add new variants at the end.
 
+use super::caps::MeshletDebugCaps;
+
 /// Debug-visualization selector for the meshlet pipeline. Lives in
 /// [`Resources`](ome_core::resource::Resources) so the editor can
 /// flip it per-frame without touching the render-stage struct.
@@ -91,9 +93,53 @@ impl MeshletDebugMode {
             Self::Off,
             Self::MeshletIds,
             Self::InstanceIds,
+            Self::TriangleDensity,
+            Self::Overdraw,
+            Self::CullPassthrough,
             Self::OnlyLod0,
             Self::OnlyRoots,
         ]
+    }
+
+    /// `true` when the mode's pipeline writes to an R32Uint atomic
+    /// storage texture (triangle-density accumulator, overdraw
+    /// accumulator, reject-reason buffer). Those branches require
+    /// `wgpu::Features::TEXTURE_ATOMIC`; on adapters without it the
+    /// editor dropdown filter hides them.
+    #[inline]
+    pub const fn needs_texture_atomic(self) -> bool {
+        matches!(
+            self,
+            Self::TriangleDensity
+                | Self::Overdraw
+                | Self::HiZRejected
+                | Self::BackfaceRejected,
+        )
+    }
+
+    /// `true` when the mode can be selected on the current device.
+    /// Filters out modes whose pipeline depends on a feature the
+    /// adapter does not expose (today: `TEXTURE_ATOMIC`).
+    #[inline]
+    pub const fn is_available_with_caps(self, caps: &MeshletDebugCaps) -> bool {
+        if self.needs_texture_atomic() {
+            caps.supports_texture_atomic()
+        } else {
+            true
+        }
+    }
+
+    /// Capability-aware dropdown list. Returns every mode currently
+    /// wired in [`Self::all_implemented`], minus those the device
+    /// cannot run. The editor's debug-view combobox iterates this
+    /// so the user never selects a mode that would later fail
+    /// pipeline validation.
+    pub fn all_available_with_caps(caps: &MeshletDebugCaps) -> Vec<Self> {
+        Self::all_implemented()
+            .iter()
+            .copied()
+            .filter(|m| m.is_available_with_caps(caps))
+            .collect()
     }
 
     /// Human-readable label for the editor dropdown / tooltips.
@@ -121,6 +167,39 @@ mod tests {
     fn off_is_zero() {
         assert_eq!(MeshletDebugMode::Off.as_u32(), 0);
         assert_eq!(MeshletDebugMode::default(), MeshletDebugMode::Off);
+    }
+
+    #[test]
+    fn needs_texture_atomic_covers_advanced_modes() {
+        assert!(MeshletDebugMode::TriangleDensity.needs_texture_atomic());
+        assert!(MeshletDebugMode::Overdraw.needs_texture_atomic());
+        assert!(MeshletDebugMode::HiZRejected.needs_texture_atomic());
+        assert!(MeshletDebugMode::BackfaceRejected.needs_texture_atomic());
+        // Baseline-safe modes never lift the atomic feature gate.
+        assert!(!MeshletDebugMode::Off.needs_texture_atomic());
+        assert!(!MeshletDebugMode::MeshletIds.needs_texture_atomic());
+        assert!(!MeshletDebugMode::InstanceIds.needs_texture_atomic());
+        assert!(!MeshletDebugMode::CullPassthrough.needs_texture_atomic());
+        assert!(!MeshletDebugMode::OnlyLod0.needs_texture_atomic());
+        assert!(!MeshletDebugMode::OnlyRoots.needs_texture_atomic());
+    }
+
+    #[test]
+    fn all_available_with_caps_filters_atomic_modes() {
+        // Conservative caps (texture_atomic missing): only the
+        // baseline-safe subset of `all_implemented()` survives.
+        let no_atomic = MeshletDebugCaps::from_flags(false);
+        let filtered = MeshletDebugMode::all_available_with_caps(&no_atomic);
+        for mode in &filtered {
+            assert!(
+                !mode.needs_texture_atomic(),
+                "{mode:?} leaked through the filter without atomic support",
+            );
+        }
+        // With atomic support, the filter is identity over `all_implemented`.
+        let with_atomic = MeshletDebugCaps::from_flags(true);
+        let unfiltered = MeshletDebugMode::all_available_with_caps(&with_atomic);
+        assert_eq!(unfiltered.len(), MeshletDebugMode::all_implemented().len());
     }
 
     #[test]

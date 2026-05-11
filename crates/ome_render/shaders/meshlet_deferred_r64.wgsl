@@ -65,6 +65,7 @@ struct MeshInstance {
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> screen: ScreenUniforms;
 @group(0) @binding(2) var vbuf64: texture_storage_2d<r64uint, atomic>;
+@group(0) @binding(4) var density_accumulator: texture_storage_2d<r32uint, atomic>;
 @group(0) @binding(3) var color_out: texture_storage_2d<rgba8unorm, write>;
 
 @group(2) @binding(0) var<storage, read> materials: array<MaterialParams>;
@@ -105,6 +106,24 @@ fn hash_to_rgb(x: u32) -> vec3<f32> {
     return vec3<f32>(r, g, b) * 0.8 + 0.2;
 }
 
+// 5-stop perceptual gradient for the density / overdraw heatmaps:
+//   t = 0.00 → black     (background / nothing rasterized here)
+//   t = 0.25 → blue      (sparse — single fragment)
+//   t = 0.50 → green     (moderate — small handful of clusters)
+//   t = 0.75 → yellow    (busy — many overlapping clusters)
+//   t = 1.00 → red       (saturated — sub-pixel triangle territory)
+//
+// Polynomial form ties each channel to where it should peak so the
+// transition is smooth and bandlimited. Good enough for diagnostic
+// overlays — fancier perceptual LUTs (turbo, viridis) are not worth
+// the extra ALU on a debug-only path.
+fn density_heatmap(t: f32) -> vec3<f32> {
+    let r = clamp(2.0 * t - 1.0, 0.0, 1.0);
+    let g = clamp(1.0 - 2.0 * abs(t - 0.5), 0.0, 1.0);
+    let b = clamp(1.0 - 2.0 * t, 0.0, 1.0);
+    return vec3<f32>(r, g, b);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn cs_shade_scene_r64(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= screen.size.x || gid.y >= screen.size.y) {
@@ -133,6 +152,36 @@ fn cs_shade_scene_r64(@builtin(global_invocation_id) gid: vec3<u32>) {
             rgb = hash_to_rgb(meshlet_id);
         } else if (screen.debug_mode == 2u) {
             rgb = hash_to_rgb(inst_id);
+        } else if (screen.debug_mode == 3u) {
+            // TriangleDensity — colour-by-contribution heatmap.
+            // The accumulator was zeroed at frame start and the
+            // vbuf64 fragment did one atomicAdd per contributing
+            // cluster fragment, so `count` is the per-pixel
+            // contribution count. Saturate at MAX_DENSITY so the
+            // gradient covers a usable range — anything brighter
+            // than the warm end is sub-pixel triangle territory and
+            // a calibration signal for the LOD `target_error_pixels`
+            // knob.
+            let count = textureLoad(density_accumulator, pixel).x;
+            const MAX_DENSITY: f32 = 32.0;
+            let t = clamp(f32(count) / MAX_DENSITY, 0.0, 1.0);
+            rgb = density_heatmap(t);
+        } else if (screen.debug_mode == 4u) {
+            // Overdraw — count of times this pixel's depth buffer
+            // was overwritten by a closer fragment. Same accumulator
+            // as TriangleDensity but the raster path runs in mode 2,
+            // so each cell stores winning fragments only. Lower
+            // saturation cap because overdraw above 8 wasted
+            // shadings is already an aggressive LOD-selector
+            // failure signal.
+            let wins = textureLoad(density_accumulator, pixel).x;
+            const MAX_OVERDRAW: f32 = 8.0;
+            let t = clamp(f32(wins) / MAX_OVERDRAW, 0.0, 1.0);
+            rgb = density_heatmap(t);
+        } else if (screen.debug_mode == 7u) {
+            // CullPassthrough — flat green for every vbuf-covered
+            // pixel. See meshlet_deferred.wgsl for the rationale.
+            rgb = vec3<f32>(0.0, 1.0, 0.0);
         } else {
             let inst = instances[inst_id];
             let desc = descriptors[meshlet_id];

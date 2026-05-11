@@ -9,7 +9,7 @@ use ome_core::resource::Resources;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
 use ome_render::Vbuf64Support;
 use ome_render::meshlet::{
-    MeshletBlit, MeshletDebugMode, MeshletLodSettings, MeshletRenderStage,
+    MeshletBlit, MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStage,
     MeshletRenderStageConfig,
 };
 use ome_render::SkyRenderPass;
@@ -65,11 +65,13 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     );
 
     let vbuf64 = Vbuf64Support::detect(gpu.device());
+    let debug_caps = MeshletDebugCaps::detect(gpu.device());
     let mut meshlet_stage = MeshletRenderStage::new(
         gpu.device(),
         MeshletRenderStageConfig {
             size: INITIAL_VIEWPORT_SIZE,
             vbuf64,
+            debug_caps,
             ..Default::default()
         },
     );
@@ -133,6 +135,11 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     // Off keeps the production normal-debug path; the View toolbar
     // dropdown writes through this resource per-frame.
     resources.insert(MeshletDebugMode::default());
+    // Capability probe for the advanced debug modes (#454). The
+    // dropdown filter consults this so a device missing
+    // `TEXTURE_ATOMIC` never lists a mode whose pipeline would fail
+    // validation.
+    resources.insert(debug_caps);
     // Continuous-LOD threshold (#462). Default 1.0 px is the
     // production target; the View toolbar exposes a slider so
     // artists can crank it higher to force coarser LOD selection

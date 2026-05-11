@@ -16,7 +16,7 @@
 //! 5. **Meshlet pipeline** — instances uploaded, dispatch threads,
 //!                           pool size + roots
 
-use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
+use ome_render::meshlet::{MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
 
 use crate::perf::EditorPerfStats;
 
@@ -26,6 +26,7 @@ pub(crate) fn draw_performance_content(
     perf_stats: EditorPerfStats,
     meshlet_stats: MeshletRenderStats,
     meshlet_debug_mode: &mut MeshletDebugMode,
+    meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
 ) {
     // auto_shrink=[true, true] lets the ScrollArea report only the
@@ -38,7 +39,12 @@ pub(crate) fn draw_performance_content(
         .auto_shrink([true, true])
         .show(ui, |ui| {
             collapsing(ui, "Debug", true, |ui| {
-                debug_controls(ui, meshlet_debug_mode, meshlet_lod_settings);
+                debug_controls(
+                    ui,
+                    meshlet_debug_mode,
+                    meshlet_debug_caps,
+                    meshlet_lod_settings,
+                );
             });
 
             collapsing(ui, "Frame", true, |ui| {
@@ -131,6 +137,7 @@ pub(crate) fn draw_performance_content(
 fn debug_controls(
     ui: &mut egui::Ui,
     meshlet_debug_mode: &mut MeshletDebugMode,
+    meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
 ) {
     ui.horizontal(|ui| {
@@ -138,8 +145,8 @@ fn debug_controls(
         egui::ComboBox::from_id_salt("perf_debug_mode_combo")
             .selected_text(meshlet_debug_mode.label())
             .show_ui(ui, |ui| {
-                for mode in MeshletDebugMode::all_implemented() {
-                    ui.selectable_value(meshlet_debug_mode, *mode, mode.label());
+                for mode in MeshletDebugMode::all_available_with_caps(&meshlet_debug_caps) {
+                    ui.selectable_value(meshlet_debug_mode, mode, mode.label());
                 }
             })
             .response

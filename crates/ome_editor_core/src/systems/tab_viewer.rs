@@ -6,7 +6,7 @@ use egui_dock::TabViewer;
 use glam::Vec3;
 
 use ome_ecs::entity::Entity;
-use ome_render::meshlet::{MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
+use ome_render::meshlet::{MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
 use ome_world::lod::LodRingConfig;
 
 use ome_gizmos_handles::{HandleMode, SnapSettings};
@@ -58,6 +58,10 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Selector for the meshlet pipeline's debug visualization
     /// (#451). Mutated by the View toolbar dropdown.
     pub(crate) meshlet_debug_mode: &'a mut MeshletDebugMode,
+    /// Capability probe (#454). Decides which debug modes the View /
+    /// Performance dropdowns surface based on the device's
+    /// `Features::TEXTURE_ATOMIC` exposure.
+    pub(crate) meshlet_debug_caps: MeshletDebugCaps,
     /// Continuous-LOD threshold (#462). Mutated by the View toolbar
     /// slider so artists can sanity-check the chain at editor
     /// distances without rebuilding any pipeline state.
@@ -102,6 +106,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.snap_settings,
                 self.selection_has_transform,
                 self.meshlet_debug_mode,
+                self.meshlet_debug_caps,
                 self.meshlet_lod_settings,
                 self.meshlet_stats,
                 self.perf_stats,
@@ -124,6 +129,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.perf_stats,
                 self.meshlet_stats,
                 self.meshlet_debug_mode,
+                self.meshlet_debug_caps,
                 self.meshlet_lod_settings,
             ),
         }
