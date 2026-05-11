@@ -50,6 +50,26 @@ impl MeshletRenderStage {
                 | wgpu::TextureUsages::COPY_SRC,
         );
 
+        // #454: rebuild the triangle-density accumulator in lock-step
+        // with the production attachments. Only allocated when the
+        // construction-time caps survey installed it — that decision
+        // is preserved across resize.
+        let (triangle_density_texture, triangle_density_view) =
+            if self.triangle_density_texture.is_some() {
+                let (tex, view) = create_2d_attachment(
+                    device,
+                    "meshlet_render_stage_triangle_density",
+                    new_size,
+                    wgpu::TextureFormat::R32Uint,
+                    wgpu::TextureUsages::STORAGE_BINDING
+                        | wgpu::TextureUsages::COPY_DST
+                        | wgpu::TextureUsages::COPY_SRC,
+                );
+                (Some(tex), Some(view))
+            } else {
+                (None, None)
+            };
+
         // Hi-Z pyramids stay lazy (#486) — only recreate them on
         // resize when they were already allocated by some prior
         // SPD-orchestrator hook.
@@ -79,6 +99,8 @@ impl MeshletRenderStage {
         self.depth_sample_view = depth_sample_view;
         self.color_texture = color_texture;
         self.color_view = color_view;
+        self.triangle_density_texture = triangle_density_texture;
+        self.triangle_density_view = triangle_density_view;
         // Retire the OLD pyramids (if any) into the current slot of
         // the triple-buffer rather than dropping them inline. The
         // next frame's render() rotates the index and clears the

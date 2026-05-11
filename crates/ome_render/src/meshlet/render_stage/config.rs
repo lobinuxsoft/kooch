@@ -1,3 +1,4 @@
+use crate::meshlet::MeshletDebugCaps;
 use crate::vbuf64::Vbuf64Support;
 
 /// Construction parameters for [`MeshletRenderStage`]. All sizes are
@@ -20,6 +21,12 @@ pub struct MeshletRenderStageConfig {
     /// resources and the per-frame orchestrator picks the atomic
     /// path; otherwise only the R32Uint path is built.
     pub vbuf64: Vbuf64Support,
+    /// Capability probe (#454) for the advanced debug modes. When
+    /// `supports_texture_atomic()` is true the stage allocates a
+    /// per-pixel R32Uint atomic accumulator backing TriangleDensity /
+    /// Overdraw / reject overlays; otherwise the texture stays `None`
+    /// and the dropdown hides the dependent modes.
+    pub debug_caps: MeshletDebugCaps,
 }
 
 impl Default for MeshletRenderStageConfig {
@@ -29,6 +36,7 @@ impl Default for MeshletRenderStageConfig {
             instance_capacity: 256,
             meshlet_capacity: 4096,
             vbuf64: Vbuf64Support::from_supported(false),
+            debug_caps: MeshletDebugCaps::default(),
         }
     }
 }

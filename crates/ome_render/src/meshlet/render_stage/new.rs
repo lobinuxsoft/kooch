@@ -22,6 +22,7 @@ impl MeshletRenderStage {
             instance_capacity,
             meshlet_capacity,
             vbuf64,
+            debug_caps,
         } = config;
         assert!(size.0 > 0 && size.1 > 0, "MeshletRenderStage size must be > 0");
         assert!(
@@ -80,6 +81,27 @@ impl MeshletRenderStage {
         // resources above stay live regardless — this is purely an
         // additional pipeline the orchestrator picks when the device
         // supports it.
+        // #454: per-pixel R32Uint atomic accumulator that backs the
+        // TriangleDensity / Overdraw heatmap modes and the reject
+        // overlay raster pass. Allocated only when the device exposes
+        // `Features::TEXTURE_ATOMIC` so a baseline-safe adapter pays
+        // zero VRAM for a feature its driver could not run.
+        let (triangle_density_texture, triangle_density_view) =
+            if debug_caps.supports_texture_atomic() {
+                let (tex, view) = create_2d_attachment(
+                    device,
+                    "meshlet_render_stage_triangle_density",
+                    size,
+                    wgpu::TextureFormat::R32Uint,
+                    wgpu::TextureUsages::STORAGE_BINDING
+                        | wgpu::TextureUsages::COPY_DST
+                        | wgpu::TextureUsages::COPY_SRC,
+                );
+                (Some(tex), Some(view))
+            } else {
+                (None, None)
+            };
+
         let vbuf64_stage = if vbuf64.is_supported() {
             Some(Vbuf64Stage::new(
                 device,
@@ -109,6 +131,8 @@ impl MeshletRenderStage {
             vbuf_texture,
             depth_texture,
             color_texture,
+            triangle_density_texture,
+            triangle_density_view,
             size,
             instance_capacity,
             // GPU timers default to disabled — tests don't pay for
@@ -216,6 +240,22 @@ impl MeshletRenderStage {
 
     pub fn vbuf_view(&self) -> &wgpu::TextureView {
         &self.vbuf_view
+    }
+
+    /// Per-pixel triangle-density accumulator (#454). `Some` only when
+    /// the construction-time `MeshletDebugCaps.supports_texture_atomic`
+    /// was true. Read by the deferred shader to colourise the
+    /// TriangleDensity / Overdraw heatmaps and by the reject-overlay
+    /// raster pass for the rejection-mode views.
+    pub fn triangle_density_view(&self) -> Option<&wgpu::TextureView> {
+        self.triangle_density_view.as_ref()
+    }
+
+    /// Backing texture for [`Self::triangle_density_view`]. Exposed so
+    /// the per-frame orchestrator can clear it (`COPY_DST` / compute
+    /// reset) before the raster passes that accumulate into it.
+    pub fn triangle_density_texture(&self) -> Option<&wgpu::Texture> {
+        self.triangle_density_texture.as_ref()
     }
 
     /// Underlying color texture (Rgba8Unorm). Exposed so callers can

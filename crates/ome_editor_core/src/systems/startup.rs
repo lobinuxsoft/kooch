@@ -71,6 +71,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         MeshletRenderStageConfig {
             size: INITIAL_VIEWPORT_SIZE,
             vbuf64,
+            debug_caps,
             ..Default::default()
         },
     );
