@@ -29,23 +29,26 @@ use glam::{Mat4, Vec3, Vec4};
 
 /// Per-frame culling parameters uploaded to the compute shader.
 ///
-/// - `planes`: six frustum planes packed as `(normal, distance)` —
-///   plane equation `dot(normal, p) + distance >= 0` means inside.
-///   Visibility against the frustum is the AND of all six.
+/// - `planes`: six pre-extracted world-space frustum planes packed
+///   as `(normal, distance)` — used by the legacy sphere test
+///   (`sphere_outside_frustum`) and the per-pass entries that
+///   haven't migrated to AABB cull yet.
 /// - `camera_position`: world-space camera position used by the
-///   backface cone test. The shader rejects a meshlet when
-///   `dot(normalize(camera - cone_apex), cone_axis) >= cone_cutoff`
-///   (the camera lies in the meshlet's back-facing half-space).
-/// - `lod_target_error_pixels`: continuous-LOD threshold (#442). The
-///   selector picks the meshlet whose `lod_error` projects to
-///   `≤ this many pixels` AND whose parent projects to `> this many
-///   pixels`. Default 1.0.
-/// - `lod_error_to_pixel_factor`: precomputed
-///   `0.5 * viewport_height_px * proj_scale_y` so the shader recovers
-///   pixel error as `lod_error / distance * factor`. Avoids passing
-///   the full projection matrix or the viewport size separately.
+///   backface cone test.
+/// - `lod_target_error_pixels` / `lod_error_to_pixel_factor`:
+///   continuous-LOD selector knobs (#442).
+/// - `debug_mode` / `debug_active`: editor-driven debug viz toggles
+///   (#451 / #454.4).
+/// - `view_proj`: clip-from-world matrix. Used by the AABB-vs-frustum
+///   test (`aabb_outside_frustum_local`) the R64 atomic path now
+///   shares with the Hi-Z 2-pass entry — both derive frustum planes
+///   from `view_proj * inst.transform` to test AABBs in local space
+///   without the world-envelope conservatism of an 8-corner box.
+///   Sphere-bounds + plane test left silhouette holes on close-up
+///   models at viewport edges (#488 documented this for the Hi-Z
+///   path; the R64 path inherits the fix here).
 ///
-/// Layout is 128 bytes — multiple of 16 to keep std140-friendly
+/// Layout is 192 bytes — multiple of 16 to keep std140-friendly
 /// alignment for the host-side `bytemuck::cast_slice` upload.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -69,6 +72,7 @@ pub struct CullParams {
     /// rendering pays nothing — the cull-shader writes are gated to
     /// a single uniform compare and the SSBO stays untouched.
     pub debug_active: u32,
+    pub view_proj: [[f32; 4]; 4],
 }
 
 impl CullParams {
@@ -87,6 +91,7 @@ impl CullParams {
             lod_error_to_pixel_factor: 0.0,
             debug_mode: 0,
             debug_active: 0,
+            view_proj: view_projection.to_cols_array_2d(),
         }
     }
 
@@ -230,9 +235,10 @@ mod tests {
 
     #[test]
     fn cull_params_layout_is_pod() {
-        // 6 planes (4 floats each) = 96 bytes, camera_position + meshlet_count = 16,
-        // (lod_target, lod_factor, debug_mode, debug_active) = 16. Total: 128 bytes.
-        assert_eq!(std::mem::size_of::<CullParams>(), 128);
+        // 6 planes (4 floats each) = 96 B, camera_position + meshlet_count = 16,
+        // (lod_target, lod_factor, debug_mode, debug_active) = 16,
+        // view_proj mat4 = 64. Total: 192 B.
+        assert_eq!(std::mem::size_of::<CullParams>(), 192);
     }
 
     #[test]

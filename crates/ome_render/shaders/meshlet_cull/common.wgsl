@@ -46,6 +46,15 @@ struct CullParams {
     // raster pass flips it on while the user holds a reject-mode
     // dropdown selection.
     debug_active: u32,
+    // Clip-from-world matrix used by the AABB-vs-frustum test in
+    // `atomic.wgsl` (#454.4 follow-up A). The atomic R64 path now
+    // matches the Hi-Z 2-pass entry's #488 fix: derive frustum
+    // planes from `view_proj * inst.transform` and test the local
+    // AABB instead of the bounding sphere — closes the silhouette
+    // holes sphere-bounds left at viewport edges. Legacy entries
+    // (basic / scene / pool) ignore the field; their pipelines stay
+    // on the pre-extracted `planes[]`.
+    view_proj: mat4x4<f32>,
 }
 
 struct MeshletDescriptor {
