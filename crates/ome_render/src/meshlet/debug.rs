@@ -53,6 +53,12 @@ pub enum MeshletDebugMode {
     /// chain-construction failures (where everything is a root and
     /// the distance threshold has nothing to descend into).
     OnlyRoots = 9,
+    /// Bright yellow on meshlets that the frustum test discarded.
+    /// Frustum culls coherent groups (entire object behind / off-screen),
+    /// so the overlay is the canonical way to spot per-cluster bounds
+    /// that disagree with the object's macro AABB — a common artifact
+    /// of stale build-time bounds after a mesh edit.
+    FrustumRejected = 10,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -113,7 +119,8 @@ impl MeshletDebugMode {
             Self::TriangleDensity
                 | Self::Overdraw
                 | Self::HiZRejected
-                | Self::BackfaceRejected,
+                | Self::BackfaceRejected
+                | Self::FrustumRejected,
         )
     }
 
@@ -155,6 +162,7 @@ impl MeshletDebugMode {
             Self::CullPassthrough => "Cull Passthrough",
             Self::OnlyLod0 => "Only LOD 0",
             Self::OnlyRoots => "Only Roots",
+            Self::FrustumRejected => "Frustum Rejected",
         }
     }
 }
@@ -175,6 +183,7 @@ mod tests {
         assert!(MeshletDebugMode::Overdraw.needs_texture_atomic());
         assert!(MeshletDebugMode::HiZRejected.needs_texture_atomic());
         assert!(MeshletDebugMode::BackfaceRejected.needs_texture_atomic());
+        assert!(MeshletDebugMode::FrustumRejected.needs_texture_atomic());
         // Baseline-safe modes never lift the atomic feature gate.
         assert!(!MeshletDebugMode::Off.needs_texture_atomic());
         assert!(!MeshletDebugMode::MeshletIds.needs_texture_atomic());
@@ -216,5 +225,6 @@ mod tests {
         assert_eq!(MeshletDebugMode::CullPassthrough.as_u32(), 7);
         assert_eq!(MeshletDebugMode::OnlyLod0.as_u32(), 8);
         assert_eq!(MeshletDebugMode::OnlyRoots.as_u32(), 9);
+        assert_eq!(MeshletDebugMode::FrustumRejected.as_u32(), 10);
     }
 }
