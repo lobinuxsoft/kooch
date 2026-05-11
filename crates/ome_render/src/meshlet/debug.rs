@@ -104,6 +104,7 @@ impl MeshletDebugMode {
             Self::CullPassthrough,
             Self::OnlyLod0,
             Self::OnlyRoots,
+            Self::FrustumRejected,
         ]
     }
 
