@@ -30,7 +30,9 @@ use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
 
 use crate::VIEWPORT_DEPTH_FORMAT;
 use crate::fps::FpsTracker;
-use crate::meshlet::{MeshletBlit, MeshletRenderStage, MeshletRenderStageConfig};
+use crate::meshlet::{
+    MeshletBlit, MeshletDebugCaps, MeshletRenderStage, MeshletRenderStageConfig,
+};
 use crate::sky::SkyRenderPass;
 use crate::vbuf64::Vbuf64Support;
 
@@ -117,6 +119,7 @@ fn init_renderers(resources: &mut Resources) {
     };
     let pipeline_cache = gpu.pipeline_cache();
     let vbuf64 = Vbuf64Support::detect(gpu.device());
+    let debug_caps = MeshletDebugCaps::detect(gpu.device());
     let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format(), pipeline_cache);
     let depth = GameDepth::new(gpu.device(), gpu.size());
     let meshlet_stage = MeshletRenderStage::new(
@@ -129,6 +132,7 @@ fn init_renderers(resources: &mut Resources) {
     );
     let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
     resources.insert(vbuf64);
+    resources.insert(debug_caps);
     resources.insert(sky_pass);
     resources.insert(depth);
     resources.insert(meshlet_stage);

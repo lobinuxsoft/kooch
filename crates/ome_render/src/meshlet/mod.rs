@@ -32,6 +32,7 @@
 mod asset;
 mod blit;
 mod builder;
+mod caps;
 mod cull;
 mod debug;
 mod deferred;
@@ -59,6 +60,7 @@ pub use builder::{
 pub use cull::{
     camera_in_backface_cone, extract_frustum_planes, sphere_outside_frustum, CullParams,
 };
+pub use caps::MeshletDebugCaps;
 pub use debug::{MeshletDebugMode, MeshletLodSettings};
 pub use deferred::{MeshletDeferredShader, DEFERRED_COLOR_FORMAT};
 pub use dispatcher::{DrawIndirectArgs, HiZTestParams, MeshletCull};
