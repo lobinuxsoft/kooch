@@ -107,6 +107,22 @@ impl MeshletDebugMode {
         ]
     }
 
+    /// Reject-reason code the cull shader writes when this mode is
+    /// active and `CullParams.debug_active != 0`. Mirrors the
+    /// `REJECT_REASON_*` constants in `meshlet_cull/atomic.wgsl`.
+    /// `None` for non-reject modes — the orchestrator uses the
+    /// `Some/None` split to gate both the cull-side `debug_active`
+    /// flag and the overlay dispatch.
+    #[inline]
+    pub const fn reject_reason_code(self) -> Option<u32> {
+        match self {
+            Self::FrustumRejected => Some(2),
+            Self::BackfaceRejected => Some(3),
+            Self::HiZRejected => Some(4),
+            _ => None,
+        }
+    }
+
     /// `true` when the mode's pipeline writes to an R32Uint atomic
     /// storage texture (triangle-density accumulator, overdraw
     /// accumulator, reject-reason buffer). Those branches require
@@ -209,6 +225,25 @@ mod tests {
         let with_atomic = MeshletDebugCaps::from_flags(true);
         let unfiltered = MeshletDebugMode::all_available_with_caps(&with_atomic);
         assert_eq!(unfiltered.len(), MeshletDebugMode::all_implemented().len());
+    }
+
+    #[test]
+    fn reject_reason_code_tracks_cull_shader_constants() {
+        // `REJECT_REASON_*` in meshlet_cull/atomic.wgsl pin these.
+        // Reordering or renumbering breaks the overlay's match.
+        assert_eq!(MeshletDebugMode::FrustumRejected.reject_reason_code(), Some(2));
+        assert_eq!(MeshletDebugMode::BackfaceRejected.reject_reason_code(), Some(3));
+        assert_eq!(MeshletDebugMode::HiZRejected.reject_reason_code(), Some(4));
+        // Non-reject modes never write into reject_reasons[] — the
+        // orchestrator must NOT lift `debug_active` for them.
+        assert!(MeshletDebugMode::Off.reject_reason_code().is_none());
+        assert!(MeshletDebugMode::TriangleDensity.reject_reason_code().is_none());
+        assert!(MeshletDebugMode::Overdraw.reject_reason_code().is_none());
+        assert!(MeshletDebugMode::CullPassthrough.reject_reason_code().is_none());
+        assert!(MeshletDebugMode::OnlyLod0.reject_reason_code().is_none());
+        assert!(MeshletDebugMode::OnlyRoots.reject_reason_code().is_none());
+        assert!(MeshletDebugMode::MeshletIds.reject_reason_code().is_none());
+        assert!(MeshletDebugMode::InstanceIds.reject_reason_code().is_none());
     }
 
     #[test]

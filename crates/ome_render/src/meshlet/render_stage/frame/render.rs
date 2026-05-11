@@ -155,14 +155,20 @@ impl MeshletRenderStage {
             .unwrap_or_default()
             .target_error_pixels
             .max(0.01);
-        let debug_mode = resources
+        let debug_mode_enum = resources
             .get::<MeshletDebugMode>()
             .copied()
-            .unwrap_or_default()
-            .as_u32();
+            .unwrap_or_default();
+        let debug_mode = debug_mode_enum.as_u32();
+        // Reject-overlay modes need the cull pass to record per-thread
+        // reasons into the `reject_reasons[]` SSBO. Production rendering
+        // and every non-reject debug mode leaves this off so the cull
+        // hot path doesn't pay the conditional store.
+        let debug_active = debug_mode_enum.reject_reason_code().is_some();
         let cull_params = CullParams::new(view_proj, cam_pos, max_meshlets_per_mesh)
             .with_lod(viewport_h_px, proj_scale_y, lod_target)
-            .with_debug_mode(debug_mode);
+            .with_debug_mode(debug_mode)
+            .with_debug_active(debug_active);
         let scene_params =
             SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
 
