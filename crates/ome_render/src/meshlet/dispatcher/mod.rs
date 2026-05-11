@@ -83,6 +83,11 @@ pub struct MeshletCull {
     pub(super) meshlet_bgl: wgpu::BindGroupLayout,
     pub(super) pool_bgl: wgpu::BindGroupLayout,
     pub(super) group_err_bgl: wgpu::BindGroupLayout,
+    /// Single-binding BGL for the per-thread `reject_reasons` buffer
+    /// (#454.4). Bound at group(4) of the scene-pool atomic cull
+    /// pipeline layout; the reject-overlay raster pass reuses it
+    /// to read the same buffer back at draw time.
+    pub(super) debug_bgl: wgpu::BindGroupLayout,
 
     pub(super) params_buffer: wgpu::Buffer,
     pub(super) hi_z_params_buffer: wgpu::Buffer,
@@ -104,6 +109,12 @@ pub struct MeshletCull {
     /// a scene's pool grows past it. Cleared each frame before pass 1.
     pub(super) group_max_err: wgpu::Buffer,
     pub(super) group_capacity: u32,
+    /// Per-thread reject-reason tag buffer (#454.4). One u32 per
+    /// cull thread; `capacity` slots so it grows in lock-step with
+    /// `visible_meshlets`. Cleared each frame by the dispatcher
+    /// before the cull pass and read by the reject-overlay raster
+    /// pass to drive the rejection bounding-box visualization.
+    pub(super) reject_reasons: wgpu::Buffer,
 
     pub(super) capacity: u32,
     pub(super) vertex_count_per_instance: u32,
@@ -178,14 +189,27 @@ impl MeshletCull {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // Reject-reasons mirrors visible_meshlets: one u32 slot per
+        // cull thread, sized to the same `capacity`. Growing them in
+        // lock-step keeps a single `ensure_capacity` call sufficient
+        // for both the production rasterizer and the debug overlay.
+        let reject_reasons = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_reject_reasons"),
+            size: new_capacity as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         tracing::info!(
             target: "ome_render::meshlet::cull",
             old_capacity = self.capacity,
             new_capacity,
             required,
-            "grew visible_meshlets buffer to fit scene",
+            "grew visible_meshlets + reject_reasons buffers to fit scene",
         );
         self.visible_meshlets = visible_meshlets;
+        self.reject_reasons = reject_reasons;
         self.capacity = new_capacity;
     }
 
@@ -230,6 +254,23 @@ impl MeshletCull {
     /// dispatch length.
     pub fn culled_count_buffer(&self) -> &wgpu::Buffer {
         &self.culled_count
+    }
+
+    /// Per-thread reject-reason tag buffer (#454.4). One u32 per
+    /// cull thread; the cull pass writes a reason code on every
+    /// return path when `CullParams.debug_active != 0`. The reject
+    /// overlay raster pass reads this back to paint rejection
+    /// bounding boxes on top of the shaded image.
+    pub fn reject_reasons_buffer(&self) -> &wgpu::Buffer {
+        &self.reject_reasons
+    }
+
+    /// Bind group layout for the per-thread `reject_reasons` buffer
+    /// (group(4) of the scene-pool atomic cull pipeline). Re-exported
+    /// so the reject-overlay raster pass can build a bind group
+    /// against the same handle the cull pipeline writes through.
+    pub fn debug_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.debug_bgl
     }
 
     /// Bind group layout for the Hi-Z 2-pass entry's group(0) — the

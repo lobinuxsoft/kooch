@@ -41,7 +41,11 @@ struct CullParams {
     // 9 (OnlyRoots) override the LOD selector — see
     // cs_cull_scene_pool_atomic.
     debug_mode: u32,
-    _pad3: u32,
+    // 1 when the cull pass should record per-thread reject reasons
+    // into reject_reasons[] (#454.4). 0 in production; the overlay
+    // raster pass flips it on while the user holds a reject-mode
+    // dropdown selection.
+    debug_active: u32,
 }
 
 struct MeshletDescriptor {

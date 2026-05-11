@@ -62,7 +62,13 @@ pub struct CullParams {
     /// a specific extreme of the chain — useful for visually
     /// auditing each chain layer in isolation.
     pub debug_mode: u32,
-    pub _pad3: u32,
+    /// `1` whenever the cull pass should record per-thread reject
+    /// reasons into `MeshletCull::reject_reasons` (#454.4). The
+    /// reject-overlay raster pass consumes those entries and paints
+    /// rejection bounding boxes over the shaded image. Production
+    /// rendering pays nothing — the cull-shader writes are gated to
+    /// a single uniform compare and the SSBO stays untouched.
+    pub debug_active: u32,
 }
 
 impl CullParams {
@@ -80,7 +86,7 @@ impl CullParams {
             lod_target_error_pixels: 1.0,
             lod_error_to_pixel_factor: 0.0,
             debug_mode: 0,
-            _pad3: 0,
+            debug_active: 0,
         }
     }
 
@@ -89,6 +95,16 @@ impl CullParams {
     /// both shading and cull behaviour.
     pub fn with_debug_mode(mut self, debug_mode: u32) -> Self {
         self.debug_mode = debug_mode;
+        self
+    }
+
+    /// Toggles per-thread reject-reason recording on the
+    /// `cs_cull_scene_pool_atomic` entry (#454.4). The overlay raster
+    /// pass requires this to be `true`; everything else (including
+    /// the deferred-shader colour overrides) leaves it at `false` so
+    /// the cull hot path stays free of the SSBO write.
+    pub fn with_debug_active(mut self, active: bool) -> Self {
+        self.debug_active = active as u32;
         self
     }
 
@@ -215,7 +231,7 @@ mod tests {
     #[test]
     fn cull_params_layout_is_pod() {
         // 6 planes (4 floats each) = 96 bytes, camera_position + meshlet_count = 16,
-        // four u32 pads = 16. Total: 128 bytes.
+        // (lod_target, lod_factor, debug_mode, debug_active) = 16. Total: 128 bytes.
         assert_eq!(std::mem::size_of::<CullParams>(), 128);
     }
 

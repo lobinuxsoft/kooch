@@ -49,6 +49,13 @@ impl MeshletCull {
         // atomicMaxes only positive pixel errors so 0 is a valid
         // "no contribution yet" floor.
         encoder.clear_buffer(&self.group_max_err, 0, None);
+        // Reset reject_reasons so stale values from the previous
+        // frame don't leak into the overlay raster pass when
+        // `debug_active` is set this frame. 0 = "thread skipped",
+        // which the overlay treats as no-op. Cost is negligible
+        // (single buffer clear per frame) and only paid when the
+        // dispatcher runs the atomic path at all.
+        encoder.clear_buffer(&self.reject_reasons, 0, None);
 
         // Bind groups shared by both passes.
         let cull_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -109,6 +116,18 @@ impl MeshletCull {
                 resource: self.group_max_err.as_entire_binding(),
             }],
         });
+        // Group(4) reject-reasons (#454.4). Bound for both passes
+        // because the pipeline layout is shared; the lod-compute
+        // entry never references the SSBO so binding is a no-op
+        // there beyond the table write.
+        let debug_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("meshlet_cull_debug_bg"),
+            layout: &self.debug_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.reject_reasons.as_entire_binding(),
+            }],
+        });
 
         let workgroups = total_threads.div_ceil(64).max(1);
 
@@ -122,6 +141,7 @@ impl MeshletCull {
             pass.set_bind_group(1, &pool_bg, &[]);
             pass.set_bind_group(2, &scene_bg, &[]);
             pass.set_bind_group(3, &group_err_bg, &[]);
+            pass.set_bind_group(4, &debug_bg, &[]);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
         {
@@ -134,6 +154,7 @@ impl MeshletCull {
             pass.set_bind_group(1, &pool_bg, &[]);
             pass.set_bind_group(2, &scene_bg, &[]);
             pass.set_bind_group(3, &group_err_bg, &[]);
+            pass.set_bind_group(4, &debug_bg, &[]);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
