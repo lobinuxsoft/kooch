@@ -100,7 +100,12 @@ struct SceneCullParams {
 @group(2) @binding(0) var<storage, read> instances: array<MeshInstance>;
 @group(2) @binding(1) var<uniform> scene_params: SceneCullParams;
 
-@group(3) @binding(0) var<storage, read> reject_reasons: array<u32>;
+// Declared `read_write` to match the cull pipeline's debug_bgl
+// (the same handle this overlay reuses). The overlay only needs
+// LOAD access semantically, but WGSL/wgpu reject pipelines whose
+// shader access is a strict subset of the layout's access — the
+// two must agree exactly.
+@group(3) @binding(0) var<storage, read_write> reject_reasons: array<u32>;
 
 // Reason → flat overlay colour. Mirrors the LUT planned for the
 // triangle-density / overdraw heatmaps so the artist can build a
