@@ -42,6 +42,7 @@ mod gpu_meshlet;
 mod gpu_timers;
 mod loader;
 mod pool;
+mod reject_overlay;
 mod render_stage;
 mod scene;
 mod system;
@@ -72,6 +73,7 @@ pub use gpu_meshlet::{
 pub use gpu_timers::MeshletGpuTimers;
 pub use loader::MeshletMeshLoader;
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshDescriptor, MeshHandle};
+pub use reject_overlay::{MeshletRejectOverlay, RejectReason};
 pub use render_stage::{
     MeshletRenderStage, MeshletRenderStageConfig, MeshletRenderStats,
 };

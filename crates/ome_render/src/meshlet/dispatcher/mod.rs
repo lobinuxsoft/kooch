@@ -265,6 +265,15 @@ impl MeshletCull {
         &self.reject_reasons
     }
 
+    /// `wgpu::Buffer` holding the per-frame `SceneCullParams` UBO.
+    /// Re-exported so the reject-overlay pass can bind the same
+    /// `(instance_count, meshlets_per_mesh)` the cull pass dispatched
+    /// against — using a different value here would either over- or
+    /// under-iterate the reject_reasons array.
+    pub fn scene_params_buffer(&self) -> &wgpu::Buffer {
+        &self.scene_params_buffer
+    }
+
     /// Bind group layout for the per-thread `reject_reasons` buffer
     /// (group(4) of the scene-pool atomic cull pipeline). Re-exported
     /// so the reject-overlay raster pass can build a bind group
