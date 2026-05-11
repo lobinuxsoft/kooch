@@ -181,6 +181,7 @@ impl Vbuf64Stage {
             encoder,
             &self.vbuf_view,
             color_view,
+            density_view,
             meshlet_bg,
             material_bg,
             cull,
