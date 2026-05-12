@@ -105,6 +105,16 @@ impl MeshletDebugMode {
             Self::OnlyLod0,
             Self::OnlyRoots,
             Self::FrustumRejected,
+            Self::BackfaceRejected,
+            // Falls back to a no-op overlay on the R64 atomic path
+            // because `cs_cull_scene_pool_atomic` doesn't run a Hi-Z
+            // occlusion test — the cull writes only frustum / backface
+            // / lod reasons. The acceptance criteria for #454 explicitly
+            // allows this: HiZRejected lights up only when the Hi-Z
+            // 2-pass orchestrator (#445 SPD follow-up) runs the scene
+            // through `cs_cull_scene_pool_atomic_hi_z`, which still
+            // needs its own reject_reasons wiring (separate follow-up).
+            Self::HiZRejected,
         ]
     }
 
