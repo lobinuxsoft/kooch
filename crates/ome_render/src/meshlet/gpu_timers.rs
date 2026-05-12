@@ -1,8 +1,23 @@
-//! GPU frame timing via wgpu timestamp queries (#463.4).
+//! GPU frame timing via wgpu timestamp queries (#463.4, #335).
 //!
-//! Wraps a `QuerySet` (start + end), a GPU-side resolve buffer, and a
-//! ring of CPU-mappable readback buffers so the render loop can
-//! sample wall-clock GPU time without blocking on `device.poll`.
+//! Wraps a `QuerySet` (2N entries for N stages), a GPU-side resolve
+//! buffer, and a ring of CPU-mappable readback buffers so the render
+//! loop can sample wall-clock GPU time without blocking on
+//! `device.poll`.
+//!
+//! ## Stages
+//!
+//! A timer instance owns `stage_count` pairs of timestamps. Stage `i`
+//! occupies query slots `(2i, 2i + 1)`. Callers write start / end per
+//! stage to break a frame into named segments (cull / vbuf raster /
+//! deferred shade in the production pipeline; bench scenarios add
+//! more granularity).
+//!
+//! Single-stage instances (`stage_count = 1`) preserve the original
+//! pre-#335 API surface: `write_start` + `write_end_and_copy` are
+//! kept as thin aliases over `write_stage_start(0)` /
+//! `write_stage_end(0)` + `resolve_and_copy`, and `last_frame_ms`
+//! returns the only stage's duration.
 //!
 //! ## Why a ring of N slots
 //!
@@ -42,8 +57,6 @@
 use std::sync::{Arc, Mutex};
 
 const SLOT_COUNT: usize = 3;
-const QUERY_COUNT: u32 = 2;
-const READBACK_BYTES: u64 = (QUERY_COUNT as u64) * std::mem::size_of::<u64>() as u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlotState {
@@ -62,6 +75,9 @@ struct TimerSlot {
 /// machine.
 pub struct MeshletGpuTimers {
     enabled: bool,
+    stage_count: u32,
+    query_count: u32,
+    readback_bytes: u64,
     query_set: Option<wgpu::QuerySet>,
     resolve_buffer: Option<wgpu::Buffer>,
     /// Nanoseconds per timestamp tick, taken from
@@ -70,18 +86,39 @@ pub struct MeshletGpuTimers {
     timestamp_period_ns: f32,
     slots: Vec<TimerSlot>,
     next_write_idx: usize,
-    /// Most recent successfully-read GPU frame time. Persists across
-    /// frames so the HUD always has a value to display even when no
-    /// slot has produced a fresh reading this frame.
-    last_frame_ms: Option<f32>,
+    /// Most recent successfully-read GPU per-stage durations, in ms.
+    /// `last_stage_timings_ms[i]` is the duration of stage `i` from
+    /// the most recent slot that finished its readback. Persists
+    /// across frames so the HUD always has a value to display even
+    /// when no slot has produced a fresh reading this frame.
+    last_stage_timings_ms: Option<Vec<f32>>,
 }
 
 impl MeshletGpuTimers {
-    /// Builds a live timer set if the adapter exposes
-    /// `Features::TIMESTAMP_QUERY`; otherwise returns a no-op
-    /// instance. Caller passes `device + queue + adapter` from the
-    /// engine's [`GpuContext`](ome_core::gpu::GpuContext).
+    /// Builds a live timer set with a single (start, end) pair if the
+    /// adapter exposes `Features::TIMESTAMP_QUERY`; otherwise returns
+    /// a no-op instance. Back-compat alias for callers that just need
+    /// total frame time; see [`Self::new_with_stages`] for granular
+    /// per-pass timing.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, adapter: &wgpu::Adapter) -> Self {
+        Self::new_with_stages(device, queue, adapter, 1)
+    }
+
+    /// Builds a live timer set with `stage_count` pairs of timestamps
+    /// — one (start, end) per pass the caller wants to time
+    /// separately. Used by the mesh-frame bench (#335) to break a
+    /// frame into cull / vbuf raster / deferred shade segments.
+    ///
+    /// Returns a no-op instance if the adapter lacks
+    /// `Features::TIMESTAMP_QUERY` or
+    /// `Features::TIMESTAMP_QUERY_INSIDE_ENCODERS`.
+    pub fn new_with_stages(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        adapter: &wgpu::Adapter,
+        stage_count: u32,
+    ) -> Self {
+        assert!(stage_count >= 1, "stage_count must be >= 1");
         // Two distinct features are required:
         // - TIMESTAMP_QUERY: lets us create the QuerySet itself.
         // - TIMESTAMP_QUERY_INSIDE_ENCODERS: lets us call
@@ -96,14 +133,16 @@ impl MeshletGpuTimers {
         if !supported {
             return Self::disabled();
         }
+        let query_count = stage_count * 2;
+        let readback_bytes = (query_count as u64) * std::mem::size_of::<u64>() as u64;
         let query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
             label: Some("meshlet_gpu_timers_query_set"),
             ty: wgpu::QueryType::Timestamp,
-            count: QUERY_COUNT,
+            count: query_count,
         });
         let resolve_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_gpu_timers_resolve"),
-            size: READBACK_BYTES,
+            size: readback_bytes,
             usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -113,7 +152,7 @@ impl MeshletGpuTimers {
                 TimerSlot {
                     buffer: device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some(&label),
-                        size: READBACK_BYTES,
+                        size: readback_bytes,
                         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     }),
@@ -123,12 +162,15 @@ impl MeshletGpuTimers {
             .collect();
         Self {
             enabled: true,
+            stage_count,
+            query_count,
+            readback_bytes,
             query_set: Some(query_set),
             resolve_buffer: Some(resolve_buffer),
             timestamp_period_ns: queue.get_timestamp_period(),
             slots,
             next_write_idx: 0,
-            last_frame_ms: None,
+            last_stage_timings_ms: None,
         }
     }
 
@@ -142,12 +184,15 @@ impl MeshletGpuTimers {
     fn disabled() -> Self {
         Self {
             enabled: false,
+            stage_count: 1,
+            query_count: 2,
+            readback_bytes: 16,
             query_set: None,
             resolve_buffer: None,
             timestamp_period_ns: 0.0,
             slots: Vec::new(),
             next_write_idx: 0,
-            last_frame_ms: None,
+            last_stage_timings_ms: None,
         }
     }
 
@@ -155,16 +200,40 @@ impl MeshletGpuTimers {
         self.enabled
     }
 
-    /// The most recent GPU frame time read from any slot, in ms.
-    /// `None` until the first slot completes its readback (typically
-    /// 1-2 frames after `enable_gpu_timers` is called).
+    pub fn stage_count(&self) -> u32 {
+        self.stage_count
+    }
+
+    /// Sum of every stage's duration from the most recent successful
+    /// readback. Equivalent to "total GPU frame time" for callers
+    /// using `stage_count = 1`. `None` until the first slot completes
+    /// its readback (typically 1-2 frames after `enable_gpu_timers`
+    /// is called).
     pub fn last_frame_ms(&self) -> Option<f32> {
-        self.last_frame_ms
+        self.last_stage_timings_ms
+            .as_ref()
+            .map(|v| v.iter().sum())
+    }
+
+    /// Duration of stage `stage_idx` from the most recent successful
+    /// readback. Returns `None` if no readback has landed yet or
+    /// `stage_idx` exceeds `stage_count`.
+    pub fn last_stage_ms(&self, stage_idx: u32) -> Option<f32> {
+        self.last_stage_timings_ms
+            .as_ref()
+            .and_then(|v| v.get(stage_idx as usize).copied())
+    }
+
+    /// Per-stage durations from the most recent successful readback,
+    /// in encoder order. Length equals `stage_count`. `None` until
+    /// the first slot completes its readback.
+    pub fn last_frame_stage_timings(&self) -> Option<&[f32]> {
+        self.last_stage_timings_ms.as_deref()
     }
 
     /// Walks every slot, reads timestamps from any that fired their
-    /// callback, updates [`Self::last_frame_ms`], and resets those
-    /// slots to `Writable`. Cheap when nothing has fired —
+    /// callback, updates [`Self::last_stage_timings_ms`], and resets
+    /// those slots to `Writable`. Cheap when nothing has fired —
     /// `Mutex::lock` + state compare per slot.
     ///
     /// Call this once per frame BEFORE acquiring a new slot for the
@@ -179,10 +248,16 @@ impl MeshletGpuTimers {
                 {
                     let view = slot.buffer.slice(..).get_mapped_range();
                     let ticks: &[u64] = bytemuck::cast_slice(&view);
-                    let delta = ticks[1].saturating_sub(ticks[0]);
-                    let ms =
-                        (delta as f64 * self.timestamp_period_ns as f64) / 1_000_000.0;
-                    self.last_frame_ms = Some(ms as f32);
+                    let mut timings = Vec::with_capacity(self.stage_count as usize);
+                    for stage in 0..self.stage_count as usize {
+                        let start = ticks[stage * 2];
+                        let end = ticks[stage * 2 + 1];
+                        let delta = end.saturating_sub(start);
+                        let ms = (delta as f64 * self.timestamp_period_ns as f64)
+                            / 1_000_000.0;
+                        timings.push(ms as f32);
+                    }
+                    self.last_stage_timings_ms = Some(timings);
                 }
                 slot.buffer.unmap();
                 *state_guard = SlotState::Writable;
@@ -209,19 +284,40 @@ impl MeshletGpuTimers {
         None
     }
 
-    /// Writes the START timestamp into the encoder. Pair with
-    /// [`Self::write_end_and_copy`] using the same slot index.
-    pub fn write_start(&self, encoder: &mut wgpu::CommandEncoder) {
-        if let Some(qs) = &self.query_set {
-            encoder.write_timestamp(qs, 0);
+    /// Writes the START timestamp for stage `stage_idx` into the
+    /// encoder. Pair with [`Self::write_stage_end`] using the same
+    /// stage index. Out-of-range `stage_idx` is a no-op so a caller
+    /// using `stage_count = 1` can't accidentally over-write.
+    pub fn write_stage_start(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        stage_idx: u32,
+    ) {
+        let Some(qs) = &self.query_set else { return };
+        if stage_idx >= self.stage_count {
+            return;
         }
+        encoder.write_timestamp(qs, stage_idx * 2);
     }
 
-    /// Writes the END timestamp, resolves both timestamps to the GPU
-    /// resolve buffer, and copies the result into the slot's
-    /// readback buffer. The submit/readback pair must call
-    /// [`Self::submit_readback`] AFTER `queue.submit`.
-    pub fn write_end_and_copy(
+    /// Writes the END timestamp for stage `stage_idx`.
+    pub fn write_stage_end(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        stage_idx: u32,
+    ) {
+        let Some(qs) = &self.query_set else { return };
+        if stage_idx >= self.stage_count {
+            return;
+        }
+        encoder.write_timestamp(qs, stage_idx * 2 + 1);
+    }
+
+    /// Resolves every timestamp into the resolve buffer and copies
+    /// the result into `slot_idx`'s readback buffer. Call once per
+    /// frame AFTER every `write_stage_end` and BEFORE
+    /// [`Self::submit_readback`].
+    pub fn resolve_and_copy(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         slot_idx: usize,
@@ -229,15 +325,34 @@ impl MeshletGpuTimers {
         let (Some(qs), Some(resolve)) = (&self.query_set, &self.resolve_buffer) else {
             return;
         };
-        encoder.write_timestamp(qs, 1);
-        encoder.resolve_query_set(qs, 0..QUERY_COUNT, resolve, 0);
+        encoder.resolve_query_set(qs, 0..self.query_count, resolve, 0);
         encoder.copy_buffer_to_buffer(
             resolve,
             0,
             &self.slots[slot_idx].buffer,
             0,
-            READBACK_BYTES,
+            self.readback_bytes,
         );
+    }
+
+    /// Back-compat alias for `stage_count = 1`: writes the single
+    /// stage's start timestamp. New callers should prefer
+    /// [`Self::write_stage_start`] for clarity.
+    pub fn write_start(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.write_stage_start(encoder, 0);
+    }
+
+    /// Back-compat alias for `stage_count = 1`: writes the single
+    /// stage's end timestamp, resolves, and copies. Equivalent to
+    /// `write_stage_end(encoder, 0)` + `resolve_and_copy(encoder,
+    /// slot_idx)`.
+    pub fn write_end_and_copy(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        slot_idx: usize,
+    ) {
+        self.write_stage_end(encoder, 0);
+        self.resolve_and_copy(encoder, slot_idx);
     }
 
     /// Schedules the slot's buffer for async readback. wgpu's
@@ -275,6 +390,8 @@ mod tests {
         let timers = MeshletGpuTimers::disabled();
         assert!(!timers.is_enabled());
         assert_eq!(timers.last_frame_ms(), None);
+        assert_eq!(timers.last_stage_ms(0), None);
+        assert!(timers.last_frame_stage_timings().is_none());
         // Even after calling drain_ready, last_frame_ms stays None
         // because no slot ever transitions to Ready on a disabled
         // instance.
@@ -295,9 +412,11 @@ mod tests {
     }
 
     #[test]
-    fn readback_size_matches_two_u64_timestamps() {
-        // wgpu writes one u64 per timestamp query; the resolve +
-        // readback buffers must be sized for both.
-        assert_eq!(READBACK_BYTES, 16);
+    fn disabled_instance_reports_stage_count_one() {
+        // Disabled timers still answer `stage_count()` so callers
+        // using the multi-stage API can branch on `is_enabled()`
+        // without first probing the count.
+        let timers = MeshletGpuTimers::disabled();
+        assert_eq!(timers.stage_count(), 1);
     }
 }

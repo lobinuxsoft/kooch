@@ -77,6 +77,65 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         .clone()
 }
 
+/// Acquires a wgpu device with `Features::TIMESTAMP_QUERY` +
+/// `TIMESTAMP_QUERY_INSIDE_ENCODERS` so the mesh-frame bench (#335)
+/// can drive `MeshletGpuTimers` for per-pass timing. Returns `None`
+/// when either no adapter is available OR the adapter doesn't expose
+/// timestamp queries (Mesa llvmpipe, MoltenVK on some macOS releases,
+/// software fallbacks under WSL2). The bench is `#[ignore]`d by
+/// default so skipping cleanly here keeps CI green on those backends.
+///
+/// Does NOT share state with [`try_acquire_device`]; the bench is a
+/// dedicated test binary so the extra adapter request per run is
+/// fine. Mirrors that helper's limits (storage textures / bind
+/// groups / storage buffers) so the cull / vbuf / Hi-Z pipelines
+/// compile against this device.
+pub fn try_acquire_device_with_timer(
+) -> Option<(wgpu::Device, wgpu::Queue, wgpu::Adapter)> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
+        flags: wgpu::InstanceFlags::default(),
+        backend_options: wgpu::BackendOptions::default(),
+        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+        display: None,
+    });
+
+    let adapter = pollster::block_on(instance.request_adapter(
+        &wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        },
+    ))
+    .ok()?;
+
+    let features = adapter.features();
+    let needed = wgpu::Features::TIMESTAMP_QUERY
+        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+    if !features.contains(needed) {
+        return None;
+    }
+
+    let mut limits = wgpu::Limits::default();
+    limits.max_storage_textures_per_shader_stage =
+        16.min(adapter.limits().max_storage_textures_per_shader_stage);
+    limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
+    limits.max_storage_buffers_per_shader_stage =
+        16.min(adapter.limits().max_storage_buffers_per_shader_stage);
+    let (device, queue) = pollster::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some("ome_render_bench_device"),
+            required_features: needed,
+            required_limits: limits,
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::Off,
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+        },
+    ))
+    .ok()?;
+    Some((device, queue, adapter))
+}
+
 /// Builds a UV-sphere with `lat_segments` × `lon_segments` quads. Used
 /// by the end-to-end bench to give meshopt enough geometry to produce
 /// 4+ meshlets — the cube produces ~2 meshlets, which is too small to
