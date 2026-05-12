@@ -49,6 +49,26 @@
 // stale entries from the previous frame never bleed through.
 @group(4) @binding(0) var<storage, read_write> reject_reasons: array<u32>;
 
+// #454.6 — per-stage cull survivor counters. AtomicAdded at each
+// stage tail when `params.debug_active != 0`. Slot layout:
+//   [0] = after_frustum   (passed frustum test)
+//   [1] = after_backface  (passed frustum + backface)
+//   [2] = after_hi_z      (only the Hi-Z 2-pass entry writes here;
+//         this entry leaves it 0 because it doesn't run an Hi-Z test)
+//   [3] = total_visible   (terminal — equals visible_count)
+@group(4) @binding(1) var<storage, read_write> stage_counters: array<atomic<u32>, 4>;
+
+const STAGE_AFTER_FRUSTUM: u32 = 0u;
+const STAGE_AFTER_BACKFACE: u32 = 1u;
+const STAGE_AFTER_HI_Z: u32 = 2u;
+const STAGE_TOTAL_VISIBLE: u32 = 3u;
+
+fn record_stage_survivor(stage: u32) {
+    if (params.debug_active != 0u) {
+        atomicAdd(&stage_counters[stage], 1u);
+    }
+}
+
 const REJECT_REASON_SKIPPED: u32 = 0u;
 const REJECT_REASON_PASSED: u32 = 1u;
 const REJECT_REASON_FRUSTUM: u32 = 2u;
@@ -241,6 +261,7 @@ fn run_cull_scene_pool_atomic(thread_id: u32) {
         record_reject(thread_id, REJECT_REASON_FRUSTUM);
         return;
     }
+    record_stage_survivor(STAGE_AFTER_FRUSTUM);
 
     let world_apex = (inst.transform * vec4<f32>(m.cone_apex, 1.0)).xyz;
     let world_axis = normalize(
@@ -250,8 +271,10 @@ fn run_cull_scene_pool_atomic(thread_id: u32) {
         record_reject(thread_id, REJECT_REASON_BACKFACE);
         return;
     }
+    record_stage_survivor(STAGE_AFTER_BACKFACE);
 
     record_reject(thread_id, REJECT_REASON_PASSED);
+    record_stage_survivor(STAGE_TOTAL_VISIBLE);
     let slot = atomicAdd(&visible_count, 1u);
     visible_meshlets[slot] = (instance_id << 16u) | (global_meshlet_idx & 0xffffu);
 }
