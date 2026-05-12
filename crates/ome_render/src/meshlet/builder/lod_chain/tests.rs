@@ -113,6 +113,60 @@ fn lod_chain_offsets_stay_within_pool_bounds() {
 }
 
 #[test]
+fn lod_chain_converges_on_dense_mesh() {
+    // #535 H3 regression: with the previous default of max_levels = 6,
+    // a 100×100 grid (~165 LOD-0 meshlets) terminated mid-chain with
+    // dozens of roots — the runtime cull never collapses to a single
+    // coarse cluster at extreme distance. Bumping to max_levels = 25
+    // and exposing the funnel via tracing is the structural fix; this
+    // test pins the convergence so future tuning regressions trip
+    // here instead of in the editor.
+    //
+    // Acceptance: a dense, simplifiable grid must collapse to ≤ 16
+    // roots. Combined fix: max_levels bump 6 → 25 + cell-boundary
+    // locks dropped past level 3 (#535 Karis trade-off). Planar
+    // grids have 4 unstitchable mesh-edge corners and METIS
+    // partitioning is non-deterministic across test-runner threads
+    // (isolation often hits 8, full-suite parallelism reaches 10);
+    // closed surfaces (the editor dragon) typically reach 1-3 roots
+    // after the same fix. The 16-root bound absorbs the partitioning
+    // variance while still flagging regressions — pre-fix counts
+    // were 150+ for the same mesh.
+    let mesh = make_grid_mesh(100);
+    let single = build_default_meshlets(&mesh).expect("single");
+    let lod_zero_count = single.meshlets.len();
+
+    let chain = build_meshlets_lod_chain(
+        &mesh,
+        DEFAULT_MAX_VERTICES,
+        DEFAULT_MAX_TRIANGLES,
+        0.5,
+        LodConfig::default(),
+    )
+    .expect("chain");
+    let roots = chain
+        .meshlets
+        .iter()
+        .filter(|m| m.parent_meshlet_index == MESHLET_ROOT_PARENT)
+        .count();
+    let max_lod = chain
+        .meshlets
+        .iter()
+        .map(|m| m.lod_level)
+        .max()
+        .unwrap_or(0);
+    assert!(
+        roots <= 16,
+        "dense planar grid should collapse to ≤ 16 roots; \
+         got {roots} roots over {} total meshlets (lod 0 = {lod_zero_count}, max_lod = {max_lod}). \
+         Likely the LOD chain terminated early — check whether \
+         CELL_BOUNDARY_LOCK_MAX_LEVEL was raised or the builder \
+         introduced a new skip path.",
+        chain.meshlets.len(),
+    );
+}
+
+#[test]
 fn lod_chain_dag_at_least_one_root_exists() {
     // Per-group DAG: the chain terminates when no group can simplify
     // further. Every meshlet that did not get a parent assigned during
@@ -273,6 +327,45 @@ fn lod_chain_dag_group_siblings_share_group_id() {
         } else {
             group_of_children.insert(parents_group, m.group_index);
         }
+    }
+}
+
+#[test]
+fn lod_chain_dag_parent_lod_error_dominates_children() {
+    // #535 H1: the 2-pass selector's mutual exclusion between
+    // `above_too_coarse` and `below_fine` depends on lod_error being
+    // monotonically non-decreasing along every parent edge of the DAG.
+    // Without the monotone clamp in the builder, meshopt can report a
+    // smaller simplify error at a deeper level (because the input is
+    // already simplified and easier to collapse further) → parent has
+    // smaller pixel_err than child → BOTH pass the cut → the engine
+    // renders parent and child superimposed (the visual symptom the
+    // user reported as "no se apagan las de menor resolución").
+    //
+    // Pin the invariant: for every non-root meshlet C, its parent P
+    // satisfies P.lod_error >= C.lod_error.
+    let mesh = make_grid_mesh(40);
+    let chain = build_meshlets_lod_chain(
+        &mesh,
+        DEFAULT_MAX_VERTICES,
+        DEFAULT_MAX_TRIANGLES,
+        0.5,
+        LodConfig::default(),
+    )
+    .expect("chain");
+    for (i, c) in chain.meshlets.iter().enumerate() {
+        if c.parent_meshlet_index == MESHLET_ROOT_PARENT {
+            continue;
+        }
+        let p = &chain.meshlets[c.parent_meshlet_index as usize];
+        assert!(
+            p.lod_error >= c.lod_error,
+            "meshlet {i}: parent lod_error {} < child lod_error {} — \
+             cut monotonicity violated; the 2-pass selector will let \
+             both levels render simultaneously",
+            p.lod_error,
+            c.lod_error,
+        );
     }
 }
 

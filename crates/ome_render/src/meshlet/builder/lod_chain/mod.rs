@@ -23,6 +23,40 @@ use super::lod_config::LodConfig;
 /// overhead.
 pub(super) const NANITE_GROUP_SIZE: usize = 4;
 
+/// Maximum parent meshlets a single group may emit (#535). The
+/// strict `≤ NANITE_GROUP_SIZE` bound rejected groups whose
+/// simplification reduced triangle count but whose re-clusterisation
+/// fragmented into 5-8 small clusters (commonly when the dropped
+/// cell-boundary lock past level 3 lets meshopt simplify aggressively
+/// → sparser geometry → meshopt::build_meshlets emits more, smaller
+/// clusters). Those groups had a triangle-space reduction but no
+/// cluster-space reduction, so the strict bound counted them as
+/// "expansion" and dropped the children to root status.
+///
+/// Doubling the bound to 2× NANITE_GROUP_SIZE accepts the temporary
+/// cluster-count growth in exchange for the triangle-space progress.
+/// The chain converges in subsequent levels because the extra
+/// parents get re-grouped and re-simplified next iteration. Bevy's
+/// meshlet builder uses a similar relaxed bound.
+const PARENTS_PER_GROUP_CAP: usize = NANITE_GROUP_SIZE * 2;
+
+/// LOD level past which per-vertex cell-boundary locks are dropped
+/// (#535). Beyond this depth the chain's groups are spatially small,
+/// the boundary-to-interior vertex ratio approaches 1, and meshopt's
+/// `simplify_with_locks` runs out of legal collapses — every group
+/// returns its input unchanged and stays rooted at the previous
+/// level. The user's diagnostic run on TEST3 showed 80 % of groups
+/// failing simplification at level 5 with locks active.
+///
+/// Karis's solution (Nanite SIGGRAPH 2021 §5.2): keep the locks on
+/// the first few levels where seam tearing would be visible, drop
+/// them once the cluster footprint goes sub-pixel. We pick 3 because
+/// at level 4+ a cluster's projected footprint at the camera distance
+/// where it gets selected is smaller than a single pixel — a torn
+/// seam there is invisible. Mesh-edge topology is still protected by
+/// `meshopt::SimplifyOptions::LockBorder`.
+const CELL_BOUNDARY_LOCK_MAX_LEVEL: u32 = 3;
+
 /// Builds a multi-LOD [`MeshletMesh`] using the Nanite-grouped DAG
 /// algorithm. The resulting `MeshletMesh` concatenates every LOD's
 /// meshlets into one descriptor array, rebasing per-LOD
@@ -83,7 +117,26 @@ pub fn build_meshlets_lod_chain(
             0.0,
         );
 
-    let mut prev_lod_range = (0usize, all_descriptors.len());
+    let lod_zero_count = all_descriptors.len();
+    tracing::info!(
+        target: "ome_render::meshlet::builder",
+        lod_zero_count,
+        "LOD chain build: starting"
+    );
+    // Per-level input is a list of pool indices, not a contiguous
+    // range. The contiguous form (prev_start..prev_end) assumed every
+    // member of the previous level got either a parent or stayed
+    // rooted forever. Plan C (#535) lets children whose group failed
+    // to simplify *retry* in subsequent levels by being mixed back
+    // into the next METIS partitioning alongside freshly emitted
+    // parents. This breaks the `lod_level == chain depth` invariant
+    // (a retried child still carries its original lod_level), but the
+    // runtime selector keys on group_max_err, not lod_level, so DAG
+    // descent stays correct. The cost is that LOD-level histograms
+    // and `MeshInstance.lod_force_level` filters report the pre-
+    // simplification level of orphans, not the level at which they
+    // eventually paired with a parent.
+    let mut prev_lod_indices: Vec<u32> = (0..lod_zero_count as u32).collect();
     let mut current_error = lod_config.initial_error;
     // Sequential id assigned per group as the chain is built. Every
     // (children, parents) pair from the same simplification step
@@ -99,16 +152,19 @@ pub fn build_meshlets_lod_chain(
         // level 1; etc. The LOD-stack inspector (#467) and
         // MeshInstance.lod_force_level filter by this value.
         let parent_lod_level = level as u32;
-        let (prev_start, prev_end) = prev_lod_range;
-        let prev_count = prev_end - prev_start;
+        let prev_count = prev_lod_indices.len();
         if prev_count <= 1 {
             break; // Single meshlet at the previous level → cannot group.
         }
 
-        // Snapshot the previous LOD's meshlets so we can index by
-        // group while still appending parents to the same vector.
-        let prev_meshlets: Vec<MeshletDescriptor> =
-            all_descriptors[prev_start..prev_end].to_vec();
+        // Snapshot the previous level's meshlets so the group loop
+        // can read them by local index while parents get appended to
+        // the same all_descriptors vector. `prev_lod_indices[i]` maps
+        // a group-local meshlet position back to its pool index.
+        let prev_meshlets: Vec<MeshletDescriptor> = prev_lod_indices
+            .iter()
+            .map(|&pool_idx| all_descriptors[pool_idx as usize])
+            .collect();
 
         let target_groups = (prev_count / NANITE_GROUP_SIZE).max(1);
         let groups =
@@ -116,8 +172,24 @@ pub fn build_meshlets_lod_chain(
         let group_boundary_globals =
             collect_group_boundary_vertices(&groups, &prev_meshlets, &all_meshlet_vertices);
 
-        let new_lod_start_in_pool = all_descriptors.len();
+        // Accumulator for the *next* level's input. Receives:
+        //   - new parents emitted in this level (the happy path)
+        //   - orphaned children whose group failed to simplify
+        //     (Plan C re-injection — they get another shot when METIS
+        //     groups them with neighbours next level)
+        let mut next_prev_lod_indices: Vec<u32> = Vec::with_capacity(prev_count);
         let mut any_group_emitted_parent = false;
+        // Per-level instrumentation (#535). Counts the funnel from
+        // METIS partitioning down to actually-emitted parents so the
+        // root explosion can be diagnosed without re-running with a
+        // CPU profiler.
+        let mut groups_skipped_too_few_tris = 0u32;
+        let mut groups_skipped_target_too_small = 0u32;
+        let mut groups_skipped_no_simplification = 0u32;
+        let mut groups_skipped_clusterize_overflow = 0u32;
+        let mut groups_emitted = 0u32;
+        let mut parents_emitted = 0u32;
+        let mut children_orphaned = 0u32;
 
         for group in &groups {
             let geo = extract_group_geometry(
@@ -127,18 +199,30 @@ pub fn build_meshlets_lod_chain(
                 &all_meshlet_triangles,
                 &mesh.vertices,
             );
-            // Build the lock mask paralleling `geo.vertices`: any
-            // group-local vertex whose original mesh-pool index is in
-            // the cell-boundary set must survive simplification so
-            // adjacent groups remain stitched.
-            let vertex_lock: Vec<bool> = geo
-                .global_indices
-                .iter()
-                .map(|gi| group_boundary_globals.contains(gi))
-                .collect();
+            // Build the lock mask paralleling `geo.vertices`. At
+            // shallow LOD levels (1..=CELL_BOUNDARY_LOCK_MAX_LEVEL)
+            // any group-local vertex whose original mesh-pool index
+            // is in the cell-boundary set must survive simplification
+            // so adjacent groups remain stitched. At deeper levels
+            // the lock is dropped — see the constant's docs for the
+            // Karis trade-off rationale.
+            let vertex_lock: Vec<bool> = if parent_lod_level <= CELL_BOUNDARY_LOCK_MAX_LEVEL {
+                geo.global_indices
+                    .iter()
+                    .map(|gi| group_boundary_globals.contains(gi))
+                    .collect()
+            } else {
+                vec![false; geo.global_indices.len()]
+            };
             // Need at least two triangles to produce a meaningful
-            // simplification budget; smaller groups stay as roots.
+            // simplification budget; orphan back into next level so
+            // METIS can re-pair them with bulkier neighbours.
             if geo.indices.len() < 6 {
+                groups_skipped_too_few_tris += 1;
+                children_orphaned += group.len() as u32;
+                for &child_local in group {
+                    next_prev_lod_indices.push(prev_lod_indices[child_local]);
+                }
                 continue;
             }
 
@@ -153,6 +237,11 @@ pub fn build_meshlets_lod_chain(
                 .min(((geo.indices.len() as f32) * lod_config.target_ratio) as usize);
             let target_count = (target_count / 3) * 3;
             if target_count < 3 {
+                groups_skipped_target_too_small += 1;
+                children_orphaned += group.len() as u32;
+                for &child_local in group {
+                    next_prev_lod_indices.push(prev_lod_indices[child_local]);
+                }
                 continue;
             }
 
@@ -170,8 +259,39 @@ pub fn build_meshlets_lod_chain(
                 Some(&mut actual_error),
             );
             if simplified.is_empty() || simplified.len() >= geo.indices.len() {
-                continue; // No reduction possible for this group.
+                // No reduction possible for this group. Plan C: re-
+                // inject the children into the next level's input so
+                // METIS re-partitions them with neighbours that *did*
+                // simplify. Without re-injection the children would
+                // stay rooted forever, producing the three-digit root
+                // explosion seen on TEST3 mesh 1 and 5 (#535).
+                groups_skipped_no_simplification += 1;
+                children_orphaned += group.len() as u32;
+                for &child_local in group {
+                    next_prev_lod_indices.push(prev_lod_indices[child_local]);
+                }
+                continue;
             }
+
+            // Monotone-clamp the parent's lod_error to be ≥ every
+            // child's lod_error (#535 H1). meshopt::simplify reports
+            // the *local* simplification error for this one step; it
+            // can be smaller than a child's lod_error when the
+            // intermediate geometry is "easier" to collapse than the
+            // earlier step that produced the children. Without this
+            // clamp, parent.pixel_err < child.pixel_err and the
+            // 2-pass cut inverts — pass 2's `above_too_coarse` and
+            // `below_fine` stop being mutually exclusive, so the
+            // parent's level AND the child's level both pass and
+            // render superimposed. Karis SIGGRAPH 2021 §4.3 uses a
+            // cumulative error metric; the simpler max-clamp is the
+            // standard Bevy / open-source Nanite recipe.
+            let mut child_max_lod_error = 0.0f32;
+            for &child_local in group {
+                child_max_lod_error =
+                    child_max_lod_error.max(prev_meshlets[child_local].lod_error);
+            }
+            let parent_lod_error = actual_error.max(child_max_lod_error);
 
             let (parent_descs, parent_mlv_local, parent_mlt) = clusterize_lod(
                 &simplified,
@@ -180,13 +300,21 @@ pub fn build_meshlets_lod_chain(
                 max_vertices,
                 max_triangles,
                 cone_weight,
-                actual_error,
+                parent_lod_error,
             );
-            if parent_descs.is_empty() || parent_descs.len() > NANITE_GROUP_SIZE {
-                // Empty: simplify produced nothing usable. Too many
-                // parents: simplification didn't actually compact the
-                // geometry meaningfully — skip rather than emit a
-                // worse-than-input level.
+            if parent_descs.is_empty() || parent_descs.len() > PARENTS_PER_GROUP_CAP {
+                // Empty: simplify produced nothing usable. Cap
+                // exceeded: even the relaxed bound of 2×
+                // NANITE_GROUP_SIZE rejected — the geometry
+                // genuinely exploded into too many small clusters
+                // for this group to count as progress. Re-inject
+                // children so a re-partitioning may yield a healthier
+                // group next level.
+                groups_skipped_clusterize_overflow += 1;
+                children_orphaned += group.len() as u32;
+                for &child_local in group {
+                    next_prev_lod_indices.push(prev_lod_indices[child_local]);
+                }
                 continue;
             }
 
@@ -250,21 +378,71 @@ pub fn build_meshlets_lod_chain(
                         best = (d2, first_parent_pool_idx + i as u32);
                     }
                 }
-                let child = &mut all_descriptors[prev_start + child_local];
+                let child_pool_idx = prev_lod_indices[child_local] as usize;
+                let child = &mut all_descriptors[child_pool_idx];
                 child.parent_meshlet_index = best.1;
                 child.group_index = group_id;
             }
 
+            // Push the freshly emitted parents into the next level's
+            // input so they participate in METIS partitioning alongside
+            // any orphans re-injected from skipped groups above.
+            for i in 0..parent_descs.len() {
+                next_prev_lod_indices.push(first_parent_pool_idx + i as u32);
+            }
+
             any_group_emitted_parent = true;
+            groups_emitted += 1;
+            parents_emitted += parent_descs.len() as u32;
         }
 
+        tracing::info!(
+            target: "ome_render::meshlet::builder",
+            level = parent_lod_level,
+            prev_count,
+            target_groups,
+            actual_groups = groups.len(),
+            groups_emitted,
+            parents_emitted,
+            children_orphaned,
+            groups_skipped_too_few_tris,
+            groups_skipped_target_too_small,
+            groups_skipped_no_simplification,
+            groups_skipped_clusterize_overflow,
+            current_error,
+            "LOD chain build: level done"
+        );
+
         if !any_group_emitted_parent {
+            tracing::info!(
+                target: "ome_render::meshlet::builder",
+                level = parent_lod_level,
+                "LOD chain build: terminating — no group emitted parents"
+            );
             break; // No progress this level; chain terminates.
         }
 
-        prev_lod_range = (new_lod_start_in_pool, all_descriptors.len());
+        prev_lod_indices = next_prev_lod_indices;
         current_error *= 2.0;
     }
+
+    let total_roots = all_descriptors
+        .iter()
+        .filter(|m| m.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT)
+        .count();
+    let max_lod_level = all_descriptors
+        .iter()
+        .map(|m| m.lod_level)
+        .max()
+        .unwrap_or(0);
+    tracing::info!(
+        target: "ome_render::meshlet::builder",
+        total_meshlets = all_descriptors.len(),
+        total_roots,
+        max_lod_level,
+        max_levels = lod_config.max_levels,
+        "LOD chain build: done"
+    );
 
     Ok(MeshletMesh {
         vertices: mesh.vertices.clone(),
