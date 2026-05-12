@@ -331,6 +331,45 @@ fn lod_chain_dag_group_siblings_share_group_id() {
 }
 
 #[test]
+fn lod_chain_dag_parent_lod_error_dominates_children() {
+    // #535 H1: the 2-pass selector's mutual exclusion between
+    // `above_too_coarse` and `below_fine` depends on lod_error being
+    // monotonically non-decreasing along every parent edge of the DAG.
+    // Without the monotone clamp in the builder, meshopt can report a
+    // smaller simplify error at a deeper level (because the input is
+    // already simplified and easier to collapse further) → parent has
+    // smaller pixel_err than child → BOTH pass the cut → the engine
+    // renders parent and child superimposed (the visual symptom the
+    // user reported as "no se apagan las de menor resolución").
+    //
+    // Pin the invariant: for every non-root meshlet C, its parent P
+    // satisfies P.lod_error >= C.lod_error.
+    let mesh = make_grid_mesh(40);
+    let chain = build_meshlets_lod_chain(
+        &mesh,
+        DEFAULT_MAX_VERTICES,
+        DEFAULT_MAX_TRIANGLES,
+        0.5,
+        LodConfig::default(),
+    )
+    .expect("chain");
+    for (i, c) in chain.meshlets.iter().enumerate() {
+        if c.parent_meshlet_index == MESHLET_ROOT_PARENT {
+            continue;
+        }
+        let p = &chain.meshlets[c.parent_meshlet_index as usize];
+        assert!(
+            p.lod_error >= c.lod_error,
+            "meshlet {i}: parent lod_error {} < child lod_error {} — \
+             cut monotonicity violated; the 2-pass selector will let \
+             both levels render simultaneously",
+            p.lod_error,
+            c.lod_error,
+        );
+    }
+}
+
+#[test]
 fn lod_chain_caps_at_max_levels() {
     // max_levels controls how many descent passes the per-group loop
     // runs. Compare two chains: a tighter cap must produce ≤ the

@@ -273,6 +273,26 @@ pub fn build_meshlets_lod_chain(
                 continue;
             }
 
+            // Monotone-clamp the parent's lod_error to be ≥ every
+            // child's lod_error (#535 H1). meshopt::simplify reports
+            // the *local* simplification error for this one step; it
+            // can be smaller than a child's lod_error when the
+            // intermediate geometry is "easier" to collapse than the
+            // earlier step that produced the children. Without this
+            // clamp, parent.pixel_err < child.pixel_err and the
+            // 2-pass cut inverts — pass 2's `above_too_coarse` and
+            // `below_fine` stop being mutually exclusive, so the
+            // parent's level AND the child's level both pass and
+            // render superimposed. Karis SIGGRAPH 2021 §4.3 uses a
+            // cumulative error metric; the simpler max-clamp is the
+            // standard Bevy / open-source Nanite recipe.
+            let mut child_max_lod_error = 0.0f32;
+            for &child_local in group {
+                child_max_lod_error =
+                    child_max_lod_error.max(prev_meshlets[child_local].lod_error);
+            }
+            let parent_lod_error = actual_error.max(child_max_lod_error);
+
             let (parent_descs, parent_mlv_local, parent_mlt) = clusterize_lod(
                 &simplified,
                 &group_adapter,
@@ -280,7 +300,7 @@ pub fn build_meshlets_lod_chain(
                 max_vertices,
                 max_triangles,
                 cone_weight,
-                actual_error,
+                parent_lod_error,
             );
             if parent_descs.is_empty() || parent_descs.len() > PARENTS_PER_GROUP_CAP {
                 // Empty: simplify produced nothing usable. Cap
