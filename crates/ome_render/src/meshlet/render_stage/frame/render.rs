@@ -222,6 +222,13 @@ impl MeshletRenderStage {
         self.gpu_timers.drain_ready();
         let timer_slot = self.gpu_timers.acquire_slot();
 
+        // #454.6 — same pattern for the per-stage survivor counter
+        // ring. Drain whatever the wgpu driver thread completed
+        // since last frame so `MeshletRenderStats.cull_stage_counts`
+        // reports the freshest value the editor stats overlay can
+        // surface.
+        self.stage_counters.drain_ready();
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("meshlet_render_stage_encoder"),
         });
