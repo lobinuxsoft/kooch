@@ -113,6 +113,54 @@ fn lod_chain_offsets_stay_within_pool_bounds() {
 }
 
 #[test]
+fn lod_chain_converges_on_dense_mesh() {
+    // #535 H3 regression: with the previous default of max_levels = 6,
+    // a 100×100 grid (~165 LOD-0 meshlets) terminated mid-chain with
+    // dozens of roots — the runtime cull never collapses to a single
+    // coarse cluster at extreme distance. Bumping to max_levels = 25
+    // and exposing the funnel via tracing is the structural fix; this
+    // test pins the convergence so future tuning regressions trip
+    // here instead of in the editor.
+    //
+    // Acceptance: a dense, simplifiable grid must collapse to ≤ 16
+    // roots (in practice the chain hits 1-4 roots; 16 leaves margin
+    // for METIS partitioning variance and meshopt edge effects on
+    // small meshes). The previous 6-level cap left this at
+    // ~30-40 roots even for a planar grid.
+    let mesh = make_grid_mesh(100);
+    let single = build_default_meshlets(&mesh).expect("single");
+    let lod_zero_count = single.meshlets.len();
+
+    let chain = build_meshlets_lod_chain(
+        &mesh,
+        DEFAULT_MAX_VERTICES,
+        DEFAULT_MAX_TRIANGLES,
+        0.5,
+        LodConfig::default(),
+    )
+    .expect("chain");
+    let roots = chain
+        .meshlets
+        .iter()
+        .filter(|m| m.parent_meshlet_index == MESHLET_ROOT_PARENT)
+        .count();
+    let max_lod = chain
+        .meshlets
+        .iter()
+        .map(|m| m.lod_level)
+        .max()
+        .unwrap_or(0);
+    assert!(
+        roots <= 16,
+        "dense planar grid should collapse to ≤ 16 roots; \
+         got {roots} roots over {} total meshlets (lod 0 = {lod_zero_count}, max_lod = {max_lod}). \
+         Likely the LOD chain terminated early — bump max_levels or \
+         relax the boundary lock mask in the builder.",
+        chain.meshlets.len(),
+    );
+}
+
+#[test]
 fn lod_chain_dag_at_least_one_root_exists() {
     // Per-group DAG: the chain terminates when no group can simplify
     // further. Every meshlet that did not get a parent assigned during

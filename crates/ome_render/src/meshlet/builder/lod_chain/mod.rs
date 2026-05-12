@@ -83,6 +83,12 @@ pub fn build_meshlets_lod_chain(
             0.0,
         );
 
+    let lod_zero_count = all_descriptors.len();
+    tracing::info!(
+        target: "ome_render::meshlet::builder",
+        lod_zero_count,
+        "LOD chain build: starting"
+    );
     let mut prev_lod_range = (0usize, all_descriptors.len());
     let mut current_error = lod_config.initial_error;
     // Sequential id assigned per group as the chain is built. Every
@@ -118,6 +124,17 @@ pub fn build_meshlets_lod_chain(
 
         let new_lod_start_in_pool = all_descriptors.len();
         let mut any_group_emitted_parent = false;
+        // Per-level instrumentation (#535). Counts the funnel from
+        // METIS partitioning down to actually-emitted parents so the
+        // root explosion can be diagnosed without re-running with a
+        // CPU profiler.
+        let mut groups_skipped_too_few_tris = 0u32;
+        let mut groups_skipped_target_too_small = 0u32;
+        let mut groups_skipped_no_simplification = 0u32;
+        let mut groups_skipped_clusterize_overflow = 0u32;
+        let mut groups_emitted = 0u32;
+        let mut parents_emitted = 0u32;
+        let mut children_orphaned = 0u32;
 
         for group in &groups {
             let geo = extract_group_geometry(
@@ -139,6 +156,8 @@ pub fn build_meshlets_lod_chain(
             // Need at least two triangles to produce a meaningful
             // simplification budget; smaller groups stay as roots.
             if geo.indices.len() < 6 {
+                groups_skipped_too_few_tris += 1;
+                children_orphaned += group.len() as u32;
                 continue;
             }
 
@@ -153,6 +172,8 @@ pub fn build_meshlets_lod_chain(
                 .min(((geo.indices.len() as f32) * lod_config.target_ratio) as usize);
             let target_count = (target_count / 3) * 3;
             if target_count < 3 {
+                groups_skipped_target_too_small += 1;
+                children_orphaned += group.len() as u32;
                 continue;
             }
 
@@ -170,7 +191,13 @@ pub fn build_meshlets_lod_chain(
                 Some(&mut actual_error),
             );
             if simplified.is_empty() || simplified.len() >= geo.indices.len() {
-                continue; // No reduction possible for this group.
+                // No reduction possible for this group — children
+                // stay rooted at the previous level. The dominant
+                // failure mode at depth: cell-boundary lock mask
+                // forbids any further collapse.
+                groups_skipped_no_simplification += 1;
+                children_orphaned += group.len() as u32;
+                continue;
             }
 
             let (parent_descs, parent_mlv_local, parent_mlt) = clusterize_lod(
@@ -187,6 +214,8 @@ pub fn build_meshlets_lod_chain(
                 // parents: simplification didn't actually compact the
                 // geometry meaningfully — skip rather than emit a
                 // worse-than-input level.
+                groups_skipped_clusterize_overflow += 1;
+                children_orphaned += group.len() as u32;
                 continue;
             }
 
@@ -256,15 +285,57 @@ pub fn build_meshlets_lod_chain(
             }
 
             any_group_emitted_parent = true;
+            groups_emitted += 1;
+            parents_emitted += parent_descs.len() as u32;
         }
 
+        tracing::debug!(
+            target: "ome_render::meshlet::builder",
+            level = parent_lod_level,
+            prev_count,
+            target_groups,
+            actual_groups = groups.len(),
+            groups_emitted,
+            parents_emitted,
+            children_orphaned,
+            groups_skipped_too_few_tris,
+            groups_skipped_target_too_small,
+            groups_skipped_no_simplification,
+            groups_skipped_clusterize_overflow,
+            current_error,
+            "LOD chain build: level done"
+        );
+
         if !any_group_emitted_parent {
+            tracing::debug!(
+                target: "ome_render::meshlet::builder",
+                level = parent_lod_level,
+                "LOD chain build: terminating — no group emitted parents"
+            );
             break; // No progress this level; chain terminates.
         }
 
         prev_lod_range = (new_lod_start_in_pool, all_descriptors.len());
         current_error *= 2.0;
     }
+
+    let total_roots = all_descriptors
+        .iter()
+        .filter(|m| m.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT)
+        .count();
+    let max_lod_level = all_descriptors
+        .iter()
+        .map(|m| m.lod_level)
+        .max()
+        .unwrap_or(0);
+    tracing::info!(
+        target: "ome_render::meshlet::builder",
+        total_meshlets = all_descriptors.len(),
+        total_roots,
+        max_lod_level,
+        max_levels = lod_config.max_levels,
+        "LOD chain build: done"
+    );
 
     Ok(MeshletMesh {
         vertices: mesh.vertices.clone(),
