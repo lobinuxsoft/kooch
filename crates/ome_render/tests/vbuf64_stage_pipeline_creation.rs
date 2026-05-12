@@ -44,6 +44,10 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     // atomicAdd, raising the total to 6. Default is 4. Mirror the
     // production GpuContext setup in `elevated_compute_limits`.
     limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
+    // #454.6 cull pipeline jumps from 8 → 9 storage buffers; bump
+    // alongside the production GpuContext.
+    limits.max_storage_buffers_per_shader_stage = 16
+        .min(adapter.limits().max_storage_buffers_per_shader_stage);
 
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("vbuf64_stage_creation_test_device"),

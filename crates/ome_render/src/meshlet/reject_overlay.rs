@@ -227,13 +227,26 @@ impl MeshletRejectOverlay {
                 },
             ],
         });
+        // debug_bgl gained binding(1) for stage_counters in #454.6.
+        // The overlay shader only references reject_reasons, but
+        // wgpu requires every BGL entry to be present in the bind
+        // group at construction — even when the shader doesn't
+        // sample the bound resource. Providing stage_counters here
+        // is a pure table write; the GPU never accesses it from this
+        // pipeline.
         let debug_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_reject_overlay_debug_bg"),
             layout: cull.debug_bind_group_layout(),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: cull.reject_reasons_buffer().as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: cull.reject_reasons_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: cull.stage_counters_buffer().as_entire_binding(),
+                },
+            ],
         });
 
         let workgroups = total_threads.div_ceil(64).max(1);

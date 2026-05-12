@@ -280,6 +280,18 @@ impl MeshletCull {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // Per-stage cull survivor counters (#454.6). 4 × u32 = 16 B,
+        // atomicAdded by the cull shader at each stage tail when
+        // `CullParams.debug_active != 0`. Cleared each frame; readback
+        // drives the editor's stats overlay row.
+        let stage_counters = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_cull_stage_counters"),
+            size: 16,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let vertex_count_per_instance = max_triangles_per_meshlet * 3;
         let indirect_args = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -326,6 +338,7 @@ impl MeshletCull {
             group_max_err,
             group_capacity: initial_group_capacity,
             reject_reasons,
+            stage_counters,
             capacity,
             vertex_count_per_instance,
         }

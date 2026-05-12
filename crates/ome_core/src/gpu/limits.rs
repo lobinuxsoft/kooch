@@ -18,6 +18,16 @@ pub(super) const TARGET_MAX_STORAGE_TEXTURES_PER_STAGE: u32 = 16;
 /// BGL creation rejects without raising it. RDNA 2+ desktop /
 /// handheld + DX12 + Metal all advertise ≥ 8.
 pub(super) const TARGET_MAX_BIND_GROUPS: u32 = 6;
+/// The scene-pool atomic cull pipeline already binds 8 storage
+/// buffers (params + visible IDs + count + 2 pool descriptors +
+/// instances + group_max_err + reject_reasons). #454.6 adds a 9th
+/// for per-stage cull survivor counts. wgpu's default
+/// `max_storage_buffers_per_shader_stage` is 8 — exactly at the
+/// existing budget — so any further cull-side instrumentation must
+/// raise it. Most desktop GPUs (RX 9070 XT included) advertise ≥
+/// 16; mobile baselines (Snapdragon X Elite / Adreno X1) typically
+/// expose 16 too.
+pub(super) const TARGET_MAX_STORAGE_BUFFERS_PER_STAGE: u32 = 16;
 
 pub(super) fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
     let adapter_limits = adapter.limits();
@@ -29,6 +39,8 @@ pub(super) fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
     let storage_textures = TARGET_MAX_STORAGE_TEXTURES_PER_STAGE
         .min(adapter_limits.max_storage_textures_per_shader_stage);
     let bind_groups = TARGET_MAX_BIND_GROUPS.min(adapter_limits.max_bind_groups);
+    let storage_buffers = TARGET_MAX_STORAGE_BUFFERS_PER_STAGE
+        .min(adapter_limits.max_storage_buffers_per_shader_stage);
 
     if invocations < TARGET_MAX_COMPUTE_INVOCATIONS_PER_WORKGROUP {
         tracing::warn!(
@@ -58,12 +70,20 @@ pub(super) fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
             "adapter clamped max_bind_groups; meshlet pipeline requires ≥ 6 (atomic R64 vbuf #493 + density accumulator #454)"
         );
     }
+    if storage_buffers < TARGET_MAX_STORAGE_BUFFERS_PER_STAGE {
+        tracing::warn!(
+            requested = TARGET_MAX_STORAGE_BUFFERS_PER_STAGE,
+            granted = storage_buffers,
+            "adapter clamped max_storage_buffers_per_shader_stage; per-stage cull survivor counters (#454.6) need ≥ 9"
+        );
+    }
 
     wgpu::Limits {
         max_compute_invocations_per_workgroup: invocations,
         max_compute_workgroup_storage_size: storage,
         max_storage_textures_per_shader_stage: storage_textures,
         max_bind_groups: bind_groups,
+        max_storage_buffers_per_shader_stage: storage_buffers,
         ..wgpu::Limits::default()
     }
 }

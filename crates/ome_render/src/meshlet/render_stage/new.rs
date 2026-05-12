@@ -146,6 +146,7 @@ impl MeshletRenderStage {
             triangle_density_texture,
             triangle_density_view,
             reject_overlay,
+            stage_counters: super::super::stage_counters::MeshletStageCounters::new(device),
             size,
             instance_capacity,
             // GPU timers default to disabled — tests don't pay for

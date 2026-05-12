@@ -56,6 +56,11 @@ impl MeshletCull {
         // (single buffer clear per frame) and only paid when the
         // dispatcher runs the atomic path at all.
         encoder.clear_buffer(&self.reject_reasons, 0, None);
+        // Reset the per-stage survivor counters (#454.6) — cull
+        // shader atomicAdds per cluster, so stale frame N-1 totals
+        // would compound otherwise. 16-byte clear is essentially
+        // free.
+        encoder.clear_buffer(&self.stage_counters, 0, None);
 
         // Bind groups shared by both passes.
         let cull_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -116,17 +121,23 @@ impl MeshletCull {
                 resource: self.group_max_err.as_entire_binding(),
             }],
         });
-        // Group(4) reject-reasons (#454.4). Bound for both passes
-        // because the pipeline layout is shared; the lod-compute
-        // entry never references the SSBO so binding is a no-op
-        // there beyond the table write.
+        // Group(4) cull debug buffers (#454.4 + #454.6). Bound for
+        // both passes because the pipeline layout is shared; the
+        // lod-compute entry never references either global so the
+        // binding is a no-op there beyond the table write.
         let debug_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_debug_bg"),
             layout: &self.debug_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.reject_reasons.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.reject_reasons.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.stage_counters.as_entire_binding(),
+                },
+            ],
         });
 
         let workgroups = total_threads.div_ceil(64).max(1);

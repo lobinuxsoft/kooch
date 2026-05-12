@@ -258,6 +258,14 @@ impl MeshletRenderStage {
             pool_meshlets_roots,
             gpu_frame_ms: self.gpu_timers.last_frame_ms(),
             draw_calls: meshlet_draw_calls,
+            // The Hi-Z 2-pass cull entry doesn't write
+            // `stage_counters[]` in #454.6 scope — wiring it is
+            // tracked alongside the SPD-backed orchestrator
+            // follow-up (#445). Surface the cached value so the
+            // editor stats overlay still shows the LATEST counts
+            // from any frame the R64 path also ran (which it
+            // doesn't on this branch — stays None on legacy R32).
+            cull_stage_counts: self.stage_counters.last_frame_counts(),
         }
     }
 }

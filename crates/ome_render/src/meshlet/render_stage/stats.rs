@@ -1,10 +1,8 @@
+use super::super::stage_counters::CullStageCounts;
+
 /// Per-frame return value reporting how the stage spent its budget.
 /// Surfaced through the editor's debug-stats overlay (#451) and used
 /// by the integration test as a render side-effect.
-///
-/// Per-stage cull survivor counts (frustum / backface / hi-z) require
-/// a 4-byte CPU readback per frame and ship in #451b together with
-/// the reject-reason tagging buffer.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct MeshletRenderStats {
     /// Number of `MeshInstance` records uploaded this frame.
@@ -43,4 +41,13 @@ pub struct MeshletRenderStats {
     /// blit / egui passes outside the meshlet stage are counted
     /// separately by the editor render system.
     pub draw_calls: u32,
+    /// Per-stage cull survivor counts (#454.6).
+    /// `[after_frustum, after_backface, after_hi_z, total_visible]`.
+    /// `None` when no debug-active mode has been selected yet (the
+    /// cull never wrote the buffer) or the first async readback
+    /// hasn't landed (1-2 frames after the user picks a reject
+    /// mode). The values are 1-2 frames stale by design — the
+    /// readback ring trades freshness for skipping `device.poll`
+    /// stalls in the hot loop.
+    pub cull_stage_counts: Option<CullStageCounts>,
 }

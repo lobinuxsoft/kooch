@@ -130,12 +130,35 @@ impl MeshletRenderStage {
             );
         }
 
+        // #454.6 — stage-counter readback is gated to debug-active
+        // frames. The cull shader only writes the SSBO when
+        // `params.debug_active != 0`; if it didn't this frame, the
+        // copy would just shuttle stale zeros (or last-frame's
+        // values when the user just toggled the mode off). Skip
+        // entirely in that case.
+        let stage_slot = if cull_params.debug_active != 0 {
+            let slot = self.stage_counters.acquire_slot();
+            if let Some(idx) = slot {
+                self.stage_counters.write_copy(
+                    &mut encoder,
+                    self.cull.stage_counters_buffer(),
+                    idx,
+                );
+            }
+            slot
+        } else {
+            None
+        };
+
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
         }
         queue.submit(std::iter::once(encoder.finish()));
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.submit_readback(slot_idx);
+        }
+        if let Some(slot_idx) = stage_slot {
+            self.stage_counters.submit_readback(slot_idx);
         }
 
         let pool = self.pipeline.pool();
@@ -155,6 +178,7 @@ impl MeshletRenderStage {
             pool_meshlets_roots,
             gpu_frame_ms: self.gpu_timers.last_frame_ms(),
             draw_calls: meshlet_draw_calls,
+            cull_stage_counts: self.stage_counters.last_frame_counts(),
         }
     }
 }

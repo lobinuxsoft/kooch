@@ -115,6 +115,17 @@ pub struct MeshletCull {
     /// before the cull pass and read by the reject-overlay raster
     /// pass to drive the rejection bounding-box visualization.
     pub(super) reject_reasons: wgpu::Buffer,
+    /// Per-stage cull survivor counters (#454.6). 16-byte buffer
+    /// holding `atomic<u32>; 4`:
+    ///   [0] = after_frustum   (passed frustum test)
+    ///   [1] = after_backface  (passed frustum + backface)
+    ///   [2] = after_hi_z      (passed all three; only Hi-Z 2-pass
+    ///         path writes — non-Hi-Z atomic path leaves it 0)
+    ///   [3] = total_visible   (terminal — equals visible_count)
+    /// AtomicAdded at each stage tail when
+    /// `CullParams.debug_active != 0`. Cleared per frame; readback
+    /// drives the editor's stats overlay.
+    pub(super) stage_counters: wgpu::Buffer,
 
     pub(super) capacity: u32,
     pub(super) vertex_count_per_instance: u32,
@@ -263,6 +274,16 @@ impl MeshletCull {
     /// bounding boxes on top of the shaded image.
     pub fn reject_reasons_buffer(&self) -> &wgpu::Buffer {
         &self.reject_reasons
+    }
+
+    /// Per-stage cull survivor counters (#454.6). 16-byte buffer
+    /// holding 4 atomic u32s — see the field doc on
+    /// [`Self::stage_counters`] for the slot layout. Read back per
+    /// frame by [`MeshletStageCounters`](super::stage_counters::MeshletStageCounters)
+    /// when the editor's debug mode is one that gates `debug_active`
+    /// on (any reject-overlay variant today).
+    pub fn stage_counters_buffer(&self) -> &wgpu::Buffer {
+        &self.stage_counters
     }
 
     /// `wgpu::Buffer` holding the per-frame `SceneCullParams` UBO.

@@ -57,6 +57,13 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
             // 6 (TARGET_MAX_BIND_GROUPS in ome_core). Mirror it here
             // so the cull shader compiles against the test device.
             limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
+            // #454.6 cull pipeline binds 9 storage buffers
+            // (params + visible IDs + count + 2 pool descriptors +
+            // instances + group_max_err + reject_reasons +
+            // stage_counters). wgpu's default 8 fails shader-module
+            // creation. Mirror TARGET_MAX_STORAGE_BUFFERS_PER_STAGE.
+            limits.max_storage_buffers_per_shader_stage = 16
+                .min(adapter.limits().max_storage_buffers_per_shader_stage);
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("ome_render_test_device"),
                 required_features: wgpu::Features::empty(),

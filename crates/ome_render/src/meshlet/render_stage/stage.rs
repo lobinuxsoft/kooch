@@ -6,6 +6,7 @@ use super::super::gpu_timers::MeshletGpuTimers;
 use super::super::pool::GpuGlobalMeshPool;
 use super::super::reject_overlay::MeshletRejectOverlay;
 use super::super::scene::MeshletScene;
+use super::super::stage_counters::MeshletStageCounters;
 use super::super::system::MeshletPipeline;
 use super::super::vbuf64_stage::Vbuf64Stage;
 use super::super::vis_buffer::MeshletVisRasterizer;
@@ -134,6 +135,12 @@ pub struct MeshletRenderStage {
     /// default (see [`Self::enable_gpu_timers`]). Tests don't pay
     /// for this; the editor / game runtime opts in at startup.
     pub(super) gpu_timers: MeshletGpuTimers,
+
+    /// Async CPU mirror of the cull pipeline's per-stage survivor
+    /// counters (#454.6). Allocated unconditionally — the GPU
+    /// footprint is 48 B and the ring stays idle when no
+    /// debug-active mode is selected.
+    pub(super) stage_counters: MeshletStageCounters,
 
     /// Cross-module engine VRAM counter (#463.5). Optional —
     /// `None` means the editor / game has not registered a tracker
