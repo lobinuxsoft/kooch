@@ -129,6 +129,19 @@ pub(crate) fn draw_performance_content(
                         "Pool meshlets (roots)",
                         &meshlet_stats.pool_meshlets_roots.to_string(),
                     );
+                    // #454.6 — per-stage cull survivor counts. Only
+                    // populated when a debug-active mode is selected
+                    // (any reject-overlay variant); the readback ring
+                    // is skipped on production frames so the field
+                    // stays None and the rows hide.
+                    if let Some([after_frustum, after_backface, after_hi_z, total_visible]) =
+                        meshlet_stats.cull_stage_counts
+                    {
+                        metric(ui, "After frustum", &after_frustum.to_string());
+                        metric(ui, "After backface", &after_backface.to_string());
+                        metric(ui, "After Hi-Z", &after_hi_z.to_string());
+                        metric(ui, "Total visible", &total_visible.to_string());
+                    }
                 });
             });
         });
