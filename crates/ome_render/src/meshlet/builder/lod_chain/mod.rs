@@ -289,7 +289,7 @@ pub fn build_meshlets_lod_chain(
             parents_emitted += parent_descs.len() as u32;
         }
 
-        tracing::debug!(
+        tracing::info!(
             target: "ome_render::meshlet::builder",
             level = parent_lod_level,
             prev_count,
@@ -307,7 +307,7 @@ pub fn build_meshlets_lod_chain(
         );
 
         if !any_group_emitted_parent {
-            tracing::debug!(
+            tracing::info!(
                 target: "ome_render::meshlet::builder",
                 level = parent_lod_level,
                 "LOD chain build: terminating — no group emitted parents"
