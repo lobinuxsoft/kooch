@@ -34,6 +34,8 @@ fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 
     let mut limits = wgpu::Limits::default();
     limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
+    limits.max_storage_buffers_per_shader_stage = 16
+        .min(adapter.limits().max_storage_buffers_per_shader_stage);
 
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("reject_overlay_creation_test_device"),
