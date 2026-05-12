@@ -45,6 +45,7 @@ mod pool;
 mod reject_overlay;
 mod render_stage;
 mod scene;
+mod stage_counters;
 mod system;
 mod vbuf64_stage;
 mod vis_buffer;
@@ -81,6 +82,7 @@ pub use scene::{
     decode_scene_visible_id, encode_scene_visible_id, MeshInstance, MeshletScene,
     SceneCullParams,
 };
+pub use stage_counters::{CullStageCounts, MeshletStageCounters};
 pub use system::{instance_at_origin, MeshletPipeline};
 pub use vbuf64_stage::Vbuf64Stage;
 pub use vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
