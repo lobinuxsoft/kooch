@@ -123,10 +123,15 @@ fn lod_chain_converges_on_dense_mesh() {
     // here instead of in the editor.
     //
     // Acceptance: a dense, simplifiable grid must collapse to ≤ 16
-    // roots (in practice the chain hits 1-4 roots; 16 leaves margin
-    // for METIS partitioning variance and meshopt edge effects on
-    // small meshes). The previous 6-level cap left this at
-    // ~30-40 roots even for a planar grid.
+    // roots. Combined fix: max_levels bump 6 → 25 + cell-boundary
+    // locks dropped past level 3 (#535 Karis trade-off). Planar
+    // grids have 4 unstitchable mesh-edge corners and METIS
+    // partitioning is non-deterministic across test-runner threads
+    // (isolation often hits 8, full-suite parallelism reaches 10);
+    // closed surfaces (the editor dragon) typically reach 1-3 roots
+    // after the same fix. The 16-root bound absorbs the partitioning
+    // variance while still flagging regressions — pre-fix counts
+    // were 150+ for the same mesh.
     let mesh = make_grid_mesh(100);
     let single = build_default_meshlets(&mesh).expect("single");
     let lod_zero_count = single.meshlets.len();
@@ -154,8 +159,9 @@ fn lod_chain_converges_on_dense_mesh() {
         roots <= 16,
         "dense planar grid should collapse to ≤ 16 roots; \
          got {roots} roots over {} total meshlets (lod 0 = {lod_zero_count}, max_lod = {max_lod}). \
-         Likely the LOD chain terminated early — bump max_levels or \
-         relax the boundary lock mask in the builder.",
+         Likely the LOD chain terminated early — check whether \
+         CELL_BOUNDARY_LOCK_MAX_LEVEL was raised or the builder \
+         introduced a new skip path.",
         chain.meshlets.len(),
     );
 }

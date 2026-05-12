@@ -23,6 +23,23 @@ use super::lod_config::LodConfig;
 /// overhead.
 pub(super) const NANITE_GROUP_SIZE: usize = 4;
 
+/// LOD level past which per-vertex cell-boundary locks are dropped
+/// (#535). Beyond this depth the chain's groups are spatially small,
+/// the boundary-to-interior vertex ratio approaches 1, and meshopt's
+/// `simplify_with_locks` runs out of legal collapses — every group
+/// returns its input unchanged and stays rooted at the previous
+/// level. The user's diagnostic run on TEST3 showed 80 % of groups
+/// failing simplification at level 5 with locks active.
+///
+/// Karis's solution (Nanite SIGGRAPH 2021 §5.2): keep the locks on
+/// the first few levels where seam tearing would be visible, drop
+/// them once the cluster footprint goes sub-pixel. We pick 3 because
+/// at level 4+ a cluster's projected footprint at the camera distance
+/// where it gets selected is smaller than a single pixel — a torn
+/// seam there is invisible. Mesh-edge topology is still protected by
+/// `meshopt::SimplifyOptions::LockBorder`.
+const CELL_BOUNDARY_LOCK_MAX_LEVEL: u32 = 3;
+
 /// Builds a multi-LOD [`MeshletMesh`] using the Nanite-grouped DAG
 /// algorithm. The resulting `MeshletMesh` concatenates every LOD's
 /// meshlets into one descriptor array, rebasing per-LOD
@@ -144,15 +161,21 @@ pub fn build_meshlets_lod_chain(
                 &all_meshlet_triangles,
                 &mesh.vertices,
             );
-            // Build the lock mask paralleling `geo.vertices`: any
-            // group-local vertex whose original mesh-pool index is in
-            // the cell-boundary set must survive simplification so
-            // adjacent groups remain stitched.
-            let vertex_lock: Vec<bool> = geo
-                .global_indices
-                .iter()
-                .map(|gi| group_boundary_globals.contains(gi))
-                .collect();
+            // Build the lock mask paralleling `geo.vertices`. At
+            // shallow LOD levels (1..=CELL_BOUNDARY_LOCK_MAX_LEVEL)
+            // any group-local vertex whose original mesh-pool index
+            // is in the cell-boundary set must survive simplification
+            // so adjacent groups remain stitched. At deeper levels
+            // the lock is dropped — see the constant's docs for the
+            // Karis trade-off rationale.
+            let vertex_lock: Vec<bool> = if parent_lod_level <= CELL_BOUNDARY_LOCK_MAX_LEVEL {
+                geo.global_indices
+                    .iter()
+                    .map(|gi| group_boundary_globals.contains(gi))
+                    .collect()
+            } else {
+                vec![false; geo.global_indices.len()]
+            };
             // Need at least two triangles to produce a meaningful
             // simplification budget; smaller groups stay as roots.
             if geo.indices.len() < 6 {
