@@ -23,6 +23,23 @@ use super::lod_config::LodConfig;
 /// overhead.
 pub(super) const NANITE_GROUP_SIZE: usize = 4;
 
+/// Maximum parent meshlets a single group may emit (#535). The
+/// strict `≤ NANITE_GROUP_SIZE` bound rejected groups whose
+/// simplification reduced triangle count but whose re-clusterisation
+/// fragmented into 5-8 small clusters (commonly when the dropped
+/// cell-boundary lock past level 3 lets meshopt simplify aggressively
+/// → sparser geometry → meshopt::build_meshlets emits more, smaller
+/// clusters). Those groups had a triangle-space reduction but no
+/// cluster-space reduction, so the strict bound counted them as
+/// "expansion" and dropped the children to root status.
+///
+/// Doubling the bound to 2× NANITE_GROUP_SIZE accepts the temporary
+/// cluster-count growth in exchange for the triangle-space progress.
+/// The chain converges in subsequent levels because the extra
+/// parents get re-grouped and re-simplified next iteration. Bevy's
+/// meshlet builder uses a similar relaxed bound.
+const PARENTS_PER_GROUP_CAP: usize = NANITE_GROUP_SIZE * 2;
+
 /// LOD level past which per-vertex cell-boundary locks are dropped
 /// (#535). Beyond this depth the chain's groups are spatially small,
 /// the boundary-to-interior vertex ratio approaches 1, and meshopt's
@@ -232,11 +249,12 @@ pub fn build_meshlets_lod_chain(
                 cone_weight,
                 actual_error,
             );
-            if parent_descs.is_empty() || parent_descs.len() > NANITE_GROUP_SIZE {
-                // Empty: simplify produced nothing usable. Too many
-                // parents: simplification didn't actually compact the
-                // geometry meaningfully — skip rather than emit a
-                // worse-than-input level.
+            if parent_descs.is_empty() || parent_descs.len() > PARENTS_PER_GROUP_CAP {
+                // Empty: simplify produced nothing usable. Cap
+                // exceeded: even the relaxed bound of 2×
+                // NANITE_GROUP_SIZE rejected — the geometry
+                // genuinely exploded into too many small clusters
+                // for this group to count as progress.
                 groups_skipped_clusterize_overflow += 1;
                 children_orphaned += group.len() as u32;
                 continue;
