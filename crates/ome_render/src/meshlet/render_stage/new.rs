@@ -222,7 +222,12 @@ impl MeshletRenderStage {
         queue: &wgpu::Queue,
         adapter: &wgpu::Adapter,
     ) {
-        self.gpu_timers = MeshletGpuTimers::new(device, queue, adapter);
+        // 3 stages per frame so the per-pass HUD (#252) can split
+        // the timer into cull / raster / post on the R64 path and
+        // pass A / Hi-Z build / pass B on the 2-pass path. The
+        // path-specific `render_path_*` functions write labels into
+        // `MeshletRenderStats::stage_timings`.
+        self.gpu_timers = MeshletGpuTimers::new_with_stages(device, queue, adapter, 3);
     }
 
     /// Most recent GPU frame time in milliseconds, or `None` if the

@@ -157,18 +157,20 @@ impl MeshletRenderStage {
             0,
             /* clear */ true,
         );
-
-        if let Some(slot_idx) = timer_slot {
-            self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
+        // Stage 0 (Pass A) closes here. `render()`'s prelude already
+        // emitted `write_start` which lands on stage 0.
+        if timer_slot.is_some() {
+            self.gpu_timers.write_stage_end(&mut encoder, 0);
         }
         queue.submit(std::iter::once(encoder.finish()));
-        if let Some(slot_idx) = timer_slot {
-            self.gpu_timers.submit_readback(slot_idx);
-        }
 
         let mut build_enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("meshlet_hi_z_build_encoder"),
         });
+        // Stage 1 (Hi-Z SPD build).
+        if timer_slot.is_some() {
+            self.gpu_timers.write_stage_start(&mut build_enc, 1);
+        }
         {
             let hiz_curr = self.hiz_curr.as_ref().expect("allocated above");
             hiz_curr.build_from_depth(
@@ -178,11 +180,18 @@ impl MeshletRenderStage {
                 &mut self.frame_bind_groups[arena_idx],
             );
         }
+        if timer_slot.is_some() {
+            self.gpu_timers.write_stage_end(&mut build_enc, 1);
+        }
         queue.submit(std::iter::once(build_enc.finish()));
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("meshlet_render_stage_encoder_pass_b"),
         });
+        // Stage 2 (Pass B = cull B + raster B + deferred shade).
+        if timer_slot.is_some() {
+            self.gpu_timers.write_stage_start(&mut encoder, 2);
+        }
         {
             let gpu_pool = self.gpu_pool.as_ref().expect("checked by render() prelude");
             let hiz_curr = self.hiz_curr.as_ref().expect("allocated above");
@@ -232,7 +241,14 @@ impl MeshletRenderStage {
             self.size,
             debug_mode,
         );
+        if let Some(slot_idx) = timer_slot {
+            self.gpu_timers.write_stage_end(&mut encoder, 2);
+            self.gpu_timers.resolve_and_copy(&mut encoder, slot_idx);
+        }
         queue.submit(std::iter::once(encoder.finish()));
+        if let Some(slot_idx) = timer_slot {
+            self.gpu_timers.submit_readback(slot_idx);
+        }
 
         // Rotate pyramids: next frame's hiz_prev = this frame's hiz_curr.
         self.swap_hi_z_pyramids();
@@ -250,6 +266,13 @@ impl MeshletRenderStage {
         // cull B, raster B, deferred shade.
         let meshlet_draw_calls = if instance_count == 0 { 0 } else { 6 };
 
+        let stage_timings = self.gpu_timers.last_frame_stage_timings().and_then(|t| {
+            if t.len() == 3 {
+                Some([("Pass A", t[0]), ("Hi-Z", t[1]), ("Pass B", t[2])])
+            } else {
+                None
+            }
+        });
         MeshletRenderStats {
             instances_uploaded: instance_count,
             cull_threads: scene_params.instance_count * scene_params.meshlets_per_mesh,
@@ -266,6 +289,7 @@ impl MeshletRenderStage {
             // from any frame the R64 path also ran (which it
             // doesn't on this branch — stays None on legacy R32).
             cull_stage_counts: self.stage_counters.last_frame_counts(),
+            stage_timings,
         }
     }
 }

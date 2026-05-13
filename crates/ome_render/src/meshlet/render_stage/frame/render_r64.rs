@@ -43,6 +43,8 @@ impl MeshletRenderStage {
             .as_ref()
             .expect("path selected only when vbuf64_stage is Some");
 
+        // Stage 0 (Cull). render() already called `write_start`
+        // which lands on stage 0; just close it after the dispatch.
         self.cull.dispatch_scene_pool_atomic(
             device,
             queue,
@@ -52,6 +54,9 @@ impl MeshletRenderStage {
             cull_params,
             scene_params,
         );
+        if timer_slot.is_some() {
+            self.gpu_timers.write_stage_end(&mut encoder, 0);
+        }
         let debug_mode = resources
             .get::<MeshletDebugMode>()
             .copied()
@@ -76,6 +81,12 @@ impl MeshletRenderStage {
             .triangle_density_view
             .as_ref()
             .expect("density texture must be allocated whenever vbuf64 path is active");
+        // Stage 1 (Raster — R64 atomic vbuf is raster + fused shading
+        // in one fragment shader; no separate deferred pass on this
+        // path).
+        if timer_slot.is_some() {
+            self.gpu_timers.write_stage_start(&mut encoder, 1);
+        }
         vbuf64.render(
             device,
             queue,
@@ -92,6 +103,10 @@ impl MeshletRenderStage {
             debug_mode.as_u32(),
             /* clear_depth */ true,
         );
+        if timer_slot.is_some() {
+            self.gpu_timers.write_stage_end(&mut encoder, 1);
+            self.gpu_timers.write_stage_start(&mut encoder, 2);
+        }
 
         // Reject-reason overlay (#454.4). Dispatched only when the
         // current debug mode is one the cull pass tagged into
@@ -151,7 +166,11 @@ impl MeshletRenderStage {
         };
 
         if let Some(slot_idx) = timer_slot {
-            self.gpu_timers.write_end_and_copy(&mut encoder, slot_idx);
+            // Stage 2 (Overlay + stage-counters copy). Closes the
+            // last stage and emits the single resolve_and_copy for
+            // every timestamp in the slot.
+            self.gpu_timers.write_stage_end(&mut encoder, 2);
+            self.gpu_timers.resolve_and_copy(&mut encoder, slot_idx);
         }
         queue.submit(std::iter::once(encoder.finish()));
         if let Some(slot_idx) = timer_slot {
@@ -170,6 +189,13 @@ impl MeshletRenderStage {
             .count() as u32;
         // R64 path: cull + clear + raster + deferred.
         let meshlet_draw_calls = if instance_count == 0 { 0 } else { 4 };
+        let stage_timings = self.gpu_timers.last_frame_stage_timings().and_then(|t| {
+            if t.len() == 3 {
+                Some([("Cull", t[0]), ("Raster", t[1]), ("Overlay", t[2])])
+            } else {
+                None
+            }
+        });
         MeshletRenderStats {
             instances_uploaded: instance_count,
             cull_threads: scene_params.instance_count * scene_params.meshlets_per_mesh,
@@ -179,6 +205,7 @@ impl MeshletRenderStage {
             gpu_frame_ms: self.gpu_timers.last_frame_ms(),
             draw_calls: meshlet_draw_calls,
             cull_stage_counts: self.stage_counters.last_frame_counts(),
+            stage_timings,
         }
     }
 }

@@ -50,4 +50,20 @@ pub struct MeshletRenderStats {
     /// readback ring trades freshness for skipping `device.poll`
     /// stalls in the hot loop.
     pub cull_stage_counts: Option<CullStageCounts>,
+    /// Per-pass GPU timings in milliseconds (#252). Each entry is
+    /// `(label, ms)` for one stage of the meshlet frame; the labels
+    /// describe the path-specific breakdown:
+    ///
+    /// - R64 atomic path: `[("Cull", _), ("Raster", _), ("Overlay", _)]`.
+    /// - Hi-Z 2-pass path: `[("Pass A", _), ("Hi-Z", _), ("Pass B", _)]`.
+    ///
+    /// Sum equals `gpu_frame_ms`; surfaced separately so the HUD can
+    /// render each pass on its own row without having to know which
+    /// path the frame took. Fixed-size `[_; 3]` keeps the stats
+    /// struct `Copy` — both paths use exactly 3 stages today; if
+    /// either grows past 3 the array widens here and the writer
+    /// path zero-pads unused slots. `None` until the first ring
+    /// readback completes (1-2 frames after `enable_gpu_timers`) or
+    /// when GPU timers are disabled.
+    pub stage_timings: Option<[(&'static str, f32); 3]>,
 }
