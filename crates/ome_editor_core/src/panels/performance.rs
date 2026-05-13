@@ -61,6 +61,19 @@ pub(crate) fn draw_performance_content(
                         .map(|ms| format!("{:.2} ms", ms))
                         .unwrap_or_else(|| "n/a".to_string());
                     metric(ui, "GPU frame time", &gpu_text);
+                    // #252 — per-pass GPU ms breakdown. Labels are
+                    // path-specific: R64 emits `["Cull", "Raster",
+                    // "Overlay"]`; the Hi-Z 2-pass orchestrator emits
+                    // `["Pass A", "Hi-Z", "Pass B"]`. Sum equals
+                    // `GPU frame time` above. `None` until the first
+                    // ring readback completes (1-2 frames after
+                    // `enable_gpu_timers`) or on adapters without
+                    // `TIMESTAMP_QUERY`.
+                    if let Some(stages) = meshlet_stats.stage_timings {
+                        for (label, ms) in stages.iter() {
+                            metric(ui, &format!("  · {label}"), &format!("{ms:.3} ms"));
+                        }
+                    }
                 });
             });
 
