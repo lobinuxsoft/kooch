@@ -33,13 +33,17 @@ struct FsInput {
     @builtin(position) position: vec4<f32>,
 }
 
-// Fullscreen triangle cover — matches resolve_material_depth.wgsl.
+// Fullscreen triangle cover. Emits this pass's material id as clip-space
+// depth (`screen.material_id / 65535`) so the fixed-function `Equal`
+// depth test against the material-depth target admits only this
+// material's pixels — the per-material cull, in hardware, with early-Z.
 @vertex
 fn vs_fullscreen(@builtin(vertex_index) vertex_index: u32) -> FsInput {
     var out: FsInput;
     let x = f32((vertex_index & 1u) << 2u) - 1.0;
     let y = f32((vertex_index & 2u) << 1u) - 1.0;
-    out.position = vec4<f32>(x, y, 0.0, 1.0);
+    let z = f32(screen.material_id) / 65535.0;
+    out.position = vec4<f32>(x, y, z, 1.0);
     return out;
 }
 

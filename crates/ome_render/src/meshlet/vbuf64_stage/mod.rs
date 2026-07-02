@@ -23,6 +23,7 @@ mod clear;
 mod deferred;
 mod density_clear;
 mod raster;
+mod two_pass;
 
 use bytemuck::{Pod, Zeroable};
 
@@ -74,6 +75,10 @@ pub struct Vbuf64Stage {
     density_clear: DensityClear,
     rasterizer: Vbuf64Rasterizer,
     deferred: Vbuf64Deferred,
+    /// Two-pass material shading (#440). Used for production (`Off`)
+    /// rendering; debug modes still route through `deferred` until the
+    /// debug fragment pass lands.
+    two_pass: two_pass::MaterialTwoPass,
     vbuf_texture: wgpu::Texture,
     vbuf_view: wgpu::TextureView,
     dummy_color_texture: wgpu::Texture,
@@ -103,11 +108,13 @@ impl Vbuf64Stage {
         let density_clear = DensityClear::new(device);
         let rasterizer = Vbuf64Rasterizer::new(device, meshlet_bgl, depth_format, pipeline_cache);
         let deferred = Vbuf64Deferred::new(device, meshlet_bgl);
+        let two_pass = two_pass::MaterialTwoPass::new(device, meshlet_bgl);
         Self {
             clear,
             density_clear,
             rasterizer,
             deferred,
+            two_pass,
             vbuf_texture,
             vbuf_view,
             dummy_color_texture,
@@ -162,6 +169,7 @@ impl Vbuf64Stage {
         density_mode: u32,
         meshlet_bg: &wgpu::BindGroup,
         material_bg: &wgpu::BindGroup,
+        material_pipeline: Option<&crate::material::MaterialPipeline>,
         cull: &MeshletCull,
         scene: &MeshletScene,
         view_proj: glam::Mat4,
@@ -192,21 +200,40 @@ impl Vbuf64Stage {
             view_proj,
             clear_depth,
         );
-        self.deferred.shade_scene(
-            device,
-            queue,
-            encoder,
-            &self.vbuf_view,
-            color_view,
-            density_view,
-            meshlet_bg,
-            material_bg,
-            cull,
-            scene,
-            view_proj,
-            self.size,
-            debug_mode,
-        );
+        // Production (`Off`) shading goes through the two-pass material
+        // path when a MaterialPipeline is present; debug modes still route
+        // through the compute deferred until the debug fragment pass lands.
+        match (debug_mode, material_pipeline) {
+            (0, Some(pipeline)) => self.two_pass.shade(
+                device,
+                queue,
+                encoder,
+                &self.vbuf_view,
+                &self.material_depth_view,
+                color_view,
+                meshlet_bg,
+                cull,
+                scene,
+                pipeline,
+                view_proj,
+                self.size,
+            ),
+            _ => self.deferred.shade_scene(
+                device,
+                queue,
+                encoder,
+                &self.vbuf_view,
+                color_view,
+                density_view,
+                meshlet_bg,
+                material_bg,
+                cull,
+                scene,
+                view_proj,
+                self.size,
+                debug_mode,
+            ),
+        }
     }
 }
 

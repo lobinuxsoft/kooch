@@ -194,11 +194,12 @@ impl MaterialPipeline {
             .unwrap_or([None; 3])
     }
 
-    /// Range of registered material slots (`1..next_slot`), i.e. every
-    /// slot the two-pass path issues a per-material shading pass for.
-    /// Slot 0 (fallback) is excluded — it shades via the default path.
-    pub fn material_slots(&self) -> std::ops::Range<u32> {
-        1..self.next_slot
+    /// Range of shading slots (`0..next_slot`) the two-pass path issues a
+    /// per-material fragment pass for. Includes slot 0 (fallback white):
+    /// geometry with no picked material resolves to it, so it must shade
+    /// too — its branch-free fallback textures reproduce the plain look.
+    pub fn shading_slots(&self) -> std::ops::Range<u32> {
+        0..self.next_slot
     }
 
     /// Per-frame sync. Walks every [`Material`] entry the
@@ -492,7 +493,7 @@ mod tests {
         // Fallback slot 0 and out-of-range slots reference nothing.
         assert_eq!(pipeline.slot_texture_refs(FALLBACK_MATERIAL_ID), [None; 3]);
         assert_eq!(pipeline.slot_texture_refs(999), [None; 3]);
-        // Exactly one shading pass to issue (slot 1).
-        assert_eq!(pipeline.material_slots(), 1..2);
+        // Two shading passes to issue: fallback slot 0 + registered slot 1.
+        assert_eq!(pipeline.shading_slots(), 0..2);
     }
 }

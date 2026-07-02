@@ -87,6 +87,7 @@ impl MeshletRenderStage {
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_start(&mut encoder, 1);
         }
+        let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
         vbuf64.render(
             device,
             queue,
@@ -97,6 +98,7 @@ impl MeshletRenderStage {
             density_mode,
             meshlet_bg,
             material_bg,
+            material_pipeline.as_deref(),
             &self.cull,
             &self.scene,
             view_proj,
@@ -121,8 +123,7 @@ impl MeshletRenderStage {
             self.reject_overlay.as_ref(),
             self.gpu_pool.as_ref(),
         ) {
-            let total_threads =
-                scene_params.instance_count * scene_params.meshlets_per_mesh;
+            let total_threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
             let reason = match reject_code {
                 2 => crate::meshlet::RejectReason::Frustum,
                 3 => crate::meshlet::RejectReason::Backface,
