@@ -38,9 +38,7 @@ use ome_ecs::hierarchy::global_transform::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::AccessTracker;
 use ome_render::material::{Material, MaterialPipeline};
-use ome_render::meshlet::{
-    build_default_meshlets, MeshletRenderStage, MeshletRenderStageConfig,
-};
+use ome_render::meshlet::{MeshletRenderStage, MeshletRenderStageConfig, build_default_meshlets};
 
 fn install_material_pipeline(
     resources: &mut Resources,
@@ -133,7 +131,10 @@ fn single_frame_first_render_does_not_crash_with_empty_prev_pyramid() {
     let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
     let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let stats = stage.render_with_assets(&device, &queue, &resources, proj * view, cam);
-    assert_eq!(stats.instances_uploaded, 1, "single visible cube must upload");
+    assert_eq!(
+        stats.instances_uploaded, 1,
+        "single visible cube must upload"
+    );
     assert_eq!(
         stats.draw_calls, 6,
         "Hi-Z 2-pass orchestrator (post-#488 with AABB cull + reversed-Z) \

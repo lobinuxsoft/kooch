@@ -152,9 +152,15 @@ mod tests {
 
     #[test]
     fn rejects_absolute_windows() {
-        assert_eq!(reject_unsafe_uri("C:/Windows/System32"), Some("absolute path"));
+        assert_eq!(
+            reject_unsafe_uri("C:/Windows/System32"),
+            Some("absolute path")
+        );
         assert_eq!(reject_unsafe_uri("C:\\Windows"), Some("absolute path"));
-        assert_eq!(reject_unsafe_uri("\\\\server\\share"), Some("absolute path"));
+        assert_eq!(
+            reject_unsafe_uri("\\\\server\\share"),
+            Some("absolute path")
+        );
     }
 
     #[test]

@@ -6,13 +6,13 @@
 use std::collections::HashMap;
 
 use crate::meshlet::asset::{
-    MESHLET_GROUP_NONE, MESHLET_ROOT_PARENT, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES,
+    DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES, MESHLET_GROUP_NONE, MESHLET_ROOT_PARENT,
 };
 use crate::meshlet::builder::single_lod::build_default_meshlets;
 use crate::meshlet::builder::test_support::make_grid_mesh;
 
-use super::build_meshlets_lod_chain;
 use super::super::lod_config::LodConfig;
+use super::build_meshlets_lod_chain;
 
 #[test]
 fn lod_chain_lod_zero_has_zero_error() {
@@ -251,8 +251,7 @@ fn lod_chain_dag_is_acyclic_via_descent_terminates() {
             idx = parent as usize;
         }
         assert_eq!(
-            chain.meshlets[idx].parent_meshlet_index,
-            MESHLET_ROOT_PARENT,
+            chain.meshlets[idx].parent_meshlet_index, MESHLET_ROOT_PARENT,
             "DAG descent from #{i} did not terminate within {max_steps} steps",
         );
     }

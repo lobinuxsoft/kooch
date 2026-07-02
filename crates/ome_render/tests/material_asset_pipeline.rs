@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use ome_core::Guid;
 use ome_core::asset_database::{AssetDatabase, AssetEntry};
 use ome_core::asset_loader::AssetServer;
-use ome_core::asset_meta::{write_meta, AssetMeta};
+use ome_core::asset_meta::{AssetMeta, write_meta};
 use ome_core::assets::Assets;
 use ome_core::resource::Resources;
 use ome_ecs::EntityAllocator;
@@ -43,10 +43,7 @@ struct TempDir {
 impl TempDir {
     fn new(name: &str) -> Self {
         let mut path = std::env::temp_dir();
-        path.push(format!(
-            "ome_material_asset_{name}_{}",
-            std::process::id(),
-        ));
+        path.push(format!("ome_material_asset_{name}_{}", std::process::id(),));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create temp dir");
         Self { path }
@@ -172,7 +169,11 @@ fn sync_from_resources_is_idempotent_across_frames() {
     pipeline.sync_from_resources(&queue, &mut resources);
     pipeline.sync_from_resources(&queue, &mut resources);
 
-    assert_eq!(pipeline.registered_count(), 1, "no slot churn across frames");
+    assert_eq!(
+        pipeline.registered_count(),
+        1,
+        "no slot churn across frames"
+    );
     assert_eq!(
         pipeline.lookup(guid),
         Some(first_slot),

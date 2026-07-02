@@ -17,10 +17,12 @@ use super::super::{MeshletRenderStage, MeshletRenderStats};
 
 impl MeshletRenderStage {
     /// Atomic R64 vbuf path. Same observable contract as the legacy
-    /// path: 4 logical passes (cull + clear + raster + deferred) and
+    /// path: 4 logical passes (cull + clear + raster + shade) and
     /// stats reporting `draw_calls = 4`. See [`Self::render`] for the
     /// dispatch decision and the prelude that builds `cull_params` /
-    /// `scene_params` / `meshlet_bg` / `material_bg` / `timer_slot`.
+    /// `scene_params` / `meshlet_bg` / `timer_slot`. The material pool
+    /// reaches the two-pass shader via the `MaterialPipeline` resource,
+    /// so this path takes no precomputed material bind group.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn render_path_r64(
         &mut self,
@@ -33,7 +35,6 @@ impl MeshletRenderStage {
         cull_params: &CullParams,
         scene_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
-        material_bg: &wgpu::BindGroup,
         timer_slot: Option<usize>,
         instance_count: u32,
     ) -> MeshletRenderStats {
@@ -97,7 +98,6 @@ impl MeshletRenderStage {
             density_view,
             density_mode,
             meshlet_bg,
-            material_bg,
             material_pipeline.as_deref(),
             &self.cull,
             &self.scene,

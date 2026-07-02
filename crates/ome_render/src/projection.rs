@@ -71,14 +71,20 @@ mod tests {
         let proj = perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
         // RH cameras look down -Z; the near plane is at view_z = -near.
         let z = project_point(proj, -0.1);
-        assert!((z - 1.0).abs() < 1e-3, "near plane should map to ndc.z ≈ 1.0, got {z}");
+        assert!(
+            (z - 1.0).abs() < 1e-3,
+            "near plane should map to ndc.z ≈ 1.0, got {z}"
+        );
     }
 
     #[test]
     fn far_plane_maps_to_zero() {
         let proj = perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
         let z = project_point(proj, -100.0);
-        assert!(z.abs() < 1e-3, "far plane should map to ndc.z ≈ 0.0, got {z}");
+        assert!(
+            z.abs() < 1e-3,
+            "far plane should map to ndc.z ≈ 0.0, got {z}"
+        );
     }
 
     #[test]
@@ -92,7 +98,10 @@ mod tests {
         let z_close = project_point(proj, -1.0);
         let z_mid = project_point(proj, -50.0);
         let z_far = project_point(proj, -100.0);
-        assert!(z_close > z_mid, "closer point must have larger ndc.z (reversed-Z)");
+        assert!(
+            z_close > z_mid,
+            "closer point must have larger ndc.z (reversed-Z)"
+        );
         assert!(z_mid > z_far, "mid point must have larger ndc.z than far");
         assert!((0.0..=1.0).contains(&z_mid), "ndc.z must stay in [0, 1]");
     }

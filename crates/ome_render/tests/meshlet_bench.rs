@@ -17,9 +17,9 @@ use glam::{Mat4, Vec3};
 use ome_core::Guid;
 use ome_render::material::{Material, MaterialPipeline};
 use ome_render::meshlet::{
-    build_default_meshlets, meshlet_bind_group, meshlet_bind_group_layout, CullParams,
-    MeshletCull, MeshletDeferredShader, MeshletGpuTimers, MeshletVisRasterizer,
-    DEFAULT_MAX_TRIANGLES, DEFERRED_COLOR_FORMAT, VISIBILITY_BUFFER_FORMAT,
+    CullParams, DEFAULT_MAX_TRIANGLES, DEFERRED_COLOR_FORMAT, MeshletCull, MeshletDeferredShader,
+    MeshletGpuTimers, MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT, build_default_meshlets,
+    meshlet_bind_group, meshlet_bind_group_layout,
 };
 
 const RT_SIZE: u32 = 256;
@@ -320,12 +320,7 @@ fn meshlet_bench_scaling_per_pass_timings() {
         let cam = Vec3::new(0.0, 0.0, 3.0);
         let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
         let aspect = BENCH_RT_WIDTH as f32 / BENCH_RT_HEIGHT as f32;
-        let proj = ome_render::perspective_rh_reverse_z(
-            60.0_f32.to_radians(),
-            aspect,
-            0.1,
-            100.0,
-        );
+        let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), aspect, 0.1, 100.0);
         let view_proj = proj * view;
         let model = Mat4::IDENTITY;
         let cull_params = CullParams::new(view_proj, cam, gpu_mesh.meshlet_count);
@@ -500,7 +495,11 @@ fn bench_run_frame(
     timers: &mut MeshletGpuTimers,
     record_timing: bool,
 ) {
-    let timer_slot = if record_timing { timers.acquire_slot() } else { None };
+    let timer_slot = if record_timing {
+        timers.acquire_slot()
+    } else {
+        None
+    };
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("bench_scaling_frame"),
     });

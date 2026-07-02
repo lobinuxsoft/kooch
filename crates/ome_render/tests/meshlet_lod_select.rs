@@ -9,8 +9,7 @@
 
 use glam::{Mat4, Vec3};
 use ome_render::meshlet::{
-    build_meshlets_lod_chain, LodConfig, MeshletMesh, DEFAULT_MAX_TRIANGLES,
-    DEFAULT_MAX_VERTICES,
+    DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES, LodConfig, MeshletMesh, build_meshlets_lod_chain,
 };
 
 /// Mirror of the `lod_pixel_error` helper in `meshlet_cull.wgsl`.
@@ -41,10 +40,8 @@ fn select_meshlets_cpu(
                 return true;
             }
             let parent = &chain.meshlets[desc.parent_meshlet_index as usize];
-            let world_self =
-                transform.transform_point3(Vec3::from_array(desc.bounds_center));
-            let world_parent =
-                transform.transform_point3(Vec3::from_array(parent.bounds_center));
+            let world_self = transform.transform_point3(Vec3::from_array(desc.bounds_center));
+            let world_parent = transform.transform_point3(Vec3::from_array(parent.bounds_center));
             let my_err = pixel_error(desc.lod_error, world_self, camera_pos, factor);
             let parent_err = pixel_error(parent.lod_error, world_parent, camera_pos, factor);
             my_err <= target_px && parent_err > target_px
@@ -206,7 +203,7 @@ fn lod_selector_at_extreme_distance_collapses_to_root_set() {
     let viewport_h = 1080.0;
     let proj_scale_y = 1.0 / (30.0_f32.to_radians()).tan();
     let cam_pos = Vec3::new(0.5, 0.5, 100_000.0); // far enough to push
-                                                  // every parent's pixel error well below 1px
+    // every parent's pixel error well below 1px
 
     let count = select_meshlets_cpu(
         &chain,

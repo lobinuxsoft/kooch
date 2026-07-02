@@ -3,9 +3,7 @@
 //! Use [`super::build_meshlets_lod_chain`] for multi-LOD output.
 
 use crate::mesh::{Mesh, MeshVertex};
-use crate::meshlet::asset::{
-    MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES,
-};
+use crate::meshlet::asset::{DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES, MeshletMesh};
 
 use super::common::{clusterize_lod, total_aabb};
 use super::error::MeshletBuildError;

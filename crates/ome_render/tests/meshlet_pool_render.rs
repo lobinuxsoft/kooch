@@ -12,6 +12,7 @@ mod common;
 use common::try_acquire_device;
 use glam::{Mat4, Vec3};
 use ome_core::Guid;
+use ome_core::resource::Resources;
 use ome_ecs::allocator::EntityAllocator;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
 use ome_ecs::commands::Commands;
@@ -19,12 +20,9 @@ use ome_ecs::component::registry::ComponentRegistry;
 use ome_ecs::hierarchy::global_transform::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::AccessTracker;
-use ome_core::resource::Resources;
 use ome_render::material::{Material, MaterialPipeline};
 use ome_render::mesh::{Mesh, MeshVertex};
-use ome_render::meshlet::{
-    build_default_meshlets, MeshletRenderStage, MeshletRenderStageConfig,
-};
+use ome_render::meshlet::{MeshletRenderStage, MeshletRenderStageConfig, build_default_meshlets};
 
 fn ecs_test_resources() -> Resources {
     let mut r = Resources::new();

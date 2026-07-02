@@ -17,12 +17,11 @@ mod common;
 
 use common::try_acquire_device;
 use glam::{Mat4, Vec3};
+use ome_render::HiZ;
 use ome_render::mesh::{Aabb, MeshVertex};
 use ome_render::meshlet::{
-    CullParams, HiZTestParams, MeshletCull, MeshletDescriptor, MeshletMesh,
-    DEFAULT_MAX_TRIANGLES,
+    CullParams, DEFAULT_MAX_TRIANGLES, HiZTestParams, MeshletCull, MeshletDescriptor, MeshletMesh,
 };
-use ome_render::HiZ;
 
 const HI_Z_DIM: u32 = 32;
 
@@ -78,11 +77,7 @@ fn synthetic_meshlet_at_ndc_depth(z: f32) -> MeshletMesh {
     }
 }
 
-fn upload_uniform_r32(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    value: f32,
-) -> wgpu::Texture {
+fn upload_uniform_r32(device: &wgpu::Device, queue: &wgpu::Queue, value: f32) -> wgpu::Texture {
     let pixels = (HI_Z_DIM * HI_Z_DIM) as usize;
     let data = vec![value; pixels];
     let row_bytes = HI_Z_DIM * 4;

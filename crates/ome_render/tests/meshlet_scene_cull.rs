@@ -16,8 +16,8 @@ mod common;
 use common::{build_cube_mesh, try_acquire_device};
 use glam::{Mat4, Vec3};
 use ome_render::meshlet::{
-    build_default_meshlets, decode_scene_visible_id, CullParams, MeshInstance, MeshletCull,
-    MeshletScene, SceneCullParams, DEFAULT_MAX_TRIANGLES,
+    CullParams, DEFAULT_MAX_TRIANGLES, MeshInstance, MeshletCull, MeshletScene, SceneCullParams,
+    build_default_meshlets, decode_scene_visible_id,
 };
 use std::collections::BTreeSet;
 
@@ -40,13 +40,7 @@ fn read_visible_meshlets(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("scene_cull_readback"),
     });
-    encoder.copy_buffer_to_buffer(
-        cull.visible_meshlets_buffer(),
-        0,
-        &staging,
-        0,
-        byte_count,
-    );
+    encoder.copy_buffer_to_buffer(cull.visible_meshlets_buffer(), 0, &staging, 0, byte_count);
     queue.submit(std::iter::once(encoder.finish()));
 
     let slice = staging.slice(..);
