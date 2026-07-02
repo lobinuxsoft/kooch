@@ -78,6 +78,12 @@ pub struct Vbuf64Stage {
     vbuf_view: wgpu::TextureView,
     dummy_color_texture: wgpu::Texture,
     dummy_color_view: wgpu::TextureView,
+    /// Pass-1 target of the two-pass material path: each covered pixel's
+    /// `material_id` encoded as depth (`f32(id)/65535`). Pass-2 per-material
+    /// shading depth-tests `Equal` against it. Allocated here so it tracks
+    /// the stage's size alongside the vbuf / dummy targets.
+    material_depth_texture: wgpu::Texture,
+    material_depth_view: wgpu::TextureView,
     size: (u32, u32),
 }
 
@@ -91,6 +97,8 @@ impl Vbuf64Stage {
     ) -> Self {
         let (vbuf_texture, vbuf_view) = create_vbuf64_texture(device, size);
         let (dummy_color_texture, dummy_color_view) = create_dummy_color_texture(device, size);
+        let (material_depth_texture, material_depth_view) =
+            create_material_depth_texture(device, size);
         let clear = Vbuf64Clear::new(device);
         let density_clear = DensityClear::new(device);
         let rasterizer = Vbuf64Rasterizer::new(device, meshlet_bgl, depth_format, pipeline_cache);
@@ -104,6 +112,8 @@ impl Vbuf64Stage {
             vbuf_view,
             dummy_color_texture,
             dummy_color_view,
+            material_depth_texture,
+            material_depth_view,
             size,
         }
     }
@@ -118,7 +128,14 @@ impl Vbuf64Stage {
         let (dummy_tex, dummy_view) = create_dummy_color_texture(device, size);
         self.dummy_color_texture = dummy_tex;
         self.dummy_color_view = dummy_view;
+        let (md_tex, md_view) = create_material_depth_texture(device, size);
+        self.material_depth_texture = md_tex;
+        self.material_depth_view = md_view;
         self.size = size;
+    }
+
+    pub fn material_depth_view(&self) -> &wgpu::TextureView {
+        &self.material_depth_view
     }
 
     pub fn vbuf_view(&self) -> &wgpu::TextureView {
@@ -216,6 +233,19 @@ fn create_dummy_color_texture(
         size,
         DUMMY_COLOR_FORMAT,
         wgpu::TextureUsages::RENDER_ATTACHMENT,
+    )
+}
+
+fn create_material_depth_texture(
+    device: &wgpu::Device,
+    size: (u32, u32),
+) -> (wgpu::Texture, wgpu::TextureView) {
+    create_2d_attachment(
+        device,
+        "meshlet_material_depth",
+        size,
+        crate::meshlet::MATERIAL_DEPTH_FORMAT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
     )
 }
 
