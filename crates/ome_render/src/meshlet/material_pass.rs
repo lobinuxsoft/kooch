@@ -28,6 +28,12 @@ pub const RESOLVE_MATERIAL_DEPTH_SHADER: &str =
 pub const VISIBILITY_BUFFER_RESOLVE_SHADER: &str =
     include_str!("../../shaders/visibility_buffer_resolve.wgsl");
 
+/// Default per-material shading body (normal-debug × albedo, tangent-space
+/// normal mapping). Concatenate with [`VISIBILITY_BUFFER_RESOLVE_SHADER`]
+/// via [`compose_material_shader`] before creating the module. Entry
+/// points: `vs_fullscreen`, `fs_material`.
+pub const MATERIAL_PBR_DEFAULT_BODY: &str = include_str!("../../shaders/material_pbr_default.wgsl");
+
 /// Composes a complete material shader by prepending the shared
 /// visibility-buffer resolve helpers to a material-specific body. This
 /// stands in for the `#import` a WGSL preprocessor would provide.
@@ -67,5 +73,11 @@ mod tests {
             VISIBILITY_BUFFER_RESOLVE_SHADER,
             "visibility_buffer_resolve.wgsl",
         );
+    }
+
+    #[test]
+    fn composed_default_material_parses_and_validates() {
+        let composed = compose_material_shader(MATERIAL_PBR_DEFAULT_BODY);
+        validate(&composed, "composed default material shader");
     }
 }
