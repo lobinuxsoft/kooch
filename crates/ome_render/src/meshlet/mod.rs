@@ -73,7 +73,10 @@ pub use gpu_meshlet::{
 };
 pub use gpu_timers::MeshletGpuTimers;
 pub use loader::MeshletMeshLoader;
-pub use material_pass::{MATERIAL_DEPTH_FORMAT, RESOLVE_MATERIAL_DEPTH_SHADER};
+pub use material_pass::{
+    MATERIAL_DEPTH_FORMAT, RESOLVE_MATERIAL_DEPTH_SHADER, VISIBILITY_BUFFER_RESOLVE_SHADER,
+    compose_material_shader,
+};
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshDescriptor, MeshHandle};
 pub use reject_overlay::{MeshletRejectOverlay, RejectReason};
 pub use render_stage::{MeshletRenderStage, MeshletRenderStageConfig, MeshletRenderStats};

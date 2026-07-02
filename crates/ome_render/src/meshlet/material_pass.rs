@@ -21,6 +21,20 @@
 pub const RESOLVE_MATERIAL_DEPTH_SHADER: &str =
     include_str!("../../shaders/resolve_material_depth.wgsl");
 
+/// Attribute-reconstruction helpers (barycentrics, analytical uv
+/// derivatives, `resolve_vertex_output`) shared by the per-material
+/// shading passes. WGSL has no `#include`, so this is prepended in Rust
+/// to each material shader — see [`compose_material_shader`].
+pub const VISIBILITY_BUFFER_RESOLVE_SHADER: &str =
+    include_str!("../../shaders/visibility_buffer_resolve.wgsl");
+
+/// Composes a complete material shader by prepending the shared
+/// visibility-buffer resolve helpers to a material-specific body. This
+/// stands in for the `#import` a WGSL preprocessor would provide.
+pub fn compose_material_shader(material_body: &str) -> String {
+    format!("{VISIBILITY_BUFFER_RESOLVE_SHADER}\n{material_body}")
+}
+
 /// Depth format the material-depth target uses. 16-bit unorm gives an
 /// exact `id / 65535` round-trip for up to 65 536 materials and lets the
 /// per-material passes use a cheap hardware `Equal` depth test.
@@ -30,16 +44,28 @@ pub const MATERIAL_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Dept
 mod tests {
     use super::*;
 
-    #[test]
-    fn resolve_material_depth_parses_and_validates() {
-        let module = naga::front::wgsl::parse_str(RESOLVE_MATERIAL_DEPTH_SHADER)
-            .expect("resolve_material_depth.wgsl should parse");
+    fn validate(source: &str, what: &str) {
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|e| panic!("{what} should parse: {e}"));
         let mut validator = naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
         );
         validator
             .validate(&module)
-            .expect("resolve_material_depth.wgsl should validate");
+            .unwrap_or_else(|e| panic!("{what} should validate: {e}"));
+    }
+
+    #[test]
+    fn resolve_material_depth_parses_and_validates() {
+        validate(RESOLVE_MATERIAL_DEPTH_SHADER, "resolve_material_depth.wgsl");
+    }
+
+    #[test]
+    fn visibility_buffer_resolve_parses_and_validates() {
+        validate(
+            VISIBILITY_BUFFER_RESOLVE_SHADER,
+            "visibility_buffer_resolve.wgsl",
+        );
     }
 }
