@@ -81,9 +81,7 @@ impl PlayState {
         if std::env::var_os("RUST_LOG").is_none() {
             cmd.env("RUST_LOG", "info");
         }
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| PlayError::Spawn(e.to_string()))?;
+        let mut child = cmd.spawn().map_err(|e| PlayError::Spawn(e.to_string()))?;
 
         // Spawn reader threads for stdout/stderr.
         if let Some(stdout) = child.stdout.take() {

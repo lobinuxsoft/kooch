@@ -5,7 +5,7 @@ use ome_core::power::PowerProfile;
 
 use crate::actions::EditorAction;
 use crate::icons;
-use crate::state::{dock_has_tab, EditorTab, ALL_TABS};
+use crate::state::{ALL_TABS, EditorTab, dock_has_tab};
 
 // Migrating off `TopBottomPanel::top(...).show(ctx, ...)` requires
 // adopting the eframe 0.34+ `App::ui(&mut self, ui: &mut Ui)` pattern,

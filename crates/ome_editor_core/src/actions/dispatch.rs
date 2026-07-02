@@ -45,12 +45,17 @@ pub(super) fn action_to_command(
         EditorAction::AddComponent { entity, type_id } => {
             Some(Box::new(AddComponentCommand::new(*entity, *type_id)))
         }
-        EditorAction::RemoveComponent { entity, type_id } => {
-            Some(Box::new(RemoveComponentCommand::new(resources, *entity, *type_id)))
-        }
-        EditorAction::TransformEdit { entity, before, after, desc } => Some(Box::new(
-            TransformEditCommand::new(*entity, *before, *after, desc),
+        EditorAction::RemoveComponent { entity, type_id } => Some(Box::new(
+            RemoveComponentCommand::new(resources, *entity, *type_id),
         )),
+        EditorAction::TransformEdit {
+            entity,
+            before,
+            after,
+            desc,
+        } => Some(Box::new(TransformEditCommand::new(
+            *entity, *before, *after, desc,
+        ))),
         _ => None,
     }
 }
@@ -75,11 +80,20 @@ pub(super) fn same_ecs_variant(a: &EditorAction, b: &EditorAction) -> bool {
     matches!(
         (a, b),
         (EditorAction::Spawn { .. }, EditorAction::Spawn { .. })
-            | (EditorAction::SpawnMesh { .. }, EditorAction::SpawnMesh { .. })
+            | (
+                EditorAction::SpawnMesh { .. },
+                EditorAction::SpawnMesh { .. }
+            )
             | (EditorAction::Despawn(_), EditorAction::Despawn(_))
             | (EditorAction::Duplicate(_), EditorAction::Duplicate(_))
             | (EditorAction::SetField { .. }, EditorAction::SetField { .. })
-            | (EditorAction::AddComponent { .. }, EditorAction::AddComponent { .. })
-            | (EditorAction::RemoveComponent { .. }, EditorAction::RemoveComponent { .. })
+            | (
+                EditorAction::AddComponent { .. },
+                EditorAction::AddComponent { .. }
+            )
+            | (
+                EditorAction::RemoveComponent { .. },
+                EditorAction::RemoveComponent { .. }
+            )
     )
 }

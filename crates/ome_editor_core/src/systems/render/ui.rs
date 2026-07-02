@@ -3,8 +3,9 @@
 
 use egui_dock::DockArea;
 
-use ome_render::meshlet::{MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
-use ome_world::lod::LodRingConfig;
+use ome_render::meshlet::{
+    MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
+};
 
 use crate::actions::EditorAction;
 use crate::editor_camera::EditorCameraController;
@@ -56,7 +57,6 @@ pub(super) fn run_editor_ui(
     undo: &UndoInfo,
     viewport: ViewportUi<'_>,
     power_profile: ome_core::power::PowerProfile,
-    streaming_config: &mut LodRingConfig,
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_debug_caps: MeshletDebugCaps,
@@ -113,7 +113,6 @@ pub(super) fn run_editor_ui(
                 snap_settings: &mut overlay.snap_settings,
                 handle_mode,
                 selection_has_transform,
-                streaming_config,
                 asset_catalog,
                 meshlet_debug_mode,
                 meshlet_debug_caps,

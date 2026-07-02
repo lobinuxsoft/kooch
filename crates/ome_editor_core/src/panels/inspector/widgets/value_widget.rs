@@ -2,7 +2,7 @@
 
 use ome_ecs::reflect::{FieldChoice, ReflectValue};
 
-use super::asset::{asset_filter_for, AssetCatalogEntry};
+use super::asset::{AssetCatalogEntry, asset_filter_for};
 use super::asset_picker::draw_asset_picker;
 use super::choices::draw_choice_dropdown;
 
@@ -58,16 +58,14 @@ pub(in crate::panels::inspector) fn draw_value_widget(
         }
         ReflectValue::I8(v) => {
             let mut val = *v as i64;
-            let resp = ui.add(
-                egui::DragValue::new(&mut val).range(i8::MIN as i64..=i8::MAX as i64),
-            );
+            let resp =
+                ui.add(egui::DragValue::new(&mut val).range(i8::MIN as i64..=i8::MAX as i64));
             resp.changed().then_some(ReflectValue::I8(val as i8))
         }
         ReflectValue::I16(v) => {
             let mut val = *v as i64;
-            let resp = ui.add(
-                egui::DragValue::new(&mut val).range(i16::MIN as i64..=i16::MAX as i64),
-            );
+            let resp =
+                ui.add(egui::DragValue::new(&mut val).range(i16::MIN as i64..=i16::MAX as i64));
             resp.changed().then_some(ReflectValue::I16(val as i16))
         }
         ReflectValue::I32(v) => {
@@ -99,8 +97,7 @@ pub(in crate::panels::inspector) fn draw_value_widget(
                         .on_hover_text(format!("Pick {label} file"))
                         .clicked()
                     {
-                        let mut dialog =
-                            rfd::FileDialog::new().set_title(format!("Pick {label}"));
+                        let mut dialog = rfd::FileDialog::new().set_title(format!("Pick {label}"));
                         if !exts.is_empty() {
                             // Include the extension list in the filter label
                             // so the native dialog's "file type" dropdown is
@@ -261,18 +258,15 @@ pub(in crate::panels::inspector) fn draw_value_widget(
                         scale.x, scale.y, scale.z
                     ));
                     if shear {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(240, 180, 40),
-                            "\u{26a0}",
-                        )
-                        .on_hover_text(
-                            "Shear detected in this matrix. Non-uniform \
+                        ui.colored_label(egui::Color32::from_rgb(240, 180, 40), "\u{26a0}")
+                            .on_hover_text(
+                                "Shear detected in this matrix. Non-uniform \
                              parent scale composed with a rotated child \
                              produces shear that `Transform { scale }` \
                              cannot represent. The values above are a \
                              best-fit decomposition and will NOT round-trip \
                              through TRS. See issue #214.",
-                        );
+                            );
                     }
                 });
             });

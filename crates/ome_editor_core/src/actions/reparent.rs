@@ -39,8 +39,9 @@ pub(super) fn rewrite_local_transform_for_reparent(
         return;
     };
     let (parent_wp, parent_wr, parent_ws) = match new_parent {
-        Some(p) => compute_world_trs(resources, p)
-            .unwrap_or((Vec3::ZERO, Quat::IDENTITY, Vec3::ONE)),
+        Some(p) => {
+            compute_world_trs(resources, p).unwrap_or((Vec3::ZERO, Quat::IDENTITY, Vec3::ONE))
+        }
         None => (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
     };
 
@@ -79,10 +80,7 @@ pub(super) fn rewrite_local_transform_for_reparent(
 /// a rotated descendant. Reading TRS back from it requires SVD, and
 /// repeated reparents accumulate decomposition drift in the
 /// inspector. Walking TRS directly stays stable.
-fn compute_world_trs(
-    resources: &Resources,
-    entity: Entity,
-) -> Option<(Vec3, Quat, Vec3)> {
+fn compute_world_trs(resources: &Resources, entity: Entity) -> Option<(Vec3, Quat, Vec3)> {
     let registry = resources.get::<ComponentRegistry>()?;
     let transform_storage = registry.get_cpu::<Transform>()?;
     let parent_storage = registry.get_cpu::<Parent>();

@@ -8,13 +8,13 @@ use ome_core::gpu::GpuContext;
 use ome_core::resource::Resources;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
+use ome_render::SkyRenderPass;
 use ome_render::meshlet::{
     MeshletBlit, MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStage,
     MeshletRenderStats,
 };
-use ome_render::SkyRenderPass;
 
-use crate::actions::{apply_actions, EditorAction};
+use crate::actions::{EditorAction, apply_actions};
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{
     ViewportInputDelta, apply_viewport_input, entity_world_position,
@@ -26,10 +26,10 @@ use crate::state::EditorOverlay;
 use crate::systems::present::present_editor_frame;
 use crate::undo::UndoStack;
 use crate::viewport::render::MeshletPathInputs;
-use crate::viewport::{render_viewport, ViewportTarget};
+use crate::viewport::{ViewportTarget, render_viewport};
 
 use self::frame_display::FrameDisplayData;
-use self::ui::{run_editor_ui, UndoInfo, ViewportUi};
+use self::ui::{UndoInfo, ViewportUi, run_editor_ui};
 
 /// Polls launcher state. Returns `true` when the render system should exit early
 /// because the project binary has been launched (triggering AppExit).
@@ -43,9 +43,7 @@ fn poll_launcher(resources: &mut Resources) -> bool {
         .and_then(|ps| ps.launcher_status())
         .is_some_and(|s| *s == LauncherStatus::Launched);
 
-    if launched
-        && let Some(events) = resources.get_mut::<Events<AppExit>>()
-    {
+    if launched && let Some(events) = resources.get_mut::<Events<AppExit>>() {
         events.send(AppExit);
     }
     launched
@@ -59,15 +57,11 @@ fn apply_deferred_actions(
     if actions.is_empty() {
         return;
     }
-    let has_open_scene = actions
-        .iter()
-        .any(|a| matches!(a, EditorAction::OpenScene));
+    let has_open_scene = actions.iter().any(|a| matches!(a, EditorAction::OpenScene));
 
     apply_actions(resources, actions, undo_stack);
 
-    if has_open_scene
-        && let Some(overlay) = resources.get_mut::<EditorOverlay>()
-    {
+    if has_open_scene && let Some(overlay) = resources.get_mut::<EditorOverlay>() {
         overlay.selected_entities.clear();
         overlay.last_clicked_index = None;
     }
@@ -141,9 +135,6 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut undo_stack = resources
         .remove::<UndoStack>()
         .unwrap_or_else(UndoStack::new);
-    let mut streaming_config = resources
-        .remove::<ome_world::lod::LodRingConfig>()
-        .unwrap_or_default();
     // Debug-mode resource is owned by the UI thread for the egui pass
     // so the View dropdown can mutate it directly. Re-inserted before
     // the meshlet stage runs so render_with_assets sees the new value.
@@ -155,8 +146,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<MeshletDebugCaps>()
         .copied()
         .unwrap_or_default();
-    let mut meshlet_lod_settings =
-        resources.remove::<MeshletLodSettings>().unwrap_or_default();
+    let mut meshlet_lod_settings = resources.remove::<MeshletLodSettings>().unwrap_or_default();
     // Stats are produced by last frame's viewport render and re-published
     // as a Resource. Read-only here — copied so we don't keep the borrow
     // through the egui pass.
@@ -266,7 +256,6 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .unwrap_or_default(),
         },
         power_profile,
-        &mut streaming_config,
         &asset_catalog,
         &mut meshlet_debug_mode,
         meshlet_debug_caps,
@@ -373,7 +362,6 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     if let Some(ps) = project_state {
         resources.insert(ps);
     }
-    resources.insert(streaming_config);
 
     apply_deferred_actions(resources, &actions, &mut undo_stack);
 

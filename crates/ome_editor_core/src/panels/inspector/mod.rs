@@ -24,8 +24,7 @@ use crate::actions::EditorAction;
 use crate::drag_drop::DraggedComponent;
 use crate::icons;
 use crate::state::{
-    ComponentDisplayInfo, EntityDisplayInfo, EulerCacheKey, ReflectedTypeInfo,
-    RotationDisplayMode,
+    ComponentDisplayInfo, EntityDisplayInfo, EulerCacheKey, ReflectedTypeInfo, RotationDisplayMode,
 };
 
 pub(crate) use widgets::AssetCatalogEntry;
@@ -80,9 +79,8 @@ pub(crate) fn draw_inspector_content(
 
     // Whole inspector area is a drop zone for DraggedComponent. On drop,
     // the component is added to every selected entity. See #209.
-    let (_, dropped) = ui.dnd_drop_zone::<DraggedComponent, ()>(
-        egui::Frame::default(),
-        |ui| draw_inspector_body(
+    let (_, dropped) = ui.dnd_drop_zone::<DraggedComponent, ()>(egui::Frame::default(), |ui| {
+        draw_inspector_body(
             ui,
             entities,
             selected,
@@ -91,8 +89,8 @@ pub(crate) fn draw_inspector_content(
             euler_cache,
             rotation_display_mode,
             asset_catalog,
-        ),
-    );
+        )
+    });
 
     if let Some(payload) = dropped {
         for &entity in selected {
@@ -218,61 +216,52 @@ fn draw_inspector_body(
     egui::ScrollArea::vertical().show(ui, |ui| {
         for comp in &visible_components {
             let is_read_only = comp.visibility == InspectorVisibility::ReadOnly;
-            let id = ui.make_persistent_id(format!(
-                "comp_{}_{:?}",
-                entity.index(),
-                comp.type_id
-            ));
-            egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                id,
-                true,
-            )
-            .show_header(ui, |ui| {
-                ui.strong(format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name));
-                // Removal is always available regardless of visibility:
-                // `ReadOnly` gates field edits, not component lifecycle.
-                if ui
-                    .small_button(icons::X)
-                    .on_hover_text("Remove component")
-                    .clicked()
-                {
-                    actions.push(EditorAction::RemoveComponent {
-                        entity,
-                        type_id: comp.type_id,
-                    });
-                }
-            })
-            .body(|ui| {
-                if let Some(fields) = &comp.fields {
-                    if fields.is_empty() {
-                        ui.weak("(no fields)");
-                    } else if is_read_only {
-                        single::draw_readonly_fields(
-                            ui,
+            let id = ui.make_persistent_id(format!("comp_{}_{:?}", entity.index(), comp.type_id));
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+                .show_header(ui, |ui| {
+                    ui.strong(format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name));
+                    // Removal is always available regardless of visibility:
+                    // `ReadOnly` gates field edits, not component lifecycle.
+                    if ui
+                        .small_button(icons::X)
+                        .on_hover_text("Remove component")
+                        .clicked()
+                    {
+                        actions.push(EditorAction::RemoveComponent {
                             entity,
-                            comp.type_id,
-                            fields,
-                            comp.field_metas,
-                        );
-                    } else {
-                        single::draw_reflected_fields(
-                            ui,
-                            entity,
-                            comp.type_id,
-                            fields,
-                            comp.field_metas,
-                            euler_cache,
-                            rotation_ctx,
-                            actions,
-                            asset_catalog,
-                        );
+                            type_id: comp.type_id,
+                        });
                     }
-                } else {
-                    ui.weak("(no reflection)");
-                }
-            });
+                })
+                .body(|ui| {
+                    if let Some(fields) = &comp.fields {
+                        if fields.is_empty() {
+                            ui.weak("(no fields)");
+                        } else if is_read_only {
+                            single::draw_readonly_fields(
+                                ui,
+                                entity,
+                                comp.type_id,
+                                fields,
+                                comp.field_metas,
+                            );
+                        } else {
+                            single::draw_reflected_fields(
+                                ui,
+                                entity,
+                                comp.type_id,
+                                fields,
+                                comp.field_metas,
+                                euler_cache,
+                                rotation_ctx,
+                                actions,
+                                asset_catalog,
+                            );
+                        }
+                    } else {
+                        ui.weak("(no reflection)");
+                    }
+                });
         }
     });
 }
-

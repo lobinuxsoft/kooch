@@ -55,14 +55,18 @@ pub(super) fn apply_non_ecs_action(
 }
 
 fn handle_save_scene(resources: &mut Resources) {
-    let scenes_dir = resources
-        .get::<ProjectState>()
-        .and_then(|ps| ps.active_project.as_ref().map(|p| p.root_path.join("scenes")));
+    let scenes_dir = resources.get::<ProjectState>().and_then(|ps| {
+        ps.active_project
+            .as_ref()
+            .map(|p| p.root_path.join("scenes"))
+    });
     let mut dialog = rfd::FileDialog::new().add_filter("OME Scene", &["ome_scene"]);
     if let Some(ref dir) = scenes_dir {
         dialog = dialog.set_directory(dir);
     }
-    let Some(path) = dialog.save_file() else { return };
+    let Some(path) = dialog.save_file() else {
+        return;
+    };
     match save_scene_as(resources, path.clone()) {
         Ok(()) => tracing::info!("scene saved to {}", path.display()),
         Err(e) => tracing::error!("failed to save scene: {e}"),
@@ -70,14 +74,18 @@ fn handle_save_scene(resources: &mut Resources) {
 }
 
 fn handle_open_scene(resources: &mut Resources, undo_stack: &mut UndoStack) {
-    let scenes_dir = resources
-        .get::<ProjectState>()
-        .and_then(|ps| ps.active_project.as_ref().map(|p| p.root_path.join("scenes")));
+    let scenes_dir = resources.get::<ProjectState>().and_then(|ps| {
+        ps.active_project
+            .as_ref()
+            .map(|p| p.root_path.join("scenes"))
+    });
     let mut dialog = rfd::FileDialog::new().add_filter("OME Scene", &["ome_scene"]);
     if let Some(ref dir) = scenes_dir {
         dialog = dialog.set_directory(dir);
     }
-    let Some(path) = dialog.pick_file() else { return };
+    let Some(path) = dialog.pick_file() else {
+        return;
+    };
     match load_scene(resources, &path) {
         Ok(()) => {
             tracing::info!("scene loaded from {}", path.display());
@@ -113,8 +121,7 @@ fn handle_play(resources: &mut Resources) {
     if let Err(e) = doc.save(&scene_path) {
         tracing::error!("failed to save play scene: {e}");
     } else if let Some(play_state) = resources.get_mut::<PlayState>()
-        && let Err(e) =
-            play_state.launch(&manifest_path, &scene_path, engine_root.as_deref())
+        && let Err(e) = play_state.launch(&manifest_path, &scene_path, engine_root.as_deref())
     {
         tracing::error!("failed to launch game: {e}");
     }
@@ -127,7 +134,9 @@ fn handle_stop(resources: &mut Resources) {
 }
 
 fn handle_open_project(resources: &mut Resources, path: &std::path::Path) {
-    let Some(mut ps) = resources.remove::<ProjectState>() else { return };
+    let Some(mut ps) = resources.remove::<ProjectState>() else {
+        return;
+    };
     match ps.open_project(path) {
         Ok(()) => {
             let title = ps
@@ -141,12 +150,10 @@ fn handle_open_project(resources: &mut Resources, path: &std::path::Path) {
                 let _ = wh.window().set_title(&format!("{title} — Oh My Engine"));
             }
 
-            let main_scene_path = ps.active_project.as_ref().and_then(|p| {
-                p.manifest
-                    .main_scene
-                    .as_ref()
-                    .map(|s| p.root_path.join(s))
-            });
+            let main_scene_path = ps
+                .active_project
+                .as_ref()
+                .and_then(|p| p.manifest.main_scene.as_ref().map(|s| p.root_path.join(s)));
             if let Some(scene_path) = main_scene_path
                 && scene_path.exists()
                 && let Err(e) = load_scene(resources, &scene_path)
@@ -164,11 +171,7 @@ fn handle_open_project(resources: &mut Resources, path: &std::path::Path) {
     resources.insert(ps);
 }
 
-fn handle_create_project(
-    resources: &mut Resources,
-    name: &str,
-    parent_path: &std::path::Path,
-) {
+fn handle_create_project(resources: &mut Resources, name: &str, parent_path: &std::path::Path) {
     let engine_root = resources
         .get::<ProjectState>()
         .and_then(|ps| ps.engine_root.clone());
@@ -334,7 +337,11 @@ fn handle_cancel_launch(resources: &mut Resources) {
 fn handle_set_power_profile(resources: &mut Resources, profile: PowerProfile) {
     if let Some(slot) = resources.get_mut::<PowerProfile>() {
         if *slot != profile {
-            tracing::info!(from = slot.as_str(), to = profile.as_str(), "power profile changed");
+            tracing::info!(
+                from = slot.as_str(),
+                to = profile.as_str(),
+                "power profile changed"
+            );
             *slot = profile;
         }
     } else {

@@ -48,11 +48,23 @@ impl SetFieldCommand {
 
 impl EditorCommand for SetFieldCommand {
     fn execute(&mut self, resources: &mut Resources) {
-        apply_field(resources, &self.type_id, self.entity, &self.field, &self.new_value);
+        apply_field(
+            resources,
+            &self.type_id,
+            self.entity,
+            &self.field,
+            &self.new_value,
+        );
     }
 
     fn undo(&mut self, resources: &mut Resources) {
-        apply_field(resources, &self.type_id, self.entity, &self.field, &self.old_value);
+        apply_field(
+            resources,
+            &self.type_id,
+            self.entity,
+            &self.field,
+            &self.old_value,
+        );
     }
 
     fn description(&self) -> &str {

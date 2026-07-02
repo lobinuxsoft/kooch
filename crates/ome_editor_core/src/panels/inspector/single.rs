@@ -11,9 +11,9 @@ use ome_ecs::reflect::{FieldMeta, ReflectValue};
 use crate::actions::EditorAction;
 use crate::state::{EntityDisplayInfo, EulerCacheKey};
 
-use super::rotation::{draw_quat_with_cache, is_transform_rotation};
-use super::widgets::{choices_for, draw_readonly_value, draw_value_widget, AssetCatalogEntry};
 use super::RotationContext;
+use super::rotation::{draw_quat_with_cache, is_transform_rotation};
+use super::widgets::{AssetCatalogEntry, choices_for, draw_readonly_value, draw_value_widget};
 
 /// Draws an editable name field for the Name component (shown above the component list).
 pub(super) fn draw_name_editor(

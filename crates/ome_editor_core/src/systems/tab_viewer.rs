@@ -6,8 +6,9 @@ use egui_dock::TabViewer;
 use glam::Vec3;
 
 use ome_ecs::entity::Entity;
-use ome_render::meshlet::{MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
-use ome_world::lod::LodRingConfig;
+use ome_render::meshlet::{
+    MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
+};
 
 use ome_gizmos_handles::{HandleMode, SnapSettings};
 
@@ -17,8 +18,6 @@ use crate::editor_camera::input::ViewportInputDelta;
 use crate::panels::archetypes::draw_archetypes_content;
 use crate::panels::components::draw_components_content;
 use crate::panels::inspector::draw_inspector_content;
-use crate::panels::performance::draw_performance_content;
-use crate::panels::streaming::draw_streaming_content;
 use crate::panels::view::draw_view_content;
 use crate::panels::world::draw_world_content;
 use crate::state::{
@@ -48,10 +47,6 @@ pub(crate) struct EditorTabViewer<'a> {
     /// `true` when at least one currently-selected entity carries a
     /// `Transform` — gates the viewport's Local/World toggle.
     pub(crate) selection_has_transform: bool,
-    /// Live handle to the global LOD ring resource. The Streaming tab
-    /// writes through here so the activation system reacts on the
-    /// next tick without a duplicate state copy.
-    pub(crate) streaming_config: &'a mut LodRingConfig,
     /// Per-frame snapshot of the `AssetDatabase` consumed by the
     /// inspector's typed asset picker.
     pub(crate) asset_catalog: &'a [crate::panels::inspector::AssetCatalogEntry],
@@ -123,15 +118,6 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             ),
             EditorTab::Archetypes => draw_archetypes_content(ui, self.archetypes),
             EditorTab::Components => draw_components_content(ui, self.component_types),
-            EditorTab::Streaming => draw_streaming_content(ui, self.streaming_config),
-            EditorTab::Performance => draw_performance_content(
-                ui,
-                self.perf_stats,
-                self.meshlet_stats,
-                self.meshlet_debug_mode,
-                self.meshlet_debug_caps,
-                self.meshlet_lod_settings,
-            ),
         }
     }
 
