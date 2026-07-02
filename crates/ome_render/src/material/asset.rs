@@ -6,14 +6,17 @@
 //! runtime sync system mirrors the asset storage into the
 //! `MaterialPool` storage buffer once per change.
 //!
-//! Field set is intentionally minimal: PR5 only carries the PBR
-//! scalars (`base_color`, `metallic`, `roughness`, `emissive`). Texture
-//! references (`albedo`, `normal`, `metal_roughness`, etc.) land
-//! alongside bindless texturing in a follow-up; the field shape
-//! changes additively, no migration burden on early projects.
+//! Field set carries the PBR scalars (`base_color`, `metallic`,
+//! `roughness`, `emissive`) plus optional texture references (`albedo`,
+//! `normal`, `metal_roughness`) stored as [`Guid`]s — the same
+//! persistible identifier `MeshRenderer` uses for mesh/material. A
+//! `None` texture falls back to the scalar (`base_color` for albedo, a
+//! flat normal, scalar metal/roughness) so pre-texture projects keep
+//! their look with zero migration.
 
 use std::fmt;
 
+use ome_core::Guid;
 use ome_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 use serde::{Deserialize, Serialize};
 
@@ -39,22 +42,59 @@ pub struct Material {
     pub roughness: f32,
     #[serde(default)]
     pub emissive: f32,
+    /// Albedo/base-color map. `None` → modulate by `base_color` scalar.
+    #[serde(default)]
+    pub albedo: Option<Guid>,
+    /// Tangent-space normal map. `None` → geometric normal (flat).
+    #[serde(default)]
+    pub normal: Option<Guid>,
+    /// Packed metal (B) + roughness (G) map, glTF convention. `None` →
+    /// `metallic` / `roughness` scalars.
+    #[serde(default)]
+    pub metal_roughness: Option<Guid>,
 }
 
 impl Material {
-    /// Constructs a material with explicit values for every field.
+    /// Constructs a material with explicit PBR scalars and no textures.
+    /// Attach maps fluently with [`with_albedo`](Self::with_albedo) etc.
     pub fn new(base_color: [f32; 4], metallic: f32, roughness: f32, emissive: f32) -> Self {
         Self {
             base_color,
             metallic,
             roughness,
             emissive,
+            albedo: None,
+            normal: None,
+            metal_roughness: None,
         }
+    }
+
+    /// Attaches an albedo map by asset [`Guid`].
+    pub fn with_albedo(mut self, guid: Guid) -> Self {
+        self.albedo = Some(guid);
+        self
+    }
+
+    /// Attaches a tangent-space normal map by asset [`Guid`].
+    pub fn with_normal(mut self, guid: Guid) -> Self {
+        self.normal = Some(guid);
+        self
+    }
+
+    /// Attaches a packed metal-roughness map by asset [`Guid`].
+    pub fn with_metal_roughness(mut self, guid: Guid) -> Self {
+        self.metal_roughness = Some(guid);
+        self
     }
 
     /// Builds the GPU-side packed representation.
     pub fn to_params(&self) -> MaterialParams {
-        MaterialParams::new(self.base_color, self.metallic, self.roughness, self.emissive)
+        MaterialParams::new(
+            self.base_color,
+            self.metallic,
+            self.roughness,
+            self.emissive,
+        )
     }
 }
 
@@ -65,6 +105,9 @@ impl Default for Material {
             metallic: 0.0,
             roughness: default_roughness(),
             emissive: 0.0,
+            albedo: None,
+            normal: None,
+            metal_roughness: None,
         }
     }
 }
@@ -93,11 +136,7 @@ impl AssetLoader<Material> for MaterialLoader {
         &["ron"]
     }
 
-    fn load(
-        &self,
-        bytes: &[u8],
-        _ctx: &mut LoadContext<'_>,
-    ) -> AssetResult<Material> {
+    fn load(&self, bytes: &[u8], _ctx: &mut LoadContext<'_>) -> AssetResult<Material> {
         let text = std::str::from_utf8(bytes)
             .map_err(|e| AssetError::Loader(Box::new(MaterialParseError::Utf8(e))))?;
         let mat: Material = ron::from_str(text)
@@ -148,6 +187,22 @@ mod tests {
         assert_eq!(m.metallic, 0.0);
         assert_eq!(m.roughness, 0.5);
         assert_eq!(m.emissive, 0.0);
+        // Textures are opt-in: a fresh material references none.
+        assert_eq!(m.albedo, None);
+        assert_eq!(m.normal, None);
+        assert_eq!(m.metal_roughness, None);
+    }
+
+    #[test]
+    fn builders_attach_texture_guids() {
+        let (a, n, mr) = (Guid::new_v4(), Guid::new_v4(), Guid::new_v4());
+        let m = Material::default()
+            .with_albedo(a)
+            .with_normal(n)
+            .with_metal_roughness(mr);
+        assert_eq!(m.albedo, Some(a));
+        assert_eq!(m.normal, Some(n));
+        assert_eq!(m.metal_roughness, Some(mr));
     }
 
     #[test]
@@ -168,20 +223,54 @@ mod tests {
         let mut ctx = LoadContext {
             path: Path::new("empty.ome_material.ron"),
         };
-        let m = MaterialLoader.load(b"()", &mut ctx).expect("empty struct parses");
+        let m = MaterialLoader
+            .load(b"()", &mut ctx)
+            .expect("empty struct parses");
         assert_eq!(m, Material::default());
     }
 
     #[test]
     fn ron_full_round_trip() {
-        let original = Material::new([0.9, 0.1, 0.05, 1.0], 0.0, 0.4, 0.0);
+        let original = Material::new([0.9, 0.1, 0.05, 1.0], 0.0, 0.4, 0.0)
+            .with_albedo(Guid::new_v4())
+            .with_normal(Guid::new_v4())
+            .with_metal_roughness(Guid::new_v4());
         let text = ron::ser::to_string_pretty(&original, ron::ser::PrettyConfig::default())
             .expect("serialize");
         let mut ctx = LoadContext {
             path: Path::new("red.ome_material.ron"),
         };
-        let parsed = MaterialLoader.load(text.as_bytes(), &mut ctx).expect("parse");
+        let parsed = MaterialLoader
+            .load(text.as_bytes(), &mut ctx)
+            .expect("parse");
         assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn ron_parses_texture_guid_literals() {
+        use std::str::FromStr;
+        let text = r#"(
+    base_color: (0.8, 0.8, 0.8, 1.0),
+    albedo: Some("550e8400-e29b-41d4-a716-446655440000"),
+    metal_roughness: Some("00000000-0000-0000-0000-000000000001"),
+)"#;
+        let mut ctx = LoadContext {
+            path: Path::new("textured.ome_material.ron"),
+        };
+        let m = MaterialLoader
+            .load(text.as_bytes(), &mut ctx)
+            .expect("parse");
+        assert_eq!(
+            m.albedo,
+            Some(Guid::from_str("550e8400-e29b-41d4-a716-446655440000").unwrap())
+        );
+        assert_eq!(
+            m.metal_roughness,
+            Some(Guid::from_str("00000000-0000-0000-0000-000000000001").unwrap())
+        );
+        // Normal elided → stays None; scalars fall back to defaults.
+        assert_eq!(m.normal, None);
+        assert_eq!(m.roughness, 0.5);
     }
 
     #[test]
@@ -193,7 +282,9 @@ mod tests {
         let mut ctx = LoadContext {
             path: Path::new("partial.ome_material.ron"),
         };
-        let m = MaterialLoader.load(text.as_bytes(), &mut ctx).expect("parse");
+        let m = MaterialLoader
+            .load(text.as_bytes(), &mut ctx)
+            .expect("parse");
         assert_eq!(m.base_color, [0.1, 0.2, 0.3, 1.0]);
         assert_eq!(m.emissive, 2.0);
         // Missing fields fell back to defaults.
