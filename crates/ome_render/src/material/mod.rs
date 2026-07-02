@@ -18,12 +18,14 @@
 
 mod asset;
 mod pipeline;
+mod texture_pool;
 
 pub use asset::{Material, MaterialLoader, MaterialParseError};
 pub use pipeline::{
     DEFAULT_CAPACITY as MATERIAL_POOL_DEFAULT_CAPACITY, FALLBACK_MATERIAL_ID, MATERIAL_TYPE_NAME,
     MaterialPipeline,
 };
+pub use texture_pool::{MaterialTexturePool, TextureSlot};
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
