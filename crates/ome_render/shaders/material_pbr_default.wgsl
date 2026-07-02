@@ -30,7 +30,10 @@ struct MaterialParams {
 @group(4) @binding(3) var material_sampler: sampler;
 
 struct FsInput {
-    @builtin(position) position: vec4<f32>,
+    // @invariant: the Equal depth test against the material-depth target
+    // demands bit-identical depth from every per-material draw, so the
+    // clip position must not be recomputed differently across draws.
+    @builtin(position) @invariant position: vec4<f32>,
 }
 
 // Fullscreen triangle cover. Emits this pass's material id as clip-space
