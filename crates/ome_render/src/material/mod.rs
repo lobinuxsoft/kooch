@@ -21,25 +21,33 @@ mod pipeline;
 
 pub use asset::{Material, MaterialLoader, MaterialParseError};
 pub use pipeline::{
-    MaterialPipeline, DEFAULT_CAPACITY as MATERIAL_POOL_DEFAULT_CAPACITY, FALLBACK_MATERIAL_ID,
-    MATERIAL_TYPE_NAME,
+    DEFAULT_CAPACITY as MATERIAL_POOL_DEFAULT_CAPACITY, FALLBACK_MATERIAL_ID, MATERIAL_TYPE_NAME,
+    MaterialPipeline,
 };
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
+/// Sentinel written to a `texture_indices` slot when the material has
+/// no map for that channel. The shader tests against this to decide
+/// whether to sample or fall back to the scalar coefficient.
+pub const NO_TEXTURE: u32 = u32::MAX;
+
 /// PBR scalar parameters for a single material slot.
 ///
-/// Layout (32 B, multiple of 16 for std140):
+/// Layout (48 B, multiple of 16 for std140):
 /// - `base_color` (vec4): RGB albedo + alpha (linear-space).
 /// - `metallic_roughness_emissive_pad` (vec4): metallic, roughness,
 ///   emissive intensity, _pad. Packed together so the struct stays
 ///   16-byte aligned for the storage-buffer stride.
+/// - `texture_indices` (uvec4): albedo, normal, metal_roughness pool
+///   indices + _pad. [`NO_TEXTURE`] means "no map — use the scalar".
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MaterialParams {
     pub base_color: [f32; 4],
     pub metallic_roughness_emissive_pad: [f32; 4],
+    pub texture_indices: [u32; 4],
 }
 
 impl Default for MaterialParams {
@@ -53,7 +61,15 @@ impl MaterialParams {
         Self {
             base_color,
             metallic_roughness_emissive_pad: [metallic, roughness, emissive, 0.0],
+            texture_indices: [NO_TEXTURE; 4],
         }
+    }
+
+    /// Assigns the resolved pool indices for the three texture channels.
+    /// Pass [`NO_TEXTURE`] for any channel without a map.
+    pub fn with_texture_indices(mut self, albedo: u32, normal: u32, metal_roughness: u32) -> Self {
+        self.texture_indices = [albedo, normal, metal_roughness, 0];
+        self
     }
 
     pub fn base_color(&self) -> [f32; 4] {
@@ -70,6 +86,18 @@ impl MaterialParams {
 
     pub fn emissive(&self) -> f32 {
         self.metallic_roughness_emissive_pad[2]
+    }
+
+    pub fn albedo_index(&self) -> u32 {
+        self.texture_indices[0]
+    }
+
+    pub fn normal_index(&self) -> u32 {
+        self.texture_indices[1]
+    }
+
+    pub fn metal_roughness_index(&self) -> u32 {
+        self.texture_indices[2]
     }
 }
 
@@ -88,7 +116,10 @@ impl MaterialPool {
     /// initial values. `materials` must be non-empty — wgpu rejects
     /// zero-sized storage buffer bindings.
     pub fn new(device: &wgpu::Device, materials: &[MaterialParams]) -> Self {
-        assert!(!materials.is_empty(), "MaterialPool requires at least one material");
+        assert!(
+            !materials.is_empty(),
+            "MaterialPool requires at least one material"
+        );
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("material_pool"),
             contents: bytemuck::cast_slice(materials),
@@ -120,10 +151,7 @@ impl MaterialPool {
         })
     }
 
-    pub fn bind_group(
-        &self,
-        device: &wgpu::Device,
-    ) -> wgpu::BindGroup {
+    pub fn bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("material_pool_bg"),
             layout: &self.bgl,
@@ -160,9 +188,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn material_params_layout_is_pod_32_bytes() {
-        // 16 B base_color + 16 B (metallic, rough, emissive, pad) = 32 B
-        assert_eq!(std::mem::size_of::<MaterialParams>(), 32);
+    fn material_params_layout_is_pod_48_bytes() {
+        // 16 B base_color + 16 B (metallic, rough, emissive, pad)
+        // + 16 B (albedo, normal, metal_rough, pad) = 48 B.
+        assert_eq!(std::mem::size_of::<MaterialParams>(), 48);
+        assert_eq!(std::mem::align_of::<MaterialParams>(), 4);
     }
 
     #[test]
@@ -172,6 +202,19 @@ mod tests {
         assert_eq!(m.metallic(), 0.0);
         assert_eq!(m.roughness(), 0.5);
         assert_eq!(m.emissive(), 0.0);
+        // No maps by default — every channel carries the sentinel.
+        assert_eq!(m.albedo_index(), NO_TEXTURE);
+        assert_eq!(m.normal_index(), NO_TEXTURE);
+        assert_eq!(m.metal_roughness_index(), NO_TEXTURE);
+    }
+
+    #[test]
+    fn texture_indices_round_trip_with_sentinel() {
+        let m = MaterialParams::default().with_texture_indices(3, NO_TEXTURE, 7);
+        assert_eq!(m.albedo_index(), 3);
+        assert_eq!(m.normal_index(), NO_TEXTURE);
+        assert_eq!(m.metal_roughness_index(), 7);
+        assert_eq!(m.texture_indices[3], 0, "pad slot stays zero");
     }
 
     #[test]

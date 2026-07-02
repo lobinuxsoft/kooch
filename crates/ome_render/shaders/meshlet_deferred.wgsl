@@ -37,6 +37,11 @@ struct ScreenUniforms {
 struct MaterialParams {
     base_color: vec4<f32>,
     metallic_roughness_emissive_pad: vec4<f32>,
+    // albedo, normal, metal_roughness pool indices + pad.
+    // 0xffffffff = no map (fall back to scalars). Sampled once the
+    // two-pass material path lands (#440); kept here so the storage
+    // stride matches MaterialParams (48 B) today.
+    texture_indices: vec4<u32>,
 }
 
 struct MeshVertexStored {
