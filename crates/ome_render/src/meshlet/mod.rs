@@ -41,6 +41,7 @@ mod drawer;
 mod gpu_meshlet;
 mod gpu_timers;
 mod loader;
+mod material_pass;
 mod pool;
 mod reject_overlay;
 mod render_stage;
@@ -51,38 +52,35 @@ mod vbuf64_stage;
 mod vis_buffer;
 
 pub use asset::{
-    MeshletDescriptor, MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES,
-    MESHLET_GROUP_NONE, MESHLET_ROOT_PARENT,
+    DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES, MESHLET_GROUP_NONE, MESHLET_ROOT_PARENT,
+    MeshletDescriptor, MeshletMesh,
 };
 pub use blit::MeshletBlit;
 pub use builder::{
-    build_default_meshlets, build_meshlets_from_mesh, build_meshlets_lod_chain, LodConfig,
-    MeshletBuildError,
-};
-pub use cull::{
-    camera_in_backface_cone, extract_frustum_planes, sphere_outside_frustum, CullParams,
+    LodConfig, MeshletBuildError, build_default_meshlets, build_meshlets_from_mesh,
+    build_meshlets_lod_chain,
 };
 pub use caps::MeshletDebugCaps;
+pub use cull::{
+    CullParams, camera_in_backface_cone, extract_frustum_planes, sphere_outside_frustum,
+};
 pub use debug::{MeshletDebugMode, MeshletLodSettings};
-pub use deferred::{MeshletDeferredShader, DEFERRED_COLOR_FORMAT};
+pub use deferred::{DEFERRED_COLOR_FORMAT, MeshletDeferredShader};
 pub use dispatcher::{DrawIndirectArgs, HiZTestParams, MeshletCull};
 pub use drawer::MeshletDrawer;
 pub use gpu_meshlet::{
-    binding, meshlet_bind_group, meshlet_bind_group_layout, pool_meshlet_bind_group,
-    GpuMeshletMesh,
+    GpuMeshletMesh, binding, meshlet_bind_group, meshlet_bind_group_layout, pool_meshlet_bind_group,
 };
 pub use gpu_timers::MeshletGpuTimers;
 pub use loader::MeshletMeshLoader;
+pub use material_pass::{MATERIAL_DEPTH_FORMAT, RESOLVE_MATERIAL_DEPTH_SHADER};
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshDescriptor, MeshHandle};
 pub use reject_overlay::{MeshletRejectOverlay, RejectReason};
-pub use render_stage::{
-    MeshletRenderStage, MeshletRenderStageConfig, MeshletRenderStats,
-};
+pub use render_stage::{MeshletRenderStage, MeshletRenderStageConfig, MeshletRenderStats};
 pub use scene::{
-    decode_scene_visible_id, encode_scene_visible_id, MeshInstance, MeshletScene,
-    SceneCullParams,
+    MeshInstance, MeshletScene, SceneCullParams, decode_scene_visible_id, encode_scene_visible_id,
 };
 pub use stage_counters::{CullStageCounts, MeshletStageCounters};
-pub use system::{instance_at_origin, MeshletPipeline};
+pub use system::{MeshletPipeline, instance_at_origin};
 pub use vbuf64_stage::Vbuf64Stage;
 pub use vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
