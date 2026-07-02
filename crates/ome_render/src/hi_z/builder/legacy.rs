@@ -1,4 +1,4 @@
-use super::super::{HI_Z_FORMAT, WORKGROUP_SIZE, mip_size};
+use super::super::{mip_size, HI_Z_FORMAT, WORKGROUP_SIZE};
 use super::types::HiZ;
 
 impl HiZ {

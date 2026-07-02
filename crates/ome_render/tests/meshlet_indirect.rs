@@ -6,7 +6,7 @@ mod common;
 
 use common::{build_cube_mesh, read_u32, try_acquire_device};
 use glam::{Mat4, Vec3};
-use ome_render::meshlet::{CullParams, DrawIndirectArgs, MeshletCull, build_default_meshlets};
+use ome_render::meshlet::{build_default_meshlets, CullParams, DrawIndirectArgs, MeshletCull};
 
 fn read_indirect_args(
     device: &wgpu::Device,
@@ -135,8 +135,10 @@ fn indirect_args_resets_between_dispatches() {
 
     let cam = Vec3::new(0.0, 0.0, 3.0);
     let visible_view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
-    let visible_proj = ome_render::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
-    let visible_params = CullParams::new(visible_proj * visible_view, cam, gpu_mesh.meshlet_count);
+    let visible_proj =
+        ome_render::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let visible_params =
+        CullParams::new(visible_proj * visible_view, cam, gpu_mesh.meshlet_count);
 
     let occluded_view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 100.0), Vec3::Y);
     let occluded_params =

@@ -10,7 +10,7 @@ use crate::actions::EditorAction;
 use crate::icons;
 use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
 
-use super::widgets::{AssetCatalogEntry, choices_for, draw_readonly_value, draw_value_widget};
+use super::widgets::{choices_for, draw_readonly_value, draw_value_widget, AssetCatalogEntry};
 
 /// A field value across multiple selected entities.
 pub(super) enum MultiFieldValue {
@@ -105,12 +105,14 @@ pub(super) fn gather_multi_component_info(
             let merged: Vec<(String, MultiFieldValue)> = first
                 .iter()
                 .map(|(name, first_val)| {
-                    let all_equal = field_lists[1..].iter().all(|fields| {
-                        fields
-                            .iter()
-                            .find(|(n, _)| n == name)
-                            .is_some_and(|(_, v)| v == first_val)
-                    });
+                    let all_equal = field_lists[1..]
+                        .iter()
+                        .all(|fields| {
+                            fields
+                                .iter()
+                                .find(|(n, _)| n == name)
+                                .is_some_and(|(_, v)| v == first_val)
+                        });
                     let multi_val = if all_equal {
                         MultiFieldValue::Uniform(first_val.clone())
                     } else {
@@ -202,62 +204,70 @@ pub(super) fn draw_multi_entity_inspector(
     egui::ScrollArea::vertical().show(ui, |ui| {
         for comp in &multi_info {
             let is_read_only = comp.visibility == InspectorVisibility::ReadOnly;
-            let id = ui.make_persistent_id(format!("multi_comp_{:?}", comp.type_id));
+            let id =
+                ui.make_persistent_id(format!("multi_comp_{:?}", comp.type_id));
 
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-                .show_header(ui, |ui| {
-                    let label = if comp.present_count < comp.total_count {
-                        format!(
-                            "{} {} ({}/{})",
-                            icons::PUZZLE_PIECE,
-                            &comp.short_name,
-                            comp.present_count,
-                            comp.total_count
-                        )
-                    } else {
-                        format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name)
-                    };
-                    ui.strong(label);
+            egui::collapsing_header::CollapsingState::load_with_default_open(
+                ui.ctx(),
+                id,
+                true,
+            )
+            .show_header(ui, |ui| {
+                let label = if comp.present_count < comp.total_count {
+                    format!(
+                        "{} {} ({}/{})",
+                        icons::PUZZLE_PIECE,
+                        &comp.short_name,
+                        comp.present_count,
+                        comp.total_count
+                    )
+                } else {
+                    format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name)
+                };
+                ui.strong(label);
 
-                    // Removal is always available regardless of visibility:
-                    // `ReadOnly` gates field edits, not component lifecycle.
-                    if ui
-                        .small_button(icons::X)
-                        .on_hover_text("Remove from all selected")
-                        .clicked()
-                    {
-                        let targets =
-                            selected_entities_with_component(entities, selected, comp.type_id);
-                        for entity in targets {
-                            actions.push(EditorAction::RemoveComponent {
-                                entity,
-                                type_id: comp.type_id,
-                            });
-                        }
+                // Removal is always available regardless of visibility:
+                // `ReadOnly` gates field edits, not component lifecycle.
+                if ui
+                    .small_button(icons::X)
+                    .on_hover_text("Remove from all selected")
+                    .clicked()
+                {
+                    let targets =
+                        selected_entities_with_component(entities, selected, comp.type_id);
+                    for entity in targets {
+                        actions.push(EditorAction::RemoveComponent {
+                            entity,
+                            type_id: comp.type_id,
+                        });
                     }
-                })
-                .body(|ui| {
-                    if let Some(fields) = &comp.fields {
-                        if fields.is_empty() {
-                            ui.weak("(no fields)");
-                        } else {
-                            let targets =
-                                selected_entities_with_component(entities, selected, comp.type_id);
-                            draw_multi_reflected_fields(
-                                ui,
-                                comp.type_id,
-                                fields,
-                                comp.field_metas,
-                                &targets,
-                                is_read_only,
-                                actions,
-                                asset_catalog,
-                            );
-                        }
+                }
+            })
+            .body(|ui| {
+                if let Some(fields) = &comp.fields {
+                    if fields.is_empty() {
+                        ui.weak("(no fields)");
                     } else {
-                        ui.weak("(no reflection)");
+                        let targets = selected_entities_with_component(
+                            entities,
+                            selected,
+                            comp.type_id,
+                        );
+                        draw_multi_reflected_fields(
+                            ui,
+                            comp.type_id,
+                            fields,
+                            comp.field_metas,
+                            &targets,
+                            is_read_only,
+                            actions,
+                            asset_catalog,
+                        );
                     }
-                });
+                } else {
+                    ui.weak("(no reflection)");
+                }
+            });
         }
     });
 }

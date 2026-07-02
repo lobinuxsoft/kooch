@@ -17,7 +17,6 @@ mod common;
 
 use common::{build_cube_mesh, try_acquire_device};
 use glam::{Mat4, Vec3};
-use ome_core::Guid;
 use ome_core::assets::Assets;
 use ome_core::resource::Resources;
 use ome_ecs::allocator::EntityAllocator;
@@ -27,9 +26,10 @@ use ome_ecs::component::registry::ComponentRegistry;
 use ome_ecs::hierarchy::global_transform::GlobalTransform;
 use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::query::AccessTracker;
+use ome_core::Guid;
 use ome_render::material::{Material, MaterialPipeline};
 use ome_render::meshlet::{
-    MeshletMesh, MeshletRenderStage, MeshletRenderStageConfig, build_default_meshlets,
+    build_default_meshlets, MeshletMesh, MeshletRenderStage, MeshletRenderStageConfig,
 };
 
 fn ecs_test_resources() -> Resources {
@@ -174,7 +174,13 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
     let view = Mat4::look_at_rh(cam_pos, Vec3::ZERO, Vec3::Y);
     let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
 
-    let stats = stage.render_with_assets(&device, &queue, &resources, proj * view, cam_pos);
+    let stats = stage.render_with_assets(
+        &device,
+        &queue,
+        &resources,
+        proj * view,
+        cam_pos,
+    );
     assert_eq!(
         stats.instances_uploaded, 2,
         "stage should ingest 2 ECS entities"
@@ -252,7 +258,13 @@ fn render_stage_with_no_entities_returns_zero_stats() {
     let view = Mat4::look_at_rh(cam_pos, Vec3::ZERO, Vec3::Y);
     let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
 
-    let stats = stage.render_with_assets(&device, &queue, &resources, proj * view, cam_pos);
+    let stats = stage.render_with_assets(
+        &device,
+        &queue,
+        &resources,
+        proj * view,
+        cam_pos,
+    );
     assert_eq!(stats.instances_uploaded, 0);
     assert_eq!(stats.cull_threads, 0);
 }

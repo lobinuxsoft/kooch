@@ -224,7 +224,11 @@ pub(super) fn cleanup_tmpdir(dir: &Path) {
 /// the supplied URI for buffer 0, plus `<dir>/scene.bin` containing the
 /// triangle's binary payload. The URI is the verbatim string the
 /// document uses — useful for traversal / absolute-path hostile cases.
-pub(super) fn write_separate_gltf_pair(dir: &Path, name: &str, uri: &str) -> (PathBuf, PathBuf) {
+pub(super) fn write_separate_gltf_pair(
+    dir: &Path,
+    name: &str,
+    uri: &str,
+) -> (PathBuf, PathBuf) {
     let indices: [u32; 3] = [0, 1, 2];
     let positions: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     let normals: [[f32; 3]; 3] = [[0.0, 0.0, 1.0]; 3];

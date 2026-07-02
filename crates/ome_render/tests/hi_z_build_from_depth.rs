@@ -12,7 +12,7 @@
 mod common;
 
 use common::try_acquire_device;
-use ome_render::hi_z::{HiZ, mip_size};
+use ome_render::hi_z::{mip_size, HiZ};
 
 const SIZE: u32 = 64;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -112,7 +112,12 @@ fn build_from_depth_roundtrip_with_cleared_depth_attachment() {
     );
 }
 
-fn read_mip(device: &wgpu::Device, queue: &wgpu::Queue, hi_z: &HiZ, mip: u32) -> Vec<f32> {
+fn read_mip(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    hi_z: &HiZ,
+    mip: u32,
+) -> Vec<f32> {
     let (w, h) = mip_size(SIZE, SIZE, mip);
     let bytes_per_row = (w * 4).max(256);
     let staging = device.create_buffer(&wgpu::BufferDescriptor {

@@ -63,11 +63,7 @@ pub(crate) fn frame_timer_system(resources: &mut Resources) {
             }
             state.frame_ms_history.push_back(frame_ms);
 
-            let fps_instant = if frame_ms > 0.0 {
-                1000.0 / frame_ms
-            } else {
-                0.0
-            };
+            let fps_instant = if frame_ms > 0.0 { 1000.0 / frame_ms } else { 0.0 };
             let avg_ms: f32 = state.frame_ms_history.iter().copied().sum::<f32>()
                 / state.frame_ms_history.len() as f32;
             let fps_avg = if avg_ms > 0.0 { 1000.0 / avg_ms } else { 0.0 };
@@ -123,10 +119,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
         frame_timer_system(&mut resources);
         let stats = resources.get::<EditorPerfStats>().unwrap();
-        assert!(
-            stats.fps_instant > 0.0,
-            "FPS instant must be populated after the second frame"
-        );
+        assert!(stats.fps_instant > 0.0, "FPS instant must be populated after the second frame");
         assert!(stats.fps_instant.is_finite());
         assert!(stats.fps_avg > 0.0);
         assert!(stats.fps_avg.is_finite());
@@ -140,14 +133,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(2));
         record_cpu_frame_ms(&mut resources, start);
         let stats = resources.get::<EditorPerfStats>().unwrap();
-        assert!(
-            stats.cpu_frame_ms >= 2.0,
-            "expected ≥ 2 ms, got {}",
-            stats.cpu_frame_ms
-        );
-        assert!(
-            stats.cpu_frame_ms < 1000.0,
-            "elapsed read should not be wildly off"
-        );
+        assert!(stats.cpu_frame_ms >= 2.0, "expected ≥ 2 ms, got {}", stats.cpu_frame_ms);
+        assert!(stats.cpu_frame_ms < 1000.0, "elapsed read should not be wildly off");
     }
 }

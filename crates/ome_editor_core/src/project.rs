@@ -308,7 +308,10 @@ pub fn ensure_default_scene(project_root: &Path) -> Result<PathBuf, ProjectError
                 components: vec![
                     ComponentDescription {
                         type_name: "ome_ecs::name::Name".to_owned(),
-                        fields: vec![("value".to_owned(), ReflectValue::String("Sky".to_owned()))],
+                        fields: vec![(
+                            "value".to_owned(),
+                            ReflectValue::String("Sky".to_owned()),
+                        )],
                     },
                     ComponentDescription {
                         type_name: "ome_ecs::sky_renderer::SkyRenderer".to_owned(),

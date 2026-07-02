@@ -8,7 +8,9 @@ use ome_ecs::archetype_registry::ArchetypeRegistry;
 use crate::queries::{
     gather_archetype_data, gather_component_types, gather_entity_data, gather_reflected_types,
 };
-use crate::state::{ArchetypeDisplayInfo, ComponentTypeInfo, EntityDisplayInfo, ReflectedTypeInfo};
+use crate::state::{
+    ArchetypeDisplayInfo, ComponentTypeInfo, EntityDisplayInfo, ReflectedTypeInfo,
+};
 
 pub(super) struct FrameDisplayData {
     pub(super) entities: Vec<EntityDisplayInfo>,
@@ -42,7 +44,8 @@ impl FrameDisplayData {
         let archetype_count = resources
             .get::<ArchetypeRegistry>()
             .map_or(0, |a| a.archetype_count());
-        let active_archetype_count = archetypes.iter().filter(|a| a.entity_count > 0).count();
+        let active_archetype_count =
+            archetypes.iter().filter(|a| a.entity_count > 0).count();
         Self {
             entities,
             archetypes,

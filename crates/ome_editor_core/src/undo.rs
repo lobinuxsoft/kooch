@@ -18,8 +18,8 @@ use ome_core::resource::Resources;
 use ome_ecs::reflect::ReflectValue;
 
 pub(crate) use commands::{
-    AddComponentCommand, DespawnCommand, DuplicateCommand, RemoveComponentCommand, SetFieldCommand,
-    SpawnCommand, SpawnMeshCommand, TransformEditCommand,
+    AddComponentCommand, DespawnCommand, DuplicateCommand, RemoveComponentCommand,
+    SetFieldCommand, SpawnCommand, SpawnMeshCommand, TransformEditCommand,
 };
 
 /// A snapshot of all reflected field values for a single component on an entity.

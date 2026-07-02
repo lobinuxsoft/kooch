@@ -1,8 +1,8 @@
 use crate::meshlet::cull::CullParams;
 use crate::meshlet::gpu_meshlet::GpuMeshletMesh;
 
-use super::super::MeshletCull;
 use super::super::types::HiZTestParams;
+use super::super::MeshletCull;
 
 impl MeshletCull {
     /// Dispatches the cull pass for `mesh` against `params`. Resets

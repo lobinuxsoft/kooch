@@ -16,20 +16,12 @@ fn cube_mesh() -> Mesh {
         [-0.5, 0.5, 0.5],
     ];
     let face_normals = [
-        [0.0, 0.0, -1.0],
-        [0.0, 0.0, 1.0],
-        [0.0, -1.0, 0.0],
-        [0.0, 1.0, 0.0],
-        [-1.0, 0.0, 0.0],
-        [1.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0],
+        [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
     ];
     let face_indices: [[usize; 4]; 6] = [
-        [0, 1, 2, 3],
-        [4, 5, 6, 7],
-        [0, 1, 5, 4],
-        [3, 2, 6, 7],
-        [0, 3, 7, 4],
-        [1, 2, 6, 5],
+        [0, 1, 2, 3], [4, 5, 6, 7], [0, 1, 5, 4],
+        [3, 2, 6, 7], [0, 3, 7, 4], [1, 2, 6, 5],
     ];
     let mut vertices = Vec::with_capacity(24);
     let mut indices = Vec::with_capacity(36);
@@ -43,7 +35,10 @@ fn cube_mesh() -> Mesh {
                 uv: [0.0, 0.0],
             });
         }
-        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        indices.extend_from_slice(&[
+            base, base + 1, base + 2,
+            base, base + 2, base + 3,
+        ]);
     }
     Mesh::from_arrays(vertices, indices)
 }

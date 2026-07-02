@@ -52,7 +52,9 @@ pub(crate) fn load_layout() -> Option<DockState<EditorTab>> {
             Some(state)
         }
         Err(e) => {
-            tracing::warn!("Failed to parse dock layout at {path:?}: {e}. Using default layout.");
+            tracing::warn!(
+                "Failed to parse dock layout at {path:?}: {e}. Using default layout."
+            );
             None
         }
     }
@@ -155,7 +157,8 @@ mod tests {
     fn round_trip_preserves_default_layout() {
         let original = default_dock_state();
         let serialized = ron::ser::to_string(&original).expect("serialize default");
-        let parsed: DockState<EditorTab> = ron::from_str(&serialized).expect("parse round-trip");
+        let parsed: DockState<EditorTab> =
+            ron::from_str(&serialized).expect("parse round-trip");
         // We can't trivially `==` two DockStates (egui_dock doesn't impl Eq),
         // but a re-serialization should produce the same string.
         let reserialized = ron::ser::to_string(&parsed).expect("reserialize");

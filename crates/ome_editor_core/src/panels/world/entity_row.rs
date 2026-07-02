@@ -60,8 +60,8 @@ pub(super) fn draw_entity_row(
     let indented_label = format!("{indent_str}{label}");
 
     // Check if this entity is the one being dragged.
-    let being_dragged =
-        egui::DragAndDrop::payload::<Entity>(ui.ctx()).is_some_and(|p| *p == info.entity);
+    let being_dragged = egui::DragAndDrop::payload::<Entity>(ui.ctx())
+        .is_some_and(|p| *p == info.entity);
 
     // Custom selectable label with click + drag sensing (single widget
     // avoids the drag overlay stealing click events from selection).
@@ -106,16 +106,7 @@ pub(super) fn draw_entity_row(
     resp.dnd_set_drag_payload(info.entity);
 
     handle_drop_targets(ui, &resp, info, entities, actions, being_dragged);
-    handle_click(
-        &resp,
-        ui,
-        idx,
-        info,
-        entities,
-        selected,
-        last_clicked_index,
-        is_selected,
-    );
+    handle_click(&resp, ui, idx, info, entities, selected, last_clicked_index, is_selected);
     handle_context_menu(&resp, info, entities, selected, reflected_types, actions);
 }
 
@@ -139,11 +130,7 @@ fn display_name_for(info: &EntityDisplayInfo) -> Option<String> {
 
 fn build_label(info: &EntityDisplayInfo, display_name: Option<&str>) -> String {
     let has_children = !info.children.is_empty();
-    let icon = if has_children {
-        icons::TREE_STRUCTURE
-    } else {
-        icons::CUBE
-    };
+    let icon = if has_children { icons::TREE_STRUCTURE } else { icons::CUBE };
 
     if let Some(name) = display_name {
         format!("{} {}  [{}]", icon, name, info.components.len())
@@ -311,11 +298,15 @@ fn handle_context_menu(
             // Multi-select: add component to all selected.
             let all: Vec<&ReflectedTypeInfo> = reflected_types.iter().collect();
             ui.menu_button(format!("{} Add Component to all", icons::PLUS), |ui| {
-                crate::panels::add_component_menu::draw_categorized(ui, &all, |type_id| {
-                    for &entity in selected.iter() {
-                        actions.push(EditorAction::AddComponent { entity, type_id });
-                    }
-                });
+                crate::panels::add_component_menu::draw_categorized(
+                    ui,
+                    &all,
+                    |type_id| {
+                        for &entity in selected.iter() {
+                            actions.push(EditorAction::AddComponent { entity, type_id });
+                        }
+                    },
+                );
             });
 
             // Multi-select: remove shared component from all selected.
@@ -330,9 +321,9 @@ fn handle_context_menu(
                     .components
                     .iter()
                     .filter(|c| {
-                        selected_infos[1..]
-                            .iter()
-                            .all(|info| info.components.iter().any(|ic| ic.type_id == c.type_id))
+                        selected_infos[1..].iter().all(|info| {
+                            info.components.iter().any(|ic| ic.type_id == c.type_id)
+                        })
                     })
                     .map(|c| (c.type_id, c.short_name.clone()))
                     .collect();

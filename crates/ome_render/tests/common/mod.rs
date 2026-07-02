@@ -28,27 +28,30 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     SHARED_DEVICE
         .get_or_init(|| {
             let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
+                backends: wgpu::Backends::VULKAN
+                    | wgpu::Backends::DX12
+                    | wgpu::Backends::METAL,
                 flags: wgpu::InstanceFlags::default(),
                 backend_options: wgpu::BackendOptions::default(),
                 memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
                 display: None,
             });
 
-            let adapter =
-                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            let adapter = pollster::block_on(instance.request_adapter(
+                &wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
                     force_fallback_adapter: false,
-                }))
-                .ok()?;
+                },
+            ))
+            .ok()?;
 
             // Hi-Z SPD pyramid build (#486) needs 12 storage texture
             // slots in one bind group; default wgpu limit is 4. Raise
             // it here mirroring the production GpuContext setup.
             let mut limits = wgpu::Limits::default();
-            limits.max_storage_textures_per_shader_stage =
-                16.min(adapter.limits().max_storage_textures_per_shader_stage);
+            limits.max_storage_textures_per_shader_stage = 16
+                .min(adapter.limits().max_storage_textures_per_shader_stage);
             // #454.4 cull pipeline binds 5 groups (cull, pool, scene,
             // group_err, debug); the production GpuContext clamps to
             // 6 (TARGET_MAX_BIND_GROUPS in ome_core). Mirror it here
@@ -59,8 +62,8 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
             // instances + group_max_err + reject_reasons +
             // stage_counters). wgpu's default 8 fails shader-module
             // creation. Mirror TARGET_MAX_STORAGE_BUFFERS_PER_STAGE.
-            limits.max_storage_buffers_per_shader_stage =
-                16.min(adapter.limits().max_storage_buffers_per_shader_stage);
+            limits.max_storage_buffers_per_shader_stage = 16
+                .min(adapter.limits().max_storage_buffers_per_shader_stage);
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("ome_render_test_device"),
                 required_features: wgpu::Features::empty(),
@@ -87,7 +90,8 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// fine. Mirrors that helper's limits (storage textures / bind
 /// groups / storage buffers) so the cull / vbuf / Hi-Z pipelines
 /// compile against this device.
-pub fn try_acquire_device_with_timer() -> Option<(wgpu::Device, wgpu::Queue, wgpu::Adapter)> {
+pub fn try_acquire_device_with_timer(
+) -> Option<(wgpu::Device, wgpu::Queue, wgpu::Adapter)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
         flags: wgpu::InstanceFlags::default(),
@@ -96,15 +100,18 @@ pub fn try_acquire_device_with_timer() -> Option<(wgpu::Device, wgpu::Queue, wgp
         display: None,
     });
 
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
+    let adapter = pollster::block_on(instance.request_adapter(
+        &wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        },
+    ))
     .ok()?;
 
     let features = adapter.features();
-    let needed = wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+    let needed = wgpu::Features::TIMESTAMP_QUERY
+        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
     if !features.contains(needed) {
         return None;
     }
@@ -115,14 +122,16 @@ pub fn try_acquire_device_with_timer() -> Option<(wgpu::Device, wgpu::Queue, wgp
     limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
     limits.max_storage_buffers_per_shader_stage =
         16.min(adapter.limits().max_storage_buffers_per_shader_stage);
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("ome_render_bench_device"),
-        required_features: needed,
-        required_limits: limits,
-        memory_hints: wgpu::MemoryHints::default(),
-        trace: wgpu::Trace::Off,
-        experimental_features: wgpu::ExperimentalFeatures::default(),
-    }))
+    let (device, queue) = pollster::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some("ome_render_bench_device"),
+            required_features: needed,
+            required_limits: limits,
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::Off,
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+        },
+    ))
     .ok()?;
     Some((device, queue, adapter))
 }
@@ -258,8 +267,7 @@ pub fn read_buffer_to_vec<T: Pod + Default + Clone>(
     rx.recv().unwrap().unwrap();
     let bytes = slice.get_mapped_range();
     let mut out = vec![T::default(); count as usize];
-    out.as_mut_slice()
-        .clone_from_slice(bytemuck::cast_slice::<u8, T>(&bytes));
+    out.as_mut_slice().clone_from_slice(bytemuck::cast_slice::<u8, T>(&bytes));
     out
 }
 

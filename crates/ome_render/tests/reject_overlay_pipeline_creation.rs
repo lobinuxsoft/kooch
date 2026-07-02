@@ -13,35 +13,19 @@
 //! same shape mismatch trips here first.
 
 use glam::{Mat4, Vec3};
-use ome_render::mesh::{Mesh, MeshVertex};
 use ome_render::meshlet::{
-    DEFAULT_MAX_TRIANGLES, GlobalMeshPool, MeshInstance, MeshletCull, MeshletRejectOverlay,
-    MeshletScene, RejectReason, build_default_meshlets,
+    build_default_meshlets, GlobalMeshPool, MeshInstance, MeshletCull, MeshletRejectOverlay,
+    MeshletScene, RejectReason, DEFAULT_MAX_TRIANGLES,
 };
+use ome_render::mesh::{Mesh, MeshVertex};
 use std::sync::{Arc, Mutex};
 
 fn build_unit_quad() -> Mesh {
     let vertices = vec![
-        MeshVertex {
-            position: [-0.5, -0.5, 0.0],
-            normal: [0.0, 0.0, 1.0],
-            uv: [0.0, 0.0],
-        },
-        MeshVertex {
-            position: [0.5, -0.5, 0.0],
-            normal: [0.0, 0.0, 1.0],
-            uv: [1.0, 0.0],
-        },
-        MeshVertex {
-            position: [0.5, 0.5, 0.0],
-            normal: [0.0, 0.0, 1.0],
-            uv: [1.0, 1.0],
-        },
-        MeshVertex {
-            position: [-0.5, 0.5, 0.0],
-            normal: [0.0, 0.0, 1.0],
-            uv: [0.0, 1.0],
-        },
+        MeshVertex { position: [-0.5, -0.5, 0.0], normal: [0.0, 0.0, 1.0], uv: [0.0, 0.0] },
+        MeshVertex { position: [0.5, -0.5, 0.0], normal: [0.0, 0.0, 1.0], uv: [1.0, 0.0] },
+        MeshVertex { position: [0.5, 0.5, 0.0], normal: [0.0, 0.0, 1.0], uv: [1.0, 1.0] },
+        MeshVertex { position: [-0.5, 0.5, 0.0], normal: [0.0, 0.0, 1.0], uv: [0.0, 1.0] },
     ];
     let indices = vec![0, 1, 2, 0, 2, 3];
     Mesh::from_arrays(vertices, indices)
@@ -65,16 +49,16 @@ fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     // Reject overlay needs TEXTURE_ATOMIC for parity with the
     // density / overdraw heatmaps, plus the Rgba8Unorm storage
     // format the deferred shader already uses.
-    let needed =
-        wgpu::Features::TEXTURE_ATOMIC | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+    let needed = wgpu::Features::TEXTURE_ATOMIC
+        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
     if !adapter.features().contains(needed) {
         return None;
     }
 
     let mut limits = wgpu::Limits::default();
     limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
-    limits.max_storage_buffers_per_shader_stage =
-        16.min(adapter.limits().max_storage_buffers_per_shader_stage);
+    limits.max_storage_buffers_per_shader_stage = 16
+        .min(adapter.limits().max_storage_buffers_per_shader_stage);
 
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("reject_overlay_creation_test_device"),
@@ -128,11 +112,7 @@ fn reject_overlay_creates_without_uncaptured_errors() {
     let (color_texture, color_view) = {
         let tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("reject_overlay_test_color"),
-            size: wgpu::Extent3d {
-                width: 64,
-                height: 64,
-                depth_or_array_layers: 1,
-            },
+            size: wgpu::Extent3d { width: 64, height: 64, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,

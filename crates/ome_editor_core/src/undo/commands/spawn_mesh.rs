@@ -124,7 +124,8 @@ impl SpawnMeshCommand {
                 .unwrap_or(false);
             if revived {
                 if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                    archetypes.register_entity(e, ome_ecs::archetype::ArchetypeId::EMPTY);
+                    archetypes
+                        .register_entity(e, ome_ecs::archetype::ArchetypeId::EMPTY);
                 }
                 e
             } else {
@@ -163,7 +164,8 @@ impl SpawnMeshCommand {
             if inserted {
                 if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
                     if let Some(current) = archetypes.entity_archetype(entity) {
-                        let new_arch = archetypes.archetype_after_add_dynamic(current, *type_id);
+                        let new_arch =
+                            archetypes.archetype_after_add_dynamic(current, *type_id);
                         archetypes.register_entity(entity, new_arch);
                     }
                 }

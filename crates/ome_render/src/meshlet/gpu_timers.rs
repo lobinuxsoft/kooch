@@ -210,7 +210,9 @@ impl MeshletGpuTimers {
     /// its readback (typically 1-2 frames after `enable_gpu_timers`
     /// is called).
     pub fn last_frame_ms(&self) -> Option<f32> {
-        self.last_stage_timings_ms.as_ref().map(|v| v.iter().sum())
+        self.last_stage_timings_ms
+            .as_ref()
+            .map(|v| v.iter().sum())
     }
 
     /// Duration of stage `stage_idx` from the most recent successful
@@ -251,7 +253,8 @@ impl MeshletGpuTimers {
                         let start = ticks[stage * 2];
                         let end = ticks[stage * 2 + 1];
                         let delta = end.saturating_sub(start);
-                        let ms = (delta as f64 * self.timestamp_period_ns as f64) / 1_000_000.0;
+                        let ms = (delta as f64 * self.timestamp_period_ns as f64)
+                            / 1_000_000.0;
                         timings.push(ms as f32);
                     }
                     self.last_stage_timings_ms = Some(timings);
@@ -285,7 +288,11 @@ impl MeshletGpuTimers {
     /// encoder. Pair with [`Self::write_stage_end`] using the same
     /// stage index. Out-of-range `stage_idx` is a no-op so a caller
     /// using `stage_count = 1` can't accidentally over-write.
-    pub fn write_stage_start(&self, encoder: &mut wgpu::CommandEncoder, stage_idx: u32) {
+    pub fn write_stage_start(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        stage_idx: u32,
+    ) {
         let Some(qs) = &self.query_set else { return };
         if stage_idx >= self.stage_count {
             return;
@@ -294,7 +301,11 @@ impl MeshletGpuTimers {
     }
 
     /// Writes the END timestamp for stage `stage_idx`.
-    pub fn write_stage_end(&self, encoder: &mut wgpu::CommandEncoder, stage_idx: u32) {
+    pub fn write_stage_end(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        stage_idx: u32,
+    ) {
         let Some(qs) = &self.query_set else { return };
         if stage_idx >= self.stage_count {
             return;
@@ -306,7 +317,11 @@ impl MeshletGpuTimers {
     /// the result into `slot_idx`'s readback buffer. Call once per
     /// frame AFTER every `write_stage_end` and BEFORE
     /// [`Self::submit_readback`].
-    pub fn resolve_and_copy(&self, encoder: &mut wgpu::CommandEncoder, slot_idx: usize) {
+    pub fn resolve_and_copy(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        slot_idx: usize,
+    ) {
         let (Some(qs), Some(resolve)) = (&self.query_set, &self.resolve_buffer) else {
             return;
         };
@@ -331,7 +346,11 @@ impl MeshletGpuTimers {
     /// stage's end timestamp, resolves, and copies. Equivalent to
     /// `write_stage_end(encoder, 0)` + `resolve_and_copy(encoder,
     /// slot_idx)`.
-    pub fn write_end_and_copy(&self, encoder: &mut wgpu::CommandEncoder, slot_idx: usize) {
+    pub fn write_end_and_copy(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        slot_idx: usize,
+    ) {
         self.write_stage_end(encoder, 0);
         self.resolve_and_copy(encoder, slot_idx);
     }

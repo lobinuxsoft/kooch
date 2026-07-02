@@ -31,7 +31,8 @@ impl EditorCommand for AddComponentCommand {
         if inserted {
             if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
                 if let Some(current) = archetypes.entity_archetype(self.entity) {
-                    let new_arch = archetypes.archetype_after_add_dynamic(current, self.type_id);
+                    let new_arch =
+                        archetypes.archetype_after_add_dynamic(current, self.type_id);
                     archetypes.register_entity(self.entity, new_arch);
                 }
             }
@@ -44,7 +45,8 @@ impl EditorCommand for AddComponentCommand {
         }
         if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
             if let Some(current) = archetypes.entity_archetype(self.entity) {
-                let new_arch = archetypes.archetype_after_remove_dynamic(current, self.type_id);
+                let new_arch =
+                    archetypes.archetype_after_remove_dynamic(current, self.type_id);
                 archetypes.register_entity(self.entity, new_arch);
             }
         }
@@ -85,7 +87,8 @@ impl EditorCommand for RemoveComponentCommand {
         }
         if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
             if let Some(current) = archetypes.entity_archetype(self.entity) {
-                let new_arch = archetypes.archetype_after_remove_dynamic(current, self.type_id);
+                let new_arch =
+                    archetypes.archetype_after_remove_dynamic(current, self.type_id);
                 archetypes.register_entity(self.entity, new_arch);
             }
         }
@@ -100,7 +103,8 @@ impl EditorCommand for RemoveComponentCommand {
         if inserted {
             if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
                 if let Some(current) = archetypes.entity_archetype(self.entity) {
-                    let new_arch = archetypes.archetype_after_add_dynamic(current, self.type_id);
+                    let new_arch =
+                        archetypes.archetype_after_add_dynamic(current, self.type_id);
                     archetypes.register_entity(self.entity, new_arch);
                 }
             }

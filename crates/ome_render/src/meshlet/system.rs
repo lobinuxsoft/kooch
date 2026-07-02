@@ -34,7 +34,7 @@ use ome_ecs::query::Query;
 
 use super::asset::MeshletMesh;
 use super::pool::{GlobalMeshPool, MeshHandle};
-use super::scene::{LOD_FORCE_NONE, MeshInstance};
+use super::scene::{MeshInstance, LOD_FORCE_NONE};
 
 /// Owns the CPU-side state that bridges the ECS to the meshlet
 /// pipeline: the global mesh pool + a registry of which assets
@@ -121,7 +121,8 @@ impl MeshletPipeline {
         // The MeshRenderer query is the primary walk; per-entity we
         // do a separate point query for LodForceLevel so absence
         // costs nothing (most entities don't carry the override).
-        let lod_force_lookup = collect_lod_force_levels(resources);
+        let lod_force_lookup =
+            collect_lod_force_levels(resources);
         let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut out = Vec::new();
         let mesh_descriptors = &self.pool.mesh_descriptors;
@@ -146,8 +147,11 @@ impl MeshletPipeline {
                 Some(mp) => mp.lookup_or_fallback(renderer.material),
                 None => crate::material::FALLBACK_MATERIAL_ID,
             };
-            let mut instance =
-                MeshInstance::new(transform.matrix, mesh_handle.mesh_id, material_id);
+            let mut instance = MeshInstance::new(
+                transform.matrix,
+                mesh_handle.mesh_id,
+                material_id,
+            );
             if let Some(force_level) = lod_force_lookup.get(&entity).copied() {
                 instance.lod_force_level = force_level as i32;
             } else {
@@ -187,7 +191,9 @@ impl MeshletPipeline {
 /// into a hashmap so the scene-instance collector can stamp the
 /// override on the matching `MeshInstance`. Empty when no entity
 /// uses the LOD inspector.
-fn collect_lod_force_levels(resources: &Resources) -> HashMap<Entity, u32> {
+fn collect_lod_force_levels(
+    resources: &Resources,
+) -> HashMap<Entity, u32> {
     let mut out = HashMap::new();
     let query = Query::<&LodForceLevel>::new(resources);
     query.for_each_entity(|entity, force| {
@@ -221,12 +227,8 @@ mod tests {
             [-0.5, 0.5, 0.5],
         ];
         let face_indices: [[usize; 4]; 6] = [
-            [0, 1, 2, 3],
-            [4, 5, 6, 7],
-            [0, 1, 5, 4],
-            [3, 2, 6, 7],
-            [0, 3, 7, 4],
-            [1, 2, 6, 5],
+            [0, 1, 2, 3], [4, 5, 6, 7], [0, 1, 5, 4],
+            [3, 2, 6, 7], [0, 3, 7, 4], [1, 2, 6, 5],
         ];
         let face_normal = [0.0, 1.0, 0.0];
         let mut vertices = Vec::new();
@@ -240,7 +242,10 @@ mod tests {
                     uv: [0.0, 0.0],
                 });
             }
-            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+            indices.extend_from_slice(&[
+                base, base + 1, base + 2,
+                base, base + 2, base + 3,
+            ]);
         }
         Mesh::from_arrays(vertices, indices)
     }

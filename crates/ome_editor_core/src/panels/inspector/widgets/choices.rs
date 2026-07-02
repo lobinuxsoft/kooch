@@ -31,9 +31,15 @@ pub(crate) fn draw_readonly_value(
 }
 
 /// Returns the `choices` label for an integer-valued field, if any.
-fn choice_label_for(value: &ReflectValue, choices: &'static [FieldChoice]) -> Option<&'static str> {
+fn choice_label_for(
+    value: &ReflectValue,
+    choices: &'static [FieldChoice],
+) -> Option<&'static str> {
     let current = reflect_value_as_i64(value)?;
-    choices.iter().find(|c| c.value == current).map(|c| c.label)
+    choices
+        .iter()
+        .find(|c| c.value == current)
+        .map(|c| c.label)
 }
 
 /// Converts an integer [`ReflectValue`] into `i64` for dropdown matching.

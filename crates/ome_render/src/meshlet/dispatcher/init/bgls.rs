@@ -82,7 +82,9 @@ pub(super) fn build_cull_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(std::mem::size_of::<CullParams>() as u64),
+                    min_binding_size: NonZeroU64::new(
+                        std::mem::size_of::<CullParams>() as u64,
+                    ),
                 },
                 count: None,
             },
@@ -170,7 +172,9 @@ pub(super) fn build_extended_cull_bgl(device: &wgpu::Device) -> wgpu::BindGroupL
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(std::mem::size_of::<CullParams>() as u64),
+                    min_binding_size: NonZeroU64::new(
+                        std::mem::size_of::<CullParams>() as u64,
+                    ),
                 },
                 count: None,
             },
@@ -274,7 +278,9 @@ pub(super) fn build_hi_z_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(std::mem::size_of::<HiZTestParams>() as u64),
+                    min_binding_size: NonZeroU64::new(
+                        std::mem::size_of::<HiZTestParams>() as u64,
+                    ),
                 },
                 count: None,
             },

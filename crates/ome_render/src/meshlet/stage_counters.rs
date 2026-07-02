@@ -197,9 +197,6 @@ mod tests {
         // exactly that or the bytemuck::cast_slice in drain_ready
         // panics on length mismatch.
         assert_eq!(READBACK_BYTES, 16);
-        assert_eq!(
-            READBACK_BYTES as usize,
-            std::mem::size_of::<CullStageCounts>()
-        );
+        assert_eq!(READBACK_BYTES as usize, std::mem::size_of::<CullStageCounts>());
     }
 }

@@ -174,7 +174,10 @@ impl MeshletMesh {
 
     /// Total triangle count summed across every meshlet.
     pub fn total_triangle_count(&self) -> u32 {
-        self.meshlets.iter().map(|m| m.triangle_count).sum::<u32>()
+        self.meshlets
+            .iter()
+            .map(|m| m.triangle_count)
+            .sum::<u32>()
     }
 }
 

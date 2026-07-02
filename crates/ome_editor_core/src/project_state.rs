@@ -118,7 +118,10 @@ impl LauncherProcess {
             crate_name
         };
 
-        let binary_path = project_root.join("target").join("debug").join(binary_name);
+        let binary_path = project_root
+            .join("target")
+            .join("debug")
+            .join(binary_name);
 
         let mut child = Command::new("cargo")
             .args(["build", "--manifest-path"])
@@ -143,7 +146,9 @@ impl LauncherProcess {
     /// Polls the child process and handles phase transitions.
     pub fn poll(&mut self) {
         match &self.status {
-            LauncherStatus::Failed(_) | LauncherStatus::Exited | LauncherStatus::Launched => return,
+            LauncherStatus::Failed(_) | LauncherStatus::Exited | LauncherStatus::Launched => {
+                return
+            }
             LauncherStatus::Compiling => self.poll_compiling(),
         }
     }
@@ -160,7 +165,8 @@ impl LauncherProcess {
                         self.status = LauncherStatus::Launched;
                     }
                 } else {
-                    self.status = LauncherStatus::Failed(format!("cargo build failed ({status})"));
+                    self.status =
+                        LauncherStatus::Failed(format!("cargo build failed ({status})"));
                 }
             }
             Ok(None) => {} // Still compiling.
@@ -176,7 +182,10 @@ impl LauncherProcess {
     /// launcher can safely exit without affecting it.
     fn launch_binary(&mut self) -> Result<(), String> {
         if !self.binary_path.exists() {
-            return Err(format!("binary not found: {}", self.binary_path.display()));
+            return Err(format!(
+                "binary not found: {}",
+                self.binary_path.display()
+            ));
         }
 
         if let Ok(mut buf) = self.output.lock() {
@@ -272,7 +281,8 @@ impl ProjectState {
     /// Opens a project from the given root directory.
     pub fn open_project(&mut self, root_path: &Path) -> Result<(), crate::project::ProjectError> {
         let mut manifest = ProjectManifest::load(root_path)?;
-        self.editor_config.add_recent(&manifest.name, root_path);
+        self.editor_config
+            .add_recent(&manifest.name, root_path);
         if let Err(e) = self.editor_config.save() {
             tracing::warn!("failed to save editor config: {e}");
         }

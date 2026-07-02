@@ -35,8 +35,8 @@ use ome_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 
 use crate::mesh::parse_mesh_bytes_full;
 
-use super::asset::{DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES, MeshletMesh};
-use super::builder::{LodConfig, MeshletBuildError, build_meshlets_lod_chain};
+use super::asset::{MeshletMesh, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES};
+use super::builder::{build_meshlets_lod_chain, LodConfig, MeshletBuildError};
 
 /// Loads `.glb` / `.gltf` files directly into [`MeshletMesh`].
 #[derive(Debug, Default, Clone, Copy)]
@@ -47,7 +47,11 @@ impl AssetLoader<MeshletMesh> for MeshletMeshLoader {
         &["glb", "gltf"]
     }
 
-    fn load(&self, bytes: &[u8], ctx: &mut LoadContext<'_>) -> AssetResult<MeshletMesh> {
+    fn load(
+        &self,
+        bytes: &[u8],
+        ctx: &mut LoadContext<'_>,
+    ) -> AssetResult<MeshletMesh> {
         let mesh = parse_mesh_bytes_full(bytes, 1.0, ctx.path.parent())
             .map_err(|e| AssetError::Loader(Box::new(e)))?;
         build_meshlets_lod_chain(

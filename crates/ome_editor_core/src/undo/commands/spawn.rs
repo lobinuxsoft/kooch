@@ -43,7 +43,8 @@ impl SpawnCommand {
                 if alloc.revive(e) {
                     // Re-register into EMPTY archetype.
                     if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                        archetypes.register_entity(e, ome_ecs::archetype::ArchetypeId::EMPTY);
+                        archetypes
+                            .register_entity(e, ome_ecs::archetype::ArchetypeId::EMPTY);
                     }
                     e
                 } else {
@@ -65,17 +66,15 @@ impl SpawnCommand {
         if let Some(reg) = resources.get::<ComponentRegistry>() {
             let type_names = reg.reflected_type_names();
             // Name first.
-            if let Some((tid, _)) = type_names
-                .iter()
-                .find(|(_, name)| name.rsplit("::").next().unwrap_or(name) == "Name")
-            {
+            if let Some((tid, _)) = type_names.iter().find(|(_, name)| {
+                name.rsplit("::").next().unwrap_or(name) == "Name"
+            }) {
                 all_types.push(*tid);
             }
             // Transform second.
-            if let Some((tid, _)) = type_names
-                .iter()
-                .find(|(_, name)| name.rsplit("::").next().unwrap_or(name) == "Transform")
-            {
+            if let Some((tid, _)) = type_names.iter().find(|(_, name)| {
+                name.rsplit("::").next().unwrap_or(name) == "Transform"
+            }) {
                 all_types.push(*tid);
             }
         }
@@ -95,7 +94,8 @@ impl SpawnCommand {
             if inserted {
                 if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
                     if let Some(current) = archetypes.entity_archetype(entity) {
-                        let new_arch = archetypes.archetype_after_add_dynamic(current, *type_id);
+                        let new_arch =
+                            archetypes.archetype_after_add_dynamic(current, *type_id);
                         archetypes.register_entity(entity, new_arch);
                     }
                 }
@@ -119,7 +119,9 @@ impl SpawnCommand {
 
     fn spawn_fresh(&self, resources: &mut Resources) -> Entity {
         use ome_ecs::commands::Commands;
-        let mut commands = resources.remove::<Commands>().expect("Commands not found");
+        let mut commands = resources
+            .remove::<Commands>()
+            .expect("Commands not found");
         let entity = commands.spawn(resources).id();
         resources.insert(commands);
         entity

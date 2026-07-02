@@ -24,10 +24,7 @@ pub enum LaunchAction {
 // which is a structural change to the editor's render loop. Out of
 // scope for the #299 cleanup.
 #[allow(deprecated)]
-pub fn draw_launch_screen(
-    ctx: &egui::Context,
-    project_state: &mut ProjectState,
-) -> Vec<LaunchAction> {
+pub fn draw_launch_screen(ctx: &egui::Context, project_state: &mut ProjectState) -> Vec<LaunchAction> {
     let mut actions = Vec::new();
 
     // If a launcher process is active, show the launcher overlay instead.
@@ -39,9 +36,17 @@ pub fn draw_launch_screen(
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.vertical_centered(|ui| {
             ui.add_space(40.0);
-            ui.heading(egui::RichText::new("Oh My Engine").size(32.0).strong());
+            ui.heading(
+                egui::RichText::new("Oh My Engine")
+                    .size(32.0)
+                    .strong(),
+            );
             ui.add_space(8.0);
-            ui.label(egui::RichText::new("Project Manager").size(14.0).weak());
+            ui.label(
+                egui::RichText::new("Project Manager")
+                    .size(14.0)
+                    .weak(),
+            );
             ui.add_space(24.0);
         });
 
@@ -82,12 +87,20 @@ pub fn draw_launch_screen(
             // --- Recent Projects ---
             ui.separator();
             ui.add_space(4.0);
-            ui.label(egui::RichText::new("Recent Projects").size(16.0).strong());
+            ui.label(
+                egui::RichText::new("Recent Projects")
+                    .size(16.0)
+                    .strong(),
+            );
             ui.add_space(4.0);
 
             let recent = project_state.editor_config.recent_projects.clone();
             if recent.is_empty() {
-                ui.label(egui::RichText::new("No recent projects").weak().italics());
+                ui.label(
+                    egui::RichText::new("No recent projects")
+                        .weak()
+                        .italics(),
+                );
             } else {
                 for entry in &recent {
                     let exists = entry.path.join("project.ome").exists();
@@ -102,11 +115,15 @@ pub fn draw_launch_screen(
                         let label = if exists {
                             egui::RichText::new(&label_text)
                         } else {
-                            egui::RichText::new(&label_text).weak().strikethrough()
+                            egui::RichText::new(&label_text)
+                                .weak()
+                                .strikethrough()
                         };
 
-                        let response =
-                            ui.add_enabled(exists, egui::Button::new(label).frame(false));
+                        let response = ui.add_enabled(
+                            exists,
+                            egui::Button::new(label).frame(false),
+                        );
 
                         if response.clicked() {
                             actions.push(LaunchAction::OpenProject(entry.path.clone()));
@@ -117,22 +134,25 @@ pub fn draw_launch_screen(
                         }
 
                         // Path display.
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            // Remove button.
-                            if ui
-                                .small_button(egui::RichText::new(icons::X).weak())
-                                .on_hover_text("Remove from recent")
-                                .clicked()
-                            {
-                                actions.push(LaunchAction::RemoveRecent(entry.path.clone()));
-                            }
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                // Remove button.
+                                if ui
+                                    .small_button(egui::RichText::new(icons::X).weak())
+                                    .on_hover_text("Remove from recent")
+                                    .clicked()
+                                {
+                                    actions.push(LaunchAction::RemoveRecent(entry.path.clone()));
+                                }
 
-                            ui.label(
-                                egui::RichText::new(entry.path.display().to_string())
-                                    .weak()
-                                    .small(),
-                            );
-                        });
+                                ui.label(
+                                    egui::RichText::new(entry.path.display().to_string())
+                                        .weak()
+                                        .small(),
+                                );
+                            },
+                        );
                     });
                 }
             }
@@ -165,7 +185,8 @@ fn draw_new_project_form(
                     ui.text_edit_singleline(&mut project_state.new_project_form.parent_path);
                     if ui.button("Browse...").clicked() {
                         if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                            project_state.new_project_form.parent_path = path.display().to_string();
+                            project_state.new_project_form.parent_path =
+                                path.display().to_string();
                         }
                     }
                 });
@@ -182,10 +203,7 @@ fn draw_new_project_form(
             let parent = project_state.new_project_form.parent_path.trim().to_owned();
             let can_create = !name.is_empty() && !parent.is_empty();
 
-            if ui
-                .add_enabled(can_create, egui::Button::new("Create"))
-                .clicked()
-            {
+            if ui.add_enabled(can_create, egui::Button::new("Create")).clicked() {
                 actions.push(LaunchAction::CreateProject {
                     name,
                     parent_path: PathBuf::from(parent),
@@ -214,14 +232,19 @@ fn draw_launcher_overlay(
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.vertical_centered(|ui| {
             ui.add_space(40.0);
-            ui.heading(egui::RichText::new("Oh My Engine").size(32.0).strong());
+            ui.heading(
+                egui::RichText::new("Oh My Engine")
+                    .size(32.0)
+                    .strong(),
+            );
             ui.add_space(16.0);
 
             // Status indicator.
             match &status {
                 LauncherStatus::Compiling => {
                     ui.label(
-                        egui::RichText::new(format!("{} Compiling...", icons::GEAR)).size(18.0),
+                        egui::RichText::new(format!("{} Compiling...", icons::GEAR))
+                            .size(18.0),
                     );
                 }
                 LauncherStatus::Launched => {
@@ -237,10 +260,16 @@ fn draw_launcher_overlay(
                             .size(18.0)
                             .color(egui::Color32::from_rgb(200, 80, 80)),
                     );
-                    ui.label(egui::RichText::new(msg).weak().small());
+                    ui.label(
+                        egui::RichText::new(msg).weak().small(),
+                    );
                 }
                 LauncherStatus::Exited => {
-                    ui.label(egui::RichText::new("Process exited").size(18.0).weak());
+                    ui.label(
+                        egui::RichText::new("Process exited")
+                            .size(18.0)
+                            .weak(),
+                    );
                 }
             }
             ui.add_space(12.0);
@@ -251,11 +280,14 @@ fn draw_launcher_overlay(
         ui.vertical_centered(|ui| {
             ui.set_max_width(panel_width);
 
-            ui.label(egui::RichText::new(format!("{} Output", icons::TERMINAL)).strong());
+            ui.label(
+                egui::RichText::new(format!("{} Output", icons::TERMINAL)).strong(),
+            );
             ui.add_space(4.0);
 
             let output_lines = &project_state.launcher_output;
-            let frame = egui::Frame::group(ui.style()).fill(egui::Color32::from_rgb(20, 20, 20));
+            let frame = egui::Frame::group(ui.style())
+                .fill(egui::Color32::from_rgb(20, 20, 20));
             frame.show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(300.0)
@@ -286,7 +318,10 @@ fn draw_launcher_overlay(
                         // App will exit shortly, nothing to show.
                     }
                     LauncherStatus::Failed(_) | LauncherStatus::Exited => {
-                        if ui.button(format!("{} Back", icons::ARROW_LEFT)).clicked() {
+                        if ui
+                            .button(format!("{} Back", icons::ARROW_LEFT))
+                            .clicked()
+                        {
                             actions.push(LaunchAction::CancelLaunch);
                         }
                     }

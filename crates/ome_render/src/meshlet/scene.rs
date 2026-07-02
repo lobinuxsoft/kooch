@@ -179,10 +179,9 @@ impl MeshletScene {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
-                            SceneCullParams,
-                        >()
-                            as u64),
+                        min_binding_size: std::num::NonZeroU64::new(
+                            std::mem::size_of::<SceneCullParams>() as u64,
+                        ),
                     },
                     count: None,
                 },
@@ -249,7 +248,10 @@ mod tests {
         // Compare every column to avoid a float-eq trap on Mat4.
         for col in 0..4 {
             for row in 0..4 {
-                assert_eq!(inst.transform[col][row], recovered.col(col)[row]);
+                assert_eq!(
+                    inst.transform[col][row],
+                    recovered.col(col)[row]
+                );
             }
         }
         assert_eq!(inst.mesh_id, 7);

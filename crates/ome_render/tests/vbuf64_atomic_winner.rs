@@ -103,9 +103,7 @@ fn run_atomic_max_two(device: &wgpu::Device, queue: &wgpu::Queue, v1: u64, v2: u
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::R64Uint,
-        usage: wgpu::TextureUsages::STORAGE_BINDING
-            | wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -271,7 +269,9 @@ fn run_atomic_max_two(device: &wgpu::Device, queue: &wgpu::Queue, v1: u64, v2: u
 #[test]
 fn closer_reversed_z_fragment_wins_atomicmax_on_gpu() {
     let Some((device, queue)) = try_acquire_device_vbuf64() else {
-        eprintln!("vbuf64 features unavailable on this adapter — skipping atomic R64 GPU test");
+        eprintln!(
+            "vbuf64 features unavailable on this adapter — skipping atomic R64 GPU test"
+        );
         return;
     };
 
@@ -294,7 +294,9 @@ fn closer_reversed_z_fragment_wins_atomicmax_on_gpu() {
 #[test]
 fn equal_depth_higher_cluster_id_wins_atomicmax_on_gpu() {
     let Some((device, queue)) = try_acquire_device_vbuf64() else {
-        eprintln!("vbuf64 features unavailable on this adapter — skipping atomic R64 GPU test");
+        eprintln!(
+            "vbuf64 features unavailable on this adapter — skipping atomic R64 GPU test"
+        );
         return;
     };
 

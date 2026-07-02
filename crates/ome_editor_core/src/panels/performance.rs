@@ -16,9 +16,7 @@
 //! 5. **Meshlet pipeline** — instances uploaded, dispatch threads,
 //!                           pool size + roots
 
-use ome_render::meshlet::{
-    MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
-};
+use ome_render::meshlet::{MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
 
 use crate::perf::EditorPerfStats;
 
@@ -51,16 +49,8 @@ pub(crate) fn draw_performance_content(
 
             collapsing(ui, "Frame", true, |ui| {
                 grid(ui, "perf_grid_frame", |ui| {
-                    metric(
-                        ui,
-                        "FPS (instant)",
-                        &format!("{:.0}", perf_stats.fps_instant),
-                    );
-                    metric(
-                        ui,
-                        "FPS (60-frame avg)",
-                        &format!("{:.0}", perf_stats.fps_avg),
-                    );
+                    metric(ui, "FPS (instant)", &format!("{:.0}", perf_stats.fps_instant));
+                    metric(ui, "FPS (60-frame avg)", &format!("{:.0}", perf_stats.fps_avg));
                     metric(
                         ui,
                         "CPU frame time",
@@ -186,7 +176,9 @@ fn debug_controls(
                 }
             })
             .response
-            .on_hover_text("Meshlet pipeline visualization mode. Off = production shading.");
+            .on_hover_text(
+                "Meshlet pipeline visualization mode. Off = production shading.",
+            );
     });
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("LOD ≤").small())

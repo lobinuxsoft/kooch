@@ -25,10 +25,7 @@ use crate::icons;
 pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) {
     ui.menu_button(format!("{} Spawn", icons::PLUS), |ui| {
         if ui.button(format!("{} Entity", icons::CUBE)).clicked() {
-            actions.push(EditorAction::Spawn {
-                extra: vec![],
-                name: None,
-            });
+            actions.push(EditorAction::Spawn { extra: vec![], name: None });
             ui.close();
         }
         ui.separator();

@@ -30,7 +30,9 @@ use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
 
 use crate::VIEWPORT_DEPTH_FORMAT;
 use crate::fps::FpsTracker;
-use crate::meshlet::{MeshletBlit, MeshletDebugCaps, MeshletRenderStage, MeshletRenderStageConfig};
+use crate::meshlet::{
+    MeshletBlit, MeshletDebugCaps, MeshletRenderStage, MeshletRenderStageConfig,
+};
 use crate::sky::SkyRenderPass;
 use crate::vbuf64::Vbuf64Support;
 
@@ -310,19 +312,17 @@ fn render_passes(
     // copy the stage's empty color buffer over the sky every frame,
     // blanking the surface to black until something is registered.
     if meshlet_stage.gpu_mesh_count() > 0 {
-        meshlet_blit.blit(
-            gpu.device(),
-            &mut encoder,
-            meshlet_stage.color_view(),
-            &view,
-        );
+        meshlet_blit.blit(gpu.device(), &mut encoder, meshlet_stage.color_view(), &view);
     }
 
     gpu.queue().submit(Some(encoder.finish()));
     frame.present();
 }
 
-fn active_camera_matrices(resources: &Resources, aspect: f32) -> Option<(glam::Mat4, glam::Vec3)> {
+fn active_camera_matrices(
+    resources: &Resources,
+    aspect: f32,
+) -> Option<(glam::Mat4, glam::Vec3)> {
     // Highest-priority active `PerspectiveCamera` wins. Game runtime
     // ties the same way the editor does: priority is the contract,
     // not iteration order.

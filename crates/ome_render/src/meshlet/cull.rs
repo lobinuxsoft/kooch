@@ -193,8 +193,8 @@ pub fn extract_frustum_planes(vp: Mat4) -> [[f32; 4]; 6] {
         row3 + row1, // bottom
         row3 - row1, // top
         row2,        // ndc.z >= 0 plane (call it "near" or "far"
-        // depending on depth orientation — geometrically
-        // it's the plane where the depth hits 0).
+                     // depending on depth orientation — geometrically
+                     // it's the plane where the depth hits 0).
         row3 - row2, // ndc.z <= 1 plane.
     ];
 
@@ -228,9 +228,9 @@ pub fn sphere_outside_frustum(planes: &[[f32; 4]; 6], center: Vec3, radius: f32)
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     #[allow(unused_imports)]
     use super::super::asset::MeshletDescriptor;
-    use super::*;
     use glam::Quat;
 
     #[test]
@@ -243,12 +243,7 @@ mod tests {
 
     #[test]
     fn extracted_planes_are_normalised() {
-        let proj = crate::projection::perspective_rh_reverse_z(
-            60.0_f32.to_radians(),
-            16.0 / 9.0,
-            0.1,
-            100.0,
-        );
+        let proj = crate::projection::perspective_rh_reverse_z(60.0_f32.to_radians(), 16.0 / 9.0, 0.1, 100.0);
         let view = Mat4::IDENTITY;
         let vp = proj * view;
 
@@ -264,9 +259,12 @@ mod tests {
 
     #[test]
     fn sphere_at_origin_inside_default_frustum() {
-        let proj =
-            crate::projection::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
-        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = crate::projection::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
+        let view = Mat4::look_at_rh(
+            Vec3::new(0.0, 0.0, 5.0),
+            Vec3::ZERO,
+            Vec3::Y,
+        );
         let planes = extract_frustum_planes(proj * view);
 
         // Sphere at world origin, radius 0.5 — should be visible
@@ -276,9 +274,12 @@ mod tests {
 
     #[test]
     fn sphere_far_behind_camera_is_culled() {
-        let proj =
-            crate::projection::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
-        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::new(0.0, 0.0, 0.0), Vec3::Y);
+        let proj = crate::projection::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
+        let view = Mat4::look_at_rh(
+            Vec3::new(0.0, 0.0, 5.0),
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::Y,
+        );
         let planes = extract_frustum_planes(proj * view);
 
         // Sphere far behind the camera — outside near + far + side planes.
@@ -288,8 +289,7 @@ mod tests {
 
     #[test]
     fn sphere_far_to_the_side_is_culled() {
-        let proj =
-            crate::projection::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+        let proj = crate::projection::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
         let view = Mat4::look_at_rh(Vec3::ZERO, -Vec3::Z, Vec3::Y);
         let planes = extract_frustum_planes(proj * view);
 
@@ -376,10 +376,11 @@ mod tests {
 
     #[test]
     fn rotated_camera_still_normalises_planes() {
-        let proj =
-            crate::projection::perspective_rh_reverse_z(45.0_f32.to_radians(), 1.5, 1.0, 1000.0);
-        let view =
-            Mat4::from_rotation_translation(Quat::from_rotation_y(1.2), Vec3::new(10.0, 5.0, -3.0));
+        let proj = crate::projection::perspective_rh_reverse_z(45.0_f32.to_radians(), 1.5, 1.0, 1000.0);
+        let view = Mat4::from_rotation_translation(
+            Quat::from_rotation_y(1.2),
+            Vec3::new(10.0, 5.0, -3.0),
+        );
         let planes = extract_frustum_planes(proj * view);
         for p in &planes {
             let len = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();

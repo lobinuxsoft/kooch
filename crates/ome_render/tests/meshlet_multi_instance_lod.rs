@@ -19,9 +19,9 @@ use common::try_acquire_device;
 use glam::{Mat4, Vec3};
 use ome_render::mesh::{Mesh, MeshVertex};
 use ome_render::meshlet::{
-    CullParams, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES, GlobalMeshPool, LodConfig,
-    MeshInstance, MeshletCull, MeshletScene, SceneCullParams, build_meshlets_lod_chain,
-    decode_scene_visible_id,
+    build_meshlets_lod_chain, decode_scene_visible_id, CullParams, GlobalMeshPool, LodConfig,
+    MeshInstance, MeshletCull, MeshletScene, SceneCullParams, DEFAULT_MAX_TRIANGLES,
+    DEFAULT_MAX_VERTICES,
 };
 use std::collections::BTreeSet;
 
@@ -158,11 +158,8 @@ fn three_instances_pick_distinct_lod_bands() {
     let proj = ome_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 5000.0);
     let viewport_h = 1080.0_f32;
     let proj_scale_y = 1.0_f32 / (30.0_f32.to_radians()).tan();
-    let cull_params = CullParams::new(proj * view, cam, meshlets_per_mesh).with_lod(
-        viewport_h,
-        proj_scale_y,
-        1.0,
-    );
+    let cull_params = CullParams::new(proj * view, cam, meshlets_per_mesh)
+        .with_lod(viewport_h, proj_scale_y, 1.0);
     let scene_params = SceneCullParams::new(instances.len() as u32, meshlets_per_mesh);
 
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

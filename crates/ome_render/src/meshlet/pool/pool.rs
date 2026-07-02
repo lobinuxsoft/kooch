@@ -114,13 +114,15 @@ impl GlobalMeshPool {
         let group_offset = self.group_capacity;
         let mut max_local_group: i64 = -1;
         for desc in &mesh.meshlets {
-            let new_parent =
-                if desc.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT {
-                    desc.parent_meshlet_index
-                } else {
-                    desc.parent_meshlet_index + first_meshlet
-                };
-            let new_group_index = if desc.group_index == crate::meshlet::asset::MESHLET_GROUP_NONE {
+            let new_parent = if desc.parent_meshlet_index
+                == crate::meshlet::asset::MESHLET_ROOT_PARENT
+            {
+                desc.parent_meshlet_index
+            } else {
+                desc.parent_meshlet_index + first_meshlet
+            };
+            let new_group_index = if desc.group_index == crate::meshlet::asset::MESHLET_GROUP_NONE
+            {
                 desc.group_index
             } else {
                 max_local_group = max_local_group.max(desc.group_index as i64);

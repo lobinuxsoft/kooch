@@ -41,11 +41,11 @@ pub(crate) fn present_editor_frame(
             .update_texture(gpu.device(), gpu.queue(), *id, image_delta);
     }
 
-    let mut encoder = gpu
-        .device()
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("egui_encoder"),
-        });
+    let mut encoder =
+        gpu.device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("egui_encoder"),
+            });
 
     let extra_buffers = overlay.renderer.update_buffers(
         gpu.device(),
@@ -56,8 +56,7 @@ pub(crate) fn present_editor_frame(
     );
 
     let output = match gpu.surface().get_current_texture() {
-        wgpu::CurrentSurfaceTexture::Success(tex)
-        | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
+        wgpu::CurrentSurfaceTexture::Success(tex) | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
         status => {
             tracing::warn!(?status, "Failed to acquire surface texture");
             return false;

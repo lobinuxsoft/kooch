@@ -4,10 +4,10 @@ use ome_render::hi_z::HiZ;
 use ome_render::material::{Material, MaterialPipeline};
 use ome_render::mesh::Mesh;
 use ome_render::meshlet::{
-    CullParams, DEFAULT_MAX_TRIANGLES, DEFERRED_COLOR_FORMAT, GlobalMeshPool, MeshInstance,
-    MeshletCull, MeshletDeferredShader, MeshletScene, MeshletVisRasterizer, SceneCullParams,
-    VISIBILITY_BUFFER_FORMAT, build_default_meshlets, meshlet_bind_group_layout,
-    pool_meshlet_bind_group,
+    build_default_meshlets, meshlet_bind_group_layout, pool_meshlet_bind_group, CullParams,
+    GlobalMeshPool, MeshInstance, MeshletCull, MeshletDeferredShader, MeshletScene,
+    MeshletVisRasterizer, SceneCullParams, DEFAULT_MAX_TRIANGLES, DEFERRED_COLOR_FORMAT,
+    VISIBILITY_BUFFER_FORMAT,
 };
 
 use crate::common::{build_sphere_mesh, try_acquire_device};

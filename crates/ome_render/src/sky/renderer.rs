@@ -326,7 +326,9 @@ impl SkyRenderPass {
         // for future per-planet atmosphere lookups (#248), so we log
         // at TRACE for now without changing the uniform layout.
         if let Some(active_origin) = resources.get::<ome_core::coord::ActiveOrigin>() {
-            let universe_pos = active_origin.coord().translated(translation.as_dvec3());
+            let universe_pos = active_origin
+                .coord()
+                .translated(translation.as_dvec3());
             tracing::trace!(
                 target: "ome_render::sky",
                 sector = ?universe_pos.sector,

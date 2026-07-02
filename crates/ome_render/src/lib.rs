@@ -37,8 +37,8 @@ pub use hi_z::HiZ;
 pub use material::{MaterialParams, MaterialPool};
 pub use mesh::{Aabb, MeshVertex};
 pub use meshlet::{
-    MeshletBuildError, MeshletDescriptor, MeshletMesh, build_default_meshlets,
-    build_meshlets_from_mesh,
+    build_default_meshlets, build_meshlets_from_mesh, MeshletBuildError, MeshletDescriptor,
+    MeshletMesh,
 };
 pub use perf::EngineVramTracker;
 pub use plugin::RenderPlugin;
@@ -46,6 +46,6 @@ pub use projection::perspective_rh_reverse_z;
 pub use sky::{ActiveSky, SkyPassNode, SkyRenderPass};
 pub use texture::{GpuTexture, Image, ImageFormat, ImageLoader};
 pub use vbuf64::{
-    CLUSTER_ID_BITS, MAX_CLUSTER_ID, TRI_ID_BITS, TRI_ID_MASK, Vbuf64Support, pack_visibility,
-    unpack_visibility,
+    pack_visibility, unpack_visibility, Vbuf64Support, CLUSTER_ID_BITS, MAX_CLUSTER_ID,
+    TRI_ID_BITS, TRI_ID_MASK,
 };

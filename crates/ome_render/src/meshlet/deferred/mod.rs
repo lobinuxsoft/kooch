@@ -151,17 +151,16 @@ impl MeshletDeferredShader {
             bind_group_layouts: &[Some(&shading_bgl), Some(meshlet_bgl), Some(&material_bgl)],
             immediate_size: 0,
         });
-        let pipeline_layout_scene =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("meshlet_deferred_pipeline_layout_scene"),
-                bind_group_layouts: &[
-                    Some(&shading_bgl),
-                    Some(meshlet_bgl),
-                    Some(&material_bgl),
-                    Some(&scene_bgl),
-                ],
-                immediate_size: 0,
-            });
+        let pipeline_layout_scene = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("meshlet_deferred_pipeline_layout_scene"),
+            bind_group_layouts: &[
+                Some(&shading_bgl),
+                Some(meshlet_bgl),
+                Some(&material_bgl),
+                Some(&scene_bgl),
+            ],
+            immediate_size: 0,
+        });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("meshlet_deferred_pipeline"),
             layout: Some(&pipeline_layout),

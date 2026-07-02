@@ -48,7 +48,9 @@ use visualizers::{
 /// Also inserts a default `HandleSet` (3 translate handles X/Y/Z).
 /// Runs once at editor startup.
 pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
-    let mut registry = resources.remove::<VisualizerRegistry>().unwrap_or_default();
+    let mut registry = resources
+        .remove::<VisualizerRegistry>()
+        .unwrap_or_default();
     registry.register::<PerspectiveCamera, PerspectiveCameraVisualizer>();
     registry.register::<OrthographicCamera, OrthographicCameraVisualizer>();
     registry.register::<DirectionalLight, DirectionalLightVisualizer>();
@@ -81,7 +83,9 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
     let multi = selected.len() > 1;
     let transform_type_id = TypeId::of::<Transform>();
 
-    let registry = resources.remove::<VisualizerRegistry>().unwrap_or_default();
+    let registry = resources
+        .remove::<VisualizerRegistry>()
+        .unwrap_or_default();
 
     {
         let mut gizmos = Gizmos::new(&mut line_batch, &mut mesh_batch);
@@ -249,8 +253,7 @@ pub(crate) fn apply_handle_input(
     // Drag end: emit one TransformEdit action with before/after.
     // Compares against the snapshot to skip no-op drags (clicked the
     // handle but didn't move).
-    if was_dragging
-        && !dragging
+    if was_dragging && !dragging
         && let Some((entity, before)) = drag_start.take()
         && let Some(after) = read_transform(resources, entity)
         && !transforms_equal(before, after)

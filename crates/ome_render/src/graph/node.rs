@@ -26,7 +26,11 @@ impl<'a> FrameInfo<'a> {
     /// zero (e.g. minimised window) so projection matrices stay finite.
     pub fn aspect(&self) -> f32 {
         let (w, h) = self.size;
-        if h == 0 { 1.0 } else { w as f32 / h as f32 }
+        if h == 0 {
+            1.0
+        } else {
+            w as f32 / h as f32
+        }
     }
 }
 

@@ -132,8 +132,13 @@ mod tests {
         let initial_rotation = view.inverse().to_scale_rotation_translation().1;
 
         // Rotate by an arbitrary yaw + pitch in fly mode.
-        let (new_rotation, new_focus) =
-            fly_look_pivot_camera(initial_position, initial_rotation, distance, 0.7, -0.3);
+        let (new_rotation, new_focus) = fly_look_pivot_camera(
+            initial_position,
+            initial_rotation,
+            distance,
+            0.7,
+            -0.3,
+        );
 
         // The derived camera position from the new state must equal
         // the initial position (FPS pivot is the camera, not the focus).

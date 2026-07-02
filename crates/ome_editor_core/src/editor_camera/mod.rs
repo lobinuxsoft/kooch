@@ -24,9 +24,9 @@ use std::any::TypeId;
 use glam::{Mat4, Vec3};
 
 use ome_core::resource::Resources;
-use ome_ecs::EphemeralComponents;
-use ome_ecs::commands::Commands;
 use ome_ecs::component::ComponentRegistry;
+use ome_ecs::commands::Commands;
+use ome_ecs::EphemeralComponents;
 use ome_ecs::perspective_camera::PerspectiveCamera;
 use ome_ecs::transform::Transform;
 use ome_world::focus::StreamingFocus;
@@ -188,11 +188,7 @@ mod tests {
         let controller = EditorCameraController::default();
         let t = initial_transform(&controller);
         let delta = (t.position - DEFAULT_EYE).length();
-        assert!(
-            delta < 1e-4,
-            "expected position {DEFAULT_EYE:?}, got {:?}",
-            t.position
-        );
+        assert!(delta < 1e-4, "expected position {DEFAULT_EYE:?}, got {:?}", t.position);
     }
 
     #[test]
@@ -204,10 +200,7 @@ mod tests {
         let forward = (t.rotation * -Vec3::Z).normalize();
         let expected = (controller.focus_point - t.position).normalize();
         let dot = forward.dot(expected);
-        assert!(
-            dot > 0.999,
-            "forward {forward:?} should point at focus, dot={dot}"
-        );
+        assert!(dot > 0.999, "forward {forward:?} should point at focus, dot={dot}");
     }
 
     #[test]

@@ -13,9 +13,9 @@ use glam::{Mat4, Vec3};
 use ome_core::Guid;
 use ome_render::material::{Material, MaterialPipeline};
 use ome_render::meshlet::{
-    CullParams, DEFAULT_MAX_TRIANGLES, DEFERRED_COLOR_FORMAT, MeshletCull, MeshletDeferredShader,
-    MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT, build_default_meshlets, meshlet_bind_group,
-    meshlet_bind_group_layout,
+    build_default_meshlets, meshlet_bind_group, meshlet_bind_group_layout, CullParams,
+    MeshletCull, MeshletDeferredShader, MeshletVisRasterizer, DEFAULT_MAX_TRIANGLES,
+    DEFERRED_COLOR_FORMAT, VISIBILITY_BUFFER_FORMAT,
 };
 
 const RT_WIDTH: u32 = 64;
@@ -217,10 +217,7 @@ fn distinct_material_ids_produce_distinct_pixel_colors() {
             break;
         }
     }
-    assert!(
-        found_red,
-        "red material id should produce some red-dominant pixels"
-    );
+    assert!(found_red, "red material id should produce some red-dominant pixels");
 
     // And the blue render should produce blue-dominant pixels.
     let mut found_blue = false;
@@ -237,10 +234,7 @@ fn distinct_material_ids_produce_distinct_pixel_colors() {
             break;
         }
     }
-    assert!(
-        found_blue,
-        "blue material id should produce some blue-dominant pixels"
-    );
+    assert!(found_blue, "blue material id should produce some blue-dominant pixels");
 
     // Sanity: red pixels are not the same as blue pixels.
     assert_ne!(red_pixels, blue_pixels);
