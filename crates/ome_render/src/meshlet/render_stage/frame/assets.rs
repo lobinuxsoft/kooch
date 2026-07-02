@@ -27,12 +27,7 @@ impl MeshletRenderStage {
     /// The `device` argument is kept on the signature for backward
     /// compatibility — the actual upload is deferred to render time
     /// because batched registrations only need one GPU upload.
-    pub fn ensure_gpu_mesh(
-        &mut self,
-        _device: &wgpu::Device,
-        guid: Guid,
-        mesh: &MeshletMesh,
-    ) {
+    pub fn ensure_gpu_mesh(&mut self, _device: &wgpu::Device, guid: Guid, mesh: &MeshletMesh) {
         let before = self.pipeline.registered_count();
         let bytes_before = self.pipeline.pool().byte_size();
         self.pipeline.register_mesh(guid, mesh);
@@ -88,10 +83,9 @@ impl MeshletRenderStage {
         // the previous in-method `resources.remove::<GpuContext>()`
         // returned `None` silently in that path, dropping every
         // material picked through the inspector (bug #533).
-        if let Some(mut material_pipeline) =
-            resources.remove::<crate::material::MaterialPipeline>()
+        if let Some(mut material_pipeline) = resources.remove::<crate::material::MaterialPipeline>()
         {
-            material_pipeline.sync_from_resources(queue, resources);
+            material_pipeline.sync_from_resources(device, queue, resources);
             resources.insert(material_pipeline);
         } else {
             tracing::debug!(

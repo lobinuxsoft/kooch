@@ -13,7 +13,7 @@
 //! with sensible colour — matches the legacy behaviour of the old
 //! per-render-call `material_id = 0`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ome_core::Guid;
 use ome_core::asset_database::AssetDatabase;
@@ -21,7 +21,8 @@ use ome_core::asset_loader::AssetServer;
 use ome_core::assets::Assets;
 use ome_core::resource::Resources;
 
-use super::{Material, MaterialParams, MaterialPool};
+use super::{Material, MaterialParams, MaterialPool, MaterialTexturePool};
+use crate::texture::Image;
 
 /// Static type name [`AssetEntry`s carry] when their loader is
 /// [`MaterialLoader`](super::MaterialLoader). Keeps the picker's
@@ -50,7 +51,15 @@ pub const FALLBACK_MATERIAL_ID: u32 = 0;
 /// in step with `Assets<Material>` as the user picks new materials.
 pub struct MaterialPipeline {
     pool: MaterialPool,
+    /// GPU texture store + per-material bind group factory for the
+    /// two-pass material shader. Populated during sync alongside `pool`.
+    texture_pool: MaterialTexturePool,
     registry: HashMap<Guid, u32>,
+    /// Per-slot texture GUID triple `[albedo, normal, metal_roughness]`,
+    /// indexed by material slot (parallel to the GPU pool slots). Slot 0
+    /// is the fallback's all-`None`. The render path reads this to build
+    /// each material pass's bind group via [`MaterialTexturePool`].
+    slot_textures: Vec<[Option<Guid>; 3]>,
     /// Index of the next free slot to hand out. Starts at 1 because
     /// slot 0 is the white-diffuse fallback.
     next_slot: u32,
@@ -62,19 +71,24 @@ impl MaterialPipeline {
     /// fallback material pre-installed at slot 0. Uploads `capacity`
     /// copies of the white-diffuse default to the GPU so reads from
     /// any unused slot are well-defined.
-    pub fn new(device: &wgpu::Device) -> Self {
-        Self::with_capacity(device, DEFAULT_CAPACITY)
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        Self::with_capacity(device, queue, DEFAULT_CAPACITY)
     }
 
     /// Capacity-explicit constructor. `capacity` must be ≥ 1 — slot 0
     /// is always the fallback.
-    pub fn with_capacity(device: &wgpu::Device, capacity: u32) -> Self {
+    pub fn with_capacity(device: &wgpu::Device, queue: &wgpu::Queue, capacity: u32) -> Self {
         assert!(capacity >= 1, "MaterialPipeline capacity must be >= 1");
         let initial = vec![MaterialParams::default(); capacity as usize];
         let pool = MaterialPool::new(device, &initial);
+        let texture_pool = MaterialTexturePool::new(device, queue);
+        // Slot 0 = fallback material, references no textures.
+        let slot_textures = vec![[None; 3]];
         Self {
             pool,
+            texture_pool,
             registry: HashMap::new(),
+            slot_textures,
             next_slot: 1,
             capacity,
         }
@@ -122,15 +136,12 @@ impl MaterialPipeline {
     /// twice with the same GUID returns the existing slot and
     /// **upgrades the GPU contents** so live edits land without a
     /// new slot allocation.
-    pub fn register(
-        &mut self,
-        queue: &wgpu::Queue,
-        guid: Guid,
-        material: &Material,
-    ) -> u32 {
+    pub fn register(&mut self, queue: &wgpu::Queue, guid: Guid, material: &Material) -> u32 {
         let params = material.to_params();
+        let refs = [material.albedo, material.normal, material.metal_roughness];
         if let Some(&slot) = self.registry.get(&guid) {
             self.pool.write(queue, slot, &params);
+            self.slot_textures[slot as usize] = refs;
             tracing::debug!(
                 target: "ome_render::material::sync",
                 guid = %guid,
@@ -152,6 +163,12 @@ impl MaterialPipeline {
         self.next_slot += 1;
         self.pool.write(queue, slot, &params);
         self.registry.insert(guid, slot);
+        debug_assert_eq!(
+            self.slot_textures.len(),
+            slot as usize,
+            "slot_textures must stay parallel to sequential slot allocation",
+        );
+        self.slot_textures.push(refs);
         tracing::debug!(
             target: "ome_render::material::sync",
             guid = %guid,
@@ -160,6 +177,29 @@ impl MaterialPipeline {
             "MaterialPipeline.register: assigned new slot",
         );
         slot
+    }
+
+    /// Read-only handle to the texture pool, for building per-material
+    /// bind groups in the two-pass render path.
+    pub fn texture_pool(&self) -> &MaterialTexturePool {
+        &self.texture_pool
+    }
+
+    /// The `[albedo, normal, metal_roughness]` texture GUIDs a slot
+    /// references. Out-of-range or fallback slots return all-`None`.
+    pub fn slot_texture_refs(&self, slot: u32) -> [Option<Guid>; 3] {
+        self.slot_textures
+            .get(slot as usize)
+            .copied()
+            .unwrap_or([None; 3])
+    }
+
+    /// Range of shading slots (`0..next_slot`) the two-pass path issues a
+    /// per-material fragment pass for. Includes slot 0 (fallback white):
+    /// geometry with no picked material resolves to it, so it must shade
+    /// too — its branch-free fallback textures reproduce the plain look.
+    pub fn shading_slots(&self) -> std::ops::Range<u32> {
+        0..self.next_slot
     }
 
     /// Per-frame sync. Walks every [`Material`] entry the
@@ -174,6 +214,7 @@ impl MaterialPipeline {
     /// already hold `&mut AssetServer`.
     pub fn sync_from_resources(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         resources: &mut Resources,
     ) {
@@ -242,8 +283,88 @@ impl MaterialPipeline {
                 ),
             }
         }
+
+        // Upload any newly-referenced texture images before registering
+        // the materials, so the render path finds a populated texture
+        // pool the moment a slot appears.
+        self.sync_textures(device, queue, &snapshots, resources);
+
         for (guid, mat) in snapshots {
             self.register(queue, guid, &mat);
+        }
+    }
+
+    /// Loads every not-yet-uploaded texture GUID referenced by
+    /// `snapshots` through the [`AssetServer`] and registers the decoded
+    /// [`Image`]s in the [`MaterialTexturePool`]. Deduplicates against
+    /// both the current snapshot set and textures already resident.
+    ///
+    /// KNOWN LIMITATION: the `AssetServer`'s `ImageLoader` is registered
+    /// sRGB for all images, so normal / metal-roughness maps decode in
+    /// the wrong color space. Correct handling needs a per-asset
+    /// color-space hint in the `.meta` sidecar — a follow-up; albedo
+    /// (the sRGB channel) is already correct.
+    fn sync_textures(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        snapshots: &[(Guid, Material)],
+        resources: &mut Resources,
+    ) {
+        let mut pending: Vec<Guid> = Vec::new();
+        let mut seen: HashSet<Guid> = HashSet::new();
+        for (_, mat) in snapshots {
+            for guid in [mat.albedo, mat.normal, mat.metal_roughness]
+                .into_iter()
+                .flatten()
+            {
+                if !self.texture_pool.contains(guid) && seen.insert(guid) {
+                    pending.push(guid);
+                }
+            }
+        }
+        if pending.is_empty() {
+            return;
+        }
+
+        let Some(mut server) = resources.remove::<AssetServer>() else {
+            tracing::warn!(
+                target: "ome_render::material::sync",
+                "AssetServer missing; skipping texture sync",
+            );
+            return;
+        };
+        let mut handles: Vec<(Guid, ome_core::assets::Handle<Image>)> =
+            Vec::with_capacity(pending.len());
+        for guid in &pending {
+            match server.load_by_guid::<Image>(*guid, resources) {
+                Ok(h) => handles.push((*guid, h)),
+                Err(e) => tracing::warn!(
+                    target: "ome_render::material::sync",
+                    guid = %guid,
+                    error = %e,
+                    "failed to load texture image by GUID",
+                ),
+            }
+        }
+        resources.insert(server);
+
+        let Some(images) = resources.get::<Assets<Image>>() else {
+            tracing::warn!(
+                target: "ome_render::material::sync",
+                "Assets<Image> missing after load; aborting texture sync",
+            );
+            return;
+        };
+        for (guid, handle) in handles {
+            match images.get(handle) {
+                Some(img) => self.texture_pool.register(device, queue, guid, img),
+                None => tracing::debug!(
+                    target: "ome_render::material::sync",
+                    guid = %guid,
+                    "texture handle resolved but Assets<Image>.get returned None",
+                ),
+            }
         }
     }
 }
@@ -262,22 +383,19 @@ mod tests {
         SHARED_DEVICE
             .get_or_init(|| {
                 let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                    backends: wgpu::Backends::VULKAN
-                        | wgpu::Backends::DX12
-                        | wgpu::Backends::METAL,
+                    backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
                     flags: wgpu::InstanceFlags::default(),
                     backend_options: wgpu::BackendOptions::default(),
                     memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
                     display: None,
                 });
-                let adapter = pollster::block_on(instance.request_adapter(
-                    &wgpu::RequestAdapterOptions {
+                let adapter =
+                    pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                         power_preference: wgpu::PowerPreference::HighPerformance,
                         compatible_surface: None,
                         force_fallback_adapter: false,
-                    },
-                ))
-                .ok()?;
+                    }))
+                    .ok()?;
                 pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                     label: Some("material_pipeline_test_device"),
                     required_features: wgpu::Features::empty(),
@@ -293,8 +411,10 @@ mod tests {
 
     #[test]
     fn lookup_or_fallback_returns_zero_for_unknown_guid() {
-        let Some((device, _)) = try_acquire_device() else { return };
-        let pipeline = MaterialPipeline::new(&device);
+        let Some((device, queue)) = try_acquire_device() else {
+            return;
+        };
+        let pipeline = MaterialPipeline::new(&device, &queue);
         assert_eq!(pipeline.lookup_or_fallback(None), FALLBACK_MATERIAL_ID);
         assert_eq!(
             pipeline.lookup_or_fallback(Some(Guid::new_v4())),
@@ -304,8 +424,10 @@ mod tests {
 
     #[test]
     fn register_assigns_distinct_slots_starting_at_one() {
-        let Some((device, queue)) = try_acquire_device() else { return };
-        let mut pipeline = MaterialPipeline::new(&device);
+        let Some((device, queue)) = try_acquire_device() else {
+            return;
+        };
+        let mut pipeline = MaterialPipeline::new(&device, &queue);
         let g1 = Guid::new_v4();
         let g2 = Guid::new_v4();
         let s1 = pipeline.register(&queue, g1, &Material::default());
@@ -319,20 +441,28 @@ mod tests {
 
     #[test]
     fn register_is_idempotent_on_same_guid() {
-        let Some((device, queue)) = try_acquire_device() else { return };
-        let mut pipeline = MaterialPipeline::new(&device);
+        let Some((device, queue)) = try_acquire_device() else {
+            return;
+        };
+        let mut pipeline = MaterialPipeline::new(&device, &queue);
         let g = Guid::new_v4();
         let s0 = pipeline.register(&queue, g, &Material::default());
-        let s1 = pipeline.register(&queue, g, &Material::new([1.0, 0.0, 0.0, 1.0], 0.0, 0.5, 0.0));
+        let s1 = pipeline.register(
+            &queue,
+            g,
+            &Material::new([1.0, 0.0, 0.0, 1.0], 0.0, 0.5, 0.0),
+        );
         assert_eq!(s0, s1, "same GUID must reuse the same slot");
         assert_eq!(pipeline.registered_count(), 1);
     }
 
     #[test]
     fn register_falls_back_when_capacity_exhausted() {
-        let Some((device, queue)) = try_acquire_device() else { return };
+        let Some((device, queue)) = try_acquire_device() else {
+            return;
+        };
         // capacity = 2 → slot 0 fallback + slot 1 = the only spawnable slot.
-        let mut pipeline = MaterialPipeline::with_capacity(&device, 2);
+        let mut pipeline = MaterialPipeline::with_capacity(&device, &queue, 2);
         let g1 = Guid::new_v4();
         let g2 = Guid::new_v4();
         let s1 = pipeline.register(&queue, g1, &Material::default());
@@ -342,5 +472,28 @@ mod tests {
             s2, FALLBACK_MATERIAL_ID,
             "overflowing registration falls back to slot 0",
         );
+    }
+
+    #[test]
+    fn register_records_texture_refs_per_slot() {
+        let Some((device, queue)) = try_acquire_device() else {
+            return;
+        };
+        let mut pipeline = MaterialPipeline::new(&device, &queue);
+        let (albedo, mr) = (Guid::new_v4(), Guid::new_v4());
+        let mat = Material::default()
+            .with_albedo(albedo)
+            .with_metal_roughness(mr);
+        let slot = pipeline.register(&queue, Guid::new_v4(), &mat);
+
+        assert_eq!(
+            pipeline.slot_texture_refs(slot),
+            [Some(albedo), None, Some(mr)]
+        );
+        // Fallback slot 0 and out-of-range slots reference nothing.
+        assert_eq!(pipeline.slot_texture_refs(FALLBACK_MATERIAL_ID), [None; 3]);
+        assert_eq!(pipeline.slot_texture_refs(999), [None; 3]);
+        // Two shading passes to issue: fallback slot 0 + registered slot 1.
+        assert_eq!(pipeline.shading_slots(), 0..2);
     }
 }

@@ -62,7 +62,10 @@ impl AssetPlugin {
     }
 
     fn primary_root(&self) -> &Path {
-        self.roots.first().map(|p| p.as_path()).unwrap_or_else(|| Path::new("assets"))
+        self.roots
+            .first()
+            .map(|p| p.as_path())
+            .unwrap_or_else(|| Path::new("assets"))
     }
 }
 
@@ -161,7 +164,7 @@ fn init_material_pipeline_system(resources: &mut Resources) {
         );
         return;
     };
-    let pipeline = MaterialPipeline::new(gpu.device());
+    let pipeline = MaterialPipeline::new(gpu.device(), gpu.queue());
     let _ = gpu;
     resources.insert(pipeline);
     tracing::info!(

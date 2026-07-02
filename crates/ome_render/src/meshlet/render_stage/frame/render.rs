@@ -169,8 +169,7 @@ impl MeshletRenderStage {
             .with_lod(viewport_h_px, proj_scale_y, lod_target)
             .with_debug_mode(debug_mode)
             .with_debug_active(debug_active);
-        let scene_params =
-            SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
+        let scene_params = SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
 
         // Grow visible_meshlets if the scene now needs more slots
         // than the dispatcher was sized for. Geometric growth absorbs
@@ -186,10 +185,7 @@ impl MeshletRenderStage {
         // forced multi-instance LOD descent to the closest one's
         // verdict (#474). Same geometric-growth pattern as the
         // visible buffer.
-        let required_group_capacity = self
-            .pipeline
-            .instance_group_capacity(&instances)
-            .max(1);
+        let required_group_capacity = self.pipeline.instance_group_capacity(&instances).max(1);
         self.cull
             .ensure_group_capacity(device, required_group_capacity);
 
@@ -253,7 +249,6 @@ impl MeshletRenderStage {
                 &cull_params,
                 &scene_params,
                 &meshlet_bg,
-                &material_bg,
                 timer_slot,
                 instance_count,
             );

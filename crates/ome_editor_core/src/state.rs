@@ -34,8 +34,6 @@ pub(crate) enum EditorTab {
     Inspector,
     Archetypes,
     Components,
-    Streaming,
-    Performance,
 }
 
 /// All tab variants, used for the Window menu.
@@ -45,8 +43,6 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::Inspector,
     EditorTab::Archetypes,
     EditorTab::Components,
-    EditorTab::Streaming,
-    EditorTab::Performance,
 ];
 
 impl EditorTab {
@@ -58,8 +54,6 @@ impl EditorTab {
             Self::Inspector => format!("{} Inspector", crate::icons::SLIDERS),
             Self::Archetypes => format!("{} Archetypes", crate::icons::TREE_STRUCTURE),
             Self::Components => format!("{} Components", crate::icons::LIST_BULLETS),
-            Self::Streaming => format!("{} Streaming", crate::icons::FADERS),
-            Self::Performance => format!("{} Performance", crate::icons::CHART_BAR),
         }
     }
 }
@@ -71,13 +65,9 @@ impl std::fmt::Display for EditorTab {
 }
 
 /// Creates the default 3-panel dock layout: World | View | Inspector.
-/// Performance is NOT in the default dock because its content is
-/// per-frame and view-specific — the View panel renders an
-/// equivalent vertical overlay anchored to its right edge so the
-/// metrics are always visible alongside what the artist is
-/// looking at. The tab variant remains in `ALL_TABS` so the
-/// Window menu can still spawn a dockable copy for users who
-/// want it detached.
+/// Per-frame performance metrics are not a dock tab — the View panel
+/// renders them as a vertical overlay anchored to its right edge, so
+/// they are always visible alongside what the artist is looking at.
 pub(crate) fn default_dock_state() -> DockState<EditorTab> {
     let mut state = DockState::new(vec![EditorTab::View]);
 

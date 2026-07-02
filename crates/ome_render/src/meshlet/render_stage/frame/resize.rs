@@ -6,7 +6,7 @@
 use crate::meshlet::deferred::DEFERRED_COLOR_FORMAT;
 use crate::meshlet::vis_buffer::VISIBILITY_BUFFER_FORMAT;
 
-use super::super::{create_2d_attachment, MeshletRenderStage};
+use super::super::{MeshletRenderStage, create_2d_attachment};
 
 impl MeshletRenderStage {
     /// Recreates the stage's vbuf / depth / color textures at
@@ -45,9 +45,13 @@ impl MeshletRenderStage {
             "meshlet_render_stage_color",
             new_size,
             DEFERRED_COLOR_FORMAT,
+            // RENDER_ATTACHMENT: the two-pass material path writes color
+            // as a fragment render target; STORAGE_BINDING stays for the
+            // compute debug-mode path.
             wgpu::TextureUsages::STORAGE_BINDING
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
 
         // #454: rebuild the triangle-density accumulator in lock-step
@@ -73,11 +77,7 @@ impl MeshletRenderStage {
         // Hi-Z pyramids stay lazy (#486) — only recreate them on
         // resize when they were already allocated by some prior
         // SPD-orchestrator hook.
-        let old_pyramid_bytes = self
-            .hiz_prev
-            .as_ref()
-            .map(|p| p.byte_size())
-            .unwrap_or(0)
+        let old_pyramid_bytes = self.hiz_prev.as_ref().map(|p| p.byte_size()).unwrap_or(0)
             + self.hiz_curr.as_ref().map(|p| p.byte_size()).unwrap_or(0);
         let hiz_prev = if self.hiz_prev.is_some() {
             Some(crate::hi_z::HiZ::new(device, new_size.0, new_size.1))

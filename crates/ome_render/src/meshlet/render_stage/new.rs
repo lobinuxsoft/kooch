@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use super::super::deferred::{MeshletDeferredShader, DEFERRED_COLOR_FORMAT};
+use super::super::DEFAULT_MAX_TRIANGLES;
+use super::super::deferred::{DEFERRED_COLOR_FORMAT, MeshletDeferredShader};
 use super::super::dispatcher::MeshletCull;
 use super::super::gpu_meshlet::meshlet_bind_group_layout;
 use super::super::gpu_timers::MeshletGpuTimers;
@@ -8,7 +9,6 @@ use super::super::scene::MeshletScene;
 use super::super::system::MeshletPipeline;
 use super::super::vbuf64_stage::Vbuf64Stage;
 use super::super::vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
-use super::super::DEFAULT_MAX_TRIANGLES;
 use super::config::MeshletRenderStageConfig;
 use super::helpers::{create_2d_attachment, depth_sample_view, render_target_byte_estimate};
 use super::stage::MeshletRenderStage;
@@ -24,7 +24,10 @@ impl MeshletRenderStage {
             vbuf64,
             debug_caps,
         } = config;
-        assert!(size.0 > 0 && size.1 > 0, "MeshletRenderStage size must be > 0");
+        assert!(
+            size.0 > 0 && size.1 > 0,
+            "MeshletRenderStage size must be > 0"
+        );
         assert!(
             instance_capacity > 0,
             "MeshletRenderStage instance_capacity must be > 0"
@@ -64,9 +67,12 @@ impl MeshletRenderStage {
             "meshlet_render_stage_color",
             size,
             DEFERRED_COLOR_FORMAT,
+            // RENDER_ATTACHMENT: two-pass material path writes color as a
+            // fragment target; STORAGE_BINDING stays for compute debug modes.
             wgpu::TextureUsages::STORAGE_BINDING
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
 
         // Hi-Z pyramids stay None until the SPD-backed orchestrator
@@ -109,7 +115,9 @@ impl MeshletRenderStage {
         // the user from selecting a mode that would dispatch into
         // empty space.
         let reject_overlay = if debug_caps.supports_texture_atomic() {
-            Some(super::super::reject_overlay::MeshletRejectOverlay::new(device, &cull))
+            Some(super::super::reject_overlay::MeshletRejectOverlay::new(
+                device, &cull,
+            ))
         } else {
             None
         };
@@ -201,11 +209,7 @@ impl MeshletRenderStage {
         // the pyramid allocation will bump the tracker on its own
         // when it runs.
         let attachment_bytes = render_target_byte_estimate(self.size);
-        let pyramid_bytes = self
-            .hiz_prev
-            .as_ref()
-            .map(|p| p.byte_size())
-            .unwrap_or(0)
+        let pyramid_bytes = self.hiz_prev.as_ref().map(|p| p.byte_size()).unwrap_or(0)
             + self.hiz_curr.as_ref().map(|p| p.byte_size()).unwrap_or(0);
         tracker.add(attachment_bytes + pyramid_bytes);
         self.vram_tracker = Some(tracker);

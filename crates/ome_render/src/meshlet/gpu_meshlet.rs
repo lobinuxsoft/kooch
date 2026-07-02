@@ -127,25 +127,33 @@ pub fn meshlet_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout
         entries: &[
             wgpu::BindGroupLayoutEntry {
                 binding: binding::VERTICES,
-                visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::COMPUTE
+                    | wgpu::ShaderStages::VERTEX
+                    | wgpu::ShaderStages::FRAGMENT,
                 ty: read_only,
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
                 binding: binding::MESHLET_VERTICES,
-                visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::COMPUTE
+                    | wgpu::ShaderStages::VERTEX
+                    | wgpu::ShaderStages::FRAGMENT,
                 ty: read_only,
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
                 binding: binding::MESHLET_TRIANGLES,
-                visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::COMPUTE
+                    | wgpu::ShaderStages::VERTEX
+                    | wgpu::ShaderStages::FRAGMENT,
                 ty: read_only,
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
                 binding: binding::DESCRIPTORS,
-                visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::COMPUTE
+                    | wgpu::ShaderStages::VERTEX
+                    | wgpu::ShaderStages::FRAGMENT,
                 ty: read_only,
                 count: None,
             },

@@ -8,10 +8,10 @@
 //!   2. `Vbuf64Rasterizer::render_scene`
 //!                      — meshlet draw_indirect, fragment writes
 //!                        `textureAtomicMax((depth<<32) | ids)`.
-//!   3. `Vbuf64Deferred::shade_scene`
-//!                      — compute reads the u64, unpacks `(slot, tri)`,
-//!                        runs the same materialed normal-debug shader
-//!                        as the R32 path.
+//!   3. Shading — two paths off the same vbuf, both all-fragment (#440):
+//!      `MaterialTwoPass` (resolve material depth + per-material passes)
+//!      for normal-look modes, `DebugResolve` for the colorize debug
+//!      modes.
 //!
 //! Construction is gated on [`Vbuf64Support`](crate::vbuf64::Vbuf64Support);
 //! the meshlet render stage carries an `Option<Vbuf64Stage>` and the
@@ -20,20 +20,20 @@
 //! features (Metal / MSL has no `atomic_uint64`).
 
 mod clear;
-mod deferred;
+mod debug_resolve;
 mod density_clear;
 mod raster;
+mod two_pass;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::material::MaterialPool;
 use crate::meshlet::deferred::DEFERRED_COLOR_FORMAT;
 use crate::meshlet::dispatcher::MeshletCull;
 use crate::meshlet::render_stage::create_2d_attachment;
 use crate::meshlet::scene::MeshletScene;
 
 use clear::Vbuf64Clear;
-use deferred::Vbuf64Deferred;
+use debug_resolve::DebugResolve;
 use density_clear::DensityClear;
 use raster::Vbuf64Rasterizer;
 
@@ -73,11 +73,20 @@ pub struct Vbuf64Stage {
     /// the rest of the stage needs).
     density_clear: DensityClear,
     rasterizer: Vbuf64Rasterizer,
-    deferred: Vbuf64Deferred,
+    /// Two-pass material shading (#440) for normal-look modes.
+    two_pass: two_pass::MaterialTwoPass,
+    /// Fullscreen fragment pass for the colorize debug modes.
+    debug_resolve: DebugResolve,
     vbuf_texture: wgpu::Texture,
     vbuf_view: wgpu::TextureView,
     dummy_color_texture: wgpu::Texture,
     dummy_color_view: wgpu::TextureView,
+    /// Pass-1 target of the two-pass material path: each covered pixel's
+    /// `material_id` encoded as depth (`f32(id)/65535`). Pass-2 per-material
+    /// shading depth-tests `Equal` against it. Allocated here so it tracks
+    /// the stage's size alongside the vbuf / dummy targets.
+    material_depth_texture: wgpu::Texture,
+    material_depth_view: wgpu::TextureView,
     size: (u32, u32),
 }
 
@@ -91,19 +100,25 @@ impl Vbuf64Stage {
     ) -> Self {
         let (vbuf_texture, vbuf_view) = create_vbuf64_texture(device, size);
         let (dummy_color_texture, dummy_color_view) = create_dummy_color_texture(device, size);
+        let (material_depth_texture, material_depth_view) =
+            create_material_depth_texture(device, size);
         let clear = Vbuf64Clear::new(device);
         let density_clear = DensityClear::new(device);
         let rasterizer = Vbuf64Rasterizer::new(device, meshlet_bgl, depth_format, pipeline_cache);
-        let deferred = Vbuf64Deferred::new(device, meshlet_bgl);
+        let two_pass = two_pass::MaterialTwoPass::new(device, meshlet_bgl);
+        let debug_resolve = DebugResolve::new(device);
         Self {
             clear,
             density_clear,
             rasterizer,
-            deferred,
+            two_pass,
+            debug_resolve,
             vbuf_texture,
             vbuf_view,
             dummy_color_texture,
             dummy_color_view,
+            material_depth_texture,
+            material_depth_view,
             size,
         }
     }
@@ -118,7 +133,14 @@ impl Vbuf64Stage {
         let (dummy_tex, dummy_view) = create_dummy_color_texture(device, size);
         self.dummy_color_texture = dummy_tex;
         self.dummy_color_view = dummy_view;
+        let (md_tex, md_view) = create_material_depth_texture(device, size);
+        self.material_depth_texture = md_tex;
+        self.material_depth_view = md_view;
         self.size = size;
+    }
+
+    pub fn material_depth_view(&self) -> &wgpu::TextureView {
+        &self.material_depth_view
     }
 
     pub fn vbuf_view(&self) -> &wgpu::TextureView {
@@ -144,7 +166,7 @@ impl Vbuf64Stage {
         density_view: &wgpu::TextureView,
         density_mode: u32,
         meshlet_bg: &wgpu::BindGroup,
-        material_bg: &wgpu::BindGroup,
+        material_pipeline: Option<&crate::material::MaterialPipeline>,
         cull: &MeshletCull,
         scene: &MeshletScene,
         view_proj: glam::Mat4,
@@ -175,21 +197,39 @@ impl Vbuf64Stage {
             view_proj,
             clear_depth,
         );
-        self.deferred.shade_scene(
-            device,
-            queue,
-            encoder,
-            &self.vbuf_view,
-            color_view,
-            density_view,
-            meshlet_bg,
-            material_bg,
-            cull,
-            scene,
-            view_proj,
-            self.size,
-            debug_mode,
-        );
+        // Colorize debug modes (ids / heatmaps / cull passthrough) render
+        // through the fullscreen debug fragment pass. Every other mode —
+        // Off and the normal-look debug modes — shades through the
+        // two-pass material path; the reject overlay is a separate
+        // dispatch layered on top by the caller.
+        if debug_resolve::is_colorize_mode(debug_mode) {
+            self.debug_resolve.draw(
+                device,
+                queue,
+                encoder,
+                &self.vbuf_view,
+                color_view,
+                density_view,
+                cull,
+                self.size,
+                debug_mode,
+            );
+        } else if let Some(pipeline) = material_pipeline {
+            self.two_pass.shade(
+                device,
+                queue,
+                encoder,
+                &self.vbuf_view,
+                &self.material_depth_view,
+                color_view,
+                meshlet_bg,
+                cull,
+                scene,
+                pipeline,
+                view_proj,
+                self.size,
+            );
+        }
     }
 }
 
@@ -219,19 +259,23 @@ fn create_dummy_color_texture(
     )
 }
 
-// Re-export the material BGL helper so the deferred submodule can build
-// its pipeline layout without re-importing `MaterialPool` directly. Kept
-// crate-private so external callers are not tempted to consume it.
-#[allow(dead_code)]
-fn material_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    MaterialPool::bind_group_layout(device)
+fn create_material_depth_texture(
+    device: &wgpu::Device,
+    size: (u32, u32),
+) -> (wgpu::Texture, wgpu::TextureView) {
+    create_2d_attachment(
+        device,
+        "meshlet_material_depth",
+        size,
+        crate::meshlet::MATERIAL_DEPTH_FORMAT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     const RASTER_SOURCE: &str = include_str!("../../../shaders/meshlet_vbuf64.wgsl");
     const CLEAR_SOURCE: &str = include_str!("../../../shaders/meshlet_clear_vbuf64.wgsl");
-    const DEFERRED_SOURCE: &str = include_str!("../../../shaders/meshlet_deferred_r64.wgsl");
 
     fn validate(source: &str, label: &str) {
         let module = naga::front::wgsl::parse_str(source)
@@ -253,11 +297,6 @@ mod tests {
     #[test]
     fn vbuf64_clear_shader_validates() {
         validate(CLEAR_SOURCE, "meshlet_clear_vbuf64.wgsl");
-    }
-
-    #[test]
-    fn vbuf64_deferred_shader_validates() {
-        validate(DEFERRED_SOURCE, "meshlet_deferred_r64.wgsl");
     }
 
     #[test]
