@@ -34,6 +34,7 @@ pub(crate) enum EditorTab {
     Inspector,
     Archetypes,
     Components,
+    AssetBrowser,
 }
 
 /// All tab variants, used for the Window menu.
@@ -43,6 +44,7 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::Inspector,
     EditorTab::Archetypes,
     EditorTab::Components,
+    EditorTab::AssetBrowser,
 ];
 
 impl EditorTab {
@@ -54,6 +56,7 @@ impl EditorTab {
             Self::Inspector => format!("{} Inspector", crate::icons::SLIDERS),
             Self::Archetypes => format!("{} Archetypes", crate::icons::TREE_STRUCTURE),
             Self::Components => format!("{} Components", crate::icons::LIST_BULLETS),
+            Self::AssetBrowser => format!("{} Assets", crate::icons::FOLDER_OPEN),
         }
     }
 }
