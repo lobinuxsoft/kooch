@@ -117,7 +117,41 @@ fn auto_open_project(resources: &mut Resources, path: &std::path::Path) {
     // ECS-side SDFs in the scene file.
 }
 
+/// Forces winit onto the X11 backend (XWayland) on Linux by clearing
+/// `WAYLAND_DISPLAY` before the event loop is built.
+///
+/// Workaround for egui's IBus+Wayland IME bug (egui #7485): under a
+/// Wayland session with IBus, a `TextEdit` accepts only one character
+/// before silently dropping input until the widget is re-focused. It is
+/// fixed upstream by egui #7983 (egui 0.35+); we are pinned to 0.34, so
+/// until that bump lands every text field in the editor is unusable on
+/// native Wayland. XWayland is not affected.
+///
+/// Opt back into native Wayland with `OME_FORCE_WAYLAND=1` (e.g. once
+/// egui is bumped, or to test the native path). No-op on non-Linux and
+/// on X11 sessions (where `WAYLAND_DISPLAY` is already absent).
+fn force_x11_backend_if_needed() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    if std::env::var_os("OME_FORCE_WAYLAND").is_some() {
+        return;
+    }
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        // SAFETY: called at the very top of `main`, before any threads
+        // are spawned (tracing included) and before the winit event loop
+        // reads the env — no concurrent env access can race this.
+        unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
+        // `init_tracing` has not run yet, so use stderr directly.
+        eprintln!(
+            "ome_editor: cleared WAYLAND_DISPLAY to force XWayland \
+             (egui #7485 IME workaround); set OME_FORCE_WAYLAND=1 to keep native Wayland",
+        );
+    }
+}
+
 fn main() {
+    force_x11_backend_if_needed();
     ome_core::init_tracing();
 
     let mut app = App::new();
