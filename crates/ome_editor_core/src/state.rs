@@ -141,6 +141,11 @@ pub struct EditorOverlay {
     /// otherwise. Used to emit a single `TransformEdit` undo entry per
     /// drag (instead of one per frame) when the user releases.
     pub(crate) gizmo_drag_start: Option<(Entity, Transform)>,
+    /// Asset selected in the Asset Browser panel, by `Guid`. Drives the
+    /// panel's detail/editor footer. Held on the overlay (not egui temp
+    /// state) so the render system can resolve the asset's data snapshot
+    /// before the egui frame runs.
+    pub(crate) selected_asset: Option<ome_core::Guid>,
 }
 
 /// Forwards raw winit events to egui for input processing.

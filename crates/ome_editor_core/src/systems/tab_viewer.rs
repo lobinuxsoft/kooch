@@ -16,7 +16,7 @@ use crate::actions::EditorAction;
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::ViewportInputDelta;
 use crate::panels::archetypes::draw_archetypes_content;
-use crate::panels::asset_browser::draw_asset_browser_content;
+use crate::panels::asset_browser::{AssetDetail, draw_asset_browser_content};
 use crate::panels::components::draw_components_content;
 use crate::panels::inspector::draw_inspector_content;
 use crate::panels::view::draw_view_content;
@@ -51,6 +51,12 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Per-frame snapshot of the `AssetDatabase` consumed by the
     /// inspector's typed asset picker.
     pub(crate) asset_catalog: &'a [crate::panels::inspector::AssetCatalogEntry],
+    /// Asset Browser selection (owned by the overlay). Row clicks mutate
+    /// it; the render system reads it to pre-resolve `asset_detail`.
+    pub(crate) selected_asset: &'a mut Option<ome_core::Guid>,
+    /// Data snapshot for the selected asset, resolved before the frame.
+    /// `None` when nothing is selected or the snapshot is still pending.
+    pub(crate) asset_detail: Option<&'a AssetDetail>,
     /// Selector for the meshlet pipeline's debug visualization
     /// (#451). Mutated by the View toolbar dropdown.
     pub(crate) meshlet_debug_mode: &'a mut MeshletDebugMode,
@@ -119,7 +125,13 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             ),
             EditorTab::Archetypes => draw_archetypes_content(ui, self.archetypes),
             EditorTab::Components => draw_components_content(ui, self.component_types),
-            EditorTab::AssetBrowser => draw_asset_browser_content(ui, self.asset_catalog),
+            EditorTab::AssetBrowser => draw_asset_browser_content(
+                ui,
+                self.asset_catalog,
+                self.selected_asset,
+                self.asset_detail,
+                self.actions,
+            ),
         }
     }
 

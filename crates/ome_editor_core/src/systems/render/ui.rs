@@ -58,6 +58,7 @@ pub(super) fn run_editor_ui(
     viewport: ViewportUi<'_>,
     power_profile: ome_core::power::PowerProfile,
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
+    asset_detail: Option<&crate::panels::asset_browser::AssetDetail>,
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
@@ -65,6 +66,7 @@ pub(super) fn run_editor_ui(
     perf_stats: crate::perf::EditorPerfStats,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
+    let mut selected_asset = overlay.selected_asset;
     let mut last_clicked_index = overlay.last_clicked_index.take();
     let mut actions: Vec<EditorAction> = Vec::new();
     let ViewportUi {
@@ -114,6 +116,8 @@ pub(super) fn run_editor_ui(
                 handle_mode,
                 selection_has_transform,
                 asset_catalog,
+                selected_asset: &mut selected_asset,
+                asset_detail,
                 meshlet_debug_mode,
                 meshlet_debug_caps,
                 meshlet_lod_settings,
@@ -131,6 +135,7 @@ pub(super) fn run_editor_ui(
     });
 
     overlay.selected_entities = selected;
+    overlay.selected_asset = selected_asset;
     overlay.last_clicked_index = last_clicked_index;
     (full_output, actions)
 }

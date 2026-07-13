@@ -238,6 +238,13 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         })
         .unwrap_or_default();
 
+    // Resolve the Asset Browser's selection into a data snapshot before
+    // the egui frame — the detail pane needs the asset's contents, and
+    // resolving them requires mutable `Resources` (AssetServer load).
+    let asset_detail = overlay
+        .selected_asset
+        .and_then(|guid| crate::systems::asset_detail::gather_asset_detail(guid, resources));
+
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
@@ -257,6 +264,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         },
         power_profile,
         &asset_catalog,
+        asset_detail.as_ref(),
         &mut meshlet_debug_mode,
         meshlet_debug_caps,
         &mut meshlet_lod_settings,

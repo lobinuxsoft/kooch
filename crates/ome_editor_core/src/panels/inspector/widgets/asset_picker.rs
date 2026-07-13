@@ -15,7 +15,7 @@ use super::asset::AssetCatalogEntry;
 /// - Dropdown opens a search field at the top, then the filtered
 ///   list. Each row shows `display_name [source]` with the full
 ///   path on hover.
-pub(super) fn draw_asset_picker(
+pub(crate) fn draw_asset_picker(
     ui: &mut egui::Ui,
     current: Option<Guid>,
     asset_type: &str,
@@ -53,16 +53,15 @@ pub(super) fn draw_asset_picker(
                     .hint_text("\u{1f50d} Search…"),
             );
             if search_resp.changed() {
-                ui.ctx().data_mut(|d| d.insert_temp(search_id, query.clone()));
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(search_id, query.clone()));
             }
 
             ui.separator();
 
             // The "(None)" entry — clears the assignment. Always
             // visible, never filtered out.
-            if ui.selectable_label(current.is_none(), "(None)").clicked()
-                && current.is_some()
-            {
+            if ui.selectable_label(current.is_none(), "(None)").clicked() && current.is_some() {
                 new_value = Some(ReflectValue::AssetRef {
                     guid: None,
                     asset_type: asset_type.to_owned(),
@@ -80,7 +79,12 @@ pub(super) fn draw_asset_picker(
                     return true;
                 }
                 entry.display_name.to_lowercase().contains(&needle)
-                    || entry.path.display().to_string().to_lowercase().contains(&needle)
+                    || entry
+                        .path
+                        .display()
+                        .to_string()
+                        .to_lowercase()
+                        .contains(&needle)
             };
 
             let mut shown = 0usize;
@@ -89,11 +93,7 @@ pub(super) fn draw_asset_picker(
                     continue;
                 }
                 let selected = current == Some(entry.guid);
-                let label = format!(
-                    "{}  [{}]",
-                    entry.display_name,
-                    entry.source.label(),
-                );
+                let label = format!("{}  [{}]", entry.display_name, entry.source.label(),);
                 let resp = ui
                     .selectable_label(selected, label)
                     .on_hover_text(entry.path.display().to_string());

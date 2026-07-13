@@ -1,5 +1,6 @@
 //! Editor systems — startup and per-frame render.
 
+mod asset_detail;
 mod present;
 mod project_assets;
 mod render;

@@ -84,6 +84,15 @@ pub(crate) enum EditorAction {
     LaunchProject(PathBuf),
     CancelLaunch,
     SetPowerProfile(PowerProfile),
+    /// Replace a `Material` asset's contents (PBR scalars + texture
+    /// references) and persist it to its `.ron` on disk. Emitted by the
+    /// Asset Browser's material editor. Applied to `Assets<Material>` so
+    /// the render sync picks it up live. Not undoable — an asset-level
+    /// edit, distinct from the ECS field undo stack.
+    EditMaterial {
+        guid: ome_core::Guid,
+        material: ome_render::material::Material,
+    },
 }
 
 pub(crate) fn apply_actions(
@@ -147,5 +156,3 @@ pub(crate) fn apply_actions(
         i += 1;
     }
 }
-
-
