@@ -100,6 +100,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         snap_settings: ome_gizmos_handles::SnapSettings::default(),
         gizmo_drag_start: None,
         selected_asset: None,
+        current_folder: None,
     };
 
     // Wire the procedural city as the editor's default content source —

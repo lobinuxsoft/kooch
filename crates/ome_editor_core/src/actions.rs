@@ -93,6 +93,13 @@ pub(crate) enum EditorAction {
         guid: ome_core::Guid,
         material: ome_render::material::Material,
     },
+    /// Copy external files into a project folder and re-scan the asset
+    /// database so they register as project assets. Emitted by the Asset
+    /// Browser's drag-and-drop import. `dest` must be inside the project.
+    ImportAssets {
+        files: Vec<PathBuf>,
+        dest: PathBuf,
+    },
 }
 
 pub(crate) fn apply_actions(

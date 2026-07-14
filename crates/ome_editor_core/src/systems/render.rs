@@ -265,6 +265,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         power_profile,
         &asset_catalog,
         asset_detail.as_ref(),
+        engine_root_owned.as_deref(),
+        project_root_owned.as_deref(),
         &mut meshlet_debug_mode,
         meshlet_debug_caps,
         &mut meshlet_lod_settings,

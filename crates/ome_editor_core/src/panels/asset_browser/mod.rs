@@ -1,38 +1,49 @@
-//! Asset Browser panel — navigates every registered asset in the
-//! current project (and the shipped engine assets), grouped by type.
+//! Asset Browser panel — a folder tree over the project's (and the
+//! shipped engine's) `assets/` directories, Unity / Godot style.
 //!
-//! The list surfaces the same [`AssetCatalogEntry`] slice the Inspector
-//! picker consumes. Selecting a row records the selection on the editor
-//! overlay; the **Inspector** panel then renders that asset's import
-//! settings / editable parameters — the Inspector serves both entities
-//! and assets. See [`crate::panels::inspector::asset_view`].
+//! Selecting an asset drives the **Inspector** (which renders its import
+//! settings / editable parameters — see
+//! [`crate::panels::inspector::asset_view`]). Dropping OS files onto the
+//! panel copies them into the selected project folder and re-imports, so
+//! they appear in the tree and in the material texture pickers.
 //!
 //! Only *typed* entries appear — an asset with no `.meta` `asset_type`
 //! (never touched by a typed `load::<T>`) is skipped upstream in
 //! [`AssetCatalogEntry::collect_from_database`], because there is no
 //! type to file it under.
 
+mod tree;
+
+use std::path::{Path, PathBuf};
+
 use ome_core::Guid;
 
+use crate::actions::EditorAction;
 use crate::icons;
 use crate::panels::inspector::AssetCatalogEntry;
 
+use self::tree::RenderCtx;
+
 /// Content of the "Asset Browser" tab.
-///
-/// `catalog` is the per-frame `AssetDatabase` snapshot; `selected_asset`
-/// is the panel's selection (owned by the editor overlay so the render
-/// system can pre-resolve the asset's data for the Inspector).
 pub(crate) fn draw_asset_browser_content(
     ui: &mut egui::Ui,
     catalog: &[AssetCatalogEntry],
     selected_asset: &mut Option<Guid>,
+    current_folder: &mut Option<PathBuf>,
+    engine_root: Option<&Path>,
+    project_root: Option<&Path>,
+    actions: &mut Vec<EditorAction>,
 ) {
+    // Full panel area, captured before content so drop detection can
+    // test the pointer against it.
+    let panel_rect = ui.available_rect_before_wrap();
+
+    // Search box.
     let search_id = ui.id().with("asset_browser_search");
     let mut query: String = ui
         .ctx()
         .data(|d| d.get_temp::<String>(search_id))
         .unwrap_or_default();
-
     let search_resp = ui.add(
         egui::TextEdit::singleline(&mut query)
             .id(search_id)
@@ -43,145 +54,111 @@ pub(crate) fn draw_asset_browser_content(
         ui.ctx()
             .data_mut(|d| d.insert_temp(search_id, query.clone()));
     }
-
     let needle = query.trim().to_lowercase();
-    let matches = |entry: &AssetCatalogEntry| -> bool {
-        if needle.is_empty() {
-            return true;
-        }
-        entry.display_name.to_lowercase().contains(&needle)
-            || entry
-                .path
-                .display()
-                .to_string()
-                .to_lowercase()
-                .contains(&needle)
-    };
 
-    let shown = catalog.iter().filter(|e| matches(e)).count();
-    ui.label(format!("{} assets ({} shown)", catalog.len(), shown));
+    // Drag-and-drop import banner + destination.
+    let import_dest = import_destination(current_folder.as_deref(), project_root);
+    draw_drop_banner(ui, project_root, import_dest.as_deref());
     ui.separator();
 
-    if catalog.is_empty() {
-        ui.weak("(no typed assets registered)");
-        ui.weak("Open a project or add assets with a .meta sidecar.");
+    if catalog.is_empty() && project_root.is_none() {
+        ui.weak("(no assets)");
+        ui.weak("Open a project to import and manage assets.");
         return;
     }
 
-    // Distinct type names, ordered by friendly label so groups land in
-    // the same slot every frame. Catalog size is a handful of assets, so
-    // per-frame grouping is trivial.
-    let mut types: Vec<&str> = catalog.iter().map(|e| e.type_name.as_str()).collect();
-    types.sort_unstable();
-    types.dedup();
-    types.sort_by(|a, b| friendly_type_label(a).cmp(friendly_type_label(b)));
-
-    // Clicking a row selects it; clicking the selected row clears it.
-    let mut toggled: Option<Guid> = None;
-
     egui::ScrollArea::vertical().show(ui, |ui| {
-        let mut any_visible = false;
-        for type_name in types {
-            let entries: Vec<&AssetCatalogEntry> = catalog
-                .iter()
-                .filter(|e| e.type_name == type_name && matches(e))
-                .collect();
-            if entries.is_empty() {
-                continue;
-            }
-            any_visible = true;
+        let mut ctx = RenderCtx {
+            needle: &needle,
+            selected_asset,
+            current_folder,
+            writable: true,
+        };
 
-            let header = format!(
-                "{} {}  ({})",
-                type_icon(type_name),
-                friendly_type_label(type_name),
-                entries.len(),
-            );
-            let id = ui.make_persistent_id(("asset_group", type_name));
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-                .show_header(ui, |ui| {
-                    ui.label(header);
-                })
-                .body(|ui| {
-                    for entry in entries {
-                        if draw_asset_row(ui, entry, *selected_asset == Some(entry.guid)) {
-                            toggled = Some(entry.guid);
-                        }
-                    }
-                });
+        if let Some(root) = project_root {
+            let entries = entries_under(catalog, root);
+            ctx.writable = true;
+            tree::render_root(ui, "Project", root, &entries, &mut ctx);
         }
-
-        if !any_visible {
-            ui.weak("(no match)");
+        if let Some(root) = engine_root {
+            let entries = entries_under(catalog, root);
+            ctx.writable = false;
+            tree::render_root(ui, "Engine (read-only)", root, &entries, &mut ctx);
         }
     });
 
-    if let Some(guid) = toggled {
-        *selected_asset = if *selected_asset == Some(guid) {
-            None
-        } else {
-            Some(guid)
-        };
+    // Handle a drop that landed over this panel. `dropped_files` is
+    // global, so gate on the pointer being inside the panel rect.
+    let dropped: Vec<PathBuf> = ui.ctx().input(|i| {
+        i.raw
+            .dropped_files
+            .iter()
+            .filter_map(|f| f.path.clone())
+            .collect()
+    });
+    if !dropped.is_empty() {
+        let over_panel = ui.ctx().input(|i| {
+            i.pointer
+                .interact_pos()
+                .is_some_and(|p| panel_rect.contains(p))
+        });
+        if over_panel && let Some(dest) = import_dest {
+            actions.push(EditorAction::ImportAssets {
+                files: dropped,
+                dest,
+            });
+        }
     }
 }
 
-/// Renders one selectable asset row. Returns `true` when clicked.
-fn draw_asset_row(ui: &mut egui::Ui, entry: &AssetCatalogEntry, selected: bool) -> bool {
-    let label = format!("{}  [{}]", entry.display_name, entry.source.label());
-    ui.selectable_label(selected, label)
-        .on_hover_text(format!(
-            "{}\nguid: {}\ntype: {}",
-            entry.path.display(),
-            entry.guid,
-            entry.type_name,
-        ))
-        .clicked()
-}
-
-/// Maps a canonical asset type name to a short, plural, artist-facing
-/// label. Falls back to the type's last path segment for any unknown
-/// type, so new asset kinds show up sensibly without a code change here.
-fn friendly_type_label(type_name: &str) -> &str {
-    match type_name {
-        "ome_render::meshlet::asset::MeshletMesh" => "Meshes",
-        "ome_render::material::asset::Material" => "Materials",
-        "ome_render::texture::asset::Image" => "Textures",
-        other => other.rsplit("::").next().unwrap_or(other),
+/// Resolves the drop destination: the selected folder if it lives inside
+/// the project, otherwise the project assets root. `None` when no
+/// project is open (imports are project-only; engine is read-only).
+fn import_destination(
+    current_folder: Option<&Path>,
+    project_root: Option<&Path>,
+) -> Option<PathBuf> {
+    let project_root = project_root?;
+    match current_folder {
+        Some(dir) if dir.starts_with(project_root) => Some(dir.to_path_buf()),
+        _ => Some(project_root.to_path_buf()),
     }
 }
 
-/// Icon per asset type. Generic `STACK` for anything not explicitly mapped.
-fn type_icon(type_name: &str) -> &'static str {
-    match type_name {
-        "ome_render::meshlet::asset::MeshletMesh" => icons::CUBE,
-        "ome_render::material::asset::Material" => icons::FADERS,
-        _ => icons::STACK,
+/// Renders the import hint. Shows the live destination while files hover,
+/// or a static prompt otherwise.
+fn draw_drop_banner(ui: &mut egui::Ui, project_root: Option<&Path>, dest: Option<&Path>) {
+    let hovering = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
+    match (project_root, dest) {
+        (Some(_), Some(dest)) => {
+            let name = dest
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| dest.display().to_string());
+            let text = format!(
+                "{} Drop files to import into '{}'",
+                icons::FOLDER_PLUS,
+                name
+            );
+            if hovering {
+                ui.strong(text);
+            } else {
+                ui.weak(text);
+            }
+        }
+        _ => {
+            ui.weak(format!(
+                "{} Open a project to import assets (drag & drop)",
+                icons::FOLDER_PLUS,
+            ));
+        }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::friendly_type_label;
-
-    #[test]
-    fn known_types_get_friendly_plural_labels() {
-        assert_eq!(
-            friendly_type_label("ome_render::meshlet::asset::MeshletMesh"),
-            "Meshes",
-        );
-        assert_eq!(
-            friendly_type_label("ome_render::material::asset::Material"),
-            "Materials",
-        );
-        assert_eq!(
-            friendly_type_label("ome_render::texture::asset::Image"),
-            "Textures",
-        );
-    }
-
-    #[test]
-    fn unknown_type_falls_back_to_last_segment() {
-        assert_eq!(friendly_type_label("foo::bar::Baz"), "Baz");
-        assert_eq!(friendly_type_label("Bare"), "Bare");
-    }
+/// Catalog entries whose path lives under `root`.
+fn entries_under<'a>(catalog: &'a [AssetCatalogEntry], root: &Path) -> Vec<&'a AssetCatalogEntry> {
+    catalog
+        .iter()
+        .filter(|e| e.path.starts_with(root))
+        .collect()
 }

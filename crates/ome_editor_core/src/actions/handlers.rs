@@ -57,9 +57,70 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::EditMaterial { guid, material } => {
             handle_edit_material(resources, *guid, material);
         }
+        EditorAction::ImportAssets { files, dest } => handle_import_assets(resources, files, dest),
         // ECS actions and Undo/Redo handled by caller.
         _ => {}
     }
+}
+
+/// Copies each source file into `dest`, then forces a project asset
+/// re-scan so the new files register (and get `.meta` sidecars) and
+/// surface in the Asset Browser + pickers next frame.
+fn handle_import_assets(
+    resources: &mut Resources,
+    files: &[std::path::PathBuf],
+    dest: &std::path::Path,
+) {
+    if let Err(e) = std::fs::create_dir_all(dest) {
+        tracing::error!(dest = %dest.display(), error = %e, "import: cannot create destination");
+        return;
+    }
+    let mut copied = 0usize;
+    for src in files {
+        let Some(name) = src.file_name() else {
+            continue;
+        };
+        let target = unique_target(dest, name);
+        match std::fs::copy(src, &target) {
+            Ok(_) => {
+                copied += 1;
+                tracing::info!(from = %src.display(), to = %target.display(), "asset imported");
+            }
+            Err(e) => {
+                tracing::error!(from = %src.display(), error = %e, "asset import failed");
+            }
+        }
+    }
+    if copied > 0 {
+        // Reset the scan marker so `scan_project_assets_system` re-runs
+        // the full project scan + eager import next frame.
+        if let Some(last) = resources.get_mut::<crate::systems::LastScannedProject>() {
+            last.root = None;
+        }
+    }
+}
+
+/// Returns a non-colliding path in `dir` for `name`, appending `_1`,
+/// `_2`, … before the extension if the file already exists.
+fn unique_target(dir: &std::path::Path, name: &std::ffi::OsStr) -> std::path::PathBuf {
+    let candidate = dir.join(name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let path = std::path::Path::new(name);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("asset");
+    let ext = path.extension().and_then(|s| s.to_str());
+    for n in 1.. {
+        let fname = match ext {
+            Some(ext) => format!("{stem}_{n}.{ext}"),
+            None => format!("{stem}_{n}"),
+        };
+        let candidate = dir.join(fname);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!("infinite unique-name loop")
 }
 
 /// Applies a Material asset edit: updates `Assets<Material>` in place so
