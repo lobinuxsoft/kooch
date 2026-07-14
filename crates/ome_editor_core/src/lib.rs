@@ -17,6 +17,7 @@
 //! ```
 
 pub(crate) mod actions;
+pub mod bootstrap;
 pub(crate) mod drag_drop;
 pub mod editor_camera;
 pub(crate) mod gizmos;
@@ -40,6 +41,7 @@ use ome_core::app::App;
 use ome_core::plugin::Plugin;
 use ome_core::stage::Stage;
 
+pub use bootstrap::{run_editor, run_editor_with};
 pub use editor_camera::{EditorCamera, EditorCameraController, EditorOnly};
 pub use perf::EditorPerfStats;
 pub use play_state::PlayState;

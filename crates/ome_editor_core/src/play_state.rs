@@ -68,6 +68,9 @@ impl PlayState {
             .arg("--manifest-path")
             .arg(manifest_path)
             .arg("--")
+            // `--game` selects the project's game build (no embedded
+            // editor) so Play tests the actual game, not a nested editor.
+            .arg("--game")
             .arg("--scene")
             .arg(scene_path)
             .stdout(Stdio::piped())
@@ -81,9 +84,7 @@ impl PlayState {
         if std::env::var_os("RUST_LOG").is_none() {
             cmd.env("RUST_LOG", "info");
         }
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| PlayError::Spawn(e.to_string()))?;
+        let mut child = cmd.spawn().map_err(|e| PlayError::Spawn(e.to_string()))?;
 
         // Spawn reader threads for stdout/stderr.
         if let Some(stdout) = child.stdout.take() {

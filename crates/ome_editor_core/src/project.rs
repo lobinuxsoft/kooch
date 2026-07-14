@@ -184,7 +184,9 @@ edition = "2024"
 [workspace]
 
 [dependencies]
-oh_my_engine = {{ path = "{engine_path}" }}
+# `editor` pulls in the embedded editor so `cargo run` opens the editor
+# with this project's components; `cargo run -- --game` runs the game.
+oh_my_engine = {{ path = "{engine_path}", features = ["editor"] }}
 # Direct dep needed until `Reflect` proc-macro resolves through the facade.
 ome_ecs = {{ path = "{engine_path}/crates/ome_ecs" }}
 "#,
@@ -203,15 +205,20 @@ pub(crate) fn generate_main_rs(_name: &str) -> String {
 
 // Editor-managed module: registers your components + systems as a plugin.
 // Regenerated whenever you create or register scripts — do not edit
-// registrations.rs by hand. Add your own modules and wiring below `main`.
+// registrations.rs by hand.
 mod registrations;
 
 fn main() {
-    oh_my_engine::ome_core::init_tracing();
-    let mut app = App::new();
-    app.add_plugins(DefaultPlugins);
-    app.add_plugin(registrations::ProjectRegistrations);
-    app.run();
+    // `cargo run`           → the editor, with your components (authoring).
+    // `cargo run -- --game` → the game (what the editor's Play button runs).
+    if std::env::args().any(|a| a == "--game") {
+        let mut app = App::new();
+        app.add_plugins(DefaultPlugins);
+        app.add_plugin(registrations::ProjectRegistrations);
+        app.run();
+    } else {
+        oh_my_engine::ome_editor_core::run_editor_with(registrations::ProjectRegistrations);
+    }
 }
 "##
     .to_owned()
