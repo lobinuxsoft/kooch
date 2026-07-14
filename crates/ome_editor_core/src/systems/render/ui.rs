@@ -94,6 +94,9 @@ pub(super) fn run_editor_ui(
                 undo.undo_desc.as_deref(),
                 undo.redo_desc.as_deref(),
                 power_profile,
+                project_state
+                    .as_ref()
+                    .and_then(|ps| ps.editor_config.ide_command.as_deref()),
             );
 
             let selection_has_transform = data.entities.iter().any(|info| {

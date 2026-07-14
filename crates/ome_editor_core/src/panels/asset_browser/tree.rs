@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use egui::collapsing_header::CollapsingState;
 use ome_core::Guid;
 
-use crate::actions::EditorAction;
+use crate::actions::{EditorAction, NewFileKind};
 use crate::icons;
 use crate::panels::inspector::AssetCatalogEntry;
 
@@ -265,6 +265,22 @@ fn folder_menu(
         });
         ui.close();
     }
+    ui.menu_button(format!("{} New Script / Scene", icons::PLUS), |ui| {
+        for (label, name, kind) in [
+            ("Rust Script", "NewScript", NewFileKind::RustScript),
+            ("C# Script", "NewScript", NewFileKind::CSharpScript),
+            ("Scene", "NewScene", NewFileKind::Scene),
+        ] {
+            if ui.button(label).clicked() {
+                actions.push(EditorAction::CreateFile {
+                    folder: node.path.clone(),
+                    name: name.to_owned(),
+                    kind,
+                });
+                ui.close();
+            }
+        }
+    });
     // The synthetic root node has an empty name; it is not itself
     // renamable / deletable (that would target the crate root).
     if !node.name.is_empty() {

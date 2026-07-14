@@ -5,7 +5,7 @@ use ome_core::power::PowerProfile;
 
 use crate::actions::EditorAction;
 use crate::icons;
-use crate::state::{dock_has_tab, EditorTab, ALL_TABS};
+use crate::state::{ALL_TABS, EditorTab, dock_has_tab};
 
 // Migrating off `TopBottomPanel::top(...).show(ctx, ...)` requires
 // adopting the eframe 0.34+ `App::ui(&mut self, ui: &mut Ui)` pattern,
@@ -22,6 +22,7 @@ pub(crate) fn draw_menu_bar(
     undo_desc: Option<&str>,
     redo_desc: Option<&str>,
     power_profile: PowerProfile,
+    ide_command: Option<&str>,
 ) {
     // Keyboard shortcuts — check before any UI so they work regardless of focus.
     let ctrl_z = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z));
@@ -106,6 +107,31 @@ pub(crate) fn draw_menu_bar(
                         ui.close();
                     }
                 }
+            });
+            ui.menu_button("Settings", |ui| {
+                ui.label("IDE command (opens project + file):");
+                let id = ui.id().with("ide_cmd_buffer");
+                let mut buf: String = ui
+                    .data(|d| d.get_temp::<String>(id))
+                    .unwrap_or_else(|| ide_command.unwrap_or_default().to_owned());
+                if ui.text_edit_singleline(&mut buf).changed() {
+                    ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Apply").clicked() {
+                        let trimmed = buf.trim();
+                        let command = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+                        actions.push(EditorAction::SetIdeCommand { command });
+                        ui.data_mut(|d| d.remove::<String>(id));
+                        ui.close();
+                    }
+                    if ui.button("Auto-detect").clicked() {
+                        actions.push(EditorAction::SetIdeCommand { command: None });
+                        ui.data_mut(|d| d.remove::<String>(id));
+                        ui.close();
+                    }
+                });
+                ui.weak("Blank = codium / code. Args OK: 'flatpak run com.vscodium.codium'.");
             });
 
             // Push Play/Stop buttons to the center of the remaining space.

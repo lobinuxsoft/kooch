@@ -85,6 +85,11 @@ impl ProjectManifest {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EditorConfig {
     pub recent_projects: Vec<RecentProject>,
+    /// External IDE command for "Open in IDE". A whitespace-separated
+    /// program + args (e.g. `code` or `flatpak run com.vscodium.codium`);
+    /// `<workspace> -g <file>` is appended. `None` = auto-detect.
+    #[serde(default)]
+    pub ide_command: Option<String>,
 }
 
 /// A recently opened project entry.
@@ -308,10 +313,7 @@ pub fn ensure_default_scene(project_root: &Path) -> Result<PathBuf, ProjectError
                 components: vec![
                     ComponentDescription {
                         type_name: "ome_ecs::name::Name".to_owned(),
-                        fields: vec![(
-                            "value".to_owned(),
-                            ReflectValue::String("Sky".to_owned()),
-                        )],
+                        fields: vec![("value".to_owned(), ReflectValue::String("Sky".to_owned()))],
                     },
                     ComponentDescription {
                         type_name: "ome_ecs::sky_renderer::SkyRenderer".to_owned(),

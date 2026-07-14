@@ -59,6 +59,9 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::LaunchProject(path) => handle_launch_project(resources, path),
         EditorAction::CancelLaunch => handle_cancel_launch(resources),
         EditorAction::SetPowerProfile(profile) => handle_set_power_profile(resources, *profile),
+        EditorAction::SetIdeCommand { command } => {
+            handle_set_ide_command(resources, command.clone());
+        }
         EditorAction::EditMaterial { guid, material } => {
             handle_edit_material(resources, *guid, material);
         }
@@ -422,6 +425,15 @@ fn handle_launch_project(resources: &mut Resources, path: &std::path::Path) {
 fn handle_cancel_launch(resources: &mut Resources) {
     if let Some(ps) = resources.get_mut::<ProjectState>() {
         ps.kill_launcher();
+    }
+}
+
+fn handle_set_ide_command(resources: &mut Resources, command: Option<String>) {
+    if let Some(ps) = resources.get_mut::<ProjectState>() {
+        ps.editor_config.ide_command = command;
+        if let Err(e) = ps.editor_config.save() {
+            tracing::warn!(error = %e, "failed to save editor config");
+        }
     }
 }
 

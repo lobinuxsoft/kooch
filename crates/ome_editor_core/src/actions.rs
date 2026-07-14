@@ -144,6 +144,26 @@ pub(crate) enum EditorAction {
         root: PathBuf,
         file: PathBuf,
     },
+    /// Create a new source file (Rust / C# script) or an empty scene in
+    /// `folder` from a stub template.
+    CreateFile {
+        folder: PathBuf,
+        name: String,
+        kind: NewFileKind,
+    },
+    /// Set (or clear, with `None`) the external IDE command used by
+    /// [`OpenInIde`], persisted in the editor config.
+    SetIdeCommand {
+        command: Option<String>,
+    },
+}
+
+/// The kind of file created by [`EditorAction::CreateFile`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NewFileKind {
+    RustScript,
+    CSharpScript,
+    Scene,
 }
 
 pub(crate) fn apply_actions(

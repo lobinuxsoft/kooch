@@ -12,7 +12,7 @@ use ome_core::asset_database::AssetDatabase;
 use ome_core::resource::Resources;
 use ome_render::material::Material;
 
-use super::EditorAction;
+use super::{EditorAction, NewFileKind};
 use crate::systems::LastScannedProject;
 
 /// Dispatches an Asset Browser file operation. Returns `true` if it
@@ -27,36 +27,97 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         EditorAction::DeleteAsset { path } => delete_asset(resources, path),
         EditorAction::DeleteFolder { path } => delete_folder(resources, path),
         EditorAction::RevealInFileManager { path } => reveal(path),
-        EditorAction::OpenInIde { root, file } => open_in_ide(root, file),
+        EditorAction::OpenInIde { root, file } => open_in_ide(resources, root, file),
+        EditorAction::CreateFile { folder, name, kind } => create_file(folder, name, *kind),
         _ => return false,
     }
     true
 }
 
-/// Opens `file` in an external IDE with `root` as the workspace folder.
-/// Tries `$OME_IDE` (if set), then `codium`, then `code`; falls back to
-/// `xdg-open` on the file when no IDE is found.
-fn open_in_ide(root: &Path, file: &Path) {
-    let configured = std::env::var("OME_IDE").ok();
-    let candidates: Vec<&str> = match configured.as_deref() {
-        Some(cmd) => vec![cmd],
-        None => vec!["codium", "code"],
-    };
-    for cmd in candidates {
-        // `<ide> <workspace> -g <file>` opens the folder + reveals the file.
-        if std::process::Command::new(cmd)
-            .arg(root)
-            .arg("-g")
-            .arg(file)
-            .spawn()
-            .is_ok()
-        {
-            tracing::info!(ide = cmd, file = %file.display(), "opened in IDE");
+fn create_file(folder: &Path, name: &str, kind: NewFileKind) {
+    let (filename, content) = match kind {
+        NewFileKind::RustScript => (format!("{name}.rs"), format!("//! {name}\n")),
+        NewFileKind::CSharpScript => (
+            format!("{name}.cs"),
+            format!("public class {}\n{{\n}}\n", csharp_ident(name)),
+        ),
+        NewFileKind::Scene => {
+            let file = unique_target(folder, OsStr::new(&format!("{name}.ome_scene")));
+            let doc = ome_ecs::SceneDocument {
+                name: name.to_owned(),
+                version: "1.0".to_owned(),
+                entities: Vec::new(),
+            };
+            match doc.save(&file) {
+                Ok(()) => tracing::info!(file = %file.display(), "scene created"),
+                Err(e) => {
+                    tracing::error!(file = %file.display(), error = %e, "failed to write scene")
+                }
+            }
             return;
         }
+    };
+    let file = unique_target(folder, OsStr::new(&filename));
+    match std::fs::write(&file, content) {
+        // Source files live outside `assets/`, so the fs-walked tree
+        // picks them up next frame with no re-scan.
+        Ok(()) => tracing::info!(file = %file.display(), "file created"),
+        Err(e) => tracing::error!(file = %file.display(), error = %e, "failed to create file"),
     }
-    tracing::warn!("no IDE found (set OME_IDE, or install codium/code); using xdg-open");
-    let _ = std::process::Command::new("xdg-open").arg(file).spawn();
+}
+
+/// Sanitises `name` into a valid C# identifier for the class stub.
+fn csharp_ident(name: &str) -> String {
+    let mut out: String = name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if out.chars().next().is_none_or(|c| c.is_ascii_digit()) {
+        out.insert(0, '_');
+    }
+    out
+}
+
+/// Opens `file` in an external IDE with `root` as the workspace folder.
+/// Uses the configured `ide_command` (editor config), else `$OME_IDE`,
+/// else `codium` / `code`; falls back to `xdg-open` when none launch.
+fn open_in_ide(resources: &Resources, root: &Path, file: &Path) {
+    let configured = resources
+        .get::<crate::project_state::ProjectState>()
+        .and_then(|ps| ps.editor_config.ide_command.clone())
+        .or_else(|| std::env::var("OME_IDE").ok());
+
+    let launched = match configured.as_deref() {
+        Some(cmd) => spawn_ide(cmd, root, file),
+        None => spawn_ide("codium", root, file) || spawn_ide("code", root, file),
+    };
+    if !launched {
+        tracing::warn!(
+            "no IDE launched (set one in Settings, or install codium/code); using xdg-open"
+        );
+        let _ = std::process::Command::new("xdg-open").arg(file).spawn();
+    }
+}
+
+/// Spawns `cmd` (a whitespace-separated program + args, e.g.
+/// `flatpak run com.vscodium.codium`) appending `<root> -g <file>`.
+fn spawn_ide(cmd: &str, root: &Path, file: &Path) -> bool {
+    let mut parts = cmd.split_whitespace();
+    let Some(program) = parts.next() else {
+        return false;
+    };
+    let args: Vec<&str> = parts.collect();
+    let ok = std::process::Command::new(program)
+        .args(&args)
+        .arg(root)
+        .arg("-g")
+        .arg(file)
+        .spawn()
+        .is_ok();
+    if ok {
+        tracing::info!(ide = program, file = %file.display(), "opened in IDE");
+    }
+    ok
 }
 
 fn create_folder(parent: &Path, name: &str) {
