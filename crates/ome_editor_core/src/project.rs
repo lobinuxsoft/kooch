@@ -199,29 +199,19 @@ ome_ecs = {{ path = "{engine_path}/crates/ome_ecs" }}
 /// `main.rs` if it goes missing — so the wiring here must stay in sync
 /// with `crate::actions::codegen`.
 pub(crate) fn generate_main_rs(_name: &str) -> String {
-    r##"use oh_my_engine::ome_ecs::component::ComponentRegistry;
-use oh_my_engine::prelude::*;
+    r##"use oh_my_engine::prelude::*;
 
-// Editor-managed module: declares + registers your components and
-// systems. Regenerated whenever you create or register scripts — do not
-// edit it by hand. Add your own modules and wiring below `main`.
+// Editor-managed module: registers your components + systems as a plugin.
+// Regenerated whenever you create or register scripts — do not edit
+// registrations.rs by hand. Add your own modules and wiring below `main`.
 mod registrations;
 
 fn main() {
     oh_my_engine::ome_core::init_tracing();
     let mut app = App::new();
     app.add_plugins(DefaultPlugins);
-    registrations::add_systems(&mut app);
-    app.add_system(Stage::Startup, register_project_components);
+    app.add_plugin(registrations::ProjectRegistrations);
     app.run();
-}
-
-/// Startup system that registers project components for scene
-/// serialization + the editor Inspector.
-fn register_project_components(resources: &mut Resources) {
-    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registrations::register_components(registry);
-    }
 }
 "##
     .to_owned()
@@ -239,11 +229,20 @@ pub(crate) const INITIAL_REGISTRATIONS: &str = "\
 use oh_my_engine::ome_ecs::component::ComponentRegistry;
 use oh_my_engine::prelude::*;
 
-/// Registers every project component for serialization + the Inspector.
-pub fn register_components(registry: &mut ComponentRegistry) {}
+/// Editor-managed plugin: registers every project component + system.
+pub struct ProjectRegistrations;
 
-/// Adds every project system to the app.
-pub fn add_systems(app: &mut App) {}
+impl Plugin for ProjectRegistrations {
+    fn build(&self, app: &mut App) {
+        app.add_system(Stage::Startup, register_components);
+    }
+}
+
+fn register_components(resources: &mut Resources) {
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return;
+    };
+}
 ";
 
 /// Creates a new project directory with the standard structure and manifest.

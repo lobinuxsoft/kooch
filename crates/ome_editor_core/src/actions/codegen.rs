@@ -61,7 +61,7 @@ pub(super) fn register_scripts(resources: &mut Resources) {
         }
     }
 
-    ensure_main_rs(&project_root, resources);
+    ensure_main_wired(&project_root, resources);
 }
 
 /// Recursively collects source files under `dir` that declare a component
@@ -161,8 +161,28 @@ fn render_registrations(files: &[SourceFile]) -> String {
         s.push_str(&format!("#[path = \"{}\"]\nmod {};\n", f.rel, f.module));
     }
     s.push('\n');
-    s.push_str("/// Registers every project component for serialization + the Inspector.\n");
-    s.push_str("pub fn register_components(registry: &mut ComponentRegistry) {\n");
+    s.push_str("/// Editor-managed plugin: registers every project component + system.\n");
+    s.push_str(
+        "/// Wired into `main.rs` as `app.add_plugin(registrations::ProjectRegistrations);`.\n",
+    );
+    s.push_str("pub struct ProjectRegistrations;\n\n");
+    s.push_str("impl Plugin for ProjectRegistrations {\n");
+    s.push_str("    fn build(&self, app: &mut App) {\n");
+    s.push_str("        app.add_system(Stage::Startup, register_components);\n");
+    for f in files {
+        for sys in &f.systems {
+            s.push_str(&format!(
+                "        app.add_system(Stage::Update, {}::{});\n",
+                f.module, sys
+            ));
+        }
+    }
+    s.push_str("    }\n}\n\n");
+    s.push_str("/// Registers project components for serialization + the Inspector.\n");
+    s.push_str("fn register_components(resources: &mut Resources) {\n");
+    s.push_str("    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {\n");
+    s.push_str("        return;\n");
+    s.push_str("    };\n");
     for f in files {
         for c in &f.components {
             s.push_str(&format!(
@@ -171,46 +191,78 @@ fn render_registrations(files: &[SourceFile]) -> String {
             ));
         }
     }
-    s.push_str("}\n\n");
-    s.push_str("/// Adds every project system to the app (defaults to `Stage::Update`).\n");
-    s.push_str("pub fn add_systems(app: &mut App) {\n");
-    for f in files {
-        for sys in &f.systems {
-            s.push_str(&format!(
-                "    app.add_system(Stage::Update, {}::{});\n",
-                f.module, sys
-            ));
-        }
-    }
     s.push_str("}\n");
     s
 }
 
-/// Recreates `src/main.rs` (and a matching empty `registrations.rs` if it
-/// too is gone) from the scaffold when the user has deleted it.
-fn ensure_main_rs(project_root: &Path, resources: &Resources) {
+/// Ensures `src/main.rs` includes + installs the `registrations` module.
+/// Regenerates it from the scaffold when missing; otherwise injects the
+/// two wiring lines (`mod registrations;` + the `add_plugin` call)
+/// non-destructively if they are absent.
+fn ensure_main_wired(project_root: &Path, resources: &Resources) {
     let src = project_root.join("src");
     let main = src.join("main.rs");
-    if main.exists() {
+
+    if !main.exists() {
+        let name = resources
+            .get::<ProjectState>()
+            .and_then(|ps| {
+                ps.active_project
+                    .as_ref()
+                    .map(|ap| ap.manifest.name.clone())
+            })
+            .unwrap_or_else(|| "game".to_owned());
+        if let Err(e) = std::fs::write(&main, generate_main_rs(&name)) {
+            tracing::error!(file = %main.display(), error = %e, "failed to regenerate main.rs");
+            return;
+        }
+        let reg = src.join("registrations.rs");
+        if !reg.exists() {
+            let _ = std::fs::write(&reg, INITIAL_REGISTRATIONS);
+        }
+        tracing::info!(file = %main.display(), "main.rs regenerated");
         return;
     }
-    let name = resources
-        .get::<ProjectState>()
-        .and_then(|ps| {
-            ps.active_project
-                .as_ref()
-                .map(|ap| ap.manifest.name.clone())
-        })
-        .unwrap_or_else(|| "game".to_owned());
-    match std::fs::write(&main, generate_main_rs(&name)) {
-        Ok(()) => tracing::info!(file = %main.display(), "main.rs regenerated"),
-        Err(e) => {
-            tracing::error!(file = %main.display(), error = %e, "failed to regenerate main.rs")
+
+    let Ok(content) = std::fs::read_to_string(&main) else {
+        return;
+    };
+    let mut lines: Vec<String> = content.lines().map(str::to_owned).collect();
+    let mut changed = false;
+
+    if !content.contains("mod registrations;") {
+        lines.insert(0, "mod registrations;".to_owned());
+        lines.insert(1, String::new());
+        changed = true;
+    }
+    if !content.contains("registrations::ProjectRegistrations") {
+        // Install after `DefaultPlugins` if present, else right after
+        // `App::new()` — both are stable anchors in a scaffold main.
+        let anchor = lines
+            .iter()
+            .position(|l| l.contains("add_plugins("))
+            .or_else(|| lines.iter().position(|l| l.contains("App::new()")));
+        match anchor {
+            Some(i) => {
+                lines.insert(
+                    i + 1,
+                    "    app.add_plugin(registrations::ProjectRegistrations);".to_owned(),
+                );
+                changed = true;
+            }
+            None => tracing::warn!(
+                file = %main.display(),
+                "could not wire registrations (no App::new()/add_plugins found); add \
+                 `app.add_plugin(registrations::ProjectRegistrations);` manually",
+            ),
         }
     }
-    let reg = src.join("registrations.rs");
-    if !reg.exists() {
-        let _ = std::fs::write(&reg, INITIAL_REGISTRATIONS);
+    if changed {
+        let out = format!("{}\n", lines.join("\n"));
+        match std::fs::write(&main, out) {
+            Ok(()) => tracing::info!(file = %main.display(), "main.rs wired to registrations"),
+            Err(e) => tracing::error!(file = %main.display(), error = %e, "failed to wire main.rs"),
+        }
     }
 }
 
