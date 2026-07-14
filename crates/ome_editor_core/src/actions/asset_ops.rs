@@ -28,19 +28,26 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         EditorAction::DeleteFolder { path } => delete_folder(resources, path),
         EditorAction::RevealInFileManager { path } => reveal(path),
         EditorAction::OpenInIde { root, file } => open_in_ide(resources, root, file),
-        EditorAction::CreateFile { folder, name, kind } => create_file(folder, name, *kind),
+        EditorAction::CreateFile { folder, name, kind } => {
+            create_file(resources, folder, name, *kind)
+        }
         _ => return false,
     }
     true
 }
 
-fn create_file(folder: &Path, name: &str, kind: NewFileKind) {
-    let (filename, content) = match kind {
-        NewFileKind::RustScript => (format!("{name}.rs"), format!("//! {name}\n")),
-        NewFileKind::CSharpScript => (
-            format!("{name}.cs"),
-            format!("public class {}\n{{\n}}\n", csharp_ident(name)),
-        ),
+// Baked-in fallbacks so file creation still works if the engine's
+// `templates/` dir is missing at runtime; the on-disk copies are the
+// editable source of truth.
+const COMPONENT_TMPL: &str = include_str!("../../../../templates/component.rs.tmpl");
+const SYSTEM_TMPL: &str = include_str!("../../../../templates/system.rs.tmpl");
+const RHAI_TMPL: &str = include_str!("../../../../templates/script.rhai.tmpl");
+
+fn create_file(resources: &Resources, folder: &Path, name: &str, kind: NewFileKind) {
+    let (tmpl_file, fallback, ext) = match kind {
+        NewFileKind::RustComponent => ("component.rs.tmpl", COMPONENT_TMPL, "rs"),
+        NewFileKind::RustSystem => ("system.rs.tmpl", SYSTEM_TMPL, "rs"),
+        NewFileKind::RhaiScript => ("script.rhai.tmpl", RHAI_TMPL, "rhai"),
         NewFileKind::Scene => {
             let file = unique_target(folder, OsStr::new(&format!("{name}.ome_scene")));
             let doc = ome_ecs::SceneDocument {
@@ -57,25 +64,68 @@ fn create_file(folder: &Path, name: &str, kind: NewFileKind) {
             return;
         }
     };
-    let file = unique_target(folder, OsStr::new(&filename));
+
+    // Prefer the engine's on-disk template (editable), fall back to the
+    // baked-in copy.
+    let template = engine_template(resources, tmpl_file).unwrap_or_else(|| fallback.to_owned());
+    let content = template
+        .replace("{{Name}}", &to_pascal_case(name))
+        .replace("{{name}}", &to_snake_case(name));
+
+    // Source files live outside `assets/`, so the fs-walked tree picks
+    // them up next frame with no re-scan.
+    let file = unique_target(
+        folder,
+        OsStr::new(&format!("{}.{ext}", to_snake_case(name))),
+    );
     match std::fs::write(&file, content) {
-        // Source files live outside `assets/`, so the fs-walked tree
-        // picks them up next frame with no re-scan.
         Ok(()) => tracing::info!(file = %file.display(), "file created"),
         Err(e) => tracing::error!(file = %file.display(), error = %e, "failed to create file"),
     }
 }
 
-/// Sanitises `name` into a valid C# identifier for the class stub.
-fn csharp_ident(name: &str) -> String {
-    let mut out: String = name
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '_')
-        .collect();
-    if out.chars().next().is_none_or(|c| c.is_ascii_digit()) {
-        out.insert(0, '_');
+/// Reads `templates/<file>` from the engine root, if resolvable.
+fn engine_template(resources: &Resources, file: &str) -> Option<String> {
+    let root = resources
+        .get::<crate::project_state::ProjectState>()?
+        .engine_root
+        .clone()?;
+    std::fs::read_to_string(root.join("templates").join(file)).ok()
+}
+
+/// Converts `name` to a `PascalCase` Rust type identifier.
+fn to_pascal_case(name: &str) -> String {
+    let mut out = String::new();
+    let mut capitalize = true;
+    for c in name.chars() {
+        if c.is_alphanumeric() {
+            if capitalize {
+                out.extend(c.to_uppercase());
+                capitalize = false;
+            } else {
+                out.push(c);
+            }
+        } else {
+            capitalize = true;
+        }
     }
     out
+}
+
+/// Converts `name` to a `snake_case` file / function identifier.
+fn to_snake_case(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        if c.is_alphanumeric() {
+            if c.is_uppercase() && !out.is_empty() && !out.ends_with('_') {
+                out.push('_');
+            }
+            out.extend(c.to_lowercase());
+        } else if !out.is_empty() && !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    out.trim_matches('_').to_owned()
 }
 
 /// Opens `file` in an external IDE with `root` as the workspace folder.
@@ -305,4 +355,23 @@ fn meta_path(p: &Path) -> PathBuf {
     let mut s = p.as_os_str().to_os_string();
     s.push(".meta");
     PathBuf::from(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{to_pascal_case, to_snake_case};
+
+    #[test]
+    fn pascal_case_from_various_inputs() {
+        assert_eq!(to_pascal_case("NewComponent"), "NewComponent");
+        assert_eq!(to_pascal_case("player health"), "PlayerHealth");
+        assert_eq!(to_pascal_case("enemy_ai"), "EnemyAi");
+    }
+
+    #[test]
+    fn snake_case_from_various_inputs() {
+        assert_eq!(to_snake_case("NewSystem"), "new_system");
+        assert_eq!(to_snake_case("PlayerHealth"), "player_health");
+        assert_eq!(to_snake_case("enemy ai"), "enemy_ai");
+    }
 }

@@ -267,8 +267,13 @@ fn folder_menu(
     }
     ui.menu_button(format!("{} New Script / Scene", icons::PLUS), |ui| {
         for (label, name, kind) in [
-            ("Rust Script", "NewScript", NewFileKind::RustScript),
-            ("C# Script", "NewScript", NewFileKind::CSharpScript),
+            (
+                "Component (Rust)",
+                "NewComponent",
+                NewFileKind::RustComponent,
+            ),
+            ("System (Rust)", "NewSystem", NewFileKind::RustSystem),
+            ("Rhai Script", "NewScript", NewFileKind::RhaiScript),
             ("Scene", "NewScene", NewFileKind::Scene),
         ] {
             if ui.button(label).clicked() {

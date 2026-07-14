@@ -158,11 +158,13 @@ pub(crate) enum EditorAction {
     },
 }
 
-/// The kind of file created by [`EditorAction::CreateFile`].
+/// The kind of file created by [`EditorAction::CreateFile`]. The Rust
+/// and Rhai kinds are scaffolded from `templates/` in the engine root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NewFileKind {
-    RustScript,
-    CSharpScript,
+    RustComponent,
+    RustSystem,
+    RhaiScript,
     Scene,
 }
 
