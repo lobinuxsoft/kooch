@@ -27,9 +27,36 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         EditorAction::DeleteAsset { path } => delete_asset(resources, path),
         EditorAction::DeleteFolder { path } => delete_folder(resources, path),
         EditorAction::RevealInFileManager { path } => reveal(path),
+        EditorAction::OpenInIde { root, file } => open_in_ide(root, file),
         _ => return false,
     }
     true
+}
+
+/// Opens `file` in an external IDE with `root` as the workspace folder.
+/// Tries `$OME_IDE` (if set), then `codium`, then `code`; falls back to
+/// `xdg-open` on the file when no IDE is found.
+fn open_in_ide(root: &Path, file: &Path) {
+    let configured = std::env::var("OME_IDE").ok();
+    let candidates: Vec<&str> = match configured.as_deref() {
+        Some(cmd) => vec![cmd],
+        None => vec!["codium", "code"],
+    };
+    for cmd in candidates {
+        // `<ide> <workspace> -g <file>` opens the folder + reveals the file.
+        if std::process::Command::new(cmd)
+            .arg(root)
+            .arg("-g")
+            .arg(file)
+            .spawn()
+            .is_ok()
+        {
+            tracing::info!(ide = cmd, file = %file.display(), "opened in IDE");
+            return;
+        }
+    }
+    tracing::warn!("no IDE found (set OME_IDE, or install codium/code); using xdg-open");
+    let _ = std::process::Command::new("xdg-open").arg(file).spawn();
 }
 
 fn create_folder(parent: &Path, name: &str) {

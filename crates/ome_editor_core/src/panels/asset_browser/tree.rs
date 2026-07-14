@@ -1,13 +1,15 @@
 //! Folder-tree model + rendering for the Asset Browser.
 //!
-//! Mirrors the on-disk `assets/` hierarchy (Unity / Godot style): each
-//! source root ("Project", "Engine") is a top-level node, folders nest
-//! below it, and assets are selectable leaves. Writable (project) roots
-//! also walk the filesystem so empty folders appear, and expose a
-//! right-click menu (new folder / material, rename, duplicate, delete,
-//! reveal) plus inline rename.
+//! Mirrors the on-disk project tree (Unity / Godot style): each source
+//! root ("Project" = the crate root, "Engine" = shipped assets) is a
+//! top-level node, folders nest below it, and every file is a leaf.
+//! Files with a registered `.meta` are typed assets (single-click →
+//! Inspector); the rest are plain files. Double-clicking any file opens
+//! it in an external IDE with the project as the workspace, so Rust
+//! source and `Cargo.toml` are editable. Writable (project) roots also
+//! expose a right-click menu and inline rename.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use egui::collapsing_header::CollapsingState;
@@ -17,20 +19,21 @@ use crate::actions::EditorAction;
 use crate::icons;
 use crate::panels::inspector::AssetCatalogEntry;
 
-/// A folder node in the asset tree. Built fresh each frame (asset counts
-/// and project trees are small, so the rebuild + fs walk is trivial).
+/// A folder node in the tree. Rebuilt fresh each frame (project trees,
+/// minus `target/`, are small enough that the fs walk is trivial).
 pub(super) struct FolderNode {
     name: String,
     path: PathBuf,
     folders: BTreeMap<String, FolderNode>,
-    assets: Vec<AssetLeaf>,
+    files: Vec<FileLeaf>,
 }
 
-struct AssetLeaf {
-    guid: Guid,
+struct FileLeaf {
     name: String,
-    type_name: String,
     path: PathBuf,
+    /// `Some((guid, type_name))` when the file is a registered typed
+    /// asset; `None` for plain files (source, config, …).
+    asset: Option<(Guid, String)>,
 }
 
 /// In-progress inline rename: which path is being edited + the buffer.
@@ -48,80 +51,65 @@ impl FolderNode {
             name,
             path,
             folders: BTreeMap::new(),
-            assets: Vec::new(),
+            files: Vec::new(),
         }
     }
 
-    /// Builds a tree of `entries` relative to `root_path`. When
-    /// `scan_dirs` is set the filesystem is walked first so empty folders
-    /// appear (needed for the writable project root).
-    fn build(root_path: &Path, entries: &[&AssetCatalogEntry], scan_dirs: bool) -> Self {
+    /// Walks `root_path` on disk, overlaying `entries` (the typed asset
+    /// catalog) so registered files carry their GUID + type.
+    fn build(root_path: &Path, entries: &[&AssetCatalogEntry]) -> Self {
+        let by_path: HashMap<&Path, (Guid, &str)> = entries
+            .iter()
+            .map(|e| (e.path.as_path(), (e.guid, e.type_name.as_str())))
+            .collect();
         let mut root = FolderNode::new(String::new(), root_path.to_path_buf());
-        if scan_dirs {
-            walk_dirs(&mut root, root_path);
-        }
-        for entry in entries {
-            let rel = entry.path.strip_prefix(root_path).unwrap_or(&entry.path);
-            let comps: Vec<String> = rel
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                .collect();
-            if comps.is_empty() {
-                continue;
-            }
-            let folder_count = comps.len() - 1;
-            let mut node = &mut root;
-            for seg in &comps[..folder_count] {
-                let child_path = node.path.join(seg);
-                node = node
-                    .folders
-                    .entry(seg.clone())
-                    .or_insert_with(|| FolderNode::new(seg.clone(), child_path));
-            }
-            node.assets.push(AssetLeaf {
-                guid: entry.guid,
-                name: entry.display_name.clone(),
-                type_name: entry.type_name.clone(),
-                path: entry.path.clone(),
-            });
-        }
+        walk(&mut root, root_path, &by_path);
         root
     }
 
-    /// `true` when this folder — or any descendant — matches the (already
-    /// lowercased) search needle. Empty is always a match.
+    /// `true` when this folder — or any descendant — has a file matching
+    /// the (already lowercased) search needle. Empty is always a match.
     fn matches(&self, needle: &str) -> bool {
         if needle.is_empty() {
             return true;
         }
-        self.assets
+        self.files
             .iter()
-            .any(|a| a.name.to_lowercase().contains(needle))
+            .any(|f| f.name.to_lowercase().contains(needle))
             || self.folders.values().any(|f| f.matches(needle))
     }
 }
 
-/// Recursively adds every real subdirectory of `dir` to `node` so empty
-/// folders show. Hidden folders (dot-prefixed) are skipped.
-fn walk_dirs(node: &mut FolderNode, dir: &Path) {
+/// Recursively populates `node` from `dir`. Skips build/vcs noise
+/// (`target/`, dot-folders) and `.meta` sidecars (shown via their asset).
+fn walk(node: &mut FolderNode, dir: &Path, by_path: &HashMap<&Path, (Guid, &str)>) {
     let Ok(read) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in read.flatten() {
-        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            continue;
-        }
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
-            continue;
-        }
+        let Ok(ft) = entry.file_type() else { continue };
         let path = entry.path();
-        let child = node
-            .folders
-            .entry(name.clone())
-            .or_insert_with(|| FolderNode::new(name, path.clone()));
-        walk_dirs(child, &path);
+        if ft.is_dir() {
+            if name == "target" || name.starts_with('.') {
+                continue;
+            }
+            let child = node
+                .folders
+                .entry(name.clone())
+                .or_insert_with(|| FolderNode::new(name, path.clone()));
+            walk(child, &path, by_path);
+        } else {
+            if name.ends_with(".meta") {
+                continue;
+            }
+            let asset = by_path
+                .get(path.as_path())
+                .map(|(g, t)| (*g, (*t).to_owned()));
+            node.files.push(FileLeaf { name, path, asset });
+        }
     }
+    node.files.sort_by(|a, b| a.name.cmp(&b.name));
 }
 
 /// State threaded through the recursive render.
@@ -131,12 +119,13 @@ pub(super) struct RenderCtx<'a> {
     pub current_folder: &'a mut Option<PathBuf>,
     pub actions: &'a mut Vec<EditorAction>,
     pub rename: &'a mut Option<RenameState>,
-    /// `true` for project roots (writable: menus + folder targeting),
+    /// `true` for the project root (writable: menus + folder targeting),
     /// `false` for the read-only engine root.
     pub writable: bool,
 }
 
-/// Renders one source root as a top-level collapsible node.
+/// Renders one source root as a top-level collapsible node. `root_path`
+/// doubles as the IDE workspace for files under it.
 pub(super) fn render_root(
     ui: &mut egui::Ui,
     label: &str,
@@ -144,34 +133,36 @@ pub(super) fn render_root(
     entries: &[&AssetCatalogEntry],
     ctx: &mut RenderCtx<'_>,
 ) {
-    let root = FolderNode::build(root_path, entries, ctx.writable);
+    let root = FolderNode::build(root_path, entries);
     let id = ui.make_persistent_id(("asset_root", root_path));
     CollapsingState::load_with_default_open(ui.ctx(), id, true)
         .show_header(ui, |ui| {
-            let resp = ui.label(format!("{} {}", icons::FOLDER_OPEN, label));
+            // A selectable label (not a plain label) senses secondary
+            // clicks, so the root's context menu actually opens.
+            let resp = ui.selectable_label(false, format!("{} {}", icons::FOLDER_OPEN, label));
             if ctx.writable {
                 let actions = &mut *ctx.actions;
                 let rename = &mut *ctx.rename;
                 resp.context_menu(|ui| folder_menu(ui, &root, true, actions, rename));
             }
         })
-        .body(|ui| render_children(ui, &root, ctx));
+        .body(|ui| render_children(ui, &root, ctx, root_path));
 }
 
-fn render_children(ui: &mut egui::Ui, node: &FolderNode, ctx: &mut RenderCtx<'_>) {
+fn render_children(ui: &mut egui::Ui, node: &FolderNode, ctx: &mut RenderCtx<'_>, root: &Path) {
     for sub in node.folders.values() {
         if sub.matches(ctx.needle) {
-            render_folder(ui, sub, ctx);
+            render_folder(ui, sub, ctx, root);
         }
     }
-    for leaf in &node.assets {
+    for leaf in &node.files {
         if ctx.needle.is_empty() || leaf.name.to_lowercase().contains(ctx.needle) {
-            render_leaf(ui, leaf, ctx);
+            render_leaf(ui, leaf, ctx, root);
         }
     }
 }
 
-fn render_folder(ui: &mut egui::Ui, node: &FolderNode, ctx: &mut RenderCtx<'_>) {
+fn render_folder(ui: &mut egui::Ui, node: &FolderNode, ctx: &mut RenderCtx<'_>, root: &Path) {
     if ctx.rename.as_ref().is_some_and(|r| r.path == node.path) {
         rename_edit(ui, &node.path, true, ctx.actions, ctx.rename);
         return;
@@ -196,29 +187,46 @@ fn render_folder(ui: &mut egui::Ui, node: &FolderNode, ctx: &mut RenderCtx<'_>) 
             let rename = &mut *ctx.rename;
             resp.context_menu(|ui| folder_menu(ui, node, writable, actions, rename));
         })
-        .body(|ui| render_children(ui, node, ctx));
+        .body(|ui| render_children(ui, node, ctx, root));
 }
 
-fn render_leaf(ui: &mut egui::Ui, leaf: &AssetLeaf, ctx: &mut RenderCtx<'_>) {
+fn render_leaf(ui: &mut egui::Ui, leaf: &FileLeaf, ctx: &mut RenderCtx<'_>, root: &Path) {
     if ctx.rename.as_ref().is_some_and(|r| r.path == leaf.path) {
         rename_edit(ui, &leaf.path, false, ctx.actions, ctx.rename);
         return;
     }
 
-    let selected = *ctx.selected_asset == Some(leaf.guid);
+    let icon = match &leaf.asset {
+        Some((_, type_name)) => type_icon(type_name),
+        None => file_icon(&leaf.name),
+    };
+    let selected = leaf
+        .asset
+        .as_ref()
+        .is_some_and(|(g, _)| *ctx.selected_asset == Some(*g));
+
     let resp = ui
-        .selectable_label(
-            selected,
-            format!("{} {}", type_icon(&leaf.type_name), leaf.name),
-        )
-        .on_hover_text(&leaf.type_name);
+        .selectable_label(selected, format!("{icon} {}", leaf.name))
+        .on_hover_text(leaf.path.display().to_string());
+
     if resp.clicked() {
-        *ctx.selected_asset = if selected { None } else { Some(leaf.guid) };
+        // Single-click selects a typed asset for the Inspector; plain
+        // files have nothing to inspect.
+        if let Some((guid, _)) = &leaf.asset {
+            *ctx.selected_asset = if selected { None } else { Some(*guid) };
+        }
     }
+    if resp.double_clicked() {
+        ctx.actions.push(EditorAction::OpenInIde {
+            root: root.to_path_buf(),
+            file: leaf.path.clone(),
+        });
+    }
+
     let writable = ctx.writable;
     let actions = &mut *ctx.actions;
     let rename = &mut *ctx.rename;
-    resp.context_menu(|ui| leaf_menu(ui, leaf, writable, actions, rename));
+    resp.context_menu(|ui| leaf_menu(ui, leaf, writable, root, actions, rename));
 }
 
 fn folder_menu(
@@ -258,7 +266,7 @@ fn folder_menu(
         ui.close();
     }
     // The synthetic root node has an empty name; it is not itself
-    // renamable / deletable (that would target the assets/ root).
+    // renamable / deletable (that would target the crate root).
     if !node.name.is_empty() {
         ui.separator();
         if ui.button("Rename").clicked() {
@@ -287,15 +295,25 @@ fn folder_menu(
 
 fn leaf_menu(
     ui: &mut egui::Ui,
-    leaf: &AssetLeaf,
+    leaf: &FileLeaf,
     writable: bool,
+    root: &Path,
     actions: &mut Vec<EditorAction>,
     rename: &mut Option<RenameState>,
 ) {
+    if ui.button("Open in IDE").clicked() {
+        actions.push(EditorAction::OpenInIde {
+            root: root.to_path_buf(),
+            file: leaf.path.clone(),
+        });
+        ui.close();
+    }
     if writable {
+        ui.separator();
         if ui.button("Rename").clicked() {
             // Edit the name before the first extension; the suffix
-            // (`.ron`, `.ome_material.ron`, …) is re-attached on commit.
+            // (`.ron`, `.rs`, `.ome_material.ron`, …) is re-attached on
+            // commit.
             let stem = leaf.name.split('.').next().unwrap_or(&leaf.name).to_owned();
             *rename = Some(RenameState {
                 path: leaf.path.clone(),
@@ -316,12 +334,15 @@ fn leaf_menu(
             });
             ui.close();
         }
+    }
+    if let Some((guid, _)) = &leaf.asset {
         ui.separator();
+        if ui.button("Copy GUID").clicked() {
+            ui.ctx().copy_text(guid.to_string());
+            ui.close();
+        }
     }
-    if ui.button("Copy GUID").clicked() {
-        ui.ctx().copy_text(leaf.guid.to_string());
-        ui.close();
-    }
+    ui.separator();
     if ui.button("Reveal in file manager").clicked() {
         actions.push(EditorAction::RevealInFileManager {
             path: leaf.path.clone(),
@@ -376,8 +397,8 @@ fn rename_edit(
     *rename = None;
 }
 
-/// Builds the new file/folder name from the edited stem, re-attaching an
-/// asset's extension suffix. Returns `None` for an empty edit.
+/// Builds the new file/folder name from the edited stem, re-attaching a
+/// file's extension suffix. Returns `None` for an empty edit.
 fn commit_name(path: &Path, buffer: &str, is_folder: bool) -> Option<String> {
     let trimmed = buffer.trim();
     if trimmed.is_empty() {
@@ -391,11 +412,21 @@ fn commit_name(path: &Path, buffer: &str, is_folder: bool) -> Option<String> {
     Some(format!("{trimmed}{suffix}"))
 }
 
-/// Icon per asset type. Generic `STACK` for anything not explicitly mapped.
+/// Icon for a typed asset by its canonical type name.
 fn type_icon(type_name: &str) -> &'static str {
     match type_name {
         "ome_render::meshlet::asset::MeshletMesh" => icons::CUBE,
         "ome_render::material::asset::Material" => icons::FADERS,
         _ => icons::STACK,
+    }
+}
+
+/// Icon for a plain (non-asset) file by extension.
+fn file_icon(name: &str) -> &'static str {
+    match name.rsplit('.').next().unwrap_or("") {
+        "rs" => icons::TERMINAL,
+        "toml" | "lock" => icons::GEAR,
+        "ome_scene" => icons::TREE_STRUCTURE,
+        _ => icons::LIST_BULLETS,
     }
 }

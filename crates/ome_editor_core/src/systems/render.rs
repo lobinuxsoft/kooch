@@ -227,6 +227,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         ),
         None => (None, None),
     };
+    // The Asset Browser tree is rooted at the project *crate* root (not
+    // `assets/`) so `src/`, `Cargo.toml`, `scenes/`, … are all browsable
+    // and openable in an external IDE.
+    let project_crate_root = project_state
+        .as_ref()
+        .and_then(|ps| ps.active_project.as_ref().map(|ap| ap.root_path.clone()));
     let asset_catalog = resources
         .get::<ome_core::asset_database::AssetDatabase>()
         .map(|db| {
@@ -266,7 +272,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &asset_catalog,
         asset_detail.as_ref(),
         engine_root_owned.as_deref(),
-        project_root_owned.as_deref(),
+        project_crate_root.as_deref(),
         &mut meshlet_debug_mode,
         meshlet_debug_caps,
         &mut meshlet_lod_settings,

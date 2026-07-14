@@ -138,6 +138,12 @@ pub(crate) enum EditorAction {
     RevealInFileManager {
         path: PathBuf,
     },
+    /// Open `file` in an external IDE with `root` as the workspace, so
+    /// the whole project (Rust source, `Cargo.toml`, …) is editable.
+    OpenInIde {
+        root: PathBuf,
+        file: PathBuf,
+    },
 }
 
 pub(crate) fn apply_actions(
