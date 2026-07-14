@@ -16,19 +16,19 @@
 //!     .run();
 //! ```
 
+pub(crate) mod actions;
+pub(crate) mod drag_drop;
 pub mod editor_camera;
+pub(crate) mod gizmos;
 pub mod icons;
 pub mod launch_screen;
+pub(crate) mod layout;
+pub(crate) mod menu_bar;
+pub(crate) mod panels;
 pub mod perf;
 pub mod play_state;
 pub mod project;
 pub mod project_state;
-pub(crate) mod actions;
-pub(crate) mod drag_drop;
-pub(crate) mod gizmos;
-pub(crate) mod layout;
-pub(crate) mod menu_bar;
-pub(crate) mod panels;
 pub(crate) mod queries;
 pub(crate) mod state;
 pub(crate) mod style;
@@ -42,10 +42,10 @@ use ome_core::stage::Stage;
 
 pub use editor_camera::{EditorCamera, EditorCameraController, EditorOnly};
 pub use perf::EditorPerfStats;
-pub use state::EditorOverlay;
 pub use play_state::PlayState;
 pub use project::{EditorConfig, ProjectManifest};
 pub use project_state::ProjectState;
+pub use state::EditorOverlay;
 
 /// Plugin that adds the embedded egui editor overlay.
 ///
@@ -82,13 +82,20 @@ impl Plugin for EditorPlugin {
         // before the inspector renders, so the picker sees [project]
         // entries the same frame the user opens a project.
         app.add_system(Stage::PreUpdate, systems::scan_project_assets_system);
+        app.add_system(Stage::PreUpdate, systems::ensure_main_exists_system);
         // Register the EditorOnly marker as ephemeral *before* the camera
         // is spawned, so the entity is filtered from any save that races
         // the spawn (e.g. play-mode snapshot triggered immediately).
-        app.add_system(Stage::Startup, editor_camera::register_ephemeral_markers_system);
+        app.add_system(
+            Stage::Startup,
+            editor_camera::register_ephemeral_markers_system,
+        );
         app.add_system(Stage::Startup, editor_camera::spawn_editor_camera_system);
         // Hand the viewport over to the gameplay camera in play mode.
-        app.add_system(Stage::PreRender, editor_camera::sync_editor_camera_active_system);
+        app.add_system(
+            Stage::PreRender,
+            editor_camera::sync_editor_camera_active_system,
+        );
         // #463 perf HUD — sample wall-clock delta between successive
         // editor render invocations and update FPS instant/avg.
         // Runs in PreRender so the timestamp it captures matches the

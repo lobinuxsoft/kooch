@@ -114,3 +114,22 @@ pub fn scan_project_assets_system(resources: &mut Resources) {
         resources.insert(LastScannedProject { root: current });
     }
 }
+
+/// PreUpdate system: if the active project's `src/main.rs` has been
+/// deleted, regenerate the entrypoint + `registrations.rs` (scanning
+/// every `.rs` under `src/`). Only fires when `src/` exists and
+/// `main.rs` is missing, so it never fights a user editing an existing
+/// `main.rs`.
+pub fn ensure_main_exists_system(resources: &mut Resources) {
+    let regenerate = resources
+        .get::<ProjectState>()
+        .and_then(|ps| ps.active_project.as_ref())
+        .map(|ap| {
+            let src = ap.root_path.join("src");
+            src.is_dir() && !src.join("main.rs").exists()
+        })
+        .unwrap_or(false);
+    if regenerate {
+        crate::actions::register_scripts(resources);
+    }
+}

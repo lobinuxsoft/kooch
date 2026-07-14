@@ -21,6 +21,8 @@ use crate::undo::{CompoundCommand, EditorCommand, UndoStack};
 use self::dispatch::{action_to_command, batch_description, same_ecs_variant};
 use self::handlers::apply_non_ecs_action;
 
+pub(crate) use self::codegen::register_scripts;
+
 pub(crate) enum EditorAction {
     /// Spawn an entity with Name + Transform + optional extra components.
     /// The optional String sets the Name component value.

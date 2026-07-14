@@ -29,7 +29,7 @@ struct SourceFile {
 
 /// Regenerates `src/registrations.rs` from the project's `src/` tree and
 /// ensures `main.rs` exists.
-pub(super) fn register_scripts(resources: &mut Resources) {
+pub(crate) fn register_scripts(resources: &mut Resources) {
     let Some(project_root) = resources
         .get::<ProjectState>()
         .and_then(|ps| ps.active_project.as_ref().map(|ap| ap.root_path.clone()))
