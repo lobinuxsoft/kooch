@@ -1,6 +1,7 @@
 //! Editor actions collected during UI, applied after render.
 
 mod asset_ops;
+mod codegen;
 mod dispatch;
 mod handlers;
 mod reparent;
@@ -156,6 +157,10 @@ pub(crate) enum EditorAction {
     SetIdeCommand {
         command: Option<String>,
     },
+    /// Rescan the project's `src/` for components + systems and rewrite
+    /// the editor-managed `src/registrations.rs` (regenerating `main.rs`
+    /// if it is missing).
+    RegisterScripts,
 }
 
 /// The kind of file created by [`EditorAction::CreateFile`]. The Rust
@@ -164,7 +169,6 @@ pub(crate) enum EditorAction {
 pub(crate) enum NewFileKind {
     RustComponent,
     RustSystem,
-    RhaiScript,
     Scene,
 }
 

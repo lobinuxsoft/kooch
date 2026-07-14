@@ -31,6 +31,7 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         EditorAction::CreateFile { folder, name, kind } => {
             create_file(resources, folder, name, *kind)
         }
+        EditorAction::RegisterScripts => super::codegen::register_scripts(resources),
         _ => return false,
     }
     true
@@ -41,13 +42,11 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
 // editable source of truth.
 const COMPONENT_TMPL: &str = include_str!("../../../../templates/component.rs.tmpl");
 const SYSTEM_TMPL: &str = include_str!("../../../../templates/system.rs.tmpl");
-const RHAI_TMPL: &str = include_str!("../../../../templates/script.rhai.tmpl");
 
 fn create_file(resources: &Resources, folder: &Path, name: &str, kind: NewFileKind) {
     let (tmpl_file, fallback, ext) = match kind {
         NewFileKind::RustComponent => ("component.rs.tmpl", COMPONENT_TMPL, "rs"),
         NewFileKind::RustSystem => ("system.rs.tmpl", SYSTEM_TMPL, "rs"),
-        NewFileKind::RhaiScript => ("script.rhai.tmpl", RHAI_TMPL, "rhai"),
         NewFileKind::Scene => {
             let file = unique_target(folder, OsStr::new(&format!("{name}.ome_scene")));
             let doc = ome_ecs::SceneDocument {

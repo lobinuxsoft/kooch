@@ -302,7 +302,6 @@ fn folder_menu(
                 CreateKind::File(NewFileKind::RustComponent),
             ),
             ("System (Rust)", CreateKind::File(NewFileKind::RustSystem)),
-            ("Rhai Script", CreateKind::File(NewFileKind::RhaiScript)),
             ("Scene", CreateKind::File(NewFileKind::Scene)),
         ] {
             if ui.button(label).clicked() {
@@ -378,6 +377,16 @@ fn leaf_menu(
             actions.push(EditorAction::DeleteAsset {
                 path: leaf.path.clone(),
             });
+            ui.close();
+        }
+        // Rust sources can be (re)registered as components / systems by
+        // rescanning src/ — the editor detects which they are.
+        if leaf.name.ends_with(".rs")
+            && ui
+                .button(format!("{} Register scripts", icons::PLUS))
+                .clicked()
+        {
+            actions.push(EditorAction::RegisterScripts);
             ui.close();
         }
     }
@@ -491,6 +500,13 @@ fn create_edit(
         return;
     }
     if resp.lost_focus() && enter && !escape && !name.is_empty() {
+        // A new component / system auto-registers so it works without a
+        // manual step; the CreateFile above runs first (writes the file),
+        // then RegisterScripts rescans src/ and picks it up.
+        let auto_register = matches!(
+            kind,
+            CreateKind::File(NewFileKind::RustComponent | NewFileKind::RustSystem)
+        );
         actions.push(match kind {
             CreateKind::Folder => EditorAction::CreateFolder { parent, name },
             CreateKind::Material => EditorAction::CreateMaterial {
@@ -503,6 +519,9 @@ fn create_edit(
                 kind,
             },
         });
+        if auto_register {
+            actions.push(EditorAction::RegisterScripts);
+        }
     }
     *pending = None;
 }
@@ -513,7 +532,6 @@ fn create_hint(kind: CreateKind) -> &'static str {
         CreateKind::Material => "Material name…",
         CreateKind::File(NewFileKind::RustComponent) => "Component name (e.g. Health)…",
         CreateKind::File(NewFileKind::RustSystem) => "System name (e.g. Movement)…",
-        CreateKind::File(NewFileKind::RhaiScript) => "Script name…",
         CreateKind::File(NewFileKind::Scene) => "Scene name…",
     }
 }
