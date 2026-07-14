@@ -22,7 +22,7 @@ use crate::actions::EditorAction;
 use crate::icons;
 use crate::panels::inspector::AssetCatalogEntry;
 
-use self::tree::{RenameState, RenderCtx};
+use self::tree::{PendingCreate, RenameState, RenderCtx};
 
 /// Content of the "Asset Browser" tab.
 pub(crate) fn draw_asset_browser_content(
@@ -92,9 +92,11 @@ pub(crate) fn draw_asset_browser_content(
         }
     }
 
-    // Inline-rename state lives in egui memory (transient UI state).
+    // Inline rename + create state live in egui memory (transient UI).
     let rename_id = egui::Id::new("asset_browser_rename");
+    let pending_id = egui::Id::new("asset_browser_pending_create");
     let mut rename: Option<RenameState> = ui.ctx().data(|d| d.get_temp(rename_id));
+    let mut pending: Option<PendingCreate> = ui.ctx().data(|d| d.get_temp(pending_id));
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         let mut ctx = RenderCtx {
@@ -103,6 +105,7 @@ pub(crate) fn draw_asset_browser_content(
             current_folder,
             actions,
             rename: &mut rename,
+            pending: &mut pending,
             writable: true,
         };
 
@@ -118,12 +121,22 @@ pub(crate) fn draw_asset_browser_content(
         }
     });
 
-    ui.ctx().data_mut(|d| match rename {
-        Some(state) => {
-            d.insert_temp(rename_id, state);
+    ui.ctx().data_mut(|d| {
+        match rename {
+            Some(state) => {
+                d.insert_temp(rename_id, state);
+            }
+            None => {
+                d.remove::<RenameState>(rename_id);
+            }
         }
-        None => {
-            d.remove::<RenameState>(rename_id);
+        match pending {
+            Some(state) => {
+                d.insert_temp(pending_id, state);
+            }
+            None => {
+                d.remove::<PendingCreate>(pending_id);
+            }
         }
     });
 }

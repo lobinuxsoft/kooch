@@ -45,6 +45,25 @@ pub(super) struct RenameState {
     pub focused: bool,
 }
 
+/// In-progress inline creation: the parent folder + what to create. The
+/// name is typed before the file is generated, so scripts get the right
+/// identifier substituted into their template.
+#[derive(Clone)]
+pub(super) struct PendingCreate {
+    pub parent: PathBuf,
+    pub kind: CreateKind,
+    pub buffer: String,
+    pub focused: bool,
+}
+
+/// What an inline creation produces.
+#[derive(Clone, Copy)]
+pub(super) enum CreateKind {
+    Folder,
+    Material,
+    File(NewFileKind),
+}
+
 impl FolderNode {
     fn new(name: String, path: PathBuf) -> Self {
         Self {
@@ -119,6 +138,7 @@ pub(super) struct RenderCtx<'a> {
     pub current_folder: &'a mut Option<PathBuf>,
     pub actions: &'a mut Vec<EditorAction>,
     pub rename: &'a mut Option<RenameState>,
+    pub pending: &'a mut Option<PendingCreate>,
     /// `true` for the project root (writable: menus + folder targeting),
     /// `false` for the read-only engine root.
     pub writable: bool,
@@ -143,13 +163,17 @@ pub(super) fn render_root(
             if ctx.writable {
                 let actions = &mut *ctx.actions;
                 let rename = &mut *ctx.rename;
-                resp.context_menu(|ui| folder_menu(ui, &root, true, actions, rename));
+                let pending = &mut *ctx.pending;
+                resp.context_menu(|ui| folder_menu(ui, &root, true, actions, rename, pending));
             }
         })
         .body(|ui| render_children(ui, &root, ctx, root_path));
 }
 
 fn render_children(ui: &mut egui::Ui, node: &FolderNode, ctx: &mut RenderCtx<'_>, root: &Path) {
+    if ctx.pending.as_ref().is_some_and(|p| p.parent == node.path) {
+        create_edit(ui, ctx.pending, ctx.actions);
+    }
     for sub in node.folders.values() {
         if sub.matches(ctx.needle) {
             render_folder(ui, sub, ctx, root);
@@ -172,7 +196,7 @@ fn render_folder(ui: &mut egui::Ui, node: &FolderNode, ctx: &mut RenderCtx<'_>, 
     let is_current = ctx.writable && ctx.current_folder.as_deref() == Some(node.path.as_path());
 
     let mut state = CollapsingState::load_with_default_open(ui.ctx(), id, false);
-    if !ctx.needle.is_empty() {
+    if !ctx.needle.is_empty() || ctx.pending.as_ref().is_some_and(|p| p.parent == node.path) {
         state.set_open(true);
     }
     state
@@ -185,7 +209,8 @@ fn render_folder(ui: &mut egui::Ui, node: &FolderNode, ctx: &mut RenderCtx<'_>, 
             let writable = ctx.writable;
             let actions = &mut *ctx.actions;
             let rename = &mut *ctx.rename;
-            resp.context_menu(|ui| folder_menu(ui, node, writable, actions, rename));
+            let pending = &mut *ctx.pending;
+            resp.context_menu(|ui| folder_menu(ui, node, writable, actions, rename, pending));
         })
         .body(|ui| render_children(ui, node, ctx, root));
 }
@@ -235,6 +260,7 @@ fn folder_menu(
     writable: bool,
     actions: &mut Vec<EditorAction>,
     rename: &mut Option<RenameState>,
+    pending: &mut Option<PendingCreate>,
 ) {
     if !writable {
         if ui.button("Reveal in file manager").clicked() {
@@ -245,43 +271,42 @@ fn folder_menu(
         }
         return;
     }
+    // "New X" starts an inline name prompt rather than creating straight
+    // away, so the typed name lands in the file name and the template.
+    let mut start = |kind: CreateKind| {
+        *pending = Some(PendingCreate {
+            parent: node.path.clone(),
+            kind,
+            buffer: String::new(),
+            focused: false,
+        });
+    };
     if ui
         .button(format!("{} New Folder", icons::FOLDER_PLUS))
         .clicked()
     {
-        actions.push(EditorAction::CreateFolder {
-            parent: node.path.clone(),
-            name: "New Folder".to_owned(),
-        });
+        start(CreateKind::Folder);
         ui.close();
     }
     if ui
         .button(format!("{} New Material", icons::FADERS))
         .clicked()
     {
-        actions.push(EditorAction::CreateMaterial {
-            folder: node.path.clone(),
-            name: "New Material".to_owned(),
-        });
+        start(CreateKind::Material);
         ui.close();
     }
     ui.menu_button(format!("{} New Script / Scene", icons::PLUS), |ui| {
-        for (label, name, kind) in [
+        for (label, kind) in [
             (
                 "Component (Rust)",
-                "NewComponent",
-                NewFileKind::RustComponent,
+                CreateKind::File(NewFileKind::RustComponent),
             ),
-            ("System (Rust)", "NewSystem", NewFileKind::RustSystem),
-            ("Rhai Script", "NewScript", NewFileKind::RhaiScript),
-            ("Scene", "NewScene", NewFileKind::Scene),
+            ("System (Rust)", CreateKind::File(NewFileKind::RustSystem)),
+            ("Rhai Script", CreateKind::File(NewFileKind::RhaiScript)),
+            ("Scene", CreateKind::File(NewFileKind::Scene)),
         ] {
             if ui.button(label).clicked() {
-                actions.push(EditorAction::CreateFile {
-                    folder: node.path.clone(),
-                    name: name.to_owned(),
-                    kind,
-                });
+                start(kind);
                 ui.close();
             }
         }
@@ -431,6 +456,66 @@ fn commit_name(path: &Path, buffer: &str, is_folder: bool) -> Option<String> {
     let filename = path.file_name()?.to_str()?;
     let suffix = filename.find('.').map(|i| &filename[i..]).unwrap_or("");
     Some(format!("{trimmed}{suffix}"))
+}
+
+/// Renders the inline creation name field. Commits on Enter (non-empty),
+/// cancels on Escape / focus loss.
+fn create_edit(
+    ui: &mut egui::Ui,
+    pending: &mut Option<PendingCreate>,
+    actions: &mut Vec<EditorAction>,
+) {
+    let Some(p) = pending.as_mut() else {
+        return;
+    };
+    let resp = ui.add(
+        egui::TextEdit::singleline(&mut p.buffer)
+            .desired_width(f32::INFINITY)
+            .hint_text(create_hint(p.kind)),
+    );
+    if !p.focused {
+        resp.request_focus();
+        p.focused = true;
+    }
+    let name = p.buffer.trim().to_owned();
+    let kind = p.kind;
+    let parent = p.parent.clone();
+
+    let (enter, escape) = ui.input(|i| {
+        (
+            i.key_pressed(egui::Key::Enter),
+            i.key_pressed(egui::Key::Escape),
+        )
+    });
+    if !escape && !resp.lost_focus() {
+        return;
+    }
+    if resp.lost_focus() && enter && !escape && !name.is_empty() {
+        actions.push(match kind {
+            CreateKind::Folder => EditorAction::CreateFolder { parent, name },
+            CreateKind::Material => EditorAction::CreateMaterial {
+                folder: parent,
+                name,
+            },
+            CreateKind::File(kind) => EditorAction::CreateFile {
+                folder: parent,
+                name,
+                kind,
+            },
+        });
+    }
+    *pending = None;
+}
+
+fn create_hint(kind: CreateKind) -> &'static str {
+    match kind {
+        CreateKind::Folder => "Folder name…",
+        CreateKind::Material => "Material name…",
+        CreateKind::File(NewFileKind::RustComponent) => "Component name (e.g. Health)…",
+        CreateKind::File(NewFileKind::RustSystem) => "System name (e.g. Movement)…",
+        CreateKind::File(NewFileKind::RhaiScript) => "Script name…",
+        CreateKind::File(NewFileKind::Scene) => "Scene name…",
+    }
 }
 
 /// Icon for a typed asset by its canonical type name.
