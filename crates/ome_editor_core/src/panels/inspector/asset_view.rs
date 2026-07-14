@@ -1,9 +1,9 @@
-//! Detail / editor pane for the asset selected in the Asset Browser.
+//! Asset inspector — the Inspector panel's view when an *asset* (rather
+//! than an entity) is selected in the Asset Browser.
 //!
-//! The panel shows read-only *import settings* for assets that are
-//! baked at import time (meshes, textures) and editable *input
-//! parameters* for authored assets (materials: colours, scalars,
-//! texture slots). Material edits are emitted as
+//! Shows read-only *import settings* for baked assets (meshes, textures)
+//! and editable *input parameters* for authored assets (materials:
+//! colours, scalars, texture slots). Material edits are emitted as
 //! [`EditorAction::EditMaterial`], which writes the change back to the
 //! asset's `.ron`.
 //!
@@ -17,8 +17,8 @@ use ome_core::Guid;
 use ome_ecs::reflect::ReflectValue;
 use ome_render::material::Material;
 
+use super::{AssetCatalogEntry, draw_asset_picker};
 use crate::actions::EditorAction;
-use crate::panels::inspector::{AssetCatalogEntry, draw_asset_picker};
 
 /// Canonical asset type name the texture pickers filter by.
 const IMAGE_TYPE: &str = "ome_render::texture::asset::Image";
@@ -53,23 +53,27 @@ pub(crate) struct ImageImportInfo {
     pub bytes: usize,
 }
 
-/// Renders the detail pane for the selected asset. `detail` is `None`
-/// while the snapshot for a freshly-selected asset is still being
-/// resolved (one frame of lag).
-pub(crate) fn draw_detail(
+/// Renders the Inspector's asset view. `detail` is `None` while the
+/// snapshot for a freshly-selected asset is still being resolved (one
+/// frame of lag).
+pub(crate) fn draw_asset_inspector(
     ui: &mut egui::Ui,
     entry: &AssetCatalogEntry,
     detail: Option<&AssetDetail>,
     catalog: &[AssetCatalogEntry],
     actions: &mut Vec<EditorAction>,
 ) {
-    ui.add_space(2.0);
-    ui.strong(&entry.display_name);
+    ui.label(format!(
+        "{} {}  [{}]",
+        crate::icons::FOLDER_OPEN,
+        entry.display_name,
+        entry.source.label(),
+    ));
     ui.label(entry.path.display().to_string())
         .on_hover_text(format!("guid: {}", entry.guid));
     ui.separator();
 
-    match detail {
+    egui::ScrollArea::vertical().show(ui, |ui| match detail {
         Some(AssetDetail::Material(mat)) => {
             draw_material_editor(ui, entry.guid, mat, catalog, actions)
         }
@@ -81,8 +85,7 @@ pub(crate) fn draw_detail(
         None => {
             ui.weak("Loading asset…");
         }
-    }
-    ui.add_space(2.0);
+    });
 }
 
 /// Editable material parameters. Emits a single `EditMaterial` action

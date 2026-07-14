@@ -15,7 +15,7 @@ use ome_render::material::Material;
 use ome_render::meshlet::MeshletMesh;
 use ome_render::texture::{Image, ImageFormat};
 
-use crate::panels::asset_browser::{AssetDetail, ImageImportInfo, MeshImportInfo};
+use crate::panels::inspector::{AssetDetail, ImageImportInfo, MeshImportInfo};
 
 /// Builds the detail snapshot for `guid`, loading the asset on demand.
 /// Returns `None` when the asset is unknown or fails to load.

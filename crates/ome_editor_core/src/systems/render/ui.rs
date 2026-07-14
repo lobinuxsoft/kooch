@@ -58,7 +58,7 @@ pub(super) fn run_editor_ui(
     viewport: ViewportUi<'_>,
     power_profile: ome_core::power::PowerProfile,
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
-    asset_detail: Option<&crate::panels::asset_browser::AssetDetail>,
+    asset_detail: Option<&crate::panels::inspector::AssetDetail>,
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
@@ -67,6 +67,8 @@ pub(super) fn run_editor_ui(
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut selected_asset = overlay.selected_asset;
+    let selected_before = selected.clone();
+    let asset_before = selected_asset;
     let mut last_clicked_index = overlay.last_clicked_index.take();
     let mut actions: Vec<EditorAction> = Vec::new();
     let ViewportUi {
@@ -133,6 +135,17 @@ pub(super) fn run_editor_ui(
             forward_launch_actions(launch_actions, &mut actions);
         }
     });
+
+    // Selection arbitration — the Inspector renders one thing. Picking
+    // an asset this frame drops the entity selection; picking an entity
+    // drops the asset selection. Keeps entity + asset selection mutually
+    // exclusive without threading either into the other's panel.
+    if selected_asset != asset_before && selected_asset.is_some() {
+        selected.clear();
+    }
+    if selected != selected_before && !selected.is_empty() {
+        selected_asset = None;
+    }
 
     overlay.selected_entities = selected;
     overlay.selected_asset = selected_asset;

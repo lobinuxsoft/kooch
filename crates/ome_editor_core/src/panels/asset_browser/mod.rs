@@ -1,25 +1,19 @@
 //! Asset Browser panel — navigates every registered asset in the
-//! current project (and the shipped engine assets), grouped by type,
-//! with a detail pane for the selected asset.
+//! current project (and the shipped engine assets), grouped by type.
 //!
 //! The list surfaces the same [`AssetCatalogEntry`] slice the Inspector
-//! picker consumes. Selecting a row resolves the asset's data snapshot
-//! ([`detail::AssetDetail`], gathered by the render system) into the
-//! bottom pane: read-only import settings for baked assets (meshes,
-//! textures) and editable input parameters for materials.
+//! picker consumes. Selecting a row records the selection on the editor
+//! overlay; the **Inspector** panel then renders that asset's import
+//! settings / editable parameters — the Inspector serves both entities
+//! and assets. See [`crate::panels::inspector::asset_view`].
 //!
 //! Only *typed* entries appear — an asset with no `.meta` `asset_type`
 //! (never touched by a typed `load::<T>`) is skipped upstream in
 //! [`AssetCatalogEntry::collect_from_database`], because there is no
 //! type to file it under.
 
-mod detail;
-
-pub(crate) use detail::{AssetDetail, ImageImportInfo, MeshImportInfo};
-
 use ome_core::Guid;
 
-use crate::actions::EditorAction;
 use crate::icons;
 use crate::panels::inspector::AssetCatalogEntry;
 
@@ -27,14 +21,11 @@ use crate::panels::inspector::AssetCatalogEntry;
 ///
 /// `catalog` is the per-frame `AssetDatabase` snapshot; `selected_asset`
 /// is the panel's selection (owned by the editor overlay so the render
-/// system can pre-resolve `asset_detail`); `actions` collects material
-/// edits emitted by the detail pane.
+/// system can pre-resolve the asset's data for the Inspector).
 pub(crate) fn draw_asset_browser_content(
     ui: &mut egui::Ui,
     catalog: &[AssetCatalogEntry],
     selected_asset: &mut Option<Guid>,
-    asset_detail: Option<&AssetDetail>,
-    actions: &mut Vec<EditorAction>,
 ) {
     let search_id = ui.id().with("asset_browser_search");
     let mut query: String = ui
@@ -75,21 +66,6 @@ pub(crate) fn draw_asset_browser_content(
         ui.weak("(no typed assets registered)");
         ui.weak("Open a project or add assets with a .meta sidecar.");
         return;
-    }
-
-    // Detail pane pinned to the bottom so it stays visible while the
-    // list scrolls above it. Only shown when the selection resolves to a
-    // catalog entry (a removed asset clears the pane).
-    let selected_entry = selected_asset.and_then(|g| catalog.iter().find(|e| e.guid == g));
-    if let Some(entry) = selected_entry {
-        egui::Panel::bottom(ui.id().with("asset_browser_detail"))
-            .resizable(true)
-            .default_size(180.0)
-            .show_inside(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    detail::draw_detail(ui, entry, asset_detail, catalog, actions);
-                });
-            });
     }
 
     // Distinct type names, ordered by friendly label so groups land in

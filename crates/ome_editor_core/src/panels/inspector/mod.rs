@@ -7,6 +7,7 @@
 //! - [`rotation`]: gimbal-safe Quat editing with display-mode toggle (#202, #205).
 //! - [`widgets`]: per-`ReflectValue` editor widgets and choice dropdowns.
 
+mod asset_view;
 mod multi;
 mod rotation;
 mod single;
@@ -17,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 
 use glam::{Quat, Vec3};
 
+use ome_core::Guid;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::{InspectorVisibility, ReflectValue};
 
@@ -27,6 +29,7 @@ use crate::state::{
     ComponentDisplayInfo, EntityDisplayInfo, EulerCacheKey, ReflectedTypeInfo, RotationDisplayMode,
 };
 
+pub(crate) use asset_view::{AssetDetail, ImageImportInfo, MeshImportInfo};
 pub(crate) use widgets::{AssetCatalogEntry, draw_asset_picker};
 
 /// Threshold for considering a cached Euler still in sync with the
@@ -69,7 +72,18 @@ pub(crate) fn draw_inspector_content(
     euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
     rotation_display_mode: &mut RotationDisplayMode,
     asset_catalog: &[AssetCatalogEntry],
+    selected_asset: Option<Guid>,
+    asset_detail: Option<&AssetDetail>,
 ) {
+    // Asset selection takes over the Inspector — it serves both entities
+    // and assets. When an asset is selected, render its view and return.
+    if let Some(guid) = selected_asset
+        && let Some(entry) = asset_catalog.iter().find(|e| e.guid == guid)
+    {
+        asset_view::draw_asset_inspector(ui, entry, asset_detail, asset_catalog, actions);
+        return;
+    }
+
     // Evict cache entries for entities that are no longer selected.
     euler_cache.retain(|(entity, _, _, _), _| selected.contains(entity));
 

@@ -16,8 +16,9 @@ use crate::actions::EditorAction;
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::ViewportInputDelta;
 use crate::panels::archetypes::draw_archetypes_content;
-use crate::panels::asset_browser::{AssetDetail, draw_asset_browser_content};
+use crate::panels::asset_browser::draw_asset_browser_content;
 use crate::panels::components::draw_components_content;
+use crate::panels::inspector::AssetDetail;
 use crate::panels::inspector::draw_inspector_content;
 use crate::panels::view::draw_view_content;
 use crate::panels::world::draw_world_content;
@@ -122,16 +123,14 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.rotation_euler_cache,
                 self.rotation_display_mode,
                 self.asset_catalog,
+                *self.selected_asset,
+                self.asset_detail,
             ),
             EditorTab::Archetypes => draw_archetypes_content(ui, self.archetypes),
             EditorTab::Components => draw_components_content(ui, self.component_types),
-            EditorTab::AssetBrowser => draw_asset_browser_content(
-                ui,
-                self.asset_catalog,
-                self.selected_asset,
-                self.asset_detail,
-                self.actions,
-            ),
+            EditorTab::AssetBrowser => {
+                draw_asset_browser_content(ui, self.asset_catalog, self.selected_asset)
+            }
         }
     }
 
