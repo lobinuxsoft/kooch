@@ -294,4 +294,24 @@ pub fn movement(resources: &mut Resources) {}
         assert_eq!(module_name("player_health.rs"), "player_health");
         assert_eq!(module_name("enemies/ai.rs"), "enemies_ai");
     }
+
+    #[test]
+    fn generated_plugin_gates_systems_behind_run_systems() {
+        use super::{SourceFile, render_registrations};
+        let files = vec![SourceFile {
+            rel: "movement.rs".to_owned(),
+            module: "movement".to_owned(),
+            components: vec![],
+            systems: vec!["move_system".to_owned()],
+        }];
+        let out = render_registrations(&files);
+        assert!(out.contains("pub run_systems: bool"));
+        assert!(out.contains("if self.run_systems"));
+        // The gameplay system must sit INSIDE the run_systems guard.
+        let guard = out.find("if self.run_systems").expect("guard present");
+        let sys = out
+            .find("add_system(Stage::Update, movement::move_system)")
+            .expect("system present");
+        assert!(sys > guard, "system must be gated by run_systems");
+    }
 }
