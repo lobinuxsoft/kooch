@@ -150,6 +150,10 @@ fn draw_material_editor(
 
 /// One texture slot row backed by the shared typed asset picker. Returns
 /// `true` when the assignment changed this frame.
+///
+/// The picker salts its widget id only by asset type, so three
+/// same-type (`Image`) slots would collide — [`egui::Ui::push_id`] gives
+/// each row its own id namespace to keep them distinct.
 fn texture_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -159,9 +163,12 @@ fn texture_row(
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label(label);
-        if let Some(ReflectValue::AssetRef { guid, .. }) =
-            draw_asset_picker(ui, *field, IMAGE_TYPE, catalog)
-        {
+        let picked = ui
+            .push_id(label, |ui| {
+                draw_asset_picker(ui, *field, IMAGE_TYPE, catalog)
+            })
+            .inner;
+        if let Some(ReflectValue::AssetRef { guid, .. }) = picked {
             *field = guid;
             changed = true;
         }
