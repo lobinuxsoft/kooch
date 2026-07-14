@@ -1,5 +1,6 @@
 //! Editor actions collected during UI, applied after render.
 
+mod asset_ops;
 mod dispatch;
 mod handlers;
 mod reparent;
@@ -99,6 +100,43 @@ pub(crate) enum EditorAction {
     ImportAssets {
         files: Vec<PathBuf>,
         dest: PathBuf,
+    },
+    /// Create an empty folder `<parent>/<name>`.
+    CreateFolder {
+        parent: PathBuf,
+        name: String,
+    },
+    /// Create a new default `Material` asset `<folder>/<name>.ron`.
+    CreateMaterial {
+        folder: PathBuf,
+        name: String,
+    },
+    /// Rename an asset file (and its `.meta` sidecar) to `new_name`,
+    /// preserving the GUID so references survive.
+    RenameAsset {
+        path: PathBuf,
+        new_name: String,
+    },
+    /// Rename a folder to `new_name`.
+    RenameFolder {
+        path: PathBuf,
+        new_name: String,
+    },
+    /// Duplicate an asset file into a fresh copy (new GUID via re-import).
+    DuplicateAsset {
+        path: PathBuf,
+    },
+    /// Delete an asset file (and its `.meta` sidecar).
+    DeleteAsset {
+        path: PathBuf,
+    },
+    /// Delete a folder and everything under it.
+    DeleteFolder {
+        path: PathBuf,
+    },
+    /// Open the OS file manager at `path` (or its parent for a file).
+    RevealInFileManager {
+        path: PathBuf,
     },
 }
 

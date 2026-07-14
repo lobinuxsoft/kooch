@@ -121,6 +121,17 @@ impl AssetDatabase {
         true
     }
 
+    /// Removes the entry for `path` from both maps, returning its GUID
+    /// if it was registered. Used by editor asset operations (delete,
+    /// rename, move) to drop stale bindings — `scan_directory` only adds
+    /// and updates, it never prunes, so callers that remove or move
+    /// files on disk must unregister the old path themselves.
+    pub fn remove_path(&mut self, path: &Path) -> Option<Guid> {
+        let guid = self.by_path.remove(path)?;
+        self.by_guid.remove(&guid);
+        Some(guid)
+    }
+
     /// Recursively scans `root`, reading every `<file>.meta` sidecar
     /// it finds, and registers the resulting GUIDs.
     ///

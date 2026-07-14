@@ -37,6 +37,11 @@ pub(super) fn apply_non_ecs_action(
     resources: &mut Resources,
     undo_stack: &mut UndoStack,
 ) {
+    // Asset Browser file operations (create / rename / delete / …) live
+    // in their own module; delegate first, fall through to the rest.
+    if super::asset_ops::handle_asset_op(action, resources) {
+        return;
+    }
     match action {
         EditorAction::SaveScene => handle_save_scene(resources),
         EditorAction::OpenScene => handle_open_scene(resources, undo_stack),
@@ -80,7 +85,7 @@ fn handle_import_assets(
         let Some(name) = src.file_name() else {
             continue;
         };
-        let target = unique_target(dest, name);
+        let target = super::asset_ops::unique_target(dest, name);
         match std::fs::copy(src, &target) {
             Ok(_) => {
                 copied += 1;
@@ -92,35 +97,8 @@ fn handle_import_assets(
         }
     }
     if copied > 0 {
-        // Reset the scan marker so `scan_project_assets_system` re-runs
-        // the full project scan + eager import next frame.
-        if let Some(last) = resources.get_mut::<crate::systems::LastScannedProject>() {
-            last.root = None;
-        }
+        super::asset_ops::force_rescan(resources);
     }
-}
-
-/// Returns a non-colliding path in `dir` for `name`, appending `_1`,
-/// `_2`, … before the extension if the file already exists.
-fn unique_target(dir: &std::path::Path, name: &std::ffi::OsStr) -> std::path::PathBuf {
-    let candidate = dir.join(name);
-    if !candidate.exists() {
-        return candidate;
-    }
-    let path = std::path::Path::new(name);
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("asset");
-    let ext = path.extension().and_then(|s| s.to_str());
-    for n in 1.. {
-        let fname = match ext {
-            Some(ext) => format!("{stem}_{n}.{ext}"),
-            None => format!("{stem}_{n}"),
-        };
-        let candidate = dir.join(fname);
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    unreachable!("infinite unique-name loop")
 }
 
 /// Applies a Material asset edit: updates `Assets<Material>` in place so

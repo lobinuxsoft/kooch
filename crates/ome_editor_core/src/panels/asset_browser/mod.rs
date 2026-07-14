@@ -22,7 +22,7 @@ use crate::actions::EditorAction;
 use crate::icons;
 use crate::panels::inspector::AssetCatalogEntry;
 
-use self::tree::RenderCtx;
+use self::tree::{RenameState, RenderCtx};
 
 /// Content of the "Asset Browser" tab.
 pub(crate) fn draw_asset_browser_content(
@@ -67,28 +67,10 @@ pub(crate) fn draw_asset_browser_content(
         return;
     }
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        let mut ctx = RenderCtx {
-            needle: &needle,
-            selected_asset,
-            current_folder,
-            writable: true,
-        };
-
-        if let Some(root) = project_root {
-            let entries = entries_under(catalog, root);
-            ctx.writable = true;
-            tree::render_root(ui, "Project", root, &entries, &mut ctx);
-        }
-        if let Some(root) = engine_root {
-            let entries = entries_under(catalog, root);
-            ctx.writable = false;
-            tree::render_root(ui, "Engine (read-only)", root, &entries, &mut ctx);
-        }
-    });
-
-    // Handle a drop that landed over this panel. `dropped_files` is
-    // global, so gate on the pointer being inside the panel rect.
+    // Handle a file drop that landed over this panel BEFORE the tree
+    // render, so `actions` stays available afterwards for the tree's own
+    // context-menu emissions. `dropped_files` is global, so gate on the
+    // pointer being inside the panel rect.
     let dropped: Vec<PathBuf> = ui.ctx().input(|i| {
         i.raw
             .dropped_files
@@ -109,6 +91,41 @@ pub(crate) fn draw_asset_browser_content(
             });
         }
     }
+
+    // Inline-rename state lives in egui memory (transient UI state).
+    let rename_id = egui::Id::new("asset_browser_rename");
+    let mut rename: Option<RenameState> = ui.ctx().data(|d| d.get_temp(rename_id));
+
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        let mut ctx = RenderCtx {
+            needle: &needle,
+            selected_asset,
+            current_folder,
+            actions,
+            rename: &mut rename,
+            writable: true,
+        };
+
+        if let Some(root) = project_root {
+            let entries = entries_under(catalog, root);
+            ctx.writable = true;
+            tree::render_root(ui, "Project", root, &entries, &mut ctx);
+        }
+        if let Some(root) = engine_root {
+            let entries = entries_under(catalog, root);
+            ctx.writable = false;
+            tree::render_root(ui, "Engine (read-only)", root, &entries, &mut ctx);
+        }
+    });
+
+    ui.ctx().data_mut(|d| match rename {
+        Some(state) => {
+            d.insert_temp(rename_id, state);
+        }
+        None => {
+            d.remove::<RenameState>(rename_id);
+        }
+    });
 }
 
 /// Resolves the drop destination: the selected folder if it lives inside
