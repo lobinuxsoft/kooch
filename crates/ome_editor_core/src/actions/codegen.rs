@@ -161,22 +161,27 @@ fn render_registrations(files: &[SourceFile]) -> String {
         s.push_str(&format!("#[path = \"{}\"]\nmod {};\n", f.rel, f.module));
     }
     s.push('\n');
-    s.push_str("/// Editor-managed plugin: registers every project component + system.\n");
-    s.push_str(
-        "/// Wired into `main.rs` as `app.add_plugin(registrations::ProjectRegistrations);`.\n",
-    );
-    s.push_str("pub struct ProjectRegistrations;\n\n");
+    s.push_str("/// Editor-managed plugin: registers project components + systems.\n");
+    s.push_str("///\n");
+    s.push_str("/// `run_systems` gates gameplay systems: `true` in the game build,\n");
+    s.push_str("/// `false` in the editor build (so nothing runs while you edit).\n");
+    s.push_str("/// Components always register, so they appear in the Inspector.\n");
+    s.push_str("pub struct ProjectRegistrations {\n");
+    s.push_str("    pub run_systems: bool,\n");
+    s.push_str("}\n\n");
     s.push_str("impl Plugin for ProjectRegistrations {\n");
     s.push_str("    fn build(&self, app: &mut App) {\n");
     s.push_str("        app.add_system(Stage::Startup, register_components);\n");
+    s.push_str("        if self.run_systems {\n");
     for f in files {
         for sys in &f.systems {
             s.push_str(&format!(
-                "        app.add_system(Stage::Update, {}::{});\n",
+                "            app.add_system(Stage::Update, {}::{});\n",
                 f.module, sys
             ));
         }
     }
+    s.push_str("        }\n");
     s.push_str("    }\n}\n\n");
     s.push_str("/// Registers project components for serialization + the Inspector.\n");
     s.push_str("fn register_components(resources: &mut Resources) {\n");

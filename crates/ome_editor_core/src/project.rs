@@ -212,12 +212,17 @@ fn main() {
     // `cargo run`           → the editor, with your components (authoring).
     // `cargo run -- --game` → the game (what the editor's Play button runs).
     if std::env::args().any(|a| a == "--game") {
+        // Game runtime: components + gameplay systems.
         let mut app = App::new();
         app.add_plugins(DefaultPlugins);
-        app.add_plugin(registrations::ProjectRegistrations);
+        app.add_plugin(registrations::ProjectRegistrations { run_systems: true });
         app.run();
     } else {
-        oh_my_engine::ome_editor_core::run_editor_with(registrations::ProjectRegistrations);
+        // Editor: register components (for the Inspector) but do NOT run
+        // gameplay systems — Play launches the game in a separate process.
+        oh_my_engine::ome_editor_core::run_editor_with(registrations::ProjectRegistrations {
+            run_systems: false,
+        });
     }
 }
 "##
@@ -236,12 +241,18 @@ pub(crate) const INITIAL_REGISTRATIONS: &str = "\
 use oh_my_engine::ome_ecs::component::ComponentRegistry;
 use oh_my_engine::prelude::*;
 
-/// Editor-managed plugin: registers every project component + system.
-pub struct ProjectRegistrations;
+/// Editor-managed plugin: registers project components + systems.
+///
+/// `run_systems` gates gameplay systems: `true` in the game build,
+/// `false` in the editor build (so nothing runs while you edit).
+pub struct ProjectRegistrations {
+    pub run_systems: bool,
+}
 
 impl Plugin for ProjectRegistrations {
     fn build(&self, app: &mut App) {
         app.add_system(Stage::Startup, register_components);
+        if self.run_systems {}
     }
 }
 
