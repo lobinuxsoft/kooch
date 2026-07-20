@@ -4,6 +4,7 @@ use ome_core::Guid;
 use ome_ecs::reflect::ReflectValue;
 
 use super::asset::AssetCatalogEntry;
+use crate::drag_drop::DraggedAsset;
 
 /// Renders the typed asset-reference picker for a `ReflectValue::AssetRef`
 /// field. Returns `Some(new_value)` when the user picks a different
@@ -109,7 +110,31 @@ pub(crate) fn draw_asset_picker(
                 ui.weak("(no match)");
             }
         });
-    let _ = combo_response;
+    // Drop target: an asset dragged out of the Asset Browser. Only this
+    // slot's own type is accepted, so a mesh dragged over a material
+    // field neither highlights nor assigns.
+    //
+    // `dnd_release_payload` takes the payload *before* checking the type,
+    // so it stays guarded behind the matching `dnd_hover_payload` — see
+    // the ordering note in `panels/world/entity_row.rs`.
+    let slot = combo_response.response;
+    if let Some(hovered) = slot.dnd_hover_payload::<DraggedAsset>()
+        && hovered.type_name == asset_type
+    {
+        ui.painter().rect_filled(
+            slot.rect,
+            2.0,
+            egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
+        );
+        if let Some(released) = slot.dnd_release_payload::<DraggedAsset>()
+            && current != Some(released.guid)
+        {
+            new_value = Some(ReflectValue::AssetRef {
+                guid: Some(released.guid),
+                asset_type: asset_type.to_owned(),
+            });
+        }
+    }
 
     new_value
 }

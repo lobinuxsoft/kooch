@@ -16,6 +16,7 @@ use egui::collapsing_header::CollapsingState;
 use ome_core::Guid;
 
 use crate::actions::{EditorAction, NewFileKind};
+use crate::drag_drop::DraggedAsset;
 use crate::icons;
 use crate::panels::inspector::AssetCatalogEntry;
 
@@ -230,9 +231,23 @@ fn render_leaf(ui: &mut egui::Ui, leaf: &FileLeaf, ctx: &mut RenderCtx<'_>, root
         .as_ref()
         .is_some_and(|(g, _)| *ctx.selected_asset == Some(*g));
 
-    let resp = ui
-        .selectable_label(selected, format!("{icon} {}", leaf.name))
-        .on_hover_text(leaf.path.display().to_string());
+    let mut resp = ui.selectable_label(selected, format!("{icon} {}", leaf.name));
+
+    // Typed assets are drag sources for the Inspector's asset slots
+    // (#439). The sense is upgraded in place rather than wrapping the row
+    // in `dnd_drag_source`, so click / double-click / context menu keep
+    // working on the same response.
+    if let Some((guid, type_name)) = &leaf.asset {
+        resp = resp.interact(egui::Sense::click_and_drag());
+        resp.dnd_set_drag_payload(DraggedAsset {
+            guid: *guid,
+            type_name: type_name.clone(),
+        });
+        if resp.dragged() {
+            draw_drag_preview(ui, icon, &leaf.name);
+        }
+    }
+    let resp = resp.on_hover_text(leaf.path.display().to_string());
 
     if resp.clicked() {
         // Single-click selects a typed asset for the Inspector; plain
@@ -534,6 +549,30 @@ fn create_hint(kind: CreateKind) -> &'static str {
         CreateKind::File(NewFileKind::RustSystem) => "System name (e.g. Movement)…",
         CreateKind::File(NewFileKind::Scene) => "Scene name…",
     }
+}
+
+/// Floating chip that follows the cursor while an asset row is dragged.
+///
+/// Painted on the tooltip layer so it clears every panel, including the
+/// Inspector it is being dragged towards.
+fn draw_drag_preview(ui: &egui::Ui, icon: &str, name: &str) {
+    let Some(pos) = ui.ctx().pointer_interact_pos() else {
+        return;
+    };
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+
+    let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("asset_drag_preview"));
+    let painter = ui.ctx().layer_painter(layer);
+    let color = ui.visuals().strong_text_color();
+    let galley = painter.layout_no_wrap(
+        format!("{icon} {name}"),
+        egui::FontId::proportional(13.0),
+        color,
+    );
+    let text_pos = pos + egui::vec2(14.0, 8.0);
+    let bg = egui::Rect::from_min_size(text_pos, galley.size()).expand(4.0);
+    painter.rect_filled(bg, 3.0, ui.visuals().panel_fill);
+    painter.galley(text_pos, galley, color);
 }
 
 /// Icon for a typed asset by its canonical type name.
