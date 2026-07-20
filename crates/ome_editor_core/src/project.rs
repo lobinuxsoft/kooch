@@ -185,8 +185,10 @@ edition = "2024"
 
 [dependencies]
 # `editor` pulls in the embedded editor so `cargo run` opens the editor
-# with this project's components; `cargo run -- --game` runs the game.
-oh_my_engine = {{ path = "{engine_path}", features = ["editor"] }}
+# with this project's components; `cargo run -- --game` runs the game;
+# `remote` lets `cargo run -- --remote` expose the ECS to the standalone
+# editor over HTTP.
+oh_my_engine = {{ path = "{engine_path}", features = ["editor", "remote"] }}
 # Direct dep needed until `Reflect` proc-macro resolves through the facade.
 ome_ecs = {{ path = "{engine_path}/crates/ome_ecs" }}
 "#,
@@ -209,13 +211,25 @@ pub(crate) fn generate_main_rs(_name: &str) -> String {
 mod registrations;
 
 fn main() {
-    // `cargo run`           → the editor, with your components (authoring).
-    // `cargo run -- --game` → the game (what the editor's Play button runs).
-    if std::env::args().any(|a| a == "--game") {
+    // `cargo run`            → the editor, with your components (authoring).
+    // `cargo run -- --game`  → the game (what the editor's Play button runs).
+    // `cargo run -- --remote`→ headless authoring host: your components +
+    //                          the remote server, driven by the standalone
+    //                          editor over HTTP. No gameplay systems run.
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--game") {
         // Game runtime: components + gameplay systems.
         let mut app = App::new();
         app.add_plugins(DefaultPlugins);
         app.add_plugin(registrations::ProjectRegistrations { run_systems: true });
+        app.run();
+    } else if args.iter().any(|a| a == "--remote") {
+        // Remote authoring host: components register (so the editor's
+        // Inspector sees them) but gameplay stays still while you edit.
+        let mut app = App::new();
+        app.add_plugins(DefaultPlugins);
+        app.add_plugin(registrations::ProjectRegistrations { run_systems: false });
+        app.add_plugin(oh_my_engine::ome_remote::RemotePlugin::new());
         app.run();
     } else {
         // Editor: register components (for the Inspector) but do NOT run

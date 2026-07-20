@@ -155,6 +155,7 @@ ome_physics = { workspace = true, optional = true }
 ome_gravity = { workspace = true, optional = true }
 ome_world = { workspace = true, optional = true }
 ome_scripting = { workspace = true, optional = true }
+ome_remote = { workspace = true, optional = true }
 ome_editor_core = { workspace = true, optional = true }
 ome_plugin_api = { workspace = true, optional = true }
 
@@ -178,6 +179,10 @@ physics = ["dep:ome_physics"]
 gravity = ["dep:ome_gravity"]
 world = ["dep:ome_world"]
 scripting = ["dep:ome_scripting"]
+# Remote editor server: lets a project expose its ECS over HTTP so the
+# standalone editor can drive it. Pulled in by projects that run in
+# `--remote` mode; independent of the embedded `editor`.
+remote = ["dep:ome_remote"]
 editor = ["dep:ome_editor_core"]
 dynamic = ["ome_core/dynamic", "ome_ecs/dynamic", "dep:ome_plugin_api"]
 

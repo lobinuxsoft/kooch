@@ -54,6 +54,8 @@ pub use ome_gravity;
 pub use ome_world;
 #[cfg(feature = "scripting")]
 pub use ome_scripting;
+#[cfg(feature = "remote")]
+pub use ome_remote;
 #[cfg(feature = "editor")]
 pub use ome_editor_core;
 
@@ -72,6 +74,8 @@ pub mod prelude {
     pub use ome_window::{WindowCloseRequested, WindowHandle, WindowPlugin, WindowResized};
     #[cfg(feature = "render")]
     pub use ome_render::RenderPlugin;
+    #[cfg(feature = "remote")]
+    pub use ome_remote::RemotePlugin;
     #[cfg(feature = "dynamic")]
     pub use ome_plugin_api::prelude as plugin_api;
 
