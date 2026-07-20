@@ -26,7 +26,7 @@ pub(crate) fn draw_components_content(ui: &mut egui::Ui, component_types: &[Comp
     egui::ScrollArea::vertical().show(ui, |ui| {
         for comp in component_types {
             let drag_id = egui::Id::new(("drag_component_row", comp.type_id));
-            ui.dnd_drag_source(drag_id, DraggedComponent(comp.type_id), |ui| {
+            ui.dnd_drag_source(drag_id, DraggedComponent(comp.component), |ui| {
                 ui.horizontal(|ui| {
                     ui.label(format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name));
                     if comp.has_reflection {

@@ -1,6 +1,9 @@
 //! ECS-action → undo command conversion + same-variant batching helpers.
 
+use std::any::TypeId;
+
 use ome_core::resource::Resources;
+use ome_ecs::component::{ComponentId, ComponentNames, ComponentRegistry};
 
 use crate::undo::{
     AddComponentCommand, DespawnCommand, DuplicateCommand, EditorCommand, RemoveComponentCommand,
@@ -8,6 +11,25 @@ use crate::undo::{
 };
 
 use super::EditorAction;
+
+/// Resolves a portable [`ComponentId`] to the local `TypeId` the undo
+/// commands and reflection registry operate on.
+///
+/// Returns `None` when this binary has no Rust type for the component —
+/// e.g. the standalone hub asked to mutate a project's own component.
+/// The action is dropped rather than misapplied; in the remote design
+/// the project's server process handles it instead.
+fn resolve_component(resources: &Resources, component: ComponentId) -> Option<TypeId> {
+    let name = resources.get::<ComponentNames>()?.name(component)?;
+    let type_id = resources.get::<ComponentRegistry>()?.type_id_by_name(name);
+    if type_id.is_none() {
+        tracing::warn!(
+            component = name,
+            "no local type for component; action dropped"
+        );
+    }
+    type_id
+}
 
 /// Converts an action into an undoable command, capturing before-state.
 ///
@@ -29,12 +51,13 @@ pub(super) fn action_to_command(
         }
         EditorAction::SetField {
             entity,
-            type_id,
+            component,
             field,
             value,
         } => {
+            let type_id = resolve_component(resources, *component)?;
             if let Some(cmd) =
-                SetFieldCommand::new(resources, *entity, *type_id, field.clone(), value.clone())
+                SetFieldCommand::new(resources, *entity, type_id, field.clone(), value.clone())
             {
                 Some(Box::new(cmd))
             } else {
@@ -42,15 +65,24 @@ pub(super) fn action_to_command(
                 None
             }
         }
-        EditorAction::AddComponent { entity, type_id } => {
-            Some(Box::new(AddComponentCommand::new(*entity, *type_id)))
+        EditorAction::AddComponent { entity, component } => {
+            let type_id = resolve_component(resources, *component)?;
+            Some(Box::new(AddComponentCommand::new(*entity, type_id)))
         }
-        EditorAction::RemoveComponent { entity, type_id } => {
-            Some(Box::new(RemoveComponentCommand::new(resources, *entity, *type_id)))
+        EditorAction::RemoveComponent { entity, component } => {
+            let type_id = resolve_component(resources, *component)?;
+            Some(Box::new(RemoveComponentCommand::new(
+                resources, *entity, type_id,
+            )))
         }
-        EditorAction::TransformEdit { entity, before, after, desc } => Some(Box::new(
-            TransformEditCommand::new(*entity, *before, *after, desc),
-        )),
+        EditorAction::TransformEdit {
+            entity,
+            before,
+            after,
+            desc,
+        } => Some(Box::new(TransformEditCommand::new(
+            *entity, *before, *after, desc,
+        ))),
         _ => None,
     }
 }
@@ -75,11 +107,20 @@ pub(super) fn same_ecs_variant(a: &EditorAction, b: &EditorAction) -> bool {
     matches!(
         (a, b),
         (EditorAction::Spawn { .. }, EditorAction::Spawn { .. })
-            | (EditorAction::SpawnMesh { .. }, EditorAction::SpawnMesh { .. })
+            | (
+                EditorAction::SpawnMesh { .. },
+                EditorAction::SpawnMesh { .. }
+            )
             | (EditorAction::Despawn(_), EditorAction::Despawn(_))
             | (EditorAction::Duplicate(_), EditorAction::Duplicate(_))
             | (EditorAction::SetField { .. }, EditorAction::SetField { .. })
-            | (EditorAction::AddComponent { .. }, EditorAction::AddComponent { .. })
-            | (EditorAction::RemoveComponent { .. }, EditorAction::RemoveComponent { .. })
+            | (
+                EditorAction::AddComponent { .. },
+                EditorAction::AddComponent { .. }
+            )
+            | (
+                EditorAction::RemoveComponent { .. },
+                EditorAction::RemoveComponent { .. }
+            )
     )
 }

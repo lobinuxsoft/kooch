@@ -26,6 +26,21 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ComponentId(pub u32);
 
+impl ComponentId {
+    /// Sentinel for a component whose name is not (yet) interned.
+    ///
+    /// Produced on read-only paths that look up a name without the
+    /// ability to intern it; consumers treat it as unresolvable — an
+    /// action carrying it is dropped rather than applied to the wrong
+    /// component.
+    pub const INVALID: ComponentId = ComponentId(u32::MAX);
+
+    /// `true` unless this is [`ComponentId::INVALID`].
+    pub fn is_valid(self) -> bool {
+        self != Self::INVALID
+    }
+}
+
 /// Bidirectional interner mapping component type names to [`ComponentId`]s.
 ///
 /// Lives as a resource. Grows monotonically: ids are never reused, so a

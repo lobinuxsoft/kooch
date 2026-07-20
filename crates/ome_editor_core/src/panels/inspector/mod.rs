@@ -110,7 +110,7 @@ pub(crate) fn draw_inspector_content(
         for &entity in selected {
             actions.push(EditorAction::AddComponent {
                 entity,
-                type_id: payload.0,
+                component: payload.0,
             });
         }
     }
@@ -202,8 +202,8 @@ fn draw_inspector_body(
 
     if !available.is_empty() {
         ui.menu_button(format!("{} Add Component", icons::PLUS), |ui| {
-            crate::panels::add_component_menu::draw_categorized(ui, &available, |type_id| {
-                actions.push(EditorAction::AddComponent { entity, type_id });
+            crate::panels::add_component_menu::draw_categorized(ui, &available, |component| {
+                actions.push(EditorAction::AddComponent { entity, component });
             });
         });
         ui.separator();
@@ -243,7 +243,7 @@ fn draw_inspector_body(
                     {
                         actions.push(EditorAction::RemoveComponent {
                             entity,
-                            type_id: comp.type_id,
+                            component: comp.component,
                         });
                     }
                 })
@@ -264,6 +264,7 @@ fn draw_inspector_body(
                                 ui,
                                 entity,
                                 comp.type_id,
+                                comp.component,
                                 fields,
                                 comp.field_metas,
                                 euler_cache,

@@ -3,6 +3,7 @@
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
+use ome_ecs::component::ComponentId;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::{FieldMeta, InspectorVisibility, ReflectValue};
 
@@ -10,7 +11,7 @@ use crate::actions::EditorAction;
 use crate::icons;
 use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
 
-use super::widgets::{choices_for, draw_readonly_value, draw_value_widget, AssetCatalogEntry};
+use super::widgets::{AssetCatalogEntry, choices_for, draw_readonly_value, draw_value_widget};
 
 /// A field value across multiple selected entities.
 pub(super) enum MultiFieldValue {
@@ -23,6 +24,7 @@ pub(super) enum MultiFieldValue {
 /// Merged component info across multiple selected entities.
 pub(super) struct MultiComponentInfo {
     pub(super) type_id: TypeId,
+    pub(super) component: ComponentId,
     pub(super) short_name: String,
     /// How many of the selected entities have this component.
     pub(super) present_count: usize,
@@ -55,6 +57,7 @@ pub(super) fn gather_multi_component_info(
 
     // Count how many selected entities have each component and collect metadata.
     struct CompMeta {
+        component: ComponentId,
         short_name: String,
         count: usize,
         visibility: InspectorVisibility,
@@ -65,6 +68,7 @@ pub(super) fn gather_multi_component_info(
     for info in &selected_infos {
         for comp in &info.components {
             let entry = comp_map.entry(comp.type_id).or_insert(CompMeta {
+                component: comp.component,
                 short_name: comp.short_name.clone(),
                 count: 0,
                 visibility: comp.visibility,
@@ -105,14 +109,12 @@ pub(super) fn gather_multi_component_info(
             let merged: Vec<(String, MultiFieldValue)> = first
                 .iter()
                 .map(|(name, first_val)| {
-                    let all_equal = field_lists[1..]
-                        .iter()
-                        .all(|fields| {
-                            fields
-                                .iter()
-                                .find(|(n, _)| n == name)
-                                .is_some_and(|(_, v)| v == first_val)
-                        });
+                    let all_equal = field_lists[1..].iter().all(|fields| {
+                        fields
+                            .iter()
+                            .find(|(n, _)| n == name)
+                            .is_some_and(|(_, v)| v == first_val)
+                    });
                     let multi_val = if all_equal {
                         MultiFieldValue::Uniform(first_val.clone())
                     } else {
@@ -126,6 +128,7 @@ pub(super) fn gather_multi_component_info(
 
         result.push(MultiComponentInfo {
             type_id: *type_id,
+            component: meta.component,
             short_name: meta.short_name.clone(),
             present_count: meta.count,
             total_count,
@@ -139,17 +142,17 @@ pub(super) fn gather_multi_component_info(
     result
 }
 
-/// Returns the subset of `selected` entities that have a component with `type_id`.
+/// Returns the subset of `selected` entities that have `component`.
 pub(super) fn selected_entities_with_component(
     entities: &[EntityDisplayInfo],
     selected: &[Entity],
-    type_id: TypeId,
+    component: ComponentId,
 ) -> Vec<Entity> {
     let selected_set: HashSet<Entity> = selected.iter().copied().collect();
     entities
         .iter()
         .filter(|e| selected_set.contains(&e.entity))
-        .filter(|e| e.components.iter().any(|c| c.type_id == type_id))
+        .filter(|e| e.components.iter().any(|c| c.component == component))
         .map(|e| e.entity)
         .collect()
 }
@@ -181,14 +184,14 @@ pub(super) fn draw_multi_entity_inspector(
 
     if !available.is_empty() {
         ui.menu_button(format!("{} Add Component", icons::PLUS), |ui| {
-            crate::panels::add_component_menu::draw_categorized(ui, &available, |type_id| {
+            crate::panels::add_component_menu::draw_categorized(ui, &available, |component| {
                 let have_it: HashSet<Entity> =
-                    selected_entities_with_component(entities, selected, type_id)
+                    selected_entities_with_component(entities, selected, component)
                         .into_iter()
                         .collect();
                 for &entity in selected {
                     if !have_it.contains(&entity) {
-                        actions.push(EditorAction::AddComponent { entity, type_id });
+                        actions.push(EditorAction::AddComponent { entity, component });
                     }
                 }
             });
@@ -204,70 +207,66 @@ pub(super) fn draw_multi_entity_inspector(
     egui::ScrollArea::vertical().show(ui, |ui| {
         for comp in &multi_info {
             let is_read_only = comp.visibility == InspectorVisibility::ReadOnly;
-            let id =
-                ui.make_persistent_id(format!("multi_comp_{:?}", comp.type_id));
+            let id = ui.make_persistent_id(format!("multi_comp_{:?}", comp.type_id));
 
-            egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                id,
-                true,
-            )
-            .show_header(ui, |ui| {
-                let label = if comp.present_count < comp.total_count {
-                    format!(
-                        "{} {} ({}/{})",
-                        icons::PUZZLE_PIECE,
-                        &comp.short_name,
-                        comp.present_count,
-                        comp.total_count
-                    )
-                } else {
-                    format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name)
-                };
-                ui.strong(label);
-
-                // Removal is always available regardless of visibility:
-                // `ReadOnly` gates field edits, not component lifecycle.
-                if ui
-                    .small_button(icons::X)
-                    .on_hover_text("Remove from all selected")
-                    .clicked()
-                {
-                    let targets =
-                        selected_entities_with_component(entities, selected, comp.type_id);
-                    for entity in targets {
-                        actions.push(EditorAction::RemoveComponent {
-                            entity,
-                            type_id: comp.type_id,
-                        });
-                    }
-                }
-            })
-            .body(|ui| {
-                if let Some(fields) = &comp.fields {
-                    if fields.is_empty() {
-                        ui.weak("(no fields)");
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+                .show_header(ui, |ui| {
+                    let label = if comp.present_count < comp.total_count {
+                        format!(
+                            "{} {} ({}/{})",
+                            icons::PUZZLE_PIECE,
+                            &comp.short_name,
+                            comp.present_count,
+                            comp.total_count
+                        )
                     } else {
-                        let targets = selected_entities_with_component(
-                            entities,
-                            selected,
-                            comp.type_id,
-                        );
-                        draw_multi_reflected_fields(
-                            ui,
-                            comp.type_id,
-                            fields,
-                            comp.field_metas,
-                            &targets,
-                            is_read_only,
-                            actions,
-                            asset_catalog,
-                        );
+                        format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name)
+                    };
+                    ui.strong(label);
+
+                    // Removal is always available regardless of visibility:
+                    // `ReadOnly` gates field edits, not component lifecycle.
+                    if ui
+                        .small_button(icons::X)
+                        .on_hover_text("Remove from all selected")
+                        .clicked()
+                    {
+                        let targets =
+                            selected_entities_with_component(entities, selected, comp.component);
+                        for entity in targets {
+                            actions.push(EditorAction::RemoveComponent {
+                                entity,
+                                component: comp.component,
+                            });
+                        }
                     }
-                } else {
-                    ui.weak("(no reflection)");
-                }
-            });
+                })
+                .body(|ui| {
+                    if let Some(fields) = &comp.fields {
+                        if fields.is_empty() {
+                            ui.weak("(no fields)");
+                        } else {
+                            let targets = selected_entities_with_component(
+                                entities,
+                                selected,
+                                comp.component,
+                            );
+                            draw_multi_reflected_fields(
+                                ui,
+                                comp.type_id,
+                                comp.component,
+                                fields,
+                                comp.field_metas,
+                                &targets,
+                                is_read_only,
+                                actions,
+                                asset_catalog,
+                            );
+                        }
+                    } else {
+                        ui.weak("(no reflection)");
+                    }
+                });
         }
     });
 }
@@ -277,6 +276,7 @@ pub(super) fn draw_multi_entity_inspector(
 fn draw_multi_reflected_fields(
     ui: &mut egui::Ui,
     type_id: TypeId,
+    component: ComponentId,
     fields: &[(String, MultiFieldValue)],
     field_metas: Option<&'static [FieldMeta]>,
     targets: &[Entity],
@@ -301,7 +301,7 @@ fn draw_multi_reflected_fields(
                             for &entity in targets {
                                 actions.push(EditorAction::SetField {
                                     entity,
-                                    type_id,
+                                    component,
                                     field: name.clone(),
                                     value: new_value.clone(),
                                 });
@@ -318,7 +318,7 @@ fn draw_multi_reflected_fields(
                             for &entity in targets {
                                 actions.push(EditorAction::SetField {
                                     entity,
-                                    type_id,
+                                    component,
                                     field: name.clone(),
                                     value: new_value.clone(),
                                 });

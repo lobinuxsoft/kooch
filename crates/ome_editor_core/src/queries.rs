@@ -4,12 +4,44 @@ use ome_core::resource::Resources;
 use ome_ecs::EphemeralComponents;
 use ome_ecs::archetype::Archetype;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
-use ome_ecs::component::ComponentRegistry;
+use ome_ecs::component::{ComponentId, ComponentNames, ComponentRegistry};
 
 use crate::state::{
     ArchetypeDisplayInfo, ComponentDisplayInfo, ComponentTypeInfo, EntityDisplayInfo,
     ReflectedTypeInfo,
 };
+
+/// Resolves a component's interned identity for a DTO.
+///
+/// Read-only: [`ComponentNames`] is pre-populated with every registry
+/// name by [`intern_registry_names`] before the gather pass, so a known
+/// component always resolves. An unseen name yields
+/// [`ComponentId::INVALID`], which downstream actions treat as
+/// unresolvable rather than misapplying.
+fn component_id(names: Option<&ComponentNames>, full_name: &str) -> ComponentId {
+    names
+        .and_then(|n| n.id(full_name))
+        .unwrap_or(ComponentId::INVALID)
+}
+
+/// Interns every registered component name so the read-only gather pass
+/// can resolve each to a [`ComponentId`]. Runs before gathering.
+pub(crate) fn intern_registry_names(resources: &mut Resources) {
+    let registry_names: Vec<String> = resources
+        .get::<ComponentRegistry>()
+        .map(|r| {
+            r.all_type_names()
+                .into_iter()
+                .map(|(_, name)| name.to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(interner) = resources.get_mut::<ComponentNames>() {
+        for name in &registry_names {
+            interner.intern(name);
+        }
+    }
+}
 
 /// Returns whether an archetype carries any marker registered as
 /// ephemeral. Used to keep editor-owned entities (cameras, gizmos) out
@@ -30,6 +62,7 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
         return Vec::new();
     };
     let components = resources.get::<ComponentRegistry>();
+    let names = resources.get::<ComponentNames>();
     let ephemeral = resources
         .get::<EphemeralComponents>()
         .map(|e| e.clone())
@@ -73,6 +106,7 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                         .unwrap_or(ome_ecs::reflect::InspectorVisibility::Editable);
                     Some(ComponentDisplayInfo {
                         type_id: *tid,
+                        component: component_id(names, full_name),
                         short_name,
                         fields,
                         field_metas,
@@ -220,6 +254,7 @@ pub(crate) fn gather_component_types(resources: &Resources) -> Vec<ComponentType
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
     };
+    let names = resources.get::<ComponentNames>();
     let mut types: Vec<ComponentTypeInfo> = registry
         .all_type_names()
         .into_iter()
@@ -227,6 +262,7 @@ pub(crate) fn gather_component_types(resources: &Resources) -> Vec<ComponentType
             let short = name.rsplit("::").next().unwrap_or(name).to_owned();
             ComponentTypeInfo {
                 type_id: tid,
+                component: component_id(names, name),
                 short_name: short,
                 has_reflection: registry.has_reflector(&tid),
             }
@@ -240,6 +276,7 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
     };
+    let names = resources.get::<ComponentNames>();
     let mut types: Vec<ReflectedTypeInfo> = registry
         .reflected_type_names()
         .into_iter()
@@ -248,6 +285,7 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
             let category = registry.reflect_category(&tid);
             ReflectedTypeInfo {
                 type_id: tid,
+                component: component_id(names, name),
                 short_name: short,
                 category,
             }
