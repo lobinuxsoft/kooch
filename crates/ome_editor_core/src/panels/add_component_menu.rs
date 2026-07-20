@@ -4,20 +4,21 @@
 //! uncategorized entries render at the top level, and each category
 //! gets its own submenu.
 
-use std::any::TypeId;
+use ome_ecs::component::ComponentId;
 use std::collections::BTreeMap;
 
 use crate::state::ReflectedTypeInfo;
 
 /// Draws a categorized list of reflected component types inside `ui`.
 ///
-/// Each selectable entry invokes `on_select` with the chosen `TypeId`.
-/// Uncategorized types (those without `#[reflect(category = "...")]`)
-/// render as flat entries before the category submenus.
+/// Each selectable entry invokes `on_select` with the chosen
+/// [`ComponentId`]. Uncategorized types (those without
+/// `#[reflect(category = "...")]`) render as flat entries before the
+/// category submenus.
 pub(crate) fn draw_categorized(
     ui: &mut egui::Ui,
     available: &[&ReflectedTypeInfo],
-    mut on_select: impl FnMut(TypeId),
+    mut on_select: impl FnMut(ComponentId),
 ) {
     let mut uncategorized: Vec<&ReflectedTypeInfo> = Vec::new();
     let mut by_category: BTreeMap<&'static str, Vec<&ReflectedTypeInfo>> = BTreeMap::new();
@@ -30,7 +31,7 @@ pub(crate) fn draw_categorized(
 
     for type_info in &uncategorized {
         if ui.selectable_label(false, &type_info.short_name).clicked() {
-            on_select(type_info.type_id);
+            on_select(type_info.component);
             ui.close();
         }
     }
@@ -43,7 +44,7 @@ pub(crate) fn draw_categorized(
         ui.menu_button(*category, |ui| {
             for type_info in entries {
                 if ui.selectable_label(false, &type_info.short_name).clicked() {
-                    on_select(type_info.type_id);
+                    on_select(type_info.component);
                     ui.close();
                 }
             }

@@ -5,15 +5,16 @@ use std::collections::HashMap;
 
 use glam::Vec3;
 
+use ome_ecs::component::ComponentId;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::{FieldMeta, ReflectValue};
 
 use crate::actions::EditorAction;
 use crate::state::{EntityDisplayInfo, EulerCacheKey};
 
-use super::rotation::{draw_quat_with_cache, is_transform_rotation};
-use super::widgets::{choices_for, draw_readonly_value, draw_value_widget, AssetCatalogEntry};
 use super::RotationContext;
+use super::rotation::{draw_quat_with_cache, is_transform_rotation};
+use super::widgets::{AssetCatalogEntry, choices_for, draw_readonly_value, draw_value_widget};
 
 /// Draws an editable name field for the Name component (shown above the component list).
 pub(super) fn draw_name_editor(
@@ -38,7 +39,7 @@ pub(super) fn draw_name_editor(
         if ui.text_edit_singleline(&mut val).changed() {
             actions.push(EditorAction::SetField {
                 entity,
-                type_id: comp.type_id,
+                component: comp.component,
                 field: "value".to_owned(),
                 value: ReflectValue::String(val),
             });
@@ -59,6 +60,7 @@ pub(super) fn draw_reflected_fields(
     ui: &mut egui::Ui,
     entity: Entity,
     type_id: TypeId,
+    component: ComponentId,
     fields: &[(String, ReflectValue)],
     field_metas: Option<&'static [FieldMeta]>,
     euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
@@ -87,7 +89,7 @@ pub(super) fn draw_reflected_fields(
                 if let Some(new_value) = new_value {
                     actions.push(EditorAction::SetField {
                         entity,
-                        type_id,
+                        component,
                         field: name.clone(),
                         value: new_value,
                     });

@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use ome_core::power::PowerProfile;
 use ome_core::resource::Resources;
+use ome_ecs::component::ComponentId;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::ReflectValue;
 use ome_ecs::transform::Transform;
@@ -47,17 +48,17 @@ pub(crate) enum EditorAction {
     Duplicate(Entity),
     SetField {
         entity: Entity,
-        type_id: TypeId,
+        component: ComponentId,
         field: String,
         value: ReflectValue,
     },
     AddComponent {
         entity: Entity,
-        type_id: TypeId,
+        component: ComponentId,
     },
     RemoveComponent {
         entity: Entity,
-        type_id: TypeId,
+        component: ComponentId,
     },
     /// Atomic Transform replacement, emitted by viewport gizmo handles
     /// at the end of a drag (one entry per drag, not per frame). The

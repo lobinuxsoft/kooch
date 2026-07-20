@@ -6,11 +6,13 @@
 
 pub mod cpu_storage;
 pub mod gpu_storage;
+pub mod names;
 pub mod registry;
 pub(crate) mod traits;
 
 pub use cpu_storage::ComponentStorage;
 pub use gpu_storage::GpuComponentStorage;
+pub use names::{ComponentId, ComponentNames};
 pub use registry::ComponentRegistry;
 pub use traits::{Component, GpuComponent};
 

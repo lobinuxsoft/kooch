@@ -10,6 +10,7 @@ use winit::event::WindowEvent;
 use winit::window::Window;
 
 use ome_core::raw_event::RawEventHandler;
+use ome_ecs::component::ComponentId;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::{FieldMeta, InspectorVisibility, ReflectValue};
 use ome_ecs::transform::Transform;
@@ -176,7 +177,11 @@ impl RawEventHandler for EguiEventHandler {
 
 /// Display data for a single component on an entity.
 pub(crate) struct ComponentDisplayInfo {
+    /// Local type handle, used for reflection and egui id salts. Absent
+    /// on a remote client that has no Rust type for this component.
     pub(crate) type_id: TypeId,
+    /// Portable identity, carried by any action this component emits.
+    pub(crate) component: ComponentId,
     pub(crate) short_name: String,
     pub(crate) fields: Option<Vec<(String, ReflectValue)>>,
     /// Static field metadata parallel to `fields`. Used to pick widget
@@ -216,6 +221,8 @@ pub(crate) struct ArchetypeDisplayInfo {
 pub(crate) struct ComponentTypeInfo {
     #[allow(dead_code)]
     pub(crate) type_id: TypeId,
+    /// Portable identity, carried when this type is dragged onto an entity.
+    pub(crate) component: ComponentId,
     pub(crate) short_name: String,
     pub(crate) has_reflection: bool,
 }
@@ -223,6 +230,8 @@ pub(crate) struct ComponentTypeInfo {
 /// Available reflected component types for "Add Component".
 pub(crate) struct ReflectedTypeInfo {
     pub(crate) type_id: TypeId,
+    /// Portable identity, carried by the emitted `AddComponent` action.
+    pub(crate) component: ComponentId,
     pub(crate) short_name: String,
     pub(crate) category: Option<&'static str>,
 }

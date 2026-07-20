@@ -59,7 +59,8 @@ pub use archetype::{Archetype, ArchetypeId};
 pub use archetype_registry::ArchetypeRegistry;
 pub use commands::Commands;
 pub use component::{
-    Component, ComponentRegistry, ComponentStorage, GpuComponent, GpuComponentStorage,
+    Component, ComponentId, ComponentNames, ComponentRegistry, ComponentStorage, GpuComponent,
+    GpuComponentStorage,
 };
 pub use entity::Entity;
 pub use ephemeral::EphemeralComponents;
