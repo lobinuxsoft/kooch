@@ -2,6 +2,7 @@ use crate::allocator::EntityAllocator;
 use crate::archetype_registry::ArchetypeRegistry;
 use crate::commands::Commands;
 use crate::component::ComponentRegistry;
+use crate::dynamic_components::DynamicComponents;
 use ome_core::resource::Resources;
 
 use super::document::SceneDocument;
@@ -42,18 +43,27 @@ pub fn sync_scene_to_ecs(
         spawned_order.push((entity, entity_desc.parent.clone()));
 
         for comp_desc in &entity_desc.components {
-            // Look up the TypeId by full type name.
+            // Look up the TypeId by full type name. A name this binary
+            // has no type for is parked verbatim rather than failing the
+            // load: which components resolve depends on which binary
+            // opened the scene, and aborting here would despawn the
+            // world (step 1 already ran) and lose everything on the next
+            // save. See `DynamicComponents`.
             let type_id = {
-                let components = resources
-                    .get::<ComponentRegistry>()
-                    .ok_or_else(|| {
-                        SceneError::UnknownComponent(comp_desc.type_name.clone())
-                    })?;
-                components
-                    .type_id_by_name(&comp_desc.type_name)
-                    .ok_or_else(|| {
-                        SceneError::UnknownComponent(comp_desc.type_name.clone())
-                    })?
+                let components = resources.get::<ComponentRegistry>();
+                components.and_then(|c| c.type_id_by_name(&comp_desc.type_name))
+            };
+            let Some(type_id) = type_id else {
+                // `EcsPlugin` inserts the store, but a hand-built
+                // `Resources` (tests, headless tools) may not have it.
+                // Create it on demand rather than dropping user data.
+                if resources.get::<DynamicComponents>().is_none() {
+                    resources.insert(DynamicComponents::new());
+                }
+                if let Some(dynamic) = resources.get_mut::<DynamicComponents>() {
+                    dynamic.insert(entity, &comp_desc.type_name, comp_desc.fields.clone());
+                }
+                continue;
             };
 
             // Insert default component via reflection.
@@ -65,8 +75,7 @@ pub fn sync_scene_to_ecs(
                 if inserted {
                     if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
                         if let Some(current) = archetypes.entity_archetype(entity) {
-                            let new_arch =
-                                archetypes.archetype_after_add_dynamic(current, type_id);
+                            let new_arch = archetypes.archetype_after_add_dynamic(current, type_id);
                             archetypes.register_entity(entity, new_arch);
                         }
                     }
@@ -76,12 +85,7 @@ pub fn sync_scene_to_ecs(
             // Set each field value.
             for (field_name, value) in &comp_desc.fields {
                 if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                    registry.reflect_set_field(
-                        &type_id,
-                        entity,
-                        field_name,
-                        value.clone(),
-                    )?;
+                    registry.reflect_set_field(&type_id, entity, field_name, value.clone())?;
                 }
             }
         }
@@ -95,14 +99,18 @@ pub fn sync_scene_to_ecs(
                 if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                     registry.register_cpu_reflected::<Parent>();
                     if let Some(storage) = registry.get_cpu_mut::<Parent>() {
-                        storage.insert(*entity, Parent { entity: parent_entity });
+                        storage.insert(
+                            *entity,
+                            Parent {
+                                entity: parent_entity,
+                            },
+                        );
                     }
                 }
                 // Update the archetype to include Parent.
                 if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
                     if let Some(current) = archetypes.entity_archetype(*entity) {
-                        let new_arch =
-                            archetypes.archetype_after_add_dynamic(current, parent_tid);
+                        let new_arch = archetypes.archetype_after_add_dynamic(current, parent_tid);
                         archetypes.register_entity(*entity, new_arch);
                     }
                 }
@@ -150,6 +158,9 @@ fn despawn_all(resources: &mut Resources) {
         }
         if let Some(components) = resources.get_mut::<ComponentRegistry>() {
             components.remove_entity(entity);
+        }
+        if let Some(dynamic) = resources.get_mut::<DynamicComponents>() {
+            dynamic.remove_entity(entity);
         }
     }
 

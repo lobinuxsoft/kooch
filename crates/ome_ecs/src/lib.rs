@@ -22,6 +22,7 @@ pub mod archetype;
 pub mod archetype_registry;
 pub mod commands;
 pub mod component;
+pub mod dynamic_components;
 pub mod entity;
 pub mod ephemeral;
 pub mod gpu_sync;
