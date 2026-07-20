@@ -1,5 +1,7 @@
 //! Editor actions collected during UI, applied after render.
 
+mod asset_ops;
+mod codegen;
 mod dispatch;
 mod handlers;
 mod reparent;
@@ -18,6 +20,8 @@ use crate::undo::{CompoundCommand, EditorCommand, UndoStack};
 
 use self::dispatch::{action_to_command, batch_description, same_ecs_variant};
 use self::handlers::apply_non_ecs_action;
+
+pub(crate) use self::codegen::register_scripts;
 
 pub(crate) enum EditorAction {
     /// Spawn an entity with Name + Transform + optional extra components.
@@ -84,6 +88,90 @@ pub(crate) enum EditorAction {
     LaunchProject(PathBuf),
     CancelLaunch,
     SetPowerProfile(PowerProfile),
+    /// Replace a `Material` asset's contents (PBR scalars + texture
+    /// references) and persist it to its `.ron` on disk. Emitted by the
+    /// Asset Browser's material editor. Applied to `Assets<Material>` so
+    /// the render sync picks it up live. Not undoable — an asset-level
+    /// edit, distinct from the ECS field undo stack.
+    EditMaterial {
+        guid: ome_core::Guid,
+        material: ome_render::material::Material,
+    },
+    /// Copy external files into a project folder and re-scan the asset
+    /// database so they register as project assets. Emitted by the Asset
+    /// Browser's drag-and-drop import. `dest` must be inside the project.
+    ImportAssets {
+        files: Vec<PathBuf>,
+        dest: PathBuf,
+    },
+    /// Create an empty folder `<parent>/<name>`.
+    CreateFolder {
+        parent: PathBuf,
+        name: String,
+    },
+    /// Create a new default `Material` asset `<folder>/<name>.ron`.
+    CreateMaterial {
+        folder: PathBuf,
+        name: String,
+    },
+    /// Rename an asset file (and its `.meta` sidecar) to `new_name`,
+    /// preserving the GUID so references survive.
+    RenameAsset {
+        path: PathBuf,
+        new_name: String,
+    },
+    /// Rename a folder to `new_name`.
+    RenameFolder {
+        path: PathBuf,
+        new_name: String,
+    },
+    /// Duplicate an asset file into a fresh copy (new GUID via re-import).
+    DuplicateAsset {
+        path: PathBuf,
+    },
+    /// Delete an asset file (and its `.meta` sidecar).
+    DeleteAsset {
+        path: PathBuf,
+    },
+    /// Delete a folder and everything under it.
+    DeleteFolder {
+        path: PathBuf,
+    },
+    /// Open the OS file manager at `path` (or its parent for a file).
+    RevealInFileManager {
+        path: PathBuf,
+    },
+    /// Open `file` in an external IDE with `root` as the workspace, so
+    /// the whole project (Rust source, `Cargo.toml`, …) is editable.
+    OpenInIde {
+        root: PathBuf,
+        file: PathBuf,
+    },
+    /// Create a new source file (Rust / C# script) or an empty scene in
+    /// `folder` from a stub template.
+    CreateFile {
+        folder: PathBuf,
+        name: String,
+        kind: NewFileKind,
+    },
+    /// Set (or clear, with `None`) the external IDE command used by
+    /// [`OpenInIde`], persisted in the editor config.
+    SetIdeCommand {
+        command: Option<String>,
+    },
+    /// Rescan the project's `src/` for components + systems and rewrite
+    /// the editor-managed `src/registrations.rs` (regenerating `main.rs`
+    /// if it is missing).
+    RegisterScripts,
+}
+
+/// The kind of file created by [`EditorAction::CreateFile`]. The Rust
+/// and Rhai kinds are scaffolded from `templates/` in the engine root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NewFileKind {
+    RustComponent,
+    RustSystem,
+    Scene,
 }
 
 pub(crate) fn apply_actions(
@@ -147,5 +235,3 @@ pub(crate) fn apply_actions(
         i += 1;
     }
 }
-
-

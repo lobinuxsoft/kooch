@@ -58,6 +58,9 @@ pub(super) fn run_editor_ui(
     viewport: ViewportUi<'_>,
     power_profile: ome_core::power::PowerProfile,
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
+    asset_detail: Option<&crate::panels::inspector::AssetDetail>,
+    engine_assets_root: Option<&std::path::Path>,
+    project_assets_root: Option<&std::path::Path>,
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
@@ -65,6 +68,10 @@ pub(super) fn run_editor_ui(
     perf_stats: crate::perf::EditorPerfStats,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
+    let mut selected_asset = overlay.selected_asset;
+    let mut current_folder = overlay.current_folder.take();
+    let selected_before = selected.clone();
+    let asset_before = selected_asset;
     let mut last_clicked_index = overlay.last_clicked_index.take();
     let mut actions: Vec<EditorAction> = Vec::new();
     let ViewportUi {
@@ -87,6 +94,9 @@ pub(super) fn run_editor_ui(
                 undo.undo_desc.as_deref(),
                 undo.redo_desc.as_deref(),
                 power_profile,
+                project_state
+                    .as_ref()
+                    .and_then(|ps| ps.editor_config.ide_command.as_deref()),
             );
 
             let selection_has_transform = data.entities.iter().any(|info| {
@@ -114,6 +124,11 @@ pub(super) fn run_editor_ui(
                 handle_mode,
                 selection_has_transform,
                 asset_catalog,
+                selected_asset: &mut selected_asset,
+                asset_detail,
+                current_folder: &mut current_folder,
+                engine_assets_root,
+                project_assets_root,
                 meshlet_debug_mode,
                 meshlet_debug_caps,
                 meshlet_lod_settings,
@@ -130,7 +145,20 @@ pub(super) fn run_editor_ui(
         }
     });
 
+    // Selection arbitration — the Inspector renders one thing. Picking
+    // an asset this frame drops the entity selection; picking an entity
+    // drops the asset selection. Keeps entity + asset selection mutually
+    // exclusive without threading either into the other's panel.
+    if selected_asset != asset_before && selected_asset.is_some() {
+        selected.clear();
+    }
+    if selected != selected_before && !selected.is_empty() {
+        selected_asset = None;
+    }
+
     overlay.selected_entities = selected;
+    overlay.selected_asset = selected_asset;
+    overlay.current_folder = current_folder;
     overlay.last_clicked_index = last_clicked_index;
     (full_output, actions)
 }

@@ -16,10 +16,7 @@ struct TempDir {
 impl TempDir {
     fn new(name: &str) -> Self {
         let mut path = std::env::temp_dir();
-        path.push(format!(
-            "ome_asset_db_{name}_{}",
-            std::process::id(),
-        ));
+        path.push(format!("ome_asset_db_{name}_{}", std::process::id(),));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("create temp dir");
         Self { path }
@@ -285,4 +282,27 @@ fn register_replaces_when_path_guid_changes() {
     assert_eq!(db.guid_for(&path), Some(g2));
     assert!(db.entry(g1).is_none(), "old GUID should be evicted");
     assert!(db.entry(g2).is_some());
+}
+
+#[test]
+fn remove_path_drops_both_mappings() {
+    let mut db = AssetDatabase::new();
+    let path = PathBuf::from("tex/albedo.png");
+    let guid = Guid::new_v4();
+    db.register(
+        guid,
+        AssetEntry {
+            path: path.clone(),
+            mtime: SystemTime::UNIX_EPOCH,
+            type_name: Some("ome_render::texture::asset::Image".to_owned()),
+        },
+    );
+    assert_eq!(db.len(), 1);
+
+    assert_eq!(db.remove_path(&path), Some(guid));
+    assert_eq!(db.len(), 0);
+    assert!(db.guid_for(&path).is_none());
+    assert!(db.entry(guid).is_none());
+    // Removing again is a no-op.
+    assert_eq!(db.remove_path(&path), None);
 }

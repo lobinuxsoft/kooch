@@ -5,6 +5,10 @@
 
 use std::any::TypeId;
 
+use ome_core::Guid;
+use ome_core::asset_database::AssetDatabase;
+use ome_core::asset_loader::AssetServer;
+use ome_core::assets::Assets;
 use ome_core::power::PowerProfile;
 use ome_core::resource::Resources;
 use ome_ecs::EphemeralComponents;
@@ -13,6 +17,7 @@ use ome_ecs::archetype_registry::ArchetypeRegistry;
 use ome_ecs::component::ComponentRegistry;
 use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::Parent;
+use ome_render::material::Material;
 
 use crate::play_state::PlayState;
 use crate::project_state::ProjectState;
@@ -32,6 +37,11 @@ pub(super) fn apply_non_ecs_action(
     resources: &mut Resources,
     undo_stack: &mut UndoStack,
 ) {
+    // Asset Browser file operations (create / rename / delete / …) live
+    // in their own module; delegate first, fall through to the rest.
+    if super::asset_ops::handle_asset_op(action, resources) {
+        return;
+    }
     match action {
         EditorAction::SaveScene => handle_save_scene(resources),
         EditorAction::OpenScene => handle_open_scene(resources, undo_stack),
@@ -49,20 +59,108 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::LaunchProject(path) => handle_launch_project(resources, path),
         EditorAction::CancelLaunch => handle_cancel_launch(resources),
         EditorAction::SetPowerProfile(profile) => handle_set_power_profile(resources, *profile),
+        EditorAction::SetIdeCommand { command } => {
+            handle_set_ide_command(resources, command.clone());
+        }
+        EditorAction::EditMaterial { guid, material } => {
+            handle_edit_material(resources, *guid, material);
+        }
+        EditorAction::ImportAssets { files, dest } => handle_import_assets(resources, files, dest),
         // ECS actions and Undo/Redo handled by caller.
         _ => {}
     }
 }
 
+/// Copies each source file into `dest`, then forces a project asset
+/// re-scan so the new files register (and get `.meta` sidecars) and
+/// surface in the Asset Browser + pickers next frame.
+fn handle_import_assets(
+    resources: &mut Resources,
+    files: &[std::path::PathBuf],
+    dest: &std::path::Path,
+) {
+    if let Err(e) = std::fs::create_dir_all(dest) {
+        tracing::error!(dest = %dest.display(), error = %e, "import: cannot create destination");
+        return;
+    }
+    let mut copied = 0usize;
+    for src in files {
+        let Some(name) = src.file_name() else {
+            continue;
+        };
+        let target = super::asset_ops::unique_target(dest, name);
+        match std::fs::copy(src, &target) {
+            Ok(_) => {
+                copied += 1;
+                tracing::info!(from = %src.display(), to = %target.display(), "asset imported");
+            }
+            Err(e) => {
+                tracing::error!(from = %src.display(), error = %e, "asset import failed");
+            }
+        }
+    }
+    if copied > 0 {
+        super::asset_ops::force_rescan(resources);
+    }
+}
+
+/// Applies a Material asset edit: updates `Assets<Material>` in place so
+/// the render sync uploads the new params live, then serialises the
+/// material back to its source `.ron` so the change survives a reload.
+fn handle_edit_material(resources: &mut Resources, guid: Guid, material: &Material) {
+    // 1. Live update: resolve the GUID to a handle (loading if needed)
+    //    and overwrite the stored asset.
+    let Some(mut server) = resources.remove::<AssetServer>() else {
+        tracing::warn!("EditMaterial: AssetServer missing; edit dropped");
+        return;
+    };
+    let handle = server.load_by_guid::<Material>(guid, resources);
+    resources.insert(server);
+    match handle {
+        Ok(h) => {
+            if let Some(assets) = resources.get_mut::<Assets<Material>>()
+                && let Some(slot) = assets.get_mut(h)
+            {
+                *slot = material.clone();
+            }
+        }
+        Err(e) => {
+            tracing::warn!(guid = %guid, error = %e, "EditMaterial: failed to resolve material")
+        }
+    }
+
+    // 2. Persist to disk at the asset's registered path.
+    let Some(path) = resources
+        .get::<AssetDatabase>()
+        .and_then(|db| db.entry(guid).map(|e| e.path.clone()))
+    else {
+        tracing::warn!(guid = %guid, "EditMaterial: no path in AssetDatabase; not persisted");
+        return;
+    };
+    match ron::ser::to_string_pretty(material, ron::ser::PrettyConfig::default()) {
+        Ok(text) => match std::fs::write(&path, text) {
+            Ok(()) => tracing::info!(path = %path.display(), "material saved"),
+            Err(e) => {
+                tracing::error!(path = %path.display(), error = %e, "failed to write material")
+            }
+        },
+        Err(e) => tracing::error!(guid = %guid, error = %e, "failed to serialise material"),
+    }
+}
+
 fn handle_save_scene(resources: &mut Resources) {
-    let scenes_dir = resources
-        .get::<ProjectState>()
-        .and_then(|ps| ps.active_project.as_ref().map(|p| p.root_path.join("scenes")));
+    let scenes_dir = resources.get::<ProjectState>().and_then(|ps| {
+        ps.active_project
+            .as_ref()
+            .map(|p| p.root_path.join("scenes"))
+    });
     let mut dialog = rfd::FileDialog::new().add_filter("OME Scene", &["ome_scene"]);
     if let Some(ref dir) = scenes_dir {
         dialog = dialog.set_directory(dir);
     }
-    let Some(path) = dialog.save_file() else { return };
+    let Some(path) = dialog.save_file() else {
+        return;
+    };
     match save_scene_as(resources, path.clone()) {
         Ok(()) => tracing::info!("scene saved to {}", path.display()),
         Err(e) => tracing::error!("failed to save scene: {e}"),
@@ -70,14 +168,18 @@ fn handle_save_scene(resources: &mut Resources) {
 }
 
 fn handle_open_scene(resources: &mut Resources, undo_stack: &mut UndoStack) {
-    let scenes_dir = resources
-        .get::<ProjectState>()
-        .and_then(|ps| ps.active_project.as_ref().map(|p| p.root_path.join("scenes")));
+    let scenes_dir = resources.get::<ProjectState>().and_then(|ps| {
+        ps.active_project
+            .as_ref()
+            .map(|p| p.root_path.join("scenes"))
+    });
     let mut dialog = rfd::FileDialog::new().add_filter("OME Scene", &["ome_scene"]);
     if let Some(ref dir) = scenes_dir {
         dialog = dialog.set_directory(dir);
     }
-    let Some(path) = dialog.pick_file() else { return };
+    let Some(path) = dialog.pick_file() else {
+        return;
+    };
     match load_scene(resources, &path) {
         Ok(()) => {
             tracing::info!("scene loaded from {}", path.display());
@@ -113,8 +215,7 @@ fn handle_play(resources: &mut Resources) {
     if let Err(e) = doc.save(&scene_path) {
         tracing::error!("failed to save play scene: {e}");
     } else if let Some(play_state) = resources.get_mut::<PlayState>()
-        && let Err(e) =
-            play_state.launch(&manifest_path, &scene_path, engine_root.as_deref())
+        && let Err(e) = play_state.launch(&manifest_path, &scene_path, engine_root.as_deref())
     {
         tracing::error!("failed to launch game: {e}");
     }
@@ -127,7 +228,9 @@ fn handle_stop(resources: &mut Resources) {
 }
 
 fn handle_open_project(resources: &mut Resources, path: &std::path::Path) {
-    let Some(mut ps) = resources.remove::<ProjectState>() else { return };
+    let Some(mut ps) = resources.remove::<ProjectState>() else {
+        return;
+    };
     match ps.open_project(path) {
         Ok(()) => {
             let title = ps
@@ -141,12 +244,10 @@ fn handle_open_project(resources: &mut Resources, path: &std::path::Path) {
                 let _ = wh.window().set_title(&format!("{title} — Oh My Engine"));
             }
 
-            let main_scene_path = ps.active_project.as_ref().and_then(|p| {
-                p.manifest
-                    .main_scene
-                    .as_ref()
-                    .map(|s| p.root_path.join(s))
-            });
+            let main_scene_path = ps
+                .active_project
+                .as_ref()
+                .and_then(|p| p.manifest.main_scene.as_ref().map(|s| p.root_path.join(s)));
             if let Some(scene_path) = main_scene_path
                 && scene_path.exists()
                 && let Err(e) = load_scene(resources, &scene_path)
@@ -164,11 +265,7 @@ fn handle_open_project(resources: &mut Resources, path: &std::path::Path) {
     resources.insert(ps);
 }
 
-fn handle_create_project(
-    resources: &mut Resources,
-    name: &str,
-    parent_path: &std::path::Path,
-) {
+fn handle_create_project(resources: &mut Resources, name: &str, parent_path: &std::path::Path) {
     let engine_root = resources
         .get::<ProjectState>()
         .and_then(|ps| ps.engine_root.clone());
@@ -331,10 +428,23 @@ fn handle_cancel_launch(resources: &mut Resources) {
     }
 }
 
+fn handle_set_ide_command(resources: &mut Resources, command: Option<String>) {
+    if let Some(ps) = resources.get_mut::<ProjectState>() {
+        ps.editor_config.ide_command = command;
+        if let Err(e) = ps.editor_config.save() {
+            tracing::warn!(error = %e, "failed to save editor config");
+        }
+    }
+}
+
 fn handle_set_power_profile(resources: &mut Resources, profile: PowerProfile) {
     if let Some(slot) = resources.get_mut::<PowerProfile>() {
         if *slot != profile {
-            tracing::info!(from = slot.as_str(), to = profile.as_str(), "power profile changed");
+            tracing::info!(
+                from = slot.as_str(),
+                to = profile.as_str(),
+                "power profile changed"
+            );
             *slot = profile;
         }
     } else {

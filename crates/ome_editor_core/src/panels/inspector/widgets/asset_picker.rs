@@ -4,6 +4,7 @@ use ome_core::Guid;
 use ome_ecs::reflect::ReflectValue;
 
 use super::asset::AssetCatalogEntry;
+use crate::drag_drop::DraggedAsset;
 
 /// Renders the typed asset-reference picker for a `ReflectValue::AssetRef`
 /// field. Returns `Some(new_value)` when the user picks a different
@@ -15,7 +16,7 @@ use super::asset::AssetCatalogEntry;
 /// - Dropdown opens a search field at the top, then the filtered
 ///   list. Each row shows `display_name [source]` with the full
 ///   path on hover.
-pub(super) fn draw_asset_picker(
+pub(crate) fn draw_asset_picker(
     ui: &mut egui::Ui,
     current: Option<Guid>,
     asset_type: &str,
@@ -53,16 +54,15 @@ pub(super) fn draw_asset_picker(
                     .hint_text("\u{1f50d} Search…"),
             );
             if search_resp.changed() {
-                ui.ctx().data_mut(|d| d.insert_temp(search_id, query.clone()));
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(search_id, query.clone()));
             }
 
             ui.separator();
 
             // The "(None)" entry — clears the assignment. Always
             // visible, never filtered out.
-            if ui.selectable_label(current.is_none(), "(None)").clicked()
-                && current.is_some()
-            {
+            if ui.selectable_label(current.is_none(), "(None)").clicked() && current.is_some() {
                 new_value = Some(ReflectValue::AssetRef {
                     guid: None,
                     asset_type: asset_type.to_owned(),
@@ -80,7 +80,12 @@ pub(super) fn draw_asset_picker(
                     return true;
                 }
                 entry.display_name.to_lowercase().contains(&needle)
-                    || entry.path.display().to_string().to_lowercase().contains(&needle)
+                    || entry
+                        .path
+                        .display()
+                        .to_string()
+                        .to_lowercase()
+                        .contains(&needle)
             };
 
             let mut shown = 0usize;
@@ -89,11 +94,7 @@ pub(super) fn draw_asset_picker(
                     continue;
                 }
                 let selected = current == Some(entry.guid);
-                let label = format!(
-                    "{}  [{}]",
-                    entry.display_name,
-                    entry.source.label(),
-                );
+                let label = format!("{}  [{}]", entry.display_name, entry.source.label(),);
                 let resp = ui
                     .selectable_label(selected, label)
                     .on_hover_text(entry.path.display().to_string());
@@ -109,7 +110,31 @@ pub(super) fn draw_asset_picker(
                 ui.weak("(no match)");
             }
         });
-    let _ = combo_response;
+    // Drop target: an asset dragged out of the Asset Browser. Only this
+    // slot's own type is accepted, so a mesh dragged over a material
+    // field neither highlights nor assigns.
+    //
+    // `dnd_release_payload` takes the payload *before* checking the type,
+    // so it stays guarded behind the matching `dnd_hover_payload` — see
+    // the ordering note in `panels/world/entity_row.rs`.
+    let slot = combo_response.response;
+    if let Some(hovered) = slot.dnd_hover_payload::<DraggedAsset>()
+        && hovered.type_name == asset_type
+    {
+        ui.painter().rect_filled(
+            slot.rect,
+            2.0,
+            egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
+        );
+        if let Some(released) = slot.dnd_release_payload::<DraggedAsset>()
+            && current != Some(released.guid)
+        {
+            new_value = Some(ReflectValue::AssetRef {
+                guid: Some(released.guid),
+                asset_type: asset_type.to_owned(),
+            });
+        }
+    }
 
     new_value
 }

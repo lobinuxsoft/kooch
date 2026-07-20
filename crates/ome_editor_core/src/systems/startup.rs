@@ -7,12 +7,12 @@ use ome_core::power::{self, PowerProfile};
 use ome_core::raw_event::RawEventHandler;
 use ome_core::resource::Resources;
 use ome_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
+use ome_render::SkyRenderPass;
 use ome_render::Vbuf64Support;
 use ome_render::meshlet::{
     MeshletBlit, MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStage,
     MeshletRenderStageConfig,
 };
-use ome_render::SkyRenderPass;
 use ome_world::{ChunkManager, ProceduralCitySource};
 
 use crate::state::{EditorOverlay, EguiEventHandler};
@@ -99,6 +99,8 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         rotation_display_mode: crate::state::RotationDisplayMode::default(),
         snap_settings: ome_gizmos_handles::SnapSettings::default(),
         gizmo_drag_start: None,
+        selected_asset: None,
+        current_folder: None,
     };
 
     // Wire the procedural city as the editor's default content source —

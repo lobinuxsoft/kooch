@@ -34,6 +34,7 @@ pub(crate) enum EditorTab {
     Inspector,
     Archetypes,
     Components,
+    AssetBrowser,
 }
 
 /// All tab variants, used for the Window menu.
@@ -43,6 +44,7 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::Inspector,
     EditorTab::Archetypes,
     EditorTab::Components,
+    EditorTab::AssetBrowser,
 ];
 
 impl EditorTab {
@@ -54,6 +56,7 @@ impl EditorTab {
             Self::Inspector => format!("{} Inspector", crate::icons::SLIDERS),
             Self::Archetypes => format!("{} Archetypes", crate::icons::TREE_STRUCTURE),
             Self::Components => format!("{} Components", crate::icons::LIST_BULLETS),
+            Self::AssetBrowser => format!("{} Assets", crate::icons::FOLDER_OPEN),
         }
     }
 }
@@ -138,6 +141,15 @@ pub struct EditorOverlay {
     /// otherwise. Used to emit a single `TransformEdit` undo entry per
     /// drag (instead of one per frame) when the user releases.
     pub(crate) gizmo_drag_start: Option<(Entity, Transform)>,
+    /// Asset selected in the Asset Browser panel, by `Guid`. Drives the
+    /// Inspector's asset view. Held on the overlay (not egui temp state)
+    /// so the render system can resolve the asset's data snapshot before
+    /// the egui frame runs.
+    pub(crate) selected_asset: Option<ome_core::Guid>,
+    /// Folder selected in the Asset Browser tree — the destination for
+    /// drag-and-drop imports. `None` falls back to the project assets
+    /// root. Only project folders are valid targets (engine is read-only).
+    pub(crate) current_folder: Option<std::path::PathBuf>,
 }
 
 /// Forwards raw winit events to egui for input processing.

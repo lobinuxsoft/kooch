@@ -227,6 +227,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         ),
         None => (None, None),
     };
+    // The Asset Browser tree is rooted at the project *crate* root (not
+    // `assets/`) so `src/`, `Cargo.toml`, `scenes/`, … are all browsable
+    // and openable in an external IDE.
+    let project_crate_root = project_state
+        .as_ref()
+        .and_then(|ps| ps.active_project.as_ref().map(|ap| ap.root_path.clone()));
     let asset_catalog = resources
         .get::<ome_core::asset_database::AssetDatabase>()
         .map(|db| {
@@ -237,6 +243,13 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             )
         })
         .unwrap_or_default();
+
+    // Resolve the Asset Browser's selection into a data snapshot before
+    // the egui frame — the detail pane needs the asset's contents, and
+    // resolving them requires mutable `Resources` (AssetServer load).
+    let asset_detail = overlay
+        .selected_asset
+        .and_then(|guid| crate::systems::asset_detail::gather_asset_detail(guid, resources));
 
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
@@ -257,6 +270,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         },
         power_profile,
         &asset_catalog,
+        asset_detail.as_ref(),
+        engine_root_owned.as_deref(),
+        project_crate_root.as_deref(),
         &mut meshlet_debug_mode,
         meshlet_debug_caps,
         &mut meshlet_lod_settings,

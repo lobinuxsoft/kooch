@@ -12,5 +12,6 @@ mod choices;
 mod value_widget;
 
 pub(crate) use self::asset::{AssetCatalogEntry, AssetSource};
+pub(crate) use self::asset_picker::draw_asset_picker;
 pub(super) use self::choices::{choices_for, draw_readonly_value};
 pub(super) use self::value_widget::draw_value_widget;

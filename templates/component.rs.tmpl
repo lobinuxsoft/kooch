@@ -1,0 +1,23 @@
+//! {{name}} component.
+//!
+//! Generated from `templates/component.rs.tmpl`. Edit that file to change
+//! the scaffold for every new component.
+
+use oh_my_engine::ome_ecs::Reflect;
+use oh_my_engine::ome_ecs::component::Component;
+
+/// A `{{Name}}` component. Attach it to entities; its public fields show
+/// up in the editor Inspector automatically.
+///
+/// Register it once (for scene serialization + the Inspector) in your
+/// project's `main.rs`, inside `register_components`:
+/// ```ignore
+/// registry.register_cpu_reflected::<{{Name}}>();
+/// ```
+#[derive(Default, Reflect)]
+pub struct {{Name}} {
+    // Add fields here, e.g.:
+    // pub value: f32,
+}
+
+impl Component for {{Name}} {}
