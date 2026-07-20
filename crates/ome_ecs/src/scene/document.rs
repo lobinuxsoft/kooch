@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::archetype_registry::ArchetypeRegistry;
 use crate::component::ComponentRegistry;
+use crate::dynamic_components::DynamicComponents;
 use crate::reflect::ReflectValue;
 use ome_core::resource::Resources;
 
@@ -99,6 +100,7 @@ impl SceneDocument {
 
         let archetypes = resources.get::<ArchetypeRegistry>();
         let components = resources.get::<ComponentRegistry>();
+        let dynamic = resources.get::<DynamicComponents>();
 
         if let (Some(archetypes), Some(components)) = (archetypes, components) {
             for archetype in archetypes.iter_matching(&[]) {
@@ -135,6 +137,24 @@ impl SceneDocument {
                         });
                     }
 
+                    // Write back components this binary could not
+                    // resolve on load, so a scene opened by a binary
+                    // that only understands half of it survives the
+                    // round-trip intact. Sorted by type name: their
+                    // original file order is not recoverable, and a
+                    // stable order keeps re-saves diff-clean.
+                    if let Some(dynamic) = &dynamic {
+                        let mut parked: Vec<ComponentDescription> = dynamic
+                            .iter_entity(entity)
+                            .map(|(type_name, fields)| ComponentDescription {
+                                type_name: type_name.to_owned(),
+                                fields: fields.to_vec(),
+                            })
+                            .collect();
+                        parked.sort_by(|a, b| a.type_name.cmp(&b.type_name));
+                        comp_descs.extend(parked);
+                    }
+
                     if comp_descs.is_empty() {
                         continue;
                     }
@@ -143,13 +163,7 @@ impl SceneDocument {
                     // "value" field, falling back to "Entity <index>".
                     let display_name = comp_descs
                         .iter()
-                        .find(|c| {
-                            c.type_name
-                                .rsplit("::")
-                                .next()
-                                .unwrap_or(&c.type_name)
-                                == "Name"
-                        })
+                        .find(|c| c.type_name.rsplit("::").next().unwrap_or(&c.type_name) == "Name")
                         .and_then(|c| {
                             c.fields.iter().find_map(|(k, v)| {
                                 if k == "value" {

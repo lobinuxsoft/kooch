@@ -2,6 +2,7 @@ use crate::allocator::EntityAllocator;
 use crate::archetype_registry::ArchetypeRegistry;
 use crate::commands::Commands;
 use crate::component::{Component, ComponentRegistry};
+use crate::dynamic_components::DynamicComponents;
 use crate::query::AccessTracker;
 use crate::reflect::{FieldKind, FieldMeta, Reflect, ReflectError, ReflectValue};
 use ome_core::resource::Resources;
@@ -85,7 +86,8 @@ impl Reflect for Health {
 }
 
 /// Helper: set up a minimal ECS with `Commands`, `ComponentRegistry`,
-/// `ArchetypeRegistry`, `EntityAllocator`, and `AccessTracker`.
+/// `ArchetypeRegistry`, `EntityAllocator`, `AccessTracker`, and
+/// `DynamicComponents`.
 pub(super) fn setup_resources() -> Resources {
     let mut resources = Resources::new();
     resources.insert(EntityAllocator::new());
@@ -93,6 +95,7 @@ pub(super) fn setup_resources() -> Resources {
     resources.insert(ArchetypeRegistry::new());
     resources.insert(AccessTracker::new());
     resources.insert(Commands::new());
+    resources.insert(DynamicComponents::new());
     resources
 }
 

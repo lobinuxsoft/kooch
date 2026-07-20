@@ -15,8 +15,6 @@ pub enum SceneError {
     Ron(ron::Error),
     /// RON deserialization error (with span info).
     RonSpanned(ron::error::SpannedError),
-    /// A component type referenced in the scene is not registered.
-    UnknownComponent(String),
     /// A reflection operation failed.
     Reflect(ReflectError),
 }
@@ -27,7 +25,6 @@ impl fmt::Display for SceneError {
             Self::Io(e) => write!(f, "failed to access scene file: {e}"),
             Self::Ron(e) => write!(f, "failed to serialize scene RON: {e}"),
             Self::RonSpanned(e) => write!(f, "failed to parse scene RON: {e}"),
-            Self::UnknownComponent(name) => write!(f, "unknown component type: {name}"),
             Self::Reflect(e) => write!(f, "reflection error: {e}"),
         }
     }
@@ -40,7 +37,6 @@ impl std::error::Error for SceneError {
             Self::Ron(e) => Some(e),
             Self::RonSpanned(e) => Some(e),
             Self::Reflect(e) => Some(e),
-            Self::UnknownComponent(_) => None,
         }
     }
 }
