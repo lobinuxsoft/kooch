@@ -31,11 +31,13 @@
 //! - [`plugin`] — [`RemotePlugin`], which starts the server and registers
 //!   the drain system.
 
+pub mod client;
 pub mod handlers;
 pub mod plugin;
 pub mod protocol;
 pub mod server;
 
+pub use client::{ClientError, RemoteClient};
 pub use plugin::RemotePlugin;
 pub use protocol::{Request, Response};
 pub use server::{DEFAULT_PORT, RemoteServer};

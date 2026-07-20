@@ -15,6 +15,7 @@ use ome_ecs::query::AccessTracker;
 use ome_ecs::reflect::ReflectValue;
 use ome_ecs::transform::Transform;
 
+use ome_remote::client::RemoteClient;
 use ome_remote::handlers::handle;
 use ome_remote::protocol::{Method, Request, ResponseData, ResponsePayload};
 use ome_remote::server::RemoteServer;
@@ -178,4 +179,83 @@ fn http_ping_round_trips_through_the_bridge() {
     assert!(response.contains("200 OK"), "status line: {response}");
     assert!(response.contains("\"kind\":\"pong\""), "body: {response}");
     assert!(response.contains("\"id\":42"), "id echoed: {response}");
+}
+
+#[test]
+fn client_drives_server_end_to_end() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let server = (0..8)
+        .find_map(|i| RemoteServer::start(17720 + i).ok())
+        .expect("bind a port");
+    let port = server.port();
+
+    // The project's "main loop": owns the ECS, drains the queue and
+    // answers, until the client signals it is done.
+    let done = Arc::new(AtomicBool::new(false));
+    let loop_done = Arc::clone(&done);
+    let main_loop = std::thread::spawn(move || {
+        let mut resources = ecs();
+        while !loop_done.load(Ordering::Relaxed) {
+            for item in server.take_pending() {
+                let response = handle(&item.request, &mut resources);
+                let _ = item.reply.send(response);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    });
+
+    // The editor client: typed calls over the wire.
+    let client = RemoteClient::new(port);
+    client.ping().expect("ping");
+
+    let hero = client.spawn(Some("Hero")).expect("spawn");
+    client
+        .add_component(hero, std::any::type_name::<Transform>())
+        .expect("add component");
+    client
+        .set_field(
+            hero,
+            std::any::type_name::<Transform>(),
+            "position",
+            ReflectValue::Vec3(glam::Vec3::new(4.0, 5.0, 6.0)),
+        )
+        .expect("set field");
+
+    let entities = client.list_entities().expect("list");
+    assert_eq!(entities.len(), 1);
+    assert_eq!(entities[0].id, hero);
+    assert_eq!(entities[0].name.as_deref(), Some("Hero"));
+    let position = entities[0]
+        .components
+        .iter()
+        .find(|c| c.type_name.ends_with("Transform"))
+        .and_then(|c| c.fields.iter().find(|(n, _)| n == "position"))
+        .map(|(_, v)| v);
+    assert_eq!(
+        position,
+        Some(&ReflectValue::Vec3(glam::Vec3::new(4.0, 5.0, 6.0)))
+    );
+
+    // A schema call reaches the registry.
+    let schema = client.get_schema().expect("schema");
+    assert!(schema.iter().any(|c| c.type_name.ends_with("Transform")));
+
+    // An unknown component surfaces as a typed remote error, not a hang.
+    let err = client
+        .add_component(hero, "game::NotHere")
+        .expect_err("unknown component must error");
+    assert!(
+        matches!(
+            err,
+            ome_remote::ClientError::Remote(
+                ome_remote::protocol::RemoteError::UnknownComponent { .. }
+            )
+        ),
+        "got {err:?}"
+    );
+
+    done.store(true, Ordering::Relaxed);
+    main_loop.join().unwrap();
 }
