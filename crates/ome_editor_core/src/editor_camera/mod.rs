@@ -24,9 +24,9 @@ use std::any::TypeId;
 use glam::{Mat4, Vec3};
 
 use ome_core::resource::Resources;
-use ome_ecs::component::ComponentRegistry;
-use ome_ecs::commands::Commands;
 use ome_ecs::EphemeralComponents;
+use ome_ecs::commands::Commands;
+use ome_ecs::component::ComponentRegistry;
 use ome_ecs::perspective_camera::PerspectiveCamera;
 use ome_ecs::transform::Transform;
 use ome_world::focus::StreamingFocus;
@@ -50,8 +50,13 @@ pub const EDITOR_CAMERA_PRIORITY: i32 = 1000;
 /// distance.
 const DEFAULT_EYE: Vec3 = Vec3::new(0.0, 5.0, 8.0);
 
-/// Startup system: registers `EditorOnly` as ephemeral so editor entities
-/// never leak into user scene files.
+/// Startup system: registers the editor's non-scene markers as ephemeral
+/// so editor entities never leak into user scene files.
+///
+/// - `EditorOnly` — the editor's own furniture (camera, gizmos).
+/// - `MirrorEntity` — the local stand-ins for a remote project's world.
+///   Those entities belong to the project, which saves them itself; a
+///   local save must not write the mirror over the project's scene.
 pub fn register_ephemeral_markers_system(resources: &mut Resources) {
     let Some(registry) = resources.get_mut::<EphemeralComponents>() else {
         tracing::warn!(
@@ -60,6 +65,7 @@ pub fn register_ephemeral_markers_system(resources: &mut Resources) {
         return;
     };
     registry.insert(TypeId::of::<EditorOnly>());
+    registry.insert(TypeId::of::<crate::remote_mirror::MirrorEntity>());
 }
 
 /// Startup system: spawns the singleton editor camera entity.
@@ -188,7 +194,11 @@ mod tests {
         let controller = EditorCameraController::default();
         let t = initial_transform(&controller);
         let delta = (t.position - DEFAULT_EYE).length();
-        assert!(delta < 1e-4, "expected position {DEFAULT_EYE:?}, got {:?}", t.position);
+        assert!(
+            delta < 1e-4,
+            "expected position {DEFAULT_EYE:?}, got {:?}",
+            t.position
+        );
     }
 
     #[test]
@@ -200,7 +210,10 @@ mod tests {
         let forward = (t.rotation * -Vec3::Z).normalize();
         let expected = (controller.focus_point - t.position).normalize();
         let dot = forward.dot(expected);
-        assert!(dot > 0.999, "forward {forward:?} should point at focus, dot={dot}");
+        assert!(
+            dot > 0.999,
+            "forward {forward:?} should point at focus, dot={dot}"
+        );
     }
 
     #[test]

@@ -66,6 +66,16 @@ impl RemoteMirror {
         self.remote_map.get(&local).copied()
     }
 
+    /// Despawns every mirrored entity and forgets the id maps.
+    ///
+    /// Called when the session ends: the mirror's entities are ephemeral,
+    /// so the ordinary project-close sweep leaves them behind.
+    pub fn clear(&mut self, resources: &mut Resources) {
+        self.despawn_previous(resources);
+        self.id_map.clear();
+        self.remote_map.clear();
+    }
+
     /// Rebuilds the local mirror to match `snapshot`.
     ///
     /// Despawns the previous mirror, then recreates every snapshot entity

@@ -5,6 +5,8 @@ use ome_ecs::EphemeralComponents;
 use ome_ecs::archetype::Archetype;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
 use ome_ecs::component::{ComponentId, ComponentNames, ComponentRegistry};
+use ome_ecs::dynamic_components::DynamicComponents;
+use ome_ecs::reflect::InspectorVisibility;
 
 use crate::state::{
     ArchetypeDisplayInfo, ComponentDisplayInfo, ComponentTypeInfo, EntityDisplayInfo,
@@ -24,10 +26,18 @@ fn component_id(names: Option<&ComponentNames>, full_name: &str) -> ComponentId 
         .unwrap_or(ComponentId::INVALID)
 }
 
-/// Interns every registered component name so the read-only gather pass
-/// can resolve each to a [`ComponentId`]. Runs before gathering.
+/// Stand-in type handle for a component this binary has no Rust type
+/// for. Such a component is addressed only by its [`ComponentId`]; the
+/// `TypeId` slot in the DTO exists for the reflection-facing paths,
+/// which never fire for a parked component.
+struct ParkedComponent;
+
+/// Interns every component name the UI can display — the registry's own
+/// types plus any parked in [`DynamicComponents`] — so the read-only
+/// gather pass can resolve each to a [`ComponentId`]. Runs before
+/// gathering.
 pub(crate) fn intern_registry_names(resources: &mut Resources) {
-    let registry_names: Vec<String> = resources
+    let mut names: Vec<String> = resources
         .get::<ComponentRegistry>()
         .map(|r| {
             r.all_type_names()
@@ -36,21 +46,69 @@ pub(crate) fn intern_registry_names(resources: &mut Resources) {
                 .collect()
         })
         .unwrap_or_default();
+    if let Some(dynamic) = resources.get::<DynamicComponents>() {
+        names.extend(dynamic.type_names().map(str::to_owned));
+    }
     if let Some(interner) = resources.get_mut::<ComponentNames>() {
-        for name in &registry_names {
+        for name in &names {
             interner.intern(name);
         }
     }
 }
 
+/// Builds display entries for the components parked under `entity`.
+///
+/// A parked component is one the loader met by name but this binary has
+/// no Rust type for — a project's own component seen by the standalone
+/// hub, chiefly. It has no reflector, so its fields come straight from
+/// the store and it carries no field metadata.
+///
+/// `editable` gates the fields: an edit is only deliverable when a
+/// remote session owns the type and can apply it. Locally there is
+/// nothing to write to, so the component shows read-only rather than
+/// offering widgets whose edits get dropped.
+fn parked_components(
+    dynamic: &DynamicComponents,
+    names: Option<&ComponentNames>,
+    entity: ome_ecs::Entity,
+    editable: bool,
+) -> Vec<ComponentDisplayInfo> {
+    let visibility = if editable {
+        InspectorVisibility::Editable
+    } else {
+        InspectorVisibility::ReadOnly
+    };
+    dynamic
+        .iter_entity(entity)
+        .map(|(full_name, fields)| ComponentDisplayInfo {
+            type_id: std::any::TypeId::of::<ParkedComponent>(),
+            component: component_id(names, full_name),
+            short_name: full_name
+                .rsplit("::")
+                .next()
+                .unwrap_or(full_name)
+                .to_owned(),
+            fields: Some(fields.to_vec()),
+            field_metas: None,
+            visibility,
+        })
+        .collect()
+}
+
 /// Returns whether an archetype carries any marker registered as
 /// ephemeral. Used to keep editor-owned entities (cameras, gizmos) out
 /// of the World hierarchy and Archetype panels.
+///
+/// `MirrorEntity` is the deliberate exception: it is ephemeral for
+/// *saves* (a mirrored world belongs to the remote project, not to the
+/// editor's scene file) but must stay visible — in remote mode the
+/// mirror **is** the entire contents of the World panel.
 fn archetype_is_ephemeral(archetype: &Archetype, ephemeral: &EphemeralComponents) -> bool {
+    let mirror = std::any::TypeId::of::<crate::remote_mirror::MirrorEntity>();
     archetype
         .components()
         .iter()
-        .any(|tid| ephemeral.contains(tid))
+        .any(|tid| *tid != mirror && ephemeral.contains(tid))
 }
 
 pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo> {
@@ -63,6 +121,11 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
     };
     let components = resources.get::<ComponentRegistry>();
     let names = resources.get::<ComponentNames>();
+    // Components with no local Rust type, shown alongside the real ones.
+    let dynamic = resources.get::<DynamicComponents>();
+    let parked_editable = resources
+        .get::<crate::remote_session::RemoteState>()
+        .is_some_and(|s| s.is_connected());
     let ephemeral = resources
         .get::<EphemeralComponents>()
         .map(|e| e.clone())
@@ -114,6 +177,10 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                     })
                 })
                 .collect();
+
+            if let Some(dynamic) = dynamic.as_ref() {
+                comps.extend(parked_components(dynamic, names, entity, parked_editable));
+            }
 
             // Sort: Name first, Transform second, rest alphabetically.
             comps.sort_by(|a, b| {
@@ -261,7 +328,6 @@ pub(crate) fn gather_component_types(resources: &Resources) -> Vec<ComponentType
         .map(|(tid, name)| {
             let short = name.rsplit("::").next().unwrap_or(name).to_owned();
             ComponentTypeInfo {
-                type_id: tid,
                 component: component_id(names, name),
                 short_name: short,
                 has_reflection: registry.has_reflector(&tid),
@@ -284,7 +350,6 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
             let short = name.rsplit("::").next().unwrap_or(name).to_owned();
             let category = registry.reflect_category(&tid);
             ReflectedTypeInfo {
-                type_id: tid,
                 component: component_id(names, name),
                 short_name: short,
                 category,
@@ -298,4 +363,90 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
             .then_with(|| a.short_name.cmp(&b.short_name))
     });
     types
+}
+
+#[cfg(test)]
+mod tests {
+    use ome_ecs::allocator::EntityAllocator;
+    use ome_ecs::commands::Commands;
+    use ome_ecs::query::AccessTracker;
+    use ome_ecs::reflect::ReflectValue;
+    use ome_ecs::transform::Transform;
+    use ome_remote::protocol::{ComponentSnapshot, EntityId, EntitySnapshot};
+
+    use crate::remote_mirror::{MirrorEntity, RemoteMirror};
+
+    use super::*;
+
+    /// A mirrored world: ECS resources plus the ephemeral registration
+    /// the editor plugin performs at startup.
+    fn mirrored_world() -> Resources {
+        let mut r = Resources::new();
+        r.insert(EntityAllocator::new());
+        r.insert(ComponentRegistry::new());
+        r.insert(ArchetypeRegistry::new());
+        r.insert(AccessTracker::new());
+        r.insert(Commands::new());
+        r.insert(DynamicComponents::new());
+        r.insert(ComponentNames::new());
+        r.get_mut::<ComponentRegistry>()
+            .unwrap()
+            .register_cpu_reflected::<Transform>();
+
+        let mut ephemeral = EphemeralComponents::new();
+        ephemeral.insert(std::any::TypeId::of::<MirrorEntity>());
+        r.insert(ephemeral);
+
+        let snapshot = vec![EntitySnapshot {
+            id: EntityId {
+                index: 0,
+                generation: 0,
+            },
+            name: Some("Mesh".into()),
+            parent: None,
+            components: vec![
+                ComponentSnapshot {
+                    type_name: std::any::type_name::<Transform>().into(),
+                    fields: vec![],
+                },
+                ComponentSnapshot {
+                    type_name: "game::spin::Spin".into(),
+                    fields: vec![("rpm".into(), ReflectValue::F32(33.0))],
+                },
+            ],
+        }];
+        RemoteMirror::new().apply(&snapshot, &mut r);
+        r
+    }
+
+    /// Mirrored entities stay visible even though `MirrorEntity` is
+    /// ephemeral — in remote mode they are the whole World panel.
+    #[test]
+    fn mirrored_entities_are_not_filtered_as_ephemeral() {
+        let mut resources = mirrored_world();
+        intern_registry_names(&mut resources);
+        assert_eq!(gather_entity_data(&resources).len(), 1);
+    }
+
+    /// A component with no local Rust type still reaches the Inspector,
+    /// with its field values, read-only while no session can apply an edit.
+    #[test]
+    fn parked_components_surface_read_only_without_a_session() {
+        let mut resources = mirrored_world();
+        intern_registry_names(&mut resources);
+
+        let entities = gather_entity_data(&resources);
+        let spin = entities[0]
+            .components
+            .iter()
+            .find(|c| c.short_name == "Spin")
+            .expect("parked component displayed");
+
+        assert_eq!(spin.visibility, InspectorVisibility::ReadOnly);
+        assert_ne!(spin.component, ComponentId::INVALID);
+        assert_eq!(
+            spin.fields.as_deref(),
+            Some(&[("rpm".to_owned(), ReflectValue::F32(33.0))][..])
+        );
+    }
 }

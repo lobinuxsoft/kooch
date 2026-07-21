@@ -21,12 +21,13 @@ use ome_render::material::Material;
 
 use crate::play_state::PlayState;
 use crate::project_state::ProjectState;
+use crate::remote_session::{RemoteSession, RemoteState};
 use crate::state::EditorOverlay;
 use crate::undo::UndoStack;
 
 use super::EditorAction;
 use super::reparent::rewrite_local_transform_for_reparent;
-use super::scene_io::{load_scene, save_scene_as};
+use super::scene_io::{load_scene, save_scene_as, scene_dialog};
 
 /// Dispatches a non-ECS, non-undo action to the appropriate handler.
 /// ECS actions (`Spawn`, `Despawn`, `SetField`, `AddComponent`,
@@ -48,6 +49,7 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::Play => handle_play(resources),
         EditorAction::Stop => handle_stop(resources),
         EditorAction::OpenProject(path) => handle_open_project(resources, path),
+        EditorAction::OpenRemote(path) => handle_open_remote(resources, path),
         EditorAction::CreateProject { name, parent_path } => {
             handle_create_project(resources, name, parent_path);
         }
@@ -149,16 +151,7 @@ fn handle_edit_material(resources: &mut Resources, guid: Guid, material: &Materi
 }
 
 fn handle_save_scene(resources: &mut Resources) {
-    let scenes_dir = resources.get::<ProjectState>().and_then(|ps| {
-        ps.active_project
-            .as_ref()
-            .map(|p| p.root_path.join("scenes"))
-    });
-    let mut dialog = rfd::FileDialog::new().add_filter("OME Scene", &["ome_scene"]);
-    if let Some(ref dir) = scenes_dir {
-        dialog = dialog.set_directory(dir);
-    }
-    let Some(path) = dialog.save_file() else {
+    let Some(path) = scene_dialog(resources).save_file() else {
         return;
     };
     match save_scene_as(resources, path.clone()) {
@@ -168,16 +161,7 @@ fn handle_save_scene(resources: &mut Resources) {
 }
 
 fn handle_open_scene(resources: &mut Resources, undo_stack: &mut UndoStack) {
-    let scenes_dir = resources.get::<ProjectState>().and_then(|ps| {
-        ps.active_project
-            .as_ref()
-            .map(|p| p.root_path.join("scenes"))
-    });
-    let mut dialog = rfd::FileDialog::new().add_filter("OME Scene", &["ome_scene"]);
-    if let Some(ref dir) = scenes_dir {
-        dialog = dialog.set_directory(dir);
-    }
-    let Some(path) = dialog.pick_file() else {
+    let Some(path) = scene_dialog(resources).pick_file() else {
         return;
     };
     match load_scene(resources, &path) {
@@ -228,6 +212,20 @@ fn handle_stop(resources: &mut Resources) {
 }
 
 fn handle_open_project(resources: &mut Resources, path: &std::path::Path) {
+    open_project(resources, path, SceneSource::LocalFile);
+}
+
+/// Where the opened project's entities come from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SceneSource {
+    /// Load the manifest's main scene into the editor's own ECS.
+    LocalFile,
+    /// Leave the ECS empty — a remote session will mirror the project's
+    /// live world into it once the project's server answers.
+    RemoteMirror,
+}
+
+fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneSource) {
     let Some(mut ps) = resources.remove::<ProjectState>() else {
         return;
     };
@@ -249,6 +247,7 @@ fn handle_open_project(resources: &mut Resources, path: &std::path::Path) {
                 .as_ref()
                 .and_then(|p| p.manifest.main_scene.as_ref().map(|s| p.root_path.join(s)));
             if let Some(scene_path) = main_scene_path
+                && scene == SceneSource::LocalFile
                 && scene_path.exists()
                 && let Err(e) = load_scene(resources, &scene_path)
             {
@@ -263,6 +262,62 @@ fn handle_open_project(resources: &mut Resources, path: &std::path::Path) {
         }
     }
     resources.insert(ps);
+}
+
+/// Opens a project in remote mode: the project's own binary owns the ECS
+/// and the editor becomes a client of it.
+///
+/// The scene is deliberately **not** loaded locally — this binary has no
+/// Rust types for the project's components, so a local load would park
+/// half of every entity. The project loads its own scene at boot and the
+/// mirror pulls it in once connected.
+fn handle_open_remote(resources: &mut Resources, path: &std::path::Path) {
+    open_project(resources, path, SceneSource::RemoteMirror);
+
+    let Some((manifest_path, engine_root)) = resources.get::<ProjectState>().and_then(|ps| {
+        let project = ps.active_project.as_ref()?;
+        Some((project.root_path.join("Cargo.toml"), ps.engine_root.clone()))
+    }) else {
+        tracing::error!("Open Remote: project failed to open");
+        return;
+    };
+    if !manifest_path.exists() {
+        tracing::error!(
+            manifest = %manifest_path.display(),
+            "Open Remote: no Cargo.toml — remote mode only works on crate-projects"
+        );
+        return;
+    }
+
+    match RemoteSession::launch(&manifest_path, engine_root.as_deref()) {
+        Ok(session) => {
+            if let Some(state) = resources.get_mut::<RemoteState>() {
+                state.session = Some(session);
+            }
+            // Reset the cadence so a stale failure from a previous
+            // session does not suppress this one's reporting.
+            if let Some(sync) = resources.get_mut::<crate::systems::RemoteSyncState>() {
+                *sync = Default::default();
+            }
+        }
+        Err(e) => tracing::error!("Open Remote: failed to launch project: {e}"),
+    }
+}
+
+/// Ends any remote session and tears its mirror out of the ECS.
+///
+/// Mirrored entities are ephemeral, so the ordinary close sweep skips
+/// them; without this they would outlive the project that owns them.
+fn disconnect_remote(resources: &mut Resources) {
+    let Some(mut state) = resources.remove::<RemoteState>() else {
+        return;
+    };
+    if let Some(session) = state.session.as_mut() {
+        session.stop();
+    }
+    state.session = None;
+    state.mirror.clear(resources);
+    resources.insert(state);
 }
 
 fn handle_create_project(resources: &mut Resources, name: &str, parent_path: &std::path::Path) {
@@ -300,6 +355,10 @@ fn handle_create_project(resources: &mut Resources, name: &str, parent_path: &st
 }
 
 fn handle_close_project(resources: &mut Resources, undo_stack: &mut UndoStack) {
+    // Before the sweep: a remote session outlives its project otherwise,
+    // and its mirrored entities are ephemeral so the sweep skips them.
+    disconnect_remote(resources);
+
     // Respect the ephemeral marker registry — editor-owned entities
     // (camera, gizmo helpers, …) carry an `EditorOnly`-style marker
     // and must survive the close so the next project open finds

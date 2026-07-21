@@ -6,9 +6,12 @@
 //!    the play binary).
 //! 3. `scenes/default.ome_scene` relative to the current working directory.
 //!
-//! The cwd convention works because both `cargo run` and `cargo run
-//! --manifest-path …` set the process working directory to the project's
-//! manifest directory.
+//! The cwd convention holds for a plain `cargo run` inside the project.
+//! It does **not** hold for `cargo run --manifest-path …`, which leaves
+//! the child's working directory at the caller's — a launcher using that
+//! form must set the child's working directory itself (see
+//! `RemoteSession::launch`) or pass `--scene` with an absolute path
+//! (see `PlayState::launch`).
 
 use std::path::PathBuf;
 

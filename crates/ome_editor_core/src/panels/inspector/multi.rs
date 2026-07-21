@@ -58,17 +58,21 @@ pub(super) fn gather_multi_component_info(
     // Count how many selected entities have each component and collect metadata.
     struct CompMeta {
         component: ComponentId,
+        /// Local type handle, kept for the reflection-facing calls.
+        /// Identity is `component`; this is only carried along.
+        type_id: TypeId,
         short_name: String,
         count: usize,
         visibility: InspectorVisibility,
         field_metas: Option<&'static [FieldMeta]>,
     }
-    let mut comp_map: HashMap<TypeId, CompMeta> = HashMap::new();
+    let mut comp_map: HashMap<ComponentId, CompMeta> = HashMap::new();
 
     for info in &selected_infos {
         for comp in &info.components {
-            let entry = comp_map.entry(comp.type_id).or_insert(CompMeta {
+            let entry = comp_map.entry(comp.component).or_insert(CompMeta {
                 component: comp.component,
+                type_id: comp.type_id,
                 short_name: comp.short_name.clone(),
                 count: 0,
                 visibility: comp.visibility,
@@ -81,7 +85,7 @@ pub(super) fn gather_multi_component_info(
     // Build result, excluding Hidden components.
     let mut result: Vec<MultiComponentInfo> = Vec::new();
 
-    for (type_id, meta) in &comp_map {
+    for (component, meta) in &comp_map {
         if meta.visibility == InspectorVisibility::Hidden {
             continue;
         }
@@ -92,7 +96,7 @@ pub(super) fn gather_multi_component_info(
             .filter_map(|info| {
                 info.components
                     .iter()
-                    .find(|c| c.type_id == *type_id)
+                    .find(|c| c.component == *component)
                     .and_then(|c| c.fields.as_ref())
             })
             .collect();
@@ -127,7 +131,7 @@ pub(super) fn gather_multi_component_info(
         };
 
         result.push(MultiComponentInfo {
-            type_id: *type_id,
+            type_id: meta.type_id,
             component: meta.component,
             short_name: meta.short_name.clone(),
             present_count: meta.count,
@@ -172,14 +176,14 @@ pub(super) fn draw_multi_entity_inspector(
     let multi_info = gather_multi_component_info(entities, selected);
 
     // "Add Component" dropdown — show types not present on ALL selected entities.
-    let all_have: HashSet<TypeId> = multi_info
+    let all_have: HashSet<ComponentId> = multi_info
         .iter()
         .filter(|c| c.present_count == c.total_count)
-        .map(|c| c.type_id)
+        .map(|c| c.component)
         .collect();
     let available: Vec<&ReflectedTypeInfo> = reflected_types
         .iter()
-        .filter(|t| !all_have.contains(&t.type_id))
+        .filter(|t| !all_have.contains(&t.component))
         .collect();
 
     if !available.is_empty() {
@@ -207,7 +211,7 @@ pub(super) fn draw_multi_entity_inspector(
     egui::ScrollArea::vertical().show(ui, |ui| {
         for comp in &multi_info {
             let is_read_only = comp.visibility == InspectorVisibility::ReadOnly;
-            let id = ui.make_persistent_id(format!("multi_comp_{:?}", comp.type_id));
+            let id = ui.make_persistent_id(format!("multi_comp_{:?}", comp.component));
 
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {

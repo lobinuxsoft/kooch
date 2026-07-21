@@ -6,7 +6,7 @@ mod dispatch;
 mod handlers;
 mod remote_edit;
 mod reparent;
-mod scene_io;
+pub(crate) mod scene_io;
 
 use std::any::TypeId;
 use std::path::PathBuf;
@@ -77,6 +77,11 @@ pub(crate) enum EditorAction {
     Play,
     Stop,
     OpenProject(PathBuf),
+    /// Open a project in **remote** mode: launch its binary with
+    /// `--remote` and drive its ECS over the wire instead of loading its
+    /// scene locally. The only way the standalone hub can edit a project
+    /// whose component types it was never compiled against.
+    OpenRemote(PathBuf),
     CreateProject {
         name: String,
         parent_path: PathBuf,

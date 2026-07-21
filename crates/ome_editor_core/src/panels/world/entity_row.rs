@@ -3,7 +3,6 @@
 //! the right-click context menu for despawn / add-component / remove-
 //! component.
 
-use std::any::TypeId;
 use std::collections::HashSet;
 
 use egui::NumExt as _;
@@ -286,15 +285,15 @@ fn handle_context_menu(
         // Add Component submenu (only for single entity).
         if selected.len() == 1 {
             let entity = selected[0];
-            let existing: HashSet<TypeId> = entities
+            let existing: HashSet<ComponentId> = entities
                 .iter()
                 .find(|e| e.entity == entity)
-                .map(|e| e.components.iter().map(|c| c.type_id).collect())
+                .map(|e| e.components.iter().map(|c| c.component).collect())
                 .unwrap_or_default();
 
             let available: Vec<&ReflectedTypeInfo> = reflected_types
                 .iter()
-                .filter(|t| !existing.contains(&t.type_id))
+                .filter(|t| !existing.contains(&t.component))
                 .collect();
 
             if !available.is_empty() {
@@ -331,9 +330,9 @@ fn handle_context_menu(
                     .components
                     .iter()
                     .filter(|c| {
-                        selected_infos[1..]
-                            .iter()
-                            .all(|info| info.components.iter().any(|ic| ic.type_id == c.type_id))
+                        selected_infos[1..].iter().all(|info| {
+                            info.components.iter().any(|ic| ic.component == c.component)
+                        })
                     })
                     .map(|c| (c.component, c.short_name.clone()))
                     .collect();

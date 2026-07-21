@@ -13,12 +13,12 @@ mod rotation;
 mod single;
 mod widgets;
 
-use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
 use glam::{Quat, Vec3};
 
 use ome_core::Guid;
+use ome_ecs::component::ComponentId;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::{InspectorVisibility, ReflectValue};
 
@@ -194,10 +194,10 @@ fn draw_inspector_body(
     single::draw_name_editor(ui, entity, info, actions);
 
     // "Add Component" dropdown.
-    let existing: HashSet<TypeId> = info.components.iter().map(|c| c.type_id).collect();
+    let existing: HashSet<ComponentId> = info.components.iter().map(|c| c.component).collect();
     let available: Vec<&ReflectedTypeInfo> = reflected_types
         .iter()
-        .filter(|t| !existing.contains(&t.type_id))
+        .filter(|t| !existing.contains(&t.component))
         .collect();
 
     if !available.is_empty() {
@@ -230,7 +230,7 @@ fn draw_inspector_body(
     egui::ScrollArea::vertical().show(ui, |ui| {
         for comp in &visible_components {
             let is_read_only = comp.visibility == InspectorVisibility::ReadOnly;
-            let id = ui.make_persistent_id(format!("comp_{}_{:?}", entity.index(), comp.type_id));
+            let id = ui.make_persistent_id(format!("comp_{}_{:?}", entity.index(), comp.component));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
                     ui.strong(format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name));
@@ -255,7 +255,7 @@ fn draw_inspector_body(
                             single::draw_readonly_fields(
                                 ui,
                                 entity,
-                                comp.type_id,
+                                comp.component,
                                 fields,
                                 comp.field_metas,
                             );

@@ -29,7 +29,7 @@ use crate::viewport::render::MeshletPathInputs;
 use crate::viewport::{ViewportTarget, render_viewport};
 
 use self::frame_display::FrameDisplayData;
-use self::ui::{UndoInfo, ViewportUi, run_editor_ui};
+use self::ui::{ToolbarInfo, ViewportUi, run_editor_ui};
 
 /// Polls launcher state. Returns `true` when the render system should exit early
 /// because the project binary has been launched (triggering AppExit).
@@ -187,12 +187,15 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // texture id stays stable through the entire egui pass.
     viewport.resize_if_needed(gpu.device(), &mut overlay.renderer);
 
-    let undo = UndoInfo {
+    let toolbar = ToolbarInfo {
         can_undo: undo_stack.can_undo(),
         can_redo: undo_stack.can_redo(),
         undo_desc: undo_stack.undo_description().map(String::from),
         redo_desc: undo_stack.redo_description().map(String::from),
         is_playing,
+        remote: resources
+            .get::<crate::remote_session::RemoteState>()
+            .and_then(|s| s.session.as_ref().map(|s| s.state())),
     };
 
     let raw_input = {
@@ -257,7 +260,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         raw_input,
         project_loaded,
         &display_data,
-        &undo,
+        &toolbar,
         ViewportUi {
             texture_id: viewport.texture_id(),
             request: &mut viewport_request,
