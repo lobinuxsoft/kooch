@@ -128,7 +128,7 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
     };
     let mut stage = MeshletRenderStage::new(&device, config);
 
-    let mut material_pipeline = MaterialPipeline::with_capacity(&device, 8);
+    let mut material_pipeline = MaterialPipeline::with_capacity(&device, &queue, 8);
     for mat in [
         Material::new([1.0, 0.4, 0.2, 1.0], 0.0, 0.5, 0.0),
         Material::new([0.2, 0.6, 1.0, 1.0], 0.0, 0.5, 0.0),
@@ -240,7 +240,7 @@ fn render_stage_with_no_entities_returns_zero_stats() {
     let assets: Assets<MeshletMesh> = Assets::new();
     resources.insert(assets);
 
-    let mut material_pipeline = MaterialPipeline::with_capacity(&device, 4);
+    let mut material_pipeline = MaterialPipeline::with_capacity(&device, &queue, 4);
     material_pipeline.register(&queue, Guid::new_v4(), &Material::default());
     resources.insert(material_pipeline);
 

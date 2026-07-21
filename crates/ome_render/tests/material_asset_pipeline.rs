@@ -121,7 +121,7 @@ fn sync_from_resources_registers_material_from_disk() {
     let server = loader_ready_server();
     let mut resources = build_resources(database, server);
 
-    let mut pipeline = MaterialPipeline::new(&device);
+    let mut pipeline = MaterialPipeline::new(&device, &queue);
     assert_eq!(pipeline.registered_count(), 0);
     assert_eq!(
         pipeline.lookup_or_fallback(Some(guid)),
@@ -129,7 +129,7 @@ fn sync_from_resources_registers_material_from_disk() {
         "before sync, the picker GUID must miss and fall back",
     );
 
-    pipeline.sync_from_resources(&queue, &mut resources);
+    pipeline.sync_from_resources(&device, &queue, &mut resources);
 
     assert_eq!(
         pipeline.registered_count(),
@@ -162,15 +162,15 @@ fn sync_from_resources_is_idempotent_across_frames() {
     let server = loader_ready_server();
     let mut resources = build_resources(database, server);
 
-    let mut pipeline = MaterialPipeline::new(&device);
-    pipeline.sync_from_resources(&queue, &mut resources);
+    let mut pipeline = MaterialPipeline::new(&device, &queue);
+    pipeline.sync_from_resources(&device, &queue, &mut resources);
     let first_slot = pipeline.lookup(guid).expect("registered on first sync");
 
     // Subsequent syncs must reuse the same slot — the editor calls
     // `sync_from_resources` every frame, so any per-frame slot churn
     // would explode the pool on long sessions.
-    pipeline.sync_from_resources(&queue, &mut resources);
-    pipeline.sync_from_resources(&queue, &mut resources);
+    pipeline.sync_from_resources(&device, &queue, &mut resources);
+    pipeline.sync_from_resources(&device, &queue, &mut resources);
 
     assert_eq!(pipeline.registered_count(), 1, "no slot churn across frames");
     assert_eq!(
@@ -204,7 +204,7 @@ fn editor_path_syncs_material_with_gpu_context_outside_resources() {
     let server = loader_ready_server();
     let mut resources = build_resources(database, server);
 
-    resources.insert(MaterialPipeline::new(&device));
+    resources.insert(MaterialPipeline::new(&device, &queue));
 
     let mut stage = MeshletRenderStage::new(
         &device,
@@ -255,8 +255,8 @@ fn sync_from_resources_skips_database_without_material_entries() {
     let server = loader_ready_server();
     let mut resources = build_resources(database, server);
 
-    let mut pipeline = MaterialPipeline::new(&device);
-    pipeline.sync_from_resources(&queue, &mut resources);
+    let mut pipeline = MaterialPipeline::new(&device, &queue);
+    pipeline.sync_from_resources(&device, &queue, &mut resources);
 
     assert_eq!(
         pipeline.registered_count(),

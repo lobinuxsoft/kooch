@@ -125,7 +125,7 @@ fn vis_buffer_plus_deferred_paints_visible_cube_pixels() {
         model,
         0,
     );
-    let mut materials = MaterialPipeline::with_capacity(&device, 4);
+    let mut materials = MaterialPipeline::with_capacity(&device, &queue, 4);
     materials.register(
         &queue,
         Guid::new_v4(),

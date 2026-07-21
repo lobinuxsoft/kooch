@@ -129,7 +129,7 @@ fn three_distinct_meshes_render_in_single_cull_dispatch() {
     );
 
     let mut resources = ecs_test_resources();
-    let mut material_pipeline = MaterialPipeline::with_capacity(&device, 8);
+    let mut material_pipeline = MaterialPipeline::with_capacity(&device, &queue, 8);
     for mat in [
         Material::new([1.0, 0.4, 0.2, 1.0], 0.0, 0.5, 0.0),
         Material::new([0.2, 0.6, 1.0, 1.0], 0.0, 0.5, 0.0),
