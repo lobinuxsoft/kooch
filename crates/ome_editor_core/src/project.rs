@@ -213,9 +213,10 @@ mod registrations;
 fn main() {
     // `cargo run`            → the editor, with your components (authoring).
     // `cargo run -- --game`  → the game (what the editor's Play button runs).
-    // `cargo run -- --remote`→ headless authoring host: your components +
-    //                          the remote server, driven by the standalone
-    //                          editor over HTTP. No gameplay systems run.
+    // `cargo run -- --remote`→ authoring host: your components + the remote
+    //                          server, driven by the standalone editor over
+    //                          HTTP. Gameplay starts paused; the editor's
+    //                          Play button starts it without a rebuild.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--game") {
         // Game runtime: components + gameplay systems.
@@ -225,7 +226,8 @@ fn main() {
         app.run();
     } else if args.iter().any(|a| a == "--remote") {
         // Remote authoring host: components register (so the editor's
-        // Inspector sees them) but gameplay stays still while you edit.
+        // Inspector sees them) and systems register paused — the editor
+        // toggles `Playing` over the wire to run them in place.
         let mut app = App::new();
         app.add_plugins(DefaultPlugins);
         app.add_plugin(registrations::ProjectRegistrations { run_systems: false });
@@ -257,16 +259,17 @@ use oh_my_engine::prelude::*;
 
 /// Editor-managed plugin: registers project components + systems.
 ///
-/// `run_systems` gates gameplay systems: `true` in the game build,
-/// `false` in the editor build (so nothing runs while you edit).
+/// `run_systems` sets the starting value of the `Playing` gate: `true`
+/// in the game build, `false` while editing. Systems are registered
+/// either way and skipped per frame, so Play can flip it live.
 pub struct ProjectRegistrations {
     pub run_systems: bool,
 }
 
 impl Plugin for ProjectRegistrations {
     fn build(&self, app: &mut App) {
+        app.insert_resource(Playing(self.run_systems));
         app.add_system(Stage::Startup, register_components);
-        if self.run_systems {}
     }
 }
 

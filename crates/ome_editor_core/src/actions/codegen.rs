@@ -163,25 +163,26 @@ fn render_registrations(files: &[SourceFile]) -> String {
     s.push('\n');
     s.push_str("/// Editor-managed plugin: registers project components + systems.\n");
     s.push_str("///\n");
-    s.push_str("/// `run_systems` gates gameplay systems: `true` in the game build,\n");
-    s.push_str("/// `false` in the editor build (so nothing runs while you edit).\n");
-    s.push_str("/// Components always register, so they appear in the Inspector.\n");
+    s.push_str("/// Gameplay systems are always registered, wrapped in\n");
+    s.push_str("/// `run_if_playing` so the `Playing` resource decides per frame\n");
+    s.push_str("/// whether they run. `run_systems` only sets its starting value:\n");
+    s.push_str("/// `true` in the game build, `false` while editing — and the\n");
+    s.push_str("/// editor's Play button flips it live, with no rebuild.\n");
     s.push_str("pub struct ProjectRegistrations {\n");
     s.push_str("    pub run_systems: bool,\n");
     s.push_str("}\n\n");
     s.push_str("impl Plugin for ProjectRegistrations {\n");
     s.push_str("    fn build(&self, app: &mut App) {\n");
+    s.push_str("        app.insert_resource(Playing(self.run_systems));\n");
     s.push_str("        app.add_system(Stage::Startup, register_components);\n");
-    s.push_str("        if self.run_systems {\n");
     for f in files {
         for sys in &f.systems {
             s.push_str(&format!(
-                "            app.add_system(Stage::Update, {}::{});\n",
+                "        app.add_system(Stage::Update, run_if_playing({}::{}));\n",
                 f.module, sys
             ));
         }
     }
-    s.push_str("        }\n");
     s.push_str("    }\n}\n\n");
     s.push_str("/// Registers project components for serialization + the Inspector.\n");
     s.push_str("fn register_components(resources: &mut Resources) {\n");
@@ -295,8 +296,12 @@ pub fn movement(resources: &mut Resources) {}
         assert_eq!(module_name("enemies/ai.rs"), "enemies_ai");
     }
 
+    /// Gameplay systems must be registered unconditionally and wrapped
+    /// in the runtime gate — registering them only when `run_systems` is
+    /// set would make Play require a rebuild, which is the whole point
+    /// of the gate.
     #[test]
-    fn generated_plugin_gates_systems_behind_run_systems() {
+    fn generated_plugin_wraps_systems_in_the_runtime_gate() {
         use super::{SourceFile, render_registrations};
         let files = vec![SourceFile {
             rel: "movement.rs".to_owned(),
@@ -306,12 +311,17 @@ pub fn movement(resources: &mut Resources) {}
         }];
         let out = render_registrations(&files);
         assert!(out.contains("pub run_systems: bool"));
-        assert!(out.contains("if self.run_systems"));
-        // The gameplay system must sit INSIDE the run_systems guard.
-        let guard = out.find("if self.run_systems").expect("guard present");
-        let sys = out
-            .find("add_system(Stage::Update, movement::move_system)")
-            .expect("system present");
-        assert!(sys > guard, "system must be gated by run_systems");
+        assert!(
+            out.contains("insert_resource(Playing(self.run_systems))"),
+            "run_systems must seed the gate, not branch on it"
+        );
+        assert!(
+            out.contains("add_system(Stage::Update, run_if_playing(movement::move_system))"),
+            "system must be registered wrapped, got:\n{out}"
+        );
+        assert!(
+            !out.contains("if self.run_systems"),
+            "compile-time branch survived"
+        );
     }
 }
