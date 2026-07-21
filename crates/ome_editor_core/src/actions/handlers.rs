@@ -27,7 +27,7 @@ use crate::undo::UndoStack;
 
 use super::EditorAction;
 use super::reparent::rewrite_local_transform_for_reparent;
-use super::scene_io::{load_scene, save_scene_as};
+use super::scene_io::{load_scene, save_scene_as, scene_dialog};
 
 /// Dispatches a non-ECS, non-undo action to the appropriate handler.
 /// ECS actions (`Spawn`, `Despawn`, `SetField`, `AddComponent`,
@@ -151,16 +151,7 @@ fn handle_edit_material(resources: &mut Resources, guid: Guid, material: &Materi
 }
 
 fn handle_save_scene(resources: &mut Resources) {
-    let scenes_dir = resources.get::<ProjectState>().and_then(|ps| {
-        ps.active_project
-            .as_ref()
-            .map(|p| p.root_path.join("scenes"))
-    });
-    let mut dialog = rfd::FileDialog::new().add_filter("OME Scene", &["ome_scene"]);
-    if let Some(ref dir) = scenes_dir {
-        dialog = dialog.set_directory(dir);
-    }
-    let Some(path) = dialog.save_file() else {
+    let Some(path) = scene_dialog(resources).save_file() else {
         return;
     };
     match save_scene_as(resources, path.clone()) {
@@ -170,16 +161,7 @@ fn handle_save_scene(resources: &mut Resources) {
 }
 
 fn handle_open_scene(resources: &mut Resources, undo_stack: &mut UndoStack) {
-    let scenes_dir = resources.get::<ProjectState>().and_then(|ps| {
-        ps.active_project
-            .as_ref()
-            .map(|p| p.root_path.join("scenes"))
-    });
-    let mut dialog = rfd::FileDialog::new().add_filter("OME Scene", &["ome_scene"]);
-    if let Some(ref dir) = scenes_dir {
-        dialog = dialog.set_directory(dir);
-    }
-    let Some(path) = dialog.pick_file() else {
+    let Some(path) = scene_dialog(resources).pick_file() else {
         return;
     };
     match load_scene(resources, &path) {

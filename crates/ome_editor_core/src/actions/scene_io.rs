@@ -33,3 +33,24 @@ pub(super) fn save_scene_as(
     resources.insert(sm);
     result
 }
+
+/// Builds the scene file dialog, rooted at the active project's
+/// `scenes/` folder when there is one.
+///
+/// Shared by the local handlers and the remote sink so both modes offer
+/// the same picker — the two processes see the same filesystem, so the
+/// path the user picks is meaningful on either side of the wire.
+pub(crate) fn scene_dialog(resources: &Resources) -> rfd::FileDialog {
+    let mut dialog = rfd::FileDialog::new().add_filter("OME Scene", &["ome_scene"]);
+    if let Some(dir) = resources
+        .get::<crate::project_state::ProjectState>()
+        .and_then(|ps| {
+            ps.active_project
+                .as_ref()
+                .map(|p| p.root_path.join("scenes"))
+        })
+    {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog
+}

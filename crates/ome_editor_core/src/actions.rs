@@ -6,7 +6,7 @@ mod dispatch;
 mod handlers;
 mod remote_edit;
 mod reparent;
-mod scene_io;
+pub(crate) mod scene_io;
 
 use std::any::TypeId;
 use std::path::PathBuf;

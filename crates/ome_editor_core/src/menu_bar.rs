@@ -5,6 +5,7 @@ use ome_core::power::PowerProfile;
 
 use crate::actions::EditorAction;
 use crate::icons;
+use crate::remote_session::ConnectionState;
 use crate::state::{ALL_TABS, EditorTab, dock_has_tab};
 
 // Migrating off `TopBottomPanel::top(...).show(ctx, ...)` requires
@@ -12,11 +13,13 @@ use crate::state::{ALL_TABS, EditorTab, dock_has_tab};
 // which is a structural change to the editor's render loop. Out of
 // scope for the #299 cleanup.
 #[allow(deprecated)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_menu_bar(
     ctx: &egui::Context,
     dock_state: &mut DockState<EditorTab>,
     actions: &mut Vec<EditorAction>,
     is_playing: bool,
+    remote: Option<ConnectionState>,
     can_undo: bool,
     can_redo: bool,
     undo_desc: Option<&str>,
@@ -163,6 +166,40 @@ pub(crate) fn draw_menu_bar(
             {
                 actions.push(EditorAction::Stop);
             }
+
+            // Remote status, right-aligned: a project build takes long
+            // enough that a silent editor reads as a hang.
+            if let Some(remote) = remote {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    draw_remote_status(ui, remote);
+                });
+            }
         });
     });
+}
+
+/// Draws the remote session indicator.
+fn draw_remote_status(ui: &mut egui::Ui, remote: ConnectionState) {
+    let (icon, text, color, hover) = match remote {
+        ConnectionState::Connecting => (
+            icons::GEAR,
+            "Connecting",
+            egui::Color32::from_rgb(210, 180, 90),
+            "Building and starting the project. The world appears once it answers.",
+        ),
+        ConnectionState::Connected => (
+            icons::ROCKET,
+            "Remote",
+            egui::Color32::from_rgb(100, 200, 100),
+            "Editing the project's live world. Edits are applied by the project, not here.",
+        ),
+        ConnectionState::Failed => (
+            icons::X,
+            "Disconnected",
+            egui::Color32::from_rgb(200, 80, 80),
+            "The project exited before answering. Check its build output in the terminal.",
+        ),
+    };
+    ui.label(egui::RichText::new(format!("{icon} {text}")).color(color))
+        .on_hover_text(hover);
 }

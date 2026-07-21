@@ -23,8 +23,8 @@ use crate::remote_session::RemoteState;
 /// Returns `true` when the action is an ECS edit that was routed to the
 /// server (or dropped because it cannot be, e.g. an unresolved entity) —
 /// the caller must not also apply it locally. Returns `false` for actions
-/// that remote mode does not own (project management, scene I/O), which
-/// the caller handles through the normal local path.
+/// that remote mode does not own (project management, editor settings),
+/// which the caller handles through the normal local path.
 ///
 /// The caller guarantees a connected session before calling.
 pub(crate) fn dispatch(resources: &Resources, action: &EditorAction) -> bool {
@@ -36,8 +36,8 @@ pub(crate) fn dispatch(resources: &Resources, action: &EditorAction) -> bool {
     }
 
     // Non-ECS actions stay on the local path even in remote mode: closing
-    // the project, opening a scene, toggling power profiles all act on the
-    // editor, not the remote world.
+    // the project, toggling power profiles all act on the editor, not the
+    // remote world.
     let Some(edit) = classify(action) else {
         return false;
     };
@@ -50,7 +50,7 @@ pub(crate) fn dispatch(resources: &Resources, action: &EditorAction) -> bool {
     };
     let names = resources.get::<ComponentNames>();
 
-    if let Err(e) = send(edit, session, &state.mirror, names) {
+    if let Err(e) = send(edit, session, &state.mirror, names, resources) {
         tracing::warn!("remote edit dropped: {e}");
     }
     true
@@ -81,6 +81,9 @@ enum Edit<'a> {
         entity: ome_ecs::entity::Entity,
         transform: ome_ecs::transform::Transform,
     },
+    /// Write the project's world to a scene file, or replace it from one.
+    SaveScene,
+    LoadScene,
 }
 
 /// Reduces an action to an [`Edit`], or `None` if remote mode does not
@@ -112,7 +115,12 @@ fn classify(action: &EditorAction) -> Option<Edit<'_>> {
             entity: *entity,
             transform: *after,
         }),
-        // Not an ECS edit remote mode owns (project mgmt, scene I/O, …).
+        // Scene I/O belongs to the project: the mirror is a view, and
+        // saving it locally would write a partly-parked copy over the
+        // project's own scene file.
+        EditorAction::SaveScene => Some(Edit::SaveScene),
+        EditorAction::OpenScene => Some(Edit::LoadScene),
+        // Not something remote mode owns (project mgmt, settings, …).
         _ => None,
     }
 }
@@ -123,6 +131,7 @@ fn send(
     session: &crate::remote_session::RemoteSession,
     mirror: &crate::remote_mirror::RemoteMirror,
     names: Option<&ComponentNames>,
+    resources: &Resources,
 ) -> Result<(), String> {
     use ome_ecs::reflect::ReflectValue;
 
@@ -172,6 +181,16 @@ fn send(
             }
             Ok(())
         }
+        // Both processes see the same filesystem, so the path the user
+        // picks here is meaningful on the project's side of the wire.
+        Edit::SaveScene => match crate::actions::scene_io::scene_dialog(resources).save_file() {
+            Some(path) => client.save_scene(&path.to_string_lossy()).map_err(map_err),
+            None => Ok(()),
+        },
+        Edit::LoadScene => match crate::actions::scene_io::scene_dialog(resources).pick_file() {
+            Some(path) => client.load_scene(&path.to_string_lossy()).map_err(map_err),
+            None => Ok(()),
+        },
     }
 }
 

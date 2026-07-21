@@ -13,17 +13,22 @@ use crate::editor_camera::input::ViewportInputDelta;
 use crate::launch_screen::{self, LaunchAction};
 use crate::menu_bar::draw_menu_bar;
 use crate::project_state::ProjectState;
+use crate::remote_session::ConnectionState;
 use crate::state::EditorOverlay;
 use crate::systems::tab_viewer::EditorTabViewer;
 
 use super::frame_display::FrameDisplayData;
 
-pub(super) struct UndoInfo {
+/// Toolbar/menu-bar state gathered before the egui pass: what the undo
+/// stack can offer, and the two modes the toolbar reports on.
+pub(super) struct ToolbarInfo {
     pub(super) can_undo: bool,
     pub(super) can_redo: bool,
     pub(super) undo_desc: Option<String>,
     pub(super) redo_desc: Option<String>,
     pub(super) is_playing: bool,
+    /// Where the remote session stands, or `None` in local mode.
+    pub(super) remote: Option<ConnectionState>,
 }
 
 /// Handles to the viewport resource consumed by the UI: a read-only
@@ -54,7 +59,7 @@ pub(super) fn run_editor_ui(
     raw_input: egui::RawInput,
     project_loaded: bool,
     data: &FrameDisplayData,
-    undo: &UndoInfo,
+    toolbar: &ToolbarInfo,
     viewport: ViewportUi<'_>,
     power_profile: ome_core::power::PowerProfile,
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
@@ -88,11 +93,12 @@ pub(super) fn run_editor_ui(
                 ctx,
                 &mut overlay.dock_state,
                 &mut actions,
-                undo.is_playing,
-                undo.can_undo,
-                undo.can_redo,
-                undo.undo_desc.as_deref(),
-                undo.redo_desc.as_deref(),
+                toolbar.is_playing,
+                toolbar.remote,
+                toolbar.can_undo,
+                toolbar.can_redo,
+                toolbar.undo_desc.as_deref(),
+                toolbar.redo_desc.as_deref(),
                 power_profile,
                 project_state
                     .as_ref()
