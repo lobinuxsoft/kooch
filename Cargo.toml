@@ -37,7 +37,7 @@ wgpu = "29"
 # Windowing
 winit = "0.30"
 # Math
-glam = { version = "0.29", features = ["bytemuck", "serde"] }
+glam = { version = "0.33", features = ["bytemuck", "serde"] }
 # Utils
 bytemuck = { version = "1.21", features = ["derive"] }
 encase = { version = "0.10", features = ["glam"] }
@@ -79,8 +79,12 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 # every meshlet-based renderer.
 meshopt = "0.6"
 # Physics — CPU rigid body solver. dimforge maintained, DOD internal,
-# industry-grade. wgrapier3d (GPU) is the future migration path (~2027).
-rapier3d = { version = "0.22", features = ["simd-stable"] }
+# industry-grade. wgrapier3d (GPU) is the future migration path — Dimforge
+# has WGSL broad-phase + constraint solvers running, and 2026 targets GPU
+# physics via rust-gpu sharing types with rapier. That path needs the
+# engine and rapier on the same glam, which is why glam is pinned to
+# whatever glamx (rapier's math layer) uses.
+rapier3d = { version = "0.34", features = ["simd-stable"] }
 # File dialogs
 rfd = "0.15"
 # Directories

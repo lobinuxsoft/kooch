@@ -1,29 +1,12 @@
-use glam::{Quat, Vec3};
-use rapier3d::na::{self, Translation3, Unit, UnitQuaternion, Vector3};
 use rapier3d::prelude::*;
 
 use crate::backend::CollisionShape;
 
-pub(super) fn vec3_to_na(v: Vec3) -> Vector3<f32> {
-    Vector3::new(v.x, v.y, v.z)
-}
-
-pub(super) fn na_to_vec3(v: Vector3<f32>) -> Vec3 {
-    Vec3::new(v.x, v.y, v.z)
-}
-
-pub(super) fn point(v: Vec3) -> na::Point3<f32> {
-    na::Point3::new(v.x, v.y, v.z)
-}
-
-pub(super) fn isometry(pos: Vec3, rot: Quat) -> Isometry<Real> {
-    let translation = Translation3::new(pos.x, pos.y, pos.z);
-    let rotation = UnitQuaternion::from_quaternion(na::Quaternion::new(
-        rot.w, rot.x, rot.y, rot.z,
-    ));
-    Isometry::from_parts(translation, rotation)
-}
-
+/// Builds the Rapier collider for an engine shape.
+///
+/// Since Rapier 0.32 the math types *are* glam's, so this module no
+/// longer translates vectors or quaternions — only shapes, which have no
+/// engine-side equivalent.
 pub(super) fn collider_for(shape: CollisionShape) -> Collider {
     match shape {
         CollisionShape::Sphere { radius } => ColliderBuilder::ball(radius).build(),
@@ -38,9 +21,4 @@ pub(super) fn collider_for(shape: CollisionShape) -> Collider {
             half_height,
         } => ColliderBuilder::capsule_y(half_height, radius).build(),
     }
-}
-
-#[allow(unused)]
-pub(super) fn _unit_y_helper() -> Unit<Vector3<f32>> {
-    Vector3::y_axis()
 }

@@ -1,11 +1,10 @@
 use glam::{Quat, Vec3};
-use rapier3d::na::Vector3;
 use rapier3d::prelude::*;
 use slotmap::SlotMap;
 
 use crate::backend::{BodyDesc, BodyHandle, BodyKind, PhysicsBackend, RayHit};
 
-use super::conv::{collider_for, isometry, na_to_vec3, point, vec3_to_na};
+use super::conv::collider_for;
 
 /// Rapier-backed [`PhysicsBackend`].
 ///
@@ -22,10 +21,9 @@ pub struct RapierBackend {
     broad_phase: DefaultBroadPhase,
     narrow_phase: NarrowPhase,
     ccd_solver: CCDSolver,
-    query_pipeline: QueryPipeline,
     physics_pipeline: PhysicsPipeline,
     integration_parameters: IntegrationParameters,
-    gravity: Vector3<f32>,
+    gravity: Vec3,
     handles: SlotMap<BodyHandle, RigidBodyHandle>,
 }
 
@@ -40,22 +38,52 @@ impl RapierBackend {
             broad_phase: DefaultBroadPhase::new(),
             narrow_phase: NarrowPhase::new(),
             ccd_solver: CCDSolver::new(),
-            query_pipeline: QueryPipeline::new(),
             physics_pipeline: PhysicsPipeline::new(),
             integration_parameters: IntegrationParameters::default(),
-            gravity: Vector3::new(0.0, -9.81, 0.0),
+            gravity: Vec3::new(0.0, -9.81, 0.0),
             handles: SlotMap::with_key(),
         }
     }
 
     /// Overrides the gravity vector. Default is `(0, -9.81, 0)`.
     pub fn set_gravity(&mut self, gravity: Vec3) {
-        self.gravity = vec3_to_na(gravity);
+        self.gravity = gravity;
     }
 
     /// Returns current gravity.
     pub fn gravity(&self) -> Vec3 {
-        na_to_vec3(self.gravity)
+        self.gravity
+    }
+
+    /// Publishes a collider's AABB into the broad-phase BVH.
+    ///
+    /// Scene queries read that BVH directly, and the broad-phase only
+    /// fills it while stepping — so without this a body spawned or
+    /// teleported since the last step is invisible to a raycast. Tools
+    /// query a world they are not simulating (click-to-pick in the
+    /// editor), so "visible only after a step" is not good enough.
+    ///
+    /// Goes through `set_aabb` rather than a broad-phase update so the
+    /// modified-collider bookkeeping `step` depends on is left alone.
+    fn publish_aabb(&mut self, collider: ColliderHandle) {
+        let Some(aabb) = self.colliders.get(collider).map(|c| c.compute_aabb()) else {
+            return;
+        };
+        self.broad_phase
+            .set_aabb(&self.integration_parameters, collider, aabb);
+    }
+
+    /// Republishes every collider attached to a body. Used after a
+    /// teleport, which can move several colliders at once.
+    fn publish_body_aabbs(&mut self, body: RigidBodyHandle) {
+        let colliders: Vec<ColliderHandle> = self
+            .bodies
+            .get(body)
+            .map(|b| b.colliders().to_vec())
+            .unwrap_or_default();
+        for collider in colliders {
+            self.publish_aabb(collider);
+        }
     }
 }
 
@@ -69,10 +97,9 @@ impl PhysicsBackend for RapierBackend {
     fn step(&mut self, dt: f32) {
         self.integration_parameters.dt = dt;
         // No event collector or hooks for PR-1 — collision events / joint
-        // breaking arrive in follow-ups. Pass the query pipeline so Rapier
-        // auto-syncs it after the simulation step.
+        // breaking arrive in follow-ups.
         self.physics_pipeline.step(
-            &self.gravity,
+            self.gravity,
             &self.integration_parameters,
             &mut self.islands,
             &mut self.broad_phase,
@@ -82,7 +109,6 @@ impl PhysicsBackend for RapierBackend {
             &mut self.impulse_joints,
             &mut self.multibody_joints,
             &mut self.ccd_solver,
-            Some(&mut self.query_pipeline),
             &(), // physics hooks
             &(), // event handler
         );
@@ -94,18 +120,16 @@ impl PhysicsBackend for RapierBackend {
             BodyKind::Kinematic => RigidBodyType::KinematicPositionBased,
             BodyKind::Static => RigidBodyType::Fixed,
         };
-        let isometry = isometry(desc.position, desc.rotation);
         let rb = RigidBodyBuilder::new(body_type)
-            .position(isometry)
+            .position(Pose::from_parts(desc.position, desc.rotation))
             .additional_mass(desc.mass.max(0.0))
             .build();
         let collider = collider_for(desc.shape);
         let rb_handle = self.bodies.insert(rb);
-        self.colliders
-            .insert_with_parent(collider, rb_handle, &mut self.bodies);
-        // Refresh the spatial index so `query_ray` works without
-        // requiring a `step` first — important for tests + tools.
-        self.query_pipeline.update(&self.colliders);
+        let collider_handle =
+            self.colliders
+                .insert_with_parent(collider, rb_handle, &mut self.bodies);
+        self.publish_aabb(collider_handle);
         self.handles.insert(rb_handle)
     }
 
@@ -122,7 +146,6 @@ impl PhysicsBackend for RapierBackend {
             &mut self.multibody_joints,
             true, // remove attached colliders
         );
-        self.query_pipeline.update(&self.colliders);
     }
 
     fn contains(&self, handle: BodyHandle) -> bool {
@@ -136,12 +159,7 @@ impl PhysicsBackend for RapierBackend {
     fn get_transform(&self, handle: BodyHandle) -> Option<(Vec3, Quat)> {
         let rb_handle = *self.handles.get(handle)?;
         let body = self.bodies.get(rb_handle)?;
-        let pos = body.translation();
-        let rot = body.rotation();
-        Some((
-            Vec3::new(pos.x, pos.y, pos.z),
-            Quat::from_xyzw(rot.i, rot.j, rot.k, rot.w),
-        ))
+        Some((body.translation(), *body.rotation()))
     }
 
     fn set_transform(&mut self, handle: BodyHandle, position: Vec3, rotation: Quat) {
@@ -151,15 +169,14 @@ impl PhysicsBackend for RapierBackend {
         let Some(body) = self.bodies.get_mut(rb_handle) else {
             return;
         };
-        body.set_position(isometry(position, rotation), true);
-        self.query_pipeline.update(&self.colliders);
+        body.set_position(Pose::from_parts(position, rotation), true);
+        self.publish_body_aabbs(rb_handle);
     }
 
     fn linear_velocity(&self, handle: BodyHandle) -> Option<Vec3> {
         let rb_handle = *self.handles.get(handle)?;
         let body = self.bodies.get(rb_handle)?;
-        let v = body.linvel();
-        Some(Vec3::new(v.x, v.y, v.z))
+        Some(body.linvel())
     }
 
     fn set_linear_velocity(&mut self, handle: BodyHandle, velocity: Vec3) {
@@ -169,20 +186,22 @@ impl PhysicsBackend for RapierBackend {
         let Some(body) = self.bodies.get_mut(rb_handle) else {
             return;
         };
-        body.set_linvel(vec3_to_na(velocity), true);
+        body.set_linvel(velocity, true);
     }
 
     fn query_ray(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<RayHit> {
-        let ray = Ray::new(point(origin), vec3_to_na(dir));
-        let filter = QueryFilter::default();
-        let (collider_handle, toi) = self.query_pipeline.cast_ray_and_get_normal(
+        let ray = Ray::new(origin, dir);
+        // Since 0.34 the query pipeline is a view borrowed from the
+        // broad-phase BVH rather than a mirror kept in sync by hand — so
+        // a query always sees the current colliders, with no `update`
+        // call to forget after a spawn or a teleport.
+        let pipeline = self.broad_phase.as_query_pipeline(
+            self.narrow_phase.query_dispatcher(),
             &self.bodies,
             &self.colliders,
-            &ray,
-            max_t,
-            true, // solid
-            filter,
-        )?;
+            QueryFilter::default(),
+        );
+        let (collider_handle, toi) = pipeline.cast_ray_and_get_normal(&ray, max_t, true)?;
         let collider = self.colliders.get(collider_handle)?;
         let parent = collider.parent()?;
         // Reverse-lookup: which BodyHandle owns this Rapier handle?
@@ -191,12 +210,11 @@ impl PhysicsBackend for RapierBackend {
             .iter()
             .find(|&(_, rb)| *rb == parent)
             .map(|(h, _)| h)?;
-        let hit_point = ray.origin + ray.dir * toi.time_of_impact;
         Some(RayHit {
             body: body_handle,
             t: toi.time_of_impact,
-            point: Vec3::new(hit_point.x, hit_point.y, hit_point.z),
-            normal: na_to_vec3(toi.normal),
+            point: ray.origin + ray.dir * toi.time_of_impact,
+            normal: toi.normal,
         })
     }
 }
