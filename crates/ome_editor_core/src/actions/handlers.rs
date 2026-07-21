@@ -290,7 +290,15 @@ fn handle_rebuild_remote(resources: &mut Resources) {
 }
 
 /// Launches the active project in remote mode and adopts the session.
+///
+/// Regenerates `src/registrations.rs` first. That file is editor-owned,
+/// and a project last registered by an older editor still gates its
+/// systems at build time — Play would flip a `Playing` gate nothing
+/// reads. Rewriting it before the build is what makes an existing
+/// project pick up the runtime gate without the user knowing it exists.
 fn start_remote_session(resources: &mut Resources) {
+    super::register_scripts(resources);
+
     let Some((manifest_path, engine_root)) = resources.get::<ProjectState>().and_then(|ps| {
         let project = ps.active_project.as_ref()?;
         Some((project.root_path.join("Cargo.toml"), ps.engine_root.clone()))
