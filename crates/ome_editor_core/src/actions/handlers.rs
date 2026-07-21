@@ -49,7 +49,6 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::Play => handle_play(resources),
         EditorAction::Stop => handle_stop(resources),
         EditorAction::OpenProject(path) => handle_open_project(resources, path),
-        EditorAction::OpenRemote(path) => handle_open_remote(resources, path),
         EditorAction::RebuildRemote => handle_rebuild_remote(resources),
         EditorAction::CreateProject { name, parent_path } => {
             handle_create_project(resources, name, parent_path);
@@ -212,8 +211,28 @@ fn handle_stop(resources: &mut Resources) {
     }
 }
 
+/// Opens a project — that is, launches it and starts driving it.
+///
+/// A project is a Rust crate that owns its own component types, so the
+/// hub cannot meaningfully load its scene itself: half of every entity
+/// would arrive as a parked component with no behaviour behind it. It
+/// launches the project in `--remote` mode instead and mirrors the world
+/// the project owns, which is also what makes Play run gameplay in the
+/// editor's viewport rather than in a second window.
+///
+/// The in-process path survives only for a folder with no crate to run.
+/// Such a project can be inspected but not played.
 fn handle_open_project(resources: &mut Resources, path: &std::path::Path) {
-    open_project(resources, path, SceneSource::LocalFile);
+    if !path.join("Cargo.toml").exists() {
+        tracing::warn!(
+            project = %path.display(),
+            "no Cargo.toml — opening read-only, without a running project"
+        );
+        open_project(resources, path, SceneSource::LocalFile);
+        return;
+    }
+    open_project(resources, path, SceneSource::RemoteMirror);
+    start_remote_session(resources);
 }
 
 /// Where the opened project's entities come from.
@@ -272,11 +291,6 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
 /// Rust types for the project's components, so a local load would park
 /// half of every entity. The project loads its own scene at boot and the
 /// mirror pulls it in once connected.
-fn handle_open_remote(resources: &mut Resources, path: &std::path::Path) {
-    open_project(resources, path, SceneSource::RemoteMirror);
-    start_remote_session(resources);
-}
-
 /// Rebuilds the project and reconnects to the fresh binary.
 ///
 /// The only way to pick up code the project did not have when it

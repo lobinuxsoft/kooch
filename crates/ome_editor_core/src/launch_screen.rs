@@ -12,7 +12,6 @@ use crate::project_state::{LauncherStatus, ProjectState};
 /// Actions that the launch screen can produce.
 pub enum LaunchAction {
     OpenProject(PathBuf),
-    OpenRemote(PathBuf),
     CreateProject { name: String, parent_path: PathBuf },
     RemoveRecent(PathBuf),
     LaunchProject(PathBuf),
@@ -62,25 +61,14 @@ pub fn draw_launch_screen(
 
                 if ui
                     .button(format!("{} Open Project", icons::FOLDER_OPEN))
-                    .clicked()
-                {
-                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                        // Always open in-process — running the project crate
-                        // is reserved for the editor's Play action.
-                        actions.push(LaunchAction::OpenProject(path));
-                    }
-                }
-
-                if ui
-                    .button(format!("{} Open Remote", icons::ROCKET))
                     .on_hover_text(
-                        "Build and run the project, then edit its live world over the wire. \
-                         The only mode that can inspect the project's own components.",
+                        "Builds and runs the project, then edits its live world. \
+                         The first open compiles, which takes a moment.",
                     )
                     .clicked()
                     && let Some(path) = rfd::FileDialog::new().pick_folder()
                 {
-                    actions.push(LaunchAction::OpenRemote(path));
+                    actions.push(LaunchAction::OpenProject(path));
                 }
             });
 

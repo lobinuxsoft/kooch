@@ -32,32 +32,32 @@ pub use ome_ecs;
 pub use ome_plugin_api;
 
 // Conditional re-exports
-#[cfg(feature = "window")]
-pub use ome_window;
-#[cfg(feature = "render")]
-pub use ome_render;
-#[cfg(feature = "gizmos")]
-pub use ome_gizmos;
-#[cfg(feature = "input")]
-pub use ome_input;
 #[cfg(feature = "audio")]
 pub use ome_audio;
-#[cfg(feature = "sdf")]
-pub use ome_sdf;
+#[cfg(feature = "editor")]
+pub use ome_editor_core;
+#[cfg(feature = "gizmos")]
+pub use ome_gizmos;
+#[cfg(feature = "gravity")]
+pub use ome_gravity;
+#[cfg(feature = "input")]
+pub use ome_input;
 #[cfg(feature = "lighting")]
 pub use ome_lighting;
 #[cfg(feature = "physics")]
 pub use ome_physics;
-#[cfg(feature = "gravity")]
-pub use ome_gravity;
-#[cfg(feature = "world")]
-pub use ome_world;
-#[cfg(feature = "scripting")]
-pub use ome_scripting;
 #[cfg(feature = "remote")]
 pub use ome_remote;
-#[cfg(feature = "editor")]
-pub use ome_editor_core;
+#[cfg(feature = "render")]
+pub use ome_render;
+#[cfg(feature = "scripting")]
+pub use ome_scripting;
+#[cfg(feature = "sdf")]
+pub use ome_sdf;
+#[cfg(feature = "window")]
+pub use ome_window;
+#[cfg(feature = "world")]
+pub use ome_world;
 
 pub use scene_bootstrap::SceneBootstrapPlugin;
 
@@ -70,15 +70,17 @@ pub mod prelude {
     pub use ome_core::prelude::*;
     pub use ome_ecs::{EcsPlugin, Entity, EntityAllocator};
 
-    #[cfg(feature = "window")]
-    pub use ome_window::{WindowCloseRequested, WindowHandle, WindowPlugin, WindowResized};
-    #[cfg(feature = "render")]
-    pub use ome_render::RenderPlugin;
-    #[cfg(feature = "remote")]
-    pub use ome_remote::RemotePlugin;
     #[cfg(feature = "dynamic")]
     pub use ome_plugin_api::prelude as plugin_api;
+    #[cfg(feature = "remote")]
+    pub use ome_remote::RemotePlugin;
+    #[cfg(feature = "render")]
+    pub use ome_render::RenderPlugin;
+    #[cfg(feature = "window")]
+    pub use ome_window::{WindowCloseRequested, WindowHandle, WindowPlugin, WindowResized};
 
+    #[cfg(feature = "remote")]
+    pub use crate::RemoteHostPlugins;
     pub use crate::{DefaultPlugins, SceneBootstrapPlugin};
 }
 
@@ -140,6 +142,25 @@ fn default_asset_plugin() -> ome_render::plugin::AssetPlugin {
     plugin
 }
 
+/// Plugin set for a project running as a **remote authoring host**
+/// (`cargo run -- --remote`).
+///
+/// Everything [`DefaultPlugins`] has minus the window and the renderer:
+/// the project owns the ECS and answers the editor over HTTP, while the
+/// editor draws the world in its own viewport. Opening a second window
+/// here would show the same scene twice and steal focus from the editor
+/// — the project is a headless host, not a game.
+pub struct RemoteHostPlugins;
+
+impl ome_core::plugin::PluginGroup for RemoteHostPlugins {
+    fn build(self) -> ome_core::plugin::PluginGroupBuilder {
+        ome_core::plugin::PluginGroupBuilder::new()
+            .add(ome_core::plugin::CorePlugin)
+            .add(ome_ecs::EcsPlugin)
+            .add(SceneBootstrapPlugin::default())
+    }
+}
+
 pub struct DefaultPlugins;
 
 impl ome_core::plugin::PluginGroup for DefaultPlugins {
@@ -152,7 +173,9 @@ impl ome_core::plugin::PluginGroup for DefaultPlugins {
         let builder = builder.add(ome_window::WindowPlugin::default());
 
         #[cfg(feature = "render")]
-        let builder = builder.add(default_asset_plugin()).add(ome_render::RenderPlugin);
+        let builder = builder
+            .add(default_asset_plugin())
+            .add(ome_render::RenderPlugin);
 
         #[cfg(feature = "world")]
         let builder = builder.add(ome_world::WorldStreamingPlugin);

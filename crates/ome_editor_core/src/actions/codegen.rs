@@ -205,6 +205,29 @@ fn render_registrations(files: &[SourceFile]) -> String {
 /// Regenerates it from the scaffold when missing; otherwise injects the
 /// two wiring lines (`mod registrations;` + the `add_plugin` call)
 /// non-destructively if they are absent.
+/// Rewrites a scaffold's `--remote` arm to the headless plugin set.
+///
+/// Earlier scaffolds built the remote host from `DefaultPlugins`, which
+/// opens a window — so the project drew the same scene the editor was
+/// already drawing, in a second window competing for focus. The match is
+/// deliberately narrow: it only fires on the exact three lines the
+/// editor itself generated, so a hand-written `main.rs` is left alone.
+fn migrate_remote_host(content: &str) -> String {
+    const OLD: &str = "\
+        app.add_plugins(DefaultPlugins);
+        app.add_plugin(registrations::ProjectRegistrations { run_systems: false });
+        app.add_plugin(oh_my_engine::ome_remote::RemotePlugin::new());";
+    const NEW: &str = "\
+        app.add_plugins(RemoteHostPlugins);
+        app.add_plugin(registrations::ProjectRegistrations { run_systems: false });
+        app.add_plugin(oh_my_engine::ome_remote::RemotePlugin::new());";
+    if !content.contains(OLD) {
+        return content.to_owned();
+    }
+    tracing::info!("main.rs: migrated --remote to the headless host plugins");
+    content.replace(OLD, NEW)
+}
+
 fn ensure_main_wired(project_root: &Path, resources: &Resources) {
     let src = project_root.join("src");
     let main = src.join("main.rs");
@@ -233,8 +256,9 @@ fn ensure_main_wired(project_root: &Path, resources: &Resources) {
     let Ok(content) = std::fs::read_to_string(&main) else {
         return;
     };
+    let content = migrate_remote_host(&content);
     let mut lines: Vec<String> = content.lines().map(str::to_owned).collect();
-    let mut changed = false;
+    let mut changed = content != std::fs::read_to_string(&main).unwrap_or_default();
 
     if !content.contains("mod registrations;") {
         lines.insert(0, "mod registrations;".to_owned());
@@ -294,6 +318,29 @@ pub fn movement(resources: &mut Resources) {}
     fn module_name_flattens_nested_paths() {
         assert_eq!(module_name("player_health.rs"), "player_health");
         assert_eq!(module_name("enemies/ai.rs"), "enemies_ai");
+    }
+
+    /// The migration rewrites only the exact arm the editor generated,
+    /// and leaves a hand-written or already-headless main alone.
+    #[test]
+    fn remote_host_migration_is_narrow() {
+        use super::migrate_remote_host;
+
+        let generated = "\
+        app.add_plugins(DefaultPlugins);
+        app.add_plugin(registrations::ProjectRegistrations { run_systems: false });
+        app.add_plugin(oh_my_engine::ome_remote::RemotePlugin::new());";
+        assert!(migrate_remote_host(generated).contains("RemoteHostPlugins"));
+
+        // The game arm uses DefaultPlugins too and must survive.
+        let game = "\
+        app.add_plugins(DefaultPlugins);
+        app.add_plugin(registrations::ProjectRegistrations { run_systems: true });";
+        assert_eq!(migrate_remote_host(game), game);
+
+        // Already migrated: unchanged, and not migrated twice.
+        let migrated = migrate_remote_host(generated);
+        assert_eq!(migrate_remote_host(&migrated), migrated);
     }
 
     /// Gameplay systems must be registered unconditionally and wrapped

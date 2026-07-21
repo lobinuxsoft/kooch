@@ -213,10 +213,11 @@ mod registrations;
 fn main() {
     // `cargo run`            → the editor, with your components (authoring).
     // `cargo run -- --game`  → the game (what the editor's Play button runs).
-    // `cargo run -- --remote`→ authoring host: your components + the remote
-    //                          server, driven by the standalone editor over
-    //                          HTTP. Gameplay starts paused; the editor's
-    //                          Play button starts it without a rebuild.
+    // `cargo run -- --remote`→ headless authoring host: your components +
+    //                          the remote server, driven by the standalone
+    //                          editor over HTTP. Gameplay starts paused; the
+    //                          editor's Play button starts it without a
+    //                          rebuild, in the editor's own viewport.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--game") {
         // Game runtime: components + gameplay systems.
@@ -228,14 +229,16 @@ fn main() {
         // Remote authoring host: components register (so the editor's
         // Inspector sees them) and systems register paused — the editor
         // toggles `Playing` over the wire to run them in place.
+        // Headless on purpose: the editor draws this world in its own
+        // viewport, so a window here would show the same scene twice.
         let mut app = App::new();
-        app.add_plugins(DefaultPlugins);
+        app.add_plugins(RemoteHostPlugins);
         app.add_plugin(registrations::ProjectRegistrations { run_systems: false });
         app.add_plugin(oh_my_engine::ome_remote::RemotePlugin::new());
         app.run();
     } else {
-        // Editor: register components (for the Inspector) but do NOT run
-        // gameplay systems — Play launches the game in a separate process.
+        // Editor embedded in the project: register components (for the
+        // Inspector) but do NOT run gameplay systems.
         oh_my_engine::ome_editor_core::run_editor_with(registrations::ProjectRegistrations {
             run_systems: false,
         });
