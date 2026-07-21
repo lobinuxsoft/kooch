@@ -30,9 +30,9 @@ pub mod perf;
 pub mod play_state;
 pub mod project;
 pub mod project_state;
+pub(crate) mod queries;
 pub mod remote_mirror;
 pub mod remote_session;
-pub(crate) mod queries;
 pub(crate) mod state;
 pub(crate) mod style;
 pub(crate) mod systems;
@@ -48,9 +48,9 @@ pub use editor_camera::{EditorCamera, EditorCameraController, EditorOnly};
 pub use perf::EditorPerfStats;
 pub use play_state::PlayState;
 pub use project::{EditorConfig, ProjectManifest};
+pub use project_state::ProjectState;
 pub use remote_mirror::{MirrorEntity, RemoteMirror};
 pub use remote_session::{ConnectionState, RemoteSession, RemoteState};
-pub use project_state::ProjectState;
 pub use state::EditorOverlay;
 
 /// Plugin that adds the embedded egui editor overlay.
@@ -66,6 +66,10 @@ pub struct EditorPlugin;
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(PlayState::new());
+        // Remote mode starts inert: no session means the editor drives
+        // its own ECS exactly as before. "Open Remote" fills it in.
+        app.insert_resource(remote_session::RemoteState::new());
+        app.insert_resource(systems::RemoteSyncState::default());
         app.insert_resource(project_state::ProjectState::new());
         app.insert_resource(undo::UndoStack::new());
         // #463 perf HUD — populated incrementally by per-metric
@@ -89,6 +93,10 @@ impl Plugin for EditorPlugin {
         // entries the same frame the user opens a project.
         app.add_system(Stage::PreUpdate, systems::scan_project_assets_system);
         app.add_system(Stage::PreUpdate, systems::ensure_main_exists_system);
+        // Remote mode: advance the handshake and pull the project's
+        // world into the local mirror. PreUpdate so the panels and the
+        // viewport see a snapshot that is at most one frame stale.
+        app.add_system(Stage::PreUpdate, systems::remote_sync_system);
         // Register the EditorOnly marker as ephemeral *before* the camera
         // is spawned, so the entity is filtered from any save that races
         // the spawn (e.g. play-mode snapshot triggered immediately).

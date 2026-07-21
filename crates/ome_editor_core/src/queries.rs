@@ -46,11 +46,17 @@ pub(crate) fn intern_registry_names(resources: &mut Resources) {
 /// Returns whether an archetype carries any marker registered as
 /// ephemeral. Used to keep editor-owned entities (cameras, gizmos) out
 /// of the World hierarchy and Archetype panels.
+///
+/// `MirrorEntity` is the deliberate exception: it is ephemeral for
+/// *saves* (a mirrored world belongs to the remote project, not to the
+/// editor's scene file) but must stay visible — in remote mode the
+/// mirror **is** the entire contents of the World panel.
 fn archetype_is_ephemeral(archetype: &Archetype, ephemeral: &EphemeralComponents) -> bool {
+    let mirror = std::any::TypeId::of::<crate::remote_mirror::MirrorEntity>();
     archetype
         .components()
         .iter()
-        .any(|tid| ephemeral.contains(tid))
+        .any(|tid| *tid != mirror && ephemeral.contains(tid))
 }
 
 pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo> {
