@@ -303,11 +303,17 @@ fn play_snapshots_the_world_and_stop_restores_it() {
     call(&mut resources, Method::SetPlaying { playing: false });
     assert!(!Playing::is_playing(&resources));
 
-    // The restore respawns entities, so look the value up by name.
     let entities = match call(&mut resources, Method::ListEntities) {
         ResponseData::Entities { entities } => entities,
         other => panic!("list: {other:?}"),
     };
+    // The handle survives the round-trip: a client that mirrored this
+    // world before play can still address the same entity after stop.
+    assert_eq!(
+        entities.iter().map(|e| e.id).collect::<Vec<_>>(),
+        vec![hero],
+        "entity identity churned across a play session"
+    );
     let position = entities
         .iter()
         .find(|e| e.name.as_deref() == Some("Hero"))

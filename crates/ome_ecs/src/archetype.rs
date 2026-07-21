@@ -95,6 +95,17 @@ impl Archetype {
         self.entities.push(entity);
     }
 
+    /// Reorders this archetype's entities to follow `rank`.
+    ///
+    /// Iteration order is observable — systems run over it, and a client
+    /// reading the world sees it — so restoring a snapshot has to put it
+    /// back, not just the entities themselves. Entities absent from
+    /// `rank` sort last, keeping their relative order.
+    pub fn reorder_entities(&mut self, rank: &std::collections::HashMap<Entity, usize>) {
+        self.entities
+            .sort_by_key(|e| rank.get(e).copied().unwrap_or(usize::MAX));
+    }
+
     /// Removes an entity from this archetype using swap-remove.
     ///
     /// Returns `true` if the entity was found and removed.

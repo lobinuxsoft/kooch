@@ -11,6 +11,11 @@ const DEFAULT_CAPACITY: u32 = 1024;
 ///
 /// Every spawn/despawn is recorded in a pending-sync list so the GPU
 /// `alive_mask` buffer can be updated incrementally.
+///
+/// [`Clone`] so a world snapshot can put generations and the free list
+/// back exactly as they were, rather than continuing past them — see
+/// [`WorldSnapshot`](crate::world_snapshot::WorldSnapshot).
+#[derive(Clone)]
 pub struct EntityAllocator {
     /// Per-slot generation counter; bumped on despawn.
     generations: Vec<u32>,
@@ -189,6 +194,15 @@ impl EntityAllocator {
         true
     }
 
+    /// Marks every slot as needing a GPU alive-mask sync.
+    ///
+    /// Used after a wholesale world replacement, where the incremental
+    /// dirty list no longer describes what changed.
+    pub fn mark_all_pending_sync(&mut self) {
+        self.pending_sync.clear();
+        self.pending_sync.extend(0..self.generations.len() as u32);
+    }
+
     // -- private --
 
     /// Doubles the capacity, pushing new indices onto the free-list.
@@ -204,12 +218,7 @@ impl EntityAllocator {
             self.free_list.push_back(i);
         }
 
-        tracing::debug!(
-            old = old_cap,
-            new = new_cap,
-            added,
-            "EntityAllocator grew"
-        );
+        tracing::debug!(old = old_cap, new = new_cap, added, "EntityAllocator grew");
     }
 }
 

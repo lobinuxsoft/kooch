@@ -146,9 +146,24 @@ impl ArchetypeRegistry {
     /// Iterates over archetypes that contain **all** of the `required`
     /// component types.
     pub fn iter_matching(&self, required: &[TypeId]) -> impl Iterator<Item = &Archetype> {
-        self.archetypes.values().filter(move |arch| {
-            required.iter().all(|r| arch.components().contains(r))
-        })
+        self.archetypes
+            .values()
+            .filter(move |arch| required.iter().all(|r| arch.components().contains(r)))
+    }
+
+    /// Reorders every archetype's entities to follow `order`.
+    ///
+    /// Used when restoring a snapshot: rebuilding an entity walks it
+    /// through a chain of archetypes, and where it lands in each one
+    /// depends on the order components happened to be added — which is
+    /// not the order the world had. This puts the observable iteration
+    /// order back.
+    pub fn reorder_entities(&mut self, order: &[Entity]) {
+        let rank: std::collections::HashMap<Entity, usize> =
+            order.iter().enumerate().map(|(i, e)| (*e, i)).collect();
+        for archetype in self.archetypes.values_mut() {
+            archetype.reorder_entities(&rank);
+        }
     }
 
     /// Returns the total number of registered archetypes.

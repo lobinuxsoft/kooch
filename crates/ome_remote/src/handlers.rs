@@ -19,6 +19,7 @@ use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::Parent;
 use ome_ecs::name::Name;
 use ome_ecs::scene::{SceneDocument, sync_scene_to_ecs};
+use ome_ecs::world_snapshot::WorldSnapshot;
 
 use crate::protocol::{
     ComponentSchema, ComponentSnapshot, EntityId, EntitySnapshot, FieldSchema, Method, RemoteError,
@@ -317,15 +318,22 @@ fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> 
 
 /// The authored world, held while a play session runs so Stop can put
 /// it back. Present only between a start and the matching stop.
-struct PlaySnapshot(SceneDocument);
+///
+/// A [`WorldSnapshot`], not a [`SceneDocument`]: the scene format is
+/// name-keyed, so loading one back respawns everything with fresh
+/// indices, fresh generations and a different order. Stop must be
+/// indistinguishable from never having pressed play, which means the
+/// identities have to survive — a client mirroring this world addresses
+/// entities by handle, and so does every `Parent` in it.
+struct PlaySnapshot(WorldSnapshot);
 
 /// Starts or stops gameplay in place.
 ///
 /// Play is destructive by nature — systems mutate the very entities the
 /// user authored — so the world is snapshotted on start and restored on
-/// stop. Restoring respawns every entity, so the client's
-/// [`EntityId`]s are invalidated; a client mirrors by id and will see
-/// this as the whole world being replaced, which it is.
+/// stop. The restore preserves entity handles, generations, order and
+/// the allocator state, so a client's [`EntityId`]s stay valid across a
+/// play session and its mirror sees fields change, not a new world.
 ///
 /// Idempotent in both directions: starting while already playing keeps
 /// the original snapshot (so a double Play cannot lose the authored
@@ -336,7 +344,7 @@ fn set_playing(resources: &mut Resources, playing: bool) -> Result<(), RemoteErr
     }
 
     if playing {
-        resources.insert(PlaySnapshot(SceneDocument::from_ecs(resources)));
+        resources.insert(PlaySnapshot(WorldSnapshot::capture(resources)));
         ome_core::run_state::Playing::set(resources, true);
         tracing::info!("remote: play");
         return Ok(());
@@ -346,9 +354,7 @@ fn set_playing(resources: &mut Resources, playing: bool) -> Result<(), RemoteErr
     // a half-rebuilt world.
     ome_core::run_state::Playing::set(resources, false);
     if let Some(snapshot) = resources.remove::<PlaySnapshot>() {
-        sync_scene_to_ecs(&snapshot.0, resources).map_err(|e| RemoteError::SceneError {
-            detail: e.to_string(),
-        })?;
+        snapshot.0.restore(resources);
     }
     tracing::info!("remote: stop");
     Ok(())
