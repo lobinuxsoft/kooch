@@ -30,6 +30,7 @@ pub mod perf;
 pub mod play_state;
 pub mod project;
 pub mod project_state;
+pub mod remote_session;
 pub(crate) mod queries;
 pub(crate) mod state;
 pub(crate) mod style;
@@ -46,6 +47,7 @@ pub use editor_camera::{EditorCamera, EditorCameraController, EditorOnly};
 pub use perf::EditorPerfStats;
 pub use play_state::PlayState;
 pub use project::{EditorConfig, ProjectManifest};
+pub use remote_session::{ConnectionState, RemoteSession};
 pub use project_state::ProjectState;
 pub use state::EditorOverlay;
 
