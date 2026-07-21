@@ -219,9 +219,8 @@ pub(crate) struct ArchetypeDisplayInfo {
 
 /// Display data for a registered component type.
 pub(crate) struct ComponentTypeInfo {
-    #[allow(dead_code)]
-    pub(crate) type_id: TypeId,
-    /// Portable identity, carried when this type is dragged onto an entity.
+    /// Portable identity — how the UI keys this type and what it carries
+    /// when dragged onto an entity.
     pub(crate) component: ComponentId,
     pub(crate) short_name: String,
     pub(crate) has_reflection: bool,
@@ -229,7 +228,6 @@ pub(crate) struct ComponentTypeInfo {
 
 /// Available reflected component types for "Add Component".
 pub(crate) struct ReflectedTypeInfo {
-    pub(crate) type_id: TypeId,
     /// Portable identity, carried by the emitted `AddComponent` action.
     pub(crate) component: ComponentId,
     pub(crate) short_name: String,

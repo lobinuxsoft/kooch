@@ -80,6 +80,14 @@ impl DynamicComponents {
             })
     }
 
+    /// Every distinct type name parked in the store.
+    ///
+    /// Lets a name-keyed consumer (the editor's component interner) see
+    /// types no local registry knows about.
+    pub fn type_names(&self) -> impl Iterator<Item = &str> {
+        self.names.iter().map(String::as_str)
+    }
+
     /// Overwrites one field of a parked component.
     ///
     /// Returns `false` when the entity has no such component, or the

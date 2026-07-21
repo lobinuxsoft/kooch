@@ -68,7 +68,7 @@ pub(super) fn draw_reflected_fields(
     actions: &mut Vec<EditorAction>,
     asset_catalog: &[AssetCatalogEntry],
 ) {
-    egui::Grid::new(format!("fields_{:?}_{}", type_id, entity.index()))
+    egui::Grid::new(format!("fields_{:?}_{}", component, entity.index()))
         .num_columns(2)
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
@@ -103,11 +103,11 @@ pub(super) fn draw_reflected_fields(
 pub(super) fn draw_readonly_fields(
     ui: &mut egui::Ui,
     entity: Entity,
-    type_id: TypeId,
+    component: ComponentId,
     fields: &[(String, ReflectValue)],
     field_metas: Option<&'static [FieldMeta]>,
 ) {
-    egui::Grid::new(format!("ro_fields_{:?}_{}", type_id, entity.index()))
+    egui::Grid::new(format!("ro_fields_{:?}_{}", component, entity.index()))
         .num_columns(2)
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
