@@ -15,13 +15,21 @@ use ome_core::resource::Resources;
 
 use crate::remote_session::{ConnectionState, RemoteState};
 
-/// Frames between snapshot pulls while connected.
+/// Frames between snapshot pulls while the project sits paused.
 ///
-/// The project owns the world and may mutate it every frame (gameplay
-/// systems, physics), so the mirror is a poll, not a subscription. Twice
-/// a second at 60 fps keeps the editor responsive to external change
-/// without spending a synchronous HTTP round-trip per frame.
-const REFRESH_INTERVAL_FRAMES: u32 = 30;
+/// The project owns the world and may mutate it behind the editor's
+/// back, so the mirror is a poll, not a subscription. Twice a second at
+/// 60 fps keeps the editor responsive to outside change without
+/// spending a synchronous HTTP round-trip per frame.
+const REFRESH_INTERVAL_IDLE: u32 = 30;
+
+/// Frames between snapshot pulls while the project is playing.
+///
+/// Gameplay moves things every tick, so a paused-mode cadence would
+/// render as a slideshow. The cost is one round-trip per frame over
+/// loopback; the mirror diffs in place, so a pull that changes nothing
+/// structural is just field writes.
+const REFRESH_INTERVAL_PLAYING: u32 = 1;
 
 /// Per-frame cadence bookkeeping for [`remote_sync_system`].
 #[derive(Default)]
@@ -51,7 +59,11 @@ pub(crate) fn remote_sync_system(resources: &mut Resources) {
 
 /// The body of [`remote_sync_system`], with both resources in hand.
 fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &mut Resources) {
-    let RemoteState { session, mirror } = state;
+    let RemoteState {
+        session,
+        mirror,
+        playing,
+    } = state;
     let Some(session) = session.as_mut() else {
         return;
     };
@@ -68,7 +80,13 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
         ConnectionState::Failed => {
             if !sync.failure_reported {
                 sync.failure_reported = true;
-                tracing::error!("remote project exited before connecting");
+                tracing::error!("remote project exited — use Rebuild to relaunch it");
+                // Tear the mirror down. Left standing it would look
+                // editable while every edit went nowhere, and a Save
+                // would write an empty scene: mirrored entities are
+                // ephemeral, so they are excluded from the document.
+                *playing = false;
+                mirror.clear(resources);
             }
             return;
         }
@@ -76,8 +94,13 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
     }
 
     if !just_connected {
+        let interval = if *playing {
+            REFRESH_INTERVAL_PLAYING
+        } else {
+            REFRESH_INTERVAL_IDLE
+        };
         sync.frames += 1;
-        if sync.frames < REFRESH_INTERVAL_FRAMES {
+        if sync.frames < interval {
             return;
         }
         sync.frames = 0;

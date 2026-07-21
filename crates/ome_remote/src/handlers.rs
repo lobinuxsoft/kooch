@@ -19,6 +19,7 @@ use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::Parent;
 use ome_ecs::name::Name;
 use ome_ecs::scene::{SceneDocument, sync_scene_to_ecs};
+use ome_ecs::world_snapshot::WorldSnapshot;
 
 use crate::protocol::{
     ComponentSchema, ComponentSnapshot, EntityId, EntitySnapshot, FieldSchema, Method, RemoteError,
@@ -81,6 +82,10 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
         },
+        Method::SetPlaying { playing } => match set_playing(resources, *playing) {
+            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Err(e) => Response::err(id, e),
+        },
     }
 }
 
@@ -115,6 +120,10 @@ fn list_entities(id: u64, resources: &Resources) -> Response {
     ];
     let parents = registry.get_cpu::<Parent>();
 
+    // Archetype iteration groups by component set, which scrambles the
+    // order the user authored. Entities are allocated in the order the
+    // scene lists them, so ascending index is that authored order — and
+    // it is what a client shows in its hierarchy.
     let mut entities = Vec::new();
     for archetype in archetypes.iter_matching(&[]) {
         for &entity in archetype.entities() {
@@ -149,6 +158,7 @@ fn list_entities(id: u64, resources: &Resources) -> Response {
             });
         }
     }
+    entities.sort_by_key(|e| e.id.index);
 
     Response::ok(id, ResponseData::Entities { entities })
 }
@@ -309,6 +319,50 @@ fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> 
     sync_scene_to_ecs(&doc, resources).map_err(|e| RemoteError::SceneError {
         detail: e.to_string(),
     })
+}
+
+/// The authored world, held while a play session runs so Stop can put
+/// it back. Present only between a start and the matching stop.
+///
+/// A [`WorldSnapshot`], not a [`SceneDocument`]: the scene format is
+/// name-keyed, so loading one back respawns everything with fresh
+/// indices, fresh generations and a different order. Stop must be
+/// indistinguishable from never having pressed play, which means the
+/// identities have to survive — a client mirroring this world addresses
+/// entities by handle, and so does every `Parent` in it.
+struct PlaySnapshot(WorldSnapshot);
+
+/// Starts or stops gameplay in place.
+///
+/// Play is destructive by nature — systems mutate the very entities the
+/// user authored — so the world is snapshotted on start and restored on
+/// stop. The restore preserves entity handles, generations, order and
+/// the allocator state, so a client's [`EntityId`]s stay valid across a
+/// play session and its mirror sees fields change, not a new world.
+///
+/// Idempotent in both directions: starting while already playing keeps
+/// the original snapshot (so a double Play cannot lose the authored
+/// state), and stopping while stopped is a no-op.
+fn set_playing(resources: &mut Resources, playing: bool) -> Result<(), RemoteError> {
+    if playing == ome_core::run_state::Playing::is_playing(resources) {
+        return Ok(());
+    }
+
+    if playing {
+        resources.insert(PlaySnapshot(WorldSnapshot::capture(resources)));
+        ome_core::run_state::Playing::set(resources, true);
+        tracing::info!("remote: play");
+        return Ok(());
+    }
+
+    // Stop: the gate goes down before the restore so no system observes
+    // a half-rebuilt world.
+    ome_core::run_state::Playing::set(resources, false);
+    if let Some(snapshot) = resources.remove::<PlaySnapshot>() {
+        snapshot.0.restore(resources);
+    }
+    tracing::info!("remote: stop");
+    Ok(())
 }
 
 /// Moves an entity to the archetype it belongs in after adding `type_id`.

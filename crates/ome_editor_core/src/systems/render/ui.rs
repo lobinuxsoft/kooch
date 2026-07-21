@@ -173,7 +173,6 @@ fn forward_launch_actions(launch_actions: Vec<LaunchAction>, actions: &mut Vec<E
     for la in launch_actions {
         match la {
             LaunchAction::OpenProject(path) => actions.push(EditorAction::OpenProject(path)),
-            LaunchAction::OpenRemote(path) => actions.push(EditorAction::OpenRemote(path)),
             LaunchAction::CreateProject { name, parent_path } => {
                 actions.push(EditorAction::CreateProject { name, parent_path })
             }

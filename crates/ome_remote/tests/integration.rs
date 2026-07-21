@@ -259,3 +259,141 @@ fn client_drives_server_end_to_end() {
     done.store(true, Ordering::Relaxed);
     main_loop.join().unwrap();
 }
+
+/// Entities are listed in the order the user authored them, not grouped
+/// by archetype — a hierarchy panel shows this order verbatim.
+#[test]
+fn entities_are_listed_in_authored_order() {
+    let mut resources = ecs();
+    let transform_ty = std::any::type_name::<Transform>().to_owned();
+
+    // Give the second entity a component the others lack, so archetype
+    // grouping would pull it out of order if the listing relied on it.
+    for (i, name) in ["First", "Second", "Third"].iter().enumerate() {
+        let entity = match call(
+            &mut resources,
+            Method::Spawn {
+                name: Some((*name).into()),
+            },
+        ) {
+            ResponseData::Spawned { entity } => entity,
+            other => panic!("spawn: {other:?}"),
+        };
+        if i == 1 {
+            call(
+                &mut resources,
+                Method::AddComponent {
+                    entity,
+                    component: transform_ty.clone(),
+                },
+            );
+        }
+    }
+
+    let entities = match call(&mut resources, Method::ListEntities) {
+        ResponseData::Entities { entities } => entities,
+        other => panic!("list: {other:?}"),
+    };
+    assert_eq!(
+        entities
+            .iter()
+            .map(|e| e.name.clone().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        vec!["First", "Second", "Third"],
+    );
+}
+
+/// Play flips the gate; Stop puts back the world as it stood when play
+/// began, so a play session cannot corrupt the authored scene.
+#[test]
+fn play_snapshots_the_world_and_stop_restores_it() {
+    use ome_core::run_state::Playing;
+
+    let mut resources = ecs();
+    let hero = match call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("Hero".into()),
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+    let transform_ty = std::any::type_name::<Transform>().to_owned();
+    call(
+        &mut resources,
+        Method::AddComponent {
+            entity: hero,
+            component: transform_ty.clone(),
+        },
+    );
+
+    assert!(!Playing::is_playing(&resources), "starts paused");
+    call(&mut resources, Method::SetPlaying { playing: true });
+    assert!(Playing::is_playing(&resources));
+
+    // Stand in for what a gameplay system would do to the world.
+    call(
+        &mut resources,
+        Method::SetField {
+            entity: hero,
+            component: transform_ty.clone(),
+            field: "position".into(),
+            value: ReflectValue::Vec3(glam::Vec3::splat(42.0)),
+        },
+    );
+
+    call(&mut resources, Method::SetPlaying { playing: false });
+    assert!(!Playing::is_playing(&resources));
+
+    let entities = match call(&mut resources, Method::ListEntities) {
+        ResponseData::Entities { entities } => entities,
+        other => panic!("list: {other:?}"),
+    };
+    // The handle survives the round-trip: a client that mirrored this
+    // world before play can still address the same entity after stop.
+    assert_eq!(
+        entities.iter().map(|e| e.id).collect::<Vec<_>>(),
+        vec![hero],
+        "entity identity churned across a play session"
+    );
+    let position = entities
+        .iter()
+        .find(|e| e.name.as_deref() == Some("Hero"))
+        .expect("hero survived the restore")
+        .components
+        .iter()
+        .find(|c| c.type_name == transform_ty)
+        .and_then(|c| c.fields.iter().find(|(n, _)| n == "position"))
+        .map(|(_, v)| v.clone());
+    assert_eq!(
+        position,
+        Some(ReflectValue::Vec3(glam::Vec3::ZERO)),
+        "play mutation leaked into the authored scene"
+    );
+}
+
+/// A second Play must not overwrite the snapshot taken by the first,
+/// or Stop would restore a world that already ran.
+#[test]
+fn repeated_play_keeps_the_original_snapshot() {
+    use ome_core::run_state::Playing;
+
+    let mut resources = ecs();
+    call(&mut resources, Method::SetPlaying { playing: true });
+    call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("Spawned during play".into()),
+        },
+    );
+    call(&mut resources, Method::SetPlaying { playing: true });
+    call(&mut resources, Method::SetPlaying { playing: false });
+
+    assert!(!Playing::is_playing(&resources));
+    let entities = match call(&mut resources, Method::ListEntities) {
+        ResponseData::Entities { entities } => entities,
+        other => panic!("list: {other:?}"),
+    };
+    assert!(entities.is_empty(), "runtime spawn survived Stop");
+}

@@ -171,15 +171,15 @@ pub(crate) fn draw_menu_bar(
             // enough that a silent editor reads as a hang.
             if let Some(remote) = remote {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    draw_remote_status(ui, remote);
+                    draw_remote_status(ui, remote, actions);
                 });
             }
         });
     });
 }
 
-/// Draws the remote session indicator.
-fn draw_remote_status(ui: &mut egui::Ui, remote: ConnectionState) {
+/// Draws the remote session indicator and its rebuild control.
+fn draw_remote_status(ui: &mut egui::Ui, remote: ConnectionState, actions: &mut Vec<EditorAction>) {
     let (icon, text, color, hover) = match remote {
         ConnectionState::Connecting => (
             icons::GEAR,
@@ -200,6 +200,21 @@ fn draw_remote_status(ui: &mut egui::Ui, remote: ConnectionState) {
             "The project exited before answering. Check its build output in the terminal.",
         ),
     };
+    // Right-to-left layout: this lands to the left of the status text.
+    if ui
+        .add_enabled(
+            remote != ConnectionState::Connecting,
+            egui::Button::new(icons::ARROWS_CLOCKWISE),
+        )
+        .on_hover_text(
+            "Rebuild & Relaunch — recompiles the project and reconnects. \
+             Needed to pick up code added since it started, and the way \
+             back from a project that exited.",
+        )
+        .clicked()
+    {
+        actions.push(EditorAction::RebuildRemote);
+    }
     ui.label(egui::RichText::new(format!("{icon} {text}")).color(color))
         .on_hover_text(hover);
 }

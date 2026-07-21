@@ -132,15 +132,21 @@ fn editor_camera_exists(resources: &Resources) -> bool {
 /// In edit mode the editor camera owns the viewport (priority 1000
 /// outranks gameplay cameras). In play mode it goes inactive so the
 /// renderer falls back to the highest-priority *active* camera in the
-/// scene, which is the user's gameplay camera.
+/// scene, which is the user's gameplay camera — mirrored from the
+/// remote project like any other entity.
 ///
 /// Idempotent: only writes when the flag actually changes, so it is
 /// cheap to run every frame.
 pub fn sync_editor_camera_active_system(resources: &mut Resources) {
+    // Two ways to be playing: a launched game process, or the connected
+    // project running its systems in place. Either way the scene's own
+    // camera should be the one framing the shot.
     let is_playing = resources
         .get::<PlayState>()
-        .map(|ps| ps.is_playing())
-        .unwrap_or(false);
+        .is_some_and(|ps| ps.is_playing())
+        || resources
+            .get::<crate::remote_session::RemoteState>()
+            .is_some_and(|s| s.playing);
     let want_active = !is_playing;
 
     let Some(entity) = find_editor_camera_entity(resources) else {

@@ -163,25 +163,26 @@ fn render_registrations(files: &[SourceFile]) -> String {
     s.push('\n');
     s.push_str("/// Editor-managed plugin: registers project components + systems.\n");
     s.push_str("///\n");
-    s.push_str("/// `run_systems` gates gameplay systems: `true` in the game build,\n");
-    s.push_str("/// `false` in the editor build (so nothing runs while you edit).\n");
-    s.push_str("/// Components always register, so they appear in the Inspector.\n");
+    s.push_str("/// Gameplay systems are always registered, wrapped in\n");
+    s.push_str("/// `run_if_playing` so the `Playing` resource decides per frame\n");
+    s.push_str("/// whether they run. `run_systems` only sets its starting value:\n");
+    s.push_str("/// `true` in the game build, `false` while editing — and the\n");
+    s.push_str("/// editor's Play button flips it live, with no rebuild.\n");
     s.push_str("pub struct ProjectRegistrations {\n");
     s.push_str("    pub run_systems: bool,\n");
     s.push_str("}\n\n");
     s.push_str("impl Plugin for ProjectRegistrations {\n");
     s.push_str("    fn build(&self, app: &mut App) {\n");
+    s.push_str("        app.insert_resource(Playing(self.run_systems));\n");
     s.push_str("        app.add_system(Stage::Startup, register_components);\n");
-    s.push_str("        if self.run_systems {\n");
     for f in files {
         for sys in &f.systems {
             s.push_str(&format!(
-                "            app.add_system(Stage::Update, {}::{});\n",
+                "        app.add_system(Stage::Update, run_if_playing({}::{}));\n",
                 f.module, sys
             ));
         }
     }
-    s.push_str("        }\n");
     s.push_str("    }\n}\n\n");
     s.push_str("/// Registers project components for serialization + the Inspector.\n");
     s.push_str("fn register_components(resources: &mut Resources) {\n");
@@ -204,6 +205,29 @@ fn render_registrations(files: &[SourceFile]) -> String {
 /// Regenerates it from the scaffold when missing; otherwise injects the
 /// two wiring lines (`mod registrations;` + the `add_plugin` call)
 /// non-destructively if they are absent.
+/// Rewrites a scaffold's `--remote` arm to the headless plugin set.
+///
+/// Earlier scaffolds built the remote host from `DefaultPlugins`, which
+/// opens a window — so the project drew the same scene the editor was
+/// already drawing, in a second window competing for focus. The match is
+/// deliberately narrow: it only fires on the exact three lines the
+/// editor itself generated, so a hand-written `main.rs` is left alone.
+fn migrate_remote_host(content: &str) -> String {
+    const OLD: &str = "\
+        app.add_plugins(DefaultPlugins);
+        app.add_plugin(registrations::ProjectRegistrations { run_systems: false });
+        app.add_plugin(oh_my_engine::ome_remote::RemotePlugin::new());";
+    const NEW: &str = "\
+        app.add_plugins(RemoteHostPlugins);
+        app.add_plugin(registrations::ProjectRegistrations { run_systems: false });
+        app.add_plugin(oh_my_engine::ome_remote::RemotePlugin::new());";
+    if !content.contains(OLD) {
+        return content.to_owned();
+    }
+    tracing::info!("main.rs: migrated --remote to the headless host plugins");
+    content.replace(OLD, NEW)
+}
+
 fn ensure_main_wired(project_root: &Path, resources: &Resources) {
     let src = project_root.join("src");
     let main = src.join("main.rs");
@@ -232,8 +256,9 @@ fn ensure_main_wired(project_root: &Path, resources: &Resources) {
     let Ok(content) = std::fs::read_to_string(&main) else {
         return;
     };
+    let content = migrate_remote_host(&content);
     let mut lines: Vec<String> = content.lines().map(str::to_owned).collect();
-    let mut changed = false;
+    let mut changed = content != std::fs::read_to_string(&main).unwrap_or_default();
 
     if !content.contains("mod registrations;") {
         lines.insert(0, "mod registrations;".to_owned());
@@ -295,8 +320,35 @@ pub fn movement(resources: &mut Resources) {}
         assert_eq!(module_name("enemies/ai.rs"), "enemies_ai");
     }
 
+    /// The migration rewrites only the exact arm the editor generated,
+    /// and leaves a hand-written or already-headless main alone.
     #[test]
-    fn generated_plugin_gates_systems_behind_run_systems() {
+    fn remote_host_migration_is_narrow() {
+        use super::migrate_remote_host;
+
+        let generated = "\
+        app.add_plugins(DefaultPlugins);
+        app.add_plugin(registrations::ProjectRegistrations { run_systems: false });
+        app.add_plugin(oh_my_engine::ome_remote::RemotePlugin::new());";
+        assert!(migrate_remote_host(generated).contains("RemoteHostPlugins"));
+
+        // The game arm uses DefaultPlugins too and must survive.
+        let game = "\
+        app.add_plugins(DefaultPlugins);
+        app.add_plugin(registrations::ProjectRegistrations { run_systems: true });";
+        assert_eq!(migrate_remote_host(game), game);
+
+        // Already migrated: unchanged, and not migrated twice.
+        let migrated = migrate_remote_host(generated);
+        assert_eq!(migrate_remote_host(&migrated), migrated);
+    }
+
+    /// Gameplay systems must be registered unconditionally and wrapped
+    /// in the runtime gate — registering them only when `run_systems` is
+    /// set would make Play require a rebuild, which is the whole point
+    /// of the gate.
+    #[test]
+    fn generated_plugin_wraps_systems_in_the_runtime_gate() {
         use super::{SourceFile, render_registrations};
         let files = vec![SourceFile {
             rel: "movement.rs".to_owned(),
@@ -306,12 +358,17 @@ pub fn movement(resources: &mut Resources) {}
         }];
         let out = render_registrations(&files);
         assert!(out.contains("pub run_systems: bool"));
-        assert!(out.contains("if self.run_systems"));
-        // The gameplay system must sit INSIDE the run_systems guard.
-        let guard = out.find("if self.run_systems").expect("guard present");
-        let sys = out
-            .find("add_system(Stage::Update, movement::move_system)")
-            .expect("system present");
-        assert!(sys > guard, "system must be gated by run_systems");
+        assert!(
+            out.contains("insert_resource(Playing(self.run_systems))"),
+            "run_systems must seed the gate, not branch on it"
+        );
+        assert!(
+            out.contains("add_system(Stage::Update, run_if_playing(movement::move_system))"),
+            "system must be registered wrapped, got:\n{out}"
+        );
+        assert!(
+            !out.contains("if self.run_systems"),
+            "compile-time branch survived"
+        );
     }
 }

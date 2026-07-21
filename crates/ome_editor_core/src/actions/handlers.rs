@@ -49,7 +49,7 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::Play => handle_play(resources),
         EditorAction::Stop => handle_stop(resources),
         EditorAction::OpenProject(path) => handle_open_project(resources, path),
-        EditorAction::OpenRemote(path) => handle_open_remote(resources, path),
+        EditorAction::RebuildRemote => handle_rebuild_remote(resources),
         EditorAction::CreateProject { name, parent_path } => {
             handle_create_project(resources, name, parent_path);
         }
@@ -211,8 +211,28 @@ fn handle_stop(resources: &mut Resources) {
     }
 }
 
+/// Opens a project — that is, launches it and starts driving it.
+///
+/// A project is a Rust crate that owns its own component types, so the
+/// hub cannot meaningfully load its scene itself: half of every entity
+/// would arrive as a parked component with no behaviour behind it. It
+/// launches the project in `--remote` mode instead and mirrors the world
+/// the project owns, which is also what makes Play run gameplay in the
+/// editor's viewport rather than in a second window.
+///
+/// The in-process path survives only for a folder with no crate to run.
+/// Such a project can be inspected but not played.
 fn handle_open_project(resources: &mut Resources, path: &std::path::Path) {
-    open_project(resources, path, SceneSource::LocalFile);
+    if !path.join("Cargo.toml").exists() {
+        tracing::warn!(
+            project = %path.display(),
+            "no Cargo.toml — opening read-only, without a running project"
+        );
+        open_project(resources, path, SceneSource::LocalFile);
+        return;
+    }
+    open_project(resources, path, SceneSource::RemoteMirror);
+    start_remote_session(resources);
 }
 
 /// Where the opened project's entities come from.
@@ -271,20 +291,39 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
 /// Rust types for the project's components, so a local load would park
 /// half of every entity. The project loads its own scene at boot and the
 /// mirror pulls it in once connected.
-fn handle_open_remote(resources: &mut Resources, path: &std::path::Path) {
-    open_project(resources, path, SceneSource::RemoteMirror);
+/// Rebuilds the project and reconnects to the fresh binary.
+///
+/// The only way to pick up code the project did not have when it
+/// started: Rust is compiled ahead of time, so a new component or system
+/// needs a rebuild, and the running process cannot grow one. Also the
+/// way back from a session that died — the launch is a `cargo run`, so
+/// it recompiles and relaunches in one step.
+fn handle_rebuild_remote(resources: &mut Resources) {
+    disconnect_remote(resources);
+    start_remote_session(resources);
+}
+
+/// Launches the active project in remote mode and adopts the session.
+///
+/// Regenerates `src/registrations.rs` first. That file is editor-owned,
+/// and a project last registered by an older editor still gates its
+/// systems at build time — Play would flip a `Playing` gate nothing
+/// reads. Rewriting it before the build is what makes an existing
+/// project pick up the runtime gate without the user knowing it exists.
+fn start_remote_session(resources: &mut Resources) {
+    super::register_scripts(resources);
 
     let Some((manifest_path, engine_root)) = resources.get::<ProjectState>().and_then(|ps| {
         let project = ps.active_project.as_ref()?;
         Some((project.root_path.join("Cargo.toml"), ps.engine_root.clone()))
     }) else {
-        tracing::error!("Open Remote: project failed to open");
+        tracing::error!("remote: no active project");
         return;
     };
     if !manifest_path.exists() {
         tracing::error!(
             manifest = %manifest_path.display(),
-            "Open Remote: no Cargo.toml — remote mode only works on crate-projects"
+            "remote: no Cargo.toml — remote mode only works on crate-projects"
         );
         return;
     }
@@ -293,6 +332,7 @@ fn handle_open_remote(resources: &mut Resources, path: &std::path::Path) {
         Ok(session) => {
             if let Some(state) = resources.get_mut::<RemoteState>() {
                 state.session = Some(session);
+                state.playing = false;
             }
             // Reset the cadence so a stale failure from a previous
             // session does not suppress this one's reporting.
@@ -300,7 +340,7 @@ fn handle_open_remote(resources: &mut Resources, path: &std::path::Path) {
                 *sync = Default::default();
             }
         }
-        Err(e) => tracing::error!("Open Remote: failed to launch project: {e}"),
+        Err(e) => tracing::error!("remote: failed to launch project: {e}"),
     }
 }
 
@@ -316,6 +356,7 @@ fn disconnect_remote(resources: &mut Resources) {
         session.stop();
     }
     state.session = None;
+    state.playing = false;
     state.mirror.clear(resources);
     resources.insert(state);
 }

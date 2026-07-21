@@ -118,6 +118,11 @@ pub enum Method {
     SaveScene { path: String },
     /// Replace the live ECS with a scene file from the server's disk.
     LoadScene { path: String },
+    /// Start or stop the project's gameplay systems in place.
+    ///
+    /// Starting snapshots the world first and stopping restores that
+    /// snapshot, so a play session leaves the authored scene untouched.
+    SetPlaying { playing: bool },
 }
 
 /// A request: a method invocation carrying a client-chosen id, echoed in
