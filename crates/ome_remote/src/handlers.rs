@@ -81,6 +81,10 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
         },
+        Method::SetPlaying { playing } => match set_playing(resources, *playing) {
+            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Err(e) => Response::err(id, e),
+        },
     }
 }
 
@@ -309,6 +313,45 @@ fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> 
     sync_scene_to_ecs(&doc, resources).map_err(|e| RemoteError::SceneError {
         detail: e.to_string(),
     })
+}
+
+/// The authored world, held while a play session runs so Stop can put
+/// it back. Present only between a start and the matching stop.
+struct PlaySnapshot(SceneDocument);
+
+/// Starts or stops gameplay in place.
+///
+/// Play is destructive by nature — systems mutate the very entities the
+/// user authored — so the world is snapshotted on start and restored on
+/// stop. Restoring respawns every entity, so the client's
+/// [`EntityId`]s are invalidated; a client mirrors by id and will see
+/// this as the whole world being replaced, which it is.
+///
+/// Idempotent in both directions: starting while already playing keeps
+/// the original snapshot (so a double Play cannot lose the authored
+/// state), and stopping while stopped is a no-op.
+fn set_playing(resources: &mut Resources, playing: bool) -> Result<(), RemoteError> {
+    if playing == ome_core::run_state::Playing::is_playing(resources) {
+        return Ok(());
+    }
+
+    if playing {
+        resources.insert(PlaySnapshot(SceneDocument::from_ecs(resources)));
+        ome_core::run_state::Playing::set(resources, true);
+        tracing::info!("remote: play");
+        return Ok(());
+    }
+
+    // Stop: the gate goes down before the restore so no system observes
+    // a half-rebuilt world.
+    ome_core::run_state::Playing::set(resources, false);
+    if let Some(snapshot) = resources.remove::<PlaySnapshot>() {
+        sync_scene_to_ecs(&snapshot.0, resources).map_err(|e| RemoteError::SceneError {
+            detail: e.to_string(),
+        })?;
+    }
+    tracing::info!("remote: stop");
+    Ok(())
 }
 
 /// Moves an entity to the archetype it belongs in after adding `type_id`.

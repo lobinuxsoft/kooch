@@ -169,6 +169,16 @@ impl RemoteClient {
     }
 
     /// Replaces the server's live ECS with a scene file from its disk.
+    /// Starts or stops the project's gameplay systems.
+    ///
+    /// Stopping restores the world as it stood when play began, which
+    /// respawns every entity — treat previously held [`EntityId`]s as
+    /// stale afterwards.
+    pub fn set_playing(&self, playing: bool) -> Result<(), ClientError> {
+        self.call(Method::SetPlaying { playing })?;
+        Ok(())
+    }
+
     pub fn load_scene(&self, path: &str) -> Result<(), ClientError> {
         self.expect_ok(Method::LoadScene {
             path: path.to_owned(),
