@@ -50,6 +50,7 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::Stop => handle_stop(resources),
         EditorAction::OpenProject(path) => handle_open_project(resources, path),
         EditorAction::OpenRemote(path) => handle_open_remote(resources, path),
+        EditorAction::RebuildRemote => handle_rebuild_remote(resources),
         EditorAction::CreateProject { name, parent_path } => {
             handle_create_project(resources, name, parent_path);
         }
@@ -273,18 +274,34 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
 /// mirror pulls it in once connected.
 fn handle_open_remote(resources: &mut Resources, path: &std::path::Path) {
     open_project(resources, path, SceneSource::RemoteMirror);
+    start_remote_session(resources);
+}
 
+/// Rebuilds the project and reconnects to the fresh binary.
+///
+/// The only way to pick up code the project did not have when it
+/// started: Rust is compiled ahead of time, so a new component or system
+/// needs a rebuild, and the running process cannot grow one. Also the
+/// way back from a session that died — the launch is a `cargo run`, so
+/// it recompiles and relaunches in one step.
+fn handle_rebuild_remote(resources: &mut Resources) {
+    disconnect_remote(resources);
+    start_remote_session(resources);
+}
+
+/// Launches the active project in remote mode and adopts the session.
+fn start_remote_session(resources: &mut Resources) {
     let Some((manifest_path, engine_root)) = resources.get::<ProjectState>().and_then(|ps| {
         let project = ps.active_project.as_ref()?;
         Some((project.root_path.join("Cargo.toml"), ps.engine_root.clone()))
     }) else {
-        tracing::error!("Open Remote: project failed to open");
+        tracing::error!("remote: no active project");
         return;
     };
     if !manifest_path.exists() {
         tracing::error!(
             manifest = %manifest_path.display(),
-            "Open Remote: no Cargo.toml — remote mode only works on crate-projects"
+            "remote: no Cargo.toml — remote mode only works on crate-projects"
         );
         return;
     }
@@ -293,6 +310,7 @@ fn handle_open_remote(resources: &mut Resources, path: &std::path::Path) {
         Ok(session) => {
             if let Some(state) = resources.get_mut::<RemoteState>() {
                 state.session = Some(session);
+                state.playing = false;
             }
             // Reset the cadence so a stale failure from a previous
             // session does not suppress this one's reporting.
@@ -300,7 +318,7 @@ fn handle_open_remote(resources: &mut Resources, path: &std::path::Path) {
                 *sync = Default::default();
             }
         }
-        Err(e) => tracing::error!("Open Remote: failed to launch project: {e}"),
+        Err(e) => tracing::error!("remote: failed to launch project: {e}"),
     }
 }
 
@@ -316,6 +334,7 @@ fn disconnect_remote(resources: &mut Resources) {
         session.stop();
     }
     state.session = None;
+    state.playing = false;
     state.mirror.clear(resources);
     resources.insert(state);
 }

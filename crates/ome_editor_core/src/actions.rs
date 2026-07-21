@@ -82,6 +82,10 @@ pub(crate) enum EditorAction {
     /// scene locally. The only way the standalone hub can edit a project
     /// whose component types it was never compiled against.
     OpenRemote(PathBuf),
+    /// Rebuild the project and reconnect to the fresh binary. The only
+    /// way to pick up code added since the session started — Rust is
+    /// compiled ahead of time — and the way back from a dead session.
+    RebuildRemote,
     CreateProject {
         name: String,
         parent_path: PathBuf,

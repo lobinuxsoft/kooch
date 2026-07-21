@@ -80,7 +80,13 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
         ConnectionState::Failed => {
             if !sync.failure_reported {
                 sync.failure_reported = true;
-                tracing::error!("remote project exited before connecting");
+                tracing::error!("remote project exited — use Rebuild to relaunch it");
+                // Tear the mirror down. Left standing it would look
+                // editable while every edit went nowhere, and a Save
+                // would write an empty scene: mirrored entities are
+                // ephemeral, so they are excluded from the document.
+                *playing = false;
+                mirror.clear(resources);
             }
             return;
         }

@@ -179,20 +179,27 @@ impl RemoteSession {
         &self.client
     }
 
+    /// Advances the session's state one step.
+    ///
     /// While [`ConnectionState::Connecting`], pings the server; on the
     /// first success, pulls the schema + an initial snapshot and moves to
-    /// [`ConnectionState::Connected`]. If the child process exited before
-    /// connecting, moves to [`ConnectionState::Failed`].
+    /// [`ConnectionState::Connected`]. Once connected it keeps watching
+    /// the child: a project that crashes or is closed drops to
+    /// [`ConnectionState::Failed`] rather than leaving the editor driving
+    /// a process that is no longer there.
     ///
-    /// A no-op once connected. Cheap while connecting: a refused
-    /// connection returns immediately, so this can run every frame during
-    /// the project's build without stalling.
+    /// Cheap in every state: a refused connection returns immediately and
+    /// the liveness check is a non-blocking wait, so this can run every
+    /// frame during the project's build without stalling.
     pub fn poll_ready(&mut self) -> ConnectionState {
-        if self.state != ConnectionState::Connecting {
+        if self.state == ConnectionState::Failed {
             return self.state;
         }
         if self.child_exited() {
             self.state = ConnectionState::Failed;
+            return self.state;
+        }
+        if self.state == ConnectionState::Connected {
             return self.state;
         }
         if self.client.ping().is_ok() {
