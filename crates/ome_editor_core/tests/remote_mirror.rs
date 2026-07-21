@@ -141,3 +141,65 @@ fn reapply_replaces_the_previous_mirror() {
             .is_some()
     );
 }
+
+/// Re-applying keeps the same local entity for the same remote id, so
+/// the editor's selection survives a refresh.
+#[test]
+fn reapply_keeps_local_entities_stable() {
+    let mut resources = ecs();
+    let mut mirror = RemoteMirror::new();
+
+    mirror.apply(&snapshot(), &mut resources);
+    let before = mirror.local_of(eid(1)).expect("mesh mirrored");
+
+    // The project moved the mesh; everything else is unchanged.
+    let mut next = snapshot();
+    next[1].components[0].fields = vec![("position".into(), ReflectValue::Vec3(glam::Vec3::Y))];
+    mirror.apply(&next, &mut resources);
+
+    assert_eq!(
+        mirror.local_of(eid(1)),
+        Some(before),
+        "entity handle churned"
+    );
+    let position = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<Transform>())
+        .and_then(|s| s.get(before))
+        .map(|t| t.position);
+    assert_eq!(position, Some(glam::Vec3::Y), "field not updated in place");
+}
+
+/// A component removed on the project's side leaves the mirror too —
+/// both a reflected one and a parked one.
+#[test]
+fn reapply_drops_components_the_project_removed() {
+    let mut resources = ecs();
+    let mut mirror = RemoteMirror::new();
+
+    mirror.apply(&snapshot(), &mut resources);
+    let mesh = mirror.local_of(eid(1)).expect("mesh mirrored");
+
+    // Both of the mesh's components are gone on the next pull.
+    let mut next = snapshot();
+    next[1].components.clear();
+    mirror.apply(&next, &mut resources);
+
+    assert!(
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<Transform>())
+            .and_then(|s| s.get(mesh))
+            .is_none(),
+        "reflected component survived"
+    );
+    assert_eq!(
+        resources
+            .get::<DynamicComponents>()
+            .unwrap()
+            .iter_entity(mesh)
+            .count(),
+        0,
+        "parked component survived"
+    );
+}

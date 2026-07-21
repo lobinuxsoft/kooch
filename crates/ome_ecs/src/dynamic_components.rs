@@ -113,6 +113,22 @@ impl DynamicComponents {
         true
     }
 
+    /// Drops one parked component from `entity`.
+    ///
+    /// Returns `false` when the entity has no component of that type.
+    pub fn remove(&mut self, entity: Entity, type_name: &str) -> bool {
+        let Some(name_index) = self.names.iter().position(|n| n == type_name) else {
+            return false;
+        };
+        let Some(i) = self.position(entity, name_index as u32) else {
+            return false;
+        };
+        self.entities.swap_remove(i);
+        self.name_indices.swap_remove(i);
+        self.fields.swap_remove(i);
+        true
+    }
+
     /// Drops every entry belonging to `entity`.
     pub fn remove_entity(&mut self, entity: Entity) {
         self.retain(|e| e != entity);

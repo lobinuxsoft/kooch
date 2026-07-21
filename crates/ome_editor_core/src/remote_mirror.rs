@@ -17,7 +17,7 @@
 //! despawns the previous mirror without touching editor-owned entities
 //! (camera, gizmos).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ome_core::resource::Resources;
 use ome_ecs::archetype_registry::ArchetypeRegistry;
@@ -47,6 +47,11 @@ pub struct RemoteMirror {
     /// The inverse: local entity → remote id, so an edit made against a
     /// mirrored entity can be addressed back to the server.
     remote_map: HashMap<Entity, EntityId>,
+    /// Component type names applied to each mirrored entity last time.
+    /// The diff needs it to notice a component the project has since
+    /// removed — the local ECS cannot be asked, since parked components
+    /// live outside the archetype.
+    components: HashMap<Entity, Vec<String>>,
 }
 
 impl RemoteMirror {
@@ -71,31 +76,36 @@ impl RemoteMirror {
     /// Called when the session ends: the mirror's entities are ephemeral,
     /// so the ordinary project-close sweep leaves them behind.
     pub fn clear(&mut self, resources: &mut Resources) {
-        self.despawn_previous(resources);
+        self.retain_only(&[], resources);
         self.id_map.clear();
         self.remote_map.clear();
+        self.components.clear();
     }
 
-    /// Rebuilds the local mirror to match `snapshot`.
+    /// Updates the local mirror to match `snapshot`.
     ///
-    /// Despawns the previous mirror, then recreates every snapshot entity
-    /// with its components and hierarchy. Cheap to call each refresh while
-    /// the entity count is small; a diffing update is a later
-    /// optimisation once selection stability demands it.
+    /// A **diff**, not a rebuild: an entity whose remote id was already
+    /// mirrored keeps its local [`Entity`] and has its fields written in
+    /// place. That stability is load-bearing — selection, the Inspector's
+    /// open headers and the gizmo all address entities by handle, so
+    /// respawning the world every refresh would drop the user's selection
+    /// twice a second, and once per frame while the project is playing.
     pub fn apply(&mut self, snapshot: &[EntitySnapshot], resources: &mut Resources) {
-        self.despawn_previous(resources);
-        self.id_map.clear();
-        self.remote_map.clear();
+        self.retain_only(snapshot, resources);
 
-        // First pass: spawn each entity, insert its components, remember
-        // the remote→local mapping.
+        // First pass: reuse or create the local entity for each snapshot
+        // entry, then sync its component set to match.
         for snap in snapshot {
-            let entity = self.spawn_mirror(resources);
-            self.id_map.insert(snap.id, entity);
-            self.remote_map.insert(entity, snap.id);
-            for comp in &snap.components {
-                insert_component(resources, entity, &comp.type_name, &comp.fields);
-            }
+            let entity = match self.id_map.get(&snap.id) {
+                Some(&entity) => entity,
+                None => {
+                    let entity = self.spawn_mirror(resources);
+                    self.id_map.insert(snap.id, entity);
+                    self.remote_map.insert(entity, snap.id);
+                    entity
+                }
+            };
+            self.sync_components(resources, entity, snap);
         }
 
         // Second pass: wire parents now that every id is mapped.
@@ -109,19 +119,56 @@ impl RemoteMirror {
         }
     }
 
-    /// Despawns the entities created by the previous [`Self::apply`].
-    fn despawn_previous(&mut self, resources: &mut Resources) {
-        if self.id_map.is_empty() {
+    /// Despawns mirrored entities whose remote id is absent from
+    /// `snapshot` — they were despawned on the project's side.
+    fn retain_only(&mut self, snapshot: &[EntitySnapshot], resources: &mut Resources) {
+        let alive: HashSet<EntityId> = snapshot.iter().map(|s| s.id).collect();
+        let gone: Vec<(EntityId, Entity)> = self
+            .id_map
+            .iter()
+            .filter(|(id, _)| !alive.contains(id))
+            .map(|(id, entity)| (*id, *entity))
+            .collect();
+        if gone.is_empty() {
             return;
         }
         let mut commands = resources
             .remove::<Commands>()
             .expect("Commands not in Resources");
-        for &entity in self.id_map.values() {
+        for (id, entity) in gone {
             commands.despawn(entity);
+            self.id_map.remove(&id);
+            self.remote_map.remove(&entity);
+            self.components.remove(&entity);
         }
         commands.apply(resources);
         resources.insert(commands);
+    }
+
+    /// Brings `entity`'s components in line with `snap`: writes the
+    /// fields of every component present, and drops any the project no
+    /// longer has.
+    fn sync_components(
+        &mut self,
+        resources: &mut Resources,
+        entity: Entity,
+        snap: &EntitySnapshot,
+    ) {
+        for comp in &snap.components {
+            insert_component(resources, entity, &comp.type_name, &comp.fields);
+        }
+
+        let present: Vec<String> = snap
+            .components
+            .iter()
+            .map(|c| c.type_name.clone())
+            .collect();
+        if let Some(previous) = self.components.get(&entity) {
+            for stale in previous.iter().filter(|n| !present.contains(n)) {
+                remove_component(resources, entity, stale);
+            }
+        }
+        self.components.insert(entity, present);
     }
 
     /// Spawns one marked mirror entity and returns it.
@@ -181,6 +228,30 @@ fn insert_component(
                 tracing::debug!(component = type_name, field, "mirror set_field failed: {e}");
             }
         }
+    }
+}
+
+/// Drops a component the project no longer has from the mirror.
+fn remove_component(resources: &mut Resources, entity: Entity, type_name: &str) {
+    let type_id = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.type_id_by_name(type_name));
+
+    let Some(type_id) = type_id else {
+        if let Some(dynamic) = resources.get_mut::<DynamicComponents>() {
+            dynamic.remove(entity, type_name);
+        }
+        return;
+    };
+
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.remove_component(entity, &type_id);
+    }
+    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(entity)
+    {
+        let new_arch = archetypes.archetype_after_remove_dynamic(current, type_id);
+        archetypes.register_entity(entity, new_arch);
     }
 }
 
