@@ -49,7 +49,7 @@ pub use perf::EditorPerfStats;
 pub use play_state::PlayState;
 pub use project::{EditorConfig, ProjectManifest};
 pub use remote_mirror::{MirrorEntity, RemoteMirror};
-pub use remote_session::{ConnectionState, RemoteSession};
+pub use remote_session::{ConnectionState, RemoteSession, RemoteState};
 pub use project_state::ProjectState;
 pub use state::EditorOverlay;
 
