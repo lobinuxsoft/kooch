@@ -4,6 +4,7 @@ mod asset_ops;
 mod codegen;
 mod dispatch;
 mod handlers;
+mod remote_edit;
 mod reparent;
 mod scene_io;
 
@@ -180,6 +181,24 @@ pub(crate) fn apply_actions(
     actions: &[EditorAction],
     undo_stack: &mut UndoStack,
 ) {
+    // Dual-sink: with a connected remote session the editor's ECS is a
+    // mirror of a project that owns the real state, so ECS edits route
+    // over the wire instead of mutating the mirror (which the next
+    // refresh would overwrite). Actions remote mode does not own fall
+    // through to the local path below. This is the one place the two
+    // modes diverge.
+    let remote = resources
+        .get::<crate::remote_session::RemoteState>()
+        .is_some_and(|s| s.is_connected());
+    if remote {
+        for action in actions {
+            if !remote_edit::dispatch(resources, action) {
+                apply_non_ecs_action(action, resources, undo_stack);
+            }
+        }
+        return;
+    }
+
     let mut i = 0;
     while i < actions.len() {
         let action = &actions[i];

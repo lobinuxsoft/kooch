@@ -22,6 +22,38 @@ use std::time::Duration;
 use ome_remote::protocol::{ComponentSchema, EntitySnapshot};
 use ome_remote::{DEFAULT_PORT, RemoteClient};
 
+use crate::remote_mirror::RemoteMirror;
+
+/// The editor's remote-mode state: the active session (if any) and the
+/// local mirror of its scene.
+///
+/// A single resource so the session and the mirror it feeds never drift.
+/// `session == None` means the editor is in ordinary local mode; a
+/// `Some` session that is [`ConnectionState::Connected`] is what flips
+/// the edit dispatch to route through the wire.
+#[derive(Default)]
+pub struct RemoteState {
+    /// The launched project, or `None` in local mode.
+    pub session: Option<RemoteSession>,
+    /// The local ECS reconstruction of the remote scene.
+    pub mirror: RemoteMirror,
+}
+
+impl RemoteState {
+    /// Creates empty (local-mode) state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `true` when a session exists and has connected — the condition
+    /// under which edits route to the server instead of the local ECS.
+    pub fn is_connected(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|s| s.state() == ConnectionState::Connected)
+    }
+}
+
 /// Where a session is in its connect handshake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {

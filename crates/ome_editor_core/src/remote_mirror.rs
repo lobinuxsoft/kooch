@@ -44,6 +44,9 @@ impl Component for MirrorEntity {}
 pub struct RemoteMirror {
     /// Remote entity id → the local entity standing in for it.
     id_map: HashMap<EntityId, Entity>,
+    /// The inverse: local entity → remote id, so an edit made against a
+    /// mirrored entity can be addressed back to the server.
+    remote_map: HashMap<Entity, EntityId>,
 }
 
 impl RemoteMirror {
@@ -57,6 +60,12 @@ impl RemoteMirror {
         self.id_map.get(&remote).copied()
     }
 
+    /// The remote id behind a mirrored local entity, if any. Used to
+    /// route an edit made in the editor back to the owning project.
+    pub fn remote_of(&self, local: Entity) -> Option<EntityId> {
+        self.remote_map.get(&local).copied()
+    }
+
     /// Rebuilds the local mirror to match `snapshot`.
     ///
     /// Despawns the previous mirror, then recreates every snapshot entity
@@ -66,12 +75,14 @@ impl RemoteMirror {
     pub fn apply(&mut self, snapshot: &[EntitySnapshot], resources: &mut Resources) {
         self.despawn_previous(resources);
         self.id_map.clear();
+        self.remote_map.clear();
 
         // First pass: spawn each entity, insert its components, remember
         // the remote→local mapping.
         for snap in snapshot {
             let entity = self.spawn_mirror(resources);
             self.id_map.insert(snap.id, entity);
+            self.remote_map.insert(entity, snap.id);
             for comp in &snap.components {
                 insert_component(resources, entity, &comp.type_name, &comp.fields);
             }
