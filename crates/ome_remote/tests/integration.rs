@@ -260,6 +260,49 @@ fn client_drives_server_end_to_end() {
     main_loop.join().unwrap();
 }
 
+/// Entities are listed in the order the user authored them, not grouped
+/// by archetype — a hierarchy panel shows this order verbatim.
+#[test]
+fn entities_are_listed_in_authored_order() {
+    let mut resources = ecs();
+    let transform_ty = std::any::type_name::<Transform>().to_owned();
+
+    // Give the second entity a component the others lack, so archetype
+    // grouping would pull it out of order if the listing relied on it.
+    for (i, name) in ["First", "Second", "Third"].iter().enumerate() {
+        let entity = match call(
+            &mut resources,
+            Method::Spawn {
+                name: Some((*name).into()),
+            },
+        ) {
+            ResponseData::Spawned { entity } => entity,
+            other => panic!("spawn: {other:?}"),
+        };
+        if i == 1 {
+            call(
+                &mut resources,
+                Method::AddComponent {
+                    entity,
+                    component: transform_ty.clone(),
+                },
+            );
+        }
+    }
+
+    let entities = match call(&mut resources, Method::ListEntities) {
+        ResponseData::Entities { entities } => entities,
+        other => panic!("list: {other:?}"),
+    };
+    assert_eq!(
+        entities
+            .iter()
+            .map(|e| e.name.clone().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        vec!["First", "Second", "Third"],
+    );
+}
+
 /// Play flips the gate; Stop puts back the world as it stood when play
 /// began, so a play session cannot corrupt the authored scene.
 #[test]

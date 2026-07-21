@@ -120,6 +120,10 @@ fn list_entities(id: u64, resources: &Resources) -> Response {
     ];
     let parents = registry.get_cpu::<Parent>();
 
+    // Archetype iteration groups by component set, which scrambles the
+    // order the user authored. Entities are allocated in the order the
+    // scene lists them, so ascending index is that authored order — and
+    // it is what a client shows in its hierarchy.
     let mut entities = Vec::new();
     for archetype in archetypes.iter_matching(&[]) {
         for &entity in archetype.entities() {
@@ -154,6 +158,7 @@ fn list_entities(id: u64, resources: &Resources) -> Response {
             });
         }
     }
+    entities.sort_by_key(|e| e.id.index);
 
     Response::ok(id, ResponseData::Entities { entities })
 }
