@@ -38,11 +38,71 @@ voxel + DC de Phase 2.5. No es el render path actual.
 
 ---
 
-## ⭐ Estado actual (development HEAD `9d8c6a6`, 2026-07-02)
+## ⭐ Estado actual (development HEAD `389f209`, 2026-07-21)
 
-- `development` limpio, **cero PRs abiertos**. origin solo tiene `main` + `development`.
+- `development` limpio, **cero PRs abiertos**.
+- **Hilo principal actual = Épico C (editor remoto), ver sección dedicada abajo.** El render
+  path #440 (más abajo) sigue vigente pero no es el foco activo.
 - Editor corre limpio en RX 9070 XT (Vulkan/RADV): cero validation warnings, smoke OK en
   producción + todos los debug modes.
+
+### ⭐⭐ Épico C — Editor remoto (BRP-style) — EN CURSO
+
+**Problema raíz:** el editor standalone (`ome_editor`, launcher hub) NO puede cargar escenas
+con componentes del proyecto (`unknown component type: test3::...::MoveComponent`). No es bug:
+es un editor genérico compilado antes que el proyecto exista; Rust resuelve tipos en
+compile-time, no hay ABI dinámica estable. **Solución (elegida por el user, "no alambre"):
+protocolo remoto tipo Bevy Remote Protocol.** El binario del PROYECTO es dueño del ECS y
+responde por HTTP; el editor pasa a cliente delgado.
+
+**Arquitectura clave (locked):** UNA fuente de datos (ECS local, real en modo local o
+ESPEJO en modo remoto vía `RemoteMirror`) + UN seam de bifurcación (`apply_actions` →
+`remote_edit::dispatch` cuando `RemoteState::is_connected()`). Paneles/DTOs/viewport
+IDÉNTICOS en ambos modos. Modelo de viewport = **C** (el hub rendea el espejo con su
+viewport, que ya rendea meshes bien). Estrategia de entrada = **A→B**: hoy "Open Remote"
+separado; cuando el remoto madure, "Open Project" pasa a remoto (borrar un botón, no
+reescribir).
+
+**Fases (todas MERGED salvo la última):**
+- ✅ **1 — componentes dinámicos** (#548). `ome_ecs::dynamic_components`: componente sin tipo
+  local se PARKEA (no aborta la carga, no vacía el mundo). Round-trip intacto. Mató pérdida
+  de datos real. `SceneError::UnknownComponent` eliminado.
+- ✅ **2 — identidad portable** (#549). `ome_ecs::component::{ComponentId, ComponentNames}`:
+  interner nombre↔u32 process-local. `EditorAction`/DTOs llevan `ComponentId`; `TypeId` se
+  queda en reflexión local. Seam `dispatch::action_to_command` resuelve ComponentId→TypeId.
+- ✅ **3 — crate `ome_remote`** (#550). Server `tiny_http` SÍNCRONO (thread dedicado + puente
+  mpsc al main, NO async, NO tokio) + `RemoteClient` blocking (std::net). `protocol` (serde,
+  componentes por nombre, Entity=(index,generation), reusa ReflectValue). Métodos:
+  ping/list_entities/get_schema/set_field/add/remove/spawn/despawn/save/load. DEFAULT_PORT 15703.
+- ✅ **4a — modo `--remote`** (#551). Facade: dep opcional tras feature `remote` + prelude.
+  Scaffold main.rs 3er modo `cargo run -- --remote` = DefaultPlugins + RemotePlugin +
+  run_systems:false. Verificado vs TEST3 real por HTTP.
+- ✅ **4b.1 — `RemoteSession`** (#552). `ome_editor_core::remote_session`: lanza el proyecto
+  (patrón PlayState + env OME_ENGINE_ROOT/OME_PROJECT_ROOT), handshake poll_ready, cachea
+  snapshot+schema.
+- ✅ **4b.2 — `RemoteMirror`** (#553). Reconstruye el snapshot en el ECS local del editor,
+  keyed por `EntityId` (NO por nombre; 5 "Mesh" duplicados). Engine components → reflected
+  reales (rendean); proyecto → parkeados (DynamicComponents). Marker `MirrorEntity`.
+- ✅ **4b.3a — dual-sink dispatch** (#554). `RemoteState` (session+mirror). `apply_actions`
+  chequea is_connected → rutea EditorAction al RemoteClient (`remote_edit::dispatch`; traduce
+  Entity local→remoto vía `mirror.remote_of`, ComponentId→nombre). UN solo if. Test e2e:
+  SetField en el editor llega al server.
+
+**⏳ LO QUE FALTA:**
+- **4b.3b — ACTIVACIÓN (próxima sesión, la que hace TODO visible):** insertar `RemoteState`
+  en `EditorPlugin`; system que poll_ready + refresh (cada N frames) + `mirror.apply` sobre el
+  ECS del editor; registrar `MirrorEntity` como ephemeral; entry point UI "Open Remote" en
+  `launch_screen.rs` (junto a "Open Project"). El viewport rendea el mirror automáticamente
+  (ya rendea el ECS local). **Necesita smoke visual del user.**
+- **Mostrar DynamicComponents parkeados en el Inspector** (deuda fase 1): `queries.rs` hoy solo
+  lee componentes registrados del archetype → los componentes del proyecto son invisibles en
+  el Inspector remoto. Necesario para authoring completo.
+- **Fase 5 — ciclo de vida:** Play/Stop remoto, reconexión tras recompilar, "Rebuild & Relaunch".
+- **Convergencia A→B:** cuando el remoto madure, "Open Project" → remoto por defecto.
+
+**Deuda no-épico acumulada (arreglable suelta):** `Duplicate` de entidad no copia componentes
+parkeados; drag `.glb`/`.gltf` al slot de mesh (pedido); `Delete` de asset sin confirmación
+(#439); thumbnails del asset browser.
 
 ### Render path vigente: mesh GPU-driven Nanite-style (NO SDF)
 
@@ -109,6 +169,21 @@ Sin (1)/(2), el paso de texturas demo no es verificable — por eso quedó afuer
 - **prev_lod_indices Vec<u32>** (#535 H3), **parent.lod_error monotone-clamped** (#535 H1) —
   tests invariante en lod_chain.
 
+### Editor remoto (locked 2026-07-21, épico C)
+
+- **El proyecto es dueño del ECS; el editor standalone es cliente.** No cargar tipos del
+  proyecto en el editor (no hay ABI Rust estable). Protocolo HTTP tipo BRP (`ome_remote`).
+- **Transporte = `tiny_http` SÍNCRONO en thread lateral + puente mpsc al main.** NUNCA async/
+  tokio en el core del engine. El server no toca el ECS fuera del main thread (`Stage::First`).
+- **UNA fuente de datos + UN seam de edición.** ECS local (real o espejo `RemoteMirror`) leído
+  por paneles/viewport igual en ambos modos; la ÚNICA bifurcación es `apply_actions` →
+  `remote_edit::dispatch` si `RemoteState::is_connected()`. NO duplicar paths por modo.
+- **Identidad cross-proceso = nombre cualificado, NUNCA TypeId.** `ComponentId` interned es
+  process-local; el cable lleva nombres. `TypeId` solo para reflexión local.
+- **Viewport modelo C** (hub rendea el espejo), entrada **A→B** (Open Remote separado hoy →
+  Open Project remoto cuando madure). NO modelo B directo (sin fallback), NO embed de ventana
+  (roto en Wayland).
+
 ### Lighting stack (locked 2026-05-06)
 
 - **Diffuse GI = Surfel radiance cache + voxel/DC coupling (#450).** NO Radiance Cascades
@@ -174,7 +249,11 @@ Local/World rotation toggle · drag-drop Components · Hierarchy propagation · 
 + warning shear · Editor camera (orbit MMB / pan Shift+MMB / zoom rueda / fly RMB+WASD+QE / focus F) ·
 Scene serialization `.ome_scene` (RON) con `EphemeralComponents` filter · SceneManager (path+dirty+load/save)
 · default scene auto-create · gizmos (translate/rotate/scale + snap + Local/World) · undo/redo per drag ·
-native asset picker · persistent dock layout · Perf HUD (FPS/CPU/GPU/RAM/VRAM/draws) · mdBook docs en `docs/book/`.
+native asset picker · persistent dock layout · Perf HUD (FPS/CPU/GPU/RAM/VRAM/draws) · mdBook docs en `docs/book/`
+· **Asset Browser** (árbol del crate + drag-drop import + menú contextual + inline create/rename + drag
+asset→slot Inspector) · material editor en Inspector · IDE picker · **codegen de proyecto** (scaffolds
+component/system + `registrations.rs` + editor embebido + gating) · **cliente remoto** (`RemoteSession` +
+`RemoteMirror` + dual-sink, ver épico C — falta activación 4b.3b).
 
 ---
 
