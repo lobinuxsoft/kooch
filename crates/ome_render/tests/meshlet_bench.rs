@@ -65,7 +65,7 @@ fn meshlet_bench_sphere_renders_under_target_frame_time() {
     let meshlet_bgl = meshlet_bind_group_layout(&device);
     let meshlet_bg = meshlet_bind_group(&device, &meshlet_bgl, &gpu_mesh);
 
-    let mut materials = MaterialPipeline::with_capacity(&device, 4);
+    let mut materials = MaterialPipeline::with_capacity(&device, &queue, 4);
     materials.register(
         &queue,
         Guid::new_v4(),
@@ -307,7 +307,7 @@ fn meshlet_bench_scaling_per_pass_timings() {
         let meshlet_bgl = meshlet_bind_group_layout(&device);
         let meshlet_bg = meshlet_bind_group(&device, &meshlet_bgl, &gpu_mesh);
 
-        let mut materials = MaterialPipeline::with_capacity(&device, 4);
+        let mut materials = MaterialPipeline::with_capacity(&device, &queue, 4);
         materials.register(
             &queue,
             Guid::new_v4(),

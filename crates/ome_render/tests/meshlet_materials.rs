@@ -50,7 +50,7 @@ fn render_with_material(material_id: u32) -> Vec<u8> {
 
     // slot 0 is the MaterialPipeline fallback (white). Pure-red and
     // pure-blue land in slots 1 and 2 — see the call sites below.
-    let mut materials = MaterialPipeline::with_capacity(&device, 4);
+    let mut materials = MaterialPipeline::with_capacity(&device, &queue, 4);
     materials.register(
         &queue,
         Guid::new_v4(),

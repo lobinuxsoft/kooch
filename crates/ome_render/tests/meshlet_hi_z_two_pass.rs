@@ -48,7 +48,7 @@ fn install_material_pipeline(
     queue: &wgpu::Queue,
     material: Material,
 ) {
-    let mut pipeline = MaterialPipeline::with_capacity(device, 4);
+    let mut pipeline = MaterialPipeline::with_capacity(device, queue, 4);
     pipeline.register(queue, Guid::new_v4(), &material);
     resources.insert(pipeline);
 }

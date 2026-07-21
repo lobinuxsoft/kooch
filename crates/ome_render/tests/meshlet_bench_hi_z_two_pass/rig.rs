@@ -62,7 +62,7 @@ pub(crate) fn build_rig() -> Option<BenchRig> {
     let meshlet_bgl = meshlet_bind_group_layout(&device);
     let meshlet_bg = pool_meshlet_bind_group(&device, &meshlet_bgl, &gpu_pool);
 
-    let mut materials = MaterialPipeline::with_capacity(&device, 4);
+    let mut materials = MaterialPipeline::with_capacity(&device, &queue, 4);
     materials.register(
         &queue,
         Guid::new_v4(),
