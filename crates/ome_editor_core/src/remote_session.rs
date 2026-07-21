@@ -114,6 +114,12 @@ impl RemoteSession {
         }
         if let Some(project_root) = manifest_path.parent() {
             cmd.env("OME_PROJECT_ROOT", project_root);
+            // `cargo run --manifest-path` does NOT move the child's
+            // working directory to the manifest's folder — it inherits
+            // the editor's. Without this the project resolves its boot
+            // scene (`scenes/default.ome_scene`, cwd-relative) against
+            // the editor's directory and comes up with an empty world.
+            cmd.current_dir(project_root);
         }
         if std::env::var_os("RUST_LOG").is_none() {
             cmd.env("RUST_LOG", "info");
