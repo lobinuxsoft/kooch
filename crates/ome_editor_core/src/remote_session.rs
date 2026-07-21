@@ -37,6 +37,12 @@ pub struct RemoteState {
     pub session: Option<RemoteSession>,
     /// The local ECS reconstruction of the remote scene.
     pub mirror: RemoteMirror,
+    /// Whether the project is running its gameplay systems.
+    ///
+    /// Mirrors the `Playing` gate on the project's side. A freshly
+    /// connected project always starts paused, so this starts `false`
+    /// and only the editor's Play/Stop moves it.
+    pub playing: bool,
 }
 
 impl RemoteState {

@@ -27,7 +27,7 @@ use crate::remote_session::RemoteState;
 /// which the caller handles through the normal local path.
 ///
 /// The caller guarantees a connected session before calling.
-pub(crate) fn dispatch(resources: &Resources, action: &EditorAction) -> bool {
+pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool {
     // Undo/Redo have no remote form yet; swallow them in remote mode
     // rather than replaying against the mirror (which the next refresh
     // overwrites anyway).
@@ -42,17 +42,24 @@ pub(crate) fn dispatch(resources: &Resources, action: &EditorAction) -> bool {
         return false;
     };
 
-    let Some(state) = resources.get::<RemoteState>() else {
+    // Lifted out of Resources so the send can borrow the session and the
+    // rest of the world at the same time, and record play state after.
+    let Some(mut state) = resources.remove::<RemoteState>() else {
         return true;
     };
-    let Some(session) = state.session.as_ref() else {
-        return true;
-    };
-    let names = resources.get::<ComponentNames>();
+    let playing = matches!(edit, Edit::SetPlaying(playing) if playing);
+    let is_play_toggle = matches!(edit, Edit::SetPlaying(_));
 
-    if let Err(e) = send(edit, session, &state.mirror, names, resources) {
-        tracing::warn!("remote edit dropped: {e}");
+    if let Some(session) = state.session.as_ref() {
+        let names = resources.get::<ComponentNames>();
+        match send(edit, session, &state.mirror, names, resources) {
+            Ok(()) if is_play_toggle => state.playing = playing,
+            Ok(()) => {}
+            Err(e) => tracing::warn!("remote edit dropped: {e}"),
+        }
     }
+
+    resources.insert(state);
     true
 }
 
@@ -84,6 +91,8 @@ enum Edit<'a> {
     /// Write the project's world to a scene file, or replace it from one.
     SaveScene,
     LoadScene,
+    /// Start or stop the project's gameplay systems in place.
+    SetPlaying(bool),
 }
 
 /// Reduces an action to an [`Edit`], or `None` if remote mode does not
@@ -120,6 +129,10 @@ fn classify(action: &EditorAction) -> Option<Edit<'_>> {
         // project's own scene file.
         EditorAction::SaveScene => Some(Edit::SaveScene),
         EditorAction::OpenScene => Some(Edit::LoadScene),
+        // Play runs the project's systems in the project we are already
+        // driving, instead of launching a second copy of it.
+        EditorAction::Play => Some(Edit::SetPlaying(true)),
+        EditorAction::Stop => Some(Edit::SetPlaying(false)),
         // Not something remote mode owns (project mgmt, settings, …).
         _ => None,
     }
@@ -191,6 +204,7 @@ fn send(
             Some(path) => client.load_scene(&path.to_string_lossy()).map_err(map_err),
             None => Ok(()),
         },
+        Edit::SetPlaying(playing) => client.set_playing(playing).map_err(map_err),
     }
 }
 
@@ -305,6 +319,7 @@ mod tests {
             .unwrap()
             .intern(transform_ty);
         editor.insert(state);
+        let mut editor = editor;
 
         let action = EditorAction::SetField {
             entity: local,
@@ -313,7 +328,7 @@ mod tests {
             value: ReflectValue::Vec3(glam::Vec3::new(9.0, 9.0, 9.0)),
         };
         assert!(
-            dispatch(&editor, &action),
+            dispatch(&mut editor, &action),
             "remote dispatch should own SetField"
         );
 
@@ -335,10 +350,56 @@ mod tests {
         main_loop.join().unwrap();
     }
 
+    /// Play is a wire toggle in remote mode: the project runs its own
+    /// systems in place, and the editor records that it is playing so
+    /// the toolbar and the refresh cadence follow.
+    #[test]
+    fn play_toggles_the_remote_gate() {
+        let server = (0..8)
+            .find_map(|i| RemoteServer::start(17780 + i).ok())
+            .expect("bind");
+        let port = server.port();
+        let done = Arc::new(AtomicBool::new(false));
+        let loop_done = Arc::clone(&done);
+        let main_loop = std::thread::spawn(move || {
+            let mut res = ecs();
+            while !loop_done.load(Ordering::Relaxed) {
+                for item in server.take_pending() {
+                    let resp = handle(&item.request, &mut res);
+                    let _ = item.reply.send(resp);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            ome_core::run_state::Playing::is_playing(&res)
+        });
+
+        let mut editor = ecs();
+        let mut state = RemoteState::new();
+        state.session = Some(RemoteSession::attach(port));
+        for _ in 0..200 {
+            if state.session.as_mut().unwrap().poll_ready() == ConnectionState::Connected {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(state.is_connected(), "did not connect");
+        assert!(!state.playing, "starts paused");
+        editor.insert(state);
+
+        assert!(dispatch(&mut editor, &EditorAction::Play));
+        assert!(
+            editor.get::<RemoteState>().unwrap().playing,
+            "editor did not record the play state"
+        );
+
+        done.store(true, Ordering::Relaxed);
+        assert!(main_loop.join().unwrap(), "project did not start playing");
+    }
+
     /// A non-ECS action is not owned by the remote sink.
     #[test]
     fn non_ecs_action_falls_through() {
-        let editor = ecs();
-        assert!(!dispatch(&editor, &EditorAction::CloseProject));
+        let mut editor = ecs();
+        assert!(!dispatch(&mut editor, &EditorAction::CloseProject));
     }
 }

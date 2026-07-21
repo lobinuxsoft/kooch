@@ -192,10 +192,15 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         can_redo: undo_stack.can_redo(),
         undo_desc: undo_stack.undo_description().map(String::from),
         redo_desc: undo_stack.redo_description().map(String::from),
-        is_playing,
         remote: resources
             .get::<crate::remote_session::RemoteState>()
             .and_then(|s| s.session.as_ref().map(|s| s.state())),
+        // In remote mode the project runs gameplay in place, so Play
+        // is a wire toggle rather than a launched process.
+        is_playing: is_playing
+            || resources
+                .get::<crate::remote_session::RemoteState>()
+                .is_some_and(|s| s.playing),
     };
 
     let raw_input = {
