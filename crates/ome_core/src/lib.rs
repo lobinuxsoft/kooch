@@ -42,6 +42,7 @@
 //! * Physics stages run N times per frame to catch up to real time
 //! ```
 
+pub mod aabb;
 pub mod app;
 pub mod asset_database;
 pub mod asset_loader;
@@ -66,6 +67,7 @@ pub mod stage;
 pub mod system;
 pub mod time;
 
+pub use aabb::Aabb;
 pub use guid::Guid;
 
 #[cfg(feature = "dynamic")]

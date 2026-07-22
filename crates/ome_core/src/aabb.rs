@@ -1,9 +1,10 @@
 //! Axis-aligned bounding box primitive.
 //!
-//! Used as the bounds key for every BVH leaf and as the AABB of every
-//! internal node. Lives in `ome_bvh` (not under each consumer) so
-//! `ome_world`, `ome_physics`, and `ome_render` all compose against the
-//! same type without conversion glue.
+//! Lives in `ome_core` so every consumer — world streaming, voxel
+//! storage, physics — composes against the same type with no conversion
+//! glue. It was in `ome_bvh` until that crate was removed; the type
+//! itself is plain geometry and never belonged to the acceleration
+//! structure that happened to host it.
 
 use glam::Vec3;
 

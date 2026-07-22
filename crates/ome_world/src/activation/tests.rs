@@ -37,7 +37,7 @@ fn single_focus_loads_local_ring() {
     activate_chunks(&[(DVec3::ZERO, 0)], &mut m, &one_ring(0, 100.0));
     assert!(m.pending_load_count() > 0);
     // The chunk containing the focus must be requested.
-    m.process_queues(usize::MAX, 0, None);
+    m.process_queues(usize::MAX, 0);
     assert!(m.active.contains_key(&ChunkId::new(IVec3::ZERO, 0)));
 }
 
@@ -45,7 +45,7 @@ fn single_focus_loads_local_ring() {
 fn idempotent_when_active_set_matches_desired() {
     let mut m = ChunkManager::new(1024);
     activate_chunks(&[(DVec3::ZERO, 0)], &mut m, &one_ring(0, 100.0));
-    m.process_queues(usize::MAX, 0, None);
+    m.process_queues(usize::MAX, 0);
     let loaded_a = m.loaded_count();
     // Run again: nothing new to load, nothing to unload.
     activate_chunks(&[(DVec3::ZERO, 0)], &mut m, &one_ring(0, 100.0));
@@ -59,7 +59,7 @@ fn focus_moves_away_unloads_old_chunks() {
     let mut m = ChunkManager::new(1024);
     let cfg = one_ring(0, 100.0);
     activate_chunks(&[(DVec3::ZERO, 0)], &mut m, &cfg);
-    m.process_queues(usize::MAX, 0, None);
+    m.process_queues(usize::MAX, 0);
     let initial = m.loaded_count();
     assert!(initial > 0);
 
@@ -81,12 +81,12 @@ fn two_overlapping_focuses_dedup_via_set() {
         &mut m,
         &cfg,
     );
-    m.process_queues(usize::MAX, 0, None);
+    m.process_queues(usize::MAX, 0);
     // Compare against single-focus run — must be at most slightly
     // larger (single focus + a few extra chunks on the +x edge).
     let mut m_single = ChunkManager::new(1024);
     activate_chunks(&[(DVec3::ZERO, 0)], &mut m_single, &cfg);
-    m_single.process_queues(usize::MAX, 0, None);
+    m_single.process_queues(usize::MAX, 0);
     // Loaded count of two-focus run must NOT be ~2× the single-focus
     // run (which would mean we duplicated chunks).
     assert!(m.loaded_count() <= m_single.loaded_count() + 5);
@@ -110,7 +110,7 @@ fn higher_lod_rings_load_coarser_grid_chunks() {
         ],
     };
     activate_chunks(&[(DVec3::ZERO, 0)], &mut m, &cfg);
-    m.process_queues(usize::MAX, 0, None);
+    m.process_queues(usize::MAX, 0);
 
     let lod0_count = m
         .active
@@ -150,7 +150,7 @@ fn cached_stationary_second_call_skips_work() {
     let focuses = [(entity(1), DVec3::new(10.0, 10.0, 10.0), 0u8)];
 
     activate_chunks_cached(&focuses, &mut cache, &mut m, &cfg);
-    m.process_queues(usize::MAX, 0, None);
+    m.process_queues(usize::MAX, 0);
     let loaded_after_first = m.loaded_count();
     let pending_after_first = m.pending_load_count();
     assert!(loaded_after_first > 0);
@@ -177,7 +177,7 @@ fn cached_sub_chunk_movement_skips_work() {
         &mut m,
         &cfg,
     );
-    m.process_queues(usize::MAX, 0, None);
+    m.process_queues(usize::MAX, 0);
 
     // Second call: focus moved 30 m on x — still chunk (0,0,0) at LOD 0
     // (chunk size 64).
@@ -204,7 +204,7 @@ fn cached_chunk_boundary_cross_triggers_work() {
         &mut m,
         &cfg,
     );
-    m.process_queues(usize::MAX, 0, None);
+    m.process_queues(usize::MAX, 0);
     let loaded_initial = m.loaded_count();
 
     // Move 100 m on x — crosses LOD-0 boundary at 64.
@@ -221,7 +221,7 @@ fn cached_chunk_boundary_cross_triggers_work() {
         "boundary crossing must produce queue activity"
     );
     // After draining, total loaded should still be reasonable.
-    m.process_queues(usize::MAX, usize::MAX, None);
+    m.process_queues(usize::MAX, usize::MAX);
     assert!(m.loaded_count() > 0);
     let _ = loaded_initial;
 }
@@ -270,7 +270,7 @@ fn closest_chunk_gets_lowest_priority() {
         &mut m,
         &one_ring(0, 100.0),
     );
-    m.process_queues(1, 0, None);
+    m.process_queues(1, 0);
     assert!(
         m.active.contains_key(&ChunkId::new(IVec3::new(3, 0, 0), 0)),
         "first-popped chunk should be the one containing the focus, got {:?}",

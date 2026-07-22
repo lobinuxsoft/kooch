@@ -4,7 +4,6 @@ members = [
     "crates/ome_core",
     "crates/ome_ecs",
     "crates/ome_plugin_api",
-    "crates/ome_bvh",
     "crates/ome_window",
     "crates/ome_input",
     "crates/ome_lighting",
@@ -117,7 +116,6 @@ serde_json = "1"
 ome_core = { path = "crates/ome_core" }
 ome_ecs = { path = "crates/ome_ecs" }
 ome_ecs_macros = { path = "crates/ome_ecs_macros" }
-ome_bvh = { path = "crates/ome_bvh" }
 ome_window = { path = "crates/ome_window" }
 ome_input = { path = "crates/ome_input" }
 ome_lighting = { path = "crates/ome_lighting" }

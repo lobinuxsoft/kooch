@@ -36,7 +36,7 @@
 //! avoids 4× the binding pressure on the consumer pipeline layout.
 
 use bytemuck::{Pod, Zeroable};
-use ome_bvh::Aabb;
+use ome_core::Aabb;
 
 use super::{ATLAS_TILES_X, ATLAS_TILES_Y, ATLAS_TILES_Z, LOD_LEVELS, ROOT_DIM, SparseGrid};
 

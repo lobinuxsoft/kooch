@@ -29,7 +29,7 @@ mínimo** (audit #239).
 ## Workspace (crates)
 
 `ome_core, ome_ecs, ome_window, ome_input, ome_lighting, ome_render, ome_physics,
-ome_gravity, ome_world, ome_audio, ome_scripting, ome_editor_core, ome_editor, ome_bvh,
+ome_gravity, ome_world, ome_audio, ome_scripting, ome_editor_core, ome_editor,
 ome_gizmos, ome_gizmos_handles, ome_editor_api`. Facade top-level `oh_my_engine` con
 `DefaultPlugins` PluginGroup (estilo Bevy).
 
@@ -38,6 +38,16 @@ primitivas CSG en WGSL, que alimentaba el raymarcher ya borrado en el pivot, y e
 almacenamiento de vóxeles disperso con LOD (#136). Lo primero murió con su renderer;
 lo segundo era el sustrato de Phase 2.5 y se mudó a **`ome_world::voxel`**, que es
 donde vive el resto del streaming.
+
+`ome_bvh` **ELIMINADO (2026-07)** junto con `ome_world::content` y el
+`ProceduralCitySource`. Era la estructura de aceleración del raymarcher — sus flags se
+llamaban `IS_RAYMARCH` / `ROLE_RAYMARCH_*` — y su único consumidor era contenido de chunk
+que nadie rendeaba desde el pivote: el path meshlet tiene su propio culling con Hi-Z. El
+`Aabb` se mudó a `ome_core`, que es donde correspondía. ~14k líneas.
+
+Criterio aplicado (del usuario, 2026-07-21): **se queda lo que sirve al sistema galáctico
+y a planetas terraformables; lo demás muere y se rehace bien contra el motor de física
+actual.** Nada de "tal vez lo usemos". Si hace falta algo de ahí: cherry-pick del historial.
 
 **No confundir los dos "SDF"**: el descartado es SDF-como-técnica-de-render/authoring
 (brushes CSG, raymarching). El vigente es SDF-como-formato-de-dato — cada vóxel guarda

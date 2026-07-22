@@ -19,7 +19,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
-use ome_bvh::Aabb;
+use ome_core::Aabb;
 
 use super::SparseGrid;
 

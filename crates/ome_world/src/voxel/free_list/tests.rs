@@ -9,7 +9,7 @@ use crate::voxel::{
     test_device::readback,
 };
 use glam::Vec3;
-use ome_bvh::Aabb;
+use ome_core::Aabb;
 use std::collections::HashSet;
 
 fn unit_bounds() -> Aabb {

@@ -13,7 +13,6 @@ use ome_render::meshlet::{
     MeshletBlit, MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStage,
     MeshletRenderStageConfig,
 };
-use ome_world::{ChunkManager, ProceduralCitySource};
 
 use crate::state::{EditorOverlay, EguiEventHandler};
 use crate::style::{configure_fonts, configure_style};
@@ -103,22 +102,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         current_folder: None,
     };
 
-    // Wire the procedural city as the editor's default content source —
-    // makes streamed chunks visible the moment a `StreamingFocus` lands
-    // on the camera (#363). Game runtime / headless tests opt in
-    // explicitly via their own `register_content_source` call.
-    if let Some(manager) = resources.get_mut::<ChunkManager>() {
-        manager.register_content_source(Box::new(ProceduralCitySource::default()));
-        tracing::info!(
-            target: "ome_editor_core::systems::startup",
-            "ProceduralCitySource registered as default content source",
-        );
-    } else {
-        tracing::warn!(
-            "ChunkManager resource missing — ProceduralCitySource not registered. \
-             Add WorldStreamingPlugin before EditorPlugin."
-        );
-    }
 
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });
     let power_profile: PowerProfile = power::detect();

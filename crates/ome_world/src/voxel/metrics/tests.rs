@@ -19,7 +19,7 @@ use crate::voxel::{
     PopulatePass, SdfSampler, SparseGrid, test_device, test_device::readback,
 };
 use glam::Vec3;
-use ome_bvh::Aabb;
+use ome_core::Aabb;
 
 /// Sphere radius the metrics cascade test exercises. Mirrors the
 /// scaling done in `populate/tests.rs` — see the comment there.

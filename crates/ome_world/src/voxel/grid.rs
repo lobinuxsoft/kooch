@@ -47,7 +47,7 @@
 
 mod buffers;
 
-use ome_bvh::Aabb;
+use ome_core::Aabb;
 
 use super::{LOD_COUNT, LOD_LEVELS, free_list};
 

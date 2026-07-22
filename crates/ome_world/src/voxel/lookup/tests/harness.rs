@@ -11,7 +11,7 @@ use crate::voxel::{
     LOD_COUNT, PopulatePass, ROOT_DIM, SdfSampler, SparseGrid, test_device,
 };
 use glam::Vec3;
-use ome_bvh::Aabb;
+use ome_core::Aabb;
 
 use super::super::{
     LOOKUP_DEFAULT_GROUP, LOOKUP_DEFAULT_MASK_BINDING, LOOKUP_DEFAULT_POOL_BINDINGS,

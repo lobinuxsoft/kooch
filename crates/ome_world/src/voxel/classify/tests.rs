@@ -13,7 +13,7 @@ use crate::voxel::{
     SdfSampler, SparseGrid, test_device,
 };
 use glam::Vec3;
-use ome_bvh::Aabb;
+use ome_core::Aabb;
 use std::collections::HashSet;
 
 const TEST_BOUNDS_MIN: Vec3 = Vec3::ZERO;

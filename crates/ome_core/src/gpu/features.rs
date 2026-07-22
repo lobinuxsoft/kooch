@@ -39,7 +39,7 @@ pub(super) fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
 /// `empty()` when unsupported so cross-backend builds keep working.
 ///
 /// `TIMESTAMP_QUERY` + `TIMESTAMP_QUERY_INSIDE_PASSES` enable per-pass GPU
-/// profiling in the LBVH builder ([`ome_bvh::BvhGpuBuilder`]); the builder
+/// profiling in the removed LBVH builder; that builder
 /// stays correct on adapters that don't expose them by skipping the
 /// `timestamp_writes` calls (see #333 — without this opt-in, adapters that
 /// support timestamps would never get the telemetry, even though the

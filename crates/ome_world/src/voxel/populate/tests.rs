@@ -40,7 +40,7 @@ const TEST_SPHERE_RADIUS: f32 = 16.0;
 #[cfg(feature = "large-root-grid")]
 const TEST_SPHERE_RADIUS: f32 = 8.0;
 use glam::Vec3;
-use ome_bvh::Aabb;
+use ome_core::Aabb;
 
 const TEST_BOUNDS_MIN: Vec3 = Vec3::ZERO;
 const TEST_BOUNDS_MAX: Vec3 = Vec3::splat(64.0);
