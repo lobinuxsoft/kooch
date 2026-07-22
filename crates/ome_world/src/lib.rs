@@ -20,6 +20,7 @@ pub mod focus_cache;
 pub mod lod;
 pub mod manager;
 pub mod plugin;
+pub mod voxel;
 
 pub use activation::{activate_chunks, activation_system};
 pub use chunk::{BASE_CHUNK_SIZE_METERS, ChunkData, ChunkId, ChunkState, MAX_LOD_LEVEL};

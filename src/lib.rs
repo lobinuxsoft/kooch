@@ -52,8 +52,6 @@ pub use ome_remote;
 pub use ome_render;
 #[cfg(feature = "scripting")]
 pub use ome_scripting;
-#[cfg(feature = "sdf")]
-pub use ome_sdf;
 #[cfg(feature = "window")]
 pub use ome_window;
 #[cfg(feature = "world")]

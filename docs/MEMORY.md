@@ -28,13 +28,22 @@ mínimo** (audit #239).
 
 ## Workspace (crates)
 
-`ome_core, ome_ecs, ome_window, ome_input, ome_sdf, ome_lighting, ome_render, ome_physics,
+`ome_core, ome_ecs, ome_window, ome_input, ome_lighting, ome_render, ome_physics,
 ome_gravity, ome_world, ome_audio, ome_scripting, ome_editor_core, ome_editor, ome_bvh,
 ome_gizmos, ome_gizmos_handles, ome_editor_api`. Facade top-level `oh_my_engine` con
 `DefaultPlugins` PluginGroup (estilo Bevy).
 
-`ome_sdf` sobrevive el pivot: repurposed como authoring-tool/brushes para el pipeline
-voxel + DC de Phase 2.5. No es el render path actual.
+`ome_sdf` **ELIMINADO (2026-07)**. Contenía dos cosas sin relación: la librería de
+primitivas CSG en WGSL, que alimentaba el raymarcher ya borrado en el pivot, y el
+almacenamiento de vóxeles disperso con LOD (#136). Lo primero murió con su renderer;
+lo segundo era el sustrato de Phase 2.5 y se mudó a **`ome_world::voxel`**, que es
+donde vive el resto del streaming.
+
+**No confundir los dos "SDF"**: el descartado es SDF-como-técnica-de-render/authoring
+(brushes CSG, raymarching). El vigente es SDF-como-formato-de-dato — cada vóxel guarda
+una distancia con signo, y de ahí extrae malla el dual contouring (#393/#397/#398). Para
+física tampoco hace falta lo primero: el collider de vóxel de rapier 0.34 consume la
+grilla directamente.
 
 ---
 

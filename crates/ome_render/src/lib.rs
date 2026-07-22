@@ -1,8 +1,10 @@
 //! ome_render — renderers for oh_my_engine.
 //!
 //! Post-pivot 2026-05-02 (plan C): mesh-only render path. SDF render
-//! (raymarch + tile-cull + GDF) was deleted; SDF brushes are preserved
-//! upstream in `ome_sdf` to feed the future Phase 2.5 voxel + DC pipeline.
+//! (raymarch + tile-cull + GDF) was deleted. The CSG brush primitives
+//! that fed it went with it in 2026-07; what survived is the sparse
+//! voxel storage, now `ome_world::voxel`, which the Phase 2.5 dual
+//! contouring pipeline extracts meshes from.
 //!
 //! - [`RenderPlugin`] is the full game render pipeline (sky + meshlet
 //!   GPU-driven cull/raster/shade) targeting the swapchain surface. Used
