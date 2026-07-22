@@ -45,6 +45,15 @@ llamaban `IS_RAYMARCH` / `ROLE_RAYMARCH_*` — y su único consumidor era conten
 que nadie rendeaba desde el pivote: el path meshlet tiene su propio culling con Hi-Z. El
 `Aabb` se mudó a `ome_core`, que es donde correspondía. ~14k líneas.
 
+**Una escena ES un mundo → una escena va dividida en chunks (#566, decisión del usuario
+2026-07-21).** Hoy la escena es una lista plana y `ChunkManager` no conoce `Entity`: el
+único vínculo ECS↔streaming es `StreamingFocus`, y va en una sola dirección. Las entidades
+son lo que ocupa el slot que dejó `ChunkContent` — mejor que primitivas, porque una entidad
+ya trae transform, malla, física y componentes del proyecto. Ownership = espacial y
+derivado del `GlobalTransform`, NO un campo guardado. **Residencia ≠ ownership**: el
+streaming decide qué se instancia, no qué existe. Las entidades transitan entre chunks.
+Depende de #139 (bridge de física).
+
 Criterio aplicado (del usuario, 2026-07-21): **se queda lo que sirve al sistema galáctico
 y a planetas terraformables; lo demás muere y se rehace bien contra el motor de física
 actual.** Nada de "tal vez lo usemos". Si hace falta algo de ahí: cherry-pick del historial.
