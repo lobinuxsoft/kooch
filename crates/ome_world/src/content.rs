@@ -2,14 +2,14 @@
 //! [`crate::manager::ChunkEvictionListener`].
 //!
 //! When `ChunkManager` transitions a chunk `Unloaded → Loaded`, the
-//! registered content source materialises the chunk's SDF primitives
+//! registered content source materialises the chunk's volume primitives
 //! plus their per-leaf AABBs. The streaming layer then forwards that
 //! content to the GPU pool (`ome_bvh::OmeAccel::insert_chunk`) without
 //! ever crossing the renderer crate boundary.
 //!
 //! # DOD discipline
 //!
-//! [`ChunkContent`] is plain old data: `Vec<SdfPrimitive>` (each entry
+//! [`ChunkContent`] is plain old data: `Vec<VolumePrimitive>` (each entry
 //! 64 B `#[repr(C)]` POD), `Vec<LeafAabb>` (each 32 B `#[repr(C)]` POD)
 //! and a single `f32` envelope. No pointer indirection, no `dyn`
 //! payload, no per-primitive heap allocation. The renderer uploads
@@ -21,7 +21,7 @@
 //! only by construction: the trait never sees a `wgpu::Device` /
 //! `Queue` / `BvhState`. GPU upload is the streaming layer's job.
 
-use ome_bvh::{Aabb, LeafAabb, sdf_primitive::SdfPrimitive};
+use ome_bvh::{Aabb, LeafAabb, volume_primitive::VolumePrimitive};
 
 use crate::chunk::ChunkId;
 
@@ -38,7 +38,7 @@ pub struct ChunkContent {
     /// 1:1 with `leaf_aabbs`. `bytemuck::cast_slice` to `&[u8]` for the
     /// `OmeAccel::insert_chunk` upload — the pool never sees the typed
     /// view, only the byte stride.
-    pub primitives: Vec<SdfPrimitive>,
+    pub primitives: Vec<VolumePrimitive>,
     /// Per-primitive leaf AABBs already inflated by the per-role
     /// smooth-blend envelope. `flags` carries `IS_RAYMARCH | role`;
     /// `entity_id` is `0` for procedurally-spawned content (no ECS
@@ -74,7 +74,7 @@ impl ChunkContent {
     }
 }
 
-/// Source that materialises a chunk's SDF primitives at load time.
+/// Source that materialises a chunk's volume primitives at load time.
 ///
 /// Implementations must be:
 /// - **Pure** w.r.t. `(chunk_id, world_aabb)`: same input → byte-identical
@@ -100,7 +100,7 @@ pub trait ChunkContentSource: Send + Sync {
 mod tests {
     use super::*;
     use glam::{IVec3, Vec3};
-    use ome_bvh::{IS_RAYMARCH, ROLE_RAYMARCH_ADD, sdf_primitive::TYPE_SPHERE};
+    use ome_bvh::{IS_RAYMARCH, ROLE_RAYMARCH_ADD, volume_primitive::TYPE_SPHERE};
 
     struct EmptySource;
     impl ChunkContentSource for EmptySource {
@@ -112,7 +112,7 @@ mod tests {
     struct OneSphereSource;
     impl ChunkContentSource for OneSphereSource {
         fn populate(&self, _id: ChunkId, _aabb: Aabb) -> ChunkContent {
-            let prim = SdfPrimitive {
+            let prim = VolumePrimitive {
                 position: [0.0; 3],
                 type_tag: TYPE_SPHERE,
                 rotation: [0.0, 0.0, 0.0, 1.0],

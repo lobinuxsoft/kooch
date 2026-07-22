@@ -1,36 +1,43 @@
-//! GPU-bound SDF primitive POD. Lives next to [`crate::leaf::LeafAabb`]
-//! because both are read by the WGSL traversal and both need to be
-//! constructible from any consumer crate without pulling in `ome_render`.
+//! [`VolumePrimitive`] — an analytic shape instance, POD.
 //!
-//! # Why here
+//! A transform plus a type tag plus per-type parameters: a sphere, box,
+//! capsule, cylinder, torus or plane placed in the world. Lives next to
+//! [`crate::leaf::LeafAabb`] because both describe what a BVH leaf
+//! points at, and both must be constructible from any consumer crate
+//! without pulling in `ome_render`.
 //!
-//! The pool's primitive byte stride is `size_of::<SdfPrimitive>()`.
-//! `OmeAccel` accepts opaque `primitives_bytes: &[u8]`, but every
-//! producer (`ome_render`'s ECS scene collector, `ome_world`'s
-//! [`crate::sdf_primitive`] content sources, the future Edit Baker)
-//! needs to lay bytes out the same way. Hoisting the type up here
-//! removes the renderer from that chain.
+//! Named for what it is rather than how it used to be evaluated. It was
+//! `SdfPrimitive`, back when a ray-marcher folded these into a signed
+//! distance field; that renderer was deleted in the 2026-05-02 pivot and
+//! the brush components followed it in 2026-07. The type outlived both
+//! because `ome_world` uses it as chunk content — the procedural city
+//! source emits boxes and cylinders, and the BVH indexes them.
 //!
-//! # WGSL contract
+//! # Layout
 //!
-//! Field offsets match `raymarch_main.wgsl::SdfPrimitive` byte-for-byte:
-//! - `position` (vec3 at 0) + `type_tag` (u32 at 12) fill the first 16 B slot.
-//! - `rotation` (vec4 at 16) is naturally 16-aligned.
-//! - `scale` (vec3 at 32) + `smoothness` (f32 at 44) fill the next 16 B slot.
-//! - `params` (vec4 at 48) holds primitive-specific data; interpretation
-//!   depends on `type_tag`. Closes the struct at 64 B (multiple of 16).
+//! `#[repr(C)]` + `Pod`, 64 bytes, every field 16-byte-slot aligned:
+//! `position` (vec3 at 0) + `type_tag` (u32 at 12); `rotation` (vec4 at
+//! 16); `scale` (vec3 at 32) + `smoothness` (f32 at 44); `params`
+//! (vec4 at 48) holding per-type data.
 //!
-//! `smoothness` lives in the slot the legacy `_pad0` occupied (#360 PR-2).
-//! The pool-driven shader reads `prim.smoothness` directly during the
-//! per-role accumulator fold.
+//! That layout was pinned to a WGSL struct in `raymarch_main.wgsl`,
+//! which no longer exists — **no shader reads this type today**. The
+//! guarantee is kept because the pool hands `primitives_bytes: &[u8]`
+//! to `OmeAccel` and every producer must agree on the stride, and
+//! because a future GPU consumer would want exactly this shape. The
+//! offset tests below are what keeps that honest.
+//!
+//! `smoothness` is the blend radius the old evaluator used to soften
+//! unions; it survives as the inflation applied to a leaf AABB, so
+//! culling still bounds whatever a future evaluator does with it.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat3, Quat, Vec3};
 
 use crate::aabb::Aabb;
 
-/// Primitive type tags. Must match the `switch` in
-/// `raymarch_main.wgsl::eval_primitive`.
+/// Primitive type tags. A GPU consumer must switch on these in the same
+/// order; nothing does today.
 pub const TYPE_SPHERE: u32 = 0;
 pub const TYPE_BOX: u32 = 1;
 pub const TYPE_CAPSULE: u32 = 2;
@@ -38,11 +45,11 @@ pub const TYPE_CYLINDER: u32 = 3;
 pub const TYPE_TORUS: u32 = 4;
 pub const TYPE_PLANE: u32 = 5;
 
-/// Per-entity SDF primitive (64 bytes). See module docstring for the
-/// WGSL contract pinned to this layout.
+/// An analytic shape instance (64 bytes). See the module docs for the
+/// layout guarantee and why it is kept.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug, PartialEq)]
-pub struct SdfPrimitive {
+pub struct VolumePrimitive {
     pub position: [f32; 3],
     pub type_tag: u32,
     pub rotation: [f32; 4],
@@ -57,13 +64,12 @@ pub struct SdfPrimitive {
 /// in the slab test when a ray is exactly axis-aligned with the plane.
 pub const PLANE_HALF_EXTENT: f32 = 1.0e10;
 
-/// World-space AABB of an SDF primitive instance, inflated by
-/// `inflation` to absorb smooth-blend support.
+/// World-space AABB of a primitive instance, inflated by `inflation` to
+/// absorb smooth-blend support.
 ///
-/// Hot-path helper shared between the renderer's per-frame collector
-/// and the world-streaming content sources — both must produce the
-/// same leaf AABB for a given primitive, otherwise the BVH cull
-/// diverges from the upstream sphere-trace and silhouettes drop.
+/// Shared by every producer of leaf AABBs so a given primitive always
+/// bounds the same way — a culler and an evaluator that disagree drop
+/// silhouettes.
 ///
 /// The world-space AABB is built by:
 /// 1. Reading per-type half-extents in local space.
@@ -72,7 +78,7 @@ pub const PLANE_HALF_EXTENT: f32 = 1.0e10;
 ///    half-extent vector — classical OBB→AABB enclosing formula).
 /// 4. Translating by `position`.
 /// 5. Inflating by `max(inflation, 0)` per axis.
-pub fn primitive_aabb(prim: &SdfPrimitive, inflation: f32) -> Aabb {
+pub fn primitive_aabb(prim: &VolumePrimitive, inflation: f32) -> Aabb {
     let position = Vec3::from_array(prim.position);
 
     if prim.type_tag == TYPE_PLANE {
@@ -94,7 +100,7 @@ pub fn primitive_aabb(prim: &SdfPrimitive, inflation: f32) -> Aabb {
     Aabb::from_centre(position, inflated_half)
 }
 
-fn local_half_extents(prim: &SdfPrimitive) -> Vec3 {
+fn local_half_extents(prim: &VolumePrimitive) -> Vec3 {
     match prim.type_tag {
         TYPE_SPHERE => Vec3::splat(prim.params[0]),
         TYPE_BOX => {
@@ -128,24 +134,30 @@ mod tests {
     const EPS: f32 = 1e-4;
 
     #[test]
-    fn sdf_primitive_layout_is_64_bytes() {
-        assert_eq!(std::mem::size_of::<SdfPrimitive>(), 64);
-        assert_eq!(std::mem::align_of::<SdfPrimitive>(), 4);
+    fn volume_primitive_layout_is_64_bytes() {
+        assert_eq!(std::mem::size_of::<VolumePrimitive>(), 64);
+        assert_eq!(std::mem::align_of::<VolumePrimitive>(), 4);
     }
 
     #[test]
-    fn sdf_primitive_field_offsets_match_wgsl() {
+    fn volume_primitive_field_offsets_match_wgsl() {
         use std::mem::offset_of;
-        assert_eq!(offset_of!(SdfPrimitive, position), 0);
-        assert_eq!(offset_of!(SdfPrimitive, type_tag), 12);
-        assert_eq!(offset_of!(SdfPrimitive, rotation), 16);
-        assert_eq!(offset_of!(SdfPrimitive, scale), 32);
-        assert_eq!(offset_of!(SdfPrimitive, smoothness), 44);
-        assert_eq!(offset_of!(SdfPrimitive, params), 48);
+        assert_eq!(offset_of!(VolumePrimitive, position), 0);
+        assert_eq!(offset_of!(VolumePrimitive, type_tag), 12);
+        assert_eq!(offset_of!(VolumePrimitive, rotation), 16);
+        assert_eq!(offset_of!(VolumePrimitive, scale), 32);
+        assert_eq!(offset_of!(VolumePrimitive, smoothness), 44);
+        assert_eq!(offset_of!(VolumePrimitive, params), 48);
     }
 
-    fn prim(type_tag: u32, position: [f32; 3], rotation: Quat, scale: [f32; 3], params: [f32; 4]) -> SdfPrimitive {
-        SdfPrimitive {
+    fn prim(
+        type_tag: u32,
+        position: [f32; 3],
+        rotation: Quat,
+        scale: [f32; 3],
+        params: [f32; 4],
+    ) -> VolumePrimitive {
+        VolumePrimitive {
             position,
             type_tag,
             rotation: rotation.to_array(),
@@ -172,13 +184,25 @@ mod tests {
 
     #[test]
     fn sphere_canonical() {
-        let p = prim(TYPE_SPHERE, [0.0; 3], Quat::IDENTITY, [1.0; 3], [2.5, 0.0, 0.0, 0.0]);
+        let p = prim(
+            TYPE_SPHERE,
+            [0.0; 3],
+            Quat::IDENTITY,
+            [1.0; 3],
+            [2.5, 0.0, 0.0, 0.0],
+        );
         approx_aabb(primitive_aabb(&p, 0.0), Vec3::splat(-2.5), Vec3::splat(2.5));
     }
 
     #[test]
     fn sphere_translated_and_inflated() {
-        let p = prim(TYPE_SPHERE, [10.0, -3.0, 5.0], Quat::IDENTITY, [1.0; 3], [1.0, 0.0, 0.0, 0.0]);
+        let p = prim(
+            TYPE_SPHERE,
+            [10.0, -3.0, 5.0],
+            Quat::IDENTITY,
+            [1.0; 3],
+            [1.0, 0.0, 0.0, 0.0],
+        );
         approx_aabb(
             primitive_aabb(&p, 0.5),
             Vec3::new(8.5, -4.5, 3.5),
@@ -188,7 +212,13 @@ mod tests {
 
     #[test]
     fn box_with_rounding() {
-        let p = prim(TYPE_BOX, [0.0; 3], Quat::IDENTITY, [1.0; 3], [1.0, 2.0, 3.0, 0.1]);
+        let p = prim(
+            TYPE_BOX,
+            [0.0; 3],
+            Quat::IDENTITY,
+            [1.0; 3],
+            [1.0, 2.0, 3.0, 0.1],
+        );
         approx_aabb(
             primitive_aabb(&p, 0.0),
             Vec3::new(-1.1, -2.1, -3.1),
@@ -209,7 +239,13 @@ mod tests {
 
     #[test]
     fn capsule_canonical() {
-        let p = prim(TYPE_CAPSULE, [0.0; 3], Quat::IDENTITY, [1.0; 3], [2.0, 0.5, 0.0, 0.0]);
+        let p = prim(
+            TYPE_CAPSULE,
+            [0.0; 3],
+            Quat::IDENTITY,
+            [1.0; 3],
+            [2.0, 0.5, 0.0, 0.0],
+        );
         approx_aabb(
             primitive_aabb(&p, 0.0),
             Vec3::new(-0.5, -2.5, -0.5),
@@ -219,7 +255,13 @@ mod tests {
 
     #[test]
     fn cylinder_no_caps() {
-        let p = prim(TYPE_CYLINDER, [0.0; 3], Quat::IDENTITY, [1.0; 3], [3.0, 1.0, 0.0, 0.0]);
+        let p = prim(
+            TYPE_CYLINDER,
+            [0.0; 3],
+            Quat::IDENTITY,
+            [1.0; 3],
+            [3.0, 1.0, 0.0, 0.0],
+        );
         approx_aabb(
             primitive_aabb(&p, 0.0),
             Vec3::new(-1.0, -3.0, -1.0),
@@ -229,7 +271,13 @@ mod tests {
 
     #[test]
     fn torus_xz_plane() {
-        let p = prim(TYPE_TORUS, [0.0; 3], Quat::IDENTITY, [1.0; 3], [2.0, 0.3, 0.0, 0.0]);
+        let p = prim(
+            TYPE_TORUS,
+            [0.0; 3],
+            Quat::IDENTITY,
+            [1.0; 3],
+            [2.0, 0.3, 0.0, 0.0],
+        );
         approx_aabb(
             primitive_aabb(&p, 0.0),
             Vec3::new(-2.3, -0.3, -2.3),
@@ -239,7 +287,13 @@ mod tests {
 
     #[test]
     fn plane_returns_sentinel_extent() {
-        let p = prim(TYPE_PLANE, [0.0, 1.0, 0.0], Quat::IDENTITY, [1.0; 3], [0.0; 4]);
+        let p = prim(
+            TYPE_PLANE,
+            [0.0, 1.0, 0.0],
+            Quat::IDENTITY,
+            [1.0; 3],
+            [0.0; 4],
+        );
         let aabb = primitive_aabb(&p, 0.0);
         assert_eq!(aabb.min, Vec3::splat(-PLANE_HALF_EXTENT) + Vec3::Y);
         assert_eq!(aabb.max, Vec3::splat(PLANE_HALF_EXTENT) + Vec3::Y);
@@ -247,7 +301,13 @@ mod tests {
 
     #[test]
     fn inflation_negative_is_clamped_to_zero() {
-        let p = prim(TYPE_SPHERE, [0.0; 3], Quat::IDENTITY, [1.0; 3], [1.0, 0.0, 0.0, 0.0]);
+        let p = prim(
+            TYPE_SPHERE,
+            [0.0; 3],
+            Quat::IDENTITY,
+            [1.0; 3],
+            [1.0, 0.0, 0.0, 0.0],
+        );
         approx_aabb(
             primitive_aabb(&p, -10.0),
             Vec3::splat(-1.0),

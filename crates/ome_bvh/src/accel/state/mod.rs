@@ -76,7 +76,7 @@ impl OmeAccel {
     /// the configured caps; the hot path never grows them.
     ///
     /// `primitive_stride` is the byte stride of one primitive in the
-    /// `primitives_pool` (e.g. 64 for `SdfPrimitive`). Lives in
+    /// `primitives_pool` (e.g. 64 for `VolumePrimitive`). Lives in
     /// constructor parameters rather than `AccelCaps` so the pool
     /// stays decoupled from the consumer crate's primitive struct.
     pub fn new(

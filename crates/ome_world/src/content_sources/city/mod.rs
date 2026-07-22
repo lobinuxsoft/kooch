@@ -1,5 +1,5 @@
 //! Deterministic procedural "city" content source — fills every chunk
-//! with a fixed budget of mixed SDF primitives keyed off the chunk
+//! with a fixed budget of mixed volume primitives keyed off the chunk
 //! coords, plus shared boundary primitives so adjacent chunks blend
 //! smoothly across their shared face.
 //!
@@ -20,8 +20,8 @@
 //! shared plane and their smooth-blend supports cross the seam, so the
 //! cross-chunk silhouette is continuous.
 
-use ome_bvh::sdf_primitive::{
-    SdfPrimitive, TYPE_BOX, TYPE_CYLINDER, TYPE_SPHERE, primitive_aabb,
+use ome_bvh::volume_primitive::{
+    VolumePrimitive, TYPE_BOX, TYPE_CYLINDER, TYPE_SPHERE, primitive_aabb,
 };
 use ome_bvh::{Aabb, IS_RAYMARCH, LeafAabb, ROLE_RAYMARCH_ADD};
 
@@ -148,9 +148,9 @@ impl ChunkContentSource for ProceduralCitySource {
 }
 
 fn push_primitive(
-    prim: SdfPrimitive,
+    prim: VolumePrimitive,
     smoothness: f32,
-    prims: &mut Vec<SdfPrimitive>,
+    prims: &mut Vec<VolumePrimitive>,
     leaves: &mut Vec<LeafAabb>,
 ) {
     let aabb = primitive_aabb(&prim, smoothness);
@@ -166,7 +166,7 @@ fn push_primitive(
     prims.push(prim);
 }
 
-fn sample_interior(key: u64, world_aabb: Aabb, smoothness: f32) -> SdfPrimitive {
+fn sample_interior(key: u64, world_aabb: Aabb, smoothness: f32) -> VolumePrimitive {
     let (x, mut s) = unit_f32_then_advance(key);
     let (y, mut s2) = unit_f32_then_advance(s);
     let (z, _) = unit_f32_then_advance(s2);
@@ -185,7 +185,7 @@ fn sample_boundary(
     direction: i32,
     world_aabb: Aabb,
     smoothness: f32,
-) -> SdfPrimitive {
+) -> VolumePrimitive {
     let (a, mut s) = unit_f32_then_advance(key);
     let (b, _) = unit_f32_then_advance(s);
     s = mix(s, 0xCAFE_BABE);
@@ -202,7 +202,7 @@ fn primitive_for_tag(
     position: [f32; 3],
     radius: f32,
     smoothness: f32,
-) -> SdfPrimitive {
+) -> VolumePrimitive {
     let tag = stream % 3;
     let (type_tag, params) = match tag {
         0 => (TYPE_SPHERE, [radius, 0.0, 0.0, 0.0]),
@@ -212,7 +212,7 @@ fn primitive_for_tag(
         ),
         _ => (TYPE_CYLINDER, [radius * 0.8, radius * 0.5, 0.0, 0.0]),
     };
-    SdfPrimitive {
+    VolumePrimitive {
         position,
         type_tag,
         rotation: [0.0, 0.0, 0.0, 1.0],

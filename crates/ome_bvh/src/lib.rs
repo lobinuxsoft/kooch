@@ -30,7 +30,7 @@ pub mod leaf;
 pub mod morton;
 pub mod node;
 pub mod query;
-pub mod sdf_primitive;
+pub mod volume_primitive;
 
 pub use aabb::Aabb;
 pub use accel::{
@@ -51,6 +51,6 @@ pub use leaf::{
 pub use morton::MortonCode;
 pub use node::{BVH_LEAF_FLAG, BVH_VALUE_MASK, BvhNode};
 pub use query::MAX_STACK_DEPTH;
-pub use sdf_primitive::{
-    SdfPrimitive, TYPE_BOX, TYPE_CAPSULE, TYPE_CYLINDER, TYPE_PLANE, TYPE_SPHERE, TYPE_TORUS,
+pub use volume_primitive::{
+    VolumePrimitive, TYPE_BOX, TYPE_CAPSULE, TYPE_CYLINDER, TYPE_PLANE, TYPE_SPHERE, TYPE_TORUS,
 };
