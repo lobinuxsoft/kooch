@@ -45,14 +45,24 @@ llamaban `IS_RAYMARCH` / `ROLE_RAYMARCH_*` — y su único consumidor era conten
 que nadie rendeaba desde el pivote: el path meshlet tiene su propio culling con Hi-Z. El
 `Aabb` se mudó a `ome_core`, que es donde correspondía. ~14k líneas.
 
-**Una escena ES un mundo → una escena va dividida en chunks (#566, decisión del usuario
-2026-07-21).** Hoy la escena es una lista plana y `ChunkManager` no conoce `Entity`: el
-único vínculo ECS↔streaming es `StreamingFocus`, y va en una sola dirección. Las entidades
-son lo que ocupa el slot que dejó `ChunkContent` — mejor que primitivas, porque una entidad
-ya trae transform, malla, física y componentes del proyecto. Ownership = espacial y
-derivado del `GlobalTransform`, NO un campo guardado. **Residencia ≠ ownership**: el
-streaming decide qué se instancia, no qué existe. Las entidades transitan entre chunks.
-Depende de #139 (bridge de física).
+**El mundo contiene escenas, NO al revés (#566, corregido 2026-07-21).** Verificado contra
+los engines ECS: Bevy escribe `Scene`/`DynamicScene` DENTRO de un `World`
+(`write_to_world_with`); el `World` de Unity DOTS contiene la meta-entidad de escena y sus
+section entities; el `UWorld` de Unreal contiene levels → UE5 World Partition = grilla
+espacial. El contenedor runtime es el mundo; las escenas son contenido que se carga en él.
+
+**Escena y celda son ORTOGONALES, no anidadas.** Una escena abarca muchas celdas y varias
+escenas pueden solaparse en una celda. Celda = "¿qué hay cerca?" (espacial, derivado de la
+posición). Escena = "¿qué autoró junto un diseñador?" (lógico, decisión humana). Una entidad
+pertenece a UNA escena y a UNA celda, independientemente. **Storage indexado por
+`(escena, celda)`** = los archivos per-scene-section de Unity. Anidarlos costaría: escenas
+solapadas en el mismo volumen, dos personas editando sin conflicto en git, y descargar una
+escena vs descargar una celda como operaciones distintas.
+
+Reglas: ownership **espacial y derivado** del transform, nunca campo guardado (se
+desincroniza). **Residencia ≠ existencia**. **Sección siempre residente** estilo section-0
+de Unity (carga primera, descarga última) = ahí vive la entidad de focus, que no puede ser
+dueña de una celda que se descarga sola. Depende de #139 (bridge de física).
 
 Criterio aplicado (del usuario, 2026-07-21): **se queda lo que sirve al sistema galáctico
 y a planetas terraformables; lo demás muere y se rehace bien contra el motor de física
