@@ -76,13 +76,53 @@ grilla directamente.
 
 ---
 
-## ⭐ Estado actual (development HEAD `389f209`, 2026-07-21)
+## ⭐ Estado actual (development HEAD `74e824f`, 2026-07-22)
 
-- `development` limpio, **cero PRs abiertos**.
-- **Hilo principal actual = Épico C (editor remoto), ver sección dedicada abajo.** El render
-  path #440 (más abajo) sigue vigente pero no es el foco activo.
+- `development` limpio, **cero PRs abiertos**. Stash pendiente: `wip: physics components
+  (#139)` sobre la branch `feat/physics-plugin`.
+- **Épico C (editor remoto) CERRADO.** Fases 1-5 mergeadas (#548→#557). Play in-editor
+  estilo Unity funcionando, smoke visual del user OK. #546 cerrada como completada.
+- **Hilo siguiente = física.** `ome_physics` está en rapier 0.34 + glam 0.33 workspace-wide
+  (#564), pero le falta el puente al ECS: nada crea cuerpos desde entidades, nada llama
+  `step`, nada escribe de vuelta a `Transform`. Un cubo todavía no puede caer. Eso es #139
+  y es el único bloqueante del épico de física.
+- **Amputación SDF/BVH hecha** (#565, ~14k líneas). Ver sección de decisiones sticky.
 - Editor corre limpio en RX 9070 XT (Vulkan/RADV): cero validation warnings, smoke OK en
   producción + todos los debug modes.
+
+### ⭐ Épico de física — backlog auditado contra el source de rapier 0.34 (2026-07-22)
+
+Cobertura verificada módulo por módulo. **#139 primero — todo lo demás depende de él.**
+
+| Capacidad de rapier 0.34 | Issue |
+|---|---|
+| `dynamics` — rigid bodies, step, integration params | **#139** ⭐ BLOQUEANTE |
+| `geometry` — colliders, shapes (incl. **voxels**), material, grupos | #137 |
+| `dynamics/joint` — 7 impulse + multibody + motores + límites + ruptura | #560 |
+| `pipeline` — event handler, hooks, sensores | #561 |
+| `pipeline/query_pipeline` — shape casts, proyección, intersecciones | #562 |
+| `pipeline/debug_render_pipeline` | #563 |
+| `control/character_controller` | #94 (body pide reescritura: especifica SDF) |
+| `control/ray_cast_vehicle_controller` | #105 |
+| `control/pid_controller` | #567 |
+| `island_manager` — regiones activas por distancia | #311 |
+| `counters` — timings por etapa | #569 |
+| `enhanced-determinism` vs SIMD — **decisión pendiente** | #568 |
+| Softbody — **rapier NO lo tiene** | #107 (corregida) |
+
+**#568 es lo más importante que nadie decidió**: `enhanced-determinism` y SIMD son
+mutuamente excluyentes (`compile_error!` en rapier). Hoy hay `simd-stable`, o sea el
+determinismo cross-machine está APAGADO sin que nadie lo eligiera. Sin él quedan fuera
+netcode lockstep, replays como log de inputs y revalidación server-side. Cambiarlo es un
+flag; lo caro es el netcode que se construya asumiendo lo contrario.
+
+**Gotcha de diseño para #139 (corregido antes de implementar):** el mapeo entidad↔cuerpo
+NO va como `HashMap<Entity, BodyHandle>` — viola las reglas DOD del proyecto. Va como
+componente POD `PhysicsBody(u32)` en el archetype + `Vec<Entity>` indexado por body index
+para el inverso. El sync pasa a ser un recorrido lineal sobre `(PhysicsBody, Transform)`.
+Con Rapier la capa de sync es **obligatoria** (Rapier es dueño de sus `RigidBodySet` /
+`ColliderSet`; no puede leer arrays ajenos) — el modelo ECS-nativo tipo Avian no está
+disponible porque Avian está soldado a `bevy_ecs`.
 
 ### ⭐⭐ Épico C — Editor remoto (BRP-style) — EN CURSO
 
@@ -187,6 +227,61 @@ Sin (1)/(2), el paso de texturas demo no es verificable — por eso quedó afuer
 ---
 
 ## Decisiones arquitecturales sticky (NO reabrir sin OK explícito)
+
+### Física = Rapier (revalidado 2026-07-21 con investigación, NO reabrir)
+
+Jolt gana en performance CPU (~2× en escenas grandes) y en completitud (softbody,
+vehículos, ragdolls). Pierde igual por tres razones: en Rust son bindings de terceros que
+se autodescriben "early work in progress / watch for exposed nails", exige toolchain C++
+(choca con #558, build shippeable), y **no tiene ni plan de GPU**. Rapier tiene wgrapier
+(física en WGSL, broadphase BVH + solvers andando, demo de 93k cuerpos / 120k joints) y
+prioridad Dimforge 2026 = GPU vía rust-gpu compartiendo tipos con rapier. Para un engine
+GPU-driven sobre wgpu eso decide solo. Bonus: rapier 0.32+ trae **collider de vóxel
+disperso**, único entre engines rigid-body generales — clave con el pipeline voxel/DC.
+
+**El backend va SIEMPRE detrás del trait `PhysicsBackend`.** `rapier3d::` solo puede
+importarse dentro de `ome_physics::rapier_backend`; en cualquier otro archivo es un bug de
+arquitectura. Los componentes ECS describen intención (forma, masa, tipo de cuerpo), no
+handles. Motivo: la migración a wgrapier tiene que ser reemplazar un crate, no reescribir
+el engine.
+
+### El mundo contiene escenas, NO al revés (#566)
+
+Verificado contra engines ECS reales: Bevy escribe `Scene`/`DynamicScene` DENTRO de un
+`World`; el `World` de Unity DOTS contiene la meta-entidad de escena y sus section
+entities; el `UWorld` de Unreal contiene levels → UE5 World Partition = grilla espacial.
+
+**Escena y celda son ORTOGONALES, no anidadas.** Una escena abarca muchas celdas; varias
+escenas se solapan en una celda. Celda = "¿qué hay cerca?" (espacial, DERIVADO del
+transform, nunca campo guardado). Escena = "¿qué autoró junto un diseñador?" (lógico).
+Storage por `(escena, celda)` = archivos per-scene-section de Unity. Anidarlos costaría
+escenas solapadas en el mismo volumen, edición paralela sin conflicto en git, y la
+distinción entre descargar una escena y descargar una celda.
+
+`SceneDocument` NO se reemplaza: pasa a ser el payload por `(escena, celda)`. El
+`.ome_scene` actual es "el mundo entero en una sección" — la sección 0 de Unity antes de
+partir nada. **Sección siempre residente** (carga primera, descarga última) = ahí vive la
+entidad de focus, que no puede ser dueña de una celda que se descarga sola.
+
+### SDF: murió la técnica, vive el dato (#565)
+
+`ome_sdf` y `ome_bvh` ELIMINADOS, ~14k líneas. Criterio del usuario: *se queda lo que sirve
+al sistema galáctico y a planetas terraformables; lo demás muere y se rehace bien contra el
+motor de física actual.* Nada de "tal vez lo usemos" — si hace falta, cherry-pick del
+historial.
+
+Fuera: brushes CSG en WGSL, los 7 componentes `Sdf*` de ome_ecs, `ome_bvh` entero (flags
+`IS_RAYMARCH`/`ROLE_RAYMARCH_*`; su único consumidor era contenido que nadie rendeaba desde
+el pivote), `ChunkContent`, `ProceduralCitySource` (el editor la registraba y generaba
+primitivas para un pool que nadie leía — "nunca funcionó" = desconectada, no rota),
+`VolumePrimitive`. Adentro: `ome_world::voxel` (sparse storage con LOD, mudado desde
+ome_sdf) y todo el streaming por distancia. `Aabb` se mudó a `ome_core`.
+
+**No confundir los dos SDF**: murió SDF-como-técnica-de-render/authoring. Vive
+SDF-como-formato-de-dato (un vóxel guarda una distancia con signo) — de ahí extrae malla
+dual contouring, y el collider de vóxel de rapier lo consume directo. Para física no hace
+falta lo primero.
+
 
 - **Meshlet shading = two-pass all-fragment.** NO binding_array bindless, NO compute deferred.
   Material variants futuras = shaders dedicados vía `compose_material_shader`.
