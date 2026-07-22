@@ -41,13 +41,6 @@ pub mod query;
 pub mod reflect;
 pub mod scene;
 pub mod scene_manager;
-pub mod sdf_blend;
-pub mod sdf_box;
-pub mod sdf_capsule;
-pub mod sdf_cylinder;
-pub mod sdf_plane;
-pub mod sdf_sphere;
-pub mod sdf_torus;
 pub mod sky_renderer;
 pub mod spot_light;
 pub mod static_body;
@@ -84,13 +77,6 @@ pub use scene::{
     ComponentDescription, EntityDescription, SceneDocument, SceneError, sync_scene_to_ecs,
 };
 pub use scene_manager::SceneManager;
-pub use sdf_blend::SdfBlend;
-pub use sdf_box::SdfBox;
-pub use sdf_capsule::SdfCapsule;
-pub use sdf_cylinder::SdfCylinder;
-pub use sdf_plane::SdfPlane;
-pub use sdf_sphere::SdfSphere;
-pub use sdf_torus::SdfTorus;
 pub use sky_renderer::SkyRenderer;
 pub use spot_light::SpotLight;
 pub use static_body::StaticBody;

@@ -4,10 +4,8 @@ members = [
     "crates/ome_core",
     "crates/ome_ecs",
     "crates/ome_plugin_api",
-    "crates/ome_bvh",
     "crates/ome_window",
     "crates/ome_input",
-    "crates/ome_sdf",
     "crates/ome_lighting",
     "crates/ome_render",
     "crates/ome_gizmos",
@@ -118,10 +116,8 @@ serde_json = "1"
 ome_core = { path = "crates/ome_core" }
 ome_ecs = { path = "crates/ome_ecs" }
 ome_ecs_macros = { path = "crates/ome_ecs_macros" }
-ome_bvh = { path = "crates/ome_bvh" }
 ome_window = { path = "crates/ome_window" }
 ome_input = { path = "crates/ome_input" }
-ome_sdf = { path = "crates/ome_sdf" }
 ome_lighting = { path = "crates/ome_lighting" }
 ome_render = { path = "crates/ome_render" }
 ome_gizmos = { path = "crates/ome_gizmos" }
@@ -153,7 +149,6 @@ ome_render = { workspace = true, optional = true }
 ome_gizmos = { workspace = true, optional = true }
 ome_input = { workspace = true, optional = true }
 ome_audio = { workspace = true, optional = true }
-ome_sdf = { workspace = true, optional = true }
 ome_lighting = { workspace = true, optional = true }
 ome_physics = { workspace = true, optional = true }
 ome_gravity = { workspace = true, optional = true }
@@ -177,7 +172,6 @@ render = ["dep:ome_render", "window"]
 gizmos = ["dep:ome_gizmos", "render"]
 input = ["dep:ome_input", "window"]
 audio = ["dep:ome_audio"]
-sdf = ["dep:ome_sdf"]
 lighting = ["dep:ome_lighting"]
 physics = ["dep:ome_physics"]
 gravity = ["dep:ome_gravity"]

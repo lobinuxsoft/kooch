@@ -8,12 +8,6 @@ use ome_ecs::mesh_renderer::MeshRenderer;
 use ome_ecs::orthographic_camera::OrthographicCamera;
 use ome_ecs::perspective_camera::PerspectiveCamera;
 use ome_ecs::point_light::PointLight;
-use ome_ecs::sdf_box::SdfBox;
-use ome_ecs::sdf_capsule::SdfCapsule;
-use ome_ecs::sdf_cylinder::SdfCylinder;
-use ome_ecs::sdf_plane::SdfPlane;
-use ome_ecs::sdf_sphere::SdfSphere;
-use ome_ecs::sdf_torus::SdfTorus;
 use ome_ecs::sky_renderer::SkyRenderer;
 use ome_ecs::spot_light::SpotLight;
 
@@ -43,51 +37,6 @@ pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>
             });
             ui.close();
         }
-        ui.separator();
-        ui.menu_button("SDF Shapes", |ui| {
-            if ui.button("Sphere").clicked() {
-                actions.push(EditorAction::Spawn {
-                    extra: vec![TypeId::of::<SdfSphere>()],
-                    name: Some("SDF Sphere".to_owned()),
-                });
-                ui.close();
-            }
-            if ui.button("Box").clicked() {
-                actions.push(EditorAction::Spawn {
-                    extra: vec![TypeId::of::<SdfBox>()],
-                    name: Some("SDF Box".to_owned()),
-                });
-                ui.close();
-            }
-            if ui.button("Capsule").clicked() {
-                actions.push(EditorAction::Spawn {
-                    extra: vec![TypeId::of::<SdfCapsule>()],
-                    name: Some("SDF Capsule".to_owned()),
-                });
-                ui.close();
-            }
-            if ui.button("Cylinder").clicked() {
-                actions.push(EditorAction::Spawn {
-                    extra: vec![TypeId::of::<SdfCylinder>()],
-                    name: Some("SDF Cylinder".to_owned()),
-                });
-                ui.close();
-            }
-            if ui.button("Torus").clicked() {
-                actions.push(EditorAction::Spawn {
-                    extra: vec![TypeId::of::<SdfTorus>()],
-                    name: Some("SDF Torus".to_owned()),
-                });
-                ui.close();
-            }
-            if ui.button("Plane").clicked() {
-                actions.push(EditorAction::Spawn {
-                    extra: vec![TypeId::of::<SdfPlane>()],
-                    name: Some("SDF Plane".to_owned()),
-                });
-                ui.close();
-            }
-        });
         if ui.button("Mesh Renderer").clicked() {
             actions.push(EditorAction::Spawn {
                 extra: vec![TypeId::of::<MeshRenderer>()],

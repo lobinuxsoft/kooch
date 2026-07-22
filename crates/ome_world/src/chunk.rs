@@ -13,7 +13,7 @@
 //! manages.
 
 use glam::{DVec3, IVec3, Vec3};
-use ome_bvh::Aabb;
+use ome_core::Aabb;
 use ome_core::coord::{ActiveOrigin, UniverseCoord};
 
 /// Side length of a level-0 chunk in meters. A chunk at level N has

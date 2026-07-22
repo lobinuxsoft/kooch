@@ -10,7 +10,6 @@
 //! camera so it stays composable with custom focus strategies.
 
 use ome_core::app::App;
-use ome_core::coord::ActiveOrigin;
 use ome_core::plugin::Plugin;
 use ome_core::resource::Resources;
 use ome_ecs::component::ComponentRegistry;
@@ -55,9 +54,9 @@ impl Plugin for WorldStreamingPlugin {
         // crossed a chunk boundary on any LOD since the last tick, the
         // system early-returns without enumerating the grid — kills
         // the regression caught in PR #315 (41 M pending entries in
-        // 30 s of editor runtime). The full LBVH-backed activation
-        // (using `ome_bvh`) lands in PR-4 / PR-5 when raymarch culling
-        // and physics broadphase need it.
+        // 30 s of editor runtime). Activation is distance-based; the
+        // LBVH that was going to accelerate it went with the raymarcher
+        // it was built for, and physics broadphase is rapier's job now.
         app.add_system(ome_core::stage::Stage::PreUpdate, world_streaming_system);
     }
 
@@ -87,12 +86,8 @@ pub fn world_streaming_system(resources: &mut Resources) {
         .unwrap_or_default();
 
     activation_system(resources, &mut cache, &mut manager, &config);
-    let origin = resources.get::<ActiveOrigin>().cloned();
-    let (loaded, unloaded) = manager.process_queues(
-        DEFAULT_MAX_LOADS_PER_FRAME,
-        DEFAULT_MAX_UNLOADS_PER_FRAME,
-        origin.as_ref(),
-    );
+    let (loaded, unloaded) =
+        manager.process_queues(DEFAULT_MAX_LOADS_PER_FRAME, DEFAULT_MAX_UNLOADS_PER_FRAME);
 
     if loaded > 0 || unloaded > 0 {
         tracing::trace!(

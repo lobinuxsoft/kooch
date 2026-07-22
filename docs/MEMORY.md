@@ -28,13 +28,51 @@ mínimo** (audit #239).
 
 ## Workspace (crates)
 
-`ome_core, ome_ecs, ome_window, ome_input, ome_sdf, ome_lighting, ome_render, ome_physics,
-ome_gravity, ome_world, ome_audio, ome_scripting, ome_editor_core, ome_editor, ome_bvh,
+`ome_core, ome_ecs, ome_window, ome_input, ome_lighting, ome_render, ome_physics,
+ome_gravity, ome_world, ome_audio, ome_scripting, ome_editor_core, ome_editor,
 ome_gizmos, ome_gizmos_handles, ome_editor_api`. Facade top-level `oh_my_engine` con
 `DefaultPlugins` PluginGroup (estilo Bevy).
 
-`ome_sdf` sobrevive el pivot: repurposed como authoring-tool/brushes para el pipeline
-voxel + DC de Phase 2.5. No es el render path actual.
+`ome_sdf` **ELIMINADO (2026-07)**. Contenía dos cosas sin relación: la librería de
+primitivas CSG en WGSL, que alimentaba el raymarcher ya borrado en el pivot, y el
+almacenamiento de vóxeles disperso con LOD (#136). Lo primero murió con su renderer;
+lo segundo era el sustrato de Phase 2.5 y se mudó a **`ome_world::voxel`**, que es
+donde vive el resto del streaming.
+
+`ome_bvh` **ELIMINADO (2026-07)** junto con `ome_world::content` y el
+`ProceduralCitySource`. Era la estructura de aceleración del raymarcher — sus flags se
+llamaban `IS_RAYMARCH` / `ROLE_RAYMARCH_*` — y su único consumidor era contenido de chunk
+que nadie rendeaba desde el pivote: el path meshlet tiene su propio culling con Hi-Z. El
+`Aabb` se mudó a `ome_core`, que es donde correspondía. ~14k líneas.
+
+**El mundo contiene escenas, NO al revés (#566, corregido 2026-07-21).** Verificado contra
+los engines ECS: Bevy escribe `Scene`/`DynamicScene` DENTRO de un `World`
+(`write_to_world_with`); el `World` de Unity DOTS contiene la meta-entidad de escena y sus
+section entities; el `UWorld` de Unreal contiene levels → UE5 World Partition = grilla
+espacial. El contenedor runtime es el mundo; las escenas son contenido que se carga en él.
+
+**Escena y celda son ORTOGONALES, no anidadas.** Una escena abarca muchas celdas y varias
+escenas pueden solaparse en una celda. Celda = "¿qué hay cerca?" (espacial, derivado de la
+posición). Escena = "¿qué autoró junto un diseñador?" (lógico, decisión humana). Una entidad
+pertenece a UNA escena y a UNA celda, independientemente. **Storage indexado por
+`(escena, celda)`** = los archivos per-scene-section de Unity. Anidarlos costaría: escenas
+solapadas en el mismo volumen, dos personas editando sin conflicto en git, y descargar una
+escena vs descargar una celda como operaciones distintas.
+
+Reglas: ownership **espacial y derivado** del transform, nunca campo guardado (se
+desincroniza). **Residencia ≠ existencia**. **Sección siempre residente** estilo section-0
+de Unity (carga primera, descarga última) = ahí vive la entidad de focus, que no puede ser
+dueña de una celda que se descarga sola. Depende de #139 (bridge de física).
+
+Criterio aplicado (del usuario, 2026-07-21): **se queda lo que sirve al sistema galáctico
+y a planetas terraformables; lo demás muere y se rehace bien contra el motor de física
+actual.** Nada de "tal vez lo usemos". Si hace falta algo de ahí: cherry-pick del historial.
+
+**No confundir los dos "SDF"**: el descartado es SDF-como-técnica-de-render/authoring
+(brushes CSG, raymarching). El vigente es SDF-como-formato-de-dato — cada vóxel guarda
+una distancia con signo, y de ahí extrae malla el dual contouring (#393/#397/#398). Para
+física tampoco hace falta lo primero: el collider de vóxel de rapier 0.34 consume la
+grilla directamente.
 
 ---
 

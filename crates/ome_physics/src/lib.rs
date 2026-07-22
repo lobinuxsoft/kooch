@@ -17,8 +17,9 @@
 //!
 //! Replaced the legacy SDF broadphase (#42 closed as superseded). Physics
 //! is now industry-standard rigid body via Rapier. SDF queries against
-//! terrain are *separate* — they live in `ome_sdf` once the dual contouring
-//! pipeline (Phase 2.5) starts feeding voxel zones.
+//! terrain are *separate* — they belong to the voxel storage in
+//! `ome_world::voxel` once the dual contouring pipeline (Phase 2.5)
+//! starts feeding voxel zones.
 
 pub mod backend;
 pub mod rapier_backend;
