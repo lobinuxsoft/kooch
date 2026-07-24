@@ -55,6 +55,37 @@ impl RapierBackend {
         self.gravity
     }
 
+    /// Sets the world's unit of length, in metres.
+    ///
+    /// The solver's internal tolerances — contact slop, linear sleep
+    /// thresholds, prediction distance — are all expressed as fractions
+    /// of this. A planet-scale world working in kilometres with the
+    /// default 1 m gets tolerances a thousand times too tight, which
+    /// shows up as jitter that reads like a solver bug rather than a
+    /// units mistake.
+    pub fn set_length_unit(&mut self, metres: f32) {
+        self.integration_parameters.length_unit = metres.max(f32::EPSILON);
+    }
+
+    /// The world's unit of length, in metres.
+    pub fn length_unit(&self) -> f32 {
+        self.integration_parameters.length_unit
+    }
+
+    /// Sets the number of solver iterations per step.
+    ///
+    /// More iterations buy stiffer stacks and less penetration for
+    /// linear cost. Clamped to at least 1 — zero would leave contacts
+    /// entirely unresolved.
+    pub fn set_solver_iterations(&mut self, iterations: usize) {
+        self.integration_parameters.num_solver_iterations = iterations.max(1);
+    }
+
+    /// Number of solver iterations per step.
+    pub fn solver_iterations(&self) -> usize {
+        self.integration_parameters.num_solver_iterations
+    }
+
     /// Publishes a collider's AABB into the broad-phase BVH.
     ///
     /// Scene queries read that BVH directly, and the broad-phase only
@@ -121,7 +152,7 @@ impl PhysicsBackend for RapierBackend {
             BodyKind::Static => RigidBodyType::Fixed,
         };
         let rb = RigidBodyBuilder::new(body_type)
-            .position(Pose::from_parts(desc.position, desc.rotation))
+            .pose(Pose::from_parts(desc.position, desc.rotation))
             .additional_mass(desc.mass.max(0.0))
             .build();
         let collider = collider_for(desc.shape);
@@ -169,7 +200,18 @@ impl PhysicsBackend for RapierBackend {
         let Some(body) = self.bodies.get_mut(rb_handle) else {
             return;
         };
-        body.set_position(Pose::from_parts(position, rotation), true);
+        let pose = Pose::from_parts(position, rotation);
+        // A kinematic body driven by `set_position` teleports: the solver
+        // sees no motion, so it passes through dynamic bodies instead of
+        // pushing them. `set_next_kinematic_position` makes the step
+        // derive a velocity from the delta, which is what "kinematic
+        // bodies push dynamics out of the way" actually means.
+        match body.body_type() {
+            RigidBodyType::KinematicPositionBased | RigidBodyType::KinematicVelocityBased => {
+                body.set_next_kinematic_position(pose)
+            }
+            _ => body.set_position(pose, true),
+        }
         self.publish_body_aabbs(rb_handle);
     }
 
