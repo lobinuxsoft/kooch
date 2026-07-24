@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::resource::Resources;
 use crate::stage::Stage;
@@ -74,6 +74,79 @@ fn stages_run_in_order() {
 
     let recorded = order.lock().unwrap();
     assert_eq!(*recorded, vec!["First", "Update", "Last"]);
+}
+
+/// The fixed loop runs between `Update` and `PostUpdate`. Transform
+/// propagation lives in `PostUpdate` and the GPU upload in `GpuSync`, so
+/// anything the solver writes has to reach them in the same frame —
+/// stepping after `GpuSync` would render the previous simulation.
+#[test]
+fn fixed_stages_run_between_update_and_post_update() {
+    let mut schedule = Schedule::new();
+    let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    for (stage, label) in [
+        (Stage::Update, "Update"),
+        (Stage::Physics, "Physics"),
+        (Stage::PostPhysics, "PostPhysics"),
+        (Stage::PostUpdate, "PostUpdate"),
+        (Stage::GpuSync, "GpuSync"),
+        (Stage::Render, "Render"),
+    ] {
+        let order = order.clone();
+        schedule.add_system(stage, move |_: &mut Resources| {
+            order.lock().unwrap().push(label);
+        });
+    }
+
+    let mut resources = Resources::new();
+    schedule.run_pre_physics(&mut resources);
+    schedule.run_fixed_stages(&mut resources);
+    schedule.run_post_physics(&mut resources);
+
+    let recorded = order.lock().unwrap();
+    assert_eq!(
+        *recorded,
+        vec![
+            "Update",
+            "Physics",
+            "PostPhysics",
+            "PostUpdate",
+            "GpuSync",
+            "Render"
+        ]
+    );
+}
+
+/// A frame with several fixed steps still propagates and uploads once,
+/// after the last step — not once per step, and not before the first.
+#[test]
+fn multiple_fixed_steps_still_propagate_once_at_the_end() {
+    let mut schedule = Schedule::new();
+    let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    for (stage, label) in [
+        (Stage::Physics, "Physics"),
+        (Stage::PostUpdate, "PostUpdate"),
+    ] {
+        let order = order.clone();
+        schedule.add_system(stage, move |_: &mut Resources| {
+            order.lock().unwrap().push(label);
+        });
+    }
+
+    let mut resources = Resources::new();
+    schedule.run_pre_physics(&mut resources);
+    for _ in 0..3 {
+        schedule.run_fixed_stages(&mut resources);
+    }
+    schedule.run_post_physics(&mut resources);
+
+    let recorded = order.lock().unwrap();
+    assert_eq!(
+        *recorded,
+        vec!["Physics", "Physics", "Physics", "PostUpdate"]
+    );
 }
 
 #[test]
@@ -165,7 +238,10 @@ fn mixed_closure_and_struct_systems() {
     resources.insert(order.clone());
     schedule.run_stage(Stage::Update, &mut resources);
 
-    assert_eq!(*order.lock().unwrap(), vec!["closure", "struct", "closure2"]);
+    assert_eq!(
+        *order.lock().unwrap(),
+        vec!["closure", "struct", "closure2"]
+    );
 }
 
 struct NamedSystem(&'static str);
@@ -215,8 +291,12 @@ fn gpu_systems_skipped_without_gpu_context() {
         fn init(&mut self, _: &wgpu::Device, _: &wgpu::Queue) {}
         fn prepare(&mut self, _: &wgpu::Device, _: &wgpu::Queue, _: &Resources) {}
         fn dispatch(&self, _: &mut wgpu::ComputePass) {}
-        fn name(&self) -> &str { "DummyGpu" }
-        fn is_initialized(&self) -> bool { true }
+        fn name(&self) -> &str {
+            "DummyGpu"
+        }
+        fn is_initialized(&self) -> bool {
+            true
+        }
     }
 
     schedule.add_gpu_system(Stage::Physics, DummyGpu);
@@ -238,8 +318,12 @@ fn cpu_systems_still_run_when_gpu_systems_skipped() {
         fn init(&mut self, _: &wgpu::Device, _: &wgpu::Queue) {}
         fn prepare(&mut self, _: &wgpu::Device, _: &wgpu::Queue, _: &Resources) {}
         fn dispatch(&self, _: &mut wgpu::ComputePass) {}
-        fn name(&self) -> &str { "DummyGpu" }
-        fn is_initialized(&self) -> bool { true }
+        fn name(&self) -> &str {
+            "DummyGpu"
+        }
+        fn is_initialized(&self) -> bool {
+            true
+        }
     }
 
     let counter_clone = counter.clone();

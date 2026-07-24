@@ -15,11 +15,11 @@
 /// Input       → Process input events
 /// PreUpdate   → Prepare for main update
 /// Update      → Main game logic
-/// PostUpdate  → Cleanup after main update
-/// GpuSync     → Synchronize with GPU
-/// Gpu         → GPU command submission
 /// Physics*    → Physics simulation (fixed timestep)
 /// PostPhysics*→ Post-physics processing (fixed timestep)
+/// PostUpdate  → Cleanup after main update (transform propagation)
+/// GpuSync     → Synchronize with GPU
+/// Gpu         → GPU command submission
 /// PreRender   → Prepare for rendering
 /// Render      → Main rendering
 /// PostRender  → Post-render cleanup
@@ -27,6 +27,13 @@
 ///
 /// * = may run multiple times per frame
 /// ```
+///
+/// The discriminants below still number `PostUpdate`..`Gpu` before the
+/// fixed stages, because they double as the `BTreeMap` key that orders
+/// systems *within* a run. Execution order is the list above, decided by
+/// [`Schedule::run_pre_physics`] / `run_fixed_stages` / `run_post_physics`.
+///
+/// [`Schedule::run_pre_physics`]: crate::schedule::Schedule::run_pre_physics
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum Stage {
