@@ -18,7 +18,13 @@ fn accessor_get_fields_from_cpu_storage() {
 
     let mut storage = ComponentStorage::<Health>::new();
     let e = Entity::new(0, 0);
-    storage.insert(e, Health { hp: 42, max_hp: 100 });
+    storage.insert(
+        e,
+        Health {
+            hp: 42,
+            max_hp: 100,
+        },
+    );
 
     let accessor = TypedReflectAccessor::<Health>::new_cpu();
     let fields = accessor.get_fields(&storage, e).unwrap();
@@ -47,7 +53,13 @@ fn accessor_set_field_on_cpu_storage() {
 
     let mut storage = ComponentStorage::<Health>::new();
     let e = Entity::new(0, 0);
-    storage.insert(e, Health { hp: 50, max_hp: 100 });
+    storage.insert(
+        e,
+        Health {
+            hp: 50,
+            max_hp: 100,
+        },
+    );
 
     let accessor = TypedReflectAccessor::<Health>::new_cpu();
     accessor
@@ -55,22 +67,6 @@ fn accessor_set_field_on_cpu_storage() {
         .unwrap();
 
     assert_eq!(storage.get(e).unwrap().hp, 75);
-}
-
-#[test]
-fn accessor_set_field_readonly_storage() {
-    use crate::component::gpu_storage::GpuComponentStorage;
-    use crate::entity::Entity;
-
-    let mut storage = GpuComponentStorage::<Position>::new("test");
-    let e = Entity::new(0, 0);
-    storage.insert(e, Position::reflect_default());
-
-    let accessor = TypedReflectAccessor::<Position>::new_gpu();
-    let err = accessor
-        .set_field(&mut storage, e, "x", ReflectValue::F32(5.0))
-        .unwrap_err();
-    assert_eq!(err, ReflectError::ReadOnly);
 }
 
 #[test]

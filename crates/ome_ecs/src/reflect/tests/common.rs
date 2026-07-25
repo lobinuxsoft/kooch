@@ -88,7 +88,7 @@ pub(super) struct Position {
     pub(super) _pad: f32,
 }
 
-impl crate::component::traits::GpuComponent for Position {}
+impl crate::component::traits::Component for Position {}
 
 impl Reflect for Position {
     fn reflect_fields(&self) -> &'static [FieldMeta] {

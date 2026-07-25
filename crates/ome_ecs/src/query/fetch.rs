@@ -193,12 +193,7 @@ impl<T: Send + Sync + 'static> WorldQuery for &mut T {
         tracker: &'w AccessTracker,
     ) -> Self::Fetch<'w> {
         let storage = unsafe { registry.storage_mut(&TypeId::of::<T>()) };
-        if let Some(ref s) = storage {
-            assert!(
-                s.is_mutable(),
-                "cannot borrow {:?} as mutable: storage is read-only (GPU component)",
-                std::any::type_name::<T>()
-            );
+        if storage.is_some() {
             tracker.borrow_write(TypeId::of::<T>());
         }
         WriteFetch {

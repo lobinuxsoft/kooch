@@ -3,8 +3,7 @@
 // ---------------------------------------------------------------------------
 
 use crate::component::cpu_storage::ComponentStorage;
-use crate::component::gpu_storage::GpuComponentStorage;
-use crate::component::traits::{AnyStorage, Component, GpuComponent};
+use crate::component::traits::{AnyStorage, Component};
 use crate::entity::Entity;
 
 use super::error::ReflectError;
@@ -59,37 +58,20 @@ pub(crate) trait ReflectAccessor: Send + Sync {
 /// Handles the unsafe downcast from `*const u8` / `*mut u8` to `&T` / `&mut T`
 /// internally, keeping the public API safe.
 ///
-/// Stores a closure for inserting defaults, since the insert strategy
-/// differs between CPU and GPU storages.
+/// Stores a closure for inserting defaults so the concrete component type
+/// is captured once, at registration, rather than at every insert.
 pub(crate) struct TypedReflectAccessor<T: Reflect> {
     inserter: Box<dyn Fn(&mut dyn AnyStorage, Entity) -> bool + Send + Sync>,
     _marker: std::marker::PhantomData<T>,
 }
 
 impl<T: Component + Reflect> TypedReflectAccessor<T> {
-    /// Creates an accessor for a CPU component.
+    /// Creates an accessor for a component.
     pub(crate) fn new_cpu() -> Self {
         Self {
             inserter: Box::new(|storage, entity| {
                 if let Some(cpu) = storage.as_any_mut().downcast_mut::<ComponentStorage<T>>() {
                     cpu.insert(entity, T::reflect_default());
-                    true
-                } else {
-                    false
-                }
-            }),
-            _marker: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<T: GpuComponent + Reflect> TypedReflectAccessor<T> {
-    /// Creates an accessor for a GPU component.
-    pub(crate) fn new_gpu() -> Self {
-        Self {
-            inserter: Box::new(|storage, entity| {
-                if let Some(gpu) = storage.as_any_mut().downcast_mut::<GpuComponentStorage<T>>() {
-                    gpu.insert(entity, T::reflect_default());
                     true
                 } else {
                     false
@@ -133,14 +115,13 @@ impl<T: Reflect> ReflectAccessor for TypedReflectAccessor<T> {
         field: &str,
         value: ReflectValue,
     ) -> Result<(), ReflectError> {
-        if !storage.is_mutable() {
-            return Err(ReflectError::ReadOnly);
-        }
         let ptr = storage
             .get_mut_ptr(entity)
             .ok_or(ReflectError::ComponentNotFound)?;
-        // SAFETY: Same TypeId guarantee as get_fields, and is_mutable() check
-        // ensures we're allowed to write.
+        // SAFETY: same TypeId guarantee as get_fields. Every storage is
+        // writable now that the GPU-backed, read-only kind is gone (#603);
+        // `ReflectError::ReadOnly` survives for types that refuse a write in
+        // their own `reflect_set`, such as `Parent`.
         let component = unsafe { &mut *(ptr as *mut T) };
         component.reflect_set(field, value)
     }

@@ -123,8 +123,8 @@ impl<T: Pod> GpuBuffer<T> {
     /// **Does not preserve GPU-side data.** The old buffer is dropped and
     /// a fresh one is created. `len` is reset to 0.
     ///
-    /// This matches the engine pattern in `EntityGpuState::grow` where the
-    /// caller re-uploads data after growing.
+    /// The caller re-uploads its data after growing — the buffer does not
+    /// preserve contents across a resize.
     pub fn grow(&mut self, device: &Device, label: &str, new_capacity: u64) {
         if new_capacity <= self.capacity {
             return;

@@ -107,8 +107,8 @@ where
 ///     }
 ///
 ///     fn prepare(&mut self, device: &Device, _queue: &Queue, resources: &Resources) {
-///         let positions = resources.get::<GpuComponentStorage<Position>>().unwrap();
-///         self.bind_group = Some(create_bind_group(device, positions));
+///         let instances = resources.get::<PositionBuffer>().unwrap();
+///         self.bind_group = Some(create_bind_group(device, instances));
 ///     }
 ///
 ///     fn dispatch(&self, pass: &mut ComputePass) {

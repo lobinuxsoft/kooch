@@ -26,10 +26,13 @@ fn registry_reflect_get_fields() {
     let mut registry = ComponentRegistry::new();
     registry.register_cpu_reflected::<Health>();
     let e = Entity::new(0, 0);
-    registry
-        .get_cpu_mut::<Health>()
-        .unwrap()
-        .insert(e, Health { hp: 42, max_hp: 100 });
+    registry.get_cpu_mut::<Health>().unwrap().insert(
+        e,
+        Health {
+            hp: 42,
+            max_hp: 100,
+        },
+    );
 
     let fields = registry
         .reflect_get_fields(&std::any::TypeId::of::<Health>(), e)
@@ -46,10 +49,13 @@ fn registry_reflect_set_field() {
     let mut registry = ComponentRegistry::new();
     registry.register_cpu_reflected::<Health>();
     let e = Entity::new(0, 0);
-    registry
-        .get_cpu_mut::<Health>()
-        .unwrap()
-        .insert(e, Health { hp: 50, max_hp: 100 });
+    registry.get_cpu_mut::<Health>().unwrap().insert(
+        e,
+        Health {
+            hp: 50,
+            max_hp: 100,
+        },
+    );
 
     registry
         .reflect_set_field(
@@ -70,7 +76,7 @@ fn registry_reflected_type_ids() {
 
     let mut registry = ComponentRegistry::new();
     registry.register_cpu_reflected::<Health>();
-    registry.register_gpu::<Position>("pos"); // Not reflected
+    registry.register_cpu::<Position>(); // Not reflected
 
     let ids = registry.reflected_type_ids();
     assert_eq!(ids.len(), 1);
@@ -86,9 +92,11 @@ fn registry_non_reflected_has_no_reflector() {
     registry.register_cpu::<Health>(); // Without reflection
 
     assert!(!registry.has_reflector(&std::any::TypeId::of::<Health>()));
-    assert!(registry
-        .reflect_get_fields(&std::any::TypeId::of::<Health>(), Entity::new(0, 0))
-        .is_none());
+    assert!(
+        registry
+            .reflect_get_fields(&std::any::TypeId::of::<Health>(), Entity::new(0, 0))
+            .is_none()
+    );
 }
 
 // -- Commands integration tests ------------------------------------------
@@ -111,7 +119,10 @@ fn commands_insert_reflected() {
     let mut commands = Commands::new();
     let entity = commands
         .spawn(&mut resources)
-        .insert_reflected(Health { hp: 42, max_hp: 100 })
+        .insert_reflected(Health {
+            hp: 42,
+            max_hp: 100,
+        })
         .id();
     commands.apply(&mut resources);
 

@@ -7,19 +7,18 @@ use ome_core::stage::Stage;
 use crate::allocator::EntityAllocator;
 use crate::archetype_registry::ArchetypeRegistry;
 use crate::commands::{Commands, commands_apply_system};
-use crate::component::registry::ComponentRegistry;
-use crate::component::{component_despawn_cleanup_system, component_gpu_sync_system};
 use crate::component::ComponentNames;
+use crate::component::component_despawn_cleanup_system;
+use crate::component::registry::ComponentRegistry;
+use crate::directional_light::DirectionalLight;
 use crate::dynamic_components::DynamicComponents;
-use crate::ephemeral::EphemeralComponents;
 #[cfg(feature = "dynamic")]
 use crate::entity::Entity;
-use crate::gpu_sync::entity_gpu_sync_system;
-use crate::directional_light::DirectionalLight;
-use crate::lod_force_level::LodForceLevel;
+use crate::ephemeral::EphemeralComponents;
 use crate::hierarchy::{
     Children, GlobalTransform, Parent, hierarchy_sync_system, transform_propagation_system,
 };
+use crate::lod_force_level::LodForceLevel;
 use crate::mesh_renderer::MeshRenderer;
 use crate::name::Name;
 use crate::orthographic_camera::OrthographicCamera;
@@ -75,19 +74,16 @@ impl Plugin for EcsPlugin {
         // Register built-in components before user startup systems.
         app.add_system(Stage::Startup, register_builtin_components);
 
-        // Order within a stage is insertion order — these MUST stay in this sequence.
+        // Order within a stage is insertion order — these MUST stay in this
+        // sequence.
         // 1. Apply deferred commands (spawn/despawn/insert/remove).
         // 2. Clean up despawned entities from component storages.
-        // 3. Sync entity alive mask to GPU.
-        // 4. Upload dirty component data to GPU.
         // Hierarchy sync and transform propagation run before GPU sync.
         app.add_system(Stage::PostUpdate, hierarchy_sync_system);
         app.add_system(Stage::PostUpdate, transform_propagation_system);
 
         app.add_system(Stage::GpuSync, commands_apply_system);
         app.add_system(Stage::GpuSync, component_despawn_cleanup_system);
-        app.add_system(Stage::GpuSync, entity_gpu_sync_system);
-        app.add_system(Stage::GpuSync, component_gpu_sync_system);
 
         #[cfg(feature = "dynamic")]
         {
