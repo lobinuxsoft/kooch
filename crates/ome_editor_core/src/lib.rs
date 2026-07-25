@@ -130,6 +130,9 @@ impl Plugin for EditorPlugin {
         // Register built-in visualizers (Transform, ...) into the
         // VisualizerRegistry. Must run BEFORE the first gizmo batch build.
         app.add_system(Stage::Startup, gizmos::register_builtin_visualizers_system);
+        // Which gizmo groups draw, restored from disk. After the
+        // visualizers are registered so the panel has something to list.
+        app.add_system(Stage::Startup, gizmos::load_visibility_system);
         // Rebuild the gizmo line batch from current selection. Runs after
         // transform propagation (PostUpdate) so GlobalTransform is fresh.
         app.add_system(Stage::PreRender, gizmos::build_gizmo_batch_system);
@@ -138,6 +141,9 @@ impl Plugin for EditorPlugin {
         // Cheap fast-path: re-serializes and compares before any disk I/O,
         // so steady-state frames produce zero writes.
         app.add_system(Stage::Last, layout::save_layout_system);
+        // Same cheap fast-path as the layout: re-serialize, compare, and
+        // only touch disk when a choice actually changed.
+        app.add_system(Stage::Last, gizmos::save_visibility_system);
     }
 
     fn name(&self) -> &str {
