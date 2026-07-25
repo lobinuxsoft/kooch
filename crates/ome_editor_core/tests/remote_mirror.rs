@@ -203,3 +203,77 @@ fn reapply_drops_components_the_project_removed() {
         "parked component survived"
     );
 }
+
+/// Unparenting on the project has to reach the mirror.
+///
+/// The parent travels as its own snapshot field rather than as a component,
+/// so `sync_components` never sees it and cannot retire it. The pass that
+/// wires parents used to skip entities whose snapshot reported no parent,
+/// which meant *parenting* was applied and *unparenting* was ignored — the
+/// hierarchy stayed nested in the editor while the project had already
+/// flattened it. Asymmetric, and it read as "unparent does not work".
+#[test]
+fn a_vanished_parent_is_cleared_from_the_mirror() {
+    let mut resources = ecs();
+    let mut mirror = RemoteMirror::new();
+
+    mirror.apply(&snapshot(), &mut resources);
+    let mesh = mirror.local_of(eid(1)).expect("mesh mirrored");
+
+    // The fixture nests the mesh under the rig.
+    assert!(
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<Parent>())
+            .is_some_and(|s| s.contains(mesh)),
+        "the fixture is not exercising a parented entity"
+    );
+
+    // The project flattens it.
+    let mut next = snapshot();
+    next[1].parent = None;
+    mirror.apply(&next, &mut resources);
+
+    assert!(
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<Parent>())
+            .is_none_or(|s| !s.contains(mesh)),
+        "the mirror kept a Parent the project no longer reports"
+    );
+}
+
+/// Re-parenting to a *different* entity travels too, not just to root.
+#[test]
+fn a_changed_parent_is_followed() {
+    let mut resources = ecs();
+    let mut mirror = RemoteMirror::new();
+
+    // Three entities: the third starts as a root and becomes the new parent.
+    let mut initial = snapshot();
+    initial.push(EntitySnapshot {
+        id: eid(2),
+        name: Some("Other".into()),
+        parent: None,
+        components: vec![],
+    });
+    mirror.apply(&initial, &mut resources);
+
+    let mesh = mirror.local_of(eid(1)).expect("mesh mirrored");
+    let other = mirror.local_of(eid(2)).expect("other mirrored");
+
+    let mut next = initial.clone();
+    next[1].parent = Some(eid(2));
+    mirror.apply(&next, &mut resources);
+
+    let parent = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<Parent>())
+        .and_then(|s| s.get(mesh))
+        .map(|p| p.entity);
+    assert_eq!(
+        parent,
+        Some(other),
+        "the mirror did not follow the new parent"
+    );
+}

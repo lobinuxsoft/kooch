@@ -109,12 +109,20 @@ impl RemoteMirror {
         }
 
         // Second pass: wire parents now that every id is mapped.
+        //
+        // The parent travels as its own snapshot field rather than as a
+        // component, so it needs its own sync — `sync_components` above
+        // never sees it and cannot retire it. Both directions matter: an
+        // entity the project reports with no parent has to *lose* its local
+        // `Parent`, or unparenting is invisible in the mirror while
+        // parenting works, which is exactly how it read.
         for snap in snapshot {
-            let (Some(&child), Some(parent)) = (self.id_map.get(&snap.id), snap.parent) else {
+            let Some(&child) = self.id_map.get(&snap.id) else {
                 continue;
             };
-            if let Some(&parent_local) = self.id_map.get(&parent) {
-                set_parent(resources, child, parent_local);
+            match snap.parent.and_then(|parent| self.id_map.get(&parent)) {
+                Some(&parent_local) => set_parent(resources, child, parent_local),
+                None => clear_parent(resources, child),
             }
         }
     }
@@ -264,6 +272,35 @@ fn set_parent(resources: &mut Resources, child: Entity, parent: Entity) {
         }
     }
     update_archetype_add(resources, child, type_id::<Parent>());
+}
+
+/// Drops `child`'s `Parent`, making it a root.
+///
+/// Deliberately *not* `ome_ecs::hierarchy::reparent`: that rewrites the
+/// child's local transform to preserve its world pose, which is right when a
+/// person drags something in the editor and wrong here. The mirror is
+/// copying a world the project already resolved — the project sends the
+/// local transform it wants, and rewriting it on this side would fight the
+/// snapshot every refresh.
+fn clear_parent(resources: &mut Resources, child: Entity) {
+    let had_parent = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<Parent>())
+        .is_some_and(|s| s.contains(child));
+    if !had_parent {
+        // Nothing to do, and skipping keeps the archetype churn off every
+        // refresh for every root entity in the scene.
+        return;
+    }
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.remove_component(child, &type_id::<Parent>());
+    }
+    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(child)
+    {
+        let new_arch = archetypes.archetype_after_remove_dynamic(current, type_id::<Parent>());
+        archetypes.register_entity(child, new_arch);
+    }
 }
 
 /// Moves `entity` to the archetype it belongs in after adding `type_id`.
