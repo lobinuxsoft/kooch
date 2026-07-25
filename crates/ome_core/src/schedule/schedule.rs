@@ -120,41 +120,22 @@ impl Schedule {
         true
     }
 
-    /// Runs all non-fixed stages in order (excluding Startup).
+    /// Runs a whole frame's non-fixed stages, in order.
     ///
-    /// This runs: First → Input → PreUpdate → Update → PostUpdate →
-    /// GpuSync → Gpu → PreRender → Render → PostRender → Last
+    /// First → Input → PreUpdate → Update → PostUpdate → GpuSync → Gpu →
+    /// PreRender → Render → PostRender → Last. For a frame that also
+    /// simulates, interleave [`run_fixed_stages`](Self::run_fixed_stages)
+    /// between the two halves instead of calling this.
     pub fn run_frame_stages(&mut self, resources: &mut Resources) {
-        for stage in [
-            Stage::First,
-            Stage::Input,
-            Stage::PreUpdate,
-            Stage::Update,
-            Stage::PostUpdate,
-            Stage::GpuSync,
-            Stage::Gpu,
-            Stage::PreRender,
-            Stage::Render,
-            Stage::PostRender,
-            Stage::Last,
-        ] {
-            self.run_stage(stage, resources);
-        }
+        self.run_pre_physics(resources);
+        self.run_post_physics(resources);
     }
 
-    /// Runs the pre-physics frame stages.
+    /// Runs the frame stages that precede the fixed timestep loop.
     ///
-    /// First → Input → PreUpdate → Update → PostUpdate → GpuSync → Gpu
+    /// First → Input → PreUpdate → Update
     pub fn run_pre_physics(&mut self, resources: &mut Resources) {
-        for stage in [
-            Stage::First,
-            Stage::Input,
-            Stage::PreUpdate,
-            Stage::Update,
-            Stage::PostUpdate,
-            Stage::GpuSync,
-            Stage::Gpu,
-        ] {
+        for stage in [Stage::First, Stage::Input, Stage::PreUpdate, Stage::Update] {
             self.run_stage(stage, resources);
         }
     }
@@ -167,11 +148,20 @@ impl Schedule {
         self.run_stage(Stage::PostPhysics, resources);
     }
 
-    /// Runs the post-physics frame stages.
+    /// Runs the frame stages that follow the fixed timestep loop.
     ///
-    /// PreRender → Render → PostRender → Last
+    /// PostUpdate → GpuSync → Gpu → PreRender → Render → PostRender → Last
+    ///
+    /// Transform propagation and the GPU upload live in `PostUpdate` and
+    /// `GpuSync`, so they run *after* the solver has written this frame's
+    /// poses — the same arrangement Unity, Unreal, Bevy and Godot use.
+    /// Running them before the fixed loop would render the previous
+    /// frame's simulation.
     pub fn run_post_physics(&mut self, resources: &mut Resources) {
         for stage in [
+            Stage::PostUpdate,
+            Stage::GpuSync,
+            Stage::Gpu,
             Stage::PreRender,
             Stage::Render,
             Stage::PostRender,

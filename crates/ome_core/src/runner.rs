@@ -24,11 +24,14 @@ pub type Runner = fn(App);
 ///    a. Update events (swap buffers)
 ///    b. Check AppExit
 ///    c. Update time, get fixed step count
-///    d. Run frame stages (First → PostUpdate)
-///    e. Run GPU stages (GpuSync, Gpu)
-///    f. Run fixed stages N times (Physics, PostPhysics)
-///    g. Run render stages (PreRender → Last)
+///    d. Run frame stages (First → Update)
+///    e. Run fixed stages N times (Physics, PostPhysics)
+///    f. Run the rest (PostUpdate, GpuSync, Gpu, PreRender → Last)
 /// ```
+///
+/// The fixed loop sits between `Update` and `PostUpdate` so transform
+/// propagation and the GPU upload see the poses the solver produced this
+/// frame, not the previous one.
 pub fn default_runner(mut app: App) {
     // Run startup systems once
     app.schedule.run_startup(&mut app.resources);
@@ -80,11 +83,10 @@ pub fn run_once(mut app: App) {
         time.update();
     }
 
-    // Run all frame stages once
-    app.schedule.run_frame_stages(&mut app.resources);
-
-    // Run fixed stages once
+    // One frame, fixed loop in its place between Update and PostUpdate.
+    app.schedule.run_pre_physics(&mut app.resources);
     app.schedule.run_fixed_stages(&mut app.resources);
+    app.schedule.run_post_physics(&mut app.resources);
 }
 
 /// Updates all event buffers.
@@ -120,8 +122,9 @@ pub fn run_for_frames(mut app: App, frame_count: u32) {
             time.update();
         }
 
-        app.schedule.run_frame_stages(&mut app.resources);
+        app.schedule.run_pre_physics(&mut app.resources);
         app.schedule.run_fixed_stages(&mut app.resources);
+        app.schedule.run_post_physics(&mut app.resources);
     }
 }
 

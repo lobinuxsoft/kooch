@@ -1,0 +1,292 @@
+//! [`PhysicsWorld`] — the ECS↔backend body mapping, and the [`PhysicsBody`]
+//! component that addresses it.
+//!
+//! # Why a slot index and not a `HashMap<Entity, BodyHandle>`
+//!
+//! The obvious mapping is a hash map either way round. Both directions
+//! are needed every frame — spawn sync walks entities and asks "does this
+//! one have a body", writeback walks bodies and asks "which entity does
+//! this belong to" — and a hash map makes each of those a pointer chase
+//! per element.
+//!
+//! Instead the world keeps parallel arrays indexed by a dense `u32` slot,
+//! and the entity carries that slot as a plain POD component. Entity →
+//! slot is a component lookup; slot → entity is an array index. Both
+//! passes are linear walks over contiguous memory.
+//!
+//! The sync layer itself is not optional: Rapier owns its `RigidBodySet`
+//! and `ColliderSet`, so the solver's state cannot live *in* the
+//! archetypes the way an ECS-native engine would put it. That is the
+//! price of the trait — and the trait is what lets a GPU solver replace
+//! Rapier later without touching a single authored scene.
+
+use glam::{Quat, Vec3};
+
+use ome_ecs::component::Component;
+use ome_ecs::entity::Entity;
+
+use crate::backend::{BodyDesc, BodyHandle, PhysicsBackend};
+use crate::components::{Collider, RigidBody};
+
+/// The physics body an entity owns, as a slot into [`PhysicsWorld`].
+///
+/// Runtime state, not authored data: it is deliberately *not* reflected,
+/// so it never reaches a scene file, the Inspector, or a
+/// [`WorldSnapshot`]. Pressing stop therefore drops it along with the
+/// rest of the play session, and the next sync rebuilds the physics world
+/// from the restored ECS — one source of truth, no divergence between the
+/// solver and the entities.
+///
+/// [`WorldSnapshot`]: ome_ecs::world_snapshot::WorldSnapshot
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PhysicsBody(u32);
+
+impl Component for PhysicsBody {}
+
+impl PhysicsBody {
+    /// Wraps a slot index.
+    pub const fn new(slot: u32) -> Self {
+        Self(slot)
+    }
+
+    /// The slot this body occupies in [`PhysicsWorld`].
+    pub const fn slot(&self) -> u32 {
+        self.0
+    }
+}
+
+/// The authored intent a body was built from.
+///
+/// Kept per slot so the sync pass can tell "this entity already has the
+/// right body" from "this entity's body no longer matches what the
+/// Inspector says", without asking the backend to describe itself.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BodySpec {
+    kind: u32,
+    mass: f32,
+    shape: u32,
+    radius: f32,
+    half_height: f32,
+    half_extents: Vec3,
+    /// The entity's `Transform` scale, folded into the shape dimensions.
+    ///
+    /// Rapier's shapes take no scale — they are built from dimensions —
+    /// so scaling has to happen where the shape is built, and a scale
+    /// change has to *rebuild* it. Which is why this belongs in the spec:
+    /// the sync pass compares specs to decide what to rebuild, so dragging
+    /// the scale gizmo lands here and retires the old body.
+    scale: Vec3,
+}
+
+impl BodySpec {
+    /// Reads the spec off the authored components.
+    ///
+    /// `scale` is the entity's `Transform` scale. Ignoring it was the bug
+    /// that made colliders "work at some sizes and not others": the mesh
+    /// grew with the gizmo and the collider stayed at its authored
+    /// dimensions.
+    pub fn new(body: &RigidBody, collider: &Collider, scale: Vec3) -> Self {
+        Self {
+            kind: body.kind,
+            mass: body.mass,
+            shape: collider.shape,
+            radius: collider.radius,
+            half_height: collider.half_height,
+            half_extents: collider.half_extents,
+            scale,
+        }
+    }
+
+    /// The descriptor that builds this body at a given pose.
+    ///
+    /// # How scale folds into each shape
+    ///
+    /// Only a box scales exactly: its half-extents are per-axis, so a
+    /// non-uniform scale is exact. The round shapes have no non-uniform
+    /// form in Rapier — a non-uniformly scaled sphere is an ellipsoid, and
+    /// there is no ellipsoid primitive — so they follow the convention
+    /// every engine uses:
+    ///
+    /// - **Sphere**: radius times the largest axis scale. Enclosing the
+    ///   mesh beats intersecting it; a collider smaller than what you can
+    ///   see is the one that reads as a physics bug.
+    /// - **Capsule**: radius times the larger of the two horizontal
+    ///   scales, half-height times the vertical one, because the capsule
+    ///   runs along Y.
+    ///
+    /// A truly non-uniform round collider wants a convex hull (#137).
+    pub fn desc(&self, position: Vec3, rotation: Quat) -> BodyDesc {
+        let s = self.scale.abs();
+        let collider = Collider {
+            shape: self.shape,
+            radius: self.radius * s.max_element(),
+            half_height: self.half_height * s.y,
+            half_extents: self.half_extents * s,
+        };
+        // The capsule's radius follows its horizontal axes, not the
+        // largest overall — a tall thin capsule scaled on Y should get
+        // taller, not fatter.
+        let collider = match self.shape {
+            crate::components::SHAPE_CAPSULE => Collider {
+                radius: self.radius * s.x.max(s.z),
+                ..collider
+            },
+            _ => collider,
+        };
+        BodyDesc {
+            kind: RigidBody {
+                kind: self.kind,
+                mass: self.mass,
+            }
+            .body_kind(),
+            shape: collider.collision_shape(),
+            mass: self.mass,
+            position,
+            rotation,
+        }
+    }
+
+    /// `true` when the solver — not the author — owns this body's pose.
+    pub fn is_dynamic(&self) -> bool {
+        matches!(self.kind, crate::components::KIND_DYNAMIC)
+    }
+
+    /// `true` when the author drives the pose and the solver reacts.
+    pub fn is_kinematic(&self) -> bool {
+        matches!(self.kind, crate::components::KIND_KINEMATIC)
+    }
+}
+
+/// One slot's worth of state. `entity == Entity::INVALID` marks it free.
+struct Slot {
+    entity: Entity,
+    handle: BodyHandle,
+    spec: BodySpec,
+}
+
+/// The physics backend plus the mapping between its bodies and entities.
+///
+/// Slots are never compacted, so a [`PhysicsBody`] stays valid for the
+/// life of its body. Freed slots go on a free list and are reused, which
+/// keeps the arrays dense without invalidating anyone's index.
+pub struct PhysicsWorld {
+    backend: Box<dyn PhysicsBackend>,
+    slots: Vec<Slot>,
+    free: Vec<u32>,
+}
+
+impl PhysicsWorld {
+    /// Wraps a backend in an empty world.
+    pub fn new(backend: Box<dyn PhysicsBackend>) -> Self {
+        Self {
+            backend,
+            slots: Vec::new(),
+            free: Vec::new(),
+        }
+    }
+
+    /// The backend, for queries.
+    pub fn backend(&self) -> &dyn PhysicsBackend {
+        self.backend.as_ref()
+    }
+
+    /// The backend, for stepping and mutation.
+    pub fn backend_mut(&mut self) -> &mut dyn PhysicsBackend {
+        self.backend.as_mut()
+    }
+
+    /// Number of live bodies.
+    pub fn len(&self) -> usize {
+        self.slots.len() - self.free.len()
+    }
+
+    /// `true` when no body is live.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Highest slot index ever handed out, plus one.
+    pub fn capacity(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Creates a body for `entity` and returns the slot addressing it.
+    pub fn insert(
+        &mut self,
+        entity: Entity,
+        spec: BodySpec,
+        position: Vec3,
+        rotation: Quat,
+    ) -> u32 {
+        let handle = self.backend.add_body(spec.desc(position, rotation));
+        let slot = Slot {
+            entity,
+            handle,
+            spec,
+        };
+        match self.free.pop() {
+            Some(index) => {
+                self.slots[index as usize] = slot;
+                index
+            }
+            None => {
+                self.slots.push(slot);
+                (self.slots.len() - 1) as u32
+            }
+        }
+    }
+
+    /// Releases a slot's body. Idempotent for an already-free slot.
+    pub fn remove(&mut self, slot: u32) {
+        let Some(entry) = self.slots.get_mut(slot as usize) else {
+            return;
+        };
+        if !entry.entity.is_valid() {
+            return;
+        }
+        entry.entity = Entity::INVALID;
+        let handle = entry.handle;
+        self.backend.remove_body(handle);
+        self.free.push(slot);
+    }
+
+    /// Drops every body, keeping the backend.
+    pub fn clear(&mut self) {
+        for slot in 0..self.slots.len() as u32 {
+            self.remove(slot);
+        }
+    }
+
+    /// The entity occupying a slot, or `None` when it is free.
+    pub fn entity(&self, slot: u32) -> Option<Entity> {
+        self.slots
+            .get(slot as usize)
+            .filter(|s| s.entity.is_valid())
+            .map(|s| s.entity)
+    }
+
+    /// The spec a live slot's body was built from.
+    pub fn spec(&self, slot: u32) -> Option<BodySpec> {
+        self.slots
+            .get(slot as usize)
+            .filter(|s| s.entity.is_valid())
+            .map(|s| s.spec)
+    }
+
+    /// The backend handle for a live slot.
+    pub fn handle(&self, slot: u32) -> Option<BodyHandle> {
+        self.slots
+            .get(slot as usize)
+            .filter(|s| s.entity.is_valid())
+            .map(|s| s.handle)
+    }
+
+    /// Walks the live slots as `(slot, entity, spec, handle)`.
+    pub fn iter(&self) -> impl Iterator<Item = (u32, Entity, BodySpec, BodyHandle)> + '_ {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.entity.is_valid())
+            .map(|(index, s)| (index as u32, s.entity, s.spec, s.handle))
+    }
+}

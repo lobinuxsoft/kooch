@@ -22,7 +22,7 @@ pub enum BodyKind {
 /// Collision primitive attached to a body. PR-1 covers the three shapes
 /// every game ships; convex hulls + trimesh + heightfield arrive with
 /// #137 (CollisionShape ECS component) and the asset pipeline.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CollisionShape {
     /// Solid ball, parametrised by `radius`.
     Sphere { radius: f32 },

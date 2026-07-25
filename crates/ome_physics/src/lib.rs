@@ -22,9 +22,11 @@
 //! starts feeding voxel zones.
 
 pub mod backend;
+pub mod components;
+pub mod plugin;
 pub mod rapier_backend;
 
-pub use backend::{
-    BodyDesc, BodyHandle, BodyKind, CollisionShape, PhysicsBackend, RayHit,
-};
+pub use backend::{BodyDesc, BodyHandle, BodyKind, CollisionShape, PhysicsBackend, RayHit};
+pub use components::{Collider, RigidBody};
+pub use plugin::{PhysicsBody, PhysicsComponentsPlugin, PhysicsPlugin, PhysicsWorld};
 pub use rapier_backend::RapierBackend;

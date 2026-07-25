@@ -68,6 +68,8 @@ pub mod prelude {
     pub use ome_core::prelude::*;
     pub use ome_ecs::{EcsPlugin, Entity, EntityAllocator};
 
+    #[cfg(feature = "physics")]
+    pub use ome_physics::{Collider, PhysicsPlugin, RigidBody};
     #[cfg(feature = "dynamic")]
     pub use ome_plugin_api::prelude as plugin_api;
     #[cfg(feature = "remote")]
@@ -152,10 +154,16 @@ pub struct RemoteHostPlugins;
 
 impl ome_core::plugin::PluginGroup for RemoteHostPlugins {
     fn build(self) -> ome_core::plugin::PluginGroupBuilder {
-        ome_core::plugin::PluginGroupBuilder::new()
+        let builder = ome_core::plugin::PluginGroupBuilder::new()
             .add(ome_core::plugin::CorePlugin)
-            .add(ome_ecs::EcsPlugin)
-            .add(SceneBootstrapPlugin::default())
+            .add(ome_ecs::EcsPlugin);
+
+        // The host is what actually simulates when the editor presses
+        // Play, so it needs physics even though it draws nothing.
+        #[cfg(feature = "physics")]
+        let builder = builder.add(ome_physics::PhysicsPlugin::new());
+
+        builder.add(SceneBootstrapPlugin::default())
     }
 }
 
@@ -177,6 +185,9 @@ impl ome_core::plugin::PluginGroup for DefaultPlugins {
 
         #[cfg(feature = "world")]
         let builder = builder.add(ome_world::WorldStreamingPlugin);
+
+        #[cfg(feature = "physics")]
+        let builder = builder.add(ome_physics::PhysicsPlugin::new());
 
         builder.add(SceneBootstrapPlugin::default())
     }

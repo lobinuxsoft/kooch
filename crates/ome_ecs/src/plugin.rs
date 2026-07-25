@@ -16,11 +16,7 @@ use crate::ephemeral::EphemeralComponents;
 use crate::entity::Entity;
 use crate::gpu_sync::entity_gpu_sync_system;
 use crate::directional_light::DirectionalLight;
-use crate::dynamic_body::DynamicBody;
-use crate::kinematic_body::KinematicBody;
 use crate::lod_force_level::LodForceLevel;
-use crate::static_body::StaticBody;
-use crate::velocity::Velocity;
 use crate::hierarchy::{
     Children, GlobalTransform, Parent, hierarchy_sync_system, transform_propagation_system,
 };
@@ -60,11 +56,7 @@ fn register_builtin_components(resources: &mut ome_core::resource::Resources) {
         registry.register_cpu_reflected::<SpotLight>();
         registry.register_cpu_reflected::<SkyRenderer>();
         registry.register_cpu_reflected::<MeshRenderer>();
-        registry.register_cpu_reflected::<DynamicBody>();
-        registry.register_cpu_reflected::<KinematicBody>();
         registry.register_cpu_reflected::<LodForceLevel>();
-        registry.register_cpu_reflected::<StaticBody>();
-        registry.register_cpu_reflected::<Velocity>();
     }
 }
 
