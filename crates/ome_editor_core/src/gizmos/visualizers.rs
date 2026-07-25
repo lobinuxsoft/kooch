@@ -54,8 +54,18 @@ impl Visualizer<PerspectiveCamera> for PerspectiveCameraVisualizer {
         ];
 
         let to_world = |p: Vec3| transform.matrix.transform_point3(p);
-        let near_w: [Vec3; 4] = [to_world(near[0]), to_world(near[1]), to_world(near[2]), to_world(near[3])];
-        let far_w: [Vec3; 4] = [to_world(far[0]), to_world(far[1]), to_world(far[2]), to_world(far[3])];
+        let near_w: [Vec3; 4] = [
+            to_world(near[0]),
+            to_world(near[1]),
+            to_world(near[2]),
+            to_world(near[3]),
+        ];
+        let far_w: [Vec3; 4] = [
+            to_world(far[0]),
+            to_world(far[1]),
+            to_world(far[2]),
+            to_world(far[3]),
+        ];
 
         // Near rectangle.
         for i in 0..4 {
@@ -99,7 +109,8 @@ impl Visualizer<OrthographicCamera> for OrthographicCameraVisualizer {
             Vec3::new(half_w, -half_h, -camera.far),
         ];
 
-        let c: [Vec3; 8] = std::array::from_fn(|i| transform.matrix.transform_point3(corners_local[i]));
+        let c: [Vec3; 8] =
+            std::array::from_fn(|i| transform.matrix.transform_point3(corners_local[i]));
 
         // Near rect, far rect, and 4 side edges.
         for i in 0..4 {
@@ -117,12 +128,7 @@ impl Visualizer<OrthographicCamera> for OrthographicCameraVisualizer {
 pub(crate) struct DirectionalLightVisualizer;
 
 impl Visualizer<DirectionalLight> for DirectionalLightVisualizer {
-    fn draw(
-        &self,
-        light: &DirectionalLight,
-        transform: &GlobalTransform,
-        gizmos: &mut Gizmos<'_>,
-    ) {
+    fn draw(&self, light: &DirectionalLight, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
         let origin = transform.matrix.w_axis.truncate();
         let forward = transform
             .matrix
