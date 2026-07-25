@@ -4,7 +4,7 @@ use std::any::TypeId;
 
 use crate::archetype_registry::ArchetypeRegistry;
 use crate::component::registry::ComponentRegistry;
-use crate::component::traits::{Component, GpuComponent};
+use crate::component::traits::Component;
 use crate::entity::Entity;
 use crate::reflect::Reflect;
 
@@ -37,22 +37,6 @@ impl EntityCommands<'_> {
         self
     }
 
-    /// Adds a GPU component to the entity.
-    pub fn insert_gpu<T: GpuComponent>(&mut self, value: T) -> &mut Self {
-        self.inserts.push(Box::new(
-            move |entity: Entity,
-                  components: &mut ComponentRegistry,
-                  archetypes: &mut ArchetypeRegistry| {
-                components.register_gpu::<T>(std::any::type_name::<T>());
-                components.get_gpu_mut::<T>().unwrap().insert(entity, value);
-                let current = archetypes.entity_archetype(entity).unwrap();
-                let new_arch = archetypes.archetype_after_add::<T>(current);
-                archetypes.register_entity(entity, new_arch);
-            },
-        ));
-        self
-    }
-
     /// Adds a CPU component with reflection support.
     pub fn insert_reflected<T: Component + Reflect>(&mut self, value: T) -> &mut Self {
         self.inserts.push(Box::new(
@@ -61,22 +45,6 @@ impl EntityCommands<'_> {
                   archetypes: &mut ArchetypeRegistry| {
                 components.register_cpu_reflected::<T>();
                 components.get_cpu_mut::<T>().unwrap().insert(entity, value);
-                let current = archetypes.entity_archetype(entity).unwrap();
-                let new_arch = archetypes.archetype_after_add::<T>(current);
-                archetypes.register_entity(entity, new_arch);
-            },
-        ));
-        self
-    }
-
-    /// Adds a GPU component with reflection support.
-    pub fn insert_gpu_reflected<T: GpuComponent + Reflect>(&mut self, value: T) -> &mut Self {
-        self.inserts.push(Box::new(
-            move |entity: Entity,
-                  components: &mut ComponentRegistry,
-                  archetypes: &mut ArchetypeRegistry| {
-                components.register_gpu_reflected::<T>(std::any::type_name::<T>());
-                components.get_gpu_mut::<T>().unwrap().insert(entity, value);
                 let current = archetypes.entity_archetype(entity).unwrap();
                 let new_arch = archetypes.archetype_after_add::<T>(current);
                 archetypes.register_entity(entity, new_arch);

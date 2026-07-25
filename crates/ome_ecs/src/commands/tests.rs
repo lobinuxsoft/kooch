@@ -4,7 +4,7 @@ use super::*;
 use crate::allocator::EntityAllocator;
 use crate::archetype_registry::ArchetypeRegistry;
 use crate::component::registry::ComponentRegistry;
-use crate::component::traits::{Component, GpuComponent};
+use crate::component::traits::Component;
 use crate::query::{Query, With, Without};
 use ome_core::resource::Resources;
 
@@ -25,7 +25,7 @@ struct Position {
     x: f32,
     y: f32,
 }
-impl GpuComponent for Position {}
+impl Component for Position {}
 
 fn setup() -> Resources {
     let mut resources = Resources::new();
@@ -43,10 +43,7 @@ fn spawn_single_entity() {
     let mut resources = setup();
     let mut commands = Commands::new();
 
-    let entity = commands
-        .spawn(&mut resources)
-        .insert(Health(100))
-        .id();
+    let entity = commands.spawn(&mut resources).insert(Health(100)).id();
 
     assert!(entity.is_valid());
     commands.apply(&mut resources);
@@ -83,7 +80,7 @@ fn spawn_with_gpu_component() {
     let entity = commands
         .spawn(&mut resources)
         .insert(Health(100))
-        .insert_gpu(Position { x: 1.0, y: 2.0 })
+        .insert(Position { x: 1.0, y: 2.0 })
         .id();
 
     commands.apply(&mut resources);
@@ -101,9 +98,7 @@ fn spawn_without_id() {
     let mut commands = Commands::new();
 
     // Just drop the builder — entity still gets created.
-    commands
-        .spawn(&mut resources)
-        .insert(Health(42));
+    commands.spawn(&mut resources).insert(Health(42));
 
     commands.apply(&mut resources);
 
@@ -136,10 +131,7 @@ fn despawn_entity() {
     let mut resources = setup();
     let mut commands = Commands::new();
 
-    let entity = commands
-        .spawn(&mut resources)
-        .insert(Health(100))
-        .id();
+    let entity = commands.spawn(&mut resources).insert(Health(100)).id();
     commands.apply(&mut resources);
 
     // Verify entity exists.
@@ -160,10 +152,7 @@ fn despawn_via_entity_commands() {
     let mut resources = setup();
     let mut commands = Commands::new();
 
-    let entity = commands
-        .spawn(&mut resources)
-        .insert(Health(100))
-        .id();
+    let entity = commands.spawn(&mut resources).insert(Health(100)).id();
     commands.apply(&mut resources);
 
     commands.entity(entity).despawn();

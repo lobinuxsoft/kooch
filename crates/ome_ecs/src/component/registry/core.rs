@@ -13,12 +13,11 @@ use crate::reflect::{
 };
 
 use crate::component::cpu_storage::ComponentStorage;
-use crate::component::gpu_storage::GpuComponentStorage;
-use crate::component::traits::{AnyStorage, Component, GpuComponent};
+use crate::component::traits::{AnyStorage, Component};
 
 /// Central registry for all component storages.
 ///
-/// Stores one [`GpuComponentStorage<T>`] or [`ComponentStorage<T>`] per
+/// Stores one [`ComponentStorage<T>`] per
 /// registered component type, keyed by `TypeId`.
 ///
 /// Uses [`UnsafeCell`] internally to allow the query system to borrow
@@ -46,20 +45,6 @@ impl ComponentRegistry {
         }
     }
 
-    /// Registers a GPU-backed component type.
-    ///
-    /// `label` is used as the GPU buffer debug label.
-    /// Does nothing if the type is already registered.
-    pub fn register_gpu<T: GpuComponent>(&mut self, label: &str) {
-        let type_id = TypeId::of::<T>();
-        self.storages
-            .entry(type_id)
-            .or_insert_with(|| UnsafeCell::new(Box::new(GpuComponentStorage::<T>::new(label))));
-        self.type_names
-            .entry(type_id)
-            .or_insert_with(|| std::any::type_name::<T>());
-    }
-
     /// Registers a CPU-only component type.
     ///
     /// Does nothing if the type is already registered.
@@ -71,24 +56,6 @@ impl ComponentRegistry {
         self.type_names
             .entry(type_id)
             .or_insert_with(|| std::any::type_name::<T>());
-    }
-
-    /// Returns an immutable reference to a GPU component storage.
-    pub fn get_gpu<T: GpuComponent>(&self) -> Option<&GpuComponentStorage<T>> {
-        self.storages.get(&TypeId::of::<T>()).and_then(|cell| {
-            // SAFETY: No mutable references exist (we have &self, not via query).
-            let storage = unsafe { &*cell.get() };
-            storage.as_any().downcast_ref()
-        })
-    }
-
-    /// Returns a mutable reference to a GPU component storage.
-    pub fn get_gpu_mut<T: GpuComponent>(&mut self) -> Option<&mut GpuComponentStorage<T>> {
-        self.storages.get_mut(&TypeId::of::<T>()).and_then(|cell| {
-            // SAFETY: We have &mut self, so exclusive access is guaranteed.
-            let storage = cell.get_mut();
-            storage.as_any_mut().downcast_mut()
-        })
     }
 
     /// Returns an immutable reference to a CPU component storage.
@@ -125,16 +92,6 @@ impl ComponentRegistry {
         }
     }
 
-    /// Syncs all GPU-backed storages to the GPU.
-    ///
-    /// CPU-only storages have a no-op `sync_gpu` so this is safe to call
-    /// on the entire registry.
-    pub fn sync_all_gpu(&mut self, device: &Device, queue: &Queue, capacity: u32) {
-        for cell in self.storages.values_mut() {
-            cell.get_mut().sync_gpu(device, queue, capacity);
-        }
-    }
-
     /// Returns `true` if a storage is registered for the given `TypeId`.
     pub fn contains_type(&self, type_id: &TypeId) -> bool {
         self.storages.contains_key(type_id)
@@ -156,17 +113,6 @@ impl ComponentRegistry {
         self.reflectors
             .entry(TypeId::of::<T>())
             .or_insert_with(|| Box::new(TypedReflectAccessor::<T>::new_cpu()));
-    }
-
-    /// Registers a GPU-backed component with reflection support.
-    ///
-    /// The component must implement both [`GpuComponent`] and [`Reflect`].
-    /// Does nothing if the type is already registered.
-    pub fn register_gpu_reflected<T: GpuComponent + Reflect>(&mut self, label: &str) {
-        self.register_gpu::<T>(label);
-        self.reflectors
-            .entry(TypeId::of::<T>())
-            .or_insert_with(|| Box::new(TypedReflectAccessor::<T>::new_gpu()));
     }
 
     // -- Reflection API -------------------------------------------------------
@@ -220,11 +166,10 @@ impl ComponentRegistry {
 
     /// Returns the inspector visibility for a reflected component type.
     /// Returns the inspector visibility for a reflected component type.
-    pub fn reflect_inspector_visibility(
-        &self,
-        type_id: &TypeId,
-    ) -> Option<InspectorVisibility> {
-        self.reflectors.get(type_id).map(|r| r.inspector_visibility())
+    pub fn reflect_inspector_visibility(&self, type_id: &TypeId) -> Option<InspectorVisibility> {
+        self.reflectors
+            .get(type_id)
+            .map(|r| r.inspector_visibility())
     }
 
     /// Returns the editor category for a reflected component type, if any.
@@ -259,9 +204,7 @@ impl ComponentRegistry {
     pub fn reflected_type_names(&self) -> Vec<(TypeId, &'static str)> {
         self.reflectors
             .keys()
-            .filter_map(|tid| {
-                self.type_names.get(tid).map(|name| (*tid, *name))
-            })
+            .filter_map(|tid| self.type_names.get(tid).map(|name| (*tid, *name)))
             .collect()
     }
 

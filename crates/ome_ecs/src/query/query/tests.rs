@@ -2,7 +2,7 @@ use ome_core::resource::Resources;
 
 use crate::archetype::ArchetypeId;
 use crate::archetype_registry::ArchetypeRegistry;
-use crate::component::{Component, ComponentRegistry, GpuComponent};
+use crate::component::{Component, ComponentRegistry};
 use crate::entity::Entity;
 use crate::query::access::AccessTracker;
 use crate::query::filter::{With, Without};
@@ -25,7 +25,7 @@ struct Position {
     x: f32,
     y: f32,
 }
-impl GpuComponent for Position {}
+impl Component for Position {}
 
 // -- Helpers --
 
@@ -56,15 +56,10 @@ fn add_cpu_component<T: Component>(resources: &mut Resources, entity: Entity, va
     archetypes.register_entity(entity, new_arch);
 }
 
-fn add_gpu_component<T: GpuComponent>(
-    resources: &mut Resources,
-    entity: Entity,
-    value: T,
-    label: &str,
-) {
+fn add_component<T: Component>(resources: &mut Resources, entity: Entity, value: T) {
     let components = resources.get_mut::<ComponentRegistry>().unwrap();
-    components.register_gpu::<T>(label);
-    components.get_gpu_mut::<T>().unwrap().insert(entity, value);
+    components.register_cpu::<T>();
+    components.get_cpu_mut::<T>().unwrap().insert(entity, value);
 
     let archetypes = resources.get_mut::<ArchetypeRegistry>().unwrap();
     let current = archetypes.entity_archetype(entity).unwrap();
@@ -113,33 +108,12 @@ fn query_mutable_cpu_component() {
 fn query_gpu_component_read_only() {
     let mut resources = setup();
     let e0 = spawn_entity(&mut resources, 0);
-    add_gpu_component(
-        &mut resources,
-        e0,
-        Position { x: 1.0, y: 2.0 },
-        "position",
-    );
+    add_component(&mut resources, e0, Position { x: 1.0, y: 2.0 });
 
     let query = Query::<&Position>::new(&resources);
     let pos = query.iter().next().unwrap();
     assert_eq!(pos.x, 1.0);
     assert_eq!(pos.y, 2.0);
-}
-
-#[test]
-#[should_panic(expected = "storage is read-only (GPU component)")]
-fn query_gpu_component_mutable_panics() {
-    let mut resources = setup();
-    let e0 = spawn_entity(&mut resources, 0);
-    add_gpu_component(
-        &mut resources,
-        e0,
-        Position { x: 1.0, y: 2.0 },
-        "position",
-    );
-
-    // Should panic: GPU components are read-only from queries.
-    let _query = Query::<&mut Position>::new(&resources);
 }
 
 #[test]
@@ -204,12 +178,7 @@ fn query_mixed_cpu_gpu() {
     let mut resources = setup();
     let e0 = spawn_entity(&mut resources, 0);
     add_cpu_component(&mut resources, e0, Health(100));
-    add_gpu_component(
-        &mut resources,
-        e0,
-        Position { x: 3.0, y: 4.0 },
-        "position",
-    );
+    add_component(&mut resources, e0, Position { x: 3.0, y: 4.0 });
 
     let query = Query::<(&Health, &Position)>::new(&resources);
     let (health, pos) = query.iter().next().unwrap();

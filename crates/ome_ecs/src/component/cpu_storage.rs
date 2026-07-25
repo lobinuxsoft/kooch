@@ -84,10 +84,6 @@ impl<T: Component> AnyStorage for ComponentStorage<T> {
         self.data.remove(&entity);
     }
 
-    fn sync_gpu(&mut self, _device: &Device, _queue: &Queue, _capacity: u32) {
-        // No-op for CPU-only components.
-    }
-
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -105,13 +101,7 @@ impl<T: Component> AnyStorage for ComponentStorage<T> {
     }
 
     fn get_mut_ptr(&mut self, entity: Entity) -> Option<*mut u8> {
-        self.data
-            .get_mut(&entity)
-            .map(|v| v as *mut T as *mut u8)
-    }
-
-    fn is_mutable(&self) -> bool {
-        true
+        self.data.get_mut(&entity).map(|v| v as *mut T as *mut u8)
     }
 }
 

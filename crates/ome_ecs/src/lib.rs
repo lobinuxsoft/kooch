@@ -5,9 +5,7 @@
 //!
 //! - [`Entity`] — lightweight `(index, generation)` handle.
 //! - [`EntityAllocator`] — spawn / despawn with FIFO slot recycling.
-//! - [`EntityGpuState`] — GPU `StorageBuffer<u32>` alive mask.
 //! - [`ComponentRegistry`] — type-erased registry of component storages.
-//! - [`GpuComponentStorage`] — dense GPU-backed component storage.
 //! - [`ComponentStorage`] — CPU-only `HashMap`-backed component storage.
 //! - [`Archetype`] — entity group sharing the same component set.
 //! - [`ArchetypeRegistry`] — archetype index with transition caching.
@@ -26,7 +24,6 @@ pub mod directional_light;
 pub mod dynamic_components;
 pub mod entity;
 pub mod ephemeral;
-pub mod gpu_sync;
 pub mod hierarchy;
 pub mod lod_force_level;
 pub mod mesh_renderer;
@@ -48,14 +45,10 @@ pub use allocator::EntityAllocator;
 pub use archetype::{Archetype, ArchetypeId};
 pub use archetype_registry::ArchetypeRegistry;
 pub use commands::Commands;
-pub use component::{
-    Component, ComponentId, ComponentNames, ComponentRegistry, ComponentStorage, GpuComponent,
-    GpuComponentStorage,
-};
+pub use component::{Component, ComponentId, ComponentNames, ComponentRegistry, ComponentStorage};
 pub use directional_light::DirectionalLight;
 pub use entity::Entity;
 pub use ephemeral::EphemeralComponents;
-pub use gpu_sync::{EntityGpuState, entity_gpu_sync_system};
 pub use hierarchy::{Children, GlobalTransform, Parent};
 pub use lod_force_level::LodForceLevel;
 pub use mesh_renderer::MeshRenderer;
