@@ -2,56 +2,57 @@
 
 use crate::component::Component;
 use crate::entity::Entity;
-use crate::reflect::{
-    FieldKind, FieldMeta, InspectorVisibility, Reflect, ReflectError, ReflectValue,
-};
 
 /// Marks this entity as a child of another entity.
 ///
 /// `Parent` is the authoritative side of the relationship — the hierarchy
 /// sync system updates `Children` to match.
-#[derive(Debug, Clone)]
+///
+/// # An ordinary component
+///
+/// This used to be special. Reflection had no way to express "points at an
+/// entity", so `Parent` reflected its target as a `"index:generation"`
+/// string that nothing could resolve, and the scene format carried the
+/// real link out of band in `EntityDescription::parent_index`.
+///
+/// With [`FieldKind::EntityRef`](crate::reflect::FieldKind::EntityRef) the
+/// link is just a field, saved and resolved by the same generic pass that
+/// handles every other component holding an entity. Read-only in the
+/// inspector because reparenting goes through the World panel, which
+/// maintains `Children` alongside it.
+#[derive(Debug, Clone, Default, crate::Reflect)]
+#[reflect(inspector = "read_only")]
 pub struct Parent {
     pub entity: Entity,
 }
 
 impl Component for Parent {}
 
-impl Reflect for Parent {
-    fn reflect_fields(&self) -> &'static [FieldMeta] {
-        static FIELDS: &[FieldMeta] = &[FieldMeta {
-            name: "entity",
-            type_name: "Entity",
-            kind: FieldKind::String,
-            choices: &[],
-            shown_when: None,
-            asset_type: "",
-        }];
-        FIELDS
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reflect::{EntityRef, FieldKind, Reflect, ReflectValue};
 
-    fn reflect_get(&self, field: &str) -> Option<ReflectValue> {
-        match field {
-            "entity" => Some(ReflectValue::String(format!(
-                "{}:{}",
-                self.entity.index(),
-                self.entity.generation()
-            ))),
-            _ => None,
-        }
-    }
+    /// The link has to be a reference the scene paths recognise. As a
+    /// string it round-tripped as text that resolved to nothing, which is
+    /// why `parent_index` existed at all.
+    #[test]
+    fn the_parent_link_is_an_entity_reference() {
+        let parent = Parent {
+            entity: Entity::new(2, 1),
+        };
+        let meta = parent
+            .reflect_fields()
+            .iter()
+            .find(|f| f.name == "entity")
+            .expect("the entity field is reflected");
 
-    fn reflect_set(&mut self, _field: &str, _value: ReflectValue) -> Result<(), ReflectError> {
-        Err(ReflectError::ReadOnly)
-    }
-
-    fn reflect_default() -> Self {
-        Self {
-            entity: Entity::INVALID,
-        }
-    }
-
-    fn inspector_visibility() -> InspectorVisibility {
-        InspectorVisibility::ReadOnly
+        assert_eq!(meta.kind, FieldKind::EntityRef);
+        assert_eq!(
+            parent.reflect_get("entity"),
+            Some(ReflectValue::EntityRef(Some(EntityRef::live(Entity::new(
+                2, 1
+            ))))),
+        );
     }
 }

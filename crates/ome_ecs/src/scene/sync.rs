@@ -118,12 +118,12 @@ pub fn sync_scene_to_ecs(
         }
     }
 
-    // 3. Second pass: establish the hierarchy.
+    // 3. Second pass: rebuild the hierarchy of *legacy* scenes only.
     //
-    // By index, which is unique. Names are not: a scene with five meshes
-    // called "Mesh" is ordinary, and resolving a parent by name collapses
-    // them onto one key so every child ends up under whichever one was
-    // inserted last — a hierarchy silently rebuilt wrong.
+    // A scene written since #607 carries `Parent` as an ordinary component
+    // whose entity reference the remapping pass below resolves, the same
+    // way it resolves any other component pointing at an entity. Older
+    // files put the link out of band, so they still need this.
     let parent_tid = std::any::TypeId::of::<Parent>();
     for (index, entity) in spawned_order.iter().enumerate() {
         let desc = &scene.entities[index];

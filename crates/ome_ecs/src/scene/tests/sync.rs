@@ -492,15 +492,24 @@ fn a_round_trip_keeps_the_hierarchy_when_names_collide() {
     // Save, then load into the same world.
     let document = SceneDocument::from_ecs(&mut resources);
     // Found by the link itself, not by name — the whole point is that names
-    // do not identify anything.
+    // do not identify anything. Since #607 the link is an ordinary
+    // component field holding an entity reference, not an out-of-band
+    // index into the document.
     let child_desc = document
         .entities
         .iter()
-        .find(|e| e.parent_index.is_some())
-        .expect("the parent link was not saved as an index");
+        .find(|e| {
+            e.components.iter().any(|c| {
+                c.type_name.ends_with("Parent")
+                    && c.fields.iter().any(|(_, value)| {
+                        matches!(value, ReflectValue::EntityRef(Some(r)) if r.is_unresolved())
+                    })
+            })
+        })
+        .expect("the parent link was not saved as an entity reference");
     assert!(
-        child_desc.parent.is_none(),
-        "the ambiguous name is still being written"
+        child_desc.parent.is_none() && child_desc.parent_index.is_none(),
+        "a legacy parent link is still being written",
     );
 
     sync_scene_to_ecs(&document, &mut resources).expect("sync");
