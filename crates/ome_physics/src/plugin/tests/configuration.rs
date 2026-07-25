@@ -1,6 +1,49 @@
-//! Integration parameters, and entities authored only halfway.
+//! Integration parameters, entities authored only halfway, and the
+//! authoring-only plugin the editor uses.
 
 use super::*;
+
+/// The editor reads its add-component menu off its *own* registry, so a
+/// host that authors physics without simulating it still has to register
+/// the types — otherwise the menu offers no body component at all.
+#[test]
+fn the_components_plugin_registers_the_authored_types() {
+    use ome_core::app::App;
+
+    let mut app = App::new();
+    app.insert_resource(ComponentRegistry::new());
+    app.add_plugin(crate::plugin::PhysicsComponentsPlugin);
+    app.schedule.run_startup(&mut app.resources);
+
+    let registry = app.resources.get::<ComponentRegistry>().unwrap();
+    for name in ["RigidBody", "Collider"] {
+        assert!(
+            registry
+                .reflected_type_names()
+                .iter()
+                .any(|(_, n)| n.ends_with(name)),
+            "{name} is not reflected, so it cannot be authored"
+        );
+    }
+}
+
+/// And it brings no solver with it: in remote mode the editor's ECS is a
+/// mirror of a project that owns the real physics world, so a second
+/// Rapier world here would simulate nothing and disagree with everything.
+#[test]
+fn the_components_plugin_stands_up_no_solver() {
+    use ome_core::app::App;
+
+    let mut app = App::new();
+    app.insert_resource(ComponentRegistry::new());
+    app.add_plugin(crate::plugin::PhysicsComponentsPlugin);
+    app.schedule.run_startup(&mut app.resources);
+
+    assert!(
+        app.resources.get::<PhysicsWorld>().is_none(),
+        "the authoring-only plugin created a physics world"
+    );
+}
 
 #[test]
 fn integration_parameters_round_trip() {

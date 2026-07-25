@@ -28,5 +28,5 @@ pub mod rapier_backend;
 
 pub use backend::{BodyDesc, BodyHandle, BodyKind, CollisionShape, PhysicsBackend, RayHit};
 pub use components::{Collider, RigidBody};
-pub use plugin::{PhysicsBody, PhysicsPlugin, PhysicsWorld};
+pub use plugin::{PhysicsBody, PhysicsComponentsPlugin, PhysicsPlugin, PhysicsWorld};
 pub use rapier_backend::RapierBackend;

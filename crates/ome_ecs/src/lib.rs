@@ -23,13 +23,11 @@ pub mod archetype_registry;
 pub mod commands;
 pub mod component;
 pub mod directional_light;
-pub mod dynamic_body;
 pub mod dynamic_components;
 pub mod entity;
 pub mod ephemeral;
 pub mod gpu_sync;
 pub mod hierarchy;
-pub mod kinematic_body;
 pub mod lod_force_level;
 pub mod mesh_renderer;
 pub mod name;
@@ -43,9 +41,7 @@ pub mod scene;
 pub mod scene_manager;
 pub mod sky_renderer;
 pub mod spot_light;
-pub mod static_body;
 pub mod transform;
-pub mod velocity;
 pub mod world_snapshot;
 
 pub use allocator::EntityAllocator;
@@ -57,12 +53,10 @@ pub use component::{
     GpuComponentStorage,
 };
 pub use directional_light::DirectionalLight;
-pub use dynamic_body::DynamicBody;
 pub use entity::Entity;
 pub use ephemeral::EphemeralComponents;
 pub use gpu_sync::{EntityGpuState, entity_gpu_sync_system};
 pub use hierarchy::{Children, GlobalTransform, Parent};
-pub use kinematic_body::KinematicBody;
 pub use lod_force_level::LodForceLevel;
 pub use mesh_renderer::MeshRenderer;
 pub use name::Name;
@@ -79,6 +73,4 @@ pub use scene::{
 pub use scene_manager::SceneManager;
 pub use sky_renderer::SkyRenderer;
 pub use spot_light::SpotLight;
-pub use static_body::StaticBody;
 pub use transform::Transform;
-pub use velocity::Velocity;

@@ -99,10 +99,33 @@ fn register_components(resources: &mut ome_core::resource::Resources) {
     }
 }
 
+/// The physics components, with no simulation behind them.
+///
+/// For a host that has to *author* physics without running it: the editor
+/// needs [`RigidBody`] and [`Collider`] reflected so they appear in the
+/// add-component menu and the Inspector, but it must not stand up a
+/// second solver. In remote mode its ECS is a mirror of a project that
+/// owns the real physics world, and a local Rapier world full of mirrored
+/// entities would be a second source of truth that simulates nothing.
+///
+/// Apps that want the simulation add [`PhysicsPlugin`], which includes
+/// this.
+pub struct PhysicsComponentsPlugin;
+
+impl Plugin for PhysicsComponentsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_system(Stage::Startup, register_components);
+    }
+
+    fn name(&self) -> &str {
+        "PhysicsComponentsPlugin"
+    }
+}
+
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugin(PhysicsComponentsPlugin);
         app.insert_resource(PhysicsWorld::new(Box::new(self.backend())));
-        app.add_system(Stage::Startup, register_components);
 
         // Sync runs unconditionally: the body set mirrors the ECS while
         // authoring too. Stepping and writeback are gameplay.

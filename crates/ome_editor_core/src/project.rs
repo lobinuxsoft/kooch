@@ -187,8 +187,9 @@ edition = "2024"
 # `editor` pulls in the embedded editor so `cargo run` opens the editor
 # with this project's components; `cargo run -- --game` runs the game;
 # `remote` lets `cargo run -- --remote` expose the ECS to the standalone
-# editor over HTTP.
-oh_my_engine = {{ path = "{engine_path}", features = ["editor", "remote"] }}
+# editor over HTTP; `physics` gives you rigid bodies — without it a
+# `RigidBody` is an inert component and nothing ever falls.
+oh_my_engine = {{ path = "{engine_path}", features = ["editor", "physics", "remote"] }}
 # Direct dep needed until `Reflect` proc-macro resolves through the facade.
 ome_ecs = {{ path = "{engine_path}/crates/ome_ecs" }}
 "#,
