@@ -15,11 +15,13 @@
 //! - [`TypedReflectAccessor`] — concrete accessor that does the downcast internally.
 
 mod accessor;
+mod entity_ref;
 mod error;
 mod field;
 mod trait_def;
 mod value;
 
+pub use entity_ref::EntityRef;
 pub use field::{FieldChoice, FieldCondition, FieldKind, FieldMeta, InspectorVisibility};
 pub use value::ReflectValue;
 pub use error::ReflectError;

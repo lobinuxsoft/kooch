@@ -2,6 +2,7 @@ use std::fmt;
 
 use ome_core::Guid;
 
+use super::entity_ref::EntityRef;
 use super::field::FieldKind;
 
 /// Type-erased value for getting and setting reflected fields.
@@ -33,6 +34,14 @@ pub enum ReflectValue {
         guid: Option<Guid>,
         asset_type: String,
     },
+    /// Reference to another entity. `None` when the field points at
+    /// nothing.
+    ///
+    /// A live component holds [`EntityRef::Live`]; a scene file holds
+    /// [`EntityRef::Persistent`]. The save path converts one way and the
+    /// load path's remapping pass converts back — see
+    /// [`EntityRef`](super::EntityRef).
+    EntityRef(Option<EntityRef>),
 }
 
 impl ReflectValue {
@@ -57,6 +66,7 @@ impl ReflectValue {
             Self::Quat(_) => FieldKind::Quat,
             Self::Mat4(_) => FieldKind::Mat4,
             Self::AssetRef { .. } => FieldKind::AssetRef,
+            Self::EntityRef(_) => FieldKind::EntityRef,
         }
     }
 }
@@ -85,6 +95,8 @@ impl fmt::Display for ReflectValue {
                 Some(g) => write!(f, "{asset_type}({g})"),
                 None => write!(f, "{asset_type}(none)"),
             },
+            Self::EntityRef(Some(r)) => write!(f, "{r}"),
+            Self::EntityRef(None) => write!(f, "(none)"),
         }
     }
 }
