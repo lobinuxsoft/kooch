@@ -7,13 +7,19 @@
 //! orthographic), and directional lights; user-extensibility lands
 //! with `ome_editor_api` (phase 4 of #278).
 //!
-//! Visibility rules (unchanged from PR #277):
+//! Visibility is decided by [`GizmoVisibility`] and nothing else: every
+//! registered visualizer runs for every selected entity, unless its
+//! component or its category is switched off in the Gizmos panel.
 //!
-//! - **Single selection**: a component's gizmo renders only when its
-//!   `CollapsingHeader` is expanded in the Inspector.
-//! - **Multi-selection** (>1 entity): only the `Transform` visualizer
-//!   runs. Other visualizers are suppressed because they would be
-//!   visually ambiguous across multiple entities.
+//! Two earlier rules are gone. Gating on the Inspector's
+//! `CollapsingHeader` (#581) coupled display to unrelated UI state.
+//! Suppressing everything but `Transform` on a multi-selection (#587) was
+//! a reasonable trade while there was no way to hide gizmos — but
+//! comparing two colliders is a common thing to want, and it was exactly
+//! the case that got suppressed. The panel is the escape hatch now.
+//!
+//! Transform *handles* remain single-selection: `HandleSet` positions one
+//! origin, and multi-entity dragging needs pivot semantics of its own.
 
 mod collider;
 mod visibility;
@@ -21,7 +27,7 @@ mod visualizers;
 
 use std::any::TypeId;
 
-use glam::{Mat3, Mat4, Vec3, Vec4};
+use glam::{Mat3, Vec3, Vec4};
 use ome_core::resource::Resources;
 use ome_ecs::component::ComponentRegistry;
 use ome_ecs::directional_light::DirectionalLight;
@@ -87,9 +93,6 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
         return;
     }
 
-    let multi = selected.len() > 1;
-    let transform_type_id = TypeId::of::<Transform>();
-
     // What draws is an explicit choice now, not a side effect of which
     // Inspector header happens to be open. Absent resource = everything
     // visible, so a host that never inserted one behaves as before.
@@ -131,9 +134,6 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
         let resources_ref: &Resources = &*resources;
         for entity in &selected {
             for &type_id in &drawable {
-                if multi && type_id != transform_type_id {
-                    continue;
-                }
                 registry.dispatch(type_id, *entity, resources_ref, &mut gizmos);
             }
         }
