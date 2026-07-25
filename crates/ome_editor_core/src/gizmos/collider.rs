@@ -16,7 +16,10 @@
 //! [`BodySpec::desc`](ome_physics::BodySpec) — box per axis, sphere on the
 //! largest axis, capsule radius on its horizontal ones. If those two ever
 //! disagree, the gizmo is worse than nothing: it would show a shape the
-//! solver is not using.
+//! solver is not using. The same goes for [`Collider::center`]: the
+//! outline is drawn at the shape's centre, because an outline at the
+//! entity origin while the solver collides somewhere else is a lie in the
+//! one place the tool exists to tell the truth.
 
 use glam::{Mat3, Vec3};
 
@@ -39,6 +42,11 @@ impl Visualizer<Collider> for ColliderVisualizer {
         let (scale, rotation, translation) = transform.matrix.to_scale_rotation_translation();
         let basis = Mat3::from_quat(rotation);
         let s = scale.abs();
+        // Drawn at the shape's centre, not the entity's origin. An outline
+        // at the origin while the solver collides half a metre up would
+        // actively mislead — worse than no outline at all, which is the
+        // whole point of drawing one.
+        let translation = translation + rotation * (collider.center * s);
 
         match collider.shape {
             SHAPE_CUBOID => {
@@ -215,6 +223,57 @@ mod tests {
         assert!(
             turned.z > 1.9 && turned.x < 0.2,
             "the outline did not rotate: {turned:?}"
+        );
+    }
+
+    /// The outline follows `Collider.center`, so what you see is where the
+    /// solver collides.
+    #[test]
+    fn the_outline_sits_at_the_shape_centre() {
+        let collider = Collider {
+            center: Vec3::new(0.0, 2.0, 0.0),
+            ..Default::default()
+        };
+        let lines = draw(&collider, Mat4::IDENTITY);
+
+        // Tight around the offset centre, and nothing near the origin.
+        assert!(
+            extent(&lines, Vec3::new(0.0, 2.0, 0.0)).max_element() < 0.6,
+            "the outline is not centred on the shape"
+        );
+        let lowest = lines
+            .iter()
+            .flat_map(|(a, b)| [a.y, b.y])
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            lowest > 1.4,
+            "the outline reaches down to the entity origin: lowest y = {lowest}"
+        );
+    }
+
+    /// The offset rotates with the entity, and scales with it.
+    #[test]
+    fn the_shape_centre_follows_the_transform() {
+        let collider = Collider {
+            center: Vec3::new(0.0, 1.0, 0.0),
+            ..Default::default()
+        };
+
+        // A half turn about X sends a +Y offset to -Y.
+        let turned = draw(&collider, Mat4::from_rotation_x(std::f32::consts::PI));
+        assert!(
+            extent(&turned, Vec3::new(0.0, -1.0, 0.0)).max_element() < 0.6,
+            "the offset did not rotate with the entity"
+        );
+
+        // Scale multiplies the offset along with the dimensions.
+        let scaled = draw(
+            &collider,
+            Mat4::from_scale_rotation_translation(Vec3::splat(3.0), Quat::IDENTITY, Vec3::ZERO),
+        );
+        assert!(
+            extent(&scaled, Vec3::new(0.0, 3.0, 0.0)).max_element() < 1.7,
+            "the offset did not scale with the entity"
         );
     }
 }
