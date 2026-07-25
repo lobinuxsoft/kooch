@@ -70,6 +70,7 @@ fn sync_scene_to_ecs_rebuilds_entities() {
         version: "0.1.0".into(),
         entities: vec![EntityDescription {
             name: "Hero".into(),
+            parent_index: None,
             parent: None,
             components: vec![ComponentDescription {
                 type_name: std::any::type_name::<Health>().to_owned(),
@@ -219,6 +220,7 @@ fn unknown_component_does_not_fail_the_load() {
         version: "0.1.0".into(),
         entities: vec![EntityDescription {
             name: "Player".into(),
+            parent_index: None,
             parent: None,
             components: vec![
                 ComponentDescription {
@@ -272,6 +274,7 @@ fn unknown_component_survives_a_save_round_trip() {
         version: "0.1.0".into(),
         entities: vec![EntityDescription {
             name: "Player".into(),
+            parent_index: None,
             parent: None,
             components: vec![
                 unknown.clone(),
@@ -327,6 +330,7 @@ fn parked_components_are_cleared_between_loads() {
         version: "0.1.0".into(),
         entities: vec![EntityDescription {
             name: "Player".into(),
+            parent_index: None,
             parent: None,
             components: vec![ComponentDescription {
                 type_name: "game::movement::MoveComponent".into(),
@@ -346,5 +350,170 @@ fn parked_components_are_cleared_between_loads() {
     assert!(
         resources.get::<DynamicComponents>().unwrap().is_empty(),
         "parked components must not outlive the entities they belong to"
+    );
+}
+
+/// Entity names are not unique, and the scene format used to resolve
+/// parents by name.
+///
+/// A scene with several meshes called "Mesh" is ordinary — TEST3 ships five.
+/// Resolving a parent through a `HashMap<String, Entity>` collapses them onto
+/// one key, so every child ends up under whichever one was inserted last:
+/// the hierarchy is silently rebuilt wrong on load, attached to the wrong
+/// entity. Indices are unique; names never were.
+#[test]
+fn duplicate_names_do_not_confuse_the_hierarchy() {
+    use crate::hierarchy::Parent;
+
+    let mut resources = setup_resources();
+    resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<Health>();
+
+    // Two possible parents with the *same* name, and a child under the
+    // first. Resolving by name would attach it to the second.
+    let scene = SceneDocument {
+        name: "Ambiguous".into(),
+        version: "0.1.0".into(),
+        entities: vec![
+            EntityDescription {
+                name: "Mesh".into(),
+                parent_index: None,
+                parent: None,
+                components: vec![ComponentDescription {
+                    type_name: std::any::type_name::<Health>().into(),
+                    fields: vec![("hp".into(), ReflectValue::U32(1))],
+                }],
+            },
+            EntityDescription {
+                name: "Mesh".into(),
+                parent_index: None,
+                parent: None,
+                components: vec![ComponentDescription {
+                    type_name: std::any::type_name::<Health>().into(),
+                    fields: vec![("hp".into(), ReflectValue::U32(2))],
+                }],
+            },
+            EntityDescription {
+                name: "Child".into(),
+                parent_index: Some(0),
+                parent: None,
+                components: vec![],
+            },
+        ],
+    };
+
+    sync_scene_to_ecs(&scene, &mut resources).expect("sync");
+
+    // Which entity landed at which document index.
+    let spawned: Vec<crate::entity::Entity> = {
+        let registry = resources.get::<ComponentRegistry>().unwrap();
+        let health = registry.get_cpu::<Health>().unwrap();
+        let mut by_hp: Vec<(u32, crate::entity::Entity)> =
+            health.iter().map(|(e, h)| (h.hp, *e)).collect();
+        by_hp.sort_by_key(|(hp, _)| *hp);
+        by_hp.into_iter().map(|(_, e)| e).collect()
+    };
+    assert_eq!(spawned.len(), 2, "both meshes should exist");
+    let first_mesh = spawned[0];
+    let second_mesh = spawned[1];
+
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    let parents = registry.get_cpu::<Parent>().expect("no Parent storage");
+    let (_, parent_comp) = parents.iter().next().expect("the child was never parented");
+
+    assert_eq!(
+        parent_comp.entity, first_mesh,
+        "the child was attached to the wrong entity — index 0 was asked for"
+    );
+    assert_ne!(parent_comp.entity, second_mesh);
+}
+
+/// A save/load round-trip preserves which entity is the parent, even when
+/// the names collide. This is the shape the bug was actually reported in:
+/// save a scene, load it, and the hierarchy comes back attached elsewhere.
+#[test]
+fn a_round_trip_keeps_the_hierarchy_when_names_collide() {
+    use crate::hierarchy::Parent;
+
+    let mut resources = setup_resources();
+    resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<Health>();
+    resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<Parent>();
+
+    // Build the world directly: two same-named entities, child under the
+    // first one, distinguished by hp.
+    let (first, second, child) = {
+        let mut commands = resources.remove::<Commands>().unwrap();
+        let a = commands
+            .spawn(&mut resources)
+            .insert_reflected(Health { hp: 1, max_hp: 1 })
+            .id();
+        let b = commands
+            .spawn(&mut resources)
+            .insert_reflected(Health { hp: 2, max_hp: 2 })
+            .id();
+        let c = commands
+            .spawn(&mut resources)
+            .insert_reflected(Health { hp: 3, max_hp: 3 })
+            .id();
+        commands.apply(&mut resources);
+        resources.insert(commands);
+        (a, b, c)
+    };
+    for (entity, name) in [(first, "Mesh"), (second, "Mesh"), (child, "Child")] {
+        let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+        registry.insert_default_reflected(&std::any::TypeId::of::<crate::name::Name>(), entity);
+        if let Some(storage) = registry.get_cpu_mut::<crate::name::Name>()
+            && let Some(n) = storage.get_mut(entity)
+        {
+            n.value = name.to_owned();
+        }
+        super::add_to_archetype(
+            &mut resources,
+            entity,
+            std::any::TypeId::of::<crate::name::Name>(),
+        );
+    }
+    {
+        let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+        if let Some(storage) = registry.get_cpu_mut::<Parent>() {
+            storage.insert(child, Parent { entity: first });
+        }
+    }
+    super::add_to_archetype(&mut resources, child, std::any::TypeId::of::<Parent>());
+
+    // Save, then load into the same world.
+    let document = SceneDocument::from_ecs(&resources);
+    // Found by the link itself, not by name — the whole point is that names
+    // do not identify anything.
+    let child_desc = document
+        .entities
+        .iter()
+        .find(|e| e.parent_index.is_some())
+        .expect("the parent link was not saved as an index");
+    assert!(
+        child_desc.parent.is_none(),
+        "the ambiguous name is still being written"
+    );
+
+    sync_scene_to_ecs(&document, &mut resources).expect("sync");
+
+    // The reloaded child points at the entity whose hp is 1 — the first
+    // "Mesh" — not merely at *some* entity called "Mesh".
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    let health = registry.get_cpu::<Health>().unwrap();
+    let parents = registry.get_cpu::<Parent>().unwrap();
+    let (_, parent_comp) = parents.iter().next().expect("hierarchy lost");
+    assert_eq!(
+        health.get(parent_comp.entity).map(|h| h.hp),
+        Some(1),
+        "the round-trip reattached the child to the wrong entity"
     );
 }
