@@ -139,6 +139,17 @@ fn slot_of(resources: &Resources, entity: Entity) -> Option<u32> {
         .map(PhysicsBody::slot)
 }
 
+/// The geometry the solver was actually built with, scale folded in.
+fn shape_of(resources: &Resources, entity: Entity) -> CollisionShape {
+    resources
+        .get::<PhysicsWorld>()
+        .unwrap()
+        .spec(slot_of(resources, entity).expect("entity has no body"))
+        .expect("slot is free")
+        .desc(Vec3::ZERO, Quat::IDENTITY)
+        .shape
+}
+
 /// The pose the solver actually holds for an entity's body.
 fn solver_position(resources: &Resources, entity: Entity) -> Vec3 {
     let world = resources.get::<PhysicsWorld>().unwrap();

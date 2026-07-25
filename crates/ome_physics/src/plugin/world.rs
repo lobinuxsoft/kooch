@@ -68,11 +68,24 @@ pub struct BodySpec {
     radius: f32,
     half_height: f32,
     half_extents: Vec3,
+    /// The entity's `Transform` scale, folded into the shape dimensions.
+    ///
+    /// Rapier's shapes take no scale — they are built from dimensions —
+    /// so scaling has to happen where the shape is built, and a scale
+    /// change has to *rebuild* it. Which is why this belongs in the spec:
+    /// the sync pass compares specs to decide what to rebuild, so dragging
+    /// the scale gizmo lands here and retires the old body.
+    scale: Vec3,
 }
 
 impl BodySpec {
     /// Reads the spec off the authored components.
-    pub fn new(body: &RigidBody, collider: &Collider) -> Self {
+    ///
+    /// `scale` is the entity's `Transform` scale. Ignoring it was the bug
+    /// that made colliders "work at some sizes and not others": the mesh
+    /// grew with the gizmo and the collider stayed at its authored
+    /// dimensions.
+    pub fn new(body: &RigidBody, collider: &Collider, scale: Vec3) -> Self {
         Self {
             kind: body.kind,
             mass: body.mass,
@@ -80,23 +93,52 @@ impl BodySpec {
             radius: collider.radius,
             half_height: collider.half_height,
             half_extents: collider.half_extents,
+            scale,
         }
     }
 
     /// The descriptor that builds this body at a given pose.
+    ///
+    /// # How scale folds into each shape
+    ///
+    /// Only a box scales exactly: its half-extents are per-axis, so a
+    /// non-uniform scale is exact. The round shapes have no non-uniform
+    /// form in Rapier — a non-uniformly scaled sphere is an ellipsoid, and
+    /// there is no ellipsoid primitive — so they follow the convention
+    /// every engine uses:
+    ///
+    /// - **Sphere**: radius times the largest axis scale. Enclosing the
+    ///   mesh beats intersecting it; a collider smaller than what you can
+    ///   see is the one that reads as a physics bug.
+    /// - **Capsule**: radius times the larger of the two horizontal
+    ///   scales, half-height times the vertical one, because the capsule
+    ///   runs along Y.
+    ///
+    /// A truly non-uniform round collider wants a convex hull (#137).
     pub fn desc(&self, position: Vec3, rotation: Quat) -> BodyDesc {
-        let body = RigidBody {
-            kind: self.kind,
-            mass: self.mass,
-        };
+        let s = self.scale.abs();
         let collider = Collider {
             shape: self.shape,
-            radius: self.radius,
-            half_height: self.half_height,
-            half_extents: self.half_extents,
+            radius: self.radius * s.max_element(),
+            half_height: self.half_height * s.y,
+            half_extents: self.half_extents * s,
+        };
+        // The capsule's radius follows its horizontal axes, not the
+        // largest overall — a tall thin capsule scaled on Y should get
+        // taller, not fatter.
+        let collider = match self.shape {
+            crate::components::SHAPE_CAPSULE => Collider {
+                radius: self.radius * s.x.max(s.z),
+                ..collider
+            },
+            _ => collider,
         };
         BodyDesc {
-            kind: body.body_kind(),
+            kind: RigidBody {
+                kind: self.kind,
+                mass: self.mass,
+            }
+            .body_kind(),
             shape: collider.collision_shape(),
             mass: self.mass,
             position,

@@ -111,7 +111,7 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
                     Authored {
                         entity,
                         claimed: slots.and_then(|s| s.get(entity)).map(PhysicsBody::slot),
-                        spec: BodySpec::new(body, &collider),
+                        spec: BodySpec::new(body, &collider, transform.scale),
                         position: transform.position,
                         rotation: transform.rotation,
                     }
