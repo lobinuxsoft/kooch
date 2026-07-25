@@ -2,12 +2,8 @@
 //! scene walk + transform bake, import-scale, and empty-document
 //! rejection. URI-aware buffer resolution lives in `uri.rs`.
 
-use super::helpers::{
-    build_minimal_triangle_glb, build_two_translated_triangles_glb, pad_to_4,
-};
-use super::super::{
-    parse_mesh_bytes, parse_mesh_bytes_with_scale, GltfMeshError, GltfMeshLoader,
-};
+use super::super::{GltfMeshError, GltfMeshLoader, parse_mesh_bytes, parse_mesh_bytes_with_scale};
+use super::helpers::{build_minimal_triangle_glb, build_two_translated_triangles_glb, pad_to_4};
 use glam::Vec3;
 use ome_core::asset_loader::{AssetError, AssetLoader, LoadContext};
 use std::path::Path;
