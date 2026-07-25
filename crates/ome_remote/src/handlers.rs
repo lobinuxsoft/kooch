@@ -67,6 +67,10 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
         },
+        Method::SetParent { entity, parent } => match set_parent(resources, *entity, *parent) {
+            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Err(e) => Response::err(id, e),
+        },
         Method::SaveScene { path } => {
             match SceneDocument::from_ecs(resources).save(path.as_ref()) {
                 Ok(()) => Response::ok(id, ResponseData::Ok),
@@ -299,6 +303,28 @@ fn spawn(resources: &mut Resources, name: Option<&str>) -> Entity {
         }
     }
     entity
+}
+
+/// Reparents an entity, or unparents it when `parent` is `None`.
+///
+/// Delegates to `ome_ecs::hierarchy::reparent`, which is the same code the
+/// editor's local path runs — the operation preserves the child's
+/// world-space transform and moves it between archetypes, and having two
+/// implementations of that would guarantee they drift.
+fn set_parent(
+    resources: &mut Resources,
+    entity: EntityId,
+    parent: Option<EntityId>,
+) -> Result<(), RemoteError> {
+    let entity = resolve_entity(resources, entity)?;
+    // Resolved before the call so an unknown parent is reported rather than
+    // silently unparenting the child to the root.
+    let parent = match parent {
+        Some(parent) => Some(resolve_entity(resources, parent)?),
+        None => None,
+    };
+    ome_ecs::hierarchy::reparent(resources, entity, parent);
+    Ok(())
 }
 
 fn despawn(resources: &mut Resources, entity: EntityId) -> Result<(), RemoteError> {

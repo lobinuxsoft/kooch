@@ -5,7 +5,6 @@ mod codegen;
 mod dispatch;
 mod handlers;
 mod remote_edit;
-mod reparent;
 pub(crate) mod scene_io;
 
 use std::any::TypeId;

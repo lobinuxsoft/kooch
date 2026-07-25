@@ -161,6 +161,18 @@ impl RemoteClient {
         self.expect_ok(Method::Despawn { entity })
     }
 
+    /// Reparents an entity on the server, or unparents it with `None`.
+    ///
+    /// Not expressible as `set_field`: `Parent::reflect_set` is read-only
+    /// because an entity handle is not a reflectable value.
+    pub fn set_parent(
+        &self,
+        entity: EntityId,
+        parent: Option<EntityId>,
+    ) -> Result<(), ClientError> {
+        self.expect_ok(Method::SetParent { entity, parent })
+    }
+
     /// Persists the server's live ECS to a scene file on its disk.
     pub fn save_scene(&self, path: &str) -> Result<(), ClientError> {
         self.expect_ok(Method::SaveScene {

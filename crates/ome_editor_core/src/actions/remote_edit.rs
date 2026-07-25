@@ -181,6 +181,86 @@ fn resolve_mesh_asset(
     guid.map(|guid| (guid, std::any::type_name::<MeshletMesh>().to_owned()))
 }
 
+/// Copies an entity on the project side, out of what the mirror already
+/// knows.
+///
+/// The editor holds every reflected component and its current values for
+/// the mirrored source, so no protocol method is needed: spawn, then
+/// `add_component` per component, then `set_field` per field. The same
+/// decomposition `SpawnMesh` uses.
+///
+/// Fields that fail to apply are logged and skipped rather than aborting.
+/// A half-copied entity the user can see and fix beats an entity that was
+/// never created because one opaque field would not travel.
+fn duplicate(
+    entity: ome_ecs::entity::Entity,
+    client: &ome_remote::RemoteClient,
+    mirror: &crate::remote_mirror::RemoteMirror,
+    resources: &Resources,
+) -> Result<(), String> {
+    use ome_ecs::component::ComponentRegistry;
+
+    let source = mirror
+        .remote_of(entity)
+        .ok_or_else(|| "entity not in mirror".to_owned())?;
+    let registry = resources
+        .get::<ComponentRegistry>()
+        .ok_or_else(|| "no component registry".to_owned())?;
+
+    // Read the source's components off the *mirror*, which is the editor's
+    // copy of what the project has.
+    let components: Vec<(String, Vec<(String, ome_ecs::reflect::ReflectValue)>)> = registry
+        .reflected_type_names()
+        .into_iter()
+        .filter_map(|(type_id, name)| {
+            let fields = registry.reflect_get_fields(&type_id, entity)?;
+            Some((name.to_owned(), fields))
+        })
+        .collect();
+
+    let name = components
+        .iter()
+        .find(|(n, _)| n.ends_with("::Name"))
+        .and_then(|(_, fields)| fields.iter().find(|(f, _)| f == "value"))
+        .and_then(|(_, v)| match v {
+            ome_ecs::reflect::ReflectValue::String(s) => Some(format!("{s} Copy")),
+            _ => None,
+        });
+
+    let copy = client.spawn(name.as_deref()).map_err(|e| e.to_string())?;
+
+    for (type_name, fields) in &components {
+        if let Err(e) = client.add_component(copy, type_name) {
+            tracing::warn!(
+                target: "ome_editor_core::remote_edit::duplicate",
+                component = %type_name,
+                error = %e,
+                "could not add a component to the copy",
+            );
+            continue;
+        }
+        for (field, value) in fields {
+            if let Err(e) = client.set_field(copy, type_name, field, value.clone()) {
+                tracing::debug!(
+                    target: "ome_editor_core::remote_edit::duplicate",
+                    component = %type_name,
+                    %field,
+                    error = %e,
+                    "field did not copy",
+                );
+            }
+        }
+    }
+
+    tracing::info!(
+        target: "ome_editor_core::remote_edit::duplicate",
+        ?source,
+        components = components.len(),
+        "duplicated an entity on the project",
+    );
+    Ok(())
+}
+
 /// An ECS edit reduced to the fields the remote protocol needs.
 enum Edit<'a> {
     SetField {
@@ -198,6 +278,23 @@ enum Edit<'a> {
         component: ome_ecs::component::ComponentId,
     },
     Despawn(ome_ecs::entity::Entity),
+    /// Reparent, or unparent with `None`.
+    ///
+    /// Its own protocol method rather than a `SetField` on `Parent`, whose
+    /// `reflect_set` is read-only: an entity handle is not a reflectable
+    /// value. Before this the action fell through to the local path, mutated
+    /// the *mirror*, and silently reverted on the next refresh (#595).
+    Reparent {
+        entity: ome_ecs::entity::Entity,
+        new_parent: Option<ome_ecs::entity::Entity>,
+    },
+    /// Copy an entity on the project side.
+    ///
+    /// No protocol method needed: the editor already holds every component's
+    /// values for the source entity in the mirror, so this decomposes into
+    /// spawn + add_component + set_field. Before this it was claimed by
+    /// nobody at all and dropped in silence (#595).
+    Duplicate(ome_ecs::entity::Entity),
     Spawn {
         name: Option<String>,
         /// Component types the action asked for beyond the base ones.
@@ -243,6 +340,11 @@ fn classify(action: &EditorAction) -> Option<Edit<'_>> {
             component: *component,
         }),
         EditorAction::Despawn(entity) => Some(Edit::Despawn(*entity)),
+        EditorAction::Reparent { entity, new_parent } => Some(Edit::Reparent {
+            entity: *entity,
+            new_parent: *new_parent,
+        }),
+        EditorAction::Duplicate(entity) => Some(Edit::Duplicate(*entity)),
         EditorAction::Spawn { name, extra } => Some(Edit::Spawn {
             name: name.clone(),
             extra: extra.clone(),
@@ -310,6 +412,14 @@ fn send(
             .remove_component(remote(entity)?, &name(component)?)
             .map_err(map_err),
         Edit::Despawn(entity) => client.despawn(remote(entity)?).map_err(map_err),
+        Edit::Reparent { entity, new_parent } => {
+            let parent = match new_parent {
+                Some(parent) => Some(remote(parent)?),
+                None => None,
+            };
+            client.set_parent(remote(entity)?, parent).map_err(map_err)
+        }
+        Edit::Duplicate(entity) => duplicate(entity, &client, mirror, resources),
         Edit::Spawn {
             name: entity_name,
             extra,
@@ -378,6 +488,7 @@ fn send(
 
 #[cfg(test)]
 mod tests {
+    use std::any::TypeId;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -806,6 +917,208 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
+
+        done.store(true, Ordering::Relaxed);
+        main_loop.join().unwrap();
+    }
+
+    /// #595, hole one: `Reparent` had no `classify` arm, fell through to the
+    /// local path, mutated the *mirror*, and silently reverted half a second
+    /// later when the refresh rebuilt parent links from the project.
+    #[test]
+    fn reparent_reaches_the_project() {
+        use ome_ecs::hierarchy::Parent;
+
+        let server = (0..8)
+            .find_map(|i| RemoteServer::start(17860 + i).ok())
+            .expect("bind");
+        let port = server.port();
+        let done = Arc::new(AtomicBool::new(false));
+        let loop_done = Arc::clone(&done);
+
+        let main_loop = std::thread::spawn(move || {
+            let mut res = ecs();
+            {
+                let reg = res.get_mut::<ComponentRegistry>().unwrap();
+                reg.register_cpu_reflected::<Parent>();
+                reg.register_cpu_reflected::<ome_ecs::hierarchy::Children>();
+            }
+            // Two root entities for the editor to relate.
+            for name in ["Parent", "Child"] {
+                handle(
+                    &Request {
+                        id: 1,
+                        method: Method::Spawn {
+                            name: Some(name.to_owned()),
+                        },
+                    },
+                    &mut res,
+                );
+            }
+            while !loop_done.load(Ordering::Relaxed) {
+                for item in server.take_pending() {
+                    let resp = handle(&item.request, &mut res);
+                    let _ = item.reply.send(resp);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+
+        let mut editor = ecs();
+        {
+            let reg = editor.get_mut::<ComponentRegistry>().unwrap();
+            reg.register_cpu_reflected::<Parent>();
+            reg.register_cpu_reflected::<ome_ecs::hierarchy::Children>();
+        }
+        let mut state = RemoteState::new();
+        state.session = Some(RemoteSession::attach(port));
+        for _ in 0..200 {
+            if state.session.as_mut().unwrap().poll_ready() == ConnectionState::Connected {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(state.is_connected(), "did not connect");
+
+        let snapshot = state.session.as_ref().unwrap().snapshot().to_vec();
+        state.mirror.apply(&snapshot, &mut editor);
+        assert!(snapshot.len() >= 2, "the project has no pair to relate");
+        let parent = state.mirror.local_of(snapshot[0].id).expect("mirrored");
+        let child = state.mirror.local_of(snapshot[1].id).expect("mirrored");
+        editor.insert(state);
+
+        assert!(dispatch(
+            &mut editor,
+            &EditorAction::Reparent {
+                entity: child,
+                new_parent: Some(parent),
+            }
+        ));
+
+        // The project itself has to report the relationship — not the mirror,
+        // which is exactly what used to be mutated instead.
+        let client = RemoteClient::new(port);
+        let entities = client.list_entities().unwrap();
+        let child_remote = entities
+            .iter()
+            .find(|e| e.id == snapshot[1].id)
+            .expect("child gone");
+        assert_eq!(
+            child_remote.parent,
+            Some(snapshot[0].id),
+            "the reparent never reached the project"
+        );
+
+        // And unparenting travels the same way.
+        assert!(dispatch(
+            &mut editor,
+            &EditorAction::Reparent {
+                entity: child,
+                new_parent: None,
+            }
+        ));
+        let entities = client.list_entities().unwrap();
+        let child_remote = entities.iter().find(|e| e.id == snapshot[1].id).unwrap();
+        assert_eq!(child_remote.parent, None, "unparenting did not travel");
+
+        done.store(true, Ordering::Relaxed);
+        main_loop.join().unwrap();
+    }
+
+    /// #595, hole two: `Duplicate` was claimed by nothing at all — not
+    /// `classify`, not `dispatch`, not `apply_non_ecs_action` — so in remote
+    /// mode it was a silent no-op.
+    #[test]
+    fn duplicate_creates_a_copy_on_the_project() {
+        let server = (0..8)
+            .find_map(|i| RemoteServer::start(17880 + i).ok())
+            .expect("bind");
+        let port = server.port();
+        let done = Arc::new(AtomicBool::new(false));
+        let loop_done = Arc::clone(&done);
+
+        let main_loop = std::thread::spawn(move || {
+            let mut res = ecs();
+            let entity = {
+                let mut commands = res.remove::<Commands>().unwrap();
+                let e = commands.spawn(&mut res).id();
+                commands.apply(&mut res);
+                res.insert(commands);
+                e
+            };
+            if let Some(reg) = res.get_mut::<ComponentRegistry>() {
+                reg.insert_default_reflected(&TypeId::of::<Transform>(), entity);
+            }
+            let empty = res
+                .get_mut::<ome_ecs::archetype_registry::ArchetypeRegistry>()
+                .unwrap()
+                .get_or_create(Default::default());
+            let archetypes = res
+                .get_mut::<ome_ecs::archetype_registry::ArchetypeRegistry>()
+                .unwrap();
+            archetypes.register_entity(entity, empty);
+            let next = archetypes.archetype_after_add::<Transform>(empty);
+            archetypes.register_entity(entity, next);
+
+            while !loop_done.load(Ordering::Relaxed) {
+                for item in server.take_pending() {
+                    let resp = handle(&item.request, &mut res);
+                    let _ = item.reply.send(resp);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+
+        let mut editor = ecs();
+        let mut state = RemoteState::new();
+        state.session = Some(RemoteSession::attach(port));
+        for _ in 0..200 {
+            if state.session.as_mut().unwrap().poll_ready() == ConnectionState::Connected {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(state.is_connected(), "did not connect");
+        let snapshot = state.session.as_ref().unwrap().snapshot().to_vec();
+        state.mirror.apply(&snapshot, &mut editor);
+        let source = state.mirror.local_of(snapshot[0].id).expect("mirrored");
+
+        // Give the source a distinctive value so the copy can be told apart
+        // from an empty entity that merely exists.
+        if let Some(reg) = editor.get_mut::<ComponentRegistry>() {
+            let _ = reg.reflect_set_field(
+                &TypeId::of::<Transform>(),
+                source,
+                "position",
+                ReflectValue::Vec3(glam::Vec3::new(3.0, 4.0, 5.0)),
+            );
+        }
+        editor.insert(state);
+
+        let before = RemoteClient::new(port).list_entities().unwrap().len();
+        assert!(dispatch(&mut editor, &EditorAction::Duplicate(source)));
+
+        let entities = RemoteClient::new(port).list_entities().unwrap();
+        assert_eq!(
+            entities.len(),
+            before + 1,
+            "no copy was created on the project"
+        );
+        let copy = entities
+            .iter()
+            .find(|e| e.id != snapshot[0].id)
+            .expect("copy not found");
+        let position = copy
+            .components
+            .iter()
+            .find(|c| c.type_name.ends_with("Transform"))
+            .and_then(|c| c.fields.iter().find(|(n, _)| n == "position"))
+            .map(|(_, v)| v.clone());
+        assert_eq!(
+            position,
+            Some(ReflectValue::Vec3(glam::Vec3::new(3.0, 4.0, 5.0))),
+            "the copy did not carry the source's field values"
+        );
 
         done.store(true, Ordering::Relaxed);
         main_loop.join().unwrap();

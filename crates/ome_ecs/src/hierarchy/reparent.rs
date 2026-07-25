@@ -20,12 +20,15 @@
 //!
 //! See issue #214 for the full research write-up.
 
+use std::any::TypeId;
+
+use crate::archetype_registry::ArchetypeRegistry;
+use crate::component::ComponentRegistry;
+use crate::entity::Entity;
+use crate::hierarchy::{Children, Parent};
+use crate::transform::Transform;
 use glam::{Quat, Vec3};
 use ome_core::resource::Resources;
-use ome_ecs::component::ComponentRegistry;
-use ome_ecs::entity::Entity;
-use ome_ecs::hierarchy::Parent;
-use ome_ecs::transform::Transform;
 
 /// Rewrites an entity's local `Transform` so its world-space TRS
 /// stays the same across a reparent. Call this BEFORE updating the
@@ -39,8 +42,9 @@ pub(super) fn rewrite_local_transform_for_reparent(
         return;
     };
     let (parent_wp, parent_wr, parent_ws) = match new_parent {
-        Some(p) => compute_world_trs(resources, p)
-            .unwrap_or((Vec3::ZERO, Quat::IDENTITY, Vec3::ONE)),
+        Some(p) => {
+            compute_world_trs(resources, p).unwrap_or((Vec3::ZERO, Quat::IDENTITY, Vec3::ONE))
+        }
         None => (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
     };
 
@@ -79,10 +83,7 @@ pub(super) fn rewrite_local_transform_for_reparent(
 /// a rotated descendant. Reading TRS back from it requires SVD, and
 /// repeated reparents accumulate decomposition drift in the
 /// inspector. Walking TRS directly stays stable.
-fn compute_world_trs(
-    resources: &Resources,
-    entity: Entity,
-) -> Option<(Vec3, Quat, Vec3)> {
+fn compute_world_trs(resources: &Resources, entity: Entity) -> Option<(Vec3, Quat, Vec3)> {
     let registry = resources.get::<ComponentRegistry>()?;
     let transform_storage = registry.get_cpu::<Transform>()?;
     let parent_storage = registry.get_cpu::<Parent>();
@@ -117,4 +118,61 @@ fn compute_world_trs(
 /// Inverse with a floor to avoid division by zero on degenerate scales.
 fn safe_inv(v: f32) -> f32 {
     if v.abs() < 1e-6 { 1.0 / 1e-6 } else { 1.0 / v }
+}
+
+/// Reparents `entity` under `new_parent`, or unparents it when `None`.
+///
+/// Lives here rather than in the editor because it is ECS mechanics —
+/// `Parent`/`Children` plus the archetype move plus preserving the child's
+/// world transform — and because the *server* has to be able to perform it.
+/// While it lived in `ome_editor_core`, remote mode had no way to reparent
+/// at all, which is exactly why the action was never routed (#595).
+pub fn reparent(resources: &mut Resources, entity: Entity, new_parent: Option<Entity>) {
+    // Preserve the child's world-space transform across the reparent.
+    // Without this, parenting snaps the child to `parent * child_local`
+    // and unparenting snaps it back to `child_local` (as if it were a
+    // root all along).
+    rewrite_local_transform_for_reparent(resources, entity, new_parent);
+
+    match new_parent {
+        Some(parent) => {
+            let mut needs_archetype_add = false;
+            if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                let has_parent = registry
+                    .get_cpu::<Parent>()
+                    .is_some_and(|s| s.contains(entity));
+                if has_parent {
+                    if let Some(storage) = registry.get_cpu_mut::<Parent>()
+                        && let Some(p) = storage.get_mut(entity)
+                    {
+                        p.entity = parent;
+                    }
+                } else if let Some(storage) = registry.get_cpu_mut::<Parent>() {
+                    storage.insert(entity, Parent { entity: parent });
+                    needs_archetype_add = true;
+                }
+            }
+            if needs_archetype_add {
+                let parent_tid = TypeId::of::<Parent>();
+                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+                    && let Some(current) = archetypes.entity_archetype(entity)
+                {
+                    let new_arch = archetypes.archetype_after_add_dynamic(current, parent_tid);
+                    archetypes.register_entity(entity, new_arch);
+                }
+            }
+        }
+        None => {
+            let parent_tid = TypeId::of::<Parent>();
+            if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                registry.remove_component(entity, &parent_tid);
+            }
+            if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+                && let Some(current) = archetypes.entity_archetype(entity)
+            {
+                let new_arch = archetypes.archetype_after_remove_dynamic(current, parent_tid);
+                archetypes.register_entity(entity, new_arch);
+            }
+        }
+    }
 }

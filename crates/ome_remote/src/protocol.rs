@@ -114,6 +114,19 @@ pub enum Method {
     Spawn { name: Option<String> },
     /// Despawn an entity.
     Despawn { entity: EntityId },
+    /// Reparent an entity, or unparent it when `parent` is `None`.
+    ///
+    /// A method of its own rather than a `SetField` on `Parent`, because
+    /// `Parent::reflect_set` is deliberately read-only: an entity handle is
+    /// not a reflectable value and `ReflectValue` has no variant for one.
+    /// `Parent.entity` reflects *out* as an `"index:generation"` string for
+    /// display and cannot be written back.
+    SetParent {
+        entity: EntityId,
+        /// `None` unparents to the scene root — the same operation, so it
+        /// does not get a second method.
+        parent: Option<EntityId>,
+    },
     /// Persist the live ECS to a scene file on the server's disk.
     SaveScene { path: String },
     /// Replace the live ECS with a scene file from the server's disk.
