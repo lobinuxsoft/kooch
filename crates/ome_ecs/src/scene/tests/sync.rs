@@ -123,7 +123,7 @@ fn assetref_fields_round_trip_through_scene_save_load() {
     }
 
     // 2. Snapshot + RON round-trip via on-disk file.
-    let doc = SceneDocument::from_ecs(&src);
+    let doc = SceneDocument::from_ecs(&mut src);
     let tmp_dir = std::env::temp_dir();
     let scene_path: PathBuf = tmp_dir.join(format!(
         "ome_assetref_round_trip_{}.ron",
@@ -173,7 +173,7 @@ fn assetref_none_round_trip() {
         src.insert(commands);
     }
 
-    let doc = SceneDocument::from_ecs(&src);
+    let doc = SceneDocument::from_ecs(&mut src);
     // Direct in-memory round-trip via RON to avoid the temp file.
     let serialized = ron::ser::to_string(&doc).expect("serialize");
     let reloaded: SceneDocument = ron::from_str(&serialized).expect("deserialize");
@@ -296,7 +296,7 @@ fn unknown_component_survives_a_save_round_trip() {
         "the unresolved component must be parked, not dropped"
     );
 
-    let saved = SceneDocument::from_ecs(&resources);
+    let saved = SceneDocument::from_ecs(&mut resources);
     let entity = saved
         .entities
         .iter()
@@ -490,17 +490,26 @@ fn a_round_trip_keeps_the_hierarchy_when_names_collide() {
     super::add_to_archetype(&mut resources, child, std::any::TypeId::of::<Parent>());
 
     // Save, then load into the same world.
-    let document = SceneDocument::from_ecs(&resources);
+    let document = SceneDocument::from_ecs(&mut resources);
     // Found by the link itself, not by name — the whole point is that names
-    // do not identify anything.
+    // do not identify anything. Since #607 the link is an ordinary
+    // component field holding an entity reference, not an out-of-band
+    // index into the document.
     let child_desc = document
         .entities
         .iter()
-        .find(|e| e.parent_index.is_some())
-        .expect("the parent link was not saved as an index");
+        .find(|e| {
+            e.components.iter().any(|c| {
+                c.type_name.ends_with("Parent")
+                    && c.fields.iter().any(|(_, value)| {
+                        matches!(value, ReflectValue::EntityRef(Some(r)) if r.is_unresolved())
+                    })
+            })
+        })
+        .expect("the parent link was not saved as an entity reference");
     assert!(
-        child_desc.parent.is_none(),
-        "the ambiguous name is still being written"
+        child_desc.parent.is_none() && child_desc.parent_index.is_none(),
+        "a legacy parent link is still being written",
     );
 
     sync_scene_to_ecs(&document, &mut resources).expect("sync");

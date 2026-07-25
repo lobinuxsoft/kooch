@@ -21,6 +21,20 @@ pub struct Entity {
     generation: u32,
 }
 
+/// [`Entity::INVALID`] — the sentinel that already means "points at
+/// nothing".
+///
+/// Needed because `#[derive(Reflect)]` requires [`Default`], so without
+/// this no component holding an `Entity` field could use the derive at
+/// all. `INVALID` is the only defensible default: it cannot collide with
+/// an allocated entity, and [`Entity::is_valid`] already exists to check
+/// for it.
+impl Default for Entity {
+    fn default() -> Self {
+        Self::INVALID
+    }
+}
+
 impl Entity {
     /// Sentinel value for uninitialised / empty slots.
     ///

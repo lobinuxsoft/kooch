@@ -89,13 +89,20 @@ impl SceneDocument {
     /// [`EphemeralComponents`](crate::ephemeral::EphemeralComponents) are
     /// skipped entirely — used by editor crates to keep helper entities
     /// (cameras, gizmos) out of user scene files.
-    pub fn from_ecs(resources: &Resources) -> Self {
+    pub fn from_ecs(resources: &mut Resources) -> Self {
+        // Saving assigns identity: `PersistentId` is opt-in, and whether
+        // something is referenced is only known once references are
+        // written. See `scene::entity_refs`.
+        let ids = super::entity_refs::assign_ids_to_referenced(resources);
+        let resources: &Resources = resources;
         use crate::ephemeral::EphemeralComponents;
-        use crate::hierarchy::{Children, GlobalTransform, Parent};
+        use crate::hierarchy::{Children, GlobalTransform};
 
-        // Type IDs of hierarchy components to skip during serialization.
+        // Children and GlobalTransform are derived from Parent and the
+        // transform hierarchy, so saving them would store the same fact
+        // twice and let the copies disagree. `Parent` itself is now an
+        // ordinary component carrying an entity reference.
         let skip_types = [
-            std::any::TypeId::of::<Parent>(),
             std::any::TypeId::of::<Children>(),
             std::any::TypeId::of::<GlobalTransform>(),
         ];
@@ -143,6 +150,15 @@ impl SceneDocument {
                         let Some(fields) = components.reflect_get_fields(&type_id, entity) else {
                             continue;
                         };
+
+                        // Live handles mean nothing after a reload; swap
+                        // them for the persistent ids assigned above.
+                        let fields = fields
+                            .into_iter()
+                            .map(|(name, value)| {
+                                (name, super::entity_refs::to_persistent(value, &ids))
+                            })
+                            .collect();
 
                         comp_descs.push(ComponentDescription {
                             type_name: type_name.to_owned(),
@@ -204,29 +220,10 @@ impl SceneDocument {
                 }
             }
 
-            // Sort BEFORE resolving parents. `parent_index` points into the
-            // emitted list, so assigning it first and sorting afterwards
-            // leaves every link pointing at whatever moved into that slot —
-            // silently, and only when the sort actually reorders anything.
+            // Sorted for a stable file order; nothing depends on the
+            // positions any more. `parent_index` used to point into this
+            // list, which made the sort load-bearing — see #607.
             indexed_entities.sort_by_key(|(idx, _, _)| *idx);
-
-            let entity_to_idx: std::collections::HashMap<crate::entity::Entity, usize> =
-                indexed_entities
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, (_, entity, _))| (*entity, idx))
-                    .collect();
-
-            if let Some(parent_storage) = components.get_cpu::<Parent>() {
-                for idx in 0..indexed_entities.len() {
-                    let entity = indexed_entities[idx].1;
-                    if let Some(parent_comp) = parent_storage.get(entity)
-                        && let Some(&parent_idx) = entity_to_idx.get(&parent_comp.entity)
-                    {
-                        indexed_entities[idx].2.parent_index = Some(parent_idx);
-                    }
-                }
-            }
         }
 
         let entities: Vec<EntityDescription> = indexed_entities

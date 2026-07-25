@@ -6,6 +6,7 @@
 //! file is what persists between sessions.
 
 mod document;
+mod entity_refs;
 mod error;
 mod sync;
 

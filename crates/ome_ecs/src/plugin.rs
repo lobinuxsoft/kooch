@@ -22,6 +22,7 @@ use crate::lod_force_level::LodForceLevel;
 use crate::mesh_renderer::MeshRenderer;
 use crate::name::Name;
 use crate::orthographic_camera::OrthographicCamera;
+use crate::persistent_id::{PersistentId, PersistentIdAllocator};
 use crate::perspective_camera::PerspectiveCamera;
 use crate::point_light::PointLight;
 use crate::query::AccessTracker;
@@ -56,6 +57,7 @@ fn register_builtin_components(resources: &mut ome_core::resource::Resources) {
         registry.register_cpu_reflected::<SkyRenderer>();
         registry.register_cpu_reflected::<MeshRenderer>();
         registry.register_cpu_reflected::<LodForceLevel>();
+        registry.register_cpu_reflected::<PersistentId>();
     }
 }
 
@@ -69,6 +71,7 @@ impl Plugin for EcsPlugin {
         app.insert_resource(EphemeralComponents::new());
         app.insert_resource(DynamicComponents::new());
         app.insert_resource(ComponentNames::new());
+        app.insert_resource(PersistentIdAllocator::new());
         app.insert_resource(SceneManager::new());
 
         // Register built-in components before user startup systems.

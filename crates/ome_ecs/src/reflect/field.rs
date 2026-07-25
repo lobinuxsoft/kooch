@@ -97,6 +97,11 @@ pub enum FieldKind {
     /// renders this as a typed dropdown picker (filtered by
     /// [`FieldMeta::asset_type`]) rather than a free-form text field.
     AssetRef,
+    /// Reference to another entity, addressed by
+    /// [`EntityGuid`](crate::persistent_id::EntityGuid) once saved. The
+    /// inspector renders this as an entity picker / drop target rather
+    /// than a text field.
+    EntityRef,
     /// Struct that also implements [`Reflect`].
     Nested,
 }

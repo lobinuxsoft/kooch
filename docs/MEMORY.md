@@ -78,6 +78,12 @@ grilla directamente.
 
 ## ⭐ Estado actual (development HEAD `26ceeb0`, 2026-07-25)
 
+- **#605 CERRADO: `ome_ecs` se queda.** `bevy_ecs` evaluado con mediciones y descartado;
+  ver la decisión sticky abajo. El ECS se mejora en el lugar, ordenado por dolor
+  demostrado.
+- **#607 en curso (`feat/entity-refs`): identidad de entidades.** Un componente ya puede
+  apuntar a otra entidad y sobrevivir un guardado. `Parent` dejó de ser un caso especial y
+  `parent_index` quedó como lectura legacy. Desbloquea #560 y las referencias cross-scene.
 - **Épico de física CERRADO en lo esencial.** #139 mergeado (#570): `PhysicsPlugin` con
   componentes `RigidBody`/`Collider`, sync de vida, step en el timestep fijo, writeback a
   `Transform`, y Stop reconstruyendo el mundo físico desde el ECS restaurado. Smokeado por
@@ -307,21 +313,83 @@ vuelven con otro índice y otra generación. `WorldSnapshot` existe precisamente
 formato de escena no puede preservar identidades. Y dos escenas distintas arrancan las dos
 en índice 0 generación 0, así que guardar handles haría colisiones invisibles.
 
-**Se referencia por `parent_index`** — índice en la lista del documento, resuelto al cargar.
-Es el mismo mecanismo que Bevy (`EntityMapper` sobre una tabla) y Unity DOTS
-(`EntityRemapUtility`), sólo que el token es la posición en vez de los bits del handle
-viejo. Trampa a recordar: **resolver los índices DESPUÉS de cualquier sort del documento.**
+**Se referencia por `PersistentId`** — el camino genérico que la deuda de esta sección
+pedía (#607). Un asset ya se direccionaba por `Guid` en vez de por handle; una entidad
+hace lo mismo un nivel más abajo.
 
-**Deuda anotada:** `parent_index` es un campo especial para el parent. **#560 (joints)
-guarda dos handles por joint** y va a necesitar el camino genérico de Bevy —
-`ReflectValue::Entity` + un pase de remapeo— en vez de un campo ad-hoc por componente.
+- **`EntityGuid(NonZeroU64)`** — identidad estable. `NonZeroU64` para que
+  `Option<EntityGuid>` siga pesando 8 bytes.
+- **`PersistentId` es opt-in.** Sólo lo llevan las entidades que algo referencia. Quién es
+  referenciado no se sabe hasta escribir las referencias, así que **guardar asigna
+  identidad** — por eso `SceneDocument::from_ecs` toma `&mut Resources`. La alternativa era
+  un id por entidad en una galaxia entera.
+- **`EntityRef` tiene dos estados explícitos**: `Live(Entity)` en memoria,
+  `Persistent { scene, id }` en disco. `Entity` sigue sin implementar `Serialize`, y
+  serializar un `Live` es **error** — si el save path no resolvió, la escena falla al
+  guardar en vez de cargar después apuntando a entidades arbitrarias.
+- **Los ids son locales a la escena, remapeados por instancia.** Es lo que hacen Unity
+  (`SceneLoadFlags.NewInstance` + `PostLoadCommandBuffer`) y Unreal (Level Instances), y es
+  lo que permite instanciar la misma escena dos veces sin que las dos copias reclamen la
+  misma identidad. Una referencia interna **no escribe su `scene`**: una escena que
+  nombrara su propio `Guid` en cada link no se podría copiar sin reescribirlos todos.
+- **Contador, no random.** Re-guardar produce un diff limpio, y el watermark impide
+  reemitir ids que otra escena ya referencia.
+- **El pase de remapeo es genérico por `FieldKind::EntityRef`**, no por componente. Un
+  componente que el engine nunca vio resuelve igual que `Parent`.
+- **Una referencia sin target se guarda y carga como vacía, no falla.** Bajo celdas de
+  mundo (#566) ése es el estado normal de una referencia a una celda no residente; fallar
+  ahí haría que un borde de streaming parezca una escena corrupta.
+
+**`Parent` dejó de ser especial** — es un componente común con un campo `Entity`.
+`parent_index` y `parent` ya no se escriben; las escenas que los tengan siguen cargando.
+El sort de `from_ecs` dejó de ser load-bearing (ordenaba la lista a la que `parent_index`
+apuntaba); ahora sólo mantiene los archivos diffeables.
+
+**Desbloqueado:** #560 (joints, dos referencias por joint) y las referencias cross-scene,
+que `parent_index` no podía expresar ni en principio.
 
 ### El ECS ya NO tiene storages GPU (2026-07-25, #603)
 
 Existían, nunca los usó nadie, y dos sistemas corrían cada frame sin consumidor. Los datos
 llegan al GPU por los buffers de instancia del pipeline de meshlets, armados desde una
-query CPU. **Un solo camino, no dos.** Esto invalida la justificación histórica de por qué
-`ome_ecs` es propio — ver #605.
+query CPU. **Un solo camino, no dos.** Esto invalidó la justificación histórica de por qué
+`ome_ecs` es propio — la re-derivación está abajo.
+
+### `ome_ecs` se queda y se mejora (locked 2026-07-25, #605 cerrado)
+
+`bevy_ecs` **no se adopta**. Evaluado con mediciones, no con opiniones; no apareció ningún
+blocker técnico, así que la decisión es sobre qué compra la migración frente a qué cuesta.
+
+Lo que la evaluación descartó como riesgo: `bevy_ecs` es standalone de verdad (65 crates
+con `reflect+serialize+multi_threaded`, cero `bevy_app`/`bevy_render`); el pipeline
+GPU-driven ni se entera (todo `ome_render` toca el ECS por `Query` en **4 lugares**); y
+`bevy_reflect` expresa `choices`/`shown_when` con custom attributes.
+
+Lo que lo decidió:
+
+- **Los 42 sitios que acceden al storage directo (`get_cpu`) contra 3 usos de `Query`** son
+  un problema en *todos* los caminos. No son motivo para migrar: son trabajo que hay que
+  hacer igual, y `ome_ecs::Query` ya expresa tuplas, `Option<Q>`, `With`/`Without` y
+  `&mut T`. **Encapsular el ECS detrás de `Query` es el prerequisito de cualquier cambio
+  de backend** — hoy la superficie de contacto son 80 archivos.
+- **`EntityAllocator::revive`** — identidad literal a través del Play/Stop — es algo que
+  `bevy_ecs` rechaza **por diseño** (`spawn_at` no acepta una generación consumida; eso
+  *es* su garantía de seguridad de handles), y hay **177 sitios fuera de `ome_ecs`** que
+  guardan un `Entity` en un campo. Para un engine con editor, nuestro diseño resuelve mejor
+  un problema que Bevy no tiene.
+- **51 de los 80 archivos afectados son `ome_editor_core`**, que es justo donde Bevy no
+  ofrece diseño para copiar: no tiene editor (`bevy_editor_prototypes` archivado, el
+  trabajo se movió al repo principal alrededor de BSN).
+
+**Bevy sigue siendo la referencia a la que robarle diseños de a uno** — la práctica que
+produjo el port de SPD, `aabb_in_frustum` y el remapeo de entidades. No se adopta como
+dependencia.
+
+Mejoras ordenadas por dolor demostrado, no por paridad de features: identidad de entidades
+(#607, hecho) → grafo de scheduling en `ome_core` (los bugs de orden #570/#572 viven en
+`app.rs`, no en el ECS) → convertir los 42 storage-sites a `Query` → change detection
+(recién tiene sentido después de eso: `Changed<T>` sólo existe dentro de una query).
+Sparse sets y `par_iter` cuando duelan; medido, hoy no duelen.
 
 ### Física = Rapier (revalidado 2026-07-21 con investigación, NO reabrir)
 

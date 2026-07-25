@@ -357,3 +357,51 @@ Format:
 > module (PR #277) migrates into `ome_gizmos` in phase 1. The
 > `ome_ui` toolkit is the heaviest piece (multi-month) and runs in
 > parallel with the others.
+
+> **2026-07-25 · Keep `ome_ecs`; do not adopt `bevy_ecs`** *(decision [#605](https://github.com/lobinuxsoft/oh_my_engine/issues/605))*
+>
+> **Decision:** `ome_ecs` stays and improves in place. `bevy_ecs` is the
+> reference to steal individual designs from, never a dependency.
+> **Why:** #603 removed the GPU component storages that had justified a
+> custom ECS, so the justification was re-derived from measurements
+> rather than repeated. No technical blocker was found — `bevy_ecs` is
+> genuinely standalone (65 crates, no `bevy_app`/`bevy_render`), the
+> GPU-driven renderer touches the ECS through `Query` in four places, and
+> `bevy_reflect` expresses our custom field attributes. What decided it:
+> 42 call sites reach into component storage directly against 3 that use
+> `Query`, which is work required in *every* path and which `ome_ecs`
+> can already express; `EntityAllocator::revive` preserves entity
+> identity across Play/Stop, which `bevy_ecs` refuses by design while 177
+> sites outside the crate hold an `Entity` in a field; and 51 of the 80
+> affected files are `ome_editor_core`, the one area where Bevy offers no
+> upstream design to copy because it has no editor.
+> **Consequence:** improvements are ordered by demonstrated pain, not by
+> feature parity. Encapsulating the ECS behind `Query` is the
+> prerequisite for any future backend change — today the contact surface
+> is 80 files. The schedule graph belongs in `ome_core`, not the ECS:
+> the ordering bugs it would fix live in `app.rs`.
+
+> **2026-07-25 · Entities are referenced by a persistent id, not a handle or an index** *(feat [#607](https://github.com/lobinuxsoft/oh_my_engine/issues/607))*
+>
+> **Decision:** a component may hold an `Entity` and have it survive a
+> save. Identity is an opt-in `PersistentId(EntityGuid)`; the wire form
+> is `EntityRef`, which is `Live(Entity)` in memory and
+> `Persistent { scene, id }` on disk. Ids are scene-local and remapped
+> per instance. `Parent` becomes an ordinary component and
+> `parent_index` is legacy-read-only.
+> **Why:** reflection had no way to express "points at an entity", so the
+> scene format carried the parent link out of band. That worked for one
+> component and could not scale: joints hold two entities, and an index
+> into one document cannot address another scene at all. Assets had
+> already solved the same problem by addressing through a `Guid`.
+> Scene-local ids follow Unity (`SceneLoadFlags.NewInstance`) and Unreal
+> (Level Instances), and are what allows one scene to be instantiated
+> twice without both copies claiming the same identity.
+> **Consequence:** saving a scene mutates the world, because whether an
+> entity is referenced is only known once references are written —
+> `SceneDocument::from_ecs` takes `&mut Resources`. `Entity` still does
+> not implement `Serialize`, so serialising a live reference is an error
+> rather than a handle written to disk. A reference whose target is
+> absent saves and loads as unset, which is the normal state for a
+> reference into a non-resident cell under #566. Unblocks #560 and
+> cross-scene references.
