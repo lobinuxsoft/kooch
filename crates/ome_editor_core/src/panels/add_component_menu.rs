@@ -21,9 +21,9 @@ pub(crate) fn draw_categorized(
     mut on_select: impl FnMut(ComponentId),
 ) {
     let mut uncategorized: Vec<&ReflectedTypeInfo> = Vec::new();
-    let mut by_category: BTreeMap<&'static str, Vec<&ReflectedTypeInfo>> = BTreeMap::new();
+    let mut by_category: BTreeMap<&str, Vec<&ReflectedTypeInfo>> = BTreeMap::new();
     for type_info in available {
-        match type_info.category {
+        match type_info.category.as_deref() {
             Some(cat) => by_category.entry(cat).or_default().push(type_info),
             None => uncategorized.push(type_info),
         }

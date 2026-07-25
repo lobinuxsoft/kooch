@@ -231,5 +231,5 @@ pub(crate) struct ReflectedTypeInfo {
     /// Portable identity, carried by the emitted `AddComponent` action.
     pub(crate) component: ComponentId,
     pub(crate) short_name: String,
-    pub(crate) category: Option<&'static str>,
+    pub(crate) category: Option<String>,
 }

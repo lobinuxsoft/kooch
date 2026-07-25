@@ -49,6 +49,12 @@ pub(crate) fn intern_registry_names(resources: &mut Resources) {
     if let Some(dynamic) = resources.get::<DynamicComponents>() {
         names.extend(dynamic.type_names().map(str::to_owned));
     }
+    // The connected project's schema. Without this the add-component menu
+    // could only offer what the editor binary was compiled with, and a
+    // component the project defines would have no `ComponentId` to carry.
+    if let Some(schema) = remote_schema(resources) {
+        names.extend(schema.iter().map(|c| c.type_name.clone()));
+    }
     if let Some(interner) = resources.get_mut::<ComponentNames>() {
         for name in &names {
             interner.intern(name);
@@ -338,24 +344,58 @@ pub(crate) fn gather_component_types(resources: &Resources) -> Vec<ComponentType
     types
 }
 
+/// The connected project's component schema, if there is one.
+///
+/// `None` in local mode, which is what makes every caller fall back to the
+/// editor's own registry without a second branch.
+fn remote_schema(resources: &Resources) -> Option<&[ome_remote::protocol::ComponentSchema]> {
+    let state = resources.get::<crate::remote_session::RemoteState>()?;
+    if !state.is_connected() {
+        return None;
+    }
+    state.session.as_ref().map(|s| s.schema())
+}
+
+/// The components the add-component menu offers.
+///
+/// **In remote mode this comes from the project, not from the editor.** The
+/// project owns the components; asking the editor's own `ComponentRegistry`
+/// answers with whatever that binary happened to be compiled with and omits
+/// everything the project defines. That is why `RigidBody` was missing from
+/// the menu until `ome_editor_core` grew an `ome_physics` dependency — a
+/// workaround that did nothing for project-defined components.
 pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedTypeInfo> {
-    let Some(registry) = resources.get::<ComponentRegistry>() else {
-        return Vec::new();
-    };
     let names = resources.get::<ComponentNames>();
-    let mut types: Vec<ReflectedTypeInfo> = registry
-        .reflected_type_names()
-        .into_iter()
-        .map(|(tid, name)| {
-            let short = name.rsplit("::").next().unwrap_or(name).to_owned();
-            let category = registry.reflect_category(&tid);
-            ReflectedTypeInfo {
-                component: component_id(names, name),
-                short_name: short,
-                category,
-            }
-        })
-        .collect();
+
+    let mut types: Vec<ReflectedTypeInfo> = match remote_schema(resources) {
+        Some(schema) => schema
+            .iter()
+            .map(|component| ReflectedTypeInfo {
+                component: component_id(names, &component.type_name),
+                short_name: component
+                    .type_name
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(&component.type_name)
+                    .to_owned(),
+                category: component.category.clone(),
+            })
+            .collect(),
+        None => {
+            let Some(registry) = resources.get::<ComponentRegistry>() else {
+                return Vec::new();
+            };
+            registry
+                .reflected_type_names()
+                .into_iter()
+                .map(|(tid, name)| ReflectedTypeInfo {
+                    component: component_id(names, name),
+                    short_name: name.rsplit("::").next().unwrap_or(name).to_owned(),
+                    category: registry.reflect_category(&tid).map(str::to_owned),
+                })
+                .collect()
+        }
+    };
     // Sort: uncategorized first (None < Some), then by category, then by name.
     types.sort_by(|a, b| {
         a.category
@@ -375,6 +415,7 @@ mod tests {
     use ome_remote::protocol::{ComponentSnapshot, EntityId, EntitySnapshot};
 
     use crate::remote_mirror::{MirrorEntity, RemoteMirror};
+    use crate::remote_session::RemoteState;
 
     use super::*;
 
@@ -447,6 +488,98 @@ mod tests {
         assert_eq!(
             spin.fields.as_deref(),
             Some(&[("rpm".to_owned(), ReflectValue::F32(33.0))][..])
+        );
+    }
+
+    /// A `RemoteState` reporting a connected session whose schema is
+    /// `components`.
+    fn connected_with_schema(port: u16, components: &[(&str, Option<&str>)]) -> RemoteState {
+        use ome_remote::protocol::ComponentSchema;
+
+        let mut state = RemoteState::new();
+        let mut session = crate::remote_session::RemoteSession::attach(port);
+        session.connected_with_schema_for_test(
+            components
+                .iter()
+                .map(|(name, category)| ComponentSchema {
+                    type_name: (*name).to_owned(),
+                    fields: None,
+                    category: category.map(str::to_owned),
+                })
+                .collect(),
+        );
+        state.session = Some(session);
+        state
+    }
+
+    /// The point of the whole change: with a project connected, the menu
+    /// lists the *project's* components — including ones this binary has no
+    /// Rust type for. Asking the editor's own registry answers with whatever
+    /// the editor was compiled with and omits everything the project defines.
+    #[test]
+    fn the_menu_lists_the_projects_components_not_the_editors() {
+        let mut resources = mirrored_world();
+        // The editor knows Transform; the project also has a component this
+        // binary has never heard of.
+        resources.insert(connected_with_schema(
+            1,
+            &[
+                ("game::spin::Spin", Some("Gameplay")),
+                ("ome_ecs::transform::Transform", None),
+            ],
+        ));
+
+        intern_registry_names(&mut resources);
+        let types = gather_reflected_types(&resources);
+
+        let names: Vec<&str> = types.iter().map(|t| t.short_name.as_str()).collect();
+        assert!(
+            names.contains(&"Spin"),
+            "a project-defined component is missing: {names:?}"
+        );
+        assert_eq!(names.len(), 2, "the local registry leaked in: {names:?}");
+
+        // And it carries a usable identity, or AddComponent could not name it
+        // over the wire.
+        let spin = types.iter().find(|t| t.short_name == "Spin").unwrap();
+        assert_ne!(
+            spin.component,
+            ome_ecs::component::ComponentId::INVALID,
+            "the project's component was never interned"
+        );
+        assert_eq!(spin.category.as_deref(), Some("Gameplay"));
+    }
+
+    /// Local mode is unchanged: no session means the editor's own registry,
+    /// which is the only thing that exists to ask.
+    #[test]
+    fn local_mode_still_lists_the_local_registry() {
+        let mut resources = mirrored_world();
+        intern_registry_names(&mut resources);
+        let types = gather_reflected_types(&resources);
+
+        assert!(
+            types.iter().any(|t| t.short_name == "Transform"),
+            "the local registry is no longer listed"
+        );
+    }
+
+    /// A session that has not finished connecting must not blank the menu:
+    /// its schema is empty until the handshake completes, and answering with
+    /// nothing would look like a project with no components.
+    #[test]
+    fn a_connecting_session_falls_back_to_the_local_registry() {
+        let mut resources = mirrored_world();
+        // `attach` starts in Connecting, and `is_connected` is false there.
+        let mut state = RemoteState::new();
+        state.session = Some(crate::remote_session::RemoteSession::attach(1));
+        resources.insert(state);
+
+        intern_registry_names(&mut resources);
+        let types = gather_reflected_types(&resources);
+        assert!(
+            types.iter().any(|t| t.short_name == "Transform"),
+            "a half-connected session emptied the menu"
         );
     }
 }

@@ -169,6 +169,18 @@ impl RemoteSession {
         &self.snapshot
     }
 
+    /// Puts the session into `Connected` with a given schema, without a
+    /// server.
+    ///
+    /// Test-only. The real path pulls the schema during the handshake; a
+    /// test about *what the editor does with a schema* should not have to
+    /// stand up a socket to state one.
+    #[cfg(test)]
+    pub(crate) fn connected_with_schema_for_test(&mut self, schema: Vec<ComponentSchema>) {
+        self.state = ConnectionState::Connected;
+        self.schema = schema;
+    }
+
     /// The component schema pulled on connect.
     pub fn schema(&self) -> &[ComponentSchema] {
         &self.schema
