@@ -35,6 +35,15 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         return true;
     }
 
+    // Spawning a mesh is the one edit that cannot be reduced to a single
+    // protocol call: the editor has to load the asset to learn its GUID,
+    // and loading mutates the `AssetServer`, which `send` cannot do from
+    // an immutable world. Handled here, before `classify`.
+    if let EditorAction::SpawnMesh { path, name } = action {
+        spawn_mesh(resources, path, name);
+        return true;
+    }
+
     // Non-ECS actions stay on the local path even in remote mode: closing
     // the project, toggling power profiles all act on the editor, not the
     // remote world.
@@ -61,6 +70,115 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
 
     resources.insert(state);
     true
+}
+
+/// Builds a mesh-bound entity on the project's side.
+///
+/// The editor resolves the asset locally — both processes see the same
+/// filesystem, so the GUID it gets is the GUID the project will resolve —
+/// then assembles the entity out of calls the protocol already has:
+/// `spawn` for the entity and its `Name`, `add_component` for `Transform`
+/// and `MeshRenderer`, and `set_field` to write the mesh reference.
+/// `MeshRenderer.mesh` is reflected as a typed `AssetRef`, so it goes over
+/// the wire like any other field.
+///
+/// Failures are logged with the path that caused them. The bug this
+/// replaces was the silence: a menu entry that did nothing at all.
+fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name: &str) {
+    const TARGET: &str = "ome_editor_core::remote_edit::spawn_mesh";
+
+    let Some((guid, asset_type)) = resolve_mesh_asset(resources, path) else {
+        return;
+    };
+
+    let Some(state) = resources.get::<RemoteState>() else {
+        return;
+    };
+    let Some(session) = state.session.as_ref() else {
+        return;
+    };
+    let client = session.client();
+
+    let entity = match client.spawn(Some(name)) {
+        Ok(entity) => entity,
+        Err(e) => {
+            tracing::warn!(target: TARGET, error = %e, "remote spawn failed");
+            return;
+        }
+    };
+
+    // Remote `spawn` creates only `Name`, so both of these are needed.
+    let transform_ty = std::any::type_name::<ome_ecs::transform::Transform>();
+    let renderer_ty = std::any::type_name::<ome_ecs::mesh_renderer::MeshRenderer>();
+    for ty in [transform_ty, renderer_ty] {
+        if let Err(e) = client.add_component(entity, ty) {
+            tracing::warn!(target: TARGET, component = ty, error = %e, "add_component failed");
+            return;
+        }
+    }
+
+    let value = ome_ecs::reflect::ReflectValue::AssetRef {
+        guid: Some(guid),
+        asset_type,
+    };
+    if let Err(e) = client.set_field(entity, renderer_ty, "mesh", value) {
+        tracing::warn!(target: TARGET, error = %e, "could not write the mesh reference");
+        return;
+    }
+
+    tracing::info!(
+        target: TARGET,
+        %name,
+        path = %path.display(),
+        %guid,
+        "spawned a mesh entity on the project",
+    );
+}
+
+/// Loads a mesh asset locally and returns its GUID and asset type name.
+fn resolve_mesh_asset(
+    resources: &mut Resources,
+    path: &std::path::Path,
+) -> Option<(ome_core::Guid, String)> {
+    const TARGET: &str = "ome_editor_core::remote_edit::spawn_mesh";
+    use ome_core::asset_database::AssetDatabase;
+    use ome_core::asset_loader::AssetServer;
+    use ome_render::meshlet::MeshletMesh;
+
+    // Taken out so the load can borrow the server and the world at once,
+    // the same dance `SpawnMeshCommand` does on the local path.
+    let mut server = match resources.remove::<AssetServer>() {
+        Some(server) => server,
+        None => {
+            tracing::warn!(target: TARGET, "AssetServer missing; cannot resolve the mesh");
+            return None;
+        }
+    };
+    let loaded = server.load::<MeshletMesh>(path, resources);
+    let resolved = server.resolve_path(path);
+    resources.insert(server);
+
+    if let Err(e) = loaded {
+        tracing::warn!(
+            target: TARGET,
+            path = %path.display(),
+            error = %e,
+            "failed to load the mesh asset",
+        );
+        return None;
+    }
+
+    let guid = resources
+        .get::<AssetDatabase>()
+        .and_then(|db| db.guid_for(&resolved));
+    if guid.is_none() {
+        tracing::warn!(
+            target: TARGET,
+            resolved = %resolved.display(),
+            "the AssetDatabase has no entry for the loaded asset",
+        );
+    }
+    guid.map(|guid| (guid, std::any::type_name::<MeshletMesh>().to_owned()))
 }
 
 /// An ECS edit reduced to the fields the remote protocol needs.
@@ -120,6 +238,9 @@ fn classify(action: &EditorAction) -> Option<Edit<'_>> {
         }),
         EditorAction::Despawn(entity) => Some(Edit::Despawn(*entity)),
         EditorAction::Spawn { name, .. } => Some(Edit::Spawn { name: name.clone() }),
+        // SpawnMesh is reduced in `dispatch`, not here: resolving its
+        // asset mutates the AssetServer, and an `Edit` has to be
+        // sendable from an immutable world.
         EditorAction::TransformEdit { entity, after, .. } => Some(Edit::TransformEdit {
             entity: *entity,
             transform: *after,
@@ -401,5 +522,147 @@ mod tests {
     fn non_ecs_action_falls_through() {
         let mut editor = ecs();
         assert!(!dispatch(&mut editor, &EditorAction::CloseProject));
+    }
+
+    /// The engine root, two levels above this crate's manifest.
+    fn engine_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("ome_editor_core is not two levels below the engine root")
+            .to_path_buf()
+    }
+
+    /// An editor world that can resolve mesh assets out of `assets/`.
+    fn editor_with_assets() -> Resources {
+        use ome_core::asset_database::AssetDatabase;
+        use ome_core::asset_loader::AssetServer;
+        use ome_ecs::mesh_renderer::MeshRenderer;
+
+        let mut r = ecs();
+        {
+            let reg = r.get_mut::<ComponentRegistry>().unwrap();
+            reg.register_cpu_reflected::<MeshRenderer>();
+        }
+        let mut server = AssetServer::new().with_asset_root(engine_root().join("assets"));
+        server.register_loader::<ome_render::meshlet::MeshletMesh, _>(
+            ome_render::meshlet::MeshletMeshLoader,
+        );
+        r.insert(server);
+        r.insert(AssetDatabase::new());
+        r.insert(ome_core::assets::Assets::<ome_render::meshlet::MeshletMesh>::new());
+        r
+    }
+
+    /// The bug: `Spawn ▸ 3D Object` was dropped on the floor in remote
+    /// mode, because `classify` had no arm for it and nothing else claimed
+    /// it. Silently — no entity, no error.
+    ///
+    /// The project has to end up with an entity carrying `Name`,
+    /// `Transform` and `MeshRenderer`, with the mesh reference written.
+    #[test]
+    fn spawn_mesh_builds_the_entity_on_the_project() {
+        use ome_ecs::mesh_renderer::MeshRenderer;
+
+        let server = (0..8)
+            .find_map(|i| RemoteServer::start(17820 + i).ok())
+            .expect("bind");
+        let port = server.port();
+        let done = Arc::new(AtomicBool::new(false));
+        let loop_done = Arc::clone(&done);
+
+        // The project: a world that can hold a MeshRenderer.
+        let main_loop = std::thread::spawn(move || {
+            let mut res = ecs();
+            {
+                let reg = res.get_mut::<ComponentRegistry>().unwrap();
+                reg.register_cpu_reflected::<MeshRenderer>();
+            }
+            while !loop_done.load(Ordering::Relaxed) {
+                for item in server.take_pending() {
+                    let resp = handle(&item.request, &mut res);
+                    let _ = item.reply.send(resp);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+
+        let mut editor = editor_with_assets();
+        let mut state = RemoteState::new();
+        state.session = Some(RemoteSession::attach(port));
+        for _ in 0..200 {
+            if state.session.as_mut().unwrap().poll_ready() == ConnectionState::Connected {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(state.is_connected(), "did not connect");
+        editor.insert(state);
+
+        let action = EditorAction::SpawnMesh {
+            path: std::path::PathBuf::from("meshes/suzanne.glb"),
+            name: "Suzanne".to_owned(),
+        };
+        assert!(
+            dispatch(&mut editor, &action),
+            "the remote sink still does not own SpawnMesh"
+        );
+
+        // Ask the project what it has.
+        let client = RemoteClient::new(port);
+        let entities = client.list_entities().unwrap();
+        let spawned = entities
+            .iter()
+            .find(|e| {
+                e.components
+                    .iter()
+                    .any(|c| c.type_name.ends_with("MeshRenderer"))
+            })
+            .expect("the project has no entity with a MeshRenderer");
+
+        for expected in ["Name", "Transform", "MeshRenderer"] {
+            assert!(
+                spawned
+                    .components
+                    .iter()
+                    .any(|c| c.type_name.ends_with(expected)),
+                "the spawned entity has no {expected}: {:?}",
+                spawned
+                    .components
+                    .iter()
+                    .map(|c| &c.type_name)
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        let mesh = spawned
+            .components
+            .iter()
+            .find(|c| c.type_name.ends_with("MeshRenderer"))
+            .and_then(|c| c.fields.iter().find(|(n, _)| n == "mesh"))
+            .map(|(_, v)| v.clone())
+            .expect("MeshRenderer has no mesh field");
+        assert!(
+            matches!(mesh, ReflectValue::AssetRef { guid: Some(_), .. }),
+            "the mesh reference did not reach the project: {mesh:?}"
+        );
+
+        done.store(true, Ordering::Relaxed);
+        main_loop.join().unwrap();
+    }
+
+    /// An unresolvable path is claimed and logged, not passed through to
+    /// the local path where it would spawn into the mirror — which the
+    /// next refresh would wipe, looking like a flicker.
+    #[test]
+    fn an_unresolvable_mesh_is_still_owned_by_the_remote_sink() {
+        let mut editor = editor_with_assets();
+        editor.insert(RemoteState::new());
+
+        let action = EditorAction::SpawnMesh {
+            path: std::path::PathBuf::from("meshes/does_not_exist.glb"),
+            name: "Ghost".to_owned(),
+        };
+        assert!(dispatch(&mut editor, &action));
     }
 }
