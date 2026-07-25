@@ -83,8 +83,7 @@ impl<'a> Gizmos<'a> {
     /// Pushes a filled oriented box — like [`Self::filled_aabb`] but
     /// the faces are rotated by `basis` (each column is a face axis).
     pub fn filled_obb(&mut self, center: Vec3, basis: Mat3, half_extents: Vec3, color: Vec4) {
-        self.mesh_batch
-            .filled_obb(center, basis, half_extents, color);
+        self.mesh_batch.filled_obb(center, basis, half_extents, color);
     }
 
     /// Pushes a filled 3D arrow from `base` to `tip` — an octagonal
