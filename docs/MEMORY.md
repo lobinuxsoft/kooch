@@ -76,23 +76,56 @@ grilla directamente.
 
 ---
 
-## ⭐ Estado actual (development HEAD `74e824f`, 2026-07-22)
+## ⭐ Estado actual (development HEAD `26ceeb0`, 2026-07-25)
 
-- `development` limpio, **cero PRs abiertos**. Stash pendiente: `wip: physics components
-  (#139)` sobre la branch `feat/physics-plugin`.
-- **Épico C (editor remoto) CERRADO.** Fases 1-5 mergeadas (#548→#557). Play in-editor
-  estilo Unity funcionando, smoke visual del user OK. #546 cerrada como completada.
-- **Hilo siguiente = física.** `ome_physics` está en rapier 0.34 + glam 0.33 workspace-wide
-  (#564), pero le falta el puente al ECS: nada crea cuerpos desde entidades, nada llama
-  `step`, nada escribe de vuelta a `Transform`. Un cubo todavía no puede caer. Eso es #139
-  y es el único bloqueante del épico de física.
-- **Amputación SDF/BVH hecha** (#565, ~14k líneas). Ver sección de decisiones sticky.
-- Editor corre limpio en RX 9070 XT (Vulkan/RADV): cero validation warnings, smoke OK en
-  producción + todos los debug modes.
+- **Épico de física CERRADO en lo esencial.** #139 mergeado (#570): `PhysicsPlugin` con
+  componentes `RigidBody`/`Collider`, sync de vida, step en el timestep fijo, writeback a
+  `Transform`, y Stop reconstruyendo el mundo físico desde el ECS restaurado. Smokeado por
+  el user: un cubo cae, Stop lo restaura.
+- **14 PRs mergeados el 2026-07-25.** Física, primitivas de malla + exportador GLB, gizmos
+  de collider y de luces, panel de gizmos, campos condicionales del Inspector, y **cinco
+  bugs de remote mode / jerarquía** que el user encontró usando el editor.
+- **⏳ PR #604 ABIERTO** — borrado del path GPU del ECS. Smokeado indirecto (nada lo usaba).
+- **⭐ PRÓXIMA SESIÓN = #605**, decidido por el user: evaluar adoptar `bevy_ecs`. Ver la
+  sección nueva de decisiones. **No arrancar #137 antes de eso.**
 
-### ⭐ Épico de física — backlog auditado contra el source de rapier 0.34 (2026-07-22)
+### ⭐ Lo que se hizo el 2026-07-25 (14 PRs)
 
-Cobertura verificada módulo por módulo. **#139 primero — todo lo demás depende de él.**
+| PR | Qué |
+|---|---|
+| #570 | `PhysicsPlugin` (#139) + orden del frame + borrado de 4 componentes legacy + editor autoriza física + `Transform.scale` en el collider |
+| #572 | el refresh del mirror pisaba el drag del gizmo (#571) |
+| #575 | 6 primitivas como assets `.glb` + exportador GLB + simplificación con meshopt (#573) |
+| #577 | `SpawnMesh` sin ruta en remote mode (#576) |
+| #579 | gizmos wireframe de colliders (#574) |
+| #583 | `Collider.center` — offset local (#580) |
+| #584 | panel 👁 Gizmos por grupos + colliders siempre visibles (#581) |
+| #586 | campos del Inspector según el shape — `FieldCondition` (#585) |
+| #588 | gizmos de TODOS los seleccionados, no sólo `Transform` (#587) |
+| #590 | el `Spawn` remoto tiraba su lista de componentes — la luz nacía inerte (#589) |
+| #594 | gizmos de point/spot/directional + segmentos de círculo derivados del radio (#593) |
+| #596 | auditoría de `EditorAction` vs `classify`: `Reparent` y `Duplicate` sin ruta (#595) |
+| #598 | el menú add-component leía el registry del editor, no el schema del proyecto (#597) |
+| #600 | el mirror nunca borraba un parent que el proyecto dejó de reportar (#599) |
+| #602 | la escena referenciaba el padre **por nombre** → jerarquía mal al cargar (#601) |
+
+### ⚠️ El patrón que dominó la sesión: remote mode se armó por fases
+
+Cinco bugs de la misma forma —#571, #576, #589, #595, #599— todos **silenciosos** y todos
+encontrados por el user clickeando, no leyendo código. Causa: el épico C se armó en fases
+(#548→#557) y cada acción que nadie ejercitó en su fase quedó sin ruta y sin test.
+
+La auditoría de #596 recorrió los 38 variantes de `EditorAction`. **Diez de los doce que
+mutan el ECS estaban bien ruteados**; los dos que no eran `Reparent` (mutaba el mirror y se
+revertía al refresh) y `Duplicate` (no-op total). Ya no debería quedar nada de esa forma.
+
+### Épico de física — backlog auditado contra el source de rapier 0.34 (2026-07-22)
+
+Cobertura verificada módulo por módulo. **#139 CERRADO el 2026-07-25 (#570)** — era el
+bloqueante, ya no lo es. El siguiente de la lista es **#137** (todas las shapes detrás de la
+abstracción), que ahora tiene sus tres dependencias adentro: primitivas para derivar hulls
+(#575), wireframes para ver el resultado (#579), y `FieldCondition` para que trece shapes
+sean legibles en el Inspector (#586). **Pero primero va #605.**
 
 | Capacidad de rapier 0.34 | Issue |
 |---|---|
@@ -124,7 +157,12 @@ Con Rapier la capa de sync es **obligatoria** (Rapier es dueño de sus `RigidBod
 `ColliderSet`; no puede leer arrays ajenos) — el modelo ECS-nativo tipo Avian no está
 disponible porque Avian está soldado a `bevy_ecs`.
 
-### ⭐⭐ Épico C — Editor remoto (BRP-style) — EN CURSO
+### Épico C — Editor remoto (BRP-style) — CERRADO (fases 1-5 mergeadas)
+
+> **Nota 2026-07-25:** cerrado no significa sin deuda. Cinco bugs silenciosos de esta
+> arquitectura salieron el 2026-07-25 (#571, #576, #589, #595, #599) y la auditoría de #596
+> recorrió los 38 variantes de `EditorAction`. El histórico de fases queda abajo como
+> contexto de *por qué* el código está armado así.
 
 **Problema raíz:** el editor standalone (`ome_editor`, launcher hub) NO puede cargar escenas
 con componentes del proyecto (`unknown component type: test3::...::MoveComponent`). No es bug:
@@ -189,7 +227,7 @@ El epic SDF #370 (GPU-driven SDF rendering Lumen-class) quedó **pausado**. El p
 pipeline end-to-end con cull + visibility buffer + deferred + Hi-Z 2-pass, atomic R64
 visibility, cluster LOD DAG (METIS).
 
-### Último landing — #440 two-pass material shading (PR #545, MERGED)
+### Histórico — #440 two-pass material shading (PR #545, MERGED 2026-07)
 
 Two-pass material shading estilo Bevy/Nanite en el path R64, **todo fragment** (se eliminó
 el compute deferred):
@@ -209,24 +247,81 @@ el compute deferred):
   (`debug_resolve.rs`): fragment fullscreen para debug modes colorize (1,2,3,4,7). Modos
   normal-look (0,5,6,8,9,10) → two-pass.
 
-### ⭐ Próximo paso — VERIFICAR #440 (falta tooling)
+### ⭐ Próximo paso — #605: evaluar adoptar `bevy_ecs`
 
-**#440 sigue OPEN a propósito.** El pipeline de texturas está completo y funciona, PERO
-**no se puede VER el texturizado** porque el editor no tiene con qué asignar/inspeccionar
-materiales. Antes de #441 (PBR real), lo lógico es el tooling mínimo:
+**Decidido por el user el 2026-07-25. Es lo primero de la próxima sesión, antes de #137.**
 
-1. **Material inspector**: campos en el Inspector para asignar albedo/normal/metal_roughness
-   por GUID a un `Material`.
-2. **Asset browser**: listado básico de assets del proyecto (`AssetDatabase` ya los conoce;
-   el inspector ya tiene un `asset_catalog`/typed asset picker reusable).
-3. **Texturas demo**: checker albedo + flat normal + metal_rough en `assets/` + un
-   `.ome_material.ron` que las referencie, para smoke visual end-to-end.
+El motivo declarado por el que `ome_ecs` era propio eran los storages GPU, que `bevy_ecs`
+no tiene. **#603 los borró — nunca los usó nadie.** Así que `ome_ecs` es ahora un ECS
+archetype CPU-only: la misma categoría que `bevy_ecs`, con mucha menos madurez detrás. La
+justificación hay que re-derivarla, no repetirla.
 
-Sin (1)/(2), el paso de texturas demo no es verificable — por eso quedó afuera del PR #545.
+Medido: `ome_ecs` son **9.467 líneas y 186 tests**, con **21 manifests dependiendo** y **43
+símbolos** usados desde afuera del crate.
 
----
+El dato que reencuadra la pregunta: **`ome_ecs` no es sólo un ECS.** Es ECS core +
+reflexión (`bevy_reflect`) + formato de escena (`bevy_scene`) + componentes de engine
+(`bevy_transform`, componentes de `bevy_render`) + soporte del editor remoto
+(`dynamic_components`, `ephemeral`). Así que "adoptar `bevy_ecs`" es en realidad adoptar
+media fundación de Bevy — y ahí la pregunta honesta pasa a ser *"¿por qué no Bevy?"*, que
+este proyecto ya contestó: el renderer es meshlet GPU-driven propio.
+
+Lo que Bevy tiene y nosotros **no** (cero ocurrencias, verificado): sparse-set storage,
+change detection (`Changed<T>`/`Added<T>`), `SystemParam`, `par_iter`, y grafo de schedule
+(`SystemSet`, `run_if`). Ese último grupo pesa: **varios bugs de esta sesión fueron
+problemas de orden** —el orden del frame en #570, la carrera mirror-vs-drag en #572— y un
+schedule de verdad los expresa declarativamente en vez de por orden de inserción.
+
+Salida plausible: quedarse con `ome_ecs` y portar mecanismos sueltos (schedule graph,
+change detection) a medida que duelan. Esta sesión demostró que robarle diseños a Bevy de
+a uno funciona: el fix de #602 (padre por índice, no por nombre) salió de leer cómo Bevy
+remapea referencias a entidades con `EntityMapper`.
 
 ## Decisiones arquitecturales sticky (NO reabrir sin OK explícito)
+
+### Física: cómo se conecta al ECS (locked 2026-07-25, #570)
+
+- **`PhysicsBody(u32)` va SIN reflejar.** Es lo que hace funcionar el Stop: `WorldSnapshot`
+  lo borra, y el sync siguiente reconstruye el mundo físico desde el ECS restaurado. Una
+  sola fuente de verdad, en vez de serializar rapier con serde.
+- **El mapeo NO es `HashMap<Entity, BodyHandle>`.** Slot `u32` POD + arrays paralelos.
+- **`PhysicsComponentsPlugin`** = tipos reflejados sin solver, para el editor. El editor
+  autora, el proyecto simula. Meterle el `PhysicsPlugin` completo al editor levantaría un
+  segundo mundo Rapier de entidades espejo.
+- **Escala del collider**: caja exacta por eje; esfera toma el eje mayor; cápsula radio por
+  horizontales y `half_height` por vertical. Envolver > intersectar.
+- **`Collider.center` NO se pre-rota** — rapier compone la pose del cuerpo encima de
+  `position_wrt_parent`; rotarlo aplica la rotación dos veces.
+- **Spot `inner_angle`/`outer_angle` = SEMI-ángulos.** Nadie los consume todavía; el gizmo
+  fijó la convención (#594). Si el shader los lee como ángulo completo, cambiar
+  `cone_radius`.
+
+### Identidad de entidades en la persistencia (locked 2026-07-25, #602)
+
+**Una escena NUNCA referencia una entidad por nombre.** Los nombres no son únicos —
+`TEST3` tiene cinco entidades llamadas "Mesh" — y un `HashMap<String, Entity>` las colapsa:
+gana la última y la jerarquía se reconstruye mal, en silencio, en cada carga.
+
+Tampoco por `Entity`: `sync_scene_to_ecs` hace `despawn_all` + respawn, así que los handles
+vuelven con otro índice y otra generación. `WorldSnapshot` existe precisamente porque el
+formato de escena no puede preservar identidades. Y dos escenas distintas arrancan las dos
+en índice 0 generación 0, así que guardar handles haría colisiones invisibles.
+
+**Se referencia por `parent_index`** — índice en la lista del documento, resuelto al cargar.
+Es el mismo mecanismo que Bevy (`EntityMapper` sobre una tabla) y Unity DOTS
+(`EntityRemapUtility`), sólo que el token es la posición en vez de los bits del handle
+viejo. Trampa a recordar: **resolver los índices DESPUÉS de cualquier sort del documento.**
+
+**Deuda anotada:** `parent_index` es un campo especial para el parent. **#560 (joints)
+guarda dos handles por joint** y va a necesitar el camino genérico de Bevy —
+`ReflectValue::Entity` + un pase de remapeo— en vez de un campo ad-hoc por componente.
+
+### El ECS ya NO tiene storages GPU (2026-07-25, #603)
+
+Existían, nunca los usó nadie, y dos sistemas corrían cada frame sin consumidor. Los datos
+llegan al GPU por los buffers de instancia del pipeline de meshlets, armados desde una
+query CPU. **Un solo camino, no dos.** Esto invalida la justificación histórica de por qué
+`ome_ecs` es propio — ver #605.
 
 ### Física = Rapier (revalidado 2026-07-21 con investigación, NO reabrir)
 
@@ -332,6 +427,29 @@ falta lo primero.
 ---
 
 ## Gotchas activos / lecciones
+
+### Herramientas: trampas que costaron tiempo real el 2026-07-25
+
+- **`rustfmt <mod.rs>` formatea TODOS los módulos que ese archivo declara.** Formatear
+  `mesh/mod.rs` arrastró `gltf_loader/*`; `ome_gizmos/src/lib.rs` arrastró `mesh/` y
+  `renderer/`; `ome_ecs/src/lib.rs` arrastró 15 módulos. **Tres veces en una sesión.**
+  Formatear sólo archivos hoja y verificar con `git status` antes de commitear.
+- **`--delete-branch` en un PR que es base de otro CIERRA el de arriba** y GitHub no lo deja
+  reabrir si la base ya no existe. Pasó con #582 → hubo que abrir #583. Retargetear a
+  `development` ANTES de borrar la rama de abajo.
+- **Crear una rama desde la rama anterior en vez de `development`** hace que el PR de arriba
+  contenga al de abajo (#586 contenía a #584). Mergear el de abajo primero lo reduce solo.
+- **Procesos `test3 --remote` huérfanos retienen el puerto 15703.** Si el editor muere sin
+  cierre ordenado (un `kill`, un crash), el proyecto sobrevive y la sesión siguiente se
+  conecta **en silencio a un binario viejo** — lo que hace intesteable cualquier cambio de
+  protocolo. Síntoma: `unknown variant \`set_parent\``. Verificar el puerto antes de smokear.
+  Un cierre normal sí apaga el proyecto bien.
+- **`pkill -f <patrón>` se mata a sí mismo** si el patrón aparece en su propia línea de
+  comando (exit 144). Usar `pgrep -x <nombre> | while read p; do kill $p; done`.
+- **`grep -c` con 0 matches sale con exit 1** y corta cadenas `&&`. Separar la verificación
+  del commit.
+- **No correr suites de GPU con el editor abierto**: un `cargo test --workspace` murió con
+  SIGSEGV en `ome_render --lib` compitiendo por la GPU con un editor vivo. No reprodujo.
 
 - **rustfmt version drift (CRÍTICO):** rustfmt local (1.8.0) reformatea TODO el repo distinto a
   como está commiteado, y NO hay toolchain pin ni CI fmt-check. **NUNCA `git add -A crates/<x>/`
