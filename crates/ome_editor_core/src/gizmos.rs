@@ -22,6 +22,7 @@
 //! origin, and multi-entity dragging needs pivot semantics of its own.
 
 mod collider;
+mod lights;
 mod visibility;
 mod visualizers;
 
@@ -49,7 +50,7 @@ pub(crate) use visibility::{
     save_visibility_system,
 };
 use visualizers::{
-    DirectionalLightVisualizer, OrthographicCameraVisualizer, PerspectiveCameraVisualizer,
+    OrthographicCameraVisualizer, PerspectiveCameraVisualizer,
 };
 
 // ---------------------------------------------------------------------------
@@ -63,7 +64,11 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     let mut registry = resources.remove::<VisualizerRegistry>().unwrap_or_default();
     registry.register::<PerspectiveCamera, PerspectiveCameraVisualizer>();
     registry.register::<OrthographicCamera, OrthographicCameraVisualizer>();
-    registry.register::<DirectionalLight, DirectionalLightVisualizer>();
+    // Lights: where they point and how far they reach. `range` and the
+    // cone angles are otherwise numbers with nothing to check them against.
+    registry.register::<DirectionalLight, lights::DirectionalLightVisualizer>();
+    registry.register::<ome_ecs::point_light::PointLight, lights::PointLightVisualizer>();
+    registry.register::<ome_ecs::spot_light::SpotLight, lights::SpotLightVisualizer>();
     // A collider is authored as numbers and is otherwise invisible; the
     // outline is the only way to see whether the shape wraps the model.
     registry.register::<ome_physics::components::Collider, collider::ColliderVisualizer>();

@@ -54,8 +54,18 @@ impl Visualizer<PerspectiveCamera> for PerspectiveCameraVisualizer {
         ];
 
         let to_world = |p: Vec3| transform.matrix.transform_point3(p);
-        let near_w: [Vec3; 4] = [to_world(near[0]), to_world(near[1]), to_world(near[2]), to_world(near[3])];
-        let far_w: [Vec3; 4] = [to_world(far[0]), to_world(far[1]), to_world(far[2]), to_world(far[3])];
+        let near_w: [Vec3; 4] = [
+            to_world(near[0]),
+            to_world(near[1]),
+            to_world(near[2]),
+            to_world(near[3]),
+        ];
+        let far_w: [Vec3; 4] = [
+            to_world(far[0]),
+            to_world(far[1]),
+            to_world(far[2]),
+            to_world(far[3]),
+        ];
 
         // Near rectangle.
         for i in 0..4 {
@@ -99,7 +109,8 @@ impl Visualizer<OrthographicCamera> for OrthographicCameraVisualizer {
             Vec3::new(half_w, -half_h, -camera.far),
         ];
 
-        let c: [Vec3; 8] = std::array::from_fn(|i| transform.matrix.transform_point3(corners_local[i]));
+        let c: [Vec3; 8] =
+            std::array::from_fn(|i| transform.matrix.transform_point3(corners_local[i]));
 
         // Near rect, far rect, and 4 side edges.
         for i in 0..4 {
@@ -107,41 +118,5 @@ impl Visualizer<OrthographicCamera> for OrthographicCameraVisualizer {
             gizmos.line(c[4 + i], c[4 + (i + 1) % 4], ORTHO_COLOR);
             gizmos.line(c[i], c[4 + i], ORTHO_COLOR);
         }
-    }
-}
-
-/// Built-in visualizer for `DirectionalLight`: a single arrow pointing
-/// along the light's forward direction (entity's -Z axis), tinted by
-/// the light's color.
-#[derive(Default)]
-pub(crate) struct DirectionalLightVisualizer;
-
-impl Visualizer<DirectionalLight> for DirectionalLightVisualizer {
-    fn draw(
-        &self,
-        light: &DirectionalLight,
-        transform: &GlobalTransform,
-        gizmos: &mut Gizmos<'_>,
-    ) {
-        let origin = transform.matrix.w_axis.truncate();
-        let forward = transform
-            .matrix
-            .transform_vector3(Vec3::NEG_Z)
-            .normalize_or_zero();
-        if forward == Vec3::ZERO {
-            return;
-        }
-        // Two perpendicular axes for the arrowhead — derive from forward
-        // and a stable up reference.
-        let up_ref = if forward.y.abs() > 0.99 {
-            Vec3::X
-        } else {
-            Vec3::Y
-        };
-        let right = forward.cross(up_ref).normalize_or(Vec3::X);
-        let up = right.cross(forward).normalize_or(Vec3::Y);
-
-        let tip = origin + forward * DIRLIGHT_ARROW_LENGTH;
-        gizmos.arrow(origin, tip, right, up, light.color);
     }
 }
