@@ -6,7 +6,12 @@
 //! # Supported field types
 //!
 //! `f32`, `f64`, `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`,
-//! `bool`, `String`, `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat4`.
+//! `bool`, `String`, `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat4`, `Entity`
+//! and `Option<Entity>`.
+//!
+//! An `Entity` field becomes a `FieldKind::EntityRef`. A live component
+//! always holds `EntityRef::Live`; turning that into something a file can
+//! hold is the scene save path's job, not the derive's.
 //!
 //! # Requirements
 //!
@@ -34,11 +39,11 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
 use crate::attrs::{
     parse_category_attr, parse_field_asset_type, parse_field_choices, parse_field_shown_when,
-    parse_field_skip,
-    parse_inspector_attr,
+    parse_field_skip, parse_inspector_attr,
 };
 use crate::type_mapping::type_mapping;
 use crate::unit_struct::unit_struct_impl;
+use crate::util::{is_entity, option_inner};
 
 /// Derives the `Reflect` trait for a named-field struct.
 ///
@@ -141,6 +146,108 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     other => Err(::ome_ecs::reflect::ReflectError::TypeMismatch {
                         field: #field_name_str.into(),
                         expected: ::ome_ecs::reflect::FieldKind::AssetRef,
+                        got: other.kind(),
+                    }),
+                },
+            });
+            continue;
+        }
+
+        // `Entity` / `Option<Entity>` become entity references.
+        //
+        // A live component holds `EntityRef::Live`, always. `reflect_set`
+        // rejects an unresolved reference rather than storing a
+        // placeholder: the scene load path resolves references in its
+        // remapping pass and only then writes them back, so a `Persistent`
+        // arriving here means that pass was skipped. Accepting it would
+        // put an entity handle that points nowhere into a live component.
+        let optional_entity = option_inner(ty).is_some_and(is_entity);
+        if optional_entity || is_entity(ty) {
+            let type_name_str = if optional_entity {
+                "Option<Entity>"
+            } else {
+                "Entity"
+            };
+            let shown_when_expr = match parse_field_shown_when(field) {
+                Ok(Some(expr)) => quote! { ::core::option::Option::Some(&#expr) },
+                Ok(None) => quote! { ::core::option::Option::None },
+                Err(e) => return e,
+            };
+
+            field_metas.push(quote! {
+                ::ome_ecs::reflect::FieldMeta {
+                    name: #field_name_str,
+                    type_name: #type_name_str,
+                    kind: ::ome_ecs::reflect::FieldKind::EntityRef,
+                    choices: &[],
+                    shown_when: #shown_when_expr,
+                    asset_type: "",
+                }
+            });
+
+            let get_expr = if optional_entity {
+                quote! { self.#field_name.map(::ome_ecs::reflect::EntityRef::live) }
+            } else {
+                quote! { ::core::option::Option::Some(::ome_ecs::reflect::EntityRef::live(self.#field_name)) }
+            };
+            get_arms.push(quote! {
+                #field_name_str => Some(::ome_ecs::reflect::ReflectValue::EntityRef(#get_expr)),
+            });
+
+            // A cleared field is `None` for an optional one and the
+            // `INVALID` sentinel otherwise — the same distinction
+            // `Option<Entity>` versus `Entity` already makes elsewhere.
+            let set_body = if optional_entity {
+                quote! {
+                    match reference {
+                        ::core::option::Option::None => {
+                            self.#field_name = ::core::option::Option::None;
+                            Ok(())
+                        }
+                        ::core::option::Option::Some(reference) => {
+                            match reference.entity() {
+                                ::core::option::Option::Some(entity) => {
+                                    self.#field_name = ::core::option::Option::Some(entity);
+                                    Ok(())
+                                }
+                                ::core::option::Option::None => Err(
+                                    ::ome_ecs::reflect::ReflectError::UnresolvedEntityRef {
+                                        field: #field_name_str.into(),
+                                    },
+                                ),
+                            }
+                        }
+                    }
+                }
+            } else {
+                quote! {
+                    match reference {
+                        ::core::option::Option::None => {
+                            self.#field_name = ::ome_ecs::entity::Entity::INVALID;
+                            Ok(())
+                        }
+                        ::core::option::Option::Some(reference) => {
+                            match reference.entity() {
+                                ::core::option::Option::Some(entity) => {
+                                    self.#field_name = entity;
+                                    Ok(())
+                                }
+                                ::core::option::Option::None => Err(
+                                    ::ome_ecs::reflect::ReflectError::UnresolvedEntityRef {
+                                        field: #field_name_str.into(),
+                                    },
+                                ),
+                            }
+                        }
+                    }
+                }
+            };
+            set_arms.push(quote! {
+                #field_name_str => match value {
+                    ::ome_ecs::reflect::ReflectValue::EntityRef(reference) => #set_body,
+                    other => Err(::ome_ecs::reflect::ReflectError::TypeMismatch {
+                        field: #field_name_str.into(),
+                        expected: ::ome_ecs::reflect::FieldKind::EntityRef,
                         got: other.kind(),
                     }),
                 },
