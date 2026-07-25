@@ -200,6 +200,12 @@ enum Edit<'a> {
     Despawn(ome_ecs::entity::Entity),
     Spawn {
         name: Option<String>,
+        /// Component types the action asked for beyond the base ones.
+        ///
+        /// Dropped before this existed, which is why a light spawned
+        /// remotely arrived with a `Name` and nothing else — no
+        /// `Transform`, no light component.
+        extra: Vec<std::any::TypeId>,
     },
     /// Every field of a `Transform`, from a gizmo drag.
     TransformEdit {
@@ -237,7 +243,10 @@ fn classify(action: &EditorAction) -> Option<Edit<'_>> {
             component: *component,
         }),
         EditorAction::Despawn(entity) => Some(Edit::Despawn(*entity)),
-        EditorAction::Spawn { name, .. } => Some(Edit::Spawn { name: name.clone() }),
+        EditorAction::Spawn { name, extra } => Some(Edit::Spawn {
+            name: name.clone(),
+            extra: extra.clone(),
+        }),
         // SpawnMesh is reduced in `dispatch`, not here: resolving its
         // asset mutates the AssetServer, and an `Edit` has to be
         // sendable from an immutable world.
@@ -301,7 +310,45 @@ fn send(
             .remove_component(remote(entity)?, &name(component)?)
             .map_err(map_err),
         Edit::Despawn(entity) => client.despawn(remote(entity)?).map_err(map_err),
-        Edit::Spawn { name } => client.spawn(name.as_deref()).map(|_| ()).map_err(map_err),
+        Edit::Spawn {
+            name: entity_name,
+            extra,
+        } => {
+            let entity = client.spawn(entity_name.as_deref()).map_err(map_err)?;
+            // Remote `spawn` creates only `Name`, while the local path adds
+            // Name + Transform + extras. Everything past the name has to be
+            // asked for explicitly, or the entity arrives inert — a light
+            // with no Transform has no position and no direction.
+            let transform = std::any::type_name::<ome_ecs::transform::Transform>();
+            client.add_component(entity, transform).map_err(map_err)?;
+
+            // `extra` is a list of local `TypeId`s; the server keys
+            // components by name, and the registry is the only thing that
+            // knows the mapping.
+            let registry = resources.get::<ome_ecs::component::ComponentRegistry>();
+            for type_id in extra {
+                let Some(component_name) =
+                    registry.as_ref().and_then(|r| r.component_name(&type_id))
+                else {
+                    // Nothing to send and nothing to guess: a type the
+                    // local registry has never seen has no name the server
+                    // would recognise.
+                    tracing::warn!(
+                        target: "ome_editor_core::remote_edit",
+                        ?type_id,
+                        "spawn requested a component with no registered name",
+                    );
+                    continue;
+                };
+                if component_name == transform {
+                    continue;
+                }
+                client
+                    .add_component(entity, component_name)
+                    .map_err(map_err)?;
+            }
+            Ok(())
+        }
         Edit::TransformEdit { entity, transform } => {
             let id = remote(entity)?;
             let ty = std::any::type_name::<ome_ecs::transform::Transform>();
@@ -664,5 +711,103 @@ mod tests {
             name: "Ghost".to_owned(),
         };
         assert!(dispatch(&mut editor, &action));
+    }
+
+    /// What was reported: a light spawned remotely arrived with a `Name`
+    /// and nothing else. `classify` matched `EditorAction::Spawn { name, .. }`
+    /// and the `..` threw away the component list, while remote `spawn`
+    /// creates only `Name` — so no Transform, no light component, an entity
+    /// with no position and nothing to render.
+    #[test]
+    fn spawn_carries_its_extra_components_over_the_wire() {
+        use ome_ecs::directional_light::DirectionalLight;
+
+        let server = (0..8)
+            .find_map(|i| RemoteServer::start(17840 + i).ok())
+            .expect("bind");
+        let port = server.port();
+        let done = Arc::new(AtomicBool::new(false));
+        let loop_done = Arc::clone(&done);
+
+        let main_loop = std::thread::spawn(move || {
+            let mut res = ecs();
+            {
+                let reg = res.get_mut::<ComponentRegistry>().unwrap();
+                reg.register_cpu_reflected::<DirectionalLight>();
+            }
+            while !loop_done.load(Ordering::Relaxed) {
+                for item in server.take_pending() {
+                    let resp = handle(&item.request, &mut res);
+                    let _ = item.reply.send(resp);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+
+        let mut editor = ecs();
+        {
+            let reg = editor.get_mut::<ComponentRegistry>().unwrap();
+            reg.register_cpu_reflected::<DirectionalLight>();
+        }
+        let mut state = RemoteState::new();
+        state.session = Some(RemoteSession::attach(port));
+        for _ in 0..200 {
+            if state.session.as_mut().unwrap().poll_ready() == ConnectionState::Connected {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(state.is_connected(), "did not connect");
+        editor.insert(state);
+
+        let action = EditorAction::Spawn {
+            extra: vec![std::any::TypeId::of::<DirectionalLight>()],
+            name: Some("Directional Light".to_owned()),
+        };
+        assert!(dispatch(&mut editor, &action));
+
+        let client = RemoteClient::new(port);
+        let entities = client.list_entities().unwrap();
+        let light = entities
+            .iter()
+            .find(|e| {
+                e.components
+                    .iter()
+                    .any(|c| c.type_name.ends_with("DirectionalLight"))
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "the light component never reached the project; got {:?}",
+                    entities
+                        .iter()
+                        .map(|e| e
+                            .components
+                            .iter()
+                            .map(|c| &c.type_name)
+                            .collect::<Vec<_>>())
+                        .collect::<Vec<_>>()
+                )
+            });
+
+        // A light with no Transform has no position and no direction, so
+        // this is not a nice-to-have — it is the difference between a light
+        // and an inert entity.
+        for expected in ["Name", "Transform", "DirectionalLight"] {
+            assert!(
+                light
+                    .components
+                    .iter()
+                    .any(|c| c.type_name.ends_with(expected)),
+                "the spawned light has no {expected}: {:?}",
+                light
+                    .components
+                    .iter()
+                    .map(|c| &c.type_name)
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        done.store(true, Ordering::Relaxed);
+        main_loop.join().unwrap();
     }
 }
