@@ -23,6 +23,6 @@ pub use gizmos::Gizmos;
 pub use mesh::{MeshBatch, MeshDraw, MeshGizmoRenderer, MeshVertex};
 pub use renderer::{DEFAULT_LINE_THICKNESS, GizmoBatch, GizmoRenderer, LineSegment};
 pub use visualizer::{Visualizer, VisualizerRegistry};
-pub use wireframe::CIRCLE_SEGMENTS;
+pub use wireframe::{MAX_CIRCLE_SEGMENTS, MIN_CIRCLE_SEGMENTS, segments_for};
 
 pub(crate) const SHADER_SOURCE: &str = include_str!("../shaders/gizmo_main.wgsl");
