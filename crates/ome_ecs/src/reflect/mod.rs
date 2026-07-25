@@ -20,7 +20,7 @@ mod field;
 mod trait_def;
 mod value;
 
-pub use field::{FieldChoice, FieldKind, FieldMeta, InspectorVisibility};
+pub use field::{FieldChoice, FieldCondition, FieldKind, FieldMeta, InspectorVisibility};
 pub use value::ReflectValue;
 pub use error::ReflectError;
 pub use trait_def::Reflect;

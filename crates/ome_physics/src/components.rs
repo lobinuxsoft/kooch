@@ -22,7 +22,7 @@ use glam::Vec3;
 
 use ome_ecs::Reflect;
 use ome_ecs::component::Component;
-use ome_ecs::reflect::FieldChoice;
+use ome_ecs::reflect::{FieldChoice, FieldCondition};
 
 use crate::backend::{BodyKind, CollisionShape};
 
@@ -122,6 +122,28 @@ pub static SHAPE_CHOICES: &[FieldChoice] = &[
     },
 ];
 
+/// Which shapes read `radius`: the ball and the capsule.
+///
+/// Beside the `SHAPE_*` constants on purpose — someone adding a shape is
+/// already editing here, and a condition kept in another file is a
+/// condition that goes stale.
+pub static RADIUS_WHEN: FieldCondition = FieldCondition {
+    field: "shape",
+    values: &[SHAPE_SPHERE as i64, SHAPE_CAPSULE as i64],
+};
+
+/// Which shapes read `half_extents`: only the box.
+pub static HALF_EXTENTS_WHEN: FieldCondition = FieldCondition {
+    field: "shape",
+    values: &[SHAPE_CUBOID as i64],
+};
+
+/// Which shapes read `half_height`: only the capsule.
+pub static HALF_HEIGHT_WHEN: FieldCondition = FieldCondition {
+    field: "shape",
+    values: &[SHAPE_CAPSULE as i64],
+};
+
 /// The collision geometry attached to a body.
 ///
 /// Named for what it becomes rather than for its geometry: a collider is
@@ -129,9 +151,11 @@ pub static SHAPE_CHOICES: &[FieldChoice] = &[
 /// restitution, sensor flag, collision groups — #137), while
 /// [`CollisionShape`] stays the pure geometry the backend consumes.
 ///
-/// Only the fields belonging to the selected `shape` are read; the rest
-/// keep whatever they were, so switching shape back and forth in the
-/// Inspector does not lose the parameters of the other one.
+/// Only the fields belonging to the selected `shape` are read, and only
+/// those are *shown* — see the `*_WHEN` conditions above. The rest keep
+/// whatever they were, so switching shape back and forth does not lose the
+/// other variant's parameters. Hiding is display only: every field is
+/// still stored, still serialised, still round-trips through a scene.
 ///
 /// # Default
 ///
@@ -143,10 +167,13 @@ pub struct Collider {
     #[reflect(choices = SHAPE_CHOICES)]
     pub shape: u32,
     /// Sphere and capsule radius.
+    #[reflect(shown_when = RADIUS_WHEN)]
     pub radius: f32,
     /// Cuboid half-extents.
+    #[reflect(shown_when = HALF_EXTENTS_WHEN)]
     pub half_extents: Vec3,
     /// Capsule half-height, excluding the hemispherical caps.
+    #[reflect(shown_when = HALF_HEIGHT_WHEN)]
     pub half_height: f32,
     /// The shape's centre, in the entity's local space.
     ///
