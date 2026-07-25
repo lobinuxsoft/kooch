@@ -34,14 +34,7 @@ pub(super) fn walk_node(
     }
 
     for child in node.children() {
-        walk_node(
-            &child,
-            world_xform,
-            buffers,
-            out_vertices,
-            out_indices,
-            aabb,
-        )?;
+        walk_node(&child, world_xform, buffers, out_vertices, out_indices, aabb)?;
     }
     Ok(())
 }
