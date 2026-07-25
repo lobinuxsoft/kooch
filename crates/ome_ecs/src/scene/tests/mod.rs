@@ -8,6 +8,7 @@ use crate::reflect::{FieldKind, FieldMeta, Reflect, ReflectError, ReflectValue};
 use ome_core::resource::Resources;
 
 mod document;
+mod entity_refs;
 mod sync;
 
 // -- Test component with manual Reflect impl ----------------------------

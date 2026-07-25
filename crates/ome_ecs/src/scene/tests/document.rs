@@ -77,7 +77,7 @@ fn from_ecs_captures_entities() {
         resources.insert(commands);
     }
 
-    let doc = SceneDocument::from_ecs(&resources);
+    let doc = SceneDocument::from_ecs(&mut resources);
 
     assert_eq!(doc.entities.len(), 2);
 
@@ -130,7 +130,7 @@ fn from_ecs_skips_ephemeral_entities() {
         resources.insert(commands);
     }
 
-    let doc = SceneDocument::from_ecs(&resources);
+    let doc = SceneDocument::from_ecs(&mut resources);
 
     // Only the non-ephemeral entity should be serialized.
     assert_eq!(doc.entities.len(), 1);

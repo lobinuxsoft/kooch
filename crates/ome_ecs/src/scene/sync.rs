@@ -6,6 +6,7 @@ use crate::dynamic_components::DynamicComponents;
 use ome_core::resource::Resources;
 
 use super::document::SceneDocument;
+use super::entity_refs::{DeferredRef, resolve_deferred};
 use super::error::SceneError;
 
 /// Clears the live ECS and rebuilds it from a [`SceneDocument`].
@@ -19,6 +20,14 @@ pub fn sync_scene_to_ecs(
 ) -> Result<(), SceneError> {
     use crate::hierarchy::Parent;
 
+    // Identity has to be a known type before the spawn pass, or the ids
+    // in the file get parked as an unknown component and every reference
+    // resolves to nothing. Registering here rather than relying on
+    // `EcsPlugin` keeps a hand-built `Resources` loading correctly.
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu_reflected::<crate::persistent_id::PersistentId>();
+    }
+
     // 1. Despawn all existing entities.
     despawn_all(resources);
 
@@ -27,6 +36,10 @@ pub fn sync_scene_to_ecs(
     let mut name_to_entity: std::collections::HashMap<String, crate::entity::Entity> =
         std::collections::HashMap::new();
     let mut spawned_order: Vec<crate::entity::Entity> = Vec::new();
+    // References cannot be written while spawning: the entity a reference
+    // points at may not exist yet, and one pointing forwards would resolve
+    // to nothing purely because of document order.
+    let mut deferred: Vec<DeferredRef> = Vec::new();
 
     for entity_desc in &scene.entities {
         // Spawn a fresh entity.
@@ -84,6 +97,20 @@ pub fn sync_scene_to_ecs(
 
             // Set each field value.
             for (field_name, value) in &comp_desc.fields {
+                // An unresolved reference waits for the second pass.
+                // Writing it now would be rejected by `reflect_set`, and
+                // rightly so — the handle it needs does not exist yet.
+                if let crate::reflect::ReflectValue::EntityRef(Some(reference)) = value
+                    && reference.is_unresolved()
+                {
+                    deferred.push(DeferredRef {
+                        entity,
+                        type_id,
+                        field: field_name.clone(),
+                        reference: *reference,
+                    });
+                    continue;
+                }
                 if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                     registry.reflect_set_field(&type_id, entity, field_name, value.clone())?;
                 }
@@ -141,6 +168,9 @@ pub fn sync_scene_to_ecs(
             }
         }
     }
+
+    // 4. Resolve entity references now that every entity exists.
+    resolve_deferred(resources, deferred);
 
     Ok(())
 }

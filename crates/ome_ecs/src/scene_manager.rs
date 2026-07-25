@@ -77,7 +77,7 @@ impl SceneManager {
     ///
     /// Returns [`SceneError::Io`] with [`io::ErrorKind::NotFound`] when there
     /// is no active path — callers should fall back to [`Self::save_as`].
-    pub fn save(&mut self, resources: &Resources) -> Result<(), SceneError> {
+    pub fn save(&mut self, resources: &mut Resources) -> Result<(), SceneError> {
         let path = self.current.clone().ok_or_else(|| {
             SceneError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -91,7 +91,7 @@ impl SceneManager {
     }
 
     /// Saves the current ECS state to `path` and adopts it as `current`.
-    pub fn save_as(&mut self, path: PathBuf, resources: &Resources) -> Result<(), SceneError> {
+    pub fn save_as(&mut self, path: PathBuf, resources: &mut Resources) -> Result<(), SceneError> {
         let doc = SceneDocument::from_ecs(resources);
         doc.save(&path)?;
         self.current = Some(path);
@@ -197,7 +197,7 @@ mod tests {
 
         let mut sm = SceneManager::new();
         let path = tmp_path("round_trip.ome_scene");
-        sm.save_as(path.clone(), &resources).unwrap();
+        sm.save_as(path.clone(), &mut resources).unwrap();
 
         assert_eq!(sm.current(), Some(path.as_path()));
         assert!(!sm.is_dirty());
@@ -224,9 +224,11 @@ mod tests {
 
     #[test]
     fn save_without_current_returns_not_found() {
-        let resources = setup_resources();
+        let mut resources = setup_resources();
         let mut sm = SceneManager::new();
-        let err = sm.save(&resources).expect_err("save with no current should fail");
+        let err = sm
+            .save(&mut resources)
+            .expect_err("save with no current should fail");
         match err {
             SceneError::Io(e) => assert_eq!(e.kind(), std::io::ErrorKind::NotFound),
             other => panic!("expected Io(NotFound), got {other:?}"),
@@ -259,7 +261,7 @@ mod tests {
         // Save a scene containing only the persistent entity (hp=1).
         let mut sm = SceneManager::new();
         let path = tmp_path("ephemeral.ome_scene");
-        sm.save_as(path.clone(), &resources).unwrap();
+        sm.save_as(path.clone(), &mut resources).unwrap();
 
         // Reload — ephemeral hp=99 entity must survive the swap.
         sm.load(&path, &mut resources).unwrap();

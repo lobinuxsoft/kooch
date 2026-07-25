@@ -89,7 +89,12 @@ impl SceneDocument {
     /// [`EphemeralComponents`](crate::ephemeral::EphemeralComponents) are
     /// skipped entirely — used by editor crates to keep helper entities
     /// (cameras, gizmos) out of user scene files.
-    pub fn from_ecs(resources: &Resources) -> Self {
+    pub fn from_ecs(resources: &mut Resources) -> Self {
+        // Saving assigns identity: `PersistentId` is opt-in, and whether
+        // something is referenced is only known once references are
+        // written. See `scene::entity_refs`.
+        let ids = super::entity_refs::assign_ids_to_referenced(resources);
+        let resources: &Resources = resources;
         use crate::ephemeral::EphemeralComponents;
         use crate::hierarchy::{Children, GlobalTransform, Parent};
 
@@ -143,6 +148,15 @@ impl SceneDocument {
                         let Some(fields) = components.reflect_get_fields(&type_id, entity) else {
                             continue;
                         };
+
+                        // Live handles mean nothing after a reload; swap
+                        // them for the persistent ids assigned above.
+                        let fields = fields
+                            .into_iter()
+                            .map(|(name, value)| {
+                                (name, super::entity_refs::to_persistent(value, &ids))
+                            })
+                            .collect();
 
                         comp_descs.push(ComponentDescription {
                             type_name: type_name.to_owned(),

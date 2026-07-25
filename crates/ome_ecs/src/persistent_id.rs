@@ -35,6 +35,9 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 
 use crate::component::Component;
+use crate::reflect::{
+    FieldKind, FieldMeta, InspectorVisibility, Reflect, ReflectError, ReflectValue,
+};
 
 /// Stable identity of an entity within its scene.
 ///
@@ -80,6 +83,67 @@ impl PersistentId {
 }
 
 impl Component for PersistentId {}
+
+/// Reflected so the id travels in a scene file as an ordinary component,
+/// rather than as another special case beside `parent_index`.
+///
+/// Read-only in the inspector: the id is what every reference in the
+/// scene resolves through, so editing it by hand would silently redirect
+/// or orphan all of them.
+impl Reflect for PersistentId {
+    fn reflect_fields(&self) -> &'static [FieldMeta] {
+        static FIELDS: &[FieldMeta] = &[FieldMeta {
+            name: "id",
+            type_name: "u64",
+            kind: FieldKind::U64,
+            choices: &[],
+            shown_when: None,
+            asset_type: "",
+        }];
+        FIELDS
+    }
+
+    fn reflect_get(&self, field: &str) -> Option<ReflectValue> {
+        match field {
+            "id" => Some(ReflectValue::U64(self.id.get())),
+            _ => None,
+        }
+    }
+
+    fn reflect_set(&mut self, field: &str, value: ReflectValue) -> Result<(), ReflectError> {
+        match field {
+            "id" => match value {
+                ReflectValue::U64(raw) => {
+                    // Zero is the niche, not an id. A file carrying one is
+                    // corrupt, and accepting it would make the entity
+                    // unreferenceable in a way nothing later could explain.
+                    self.id = EntityGuid::new(raw).ok_or(ReflectError::TypeMismatch {
+                        field: "id".into(),
+                        expected: FieldKind::U64,
+                        got: FieldKind::U64,
+                    })?;
+                    Ok(())
+                }
+                other => Err(ReflectError::TypeMismatch {
+                    field: "id".into(),
+                    expected: FieldKind::U64,
+                    got: other.kind(),
+                }),
+            },
+            other => Err(ReflectError::FieldNotFound(other.into())),
+        }
+    }
+
+    fn reflect_default() -> Self {
+        // The allocator overwrites this immediately; it exists because
+        // reflected insertion builds a default first.
+        Self::new(EntityGuid::new(1).expect("non-zero"))
+    }
+
+    fn inspector_visibility() -> InspectorVisibility {
+        InspectorVisibility::ReadOnly
+    }
+}
 
 /// Hands out [`EntityGuid`]s for one scene.
 ///
