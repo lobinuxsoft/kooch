@@ -14,12 +14,27 @@ use ome_ecs::spot_light::SpotLight;
 use crate::actions::EditorAction;
 use crate::icons;
 
+/// Title-cases a primitive's asset stem for display: `cube` → `Cube`.
+///
+/// The stem is the filename, so it has to stay lowercase; the menu entry
+/// is what a person reads.
+fn display_name(stem: &str) -> String {
+    let mut chars = stem.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 /// Renders the "+ Spawn" menu button. Pushes one or more
 /// `EditorAction::Spawn` entries to `actions` when the user picks an item.
 pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) {
     ui.menu_button(format!("{} Spawn", icons::PLUS), |ui| {
         if ui.button(format!("{} Entity", icons::CUBE)).clicked() {
-            actions.push(EditorAction::Spawn { extra: vec![], name: None });
+            actions.push(EditorAction::Spawn {
+                extra: vec![],
+                name: None,
+            });
             ui.close();
         }
         ui.separator();
@@ -45,6 +60,18 @@ pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>
             ui.close();
         }
         ui.menu_button("3D Object", |ui| {
+            // Driven by the same list the baker writes, so a primitive
+            // cannot appear in the menu without a file behind it.
+            for (name, _) in ome_render::mesh::Primitive::CANONICAL {
+                if ui.button(display_name(name)).clicked() {
+                    actions.push(EditorAction::SpawnMesh {
+                        path: std::path::PathBuf::from(format!("meshes/primitives/{name}.glb")),
+                        name: display_name(name),
+                    });
+                    ui.close();
+                }
+            }
+            ui.separator();
             if ui.button("Suzanne (demo)").clicked() {
                 actions.push(EditorAction::SpawnMesh {
                     path: std::path::PathBuf::from("meshes/suzanne.glb"),
