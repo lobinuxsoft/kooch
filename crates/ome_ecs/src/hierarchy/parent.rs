@@ -24,6 +24,7 @@ impl Reflect for Parent {
             type_name: "Entity",
             kind: FieldKind::String,
             choices: &[],
+            shown_when: None,
             asset_type: "",
         }];
         FIELDS

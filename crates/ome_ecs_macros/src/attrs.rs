@@ -16,9 +16,9 @@ pub(crate) fn parse_inspector_attr(
         if !attr.path().is_ident("reflect") {
             continue;
         }
-        let nested = match attr.parse_args_with(
-            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
-        ) {
+        let nested = match attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        {
             Ok(n) => n,
             Err(e) => return Err(e.to_compile_error().into()),
         };
@@ -64,9 +64,9 @@ pub(crate) fn parse_field_asset_type(field: &syn::Field) -> Result<Option<String
         if !attr.path().is_ident("reflect") {
             continue;
         }
-        let nested = match attr.parse_args_with(
-            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
-        ) {
+        let nested = match attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        {
             Ok(n) => n,
             Err(e) => return Err(e.to_compile_error().into()),
         };
@@ -95,9 +95,9 @@ pub(crate) fn parse_field_skip(field: &syn::Field) -> Result<bool, TokenStream> 
         if !attr.path().is_ident("reflect") {
             continue;
         }
-        let nested = match attr.parse_args_with(
-            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
-        ) {
+        let nested = match attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        {
             Ok(n) => n,
             Err(e) => return Err(e.to_compile_error().into()),
         };
@@ -117,22 +117,47 @@ pub(crate) fn parse_field_skip(field: &syn::Field) -> Result<bool, TokenStream> 
 /// Returns `Ok(Some(expr))` with the path/identifier pointing to a
 /// `&'static [::ome_ecs::reflect::FieldChoice]` constant when present,
 /// `Ok(None)` when absent, or `Err(compile_error)` on a parse failure.
-pub(crate) fn parse_field_choices(
-    field: &syn::Field,
-) -> Result<Option<syn::Expr>, TokenStream> {
+pub(crate) fn parse_field_choices(field: &syn::Field) -> Result<Option<syn::Expr>, TokenStream> {
     for attr in &field.attrs {
         if !attr.path().is_ident("reflect") {
             continue;
         }
-        let nested = match attr.parse_args_with(
-            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
-        ) {
+        let nested = match attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        {
             Ok(n) => n,
             Err(e) => return Err(e.to_compile_error().into()),
         };
         for meta in nested {
             if let Meta::NameValue(MetaNameValue { path, value, .. }) = meta
                 && path.is_ident("choices")
+            {
+                return Ok(Some(value));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Parses `#[reflect(shown_when = PATH)]` from a field's attributes.
+///
+/// Returns `Ok(Some(expr))` with the path/identifier pointing to a
+/// `::ome_ecs::reflect::FieldCondition` constant when present,
+/// `Ok(None)` when absent, or `Err(compile_error)` on a parse failure.
+pub(crate) fn parse_field_shown_when(field: &syn::Field) -> Result<Option<syn::Expr>, TokenStream> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("reflect") {
+            continue;
+        }
+        let nested = match attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        {
+            Ok(n) => n,
+            Err(e) => return Err(e.to_compile_error().into()),
+        };
+        for meta in nested {
+            if let Meta::NameValue(MetaNameValue { path, value, .. }) = meta
+                && path.is_ident("shown_when")
             {
                 return Ok(Some(value));
             }
@@ -151,9 +176,9 @@ pub(crate) fn parse_category_attr(input: &DeriveInput) -> Result<Option<String>,
         if !attr.path().is_ident("reflect") {
             continue;
         }
-        let nested = match attr.parse_args_with(
-            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
-        ) {
+        let nested = match attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        {
             Ok(n) => n,
             Err(e) => return Err(e.to_compile_error().into()),
         };

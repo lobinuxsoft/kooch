@@ -34,6 +34,7 @@ impl Reflect for Health {
                 type_name: "u32",
                 kind: FieldKind::U32,
                 choices: &[],
+                shown_when: None,
                 asset_type: "",
             },
             FieldMeta {
@@ -41,6 +42,7 @@ impl Reflect for Health {
                 type_name: "u32",
                 kind: FieldKind::U32,
                 choices: &[],
+                shown_when: None,
                 asset_type: "",
             },
         ];
