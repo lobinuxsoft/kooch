@@ -26,7 +26,6 @@ use crate::state::EditorOverlay;
 use crate::undo::UndoStack;
 
 use super::EditorAction;
-use super::reparent::rewrite_local_transform_for_reparent;
 use super::scene_io::{load_scene, save_scene_as, scene_dialog};
 
 /// Dispatches a non-ECS, non-undo action to the appropriate handler.
@@ -450,53 +449,10 @@ fn handle_close_project(resources: &mut Resources, undo_stack: &mut UndoStack) {
 }
 
 fn handle_reparent(resources: &mut Resources, entity: Entity, new_parent: Option<Entity>) {
-    // Preserve the child's world-space transform across the reparent.
-    // Without this, parenting snaps the child to `parent * child_local`
-    // and unparenting snaps it back to `child_local` (as if it were a
-    // root all along).
-    rewrite_local_transform_for_reparent(resources, entity, new_parent);
-
-    match new_parent {
-        Some(parent) => {
-            let mut needs_archetype_add = false;
-            if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                let has_parent = registry
-                    .get_cpu::<Parent>()
-                    .is_some_and(|s| s.contains(entity));
-                if has_parent {
-                    if let Some(storage) = registry.get_cpu_mut::<Parent>()
-                        && let Some(p) = storage.get_mut(entity)
-                    {
-                        p.entity = parent;
-                    }
-                } else if let Some(storage) = registry.get_cpu_mut::<Parent>() {
-                    storage.insert(entity, Parent { entity: parent });
-                    needs_archetype_add = true;
-                }
-            }
-            if needs_archetype_add {
-                let parent_tid = TypeId::of::<Parent>();
-                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-                    && let Some(current) = archetypes.entity_archetype(entity)
-                {
-                    let new_arch = archetypes.archetype_after_add_dynamic(current, parent_tid);
-                    archetypes.register_entity(entity, new_arch);
-                }
-            }
-        }
-        None => {
-            let parent_tid = TypeId::of::<Parent>();
-            if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                registry.remove_component(entity, &parent_tid);
-            }
-            if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-                && let Some(current) = archetypes.entity_archetype(entity)
-            {
-                let new_arch = archetypes.archetype_after_remove_dynamic(current, parent_tid);
-                archetypes.register_entity(entity, new_arch);
-            }
-        }
-    }
+    // Moved to ome_ecs::hierarchy (#595): the server has to be able to
+    // perform this too, and while it lived here remote mode had no way to
+    // reparent at all.
+    ome_ecs::hierarchy::reparent(resources, entity, new_parent);
 }
 
 fn handle_remove_recent(resources: &mut Resources, path: &std::path::Path) {
