@@ -259,6 +259,16 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .selected_asset
         .and_then(|guid| crate::systems::asset_detail::gather_asset_detail(guid, resources));
 
+    // Lifted out for the frame: the Gizmos dropdown mutates it, and the
+    // egui closure already holds Resources immutably. Groups are resolved
+    // from the registry now rather than rebuilt inside the menu, so the
+    // panel is a pure draw over data.
+    let mut gizmo_visibility = resources
+        .get::<crate::gizmos::GizmoVisibility>()
+        .cloned()
+        .unwrap_or_else(crate::gizmos::GizmoVisibility::new);
+    let gizmo_groups = crate::gizmos::groups_from_resources(resources);
+
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
@@ -289,7 +299,13 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             .get::<crate::perf::EditorPerfStats>()
             .copied()
             .unwrap_or_default(),
+        &mut gizmo_visibility,
+        &gizmo_groups,
     );
+
+    // Put the choices back so the batch system and the save system see
+    // whatever the dropdown just changed.
+    resources.insert(gizmo_visibility);
 
     // Hand the (possibly toggled) debug mode + LOD threshold back to
     // the resource map before the viewport render pass picks them up.

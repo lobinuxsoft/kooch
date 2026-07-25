@@ -14,7 +14,9 @@
 //! extra wiring.
 
 use ome_gizmos_handles::{HandleMode, SnapSettings};
-use ome_render::meshlet::{MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats};
+use ome_render::meshlet::{
+    MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
+};
 
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
@@ -44,6 +46,8 @@ pub(crate) fn draw_view_content(
     meshlet_lod_settings: &mut MeshletLodSettings,
     meshlet_stats: MeshletRenderStats,
     perf_stats: EditorPerfStats,
+    gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
+    gizmo_groups: &[crate::gizmos::GizmoGroup],
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -64,9 +68,8 @@ pub(crate) fn draw_view_content(
     // input). The toolbar is drawn on top using a child UI placed at
     // the top-left corner of the panel rect so its clicks do not fall
     // through to the viewport drag layer.
-    let response = ui.add(
-        egui::Image::new((texture_id, available)).sense(egui::Sense::click_and_drag()),
-    );
+    let response =
+        ui.add(egui::Image::new((texture_id, available)).sense(egui::Sense::click_and_drag()));
     let mut delta = collect_viewport_input(&response, ui, controller);
 
     // Horizontal toolbar at the top edge of the viewport. Hosts only
@@ -160,6 +163,29 @@ pub(crate) fn draw_view_content(
                         .prefix(format!("{} ", icons::ARROWS_CLOCKWISE)),
                 )
                 .on_hover_text("Rotate snap step (degrees, hold Ctrl while dragging)");
+
+                ui.separator();
+
+                // Gizmo visibility. Marked when something is hidden, so a
+                // missing outline is traceable to a choice rather than
+                // looking like a broken gizmo — which is the failure this
+                // menu exists to prevent.
+                let filtered = gizmo_visibility.has_exceptions();
+                let label = if filtered {
+                    format!("{} Gizmos*", icons::EYE)
+                } else {
+                    format!("{} Gizmos", icons::EYE)
+                };
+                ui.menu_button(label, |ui| {
+                    ui.set_min_width(200.0);
+                    crate::gizmos::draw_gizmo_menu(ui, gizmo_visibility, gizmo_groups);
+                })
+                .response
+                .on_hover_text(if filtered {
+                    "Some gizmos are hidden"
+                } else {
+                    "Choose which gizmos draw"
+                });
             });
     }
 
@@ -193,7 +219,11 @@ pub(crate) fn draw_view_content(
         .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
         .corner_radius(egui::CornerRadius::same(6))
         .show(&mut toggle_ui, |ui| {
-            let glyph = if sidebar_visible { "\u{27e9}" } else { "\u{27e8}" };
+            let glyph = if sidebar_visible {
+                "\u{27e9}"
+            } else {
+                "\u{27e8}"
+            };
             let button = egui::Button::new(egui::RichText::new(glyph).size(16.0))
                 .min_size(toggle_size)
                 .fill(egui::Color32::TRANSPARENT)
@@ -219,13 +249,10 @@ pub(crate) fn draw_view_content(
         // collapsing every section doesn't leave a giant black
         // box on the viewport.
         let panel_top = toggle_pos.y + toggle_size.y + 4.0;
-        let panel_max_height = (available.y - 2.0 * TOOLBAR_OFFSET.y - toggle_size.y - 4.0)
-            .max(0.0);
+        let panel_max_height =
+            (available.y - 2.0 * TOOLBAR_OFFSET.y - toggle_size.y - 4.0).max(0.0);
         let sidebar_max_rect = egui::Rect::from_min_size(
-            egui::pos2(
-                panel_top_right.x - PERF_SIDEBAR_WIDTH,
-                panel_top,
-            ),
+            egui::pos2(panel_top_right.x - PERF_SIDEBAR_WIDTH, panel_top),
             egui::vec2(PERF_SIDEBAR_WIDTH, panel_max_height),
         );
         let mut sidebar_ui = ui.new_child(

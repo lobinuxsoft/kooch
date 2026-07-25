@@ -16,6 +16,7 @@
 //!   visually ambiguous across multiple entities.
 
 mod collider;
+mod visibility;
 mod visualizers;
 
 use std::any::TypeId;
@@ -37,6 +38,10 @@ use crate::actions::EditorAction;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta};
 use crate::state::{EditorOverlay, RotationDisplayMode};
 
+pub(crate) use visibility::{
+    GizmoGroup, GizmoVisibility, draw_gizmo_menu, groups_from_resources, load_visibility_system,
+    save_visibility_system,
+};
 use visualizers::{
     DirectionalLightVisualizer, OrthographicCameraVisualizer, PerspectiveCameraVisualizer,
 };
@@ -66,8 +71,8 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
 /// Pre-render system that rebuilds the gizmo line + mesh batches from
 /// current selection by dispatching through the [`VisualizerRegistry`].
 pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
-    let (selected, ctx) = match resources.get::<EditorOverlay>() {
-        Some(overlay) => (overlay.selected_entities.clone(), overlay.ctx.clone()),
+    let selected = match resources.get::<EditorOverlay>() {
+        Some(overlay) => overlay.selected_entities.clone(),
         None => return,
     };
 
@@ -85,17 +90,48 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
     let multi = selected.len() > 1;
     let transform_type_id = TypeId::of::<Transform>();
 
+    // What draws is an explicit choice now, not a side effect of which
+    // Inspector header happens to be open. Absent resource = everything
+    // visible, so a host that never inserted one behaves as before.
+    let visibility = resources
+        .get::<GizmoVisibility>()
+        .cloned()
+        .unwrap_or_else(GizmoVisibility::new);
+    if !visibility.enabled {
+        resources.insert(line_batch);
+        resources.insert(mesh_batch);
+        return;
+    }
+    // Resolved up front: the dispatch loop borrows Resources immutably,
+    // and the category lives in the ComponentRegistry.
+    let drawable: Vec<TypeId> = {
+        let registry = resources.get::<VisualizerRegistry>();
+        let components = resources.get::<ComponentRegistry>();
+        registry
+            .map(|r| {
+                r.registered_types()
+                    .filter(|type_id| {
+                        let Some(components) = components.as_ref() else {
+                            return true;
+                        };
+                        let Some(name) = components.component_name(type_id) else {
+                            return true;
+                        };
+                        visibility.draws(name, components.reflect_category(type_id))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
     let registry = resources.remove::<VisualizerRegistry>().unwrap_or_default();
 
     {
         let mut gizmos = Gizmos::new(&mut line_batch, &mut mesh_batch);
         let resources_ref: &Resources = &*resources;
         for entity in &selected {
-            for type_id in registry.registered_types() {
+            for &type_id in &drawable {
                 if multi && type_id != transform_type_id {
-                    continue;
-                }
-                if !multi && !is_component_expanded(&ctx, *entity, type_id) {
                     continue;
                 }
                 registry.dispatch(type_id, *entity, resources_ref, &mut gizmos);
@@ -387,11 +423,3 @@ fn entity_world_rotation(resources: &Resources, entity: Entity) -> Mat3 {
     Mat3::from_quat(rotation)
 }
 
-/// Reads the Inspector's `CollapsingHeader` state for a (entity,
-/// component) pair. Defaults to `true` (open) when no state is stored.
-fn is_component_expanded(ctx: &egui::Context, entity: Entity, type_id: TypeId) -> bool {
-    let id = egui::Id::new(format!("comp_{}_{:?}", entity.index(), type_id));
-    egui::collapsing_header::CollapsingState::load(ctx, id)
-        .map(|state| state.is_open())
-        .unwrap_or(true)
-}

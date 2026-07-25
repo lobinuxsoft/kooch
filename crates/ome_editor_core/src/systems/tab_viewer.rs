@@ -49,6 +49,11 @@ pub(crate) struct EditorTabViewer<'a> {
     /// `true` when at least one currently-selected entity carries a
     /// `Transform` — gates the viewport's Local/World toggle.
     pub(crate) selection_has_transform: bool,
+    /// Which gizmo groups draw. Threaded through so the Gizmos dropdown
+    /// can mutate it from the viewport toolbar.
+    pub(crate) gizmo_visibility: &'a mut crate::gizmos::GizmoVisibility,
+    /// The registered visualizers, grouped by category, for that dropdown.
+    pub(crate) gizmo_groups: &'a [crate::gizmos::GizmoGroup],
     /// Per-frame snapshot of the `AssetDatabase` consumed by the
     /// inspector's typed asset picker.
     pub(crate) asset_catalog: &'a [crate::panels::inspector::AssetCatalogEntry],
@@ -118,6 +123,8 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.meshlet_lod_settings,
                 self.meshlet_stats,
                 self.perf_stats,
+                self.gizmo_visibility,
+                self.gizmo_groups,
             ),
             EditorTab::Inspector => draw_inspector_content(
                 ui,

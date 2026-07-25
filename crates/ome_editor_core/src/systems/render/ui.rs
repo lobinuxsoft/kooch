@@ -71,6 +71,8 @@ pub(super) fn run_editor_ui(
     meshlet_lod_settings: &mut MeshletLodSettings,
     meshlet_stats: MeshletRenderStats,
     perf_stats: crate::perf::EditorPerfStats,
+    gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
+    gizmo_groups: &[crate::gizmos::GizmoGroup],
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut selected_asset = overlay.selected_asset;
@@ -116,6 +118,8 @@ pub(super) fn run_editor_ui(
                 selected: &mut selected,
                 reflected_types: &data.reflected_types,
                 actions: &mut actions,
+                gizmo_visibility,
+                gizmo_groups,
                 entity_count: data.entity_count,
                 archetype_count: data.archetype_count,
                 active_archetype_count: data.active_archetype_count,
