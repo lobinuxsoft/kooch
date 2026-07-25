@@ -155,7 +155,7 @@ impl PhysicsBackend for RapierBackend {
             .pose(Pose::from_parts(desc.position, desc.rotation))
             .additional_mass(desc.mass.max(0.0))
             .build();
-        let collider = collider_for(desc.shape);
+        let collider = collider_for(desc.shape, desc.shape_offset);
         let rb_handle = self.bodies.insert(rb);
         let collider_handle =
             self.colliders

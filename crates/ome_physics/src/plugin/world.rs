@@ -68,6 +68,12 @@ pub struct BodySpec {
     radius: f32,
     half_height: f32,
     half_extents: Vec3,
+    /// The shape's authored centre, in the entity's local space.
+    ///
+    /// In the spec because it is baked into the collider when built: an
+    /// offset edited in the Inspector has to *replace* the collider, and
+    /// the sync pass decides that by comparing specs.
+    center: Vec3,
     /// The entity's `Transform` scale, folded into the shape dimensions.
     ///
     /// Rapier's shapes take no scale — they are built from dimensions —
@@ -93,6 +99,7 @@ impl BodySpec {
             radius: collider.radius,
             half_height: collider.half_height,
             half_extents: collider.half_extents,
+            center: collider.center,
             scale,
         }
     }
@@ -122,6 +129,7 @@ impl BodySpec {
             radius: self.radius * s.max_element(),
             half_height: self.half_height * s.y,
             half_extents: self.half_extents * s,
+            center: self.center,
         };
         // The capsule's radius follows its horizontal axes, not the
         // largest overall — a tall thin capsule scaled on Y should get
@@ -143,6 +151,11 @@ impl BodySpec {
             mass: self.mass,
             position,
             rotation,
+            // Body-local, and deliberately *not* pre-rotated: rapier
+            // composes the body's pose on top of the collider's
+            // `position_wrt_parent`, so rotating here would apply the
+            // body's rotation twice.
+            shape_offset: self.center * s,
         }
     }
 

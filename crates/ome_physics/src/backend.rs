@@ -44,6 +44,13 @@ pub struct BodyDesc {
     pub mass: f32,
     pub position: Vec3,
     pub rotation: Quat,
+    /// The shape's centre relative to the body, in body-local space.
+    ///
+    /// A plain vector rather than a backend pose type: the trait is the
+    /// contract, and a GPU backend later has to be able to honour the same
+    /// descriptor. Rapier models this as the collider's
+    /// `position_wrt_parent`.
+    pub shape_offset: Vec3,
 }
 
 impl BodyDesc {
@@ -55,6 +62,7 @@ impl BodyDesc {
             mass,
             position: Vec3::ZERO,
             rotation: Quat::IDENTITY,
+            shape_offset: Vec3::ZERO,
         }
     }
 
@@ -66,6 +74,7 @@ impl BodyDesc {
             mass: 0.0,
             position,
             rotation: Quat::IDENTITY,
+            shape_offset: Vec3::ZERO,
         }
     }
 }

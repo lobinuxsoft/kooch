@@ -148,6 +148,14 @@ pub struct Collider {
     pub half_extents: Vec3,
     /// Capsule half-height, excluding the hemispherical caps.
     pub half_height: f32,
+    /// The shape's centre, in the entity's local space.
+    ///
+    /// Moves the geometry inside the body without moving the body. A
+    /// model whose pivot is not at its centre of volume needs this: a
+    /// character pivoted at the feet wants its capsule half a body up, and
+    /// a door pivoted on the hinge wants its box beside it rather than
+    /// around it.
+    pub center: Vec3,
 }
 
 impl Default for Collider {
@@ -157,6 +165,7 @@ impl Default for Collider {
             radius: 0.5,
             half_extents: Vec3::splat(0.5),
             half_height: 0.5,
+            center: Vec3::ZERO,
         }
     }
 }
@@ -244,6 +253,7 @@ mod tests {
             radius: 0.25,
             half_extents: Vec3::splat(2.0),
             half_height: 1.0,
+            center: Vec3::ZERO,
         };
         collider.shape = SHAPE_CUBOID;
         assert_eq!(

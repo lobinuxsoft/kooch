@@ -141,3 +141,81 @@ fn authoring_a_transform_moves_the_body() {
 
     assert_eq!(solver_position(&resources, entity).y, 42.0);
 }
+
+/// The offset has to reach the solver, not just the gizmo. A capsule
+/// pushed up by half a body — the character-pivoted-at-the-feet case —
+/// rests higher off the floor than one centred on its entity.
+#[test]
+fn an_offset_shape_collides_where_it_is_drawn() {
+    fn rest_height(center: Vec3) -> f32 {
+        let mut resources = world();
+        spawn_body(
+            &mut resources,
+            Transform::from_position(Vec3::new(0.0, -0.5, 0.0)),
+            RigidBody {
+                kind: KIND_STATIC,
+                mass: 0.0,
+            },
+            Collider {
+                shape: SHAPE_CUBOID,
+                half_extents: Vec3::new(20.0, 0.5, 20.0),
+                ..Default::default()
+            },
+        );
+        let ball = spawn_body(
+            &mut resources,
+            Transform::from_position(Vec3::new(0.0, 6.0, 0.0)),
+            RigidBody::default(),
+            Collider {
+                center,
+                ..Default::default()
+            },
+        );
+        Playing::set(&mut resources, true);
+        simulate(&mut resources, 300);
+        position(&resources, ball).y
+    }
+
+    // Floor top at y = 0, sphere radius 0.5.
+    let centred = rest_height(Vec3::ZERO);
+    // The shape sits 2 units above the body's origin, so the *body* comes
+    // to rest 2 units lower for the shape to touch the same floor.
+    let offset = rest_height(Vec3::new(0.0, 2.0, 0.0));
+
+    assert!(
+        (centred - 0.5).abs() < 0.15,
+        "the centred sphere did not rest on the floor: y = {centred}"
+    );
+    assert!(
+        (offset - (centred - 2.0)).abs() < 0.2,
+        "the offset never reached the solver: centred {centred}, offset {offset}"
+    );
+}
+
+/// The offset moves the shape, never the body. Writeback still reports
+/// where the *body* is, or every transform in the scene would drift by the
+/// collider's offset every frame.
+#[test]
+fn an_offset_does_not_move_the_body() {
+    let mut resources = world();
+    let entity = spawn_body(
+        &mut resources,
+        Transform::from_position(Vec3::new(1.0, 5.0, -2.0)),
+        RigidBody {
+            kind: KIND_STATIC,
+            mass: 0.0,
+        },
+        Collider {
+            center: Vec3::new(0.0, 10.0, 0.0),
+            ..Default::default()
+        },
+    );
+    Playing::set(&mut resources, true);
+    simulate(&mut resources, 10);
+
+    assert_eq!(
+        position(&resources, entity),
+        Vec3::new(1.0, 5.0, -2.0),
+        "the collider's offset leaked into the body's transform"
+    );
+}
