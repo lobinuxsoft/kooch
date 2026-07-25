@@ -17,10 +17,12 @@ mod gizmos;
 pub mod mesh;
 mod renderer;
 mod visualizer;
+mod wireframe;
 
 pub use gizmos::Gizmos;
 pub use mesh::{MeshBatch, MeshDraw, MeshGizmoRenderer, MeshVertex};
 pub use renderer::{DEFAULT_LINE_THICKNESS, GizmoBatch, GizmoRenderer, LineSegment};
 pub use visualizer::{Visualizer, VisualizerRegistry};
+pub use wireframe::CIRCLE_SEGMENTS;
 
 pub(crate) const SHADER_SOURCE: &str = include_str!("../shaders/gizmo_main.wgsl");

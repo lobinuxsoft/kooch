@@ -15,6 +15,7 @@
 //!   runs. Other visualizers are suppressed because they would be
 //!   visually ambiguous across multiple entities.
 
+mod collider;
 mod visualizers;
 
 use std::any::TypeId;
@@ -48,12 +49,13 @@ use visualizers::{
 /// Also inserts a default `HandleSet` (3 translate handles X/Y/Z).
 /// Runs once at editor startup.
 pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
-    let mut registry = resources
-        .remove::<VisualizerRegistry>()
-        .unwrap_or_default();
+    let mut registry = resources.remove::<VisualizerRegistry>().unwrap_or_default();
     registry.register::<PerspectiveCamera, PerspectiveCameraVisualizer>();
     registry.register::<OrthographicCamera, OrthographicCameraVisualizer>();
     registry.register::<DirectionalLight, DirectionalLightVisualizer>();
+    // A collider is authored as numbers and is otherwise invisible; the
+    // outline is the only way to see whether the shape wraps the model.
+    registry.register::<ome_physics::components::Collider, collider::ColliderVisualizer>();
     resources.insert(registry);
 
     if resources.get::<HandleSet>().is_none() {
@@ -83,9 +85,7 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
     let multi = selected.len() > 1;
     let transform_type_id = TypeId::of::<Transform>();
 
-    let registry = resources
-        .remove::<VisualizerRegistry>()
-        .unwrap_or_default();
+    let registry = resources.remove::<VisualizerRegistry>().unwrap_or_default();
 
     {
         let mut gizmos = Gizmos::new(&mut line_batch, &mut mesh_batch);
@@ -253,7 +253,8 @@ pub(crate) fn apply_handle_input(
     // Drag end: emit one TransformEdit action with before/after.
     // Compares against the snapshot to skip no-op drags (clicked the
     // handle but didn't move).
-    if was_dragging && !dragging
+    if was_dragging
+        && !dragging
         && let Some((entity, before)) = drag_start.take()
         && let Some(after) = read_transform(resources, entity)
         && !transforms_equal(before, after)
