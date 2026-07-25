@@ -276,4 +276,47 @@ mod tests {
             "the offset did not scale with the entity"
         );
     }
+
+    /// Multi-selection draws one outline per entity, into the same batch.
+    ///
+    /// The dispatch loop relies on visualizers *appending* rather than
+    /// replacing, so two selected bodies produce two outlines at two
+    /// places. A visualizer that overwrote the batch would show only the
+    /// last entity, which is what suppressing multi-selection used to hide.
+    #[test]
+    fn two_entities_produce_two_outlines_in_one_batch() {
+        let collider = Collider::default();
+        let (a, b) = (Vec3::new(-5.0, 0.0, 0.0), Vec3::new(5.0, 0.0, 0.0));
+
+        let mut lines = GizmoBatch::default();
+        let mut meshes = MeshBatch::default();
+        {
+            let mut gizmos = Gizmos::new(&mut lines, &mut meshes);
+            for centre in [a, b] {
+                ColliderVisualizer.draw(
+                    &collider,
+                    &GlobalTransform {
+                        matrix: Mat4::from_translation(centre),
+                    },
+                    &mut gizmos,
+                );
+            }
+        }
+        let segments: Vec<(Vec3, Vec3)> = lines.lines.iter().map(|s| (s.start, s.end)).collect();
+
+        let single = draw(&collider, Mat4::from_translation(a)).len();
+        assert_eq!(
+            segments.len(),
+            single * 2,
+            "the second entity did not add its own outline"
+        );
+        // One cluster around each entity, nothing stranded between them.
+        for centre in [a, b] {
+            let near = segments
+                .iter()
+                .filter(|(p, _)| (*p - centre).length() < 1.0)
+                .count();
+            assert_eq!(near, single, "no outline at {centre:?}");
+        }
+    }
 }
