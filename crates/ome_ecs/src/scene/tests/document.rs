@@ -5,7 +5,7 @@ use crate::reflect::ReflectValue;
 use crate::scene::{ComponentDescription, EntityDescription, SceneDocument};
 use crate::transform::Transform;
 
-use super::{setup_resources, Health, TestEphemeral};
+use super::{Health, TestEphemeral, setup_resources};
 
 #[test]
 fn round_trip_save_load() {
@@ -15,21 +15,23 @@ fn round_trip_save_load() {
         entities: vec![
             EntityDescription {
                 name: "Player".into(),
+                parent_index: None,
                 parent: None,
                 components: vec![ComponentDescription {
                     type_name: "ome_ecs::transform::Transform".into(),
                     fields: vec![
-                        ("position".into(), ReflectValue::Vec3(Vec3::new(1.0, 2.0, 3.0))),
                         (
-                            "rotation".into(),
-                            ReflectValue::Quat(glam::Quat::IDENTITY),
+                            "position".into(),
+                            ReflectValue::Vec3(Vec3::new(1.0, 2.0, 3.0)),
                         ),
+                        ("rotation".into(), ReflectValue::Quat(glam::Quat::IDENTITY)),
                         ("scale".into(), ReflectValue::Vec3(Vec3::ONE)),
                     ],
                 }],
             },
             EntityDescription {
                 name: "Enemy".into(),
+                parent_index: None,
                 parent: None,
                 components: vec![ComponentDescription {
                     type_name: "test::Health".into(),
@@ -63,7 +65,10 @@ fn from_ecs_captures_entities() {
         let mut commands = resources.remove::<Commands>().unwrap();
         commands
             .spawn(&mut resources)
-            .insert_reflected(Health { hp: 42, max_hp: 100 })
+            .insert_reflected(Health {
+                hp: 42,
+                max_hp: 100,
+            })
             .insert_reflected(Transform::from_position(Vec3::new(1.0, 2.0, 3.0)));
         commands
             .spawn(&mut resources)
@@ -90,8 +95,16 @@ fn from_ecs_captures_entities() {
         .iter()
         .find(|c| c.type_name.contains("Health"))
         .expect("Health component not found");
-    assert!(health_comp.fields.contains(&("hp".into(), ReflectValue::U32(42))));
-    assert!(health_comp.fields.contains(&("max_hp".into(), ReflectValue::U32(100))));
+    assert!(
+        health_comp
+            .fields
+            .contains(&("hp".into(), ReflectValue::U32(42)))
+    );
+    assert!(
+        health_comp
+            .fields
+            .contains(&("max_hp".into(), ReflectValue::U32(100)))
+    );
 }
 
 #[test]

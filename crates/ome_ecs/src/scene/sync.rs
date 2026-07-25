@@ -26,7 +26,7 @@ pub fn sync_scene_to_ecs(
     // Track name → Entity for parent resolution.
     let mut name_to_entity: std::collections::HashMap<String, crate::entity::Entity> =
         std::collections::HashMap::new();
-    let mut spawned_order: Vec<(crate::entity::Entity, Option<String>)> = Vec::new();
+    let mut spawned_order: Vec<crate::entity::Entity> = Vec::new();
 
     for entity_desc in &scene.entities {
         // Spawn a fresh entity.
@@ -40,7 +40,7 @@ pub fn sync_scene_to_ecs(
         };
 
         name_to_entity.insert(entity_desc.name.clone(), entity);
-        spawned_order.push((entity, entity_desc.parent.clone()));
+        spawned_order.push(entity);
 
         for comp_desc in &entity_desc.components {
             // Look up the TypeId by full type name. A name this binary
@@ -91,11 +91,35 @@ pub fn sync_scene_to_ecs(
         }
     }
 
-    // 3. Second pass: establish hierarchy from parent names.
+    // 3. Second pass: establish the hierarchy.
+    //
+    // By index, which is unique. Names are not: a scene with five meshes
+    // called "Mesh" is ordinary, and resolving a parent by name collapses
+    // them onto one key so every child ends up under whichever one was
+    // inserted last — a hierarchy silently rebuilt wrong.
     let parent_tid = std::any::TypeId::of::<Parent>();
-    for (entity, parent_name) in &spawned_order {
-        if let Some(parent_name) = parent_name {
-            if let Some(&parent_entity) = name_to_entity.get(parent_name) {
+    for (index, entity) in spawned_order.iter().enumerate() {
+        let desc = &scene.entities[index];
+        let resolved = match desc.parent_index {
+            Some(parent_index) => spawned_order.get(parent_index).copied(),
+            // Legacy scenes carry a name instead. Ambiguous by construction,
+            // so say so rather than picking one silently — which is the bug
+            // this replaces.
+            None => desc.parent.as_ref().and_then(|name| {
+                let matches = scene.entities.iter().filter(|e| &e.name == name).count();
+                if matches > 1 {
+                    tracing::warn!(
+                        target: "ome_ecs::scene",
+                        %name,
+                        matches,
+                        "legacy scene names an ambiguous parent; re-save to fix",
+                    );
+                }
+                name_to_entity.get(name).copied()
+            }),
+        };
+        {
+            if let Some(parent_entity) = resolved {
                 if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                     registry.register_cpu_reflected::<Parent>();
                     if let Some(storage) = registry.get_cpu_mut::<Parent>() {

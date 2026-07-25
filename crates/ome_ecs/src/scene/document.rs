@@ -26,7 +26,21 @@ pub struct SceneDocument {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EntityDescription {
     pub name: String,
-    /// Parent entity name (for hierarchy reconstruction on load).
+    /// Parent's index into [`SceneDocument::entities`].
+    ///
+    /// An index, not a name. Entity names are not unique — a scene with five
+    /// meshes called "Mesh" is normal — so resolving a parent by name
+    /// collapses them all onto one key and attaches every child to whichever
+    /// one happened to be inserted last. That is a hierarchy silently
+    /// rebuilt wrong on load, and it is what [`Self::parent`] did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_index: Option<usize>,
+    /// Parent entity name — **legacy**, read only.
+    ///
+    /// Kept so scenes written before `parent_index` still load. Never
+    /// written any more: two ways to express the same link is two ways for
+    /// them to disagree. Resolving through it is ambiguous by construction
+    /// and warns when the name it names is not unique.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     pub components: Vec<ComponentDescription>,
@@ -68,7 +82,8 @@ impl SceneDocument {
     ///
     /// Hierarchy components (`Parent`, `Children`, `GlobalTransform`) are
     /// excluded from the component list. Instead, parent relationships are
-    /// stored as an entity name reference in `EntityDescription::parent`.
+    /// stored as an index into `entities` in
+    /// `EntityDescription::parent_index`.
     ///
     /// Entities whose archetype contains a marker registered in
     /// [`EphemeralComponents`](crate::ephemeral::EphemeralComponents) are
@@ -92,11 +107,9 @@ impl SceneDocument {
             .map(|e| e.clone())
             .unwrap_or_default();
 
-        // (entity_index, EntityDescription) for stable ordering.
-        let mut indexed_entities: Vec<(u32, EntityDescription)> = Vec::new();
-        // Map entity → vec index for parent name lookup.
-        let mut entity_to_idx: std::collections::HashMap<crate::entity::Entity, usize> =
-            std::collections::HashMap::new();
+        // (entity_index, entity, EntityDescription). The handle is carried
+        // along so parents can be resolved *after* the sort — see below.
+        let mut indexed_entities: Vec<(u32, crate::entity::Entity, EntityDescription)> = Vec::new();
 
         let archetypes = resources.get::<ArchetypeRegistry>();
         let components = resources.get::<ComponentRegistry>();
@@ -178,36 +191,48 @@ impl SceneDocument {
                         })
                         .unwrap_or_else(|| format!("Entity {}", entity.index()));
 
-                    let idx = indexed_entities.len();
-                    entity_to_idx.insert(entity, idx);
                     indexed_entities.push((
                         entity.index(),
+                        entity,
                         EntityDescription {
                             name: display_name,
-                            parent: None, // Filled in second pass.
+                            parent_index: None, // Filled in second pass.
+                            parent: None,
                             components: comp_descs,
                         },
                     ));
                 }
             }
 
-            // Second pass: resolve parent names.
+            // Sort BEFORE resolving parents. `parent_index` points into the
+            // emitted list, so assigning it first and sorting afterwards
+            // leaves every link pointing at whatever moved into that slot —
+            // silently, and only when the sort actually reorders anything.
+            indexed_entities.sort_by_key(|(idx, _, _)| *idx);
+
+            let entity_to_idx: std::collections::HashMap<crate::entity::Entity, usize> =
+                indexed_entities
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, (_, entity, _))| (*entity, idx))
+                    .collect();
+
             if let Some(parent_storage) = components.get_cpu::<Parent>() {
-                for (&entity, idx) in &entity_to_idx {
-                    if let Some(parent_comp) = parent_storage.get(entity) {
-                        if let Some(&parent_idx) = entity_to_idx.get(&parent_comp.entity) {
-                            indexed_entities[*idx].1.parent =
-                                Some(indexed_entities[parent_idx].1.name.clone());
-                        }
+                for idx in 0..indexed_entities.len() {
+                    let entity = indexed_entities[idx].1;
+                    if let Some(parent_comp) = parent_storage.get(entity)
+                        && let Some(&parent_idx) = entity_to_idx.get(&parent_comp.entity)
+                    {
+                        indexed_entities[idx].2.parent_index = Some(parent_idx);
                     }
                 }
             }
         }
 
-        // Sort by entity index for stable ordering across save/load.
-        indexed_entities.sort_by_key(|(idx, _)| *idx);
-        let entities: Vec<EntityDescription> =
-            indexed_entities.into_iter().map(|(_, desc)| desc).collect();
+        let entities: Vec<EntityDescription> = indexed_entities
+            .into_iter()
+            .map(|(_, _, desc)| desc)
+            .collect();
 
         SceneDocument {
             name: "Untitled Scene".into(),

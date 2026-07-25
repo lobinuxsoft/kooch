@@ -119,3 +119,28 @@ pub(super) struct TestAssetHolder {
 }
 
 impl Component for TestAssetHolder {}
+
+/// Moves `entity` into the archetype it belongs in after gaining `type_id`.
+///
+/// Component storage alone is not enough: an entity whose archetype does not
+/// list a component is invisible to every archetype-driven query, which
+/// includes `SceneDocument::from_ecs`.
+pub(super) fn add_to_archetype(
+    resources: &mut Resources,
+    entity: crate::entity::Entity,
+    type_id: std::any::TypeId,
+) {
+    let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() else {
+        return;
+    };
+    let current = match archetypes.entity_archetype(entity) {
+        Some(current) => current,
+        None => {
+            let empty = archetypes.get_or_create(Default::default());
+            archetypes.register_entity(entity, empty);
+            empty
+        }
+    };
+    let next = archetypes.archetype_after_add_dynamic(current, type_id);
+    archetypes.register_entity(entity, next);
+}

@@ -349,6 +349,7 @@ pub fn ensure_default_scene(project_root: &Path) -> Result<PathBuf, ProjectError
         entities: vec![
             EntityDescription {
                 name: "Camera".to_owned(),
+                parent_index: None,
                 parent: None,
                 components: vec![
                     ComponentDescription {
@@ -370,6 +371,7 @@ pub fn ensure_default_scene(project_root: &Path) -> Result<PathBuf, ProjectError
             },
             EntityDescription {
                 name: "Sky".to_owned(),
+                parent_index: None,
                 parent: None,
                 components: vec![
                     ComponentDescription {
