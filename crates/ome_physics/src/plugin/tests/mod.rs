@@ -9,6 +9,7 @@
 
 mod compound;
 mod configuration;
+mod joints;
 mod lifetime;
 mod play_lifecycle;
 mod simulation;
@@ -31,7 +32,7 @@ use ome_ecs::transform::Transform;
 use ome_ecs::world_snapshot::WorldSnapshot;
 
 use crate::backend::CollisionShape;
-use crate::components::{Collider, KIND_KINEMATIC, KIND_STATIC, RigidBody, SHAPE_CUBOID};
+use crate::components::{Collider, Joint, KIND_KINEMATIC, KIND_STATIC, RigidBody, SHAPE_CUBOID};
 use crate::rapier_backend::RapierBackend;
 
 use super::systems::{physics_step_system, physics_sync_system, physics_writeback_system};
@@ -57,6 +58,7 @@ fn world() -> Resources {
     registry.register_cpu_reflected::<Transform>();
     registry.register_cpu_reflected::<RigidBody>();
     registry.register_cpu_reflected::<Collider>();
+    registry.register_cpu_reflected::<Joint>();
     registry.register_cpu::<PhysicsBody>();
     // The hierarchy the compound walk reads. Normally registered by
     // EcsPlugin; this harness builds its Resources by hand.

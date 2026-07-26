@@ -8,7 +8,8 @@
 //! # Architecture
 //!
 //! - [`backend`] — public trait + descriptor types (BodyDesc, BodyHandle,
-//!   CollisionShape, RayHit). Pure data + glam types, no nalgebra leaks.
+//!   CollisionShape, JointDesc, RayHit). Pure data + glam types, no
+//!   nalgebra leaks.
 //! - [`rapier_backend`] — concrete [`RapierBackend`] implementing the trait
 //!   on top of Rapier's CPU pipeline. Owns the `RigidBodySet`,
 //!   `ColliderSet`, `IslandManager`, etc.
@@ -27,8 +28,11 @@ pub mod plugin;
 pub mod rapier_backend;
 
 pub use backend::{
-    BodyDesc, BodyHandle, BodyKind, ColliderHandle, CollisionShape, PhysicsBackend, RayHit,
+    BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, CollisionShape, JointDesc,
+    JointHandle, JointKind, JointMotor, MotorModel, PhysicsBackend, RayHit,
 };
-pub use components::{Collider, RigidBody};
-pub use plugin::{PhysicsBody, PhysicsComponentsPlugin, PhysicsPlugin, PhysicsWorld};
+pub use components::{Collider, Joint, RigidBody};
+pub use plugin::{
+    JointRegistry, PhysicsBody, PhysicsComponentsPlugin, PhysicsPlugin, PhysicsWorld,
+};
 pub use rapier_backend::RapierBackend;

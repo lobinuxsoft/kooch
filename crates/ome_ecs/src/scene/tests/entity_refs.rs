@@ -201,3 +201,88 @@ fn a_saved_document_serialises_without_live_handles() {
         "a saved reference must be persistent, got {value:?}",
     );
 }
+
+/// The shape a joint actually has: **two** references in one component,
+/// pointing at two different entities.
+#[derive(Debug, Default, Clone, PartialEq, ome_ecs_macros::Reflect)]
+struct Pair {
+    a: Entity,
+    b: Entity,
+}
+
+impl Component for Pair {}
+
+/// Two references in one component both survive, and stay distinct.
+///
+/// The single-reference case above is what `parent_index` used to cover.
+/// This is the case it never could, and the one #560's joints are built
+/// on: nothing in the save or load path is allowed to treat "the entity
+/// reference" as singular.
+#[test]
+fn two_references_in_one_component_both_survive() {
+    let mut resources = setup_resources();
+    let (holder, first, second) = {
+        let mut commands = resources.remove::<Commands>().unwrap();
+        let spawned: Vec<Entity> = (0..3)
+            .map(|_| commands.spawn(&mut resources).id())
+            .collect();
+        commands.apply(&mut resources);
+        resources.insert(commands);
+        (spawned[0], spawned[1], spawned[2])
+    };
+
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu_reflected::<Pair>();
+        if let Some(storage) = registry.get_cpu_mut::<Pair>() {
+            storage.insert(
+                holder,
+                Pair {
+                    a: first,
+                    b: second,
+                },
+            );
+        }
+    }
+    if let Some(archetypes) = resources.get_mut::<crate::archetype_registry::ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(holder)
+    {
+        let next = archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<Pair>());
+        archetypes.register_entity(holder, next);
+    }
+
+    let document = SceneDocument::from_ecs(&mut resources);
+    let mut reloaded = setup_resources();
+    reloaded
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<Pair>();
+    sync_scene_to_ecs(&document, &mut reloaded).expect("loads");
+
+    let pair = reloaded
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<Pair>())
+        .and_then(|s| s.iter().next().map(|(_, pair)| pair.clone()))
+        .expect("the pair survived");
+
+    assert!(pair.a.is_valid(), "the first reference did not resolve");
+    assert!(pair.b.is_valid(), "the second reference did not resolve");
+    assert_ne!(
+        pair.a, pair.b,
+        "both references resolved to the same entity",
+    );
+
+    // Both targets were given identities, which is what makes the above
+    // more than two handles that happen to differ.
+    let ids: Vec<_> = reloaded
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<PersistentId>())
+        .map(|s| {
+            [pair.a, pair.b]
+                .iter()
+                .filter_map(|&entity| s.get(entity).map(|id| id.id))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(ids.len(), 2, "both targets should carry an identity");
+    assert_ne!(ids[0], ids[1], "the two targets share an identity");
+}

@@ -81,6 +81,11 @@ pub fn physics_sync_system(resources: &mut Resources) {
     // nothing is a genuine orphan.
     let orphans = find_orphans(resources, &world);
     push_authored_poses(&mut world, &authored, playing);
+    // After the bodies exist: a joint resolves its two entity references
+    // through the slots this pass just wrote, so running it first would
+    // leave every joint in a scene's first frame waiting on bodies that
+    // are about to appear.
+    super::joints::sync_joints(resources, &mut world);
 
     resources.insert(world);
     sync_archetypes(resources, &gained, &orphans);
@@ -308,6 +313,9 @@ pub fn physics_step_system(resources: &mut Resources) {
         .unwrap_or(FALLBACK_DT);
     if let Some(world) = resources.get_mut::<PhysicsWorld>() {
         world.backend_mut().step(dt);
+        // Immediately after the step that produced them, so a joint that
+        // broke is already gone from the registry before anything reads it.
+        super::joints::collect_broken_joints(world);
     }
 }
 

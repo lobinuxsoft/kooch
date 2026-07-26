@@ -14,6 +14,7 @@
 
 mod backend;
 mod conv;
+mod joints;
 
 #[cfg(test)]
 mod tests;

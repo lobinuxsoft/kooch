@@ -6,7 +6,7 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
-Last updated 2026-07-26, `development` at `b2e4ddc`.
+Last updated 2026-07-26, `development` at `a04b41a`.
 
 ---
 
@@ -18,29 +18,27 @@ Last updated 2026-07-26, `development` at `b2e4ddc`.
 | **#607** | Stable entity references — a component can point at an entity and survive a save |
 | **#609** | More than one scene loaded at once |
 | **#612** | Parented physics — compound colliders, gizmo parent-space conversion, Inspector warnings |
+| **#560** | Joints — one `Joint` component, all eight rapier kinds, motors, limits, breaking |
 
 ---
 
 ## Next — physics, because half of it is missing where users look
 
-Smoke turned up that the physics story has a visible hole: the editor tells authors to use
-a joint, and there are no joints.
+Smoke turned up that the physics story had a visible hole: the editor told authors to use a
+joint, and there were no joints. That one is closed; the rest of the hole is not.
 
-1. **#560 — joints.** Unblocked by #607, and now the answer the Inspector already points at.
-   Rapier offers fixed, revolute, prismatic, spherical, rope, spring, pin-slot and generic,
-   in impulse and multibody flavours, with motors, limits and breaking. Shape: one `Joint`
-   component with a reflected type discriminant and `FieldCondition` per-type fields — the
-   pattern #586 established for `Collider`.
-2. **#618 — mass control.** Compound bodies compute their centre of mass from every shape,
+1. **#618 — mass control.** Compound bodies compute their centre of mass from every shape,
    which surprised the author and reads as "slow". The physics is right; the control is
    missing. Needs a decision on the default before code.
-3. **#563 — physics debug render.** Would have made #618 diagnosable in seconds instead of
-   by reasoning about inertia tensors. Cheap, and it pays for itself the next time physics
-   looks wrong.
+2. **#563 — physics debug render.** Would have made #618 diagnosable in seconds instead of
+   by reasoning about inertia tensors, and joints are the next thing that will look wrong
+   without one: a hinge that does nothing and a hinge whose axis is off look identical from
+   the viewport.
 
 Then the rest of what Rapier exposes and the engine does not: **#561** (events, sensors,
-groups), **#562** (scene queries), **#567** (PD/PID controllers), **#569** (per-stage
-counters in the perf HUD).
+groups — also where a broken joint's event belongs; the backend already drains them),
+**#562** (scene queries), **#567** (PD/PID controllers), **#569** (per-stage counters in the
+perf HUD).
 
 > The standing rule: implement what Rapier offers, warn for what it does not. Everything
 > above is exposing the solver, not working around it. See `MEMORY.md`.

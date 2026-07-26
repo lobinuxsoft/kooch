@@ -1,11 +1,13 @@
 //! [`PhysicsPlugin`] — wires the backend into the ECS and the schedule.
 
 mod compound;
+mod joints;
 mod systems;
 #[cfg(test)]
 mod tests;
 mod world;
 
+pub use joints::JointRegistry;
 pub use systems::{physics_step_system, physics_sync_system, physics_writeback_system};
 pub use world::{BodySpec, PhysicsBody, PhysicsWorld};
 
@@ -15,7 +17,7 @@ use ome_core::run_state::run_if_playing;
 use ome_core::stage::Stage;
 use ome_ecs::component::ComponentRegistry;
 
-use crate::components::{Collider, RigidBody};
+use crate::components::{Collider, Joint, RigidBody};
 use crate::rapier_backend::RapierBackend;
 
 /// Adds rigid body physics to an app.
@@ -96,6 +98,7 @@ fn register_components(resources: &mut ome_core::resource::Resources) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<RigidBody>();
         registry.register_cpu_reflected::<Collider>();
+        registry.register_cpu_reflected::<Joint>();
         registry.register_cpu::<PhysicsBody>();
     }
 }

@@ -1,22 +1,7 @@
-//! ECS components describing an entity's physical intent.
+//! [`RigidBody`] and [`Collider`] — what an entity is physically.
 //!
-//! These say *what* an entity is physically — a dynamic body, a sphere
-//! of radius 0.5 — never *how* it is simulated. Nothing here mentions
-//! the backend, so swapping the solver (wgrapier, when GPU rigid bodies
-//! land) is a change inside [`crate::rapier_backend`], not a rewrite of
-//! every scene ever authored.
-//!
-//! # Why flat fields instead of enums
-//!
-//! Reflection has no enum representation — [`ReflectValue`] covers
-//! scalars, vectors and asset references — so a variant is a `u32`
-//! discriminant with labelled `choices`, and the parameters of every
-//! variant sit side by side. The alternative was blocking physics on a
-//! reflection feature; the shape of the data is the same either way,
-//! and [`Collider::shape`] resolves it back to a typed
-//! [`CollisionShape`] at the seam.
-//!
-//! [`ReflectValue`]: ome_ecs::reflect::ReflectValue
+//! See the [module docs](super) for why a variant is a `u32` discriminant
+//! rather than an enum.
 
 use glam::Vec3;
 
