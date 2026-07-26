@@ -26,7 +26,7 @@ use crate::state::EditorOverlay;
 use crate::undo::UndoStack;
 
 use super::EditorAction;
-use super::scene_io::{load_scene, save_scene_as, scene_dialog};
+use super::scene_io::{close_scene, load_scene, open_scene_additive, save_scene_as, scene_dialog};
 
 /// Dispatches a non-ECS, non-undo action to the appropriate handler.
 /// ECS actions (`Spawn`, `Despawn`, `SetField`, `AddComponent`,
@@ -45,6 +45,9 @@ pub(super) fn apply_non_ecs_action(
     match action {
         EditorAction::SaveScene => handle_save_scene(resources),
         EditorAction::OpenScene => handle_open_scene(resources, undo_stack),
+        EditorAction::OpenSceneAdditive => handle_open_scene_additive(resources),
+        EditorAction::CloseScene(id) => handle_close_scene(resources, *id),
+        EditorAction::SetActiveScene(id) => handle_set_active_scene(resources, *id),
         EditorAction::Play => handle_play(resources),
         EditorAction::Stop => handle_stop(resources),
         EditorAction::OpenProject(path) => handle_open_project(resources, path),
@@ -169,6 +172,41 @@ fn handle_open_scene(resources: &mut Resources, undo_stack: &mut UndoStack) {
             undo_stack.clear();
         }
         Err(e) => tracing::error!("failed to load scene: {e}"),
+    }
+}
+
+/// Opens a scene beside the ones already loaded.
+///
+/// The undo stack is left alone: nothing that was already open changed,
+/// so the history of edits to those scenes is still valid. A replacing
+/// load clears it because the entities those edits name are gone.
+fn handle_open_scene_additive(resources: &mut Resources) {
+    let Some(path) = scene_dialog(resources).pick_file() else {
+        return;
+    };
+    match open_scene_additive(resources, &path) {
+        Ok(id) => tracing::info!("scene {id} loaded additively from {}", path.display()),
+        Err(e) => tracing::error!("failed to load scene: {e}"),
+    }
+}
+
+/// Closes one scene, despawning only its entities.
+///
+/// The undo stack is cleared: entries naming entities that just went away
+/// would resurrect nothing on undo.
+fn handle_close_scene(resources: &mut Resources, id: ome_core::Guid) {
+    if close_scene(resources, id) {
+        tracing::info!("scene {id} closed");
+    } else {
+        tracing::warn!("asked to close scene {id}, which is not open");
+    }
+}
+
+fn handle_set_active_scene(resources: &mut Resources, id: ome_core::Guid) {
+    if let Some(sm) = resources.get_mut::<ome_ecs::SceneManager>()
+        && !sm.set_active(id)
+    {
+        tracing::warn!("asked to activate scene {id}, which is not open");
     }
 }
 

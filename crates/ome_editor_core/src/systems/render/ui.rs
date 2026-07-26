@@ -113,6 +113,7 @@ pub(super) fn run_editor_ui(
             });
             let mut tab_viewer = EditorTabViewer {
                 entities: &data.entities,
+                scenes: &data.scenes,
                 archetypes: &data.archetypes,
                 component_types: &data.component_types,
                 selected: &mut selected,

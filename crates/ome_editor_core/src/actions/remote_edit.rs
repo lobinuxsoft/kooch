@@ -365,6 +365,14 @@ fn classify(action: &EditorAction) -> Option<Edit<'_>> {
         // driving, instead of launching a second copy of it.
         EditorAction::Play => Some(Edit::SetPlaying(true)),
         EditorAction::Stop => Some(Edit::SetPlaying(false)),
+        // Multi-scene is a hub-side view of what the project loaded. The
+        // wire protocol has one scene, so opening a second one beside it,
+        // closing one, or switching which is active has nothing to send —
+        // listed rather than left to the catch-all so the audit in #596
+        // keeps meaning something.
+        EditorAction::OpenSceneAdditive
+        | EditorAction::CloseScene(_)
+        | EditorAction::SetActiveScene(_) => None,
         // Not something remote mode owns (project mgmt, settings, …).
         _ => None,
     }

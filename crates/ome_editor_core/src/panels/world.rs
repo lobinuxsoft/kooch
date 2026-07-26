@@ -1,15 +1,17 @@
 //! World panel — entity hierarchy list with context menu.
 
 mod entity_row;
+mod scene_bar;
 mod spawn_menu;
 
 use ome_ecs::entity::Entity;
 
 use crate::actions::EditorAction;
 use crate::icons;
-use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
+use crate::state::{EntityDisplayInfo, ReflectedTypeInfo, SceneDisplayInfo};
 
 use self::entity_row::draw_entity_row;
+use self::scene_bar::draw_scene_bar;
 use self::spawn_menu::draw_spawn_menu;
 
 /// Content of the "World" tab — entity hierarchy list with context menu.
@@ -23,7 +25,9 @@ pub(crate) fn draw_world_content(
     archetype_count: usize,
     active_archetype_count: usize,
     last_clicked_index: &mut Option<usize>,
+    scenes: &[SceneDisplayInfo],
 ) {
+    draw_scene_bar(ui, scenes, actions);
     ui.label(format!(
         "{} entities, {} archetypes ({} active)",
         entity_count, archetype_count, active_archetype_count,

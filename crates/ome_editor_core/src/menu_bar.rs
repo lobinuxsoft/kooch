@@ -49,6 +49,14 @@ pub(crate) fn draw_menu_bar(
                     actions.push(EditorAction::OpenScene);
                     ui.close();
                 }
+                if ui
+                    .button("Open Scene Additive...")
+                    .on_hover_text("Load a scene beside the ones already open")
+                    .clicked()
+                {
+                    actions.push(EditorAction::OpenSceneAdditive);
+                    ui.close();
+                }
                 ui.separator();
                 if ui.button("Close Project").clicked() {
                     actions.push(EditorAction::CloseProject);

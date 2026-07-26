@@ -73,6 +73,14 @@ pub(crate) enum EditorAction {
     Redo,
     SaveScene,
     OpenScene,
+    /// Open a scene beside the ones already loaded, rather than replacing
+    /// them. The scene becomes the active one, so newly spawned entities
+    /// land in it.
+    OpenSceneAdditive,
+    /// Close one open scene, despawning only its entities.
+    CloseScene(ome_core::Guid),
+    /// Make an already-open scene the one new entities are authored into.
+    SetActiveScene(ome_core::Guid),
     Play,
     Stop,
     /// Open a project: launch its binary with `--remote` and drive its

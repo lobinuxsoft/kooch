@@ -191,6 +191,20 @@ pub(crate) struct ComponentDisplayInfo {
     pub(crate) visibility: InspectorVisibility,
 }
 
+/// One open scene, as the World panel needs to show it.
+///
+/// A snapshot rather than a borrow of `SceneManager`: the UI pass runs
+/// while `Resources` is borrowed elsewhere, which is the same reason
+/// [`EntityDisplayInfo`] exists.
+#[derive(Debug, Clone)]
+pub(crate) struct SceneDisplayInfo {
+    pub(crate) id: ome_core::Guid,
+    /// File stem, or "Untitled" for a scene never saved.
+    pub(crate) name: String,
+    pub(crate) dirty: bool,
+    pub(crate) active: bool,
+}
+
 pub(crate) struct EntityDisplayInfo {
     pub(crate) entity: Entity,
     pub(crate) components: Vec<ComponentDisplayInfo>,

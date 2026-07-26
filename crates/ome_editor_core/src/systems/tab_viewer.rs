@@ -29,6 +29,7 @@ use crate::state::{
 
 pub(crate) struct EditorTabViewer<'a> {
     pub(crate) entities: &'a [EntityDisplayInfo],
+    pub(crate) scenes: &'a [crate::state::SceneDisplayInfo],
     pub(crate) archetypes: &'a [ArchetypeDisplayInfo],
     pub(crate) component_types: &'a [ComponentTypeInfo],
     pub(crate) selected: &'a mut Vec<Entity>,
@@ -107,6 +108,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.archetype_count,
                 self.active_archetype_count,
                 self.last_clicked_index,
+                self.scenes,
             ),
             EditorTab::View => draw_view_content(
                 ui,
