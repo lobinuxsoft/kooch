@@ -258,6 +258,7 @@ fn a_scaled_body_lands_on_a_scaled_floor() {
         RigidBody {
             kind: KIND_STATIC,
             mass: 0.0,
+            ..Default::default()
         },
         Collider {
             shape: SHAPE_CUBOID,

@@ -84,6 +84,20 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// move. For kinematic bodies this is the standard way to drive them.
     fn set_transform(&mut self, handle: BodyHandle, position: Vec3, rotation: Quat);
 
+    /// What the body actually weighs, in kg. `None` for a stale handle.
+    ///
+    /// Worth asking rather than assuming: the descriptor says what was
+    /// requested, and this says what the solver built. #618 was filed
+    /// because those two had silently drifted apart.
+    fn mass(&self, handle: BodyHandle) -> Option<f32>;
+
+    /// The body's centre of mass, in body-local space. `None` for a stale
+    /// handle.
+    ///
+    /// The thing a compound body surprises authors with, and what a
+    /// physics debug view has to draw (#563).
+    fn center_of_mass(&self, handle: BodyHandle) -> Option<Vec3>;
+
     /// Linear velocity in world space. `None` for stale handles or
     /// non-dynamic bodies.
     fn linear_velocity(&self, handle: BodyHandle) -> Option<Vec3>;

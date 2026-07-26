@@ -90,6 +90,13 @@ pub struct BodySpec {
     /// the body for the same reason it does on a scale change: rapier
     /// bakes shapes at build time.
     attachments: u64,
+    /// The authored centre of mass, or `None` for the collider's own.
+    ///
+    /// In the spec because rapier bakes mass properties into the body at
+    /// build time, the same as shapes. `RigidBody::density` deliberately is
+    /// *not* here: nothing in the simulation reads it, so a density edit
+    /// must not retire a body and drop its velocity mid-play.
+    center_of_mass: Option<Vec3>,
 }
 
 impl BodySpec {
@@ -119,6 +126,7 @@ impl BodySpec {
             half_height: collider.half_height,
             half_extents: collider.half_extents,
             center: collider.center,
+            center_of_mass: body.explicit_center_of_mass(),
             scale,
         }
     }
@@ -154,10 +162,15 @@ impl BodySpec {
             kind: RigidBody {
                 kind: self.kind,
                 mass: self.mass,
+                ..Default::default()
             }
             .body_kind(),
             shape: scaled_shape(&collider, self.scale),
             mass: self.mass,
+            // Scaled with the body, because it is a point in the entity's
+            // local space and the gizmo that scales the shape scales the
+            // space the point lives in.
+            center_of_mass: self.center_of_mass.map(|center| center * s),
             position,
             rotation,
             // Body-local, and deliberately *not* pre-rotated: rapier

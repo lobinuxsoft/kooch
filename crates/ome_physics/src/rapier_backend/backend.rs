@@ -8,7 +8,7 @@ use crate::backend::{
     JointHandle, PhysicsBackend, RayHit,
 };
 
-use super::conv::{collider_for, collider_for_pose};
+use super::conv::{collider_for, collider_for_pose, mass_properties_for};
 use super::joints::{JointEntry, JointRef, generic_joint_for, linear_impulse};
 
 /// Rapier-backed [`PhysicsBackend`].
@@ -132,6 +132,14 @@ impl RapierBackend {
         }
     }
 
+    /// Settles a body's mass properties now instead of at the next step.
+    fn recompute_mass_properties(&mut self, body: RigidBodyHandle) {
+        let colliders = &self.colliders;
+        if let Some(rb) = self.bodies.get_mut(body) {
+            rb.recompute_mass_properties_from_colliders(colliders);
+        }
+    }
+
     /// Removes the joints the last step overloaded.
     ///
     /// Rapier has no breaking of its own — it reports the impulse it
@@ -223,9 +231,18 @@ impl PhysicsBackend for RapierBackend {
             BodyKind::Kinematic => RigidBodyType::KinematicPositionBased,
             BodyKind::Static => RigidBodyType::Fixed,
         };
+        // `additional_mass_properties`, not `additional_mass`: the latter
+        // is *added* to whatever the colliders' density implies, so the
+        // authored number would mean a different weight for every shape.
+        // With massless colliders this is the body's entire mass
+        // properties, and it is exactly what the author typed.
         let rb = RigidBodyBuilder::new(body_type)
             .pose(Pose::from_parts(desc.position, desc.rotation))
-            .additional_mass(desc.mass.max(0.0))
+            .additional_mass_properties(mass_properties_for(
+                desc.shape,
+                desc.mass,
+                desc.center_of_mass,
+            ))
             .build();
         let collider = collider_for(desc.shape, desc.shape_offset);
         let rb_handle = self.bodies.insert(rb);
@@ -233,6 +250,11 @@ impl PhysicsBackend for RapierBackend {
             self.colliders
                 .insert_with_parent(collider, rb_handle, &mut self.bodies);
         self.publish_aabb(collider_handle);
+        // Rapier defers this to the next step. The editor authors a world
+        // it does not simulate, so without it every mass and centre of
+        // mass read before pressing Play is stale — and a physics debug
+        // view (#563) would draw the wrong point.
+        self.recompute_mass_properties(rb_handle);
         self.handles.insert(rb_handle)
     }
 
@@ -249,6 +271,10 @@ impl PhysicsBackend for RapierBackend {
             .colliders
             .insert_with_parent(collider, rb_handle, &mut self.bodies);
         self.publish_aabb(handle);
+        // Massless, so this changes nothing today — but it keeps "the
+        // properties are current" true after every shape change rather
+        // than only after the first.
+        self.recompute_mass_properties(rb_handle);
         Some(self.collider_handles.insert(handle))
     }
 
@@ -320,6 +346,22 @@ impl PhysicsBackend for RapierBackend {
             _ => body.set_position(pose, true),
         }
         self.publish_body_aabbs(rb_handle);
+    }
+
+    fn mass(&self, handle: BodyHandle) -> Option<f32> {
+        let rb_handle = *self.handles.get(handle)?;
+        Some(self.bodies.get(rb_handle)?.mass())
+    }
+
+    fn center_of_mass(&self, handle: BodyHandle) -> Option<Vec3> {
+        let rb_handle = *self.handles.get(handle)?;
+        Some(
+            self.bodies
+                .get(rb_handle)?
+                .mass_properties()
+                .local_mprops
+                .local_com,
+        )
     }
 
     fn linear_velocity(&self, handle: BodyHandle) -> Option<Vec3> {

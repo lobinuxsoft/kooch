@@ -26,8 +26,20 @@ pub(super) fn collider_for_pose(shape: CollisionShape, offset: Vec3, rotation: Q
         .build()
 }
 
-/// The un-built builder, so the offset is applied in one place.
+/// The un-built builder, so the offset and the density are applied in one
+/// place.
+///
+/// Every collider is built massless. Mass belongs to the body — see
+/// [`BodyDesc::mass`](crate::backend::BodyDesc::mass) for why the shapes
+/// do not get a say. A density left at rapier's default would make a body
+/// weigh its authored mass *plus* its volume, which is exactly the units
+/// bug #618 exists to close.
 fn builder_for(shape: CollisionShape) -> ColliderBuilder {
+    shape_builder(shape).density(0.0)
+}
+
+/// The shape, before density or placement.
+fn shape_builder(shape: CollisionShape) -> ColliderBuilder {
     match shape {
         CollisionShape::Sphere { radius } => ColliderBuilder::ball(radius),
         CollisionShape::Cuboid { half_extents } => ColliderBuilder::cuboid(
@@ -40,4 +52,31 @@ fn builder_for(shape: CollisionShape) -> ColliderBuilder {
             half_height,
         } => ColliderBuilder::capsule_y(half_height, radius),
     }
+}
+
+/// The mass properties a body of `mass` kg shaped like `shape` has.
+///
+/// The shape is measured at unit density and then *scaled* to the authored
+/// mass, so the tensor keeps the shape's proportions — a long thin capsule
+/// still resists rolling differently from tumbling — while the mass is
+/// exactly what the author typed.
+///
+/// Clamped away from zero: `set_mass(0.0, true)` scales the inertia to
+/// zero too, and a body with no inertia takes infinite angular
+/// acceleration from any torque. A mass field mid-edit passes through zero
+/// on the way to the value the author means, and the NaNs it would produce
+/// outlive the typo.
+pub(super) fn mass_properties_for(
+    shape: CollisionShape,
+    mass: f32,
+    center_of_mass: Option<Vec3>,
+) -> MassProperties {
+    const MIN_MASS: f32 = 1e-4;
+
+    let mut mprops = shape_builder(shape).build().shape().mass_properties(1.0);
+    mprops.set_mass(mass.max(MIN_MASS), true);
+    if let Some(center) = center_of_mass {
+        mprops.local_com = center;
+    }
+    mprops
 }
