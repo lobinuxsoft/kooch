@@ -87,6 +87,14 @@ slotmap::new_key_type! {
     pub struct BodyHandle;
 }
 
+slotmap::new_key_type! {
+    /// Opaque handle for one shape attached to a body.
+    ///
+    /// Separate from [`BodyHandle`] because a body owns several: removing
+    /// a child entity's collider must not take the body with it.
+    pub struct ColliderHandle;
+}
+
 /// Result of a successful [`PhysicsBackend::query_ray`] call.
 #[derive(Debug, Clone, Copy)]
 pub struct RayHit {
@@ -122,9 +130,38 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// simulation steps until [`remove_body`](Self::remove_body) is called.
     fn add_body(&mut self, desc: BodyDesc) -> BodyHandle;
 
-    /// Removes a body and its collider. Subsequent calls with `handle`
+    /// Removes a body and its colliders. Subsequent calls with `handle`
     /// return `None` from getters and silently no-op for setters.
     fn remove_body(&mut self, handle: BodyHandle);
+
+    /// Adds another collision shape to an existing body.
+    ///
+    /// This is how a hierarchy becomes physics: a child entity carrying a
+    /// `Collider` but no `RigidBody` of its own contributes its shape to
+    /// the nearest ancestor that has one. The result is **one** body with
+    /// several shapes, which is what Unity calls a compound collider and
+    /// Unreal calls welding.
+    ///
+    /// The alternative — one body per collider, held together by the
+    /// transform hierarchy — is the thing no engine supports, because the
+    /// solver and the hierarchy would both own the pose.
+    ///
+    /// `offset` and `rotation` place the shape in the body's local space.
+    /// Returns `None` for a stale body handle.
+    fn attach_collider(
+        &mut self,
+        body: BodyHandle,
+        shape: CollisionShape,
+        offset: Vec3,
+        rotation: Quat,
+    ) -> Option<ColliderHandle>;
+
+    /// Removes one attached shape. The body and its other shapes survive.
+    fn detach_collider(&mut self, handle: ColliderHandle);
+
+    /// Number of shapes attached to a body, including the one it was
+    /// created with. `None` for a stale handle.
+    fn collider_count(&self, body: BodyHandle) -> Option<usize>;
 
     /// Returns `true` when the handle is live.
     fn contains(&self, handle: BodyHandle) -> bool;
