@@ -25,7 +25,9 @@ use glam::{Quat, Vec3};
 use ome_ecs::component::Component;
 use ome_ecs::entity::Entity;
 
-use crate::backend::{BodyDesc, BodyHandle, CollisionShape, PhysicsBackend};
+use crate::backend::{
+    BodyDesc, BodyHandle, CollisionShape, Damping, PhysicsBackend, SurfaceMaterial,
+};
 use crate::components::{Collider, RigidBody};
 
 /// The physics body an entity owns, as a slot into [`PhysicsWorld`].
@@ -90,6 +92,14 @@ pub struct BodySpec {
     /// the body for the same reason it does on a scale change: rapier
     /// bakes shapes at build time.
     attachments: u64,
+    /// The body's own surface, and how quickly it loses motion.
+    ///
+    /// In the spec for the same reason the shape is: rapier bakes both into
+    /// the collider and the body at build time, so an Inspector edit has to
+    /// retire and rebuild. Unlike `RigidBody::density`, the simulation
+    /// genuinely reads these.
+    material: SurfaceMaterial,
+    damping: Damping,
     /// The authored centre of mass, or `None` for the collider's own.
     ///
     /// In the spec because rapier bakes mass properties into the body at
@@ -126,6 +136,8 @@ impl BodySpec {
             half_height: collider.half_height,
             half_extents: collider.half_extents,
             center: collider.center,
+            material: collider.material(),
+            damping: body.damping(),
             center_of_mass: body.explicit_center_of_mass(),
             scale,
         }
@@ -157,6 +169,7 @@ impl BodySpec {
             half_height: self.half_height,
             half_extents: self.half_extents,
             center: self.center,
+            ..Default::default()
         };
         BodyDesc {
             kind: RigidBody {
@@ -171,6 +184,8 @@ impl BodySpec {
             // local space and the gizmo that scales the shape scales the
             // space the point lives in.
             center_of_mass: self.center_of_mass.map(|center| center * s),
+            material: self.material,
+            damping: self.damping,
             position,
             rotation,
             // Body-local, and deliberately *not* pre-rotated: rapier
@@ -359,6 +374,7 @@ impl PhysicsWorld {
                 attachment.shape,
                 attachment.offset,
                 attachment.rotation,
+                attachment.material,
             );
         }
     }
@@ -394,6 +410,7 @@ pub(super) fn scaled_shape(collider: &Collider, scale: Vec3) -> CollisionShape {
         half_height: collider.half_height * s.y,
         half_extents: collider.half_extents * s,
         center: collider.center,
+        ..Default::default()
     };
     let scaled = match collider.shape {
         crate::components::SHAPE_CAPSULE => Collider {

@@ -25,7 +25,7 @@ use ome_ecs::component::ComponentRegistry;
 use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::{Children, GlobalTransform};
 
-use crate::backend::CollisionShape;
+use crate::backend::{CollisionShape, SurfaceMaterial};
 use crate::components::{Collider, RigidBody};
 
 use super::world::scaled_shape;
@@ -36,6 +36,9 @@ pub(super) struct Attachment {
     pub shape: CollisionShape,
     pub offset: Vec3,
     pub rotation: Quat,
+    /// The child's own surface. An ice patch welded onto a crate is still
+    /// ice — the body's material has no business overriding it.
+    pub material: SurfaceMaterial,
 }
 
 /// Collects the shapes a body inherits from its descendants.
@@ -87,6 +90,7 @@ pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attach
                 shape: scaled_shape(collider, scale),
                 offset: translation + collider.center,
                 rotation,
+                material: collider.material(),
             });
         }
 
@@ -137,6 +141,13 @@ pub(super) fn digest(attachments: &[Attachment]) -> u64 {
         {
             value.to_bits().hash(&mut hasher);
         }
+        // The surface is part of the shape's identity for rebuild
+        // purposes: editing a child's friction has to reach the solver,
+        // and rapier bakes it at build time like everything else.
+        attachment.material.friction.to_bits().hash(&mut hasher);
+        attachment.material.restitution.to_bits().hash(&mut hasher);
+        (attachment.material.friction_rule as u8).hash(&mut hasher);
+        (attachment.material.restitution_rule as u8).hash(&mut hasher);
         match attachment.shape {
             CollisionShape::Sphere { radius } => {
                 0u8.hash(&mut hasher);

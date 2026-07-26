@@ -2,6 +2,8 @@
 
 use glam::{Quat, Vec3};
 
+use super::material::{Damping, SurfaceMaterial};
+
 /// How the solver treats a body's motion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyKind {
@@ -56,6 +58,10 @@ pub struct BodyDesc {
     /// A vehicle wants its centre of mass low or it rolls in every corner,
     /// and no arrangement of collision shapes says that as directly.
     pub center_of_mass: Option<Vec3>,
+    /// What the body's own shape does on contact.
+    pub material: SurfaceMaterial,
+    /// How quickly the body loses motion with nothing touching it.
+    pub damping: Damping,
     pub position: Vec3,
     pub rotation: Quat,
     /// The shape's centre relative to the body, in body-local space.
@@ -75,6 +81,8 @@ impl BodyDesc {
             shape,
             mass,
             center_of_mass: None,
+            material: SurfaceMaterial::default(),
+            damping: Damping::default(),
             position: Vec3::ZERO,
             rotation: Quat::IDENTITY,
             shape_offset: Vec3::ZERO,
@@ -88,6 +96,8 @@ impl BodyDesc {
             shape,
             mass: 0.0,
             center_of_mass: None,
+            material: SurfaceMaterial::default(),
+            damping: Damping::default(),
             position,
             rotation: Quat::IDENTITY,
             shape_offset: Vec3::ZERO,

@@ -14,6 +14,7 @@ mod debug;
 mod joints;
 mod lifetime;
 mod mass;
+mod material;
 mod play_lifecycle;
 mod simulation;
 

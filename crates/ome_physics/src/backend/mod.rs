@@ -8,10 +8,12 @@
 mod body;
 mod debug;
 mod joint;
+mod material;
 
 pub use body::{BodyDesc, BodyHandle, BodyKind, ColliderHandle, CollisionShape, RayHit};
 pub use debug::{DebugCategories, DebugLine};
 pub use joint::{BrokenJoint, JointDesc, JointHandle, JointKind, JointMotor, MotorModel};
+pub use material::{CombineRule, Damping, SurfaceMaterial};
 
 use glam::{Quat, Vec3};
 
@@ -55,6 +57,10 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// both simulate want [`add_joint`](Self::add_joint) instead.
     ///
     /// `offset` and `rotation` place the shape in the body's local space.
+    /// `material` is the shape's own — a child contributing a collider
+    /// brings its own friction, because an ice patch welded to a crate is
+    /// still ice.
+    ///
     /// Returns `None` for a stale body handle.
     fn attach_collider(
         &mut self,
@@ -62,6 +68,7 @@ pub trait PhysicsBackend: Send + Sync + 'static {
         shape: CollisionShape,
         offset: Vec3,
         rotation: Quat,
+        material: SurfaceMaterial,
     ) -> Option<ColliderHandle>;
 
     /// Removes one attached shape. The body and its other shapes survive.
@@ -106,6 +113,18 @@ pub trait PhysicsBackend: Send + Sync + 'static {
 
     /// Sets linear velocity for dynamic bodies. No-op otherwise.
     fn set_linear_velocity(&mut self, handle: BodyHandle, velocity: Vec3);
+
+    /// Angular velocity in radians per second, about each world axis.
+    /// `None` for stale handles.
+    ///
+    /// The counterpart of [`linear_velocity`](Self::linear_velocity),
+    /// which existed alone. Spin is not derivable from anything else the
+    /// trait exposes, so without this "is angular damping working" is a
+    /// question with no way to ask it.
+    fn angular_velocity(&self, handle: BodyHandle) -> Option<Vec3>;
+
+    /// Sets angular velocity for dynamic bodies. No-op otherwise.
+    fn set_angular_velocity(&mut self, handle: BodyHandle, velocity: Vec3);
 
     /// Constrains two bodies to each other.
     ///

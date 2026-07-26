@@ -2,7 +2,7 @@ use rapier3d::prelude::*;
 
 use glam::{Quat, Vec3};
 
-use crate::backend::CollisionShape;
+use crate::backend::{CollisionShape, CombineRule, SurfaceMaterial};
 
 /// Builds the Rapier collider for an engine shape.
 ///
@@ -11,8 +11,14 @@ use crate::backend::CollisionShape;
 /// engine-side equivalent.
 /// `offset` becomes the collider's position relative to its parent body,
 /// which is how rapier expresses a shape that is not centred on the body.
-pub(super) fn collider_for(shape: CollisionShape, offset: Vec3) -> Collider {
-    builder_for(shape).translation(offset).build()
+pub(super) fn collider_for(
+    shape: CollisionShape,
+    offset: Vec3,
+    material: SurfaceMaterial,
+) -> Collider {
+    with_material(builder_for(shape), material)
+        .translation(offset)
+        .build()
 }
 
 /// Same, with a rotation in the body's local space.
@@ -20,10 +26,40 @@ pub(super) fn collider_for(shape: CollisionShape, offset: Vec3) -> Collider {
 /// A compound shape needs one: a child entity contributing its collider
 /// can be rotated relative to the body, and dropping that would silently
 /// axis-align every attached shape.
-pub(super) fn collider_for_pose(shape: CollisionShape, offset: Vec3, rotation: Quat) -> Collider {
-    builder_for(shape)
+pub(super) fn collider_for_pose(
+    shape: CollisionShape,
+    offset: Vec3,
+    rotation: Quat,
+    material: SurfaceMaterial,
+) -> Collider {
+    with_material(builder_for(shape), material)
         .position(Pose::from_parts(offset, rotation))
         .build()
+}
+
+/// Applies the surface coefficients to a builder.
+///
+/// Applied here rather than per call site so no path can forget them and
+/// silently fall back to rapier's defaults — which is the state #623 was
+/// filed about.
+fn with_material(builder: ColliderBuilder, material: SurfaceMaterial) -> ColliderBuilder {
+    let material = material.sanitised();
+    builder
+        .friction(material.friction)
+        .friction_combine_rule(combine_rule(material.friction_rule))
+        .restitution(material.restitution)
+        .restitution_combine_rule(combine_rule(material.restitution_rule))
+}
+
+/// Our rule, as rapier's.
+fn combine_rule(rule: CombineRule) -> CoefficientCombineRule {
+    match rule {
+        CombineRule::Average => CoefficientCombineRule::Average,
+        CombineRule::Min => CoefficientCombineRule::Min,
+        CombineRule::Multiply => CoefficientCombineRule::Multiply,
+        CombineRule::Max => CoefficientCombineRule::Max,
+        CombineRule::ClampedSum => CoefficientCombineRule::ClampedSum,
+    }
 }
 
 /// The un-built builder, so the offset and the density are applied in one
