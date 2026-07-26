@@ -37,6 +37,7 @@ pub mod query;
 pub mod reflect;
 pub mod scene;
 pub mod scene_manager;
+pub mod scene_member;
 pub mod sky_renderer;
 pub mod spot_light;
 pub mod transform;
@@ -66,6 +67,7 @@ pub use scene::{
     ComponentDescription, EntityDescription, SceneDocument, SceneError, sync_scene_to_ecs,
 };
 pub use scene_manager::SceneManager;
+pub use scene_member::SceneMember;
 pub use sky_renderer::SkyRenderer;
 pub use spot_light::SpotLight;
 pub use transform::Transform;

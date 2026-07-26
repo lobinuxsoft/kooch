@@ -15,4 +15,4 @@ mod tests;
 
 pub use document::{ComponentDescription, EntityDescription, SceneDocument};
 pub use error::SceneError;
-pub use sync::sync_scene_to_ecs;
+pub use sync::{despawn_scene, spawn_scene_into, sync_scene_to_ecs};

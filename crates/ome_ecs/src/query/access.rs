@@ -33,7 +33,9 @@ impl AccessTracker {
             }
         }
         let mut borrows = self.borrows.write().unwrap();
-        borrows.entry(type_id).or_insert_with(|| AtomicIsize::new(0));
+        borrows
+            .entry(type_id)
+            .or_insert_with(|| AtomicIsize::new(0));
     }
 
     /// Acquires a shared (read) borrow on a component type.

@@ -75,17 +75,18 @@ pub fn transform_propagation_system(resources: &mut ome_core::resource::Resource
     // Get Children storage for traversal (read-only snapshot of entity lists).
     let children_map: std::collections::HashMap<Entity, Vec<Entity>> = registry
         .get_cpu::<Children>()
-        .map(|s| {
-            s.iter()
-                .map(|(e, c)| (*e, c.entities.clone()))
-                .collect()
-        })
+        .map(|s| s.iter().map(|(e, c)| (*e, c.entities.clone())).collect())
         .unwrap_or_default();
 
     let mut global_transforms: Vec<(Entity, GlobalTransform)> = Vec::new();
 
     while let Some((entity, parent_global)) = queue.pop_front() {
-        global_transforms.push((entity, GlobalTransform { matrix: parent_global }));
+        global_transforms.push((
+            entity,
+            GlobalTransform {
+                matrix: parent_global,
+            },
+        ));
 
         if let Some(children) = children_map.get(&entity) {
             for &child in children {

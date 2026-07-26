@@ -50,6 +50,9 @@ fn create_file(resources: &Resources, folder: &Path, name: &str, kind: NewFileKi
         NewFileKind::Scene => {
             let file = unique_target(folder, OsStr::new(&format!("{name}.ome_scene")));
             let doc = ome_ecs::SceneDocument {
+                // A new scene gets its identity now, so references into it are
+                // stable from the first save.
+                id: ome_core::Guid::new_v4(),
                 name: name.to_owned(),
                 version: "1.0".to_owned(),
                 entities: Vec::new(),

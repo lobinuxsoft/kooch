@@ -99,8 +99,7 @@ mod tests {
             .expect("material field reflected");
         assert_eq!(mat_meta.kind, FieldKind::AssetRef);
         assert_eq!(
-            mat_meta.asset_type,
-            "ome_render::material::asset::Material",
+            mat_meta.asset_type, "ome_render::material::asset::Material",
             "attribute must equal `type_name::<Material>()` so the picker filter matches sidecar entries",
         );
     }
@@ -114,7 +113,13 @@ mod tests {
         // renders it via the asset-picker dropdown.
         assert_eq!(
             names,
-            &["mesh", "material", "visible", "cast_shadows", "receive_shadows"],
+            &[
+                "mesh",
+                "material",
+                "visible",
+                "cast_shadows",
+                "receive_shadows"
+            ],
         );
     }
 
@@ -139,8 +144,7 @@ mod tests {
             .find(|f| f.name == "mesh")
             .expect("mesh field reflected");
         assert_eq!(
-            mesh_meta.asset_type,
-            "ome_render::meshlet::asset::MeshletMesh",
+            mesh_meta.asset_type, "ome_render::meshlet::asset::MeshletMesh",
             "attribute string must equal `type_name::<MeshletMesh>()` so the picker filter matches the AssetEntry's type_name",
         );
     }
@@ -155,7 +159,10 @@ mod tests {
             .find(|f| f.name == "mesh")
             .expect("mesh field should be reflected");
         assert_eq!(mesh_meta.kind, FieldKind::AssetRef);
-        assert_eq!(mesh_meta.asset_type, "ome_render::meshlet::asset::MeshletMesh");
+        assert_eq!(
+            mesh_meta.asset_type,
+            "ome_render::meshlet::asset::MeshletMesh"
+        );
     }
 
     #[test]

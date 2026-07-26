@@ -77,6 +77,9 @@ mod tests {
         let cam = PerspectiveCamera::default();
         let fields = cam.reflect_fields();
         let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
-        assert_eq!(names, &["active", "priority", "fov", "near", "far", "clear_color"]);
+        assert_eq!(
+            names,
+            &["active", "priority", "fov", "near", "far", "clear_color"]
+        );
     }
 }

@@ -95,7 +95,9 @@ impl<A: QueryFilter, B: QueryFilter, C: QueryFilter> QueryFilter for (A, B, C) {
     }
 
     fn matches_archetype(archetype: &Archetype) -> bool {
-        A::matches_archetype(archetype) && B::matches_archetype(archetype) && C::matches_archetype(archetype)
+        A::matches_archetype(archetype)
+            && B::matches_archetype(archetype)
+            && C::matches_archetype(archetype)
     }
 }
 
@@ -144,7 +146,11 @@ mod tests {
     #[test]
     fn combined_filter() {
         let arch = archetype_with_2::<Position, Velocity>();
-        assert!(<(With<Position>, Without<Health>)>::matches_archetype(&arch));
-        assert!(!<(With<Position>, Without<Velocity>)>::matches_archetype(&arch));
+        assert!(<(With<Position>, Without<Health>)>::matches_archetype(
+            &arch
+        ));
+        assert!(!<(With<Position>, Without<Velocity>)>::matches_archetype(
+            &arch
+        ));
     }
 }
