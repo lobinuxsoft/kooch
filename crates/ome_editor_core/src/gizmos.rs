@@ -23,6 +23,7 @@
 
 mod collider;
 mod lights;
+mod parent_space;
 mod visibility;
 mod visualizers;
 
@@ -49,9 +50,7 @@ pub(crate) use visibility::{
     GizmoGroup, GizmoVisibility, draw_gizmo_menu, groups_from_resources, load_visibility_system,
     save_visibility_system,
 };
-use visualizers::{
-    OrthographicCameraVisualizer, PerspectiveCameraVisualizer,
-};
+use visualizers::{OrthographicCameraVisualizer, PerspectiveCameraVisualizer};
 
 // ---------------------------------------------------------------------------
 // Systems
@@ -257,6 +256,13 @@ pub(crate) fn apply_handle_input(
     // `transform_propagation_system` re-derives the world matrix
     // downstream so the same-frame render sees the new pose.
     if dragging && !delta_out.is_noop() {
+        // The gizmo is drawn from `GlobalTransform`, so its delta is in
+        // world space; a `Transform` is in its parent's. For a root the
+        // two coincide, which is why this went unnoticed until something
+        // was parented — a child of a rotated parent slid down an axis
+        // the user had not grabbed. See #612.
+        let to_parent_space = parent_space::parent_world_to_local(resources, target);
+
         let mut mutated = false;
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
             && let Some(storage) = registry.get_cpu_mut::<Transform>()
@@ -264,12 +270,20 @@ pub(crate) fn apply_handle_input(
         {
             match delta_out {
                 TransformDelta::Translation(v) => {
+                    let v = match to_parent_space {
+                        Some(m) => parent_space::translation_to_parent_space(m, v),
+                        None => v,
+                    };
                     t.position += v;
                     mutated = true;
                 }
                 TransformDelta::Rotation(q) => {
-                    // Left-multiply: world rotation accumulates on the
-                    // existing local rotation.
+                    let q = match to_parent_space {
+                        Some(m) => parent_space::rotation_to_parent_space(m, q),
+                        None => q,
+                    };
+                    // Left-multiply: the delta accumulates on the existing
+                    // local rotation, both now in the parent's space.
                     t.rotation = q * t.rotation;
                     t.rotation = t.rotation.normalize();
                     mutated = true;
@@ -427,4 +441,3 @@ fn entity_world_rotation(resources: &Resources, entity: Entity) -> Mat3 {
     let (_, rotation, _) = gt.matrix.to_scale_rotation_translation();
     Mat3::from_quat(rotation)
 }
-
