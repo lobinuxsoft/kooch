@@ -15,9 +15,9 @@
 //! years. The way out is to stop having two bodies.
 //!
 //! A descendant that *does* carry its own [`RigidBody`] is left alone — it
-//! is an independent body, and joining two bodies is what a joint is for
-//! (#560). It also ends the walk: entities under it belong to that body,
-//! not to this one.
+//! is an independent body, and joining two bodies is what a
+//! [`Joint`](crate::components::Joint) is for. It also ends the walk:
+//! entities under it belong to that body, not to this one.
 
 use glam::{Quat, Vec3};
 use ome_core::resource::Resources;
@@ -182,6 +182,7 @@ fn warn_nested_body(entity: Entity, body: &RigidBody) {
         entity = entity.index(),
         "a dynamic RigidBody under another body does not follow its parent — \
          the solver owns its pose. For one body with several shapes, remove \
-         this RigidBody and keep the Collider; to link two bodies, use a joint",
+         this RigidBody and keep the Collider; to link two bodies that both \
+         simulate, add a Joint component naming them both",
     );
 }

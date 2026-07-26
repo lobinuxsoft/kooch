@@ -195,6 +195,7 @@ pub struct PhysicsWorld {
     backend: Box<dyn PhysicsBackend>,
     slots: Vec<Slot>,
     free: Vec<u32>,
+    joints: super::joints::JointRegistry,
 }
 
 impl PhysicsWorld {
@@ -204,7 +205,18 @@ impl PhysicsWorld {
             backend,
             slots: Vec::new(),
             free: Vec::new(),
+            joints: Default::default(),
         }
+    }
+
+    /// The authored joints and what the solver made of them.
+    pub fn joints(&self) -> &super::joints::JointRegistry {
+        &self.joints
+    }
+
+    /// The joint registry, for the sync pass.
+    pub(super) fn joints_mut(&mut self) -> &mut super::joints::JointRegistry {
+        &mut self.joints
     }
 
     /// The backend, for queries.
