@@ -39,6 +39,8 @@ const POSE_EPSILON: f32 = 1e-5;
 /// What the ECS says an entity's body should be, this frame.
 struct Authored {
     entity: Entity,
+    /// Shapes contributed by descendants that have no body of their own.
+    attachments: Vec<super::compound::Attachment>,
     /// The slot the entity currently claims, if it carries a
     /// [`PhysicsBody`] already.
     claimed: Option<u32>,
@@ -108,12 +110,19 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
                         .and_then(|s| s.get(entity))
                         .copied()
                         .unwrap_or_default();
+                    let attachments = super::compound::attachments_for(resources, entity);
                     Authored {
                         entity,
                         claimed: slots.and_then(|s| s.get(entity)).map(PhysicsBody::slot),
-                        spec: BodySpec::new(body, &collider, transform.scale),
+                        spec: BodySpec::with_attachments(
+                            body,
+                            &collider,
+                            transform.scale,
+                            super::compound::digest(&attachments),
+                        ),
                         position: transform.position,
                         rotation: transform.rotation,
+                        attachments,
                     }
                 })
                 .collect()
@@ -193,6 +202,11 @@ fn create_missing_bodies(
             continue;
         }
         let slot = world.insert(entry.entity, entry.spec, entry.position, entry.rotation);
+        // Shapes inherited from descendants join the body it just built.
+        // Attached here rather than in `world.insert` because they are
+        // gathered from the ECS, and `PhysicsWorld` deliberately knows
+        // nothing about entities beyond the one that owns each slot.
+        world.attach_all(slot, &entry.attachments);
         // Point the entry at its new slot so the pose pass does not have
         // to go looking for it — a search there would be quadratic in the
         // number of bodies every time a scene loads.

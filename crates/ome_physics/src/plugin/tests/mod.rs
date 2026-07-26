@@ -7,6 +7,7 @@
 //! This module is the shared harness; the assertions live in the
 //! submodules below.
 
+mod compound;
 mod configuration;
 mod lifetime;
 mod play_lifecycle;
@@ -57,6 +58,11 @@ fn world() -> Resources {
     registry.register_cpu_reflected::<RigidBody>();
     registry.register_cpu_reflected::<Collider>();
     registry.register_cpu::<PhysicsBody>();
+    // The hierarchy the compound walk reads. Normally registered by
+    // EcsPlugin; this harness builds its Resources by hand.
+    registry.register_cpu_reflected::<ome_ecs::hierarchy::Parent>();
+    registry.register_cpu_reflected::<ome_ecs::hierarchy::Children>();
+    registry.register_cpu_reflected::<ome_ecs::hierarchy::GlobalTransform>();
     r
 }
 

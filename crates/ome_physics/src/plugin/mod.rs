@@ -1,5 +1,6 @@
 //! [`PhysicsPlugin`] — wires the backend into the ECS and the schedule.
 
+mod compound;
 mod systems;
 #[cfg(test)]
 mod tests;
