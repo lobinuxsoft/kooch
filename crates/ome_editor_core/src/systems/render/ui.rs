@@ -73,6 +73,7 @@ pub(super) fn run_editor_ui(
     perf_stats: crate::perf::EditorPerfStats,
     gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
     gizmo_groups: &[crate::gizmos::GizmoGroup],
+    physics_debug: &mut ome_physics::backend::DebugCategories,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut selected_asset = overlay.selected_asset;
@@ -120,6 +121,7 @@ pub(super) fn run_editor_ui(
                 reflected_types: &data.reflected_types,
                 actions: &mut actions,
                 gizmo_visibility,
+                physics_debug,
                 gizmo_groups,
                 entity_count: data.entity_count,
                 archetype_count: data.archetype_count,

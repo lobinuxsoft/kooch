@@ -48,6 +48,7 @@ pub(crate) fn draw_view_content(
     perf_stats: EditorPerfStats,
     gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
     gizmo_groups: &[crate::gizmos::GizmoGroup],
+    physics_debug: &mut ome_physics::backend::DebugCategories,
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -186,6 +187,27 @@ pub(crate) fn draw_view_content(
                 } else {
                     "Choose which gizmos draw"
                 });
+
+                // The solver's own account of itself, separate from the
+                // Gizmos menu on purpose: those draw components, this
+                // draws what the physics world actually holds, and the
+                // whole value is in being able to compare the two.
+                let active = physics_debug.any();
+                let label = if active {
+                    format!("{} Physics*", icons::SLIDERS)
+                } else {
+                    format!("{} Physics", icons::SLIDERS)
+                };
+                ui.menu_button(label, |ui| {
+                    ui.set_min_width(240.0);
+                    draw_physics_debug_menu(ui, physics_debug);
+                })
+                .response
+                .on_hover_text(if active {
+                    "The physics overlay is on — it costs frame time"
+                } else {
+                    "Draw what the solver holds: contacts, joints, mass"
+                });
             });
     }
 
@@ -305,4 +327,41 @@ fn mode_button(ui: &mut egui::Ui, icon: &str, tooltip: &str, active: bool) -> bo
         .fill(fill)
         .stroke(stroke);
     ui.add(button).on_hover_text(tooltip).clicked()
+}
+
+/// The physics overlay's per-category switches.
+///
+/// Each line says what the category answers rather than what it draws. An
+/// author reaching for this menu has a question ("why is it not
+/// colliding"), not a shopping list.
+fn draw_physics_debug_menu(
+    ui: &mut egui::Ui,
+    categories: &mut ome_physics::backend::DebugCategories,
+) {
+    ui.checkbox(&mut categories.contacts, "Contacts")
+        .on_hover_text("Where bodies are actually touching. Start here.");
+    ui.checkbox(&mut categories.body_axes, "Centre of mass and axes")
+        .on_hover_text(
+            "Each body's axes, drawn at its centre of mass — not at its origin. \
+             A compound body's centre of mass is rarely where you assume.",
+        );
+    ui.checkbox(&mut categories.joints, "Joint anchors")
+        .on_hover_text(
+            "A joint anchored to the wrong point looks exactly like one that is broken.",
+        );
+    ui.checkbox(&mut categories.collider_aabbs, "Broad-phase bounds")
+        .on_hover_text("For when nothing collides at all and the question is whether the broad phase can see it.");
+
+    ui.separator();
+    ui.checkbox(&mut categories.collider_shapes, "Solver collider shapes")
+        .on_hover_text(
+            "The shapes the SOLVER holds, not the ones the components describe. The green \
+             collider gizmo already draws the latter — switch this on to compare them, because \
+             where they disagree is the bug. The expensive category.",
+        );
+
+    ui.separator();
+    if ui.button("Turn everything off").clicked() {
+        *categories = Default::default();
+    }
 }

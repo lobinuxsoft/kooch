@@ -22,6 +22,9 @@
 //! origin, and multi-entity dragging needs pivot semantics of its own.
 
 mod collider;
+mod physics_debug;
+
+pub(crate) use physics_debug::PhysicsDebugOverlay;
 mod lights;
 mod parent_space;
 mod visibility;
@@ -90,6 +93,12 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
     let mut mesh_batch = resources.remove::<MeshBatch>().unwrap_or_default();
     line_batch.clear();
     mesh_batch.clear();
+
+    // Before the selection gate on purpose: the solver overlay describes
+    // the whole world, and the questions it answers — what is touching
+    // what, which bodies went to sleep — are asked precisely when nothing
+    // is selected.
+    physics_debug::draw(resources, &mut line_batch);
 
     if selected.is_empty() {
         resources.insert(line_batch);

@@ -53,6 +53,7 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Which gizmo groups draw. Threaded through so the Gizmos dropdown
     /// can mutate it from the viewport toolbar.
     pub(crate) gizmo_visibility: &'a mut crate::gizmos::GizmoVisibility,
+    pub(crate) physics_debug: &'a mut ome_physics::backend::DebugCategories,
     /// The registered visualizers, grouped by category, for that dropdown.
     pub(crate) gizmo_groups: &'a [crate::gizmos::GizmoGroup],
     /// Per-frame snapshot of the `AssetDatabase` consumed by the
@@ -127,6 +128,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.perf_stats,
                 self.gizmo_visibility,
                 self.gizmo_groups,
+                self.physics_debug,
             ),
             EditorTab::Inspector => draw_inspector_content(
                 ui,

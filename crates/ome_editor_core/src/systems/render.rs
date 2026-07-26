@@ -268,6 +268,13 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .cloned()
         .unwrap_or_else(crate::gizmos::GizmoVisibility::new);
     let gizmo_groups = crate::gizmos::groups_from_resources(resources);
+    // Same lift as the gizmo choices: the menu mutates it while the egui
+    // closure holds Resources immutably. The overlay resource owns the
+    // reusable line buffer, so only the switches travel.
+    let mut physics_debug = resources
+        .get::<crate::gizmos::PhysicsDebugOverlay>()
+        .map(|overlay| overlay.categories)
+        .unwrap_or_default();
 
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
@@ -301,11 +308,23 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             .unwrap_or_default(),
         &mut gizmo_visibility,
         &gizmo_groups,
+        &mut physics_debug,
     );
 
     // Put the choices back so the batch system and the save system see
     // whatever the dropdown just changed.
     resources.insert(gizmo_visibility);
+
+    // The overlay resource is created on first use rather than at startup:
+    // a host with no physics never grows one.
+    match resources.get_mut::<crate::gizmos::PhysicsDebugOverlay>() {
+        Some(overlay) => overlay.categories = physics_debug,
+        None => {
+            if physics_debug.any() {
+                resources.insert(crate::gizmos::PhysicsDebugOverlay::new(physics_debug));
+            }
+        }
+    }
 
     // Hand the (possibly toggled) debug mode + LOD threshold back to
     // the resource map before the viewport render pass picks them up.
