@@ -76,7 +76,38 @@ grilla directamente.
 
 ---
 
-## ⭐ Estado actual (development HEAD `b2e4ddc`, 2026-07-26)
+## ⭐ Estado actual (2026-07-26, rama `feat/physics-joints`)
+
+**#560 joints implementado.** Un componente `Joint` con discriminante reflejado y campos
+por tipo vía `FieldCondition` — el patrón de `Collider`, no un componente por tipo de joint.
+Los ocho tipos de rapier, impulse y multibody, motores, límites y breaking.
+
+**Dos cosas que el issue prometía y rapier 0.34 no da tal cual** — verificado contra el
+source, no contra la doc:
+
+- **`PinSlotJoint::new` es `#[cfg(feature = "dim2")]`.** No existe en 3D. El equivalente
+  espacial es un joint **cilíndrico** (desliza y gira sobre el mismo eje) y se arma con el
+  `GenericJointBuilder` del propio rapier bloqueando `LIN_Y|LIN_Z|ANG_Y|ANG_Z`. Sigue siendo
+  rapier; no es dinámica propia.
+- **Joint breaking no existe en rapier.** Lo único que expone es `ImpulseJoint.impulses`.
+  Implementado leyendo ese impulso después del step y removiendo la constraint. Leer la
+  salida del solver no es un segundo solver — pero **sólo funciona para impulse joints**: un
+  multibody se resuelve en coordenadas reducidas, donde no hay impulso de constraint que
+  medir. Warning en el Inspector para esa combinación.
+
+**Convención propia y documentada:** límites y motor actúan sobre **un solo eje**, el eje
+libre primario del joint (angular para revolute/spherical/generic, lineal para
+prismatic/pin-slot; ninguno para fixed/rope/spring). Exponer los seis DoF sería seis veces
+la superficie de Inspector para un caso que casi no aparece. Un cono de swing de ragdoll es
+lo que esto NO cubre.
+
+**El umbral de breaking se mide sobre el impulso LINEAL solamente.** Rapier reporta seis
+componentes — tres de fuerza, tres de torque — y una norma sobre los seis suma newton·s con
+newton·m·s: un número contra el que nadie puede escribir un umbral.
+
+---
+
+## Estado anterior (development HEAD `b2e4ddc`, 2026-07-26)
 
 **Sesión 2026-07-26 — cerrado:** #605 (el ECS propio se queda), #607 (identidad de
 entidades), #609 (multi-escena), #612 (física en emparentados: compound + gizmo + warnings).
@@ -464,6 +495,30 @@ propia no.**
 
 No contradice "la física detrás de la abstracción": el trait sigue siendo el contrato, pero
 su superficie la define lo que Rapier puede hacer, no lo que nos gustaría.
+
+### Joints: cómo se conectan al ECS (locked 2026-07-26, #560)
+
+**El joint nombra a los DOS cuerpos; no vive sobre uno de ellos.** La alternativa
+(`connectedBody` de Unity) le cuesta a un cuerpo poder estar en dos joints a la vez, porque
+un componente aparece una vez por entidad — y una pelvis de ragdoll está en cuatro. Con dos
+`Entity` el joint va en la entidad que el autor quiera, incluso una vacía.
+
+**Los joints NO se direccionan con un componente de slot como los cuerpos.** `PhysicsBody`
+existe porque las dos direcciones del mapeo se recorren cada frame: sync pregunta "esta
+entidad tiene cuerpo", writeback pregunta "de quién es este cuerpo". **Un joint no tiene
+writeback** — nada lo lee de vuelta al ECS. Queda sólo entidad → joint, una vez por frame,
+sobre un conjunto mucho más chico. Un map es la forma honesta de eso.
+
+**El joint sabe que tiene que reconstruirse porque recuerda sus dos `BodyHandle`.** No hay
+un segundo ciclo de vida que mantener sincronizado: un handle de cuerpo cambia cuando el
+cuerpo se reconstruye — edición en el Inspector, cambio de escala, y sobre todo **stop**,
+que tira todos los `PhysicsBody` y rearma el mundo desde el ECS restaurado. Así que "se
+movieron los handles de mis cuerpos" ya significa todo lo que "terminó la sesión de play"
+tendría que significar.
+
+**Un joint roto NO vuelve solo.** El componente sigue autorado, así que olvidar el slot haría
+que el próximo sync lo reconstruya y se rompa otra vez, para siempre. El slot queda con
+`joint: None` hasta que los handles de los cuerpos se muevan.
 
 ### Prefabs = escenas instanciadas (decidido 2026-07-26, #611)
 
