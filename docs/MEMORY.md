@@ -419,6 +419,13 @@ cuerpo, varios shapes) y welding.
 Un warning honesto vale más que una feature que miente. Godot warnea en el nodo cuando la
 configuración física no cierra; copiar ese patrón en el editor.
 
+**Shear resuelto por la misma regla (2026-07-26, #612):** un padre con escala no uniforme
+compuesto con un hijo rotado produce *shear*, y las formas de Rapier se construyen desde
+dimensiones — no hay forma sheareada. Entonces: **aproximación documentada + warning en el
+Inspector**, no una geometría propia que lo represente. El collider queda como best-fit y el
+autor se entera dónde está mirando. `GlobalTransform::has_shear` ya lo detectaba para #214;
+ahora también lo mira el Inspector para colliders.
+
 **Excepciones acordadas** — lo específico del proyecto que Rapier no cubre:
 - **Planetas terraformables** (terreno editable en runtime).
 - **Double contouring / marching cubes** para la malla de colisión planetaria.

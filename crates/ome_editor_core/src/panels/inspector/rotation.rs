@@ -15,7 +15,7 @@ use ome_ecs::transform::Transform;
 
 use crate::state::{EulerCacheKey, RotationDisplayMode};
 
-use super::{RotationContext, EULER_CACHE_EPS};
+use super::{EULER_CACHE_EPS, RotationContext};
 
 /// Identifies the specific `Transform.rotation` field, which is the
 /// only Quat with a meaningful world-space interpretation.
@@ -79,8 +79,7 @@ pub(super) fn draw_quat_with_cache(
     }
     let new_euler = Vec3::new(dx.to_radians(), dy.to_radians(), dz.to_radians());
     euler_cache.insert(key, new_euler);
-    let new_display_quat =
-        Quat::from_euler(EulerRot::XYZ, new_euler.x, new_euler.y, new_euler.z);
+    let new_display_quat = Quat::from_euler(EulerRot::XYZ, new_euler.x, new_euler.y, new_euler.z);
     // Convert the edited display-space quaternion back to local space so
     // the Transform storage remains authoritative.
     let new_local = match mode {
