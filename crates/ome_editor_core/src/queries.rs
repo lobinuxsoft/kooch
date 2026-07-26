@@ -137,6 +137,14 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
         .map(|e| e.clone())
         .unwrap_or_default();
 
+    // Scene membership, so the World panel can group rows by the file
+    // they came from.
+    let scene_of: HashMap<ome_ecs::Entity, ome_core::Guid> = components
+        .as_ref()
+        .and_then(|registry| registry.get_cpu::<ome_ecs::SceneMember>())
+        .map(|storage| storage.iter().map(|(&e, m)| (e, m.scene)).collect())
+        .unwrap_or_default();
+
     // Collect world-space rotations from GlobalTransform once so the
     // Inspector's World rotation display mode has a lookup table.
     let mut global_rotations: HashMap<ome_ecs::Entity, Quat> = HashMap::new();
@@ -211,6 +219,7 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                 children: Vec::new(),
                 depth: 0,
                 global_rotation: global_rotations.get(&entity).copied(),
+                scene: scene_of.get(&entity).copied(),
                 parent_global_rotation: None,
             });
         }
@@ -261,6 +270,7 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
             let mut info = std::mem::replace(
                 &mut flat[idx],
                 EntityDisplayInfo {
+                    scene: None,
                     entity: ome_ecs::Entity::INVALID,
                     components: Vec::new(),
                     parent: None,

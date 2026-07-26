@@ -70,12 +70,26 @@ pub(crate) fn draw_world_content(
     handle_keyboard(ui, entities, selected, last_clicked_index, actions);
 
     egui::ScrollArea::vertical().show(ui, |ui| {
-        for (idx, info) in entities.iter().enumerate() {
-            draw_entity_row(
+        // One scene: no headers, since every row would sit under the same
+        // one and the grouping would only cost a level of indentation.
+        if scenes.len() < 2 {
+            for (idx, info) in entities.iter().enumerate() {
+                draw_entity_row(
+                    ui,
+                    idx,
+                    info,
+                    entities,
+                    selected,
+                    reflected_types,
+                    actions,
+                    last_clicked_index,
+                );
+            }
+        } else {
+            draw_grouped_by_scene(
                 ui,
-                idx,
-                info,
                 entities,
+                scenes,
                 selected,
                 reflected_types,
                 actions,
@@ -159,5 +173,91 @@ fn handle_keyboard(
             selected.push(entities[new_idx].entity);
         }
         *last_clicked_index = Some(new_idx);
+    }
+}
+
+/// Draws the entity list grouped under a header per open scene.
+///
+/// Only used with more than one scene open. Rows keep their original
+/// indices so keyboard navigation and shift-range selection still address
+/// the same flat list the rest of the panel works with.
+#[allow(clippy::too_many_arguments)]
+fn draw_grouped_by_scene(
+    ui: &mut egui::Ui,
+    entities: &[EntityDisplayInfo],
+    scenes: &[SceneDisplayInfo],
+    selected: &mut Vec<Entity>,
+    reflected_types: &[ReflectedTypeInfo],
+    actions: &mut Vec<EditorAction>,
+    last_clicked_index: &mut Option<usize>,
+) {
+    let mut drawn = vec![false; entities.len()];
+
+    for scene in scenes {
+        let rows: Vec<usize> = entities
+            .iter()
+            .enumerate()
+            .filter(|(_, info)| info.scene == Some(scene.id))
+            .map(|(idx, _)| idx)
+            .collect();
+
+        let header = if scene.dirty {
+            format!("{} ({} entities) *", scene.name, rows.len())
+        } else {
+            format!("{} ({} entities)", scene.name, rows.len())
+        };
+
+        // The active scene starts expanded: it is the one being worked in.
+        egui::CollapsingHeader::new(header)
+            .id_salt(scene.id.to_string())
+            .default_open(scene.active)
+            .show(ui, |ui| {
+                if rows.is_empty() {
+                    ui.weak("(empty)");
+                }
+                for idx in rows {
+                    drawn[idx] = true;
+                    draw_entity_row(
+                        ui,
+                        idx,
+                        &entities[idx],
+                        entities,
+                        selected,
+                        reflected_types,
+                        actions,
+                        last_clicked_index,
+                    );
+                }
+            });
+    }
+
+    // Anything belonging to no scene still has to be reachable, or an
+    // entity spawned before the first save would vanish from the panel
+    // that is supposed to list the world.
+    let orphans: Vec<usize> = drawn
+        .iter()
+        .enumerate()
+        .filter(|&(_, done)| !done)
+        .map(|(idx, _)| idx)
+        .collect();
+    if !orphans.is_empty() {
+        egui::CollapsingHeader::new(format!("Unsaved ({} entities)", orphans.len()))
+            .id_salt("world_unsaved_group")
+            .default_open(true)
+            .show(ui, |ui| {
+                ui.weak("Not in any scene yet — saved with the active one.");
+                for idx in orphans {
+                    draw_entity_row(
+                        ui,
+                        idx,
+                        &entities[idx],
+                        entities,
+                        selected,
+                        reflected_types,
+                        actions,
+                        last_clicked_index,
+                    );
+                }
+            });
     }
 }

@@ -217,6 +217,10 @@ pub(crate) struct EntityDisplayInfo {
     /// World-space rotation from `GlobalTransform`, if available. Used
     /// by the Inspector's World rotation display mode.
     pub(crate) global_rotation: Option<glam::Quat>,
+    /// Scene this entity was authored in, or `None` for one that belongs
+    /// to no scene — an editor helper, or something spawned but not yet
+    /// saved into any file.
+    pub(crate) scene: Option<ome_core::Guid>,
     /// Parent's world-space rotation from `GlobalTransform`, if the
     /// entity has a parent and that parent has a `GlobalTransform`.
     /// Used to convert World-space edits back to the local rotation
