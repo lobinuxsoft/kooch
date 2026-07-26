@@ -1,10 +1,13 @@
 use glam::{Quat, Vec3};
+use rapier3d::geometry::ColliderHandle as RapierColliderHandle;
 use rapier3d::prelude::*;
 use slotmap::SlotMap;
 
-use crate::backend::{BodyDesc, BodyHandle, BodyKind, PhysicsBackend, RayHit};
+use crate::backend::{
+    BodyDesc, BodyHandle, BodyKind, ColliderHandle, CollisionShape, PhysicsBackend, RayHit,
+};
 
-use super::conv::collider_for;
+use super::conv::{collider_for, collider_for_pose};
 
 /// Rapier-backed [`PhysicsBackend`].
 ///
@@ -25,6 +28,8 @@ pub struct RapierBackend {
     integration_parameters: IntegrationParameters,
     gravity: Vec3,
     handles: SlotMap<BodyHandle, RigidBodyHandle>,
+    /// Shapes attached beyond the one each body was created with.
+    collider_handles: SlotMap<ColliderHandle, RapierColliderHandle>,
 }
 
 impl RapierBackend {
@@ -42,6 +47,7 @@ impl RapierBackend {
             integration_parameters: IntegrationParameters::default(),
             gravity: Vec3::new(0.0, -9.81, 0.0),
             handles: SlotMap::with_key(),
+            collider_handles: SlotMap::with_key(),
         }
     }
 
@@ -96,7 +102,7 @@ impl RapierBackend {
     ///
     /// Goes through `set_aabb` rather than a broad-phase update so the
     /// modified-collider bookkeeping `step` depends on is left alone.
-    fn publish_aabb(&mut self, collider: ColliderHandle) {
+    fn publish_aabb(&mut self, collider: RapierColliderHandle) {
         let Some(aabb) = self.colliders.get(collider).map(|c| c.compute_aabb()) else {
             return;
         };
@@ -107,7 +113,7 @@ impl RapierBackend {
     /// Republishes every collider attached to a body. Used after a
     /// teleport, which can move several colliders at once.
     fn publish_body_aabbs(&mut self, body: RigidBodyHandle) {
-        let colliders: Vec<ColliderHandle> = self
+        let colliders: Vec<RapierColliderHandle> = self
             .bodies
             .get(body)
             .map(|b| b.colliders().to_vec())
@@ -162,6 +168,38 @@ impl PhysicsBackend for RapierBackend {
                 .insert_with_parent(collider, rb_handle, &mut self.bodies);
         self.publish_aabb(collider_handle);
         self.handles.insert(rb_handle)
+    }
+
+    fn attach_collider(
+        &mut self,
+        body: BodyHandle,
+        shape: CollisionShape,
+        offset: Vec3,
+        rotation: Quat,
+    ) -> Option<ColliderHandle> {
+        let rb_handle = *self.handles.get(body)?;
+        let collider = collider_for_pose(shape, offset, rotation);
+        let handle = self
+            .colliders
+            .insert_with_parent(collider, rb_handle, &mut self.bodies);
+        self.publish_aabb(handle);
+        Some(self.collider_handles.insert(handle))
+    }
+
+    fn detach_collider(&mut self, handle: ColliderHandle) {
+        let Some(collider_handle) = self.collider_handles.remove(handle) else {
+            return;
+        };
+        // `wake_up: true` — the body's shape changed, so a sleeping body
+        // has to re-evaluate contacts or it keeps colliding with a shape
+        // that is gone.
+        self.colliders
+            .remove(collider_handle, &mut self.islands, &mut self.bodies, true);
+    }
+
+    fn collider_count(&self, body: BodyHandle) -> Option<usize> {
+        let rb_handle = *self.handles.get(body)?;
+        Some(self.bodies.get(rb_handle)?.colliders().len())
     }
 
     fn remove_body(&mut self, handle: BodyHandle) {

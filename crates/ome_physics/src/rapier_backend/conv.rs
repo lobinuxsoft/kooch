@@ -1,6 +1,6 @@
 use rapier3d::prelude::*;
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 use crate::backend::CollisionShape;
 
@@ -13,6 +13,17 @@ use crate::backend::CollisionShape;
 /// which is how rapier expresses a shape that is not centred on the body.
 pub(super) fn collider_for(shape: CollisionShape, offset: Vec3) -> Collider {
     builder_for(shape).translation(offset).build()
+}
+
+/// Same, with a rotation in the body's local space.
+///
+/// A compound shape needs one: a child entity contributing its collider
+/// can be rotated relative to the body, and dropping that would silently
+/// axis-align every attached shape.
+pub(super) fn collider_for_pose(shape: CollisionShape, offset: Vec3, rotation: Quat) -> Collider {
+    builder_for(shape)
+        .position(Pose::from_parts(offset, rotation))
+        .build()
 }
 
 /// The un-built builder, so the offset is applied in one place.

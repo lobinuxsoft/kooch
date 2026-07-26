@@ -25,7 +25,7 @@ use glam::{Quat, Vec3};
 use ome_ecs::component::Component;
 use ome_ecs::entity::Entity;
 
-use crate::backend::{BodyDesc, BodyHandle, PhysicsBackend};
+use crate::backend::{BodyDesc, BodyHandle, CollisionShape, PhysicsBackend};
 use crate::components::{Collider, RigidBody};
 
 /// The physics body an entity owns, as a slot into [`PhysicsWorld`].
@@ -82,6 +82,14 @@ pub struct BodySpec {
     /// the sync pass compares specs to decide what to rebuild, so dragging
     /// the scale gizmo lands here and retires the old body.
     scale: Vec3,
+    /// Digest of the shapes this body inherits from its descendants.
+    ///
+    /// A digest rather than the shapes themselves, so the spec stays
+    /// plain-old-data and comparable by value. Adding, moving, resizing or
+    /// deleting a child's collider changes it, and the sync pass rebuilds
+    /// the body for the same reason it does on a scale change: rapier
+    /// bakes shapes at build time.
+    attachments: u64,
 }
 
 impl BodySpec {
@@ -92,7 +100,18 @@ impl BodySpec {
     /// grew with the gizmo and the collider stayed at its authored
     /// dimensions.
     pub fn new(body: &RigidBody, collider: &Collider, scale: Vec3) -> Self {
+        Self::with_attachments(body, collider, scale, 0)
+    }
+
+    /// Same, for a body that inherits shapes from its descendants.
+    pub fn with_attachments(
+        body: &RigidBody,
+        collider: &Collider,
+        scale: Vec3,
+        attachments: u64,
+    ) -> Self {
         Self {
+            attachments,
             kind: body.kind,
             mass: body.mass,
             shape: collider.shape,
@@ -126,20 +145,10 @@ impl BodySpec {
         let s = self.scale.abs();
         let collider = Collider {
             shape: self.shape,
-            radius: self.radius * s.max_element(),
-            half_height: self.half_height * s.y,
-            half_extents: self.half_extents * s,
+            radius: self.radius,
+            half_height: self.half_height,
+            half_extents: self.half_extents,
             center: self.center,
-        };
-        // The capsule's radius follows its horizontal axes, not the
-        // largest overall — a tall thin capsule scaled on Y should get
-        // taller, not fatter.
-        let collider = match self.shape {
-            crate::components::SHAPE_CAPSULE => Collider {
-                radius: self.radius * s.x.max(s.z),
-                ..collider
-            },
-            _ => collider,
         };
         BodyDesc {
             kind: RigidBody {
@@ -147,7 +156,7 @@ impl BodySpec {
                 mass: self.mass,
             }
             .body_kind(),
-            shape: collider.collision_shape(),
+            shape: scaled_shape(&collider, self.scale),
             mass: self.mass,
             position,
             rotation,
@@ -302,4 +311,67 @@ impl PhysicsWorld {
             .filter(|(_, s)| s.entity.is_valid())
             .map(|(index, s)| (index as u32, s.entity, s.spec, s.handle))
     }
+}
+
+impl PhysicsWorld {
+    /// Adds a body's inherited shapes to the body in `slot`.
+    ///
+    /// Handles are not kept: an attachment only changes as part of a spec
+    /// change, and a spec change retires the whole body — which takes its
+    /// shapes with it. Tracking them individually would buy nothing and
+    /// give two places to forget.
+    pub fn attach_all(&mut self, slot: u32, attachments: &[super::compound::Attachment]) {
+        let Some(handle) = self.handle(slot) else {
+            return;
+        };
+        for attachment in attachments {
+            self.backend_mut().attach_collider(
+                handle,
+                attachment.shape,
+                attachment.offset,
+                attachment.rotation,
+            );
+        }
+    }
+}
+
+/// Folds a `Transform` scale into a collider's dimensions.
+///
+/// Rapier's shapes take no scale — they are built from dimensions — so
+/// scaling has to happen where the shape is built. Shared by the body's
+/// own shape and by the ones its descendants contribute, so a compound
+/// child scales the same way the body does.
+///
+/// # Why the round shapes are approximations
+///
+/// Only a box scales exactly: its half-extents are per-axis. A
+/// non-uniformly scaled sphere is an ellipsoid and Rapier has no
+/// ellipsoid primitive, so the round shapes follow the convention every
+/// engine uses:
+///
+/// - **Sphere**: radius times the largest axis scale. Enclosing the mesh
+///   beats intersecting it; a collider smaller than what you can see is
+///   the one that reads as a physics bug.
+/// - **Capsule**: radius times the larger of the two *horizontal* scales,
+///   half-height times the vertical one, because the capsule runs along Y.
+///   A tall thin capsule scaled on Y should get taller, not fatter.
+///
+/// A truly non-uniform round collider wants a convex hull (#137).
+pub(super) fn scaled_shape(collider: &Collider, scale: Vec3) -> CollisionShape {
+    let s = scale.abs();
+    let scaled = Collider {
+        shape: collider.shape,
+        radius: collider.radius * s.max_element(),
+        half_height: collider.half_height * s.y,
+        half_extents: collider.half_extents * s,
+        center: collider.center,
+    };
+    let scaled = match collider.shape {
+        crate::components::SHAPE_CAPSULE => Collider {
+            radius: collider.radius * s.x.max(s.z),
+            ..scaled
+        },
+        _ => scaled,
+    };
+    scaled.collision_shape()
 }
