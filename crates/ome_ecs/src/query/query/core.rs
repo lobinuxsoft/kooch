@@ -70,9 +70,7 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
             .filter(|arch| {
                 // Exclude archetypes that contain excluded types.
                 let excluded = F::excluded_ids();
-                excluded
-                    .iter()
-                    .all(|e| !arch.components().contains(e))
+                excluded.iter().all(|e| !arch.components().contains(e))
             })
             .collect();
 

@@ -77,7 +77,10 @@ mod tests {
     ) {
         if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
             registry.register_cpu_reflected::<T>();
-            registry.get_cpu_mut::<T>().unwrap().insert(entity, component);
+            registry
+                .get_cpu_mut::<T>()
+                .unwrap()
+                .insert(entity, component);
         }
     }
 
@@ -114,7 +117,13 @@ mod tests {
         hierarchy_sync_system(&mut resources);
 
         let registry = resources.get::<ComponentRegistry>().unwrap();
-        assert!(registry.get_cpu::<Children>().unwrap().get(parent).is_none());
+        assert!(
+            registry
+                .get_cpu::<Children>()
+                .unwrap()
+                .get(parent)
+                .is_none()
+        );
     }
 
     #[test]
@@ -282,11 +291,7 @@ mod tests {
 
         insert_component(&mut resources, child_a, Parent { entity: root });
         insert_component(&mut resources, child_b, Parent { entity: root });
-        insert_component(
-            &mut resources,
-            grandchild,
-            Parent { entity: child_a },
-        );
+        insert_component(&mut resources, grandchild, Parent { entity: child_a });
 
         hierarchy_sync_system(&mut resources);
 

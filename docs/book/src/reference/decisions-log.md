@@ -405,3 +405,47 @@ Format:
 > absent saves and loads as unset, which is the normal state for a
 > reference into a non-resident cell under #566. Unblocks #560 and
 > cross-scene references.
+
+> **2026-07-25 · The world is the container; scenes are content loaded into it** *(feat [#609](https://github.com/lobinuxsoft/oh_my_engine/issues/609))*
+>
+> **Decision:** `SceneManager` becomes a registry of open scenes with one
+> active, instead of a single current path whose load replaced the world.
+> Scenes carry a `Guid`; `SceneMember` records an entity's authoring home
+> and is derived on load rather than serialised. Saving writes only one
+> scene's entities; closing despawns only its own.
+> **Why:** the model #566 settled on. One scene per world is "the entire
+> world in one section", which cannot express a space station and an
+> asteroid field as separate content occupying the same volume, nor make
+> "close the station" different from "walk away from it". #607 supplied
+> the prerequisite by making entity references survive a save.
+> **Consequence:** there is always a scene, even before the first save,
+> and entities with no membership are adopted by the active scene when it
+> saves — otherwise anything spawned in the editor would belong to nothing
+> and be written to no file. The reference remap table is keyed by
+> `(scene, id)`, never by id alone: ids are scene-local, so two open
+> scenes both numbering an entity 1 is ordinary. Opening the same file
+> twice is refused, because two copies would share every entity id.
+> Scene transforms and instancing are deliberately deferred — they need a
+> decision on whether the transform bakes at load, as Unreal's Embedded
+> Level Instances do.
+
+> **2026-07-26 · A scene is the prefab; instancing and editing are different operations** *(epic [#611](https://github.com/lobinuxsoft/oh_my_engine/issues/611))*
+>
+> **Decision:** prefabs are scenes instanced with their entity ids remapped
+> per instance. No separate format. Built in two phases: runtime
+> instancing first, the linked-with-overrides prefab system after.
+> **Why:** #609 refuses to open one file twice, which is right for editing
+> and wrong as a limit on instancing — and entity ids were made
+> scene-local in #607 precisely so instances could remap them. Unity's
+> prefab *is* a serialised scene file, and Godot says so outright with
+> `PackedScene`; both store an instance as a reference to the source plus
+> a list of differences rather than a copy, which is what keeps editing
+> the source propagating to its instances.
+> **Consequence:** two things must be settled in phase A because they
+> touch already-merged types — whether a scene must have a single root
+> (instancing as a unit with a transform needs one, and our documents are
+> a flat list), and how an outside reference names *this instance* rather
+> than the prefab, since `EntityRef::Persistent { scene, id }` is
+> ambiguous once a scene is instanced twice. Phase B waits on one
+> decision: whether overrides are per field, as Unity and Godot both do,
+> or whether editing an instance promotes it to its own scene.

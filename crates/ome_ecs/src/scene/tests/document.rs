@@ -10,6 +10,7 @@ use super::{Health, TestEphemeral, setup_resources};
 #[test]
 fn round_trip_save_load() {
     let doc = SceneDocument {
+        id: ome_core::Guid::new_v4(),
         name: "Test Scene".into(),
         version: "0.1.0".into(),
         entities: vec![

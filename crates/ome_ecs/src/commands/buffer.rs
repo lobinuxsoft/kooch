@@ -134,8 +134,7 @@ impl Commands {
                     components.remove_component(entity, &type_id);
                     // Transition archetype.
                     if let Some(current) = archetypes.entity_archetype(entity) {
-                        let new_arch =
-                            archetypes.archetype_after_remove_dynamic(current, type_id);
+                        let new_arch = archetypes.archetype_after_remove_dynamic(current, type_id);
                         archetypes.register_entity(entity, new_arch);
                     }
                 }

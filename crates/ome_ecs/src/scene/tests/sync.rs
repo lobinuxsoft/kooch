@@ -39,6 +39,7 @@ fn despawn_all_preserves_ephemeral_entities() {
     // Loading an empty scene should wipe the persistent entity but
     // keep the ephemeral one alive.
     let empty = SceneDocument {
+        id: ome_core::Guid::new_v4(),
         name: "empty".into(),
         version: "0.1.0".into(),
         entities: vec![],
@@ -66,6 +67,7 @@ fn sync_scene_to_ecs_rebuilds_entities() {
     }
 
     let doc = SceneDocument {
+        id: ome_core::Guid::new_v4(),
         name: "Test".into(),
         version: "0.1.0".into(),
         entities: vec![EntityDescription {
@@ -216,6 +218,7 @@ fn unknown_component_does_not_fail_the_load() {
         .register_cpu_reflected::<Health>();
 
     let doc = SceneDocument {
+        id: ome_core::Guid::new_v4(),
         name: "with unknown".into(),
         version: "0.1.0".into(),
         entities: vec![EntityDescription {
@@ -270,6 +273,7 @@ fn unknown_component_survives_a_save_round_trip() {
         ],
     };
     let doc = SceneDocument {
+        id: ome_core::Guid::new_v4(),
         name: "with unknown".into(),
         version: "0.1.0".into(),
         entities: vec![EntityDescription {
@@ -326,6 +330,7 @@ fn parked_components_are_cleared_between_loads() {
     let mut resources = setup_resources();
 
     let doc = SceneDocument {
+        id: ome_core::Guid::new_v4(),
         name: "first".into(),
         version: "0.1.0".into(),
         entities: vec![EntityDescription {
@@ -342,6 +347,7 @@ fn parked_components_are_cleared_between_loads() {
     assert_eq!(resources.get::<DynamicComponents>().unwrap().len(), 1);
 
     let empty = SceneDocument {
+        id: ome_core::Guid::new_v4(),
         name: "second".into(),
         version: "0.1.0".into(),
         entities: vec![],
@@ -374,6 +380,7 @@ fn duplicate_names_do_not_confuse_the_hierarchy() {
     // Two possible parents with the *same* name, and a child under the
     // first. Resolving by name would attach it to the second.
     let scene = SceneDocument {
+        id: ome_core::Guid::new_v4(),
         name: "Ambiguous".into(),
         version: "0.1.0".into(),
         entities: vec![

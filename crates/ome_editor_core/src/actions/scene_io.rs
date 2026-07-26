@@ -20,6 +20,29 @@ pub(super) fn load_scene(
     result
 }
 
+/// Loads a scene beside the ones already open, returning its identity.
+pub(super) fn open_scene_additive(
+    resources: &mut Resources,
+    path: &Path,
+) -> Result<ome_core::Guid, ome_ecs::SceneError> {
+    let mut sm = resources
+        .remove::<ome_ecs::SceneManager>()
+        .unwrap_or_default();
+    let result = sm.open_additive(path, resources);
+    resources.insert(sm);
+    result
+}
+
+/// Closes one scene. Returns `false` if it was not open.
+pub(super) fn close_scene(resources: &mut Resources, id: ome_core::Guid) -> bool {
+    let mut sm = resources
+        .remove::<ome_ecs::SceneManager>()
+        .unwrap_or_default();
+    let closed = sm.close(id, resources);
+    resources.insert(sm);
+    closed
+}
+
 /// Saves the current ECS state to `path` via `SceneManager`, adopting it
 /// as the new current scene.
 pub(super) fn save_scene_as(

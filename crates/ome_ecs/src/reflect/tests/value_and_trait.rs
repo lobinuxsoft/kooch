@@ -5,7 +5,10 @@ use crate::reflect::{FieldKind, Reflect, ReflectError, ReflectValue};
 
 #[test]
 fn reflect_fields_returns_metadata() {
-    let h = Health { hp: 50, max_hp: 100 };
+    let h = Health {
+        hp: 50,
+        max_hp: 100,
+    };
     let fields = h.reflect_fields();
     assert_eq!(fields.len(), 2);
     assert_eq!(fields[0].name, "hp");
@@ -15,7 +18,10 @@ fn reflect_fields_returns_metadata() {
 
 #[test]
 fn reflect_get_returns_values() {
-    let h = Health { hp: 42, max_hp: 100 };
+    let h = Health {
+        hp: 42,
+        max_hp: 100,
+    };
     assert_eq!(h.reflect_get("hp"), Some(ReflectValue::U32(42)));
     assert_eq!(h.reflect_get("max_hp"), Some(ReflectValue::U32(100)));
     assert_eq!(h.reflect_get("nonexistent"), None);
@@ -23,14 +29,20 @@ fn reflect_get_returns_values() {
 
 #[test]
 fn reflect_set_modifies_values() {
-    let mut h = Health { hp: 50, max_hp: 100 };
+    let mut h = Health {
+        hp: 50,
+        max_hp: 100,
+    };
     h.reflect_set("hp", ReflectValue::U32(75)).unwrap();
     assert_eq!(h.hp, 75);
 }
 
 #[test]
 fn reflect_set_type_mismatch() {
-    let mut h = Health { hp: 50, max_hp: 100 };
+    let mut h = Health {
+        hp: 50,
+        max_hp: 100,
+    };
     let err = h.reflect_set("hp", ReflectValue::F32(1.0)).unwrap_err();
     assert_eq!(
         err,
@@ -44,7 +56,10 @@ fn reflect_set_type_mismatch() {
 
 #[test]
 fn reflect_set_field_not_found() {
-    let mut h = Health { hp: 50, max_hp: 100 };
+    let mut h = Health {
+        hp: 50,
+        max_hp: 100,
+    };
     let err = h.reflect_set("nope", ReflectValue::U32(1)).unwrap_err();
     assert_eq!(err, ReflectError::FieldNotFound("nope".into()));
 }
@@ -61,10 +76,7 @@ fn reflect_value_kind() {
     assert_eq!(ReflectValue::F32(1.0).kind(), FieldKind::F32);
     assert_eq!(ReflectValue::U32(1).kind(), FieldKind::U32);
     assert_eq!(ReflectValue::Bool(true).kind(), FieldKind::Bool);
-    assert_eq!(
-        ReflectValue::Vec3(glam::Vec3::ZERO).kind(),
-        FieldKind::Vec3
-    );
+    assert_eq!(ReflectValue::Vec3(glam::Vec3::ZERO).kind(), FieldKind::Vec3);
 }
 
 #[test]

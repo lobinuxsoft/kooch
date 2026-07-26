@@ -20,6 +20,7 @@
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
+use ome_core::Guid;
 use ome_core::resource::Resources;
 
 use crate::archetype_registry::ArchetypeRegistry;
@@ -27,6 +28,7 @@ use crate::component::ComponentRegistry;
 use crate::entity::Entity;
 use crate::persistent_id::{EntityGuid, PersistentId, PersistentIdAllocator};
 use crate::reflect::{EntityRef, FieldKind, ReflectValue};
+use crate::scene_member::SceneMember;
 
 /// Every entity referenced by a reflected field anywhere in the world.
 ///
@@ -184,42 +186,73 @@ pub(super) fn resolve_deferred(resources: &mut Resources, deferred: Vec<Deferred
     }
 
     // Ids arrived as ordinary `PersistentId` components during the spawn
-    // pass, so the map is simply everything that ended up carrying one.
-    let by_id: HashMap<EntityGuid, Entity> = resources
+    // pass, so the map is everything that ended up carrying one.
+    //
+    // Keyed by *scene and* id, never by id alone: ids are scene-local, so
+    // two open scenes both having an entity 1 is ordinary. A map keyed on
+    // the id would collapse them and hand every reference whichever one
+    // was inserted last — the same failure that made resolving parents by
+    // name unusable.
+    let by_id: HashMap<(Guid, EntityGuid), Entity> = resources
         .get::<ComponentRegistry>()
-        .and_then(|components| components.get_cpu::<PersistentId>())
-        .map(|storage| {
-            storage
-                .iter()
-                .map(|(&entity, persistent)| (persistent.id, entity))
-                .collect()
+        .map(|components| {
+            let members = components.get_cpu::<SceneMember>();
+            components
+                .get_cpu::<PersistentId>()
+                .map(|storage| {
+                    storage
+                        .iter()
+                        .filter_map(|(&entity, persistent)| {
+                            let scene = members?.get(entity)?.scene;
+                            Some(((scene, persistent.id), entity))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
         })
         .unwrap_or_default();
+
+    // Which scene each referring entity lives in, so a reference that does
+    // not name a scene resolves within its own.
+    let scene_of = |resources: &Resources, entity: Entity| -> Option<Guid> {
+        resources
+            .get::<ComponentRegistry>()?
+            .get_cpu::<SceneMember>()?
+            .get(entity)
+            .map(|member| member.scene)
+    };
 
     for deferred in deferred {
         let Some(id) = deferred.reference.persistent_id() else {
             continue;
         };
 
-        // A cross-scene reference stays unresolved until that scene is
-        // loaded. Not an error — see the doc comment.
-        if deferred.reference.scene().is_some() {
+        // A reference naming no scene means "my own".
+        let Some(scene) = deferred
+            .reference
+            .scene()
+            .or_else(|| scene_of(resources, deferred.entity))
+        else {
             tracing::debug!(
                 target: "ome_ecs::scene",
                 field = %deferred.field,
-                "cross-scene reference left unresolved; its scene is not loaded",
+                "reference held by an entity belonging to no scene; left unresolved",
             );
             continue;
-        }
+        };
 
-        let resolved = match by_id.get(&id) {
+        let resolved = match by_id.get(&(scene, id)) {
             Some(&target) => ReflectValue::EntityRef(Some(EntityRef::live(target))),
             None => {
-                tracing::warn!(
+                // Ordinary when the target's scene is not open — a
+                // cross-scene reference resolves once both are loaded, and
+                // under world cells (#566) a non-resident target is the
+                // normal case rather than a broken file.
+                tracing::debug!(
                     target: "ome_ecs::scene",
                     field = %deferred.field,
                     %id,
-                    "reference points at an entity this scene does not contain",
+                    "reference target is not loaded; left unset",
                 );
                 ReflectValue::EntityRef(None)
             }

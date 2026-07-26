@@ -21,12 +21,12 @@ mod field;
 mod trait_def;
 mod value;
 
-pub use entity_ref::EntityRef;
-pub use field::{FieldChoice, FieldCondition, FieldKind, FieldMeta, InspectorVisibility};
-pub use value::ReflectValue;
-pub use error::ReflectError;
-pub use trait_def::Reflect;
 pub(crate) use accessor::{ReflectAccessor, TypedReflectAccessor};
+pub use entity_ref::EntityRef;
+pub use error::ReflectError;
+pub use field::{FieldChoice, FieldCondition, FieldKind, FieldMeta, InspectorVisibility};
+pub use trait_def::Reflect;
+pub use value::ReflectValue;
 
 #[cfg(test)]
 mod tests;

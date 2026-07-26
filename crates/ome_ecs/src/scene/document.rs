@@ -6,6 +6,7 @@ use crate::archetype_registry::ArchetypeRegistry;
 use crate::component::ComponentRegistry;
 use crate::dynamic_components::DynamicComponents;
 use crate::reflect::ReflectValue;
+use ome_core::Guid;
 use ome_core::resource::Resources;
 
 use super::error::SceneError;
@@ -17,6 +18,20 @@ use super::error::SceneError;
 /// Top-level scene container, serialized as RON.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SceneDocument {
+    /// Identity of this scene, stable across sessions.
+    ///
+    /// This is what [`EntityRef::Persistent`](crate::reflect::EntityRef) has
+    /// addressed since #607: a reference leaving its own file names the
+    /// scene it points into. A path could not serve — moving or renaming a
+    /// file would break every reference into it — for the same reason an
+    /// asset is addressed by [`Guid`] rather than by where it happens to
+    /// sit on disk.
+    ///
+    /// Files written before scenes had identity get one assigned on load;
+    /// [`SceneManager`](crate::scene_manager::SceneManager) marks them dirty
+    /// so it persists on the next save.
+    #[serde(default = "Guid::new_v4")]
+    pub id: Guid,
     pub name: String,
     pub version: String,
     pub entities: Vec<EntityDescription>,
@@ -90,6 +105,24 @@ impl SceneDocument {
     /// skipped entirely — used by editor crates to keep helper entities
     /// (cameras, gizmos) out of user scene files.
     pub fn from_ecs(resources: &mut Resources) -> Self {
+        Self::capture(resources, None, Guid::new_v4())
+    }
+
+    /// Snapshots only the entities belonging to `scene`.
+    ///
+    /// With several scenes open, saving one must not drag in another's
+    /// entities — that would duplicate them into both files and make the
+    /// next load spawn each twice.
+    pub fn from_ecs_scene(resources: &mut Resources, scene: Guid) -> Self {
+        Self::capture(resources, Some(scene), scene)
+    }
+
+    /// Shared body of [`Self::from_ecs`] and [`Self::from_ecs_scene`].
+    ///
+    /// `only` restricts the walk to one scene's members; `None` captures
+    /// the whole world, which is what Play and the remote protocol want —
+    /// they mirror what is running, not what one file owns.
+    fn capture(resources: &mut Resources, only: Option<Guid>, id: Guid) -> Self {
         // Saving assigns identity: `PersistentId` is opt-in, and whether
         // something is referenced is only known once references are
         // written. See `scene::entity_refs`.
@@ -106,6 +139,10 @@ impl SceneDocument {
             std::any::TypeId::of::<Children>(),
             std::any::TypeId::of::<GlobalTransform>(),
         ];
+
+        // Membership is derived on load, never written — see
+        // `SceneMember`. It is read here only to decide what belongs.
+        let member_tid = std::any::TypeId::of::<crate::scene_member::SceneMember>();
 
         // Snapshot ephemeral markers; default to empty if the resource is
         // not present (e.g., headless tests without an editor plugin).
@@ -131,11 +168,22 @@ impl SceneDocument {
                     continue;
                 }
                 for &entity in archetype.entities() {
+                    // Restrict to one scene's members when asked.
+                    if let Some(only) = only {
+                        let belongs = components
+                            .get_cpu::<crate::scene_member::SceneMember>()
+                            .and_then(|storage| storage.get(entity))
+                            .is_some_and(|member| member.scene == only);
+                        if !belongs {
+                            continue;
+                        }
+                    }
+
                     let mut comp_descs = Vec::new();
 
                     for &type_id in archetype.components() {
-                        // Skip hierarchy components.
-                        if skip_types.contains(&type_id) {
+                        // Skip hierarchy components and membership.
+                        if skip_types.contains(&type_id) || type_id == member_tid {
                             continue;
                         }
 
@@ -232,6 +280,7 @@ impl SceneDocument {
             .collect();
 
         SceneDocument {
+            id,
             name: "Untitled Scene".into(),
             version: "0.1.0".into(),
             entities,

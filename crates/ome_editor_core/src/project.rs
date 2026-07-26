@@ -344,6 +344,9 @@ pub fn ensure_default_scene(project_root: &Path) -> Result<PathBuf, ProjectError
     }
 
     let doc = SceneDocument {
+        // A new scene gets its identity now, so references into it are
+        // stable from the first save.
+        id: ome_core::Guid::new_v4(),
         name: "Default Scene".to_owned(),
         version: "0.1.0".to_owned(),
         entities: vec![

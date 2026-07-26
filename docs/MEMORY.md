@@ -81,9 +81,11 @@ grilla directamente.
 - **#605 CERRADO: `ome_ecs` se queda.** `bevy_ecs` evaluado con mediciones y descartado;
   ver la decisión sticky abajo. El ECS se mejora en el lugar, ordenado por dolor
   demostrado.
-- **#607 en curso (`feat/entity-refs`): identidad de entidades.** Un componente ya puede
+- **#609 en curso (`feat/multi-scene`): varias escenas abiertas a la vez.** El world es el
+  contenedor, las escenas son contenido. Ver la decisión sticky abajo.
+- **#607 MERGEADO (PR #608): identidad de entidades.** Un componente ya puede
   apuntar a otra entidad y sobrevivir un guardado. `Parent` dejó de ser un caso especial y
-  `parent_index` quedó como lectura legacy. Desbloquea #560 y las referencias cross-scene.
+  `parent_index` quedó como lectura legacy. Desbloqueó #560 y las referencias cross-scene.
 - **Épico de física CERRADO en lo esencial.** #139 mergeado (#570): `PhysicsPlugin` con
   componentes `RigidBody`/`Collider`, sync de vida, step en el timestep fijo, writeback a
   `Transform`, y Stop reconstruyendo el mundo físico desde el ECS restaurado. Smokeado por
@@ -347,6 +349,109 @@ apuntaba); ahora sólo mantiene los archivos diffeables.
 
 **Desbloqueado:** #560 (joints, dos referencias por joint) y las referencias cross-scene,
 que `parent_index` no podía expresar ni en principio.
+
+### Multi-escena: el world es el contenedor (locked 2026-07-25, #609)
+
+`SceneManager` era `current: Option<PathBuf>` y cargar reemplazaba el mundo — "el mundo
+entero en una sección", en los términos de #566. Ahora es un **registro de escenas
+abiertas** con una activa.
+
+- **La escena tiene `Guid`**, que es lo que `EntityRef::Persistent { scene, .. }` venía
+  direccionando desde #607. **NO un path**: renombrar el archivo rompería todas las
+  referencias que entran.
+- **`SceneMember { scene: Guid }`** = hogar de autoría. **Derivado en el load, NUNCA
+  serializado** — toda entidad de un archivo pertenece a esa escena, escribirlo guardaría
+  el mismo hecho dos veces. Mismo criterio que `Children`/`GlobalTransform`.
+- **SIEMPRE hay una escena**, aunque sea "Untitled" sin path (como cualquier editor).
+  Arrancar vacío significaría que las entidades creadas antes del primer guardado no
+  pertenecen a nada → se guardaría un archivo vacío y marcar dirty no tendría dónde.
+- **Las entidades sin `SceneMember` las adopta la escena activa al guardar.** Es cómo lo
+  spawneado en el editor consigue hogar sin que el autor piense en eso. Las ephemeral NO
+  se adoptan (la cámara del editor no es contenido).
+- **`dirty` es POR ESCENA.** Con dos abiertas, guardar una no puede declarar segura la otra.
+- **La tabla de remapeo se keyea por `(escena, id)`, NUNCA sólo por id.** Los ids son
+  locales a la escena, así que dos escenas numerando ambas una entidad 1 es lo normal;
+  keyear por id le daría a cada referencia la escena que cargó última — el mismo fallo que
+  hacía inservible resolver padres por nombre. **Hay test.**
+- **Abrir el mismo archivo dos veces se RECHAZA.** Dos copias compartirían todos los ids de
+  entidad, así que una referencia no podría decir a cuál apunta. Instanciar una escena N
+  veces necesita remapeo por instancia — trabajo aparte.
+- Un archivo sin `id` recibe uno al cargar y **se marca dirty**, para que persista. Si no,
+  tendría id distinto cada sesión y ninguna referencia entrante resolvería nunca.
+
+**Transform de escena: NO es criterio de streaming.** Unreal particiona el espacio en grid
+(World Partition) y aparte tiene Level Instances con transform — que en modo *Embedded*
+(default) **existen sólo en el editor** y en runtime se disuelven en la grid. Unity:
+secciones + `SceneLoadFlags.NewInstance` con `PostLoadOffset`. O sea el transform sirve para
+**composición** (instanciar un módulo N veces), no para decidir residencia. Una ciudad de
+40km no tiene "una posición": si el criterio fuera origen+radio, cargás la ciudad entera o
+nada. La residencia se deriva de dónde quedaron las entidades, como fijó #566.
+
+### Rapier define el techo de la física (locked 2026-07-26, #612)
+
+**Implementar SOLO lo que Rapier ofrece. Lo que no permite → WARNING, no construirlo por
+afuera.** Mismo razonamiento que "Bevy define el techo de wgpu", pero para física.
+
+Motivo: física escrita por afuera del solver pelea contra el solver — dos autoridades sobre
+la misma pose. El caso que originó la regla (un `RigidBody` dinámico emparentado a otro
+transform) es exactamente eso, y **Godot lleva años sin resolverlo** (issues #22904 y
+#120067, abiertas). Unity y Unreal lo *evitan* en vez de soportarlo: compound colliders (un
+cuerpo, varios shapes) y welding.
+
+Un warning honesto vale más que una feature que miente. Godot warnea en el nodo cuando la
+configuración física no cierra; copiar ese patrón en el editor.
+
+**Excepciones acordadas** — lo específico del proyecto que Rapier no cubre:
+- **Planetas terraformables** (terreno editable en runtime).
+- **Double contouring / marching cubes** para la malla de colisión planetaria.
+
+Las dos son sobre **generar la geometría** que después se le entrega a Rapier como
+collider, NO sobre reemplazar el solver. Esa es la línea: **geometría propia sí, dinámica
+propia no.**
+
+No contradice "la física detrás de la abstracción": el trait sigue siendo el contrato, pero
+su superficie la define lo que Rapier puede hacer, no lo que nos gustaría.
+
+### Prefabs = escenas instanciadas (decidido 2026-07-26, #611)
+
+**Abrir e instanciar son operaciones DISTINTAS y sólo una tiene restricción.** #609 rechaza
+abrir el mismo archivo dos veces *para editar* (dos copias editables no pueden guardarse
+las dos al mismo archivo). **Instanciar nunca tuvo esa restricción** — los ids se hicieron
+locales a la escena en #607 justamente para poder remapearlos por instancia.
+
+| | abrir (editar) | instanciar |
+|---|---|---|
+| ids del archivo | 1:1 con entidades | **remapeados** por instancia |
+| se guarda de vuelta | sí | no — la instancia vive en la escena contenedora |
+| dos copias a la vez | ambiguo al guardar | válido |
+
+**Una escena ES el prefab. NO inventar formato nuevo.** Dato: el prefab de Unity *es* un
+archivo de escena serializado — mismo YAML, la diferencia es semántica. Godot lo hace
+explícito con `PackedScene`. Y los dos guardan la instancia como **referencia al origen +
+lista de diferencias, NUNCA copia del contenido** (Godot: `instance=ExtResource(...)` +
+overrides; Unity: `PrefabInstance` con `m_SourcePrefab` + bloque `m_Modification`). Copiar
+el contenido rompería el vínculo que hace que editar el origen actualice las instancias.
+
+**Orden decidido por el user: A ahora, B después.**
+
+- **Fase A (#611)** — instanciación en runtime: `instantiate(scene) -> Entity` con remapeo
+  de ids, asset de escena cacheado. Es lo que un juego necesita (spawnear una bala, un
+  árbol) y es la fundación de B, así que nada se tira.
+- **Fase B** — prefabs completos: `SceneInstance { source, overrides }`, propagación del
+  origen a las instancias, subárbol colapsado en el editor, anidados.
+
+**Dos cosas a resolver en la Fase A porque tocan tipos YA MERGEADOS:**
+
+1. **Raíz única.** Instanciar algo como unidad con transform exige una raíz; Godot lo
+   obliga. Nuestro `.ome_scene` es lista plana con parents opcionales → N raíces sueltas no
+   tienen "un" transform. O se exige raíz única, o se envuelve la instancia al instanciar.
+2. **Identidad de la instancia.** `EntityRef::Persistent { scene, id }` dice "la entidad 1
+   de la escena X". Con X instanciada tres veces eso es **ambiguo**. La respuesta de Unity:
+   las referencias externas apuntan a la *instancia*, que por eso tiene su propio id.
+
+**La decisión que la Fase B espera** (NO adivinarla ahora): si los overrides se guardan por
+campo (Unity y Godot) o si una instancia modificada se vuelve su propia escena. Define el
+formato de archivo, y se toma con la instanciación ya andando.
 
 ### El ECS ya NO tiene storages GPU (2026-07-25, #603)
 

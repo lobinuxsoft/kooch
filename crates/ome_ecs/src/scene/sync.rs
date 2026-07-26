@@ -11,10 +11,28 @@ use super::error::SceneError;
 
 /// Clears the live ECS and rebuilds it from a [`SceneDocument`].
 ///
-/// All existing entities are despawned. For each entity in the document,
-/// a new entity is spawned, and its components are inserted via reflection.
-/// Hierarchy relationships are reconstructed from `EntityDescription::parent`.
+/// Every non-ephemeral entity is despawned first, so this is "open this
+/// scene and only this scene". To add a scene beside the ones already
+/// open, use [`spawn_scene_into`].
 pub fn sync_scene_to_ecs(
+    scene: &SceneDocument,
+    resources: &mut Resources,
+) -> Result<(), SceneError> {
+    despawn_all(resources);
+    spawn_scene_into(scene, resources)
+}
+
+/// Spawns a document's entities beside whatever is already loaded.
+///
+/// Each entity is tagged with [`SceneMember`] naming `scene.id`, which is
+/// what lets saving write only its own entities and unloading despawn only
+/// its own.
+///
+/// Entity references resolve at the end, once every entity in this
+/// document exists. A reference into a scene that is not open stays
+/// unresolved rather than failing — see
+/// [`resolve_deferred`](super::entity_refs::resolve_deferred).
+pub fn spawn_scene_into(
     scene: &SceneDocument,
     resources: &mut Resources,
 ) -> Result<(), SceneError> {
@@ -28,10 +46,7 @@ pub fn sync_scene_to_ecs(
         registry.register_cpu_reflected::<crate::persistent_id::PersistentId>();
     }
 
-    // 1. Despawn all existing entities.
-    despawn_all(resources);
-
-    // 2. First pass: spawn entities and insert components.
+    // First pass: spawn entities and insert components.
     // Track name → Entity for parent resolution.
     let mut name_to_entity: std::collections::HashMap<String, crate::entity::Entity> =
         std::collections::HashMap::new();
@@ -54,6 +69,7 @@ pub fn sync_scene_to_ecs(
 
         name_to_entity.insert(entity_desc.name.clone(), entity);
         spawned_order.push(entity);
+        tag_with_scene(resources, entity, scene.id);
 
         for comp_desc in &entity_desc.components {
             // Look up the TypeId by full type name. A name this binary
@@ -169,10 +185,51 @@ pub fn sync_scene_to_ecs(
         }
     }
 
-    // 4. Resolve entity references now that every entity exists.
+    // Resolve entity references now that every entity exists.
     resolve_deferred(resources, deferred);
 
     Ok(())
+}
+
+/// Records which scene an entity was authored in.
+fn tag_with_scene(resources: &mut Resources, entity: crate::entity::Entity, scene: ome_core::Guid) {
+    use crate::scene_member::SceneMember;
+
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu::<SceneMember>();
+        if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
+            storage.insert(entity, SceneMember::new(scene));
+        }
+    }
+    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(entity)
+    {
+        let next =
+            archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<SceneMember>());
+        archetypes.register_entity(entity, next);
+    }
+}
+
+/// Despawns only the entities belonging to `scene`.
+///
+/// "Remove the station" and "I walked away" have to be different
+/// operations (#566); this is the first of the two.
+pub fn despawn_scene(scene: ome_core::Guid, resources: &mut Resources) {
+    use crate::scene_member::SceneMember;
+
+    let doomed: Vec<crate::entity::Entity> = resources
+        .get::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu::<SceneMember>())
+        .map(|storage| {
+            storage
+                .iter()
+                .filter(|(_, member)| member.scene == scene)
+                .map(|(&entity, _)| entity)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    despawn_entities(resources, &doomed);
 }
 
 /// Despawns every alive entity in the ECS, except those marked ephemeral.
@@ -203,7 +260,15 @@ fn despawn_all(resources: &mut Resources) {
         })
         .unwrap_or_default();
 
-    for entity in entities {
+    despawn_entities(resources, &entities);
+}
+
+/// Removes `entities` from every store that knows about them.
+///
+/// Shared by the whole-world and per-scene paths so they cannot drift into
+/// forgetting different stores.
+fn despawn_entities(resources: &mut Resources, entities: &[crate::entity::Entity]) {
+    for &entity in entities {
         if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
             alloc.despawn(entity);
         }
@@ -218,7 +283,6 @@ fn despawn_all(resources: &mut Resources) {
         }
     }
 
-    // GC empty archetypes after clearing everything.
     if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
         archetypes.gc_empty_archetypes();
     }

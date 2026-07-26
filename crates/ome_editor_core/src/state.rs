@@ -191,6 +191,20 @@ pub(crate) struct ComponentDisplayInfo {
     pub(crate) visibility: InspectorVisibility,
 }
 
+/// One open scene, as the World panel needs to show it.
+///
+/// A snapshot rather than a borrow of `SceneManager`: the UI pass runs
+/// while `Resources` is borrowed elsewhere, which is the same reason
+/// [`EntityDisplayInfo`] exists.
+#[derive(Debug, Clone)]
+pub(crate) struct SceneDisplayInfo {
+    pub(crate) id: ome_core::Guid,
+    /// File stem, or "Untitled" for a scene never saved.
+    pub(crate) name: String,
+    pub(crate) dirty: bool,
+    pub(crate) active: bool,
+}
+
 pub(crate) struct EntityDisplayInfo {
     pub(crate) entity: Entity,
     pub(crate) components: Vec<ComponentDisplayInfo>,
@@ -203,6 +217,10 @@ pub(crate) struct EntityDisplayInfo {
     /// World-space rotation from `GlobalTransform`, if available. Used
     /// by the Inspector's World rotation display mode.
     pub(crate) global_rotation: Option<glam::Quat>,
+    /// Scene this entity was authored in, or `None` for one that belongs
+    /// to no scene — an editor helper, or something spawned but not yet
+    /// saved into any file.
+    pub(crate) scene: Option<ome_core::Guid>,
     /// Parent's world-space rotation from `GlobalTransform`, if the
     /// entity has a parent and that parent has a `GlobalTransform`.
     /// Used to convert World-space edits back to the local rotation

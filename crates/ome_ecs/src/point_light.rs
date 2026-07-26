@@ -69,6 +69,9 @@ mod tests {
         let l = PointLight::default();
         let fields = l.reflect_fields();
         let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
-        assert_eq!(names, &["active", "color", "intensity", "range", "cast_shadows"]);
+        assert_eq!(
+            names,
+            &["active", "color", "intensity", "range", "cast_shadows"]
+        );
     }
 }

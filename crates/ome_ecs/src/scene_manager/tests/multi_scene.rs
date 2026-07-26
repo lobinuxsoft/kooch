@@ -1,0 +1,426 @@
+//! Several scenes open at once (#609).
+
+use super::{setup_resources, tmp_path};
+use crate::commands::Commands;
+use crate::component::ComponentRegistry;
+use crate::entity::Entity;
+use crate::scene_manager::SceneManager;
+use crate::scene_member::SceneMember;
+use ome_core::Guid;
+use ome_core::resource::Resources;
+
+/// Writes a scene file holding `count` entities with the given hp values.
+fn write_scene(name: &str, hps: &[u32]) -> std::path::PathBuf {
+    use crate::scene::SceneDocument;
+
+    let mut resources = setup_resources();
+    {
+        let mut commands = resources.remove::<Commands>().unwrap();
+        for &hp in hps {
+            commands
+                .spawn(&mut resources)
+                .insert_reflected(super::single_scene::Health { hp });
+        }
+        commands.apply(&mut resources);
+        resources.insert(commands);
+    }
+
+    let path = tmp_path(name);
+    let mut manager = SceneManager::new();
+    manager
+        .save_as(path.clone(), &mut resources)
+        .expect("writes the fixture");
+    path
+}
+
+fn live_hps(resources: &Resources) -> Vec<u32> {
+    use crate::query::Query;
+    let mut hps: Vec<u32> = Query::<&super::single_scene::Health>::new(resources)
+        .iter()
+        .map(|h| h.hp)
+        .collect();
+    hps.sort_unstable();
+    hps
+}
+
+fn members(resources: &Resources) -> Vec<(Entity, Guid)> {
+    resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<SceneMember>())
+        .map(|s| s.iter().map(|(&e, m)| (e, m.scene)).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn two_scenes_can_be_open_at_once() {
+    let first = write_scene("multi_a", &[1, 2]);
+    let second = write_scene("multi_b", &[10]);
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+
+    manager
+        .load(&first, &mut resources)
+        .expect("loads the first");
+    let second_id = manager
+        .open_additive(&second, &mut resources)
+        .expect("loads the second beside it");
+
+    assert_eq!(manager.scenes().len(), 2);
+    assert_eq!(live_hps(&resources), vec![1, 2, 10], "both scenes are live");
+    assert_eq!(
+        manager.active_id(),
+        Some(second_id),
+        "the scene just opened becomes active",
+    );
+}
+
+/// Every entity has to know its home, or saving and closing cannot tell
+/// the two scenes apart.
+#[test]
+fn each_entity_belongs_to_the_scene_that_loaded_it() {
+    let first = write_scene("multi_owner_a", &[1]);
+    let second = write_scene("multi_owner_b", &[10]);
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&first, &mut resources).unwrap();
+    let first_id = manager.active_id().expect("a scene is active");
+    let second_id = manager.open_additive(&second, &mut resources).unwrap();
+
+    let owners = members(&resources);
+    assert_eq!(owners.len(), 2, "both entities carry membership");
+    assert!(owners.iter().any(|&(_, scene)| scene == first_id));
+    assert!(owners.iter().any(|&(_, scene)| scene == second_id));
+}
+
+/// The failure this prevents is duplication: saving one scene while
+/// another is open would write the other's entities into both files, and
+/// the next load would spawn each of them twice.
+#[test]
+fn saving_one_scene_does_not_capture_the_other() {
+    use crate::scene::SceneDocument;
+
+    let first = write_scene("multi_save_a", &[1, 2]);
+    let second = write_scene("multi_save_b", &[10]);
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&first, &mut resources).unwrap();
+    let first_id = manager.active_id().unwrap();
+    manager.open_additive(&second, &mut resources).unwrap();
+
+    manager
+        .save_scene(first_id, &mut resources)
+        .expect("saves only the first");
+
+    let written = SceneDocument::load(&first).expect("reads back");
+    assert_eq!(
+        written.entities.len(),
+        2,
+        "the first scene kept its own two entities and took none of the other's",
+    );
+}
+
+/// "Close the station" and "walk away from the station" are different
+/// operations (#566); this is the first one.
+#[test]
+fn closing_a_scene_despawns_only_its_own_entities() {
+    let first = write_scene("multi_close_a", &[1, 2]);
+    let second = write_scene("multi_close_b", &[10]);
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&first, &mut resources).unwrap();
+    let first_id = manager.active_id().unwrap();
+    let second_id = manager.open_additive(&second, &mut resources).unwrap();
+
+    assert!(manager.close(second_id, &mut resources));
+
+    assert_eq!(
+        live_hps(&resources),
+        vec![1, 2],
+        "only the second went away"
+    );
+    assert_eq!(manager.scenes().len(), 1);
+    assert_eq!(
+        manager.active_id(),
+        Some(first_id),
+        "closing the active scene falls back to one still open",
+    );
+}
+
+#[test]
+fn closing_a_scene_that_is_not_open_reports_it() {
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    assert!(!manager.close(Guid::new_v4(), &mut resources));
+}
+
+/// Two copies of one file would share every entity id, so a reference
+/// into that scene could not say which copy it meant. Refused until
+/// per-instance remapping exists.
+#[test]
+fn the_same_scene_cannot_be_opened_twice() {
+    let path = write_scene("multi_twice", &[1]);
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&path, &mut resources).unwrap();
+
+    let error = manager
+        .open_additive(&path, &mut resources)
+        .expect_err("opening the same scene twice must be refused");
+    assert!(
+        error.to_string().contains("already open"),
+        "the error should say why, got: {error}",
+    );
+    assert_eq!(manager.scenes().len(), 1, "nothing was added");
+}
+
+/// Dirty is per scene. With two open, saving one must not claim the
+/// other's edits are safe.
+#[test]
+fn dirty_state_is_tracked_per_scene() {
+    let first = write_scene("multi_dirty_a", &[1]);
+    let second = write_scene("multi_dirty_b", &[10]);
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&first, &mut resources).unwrap();
+    let first_id = manager.active_id().unwrap();
+    let second_id = manager.open_additive(&second, &mut resources).unwrap();
+
+    manager.mark_dirty(); // marks the active one, which is the second
+    assert!(manager.any_dirty());
+    assert!(manager.scene(second_id).unwrap().dirty);
+    assert!(
+        !manager.scene(first_id).unwrap().dirty,
+        "the other is clean"
+    );
+
+    manager.save_scene(second_id, &mut resources).unwrap();
+    assert!(!manager.any_dirty(), "saving cleared the only dirty scene");
+}
+
+#[test]
+fn the_active_scene_can_be_switched_but_only_to_an_open_one() {
+    let first = write_scene("multi_active_a", &[1]);
+    let second = write_scene("multi_active_b", &[10]);
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&first, &mut resources).unwrap();
+    let first_id = manager.active_id().unwrap();
+    manager.open_additive(&second, &mut resources).unwrap();
+
+    assert!(manager.set_active(first_id));
+    assert_eq!(manager.active_id(), Some(first_id));
+
+    assert!(
+        !manager.set_active(Guid::new_v4()),
+        "an unopened scene must not become active",
+    );
+    assert_eq!(
+        manager.active_id(),
+        Some(first_id),
+        "a refused switch leaves the active scene alone",
+    );
+}
+
+/// A scene keeps its identity across sessions, or every reference into it
+/// breaks on the next load.
+#[test]
+fn a_scene_keeps_its_identity_across_a_save_and_load() {
+    let path = write_scene("multi_identity", &[1]);
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&path, &mut resources).unwrap();
+    let first = manager.active_id().unwrap();
+
+    manager.save(&mut resources).unwrap();
+
+    let mut reloaded_resources = setup_resources();
+    let mut reloaded = SceneManager::new();
+    reloaded.load(&path, &mut reloaded_resources).unwrap();
+
+    assert_eq!(
+        reloaded.active_id(),
+        Some(first),
+        "the scene id must survive a round trip",
+    );
+}
+
+/// A file written before scenes had identity gets one on load, and is
+/// marked dirty so it persists — otherwise it would get a different id
+/// every session and references into it would never resolve.
+#[test]
+fn a_scene_file_without_an_id_is_marked_dirty_so_the_new_id_persists() {
+    let path = tmp_path("multi_legacy");
+    std::fs::write(&path, r#"(name: "Legacy", version: "0.1.0", entities: [])"#)
+        .expect("writes a pre-identity file");
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&path, &mut resources).expect("still loads");
+
+    assert!(
+        manager.is_dirty(),
+        "a scene that was just given an id has an unsaved change",
+    );
+
+    manager.save(&mut resources).expect("persists the id");
+    let stored = std::fs::read_to_string(&path).unwrap();
+    assert!(stored.contains("id:"), "the id reached the file");
+    assert!(!manager.is_dirty());
+}
+
+/// Entity ids are scene-local, so two open scenes both having an entity 1
+/// is ordinary. Resolving references by id alone would collapse them and
+/// point every reference at whichever scene loaded last — the same class
+/// of failure that made resolving parents by name unusable.
+#[test]
+fn two_scenes_may_reuse_the_same_entity_id_without_crossing_references() {
+    use crate::archetype_registry::ArchetypeRegistry;
+    use crate::persistent_id::PersistentId;
+    use crate::scene::SceneDocument;
+
+    /// A component pointing at another entity, so the file carries a
+    /// reference that the load pass has to resolve.
+    #[derive(Debug, Default, Clone, PartialEq, ome_ecs_macros::Reflect)]
+    struct Link {
+        target: Entity,
+    }
+    impl crate::component::Component for Link {}
+
+    /// Builds a one-file scene whose single `Link` points at a sibling.
+    fn write_linked_scene(name: &str, hp: u32) -> std::path::PathBuf {
+        let mut resources = setup_resources();
+        resources
+            .get_mut::<ComponentRegistry>()
+            .unwrap()
+            .register_cpu_reflected::<Link>();
+
+        let (source, target) = {
+            let mut commands = resources.remove::<Commands>().unwrap();
+            let target = commands
+                .spawn(&mut resources)
+                .insert_reflected(super::single_scene::Health { hp })
+                .id();
+            let source = commands.spawn(&mut resources).id();
+            commands.apply(&mut resources);
+            resources.insert(commands);
+            (source, target)
+        };
+
+        if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+            && let Some(storage) = registry.get_cpu_mut::<Link>()
+        {
+            storage.insert(source, Link { target });
+        }
+        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+            && let Some(current) = archetypes.entity_archetype(source)
+        {
+            let next =
+                archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<Link>());
+            archetypes.register_entity(source, next);
+        }
+
+        let path = tmp_path(name);
+        let mut manager = SceneManager::new();
+        manager.save_as(path.clone(), &mut resources).unwrap();
+        path
+    }
+
+    let first = write_linked_scene("multi_collide_a", 1);
+    let second = write_linked_scene("multi_collide_b", 10);
+
+    // Both files were written independently, so both allocated id 1.
+    for path in [&first, &second] {
+        let doc = SceneDocument::load(path).unwrap();
+        let ids: Vec<u64> = doc
+            .entities
+            .iter()
+            .flat_map(|e| &e.components)
+            .filter(|c| c.type_name.ends_with("PersistentId"))
+            .flat_map(|c| &c.fields)
+            .filter_map(|(_, v)| match v {
+                crate::reflect::ReflectValue::U64(raw) => Some(*raw),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids, vec![1], "each scene numbers from 1 independently");
+    }
+
+    let mut resources = setup_resources();
+    resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<Link>();
+
+    let mut manager = SceneManager::new();
+    manager.load(&first, &mut resources).unwrap();
+    manager.open_additive(&second, &mut resources).unwrap();
+
+    // Every link must point at a target in its own scene.
+    let links: Vec<(Entity, Entity)> = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<Link>())
+        .map(|s| s.iter().map(|(&e, l)| (e, l.target)).collect())
+        .unwrap_or_default();
+    assert_eq!(links.len(), 2, "both scenes contributed a link");
+
+    let owner = |entity: Entity| -> Guid {
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<SceneMember>())
+            .and_then(|s| s.get(entity))
+            .expect("every loaded entity has a home")
+            .scene
+    };
+
+    for (source, target) in links {
+        assert!(target.is_valid(), "the reference resolved");
+        assert_eq!(
+            owner(source),
+            owner(target),
+            "a reference crossed into the other scene — ids were resolved without their scene",
+        );
+        // And it really is the sibling that was pointed at, not itself.
+        assert_ne!(source, target);
+        assert_eq!(
+            resources
+                .get::<ComponentRegistry>()
+                .and_then(|r| r.get_cpu::<PersistentId>())
+                .and_then(|s| s.get(target))
+                .map(|p| p.id.get()),
+            Some(1),
+            "the target is the entity that was numbered 1 in its own scene",
+        );
+    }
+}
+
+/// Entity names are free text, so a scene holding one called `grid:floor`
+/// contains the substring `id:` without having an identity field. A
+/// text search would call that file "already identified" and never
+/// persist the id it was just given — a different scene id every session,
+/// and no reference into it ever resolving.
+#[test]
+fn an_entity_name_containing_id_does_not_pass_for_a_scene_identity() {
+    let path = tmp_path("multi_named_id");
+    std::fs::write(
+        &path,
+        r#"(name: "Legacy", version: "0.1.0", entities: [(name: "grid:floor", components: [])])"#,
+    )
+    .expect("writes a pre-identity file whose text contains `id:`");
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&path, &mut resources).expect("loads");
+
+    assert!(
+        manager.is_dirty(),
+        "the file has no identity field; the name merely looks like one",
+    );
+}
