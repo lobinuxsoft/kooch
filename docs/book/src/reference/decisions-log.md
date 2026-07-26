@@ -428,3 +428,24 @@ Format:
 > Scene transforms and instancing are deliberately deferred — they need a
 > decision on whether the transform bakes at load, as Unreal's Embedded
 > Level Instances do.
+
+> **2026-07-26 · A scene is the prefab; instancing and editing are different operations** *(epic [#611](https://github.com/lobinuxsoft/oh_my_engine/issues/611))*
+>
+> **Decision:** prefabs are scenes instanced with their entity ids remapped
+> per instance. No separate format. Built in two phases: runtime
+> instancing first, the linked-with-overrides prefab system after.
+> **Why:** #609 refuses to open one file twice, which is right for editing
+> and wrong as a limit on instancing — and entity ids were made
+> scene-local in #607 precisely so instances could remap them. Unity's
+> prefab *is* a serialised scene file, and Godot says so outright with
+> `PackedScene`; both store an instance as a reference to the source plus
+> a list of differences rather than a copy, which is what keeps editing
+> the source propagating to its instances.
+> **Consequence:** two things must be settled in phase A because they
+> touch already-merged types — whether a scene must have a single root
+> (instancing as a unit with a transform needs one, and our documents are
+> a flat list), and how an outside reference names *this instance* rather
+> than the prefab, since `EntityRef::Persistent { scene, id }` is
+> ambiguous once a scene is instanced twice. Phase B waits on one
+> decision: whether overrides are per field, as Unity and Godot both do,
+> or whether editing an instance promotes it to its own scene.

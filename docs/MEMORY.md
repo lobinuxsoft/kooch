@@ -387,6 +387,47 @@ secciones + `SceneLoadFlags.NewInstance` con `PostLoadOffset`. O sea el transfor
 40km no tiene "una posición": si el criterio fuera origen+radio, cargás la ciudad entera o
 nada. La residencia se deriva de dónde quedaron las entidades, como fijó #566.
 
+### Prefabs = escenas instanciadas (decidido 2026-07-26, #611)
+
+**Abrir e instanciar son operaciones DISTINTAS y sólo una tiene restricción.** #609 rechaza
+abrir el mismo archivo dos veces *para editar* (dos copias editables no pueden guardarse
+las dos al mismo archivo). **Instanciar nunca tuvo esa restricción** — los ids se hicieron
+locales a la escena en #607 justamente para poder remapearlos por instancia.
+
+| | abrir (editar) | instanciar |
+|---|---|---|
+| ids del archivo | 1:1 con entidades | **remapeados** por instancia |
+| se guarda de vuelta | sí | no — la instancia vive en la escena contenedora |
+| dos copias a la vez | ambiguo al guardar | válido |
+
+**Una escena ES el prefab. NO inventar formato nuevo.** Dato: el prefab de Unity *es* un
+archivo de escena serializado — mismo YAML, la diferencia es semántica. Godot lo hace
+explícito con `PackedScene`. Y los dos guardan la instancia como **referencia al origen +
+lista de diferencias, NUNCA copia del contenido** (Godot: `instance=ExtResource(...)` +
+overrides; Unity: `PrefabInstance` con `m_SourcePrefab` + bloque `m_Modification`). Copiar
+el contenido rompería el vínculo que hace que editar el origen actualice las instancias.
+
+**Orden decidido por el user: A ahora, B después.**
+
+- **Fase A (#611)** — instanciación en runtime: `instantiate(scene) -> Entity` con remapeo
+  de ids, asset de escena cacheado. Es lo que un juego necesita (spawnear una bala, un
+  árbol) y es la fundación de B, así que nada se tira.
+- **Fase B** — prefabs completos: `SceneInstance { source, overrides }`, propagación del
+  origen a las instancias, subárbol colapsado en el editor, anidados.
+
+**Dos cosas a resolver en la Fase A porque tocan tipos YA MERGEADOS:**
+
+1. **Raíz única.** Instanciar algo como unidad con transform exige una raíz; Godot lo
+   obliga. Nuestro `.ome_scene` es lista plana con parents opcionales → N raíces sueltas no
+   tienen "un" transform. O se exige raíz única, o se envuelve la instancia al instanciar.
+2. **Identidad de la instancia.** `EntityRef::Persistent { scene, id }` dice "la entidad 1
+   de la escena X". Con X instanciada tres veces eso es **ambiguo**. La respuesta de Unity:
+   las referencias externas apuntan a la *instancia*, que por eso tiene su propio id.
+
+**La decisión que la Fase B espera** (NO adivinarla ahora): si los overrides se guardan por
+campo (Unity y Godot) o si una instancia modificada se vuelve su propia escena. Define el
+formato de archivo, y se toma con la instanciación ya andando.
+
 ### El ECS ya NO tiene storages GPU (2026-07-25, #603)
 
 Existían, nunca los usó nadie, y dos sistemas corrían cada frame sin consumidor. Los datos
