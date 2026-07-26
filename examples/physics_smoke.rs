@@ -26,6 +26,7 @@ use ome_ecs::entity::Entity;
 use ome_ecs::plugin::EcsPlugin;
 use ome_ecs::transform::Transform;
 use ome_physics::backend::DebugCategories;
+use ome_physics::backend::PhysicsBackend;
 use ome_physics::components::{
     Collider, JOINT_REVOLUTE, Joint, KIND_STATIC, RigidBody, SHAPE_CUBOID,
 };
@@ -52,6 +53,11 @@ struct Cast {
     door: Option<Entity>,
     fuse: Option<Entity>,
     fuse_joint: Option<Entity>,
+    /// Two identical cubes shoved at the same speed over floors that
+    /// differ only in friction (#623).
+    slippery: Option<Entity>,
+    grippy: Option<Entity>,
+    spinner: Option<Entity>,
 }
 
 fn main() {
@@ -63,6 +69,7 @@ fn main() {
     app.add_plugin(PhysicsPlugin::new());
     app.insert_resource(Cast::default());
     app.add_system(Stage::Startup, build_scene);
+    app.add_system(Stage::Update, launch);
     app.add_system(Stage::Last, report);
     Playing::set(app.resources_mut(), true);
     app.run();
@@ -170,8 +177,63 @@ fn build_scene(resources: &mut Resources) {
     ));
     cast.fuse = Some(fuse);
 
+    // #623: friction was not authorable at all until now — every collider
+    // silently took rapier's 0.5. These two differ in nothing else.
+    cast.slippery = Some(sled(resources, -20.0, 0.02));
+    cast.grippy = Some(sled(resources, 20.0, 1.5));
+
+    // #623: angular damping, which #618's "it rotates sluggishly" could
+    // not have been, because nothing was damping anything.
+    cast.spinner = Some(body(
+        resources,
+        Vec3::new(0.0, 20.0, 0.0),
+        RigidBody {
+            mass: 1.0,
+            angular_damping: 4.0,
+            ..Default::default()
+        },
+        cuboid(0.5),
+    ));
+
     resources.insert(cast);
     tracing::info!("scene built");
+}
+
+/// A cube on its own strip of floor, both at `friction`, shoved along +X.
+///
+/// Its own strip so the two comparisons cannot touch each other, and the
+/// push is applied on the first report-free frame rather than here: the
+/// body does not exist in the solver until the sync pass has run.
+fn sled(resources: &mut Resources, z: f32, friction: f32) -> Entity {
+    body(
+        resources,
+        Vec3::new(0.0, -1.0, z),
+        RigidBody {
+            kind: KIND_STATIC,
+            mass: 0.0,
+            ..Default::default()
+        },
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::new(200.0, 1.0, 4.0),
+            friction,
+            ..Default::default()
+        },
+    );
+    body(
+        resources,
+        Vec3::new(0.0, 0.5, z),
+        RigidBody {
+            mass: 1.0,
+            ..Default::default()
+        },
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::splat(0.5),
+            friction,
+            ..Default::default()
+        },
+    )
 }
 
 fn ground(resources: &mut Resources) -> Entity {
@@ -278,6 +340,48 @@ fn insert<T: Component>(resources: &mut Resources, entity: Entity, value: T) {
 // Report
 // ---------------------------------------------------------------------------
 
+/// Shoves the sleds and spins the top, once, on the first step.
+///
+/// Not in `build_scene`: the bodies do not exist in the solver until the
+/// sync pass has run, and there is no force component to author yet
+/// (#567).
+fn launch(resources: &mut Resources) {
+    let steps = resources.get::<Time>().map(Time::fixed_count).unwrap_or(0);
+    if steps != 1 {
+        return;
+    }
+    let Some(cast) = resources.remove::<Cast>() else {
+        return;
+    };
+    for entity in [cast.slippery, cast.grippy].into_iter().flatten() {
+        if let Some(handle) = handle_of(resources, entity)
+            && let Some(world) = resources.get_mut::<PhysicsWorld>()
+        {
+            world
+                .backend_mut()
+                .set_linear_velocity(handle, Vec3::new(8.0, 0.0, 0.0));
+        }
+    }
+    if let Some(spinner) = cast.spinner
+        && let Some(handle) = handle_of(resources, spinner)
+        && let Some(world) = resources.get_mut::<PhysicsWorld>()
+    {
+        world
+            .backend_mut()
+            .set_angular_velocity(handle, Vec3::new(0.0, 10.0, 0.0));
+    }
+    resources.insert(cast);
+}
+
+fn handle_of(resources: &Resources, entity: Entity) -> Option<ome_physics::BodyHandle> {
+    let slot = resources
+        .get::<ComponentRegistry>()?
+        .get_cpu::<PhysicsBody>()?
+        .get(entity)
+        .map(PhysicsBody::slot)?;
+    resources.get::<PhysicsWorld>()?.handle(slot)
+}
+
 fn report(resources: &mut Resources) {
     let steps = resources.get::<Time>().map(Time::fixed_count).unwrap_or(0);
     if steps < STEPS {
@@ -326,6 +430,30 @@ fn report(resources: &mut Resources) {
             .map(|w| w.backend().joint_count())
             .unwrap_or(0),
     );
+
+    println!("\n-- #623 collider material --");
+    for (label, entity) in [
+        ("friction 0.02, shoved at 8 m/s", cast.slippery),
+        ("friction 1.50, shoved at 8 m/s", cast.grippy),
+    ] {
+        let Some(entity) = entity else { continue };
+        println!(
+            "  {label}  ->  slid {:.3} m",
+            position_of(resources, entity).x
+        );
+    }
+    if let Some(spinner) = cast.spinner {
+        let left = handle_of(resources, spinner)
+            .and_then(|h| {
+                resources
+                    .get::<PhysicsWorld>()?
+                    .backend()
+                    .angular_velocity(h)
+            })
+            .map(|v| v.length())
+            .unwrap_or(0.0);
+        println!("  spun at 10 rad/s, damping 4    ->  {left:.4} rad/s left");
+    }
 
     println!("\n-- #563 what the solver will draw --");
     for (label, categories) in [

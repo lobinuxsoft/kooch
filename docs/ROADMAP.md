@@ -6,7 +6,7 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
-Last updated 2026-07-26, `development` at `9993a58`.
+Last updated 2026-07-26, `development` at `937021c`.
 
 ---
 
@@ -21,22 +21,20 @@ Last updated 2026-07-26, `development` at `9993a58`.
 | **#560** | Joints — one `Joint` component, all eight rapier kinds, motors, limits, breaking |
 | **#618** | Mass control — `mass` means kilograms, shapes are massless, explicit centre of mass |
 | **#563** | Physics debug render — the solver's own account of itself, in the viewport |
+| **#623** | Collider material — friction, restitution, combine rules and damping, all authorable |
 
 ---
 
 ## Next — physics, because half of it is missing where users look
 
-Smoke turned up three holes: no joints where the editor said to use one, a mass that came from
-nowhere the author could see, and no way to look at any of it. All three are closed. What is
-left is the material nobody can touch and the gravity that only points down.
+Smoke turned up four holes: no joints where the editor said to use one, a mass that came from
+nowhere the author could see, no way to look at any of it, and a material nobody could touch.
+All four are closed. What is left is what the solver reports back, and gravity that only
+points down.
 
-1. **#623 — collider material.** Friction, restitution and damping are not authorable at all:
-   every collider silently gets rapier's 0.5 friction, chosen by nobody. Raised while
-   reviewing #618, where the author's own reading of "it feels slow" was friction and could
-   not be checked because there was nothing to check.
-2. **#561 — collision events, sensors and groups.** Also where a broken joint's event
+1. **#561 — collision events, sensors and groups.** Also where a broken joint's event
    belongs; the backend already drains them through `take_broken_joints`.
-3. **#624 — custom gravity.** Per-body scale is one field. Gravity that points at a planet
+2. **#624 — custom gravity.** Per-body scale is one field. Gravity that points at a planet
    instead of down is what `crates/ome_gravity/` has been a nine-line placeholder for since
    the foundation, and what planet-scale actually needs.
 

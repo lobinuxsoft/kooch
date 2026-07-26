@@ -76,7 +76,38 @@ grilla directamente.
 
 ---
 
-## ⭐ Smoke headless de física — `cargo run --example physics_smoke`
+## ⭐ Estado actual (2026-07-26, rama `feat/collider-material`)
+
+**#623 material de collider.** #560, #618, #563 mergeados; #626 y #627 también.
+
+**Antes de esto no había NADA autorable de material.** Todo collider tomaba la fricción 0.5
+y restitución 0.0 de rapier, y todo cuerpo damping 0.0. Un `grep` de `ome_physics` sólo
+encontraba `damping` en los joints. Una escena se comportaba de un modo que nadie eligió y
+nadie podía cambiar.
+
+**Comportamiento NO OBVIO de rapier que hay que saber antes de autorar:** la regla de
+combinación de un par se resuelve con `rule1.max(rule2)` **sobre los discriminantes**. Un
+collider en `Average` (0) contra uno en `Max` (3) usa `Max`. La regla no se negocia — gana la
+más insistente. Está documentado en `CombineRule` y en el tooltip del Inspector.
+
+**Damping ≠ fricción.** El damping actúa sin contacto (aire); la fricción sólo en contacto.
+Y confirma lo de #618: "rota lento" **no podía** ser damping, porque el default de rapier es
+0.0 y nada lo estaba amortiguando.
+
+**Hueco cerrado de paso:** el trait tenía `linear_velocity`/`set_linear_velocity` pero **no
+angular**. Lo descubrí porque mi propio test de damping pasaba midiendo 0 contra 0 — sin
+`set_angular_velocity` no había forma de hacer girar un cuerpo. Agregados los dos.
+
+**El material del hijo es del hijo:** un parche de hielo soldado a un cajón sigue siendo
+hielo, así que `Attachment` lleva su propio `SurfaceMaterial` y el digest lo cubre — editar la
+fricción de un hijo reconstruye el cuerpo padre.
+
+Baseline medido: mismo empujón de 8 m/s, fricción 0.02 → **20.766 m**; fricción 1.5 →
+**3.475 m**. Spin de 10 rad/s con damping 4 → **0.0005 rad/s**.
+
+---
+
+## Smoke headless de física — `cargo run --example physics_smoke`
 
 ```
 cargo run --example physics_smoke --no-default-features \
