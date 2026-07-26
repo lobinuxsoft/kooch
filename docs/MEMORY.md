@@ -76,7 +76,40 @@ grilla directamente.
 
 ---
 
-## ⭐ Estado actual (2026-07-26, rama `feat/physics-mass-control`)
+## ⭐ Estado actual (2026-07-26, rama `feat/physics-debug-render`)
+
+**#563 debug render.** #560 y #618 mergeados (PRs #621, #622).
+
+**Rapier NO dibuja nada.** `DebugRenderPipeline` recorre el mundo y llama a un
+`draw_line(object, a, b, color)` tuyo — es el único método obligatorio del trait. Te da la
+teselación ya hecha (una esfera llega como segmentos, no como centro y radio), el recorrido
+completo, y el color por estado en **HSLA con hue en grados**. Es un productor de líneas.
+
+**Esto NO es un segundo contorno de collider.** `ColliderVisualizer` ya dibujaba colliders
+desde los componentes del ECS. Eso es la misma cuenta hecha dos veces: si el cuerpo nunca se
+construyó, o se construyó de un spec viejo, el gizmo dibuja la forma que *debería* existir y
+no puede decir nada de la que hay. **Cuando los dos difieren, esa diferencia es el bug.** Por
+eso `collider_shapes` va apagado por defecto — prenderlo es un acto de comparación.
+
+Lo que sólo el solver sabe y no se derivaba de ningún componente: **contactos**, **centro de
+masa**, **anclas de joints**, **AABBs de broad-phase**, y **sleep state** (gratis: rapier
+oscurece con `sleep_color_multiplier`).
+
+**`debug-render` es feature de cargo de rapier**, envuelta en una de `ome_physics` que sólo
+prende el editor. Un build de juego ni la compila — #558 aplicado donde sale más barato. El
+método del trait tiene impl por defecto vacía: un backend que no puede introspeccionarse dice
+nada en vez de inventar una aproximación.
+
+**El overlay es whole-world, así que va ANTES del early-return por selección** en
+`build_gizmo_batch_system`. Las preguntas que contesta se hacen justamente cuando no hay nada
+seleccionado. Y con todo apagado el backend ni se llama: "cuesta cero apagado" tiene que
+significar que el recorrido no pasa.
+
+Bajé `subdivisions` de 20 a 12: son ~60 segmentos por esfera generados y subidos por frame.
+
+---
+
+## Estado anterior (2026-07-26, rama `feat/physics-mass-control`, PR #622 mergeado)
 
 **#618 mass control.** #560 ya mergeado (PR #621).
 

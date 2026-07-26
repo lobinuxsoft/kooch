@@ -14,3 +14,13 @@ glam.workspace = true
 tracing.workspace = true
 rapier3d.workspace = true
 slotmap = "1.0"
+
+[features]
+# Rapier's debug-render walk, which the editor turns into a viewport
+# overlay. Off by default so a shipped game never compiles it — the
+# overlay is a tool, and #558 keeps tools out of game builds.
+debug-render = ["rapier3d/debug-render"]
+
+[dev-dependencies]
+# The overlay's own tests need the walk they are testing.
+ome_physics = { path = ".", features = ["debug-render"] }

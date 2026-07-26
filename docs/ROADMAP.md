@@ -6,7 +6,7 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
-Last updated 2026-07-26, `development` at `d611156`.
+Last updated 2026-07-26, `development` at `9993a58`.
 
 ---
 
@@ -20,25 +20,28 @@ Last updated 2026-07-26, `development` at `d611156`.
 | **#612** | Parented physics — compound colliders, gizmo parent-space conversion, Inspector warnings |
 | **#560** | Joints — one `Joint` component, all eight rapier kinds, motors, limits, breaking |
 | **#618** | Mass control — `mass` means kilograms, shapes are massless, explicit centre of mass |
+| **#563** | Physics debug render — the solver's own account of itself, in the viewport |
 
 ---
 
 ## Next — physics, because half of it is missing where users look
 
-Smoke turned up two holes: the editor told authors to use a joint when there were none, and a
-compound body's mass came from nowhere the author could see. Both are closed. What is left is
-that physics is still invisible — the only way to find out what the solver built is to reason
-about it.
+Smoke turned up three holes: no joints where the editor said to use one, a mass that came from
+nowhere the author could see, and no way to look at any of it. All three are closed. What is
+left is the material nobody can touch and the gravity that only points down.
 
-1. **#563 — physics debug render.** It would have made #618 diagnosable in seconds instead of
-   by reasoning about inertia tensors, and joints are the next thing that will look wrong
-   without one: a hinge that does nothing and a hinge whose axis is off look identical from
-   the viewport.
+1. **#623 — collider material.** Friction, restitution and damping are not authorable at all:
+   every collider silently gets rapier's 0.5 friction, chosen by nobody. Raised while
+   reviewing #618, where the author's own reading of "it feels slow" was friction and could
+   not be checked because there was nothing to check.
+2. **#561 — collision events, sensors and groups.** Also where a broken joint's event
+   belongs; the backend already drains them through `take_broken_joints`.
+3. **#624 — custom gravity.** Per-body scale is one field. Gravity that points at a planet
+   instead of down is what `crates/ome_gravity/` has been a nine-line placeholder for since
+   the foundation, and what planet-scale actually needs.
 
-Then the rest of what Rapier exposes and the engine does not: **#561** (events, sensors,
-groups — also where a broken joint's event belongs; the backend already drains them),
-**#562** (scene queries), **#567** (PD/PID controllers), **#569** (per-stage counters in the
-perf HUD).
+Then **#562** (scene queries), **#567** (PD/PID controllers), **#569** (per-stage counters in
+the perf HUD).
 
 > The standing rule: implement what Rapier offers, warn for what it does not. Everything
 > above is exposing the solver, not working around it. See `MEMORY.md`.

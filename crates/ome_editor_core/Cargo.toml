@@ -13,7 +13,10 @@ ome_ecs.workspace = true
 ome_render.workspace = true
 ome_gizmos.workspace = true
 ome_gizmos_handles.workspace = true
-ome_physics.workspace = true
+# `debug-render` pulls in rapier's world walk, which the viewport overlay
+# turns into lines. The editor is the only crate that should ask for it —
+# a game build never enables it, so it never compiles it (#558).
+ome_physics = { workspace = true, features = ["debug-render"] }
 ome_window.workspace = true
 ome_world.workspace = true
 ome_remote.workspace = true
