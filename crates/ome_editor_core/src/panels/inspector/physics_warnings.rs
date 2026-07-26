@@ -22,6 +22,14 @@ pub(super) enum PhysicsWarning {
     /// from dimensions and cannot be sheared, so the collider will not
     /// match the mesh.
     ShearedCollider,
+    /// A joint whose motor is switched on with both coefficients at zero.
+    /// It contributes nothing to the solve, which is indistinguishable
+    /// from a motor that is off — except that the author thinks it is on.
+    InertJointMotor,
+    /// A joint asked to be both articulated and breakable. Reduced
+    /// coordinates produce no constraint impulse, so there is nothing to
+    /// compare a threshold against.
+    ArticulatedJointCannotBreak,
 }
 
 impl PhysicsWarning {
@@ -31,6 +39,8 @@ impl PhysicsWarning {
         match self {
             Self::NestedDynamicBody => "Dynamic body will not follow its parent",
             Self::ShearedCollider => "Sheared collider will not match the mesh",
+            Self::InertJointMotor => "Motor is on but does nothing",
+            Self::ArticulatedJointCannotBreak => "Articulated joints cannot break",
         }
     }
 
@@ -40,8 +50,8 @@ impl PhysicsWarning {
                 "This RigidBody is dynamic and sits under another body. The solver owns \
                  its pose, so it will NOT follow its parent — no engine supports that \
                  configuration. For one body with several shapes, remove this RigidBody \
-                 and keep the Collider; to link two bodies that both simulate, use a \
-                 joint. See issue #612."
+                 and keep the Collider; to link two bodies that both simulate, add a \
+                 Joint component naming them both. See issues #612 and #560."
             }
             Self::ShearedCollider => {
                 "This entity's world matrix is sheared — a non-uniform parent scale \
@@ -49,6 +59,20 @@ impl PhysicsWarning {
                  has no sheared form, so the collider is a best-fit approximation and \
                  will not match the mesh. Make the parent's scale uniform, or unrotate \
                  the child. See issues #612 and #214."
+            }
+            Self::InertJointMotor => {
+                "This Joint's motor is enabled, but both Motor Stiffness and Motor \
+                 Damping are zero — so it applies nothing and the joint behaves exactly \
+                 as if the motor were off. Stiffness pulls towards Motor Target \
+                 Position; damping holds Motor Target Velocity. Set whichever one you \
+                 meant."
+            }
+            Self::ArticulatedJointCannotBreak => {
+                "This Joint is both Articulated and Breakable. An articulated joint is \
+                 solved in reduced coordinates, where the stretched configuration is not \
+                 representable — so there is no constraint impulse to compare Break \
+                 Impulse against, and it will never break. Turn off Articulated to use a \
+                 break threshold."
             }
         }
     }
@@ -73,7 +97,56 @@ pub(super) fn warnings_for(entity: Entity, entities: &[EntityDisplayInfo]) -> Ve
         warnings.push(PhysicsWarning::ShearedCollider);
     }
 
+    warnings.extend(joint_warnings(info));
+
     warnings
+}
+
+/// The joint mistakes an author cannot see from the panel.
+///
+/// Both are configurations the solver accepts and then quietly ignores,
+/// which is the worst kind: the joint is built, nothing errors, and the
+/// behaviour is simply absent.
+fn joint_warnings(info: &EntityDisplayInfo) -> Vec<PhysicsWarning> {
+    let Some(fields) = info
+        .components
+        .iter()
+        .find(|component| component.short_name == "Joint")
+        .and_then(|component| component.fields.as_ref())
+    else {
+        return Vec::new();
+    };
+
+    let mut warnings = Vec::new();
+    if flag(fields, "motor_enabled")
+        && number(fields, "motor_stiffness") == Some(0.0)
+        && number(fields, "motor_damping") == Some(0.0)
+    {
+        warnings.push(PhysicsWarning::InertJointMotor);
+    }
+    if flag(fields, "articulated") && flag(fields, "breakable") {
+        warnings.push(PhysicsWarning::ArticulatedJointCannotBreak);
+    }
+    warnings
+}
+
+/// Reads a reflected `bool` field, absent reading as `false`.
+fn flag(fields: &[(String, ome_ecs::reflect::ReflectValue)], name: &str) -> bool {
+    use ome_ecs::reflect::ReflectValue;
+
+    fields
+        .iter()
+        .any(|(field, value)| field == name && matches!(value, ReflectValue::Bool(true)))
+}
+
+/// Reads a reflected `f32` field.
+fn number(fields: &[(String, ome_ecs::reflect::ReflectValue)], name: &str) -> Option<f32> {
+    use ome_ecs::reflect::ReflectValue;
+
+    fields.iter().find_map(|(field, value)| match value {
+        ReflectValue::F32(number) if field == name => Some(*number),
+        _ => None,
+    })
 }
 
 /// Matched by `short_name`, which is what the display snapshot carries —
@@ -318,6 +391,98 @@ mod tests {
         );
         let entities = vec![entity(0, None, vec![collider(), global(plain)])];
 
+        assert!(warnings_for(entities[0].entity, &entities).is_empty());
+    }
+
+    fn joint(fields: Vec<(String, ReflectValue)>) -> ComponentDisplayInfo {
+        component("Joint", fields)
+    }
+
+    /// A motor switched on with no coefficients is built, accepted, and
+    /// does nothing — the author has no way to tell it apart from a motor
+    /// that is off.
+    #[test]
+    fn a_motor_with_no_coefficients_is_flagged() {
+        let entities = vec![entity(
+            0,
+            None,
+            vec![joint(vec![
+                ("motor_enabled".into(), ReflectValue::Bool(true)),
+                ("motor_stiffness".into(), ReflectValue::F32(0.0)),
+                ("motor_damping".into(), ReflectValue::F32(0.0)),
+            ])],
+        )];
+
+        assert_eq!(
+            warnings_for(entities[0].entity, &entities),
+            vec![PhysicsWarning::InertJointMotor],
+        );
+    }
+
+    #[test]
+    fn a_motor_with_either_coefficient_is_not_flagged() {
+        for (stiffness, damping) in [(1.0, 0.0), (0.0, 1.0)] {
+            let entities = vec![entity(
+                0,
+                None,
+                vec![joint(vec![
+                    ("motor_enabled".into(), ReflectValue::Bool(true)),
+                    ("motor_stiffness".into(), ReflectValue::F32(stiffness)),
+                    ("motor_damping".into(), ReflectValue::F32(damping)),
+                ])],
+            )];
+            assert!(
+                warnings_for(entities[0].entity, &entities).is_empty(),
+                "stiffness {stiffness} damping {damping} should not warn",
+            );
+        }
+    }
+
+    /// A motor that is simply off is the ordinary case, and warning about
+    /// it would make the warning noise.
+    #[test]
+    fn a_disabled_motor_is_not_flagged() {
+        let entities = vec![entity(
+            0,
+            None,
+            vec![joint(vec![
+                ("motor_enabled".into(), ReflectValue::Bool(false)),
+                ("motor_stiffness".into(), ReflectValue::F32(0.0)),
+                ("motor_damping".into(), ReflectValue::F32(0.0)),
+            ])],
+        )];
+        assert!(warnings_for(entities[0].entity, &entities).is_empty());
+    }
+
+    /// Reduced coordinates produce no constraint impulse, so the threshold
+    /// has nothing to compare against and the joint never breaks.
+    #[test]
+    fn an_articulated_breakable_joint_is_flagged() {
+        let entities = vec![entity(
+            0,
+            None,
+            vec![joint(vec![
+                ("articulated".into(), ReflectValue::Bool(true)),
+                ("breakable".into(), ReflectValue::Bool(true)),
+            ])],
+        )];
+
+        assert_eq!(
+            warnings_for(entities[0].entity, &entities),
+            vec![PhysicsWarning::ArticulatedJointCannotBreak],
+        );
+    }
+
+    #[test]
+    fn an_impulse_breakable_joint_is_not_flagged() {
+        let entities = vec![entity(
+            0,
+            None,
+            vec![joint(vec![
+                ("articulated".into(), ReflectValue::Bool(false)),
+                ("breakable".into(), ReflectValue::Bool(true)),
+            ])],
+        )];
         assert!(warnings_for(entities[0].entity, &entities).is_empty());
     }
 
