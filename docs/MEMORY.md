@@ -76,7 +76,35 @@ grilla directamente.
 
 ---
 
-## ⭐ Estado actual (development HEAD `26ceeb0`, 2026-07-25)
+## ⭐ Estado actual (development HEAD `b2e4ddc`, 2026-07-26)
+
+**Sesión 2026-07-26 — cerrado:** #605 (el ECS propio se queda), #607 (identidad de
+entidades), #609 (multi-escena), #612 (física en emparentados: compound + gizmo + warnings).
+**1035 tests verdes, cero PRs abiertos.**
+
+**Hallazgos del smoke que quedaron como issues** — leer antes de retomar física o editor:
+
+- **#619 — no se puede crear una escena nueva desde el editor.** No hay botón. El template
+  (Camera + Sky) existe pero sólo lo usa `project.rs` al abrir un proyecto. Bloquea probar
+  multi-escena sin tener archivos ya en disco.
+- **#618 — el centro de masa de un cuerpo compuesto sorprende.** Con hijos aportando
+  colliders, el centro de masa cae entre las formas y el cuerpo rota lento. **No es un bug:**
+  es física correcta — más formas lejos del centro = tensor de inercia más grande = menos
+  aceleración angular por el mismo torque. Lo que falta es **control**, y Rapier lo da
+  (`ColliderBuilder::density(0)` para forma sin masa, `additional_mass_properties` para
+  centro explícito). La decisión pendiente es el **default**.
+- **#560 joints — DESBLOQUEADO y ahora urgente.** #607 quitó el bloqueo (dos `EntityRef` por
+  joint ya se serializan). Y el warning de #617 le dice al autor "usá un joint" para un
+  joint que todavía no existe. Rapier 0.34 trae: fixed, revolute, prismatic, spherical,
+  rope, spring, pin_slot, generic + impulse/multibody + motores + límites + breaking.
+
+**Principio que el user enunció y conviene recordar:** *todo lo que Rapier ofrece debería
+terminar teniendo un componente.* Joints (#560) es el hueco más grande; scene queries
+(#562), eventos y sensores (#561) son los otros ya fileados.
+
+---
+
+## Estado anterior (development HEAD `26ceeb0`, 2026-07-25)
 
 - **#605 CERRADO: `ome_ecs` se queda.** `bevy_ecs` evaluado con mediciones y descartado;
   ver la decisión sticky abajo. El ECS se mejora en el lugar, ordenado por dolor
@@ -718,6 +746,9 @@ component/system + `registrations.rs` + editor embebido + gating) · **cliente r
 - El user maneja el fin de sesión; el smoke visual lo maneja el user (el agente arranca la app y diagnostica).
 
 ## Docs de referencia in-repo
+
+- **`docs/ROADMAP.md`** — qué sigue y por qué, ordenado por bloqueos. Este archivo manda en
+  *decisiones*; el roadmap manda en *orden*.
 
 - `docs/decisions/0001_mesh_format.md` — mesh format ADR (glTF + OBJ).
 - `docs/research/stack_decisions_2026-05-02.md` — stack choices + rationale.
