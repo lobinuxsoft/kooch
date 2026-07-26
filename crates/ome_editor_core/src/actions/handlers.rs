@@ -181,6 +181,21 @@ fn handle_open_scene(resources: &mut Resources, undo_stack: &mut UndoStack) {
 /// so the history of edits to those scenes is still valid. A replacing
 /// load clears it because the entities those edits name are gone.
 fn handle_open_scene_additive(resources: &mut Resources) {
+    // The menu greys this out while mirroring a project, but the action
+    // can reach here by other routes (a shortcut, a replayed action), and
+    // the failure it guards against is silent: entities that exist only
+    // on this side, invisible in the game, whose every edit is dropped.
+    if resources
+        .get::<crate::remote_session::RemoteState>()
+        .is_some_and(|state| state.is_connected())
+    {
+        tracing::warn!(
+            "additive scene loading is unavailable while a project is open; \
+             the world shown here mirrors the project",
+        );
+        return;
+    }
+
     let Some(path) = scene_dialog(resources).pick_file() else {
         return;
     };

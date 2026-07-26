@@ -365,10 +365,12 @@ fn classify(action: &EditorAction) -> Option<Edit<'_>> {
         // driving, instead of launching a second copy of it.
         EditorAction::Play => Some(Edit::SetPlaying(true)),
         EditorAction::Stop => Some(Edit::SetPlaying(false)),
-        // Multi-scene is a hub-side view of what the project loaded. The
-        // wire protocol has one scene, so opening a second one beside it,
-        // closing one, or switching which is active has nothing to send —
-        // listed rather than left to the catch-all so the audit in #596
+        // The wire protocol has one scene, so none of these have anything
+        // to send. Additive loading is refused outright while mirroring
+        // rather than handled here: entities loaded on this side do not
+        // exist in the project, so they are invisible in the game and
+        // every edit to them is dropped for not being in the mirror.
+        // Listed rather than left to the catch-all so the audit in #596
         // keeps meaning something.
         EditorAction::OpenSceneAdditive
         | EditorAction::CloseScene(_)

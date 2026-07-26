@@ -49,11 +49,24 @@ pub(crate) fn draw_menu_bar(
                     actions.push(EditorAction::OpenScene);
                     ui.close();
                 }
-                if ui
-                    .button("Open Scene Additive...")
-                    .on_hover_text("Load a scene beside the ones already open")
-                    .clicked()
-                {
+                // Disabled while driving a project: the world here is a
+                // mirror of the project's, and an additive load would
+                // spawn entities that exist only on this side. They would
+                // be invisible in the game and every edit to them would be
+                // dropped for not being in the mirror. Loading a second
+                // scene into the project needs the project to do it — see
+                // the issue linked from the tooltip.
+                let mirroring = remote == Some(ConnectionState::Connected);
+                let additive = ui
+                    .add_enabled(!mirroring, egui::Button::new("Open Scene Additive..."))
+                    .on_hover_text(if mirroring {
+                        "Unavailable while a project is open — the world \
+                         shown here mirrors the project, and a scene loaded \
+                         on this side would not exist in it"
+                    } else {
+                        "Load a scene beside the ones already open"
+                    });
+                if additive.clicked() {
                     actions.push(EditorAction::OpenSceneAdditive);
                     ui.close();
                 }
