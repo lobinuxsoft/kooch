@@ -4,10 +4,12 @@ use rapier3d::prelude::*;
 use slotmap::SlotMap;
 
 use crate::backend::{
-    BodyDesc, BodyHandle, BodyKind, ColliderHandle, CollisionShape, PhysicsBackend, RayHit,
+    BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, CollisionShape, JointDesc,
+    JointHandle, PhysicsBackend, RayHit,
 };
 
 use super::conv::{collider_for, collider_for_pose};
+use super::joints::{JointEntry, JointRef, generic_joint_for, linear_impulse};
 
 /// Rapier-backed [`PhysicsBackend`].
 ///
@@ -30,6 +32,11 @@ pub struct RapierBackend {
     handles: SlotMap<BodyHandle, RigidBodyHandle>,
     /// Shapes attached beyond the one each body was created with.
     collider_handles: SlotMap<ColliderHandle, RapierColliderHandle>,
+    /// Live joints, whichever of rapier's two sets holds each one.
+    joint_handles: SlotMap<JointHandle, JointEntry>,
+    /// Joints that broke since the last drain — see
+    /// [`PhysicsBackend::take_broken_joints`].
+    broken_joints: Vec<BrokenJoint>,
 }
 
 impl RapierBackend {
@@ -48,6 +55,8 @@ impl RapierBackend {
             gravity: Vec3::new(0.0, -9.81, 0.0),
             handles: SlotMap::with_key(),
             collider_handles: SlotMap::with_key(),
+            joint_handles: SlotMap::with_key(),
+            broken_joints: Vec::new(),
         }
     }
 
@@ -122,6 +131,61 @@ impl RapierBackend {
             self.publish_aabb(collider);
         }
     }
+
+    /// Removes the joints the last step overloaded.
+    ///
+    /// Rapier has no breaking of its own — it reports the impulse it
+    /// applied to hold each joint together, and this compares that against
+    /// the author's threshold. Reading the solver's own output and removing
+    /// a constraint is not a second solver; nothing here computes a force.
+    ///
+    /// Impulse joints only. A multibody joint is solved in reduced
+    /// coordinates, where the constraint impulse is not a quantity that
+    /// exists to be read — [`add_joint`](PhysicsBackend::add_joint) warns
+    /// rather than pretending otherwise.
+    fn break_overloaded_joints(&mut self) {
+        // Collected first: removing a joint borrows the set mutably, and
+        // breaking is rare enough that the allocation never happens on the
+        // common path.
+        let mut broken = Vec::new();
+        for (handle, entry) in &self.joint_handles {
+            if !entry.break_impulse.is_finite() {
+                continue;
+            }
+            let JointRef::Impulse(rapier_handle) = entry.reference else {
+                continue;
+            };
+            let Some(joint) = self.impulse_joints.get(rapier_handle) else {
+                continue;
+            };
+            let impulse = linear_impulse(&joint.impulses);
+            if impulse > entry.break_impulse {
+                broken.push(BrokenJoint {
+                    joint: handle,
+                    body_a: entry.body_a,
+                    body_b: entry.body_b,
+                    impulse,
+                });
+            }
+        }
+
+        for event in broken {
+            self.remove_joint(event.joint);
+            self.broken_joints.push(event);
+        }
+    }
+
+    /// Drops the bookkeeping for joints attached to a body rapier is about
+    /// to remove.
+    ///
+    /// Rapier removes the joints themselves; what it cannot do is retire
+    /// the engine-side handles that addressed them, and a
+    /// [`JointHandle`] outliving its joint is how a later `remove_joint`
+    /// would reach into the set with a handle rapier has reissued.
+    fn forget_joints_of(&mut self, body: BodyHandle) {
+        self.joint_handles
+            .retain(|_, entry| entry.body_a != body && entry.body_b != body);
+    }
 }
 
 impl Default for RapierBackend {
@@ -133,8 +197,9 @@ impl Default for RapierBackend {
 impl PhysicsBackend for RapierBackend {
     fn step(&mut self, dt: f32) {
         self.integration_parameters.dt = dt;
-        // No event collector or hooks for PR-1 — collision events / joint
-        // breaking arrive in follow-ups.
+        // No event collector or hooks yet — collision events arrive with
+        // #561. Joint breaking is handled after the step, from the impulses
+        // the solver reports.
         self.physics_pipeline.step(
             self.gravity,
             &self.integration_parameters,
@@ -149,6 +214,7 @@ impl PhysicsBackend for RapierBackend {
             &(), // physics hooks
             &(), // event handler
         );
+        self.break_overloaded_joints();
     }
 
     fn add_body(&mut self, desc: BodyDesc) -> BodyHandle {
@@ -206,6 +272,9 @@ impl PhysicsBackend for RapierBackend {
         let Some(rb_handle) = self.handles.remove(handle) else {
             return;
         };
+        // Before rapier removes them, so the engine-side handles retire
+        // with the joints rather than outliving them.
+        self.forget_joints_of(handle);
         // Remove rigid body + its colliders + any joints.
         self.bodies.remove(
             rb_handle,
@@ -267,6 +336,90 @@ impl PhysicsBackend for RapierBackend {
             return;
         };
         body.set_linvel(velocity, true);
+    }
+
+    fn add_joint(&mut self, desc: JointDesc) -> Option<JointHandle> {
+        let body_a = *self.handles.get(desc.body_a)?;
+        let body_b = *self.handles.get(desc.body_b)?;
+        // A joint from a body to itself is not a constraint, it is a
+        // degenerate system the solver has no answer for.
+        if body_a == body_b {
+            tracing::warn!(
+                target: "ome_physics",
+                "a joint cannot constrain a body to itself",
+            );
+            return None;
+        }
+
+        let joint = generic_joint_for(&desc);
+        let reference = match desc.articulated {
+            // `insert` returns `None` when the joint would close a cycle:
+            // a multibody is a tree by construction, and a loop has to stay
+            // on impulse joints.
+            true => match self.multibody_joints.insert(body_a, body_b, joint, true) {
+                Some(handle) => JointRef::Multibody(handle),
+                None => {
+                    tracing::warn!(
+                        target: "ome_physics",
+                        "an articulated joint cannot close a loop — rapier solves \
+                         multibodies in reduced coordinates, where a cycle is not \
+                         representable. Turn off Articulated for this joint",
+                    );
+                    return None;
+                }
+            },
+            false => JointRef::Impulse(self.impulse_joints.insert(body_a, body_b, joint, true)),
+        };
+
+        if desc.articulated && desc.break_impulse.is_finite() {
+            tracing::warn!(
+                target: "ome_physics",
+                "an articulated joint cannot break — its constraint impulse is not a \
+                 quantity reduced-coordinate solving produces. Turn off Articulated to \
+                 use a break threshold",
+            );
+        }
+
+        Some(self.joint_handles.insert(JointEntry {
+            reference,
+            body_a: desc.body_a,
+            body_b: desc.body_b,
+            break_impulse: desc.break_impulse,
+        }))
+    }
+
+    fn remove_joint(&mut self, handle: JointHandle) {
+        let Some(entry) = self.joint_handles.remove(handle) else {
+            return;
+        };
+        // `wake_up: true` — the bodies' constraints changed, and a sleeping
+        // body would otherwise stay held by a joint that no longer exists.
+        match entry.reference {
+            JointRef::Impulse(joint) => {
+                self.impulse_joints.remove(joint, true);
+            }
+            JointRef::Multibody(joint) => self.multibody_joints.remove(joint, true),
+        }
+    }
+
+    fn joint_count(&self) -> usize {
+        self.joint_handles.len()
+    }
+
+    fn joint_impulse(&self, handle: JointHandle) -> Option<f32> {
+        match self.joint_handles.get(handle)?.reference {
+            JointRef::Impulse(joint) => {
+                Some(linear_impulse(&self.impulse_joints.get(joint)?.impulses))
+            }
+            // Reduced coordinates never form a constraint impulse: the
+            // stretched configuration is not representable, so there is
+            // nothing holding the joint together to measure.
+            JointRef::Multibody(_) => None,
+        }
+    }
+
+    fn take_broken_joints(&mut self) -> Vec<BrokenJoint> {
+        std::mem::take(&mut self.broken_joints)
     }
 
     fn query_ray(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<RayHit> {
