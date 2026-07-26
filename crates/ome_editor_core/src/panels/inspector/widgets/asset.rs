@@ -93,13 +93,14 @@ impl AssetCatalogEntry {
         project_root: Option<&Path>,
     ) -> Vec<Self> {
         let mut out: Vec<Self> = Vec::new();
-        let mut seen_guids: std::collections::HashSet<Guid> =
-            std::collections::HashSet::new();
+        let mut seen_guids: std::collections::HashSet<Guid> = std::collections::HashSet::new();
         for guid in db.path_iter().map(|(_, g)| g) {
             if !seen_guids.insert(guid) {
                 continue;
             }
-            let Some(entry) = db.entry(guid) else { continue };
+            let Some(entry) = db.entry(guid) else {
+                continue;
+            };
             let Some(type_name) = entry.type_name.clone() else {
                 continue;
             };
@@ -150,7 +151,9 @@ fn classify_source(
 
 /// Returns `(label, extensions)` when a String field's name suggests
 /// it holds an asset path.
-pub(super) fn asset_filter_for(field_name: &str) -> Option<(&'static str, &'static [&'static str])> {
+pub(super) fn asset_filter_for(
+    field_name: &str,
+) -> Option<(&'static str, &'static [&'static str])> {
     let n = field_name.to_lowercase();
     if n.contains("mesh") {
         Some(("Mesh", &["gltf", "glb"]))
