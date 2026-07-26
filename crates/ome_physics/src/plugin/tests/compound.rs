@@ -223,6 +223,7 @@ fn moving_a_child_changes_the_digest() {
         shape: crate::backend::CollisionShape::Sphere { radius: 1.0 },
         offset: Vec3::ZERO,
         rotation: Quat::IDENTITY,
+        material: Default::default(),
     }];
     let mut b = a;
     b[0].offset = Vec3::new(0.0, 0.1, 0.0);

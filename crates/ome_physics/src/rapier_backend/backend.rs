@@ -5,7 +5,7 @@ use slotmap::SlotMap;
 
 use crate::backend::{
     BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, CollisionShape, JointDesc,
-    JointHandle, PhysicsBackend, RayHit,
+    JointHandle, PhysicsBackend, RayHit, SurfaceMaterial,
 };
 
 use super::conv::{collider_for, collider_for_pose, mass_properties_for};
@@ -245,8 +245,10 @@ impl PhysicsBackend for RapierBackend {
                 desc.mass,
                 desc.center_of_mass,
             ))
+            .linear_damping(desc.damping.sanitised().linear)
+            .angular_damping(desc.damping.sanitised().angular)
             .build();
-        let collider = collider_for(desc.shape, desc.shape_offset);
+        let collider = collider_for(desc.shape, desc.shape_offset, desc.material);
         let rb_handle = self.bodies.insert(rb);
         let collider_handle =
             self.colliders
@@ -266,9 +268,10 @@ impl PhysicsBackend for RapierBackend {
         shape: CollisionShape,
         offset: Vec3,
         rotation: Quat,
+        material: SurfaceMaterial,
     ) -> Option<ColliderHandle> {
         let rb_handle = *self.handles.get(body)?;
-        let collider = collider_for_pose(shape, offset, rotation);
+        let collider = collider_for_pose(shape, offset, rotation, material);
         let handle = self
             .colliders
             .insert_with_parent(collider, rb_handle, &mut self.bodies);
@@ -473,6 +476,21 @@ impl PhysicsBackend for RapierBackend {
         out: &mut Vec<crate::backend::DebugLine>,
     ) {
         self.collect_debug_lines(categories, out);
+    }
+
+    fn angular_velocity(&self, handle: BodyHandle) -> Option<Vec3> {
+        let rb_handle = *self.handles.get(handle)?;
+        Some(self.bodies.get(rb_handle)?.angvel())
+    }
+
+    fn set_angular_velocity(&mut self, handle: BodyHandle, velocity: Vec3) {
+        let Some(&rb_handle) = self.handles.get(handle) else {
+            return;
+        };
+        let Some(body) = self.bodies.get_mut(rb_handle) else {
+            return;
+        };
+        body.set_angvel(velocity, true);
     }
 
     fn query_ray(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<RayHit> {

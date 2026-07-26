@@ -212,6 +212,7 @@ fn a_body_can_carry_several_shapes() {
             },
             Vec3::new(0.0, 1.0, 0.0),
             Quat::IDENTITY,
+            Default::default(),
         )
         .expect("attaching to a live body succeeds");
 
@@ -254,6 +255,7 @@ fn an_attached_shape_keeps_its_rotation() {
                 },
                 Vec3::ZERO,
                 rotation,
+                Default::default(),
             )
             .expect("attaches");
 
@@ -290,6 +292,7 @@ fn attaching_to_a_stale_body_returns_none() {
                 CollisionShape::Sphere { radius: 1.0 },
                 Vec3::ZERO,
                 Quat::IDENTITY,
+                Default::default(),
             )
             .is_none(),
     );
@@ -311,6 +314,7 @@ fn removing_a_body_takes_its_attached_shapes() {
             CollisionShape::Sphere { radius: 0.5 },
             Vec3::X,
             Quat::IDENTITY,
+            Default::default(),
         )
         .expect("attaches");
 

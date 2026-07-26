@@ -9,7 +9,7 @@ use ome_ecs::Reflect;
 use ome_ecs::component::Component;
 use ome_ecs::reflect::{FieldChoice, FieldCondition};
 
-use crate::backend::{BodyKind, CollisionShape};
+use crate::backend::{BodyKind, CollisionShape, CombineRule, Damping, SurfaceMaterial};
 
 // ---------------------------------------------------------------------------
 // RigidBody
@@ -106,6 +106,16 @@ pub struct RigidBody {
     /// as saying where it is.
     #[reflect(shown_when = CENTER_OF_MASS_WHEN)]
     pub center_of_mass: Vec3,
+    /// How quickly the body loses linear motion with nothing touching it.
+    ///
+    /// Not friction — this applies in a vacuum, which makes it the tool for
+    /// "this moves through air" and the wrong one for "this slides less on
+    /// ice". Zero means a body keeps its motion forever, which is rapier's
+    /// default and was the engine's only option until #623.
+    pub linear_damping: f32,
+    /// The same for spin. A thrown object that should stop tumbling wants
+    /// this; a wheel that should keep turning does not.
+    pub angular_damping: f32,
 }
 
 impl Default for RigidBody {
@@ -116,6 +126,8 @@ impl Default for RigidBody {
             density: 1000.0,
             center_of_mass_enabled: false,
             center_of_mass: Vec3::ZERO,
+            linear_damping: 0.0,
+            angular_damping: 0.0,
         }
     }
 }
@@ -137,6 +149,15 @@ impl RigidBody {
     /// The authored centre of mass, or `None` to use the collider's.
     pub fn explicit_center_of_mass(&self) -> Option<Vec3> {
         self.center_of_mass_enabled.then_some(self.center_of_mass)
+    }
+
+    /// The damping the backend applies to this body.
+    pub fn damping(&self) -> Damping {
+        Damping {
+            linear: self.linear_damping,
+            angular: self.angular_damping,
+        }
+        .sanitised()
     }
 }
 
@@ -220,6 +241,25 @@ pub struct Collider {
     /// Capsule half-height, excluding the hemispherical caps.
     #[reflect(shown_when = HALF_HEIGHT_WHEN)]
     pub half_height: f32,
+    /// Resistance to sliding. 0 is frictionless; 1 is about rubber on dry
+    /// tarmac. Above 1 is legal and useful for gameplay.
+    pub friction: f32,
+    /// How this collider's friction combines with the other one's. One of
+    /// the `COMBINE_*` constants.
+    ///
+    /// **The pushier claim wins.** Rapier resolves a pair by taking the
+    /// higher of the two discriminants, so a collider on Average against
+    /// one on Max gets Max. A rule is less "how my surface behaves" than
+    /// "how I insist on being combined".
+    #[reflect(choices = COMBINE_CHOICES)]
+    pub friction_rule: u32,
+    /// Bounce. 0 absorbs the impact; 1 returns it, so a ball comes back to
+    /// roughly the height it fell from.
+    pub restitution: f32,
+    /// How this collider's bounce combines with the other one's. Same
+    /// max-wins resolution as `friction_rule`.
+    #[reflect(choices = COMBINE_CHOICES)]
+    pub restitution_rule: u32,
     /// The shape's centre, in the entity's local space.
     ///
     /// Moves the geometry inside the body without moving the body. A
@@ -237,6 +277,10 @@ impl Default for Collider {
             radius: 0.5,
             half_extents: Vec3::splat(0.5),
             half_height: 0.5,
+            friction: 0.5,
+            friction_rule: COMBINE_AVERAGE,
+            restitution: 0.0,
+            restitution_rule: COMBINE_AVERAGE,
             center: Vec3::ZERO,
         }
     }
@@ -244,7 +288,65 @@ impl Default for Collider {
 
 impl Component for Collider {}
 
+/// The mean of the two coefficients. Rapier's default.
+pub const COMBINE_AVERAGE: u32 = 0;
+/// The smaller value — the slipperier surface wins.
+pub const COMBINE_MIN: u32 = 1;
+/// The product — both surfaces have to be high.
+pub const COMBINE_MULTIPLY: u32 = 2;
+/// The larger value — the stickier surface wins.
+pub const COMBINE_MAX: u32 = 3;
+/// The sum, clamped.
+pub const COMBINE_CLAMPED_SUM: u32 = 4;
+
+/// Labels for the combine-rule dropdowns.
+pub static COMBINE_CHOICES: &[FieldChoice] = &[
+    FieldChoice {
+        label: "Average",
+        value: COMBINE_AVERAGE as i64,
+    },
+    FieldChoice {
+        label: "Min (slipperier wins)",
+        value: COMBINE_MIN as i64,
+    },
+    FieldChoice {
+        label: "Multiply",
+        value: COMBINE_MULTIPLY as i64,
+    },
+    FieldChoice {
+        label: "Max (stickier wins)",
+        value: COMBINE_MAX as i64,
+    },
+    FieldChoice {
+        label: "Clamped sum",
+        value: COMBINE_CLAMPED_SUM as i64,
+    },
+];
+
+/// The backend rule for a discriminant, defaulting to the average for one
+/// outside the known set — a scene from a newer editor stays loadable.
+fn combine_rule(discriminant: u32) -> CombineRule {
+    match discriminant {
+        COMBINE_MIN => CombineRule::Min,
+        COMBINE_MULTIPLY => CombineRule::Multiply,
+        COMBINE_MAX => CombineRule::Max,
+        COMBINE_CLAMPED_SUM => CombineRule::ClampedSum,
+        _ => CombineRule::Average,
+    }
+}
+
 impl Collider {
+    /// The surface this collider presents on contact.
+    pub fn material(&self) -> SurfaceMaterial {
+        SurfaceMaterial {
+            friction: self.friction,
+            friction_rule: combine_rule(self.friction_rule),
+            restitution: self.restitution,
+            restitution_rule: combine_rule(self.restitution_rule),
+        }
+        .sanitised()
+    }
+
     /// Resolves the flat fields to the geometry the backend takes.
     ///
     /// Degenerate values are clamped rather than rejected: a collider
@@ -327,6 +429,7 @@ mod tests {
             half_extents: Vec3::splat(2.0),
             half_height: 1.0,
             center: Vec3::ZERO,
+            ..Default::default()
         };
         collider.shape = SHAPE_CUBOID;
         assert_eq!(
