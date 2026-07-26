@@ -6,9 +6,11 @@
 //! surface, even when the backend uses it internally.
 
 mod body;
+mod debug;
 mod joint;
 
 pub use body::{BodyDesc, BodyHandle, BodyKind, ColliderHandle, CollisionShape, RayHit};
+pub use debug::{DebugCategories, DebugLine};
 pub use joint::{BrokenJoint, JointDesc, JointHandle, JointKind, JointMotor, MotorModel};
 
 use glam::{Quat, Vec3};
@@ -137,4 +139,17 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// Casts a ray and returns the closest hit, if any. `dir` is expected
     /// to be normalized; `max_t` is the parametric cutoff.
     fn query_ray(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<RayHit>;
+
+    /// Appends line segments describing the solver's own state — see
+    /// [`DebugLine`].
+    ///
+    /// Appends rather than returns, so a caller drawing every frame reuses
+    /// one buffer instead of allocating a fresh `Vec` sixty times a
+    /// second.
+    ///
+    /// Defaults to producing nothing. A backend that cannot introspect
+    /// itself should say nothing rather than invent an approximation: the
+    /// overlay exists to report ground truth, and a plausible drawing of a
+    /// state the solver is not in is worse than an empty viewport.
+    fn debug_lines(&self, _categories: DebugCategories, _out: &mut Vec<DebugLine>) {}
 }

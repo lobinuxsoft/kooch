@@ -18,13 +18,15 @@ use super::joints::{JointEntry, JointRef, generic_joint_for, linear_impulse};
 /// are stable across `step` calls; `remove_body` evicts both Rapier-side
 /// and slotmap-side entries.
 pub struct RapierBackend {
-    bodies: RigidBodySet,
-    colliders: ColliderSet,
-    impulse_joints: ImpulseJointSet,
-    multibody_joints: MultibodyJointSet,
+    // Visible to the sibling `debug` module, which walks them to describe
+    // the world; private to everything else.
+    pub(super) bodies: RigidBodySet,
+    pub(super) colliders: ColliderSet,
+    pub(super) impulse_joints: ImpulseJointSet,
+    pub(super) multibody_joints: MultibodyJointSet,
     islands: IslandManager,
     broad_phase: DefaultBroadPhase,
-    narrow_phase: NarrowPhase,
+    pub(super) narrow_phase: NarrowPhase,
     ccd_solver: CCDSolver,
     physics_pipeline: PhysicsPipeline,
     integration_parameters: IntegrationParameters,
@@ -462,6 +464,15 @@ impl PhysicsBackend for RapierBackend {
 
     fn take_broken_joints(&mut self) -> Vec<BrokenJoint> {
         std::mem::take(&mut self.broken_joints)
+    }
+
+    #[cfg(feature = "debug-render")]
+    fn debug_lines(
+        &self,
+        categories: crate::backend::DebugCategories,
+        out: &mut Vec<crate::backend::DebugLine>,
+    ) {
+        self.collect_debug_lines(categories, out);
     }
 
     fn query_ray(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<RayHit> {

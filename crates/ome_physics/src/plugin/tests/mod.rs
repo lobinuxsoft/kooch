@@ -9,6 +9,8 @@
 
 mod compound;
 mod configuration;
+#[cfg(feature = "debug-render")]
+mod debug;
 mod joints;
 mod lifetime;
 mod mass;
