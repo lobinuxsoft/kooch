@@ -345,7 +345,11 @@ impl PhysicsWorld {
     /// change, and a spec change retires the whole body — which takes its
     /// shapes with it. Tracking them individually would buy nothing and
     /// give two places to forget.
-    pub fn attach_all(&mut self, slot: u32, attachments: &[super::compound::Attachment]) {
+    ///
+    /// Visible only inside the plugin, because `Attachment` is: a `pub`
+    /// signature naming a type nobody outside can name is a function that
+    /// advertises itself and cannot be called.
+    pub(super) fn attach_all(&mut self, slot: u32, attachments: &[super::compound::Attachment]) {
         let Some(handle) = self.handle(slot) else {
             return;
         };
