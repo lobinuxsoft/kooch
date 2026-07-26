@@ -405,3 +405,26 @@ Format:
 > absent saves and loads as unset, which is the normal state for a
 > reference into a non-resident cell under #566. Unblocks #560 and
 > cross-scene references.
+
+> **2026-07-25 · The world is the container; scenes are content loaded into it** *(feat [#609](https://github.com/lobinuxsoft/oh_my_engine/issues/609))*
+>
+> **Decision:** `SceneManager` becomes a registry of open scenes with one
+> active, instead of a single current path whose load replaced the world.
+> Scenes carry a `Guid`; `SceneMember` records an entity's authoring home
+> and is derived on load rather than serialised. Saving writes only one
+> scene's entities; closing despawns only its own.
+> **Why:** the model #566 settled on. One scene per world is "the entire
+> world in one section", which cannot express a space station and an
+> asteroid field as separate content occupying the same volume, nor make
+> "close the station" different from "walk away from it". #607 supplied
+> the prerequisite by making entity references survive a save.
+> **Consequence:** there is always a scene, even before the first save,
+> and entities with no membership are adopted by the active scene when it
+> saves — otherwise anything spawned in the editor would belong to nothing
+> and be written to no file. The reference remap table is keyed by
+> `(scene, id)`, never by id alone: ids are scene-local, so two open
+> scenes both numbering an entity 1 is ordinary. Opening the same file
+> twice is refused, because two copies would share every entity id.
+> Scene transforms and instancing are deliberately deferred — they need a
+> decision on whether the transform bakes at load, as Unreal's Embedded
+> Level Instances do.
