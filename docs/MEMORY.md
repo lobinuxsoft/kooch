@@ -387,6 +387,31 @@ secciones + `SceneLoadFlags.NewInstance` con `PostLoadOffset`. O sea el transfor
 40km no tiene "una posición": si el criterio fuera origen+radio, cargás la ciudad entera o
 nada. La residencia se deriva de dónde quedaron las entidades, como fijó #566.
 
+### Rapier define el techo de la física (locked 2026-07-26, #612)
+
+**Implementar SOLO lo que Rapier ofrece. Lo que no permite → WARNING, no construirlo por
+afuera.** Mismo razonamiento que "Bevy define el techo de wgpu", pero para física.
+
+Motivo: física escrita por afuera del solver pelea contra el solver — dos autoridades sobre
+la misma pose. El caso que originó la regla (un `RigidBody` dinámico emparentado a otro
+transform) es exactamente eso, y **Godot lleva años sin resolverlo** (issues #22904 y
+#120067, abiertas). Unity y Unreal lo *evitan* en vez de soportarlo: compound colliders (un
+cuerpo, varios shapes) y welding.
+
+Un warning honesto vale más que una feature que miente. Godot warnea en el nodo cuando la
+configuración física no cierra; copiar ese patrón en el editor.
+
+**Excepciones acordadas** — lo específico del proyecto que Rapier no cubre:
+- **Planetas terraformables** (terreno editable en runtime).
+- **Double contouring / marching cubes** para la malla de colisión planetaria.
+
+Las dos son sobre **generar la geometría** que después se le entrega a Rapier como
+collider, NO sobre reemplazar el solver. Esa es la línea: **geometría propia sí, dinámica
+propia no.**
+
+No contradice "la física detrás de la abstracción": el trait sigue siendo el contrato, pero
+su superficie la define lo que Rapier puede hacer, no lo que nos gustaría.
+
 ### Prefabs = escenas instanciadas (decidido 2026-07-26, #611)
 
 **Abrir e instanciar son operaciones DISTINTAS y sólo una tiene restricción.** #609 rechaza
