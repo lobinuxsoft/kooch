@@ -237,12 +237,26 @@ impl SceneManager {
 
     /// Whether a file on disk predates scene identity.
     ///
-    /// `SceneDocument::id` defaults on deserialisation, so a freshly
-    /// generated id is indistinguishable from a stored one by the time the
-    /// document exists. This checks the text instead.
+    /// `SceneDocument::id` defaults on deserialisation, so by the time the
+    /// document exists a freshly generated id is indistinguishable from a
+    /// stored one. This re-reads the file asking only whether the field is
+    /// there.
+    ///
+    /// Parsed rather than searched for `"id:"`: entity names are free text,
+    /// so a scene holding an entity called `grid:floor` would answer yes to
+    /// a substring check and never persist the id it was just given.
     fn lacks_stored_id(path: &Path) -> Result<bool, SceneError> {
+        /// Reads the identity field and ignores everything else.
+        #[derive(serde::Deserialize)]
+        struct IdProbe {
+            #[serde(default)]
+            id: Option<Guid>,
+        }
+
         let data = std::fs::read_to_string(path)?;
-        Ok(!data.contains("id:"))
+        // An unparseable file is not this function's problem — the real
+        // load is about to report it properly.
+        Ok(ron::from_str::<IdProbe>(&data).is_ok_and(|probe| probe.id.is_none()))
     }
 
     // -- Saving ----------------------------------------------------------

@@ -400,3 +400,27 @@ fn two_scenes_may_reuse_the_same_entity_id_without_crossing_references() {
         );
     }
 }
+
+/// Entity names are free text, so a scene holding one called `grid:floor`
+/// contains the substring `id:` without having an identity field. A
+/// text search would call that file "already identified" and never
+/// persist the id it was just given — a different scene id every session,
+/// and no reference into it ever resolving.
+#[test]
+fn an_entity_name_containing_id_does_not_pass_for_a_scene_identity() {
+    let path = tmp_path("multi_named_id");
+    std::fs::write(
+        &path,
+        r#"(name: "Legacy", version: "0.1.0", entities: [(name: "grid:floor", components: [])])"#,
+    )
+    .expect("writes a pre-identity file whose text contains `id:`");
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&path, &mut resources).expect("loads");
+
+    assert!(
+        manager.is_dirty(),
+        "the file has no identity field; the name merely looks like one",
+    );
+}
