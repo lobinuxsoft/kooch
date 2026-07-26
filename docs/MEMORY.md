@@ -76,7 +76,39 @@ grilla directamente.
 
 ---
 
-## ⭐ Estado actual (2026-07-26, rama `feat/physics-debug-render`)
+## ⭐ Smoke headless de física — `cargo run --example physics_smoke`
+
+```
+cargo run --example physics_smoke --no-default-features \
+    --features physics,physics-debug-render
+```
+
+Corre el `App` de verdad — plugins, schedule, timestep fijo — sin ventana ni GPU, y
+**imprime lo que el solver terminó teniendo**: masas, centros de masa, el ángulo al que
+frenó la puerta, si el joint frágil se soltó, y cuántos segmentos dibuja cada categoría del
+overlay. Es lo más cerca de un smoke automatizable que hay hoy.
+
+**⚠️ TRAMPA que ya mordió una vez: contar frames NO mide tiempo de física.** El runner por
+defecto gira tan rápido como puede y los pasos fijos se acumulan por tiempo **real**. La
+primera versión del ejemplo corrió 240 frames en **10 ms** y reportó — correctamente — que
+nada se había movido. Hay que esperar `Time::fixed_count()`, no `frame_count()`.
+
+Baseline verificado 2026-07-26 (240 pasos, 4 s simulados):
+
+| | |
+|---|---|
+| cubo 1 m y esfera r=2, ambos 3 kg autorados | 3.0000 kg los dos, CoM en el origen |
+| compuesto con collider hijo a 4 m | 3.0000 kg, CoM **no** arrastrado |
+| puerta con límite 0.4 rad | frena en 0.4000 |
+| joint de 0.02 bajo 5 kg | se suelta; la carga cae a y=0.499 |
+| overlay | 27 contactos / 24 CoM / 3 anclas / 108 AABB / 132 shapes / 0 apagado |
+
+Las anclas de joint pasan de 6 a 3 segmentos cuando uno se rompe — el overlay es coherente
+consigo mismo.
+
+---
+
+## Estado (2026-07-26, rama `feat/physics-debug-render`)
 
 **#563 debug render.** #560 y #618 mergeados (PRs #621, #622).
 
