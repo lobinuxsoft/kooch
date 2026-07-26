@@ -387,6 +387,24 @@ secciones + `SceneLoadFlags.NewInstance` con `PostLoadOffset`. O sea el transfor
 40km no tiene "una posición": si el criterio fuera origen+radio, cargás la ciudad entera o
 nada. La residencia se deriva de dónde quedaron las entidades, como fijó #566.
 
+### Cero readback: la excepción por eventos discretos (locked 2026-07-26, #614)
+
+La regla sigue siendo **cero readback POR FRAME** en el hot loop. La excepción acordada:
+**un evento discreto puede sincronizar.**
+
+Discreto = el jugador excava, cae un meteoro, explota algo. Ocurre cuando ocurre, no todos
+los frames. Es exactamente lo que hacen los engines de voxel destructible: el costo se paga
+en el evento, no en el presupuesto de frame.
+
+**Lo que la excepción NO habilita:** que el streaming del terreno, su selección de LOD, o
+el refit de su estructura de aceleración metan readback por frame. Eso sigue prohibido. La
+excepción se escribió así a propósito — "el terreno queda exento" sería más fácil de
+recordar y sería la puerta por la que dentro de un año entra un hitch que nadie sabe
+explicar.
+
+Test mental antes de agregar un readback: **¿esto corre porque pasó algo, o corre siempre?**
+Si es lo segundo, no entra en la excepción.
+
 ### Rapier define el techo de la física (locked 2026-07-26, #612)
 
 **Implementar SOLO lo que Rapier ofrece. Lo que no permite → WARNING, no construirlo por
