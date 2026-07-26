@@ -76,7 +76,45 @@ grilla directamente.
 
 ---
 
-## ⭐ Estado actual (2026-07-26, rama `feat/physics-joints`)
+## ⭐ Estado actual (2026-07-26, rama `feat/physics-mass-control`)
+
+**#618 mass control.** #560 ya mergeado (PR #621).
+
+**El bug de unidades que el issue NO había identificado:** `RigidBody.mass` decía
+*"Mass in kilograms"* y en realidad era *masa adicional sobre la que el volumen del collider
+implica a densidad 1.0*, porque `RigidBodyBuilder::additional_mass` de rapier **suma**.
+Medido: esfera r=0.5 con `mass = 1.0` pesaba **1.52 kg**; esfera r=2.0 pesaba **34.5 kg**.
+O sea "se ve lento" tenía dos causas — el tensor de inercia creciendo (física correcta, lo
+que decía el issue) *y* la masa total creciendo con cada shape.
+
+**Decisión (opción A del issue): los colliders no aportan masa.** `mass` es la masa entera y
+única autoridad. Un campo que dice kilogramos tiene que significar kilogramos.
+
+**Cómo se arma sin degenerar la inercia** — el detalle que casi muerde: con colliders a
+`density(0.0)`, un `additional_mass` escalar escala una inercia que vale cero → aceleración
+angular infinita. La forma correcta es `additional_mass_properties` con un `MassProperties`
+sacado de la **forma del collider del padre a densidad 1.0** y después `set_mass(m, true)`.
+Verificado: masa exacta, centro de masa en el collider del padre (no arrastrado por un hijo
+descentrado a 4 m), inercia `0.3 = ⅖·m·r²` correcta y finita.
+
+**`density` es campo de autoring y NO entra en `BodySpec`.** La simulación nunca lo lee; sólo
+lo lee el botón *Calculate mass*. Si entrara en el spec, editarlo retiraría el cuerpo y le
+tiraría la velocidad en pleno play por un número que el solver ni mira.
+
+**Las mass properties de rapier quedan STALE hasta el primer step.** El editor autora un
+mundo que no simula, así que `add_body` llama explícitamente a
+`recompute_mass_properties_from_colliders`. Sin eso, el debug render de #563 dibujaría el
+punto equivocado.
+
+**El botón no necesitó protocolo nuevo:** `EditorAction::SetField` ya existía, así que el
+undo sale gratis y anda igual contra un proyecto remoto — el volumen se calcula del snapshot
+del Inspector. El recorrido de hijos **frena en cualquier descendiente con `RigidBody`**,
+misma regla que `compound.rs::attachments_for`; si divergen, el botón reporta la masa de un
+cuerpo que el solver nunca arma.
+
+---
+
+## Estado anterior (2026-07-26, rama `feat/physics-joints`, PR #621 mergeado)
 
 **#560 joints implementado.** Un componente `Joint` con discriminante reflejado y campos
 por tipo vía `FieldCondition` — el patrón de `Collider`, no un componente por tipo de joint.

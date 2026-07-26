@@ -11,6 +11,7 @@ mod compound;
 mod configuration;
 mod joints;
 mod lifetime;
+mod mass;
 mod play_lifecycle;
 mod simulation;
 

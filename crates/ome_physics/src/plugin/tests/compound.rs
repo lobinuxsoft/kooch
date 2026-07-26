@@ -34,6 +34,7 @@ fn dynamic() -> RigidBody {
     RigidBody {
         kind: KIND_DYNAMIC,
         mass: 1.0,
+        ..Default::default()
     }
 }
 

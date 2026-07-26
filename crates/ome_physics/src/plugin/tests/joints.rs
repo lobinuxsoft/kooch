@@ -21,6 +21,7 @@ fn anchor(resources: &mut Resources, position: Vec3) -> Entity {
         RigidBody {
             kind: KIND_STATIC,
             mass: 0.0,
+            ..Default::default()
         },
         Collider {
             shape: SHAPE_CUBOID,

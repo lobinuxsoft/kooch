@@ -36,9 +36,26 @@ pub enum CollisionShape {
 pub struct BodyDesc {
     pub kind: BodyKind,
     pub shape: CollisionShape,
-    /// Mass in kg. Ignored for [`BodyKind::Static`] /
-    /// [`BodyKind::Kinematic`]; used for dynamic inertia tensor.
+    /// The body's **whole** mass in kg. Ignored for [`BodyKind::Static`]
+    /// and [`BodyKind::Kinematic`].
+    ///
+    /// Whole, not additional: shapes contribute collision and no mass, so
+    /// this is exactly what the body weighs however many colliders it
+    /// carries. A backend that let the shapes add to it would make the
+    /// number mean something different for every collider, which is the
+    /// bug #618 was filed about.
+    ///
+    /// The inertia tensor is still derived from [`shape`](Self::shape) —
+    /// scaled to this mass — because a body has to resist rotation like
+    /// something of its size, and a mass with no geometry behind it has no
+    /// tensor at all.
     pub mass: f32,
+    /// Where the centre of mass sits in body-local space, or `None` to use
+    /// the shape's own centre.
+    ///
+    /// A vehicle wants its centre of mass low or it rolls in every corner,
+    /// and no arrangement of collision shapes says that as directly.
+    pub center_of_mass: Option<Vec3>,
     pub position: Vec3,
     pub rotation: Quat,
     /// The shape's centre relative to the body, in body-local space.
@@ -57,6 +74,7 @@ impl BodyDesc {
             kind: BodyKind::Dynamic,
             shape,
             mass,
+            center_of_mass: None,
             position: Vec3::ZERO,
             rotation: Quat::IDENTITY,
             shape_offset: Vec3::ZERO,
@@ -69,6 +87,7 @@ impl BodyDesc {
             kind: BodyKind::Static,
             shape,
             mass: 0.0,
+            center_of_mass: None,
             position,
             rotation: Quat::IDENTITY,
             shape_offset: Vec3::ZERO,

@@ -8,6 +8,7 @@
 //! - [`widgets`]: per-`ReflectValue` editor widgets and choice dropdowns.
 
 mod asset_view;
+mod mass_from_colliders;
 mod multi;
 mod physics_warnings;
 mod rotation;
@@ -251,6 +252,9 @@ fn draw_inspector_body(
                             component: comp.component,
                         });
                     }
+                    if comp.short_name == "RigidBody" && !is_read_only {
+                        draw_calculate_mass(ui, entity, comp.component, entities, actions);
+                    }
                 })
                 .body(|ui| {
                     if let Some(fields) = &comp.fields {
@@ -288,6 +292,47 @@ fn draw_inspector_body(
 
 /// Draws any physics warnings that apply to `entity`.
 ///
+/// The **Calculate mass** button on a `RigidBody` header.
+///
+/// Writes `density × collider volume` into `mass`, once. It emits an
+/// ordinary `SetField`, which means it is undoable like any other edit and
+/// works unchanged against a remote project — the volume is computed from
+/// the display snapshot, so no new message crosses the wire.
+///
+/// Disabled rather than hidden when there is nothing to measure: a button
+/// that is not there reads as a feature that does not exist, while a greyed
+/// one with a reason on hover says what to do next.
+fn draw_calculate_mass(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    component: ComponentId,
+    entities: &[EntityDisplayInfo],
+    actions: &mut Vec<EditorAction>,
+) {
+    let mass = mass_from_colliders::mass_from_colliders(entity, entities);
+    let button = ui.add_enabled(mass.is_some(), egui::Button::new("Calculate mass").small());
+    let button = match mass {
+        Some(mass) => button.on_hover_text(format!(
+            "Set mass to {mass:.3} kg — this body's collider volume times its density. \
+             Writes the value, so resizing a collider later will not change it.",
+        )),
+        None => button.on_disabled_hover_text(
+            "Needs a Collider on this entity or on one of its children. Descendants \
+             that carry their own RigidBody are separate bodies and do not count.",
+        ),
+    };
+    if button.clicked()
+        && let Some(mass) = mass
+    {
+        actions.push(EditorAction::SetField {
+            entity,
+            component,
+            field: "mass".to_owned(),
+            value: ome_ecs::reflect::ReflectValue::F32(mass),
+        });
+    }
+}
+
 /// Amber rather than red: the scene still runs, and the configuration is
 /// legal — it just does not do what the author probably expects. The same
 /// colour the Transform readout already uses for shear.

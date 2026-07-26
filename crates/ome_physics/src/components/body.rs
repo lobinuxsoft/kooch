@@ -38,22 +38,74 @@ pub static KIND_CHOICES: &[FieldChoice] = &[
     },
 ];
 
+/// Which state reads `center_of_mass`: only an explicit override.
+pub static CENTER_OF_MASS_WHEN: FieldCondition = FieldCondition {
+    field: "center_of_mass_enabled",
+    values: &[1],
+};
+
 /// Marks an entity as participating in the physics simulation.
 ///
 /// Pairs with a [`Collider`]; an entity carrying only this gets a unit
 /// sphere, so a half-authored entity falls rather than panics.
 ///
+/// # Where the mass comes from
+///
+/// From [`mass`](Self::mass), and nowhere else. Colliders contribute
+/// collision and no mass at all.
+///
+/// This is a deliberate departure from Unity and Unreal, which derive a
+/// body's mass properties from every attached shape's volume and density.
+/// That is physically correct and it is what surprised the author who
+/// filed #618: adding a second collider to a body made it heavier and
+/// slower to turn, with nothing in the Inspector saying so. Worse, the
+/// `mass` field did not mean kilograms — rapier's `additional_mass` is
+/// *added* to the shape-derived mass, so a 1 kg body with a two-metre
+/// sphere weighed thirty-four.
+///
+/// A field labelled kilograms has to mean kilograms. So the shapes are
+/// massless, `mass` is the whole mass, and the body's inertia is derived
+/// from the entity's *own* collider scaled to that mass — which is also
+/// why a compound body's centre of mass stays where the author expects
+/// instead of drifting towards the children.
+///
+/// What that gives up is "a bigger rock is automatically heavier".
+/// [`density`](Self::density) buys it back on demand: the Inspector's
+/// **Calculate mass** button multiplies it by the colliders' volume and
+/// writes the result here, once, where you can see and edit it.
+///
 /// # Default
 ///
-/// A dynamic body of 1 kg.
+/// A dynamic body of 1 kg at the density of water.
 #[derive(Debug, Clone, Copy, Reflect)]
 #[reflect(category = "Physics")]
 pub struct RigidBody {
     /// How the solver treats this body. One of the `KIND_*` constants.
     #[reflect(choices = KIND_CHOICES)]
     pub kind: u32,
-    /// Mass in kilograms. Ignored by static and kinematic bodies.
+    /// Mass in kilograms — the body's whole mass. Ignored by static and
+    /// kinematic bodies.
     pub mass: f32,
+    /// Kilograms per cubic metre, for the Inspector's **Calculate mass**
+    /// button.
+    ///
+    /// **The simulation never reads this.** It is authoring input: the
+    /// button multiplies it by the volume of this entity's colliders and
+    /// writes the product into [`mass`](Self::mass). Kept as a field
+    /// rather than asked for in a dialog so the number that produced a
+    /// mass is visible next to it — 1000 is water, ~2700 aluminium, ~7850
+    /// steel, ~600 dry pine.
+    pub density: f32,
+    /// Put the centre of mass somewhere other than the collider's centre.
+    pub center_of_mass_enabled: bool,
+    /// The centre of mass, in the entity's local space.
+    ///
+    /// What Unity calls `centerOfMass` and Unreal calls `COMOffset`. A
+    /// vehicle wants its centre of mass low or it rolls in every corner,
+    /// and no arrangement of collision shapes expresses that as directly
+    /// as saying where it is.
+    #[reflect(shown_when = CENTER_OF_MASS_WHEN)]
+    pub center_of_mass: Vec3,
 }
 
 impl Default for RigidBody {
@@ -61,6 +113,9 @@ impl Default for RigidBody {
         Self {
             kind: KIND_DYNAMIC,
             mass: 1.0,
+            density: 1000.0,
+            center_of_mass_enabled: false,
+            center_of_mass: Vec3::ZERO,
         }
     }
 }
@@ -77,6 +132,11 @@ impl RigidBody {
             KIND_STATIC => BodyKind::Static,
             _ => BodyKind::Dynamic,
         }
+    }
+
+    /// The authored centre of mass, or `None` to use the collider's.
+    pub fn explicit_center_of_mass(&self) -> Option<Vec3> {
+        self.center_of_mass_enabled.then_some(self.center_of_mass)
     }
 }
 
@@ -228,6 +288,7 @@ mod tests {
         let body = RigidBody {
             kind: 99,
             mass: 1.0,
+            ..Default::default()
         };
         assert_eq!(body.body_kind(), BodyKind::Dynamic);
 

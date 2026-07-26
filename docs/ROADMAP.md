@@ -6,7 +6,7 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
-Last updated 2026-07-26, `development` at `a04b41a`.
+Last updated 2026-07-26, `development` at `d611156`.
 
 ---
 
@@ -19,18 +19,18 @@ Last updated 2026-07-26, `development` at `a04b41a`.
 | **#609** | More than one scene loaded at once |
 | **#612** | Parented physics — compound colliders, gizmo parent-space conversion, Inspector warnings |
 | **#560** | Joints — one `Joint` component, all eight rapier kinds, motors, limits, breaking |
+| **#618** | Mass control — `mass` means kilograms, shapes are massless, explicit centre of mass |
 
 ---
 
 ## Next — physics, because half of it is missing where users look
 
-Smoke turned up that the physics story had a visible hole: the editor told authors to use a
-joint, and there were no joints. That one is closed; the rest of the hole is not.
+Smoke turned up two holes: the editor told authors to use a joint when there were none, and a
+compound body's mass came from nowhere the author could see. Both are closed. What is left is
+that physics is still invisible — the only way to find out what the solver built is to reason
+about it.
 
-1. **#618 — mass control.** Compound bodies compute their centre of mass from every shape,
-   which surprised the author and reads as "slow". The physics is right; the control is
-   missing. Needs a decision on the default before code.
-2. **#563 — physics debug render.** Would have made #618 diagnosable in seconds instead of
+1. **#563 — physics debug render.** It would have made #618 diagnosable in seconds instead of
    by reasoning about inertia tensors, and joints are the next thing that will look wrong
    without one: a hinge that does nothing and a hinge whose axis is off look identical from
    the viewport.

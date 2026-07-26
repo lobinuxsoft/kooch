@@ -70,6 +70,7 @@ fn a_static_body_stays_put_and_catches_what_falls() {
         RigidBody {
             kind: KIND_STATIC,
             mass: 0.0,
+            ..Default::default()
         },
         Collider {
             shape: SHAPE_CUBOID,
@@ -102,6 +103,7 @@ fn a_kinematic_body_follows_its_transform_while_playing() {
         RigidBody {
             kind: KIND_KINEMATIC,
             mass: 1.0,
+            ..Default::default()
         },
         Collider::default(),
     );
@@ -155,6 +157,7 @@ fn an_offset_shape_collides_where_it_is_drawn() {
             RigidBody {
                 kind: KIND_STATIC,
                 mass: 0.0,
+                ..Default::default()
             },
             Collider {
                 shape: SHAPE_CUBOID,
@@ -204,6 +207,7 @@ fn an_offset_does_not_move_the_body() {
         RigidBody {
             kind: KIND_STATIC,
             mass: 0.0,
+            ..Default::default()
         },
         Collider {
             center: Vec3::new(0.0, 10.0, 0.0),
