@@ -30,15 +30,15 @@ Last updated 2026-07-26, `development` at `63df64c`.
 
 Smoke turned up five holes, and all five are closed: no joints where the editor said to use
 one, a mass that came from nowhere, no way to look at any of it, a material nobody could
-touch, and a solver that could not report back. What is left is gravity that only points
-down, and the queries nobody can make.
+touch, and a solver that could not report back — and gravity that only pointed down. What is
+left is the queries nobody can make.
 
-1. **#624 — custom gravity.** Per-body scale is one field. Gravity that points at a planet
-   instead of down is what `crates/ome_gravity/` has been a nine-line placeholder for since
-   the foundation, and what planet-scale actually needs.
+**#624 is done** — `crates/ome_gravity/` is no longer a nine-line placeholder. Three source
+components that sum, applied as an impulse so gameplay forces still compose.
 
-Then **#562** (scene queries), **#567** (PD/PID controllers), **#569** (per-stage counters in
-the perf HUD).
+Next: **#562** (scene queries), **#567** (PD/PID controllers), **#569** (per-stage counters in
+the perf HUD). Loose end from #624: splitting `RigidBody` into `RigidBody`/`KinematicBody`/
+`StaticBody`, which is a scene-format migration and wants its own issue.
 
 > The standing rule: implement what Rapier offers, warn for what it does not. Everything
 > above is exposing the solver, not working around it. See `MEMORY.md`.
