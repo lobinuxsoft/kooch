@@ -9,12 +9,14 @@ use std::ffi::c_void;
 use ome_plugin_api::engine_api::EngineApi;
 
 mod callback;
+mod component;
 mod context;
 mod entity;
 mod resource_api;
 #[cfg(test)]
 mod tests;
 
+pub use component::{ComponentBridge, PluginField};
 pub use context::BridgeContext;
 pub use entity::EntityBridge;
 
@@ -30,5 +32,6 @@ pub fn create_engine_api(ctx: &mut BridgeContext) -> EngineApi {
         log_info: resource_api::bridge_log_info,
         set_plugin_data: resource_api::bridge_set_plugin_data,
         get_plugin_data: resource_api::bridge_get_plugin_data,
+        add_component_type: component::bridge_register_component,
     }
 }

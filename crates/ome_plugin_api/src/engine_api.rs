@@ -9,6 +9,7 @@
 
 use std::ffi::c_void;
 
+use crate::component::ComponentDesc;
 use crate::types::{SystemCallback, UserdataDrop};
 
 /// Function pointer table giving plugins access to engine services.
@@ -82,6 +83,16 @@ pub struct EngineApi {
         key_len: usize,
         out_len: *mut usize,
     ) -> *const u8,
+
+    /// Declares a component type the plugin owns.
+    ///
+    /// The plugin's types do not exist in the engine's binary, so what
+    /// crosses is a description — a name and its fields — which is what
+    /// the editor's Inspector draws and what the scene format writes.
+    ///
+    /// Returns one of the
+    /// [`register_result`](crate::component::register_result) constants.
+    pub add_component_type: extern "C" fn(ctx: *mut c_void, desc: *const ComponentDesc) -> u32,
 }
 
 // SAFETY: EngineApi is a bag of function pointers + an opaque context pointer.
@@ -145,6 +156,17 @@ impl EngineApi {
     #[inline]
     pub fn set_data(&mut self, key: &str, data: &[u8]) {
         (self.set_plugin_data)(self.ctx, key.as_ptr(), key.len(), data.as_ptr(), data.len())
+    }
+
+    /// Declares a component type, returning one of the
+    /// [`register_result`](crate::component::register_result) constants.
+    ///
+    /// The description borrows its strings, so a plugin can build it
+    /// from `&'static str` without allocating; the engine copies what it
+    /// keeps before returning.
+    #[inline]
+    pub fn register_component(&mut self, desc: &ComponentDesc) -> u32 {
+        (self.add_component_type)(self.ctx, desc as *const ComponentDesc)
     }
 
     /// Retrieves plugin data by key. Returns `None` if not found.

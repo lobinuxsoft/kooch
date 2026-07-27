@@ -166,18 +166,21 @@
 //! - Userdata must be `Send + Sync` safe (the engine is single-threaded
 //!   but the type system requires these bounds)
 
+pub mod component;
 pub mod engine_api;
 pub mod plugin;
 pub mod types;
 pub mod version;
 
+pub use component::{ComponentDesc, FieldDesc};
 pub use engine_api::EngineApi;
 pub use plugin::{BoxedPlugin, OmePlugin};
 
 /// Re-exports for plugin authors.
 pub mod prelude {
+    pub use crate::component::{ComponentDesc, FieldDesc, field_kind, register_result};
     pub use crate::engine_api::EngineApi;
     pub use crate::plugin::OmePlugin;
-    pub use crate::types::{stage, pack_entity, unpack_entity, SystemCallback, UserdataDrop};
+    pub use crate::types::{SystemCallback, UserdataDrop, pack_entity, stage, unpack_entity};
     pub use crate::version::API_VERSION;
 }

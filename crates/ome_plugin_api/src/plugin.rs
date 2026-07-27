@@ -73,9 +73,7 @@ pub trait OmePlugin: Send + Sync {
 pub type BoxedPlugin = stabby::abi::Dyn<
     'static,
     stabby::alloc::boxed::Box<()>,
-    <dyn OmePlugin as stabby::abi::vtable::CompoundVt<'static>>::Vt<
-        stabby::abi::vtable::VtDrop,
-    >,
+    <dyn OmePlugin as stabby::abi::vtable::CompoundVt<'static>>::Vt<stabby::abi::vtable::VtDrop>,
 >;
 
 /// Constructor function signature exported by plugin cdylibs.
