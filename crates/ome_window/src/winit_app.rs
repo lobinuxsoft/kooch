@@ -17,9 +17,9 @@ use ome_core::gpu::GpuContext;
 use ome_core::raw_event::RawEventHandler;
 use ome_core::time::Time;
 
+use crate::WindowConfig;
 use crate::event::{WindowCloseRequested, WindowResized};
 use crate::handle::WindowHandle;
-use crate::WindowConfig;
 
 /// Bridges winit's event loop with the engine's frame-based game loop.
 ///
@@ -61,27 +61,20 @@ impl WinitApp {
         self.app.schedule.run_pre_physics(&mut self.app.resources);
 
         for _ in 0..fixed_steps {
-            self.app
-                .schedule
-                .run_fixed_stages(&mut self.app.resources);
+            self.app.schedule.run_fixed_stages(&mut self.app.resources);
         }
 
-        self.app
-            .schedule
-            .run_post_physics(&mut self.app.resources);
+        self.app.schedule.run_post_physics(&mut self.app.resources);
     }
 
     /// Swaps double buffers for all registered event types.
+    ///
+    /// It used to name three of them under this same comment, which meant
+    /// every event any plugin added was written and never became readable —
+    /// in the editor as much as anywhere, since this is the runner a
+    /// windowed app uses. Asking beats remembering.
     fn update_events(&mut self) {
-        if let Some(events) = self.app.resources.get_mut::<Events<AppExit>>() {
-            events.update();
-        }
-        if let Some(events) = self.app.resources.get_mut::<Events<WindowResized>>() {
-            events.update();
-        }
-        if let Some(events) = self.app.resources.get_mut::<Events<WindowCloseRequested>>() {
-            events.update();
-        }
+        ome_core::event::update_all_events(&mut self.app.resources);
     }
 
     /// Returns `true` if an `AppExit` event has been sent.
@@ -155,11 +148,7 @@ impl ApplicationHandler for WinitApp {
     ) {
         // Forward events to registered handler (e.g., egui overlay).
         if let Some(window) = self.window.clone() {
-            if let Some(handler) = self
-                .app
-                .resources
-                .get_mut::<Box<dyn RawEventHandler>>()
-            {
+            if let Some(handler) = self.app.resources.get_mut::<Box<dyn RawEventHandler>>() {
                 handler.on_event(&*window, &event);
             }
         }
@@ -168,9 +157,7 @@ impl ApplicationHandler for WinitApp {
             WindowEvent::CloseRequested => {
                 tracing::info!("Window close requested");
 
-                if let Some(events) =
-                    self.app.resources.get_mut::<Events<WindowCloseRequested>>()
-                {
+                if let Some(events) = self.app.resources.get_mut::<Events<WindowCloseRequested>>() {
                     events.send(WindowCloseRequested);
                 }
                 if let Some(events) = self.app.resources.get_mut::<Events<AppExit>>() {

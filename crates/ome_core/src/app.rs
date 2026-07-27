@@ -6,7 +6,7 @@
 use crate::event::{AppExit, Events};
 use crate::plugin::{Plugin, PluginGroup};
 use crate::resource::Resources;
-use crate::runner::{default_runner, Runner};
+use crate::runner::{Runner, default_runner};
 use crate::schedule::Schedule;
 use crate::stage::Stage;
 use crate::system::{GpuSystem, System};
@@ -128,9 +128,27 @@ impl App {
 
     /// Registers an event type.
     ///
-    /// Events must be registered before they can be sent or read.
+    /// Events must be registered before they can be sent or read. This is
+    /// also what makes them *delivered*: it records how to swap the type's
+    /// double buffers, which the runner does once a frame. Before that was
+    /// recorded, each runner swapped a hardcoded list and every other event
+    /// type was written and never became readable.
+    ///
+    /// Idempotent. `AppExit` is registered by both this type's constructor
+    /// and `CorePlugin`, and a second registration must neither reset the
+    /// buffer nor add a second swap — swapping twice in a frame discards
+    /// whatever was written between the two.
     pub fn add_event<E: Send + Sync + 'static>(&mut self) -> &mut Self {
-        self.resources.insert(Events::<E>::new());
+        if !self.resources.contains::<Events<E>>() {
+            self.resources.insert(Events::<E>::new());
+        }
+        if !self.resources.contains::<crate::event::EventUpdaters>() {
+            self.resources
+                .insert(crate::event::EventUpdaters::default());
+        }
+        if let Some(updaters) = self.resources.get_mut::<crate::event::EventUpdaters>() {
+            updaters.register::<E>();
+        }
         self
     }
 
@@ -192,8 +210,7 @@ impl App {
     ) -> Result<&mut Self, crate::dynamic::PluginLoadError> {
         // Ensure we have a PluginLoader resource to keep libraries alive.
         if !self.resources.contains::<crate::dynamic::PluginLoader>() {
-            self.resources
-                .insert(crate::dynamic::PluginLoader::new());
+            self.resources.insert(crate::dynamic::PluginLoader::new());
         }
 
         // Remove the loader, load the plugin, re-insert.
@@ -253,8 +270,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[test]
     fn new_app() {

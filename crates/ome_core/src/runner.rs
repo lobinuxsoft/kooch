@@ -91,10 +91,9 @@ pub fn run_once(mut app: App) {
 
 /// Updates all event buffers.
 fn update_events(app: &mut App) {
-    // Update AppExit events
-    if let Some(events) = app.resources.get_mut::<Events<AppExit>>() {
-        events.update();
-    }
+    // Every registered type, by asking rather than by name — see
+    // `event::update_all_events` for what the hardcoded version cost.
+    crate::event::update_all_events(&mut app.resources);
 }
 
 /// Returns `true` if an AppExit event has been sent.
@@ -132,8 +131,8 @@ pub fn run_for_frames(mut app: App, frame_count: u32) {
 mod tests {
     use super::*;
     use crate::stage::Stage;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
 
     fn test_app() -> App {
@@ -213,7 +212,11 @@ mod tests {
         if let Some(time) = app.resources.get_mut::<Time>() {
             // 100ms at 60Hz should give 5-6 fixed steps (float precision dependent)
             let steps = time.advance(Duration::from_millis(100));
-            assert!(steps >= 5 && steps <= 6, "Expected 5-6 steps, got {}", steps);
+            assert!(
+                steps >= 5 && steps <= 6,
+                "Expected 5-6 steps, got {}",
+                steps
+            );
         }
     }
 }
