@@ -19,7 +19,7 @@ use ome_ecs::entity::Entity;
 use ome_ecs::query::AccessTracker;
 use ome_ecs::transform::Transform;
 use ome_gravity::{AreaGravity, BoxGravity, GlobalGravity, PointGravity, plugin};
-use ome_physics::components::{Collider, RigidBody};
+use ome_physics::components::{Collider, KIND_STATIC, RigidBody, SHAPE_CUBOID};
 use ome_physics::plugin::{
     PhysicsWorld, physics_step_system, physics_sync_system, physics_writeback_system,
 };
@@ -418,5 +418,142 @@ fn a_box_source_rotates_with_its_entity() {
         moved.normalize().dot(expected) > 0.99,
         "a slab turned 45° pulled along {}, wanted {expected}",
         moved.normalize(),
+    );
+}
+
+/// A resting body has to be allowed to fall asleep.
+///
+/// Rapier excludes a sleeping body from the island solver — that is how a
+/// scene of settled crates costs nothing. A field that hands every dynamic
+/// body an impulse every step, waking it to do so, turns off sleeping for
+/// the whole world: the CPU then simulates a pile of boxes that have not
+/// moved in a minute, forever.
+///
+/// The world vector never had this problem, because rapier's own gravity
+/// does not wake anything. Matching that is the point.
+#[test]
+fn a_settled_body_still_falls_asleep() {
+    let mut resources = world();
+    source_at(
+        &mut resources,
+        Transform::default(),
+        GlobalGravity::default(),
+    );
+
+    // A floor to settle on, and something to settle.
+    let floor = spawn(&mut resources);
+    insert(&mut resources, floor, Transform::default());
+    insert(
+        &mut resources,
+        floor,
+        RigidBody {
+            kind: KIND_STATIC,
+            ..Default::default()
+        },
+    );
+    insert(
+        &mut resources,
+        floor,
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::new(20.0, 0.5, 20.0),
+            ..Default::default()
+        },
+    );
+
+    let crate_body = body_at(&mut resources, Vec3::new(0.0, 1.2, 0.0));
+
+    Playing::set(&mut resources, true);
+    // Long enough to fall, bounce out its energy, and cross rapier's sleep
+    // timer, which is a wall-clock threshold rather than a step count.
+    simulate(&mut resources, 600);
+
+    let handle = resources
+        .get::<PhysicsWorld>()
+        .and_then(|w| w.iter().find(|(_, e, _, _)| *e == crate_body).map(|t| t.3))
+        .expect("the crate has no body");
+    let sleeping = resources
+        .get::<PhysicsWorld>()
+        .and_then(|w| w.backend().is_sleeping(handle))
+        .expect("stale handle");
+
+    assert!(
+        sleeping,
+        "the crate is still awake after ten seconds of resting on a floor \
+         — the field is waking every body every step, so nothing in the \
+         scene ever sleeps",
+    );
+}
+
+/// …but a field that changes has to reach what has already settled.
+///
+/// The counterweight to the test above. Never waking anything is cheap and
+/// wrong: switching a gravity zone on, or moving a planet, would leave the
+/// crates already lying there asleep and floating. So the step that sees a
+/// changed field wakes what it pulls on, and only that step.
+#[test]
+fn a_moved_source_wakes_what_it_pulls_on() {
+    let mut resources = world();
+    let planet = source_at(
+        &mut resources,
+        Transform::default(),
+        GlobalGravity::default(),
+    );
+
+    let floor = spawn(&mut resources);
+    insert(&mut resources, floor, Transform::default());
+    insert(
+        &mut resources,
+        floor,
+        RigidBody {
+            kind: KIND_STATIC,
+            ..Default::default()
+        },
+    );
+    insert(
+        &mut resources,
+        floor,
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::new(20.0, 0.5, 20.0),
+            ..Default::default()
+        },
+    );
+
+    let crate_body = body_at(&mut resources, Vec3::new(0.0, 1.2, 0.0));
+    Playing::set(&mut resources, true);
+    simulate(&mut resources, 600);
+
+    let handle = |resources: &Resources| {
+        resources
+            .get::<PhysicsWorld>()
+            .and_then(|w| w.iter().find(|(_, e, _, _)| *e == crate_body).map(|t| t.3))
+            .expect("the crate has no body")
+    };
+    let sleeping = |resources: &Resources| {
+        let handle = handle(resources);
+        resources
+            .get::<PhysicsWorld>()
+            .and_then(|w| w.backend().is_sleeping(handle))
+            .expect("stale handle")
+    };
+    assert!(
+        sleeping(&resources),
+        "it never settled, so the test is moot"
+    );
+
+    // Gravity flips upward. A crate that stays asleep through that is a
+    // crate glued to the floor.
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        && let Some(storage) = registry.get_cpu_mut::<GlobalGravity>()
+        && let Some(field) = storage.get_mut(planet)
+    {
+        field.acceleration = Vec3::new(0.0, 9.81, 0.0);
+    }
+    simulate(&mut resources, 2);
+
+    assert!(
+        !sleeping(&resources),
+        "the field changed and the settled crate slept through it",
     );
 }

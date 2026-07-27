@@ -116,6 +116,16 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// because those two had silently drifted apart.
     fn mass(&self, handle: BodyHandle) -> Option<f32>;
 
+    /// Whether the solver has put this body to sleep. `None` for a stale
+    /// handle.
+    ///
+    /// Worth asking before applying anything per-step. A resting body is
+    /// excluded from the island solver, and waking it every step to hand
+    /// it a force it does not need turns a settled scene into one that
+    /// simulates forever — which is what a custom gravity field did until
+    /// it learned to ask this.
+    fn is_sleeping(&self, handle: BodyHandle) -> Option<bool>;
+
     /// The body's centre of mass, in body-local space. `None` for a stale
     /// handle.
     ///
@@ -151,8 +161,19 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// × dt` is exactly the same push over one step and composes with
     /// everything around it.
     ///
+    /// `wake` decides whether the body is roused to receive it. **Pass
+    /// `false` for anything applied every step.** Waking a body resets its
+    /// sleep timer, so a per-step impulse that wakes what it touches stops
+    /// the scene from ever settling — the body cannot reach sleep, because
+    /// the thing checking on it keeps knocking. That is not a slow path,
+    /// it is the whole scene solving forever.
+    ///
+    /// A sleeping body given an impulse with `wake: false` accumulates the
+    /// velocity without being simulated, so callers that skip sleeping
+    /// bodies should skip them outright rather than pass `false` and hope.
+    ///
     /// No-op for stale handles and non-dynamic bodies.
-    fn apply_impulse(&mut self, handle: BodyHandle, impulse: Vec3);
+    fn apply_impulse(&mut self, handle: BodyHandle, impulse: Vec3, wake: bool);
 
     /// Constrains two bodies to each other.
     ///

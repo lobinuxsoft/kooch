@@ -553,14 +553,19 @@ impl PhysicsBackend for RapierBackend {
         self.collect_debug_lines(categories, out);
     }
 
-    fn apply_impulse(&mut self, handle: BodyHandle, impulse: Vec3) {
+    fn apply_impulse(&mut self, handle: BodyHandle, impulse: Vec3, wake: bool) {
         let Some(&rb_handle) = self.handles.get(handle) else {
             return;
         };
         let Some(body) = self.bodies.get_mut(rb_handle) else {
             return;
         };
-        body.apply_impulse(impulse, true);
+        body.apply_impulse(impulse, wake);
+    }
+
+    fn is_sleeping(&self, handle: BodyHandle) -> Option<bool> {
+        let rb_handle = *self.handles.get(handle)?;
+        Some(self.bodies.get(rb_handle)?.is_sleeping())
     }
 
     fn angular_velocity(&self, handle: BodyHandle) -> Option<Vec3> {
