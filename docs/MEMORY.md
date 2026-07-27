@@ -734,6 +734,17 @@ que sumar NO expresa es una zona que *reemplaza* ("adentro de esta sala, abajo e
 el planeta"): eso quiere una prioridad, no un peso, y está deliberadamente ausente hasta que
 algo lo pida.
 
+**🔴 EL IMPULSO NO DEBE DESPERTAR AL CUERPO (`wake: false`).** Rapier saca del island solver a
+todo cuerpo dormido — así una pila de cajas asentadas cuesta cero. Un impulso con `wake: true`
+resetea el timer de sueño, así que un campo que tira de todos los cuerpos cada step **apaga el
+sueño de la escena entera**: el cuerpo no puede llegar a dormirse porque lo que lo chequea lo
+sigue golpeando. El vector global nunca tuvo el problema porque la gravedad propia de rapier
+no despierta nada. Medido con 300 cajas asentadas: **0.137 → 0.042 ms/step, 0/301 → 300/301
+dormidos**. Además: los dormidos se **saltean por completo** (no se les da impulso con
+`wake:false`, que lo acumularían sin ser simulados) y hay un **digest FNV de las fuentes** —
+cuando el campo cambia, ese step SÍ despierta, o prender una zona de gravedad dejaría flotando
+a las cajas ya asentadas.
+
 **La gravedad se aplica como impulso `masa × aceleración × dt`, NO como fuerza.** El
 `add_force` de rapier persiste entre steps hasta un `reset_forces`, así que aplicarla como
 fuerza obligaría a pisar el acumulador cada frame y borraría cualquier fuerza de gameplay.
