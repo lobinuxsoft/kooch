@@ -1,170 +1,78 @@
-//! ABI-stable plugin API for OhMyEngine.
+//! Plugin API for OhMyEngine — the only crate a plugin depends on.
 //!
-//! This crate is the **only dependency** plugin authors need. It defines:
+//! A plugin is a Rust `dylib` the engine loads at run time. It defines:
 //!
-//! - [`OmePlugin`] — The trait plugins implement (stabby vtable)
-//! - [`EngineApi`] — Function pointer table for engine services
-//! - [`types`] — Stage constants, entity packing, callback signatures
-//! - [`version`] — API version constants and compatibility check
+//! - [`OmePlugin`] — the trait a plugin implements
+//! - [`Engine`] — what a plugin can ask the engine to do
+//! - [`component`] — describing component types the engine cannot name
+//! - [`types`] — stages and entity handles
+//! - [`version`] — the build stamp that makes the whole thing sound
 //!
-//! # Architecture
+//! # Why plain Rust types
 //!
-//! ```text
-//! ome_plugin_api (this crate)     ← plugin authors depend ONLY on this
-//!     ↑
-//! ome_core [feature: dynamic]     ← engine loads plugins at runtime
-//!     ↑
-//! oh_my_engine (facade)           ← re-exports everything
-//! ```
+//! Plugin and engine are built by the same compiler, in the same
+//! workspace, moments apart. Under that condition Rust types are
+//! compatible across the boundary, so the API is ordinary Rust: traits,
+//! `String`, `Vec`, `Box<dyn Fn>`. No function-pointer tables, no
+//! `*mut c_void`, no stable-ABI dependency.
 //!
-//! # Plugin Author Guide
+//! **That condition is the entire contract, so it is verified rather
+//! than assumed.** Every plugin exports a [`BuildStamp`](version::BuildStamp)
+//! recording its API version and the exact compiler that produced it,
+//! and the loader compares it before calling anything else. A mismatch
+//! is a refusal with a message naming which half is wrong.
 //!
-//! ## Project Setup
+//! This is deliberately not a stable ABI. A plugin is not something a
+//! third party compiles once and ships against future engine versions —
+//! it is your project's code, rebuilt alongside the engine. Buying ABI
+//! stability would cost a dependency and a layer of indirection to solve
+//! a problem this design does not have.
 //!
-//! Create a new crate with `crate-type = ["cdylib"]`:
+//! # Project setup
 //!
 //! ```toml
-//! [package]
-//! name = "my_plugin"
-//! version = "0.1.0"
-//! edition = "2024"
-//!
 //! [lib]
-//! crate-type = ["cdylib"]
+//! crate-type = ["rlib", "dylib"]
 //!
 //! [dependencies]
-//! ome_plugin_api = { version = "0.1" }
-//! stabby = "72"
+//! ome_plugin_api = { path = "..." }
 //! ```
 //!
-//! ## Implementing a Plugin
+//! `dylib`, not `cdylib`: a `cdylib` exposes a C interface and cannot
+//! carry Rust types. The `rlib` alongside it keeps ordinary consumers
+//! building.
 //!
-//! Every plugin must:
-//! 1. Implement the [`OmePlugin`] trait
-//! 2. Export a constructor function named `ome_create_plugin` via `#[stabby::export]`
-//! 3. Return [`BoxedPlugin`] from the constructor
+//! Both sides must be built with `-C prefer-dynamic`, or each ends up
+//! with its own copy of `std` and of the engine's globals — including
+//! the log subscriber, which would silently swallow the plugin's output.
+//!
+//! # Writing one
 //!
 //! ```ignore
 //! use ome_plugin_api::prelude::*;
-//! use ome_plugin_api::BoxedPlugin;
 //!
+//! #[derive(Default)]
 //! struct MyPlugin;
 //!
 //! impl OmePlugin for MyPlugin {
-//!     extern "C" fn name(&self) -> stabby::string::String {
-//!         "MyPlugin".into()
-//!     }
+//!     fn name(&self) -> &str { "MyPlugin" }
 //!
-//!     extern "C" fn api_version(&self) -> u32 {
-//!         API_VERSION
-//!     }
-//!
-//!     extern "C" fn build(&mut self, api: *mut EngineApi) {
-//!         let api = unsafe { &mut *api };
-//!         api.log("MyPlugin loaded!");
-//!     }
-//!
-//!     extern "C" fn cleanup(&mut self) {}
-//! }
-//!
-//! #[stabby::export]
-//! extern "C" fn ome_create_plugin() -> BoxedPlugin {
-//!     stabby::alloc::boxed::Box::new(MyPlugin).into()
-//! }
-//! ```
-//!
-//! ## Lifecycle
-//!
-//! 1. Engine loads the `.dll`/`.so` and calls `ome_create_plugin()`
-//! 2. Engine checks [`OmePlugin::api_version`] — rejects incompatible plugins
-//! 3. Engine calls [`OmePlugin::build`] — register systems and access resources here
-//! 4. Game loop runs — registered system callbacks execute each frame
-//! 5. Engine calls [`OmePlugin::cleanup`] on shutdown
-//!
-//! ## Registering Systems
-//!
-//! Use [`EngineApi::register_system`] during `build()` to add per-frame logic:
-//!
-//! ```ignore
-//! // System without state (null userdata).
-//! api.register_system(stage::UPDATE, my_system, std::ptr::null_mut(), None);
-//!
-//! // System with state (heap-allocated userdata + destructor).
-//! let state = Box::into_raw(Box::new(MyState::default())) as *mut c_void;
-//! api.register_system(stage::UPDATE, stateful_system, state, Some(drop_state));
-//! ```
-//!
-//! Each system callback receives a fresh [`EngineApi`] pointer valid for that
-//! invocation. See [`types::stage`] for available stages.
-//!
-//! ## Accessing Engine Resources
-//!
-//! Plugins can read/write engine resources by name:
-//!
-//! ```ignore
-//! extern "C" fn my_system(api: *mut EngineApi, _: *mut c_void) {
-//!     let api = unsafe { &mut *api };
-//!     let ptr = api.resource_ptr("ome_core::Time");
-//!     if !ptr.is_null() {
-//!         // Cast to the concrete type (must match exactly).
-//!         let time = unsafe { &*(ptr as *const ome_core::time::Time) };
+//!     fn build(&mut self, engine: &mut dyn Engine) {
+//!         engine.register_component(
+//!             ComponentSchema::new("my_game::Health")
+//!                 .with_field("current", FieldKind::U32),
+//!         ).expect("Health");
 //!     }
 //! }
+//!
+//! ome_plugin_api::export_plugin!(MyPlugin);
 //! ```
 //!
-//! Only resources registered in the engine's `ResourceRegistry` are accessible.
+//! # The one rule
 //!
-//! ## Plugin-to-Plugin Communication
-//!
-//! [`EngineApi::set_data`] and [`EngineApi::get_data`] provide a key-value byte
-//! store shared across all plugins. Use this for cross-plugin state:
-//!
-//! ```ignore
-//! // Writer plugin
-//! api.set_data("score.current", &score.to_le_bytes());
-//!
-//! // Reader plugin
-//! if let Some(bytes) = api.get_data("score.current") {
-//!     let score = u32::from_le_bytes(bytes.try_into().unwrap());
-//! }
-//! ```
-//!
-//! ## Entity Management
-//!
-//! Spawn and despawn entities via packed `u64` handles:
-//!
-//! ```ignore
-//! let entity = api.spawn();
-//! // ... later ...
-//! api.despawn(entity);
-//! ```
-//!
-//! Use [`types::unpack_entity`] to extract `(index, generation)` if needed.
-//!
-//! ## Building and Loading
-//!
-//! ```bash
-//! # Build the plugin
-//! cargo build -p my_plugin --release
-//!
-//! # The engine loads it at runtime
-//! # (produces my_plugin.dll on Windows, libmy_plugin.so on Linux)
-//! ```
-//!
-//! On the engine side:
-//!
-//! ```ignore
-//! unsafe { app.load_plugin(Path::new("plugins/my_plugin.dll"))? };
-//! ```
-//!
-//! ## Safety Notes
-//!
-//! - All `extern "C" fn` methods must not panic across the FFI boundary
-//! - The `api` pointer in `build()` and system callbacks is only valid for
-//!   the duration of that call — do not store it
-//! - Resource pointers are invalidated after the callback returns
-//! - Userdata must be `Send + Sync` safe (the engine is single-threaded
-//!   but the type system requires these bounds)
+//! **A plugin owns no state that must survive a reload.** The library is
+//! unloaded and replaced; its statics go with it. Anything that has to
+//! persist belongs to the host, via [`Engine::set_data`].
 
 pub mod component;
 pub mod engine_api;
@@ -172,15 +80,17 @@ pub mod plugin;
 pub mod types;
 pub mod version;
 
-pub use component::{ComponentDesc, FieldDesc};
-pub use engine_api::EngineApi;
-pub use plugin::{BoxedPlugin, OmePlugin};
+pub use component::{ComponentSchema, FieldKind, FieldSchema, RegisterError};
+pub use engine_api::{Engine, PluginSystem};
+pub use plugin::{CREATE_SYMBOL, CreatePluginFn, OmePlugin, STAMP_SYMBOL};
+pub use types::Stage;
+pub use version::{API_VERSION, BuildStamp};
 
-/// Re-exports for plugin authors.
+/// Everything a plugin author needs in one import.
 pub mod prelude {
-    pub use crate::component::{ComponentDesc, FieldDesc, field_kind, register_result};
-    pub use crate::engine_api::EngineApi;
+    pub use crate::component::{ComponentSchema, FieldKind, FieldSchema, RegisterError};
+    pub use crate::engine_api::{Engine, PluginSystem};
     pub use crate::plugin::OmePlugin;
-    pub use crate::types::{SystemCallback, UserdataDrop, pack_entity, stage, unpack_entity};
+    pub use crate::types::{Stage, pack_entity, unpack_entity};
     pub use crate::version::API_VERSION;
 }

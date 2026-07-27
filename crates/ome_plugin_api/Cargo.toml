@@ -1,11 +1,14 @@
 [package]
 name = "ome_plugin_api"
-description = "ABI-stable plugin API for OhMyEngine dynamic plugins"
+description = "Plugin API for OhMyEngine dynamic plugins"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+build = "build.rs"
 
+# No dependencies on purpose: this is the only crate a plugin links, and
+# it must stay cheap enough that doing so costs nothing. The build script
+# records the compiler identity and needs nothing either.
 [dependencies]
-stabby = { workspace = true }

@@ -1,205 +1,219 @@
-//! Describing a component type across the FFI boundary.
+//! Describing a component type a plugin owns.
 //!
 //! A plugin's component types do not exist in the engine's binary, so
-//! they cannot cross as Rust types — there is no `TypeId` to agree on
-//! and no layout the engine could name. What crosses instead is a
-//! *description*: a type name and a list of fields, which is exactly
-//! what the editor's Inspector draws and what the scene format writes.
+//! the engine cannot name them. What it receives instead is a
+//! *description*: a type name and its fields. That is what the editor's
+//! Inspector draws and what the scene format writes, and it is the same
+//! shape `DynamicComponents` already stores components under.
 //!
-//! The engine already stores components it cannot name, keyed by type
-//! name, in `DynamicComponents`. This is the other half of that: how a
-//! plugin declares one in the first place.
-//!
-//! # Why constants rather than an enum
-//!
-//! [`field_kind`] mirrors `ome_ecs::reflect::FieldKind`, which is a
-//! plain Rust enum with no `#[repr(u8)]` — its discriminants are not a
-//! stable ABI and must not become one by accident. Repeating the values
-//! here makes the wire format explicit and lets the engine's enum be
-//! reordered without silently changing what a compiled plugin means.
-//! The bridge maps between them once, in one place.
+//! These are ordinary Rust types. The plugin is a `dylib` built by the
+//! same compiler as the engine, so `String` and `Vec` cross the boundary
+//! as themselves — there is no reason to hand-roll pointer-and-length
+//! pairs, and every reason not to.
 
-use std::ffi::c_void;
-
-/// Field type discriminants, mirroring `ome_ecs::reflect::FieldKind`.
+/// The type of a component field.
 ///
-/// These values are a **wire format**: changing one invalidates every
-/// plugin already compiled against it. Add new kinds at the end.
-pub mod field_kind {
+/// Mirrors `ome_ecs::reflect::FieldKind`. The two are separate because
+/// `ome_ecs` pulls in wgpu, glam, serde and ron — a plugin should not
+/// link a GPU stack to say that a field holds an `f32`. The engine maps
+/// between them in one place, and a parity test keeps them in step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FieldKind {
     /// 32-bit float.
-    pub const F32: u8 = 0;
+    F32,
     /// 64-bit float.
-    pub const F64: u8 = 1;
+    F64,
     /// Unsigned 8-bit integer.
-    pub const U8: u8 = 2;
+    U8,
     /// Unsigned 16-bit integer.
-    pub const U16: u8 = 3;
+    U16,
     /// Unsigned 32-bit integer.
-    pub const U32: u8 = 4;
+    U32,
     /// Unsigned 64-bit integer.
-    pub const U64: u8 = 5;
+    U64,
     /// Signed 8-bit integer.
-    pub const I8: u8 = 6;
+    I8,
     /// Signed 16-bit integer.
-    pub const I16: u8 = 7;
+    I16,
     /// Signed 32-bit integer.
-    pub const I32: u8 = 8;
+    I32,
     /// Signed 64-bit integer.
-    pub const I64: u8 = 9;
+    I64,
     /// Boolean.
-    pub const BOOL: u8 = 10;
+    Bool,
     /// UTF-8 string.
-    pub const STRING: u8 = 11;
+    String,
     /// Two-component vector.
-    pub const VEC2: u8 = 12;
+    Vec2,
     /// Three-component vector.
-    pub const VEC3: u8 = 13;
+    Vec3,
     /// Four-component vector.
-    pub const VEC4: u8 = 14;
+    Vec4,
     /// Quaternion.
-    pub const QUAT: u8 = 15;
+    Quat,
     /// 4x4 matrix.
-    pub const MAT4: u8 = 16;
+    Mat4,
     /// Asset reference, addressed by GUID.
-    pub const ASSET_REF: u8 = 17;
+    AssetRef,
     /// Reference to another entity.
-    pub const ENTITY_REF: u8 = 18;
+    EntityRef,
     /// Nested reflected struct.
-    pub const NESTED: u8 = 19;
+    Nested,
+}
 
-    /// Highest discriminant this build knows.
+impl FieldKind {
+    /// Every kind, in declaration order.
     ///
-    /// The bridge rejects anything above it rather than guessing, so a
-    /// plugin built against a newer API fails loudly on the field it
-    /// cannot express instead of silently registering the wrong type.
-    pub const MAX: u8 = NESTED;
+    /// Exists so the engine's parity test can assert it knows how to map
+    /// all of them — a new kind added here without a mapping fails the
+    /// build rather than silently drawing the wrong widget.
+    pub const ALL: &'static [FieldKind] = &[
+        FieldKind::F32,
+        FieldKind::F64,
+        FieldKind::U8,
+        FieldKind::U16,
+        FieldKind::U32,
+        FieldKind::U64,
+        FieldKind::I8,
+        FieldKind::I16,
+        FieldKind::I32,
+        FieldKind::I64,
+        FieldKind::Bool,
+        FieldKind::String,
+        FieldKind::Vec2,
+        FieldKind::Vec3,
+        FieldKind::Vec4,
+        FieldKind::Quat,
+        FieldKind::Mat4,
+        FieldKind::AssetRef,
+        FieldKind::EntityRef,
+        FieldKind::Nested,
+    ];
 }
 
-/// One field of a component, as described by a plugin.
-///
-/// Borrowed, not owned: `name_ptr` must stay valid for the duration of
-/// the `register_component` call, and the engine copies what it keeps.
-/// A plugin can therefore build these from `&'static str` literals
-/// without allocating.
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct FieldDesc {
-    /// UTF-8 field name. Not NUL-terminated.
-    pub name_ptr: *const u8,
-    /// Length of the name in bytes.
-    pub name_len: usize,
-    /// One of the [`field_kind`] constants.
-    pub kind: u8,
+/// One field of a plugin-declared component.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldSchema {
+    /// Field name as it appears in the Inspector and the scene file.
+    pub name: String,
+    /// What the field holds.
+    pub kind: FieldKind,
 }
 
-impl FieldDesc {
-    /// Describes a field from a name and a [`field_kind`] constant.
-    #[inline]
-    pub const fn new(name: &str, kind: u8) -> Self {
+impl FieldSchema {
+    /// Describes a field.
+    pub fn new(name: impl Into<String>, kind: FieldKind) -> Self {
         Self {
-            name_ptr: name.as_ptr(),
-            name_len: name.len(),
+            name: name.into(),
             kind,
         }
     }
 }
 
-/// A component type a plugin is declaring to the engine.
+/// A component type a plugin declares to the engine.
 ///
-/// The name is the identity: the engine keys stored components by it,
-/// so it must be stable across rebuilds of the plugin — a fully
-/// qualified path such as `"my_game::Health"` rather than `"Health"`.
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct ComponentDesc {
-    /// UTF-8 fully qualified type name. Not NUL-terminated.
-    pub name_ptr: *const u8,
-    /// Length of the type name in bytes.
-    pub name_len: usize,
-    /// Pointer to `field_count` contiguous [`FieldDesc`].
-    pub fields_ptr: *const FieldDesc,
-    /// Number of fields. Zero is legal — a marker component.
-    pub field_count: usize,
+/// The type name is the identity — the engine keys stored components by
+/// it — so it must be stable across rebuilds of the plugin. Use a fully
+/// qualified path such as `"my_game::Health"`, not `"Health"`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentSchema {
+    /// Fully qualified type name.
+    pub type_name: String,
+    /// The component's fields. Empty is legal — a marker component.
+    pub fields: Vec<FieldSchema>,
 }
 
-impl ComponentDesc {
-    /// Describes a component from a name and a slice of fields.
-    #[inline]
-    pub const fn new(name: &str, fields: &[FieldDesc]) -> Self {
+impl ComponentSchema {
+    /// Describes a component with no fields — a marker.
+    pub fn new(type_name: impl Into<String>) -> Self {
         Self {
-            name_ptr: name.as_ptr(),
-            name_len: name.len(),
-            fields_ptr: fields.as_ptr(),
-            field_count: fields.len(),
+            type_name: type_name.into(),
+            fields: Vec::new(),
+        }
+    }
+
+    /// Adds a field, for building a schema fluently.
+    #[must_use]
+    pub fn with_field(mut self, name: impl Into<String>, kind: FieldKind) -> Self {
+        self.fields.push(FieldSchema::new(name, kind));
+        self
+    }
+}
+
+/// Why the engine refused a [`ComponentSchema`].
+///
+/// Distinguishable because the fixes differ: an empty name is the
+/// plugin author's mistake, a taken name is a collision with another
+/// plugin, and a missing bridge means the host built an `App` with no
+/// ECS at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegisterError {
+    /// The type name was empty.
+    EmptyName,
+    /// A field name was empty.
+    EmptyFieldName {
+        /// Index of the offending field.
+        index: usize,
+    },
+    /// Another type already holds this name.
+    NameTaken {
+        /// The name that was already claimed.
+        type_name: String,
+    },
+    /// The host has no component registry wired.
+    NoRegistry,
+}
+
+impl std::fmt::Display for RegisterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyName => write!(f, "component type name is empty"),
+            Self::EmptyFieldName { index } => write!(f, "field {index} has an empty name"),
+            Self::NameTaken { type_name } => {
+                write!(f, "a component named {type_name} is already registered")
+            }
+            Self::NoRegistry => write!(f, "the host has no component registry"),
         }
     }
 }
 
-/// Outcome of a [`ComponentDesc`] registration.
-///
-/// Distinguishable failures, because they need different fixes: a bad
-/// name is the plugin author's typo, an unknown field kind is a version
-/// mismatch, and a missing bridge means the host never wired the ECS.
-pub mod register_result {
-    /// The component type was registered.
-    pub const OK: u32 = 0;
-    /// The type name or a field name was not valid UTF-8.
-    pub const BAD_UTF8: u32 = 1;
-    /// A field carried a kind this engine build does not know.
-    pub const UNKNOWN_FIELD_KIND: u32 = 2;
-    /// The engine has no component bridge registered — the host built
-    /// an `App` without the ECS.
-    pub const NO_BRIDGE: u32 = 3;
-    /// A different type is already registered under this name.
-    pub const NAME_TAKEN: u32 = 4;
-}
-
-/// Signature of the engine's component registration entry point.
-///
-/// Returns one of the [`register_result`] constants.
-pub type RegisterComponentFn = extern "C" fn(ctx: *mut c_void, desc: *const ComponentDesc) -> u32;
+impl std::error::Error for RegisterError {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn field_desc_borrows_its_name() {
-        let f = FieldDesc::new("hp", field_kind::F32);
-        assert_eq!(f.name_len, 2);
-        assert_eq!(f.kind, field_kind::F32);
-        let name = unsafe { std::slice::from_raw_parts(f.name_ptr, f.name_len) };
-        assert_eq!(name, b"hp");
+    fn a_schema_is_built_fluently() {
+        let schema = ComponentSchema::new("my_game::Health")
+            .with_field("current", FieldKind::U32)
+            .with_field("regen", FieldKind::F32);
+
+        assert_eq!(schema.type_name, "my_game::Health");
+        assert_eq!(schema.fields.len(), 2);
+        assert_eq!(schema.fields[1].kind, FieldKind::F32);
     }
 
+    /// A marker component is a real thing, not a half-built schema.
     #[test]
-    fn component_desc_points_at_its_fields() {
-        const FIELDS: &[FieldDesc] = &[
-            FieldDesc::new("current", field_kind::U32),
-            FieldDesc::new("max", field_kind::U32),
-        ];
-        let d = ComponentDesc::new("my_game::Health", FIELDS);
-        assert_eq!(d.field_count, 2);
-        let fields = unsafe { std::slice::from_raw_parts(d.fields_ptr, d.field_count) };
-        assert_eq!(fields[1].kind, field_kind::U32);
+    fn a_marker_has_no_fields() {
+        assert!(ComponentSchema::new("my_game::Player").fields.is_empty());
     }
 
-    /// A marker component is legal and must not be confused with a
-    /// failure to describe fields.
+    /// `ALL` exists so the engine can prove it maps every kind. If a
+    /// variant is added without listing it here, the mapping would
+    /// silently skip it.
     #[test]
-    fn zero_fields_is_valid() {
-        let d = ComponentDesc::new("my_game::Player", &[]);
-        assert_eq!(d.field_count, 0);
-    }
+    fn all_lists_every_kind() {
+        // Adding a variant without extending ALL leaves this stale, and
+        // the engine-side parity test then fails loudly.
+        assert_eq!(FieldKind::ALL.len(), 20);
+        assert_eq!(FieldKind::ALL[0], FieldKind::F32);
+        assert_eq!(FieldKind::ALL[19], FieldKind::Nested);
 
-    /// The kinds are a wire format. If this test is edited to match a
-    /// change, every already-compiled plugin has been invalidated.
-    #[test]
-    fn field_kind_values_are_pinned() {
-        assert_eq!(field_kind::F32, 0);
-        assert_eq!(field_kind::BOOL, 10);
-        assert_eq!(field_kind::VEC3, 13);
-        assert_eq!(field_kind::NESTED, 19);
-        assert_eq!(field_kind::MAX, field_kind::NESTED);
+        let mut seen = std::collections::HashSet::new();
+        for kind in FieldKind::ALL {
+            assert!(seen.insert(*kind), "{kind:?} listed twice in ALL");
+        }
     }
 }

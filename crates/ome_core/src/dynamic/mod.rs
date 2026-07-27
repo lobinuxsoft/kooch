@@ -1,29 +1,35 @@
-//! Dynamic plugin loading via shared libraries (`.dll`/`.so`).
+//! Loading plugins from Rust dynamic libraries.
 //!
-//! Gated behind the `dynamic` Cargo feature. Provides:
+//! Gated behind the `dynamic` Cargo feature.
 //!
-//! - [`PluginLoader`] — loads and verifies plugin libraries
-//! - [`DynamicPlugin`] — wraps a dynamic plugin as a static [`Plugin`]
-//! - [`BridgeContext`] / [`EntityBridge`] — FFI bridge infrastructure
-//! - [`ResourceRegistry`] — name → TypeId mapping for FFI resource access
-//! - [`PluginData`] — key-value byte storage for inter-plugin communication
-//!
-//! # Architecture
+//! - [`PluginLoader`] — opens libraries and refuses incompatible ones
+//! - [`EngineHost`] — the engine's implementation of the plugin API
+//! - [`DynamicPlugin`] — wraps a loaded plugin as an engine [`Plugin`]
+//! - [`EntityBridge`] / [`ComponentBridge`] — hooks the ECS installs
+//! - [`ResourceRegistry`] — name → `TypeId` for resource lookup
+//! - [`PluginData`] — host-owned storage that outlives a reload
 //!
 //! ```text
 //! App::load_plugin(path)
-//!   → PluginLoader::load()          libloading + stabby ABI check
-//!   → DynamicPlugin::new(plugin)    wrap as static Plugin
-//!   → app.add_plugin(wrapper)       normal plugin lifecycle
+//!   → PluginLoader::load()       build stamp checked BEFORE any call
+//!   → DynamicPlugin::new()       wrapped as an ordinary Plugin
+//!   → app.add_plugin(wrapper)    normal lifecycle; build() gets an EngineHost
 //! ```
+//!
+//! A plugin is a `dylib`, not a `cdylib`, and both sides are built by
+//! the same compiler — so the API is plain Rust rather than a C ABI.
+//! What makes that sound is the build stamp the loader verifies first;
+//! see [`ome_plugin_api::version`].
 
-pub mod bridge;
+pub mod bridges;
+pub mod host;
 pub mod loader;
 pub mod plugin_data;
 pub mod resource_registry;
 pub mod wrapper;
 
-pub use bridge::{BridgeContext, EntityBridge};
+pub use bridges::{ComponentBridge, EntityBridge};
+pub use host::EngineHost;
 pub use loader::{PluginLoadError, PluginLoader};
 pub use plugin_data::PluginData;
 pub use resource_registry::ResourceRegistry;

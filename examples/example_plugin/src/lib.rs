@@ -1,99 +1,72 @@
-//! Example dynamic plugin for OhMyEngine.
+//! A plugin, in the smallest form that still shows every moving part.
 //!
-//! Demonstrates the minimal setup to create a loadable `.dll`/`.so` plugin:
-//! - Implement [`OmePlugin`]
-//! - Export a constructor via `#[stabby::export]`
+//! Build it as a library the engine can load:
 //!
-//! Build with: `cargo build -p example_plugin`
-//! Load with: `examples/dynamic_plugin.rs`
-
-use std::ffi::c_void;
+//! ```text
+//! RUSTFLAGS="-C prefer-dynamic" cargo build -p example_plugin
+//! ```
+//!
+//! `prefer-dynamic` matters: without it the plugin links its own copy of
+//! `std` and of the engine, and the two halves stop sharing globals —
+//! including the log subscriber, so the plugin's output would vanish.
 
 use ome_plugin_api::prelude::*;
-use ome_plugin_api::BoxedPlugin;
 
-/// A minimal example plugin that logs messages and registers a system.
+/// Counts frames, and keeps the count where a reload cannot lose it.
+#[derive(Default)]
 struct HelloPlugin;
 
-impl OmePlugin for HelloPlugin {
-    extern "C" fn name(&self) -> stabby::string::String {
-        "HelloPlugin".into()
-    }
-
-    extern "C" fn api_version(&self) -> u32 {
-        API_VERSION
-    }
-
-    extern "C" fn build(&mut self, api: *mut EngineApi) {
-        let api = unsafe { &mut *api };
-        api.log("HelloPlugin::build() — registering systems");
-
-        // Store some plugin data for demonstration.
-        api.set_data("hello.greeting", b"Hello from a dynamic plugin!");
-
-        // Register a system that runs every frame in the Update stage.
-        // No userdata needed — we use null.
-        api.register_system(
-            stage::UPDATE,
-            hello_system,
-            std::ptr::null_mut(),
-            None,
-        );
-
-        // Register a system with userdata.
-        let counter = Box::new(CounterState { count: 0 });
-        let userdata = Box::into_raw(counter) as *mut c_void;
-        api.register_system(
-            stage::POST_UPDATE,
-            counter_system,
-            userdata,
-            Some(drop_counter),
-        );
-    }
-
-    extern "C" fn cleanup(&mut self) {
-        // Nothing to clean up in this example.
-    }
-}
-
-/// System callback that logs a message each frame.
-extern "C" fn hello_system(api: *mut EngineApi, _userdata: *mut c_void) {
-    let api = unsafe { &mut *api };
-
-    // Read back the data we stored during build.
-    if let Some(greeting) = api.get_data("hello.greeting") {
-        let msg = std::str::from_utf8(greeting).unwrap_or("(invalid utf8)");
-        api.log(msg);
-    }
-}
-
-/// Per-system state stored as userdata.
-struct CounterState {
-    count: u32,
-}
-
-/// System that counts frames using userdata.
-extern "C" fn counter_system(api: *mut EngineApi, userdata: *mut c_void) {
-    let api = unsafe { &mut *api };
-    let state = unsafe { &mut *(userdata as *mut CounterState) };
-
-    state.count += 1;
-
-    if state.count % 60 == 0 {
-        let msg = format!("CounterSystem: {} frames elapsed", state.count);
-        api.log(&msg);
-    }
-}
-
-/// Destructor for CounterState userdata.
-unsafe extern "C" fn drop_counter(userdata: *mut c_void) {
-    drop(unsafe { Box::from_raw(userdata as *mut CounterState) });
-}
-
-/// Plugin constructor exported for the engine to find.
+/// Key under which the host holds our frame counter.
 ///
-/// The engine calls `lib.get_stabbied(b"ome_create_plugin")` to load this.
-#[stabby::export]
-extern "C" fn ome_create_plugin() -> BoxedPlugin {
-    stabby::alloc::boxed::Box::new(HelloPlugin).into()
+/// The count lives in the host on purpose. Anything a plugin keeps in
+/// its own statics is unloaded with the library on the next reload;
+/// state parked here survives it.
+const FRAMES_KEY: &str = "example_plugin::frames";
+
+impl OmePlugin for HelloPlugin {
+    fn name(&self) -> &str {
+        "HelloPlugin"
+    }
+
+    fn build(&mut self, engine: &mut dyn Engine) {
+        engine.log("HelloPlugin loaded");
+
+        // Declare a component type the engine has no Rust type for.
+        // The editor draws it from this description alone.
+        match engine.register_component(
+            ComponentSchema::new("example_plugin::Health")
+                .with_field("current", FieldKind::U32)
+                .with_field("max", FieldKind::U32)
+                .with_field("regen", FieldKind::F32),
+        ) {
+            Ok(()) => engine.log("registered example_plugin::Health"),
+            Err(e) => engine.log(&format!("could not register Health: {e}")),
+        }
+
+        // A marker component: no fields is a legitimate shape.
+        let _ = engine.register_component(ComponentSchema::new("example_plugin::Player"));
+
+        engine.add_system(
+            Stage::Update,
+            Box::new(|engine: &mut dyn Engine| {
+                let frames = engine
+                    .get_data(FRAMES_KEY)
+                    .and_then(|bytes| bytes.try_into().ok())
+                    .map_or(0u64, u64::from_le_bytes);
+                let frames = frames.wrapping_add(1);
+                engine.set_data(FRAMES_KEY, &frames.to_le_bytes());
+
+                // Every 60th frame, so the log stays readable.
+                if frames % 60 == 0 {
+                    engine.log(&format!("HelloPlugin has seen {frames} frames"));
+                }
+            }),
+        );
+    }
+
+    fn cleanup(&mut self) {
+        // Nothing to release: this plugin owns no state, by design.
+    }
 }
+
+ome_plugin_api::export_plugin!(HelloPlugin);

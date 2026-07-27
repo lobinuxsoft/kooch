@@ -28,9 +28,8 @@ toml = { workspace = true }
 serde = { workspace = true }
 
 # Dynamic plugin support (optional)
-stabby = { workspace = true, features = ["libloading"], optional = true }
 libloading = { workspace = true, optional = true }
 ome_plugin_api = { workspace = true, optional = true }
 
 [features]
-dynamic = ["dep:stabby", "dep:libloading", "dep:ome_plugin_api"]
+dynamic = ["dep:libloading", "dep:ome_plugin_api"]
