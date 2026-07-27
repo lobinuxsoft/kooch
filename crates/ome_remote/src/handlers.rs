@@ -31,6 +31,25 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
     let id = request.id;
     match &request.method {
         Method::Ping => Response::ok(id, ResponseData::Pong),
+        Method::Extension { name, payload } => {
+            match crate::extensions::call(resources, name, payload) {
+                Some(Ok(result)) => Response::ok(
+                    id,
+                    ResponseData::Extension {
+                        name: name.clone(),
+                        result,
+                    },
+                ),
+                Some(Err(detail)) => Response::err(
+                    id,
+                    RemoteError::ExtensionFailed {
+                        name: name.clone(),
+                        detail,
+                    },
+                ),
+                None => Response::err(id, RemoteError::UnknownExtension { name: name.clone() }),
+            }
+        }
         Method::ListEntities => list_entities(id, resources),
         Method::GetSchema => get_schema(id, resources),
         Method::SetField {

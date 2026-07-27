@@ -34,6 +34,12 @@
 pub mod client;
 pub mod handlers;
 pub mod plugin;
+/// Re-exported for extension authors: a handler's payload and result are
+/// `serde_json::Value`, and the crate that writes one should not have to
+/// depend on serde_json to say so.
+pub use serde_json;
+
+pub mod extensions;
 pub mod protocol;
 pub mod server;
 

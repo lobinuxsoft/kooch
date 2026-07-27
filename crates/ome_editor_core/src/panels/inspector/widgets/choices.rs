@@ -116,48 +116,96 @@ pub(crate) fn bits_for(
         .unwrap_or(&[])
 }
 
-/// Renders an integer field as one checkbox per named bit.
+/// Renders an integer field as a compact grid of toggles.
 ///
-/// A collision filter written as a raw number fails silently — two things
-/// pass through each other and nothing says why — so the named form is not
-/// a convenience. It is the difference between a mistake you can see and
-/// one you cannot.
+/// A checkbox per bit stacked vertically is what this was first, and with
+/// sixteen bits across four mask fields it filled the Inspector with
+/// sixty-four rows of the word "Group". The grid is the same information in
+/// three rows: the number on the face, the full name on hover, and set or
+/// unset legible at a glance across the whole mask — which is the thing a
+/// filter is read for.
+///
+/// Unity and Unreal both use a grid for layer masks. Worth matching rather
+/// than inventing, because it is the one part of collision filtering people
+/// already know how to look at.
 ///
 /// Bits outside the named set are preserved rather than cleared: a mask
 /// authored by a newer editor, or by hand, must survive a visit to this
 /// widget untouched.
+///
+/// # `field_name` is not decoration
+///
+/// egui derives a widget's id from its label. `Collider` has four mask
+/// fields sharing one set of bit names, so without a scope per field the
+/// same sixteen ids appear four times in one panel — and egui reported it,
+/// sixty-five times a run: `Widget rect ... changed id between passes`.
+/// Colliding ids do not merely warn; they send clicks to whichever widget
+/// claimed the id, which reads as the whole Inspector ignoring the mouse.
 pub(crate) fn draw_bitmask(
     ui: &mut egui::Ui,
     value: &ReflectValue,
     bits: &'static [FieldChoice],
+    field_name: &str,
 ) -> Option<ReflectValue> {
+    /// Wide enough for two digits, uniform so the grid lines up.
+    const CELL: egui::Vec2 = egui::vec2(24.0, 18.0);
+    /// Eight per row: two rows covers the sixteen groups, and eight cells
+    /// stay narrow enough for the Inspector at its usual width.
+    const PER_ROW: usize = 8;
+
     let current = reflect_value_as_i64(value)?;
     let mut next = current;
 
-    ui.vertical(|ui| {
-        // "All" and "None" earn their place: the default is every bit set,
-        // and clicking thirty-two boxes to express "nothing" is how people
-        // give up and go back to typing numbers.
+    ui.push_id(field_name, |ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
+        for row in bits.chunks(PER_ROW) {
+            ui.horizontal(|ui| {
+                for bit in row {
+                    let set = current & bit.value != 0;
+                    let response = ui
+                        .add(
+                            egui::Button::new(short_label(bit.label))
+                                .min_size(CELL)
+                                .selected(set),
+                        )
+                        .on_hover_text(bit.label);
+                    if response.clicked() {
+                        // Toggle: the same click sets and clears, which is
+                        // what a toggle in a grid has to do.
+                        next ^= bit.value;
+                    }
+                }
+            });
+        }
+        // Worth the row: the default is every bit set, and clicking sixteen
+        // cells to express "nothing" is how people go back to typing
+        // numbers.
         ui.horizontal(|ui| {
             if ui.small_button("All").clicked() {
-                next = named_mask(bits) | (current & !named_mask(bits));
+                next |= named_mask(bits);
             }
             if ui.small_button("None").clicked() {
-                next = current & !named_mask(bits);
+                next &= !named_mask(bits);
             }
         });
-        for bit in bits {
-            let mut set = current & bit.value != 0;
-            if ui.checkbox(&mut set, bit.label).changed() {
-                next = match set {
-                    true => current | bit.value,
-                    false => current & !bit.value,
-                };
-            }
-        }
     });
 
     (next != current).then(|| reflect_value_from_i64(value, next))?
+}
+
+/// What goes on a cell: the trailing number if the label ends in one, so
+/// "Group 12" reads as "12" and the grid stays a grid.
+///
+/// Anything else is truncated rather than dropped — a project renaming its
+/// layers should get something on the face, and the full name is on hover
+/// either way.
+fn short_label(label: &'static str) -> String {
+    match label.rsplit(' ').next() {
+        Some(tail) if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) => {
+            tail.to_owned()
+        }
+        _ => label.chars().take(3).collect(),
+    }
 }
 
 /// The union of every named bit — everything this widget is allowed to

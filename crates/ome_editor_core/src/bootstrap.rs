@@ -119,23 +119,33 @@ fn set_engine_root(resources: &mut Resources) {
     }
 }
 
+/// Opens the project exactly as clicking Open Project does.
+///
+/// # It used to do something else, and that was the bug
+///
+/// This called `ProjectState::open_project` directly — the low-level method
+/// — which skips both halves of what opening a project means:
+/// `SceneSource::RemoteMirror` and `start_remote_session`. So a project
+/// opened through this variable got the read-only in-process path: no
+/// running project, no gameplay, and a Play button that shelled out to a
+/// second window instead of simulating in the viewport.
+///
+/// Which made this variable a liar. It is documented for smoke runs, and a
+/// smoke run has to exercise what an author exercises — otherwise it
+/// confirms a world nobody uses. Going through the action means there is
+/// one path, and it is the one clicking takes.
 fn auto_open_project(resources: &mut Resources, path: &std::path::Path) {
     tracing::info!(path = %path.display(), "OME_EDITOR_AUTO_OPEN: opening project");
-    let Some(mut ps) = resources.remove::<ProjectState>() else {
-        return;
-    };
-    match ps.open_project(path) {
-        Ok(()) => {
-            let title = ps
-                .active_project
-                .as_ref()
-                .map(|p| p.manifest.name.clone())
-                .unwrap_or_default();
-            tracing::info!(title, "OME_EDITOR_AUTO_OPEN: project opened");
-        }
-        Err(e) => tracing::warn!(error = %e, "OME_EDITOR_AUTO_OPEN: open_project failed"),
-    }
-    resources.insert(ps);
+    // A throwaway stack: opening a project is not an undoable edit, and
+    // the real one belongs to the editor loop that has not started yet.
+    let mut undo = crate::undo::UndoStack::new();
+    crate::actions::apply_actions(
+        resources,
+        &[crate::actions::EditorAction::OpenProject(
+            path.to_path_buf(),
+        )],
+        &mut undo,
+    );
 }
 
 /// Forces winit onto XWayland on Linux by clearing `WAYLAND_DISPLAY`

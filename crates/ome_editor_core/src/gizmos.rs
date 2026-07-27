@@ -21,6 +21,7 @@
 //! Transform *handles* remain single-selection: `HandleSet` positions one
 //! origin, and multi-entity dragging needs pivot semantics of its own.
 
+mod center_of_mass;
 mod collider;
 mod physics_debug;
 
@@ -74,6 +75,10 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // A collider is authored as numbers and is otherwise invisible; the
     // outline is the only way to see whether the shape wraps the model.
     registry.register::<ome_physics::components::Collider, collider::ColliderVisualizer>();
+    // Where the author put the centre of mass. Only the authored one —
+    // the solver's own is in the project's process, which is #634.
+    registry
+        .register::<ome_physics::components::RigidBody, center_of_mass::CenterOfMassVisualizer>();
     resources.insert(registry);
 
     if resources.get::<HandleSet>().is_none() {
