@@ -54,6 +54,8 @@ pub(crate) struct EditorTabViewer<'a> {
     /// can mutate it from the viewport toolbar.
     pub(crate) gizmo_visibility: &'a mut crate::gizmos::GizmoVisibility,
     pub(crate) physics_debug: &'a mut ome_physics::backend::DebugCategories,
+    pub(crate) log_buffer: Option<&'a ome_core::LogBuffer>,
+    pub(crate) console: &'a mut crate::panels::console::ConsoleState,
     /// The registered visualizers, grouped by category, for that dropdown.
     pub(crate) gizmo_groups: &'a [crate::gizmos::GizmoGroup],
     /// Per-frame snapshot of the `AssetDatabase` consumed by the
@@ -130,6 +132,9 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.gizmo_groups,
                 self.physics_debug,
             ),
+            EditorTab::Console => {
+                crate::panels::console::draw_console(ui, self.log_buffer, self.console)
+            }
             EditorTab::Inspector => draw_inspector_content(
                 ui,
                 self.entities,

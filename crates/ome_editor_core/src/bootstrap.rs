@@ -26,9 +26,14 @@ pub fn run_editor() {
 /// components + systems are registered and show up in the editor UI.
 pub fn run_editor_with<P: Plugin + 'static>(project: P) {
     force_x11_backend_if_needed();
-    ome_core::init_tracing();
+    // With a console buffer beside stdout: the editor has a panel to
+    // show it in, and a project opened from the launcher has no terminal
+    // attached to read the other one.
+    let log_buffer = ome_core::init_tracing_with_console();
 
     let mut app = App::new();
+    app.insert_resource(log_buffer);
+    app.insert_resource(crate::panels::console::ConsoleState::default());
     app.add_plugins(MinimalPlugins);
     app.add_plugin(WindowPlugin {
         title: "Oh My Engine".into(),
