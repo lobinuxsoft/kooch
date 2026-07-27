@@ -37,12 +37,7 @@ impl<T: Pod> GpuBuffer<T> {
     ///
     /// The buffer is allocated on the GPU but contains no valid data
     /// (`len` starts at 0).
-    pub fn with_capacity(
-        device: &Device,
-        label: &str,
-        capacity: u64,
-        usage: BufferUsages,
-    ) -> Self {
+    pub fn with_capacity(device: &Device, label: &str, capacity: u64, usage: BufferUsages) -> Self {
         let byte_size = capacity * Self::ELEM_SIZE;
 
         let buffer = device.create_buffer(&BufferDescriptor {
@@ -64,12 +59,7 @@ impl<T: Pod> GpuBuffer<T> {
     /// Creates a buffer initialized with `data`.
     ///
     /// Both `len` and `capacity` are set to `data.len()`.
-    pub fn from_data(
-        device: &Device,
-        label: &str,
-        data: &[T],
-        usage: BufferUsages,
-    ) -> Self {
+    pub fn from_data(device: &Device, label: &str, data: &[T], usage: BufferUsages) -> Self {
         use wgpu::util::DeviceExt;
 
         let count = data.len() as u64;

@@ -127,6 +127,11 @@ pub struct CorePlugin;
 
 impl Plugin for CorePlugin {
     fn build(&self, app: &mut App) {
+        // Before anything else has a chance to log. Without a subscriber
+        // every `tracing` call in the engine is silently discarded, which
+        // is a failure mode that looks exactly like nothing happening.
+        crate::init_tracing_if_needed();
+
         use crate::coord::ActiveOrigin;
         use crate::event::AppExit;
         use crate::time::Time;
@@ -144,8 +149,8 @@ impl Plugin for CorePlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     struct TestPlugin {
         built: Arc<AtomicBool>,

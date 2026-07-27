@@ -54,8 +54,7 @@ pub(super) fn optional_features(adapter: &Adapter) -> wgpu::Features {
             .features()
             .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
     {
-        features |= wgpu::Features::TIMESTAMP_QUERY
-            | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES;
+        features |= wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES;
     }
     // #463.4 — `encoder.write_timestamp` (called between passes by
     // MeshletGpuTimers in the meshlet render stage) requires this

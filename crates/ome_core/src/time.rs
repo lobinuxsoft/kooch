@@ -269,7 +269,11 @@ mod tests {
         // Advance by 100ms (should be 5-6 updates at 60Hz depending on float precision)
         // 100ms / 16.67ms ≈ 6, but floating point may give 5
         let updates = time.advance(Duration::from_millis(100));
-        assert!(updates >= 5 && updates <= 6, "Expected 5-6 updates, got {}", updates);
+        assert!(
+            updates >= 5 && updates <= 6,
+            "Expected 5-6 updates, got {}",
+            updates
+        );
     }
 
     #[test]

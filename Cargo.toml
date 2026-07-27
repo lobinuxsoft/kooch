@@ -42,7 +42,7 @@ encase = { version = "0.10", features = ["glam"] }
 pollster = "0.4"
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Window handle
 raw-window-handle = "0.6"
 # Audio

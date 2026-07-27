@@ -12,7 +12,7 @@ use ome_plugin_api::plugin::OmePluginDynMut;
 use crate::app::App;
 use crate::plugin::Plugin;
 
-use super::bridge::{create_engine_api, BridgeContext};
+use super::bridge::{BridgeContext, create_engine_api};
 use super::plugin_data::PluginData;
 use super::resource_registry::ResourceRegistry;
 

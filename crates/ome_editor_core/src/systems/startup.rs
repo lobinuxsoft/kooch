@@ -102,7 +102,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         current_folder: None,
     };
 
-
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });
     let power_profile: PowerProfile = power::detect();
     resources.insert(overlay);

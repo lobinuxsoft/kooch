@@ -81,8 +81,7 @@ impl EditorCommand for DespawnCommand {
 
         // Re-register into EMPTY archetype first.
         if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-            archetypes
-                .register_entity(self.entity, ome_ecs::archetype::ArchetypeId::EMPTY);
+            archetypes.register_entity(self.entity, ome_ecs::archetype::ArchetypeId::EMPTY);
         }
 
         // Restore all components from snapshots.
@@ -96,8 +95,7 @@ impl EditorCommand for DespawnCommand {
                 // Transition archetype.
                 if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
                     if let Some(current) = archetypes.entity_archetype(self.entity) {
-                        let new_arch =
-                            archetypes.archetype_after_add_dynamic(current, *type_id);
+                        let new_arch = archetypes.archetype_after_add_dynamic(current, *type_id);
                         archetypes.register_entity(self.entity, new_arch);
                     }
                 }

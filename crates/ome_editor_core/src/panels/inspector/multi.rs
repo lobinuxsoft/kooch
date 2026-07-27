@@ -301,7 +301,7 @@ fn draw_multi_reflected_fields(
                     MultiFieldValue::Uniform(value) => {
                         ui.label(name);
                         if read_only {
-                            draw_readonly_value(ui, value, choices);
+                            draw_readonly_value(ui, value, choices, bits);
                         } else if let Some(new_value) =
                             draw_value_widget(ui, value, name, choices, bits, asset_catalog)
                         {
@@ -318,7 +318,7 @@ fn draw_multi_reflected_fields(
                     MultiFieldValue::Mixed(base) => {
                         ui.label(format!("{name} \u{2014}"));
                         if read_only {
-                            draw_readonly_value(ui, base, choices);
+                            draw_readonly_value(ui, base, choices, bits);
                         } else if let Some(new_value) =
                             draw_value_widget(ui, base, name, choices, bits, asset_catalog)
                         {

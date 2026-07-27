@@ -233,7 +233,10 @@ fn load_generates_meta_on_first_call() {
     resources.insert(Assets::<PlainText>::new());
     let path = temp_file_with("hello", "txt");
     let meta_path = asset_meta::meta_path_for(&path);
-    assert!(!meta_path.exists(), "test fixture must start without sidecar");
+    assert!(
+        !meta_path.exists(),
+        "test fixture must start without sidecar"
+    );
 
     server.load::<PlainText>(&path, &mut resources).unwrap();
     assert!(meta_path.exists(), "load should have generated the sidecar");

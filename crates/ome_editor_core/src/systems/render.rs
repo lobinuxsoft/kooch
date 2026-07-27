@@ -79,15 +79,29 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // this function.
     let frame_cpu_start = std::time::Instant::now();
 
+    // The buffer is cloned out first: it is an `Arc` handle, so this is
+    // cheap, and holding a borrow of `Resources` across the poll below
+    // would collide with the mutable one that draining needs.
+    let log_buffer = resources.get::<ome_core::LogBuffer>().cloned();
+
     let is_playing = if let Some(play_state) = resources.get_mut::<PlayState>() {
         play_state.poll();
-        for line in play_state.drain_output() {
-            tracing::info!("[game] {line}");
+        let lines = play_state.drain_output();
+        if let Some(buffer) = log_buffer.as_ref() {
+            for line in &lines {
+                crate::project_log::record(buffer, line);
+            }
         }
         play_state.is_playing()
     } else {
         false
     };
+
+    // The host's own output, which was captured and then never read by
+    // anyone. Everything a mirrored project says — including every physics
+    // event — happens over there, so without this the Console shows the
+    // editor talking to itself.
+    forward_remote_output(resources);
 
     if poll_launcher(resources) {
         return;
@@ -275,6 +289,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<crate::gizmos::PhysicsDebugOverlay>()
         .map(|overlay| overlay.categories)
         .unwrap_or_default();
+    let mut console = resources
+        .remove::<crate::panels::console::ConsoleState>()
+        .unwrap_or_default();
 
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
@@ -309,11 +326,14 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut gizmo_visibility,
         &gizmo_groups,
         &mut physics_debug,
+        log_buffer.as_ref(),
+        &mut console,
     );
 
     // Put the choices back so the batch system and the save system see
     // whatever the dropdown just changed.
     resources.insert(gizmo_visibility);
+    resources.insert(console);
 
     // The overlay resource is created on first use rather than at startup:
     // a host with no physics never grows one.
@@ -431,4 +451,25 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // every CPU branch above (early returns excepted; those are
     // wall-clock-trivial).
     record_cpu_frame_ms(resources, frame_cpu_start);
+}
+
+/// Moves the mirrored project's stdout into the editor's log.
+///
+/// Tagged `[game]` like the spawned-process path, so one prefix means "not
+/// the editor" however the project was started, and the Console's project
+/// filter works for both.
+fn forward_remote_output(resources: &mut Resources) {
+    let Some(state) = resources.get::<crate::remote_session::RemoteState>() else {
+        return;
+    };
+    let Some(session) = state.session.as_ref() else {
+        return;
+    };
+    let Some(buffer) = resources.get::<ome_core::LogBuffer>() else {
+        return;
+    };
+    let buffer = buffer.clone();
+    for line in session.drain_output() {
+        crate::project_log::record(&buffer, &line);
+    }
 }

@@ -216,7 +216,10 @@ mod tests {
     fn ray_intersect_miss() {
         let b = unit_box();
         // Ray parallel to +Y at x = 2 — outside the slab on x.
-        assert!(b.ray_intersect(Vec3::new(2.0, -1.0, 0.5), Vec3::Y).is_none());
+        assert!(
+            b.ray_intersect(Vec3::new(2.0, -1.0, 0.5), Vec3::Y)
+                .is_none()
+        );
     }
 
     #[test]

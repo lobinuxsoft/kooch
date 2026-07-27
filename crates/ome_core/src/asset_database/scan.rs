@@ -39,7 +39,10 @@ pub(super) fn scan_recursive(
             continue;
         }
         let meta = read_meta(&path)?;
-        let mtime = entry.metadata()?.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        let mtime = entry
+            .metadata()?
+            .modified()
+            .unwrap_or(SystemTime::UNIX_EPOCH);
         let asset_entry = AssetEntry {
             path: path.clone(),
             mtime,

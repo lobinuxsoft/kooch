@@ -110,6 +110,7 @@ pub(super) fn drain_physics_events(resources: &mut Resources) {
     resources.insert(world);
 
     for (a, b, started, sensor) in collisions {
+        report(a, b, started, sensor);
         match started {
             true => send(resources, CollisionStarted { a, b, sensor }),
             false => send(resources, CollisionStopped { a, b, sensor }),
@@ -120,6 +121,49 @@ pub(super) fn drain_physics_events(resources: &mut Resources) {
     }
     for event in breaks {
         send(resources, event);
+    }
+}
+
+/// Says a collision happened, so it is visible without writing a listener.
+///
+/// # Why a sensor is louder than a contact
+///
+/// A trigger firing is a gameplay event: something is meant to react, and
+/// "did my trigger fire" is a question with no other way to answer it — the
+/// body passes through and nothing moves. Solid contacts are constant by
+/// comparison; a scene at rest still generates them, and a stack of crates
+/// would bury everything else.
+///
+/// So sensors are `info` and contacts are `debug`. Both are gated by
+/// `RUST_LOG` like anything else, and neither is a substitute for a
+/// listener — this exists so that a scene can be understood before anyone
+/// writes one.
+fn report(a: Entity, b: Entity, started: bool, sensor: bool) {
+    match (sensor, started) {
+        (true, true) => tracing::info!(
+            target: "ome_physics",
+            a = a.index(),
+            b = b.index(),
+            "a sensor was entered",
+        ),
+        (true, false) => tracing::info!(
+            target: "ome_physics",
+            a = a.index(),
+            b = b.index(),
+            "a sensor was left",
+        ),
+        (false, true) => tracing::debug!(
+            target: "ome_physics",
+            a = a.index(),
+            b = b.index(),
+            "two bodies started touching",
+        ),
+        (false, false) => tracing::debug!(
+            target: "ome_physics",
+            a = a.index(),
+            b = b.index(),
+            "two bodies stopped touching",
+        ),
     }
 }
 

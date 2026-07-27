@@ -84,6 +84,12 @@ impl PlayState {
         if std::env::var_os("RUST_LOG").is_none() {
             cmd.env("RUST_LOG", "info");
         }
+        // Unconditional, unlike the filter above: the editor reads this
+        // rather than a person, and a formatted line arrives as one opaque
+        // string that loses the level and target the Console filters on.
+        // Someone who set `RUST_LOG` wanted different *levels*, not a
+        // different wire format.
+        cmd.env("OME_LOG_FORMAT", "json");
         let mut child = cmd.spawn().map_err(|e| PlayError::Spawn(e.to_string()))?;
 
         // Spawn reader threads for stdout/stderr.

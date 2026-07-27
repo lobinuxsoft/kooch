@@ -22,11 +22,33 @@ pub(crate) fn draw_readonly_value(
     ui: &mut egui::Ui,
     value: &ReflectValue,
     choices: &'static [FieldChoice],
+    bits: &'static [FieldChoice],
 ) {
     if let Some(label) = choice_label_for(value, choices) {
         ui.weak(label);
+    } else if !bits.is_empty() {
+        // A mask shown as its number is the unreadability the grid exists
+        // to fix; read-only is not a reason to go back to `4294967295`.
+        ui.weak(set_bit_names(value, bits));
     } else {
         ui.weak(format!("{value}"));
+    }
+}
+
+/// The named bits that are set, or a word for the two common extremes.
+fn set_bit_names(value: &ReflectValue, bits: &'static [FieldChoice]) -> String {
+    let Some(current) = reflect_value_as_i64(value) else {
+        return format!("{value}");
+    };
+    let set: Vec<&str> = bits
+        .iter()
+        .filter(|bit| current & bit.value != 0)
+        .map(|bit| bit.label)
+        .collect();
+    match set.len() {
+        0 => "None".to_owned(),
+        n if n == bits.len() => "All".to_owned(),
+        _ => set.join(", "),
     }
 }
 

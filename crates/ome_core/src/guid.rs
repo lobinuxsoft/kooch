@@ -91,7 +91,11 @@ mod tests {
         let rendered = g.to_string();
         assert_eq!(rendered, "550e8400e29b41d4a716446655440000");
         assert_eq!(rendered.len(), 32);
-        assert!(rendered.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            rendered
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     #[test]

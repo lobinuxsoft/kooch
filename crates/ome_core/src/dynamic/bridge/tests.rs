@@ -28,11 +28,7 @@ fn stage_from_u8_invalid() {
 #[test]
 fn bridge_log_does_not_panic() {
     let msg = "test log message";
-    bridge_log_info(
-        std::ptr::null_mut(),
-        msg.as_ptr(),
-        msg.len(),
-    );
+    bridge_log_info(std::ptr::null_mut(), msg.as_ptr(), msg.len());
 }
 
 #[test]
@@ -60,18 +56,10 @@ fn bridge_plugin_data_roundtrip() {
 
     let key = "test_key";
     let data = b"hello";
-    bridge_set_plugin_data(
-        ctx_ptr,
-        key.as_ptr(), key.len(),
-        data.as_ptr(), data.len(),
-    );
+    bridge_set_plugin_data(ctx_ptr, key.as_ptr(), key.len(), data.as_ptr(), data.len());
 
     let mut out_len: usize = 0;
-    let ptr = bridge_get_plugin_data(
-        ctx_ptr,
-        key.as_ptr(), key.len(),
-        &mut out_len,
-    );
+    let ptr = bridge_get_plugin_data(ctx_ptr, key.as_ptr(), key.len(), &mut out_len);
 
     assert!(!ptr.is_null());
     assert_eq!(out_len, 5);

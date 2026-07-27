@@ -174,7 +174,7 @@ pub(super) fn draw_readonly_fields(
                 ui.label(name);
                 let choices = choices_for(field_metas, name);
                 let bits = bits_for(field_metas, name);
-                draw_readonly_value(ui, value, choices);
+                draw_readonly_value(ui, value, choices, bits);
                 ui.end_row();
             }
         });

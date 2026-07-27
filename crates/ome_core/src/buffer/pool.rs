@@ -116,19 +116,19 @@ mod tests {
             display: None,
         });
 
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            }))
-            .expect("no GPU adapter");
-
-        let (device, _queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("test_device"),
-            ..Default::default()
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
         }))
-        .expect("failed to create device");
+        .expect("no GPU adapter");
+
+        let (device, _queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                label: Some("test_device"),
+                ..Default::default()
+            }))
+            .expect("failed to create device");
 
         device
     }

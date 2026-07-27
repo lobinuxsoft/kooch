@@ -49,7 +49,9 @@ pub(crate) fn render_viewport(
     // first on the queue.
     let frame_stats = if project_loaded {
         meshlet.stage.resize(gpu.device(), target.size());
-        meshlet.stage.sync_assets_to_gpu(gpu.device(), gpu.queue(), resources);
+        meshlet
+            .stage
+            .sync_assets_to_gpu(gpu.device(), gpu.queue(), resources);
         let (view_proj, cam_pos) = active_camera_matrices(resources, target.aspect())
             .unwrap_or((glam::Mat4::IDENTITY, glam::Vec3::ZERO));
         let stats = meshlet.stage.render_with_assets(
@@ -116,9 +118,12 @@ pub(crate) fn render_viewport(
     // the per-frame truth: > 0 iff the meshlet pipeline ran a real
     // dispatch this frame.
     if project_loaded && frame_stats.instances_uploaded > 0 {
-        meshlet
-            .blit
-            .blit(gpu.device(), &mut encoder, meshlet.stage.color_view(), target.view());
+        meshlet.blit.blit(
+            gpu.device(),
+            &mut encoder,
+            meshlet.stage.color_view(),
+            target.view(),
+        );
     }
 
     // Pass 3: Line gizmos (always-on-top, depth comparison `Always`,
@@ -184,10 +189,7 @@ fn clear_to_black(
     });
 }
 
-fn active_camera_matrices(
-    resources: &Resources,
-    aspect: f32,
-) -> Option<(glam::Mat4, glam::Vec3)> {
+fn active_camera_matrices(resources: &Resources, aspect: f32) -> Option<(glam::Mat4, glam::Vec3)> {
     use ome_ecs::perspective_camera::PerspectiveCamera;
 
     // Pick the highest-priority active camera. The editor camera ships

@@ -13,9 +13,9 @@
 pub(crate) mod sys_metrics;
 pub(crate) mod timing;
 
+pub(crate) use sys_metrics::{SysMetricsState, sys_metrics_system};
 pub use timing::record_cpu_frame_ms;
-pub(crate) use sys_metrics::{sys_metrics_system, SysMetricsState};
-pub(crate) use timing::{frame_timer_system, PerfTimingState};
+pub(crate) use timing::{PerfTimingState, frame_timer_system};
 
 /// Sampled-once-per-frame perf counters surfaced by the View toolbar
 /// HUD. Every field defaults to zero so callers can read it before
