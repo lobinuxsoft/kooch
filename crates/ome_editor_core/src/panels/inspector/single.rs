@@ -14,7 +14,9 @@ use crate::state::{EntityDisplayInfo, EulerCacheKey};
 
 use super::RotationContext;
 use super::rotation::{draw_quat_with_cache, is_transform_rotation};
-use super::widgets::{AssetCatalogEntry, choices_for, draw_readonly_value, draw_value_widget};
+use super::widgets::{
+    AssetCatalogEntry, bits_for, choices_for, draw_readonly_value, draw_value_widget,
+};
 
 /// Draws an editable name field for the Name component (shown above the component list).
 pub(super) fn draw_name_editor(
@@ -125,6 +127,7 @@ pub(super) fn draw_reflected_fields(
                 }
                 ui.label(name);
                 let choices = choices_for(field_metas, name);
+                let bits = bits_for(field_metas, name);
                 let new_value = match value {
                     ReflectValue::Quat(q) => {
                         let ctx = if is_transform_rotation(type_id, name) {
@@ -134,7 +137,7 @@ pub(super) fn draw_reflected_fields(
                         };
                         draw_quat_with_cache(ui, entity, type_id, name, *q, ctx, euler_cache)
                     }
-                    _ => draw_value_widget(ui, value, name, choices, asset_catalog),
+                    _ => draw_value_widget(ui, value, name, choices, bits, asset_catalog),
                 };
                 if let Some(new_value) = new_value {
                     actions.push(EditorAction::SetField {
@@ -170,6 +173,7 @@ pub(super) fn draw_readonly_fields(
                 }
                 ui.label(name);
                 let choices = choices_for(field_metas, name);
+                let bits = bits_for(field_metas, name);
                 draw_readonly_value(ui, value, choices);
                 ui.end_row();
             }

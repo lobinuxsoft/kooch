@@ -9,7 +9,10 @@ use ome_ecs::Reflect;
 use ome_ecs::component::Component;
 use ome_ecs::reflect::{FieldChoice, FieldCondition};
 
-use crate::backend::{BodyKind, CollisionShape, CombineRule, Damping, SurfaceMaterial};
+use crate::backend::{
+    BodyKind, ColliderInteraction, CollisionShape, CombineRule, Damping, InteractionMask,
+    SurfaceMaterial,
+};
 
 // ---------------------------------------------------------------------------
 // RigidBody
@@ -260,6 +263,49 @@ pub struct Collider {
     /// max-wins resolution as `friction_rule`.
     #[reflect(choices = COMBINE_CHOICES)]
     pub restitution_rule: u32,
+    /// Report overlap and never push — a trigger volume.
+    ///
+    /// A sensor is not a collider that gets ignored: rapier computes no
+    /// contact manifold for it at all, so its events carry no contact
+    /// information. Checkpoints, damage zones, detection ranges.
+    pub sensor: bool,
+    /// Raise an event when this collider starts or stops touching
+    /// something.
+    ///
+    /// Off by default, and that is the design rather than an oversight:
+    /// events are opt-in per collider in rapier, so a scene pays only for
+    /// what it listens to.
+    pub collision_events: bool,
+    /// Raise an event when contact force exceeds
+    /// `contact_force_threshold`.
+    ///
+    /// This is what tells "brushed the wall" from "hit it hard enough to
+    /// take damage" without inspecting contacts every frame.
+    pub contact_force_events: bool,
+    /// The force, in newtons, above which a contact is worth reporting.
+    #[reflect(shown_when = CONTACT_FORCE_WHEN)]
+    pub contact_force_threshold: f32,
+    /// Which groups this collider belongs to.
+    ///
+    /// A pair is considered only when each side's memberships intersect the
+    /// other's filter — **both** directions, so being in a group the other
+    /// side looks for is not enough on its own.
+    #[reflect(bits = GROUP_BITS)]
+    pub collision_memberships: u32,
+    /// Which groups this collider will collide with.
+    #[reflect(bits = GROUP_BITS)]
+    pub collision_filter: u32,
+    /// Which groups this collider is *solved* against, out of those it
+    /// collides with.
+    ///
+    /// The pair of masks is the point: a projectile that should detect a
+    /// wall without being stopped by it shares the wall's collision groups
+    /// and not its solver groups.
+    #[reflect(bits = GROUP_BITS)]
+    pub solver_memberships: u32,
+    /// Which groups this collider will be pushed by.
+    #[reflect(bits = GROUP_BITS)]
+    pub solver_filter: u32,
     /// The shape's centre, in the entity's local space.
     ///
     /// Moves the geometry inside the body without moving the body. A
@@ -281,6 +327,14 @@ impl Default for Collider {
             friction_rule: COMBINE_AVERAGE,
             restitution: 0.0,
             restitution_rule: COMBINE_AVERAGE,
+            sensor: false,
+            collision_events: false,
+            contact_force_events: false,
+            contact_force_threshold: 0.0,
+            collision_memberships: u32::MAX,
+            collision_filter: u32::MAX,
+            solver_memberships: u32::MAX,
+            solver_filter: u32::MAX,
             center: Vec3::ZERO,
         }
     }
@@ -323,6 +377,92 @@ pub static COMBINE_CHOICES: &[FieldChoice] = &[
     },
 ];
 
+/// The collision groups, named.
+///
+/// Sixteen of rapier's thirty-two bits, named generically because the
+/// engine does not know what a project's layers mean. A game renames them
+/// by shipping its own labels; what matters here is that the Inspector
+/// shows *boxes* rather than a number, because a filtering mistake written
+/// as an integer fails silently — two things pass through each other and
+/// nothing says why.
+///
+/// The remaining sixteen are deliberately unnamed rather than absent: the
+/// widget preserves bits it does not know about, so a project using the
+/// high half by hand keeps it across an edit.
+pub static GROUP_BITS: &[FieldChoice] = &[
+    FieldChoice {
+        label: "Group 1",
+        value: 1 << 0,
+    },
+    FieldChoice {
+        label: "Group 2",
+        value: 1 << 1,
+    },
+    FieldChoice {
+        label: "Group 3",
+        value: 1 << 2,
+    },
+    FieldChoice {
+        label: "Group 4",
+        value: 1 << 3,
+    },
+    FieldChoice {
+        label: "Group 5",
+        value: 1 << 4,
+    },
+    FieldChoice {
+        label: "Group 6",
+        value: 1 << 5,
+    },
+    FieldChoice {
+        label: "Group 7",
+        value: 1 << 6,
+    },
+    FieldChoice {
+        label: "Group 8",
+        value: 1 << 7,
+    },
+    FieldChoice {
+        label: "Group 9",
+        value: 1 << 8,
+    },
+    FieldChoice {
+        label: "Group 10",
+        value: 1 << 9,
+    },
+    FieldChoice {
+        label: "Group 11",
+        value: 1 << 10,
+    },
+    FieldChoice {
+        label: "Group 12",
+        value: 1 << 11,
+    },
+    FieldChoice {
+        label: "Group 13",
+        value: 1 << 12,
+    },
+    FieldChoice {
+        label: "Group 14",
+        value: 1 << 13,
+    },
+    FieldChoice {
+        label: "Group 15",
+        value: 1 << 14,
+    },
+    FieldChoice {
+        label: "Group 16",
+        value: 1 << 15,
+    },
+];
+
+/// Which state reads `contact_force_threshold`: only a collider that asked
+/// for force events.
+pub static CONTACT_FORCE_WHEN: FieldCondition = FieldCondition {
+    field: "contact_force_events",
+    values: &[1],
+};
+
 /// The backend rule for a discriminant, defaulting to the average for one
 /// outside the known set — a scene from a newer editor stays loadable.
 fn combine_rule(discriminant: u32) -> CombineRule {
@@ -345,6 +485,25 @@ impl Collider {
             restitution_rule: combine_rule(self.restitution_rule),
         }
         .sanitised()
+    }
+
+    /// How this collider participates: what it notices and what it
+    /// reports.
+    pub fn interaction(&self) -> ColliderInteraction {
+        ColliderInteraction {
+            collision_groups: InteractionMask {
+                memberships: self.collision_memberships,
+                filter: self.collision_filter,
+            },
+            solver_groups: InteractionMask {
+                memberships: self.solver_memberships,
+                filter: self.solver_filter,
+            },
+            sensor: self.sensor,
+            collision_events: self.collision_events,
+            contact_force_events: self.contact_force_events,
+            contact_force_threshold: self.contact_force_threshold.max(0.0),
+        }
     }
 
     /// Resolves the flat fields to the geometry the backend takes.

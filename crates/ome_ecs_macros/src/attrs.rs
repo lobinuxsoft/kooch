@@ -139,6 +139,33 @@ pub(crate) fn parse_field_choices(field: &syn::Field) -> Result<Option<syn::Expr
     Ok(None)
 }
 
+/// Parses `#[reflect(bits = PATH)]` from a field's attributes.
+///
+/// Returns `Ok(Some(expr))` with the path pointing to a
+/// `&'static [::ome_ecs::reflect::FieldChoice]` constant naming each bit,
+/// `Ok(None)` when absent, or `Err(compile_error)` on a parse failure.
+pub(crate) fn parse_field_bits(field: &syn::Field) -> Result<Option<syn::Expr>, TokenStream> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("reflect") {
+            continue;
+        }
+        let nested = match attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        {
+            Ok(n) => n,
+            Err(e) => return Err(e.to_compile_error().into()),
+        };
+        for meta in nested {
+            if let Meta::NameValue(MetaNameValue { path, value, .. }) = meta
+                && path.is_ident("bits")
+            {
+                return Ok(Some(value));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// Parses `#[reflect(shown_when = PATH)]` from a field's attributes.
 ///
 /// Returns `Ok(Some(expr))` with the path/identifier pointing to a

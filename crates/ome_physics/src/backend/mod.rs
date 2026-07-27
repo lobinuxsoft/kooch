@@ -7,11 +7,15 @@
 
 mod body;
 mod debug;
+mod events;
+mod interaction;
 mod joint;
 mod material;
 
 pub use body::{BodyDesc, BodyHandle, BodyKind, ColliderHandle, CollisionShape, RayHit};
 pub use debug::{DebugCategories, DebugLine};
+pub use events::{CollisionEvent, ContactForceEvent};
+pub use interaction::{ColliderInteraction, InteractionMask};
 pub use joint::{BrokenJoint, JointDesc, JointHandle, JointKind, JointMotor, MotorModel};
 pub use material::{CombineRule, Damping, SurfaceMaterial};
 
@@ -69,6 +73,7 @@ pub trait PhysicsBackend: Send + Sync + 'static {
         offset: Vec3,
         rotation: Quat,
         material: SurfaceMaterial,
+        interaction: ColliderInteraction,
     ) -> Option<ColliderHandle>;
 
     /// Removes one attached shape. The body and its other shapes survive.
@@ -147,6 +152,24 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// This is the load on the constraint, and it is what
     /// [`JointDesc::break_impulse`] is compared against.
     fn joint_impulse(&self, handle: JointHandle) -> Option<f32>;
+
+    /// Drains the collisions the last [`step`](Self::step) reported.
+    ///
+    /// Draining rather than peeking: a caller that reads every frame sees
+    /// each event once, and a caller that never reads does not accumulate
+    /// forever. The same contract as
+    /// [`take_broken_joints`](Self::take_broken_joints).
+    ///
+    /// Only colliders that asked for them produce any — see
+    /// [`ColliderInteraction::collision_events`].
+    fn take_collision_events(&mut self) -> Vec<CollisionEvent> {
+        Vec::new()
+    }
+
+    /// Drains the contact-force events the last step reported.
+    fn take_contact_force_events(&mut self) -> Vec<ContactForceEvent> {
+        Vec::new()
+    }
 
     /// Drains the joints that broke during the last [`step`](Self::step).
     ///

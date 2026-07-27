@@ -2,7 +2,9 @@ use rapier3d::prelude::*;
 
 use glam::{Quat, Vec3};
 
-use crate::backend::{CollisionShape, CombineRule, SurfaceMaterial};
+use crate::backend::{
+    ColliderInteraction, CollisionShape, CombineRule, InteractionMask, SurfaceMaterial,
+};
 
 /// Builds the Rapier collider for an engine shape.
 ///
@@ -15,8 +17,9 @@ pub(super) fn collider_for(
     shape: CollisionShape,
     offset: Vec3,
     material: SurfaceMaterial,
+    interaction: ColliderInteraction,
 ) -> Collider {
-    with_material(builder_for(shape), material)
+    with_interaction(with_material(builder_for(shape), material), interaction)
         .translation(offset)
         .build()
 }
@@ -31,10 +34,44 @@ pub(super) fn collider_for_pose(
     offset: Vec3,
     rotation: Quat,
     material: SurfaceMaterial,
+    interaction: ColliderInteraction,
 ) -> Collider {
-    with_material(builder_for(shape), material)
+    with_interaction(with_material(builder_for(shape), material), interaction)
         .position(Pose::from_parts(offset, rotation))
         .build()
+}
+
+/// Applies the filtering, the sensor flag and the event opt-ins.
+///
+/// `ActiveEvents` starts empty in rapier, so a collider that does not ask
+/// generates nothing — which is why the engine heard silence until #561.
+fn with_interaction(builder: ColliderBuilder, interaction: ColliderInteraction) -> ColliderBuilder {
+    let mut events = ActiveEvents::empty();
+    events.set(ActiveEvents::COLLISION_EVENTS, interaction.collision_events);
+    events.set(
+        ActiveEvents::CONTACT_FORCE_EVENTS,
+        interaction.contact_force_events,
+    );
+    builder
+        .sensor(interaction.sensor)
+        .active_events(events)
+        .contact_force_event_threshold(interaction.contact_force_threshold.max(0.0))
+        .collision_groups(groups(interaction.collision_groups))
+        .solver_groups(groups(interaction.solver_groups))
+}
+
+/// Our mask, as rapier's.
+///
+/// `And` is the test mode rapier 0.34 added and the one
+/// [`InteractionMask::interacts_with`] documents: both sides have to agree.
+/// `Or` would let a one-sided claim through, which is the behaviour that
+/// makes filtering bugs impossible to reason about.
+fn groups(mask: InteractionMask) -> InteractionGroups {
+    InteractionGroups::new(
+        Group::from_bits_truncate(mask.memberships),
+        Group::from_bits_truncate(mask.filter),
+        InteractionTestMode::And,
+    )
 }
 
 /// Applies the surface coefficients to a builder.

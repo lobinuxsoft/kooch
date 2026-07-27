@@ -34,6 +34,7 @@ impl Reflect for Health {
                 type_name: "u32",
                 kind: FieldKind::U32,
                 choices: &[],
+                bits: &[],
                 shown_when: None,
                 asset_type: "",
             },
@@ -42,6 +43,7 @@ impl Reflect for Health {
                 type_name: "u32",
                 kind: FieldKind::U32,
                 choices: &[],
+                bits: &[],
                 shown_when: None,
                 asset_type: "",
             },
@@ -190,18 +192,12 @@ fn despawn_undo_restores_entity() {
     stack.execute(Box::new(cmd), &mut resources);
 
     // Entity should be dead.
-    assert!(!resources
-        .get::<EntityAllocator>()
-        .unwrap()
-        .is_alive(entity));
+    assert!(!resources.get::<EntityAllocator>().unwrap().is_alive(entity));
 
     stack.undo(&mut resources);
 
     // Entity should be alive again with the same handle.
-    assert!(resources
-        .get::<EntityAllocator>()
-        .unwrap()
-        .is_alive(entity));
+    assert!(resources.get::<EntityAllocator>().unwrap().is_alive(entity));
 
     // Health component should be restored.
     assert_eq!(get_hp(&resources, entity), Some(42));

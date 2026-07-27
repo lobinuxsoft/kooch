@@ -6,7 +6,7 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
-Last updated 2026-07-26, `development` at `937021c`.
+Last updated 2026-07-26, `development` at `63df64c`.
 
 ---
 
@@ -22,19 +22,18 @@ Last updated 2026-07-26, `development` at `937021c`.
 | **#618** | Mass control — `mass` means kilograms, shapes are massless, explicit centre of mass |
 | **#563** | Physics debug render — the solver's own account of itself, in the viewport |
 | **#623** | Collider material — friction, restitution, combine rules and damping, all authorable |
+| **#561** | Collision events, sensors and groups — the solver can finally report back |
 
 ---
 
 ## Next — physics, because half of it is missing where users look
 
-Smoke turned up four holes: no joints where the editor said to use one, a mass that came from
-nowhere the author could see, no way to look at any of it, and a material nobody could touch.
-All four are closed. What is left is what the solver reports back, and gravity that only
-points down.
+Smoke turned up five holes, and all five are closed: no joints where the editor said to use
+one, a mass that came from nowhere, no way to look at any of it, a material nobody could
+touch, and a solver that could not report back. What is left is gravity that only points
+down, and the queries nobody can make.
 
-1. **#561 — collision events, sensors and groups.** Also where a broken joint's event
-   belongs; the backend already drains them through `take_broken_joints`.
-2. **#624 — custom gravity.** Per-body scale is one field. Gravity that points at a planet
+1. **#624 — custom gravity.** Per-body scale is one field. Gravity that points at a planet
    instead of down is what `crates/ome_gravity/` has been a nine-line placeholder for since
    the foundation, and what planet-scale actually needs.
 

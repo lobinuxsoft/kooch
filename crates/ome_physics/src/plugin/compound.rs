@@ -25,7 +25,7 @@ use ome_ecs::component::ComponentRegistry;
 use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::{Children, GlobalTransform};
 
-use crate::backend::{CollisionShape, SurfaceMaterial};
+use crate::backend::{ColliderInteraction, CollisionShape, SurfaceMaterial};
 use crate::components::{Collider, RigidBody};
 
 use super::world::scaled_shape;
@@ -39,6 +39,9 @@ pub(super) struct Attachment {
     /// The child's own surface. An ice patch welded onto a crate is still
     /// ice — the body's material has no business overriding it.
     pub material: SurfaceMaterial,
+    /// The child's own filtering and event opt-ins. A trigger volume
+    /// parented to a crate is still a trigger volume.
+    pub interaction: ColliderInteraction,
 }
 
 /// Collects the shapes a body inherits from its descendants.
@@ -91,6 +94,7 @@ pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attach
                 offset: translation + collider.center,
                 rotation,
                 material: collider.material(),
+                interaction: collider.interaction(),
             });
         }
 
@@ -148,6 +152,14 @@ pub(super) fn digest(attachments: &[Attachment]) -> u64 {
         attachment.material.restitution.to_bits().hash(&mut hasher);
         (attachment.material.friction_rule as u8).hash(&mut hasher);
         (attachment.material.restitution_rule as u8).hash(&mut hasher);
+        // Filtering and event opt-ins are baked into the collider too, so
+        // an edit to either has to rebuild the body.
+        let i = attachment.interaction;
+        (i.sensor, i.collision_events, i.contact_force_events).hash(&mut hasher);
+        i.contact_force_threshold.to_bits().hash(&mut hasher);
+        for mask in [i.collision_groups, i.solver_groups] {
+            (mask.memberships, mask.filter).hash(&mut hasher);
+        }
         match attachment.shape {
             CollisionShape::Sphere { radius } => {
                 0u8.hash(&mut hasher);

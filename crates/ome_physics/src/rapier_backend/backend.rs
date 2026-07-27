@@ -4,11 +4,13 @@ use rapier3d::prelude::*;
 use slotmap::SlotMap;
 
 use crate::backend::{
-    BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, CollisionShape, JointDesc,
-    JointHandle, PhysicsBackend, RayHit, SurfaceMaterial,
+    BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, ColliderInteraction,
+    CollisionEvent, CollisionShape, ContactForceEvent, JointDesc, JointHandle, PhysicsBackend,
+    RayHit, SurfaceMaterial,
 };
 
 use super::conv::{collider_for, collider_for_pose, mass_properties_for};
+use super::events::{EventCollector, parent_of};
 use super::joints::{JointEntry, JointRef, generic_joint_for, linear_impulse};
 
 /// Rapier-backed [`PhysicsBackend`].
@@ -39,6 +41,14 @@ pub struct RapierBackend {
     /// Joints that broke since the last drain — see
     /// [`PhysicsBackend::take_broken_joints`].
     broken_joints: Vec<BrokenJoint>,
+    /// What the last step reported. Filled from inside `step`, drained
+    /// afterwards — see [`super::events`].
+    collector: EventCollector,
+    /// Rapier body → engine body, so an event does not cost a linear scan
+    /// of every body to answer "whose collider was that".
+    ///
+    /// `query_ray` used to do exactly that scan; it uses this now too.
+    body_lookup: std::collections::HashMap<RigidBodyHandle, BodyHandle>,
 }
 
 impl RapierBackend {
@@ -59,6 +69,8 @@ impl RapierBackend {
             collider_handles: SlotMap::with_key(),
             joint_handles: SlotMap::with_key(),
             broken_joints: Vec::new(),
+            collector: EventCollector::default(),
+            body_lookup: std::collections::HashMap::new(),
         }
     }
 
@@ -142,6 +154,16 @@ impl RapierBackend {
         }
     }
 
+    /// The engine bodies owning a reported collider pair.
+    fn bodies_of(
+        &self,
+        colliders: (RapierColliderHandle, RapierColliderHandle),
+    ) -> Option<(BodyHandle, BodyHandle)> {
+        let a = parent_of(&self.colliders, colliders.0)?;
+        let b = parent_of(&self.colliders, colliders.1)?;
+        Some((*self.body_lookup.get(&a)?, *self.body_lookup.get(&b)?))
+    }
+
     /// Removes the joints the last step overloaded.
     ///
     /// Rapier has no breaking of its own — it reports the impulse it
@@ -221,8 +243,8 @@ impl PhysicsBackend for RapierBackend {
             &mut self.impulse_joints,
             &mut self.multibody_joints,
             &mut self.ccd_solver,
-            &(), // physics hooks
-            &(), // event handler
+            &(),             // physics hooks (#561 leaves these for later)
+            &self.collector, // collected now, delivered after the step
         );
         self.break_overloaded_joints();
     }
@@ -248,7 +270,12 @@ impl PhysicsBackend for RapierBackend {
             .linear_damping(desc.damping.sanitised().linear)
             .angular_damping(desc.damping.sanitised().angular)
             .build();
-        let collider = collider_for(desc.shape, desc.shape_offset, desc.material);
+        let collider = collider_for(
+            desc.shape,
+            desc.shape_offset,
+            desc.material,
+            desc.interaction,
+        );
         let rb_handle = self.bodies.insert(rb);
         let collider_handle =
             self.colliders
@@ -259,7 +286,9 @@ impl PhysicsBackend for RapierBackend {
         // mass read before pressing Play is stale — and a physics debug
         // view (#563) would draw the wrong point.
         self.recompute_mass_properties(rb_handle);
-        self.handles.insert(rb_handle)
+        let handle = self.handles.insert(rb_handle);
+        self.body_lookup.insert(rb_handle, handle);
+        handle
     }
 
     fn attach_collider(
@@ -269,9 +298,10 @@ impl PhysicsBackend for RapierBackend {
         offset: Vec3,
         rotation: Quat,
         material: SurfaceMaterial,
+        interaction: ColliderInteraction,
     ) -> Option<ColliderHandle> {
         let rb_handle = *self.handles.get(body)?;
-        let collider = collider_for_pose(shape, offset, rotation, material);
+        let collider = collider_for_pose(shape, offset, rotation, material, interaction);
         let handle = self
             .colliders
             .insert_with_parent(collider, rb_handle, &mut self.bodies);
@@ -306,6 +336,7 @@ impl PhysicsBackend for RapierBackend {
         // Before rapier removes them, so the engine-side handles retire
         // with the joints rather than outliving them.
         self.forget_joints_of(handle);
+        self.body_lookup.remove(&rb_handle);
         // Remove rigid body + its colliders + any joints.
         self.bodies.remove(
             rb_handle,
@@ -465,6 +496,41 @@ impl PhysicsBackend for RapierBackend {
         }
     }
 
+    fn take_collision_events(&mut self) -> Vec<CollisionEvent> {
+        self.collector
+            .drain_collisions()
+            .into_iter()
+            .filter_map(|raw| {
+                // A pair either side of which has no body is dropped: an
+                // unparented collider has no entity to report against, and
+                // inventing one would be worse than saying nothing.
+                let (a, b) = self.bodies_of(raw.colliders)?;
+                Some(CollisionEvent {
+                    a,
+                    b,
+                    started: raw.started,
+                    sensor: raw.sensor,
+                })
+            })
+            .collect()
+    }
+
+    fn take_contact_force_events(&mut self) -> Vec<ContactForceEvent> {
+        self.collector
+            .drain_forces()
+            .into_iter()
+            .filter_map(|raw| {
+                let (a, b) = self.bodies_of(raw.colliders)?;
+                Some(ContactForceEvent {
+                    a,
+                    b,
+                    total_force_magnitude: raw.total_force_magnitude,
+                    max_force_magnitude: raw.max_force_magnitude,
+                })
+            })
+            .collect()
+    }
+
     fn take_broken_joints(&mut self) -> Vec<BrokenJoint> {
         std::mem::take(&mut self.broken_joints)
     }
@@ -508,12 +574,10 @@ impl PhysicsBackend for RapierBackend {
         let (collider_handle, toi) = pipeline.cast_ray_and_get_normal(&ray, max_t, true)?;
         let collider = self.colliders.get(collider_handle)?;
         let parent = collider.parent()?;
-        // Reverse-lookup: which BodyHandle owns this Rapier handle?
-        let body_handle = self
-            .handles
-            .iter()
-            .find(|&(_, rb)| *rb == parent)
-            .map(|(h, _)| h)?;
+        // The reverse map, rather than the linear scan this used to do:
+        // events made the same lookup a per-event cost, so it earned an
+        // index, and the raycast gets it for free.
+        let body_handle = *self.body_lookup.get(&parent)?;
         Some(RayHit {
             body: body_handle,
             t: toi.time_of_impact,
