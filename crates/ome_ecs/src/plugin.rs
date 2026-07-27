@@ -90,8 +90,32 @@ impl Plugin for EcsPlugin {
 
         #[cfg(feature = "dynamic")]
         {
-            use ome_core::dynamic::EntityBridge;
+            use ome_core::dynamic::{ComponentBridge, EntityBridge};
             use ome_plugin_api::types::{pack_entity, unpack_entity};
+
+            use crate::component::DynamicTypeRegistry;
+            use crate::component::plugin_bridge::register_schema;
+
+            app.insert_resource(DynamicTypeRegistry::new());
+
+            // A plugin's component types have no TypeId here, so they
+            // are registered by name into the registry the editor reads
+            // beside the reflected one.
+            app.insert_resource(ComponentBridge::new(|resources, schema| {
+                let Some(registry) = resources.get_mut::<DynamicTypeRegistry>() else {
+                    return Err(ome_plugin_api::component::RegisterError::NoRegistry);
+                };
+                // Until a plugin can be asked which one it is, the type's
+                // own path prefix identifies the source — enough to drop
+                // its types together on unload.
+                let source = schema
+                    .type_name
+                    .split("::")
+                    .next()
+                    .unwrap_or(&schema.type_name)
+                    .to_owned();
+                register_schema(registry, schema, &source)
+            }));
 
             app.insert_resource(EntityBridge::new(
                 |resources| {

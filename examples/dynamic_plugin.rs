@@ -1,14 +1,16 @@
-//! Host example that loads a dynamic plugin at runtime.
+//! Loads a plugin from a Rust dynamic library and runs a few frames.
 //!
-//! Build the plugin first:
+//! Both halves must be built with the same flags, or the plugin links
+//! its own copy of `std` and the engine's globals fork:
+//!
 //! ```text
-//! cargo build -p example_plugin
+//! RUSTFLAGS="-C prefer-dynamic" cargo build -p example_plugin
+//! RUSTFLAGS="-C prefer-dynamic" cargo run --example dynamic_plugin --features dynamic
 //! ```
 //!
-//! Then run this example:
-//! ```text
-//! cargo run --example dynamic_plugin --features dynamic
-//! ```
+//! The plugin declares two component types the engine has no Rust type
+//! for, and a system that keeps a frame counter in host-owned storage —
+//! the shape that survives a reload.
 
 use oh_my_engine::ome_core::prelude::*;
 use oh_my_engine::ome_ecs::EcsPlugin;
@@ -22,12 +24,10 @@ fn main() {
     app.add_plugin(EcsPlugin);
     app.set_runner(run_for_frames);
 
-    // Find the plugin library.
     let plugin_path = find_plugin_library();
+    tracing::info!(path = %plugin_path.display(), "loading plugin");
 
-    tracing::info!(path = %plugin_path.display(), "Loading dynamic plugin");
-
-    // SAFETY: We trust the example plugin we just built.
+    // SAFETY: this is the library we just built, in our own target dir.
     unsafe {
         app.load_plugin(&plugin_path)
             .expect("failed to load plugin");
@@ -36,7 +36,7 @@ fn main() {
     app.run();
 }
 
-/// Locates the built `example_plugin` library in the target directory.
+/// Finds the built `example_plugin` library next to this example.
 fn find_plugin_library() -> PathBuf {
     let mut path = std::env::current_exe()
         .expect("failed to get exe path")
@@ -44,8 +44,8 @@ fn find_plugin_library() -> PathBuf {
         .expect("exe has no parent")
         .to_path_buf();
 
-    // The exe is in target/{profile}/examples, the cdylib is in target/{profile}.
-    // Walk up from the examples dir to the profile dir.
+    // The example binary lands in target/{profile}/examples; the library
+    // is one level up in target/{profile}.
     if path.ends_with("examples") {
         path.pop();
     }
@@ -59,26 +59,24 @@ fn find_plugin_library() -> PathBuf {
 
     path.push(lib_name);
 
-    if !path.exists() {
-        panic!(
-            "Plugin not found at {}. Build it first:\n  cargo build -p example_plugin",
-            path.display()
-        );
-    }
+    assert!(
+        path.exists(),
+        "plugin not found at {}. Build it first:\n  \
+         RUSTFLAGS=\"-C prefer-dynamic\" cargo build -p example_plugin",
+        path.display()
+    );
 
     path
 }
 
-/// Custom runner that runs for 5 frames to demonstrate the plugin system.
+/// Runs enough frames for the plugin's every-60th-frame log to fire.
 fn run_for_frames(mut app: App) {
     app.finish_plugins();
-
     app.schedule.run_startup(&mut app.resources);
 
-    for frame in 0..5 {
-        tracing::info!(frame, "--- Frame start ---");
+    for _ in 0..120 {
         app.schedule.run_frame_stages(&mut app.resources);
     }
 
-    tracing::info!("Done — 5 frames executed successfully");
+    tracing::info!("done — 120 frames executed");
 }

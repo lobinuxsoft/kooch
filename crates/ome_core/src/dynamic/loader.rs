@@ -1,19 +1,36 @@
-//! Dynamic plugin loader using `libloading` and `stabby` ABI verification.
+//! Loading plugin libraries, and refusing the ones that would be unsound.
 //!
-//! [`PluginLoader`] loads `.dll`/`.so` files, verifies ABI compatibility via
-//! stabby, instantiates the plugin, and keeps the library alive.
+//! [`PluginLoader`] opens `.so`/`.dll` files with `libloading`, checks the
+//! build stamp, constructs the plugin, and keeps the library alive.
+//!
+//! # Why the stamp is read first
+//!
+//! The constructor hands back a `Box<dyn OmePlugin>` — a Rust trait
+//! object, whose vtable layout Rust does not guarantee across compiler
+//! versions. Calling it when the plugin was built by a different
+//! compiler is undefined behaviour, and it would look like a working
+//! load right up until a method call jumps somewhere else.
+//!
+//! So the stamp symbol is looked up and compared **before** the
+//! constructor is even resolved. It is a `#[repr(C)]` struct of two
+//! integers, which is decodable regardless of whether anything else
+//! would have been.
 
 use std::path::{Path, PathBuf};
 
 use libloading::Library;
-use stabby::libloading::StabbyLibrary;
 
-use ome_plugin_api::plugin::{BoxedPlugin, CreatePluginFn, OmePluginDyn};
+use ome_plugin_api::OmePlugin;
+use ome_plugin_api::plugin::{CREATE_SYMBOL, CreatePluginFn, STAMP_SYMBOL};
+use ome_plugin_api::version::{BuildStamp, Incompatibility};
 
-/// Holds loaded dynamic libraries and their plugin instances.
+/// Signature of the build-stamp symbol every plugin exports.
+type BuildStampFn = unsafe extern "C" fn() -> BuildStamp;
+
+/// Holds loaded libraries and keeps them alive.
 ///
-/// Libraries must outlive their plugins — dropping a `PluginLoader` unloads
-/// the libraries which invalidates all function pointers.
+/// A library must outlive every plugin that came out of it: dropping it
+/// unmaps the code the plugin's vtable points into.
 pub struct PluginLoader {
     loaded: Vec<LoadedPlugin>,
 }
@@ -29,23 +46,22 @@ impl PluginLoader {
         Self { loaded: Vec::new() }
     }
 
-    /// Loads a plugin from a shared library at `path`.
+    /// Loads a plugin from the library at `path`.
     ///
-    /// 1. Opens the library with `libloading`
-    /// 2. Looks up `ome_create_plugin` with stabby ABI verification
-    /// 3. Calls the constructor to get a `Box<dyn OmePlugin>`
-    /// 4. Verifies API version compatibility
-    /// 5. Returns the plugin instance (library is kept alive internally)
+    /// The build stamp is verified before the constructor is called; an
+    /// incompatible library is refused without executing any of its
+    /// Rust code.
     ///
     /// # Safety
     ///
-    /// Loading a shared library executes arbitrary code. Only load trusted plugins.
+    /// Opening a library runs its initialisers, which is arbitrary code.
+    /// Only load libraries you built.
     ///
     /// # Errors
     ///
-    /// Returns an error if the library can't be loaded, the symbol is missing,
-    /// ABI verification fails, or the plugin reports an incompatible version.
-    pub unsafe fn load(&mut self, path: &Path) -> Result<BoxedPlugin, PluginLoadError> {
+    /// If the library cannot be opened, either symbol is missing, or the
+    /// stamp does not match this engine's.
+    pub unsafe fn load(&mut self, path: &Path) -> Result<Box<dyn OmePlugin>, PluginLoadError> {
         let library = unsafe {
             Library::new(path).map_err(|e| PluginLoadError::LibraryOpen {
                 path: path.to_path_buf(),
@@ -53,34 +69,41 @@ impl PluginLoader {
             })?
         };
 
-        // stabby verifies ABI compatibility via the companion `_stabbied` symbol.
-        let constructor = unsafe {
-            library
-                .get_stabbied::<CreatePluginFn>(b"ome_create_plugin")
-                .map_err(|e| PluginLoadError::Symbol {
-                    path: path.to_path_buf(),
-                    source: e.to_string(),
-                })?
+        // Before anything else: prove this library is safe to call into.
+        let stamp = unsafe {
+            let symbol =
+                library
+                    .get::<BuildStampFn>(STAMP_SYMBOL)
+                    .map_err(|e| PluginLoadError::Symbol {
+                        path: path.to_path_buf(),
+                        symbol: String::from_utf8_lossy(STAMP_SYMBOL).into_owned(),
+                        source: e.to_string(),
+                    })?;
+            symbol()
         };
 
-        let plugin = constructor();
-
-        // Version check.
-        let version = plugin.api_version();
-        if !ome_plugin_api::version::is_compatible(version) {
-            return Err(PluginLoadError::IncompatibleVersion {
+        if let Some(reason) = stamp.incompatibility() {
+            return Err(PluginLoadError::Incompatible {
                 path: path.to_path_buf(),
-                plugin_version: version,
-                engine_version: ome_plugin_api::version::API_VERSION,
+                reason,
             });
         }
 
-        let name: String = plugin.name().into();
+        let plugin = unsafe {
+            let constructor = library.get::<CreatePluginFn>(CREATE_SYMBOL).map_err(|e| {
+                PluginLoadError::Symbol {
+                    path: path.to_path_buf(),
+                    symbol: String::from_utf8_lossy(CREATE_SYMBOL).into_owned(),
+                    source: e.to_string(),
+                }
+            })?;
+            constructor()
+        };
+
         tracing::info!(
-            plugin = %name,
-            version,
+            plugin = plugin.name(),
             path = %path.display(),
-            "Loaded dynamic plugin"
+            "loaded plugin"
         );
 
         self.loaded.push(LoadedPlugin {
@@ -91,13 +114,13 @@ impl PluginLoader {
         Ok(plugin)
     }
 
-    /// Returns the number of loaded plugins.
+    /// Number of libraries currently held open.
     #[inline]
     pub fn count(&self) -> usize {
         self.loaded.len()
     }
 
-    /// Returns the paths of all loaded plugin libraries.
+    /// Paths of the libraries currently held open.
     pub fn paths(&self) -> impl Iterator<Item = &Path> {
         self.loaded.iter().map(|lp| lp.path.as_path())
     }
@@ -109,18 +132,31 @@ impl Default for PluginLoader {
     }
 }
 
-/// Errors that can occur when loading a dynamic plugin.
+/// Why a plugin could not be loaded.
 #[derive(Debug)]
 pub enum PluginLoadError {
-    /// Failed to open the shared library.
-    LibraryOpen { path: PathBuf, source: String },
-    /// Failed to find or verify the `ome_create_plugin` symbol.
-    Symbol { path: PathBuf, source: String },
-    /// Plugin API version is incompatible with the engine.
-    IncompatibleVersion {
+    /// The library could not be opened.
+    LibraryOpen {
+        /// Library that failed to open.
         path: PathBuf,
-        plugin_version: u32,
-        engine_version: u32,
+        /// What the loader reported.
+        source: String,
+    },
+    /// A required symbol was missing.
+    Symbol {
+        /// Library that lacked it.
+        path: PathBuf,
+        /// Symbol that was looked up.
+        symbol: String,
+        /// What the loader reported.
+        source: String,
+    },
+    /// The library was not built for this engine.
+    Incompatible {
+        /// Library that was refused.
+        path: PathBuf,
+        /// Which half of the stamp failed to match.
+        reason: Incompatibility,
     },
 }
 
@@ -130,23 +166,17 @@ impl std::fmt::Display for PluginLoadError {
             Self::LibraryOpen { path, source } => {
                 write!(f, "failed to open library {}: {source}", path.display())
             }
-            Self::Symbol { path, source } => {
-                write!(
-                    f,
-                    "failed to load ome_create_plugin from {}: {source}",
-                    path.display()
-                )
-            }
-            Self::IncompatibleVersion {
+            Self::Symbol {
                 path,
-                plugin_version,
-                engine_version,
-            } => {
-                write!(
-                    f,
-                    "plugin {} has API version {plugin_version}, engine expects {engine_version}",
-                    path.display()
-                )
+                symbol,
+                source,
+            } => write!(
+                f,
+                "{} does not export {symbol}: {source} — is it built with export_plugin!?",
+                path.display()
+            ),
+            Self::Incompatible { path, reason } => {
+                write!(f, "refused to load {}: {reason}", path.display())
             }
         }
     }
