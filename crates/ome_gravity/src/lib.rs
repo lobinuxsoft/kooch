@@ -27,4 +27,4 @@ pub mod plugin;
 pub mod sources;
 
 pub use plugin::{GravityComponentsPlugin, GravityPlugin, gravity_at};
-pub use sources::{AreaGravity, GlobalGravity, PointGravity};
+pub use sources::{AreaGravity, BoxGravity, GlobalGravity, PointGravity};

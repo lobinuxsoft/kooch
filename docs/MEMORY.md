@@ -720,8 +720,8 @@ que el próximo sync lo reconstruya y se rompa otra vez, para siempre. El slot q
 
 ### Gravedad: campos que suman, aplicados como impulso (locked 2026-07-27, #624)
 
-**Tres componentes, no uno con discriminante.** `GlobalGravity`, `PointGravity`,
-`AreaGravity`. La física deletrea sus variantes como `u32` reflejado (`Collider.shape`,
+**Componentes separados, no uno con discriminante.** `GlobalGravity`, `PointGravity`,
+`AreaGravity`, `BoxGravity`. La física deletrea sus variantes como `u32` reflejado (`Collider.shape`,
 `Joint.kind`) porque un collider es *una* forma a la vez. La gravedad es distinta en lo que
 importa: una escena tiene muchas fuentes simultáneas, se consultan por separado, y una
 entidad nunca es "una fuente puntual que además es un área". Componentes separados dejan que
@@ -753,8 +753,27 @@ del mundo. `AreaGravity` lleva su rotación aparte de la matriz inversa: rotar u
 con una matriz escalada escalaría la aceleración, y una zona estirada no es una zona más
 fuerte.
 
+**`BoxGravity` = el planeta cubo, y sus aristas NO tienen caso especial.** La dirección es
+hacia el punto más cercano del box, o sea `local_point.clamp(-half, half) - local_point`. Esa
+única expresión produce todo: sobre una cara da exactamente su normal (constante en toda la
+cara, por eso se camina); pasando una arista el punto más cercano cae *sobre* la arista y la
+dirección rota **continua**; sobre un vértice apunta al vértice. **Es el gradiente del SDF del
+box** — gravedad que sigue una superficie *es* el gradiente de la distancia a ella. No hay
+blend, ni interpolación, ni rama por arista en ningún lado.
+
+**`rounding` encoge el box antes de clampear** — la dirección empieza a doblar *antes* de la
+arista en vez de en ella. `0` = cubo duro; `= half_extents` colapsa el box a su centro y el
+campo **es una esfera**. Un dial de cubo a planeta redondo, una línea de código.
+
+**Adentro del sólido la gravedad es CERO.** Inventarle dirección a un cuerpo adentro de la
+roca es una fuerza que lo dispara fuera del planeta.
+
+**`AreaGravity` y `BoxGravity` NO son variantes.** Area = región con un abajo uniforme, actúa
+sobre lo de adentro. Box = sólido, actúa sobre lo de afuera, dirección distinta en cada punto.
+Unirlos pediría un flag que invierte el significado de todos los demás campos.
+
 **PENDIENTE, no cerrado en #624:** partir `RigidBody` en `RigidBody`/`KinematicBody`/
-`StaticBody`. Es una migración del formato de escena y no se revisa junto con gravedad.
+`StaticBody` → **issue #639**. Es una migración del formato de escena.
 
 ### Prefabs = escenas instanciadas (decidido 2026-07-26, #611)
 
