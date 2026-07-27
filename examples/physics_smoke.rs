@@ -30,7 +30,10 @@ use ome_physics::backend::PhysicsBackend;
 use ome_physics::components::{
     Collider, JOINT_REVOLUTE, Joint, KIND_STATIC, RigidBody, SHAPE_CUBOID,
 };
-use ome_physics::plugin::{PhysicsBody, PhysicsPlugin, PhysicsWorld};
+use ome_physics::plugin::{
+    CollisionStarted, CollisionStopped, ContactForce, JointBroke, PhysicsBody, PhysicsPlugin,
+    PhysicsWorld,
+};
 
 /// How many *fixed steps* to run before reporting and quitting.
 ///
@@ -58,6 +61,27 @@ struct Cast {
     slippery: Option<Entity>,
     grippy: Option<Entity>,
     spinner: Option<Entity>,
+    /// A trigger volume and the body falling through it (#561).
+    trigger: Option<Entity>,
+    /// Same collision groups as the wall, disjoint solver groups: detects
+    /// it and is not stopped by it (#561).
+    ghost: Option<Entity>,
+}
+
+/// What the solver reported over the whole run.
+///
+/// Accumulated as it arrives, because the event buffers are
+/// double-buffered: reading only at the end would see the last frame's
+/// events and nothing else.
+#[derive(Default)]
+struct Heard {
+    started: usize,
+    stopped: usize,
+    sensor_started: usize,
+    forces: usize,
+    peak_force: f32,
+    joint_breaks: usize,
+    ghost_detections: usize,
 }
 
 fn main() {
@@ -70,6 +94,7 @@ fn main() {
     app.insert_resource(Cast::default());
     app.add_system(Stage::Startup, build_scene);
     app.add_system(Stage::Update, launch);
+    app.add_system(Stage::Update, listen);
     app.add_system(Stage::Last, report);
     Playing::set(app.resources_mut(), true);
     app.run();
@@ -195,7 +220,99 @@ fn build_scene(resources: &mut Resources) {
         cuboid(0.5),
     ));
 
+    // #561: a trigger volume, which reports overlap and never pushes.
+    body(
+        resources,
+        Vec3::new(0.0, 3.0, 12.0),
+        RigidBody {
+            kind: KIND_STATIC,
+            mass: 0.0,
+            ..Default::default()
+        },
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::new(3.0, 0.5, 3.0),
+            sensor: true,
+            collision_events: true,
+            ..Default::default()
+        },
+    );
+    cast.trigger = Some(body(
+        resources,
+        Vec3::new(0.0, 8.0, 12.0),
+        RigidBody {
+            mass: 1.0,
+            ..Default::default()
+        },
+        cuboid(0.5),
+    ));
+
+    // #561: the floor everything else rests on reports hard landings.
+    body(
+        resources,
+        Vec3::new(0.0, -1.0, -12.0),
+        RigidBody {
+            kind: KIND_STATIC,
+            mass: 0.0,
+            ..Default::default()
+        },
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::new(6.0, 1.0, 6.0),
+            collision_events: true,
+            contact_force_events: true,
+            contact_force_threshold: 1.0,
+            ..Default::default()
+        },
+    );
+    body(
+        resources,
+        Vec3::new(0.0, 14.0, -12.0),
+        RigidBody {
+            mass: 20.0,
+            ..Default::default()
+        },
+        cuboid(0.5),
+    );
+
+    // #561: matching collision groups, disjoint solver groups — the wall
+    // is seen and does not stop anything.
+    body(
+        resources,
+        Vec3::new(0.0, 0.0, 20.0),
+        RigidBody {
+            kind: KIND_STATIC,
+            mass: 0.0,
+            ..Default::default()
+        },
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::new(4.0, 0.5, 4.0),
+            solver_memberships: 0b0001,
+            solver_filter: 0b0001,
+            collision_events: true,
+            ..Default::default()
+        },
+    );
+    cast.ghost = Some(body(
+        resources,
+        Vec3::new(0.0, 5.0, 20.0),
+        RigidBody {
+            mass: 1.0,
+            ..Default::default()
+        },
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::splat(0.5),
+            solver_memberships: 0b0010,
+            solver_filter: 0b0010,
+            collision_events: true,
+            ..Default::default()
+        },
+    ));
+
     resources.insert(cast);
+    resources.insert(Heard::default());
     tracing::info!("scene built");
 }
 
@@ -382,6 +499,44 @@ fn handle_of(resources: &Resources, entity: Entity) -> Option<ome_physics::BodyH
     resources.get::<PhysicsWorld>()?.handle(slot)
 }
 
+/// Accumulates what the solver reported this frame.
+///
+/// Runs every frame because the buffers swap every frame: a tally taken
+/// only at the end would see the last frame and call it the whole run.
+fn listen(resources: &mut Resources) {
+    let ghost = resources.get::<Cast>().and_then(|cast| cast.ghost);
+    let mut heard = match resources.remove::<Heard>() {
+        Some(heard) => heard,
+        None => return,
+    };
+
+    if let Some(events) = resources.get::<Events<CollisionStarted>>() {
+        for event in events.read() {
+            heard.started += 1;
+            if event.sensor {
+                heard.sensor_started += 1;
+            }
+            if Some(event.a) == ghost || Some(event.b) == ghost {
+                heard.ghost_detections += 1;
+            }
+        }
+    }
+    if let Some(events) = resources.get::<Events<CollisionStopped>>() {
+        heard.stopped += events.read().count();
+    }
+    if let Some(events) = resources.get::<Events<ContactForce>>() {
+        for event in events.read() {
+            heard.forces += 1;
+            heard.peak_force = heard.peak_force.max(event.total_force_magnitude);
+        }
+    }
+    if let Some(events) = resources.get::<Events<JointBroke>>() {
+        heard.joint_breaks += events.read().count();
+    }
+
+    resources.insert(heard);
+}
+
 fn report(resources: &mut Resources) {
     let steps = resources.get::<Time>().map(Time::fixed_count).unwrap_or(0);
     if steps < STEPS {
@@ -453,6 +608,42 @@ fn report(resources: &mut Resources) {
             .map(|v| v.length())
             .unwrap_or(0.0);
         println!("  spun at 10 rad/s, damping 4    ->  {left:.4} rad/s left");
+    }
+
+    println!("\n-- #561 what the solver reported --");
+    if let Some(heard) = resources.get::<Heard>() {
+        println!(
+            "  collisions started / stopped   ->  {} / {}",
+            heard.started, heard.stopped
+        );
+        println!(
+            "  of those, sensor overlaps      ->  {}",
+            heard.sensor_started
+        );
+        println!(
+            "  contact-force events           ->  {} (peak {:.1} N)",
+            heard.forces, heard.peak_force
+        );
+        println!(
+            "  joint breaks                   ->  {}",
+            heard.joint_breaks
+        );
+        println!(
+            "  ghost detected the wall        ->  {} times",
+            heard.ghost_detections
+        );
+    }
+    if let Some(ghost) = cast.ghost {
+        println!(
+            "  ghost passed through it        ->  now at y={:.3}",
+            position_of(resources, ghost).y,
+        );
+    }
+    if let Some(trigger) = cast.trigger {
+        println!(
+            "  body fell through the trigger  ->  now at y={:.3}",
+            position_of(resources, trigger).y,
+        );
     }
 
     println!("\n-- #563 what the solver will draw --");
