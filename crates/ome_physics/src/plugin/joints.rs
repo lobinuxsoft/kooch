@@ -33,6 +33,8 @@ use ome_ecs::entity::Entity;
 use crate::backend::{BodyHandle, JointDesc, JointHandle};
 use crate::components::Joint;
 
+use super::events::JointBroke;
+
 use super::world::{PhysicsBody, PhysicsWorld};
 
 /// One authored joint, and what the solver made of it.
@@ -59,6 +61,9 @@ pub struct JointRegistry {
     /// Joints already complained about, so an unresolvable reference is
     /// one log line rather than one per frame forever.
     warned: HashSet<Entity>,
+    /// Breaks waiting to be reported. #560 built the breaking with nowhere
+    /// to send it; #561 is the somewhere.
+    breaks: Vec<JointBroke>,
 }
 
 impl JointRegistry {
@@ -70,6 +75,11 @@ impl JointRegistry {
     /// `true` when nothing is tracked.
     pub fn is_empty(&self) -> bool {
         self.slots.is_empty()
+    }
+
+    /// The breaks collected since the last drain, for the event pass.
+    pub(super) fn drained_breaks(&mut self) -> &mut Vec<JointBroke> {
+        &mut self.breaks
     }
 
     /// Whether the joint authored on `entity` is currently live in the
@@ -239,15 +249,30 @@ pub(super) fn collect_broken_joints(world: &mut PhysicsWorld) {
     if broken.is_empty() {
         return;
     }
-    let dead: HashSet<JointHandle> = broken.iter().map(|event| event.joint).collect();
-    for (entity, slot) in world.joints_mut().slots.iter_mut() {
-        if slot.joint.is_some_and(|handle| dead.contains(&handle)) {
-            slot.joint = None;
-            tracing::info!(
-                target: "ome_physics",
-                entity = entity.index(),
-                "a joint broke under load",
-            );
-        }
+    let dead: HashMap<JointHandle, f32> = broken
+        .iter()
+        .map(|event| (event.joint, event.impulse))
+        .collect();
+    let mut reported = Vec::new();
+    for (&entity, slot) in world.joints_mut().slots.iter_mut() {
+        let Some(impulse) = slot.joint.and_then(|handle| dead.get(&handle).copied()) else {
+            continue;
+        };
+        slot.joint = None;
+        reported.push((entity, slot.spec.body_a, slot.spec.body_b, impulse));
+        tracing::info!(
+            target: "ome_physics",
+            entity = entity.index(),
+            "a joint broke under load",
+        );
+    }
+    let registry = world.joints_mut();
+    for (joint, a, b, impulse) in reported {
+        registry.breaks.push(JointBroke {
+            joint,
+            a,
+            b,
+            impulse,
+        });
     }
 }

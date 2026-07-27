@@ -2,6 +2,7 @@
 
 use glam::{Quat, Vec3};
 
+use super::interaction::ColliderInteraction;
 use super::material::{Damping, SurfaceMaterial};
 
 /// How the solver treats a body's motion.
@@ -60,6 +61,8 @@ pub struct BodyDesc {
     pub center_of_mass: Option<Vec3>,
     /// What the body's own shape does on contact.
     pub material: SurfaceMaterial,
+    /// What the body's own shape notices and reports.
+    pub interaction: ColliderInteraction,
     /// How quickly the body loses motion with nothing touching it.
     pub damping: Damping,
     pub position: Vec3,
@@ -82,6 +85,7 @@ impl BodyDesc {
             mass,
             center_of_mass: None,
             material: SurfaceMaterial::default(),
+            interaction: ColliderInteraction::default(),
             damping: Damping::default(),
             position: Vec3::ZERO,
             rotation: Quat::IDENTITY,
@@ -97,6 +101,7 @@ impl BodyDesc {
             mass: 0.0,
             center_of_mass: None,
             material: SurfaceMaterial::default(),
+            interaction: ColliderInteraction::default(),
             damping: Damping::default(),
             position,
             rotation: Quat::IDENTITY,

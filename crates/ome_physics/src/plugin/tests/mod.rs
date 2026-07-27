@@ -11,6 +11,7 @@ mod compound;
 mod configuration;
 #[cfg(feature = "debug-render")]
 mod debug;
+mod events;
 mod joints;
 mod lifetime;
 mod mass;

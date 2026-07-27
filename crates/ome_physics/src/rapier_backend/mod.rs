@@ -16,6 +16,7 @@ mod backend;
 mod conv;
 #[cfg(feature = "debug-render")]
 mod debug;
+mod events;
 mod joints;
 
 #[cfg(test)]

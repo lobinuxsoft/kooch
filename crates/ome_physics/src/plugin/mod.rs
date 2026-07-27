@@ -1,12 +1,14 @@
 //! [`PhysicsPlugin`] — wires the backend into the ECS and the schedule.
 
 mod compound;
+pub(super) mod events;
 mod joints;
 mod systems;
 #[cfg(test)]
 mod tests;
 mod world;
 
+pub use events::{CollisionStarted, CollisionStopped, ContactForce, JointBroke};
 pub use joints::JointRegistry;
 pub use systems::{physics_step_system, physics_sync_system, physics_writeback_system};
 pub use world::{BodySpec, PhysicsBody, PhysicsWorld};
@@ -133,9 +135,25 @@ impl Plugin for PhysicsPlugin {
 
         // Sync runs unconditionally: the body set mirrors the ECS while
         // authoring too. Stepping and writeback are gameplay.
+        // Before the sync, and ungated: a system gated on play cannot see
+        // play end, and an event about a world that no longer exists must
+        // not reach the next session.
+        app.add_system(Stage::PreUpdate, events::physics_lifecycle_system);
         app.add_system(Stage::PreUpdate, physics_sync_system);
         app.add_system(Stage::Physics, run_if_playing(physics_step_system));
         app.add_system(Stage::PostPhysics, run_if_playing(physics_writeback_system));
+
+        // The solver's reports, delivered after the step rather than during
+        // it — see `events`. Registered here so a host that adds physics
+        // gets the buffers without a second call to remember.
+        app.add_event::<CollisionStarted>();
+        app.add_event::<CollisionStopped>();
+        app.add_event::<ContactForce>();
+        app.add_event::<JointBroke>();
+        app.add_system(
+            Stage::PostPhysics,
+            run_if_playing(events::drain_physics_events),
+        );
     }
 
     fn name(&self) -> &str {

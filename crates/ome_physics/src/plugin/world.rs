@@ -26,7 +26,8 @@ use ome_ecs::component::Component;
 use ome_ecs::entity::Entity;
 
 use crate::backend::{
-    BodyDesc, BodyHandle, CollisionShape, Damping, PhysicsBackend, SurfaceMaterial,
+    BodyDesc, BodyHandle, ColliderInteraction, CollisionShape, Damping, PhysicsBackend,
+    SurfaceMaterial,
 };
 use crate::components::{Collider, RigidBody};
 
@@ -99,6 +100,7 @@ pub struct BodySpec {
     /// retire and rebuild. Unlike `RigidBody::density`, the simulation
     /// genuinely reads these.
     material: SurfaceMaterial,
+    interaction: ColliderInteraction,
     damping: Damping,
     /// The authored centre of mass, or `None` for the collider's own.
     ///
@@ -137,6 +139,7 @@ impl BodySpec {
             half_extents: collider.half_extents,
             center: collider.center,
             material: collider.material(),
+            interaction: collider.interaction(),
             damping: body.damping(),
             center_of_mass: body.explicit_center_of_mass(),
             scale,
@@ -185,6 +188,7 @@ impl BodySpec {
             // space the point lives in.
             center_of_mass: self.center_of_mass.map(|center| center * s),
             material: self.material,
+            interaction: self.interaction,
             damping: self.damping,
             position,
             rotation,
@@ -343,6 +347,19 @@ impl PhysicsWorld {
             .map(|s| s.handle)
     }
 
+    /// The entity owning a backend body.
+    ///
+    /// A linear walk, deliberately: this runs once per reported event, and
+    /// events are opt-in per collider, so the set is small by construction.
+    /// An index here would be a third mapping to keep in step for a cost
+    /// nobody has measured.
+    pub fn entity_of(&self, handle: BodyHandle) -> Option<Entity> {
+        self.slots
+            .iter()
+            .find(|slot| slot.entity.is_valid() && slot.handle == handle)
+            .map(|slot| slot.entity)
+    }
+
     /// Walks the live slots as `(slot, entity, spec, handle)`.
     pub fn iter(&self) -> impl Iterator<Item = (u32, Entity, BodySpec, BodyHandle)> + '_ {
         self.slots
@@ -375,6 +392,7 @@ impl PhysicsWorld {
                 attachment.offset,
                 attachment.rotation,
                 attachment.material,
+                attachment.interaction,
             );
         }
     }
