@@ -76,7 +76,38 @@ grilla directamente.
 
 ---
 
-## ⭐ Estado actual (2026-07-26, rama `feat/collider-material`)
+## ⭐ Estado actual (2026-07-26, rama `feat/physics-events`)
+
+**#561 eventos, sensores y grupos.** #560/#618/#563/#623 mergeados.
+
+**Antes de esto la simulación corría CIEGA:** `step` recibía `&()` como event handler, así que
+nada en el engine podía enterarse de que dos cosas se tocaron. Física sí, gameplay no.
+
+**Tres cosas no obvias que resolví:**
+
+1. **`EventHandler` toma `&self` y exige `Send + Sync`** — rapier lo llama desde dentro del
+   step, posiblemente desde threads del solver. El colector necesita mutabilidad interior que
+   además sea `Sync`. Rapier usa canales de crossbeam; usé `Mutex<Vec<_>>` y me ahorré la dep.
+2. **`InteractionGroups::new` toma TRES argumentos en 0.34** — hay un `test_mode` nuevo. Uso
+   `And` (los dos lados tienen que acordar). `Or` deja pasar un reclamo unilateral, que es lo
+   que vuelve indebugueable un filtro.
+3. **No hay evento de stop.** `Playing` es un flag, así que el plugin recuerda el estado
+   anterior y limpia en la transición, con un sistema **sin gate de play** — uno gateado no
+   puede ver que el play terminó.
+
+**El colector recolecta DURANTE el step y se drena DESPUÉS.** No es prolijidad: un listener
+que despawnea lo que acaba de tocar estaría mutando el set que se está iterando.
+
+**`FieldKind::Bitmask` NO se agregó — es metadata `bits` en `FieldMeta`**, igual que `choices`
+convierte un `u32` en dropdown. El almacenamiento sigue siendo `u32`, así que un kind nuevo
+sería un caso que todo consumidor tendría que manejar y que se lee/escribe idéntico a `U32`.
+**El widget preserva los bits que no nombra** — un mask autorado a mano sobrevive una visita.
+
+**El evento del joint roto de #560 por fin tiene dónde ir:** `JointBroke`.
+
+---
+
+## Estado (2026-07-26, rama `feat/collider-material`, mergeada)
 
 **#623 material de collider.** #560, #618, #563 mergeados; #626 y #627 también.
 
