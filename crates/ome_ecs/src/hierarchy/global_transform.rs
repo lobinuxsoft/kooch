@@ -96,6 +96,7 @@ impl Reflect for GlobalTransform {
             type_name: "glam::Mat4",
             kind: FieldKind::Mat4,
             choices: &[],
+            bits: &[],
             shown_when: None,
             asset_type: "",
         }];

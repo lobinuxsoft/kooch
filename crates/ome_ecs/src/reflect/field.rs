@@ -11,6 +11,30 @@ pub struct FieldMeta {
     /// the editor inspector renders the field as a dropdown instead of
     /// a free-form numeric input. Ignored for non-integer `kind`s.
     pub choices: &'static [FieldChoice],
+    /// Optional named bits for an integer field used as a bitmask. When
+    /// non-empty, the inspector renders a checkbox per entry instead of a
+    /// number. Ignored for non-integer `kind`s.
+    ///
+    /// Reuses [`FieldChoice`] rather than growing a parallel type, with
+    /// `value` read as the bit's mask instead of the field's whole value.
+    /// The two are mutually exclusive in practice: a field is either one
+    /// of a set or a combination of them, never both, and `choices` wins
+    /// if someone declares both.
+    ///
+    /// # Why this is not a `FieldKind`
+    ///
+    /// The storage is still a plain integer — `u32` in, `u32` out — so a
+    /// new kind would mean every consumer matching on kinds handling a
+    /// case that reads and writes exactly like `U32`. The display hint
+    /// belongs beside `choices`, which solves the same problem for
+    /// single-select.
+    ///
+    /// # Why it exists at all
+    ///
+    /// A collision filter written as a raw number fails silently: two
+    /// things pass through each other and nothing says why. Named bits
+    /// turn that into a checkbox someone can see is unticked.
+    pub bits: &'static [FieldChoice],
     /// When set, the field is only meaningful while another field of the
     /// same component holds one of the listed values — see
     /// [`FieldCondition`]. `None` means always shown.

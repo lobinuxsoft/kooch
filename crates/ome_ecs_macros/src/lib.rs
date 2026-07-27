@@ -38,8 +38,8 @@ use quote::quote;
 use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
 use crate::attrs::{
-    parse_category_attr, parse_field_asset_type, parse_field_choices, parse_field_shown_when,
-    parse_field_skip, parse_inspector_attr,
+    parse_category_attr, parse_field_asset_type, parse_field_bits, parse_field_choices,
+    parse_field_shown_when, parse_field_skip, parse_inspector_attr,
 };
 use crate::type_mapping::type_mapping;
 use crate::unit_struct::unit_struct_impl;
@@ -126,6 +126,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     type_name: "Option<ome_core::Guid>",
                     kind: ::ome_ecs::reflect::FieldKind::AssetRef,
                     choices: &[],
+                    bits: &[],
                     // An asset picker has no variant to depend on yet.
                     shown_when: ::core::option::Option::None,
                     asset_type: #asset_type,
@@ -180,6 +181,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     type_name: #type_name_str,
                     kind: ::ome_ecs::reflect::FieldKind::EntityRef,
                     choices: &[],
+                    bits: &[],
                     shown_when: #shown_when_expr,
                     asset_type: "",
                 }
@@ -278,6 +280,11 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             Ok(None) => quote! { &[] },
             Err(e) => return e,
         };
+        let bits_expr = match parse_field_bits(field) {
+            Ok(Some(expr)) => quote! { #expr },
+            Ok(None) => quote! { &[] },
+            Err(e) => return e,
+        };
         let shown_when_expr = match parse_field_shown_when(field) {
             Ok(Some(expr)) => quote! { ::core::option::Option::Some(&#expr) },
             Ok(None) => quote! { ::core::option::Option::None },
@@ -291,6 +298,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 type_name: #type_name_str,
                 kind: ::ome_ecs::reflect::FieldKind::#kind_ident,
                 choices: #choices_expr,
+                bits: #bits_expr,
                 shown_when: #shown_when_expr,
                 asset_type: "",
             }

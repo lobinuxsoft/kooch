@@ -97,6 +97,7 @@ impl Reflect for PersistentId {
             type_name: "u64",
             kind: FieldKind::U64,
             choices: &[],
+            bits: &[],
             shown_when: None,
             asset_type: "",
         }];
