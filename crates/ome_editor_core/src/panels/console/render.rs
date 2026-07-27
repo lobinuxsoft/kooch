@@ -1,67 +1,9 @@
-//! The Console tab — what the engine has been saying.
-//!
-//! Everything reaches this through `tracing`, including a running
-//! project's output, which the editor forwards as `[game] ...`. So there is
-//! one log rather than a panel and a terminal that drift apart.
-//!
-//! # Why filters are not optional
-//!
-//! At `info` the engine is chatty — asset scans, meshlet LOD chains, one
-//! line per pipeline. The line that matters is a `warn` about a joint with
-//! no bodies, three hundred lines up. A log nobody can narrow is a log
-//! nobody reads, which is the state this panel replaces.
+//! Drawing the Console's rows.
 
 use ome_core::{LogBuffer, LogEntry};
 use tracing::Level;
 
-/// What the panel is currently showing, kept between frames.
-pub(crate) struct ConsoleState {
-    /// Minimum level shown.
-    pub(crate) level: Level,
-    /// Substring filter, matched against the message and the target.
-    pub(crate) filter: String,
-    /// Follow the tail. Turned off by scrolling up, so reading something
-    /// is not fought by new lines arriving.
-    pub(crate) follow: bool,
-    /// Show only what a spawned project said.
-    pub(crate) project_only: bool,
-}
-
-impl Default for ConsoleState {
-    fn default() -> Self {
-        Self {
-            // Not `INFO`: the interesting lines are warnings and errors,
-            // and the first thing anyone does at info is scroll past a
-            // hundred asset lines. The level picker is right there.
-            level: Level::INFO,
-            filter: String::new(),
-            follow: true,
-            project_only: false,
-        }
-    }
-}
-
-impl ConsoleState {
-    /// Whether an entry passes the current filters.
-    pub(crate) fn shows(&self, entry: &LogEntry) -> bool {
-        // `tracing::Level` orders with ERROR as the *smallest*, so "at
-        // least this severe" is `<=`. Getting this backwards shows debug
-        // spam when someone asks for errors, which is the wrong way to be
-        // wrong.
-        if entry.level > self.level {
-            return false;
-        }
-        if self.project_only && !entry.is_from_project() {
-            return false;
-        }
-        if self.filter.is_empty() {
-            return true;
-        }
-        let needle = self.filter.to_lowercase();
-        entry.message.to_lowercase().contains(&needle)
-            || entry.target.to_lowercase().contains(&needle)
-    }
-}
+use super::ConsoleState;
 
 /// Content of the "Console" tab.
 pub(crate) fn draw_console(
@@ -74,8 +16,9 @@ pub(crate) fn draw_console(
         return;
     };
 
-    let entries = buffer.snapshot();
-    let dropped = buffer.dropped();
+    // Before the controls, so a filter typed this frame is applied this
+    // frame rather than one behind the keystroke.
+    state.sync(buffer);
 
     ui.horizontal(|ui| {
         egui::ComboBox::from_id_salt("console_level")
@@ -109,24 +52,39 @@ pub(crate) fn draw_console(
         }
     });
 
-    let shown = entries.iter().filter(|e| state.shows(e)).count();
     ui.horizontal(|ui| {
-        ui.weak(format!("{shown} of {} lines", entries.len()));
-        if dropped > 0 {
+        ui.weak(format!(
+            "{} of {} lines",
+            state.visible().len(),
+            state.entries().len(),
+        ));
+        if state.dropped() > 0 {
             // Said rather than implied: a panel showing two thousand lines
             // out of nine thousand looks like nothing else happened.
-            ui.weak(format!("({dropped} older dropped)"));
+            ui.weak(format!("({} older dropped)", state.dropped()));
         }
     });
     ui.separator();
 
-    egui::ScrollArea::vertical()
+    // One line per row, and only the rows on screen are built. Wrapping
+    // would make rows different heights, and a virtualised list needs to
+    // know where row N starts without having laid out the N-1 before it —
+    // so a long line scrolls sideways instead of folding. That is the
+    // trade this panel makes to stay free with a full log.
+    let row_height =
+        ui.text_style_height(&egui::TextStyle::Monospace) + ui.spacing().item_spacing.y;
+
+    egui::ScrollArea::both()
         .stick_to_bottom(state.follow)
         .auto_shrink([false, false])
-        .show(ui, |ui| {
+        .show_rows(ui, row_height, state.visible().len(), |ui, rows| {
             ui.spacing_mut().item_spacing.y = 1.0;
-            for entry in entries.iter().filter(|e| state.shows(e)) {
-                ui.horizontal_wrapped(|ui| {
+            let entries = state.entries();
+            for &index in &state.visible()[rows] {
+                let Some(entry) = entries.get(index) else {
+                    continue;
+                };
+                ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     ui.colored_label(
                         level_colour(entry.level),
@@ -142,7 +100,6 @@ pub(crate) fn draw_console(
         });
 }
 
-/// Monospaced text, padded so the level column lines up.
 fn mono(text: impl Into<String>) -> egui::RichText {
     egui::RichText::new(text).monospace()
 }
@@ -261,7 +218,6 @@ fn short_target(target: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn entry(level: Level, target: &str, message: &str) -> LogEntry {
         LogEntry {
             seq: 0,
@@ -277,93 +233,6 @@ mod tests {
             from_project: true,
             ..entry(level, target, message)
         }
-    }
-
-    /// `tracing::Level` orders ERROR smallest, so "at least this severe"
-    /// is `<=`. Backwards means asking for errors shows trace spam.
-    #[test]
-    fn the_level_filter_keeps_the_more_severe() {
-        let state = ConsoleState {
-            level: Level::WARN,
-            ..Default::default()
-        };
-        assert!(state.shows(&entry(Level::ERROR, "t", "louder")));
-        assert!(state.shows(&entry(Level::WARN, "t", "equal")));
-        assert!(!state.shows(&entry(Level::INFO, "t", "quieter")));
-        assert!(!state.shows(&entry(Level::DEBUG, "t", "quieter still")));
-    }
-
-    #[test]
-    fn the_text_filter_matches_message_or_target() {
-        let state = ConsoleState {
-            filter: "joint".to_owned(),
-            ..Default::default()
-        };
-        assert!(state.shows(&entry(Level::INFO, "t", "a joint broke")));
-        assert!(state.shows(&entry(Level::INFO, "ome_physics::joint", "unrelated")));
-        assert!(!state.shows(&entry(Level::INFO, "t", "a collider")));
-    }
-
-    /// Someone typing "JOINT" means the same thing.
-    #[test]
-    fn the_text_filter_ignores_case() {
-        let state = ConsoleState {
-            filter: "JOINT".to_owned(),
-            ..Default::default()
-        };
-        assert!(state.shows(&entry(Level::INFO, "t", "a joint broke")));
-    }
-
-    /// The question this panel exists for — "did my trigger fire" — is
-    /// asked about the project, not the editor.
-    #[test]
-    fn project_only_hides_the_editors_own_lines() {
-        let state = ConsoleState {
-            project_only: true,
-            ..Default::default()
-        };
-        assert!(state.shows(&from_project(Level::INFO, "ome_physics", "a sensor fired")));
-        assert!(!state.shows(&entry(Level::INFO, "handlers", "scene loaded")));
-    }
-
-    /// The point of carrying the project's own level: asking for warnings
-    /// has to hide a project's info, which sniffing a prefix could never
-    /// do — every forwarded line used to arrive as an `info`.
-    #[test]
-    fn a_projects_line_is_filtered_by_its_own_level() {
-        let state = ConsoleState {
-            level: Level::WARN,
-            ..Default::default()
-        };
-        assert!(state.shows(&from_project(
-            Level::WARN,
-            "ome_physics",
-            "a joint is waiting"
-        )));
-        assert!(!state.shows(&from_project(
-            Level::INFO,
-            "ome_physics",
-            "a sensor was entered"
-        )));
-    }
-
-    /// The filters compose; passing one is not enough.
-    #[test]
-    fn the_filters_are_combined() {
-        let state = ConsoleState {
-            level: Level::WARN,
-            filter: "joint".to_owned(),
-            ..Default::default()
-        };
-        assert!(state.shows(&entry(Level::WARN, "t", "a joint broke")));
-        assert!(
-            !state.shows(&entry(Level::INFO, "t", "a joint broke")),
-            "the level filter was ignored once the text matched",
-        );
-        assert!(
-            !state.shows(&entry(Level::WARN, "t", "a collider")),
-            "the text filter was ignored once the level matched",
-        );
     }
 
     /// The numbers are what anyone scans a log line for, so they have to

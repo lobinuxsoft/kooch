@@ -1055,6 +1055,30 @@ component/system + `registrations.rs` + editor embebido + gating) · **cliente r
 
 ---
 
+## 🔴 Paneles immediate-mode: el costo por frame es el costo, siempre (2026-07-27)
+
+**egui redibuja TODO cada frame.** Cualquier cosa que un panel hace en su `draw` la hace 60
+veces por segundo mientras esté visible — y el síntoma que reporta el user es *"depende de la
+cantidad de paneles visibles"*.
+
+**El caso concreto (Console, mío, #635):** `LogBuffer::snapshot()` adentro del draw **clonaba
+las 2000 entradas** (dos `String` cada una) por frame, después filtraba **dos veces** (una para
+contar, otra para dibujar) **alocando 3 `to_lowercase()` por entrada por pasada**, y
+`ScrollArea::show` maquetaba **las 2000 filas** aunque se vieran 40. Medido: **0.206 ms/frame →
+0.029 µs** sólo en el camino de datos, sin contar el layout.
+
+**Las tres reglas que salen de esto:**
+1. **Nada de snapshots por frame.** `LogEntry.seq` existía exactamente para esto y no se usaba:
+   el panel guarda su copia y pide sólo `entries_after(seq)`.
+2. **Nada de alocar por ítem en un filtro.** Plegar el needle una vez; comparar con
+   `eq_ignore_ascii_case` sobre bytes.
+3. **Listas largas se virtualizan** — `ScrollArea::show_rows`, no `show`. Exige altura de fila
+   uniforme, o sea **sin wrap**: una línea larga scrollea de costado. Es el trade que paga.
+
+**Pendiente menor detectado, NO arreglado:** `asset_browser/tree.rs::render_root` reconstruye
+el `FolderNode` entero (con `PathBuf` clonados) **cada frame, dos veces** (Project + Engine).
+Hoy son ~12 assets así que no se nota; con un catálogo grande es el mismo bug.
+
 ## Workflow rules (NEVER violate sin OK explícito del user)
 
 - **Branch first** (`feat/<slug>` desde `development`, nunca directo). Después de crear PR: **STOP**

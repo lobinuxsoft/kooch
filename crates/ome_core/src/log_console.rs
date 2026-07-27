@@ -159,11 +159,54 @@ impl LogBuffer {
     /// A copy rather than a borrow: the panel draws inside the egui pass
     /// while systems on other threads are still logging, and holding the
     /// lock across a frame would let a log line block a repaint.
+    ///
+    /// **Every call clones every line.** A viewer redrawing at 60 fps wants
+    /// [`entries_after`](Self::entries_after) instead — that is what
+    /// [`seq`](LogEntry::seq) is for, and copying two thousand lines to
+    /// find out that none of them changed is what it exists to avoid.
     pub fn snapshot(&self) -> Vec<LogEntry> {
         self.inner
             .lock()
             .map(|inner| inner.entries.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// The lines newer than `seq`, oldest first.
+    ///
+    /// What a viewer holding its own copy needs: on a quiet frame this
+    /// clones nothing, and on a busy one it clones what actually arrived.
+    pub fn entries_after(&self, seq: u64) -> Vec<LogEntry> {
+        self.inner
+            .lock()
+            .map(|inner| {
+                inner
+                    .entries
+                    .iter()
+                    // Newest last, so the tail is a suffix — take it from
+                    // the back and stop at the first line already seen.
+                    .rev()
+                    .take_while(|entry| entry.seq > seq)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The sequence numbers still held, as `(oldest, newest)`. `None` when
+    /// the log is empty.
+    ///
+    /// A viewer compares these against its own copy: a newest that moved
+    /// means there is something to fetch, and an oldest that moved past
+    /// what it holds means lines were dropped — or the log was cleared,
+    /// which is the same discovery.
+    pub fn seq_range(&self) -> Option<(u64, u64)> {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|inner| Some((inner.entries.front()?.seq, inner.entries.back()?.seq)))
     }
 
     /// How many lines were dropped to stay bounded.
