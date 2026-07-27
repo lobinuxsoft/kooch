@@ -191,8 +191,10 @@ edition = "2024"
 # nothing (#634).
 # `remote` lets `cargo run -- --remote` expose the ECS to the standalone
 # editor over HTTP; `physics` gives you rigid bodies — without it a
-# `RigidBody` is an inert component and nothing ever falls.
-oh_my_engine = {{ path = "{engine_path}", features = ["editor", "physics", "remote", "physics-debug-render"] }}
+# `RigidBody` is an inert component and nothing ever falls. `gravity` is
+# the same story one level up: without it a `PointGravity` is authorable,
+# mirrors to the editor, draws its gizmo, and pulls on nothing.
+oh_my_engine = {{ path = "{engine_path}", features = ["editor", "physics", "gravity", "remote", "physics-debug-render"] }}
 # Direct dep needed until `Reflect` proc-macro resolves through the facade.
 ome_ecs = {{ path = "{engine_path}/crates/ome_ecs" }}
 "#,

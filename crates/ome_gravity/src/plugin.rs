@@ -245,10 +245,15 @@ fn reconcile_world_gravity(resources: &mut Resources) {
     }
 }
 
-/// Registers the gravity components and the system that applies them.
-pub struct GravityPlugin;
+/// The components without the systems, for a host that authors gravity
+/// but does not simulate it.
+///
+/// The editor is that host: the solver lives in the project's process, so
+/// this side needs the fields to exist as data — to mirror, inspect and
+/// draw — and must never apply them.
+pub struct GravityComponentsPlugin;
 
-impl Plugin for GravityPlugin {
+impl Plugin for GravityComponentsPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(Stage::Startup, |resources: &mut Resources| {
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
@@ -257,6 +262,19 @@ impl Plugin for GravityPlugin {
                 registry.register_cpu_reflected::<AreaGravity>();
             }
         });
+    }
+
+    fn name(&self) -> &str {
+        "GravityComponentsPlugin"
+    }
+}
+
+/// Registers the gravity components and the system that applies them.
+pub struct GravityPlugin;
+
+impl Plugin for GravityPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugin(GravityComponentsPlugin);
         // In the fixed stage beside the solver, before it steps: the
         // impulse is for this step, and applying it after would move the
         // body a step late.

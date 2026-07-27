@@ -23,6 +23,7 @@
 
 mod center_of_mass;
 mod collider;
+mod gravity;
 mod physics_debug;
 
 pub(crate) use physics_debug::PhysicsDebugOverlay;
@@ -79,6 +80,13 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // the solver's own is in the project's process, which is #634.
     registry
         .register::<ome_physics::components::RigidBody, center_of_mass::CenterOfMassVisualizer>();
+    // A gravity field has no mesh, no surface and no contact: every number
+    // it carries is world geometry that nothing else draws, and a rotated
+    // zone is indistinguishable from an unrotated one until something falls
+    // sideways.
+    registry.register::<ome_gravity::GlobalGravity, gravity::GlobalGravityVisualizer>();
+    registry.register::<ome_gravity::PointGravity, gravity::PointGravityVisualizer>();
+    registry.register::<ome_gravity::AreaGravity, gravity::AreaGravityVisualizer>();
     resources.insert(registry);
 
     if resources.get::<HandleSet>().is_none() {

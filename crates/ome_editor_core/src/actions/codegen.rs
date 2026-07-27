@@ -62,6 +62,58 @@ pub(crate) fn register_scripts(resources: &mut Resources) {
     }
 
     ensure_main_wired(&project_root, resources);
+    ensure_features(&project_root);
+}
+
+/// Adds engine features a project predates.
+///
+/// A feature that is missing does not fail to build — it compiles a host
+/// without the system, so the component is authorable, mirrors to the
+/// editor, draws its gizmo and does nothing. That failure mode is
+/// indistinguishable from "the physics is broken", which is how it was
+/// reported the last two times.
+///
+/// Deliberately narrow, like [`migrate_remote_host`]: it edits only the
+/// exact dependency line the editor generated, and leaves a hand-written
+/// manifest alone.
+fn ensure_features(project_root: &Path) {
+    /// Features added after the first scaffolds shipped, each with the
+    /// component it makes real.
+    const ADDED: &[(&str, &str)] = &[("gravity", "PointGravity / AreaGravity")];
+
+    let manifest = project_root.join("Cargo.toml");
+    let Ok(content) = std::fs::read_to_string(&manifest) else {
+        return;
+    };
+    let mut out = content.clone();
+    for (feature, what) in ADDED {
+        let quoted = format!("\"{feature}\"");
+        // `features = [` is the anchor rather than the whole line, so the
+        // order of the existing features does not matter.
+        let Some(start) = out.find("oh_my_engine = {") else {
+            return;
+        };
+        let Some(list) = out[start..].find("features = [").map(|i| start + i) else {
+            return;
+        };
+        let Some(end) = out[list..].find(']').map(|i| list + i) else {
+            return;
+        };
+        if out[list..end].contains(&quoted) {
+            continue;
+        }
+        out.insert_str(end, &format!(", {quoted}"));
+        tracing::info!(
+            feature = feature,
+            enables = what,
+            "Cargo.toml: added an engine feature this project predates",
+        );
+    }
+    if out != content
+        && let Err(e) = std::fs::write(&manifest, out)
+    {
+        tracing::error!(file = %manifest.display(), error = %e, "failed to update Cargo.toml");
+    }
 }
 
 /// Recursively collects source files under `dir` that declare a component
@@ -298,7 +350,69 @@ fn ensure_main_wired(project_root: &Path, resources: &Resources) {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect, module_name};
+    use super::{detect, ensure_features, module_name};
+
+    /// A manifest in its own directory, the way the rest of the repo does
+    /// it — there is no `tempfile` in this workspace.
+    fn manifest_dir(name: &str, contents: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ome_codegen_{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(dir.join("Cargo.toml"), contents).expect("write");
+        dir
+    }
+
+    fn manifest_of(dir: &std::path::Path) -> String {
+        std::fs::read_to_string(dir.join("Cargo.toml")).expect("read")
+    }
+
+    /// A project scaffolded before `gravity` existed compiles a host with
+    /// no gravity system, so a `PointGravity` is authorable, mirrors, draws
+    /// its gizmo and pulls on nothing — which reads as "physics is broken".
+    #[test]
+    fn an_older_project_gains_the_gravity_feature() {
+        let dir = manifest_dir(
+            "older",
+            "oh_my_engine = { path = \"../..\", features = [\"editor\", \"physics\"] }\n",
+        );
+
+        ensure_features(&dir);
+
+        let out = manifest_of(&dir);
+        assert!(out.contains("\"gravity\""), "{out}");
+        assert!(
+            out.contains("\"physics\""),
+            "the existing features survived: {out}",
+        );
+    }
+
+    /// Running twice must not append it twice, because this runs on every
+    /// script regeneration.
+    #[test]
+    fn adding_a_feature_is_idempotent() {
+        let dir = manifest_dir(
+            "idempotent",
+            "oh_my_engine = { path = \"../..\", features = [\"physics\", \"gravity\"] }\n",
+        );
+        let before = manifest_of(&dir);
+
+        ensure_features(&dir);
+        ensure_features(&dir);
+
+        assert_eq!(manifest_of(&dir), before);
+    }
+
+    /// A manifest that does not depend on the engine the way the scaffold
+    /// writes it is somebody's own file, and is left alone.
+    #[test]
+    fn a_hand_written_manifest_is_untouched() {
+        let original = "oh_my_engine = { git = \"…\" }\n";
+        let dir = manifest_dir("hand_written", original);
+
+        ensure_features(&dir);
+
+        assert_eq!(manifest_of(&dir), original);
+    }
 
     #[test]
     fn detects_component_and_system() {
