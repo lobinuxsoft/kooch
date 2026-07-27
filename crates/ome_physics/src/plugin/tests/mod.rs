@@ -12,6 +12,7 @@ mod configuration;
 #[cfg(feature = "debug-render")]
 mod debug;
 mod events;
+mod gravity;
 mod joints;
 mod lifetime;
 mod mass;

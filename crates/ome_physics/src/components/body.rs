@@ -119,6 +119,16 @@ pub struct RigidBody {
     /// The same for spin. A thrown object that should stop tumbling wants
     /// this; a wheel that should keep turning does not.
     pub angular_damping: f32,
+    /// How much the world's gravity pulls on this body.
+    ///
+    /// A multiplier, not a replacement: 1 is normal, 0 is weightless, 0.16
+    /// is the Moon, and 2 is a body that falls twice as fast. Negative is
+    /// legal and is how a balloon rises.
+    ///
+    /// Gravity is an *acceleration*, so this changes how fast the body
+    /// falls and not how heavy it is — two bodies of different mass at the
+    /// same scale still fall together.
+    pub gravity_scale: f32,
 }
 
 impl Default for RigidBody {
@@ -131,6 +141,7 @@ impl Default for RigidBody {
             center_of_mass: Vec3::ZERO,
             linear_damping: 0.0,
             angular_damping: 0.0,
+            gravity_scale: 1.0,
         }
     }
 }

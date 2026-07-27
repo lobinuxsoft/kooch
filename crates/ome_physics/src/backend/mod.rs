@@ -39,6 +39,17 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// Advances the simulation by `dt` seconds.
     fn step(&mut self, dt: f32);
 
+    /// The uniform acceleration applied to every dynamic body.
+    fn gravity(&self) -> Vec3;
+
+    /// Sets the uniform acceleration applied to every dynamic body.
+    ///
+    /// On the trait rather than the concrete backend because every solver
+    /// has one, and because gravity *fields* need to switch it off: a
+    /// planet pulling towards its centre plus a world vector pulling down
+    /// gives a diagonal, and the author placed one planet.
+    fn set_gravity(&mut self, gravity: Vec3);
+
     /// Inserts a body, returns its handle. Handles are stable across
     /// simulation steps until [`remove_body`](Self::remove_body) is called.
     fn add_body(&mut self, desc: BodyDesc) -> BodyHandle;
@@ -130,6 +141,18 @@ pub trait PhysicsBackend: Send + Sync + 'static {
 
     /// Sets angular velocity for dynamic bodies. No-op otherwise.
     fn set_angular_velocity(&mut self, handle: BodyHandle, velocity: Vec3);
+
+    /// Applies an instantaneous change in momentum.
+    ///
+    /// An impulse rather than a force, for anything that varies per step.
+    /// Rapier's forces persist until they are reset, so a force reapplied
+    /// every step accumulates — and resetting to avoid that would erase
+    /// whatever else had been applied. An impulse of `mass × acceleration
+    /// × dt` is exactly the same push over one step and composes with
+    /// everything around it.
+    ///
+    /// No-op for stale handles and non-dynamic bodies.
+    fn apply_impulse(&mut self, handle: BodyHandle, impulse: Vec3);
 
     /// Constrains two bodies to each other.
     ///

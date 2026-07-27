@@ -65,6 +65,9 @@ pub struct BodyDesc {
     pub interaction: ColliderInteraction,
     /// How quickly the body loses motion with nothing touching it.
     pub damping: Damping,
+    /// Multiplier on the world's gravity for this body. 1 is normal, 0 is
+    /// weightless, negative rises.
+    pub gravity_scale: f32,
     pub position: Vec3,
     pub rotation: Quat,
     /// The shape's centre relative to the body, in body-local space.
@@ -87,6 +90,7 @@ impl BodyDesc {
             material: SurfaceMaterial::default(),
             interaction: ColliderInteraction::default(),
             damping: Damping::default(),
+            gravity_scale: 1.0,
             position: Vec3::ZERO,
             rotation: Quat::IDENTITY,
             shape_offset: Vec3::ZERO,
@@ -103,6 +107,7 @@ impl BodyDesc {
             material: SurfaceMaterial::default(),
             interaction: ColliderInteraction::default(),
             damping: Damping::default(),
+            gravity_scale: 1.0,
             position,
             rotation: Quat::IDENTITY,
             shape_offset: Vec3::ZERO,
