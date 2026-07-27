@@ -314,6 +314,17 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
                 let _ = wh.window().set_title(&format!("{title} — Oh My Engine"));
             }
 
+            // If the project built a library, let it declare its own
+            // component types so they appear in the Add Component menu.
+            // A project without one — every project made before this
+            // existed — opens exactly as before.
+            if let Some(root) = ps.active_project.as_ref().map(|p| p.root_path.clone()) {
+                let gained = crate::project_plugin::load_project_plugin(resources, &root, &title);
+                if gained > 0 {
+                    tracing::info!(types = gained, "project components available in the editor");
+                }
+            }
+
             let main_scene_path = ps
                 .active_project
                 .as_ref()

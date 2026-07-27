@@ -8,8 +8,8 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-ome_core.workspace = true
-ome_ecs.workspace = true
+ome_core = { workspace = true, features = ["dynamic"] }
+ome_ecs = { workspace = true, features = ["dynamic"] }
 ome_render.workspace = true
 ome_gizmos.workspace = true
 ome_gizmos_handles.workspace = true

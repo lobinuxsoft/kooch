@@ -30,6 +30,7 @@ pub mod perf;
 pub mod play_state;
 pub mod project;
 pub mod project_log;
+pub mod project_plugin;
 mod project_state;
 pub(crate) mod queries;
 pub mod remote_mirror;
