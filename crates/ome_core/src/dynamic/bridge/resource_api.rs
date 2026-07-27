@@ -16,7 +16,8 @@ pub(super) extern "C" fn bridge_get_resource_ptr(
 ) -> *const c_void {
     let bridge = unsafe { &*(ctx as *const BridgeContext) };
     let resources = unsafe { &*bridge.resources };
-    let name = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(name_ptr, name_len)) };
+    let name =
+        unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(name_ptr, name_len)) };
 
     let type_id = {
         let registry = match resources.get::<ResourceRegistry>() {
@@ -39,7 +40,8 @@ pub(super) extern "C" fn bridge_get_resource_mut_ptr(
 ) -> *mut c_void {
     let bridge = unsafe { &mut *(ctx as *mut BridgeContext) };
     let resources = unsafe { &mut *bridge.resources };
-    let name = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(name_ptr, name_len)) };
+    let name =
+        unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(name_ptr, name_len)) };
 
     // Two-step: lookup TypeId (immutable), then get pointer (mutable).
     // The TypeId copy breaks the immutable borrow before the mutable one.
@@ -61,12 +63,9 @@ pub(super) extern "C" fn bridge_get_resource_mut_ptr(
 // Logging bridge
 // ---------------------------------------------------------------------------
 
-pub(super) extern "C" fn bridge_log_info(
-    _ctx: *mut c_void,
-    msg_ptr: *const u8,
-    msg_len: usize,
-) {
-    let msg = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(msg_ptr, msg_len)) };
+pub(super) extern "C" fn bridge_log_info(_ctx: *mut c_void, msg_ptr: *const u8, msg_len: usize) {
+    let msg =
+        unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(msg_ptr, msg_len)) };
     tracing::info!(target: "dynamic_plugin", "{msg}");
 }
 
@@ -83,7 +82,8 @@ pub(super) extern "C" fn bridge_set_plugin_data(
 ) {
     let bridge = unsafe { &mut *(ctx as *mut BridgeContext) };
     let resources = unsafe { &mut *bridge.resources };
-    let key = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(key_ptr, key_len)) };
+    let key =
+        unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(key_ptr, key_len)) };
     let data = unsafe { std::slice::from_raw_parts(data_ptr, data_len) };
 
     if let Some(pd) = resources.get_mut::<PluginData>() {
@@ -101,7 +101,8 @@ pub(super) extern "C" fn bridge_get_plugin_data(
 ) -> *const u8 {
     let bridge = unsafe { &*(ctx as *const BridgeContext) };
     let resources = unsafe { &*bridge.resources };
-    let key = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(key_ptr, key_len)) };
+    let key =
+        unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(key_ptr, key_len)) };
 
     let pd = match resources.get::<PluginData>() {
         Some(pd) => pd,

@@ -69,7 +69,10 @@ pub fn detect() -> PowerProfile {
         .ok()
         .and_then(|s| PowerProfile::parse(&s))
     {
-        tracing::info!(profile = forced.as_str(), "power profile forced via OME_POWER_PROFILE");
+        tracing::info!(
+            profile = forced.as_str(),
+            "power profile forced via OME_POWER_PROFILE"
+        );
         return forced;
     }
 

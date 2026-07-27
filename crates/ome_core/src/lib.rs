@@ -54,6 +54,7 @@ pub mod coord;
 pub mod event;
 pub mod gpu;
 pub mod guid;
+pub mod log_console;
 pub mod pipeline_cache;
 pub mod plugin;
 pub mod power;
@@ -86,6 +87,55 @@ pub mod dynamic;
 ///     App::new().add_plugins(MinimalPlugins).run();
 /// }
 /// ```
+pub use log_console::{LogBuffer, LogEntry};
+
+/// Installs tracing with a console buffer beside stdout, and hands the
+/// buffer back.
+///
+/// For a host with a UI to show the log in. Everything written through
+/// `tracing` reaches both, so the panel and the terminal cannot disagree
+/// about what happened — including a spawned project's output, which the
+/// editor forwards through `tracing` already.
+pub fn init_tracing_with_console() -> LogBuffer {
+    use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let buffer = LogBuffer::new();
+
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(buffer.layer())
+        .with(filter)
+        .init();
+
+    buffer
+}
+
+/// Installs the default subscriber unless the host already installed one.
+///
+/// Called by [`CorePlugin`](crate::plugin::CorePlugin), so an app that
+/// never thought about logging still gets it. That is not a convenience:
+/// without a subscriber every `tracing` call in the engine is a no-op, so a
+/// host that forgot the line is one whose warnings, errors and events do
+/// not exist anywhere — and the way you find out is by not seeing them.
+///
+/// A generated project's `--game` and `--remote` binaries were exactly
+/// that. The remote host logged a joint breaking, a sensor being entered
+/// and its own play/stop transitions into nothing at all, and the editor's
+/// Console showed a project that never spoke.
+///
+/// `try_init` rather than `init`: a host that set up its own subscriber —
+/// the editor, with its console buffer — keeps it, and this is a no-op.
+pub fn init_tracing_if_needed() {
+    use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(filter)
+        .try_init();
+}
+
 pub fn init_tracing() {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 

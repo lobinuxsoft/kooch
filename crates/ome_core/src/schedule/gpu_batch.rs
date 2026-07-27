@@ -27,11 +27,11 @@ pub(super) fn run_gpu_batch(systems: &mut [AnySystem], resources: &mut Resources
     }
 
     // Dispatch phase — one encoder, one pass per system.
-    let mut encoder =
-        gpu.device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("gpu_system_encoder"),
-            });
+    let mut encoder = gpu
+        .device()
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("gpu_system_encoder"),
+        });
 
     for sys in systems.iter() {
         if let AnySystem::Gpu(gpu_sys) = sys {

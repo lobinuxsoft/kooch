@@ -185,16 +185,16 @@ impl Schedule {
 
     /// Returns the number of CPU systems in a stage.
     pub fn cpu_system_count(&self, stage: Stage) -> usize {
-        self.stages.get(&stage).map_or(0, |systems| {
-            systems.iter().filter(|s| !s.is_gpu()).count()
-        })
+        self.stages
+            .get(&stage)
+            .map_or(0, |systems| systems.iter().filter(|s| !s.is_gpu()).count())
     }
 
     /// Returns the number of GPU systems in a stage.
     pub fn gpu_system_count(&self, stage: Stage) -> usize {
-        self.stages.get(&stage).map_or(0, |systems| {
-            systems.iter().filter(|s| s.is_gpu()).count()
-        })
+        self.stages
+            .get(&stage)
+            .map_or(0, |systems| systems.iter().filter(|s| s.is_gpu()).count())
     }
 
     /// Returns the total number of systems across all stages.
@@ -204,9 +204,9 @@ impl Schedule {
 
     /// Returns the names of all systems in a stage, in execution order.
     pub fn system_names(&self, stage: Stage) -> Vec<&str> {
-        self.stages
-            .get(&stage)
-            .map_or(Vec::new(), |systems| systems.iter().map(|s| s.name()).collect())
+        self.stages.get(&stage).map_or(Vec::new(), |systems| {
+            systems.iter().map(|s| s.name()).collect()
+        })
     }
 
     /// Returns `true` if startup has already completed.

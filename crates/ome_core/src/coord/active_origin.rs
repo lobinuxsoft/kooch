@@ -97,11 +97,8 @@ mod tests {
             super::super::RebaseOutcome::Unchanged
         );
         // Player past threshold → rebased.
-        let far = UniverseCoord::from_dvec3(DVec3::new(
-            DEFAULT_REBASE_THRESHOLD_METERS + 1.0,
-            0.0,
-            0.0,
-        ));
+        let far =
+            UniverseCoord::from_dvec3(DVec3::new(DEFAULT_REBASE_THRESHOLD_METERS + 1.0, 0.0, 0.0));
         assert!(matches!(
             origin.evaluate_rebase(far, DEFAULT_REBASE_THRESHOLD_METERS),
             super::super::RebaseOutcome::Rebased { .. }

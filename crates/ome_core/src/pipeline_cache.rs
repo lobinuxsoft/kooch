@@ -35,8 +35,12 @@ fn cache_dir() -> Option<PathBuf> {
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
         return Some(PathBuf::from(local).join("ome").join("pipeline_cache"));
     }
-    std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join(".cache").join("ome").join("pipeline_cache"))
+    std::env::var_os("HOME").map(|h| {
+        PathBuf::from(h)
+            .join(".cache")
+            .join("ome")
+            .join("pipeline_cache")
+    })
 }
 
 fn adapter_hash(adapter: &Adapter) -> String {
@@ -92,9 +96,8 @@ pub fn load(device: &Device, adapter: &Adapter) -> Option<PipelineCache> {
 
 /// Persists the current pipeline cache blob to disk using an atomic rename.
 pub fn save(cache: &PipelineCache, adapter: &Adapter) -> io::Result<()> {
-    let path = cache_path(adapter).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::NotFound, "no cache directory resolvable")
-    })?;
+    let path = cache_path(adapter)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no cache directory resolvable"))?;
     let data = cache.get_data().ok_or_else(|| {
         io::Error::other("pipeline cache returned no data (driver may not support retrieval)")
     })?;

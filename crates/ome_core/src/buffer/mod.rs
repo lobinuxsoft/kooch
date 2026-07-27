@@ -33,6 +33,6 @@ mod staging;
 mod uniform;
 
 pub use gpu_buffer::GpuBuffer;
-pub use pool::{bucket_size, BufferPool};
+pub use pool::{BufferPool, bucket_size};
 pub use staging::StagingBuffer;
 pub use uniform::UniformBuffer;

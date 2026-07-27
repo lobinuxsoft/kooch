@@ -69,10 +69,7 @@ mod tests {
         reg.register::<String>("std::String");
 
         assert_eq!(reg.get_type_id("core::i32"), Some(TypeId::of::<i32>()));
-        assert_eq!(
-            reg.get_type_id("std::String"),
-            Some(TypeId::of::<String>())
-        );
+        assert_eq!(reg.get_type_id("std::String"), Some(TypeId::of::<String>()));
         assert_eq!(reg.get_type_id("unknown"), None);
     }
 

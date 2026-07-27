@@ -133,10 +133,7 @@ mod tests {
     #[test]
     fn sector_zero_covers_centred_range() {
         // Center of sector 0.
-        assert_eq!(
-            UniverseCoord::from_dvec3(DVec3::ZERO).sector,
-            IVec3::ZERO
-        );
+        assert_eq!(UniverseCoord::from_dvec3(DVec3::ZERO).sector, IVec3::ZERO);
         // Just inside the upper edge — still sector 0 (upper exclusive).
         let near_edge = UniverseCoord::from_dvec3(DVec3::new(SECTOR_HALF - 1.0, 0.0, 0.0));
         assert_eq!(near_edge.sector, IVec3::ZERO);

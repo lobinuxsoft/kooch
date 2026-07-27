@@ -26,9 +26,7 @@ struct LoadedPlugin {
 impl PluginLoader {
     /// Creates an empty loader.
     pub fn new() -> Self {
-        Self {
-            loaded: Vec::new(),
-        }
+        Self { loaded: Vec::new() }
     }
 
     /// Loads a plugin from a shared library at `path`.
@@ -47,10 +45,7 @@ impl PluginLoader {
     ///
     /// Returns an error if the library can't be loaded, the symbol is missing,
     /// ABI verification fails, or the plugin reports an incompatible version.
-    pub unsafe fn load(
-        &mut self,
-        path: &Path,
-    ) -> Result<BoxedPlugin, PluginLoadError> {
+    pub unsafe fn load(&mut self, path: &Path) -> Result<BoxedPlugin, PluginLoadError> {
         let library = unsafe {
             Library::new(path).map_err(|e| PluginLoadError::LibraryOpen {
                 path: path.to_path_buf(),
@@ -118,15 +113,9 @@ impl Default for PluginLoader {
 #[derive(Debug)]
 pub enum PluginLoadError {
     /// Failed to open the shared library.
-    LibraryOpen {
-        path: PathBuf,
-        source: String,
-    },
+    LibraryOpen { path: PathBuf, source: String },
     /// Failed to find or verify the `ome_create_plugin` symbol.
-    Symbol {
-        path: PathBuf,
-        source: String,
-    },
+    Symbol { path: PathBuf, source: String },
     /// Plugin API version is incompatible with the engine.
     IncompatibleVersion {
         path: PathBuf,

@@ -202,10 +202,7 @@ mod tests {
     impl TempDir {
         fn new(name: &str) -> Self {
             let mut path = std::env::temp_dir();
-            path.push(format!(
-                "ome_asset_meta_{name}_{}",
-                std::process::id(),
-            ));
+            path.push(format!("ome_asset_meta_{name}_{}", std::process::id(),));
             let _ = fs::remove_dir_all(&path);
             fs::create_dir_all(&path).expect("create temp dir");
             Self { path }
@@ -317,8 +314,8 @@ mod tests {
         let asset = dir.path.join("foo.glb");
         touch(&asset);
 
-        let meta = read_or_create_typed(&asset, "ome_render::meshlet::MeshletMesh")
-            .expect("create typed");
+        let meta =
+            read_or_create_typed(&asset, "ome_render::meshlet::MeshletMesh").expect("create typed");
         assert_eq!(
             meta.asset_type.as_deref(),
             Some("ome_render::meshlet::MeshletMesh"),

@@ -31,11 +31,7 @@ unsafe impl Send for CallbackData {}
 unsafe impl Sync for CallbackData {}
 
 impl CallbackData {
-    fn new(
-        callback: SystemCallback,
-        userdata: *mut c_void,
-        drop_fn: Option<UserdataDrop>,
-    ) -> Self {
+    fn new(callback: SystemCallback, userdata: *mut c_void, drop_fn: Option<UserdataDrop>) -> Self {
         Self {
             callback,
             userdata,
