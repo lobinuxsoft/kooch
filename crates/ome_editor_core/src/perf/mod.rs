@@ -64,6 +64,44 @@ pub struct EditorPerfStats {
     /// frame. Grows with every meshlet pool dispatch, sky pass,
     /// gizmo batch, and editor UI submit.
     pub draw_calls: u32,
+    /// Cost of the remote snapshot pull, or `None` in local mode.
+    pub remote: Option<RemoteSyncStats>,
+}
+
+/// What one remote snapshot pull cost the editor's main thread (#645).
+///
+/// Every field describes the **last pull**, not the last frame. The
+/// pull runs on a cadence — every frame while playing, one frame in
+/// thirty while idle — and holding the previous sample keeps the HUD
+/// readable instead of flickering to zero on the twenty-nine frames
+/// that skip it.
+///
+/// `refresh_ms` is the whole main-thread stall and is what the frame
+/// budget actually pays. It is not the sum of `transport_ms` and
+/// `decode_ms`: those come from the client's last call, so on a frame
+/// where the refresh was skipped they describe an older call. Read the
+/// split as *which half dominates*, not as an exact decomposition.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct RemoteSyncStats {
+    /// Wall-clock of `session.refresh()` — socket, the wait for the
+    /// project's next `Stage::First`, and the parse.
+    pub refresh_ms: f32,
+    /// The socket half: connect, write, and block until the server's
+    /// main thread answers. Dominant here means the editor is waiting
+    /// on the project's frame boundary, not on bandwidth.
+    pub transport_ms: f32,
+    /// The parse half. Dominant here means the payload is too big and
+    /// the answer is to send less, not to send it off-thread.
+    pub decode_ms: f32,
+    /// Wall-clock of `mirror.apply()` — rebuilding the snapshot into
+    /// the editor's own ECS. Runs on the same frames as the pull and
+    /// was equally unmeasured.
+    pub mirror_ms: f32,
+    /// Entities in the snapshot: the denominator without which the
+    /// milliseconds above mean nothing.
+    pub entities: u32,
+    /// Bytes of the last response body.
+    pub snapshot_bytes: u32,
 }
 
 impl EditorPerfStats {
@@ -97,6 +135,7 @@ mod tests {
         assert_eq!(s.gpu_frame_ms, None);
         assert_eq!(s.vram_tracked_bytes, 0);
         assert_eq!(s.draw_calls, 0);
+        assert_eq!(s.remote, None, "local mode reports no remote cost");
     }
 
     #[test]

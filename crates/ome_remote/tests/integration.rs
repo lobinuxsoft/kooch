@@ -238,9 +238,31 @@ fn client_drives_server_end_to_end() {
         Some(&ReflectValue::Vec3(glam::Vec3::new(4.0, 5.0, 6.0)))
     );
 
+    // #645 — every call records what it cost, split into the wait for
+    // the server's main thread and the parse of what came back. The
+    // editor pulls this every frame while playing, so it has to be
+    // possible to tell which half is the bill.
+    let stats = client.last_call_stats();
+    assert!(
+        stats.response_bytes > 0,
+        "a listing that returned an entity cannot be zero bytes"
+    );
+    assert!(
+        stats.transport_us > 0,
+        "the main loop sleeps a millisecond per turn; the wait is measurable"
+    );
+
     // A schema call reaches the registry.
     let schema = client.get_schema().expect("schema");
     assert!(schema.iter().any(|c| c.type_name.ends_with("Transform")));
+
+    // And the sample is per call, not cumulative: the schema call above
+    // replaced the listing's numbers rather than adding to them.
+    let after_schema = client.last_call_stats();
+    assert_ne!(
+        after_schema.response_bytes, stats.response_bytes,
+        "the stats did not move to the newer call"
+    );
 
     // An unknown component surfaces as a typed remote error, not a hang.
     let err = client

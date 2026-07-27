@@ -14,8 +14,8 @@
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use ome_ecs::reflect::ReflectValue;
 
@@ -57,6 +57,64 @@ impl From<std::io::Error> for ClientError {
     }
 }
 
+/// What the most recent [`RemoteClient::call`] spent, split by where.
+///
+/// The split is the whole point. A call's total says the editor stalled;
+/// it does not say why, and the two causes have unrelated fixes:
+///
+/// - **Transport dominating** — the wait is not the loopback socket, it
+///   is the server's main thread. [`crate::plugin`] answers queued
+///   requests from a `Stage::First` system, so a caller blocks until the
+///   project reaches its next frame boundary.
+/// - **Decode dominating** — the payload itself is too big, and the
+///   answer is to send less of it rather than to send it elsewhere.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct CallStats {
+    /// Microseconds from opening the socket to holding the reply text.
+    pub transport_us: u32,
+    /// Microseconds spent parsing that text into a [`Response`].
+    pub decode_us: u32,
+    /// Bytes of response body, headers excluded.
+    pub response_bytes: u32,
+}
+
+/// [`CallStats`] as atomics, so recording one keeps [`RemoteClient`]
+/// `Sync` without a lock — callers hold it behind `&self`.
+///
+/// `Relaxed` throughout: the three fields are a diagnostic read once a
+/// frame by a HUD, not a synchronisation edge. A torn read across a
+/// call boundary would mix two adjacent samples of the same metric,
+/// which is invisible at HUD resolution and not worth an `Acquire`.
+#[derive(Default)]
+struct CallStatsCell {
+    transport_us: AtomicU32,
+    decode_us: AtomicU32,
+    response_bytes: AtomicU32,
+}
+
+impl CallStatsCell {
+    /// Saturating, because a `u32` of microseconds runs out at 71
+    /// minutes and a stuck socket should read as "enormous", not wrap
+    /// to nearly zero.
+    fn store(&self, transport: Duration, decode: Duration, response_bytes: usize) {
+        let us = |d: Duration| d.as_micros().min(u32::MAX as u128) as u32;
+        self.transport_us.store(us(transport), Ordering::Relaxed);
+        self.decode_us.store(us(decode), Ordering::Relaxed);
+        self.response_bytes.store(
+            response_bytes.min(u32::MAX as usize) as u32,
+            Ordering::Relaxed,
+        );
+    }
+
+    fn load(&self) -> CallStats {
+        CallStats {
+            transport_us: self.transport_us.load(Ordering::Relaxed),
+            decode_us: self.decode_us.load(Ordering::Relaxed),
+            response_bytes: self.response_bytes.load(Ordering::Relaxed),
+        }
+    }
+}
+
 /// Connection details for a running project's remote server.
 ///
 /// Cheap to clone and hold; each call opens its own short-lived socket,
@@ -68,6 +126,8 @@ pub struct RemoteClient {
     next_id: AtomicU64,
     /// Per-request socket timeout.
     timeout: Duration,
+    /// Cost of the last completed call, for the editor's perf HUD.
+    last_call: CallStatsCell,
 }
 
 impl RemoteClient {
@@ -78,7 +138,16 @@ impl RemoteClient {
             port,
             next_id: AtomicU64::new(1),
             timeout: Duration::from_secs(2),
+            last_call: CallStatsCell::default(),
         }
+    }
+
+    /// What the last completed [`Self::call`] cost, split by transport
+    /// and decode. All zeroes before the first call completes; a call
+    /// that fails leaves the previous sample standing rather than
+    /// reporting a zero that reads like "free".
+    pub fn last_call_stats(&self) -> CallStats {
+        self.last_call.load()
     }
 
     /// Overrides the per-request socket timeout (default 2s).
@@ -213,9 +282,18 @@ impl RemoteClient {
         let body =
             serde_json::to_string(&request).map_err(|e| ClientError::Decode(e.to_string()))?;
 
+        let started = Instant::now();
         let raw = self.round_trip(&body)?;
-        let response: Response =
-            serde_json::from_str(&raw).map_err(|e| ClientError::Decode(e.to_string()))?;
+        let transport = started.elapsed();
+
+        let decoding = Instant::now();
+        let decoded: Result<Response, _> =
+            serde_json::from_str(&raw).map_err(|e| ClientError::Decode(e.to_string()));
+        // Recorded before the `?`, so a payload that is expensive to
+        // parse *and* malformed still reports what it cost.
+        self.last_call
+            .store(transport, decoding.elapsed(), raw.len());
+        let response = decoded?;
 
         match response.payload {
             ResponsePayload::Result(data) => Ok(data),

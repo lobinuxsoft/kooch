@@ -43,7 +43,7 @@ pub mod extensions;
 pub mod protocol;
 pub mod server;
 
-pub use client::{ClientError, RemoteClient};
+pub use client::{CallStats, ClientError, RemoteClient};
 pub use plugin::RemotePlugin;
 pub use protocol::{Request, Response};
 pub use server::{DEFAULT_PORT, RemoteServer};

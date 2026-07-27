@@ -15,6 +15,8 @@
 //! 4. **Render**           — engine-tracked VRAM, draw calls
 //! 5. **Meshlet pipeline** — instances uploaded, dispatch threads,
 //!                           pool size + roots
+//! 6. **Remote**           — cost of the snapshot pull, split by
+//!                           transport / decode. Hidden in local mode.
 
 use ome_render::meshlet::{
     MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
@@ -167,6 +169,55 @@ pub(crate) fn draw_performance_content(
                     }
                 });
             });
+
+            // #645 — only with a session; local mode has no pull, and a
+            // section of zeroes would read as "measured, costs nothing".
+            if let Some(remote) = perf_stats.remote {
+                collapsing(ui, "Remote", true, |ui| {
+                    grid(ui, "perf_grid_remote", |ui| {
+                        metric_with_tooltip(
+                            ui,
+                            "Snapshot pull",
+                            &format!("{:.2} ms", remote.refresh_ms),
+                            "Main-thread stall for one snapshot pull, paid out of this \
+                             frame's budget. Every frame while playing, one frame in \
+                             thirty while paused. Holds the last pull's value on the \
+                             frames in between.",
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "  · transport",
+                            &format!("{:.2} ms", remote.transport_ms),
+                            "Socket open, request, and the block until the project \
+                             answers. The project serves requests from a Stage::First \
+                             system, so this is mostly the wait for its next frame \
+                             boundary — not bandwidth. If this dominates, the fix is to \
+                             stop doing it on the main thread.",
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "  · decode",
+                            &format!("{:.2} ms", remote.decode_ms),
+                            "Parsing the response. If this dominates, the payload is \
+                             the problem and the fix is to send less of it — diff \
+                             server-side rather than resend the whole scene.",
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "Mirror apply",
+                            &format!("{:.2} ms", remote.mirror_ms),
+                            "Rebuilding the snapshot into the editor's own ECS, on the \
+                             same frames as the pull.",
+                        );
+                        metric(ui, "Entities mirrored", &remote.entities.to_string());
+                        metric(
+                            ui,
+                            "Snapshot size",
+                            &format!("{:.1} KB", remote.snapshot_bytes as f32 / 1024.0),
+                        );
+                    });
+                });
+            }
         });
 }
 
