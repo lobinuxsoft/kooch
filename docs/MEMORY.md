@@ -827,6 +827,42 @@ el contenido rompería el vínculo que hace que editar el origen actualice las i
 campo (Unity y Godot) o si una instancia modificada se vuelve su propia escena. Define el
 formato de archivo, y se toma con la instanciación ya andando.
 
+### El ECS se queda en CPU (locked 2026-07-27)
+
+Extiende y cierra lo que #603 dejó a medio decir. **El ECS no va a ir al GPU.** Lo que sí va,
+y sigue siendo GPU-driven sin concesiones: **gráficos, efectos y sus derivados**. La física
+se sumará si y cuando **rapier3d tenga soporte GPU**, no antes.
+
+**Alcance de la regla "GPU-driven":** aplica al **render**, no al ECS. Cuando el encabezado
+de este archivo dice que todo se evalúa contra un hot loop GPU-driven sin readback, se está
+hablando del pipeline de meshlets. Un sistema de gameplay que corre en CPU sobre arrays no
+viola nada.
+
+**La consecuencia que importa: los componentes ya NO necesitan ser `Pod`/`Zeroable`.** Nada
+del ECS cruza al GPU por sí mismo, así que un componente puede tener un tipo custom anidado,
+un `Vec<T>`, un `HashMap` o un enum. Deja de ser un problema de arquitectura.
+
+**Lo que sí sigue importando es el cache, y eso no lo cambia esta decisión.** Un `Vec` por
+componente mete una indirección y una allocation por entidad, y rompe la localidad al
+iterar. Para colecciones **grandes** el patrón sigue siendo una tabla aparte indexada por
+entidad — el `DynamicBuffer<T>` de Unity, que vive fuera del chunk y lo posee la entidad, no
+el componente. La diferencia es que ahora el argumento es de cache y se decide caso por
+caso, no una prohibición.
+
+**Cómo lo resuelve el resto** (investigado 2026-07-27):
+
+- **Unity DOTS** exige `IComponentData` blittable, pero eso es una restricción de **Burst y
+  los jobs, no del ECS**. Sus salidas para colecciones son `DynamicBuffer<T>` y
+  `BlobAssetReference<T>` (arrays inmutables grandes compartidos por referencia). El chunk
+  topea en 16 KB por entidad y los buffers quedan fuera de esa cuenta.
+- **Bevy** no restringe: un componente es cualquier `Send + Sync + 'static`. Y `bevy_reflect`
+  ya cubre lo que a `ReflectValue` le falta — `Struct`, `TupleStruct`, `Tuple`, `List`,
+  `Array`, `Map`, `Set`, `Enum`, `Opaque`, con `TypeInfo` y `ReflectRef` para recorrerlos.
+  **Por la regla de que Bevy es el techo, ese es el diseño a portar, no a inventar.**
+
+Esto desbloquea la reflexión recursiva que el hot reload necesita para mostrar componentes
+de proyecto con campos no escalares.
+
 ### El ECS ya NO tiene storages GPU (2026-07-25, #603)
 
 Existían, nunca los usó nadie, y dos sistemas corrían cada frame sin consumidor. Los datos
