@@ -8,11 +8,15 @@
 //! own instance buffers, assembled from a CPU query — one route, not two.
 
 pub mod cpu_storage;
+pub mod dynamic_types;
 pub mod names;
+#[cfg(feature = "dynamic")]
+pub(crate) mod plugin_bridge;
 pub mod registry;
 pub(crate) mod traits;
 
 pub use cpu_storage::ComponentStorage;
+pub use dynamic_types::{DynamicField, DynamicType, DynamicTypeRegistry};
 pub use names::{ComponentId, ComponentNames};
 pub use registry::ComponentRegistry;
 pub use traits::Component;
