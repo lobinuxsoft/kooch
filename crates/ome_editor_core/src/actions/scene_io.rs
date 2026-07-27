@@ -8,7 +8,7 @@ use ome_core::resource::Resources;
 
 /// Loads a scene through `SceneManager`, lifting it out of `Resources`
 /// while the load runs (avoids overlapping borrows with `sync_scene_to_ecs`).
-pub(super) fn load_scene(
+pub(crate) fn load_scene(
     resources: &mut Resources,
     path: &Path,
 ) -> Result<(), ome_ecs::SceneError> {
