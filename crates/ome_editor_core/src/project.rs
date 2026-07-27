@@ -186,10 +186,13 @@ edition = "2024"
 [dependencies]
 # `editor` pulls in the embedded editor so `cargo run` opens the editor
 # with this project's components; `cargo run -- --game` runs the game;
+# `physics-debug-render` lets the host answer the editor's physics overlay
+# — without it the solver walk is not compiled and the overlay draws
+# nothing (#634).
 # `remote` lets `cargo run -- --remote` expose the ECS to the standalone
 # editor over HTTP; `physics` gives you rigid bodies — without it a
 # `RigidBody` is an inert component and nothing ever falls.
-oh_my_engine = {{ path = "{engine_path}", features = ["editor", "physics", "remote"] }}
+oh_my_engine = {{ path = "{engine_path}", features = ["editor", "physics", "remote", "physics-debug-render"] }}
 # Direct dep needed until `Reflect` proc-macro resolves through the facade.
 ome_ecs = {{ path = "{engine_path}/crates/ome_ecs" }}
 "#,

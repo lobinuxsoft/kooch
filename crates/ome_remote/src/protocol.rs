@@ -95,6 +95,19 @@ pub struct ComponentSchema {
 pub enum Method {
     /// Liveness check. Returns [`ResponseData::Pong`].
     Ping,
+    /// A method this crate does not know about, served by whichever
+    /// subsystem registered it — see [`crate::extensions`].
+    ///
+    /// The payload is opaque here on purpose: `ome_remote` depends on
+    /// `ome_core` and `ome_ecs` and should keep doing so, rather than
+    /// growing a dependency on every subsystem that wants to be asked
+    /// something.
+    Extension {
+        /// `subsystem.method`, e.g. `physics.debug_lines`.
+        name: String,
+        #[serde(default)]
+        payload: serde_json::Value,
+    },
     /// Every non-ephemeral entity with its components and fields.
     ListEntities,
     /// Every registered component type with its field schema.
@@ -163,6 +176,12 @@ pub enum ResponseData {
     Spawned { entity: EntityId },
     /// Reply to any method that mutates but returns nothing.
     Ok,
+    /// Reply to [`Method::Extension`] — whatever the handler returned,
+    /// uninterpreted.
+    Extension {
+        name: String,
+        result: serde_json::Value,
+    },
 }
 
 /// A typed failure. Serialized as `{"error": {...}}` in [`Response`].
@@ -181,6 +200,14 @@ pub enum RemoteError {
     SceneError { detail: String },
     /// The method ran but the ECS was not available (e.g. no registry).
     Unavailable { detail: String },
+    /// No subsystem on this host registered that extension.
+    ///
+    /// Usually a feature that is off rather than a mistake: a host built
+    /// without physics serves no `physics.*`, and a client should be able
+    /// to tell that from a handler that ran and failed.
+    UnknownExtension { name: String },
+    /// The extension ran and reported its own failure.
+    ExtensionFailed { name: String, detail: String },
 }
 
 /// A response: the echoed request id plus either a result or an error.

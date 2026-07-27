@@ -163,6 +163,10 @@ impl ome_core::plugin::PluginGroup for RemoteHostPlugins {
         #[cfg(feature = "physics")]
         let builder = builder.add(ome_physics::PhysicsPlugin::new());
 
+        // What lets the editor draw the solver's state from over there.
+        #[cfg(all(feature = "physics", feature = "remote"))]
+        let builder = builder.add(PhysicsRemotePlugin);
+
         builder.add(SceneBootstrapPlugin::default())
     }
 }
@@ -189,6 +193,102 @@ impl ome_core::plugin::PluginGroup for DefaultPlugins {
         #[cfg(feature = "physics")]
         let builder = builder.add(ome_physics::PhysicsPlugin::new());
 
+        // What lets the editor draw the solver's state from over there.
+        #[cfg(all(feature = "physics", feature = "remote"))]
+        let builder = builder.add(PhysicsRemotePlugin);
+
         builder.add(SceneBootstrapPlugin::default())
+    }
+}
+
+/// Lets the editor ask the host for the solver's own account of itself.
+///
+/// # Why this lives in the facade
+///
+/// `ome_remote` knows about entities and components and deliberately not
+/// about physics; `ome_physics` knows about bodies and deliberately not
+/// about wires. Neither should learn the other. This crate already depends
+/// on both, so it is the one place they can meet — the extension registry
+/// exists exactly so this can be a plugin rather than a dependency.
+///
+/// Serves `physics.debug_lines`: takes the categories to draw and returns
+/// world-space segments. The editor's overlay reads `PhysicsWorld` when it
+/// has one and asks over the wire when it does not, which in the editor is
+/// always (#634).
+#[cfg(all(feature = "physics", feature = "remote"))]
+pub struct PhysicsRemotePlugin;
+
+#[cfg(all(feature = "physics", feature = "remote"))]
+impl ome_core::plugin::Plugin for PhysicsRemotePlugin {
+    fn build(&self, app: &mut ome_core::app::App) {
+        app.add_system(
+            ome_core::stage::Stage::Startup,
+            |resources: &mut ome_core::resource::Resources| {
+                if !resources.contains::<ome_remote::extensions::RemoteExtensions>() {
+                    resources.insert(ome_remote::extensions::RemoteExtensions::default());
+                }
+                let Some(extensions) =
+                    resources.get_mut::<ome_remote::extensions::RemoteExtensions>()
+                else {
+                    return;
+                };
+                extensions.register(
+                    "physics.debug_lines",
+                    Box::new(|resources, payload| {
+                        let categories: ome_physics::backend::DebugCategories =
+                            debug_categories_from(payload);
+                        // Off means off: the walk is per-frame CPU work, and a
+                        // request with nothing switched on must not pay for it.
+                        if !categories.any() {
+                            return Ok(ome_remote::serde_json::json!({ "lines": [] }));
+                        }
+                        let world = resources
+                            .get::<ome_physics::plugin::PhysicsWorld>()
+                            .ok_or_else(|| "this host has no physics world".to_owned())?;
+                        let mut lines = Vec::new();
+                        world.backend().debug_lines(categories, &mut lines);
+                        Ok(ome_remote::serde_json::json!({
+                            "lines": lines
+                                .iter()
+                                .map(|line| ome_remote::serde_json::json!({
+                                    "start": line.start.to_array(),
+                                    "end": line.end.to_array(),
+                                    "color": line.color.to_array(),
+                                }))
+                                .collect::<Vec<_>>(),
+                        }))
+                    }),
+                );
+            },
+        );
+    }
+
+    fn name(&self) -> &str {
+        "PhysicsRemotePlugin"
+    }
+}
+
+/// Reads the five switches out of the request payload.
+///
+/// A missing switch is off rather than an error: a client asking for
+/// contacts alone should not have to spell out the four it does not want,
+/// and a newer editor asking for a category this host has never heard of
+/// should get the rest instead of a failure.
+#[cfg(all(feature = "physics", feature = "remote"))]
+fn debug_categories_from(
+    payload: &ome_remote::serde_json::Value,
+) -> ome_physics::backend::DebugCategories {
+    let flag = |name: &str| {
+        payload
+            .get(name)
+            .and_then(ome_remote::serde_json::Value::as_bool)
+            == Some(true)
+    };
+    ome_physics::backend::DebugCategories {
+        collider_shapes: flag("collider_shapes"),
+        contacts: flag("contacts"),
+        joints: flag("joints"),
+        collider_aabbs: flag("collider_aabbs"),
+        body_axes: flag("body_axes"),
     }
 }
