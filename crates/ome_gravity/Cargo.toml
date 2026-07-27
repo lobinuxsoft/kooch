@@ -10,6 +10,8 @@ authors.workspace = true
 [dependencies]
 ome_core.workspace = true
 ome_ecs.workspace = true
+# The fields are summed here and handed to the solver as impulses.
+ome_physics.workspace = true
 wgpu.workspace = true
 glam.workspace = true
 bytemuck.workspace = true

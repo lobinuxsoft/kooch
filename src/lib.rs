@@ -163,6 +163,11 @@ impl ome_core::plugin::PluginGroup for RemoteHostPlugins {
         #[cfg(feature = "physics")]
         let builder = builder.add(ome_physics::PhysicsPlugin::new());
 
+        // Gravity that points somewhere other than down. Inert until a
+        // scene holds a source, so adding it changes nothing on its own.
+        #[cfg(all(feature = "physics", feature = "gravity"))]
+        let builder = builder.add(ome_gravity::GravityPlugin);
+
         // What lets the editor draw the solver's state from over there.
         #[cfg(all(feature = "physics", feature = "remote"))]
         let builder = builder.add(PhysicsRemotePlugin);
@@ -179,6 +184,9 @@ impl ome_core::plugin::PluginGroup for DefaultPlugins {
             .add(ome_core::plugin::CorePlugin)
             .add(ome_ecs::EcsPlugin);
 
+        #[cfg(all(feature = "physics", feature = "gravity"))]
+        let builder = builder.add(ome_gravity::GravityPlugin);
+
         #[cfg(feature = "window")]
         let builder = builder.add(ome_window::WindowPlugin::default());
 
@@ -192,6 +200,11 @@ impl ome_core::plugin::PluginGroup for DefaultPlugins {
 
         #[cfg(feature = "physics")]
         let builder = builder.add(ome_physics::PhysicsPlugin::new());
+
+        // Gravity that points somewhere other than down. Inert until a
+        // scene holds a source, so adding it changes nothing on its own.
+        #[cfg(all(feature = "physics", feature = "gravity"))]
+        let builder = builder.add(ome_gravity::GravityPlugin);
 
         // What lets the editor draw the solver's state from over there.
         #[cfg(all(feature = "physics", feature = "remote"))]
