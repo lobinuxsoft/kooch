@@ -4,9 +4,10 @@
 //! order-dependent bugs where a system might miss events from systems
 //! that run later in the same frame.
 
-use std::any::{Any, TypeId};
-use std::collections::HashMap;
+use std::any::TypeId;
 use std::marker::PhantomData;
+
+use crate::resource::Resources;
 
 /// Double-buffered storage for events of type `T`.
 ///
@@ -71,74 +72,6 @@ impl<T> Events<T> {
     }
 }
 
-/// Type-erased event storage that can hold multiple event types.
-#[derive(Default)]
-pub struct EventRegistry {
-    storage: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
-}
-
-impl EventRegistry {
-    /// Creates a new empty event registry.
-    pub fn new() -> Self {
-        Self {
-            storage: HashMap::new(),
-        }
-    }
-
-    /// Registers a new event type, creating its buffer if it doesn't exist.
-    pub fn register<T: Send + Sync + 'static>(&mut self) {
-        self.storage
-            .entry(TypeId::of::<T>())
-            .or_insert_with(|| Box::new(Events::<T>::new()));
-    }
-
-    /// Sends an event of type `T`.
-    ///
-    /// Panics if the event type hasn't been registered.
-    pub fn send<T: Send + Sync + 'static>(&mut self, event: T) {
-        self.get_mut::<T>()
-            .expect("Event type not registered")
-            .send(event);
-    }
-
-    /// Returns a reader for events of type `T`.
-    ///
-    /// Returns `None` if the event type hasn't been registered.
-    pub fn read<T: Send + Sync + 'static>(&self) -> Option<EventReader<'_, T>> {
-        self.get::<T>().map(|events| EventReader {
-            events,
-            _marker: PhantomData,
-        })
-    }
-
-    /// Updates all event buffers, swapping read/write buffers.
-    ///
-    /// Should be called once at the start of each frame.
-    pub fn update_all(&mut self) {
-        for (_, boxed) in self.storage.iter_mut() {
-            // We need to call update on each Events<T>, but we don't know T.
-            // Use a trait object approach with a helper trait.
-            if let Some(updatable) = boxed.downcast_mut::<Box<dyn EventsUpdatable>>() {
-                updatable.update();
-            }
-        }
-    }
-
-    /// Gets a reference to the Events<T> for a specific type.
-    fn get<T: Send + Sync + 'static>(&self) -> Option<&Events<T>> {
-        self.storage
-            .get(&TypeId::of::<T>())
-            .and_then(|boxed| boxed.downcast_ref())
-    }
-
-    /// Gets a mutable reference to the Events<T> for a specific type.
-    fn get_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut Events<T>> {
-        self.storage
-            .get_mut(&TypeId::of::<T>())
-            .and_then(|boxed| boxed.downcast_mut())
-    }
-}
-
 /// A reader that provides access to events from the previous frame.
 pub struct EventReader<'a, T> {
     events: &'a Events<T>,
@@ -162,9 +95,76 @@ impl<'a, T> EventReader<'a, T> {
     }
 }
 
-/// Helper trait for type-erased event updates.
-trait EventsUpdatable: Send + Sync {
-    fn update(&mut self);
+/// Swaps every registered event type's buffers.
+///
+/// # Why this is not a hardcoded list
+///
+/// It used to be — twice. The default runner swapped `AppExit` and nothing
+/// else; the winit runner swapped three types under a comment claiming it
+/// handled "all registered event types". Every event any plugin added was
+/// invisible to both, so `send` wrote into a buffer that never became
+/// readable and `read` returned empty forever. Collision events (#561) were
+/// the first feature to notice, four months on.
+///
+/// So registration records how to swap, and a runner asks rather than
+/// remembering. A new event type is delivered because
+/// [`add_event`](crate::app::App::add_event) was called, not because
+/// someone also edited two runners.
+pub fn update_all_events(resources: &mut Resources) {
+    // Lifted out and put back: each updater takes `&mut Resources`, so the
+    // list cannot be borrowed from the same place while they run.
+    let Some(updaters) = resources.remove::<EventUpdaters>() else {
+        return;
+    };
+    for (_, updater) in &updaters.updaters {
+        updater(resources);
+    }
+    resources.insert(updaters);
+}
+
+/// How to swap each registered event type, recorded at registration.
+///
+/// A plain function pointer per type: `add_event` is generic, so the
+/// compiler monomorphises one swap per event type and the list needs no
+/// type erasure of its own — which is what the deleted `EventRegistry`
+/// attempted and never managed. Its `update_all` downcast to a trait object
+/// that nothing implemented, and its own test said so in a comment.
+#[derive(Default)]
+pub struct EventUpdaters {
+    /// Keyed by [`TypeId`] so a type registered twice is swapped once.
+    ///
+    /// Not hypothetical: `AppExit` is registered by both `App::new` and
+    /// `CorePlugin`, and swapping twice in a frame would discard whatever
+    /// was written between the two swaps.
+    updaters: Vec<(TypeId, fn(&mut Resources))>,
+}
+
+impl EventUpdaters {
+    /// Records how to swap `E`, unless it is recorded already.
+    pub fn register<E: Send + Sync + 'static>(&mut self) {
+        let type_id = TypeId::of::<E>();
+        if self.updaters.iter().any(|(known, _)| *known == type_id) {
+            return;
+        }
+        self.updaters.push((type_id, swap::<E>));
+    }
+
+    /// How many event types will be swapped.
+    pub fn len(&self) -> usize {
+        self.updaters.len()
+    }
+
+    /// `true` when nothing is registered.
+    pub fn is_empty(&self) -> bool {
+        self.updaters.is_empty()
+    }
+}
+
+/// The monomorphised swap for one event type.
+fn swap<E: Send + Sync + 'static>(resources: &mut Resources) {
+    if let Some(events) = resources.get_mut::<Events<E>>() {
+        events.update();
+    }
 }
 
 /// Signal sent to request application shutdown.
@@ -225,22 +225,71 @@ mod tests {
     #[derive(Debug, Clone, PartialEq)]
     struct TestEvent(i32);
 
+    #[derive(Debug)]
+    struct OtherEvent;
+
+    /// The bug this replaced: an event type nobody hardcoded into a runner
+    /// was never swapped, so it could be sent and never read.
     #[test]
-    fn event_registry() {
-        let mut registry = EventRegistry::new();
-        registry.register::<TestEvent>();
+    fn a_registered_type_is_swapped_by_asking_rather_than_by_name() {
+        let mut resources = Resources::new();
+        let mut updaters = EventUpdaters::default();
+        updaters.register::<TestEvent>();
+        resources.insert(updaters);
+        resources.insert(Events::<TestEvent>::new());
 
-        registry.send(TestEvent(42));
-        assert!(registry.read::<TestEvent>().unwrap().is_empty());
+        resources
+            .get_mut::<Events<TestEvent>>()
+            .unwrap()
+            .send(TestEvent(42));
+        assert!(
+            resources.get::<Events<TestEvent>>().unwrap().is_empty(),
+            "an event should not be readable in the frame it was sent",
+        );
 
-        // We can't easily call update_all because of the trait object complexity.
-        // For now, test direct access.
-        if let Some(events) = registry.get_mut::<TestEvent>() {
-            events.update();
-        }
+        update_all_events(&mut resources);
 
-        let reader = registry.read::<TestEvent>().unwrap();
-        let received: Vec<_> = reader.read().collect();
-        assert_eq!(received, vec![&TestEvent(42)]);
+        let received: Vec<_> = resources
+            .get::<Events<TestEvent>>()
+            .unwrap()
+            .read()
+            .cloned()
+            .collect();
+        assert_eq!(received, vec![TestEvent(42)]);
+    }
+
+    /// `AppExit` really is registered twice — `App::new` and `CorePlugin` —
+    /// and swapping twice in one frame would discard whatever was written
+    /// between the swaps.
+    #[test]
+    fn registering_a_type_twice_swaps_it_once() {
+        let mut updaters = EventUpdaters::default();
+        updaters.register::<TestEvent>();
+        updaters.register::<TestEvent>();
+        assert_eq!(updaters.len(), 1);
+
+        updaters.register::<OtherEvent>();
+        assert_eq!(updaters.len(), 2, "a second type should still register");
+    }
+
+    /// A registered type whose buffer was never inserted must not panic:
+    /// registration and insertion are two calls, and a host may do one.
+    #[test]
+    fn a_registered_type_with_no_buffer_is_skipped() {
+        let mut resources = Resources::new();
+        let mut updaters = EventUpdaters::default();
+        updaters.register::<TestEvent>();
+        resources.insert(updaters);
+
+        // The assertion is that this returns.
+        update_all_events(&mut resources);
+    }
+
+    /// No updaters at all is the state of a hand-built `Resources`, and it
+    /// has to be silent rather than absent-resource panic.
+    #[test]
+    fn no_updaters_is_not_an_error() {
+        let mut resources = Resources::new();
+        update_all_events(&mut resources);
     }
 }

@@ -8,7 +8,7 @@ pub use crate::app::App;
 pub use crate::asset_loader::{AssetError, AssetLoader, AssetResult, AssetServer, LoadContext};
 pub use crate::assets::{Asset, Assets, Handle};
 pub use crate::buffer::{BufferPool, GpuBuffer, StagingBuffer, UniformBuffer};
-pub use crate::event::{AppExit, EventReader, EventRegistry, Events};
+pub use crate::event::{AppExit, EventReader, EventUpdaters, Events, update_all_events};
 pub use crate::gpu::{GpuContext, GpuError};
 pub use crate::plugin::{CorePlugin, MinimalPlugins, Plugin, PluginGroup, PluginGroupBuilder};
 pub use crate::resource::Resources;

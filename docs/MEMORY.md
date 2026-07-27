@@ -76,7 +76,40 @@ grilla directamente.
 
 ---
 
-## ⭐ Estado actual (2026-07-26, rama `feat/physics-events`)
+## ⭐ Entrega de eventos: NUNCA funcionó hasta #630 (locked 2026-07-27)
+
+**Todo tipo de evento que no fuera de una lista hardcodeada se enviaba y jamás se leía.**
+`Events<T>` tiene buffer doble y está bien; lo que faltaba era **alguien que llamara a
+`update()`**. Había **dos** listas hardcodeadas que las dos se declaraban generales:
+
+- `runner.rs::update_events` rotaba **sólo `AppExit`**.
+- `winit_app.rs::update_events` rotaba tres tipos, bajo un comentario que decía
+  *"Swaps double buffers for all registered event types"*. Ese es el runner del **editor**.
+
+Así que `WindowResized`, `WindowCloseRequested` y todo lo de física estaban muertos. Vivió
+cuatro meses (desde `5de14cb`, 2026-02-03) porque `AppExit` era el único evento que alguien
+leía.
+
+**`EventRegistry` era la solución pensada y nunca estuvo viva.** `add_event` insertaba un
+`Events<E>` suelto en `Resources` (que ya es un mapa type-erased, así que el registry
+duplicaba). Y su `update_all` hacía downcast a `Box<dyn EventsUpdatable>` — un trait
+**declarado y jamás implementado**, así que el tipo destino no existía. Su propio test lo
+confesaba: *"We can't easily call update_all because of the trait object complexity"*.
+**Borrado en #630.**
+
+**La solución: `add_event` registra CÓMO rotar.** Un `fn(&mut Resources)` monomorfizado por
+tipo en `EventUpdaters`; los runners llaman a `update_all_events`. Un tipo nuevo se entrega
+porque alguien llamó a `add_event`, no porque además editó dos runners.
+
+**Dedup por `TypeId` obligatorio:** `AppExit` se registra DOS veces (`App::new` y
+`CorePlugin`). Rotar dos veces en un frame descarta lo escrito entre los dos swaps.
+
+**Lo encontró el smoke, no los tests.** Los unitarios de #561 pasaban porque el harness rota
+los buffers a mano. Sólo el `App` real lo mostró: 0 eventos con la física produciéndolos.
+
+---
+
+## Estado (2026-07-26, rama `feat/physics-events`, mergeada)
 
 **#561 eventos, sensores y grupos.** #560/#618/#563/#623 mergeados.
 
