@@ -128,13 +128,107 @@ pub(crate) fn draw_console(
             for entry in entries.iter().filter(|e| state.shows(e)) {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    ui.colored_label(level_colour(entry.level), level_name(entry.level));
-                    ui.weak(short_target(&entry.target));
-                    ui.label(&entry.message);
+                    ui.colored_label(
+                        level_colour(entry.level),
+                        mono(format!("{:<5}", level_name(entry.level))),
+                    );
+                    ui.colored_label(
+                        target_colour(entry.from_project),
+                        mono(short_target(&entry.target)),
+                    );
+                    draw_message(ui, entry);
                 });
             }
         });
 }
+
+/// Monospaced text, padded so the level column lines up.
+fn mono(text: impl Into<String>) -> egui::RichText {
+    egui::RichText::new(text).monospace()
+}
+
+/// Draws the message, with the structured fields picked out.
+///
+/// A line is `a sensor was entered a=8 b=9`, and the part anyone scans for
+/// is the numbers. Rendering it as one flat string makes the reader do
+/// that separation by eye, every line.
+///
+/// A warning or an error tints the whole message: at that point the
+/// severity *is* the message, and a level chip four columns to the left is
+/// not where the eye lands.
+fn draw_message(ui: &mut egui::Ui, entry: &LogEntry) {
+    let tint = match entry.level {
+        Level::ERROR | Level::WARN => Some(level_colour(entry.level)),
+        _ => None,
+    };
+
+    for part in split_fields(&entry.message) {
+        match part {
+            Part::Text(text) => match tint {
+                Some(colour) => ui.colored_label(colour, mono(text)),
+                None => ui.label(mono(text)),
+            },
+            Part::Field { key, value } => {
+                ui.label(mono(key).color(FIELD_KEY));
+                ui.label(mono(value).color(FIELD_VALUE).strong())
+            }
+        };
+    }
+}
+
+/// A run of the message: prose, or one `key=value`.
+enum Part<'a> {
+    Text(&'a str),
+    Field { key: &'a str, value: &'a str },
+}
+
+/// Splits a message into prose and `key=value` runs.
+///
+/// Whitespace-separated tokens containing `=` are fields; everything else
+/// is prose, kept contiguous so wrapping behaves. Deliberately simple: a
+/// message that happens to contain an equals sign is coloured slightly
+/// oddly, which is a better failure than a parser that swallows a line.
+fn split_fields(message: &str) -> Vec<Part<'_>> {
+    let mut parts = Vec::new();
+    let mut prose_start = None::<usize>;
+
+    for token in message.split_inclusive(' ') {
+        let trimmed = token.trim_end();
+        let offset = token.as_ptr() as usize - message.as_ptr() as usize;
+
+        match trimmed.split_once('=') {
+            Some((key, value)) if !key.is_empty() && !key.contains(' ') => {
+                if let Some(start) = prose_start.take() {
+                    parts.push(Part::Text(message[start..offset].trim_end()));
+                }
+                parts.push(Part::Field {
+                    key: &trimmed[..key.len() + 1],
+                    value,
+                });
+            }
+            _ => {
+                prose_start.get_or_insert(offset);
+            }
+        }
+    }
+    if let Some(start) = prose_start {
+        parts.push(Part::Text(message[start..].trim_end()));
+    }
+    parts
+}
+
+/// A project's own module, distinguished from the editor's without a
+/// prefix cluttering every line.
+fn target_colour(from_project: bool) -> egui::Color32 {
+    match from_project {
+        true => egui::Color32::from_rgb(150, 190, 150),
+        false => egui::Color32::from_rgb(130, 130, 130),
+    }
+}
+
+/// The `key=` of a structured field, and its value.
+const FIELD_KEY: egui::Color32 = egui::Color32::from_rgb(150, 130, 190);
+const FIELD_VALUE: egui::Color32 = egui::Color32::from_rgb(215, 190, 130);
 
 fn level_name(level: Level) -> &'static str {
     match level {
@@ -174,6 +268,14 @@ mod tests {
             level,
             target: target.to_owned(),
             message: message.to_owned(),
+            from_project: false,
+        }
+    }
+
+    fn from_project(level: Level, target: &str, message: &str) -> LogEntry {
+        LogEntry {
+            from_project: true,
+            ..entry(level, target, message)
         }
     }
 
@@ -220,8 +322,29 @@ mod tests {
             project_only: true,
             ..Default::default()
         };
-        assert!(state.shows(&entry(Level::INFO, "t", "[game] a sensor fired")));
-        assert!(!state.shows(&entry(Level::INFO, "t", "scene loaded")));
+        assert!(state.shows(&from_project(Level::INFO, "ome_physics", "a sensor fired")));
+        assert!(!state.shows(&entry(Level::INFO, "handlers", "scene loaded")));
+    }
+
+    /// The point of carrying the project's own level: asking for warnings
+    /// has to hide a project's info, which sniffing a prefix could never
+    /// do — every forwarded line used to arrive as an `info`.
+    #[test]
+    fn a_projects_line_is_filtered_by_its_own_level() {
+        let state = ConsoleState {
+            level: Level::WARN,
+            ..Default::default()
+        };
+        assert!(state.shows(&from_project(
+            Level::WARN,
+            "ome_physics",
+            "a joint is waiting"
+        )));
+        assert!(!state.shows(&from_project(
+            Level::INFO,
+            "ome_physics",
+            "a sensor was entered"
+        )));
     }
 
     /// The filters compose; passing one is not enough.
@@ -241,6 +364,54 @@ mod tests {
             !state.shows(&entry(Level::WARN, "t", "a collider")),
             "the text filter was ignored once the level matched",
         );
+    }
+
+    /// The numbers are what anyone scans a log line for, so they have to
+    /// come out of the prose.
+    #[test]
+    fn fields_are_separated_from_prose() {
+        let parts = split_fields("a sensor was entered a=8 b=9");
+        let rendered: Vec<String> = parts
+            .iter()
+            .map(|p| match p {
+                Part::Text(t) => format!("text:{t}"),
+                Part::Field { key, value } => format!("field:{key}{value}"),
+            })
+            .collect();
+        assert_eq!(
+            rendered,
+            vec!["text:a sensor was entered", "field:a=8", "field:b=9"],
+        );
+    }
+
+    /// A message with nothing structured in it stays one run, or wrapping
+    /// breaks at every space.
+    #[test]
+    fn prose_without_fields_is_one_part() {
+        let parts = split_fields("scene loaded from disk");
+        assert_eq!(parts.len(), 1);
+        assert!(matches!(parts[0], Part::Text("scene loaded from disk")));
+    }
+
+    /// An equals sign inside prose must not eat the line — colouring it
+    /// oddly is a better failure than losing it.
+    #[test]
+    fn an_equals_in_prose_does_not_swallow_anything() {
+        let parts = split_fields("solved x=1 for the case");
+        let text: String = parts
+            .iter()
+            .map(|p| match p {
+                Part::Text(t) => (*t).to_owned(),
+                Part::Field { key, value } => format!("{key}{value}"),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(text, "solved x=1 for the case");
+    }
+
+    #[test]
+    fn an_empty_message_produces_nothing() {
+        assert!(split_fields("").is_empty());
     }
 
     #[test]

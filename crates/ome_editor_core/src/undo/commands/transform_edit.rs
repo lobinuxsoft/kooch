@@ -21,7 +21,12 @@ pub(crate) struct TransformEditCommand {
 
 impl TransformEditCommand {
     pub fn new(entity: Entity, before: Transform, after: Transform, desc: &'static str) -> Self {
-        Self { entity, before, after, desc }
+        Self {
+            entity,
+            before,
+            after,
+            desc,
+        }
     }
 }
 

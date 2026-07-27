@@ -43,18 +43,52 @@ pub struct LogEntry {
     /// The emitting module, for the filter.
     pub target: String,
     pub message: String,
+    /// Whether a hosted project said this rather than the editor.
+    ///
+    /// A field rather than a prefix on the message. It used to be sniffed
+    /// from a `[game] ` prefix, which meant a project's line could not be
+    /// filtered by its own level — everything forwarded arrived as an
+    /// `info` from the forwarding module, whatever the project had
+    /// actually logged.
+    pub from_project: bool,
 }
 
 impl LogEntry {
-    /// Whether this line came from a spawned project rather than the
-    /// editor.
-    ///
-    /// Matched on the prefix the editor already forwards child output with,
-    /// so a project's log is distinguishable in the panel without a second
-    /// capture path.
+    /// Whether a hosted project said this.
     pub fn is_from_project(&self) -> bool {
-        self.message.starts_with("[game]")
+        self.from_project
     }
+}
+
+/// Removes ANSI escape sequences from a line.
+///
+/// The engine no longer colourises into a pipe, but a child process is
+/// arbitrary: cargo, a script, anything a project spawns. Whoever renders
+/// these has no terminal to interpret them, so an escape that survives is
+/// drawn as glyphs — `\x1b[2m` arriving in the editor's Console as boxes is
+/// how this was found.
+///
+/// Handles CSI sequences (`ESC [ ... letter`), which is what colour uses.
+/// Anything else is left alone rather than guessed at.
+pub fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        // ESC [ params letter — consume through the final byte.
+        if chars.next() != Some('[') {
+            continue;
+        }
+        for c in chars.by_ref() {
+            if c.is_ascii_alphabetic() {
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// The shared buffer. Cheap to clone; every clone is the same log.
@@ -80,7 +114,26 @@ impl LogBuffer {
         Self::default()
     }
 
+    /// Records a line a hosted project logged, with the level and target
+    /// it logged it at.
+    ///
+    /// Not routed through `tracing`: doing that would re-stamp the line
+    /// with the forwarder's level and module, which is what made a
+    /// project's warnings indistinguishable from its chatter.
+    pub fn push_project(
+        &self,
+        level: Level,
+        target: impl Into<String>,
+        message: impl Into<String>,
+    ) {
+        self.record(level, target.into(), message.into(), true);
+    }
+
     fn push(&self, level: Level, target: String, message: String) {
+        self.record(level, target, message, false);
+    }
+
+    fn record(&self, level: Level, target: String, message: String, from_project: bool) {
         let Ok(mut inner) = self.inner.lock() else {
             // A poisoned lock means a panic is already being reported
             // somewhere; losing a log line is not the thing to escalate.
@@ -93,6 +146,7 @@ impl LogBuffer {
             level,
             target,
             message,
+            from_project,
         });
         while inner.entries.len() > CAPACITY {
             inner.entries.pop_front();
@@ -271,16 +325,52 @@ mod tests {
         assert_eq!(other.len(), 1);
     }
 
-    /// The prefix the editor already forwards child output with is what
-    /// tells a project's lines from the editor's.
+    /// A colourised child line has to arrive readable: the renderer has no
+    /// terminal, so a surviving escape is drawn as glyphs.
     #[test]
-    fn project_output_is_distinguishable() {
+    fn ansi_escapes_are_stripped() {
+        let coloured = "\u{1b}[2m2026-07-27\u{1b}[0m \u{1b}[32m INFO\u{1b}[0m a sensor was entered";
+        assert_eq!(
+            strip_ansi(coloured),
+            "2026-07-27  INFO a sensor was entered"
+        );
+    }
+
+    /// A line with nothing to strip must come back untouched, including
+    /// text that merely looks like a sequence.
+    #[test]
+    fn plain_text_survives_stripping() {
+        assert_eq!(
+            strip_ansi("a sensor was entered a=8"),
+            "a sensor was entered a=8"
+        );
+        assert_eq!(
+            strip_ansi("half_extents [2.0, 1.0]"),
+            "half_extents [2.0, 1.0]"
+        );
+    }
+
+    /// A truncated escape at the end of a line must not eat the line or
+    /// loop — child output arrives in chunks and can be cut anywhere.
+    #[test]
+    fn a_truncated_escape_terminates() {
+        assert_eq!(strip_ansi("text \u{1b}["), "text ");
+        assert_eq!(strip_ansi("text \u{1b}"), "text ");
+    }
+
+    /// A project's line keeps its own level and target, so filtering by
+    /// severity works on it. Sniffing a prefix could not do that: every
+    /// forwarded line arrived as an `info` from the forwarding module.
+    #[test]
+    fn a_projects_line_keeps_its_own_level_and_target() {
         let buffer = LogBuffer::new();
-        entry(&buffer, "[game] the project said this");
+        buffer.push_project(Level::WARN, "ome_physics", "a joint is waiting");
         entry(&buffer, "the editor said this");
 
         let snapshot = buffer.snapshot();
         assert!(snapshot[0].is_from_project());
+        assert_eq!(snapshot[0].level, Level::WARN);
+        assert_eq!(snapshot[0].target, "ome_physics");
         assert!(!snapshot[1].is_from_project());
     }
 

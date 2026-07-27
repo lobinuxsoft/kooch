@@ -80,8 +80,11 @@ pub fn apply_viewport_input(
 
     // --- Zoom (mouse wheel) -----------------------------------------------
     if delta.zoom_lines != 0.0 {
-        controller.distance =
-            apply_zoom(controller.distance, delta.zoom_lines, controller.zoom_sensitivity);
+        controller.distance = apply_zoom(
+            controller.distance,
+            delta.zoom_lines,
+            controller.zoom_sensitivity,
+        );
         controller.clamp_distance();
     }
 
@@ -94,11 +97,8 @@ pub fn apply_viewport_input(
     // pivot moves with the camera.
     if delta.fly_active {
         if delta.fly_yaw != 0.0 || delta.fly_pitch != 0.0 {
-            let position_before = camera_position(
-                controller.focus_point,
-                rotation,
-                controller.distance,
-            );
+            let position_before =
+                camera_position(controller.focus_point, rotation, controller.distance);
             let (new_rotation, new_focus) = fly_look_pivot_camera(
                 position_before,
                 rotation,

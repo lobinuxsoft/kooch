@@ -75,10 +75,7 @@ impl DuplicateCommand {
                 self.allocate_fresh(resources)
             } else {
                 if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                    archetypes.register_entity(
-                        existing,
-                        ome_ecs::archetype::ArchetypeId::EMPTY,
-                    );
+                    archetypes.register_entity(existing, ome_ecs::archetype::ArchetypeId::EMPTY);
                 }
                 existing
             }
@@ -98,8 +95,7 @@ impl DuplicateCommand {
             if inserted {
                 if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
                     if let Some(current) = archetypes.entity_archetype(entity) {
-                        let new_arch =
-                            archetypes.archetype_after_add_dynamic(current, *type_id);
+                        let new_arch = archetypes.archetype_after_add_dynamic(current, *type_id);
                         archetypes.register_entity(entity, new_arch);
                     }
                 }
@@ -110,15 +106,10 @@ impl DuplicateCommand {
         for snapshot in &self.snapshots {
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 for (field, value) in &snapshot.fields {
-                    if let Err(e) = registry.reflect_set_field(
-                        &snapshot.type_id,
-                        entity,
-                        field,
-                        value.clone(),
-                    ) {
-                        tracing::warn!(
-                            "duplicate: failed to restore field '{field}': {e}",
-                        );
+                    if let Err(e) =
+                        registry.reflect_set_field(&snapshot.type_id, entity, field, value.clone())
+                    {
+                        tracing::warn!("duplicate: failed to restore field '{field}': {e}",);
                     }
                 }
             }
@@ -127,9 +118,7 @@ impl DuplicateCommand {
 
     fn allocate_fresh(&self, resources: &mut Resources) -> Entity {
         use ome_ecs::commands::Commands;
-        let mut commands = resources
-            .remove::<Commands>()
-            .expect("Commands not found");
+        let mut commands = resources.remove::<Commands>().expect("Commands not found");
         let entity = commands.spawn(resources).id();
         resources.insert(commands);
         entity

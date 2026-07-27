@@ -185,6 +185,9 @@ mod tests {
         );
         // RAM, in contrast, is a snapshot — should populate even
         // from the first sample.
-        assert!(stats.ram_rss_mb > 0, "RAM must populate from the very first sample");
+        assert!(
+            stats.ram_rss_mb > 0,
+            "RAM must populate from the very first sample"
+        );
     }
 }

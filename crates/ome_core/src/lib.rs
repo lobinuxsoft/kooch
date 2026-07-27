@@ -87,7 +87,7 @@ pub mod dynamic;
 ///     App::new().add_plugins(MinimalPlugins).run();
 /// }
 /// ```
-pub use log_console::{LogBuffer, LogEntry};
+pub use log_console::{LogBuffer, LogEntry, strip_ansi};
 
 /// Installs tracing with a console buffer beside stdout, and hands the
 /// buffer back.
@@ -103,12 +103,38 @@ pub fn init_tracing_with_console() -> LogBuffer {
     let buffer = LogBuffer::new();
 
     tracing_subscriber::registry()
-        .with(fmt::layer())
+        .with(fmt::layer().with_ansi(ansi_wanted()))
         .with(buffer.layer())
         .with(filter)
         .init();
 
     buffer
+}
+
+/// Whether stdout is a terminal, and therefore whether colour helps.
+///
+/// A program writing to a pipe should not emit escape sequences: whoever
+/// reads the other end has to strip them, and if they do not, the codes are
+/// rendered as glyphs. The editor's Console showed exactly that — the host
+/// colourised into a pipe and `\x1b[2m` arrived as boxes.
+fn ansi_wanted() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
+}
+
+/// Whether this process should log as JSON.
+///
+/// Set by whoever spawned it — the editor does, for a project it hosts.
+/// A pre-formatted line is one opaque string to whoever reads the pipe:
+/// the editor was wrapping the host's whole formatted line, timestamp and
+/// level and all, inside a line of its own, so the Console showed `INFO`
+/// twice and could not filter a project's warnings from its info because
+/// every forwarded line was, to the editor, an `info` from `render`.
+///
+/// An env var rather than "not a terminal", because someone doing
+/// `cargo run > log.txt` wants a log they can read, not JSON.
+fn json_wanted() -> bool {
+    std::env::var("OME_LOG_FORMAT").is_ok_and(|v| v.eq_ignore_ascii_case("json"))
 }
 
 /// Installs the default subscriber unless the host already installed one.
@@ -130,8 +156,15 @@ pub fn init_tracing_if_needed() {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    if json_wanted() {
+        let _ = tracing_subscriber::registry()
+            .with(fmt::layer().json().flatten_event(true))
+            .with(filter)
+            .try_init();
+        return;
+    }
     let _ = tracing_subscriber::registry()
-        .with(fmt::layer())
+        .with(fmt::layer().with_ansi(ansi_wanted()))
         .with(filter)
         .try_init();
 }
@@ -142,7 +175,7 @@ pub fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::registry()
-        .with(fmt::layer())
+        .with(fmt::layer().with_ansi(ansi_wanted()))
         .with(filter)
         .init();
 }

@@ -79,10 +79,18 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // this function.
     let frame_cpu_start = std::time::Instant::now();
 
+    // The buffer is cloned out first: it is an `Arc` handle, so this is
+    // cheap, and holding a borrow of `Resources` across the poll below
+    // would collide with the mutable one that draining needs.
+    let log_buffer = resources.get::<ome_core::LogBuffer>().cloned();
+
     let is_playing = if let Some(play_state) = resources.get_mut::<PlayState>() {
         play_state.poll();
-        for line in play_state.drain_output() {
-            tracing::info!("[game] {line}");
+        let lines = play_state.drain_output();
+        if let Some(buffer) = log_buffer.as_ref() {
+            for line in &lines {
+                crate::project_log::record(buffer, line);
+            }
         }
         play_state.is_playing()
     } else {
@@ -281,11 +289,6 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<crate::gizmos::PhysicsDebugOverlay>()
         .map(|overlay| overlay.categories)
         .unwrap_or_default();
-    // The buffer is cheap to clone and every clone is the same log, so the
-    // panel gets a handle rather than borrowing `Resources` across the
-    // egui pass. The filter state is lifted for the same reason the gizmo
-    // choices are: the panel mutates it while the closure holds Resources.
-    let log_buffer = resources.get::<ome_core::LogBuffer>().cloned();
     let mut console = resources
         .remove::<crate::panels::console::ConsoleState>()
         .unwrap_or_default();
@@ -462,7 +465,11 @@ fn forward_remote_output(resources: &mut Resources) {
     let Some(session) = state.session.as_ref() else {
         return;
     };
+    let Some(buffer) = resources.get::<ome_core::LogBuffer>() else {
+        return;
+    };
+    let buffer = buffer.clone();
     for line in session.drain_output() {
-        tracing::info!("[game] {line}");
+        crate::project_log::record(&buffer, &line);
     }
 }
