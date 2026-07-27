@@ -87,6 +87,7 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     registry.register::<ome_gravity::GlobalGravity, gravity::GlobalGravityVisualizer>();
     registry.register::<ome_gravity::PointGravity, gravity::PointGravityVisualizer>();
     registry.register::<ome_gravity::AreaGravity, gravity::AreaGravityVisualizer>();
+    registry.register::<ome_gravity::BoxGravity, gravity::BoxGravityVisualizer>();
     resources.insert(registry);
 
     if resources.get::<HandleSet>().is_none() {

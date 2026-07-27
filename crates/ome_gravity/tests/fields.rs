@@ -18,7 +18,7 @@ use ome_ecs::dynamic_components::DynamicComponents;
 use ome_ecs::entity::Entity;
 use ome_ecs::query::AccessTracker;
 use ome_ecs::transform::Transform;
-use ome_gravity::{AreaGravity, GlobalGravity, PointGravity, plugin};
+use ome_gravity::{AreaGravity, BoxGravity, GlobalGravity, PointGravity, plugin};
 use ome_physics::components::{Collider, RigidBody};
 use ome_physics::plugin::{
     PhysicsWorld, physics_step_system, physics_sync_system, physics_writeback_system,
@@ -44,6 +44,7 @@ fn world() -> Resources {
     registry.register_cpu_reflected::<GlobalGravity>();
     registry.register_cpu_reflected::<PointGravity>();
     registry.register_cpu_reflected::<AreaGravity>();
+    registry.register_cpu_reflected::<BoxGravity>();
     r
 }
 
@@ -211,7 +212,11 @@ fn overlapping_sources_sum() {
 #[test]
 fn the_world_vector_is_off_while_a_source_exists() {
     let mut resources = world();
-    source_at(&mut resources, Transform::default(), PointGravity::default());
+    source_at(
+        &mut resources,
+        Transform::default(),
+        PointGravity::default(),
+    );
 
     plugin::reconcile_world_gravity_for_test(&mut resources);
 
@@ -334,5 +339,84 @@ fn a_body_beyond_every_source_does_not_move() {
         (position(&resources, far).y - 500.0).abs() < 1e-3,
         "a body out of range moved to {}",
         position(&resources, far),
+    );
+}
+
+/// A cube planet: each face pulls along its own normal, so where a body
+/// falls depends on which face it started over. This is the whole claim,
+/// and it is one a world gravity vector cannot make.
+#[test]
+fn a_box_source_pulls_towards_the_nearest_face() {
+    let mut resources = world();
+    source_at(
+        &mut resources,
+        Transform::default(),
+        BoxGravity {
+            half_extents: Vec3::splat(10.0),
+            rounding: 0.0,
+            range: 0.0,
+            falloff: 0.0,
+            ..Default::default()
+        },
+    );
+
+    // One body over each face, off-centre so "fell straight down" and
+    // "fell towards the middle of the planet" give different answers.
+    let starts = [
+        (Vec3::new(3.0, 15.0, 0.0), Vec3::NEG_Y),
+        (Vec3::new(15.0, 3.0, 0.0), Vec3::NEG_X),
+        (Vec3::new(0.0, -15.0, 3.0), Vec3::Y),
+        (Vec3::new(0.0, 3.0, -15.0), Vec3::Z),
+    ];
+    let bodies: Vec<Entity> = starts
+        .iter()
+        .map(|&(start, _)| body_at(&mut resources, start))
+        .collect();
+
+    Playing::set(&mut resources, true);
+    simulate(&mut resources, 30);
+
+    for (body, (start, wanted)) in bodies.iter().zip(starts) {
+        let moved = position(&resources, *body) - start;
+        assert!(moved.length() > 0.1, "a body at {start} did not fall");
+        assert!(
+            moved.normalize().dot(wanted) > 0.99,
+            "a body at {start} moved {moved}, not along {wanted}",
+        );
+    }
+}
+
+/// The zone rotates with its entity, the same as an area: a cube planet
+/// turned on its side has its faces somewhere else.
+#[test]
+fn a_box_source_rotates_with_its_entity() {
+    let mut resources = world();
+    source_at(
+        &mut resources,
+        Transform {
+            rotation: glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_4),
+            ..Default::default()
+        },
+        BoxGravity {
+            half_extents: Vec3::new(10.0, 2.0, 10.0),
+            rounding: 0.0,
+            range: 0.0,
+            falloff: 0.0,
+            ..Default::default()
+        },
+    );
+
+    // Straight up from a slab turned 45°: the nearest face is the tilted
+    // top, so the pull is along its tilted normal rather than straight down.
+    let body = body_at(&mut resources, Vec3::new(0.0, 15.0, 0.0));
+    Playing::set(&mut resources, true);
+    simulate(&mut resources, 30);
+
+    let moved = position(&resources, body) - Vec3::new(0.0, 15.0, 0.0);
+    let expected = glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_4) * Vec3::NEG_Y;
+    assert!(
+        moved.normalize().dot(expected) > 0.99,
+        "a slab turned 45° pulled along {}, wanted {expected}",
+        moved.normalize(),
     );
 }

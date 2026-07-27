@@ -1,0 +1,102 @@
+//! A planet: the sphere where the strength is exact, the sphere where it
+//! stops, and arrows saying the pull is inward.
+
+use glam::{Mat3, Vec3};
+
+use ome_ecs::hierarchy::GlobalTransform;
+use ome_gizmos::{Gizmos, Visualizer};
+use ome_gravity::PointGravity;
+
+use super::{ARROW, EDGE, FIELD, arrow};
+
+#[derive(Default)]
+pub(crate) struct PointGravityVisualizer;
+
+impl Visualizer<PointGravity> for PointGravityVisualizer {
+    fn draw(&self, field: &PointGravity, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
+        let (_, rotation, origin) = transform.matrix.to_scale_rotation_translation();
+        let basis = Mat3::from_quat(rotation);
+
+        // `radius` is where `strength` holds exactly — the one distance in
+        // the component that means something an author can check.
+        if field.radius > 0.0 {
+            gizmos.wire_sphere(origin, basis, field.radius, FIELD);
+        }
+        // Zero or less is unlimited, and there is no sphere for infinity.
+        if field.range > 0.0 {
+            gizmos.wire_sphere(origin, basis, field.range, EDGE);
+        }
+
+        // Six arrows pointing *in*. This is the difference between a planet
+        // and the world vector, and it is the whole reason #624 exists.
+        let surface = match field.radius > 0.0 {
+            true => field.radius,
+            false => ARROW,
+        };
+        for axis in [
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::Z,
+            Vec3::NEG_Z,
+        ] {
+            arrow(gizmos, origin + axis * surface, -axis, FIELD);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gizmos::gravity::harness::{draw, reach};
+    use glam::Mat4;
+
+    /// The cutoff is the outer sphere, so the gizmo has to reach it.
+    #[test]
+    fn a_point_source_draws_out_to_its_range() {
+        let field = PointGravity {
+            radius: 10.0,
+            range: 100.0,
+            ..Default::default()
+        };
+        let reach = reach(&draw(&PointGravityVisualizer, &field, Mat4::IDENTITY));
+        assert!((reach - 100.0).abs() < 1.0, "reached {reach}, wanted 100");
+    }
+
+    /// Zero range means unlimited, and there is no sphere for infinity —
+    /// so the drawing must stop at the radius rather than at zero.
+    #[test]
+    fn an_unlimited_point_source_draws_only_its_radius() {
+        let field = PointGravity {
+            radius: 10.0,
+            range: 0.0,
+            ..Default::default()
+        };
+        let reach = reach(&draw(&PointGravityVisualizer, &field, Mat4::IDENTITY));
+        assert!((reach - 10.0).abs() < 1.0, "reached {reach}, wanted 10");
+    }
+
+    /// A planet pulls inward. If the arrows pointed out it would read as a
+    /// repulsor, which is the one thing this component is not.
+    #[test]
+    fn a_point_source_points_inward() {
+        let field = PointGravity {
+            radius: 10.0,
+            range: 0.0,
+            ..Default::default()
+        };
+        let segments = draw(&PointGravityVisualizer, &field, Mat4::IDENTITY);
+        let shafts: Vec<_> = segments
+            .iter()
+            .filter(|(a, b)| ((*b - *a).length() - ARROW).abs() < 1e-3)
+            .collect();
+        assert_eq!(shafts.len(), 6, "expected one arrow per axis");
+        for (a, b) in shafts {
+            assert!(
+                b.length() < a.length(),
+                "an arrow from {a} to {b} points away from the centre",
+            );
+        }
+    }
+}

@@ -13,7 +13,7 @@ use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::transform::Transform;
 
-use crate::sources::{AreaGravity, GlobalGravity, PointGravity};
+use crate::sources::{AreaGravity, BoxGravity, GlobalGravity, PointGravity};
 
 /// One source, resolved into world space.
 struct Source {
@@ -34,9 +34,33 @@ enum Kind {
     /// things straight down.
     Area {
         settings: AreaGravity,
-        to_local: glam::Mat4,
-        rotation: glam::Quat,
+        local: LocalSpace,
     },
+    /// A solid whose direction differs at every point around it, so its
+    /// answer needs the same round trip an area's does.
+    Solid {
+        settings: BoxGravity,
+        local: LocalSpace,
+    },
+}
+
+/// The two halves of a transform a local-space field needs: the inverse to
+/// put a world point into the field's space, and the rotation to bring the
+/// resulting direction back out.
+///
+/// Both, because only converting the point is a bug that looks like the
+/// field working — the shape is tested in the right place and then pulls
+/// along an *unrotated* direction, so a rotated zone drops things straight
+/// down.
+struct LocalSpace {
+    to_local: glam::Mat4,
+    rotation: glam::Quat,
+}
+
+impl LocalSpace {
+    fn direction_from(&self, point: Vec3, local: impl Fn(Vec3) -> Vec3) -> Vec3 {
+        self.rotation * local(self.to_local.transform_point3(point))
+    }
 }
 
 /// The acceleration every source together applies at a world point.
@@ -56,11 +80,12 @@ impl Source {
         match &self.kind {
             Kind::Global(global) => global.acceleration,
             Kind::Point(source) => source.acceleration_at(self.position, point),
-            Kind::Area {
-                settings,
-                to_local,
-                rotation,
-            } => *rotation * settings.acceleration_at_local(to_local.transform_point3(point)),
+            Kind::Area { settings, local } => {
+                local.direction_from(point, |p| settings.acceleration_at_local(p))
+            }
+            Kind::Solid { settings, local } => {
+                local.direction_from(point, |p| settings.acceleration_at_local(p))
+            }
         }
     }
 }
@@ -119,17 +144,35 @@ fn collect_sources(resources: &Resources) -> Vec<Source> {
                 position: position_of(entity),
                 kind: Kind::Area {
                     settings: *area,
-                    to_local: matrix_of(entity).inverse(),
-                    // The rotation alone, not the whole matrix: rotating a
-                    // direction by a scaled matrix would scale the
-                    // acceleration, and a stretched zone is not a stronger
-                    // one.
-                    rotation: matrix_of(entity).to_scale_rotation_translation().1,
+                    local: local_space(matrix_of(entity)),
+                },
+            });
+        }
+    }
+    if let Some(storage) = registry.get_cpu::<BoxGravity>() {
+        for (&entity, solid) in storage.iter() {
+            sources.push(Source {
+                position: position_of(entity),
+                kind: Kind::Solid {
+                    settings: *solid,
+                    local: local_space(matrix_of(entity)),
                 },
             });
         }
     }
     sources
+}
+
+/// Splits a transform into what a local-space field needs.
+///
+/// The rotation alone, not the whole matrix: rotating a direction by a
+/// scaled matrix would scale the acceleration, and a stretched zone is not
+/// a stronger one.
+fn local_space(matrix: glam::Mat4) -> LocalSpace {
+    LocalSpace {
+        to_local: matrix.inverse(),
+        rotation: matrix.to_scale_rotation_translation().1,
+    }
 }
 
 /// Applies the summed field to every dynamic body.
@@ -260,6 +303,7 @@ impl Plugin for GravityComponentsPlugin {
                 registry.register_cpu_reflected::<GlobalGravity>();
                 registry.register_cpu_reflected::<PointGravity>();
                 registry.register_cpu_reflected::<AreaGravity>();
+                registry.register_cpu_reflected::<BoxGravity>();
             }
         });
     }
