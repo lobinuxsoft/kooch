@@ -718,6 +718,44 @@ tendría que significar.
 que el próximo sync lo reconstruya y se rompa otra vez, para siempre. El slot queda con
 `joint: None` hasta que los handles de los cuerpos se muevan.
 
+### Gravedad: campos que suman, aplicados como impulso (locked 2026-07-27, #624)
+
+**Tres componentes, no uno con discriminante.** `GlobalGravity`, `PointGravity`,
+`AreaGravity`. La física deletrea sus variantes como `u32` reflejado (`Collider.shape`,
+`Joint.kind`) porque un collider es *una* forma a la vez. La gravedad es distinta en lo que
+importa: una escena tiene muchas fuentes simultáneas, se consultan por separado, y una
+entidad nunca es "una fuente puntual que además es un área". Componentes separados dejan que
+el arquetipo conteste la query en vez de un filtro sobre el discriminante, y hacen la
+combinación inválida irrepresentable en vez de meramente improbable.
+
+**Los campos superpuestos SUMAN — la superposición es el blend.** Dos planetas cercanos tiran
+por la suma vectorial y la transición entre ellos es suave sin que nadie elija un peso. Lo
+que sumar NO expresa es una zona que *reemplaza* ("adentro de esta sala, abajo es -X, ignorá
+el planeta"): eso quiere una prioridad, no un peso, y está deliberadamente ausente hasta que
+algo lo pida.
+
+**La gravedad se aplica como impulso `masa × aceleración × dt`, NO como fuerza.** El
+`add_force` de rapier persiste entre steps hasta un `reset_forces`, así que aplicarla como
+fuerza obligaría a pisar el acumulador cada frame y borraría cualquier fuerza de gameplay.
+El impulso se compone en vez de sobrescribir.
+
+**Mientras exista una fuente, el vector global de rapier queda en cero.** Si no, un planeta
+tira en diagonal: campo + vector del mundo. Corolario que costó un test: el `gravity_scale`
+de rapier entonces multiplica nada, así que **el sistema de campos honra `gravity_scale` por
+su cuenta**. Sin eso, agregar un planeta apagaría silenciosamente el multiplicador por cuerpo.
+
+**Una escena sin fuentes queda intacta.** El plugin es inerte hasta que alguien autoriza una
+fuente, así que agregarlo a `DefaultPlugins` no cambia ninguna escena existente.
+
+**`PointGravity` clampea en su radio de referencia.** Sin clamp la fuerza tiende a infinito
+en el centro, que además de no ser físico es una forma confiable de disparar un cuerpo fuera
+del mundo. `AreaGravity` lleva su rotación aparte de la matriz inversa: rotar una dirección
+con una matriz escalada escalaría la aceleración, y una zona estirada no es una zona más
+fuerte.
+
+**PENDIENTE, no cerrado en #624:** partir `RigidBody` en `RigidBody`/`KinematicBody`/
+`StaticBody`. Es una migración del formato de escena y no se revisa junto con gravedad.
+
 ### Prefabs = escenas instanciadas (decidido 2026-07-26, #611)
 
 **Abrir e instanciar son operaciones DISTINTAS y sólo una tiene restricción.** #609 rechaza

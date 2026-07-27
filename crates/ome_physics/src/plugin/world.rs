@@ -102,6 +102,8 @@ pub struct BodySpec {
     material: SurfaceMaterial,
     interaction: ColliderInteraction,
     damping: Damping,
+    /// In the spec because rapier bakes it into the body at build time.
+    gravity_scale: f32,
     /// The authored centre of mass, or `None` for the collider's own.
     ///
     /// In the spec because rapier bakes mass properties into the body at
@@ -141,6 +143,7 @@ impl BodySpec {
             material: collider.material(),
             interaction: collider.interaction(),
             damping: body.damping(),
+            gravity_scale: body.gravity_scale,
             center_of_mass: body.explicit_center_of_mass(),
             scale,
         }
@@ -190,6 +193,7 @@ impl BodySpec {
             material: self.material,
             interaction: self.interaction,
             damping: self.damping,
+            gravity_scale: self.gravity_scale,
             position,
             rotation,
             // Body-local, and deliberately *not* pre-rotated: rapier

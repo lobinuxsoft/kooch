@@ -249,6 +249,14 @@ impl PhysicsBackend for RapierBackend {
         self.break_overloaded_joints();
     }
 
+    fn gravity(&self) -> Vec3 {
+        self.gravity
+    }
+
+    fn set_gravity(&mut self, gravity: Vec3) {
+        self.gravity = gravity;
+    }
+
     fn add_body(&mut self, desc: BodyDesc) -> BodyHandle {
         let body_type = match desc.kind {
             BodyKind::Dynamic => RigidBodyType::Dynamic,
@@ -267,6 +275,7 @@ impl PhysicsBackend for RapierBackend {
                 desc.mass,
                 desc.center_of_mass,
             ))
+            .gravity_scale(desc.gravity_scale)
             .linear_damping(desc.damping.sanitised().linear)
             .angular_damping(desc.damping.sanitised().angular)
             .build();
@@ -542,6 +551,16 @@ impl PhysicsBackend for RapierBackend {
         out: &mut Vec<crate::backend::DebugLine>,
     ) {
         self.collect_debug_lines(categories, out);
+    }
+
+    fn apply_impulse(&mut self, handle: BodyHandle, impulse: Vec3) {
+        let Some(&rb_handle) = self.handles.get(handle) else {
+            return;
+        };
+        let Some(body) = self.bodies.get_mut(rb_handle) else {
+            return;
+        };
+        body.apply_impulse(impulse, true);
     }
 
     fn angular_velocity(&self, handle: BodyHandle) -> Option<Vec3> {

@@ -73,6 +73,9 @@ impl Plugin for EditorPlugin {
         // menu offers no body component at all — the registry it reads is
         // the editor's own.
         app.add_plugin(ome_physics::PhysicsComponentsPlugin);
+        // Components only: the editor authors gravity, the project's
+        // process applies it.
+        app.add_plugin(ome_gravity::GravityComponentsPlugin);
 
         app.insert_resource(PlayState::new());
         // Remote mode starts inert: no session means the editor drives
