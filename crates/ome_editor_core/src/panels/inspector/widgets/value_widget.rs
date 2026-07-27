@@ -29,7 +29,7 @@ pub(in crate::panels::inspector) fn draw_value_widget(
         return draw_choice_dropdown(ui, value, choices, field_name);
     }
     if !bits.is_empty() {
-        return draw_bitmask(ui, value, bits);
+        return draw_bitmask(ui, value, bits, field_name);
     }
     match value {
         ReflectValue::F32(v) => {
