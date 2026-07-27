@@ -4,12 +4,15 @@ use ome_ecs::reflect::{FieldChoice, ReflectValue};
 
 use super::asset::{AssetCatalogEntry, asset_filter_for};
 use super::asset_picker::draw_asset_picker;
-use super::choices::draw_choice_dropdown;
+use super::choices::{draw_bitmask, draw_choice_dropdown};
 
 /// Draws an editable widget for a single reflected value.
 /// Returns `Some(new_value)` if the user modified it.
 /// `field_name` is used to detect color fields and show a color picker.
-/// `choices` renders integer fields as a dropdown when non-empty.
+/// `choices` renders integer fields as a dropdown when non-empty, and
+/// `bits` renders them as named checkboxes — a field is one of a set or a
+/// combination of them, never both, so `choices` wins if somehow given
+/// both.
 /// `asset_catalog` is the per-frame snapshot of `AssetDatabase` the
 /// `AssetRef` widget filters when populating its picker dropdown.
 pub(in crate::panels::inspector) fn draw_value_widget(
@@ -17,12 +20,16 @@ pub(in crate::panels::inspector) fn draw_value_widget(
     value: &ReflectValue,
     field_name: &str,
     choices: &'static [FieldChoice],
+    bits: &'static [FieldChoice],
     asset_catalog: &[AssetCatalogEntry],
 ) -> Option<ReflectValue> {
-    if !choices.is_empty()
-        && let Some(new_value) = draw_choice_dropdown(ui, value, choices, field_name)
-    {
-        return Some(new_value);
+    if !choices.is_empty() {
+        // Returns `None` while the popup is merely open, so the dropdown
+        // cannot fall through to the numeric widget behind it.
+        return draw_choice_dropdown(ui, value, choices, field_name);
+    }
+    if !bits.is_empty() {
+        return draw_bitmask(ui, value, bits);
     }
     match value {
         ReflectValue::F32(v) => {

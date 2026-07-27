@@ -11,7 +11,9 @@ use crate::actions::EditorAction;
 use crate::icons;
 use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
 
-use super::widgets::{AssetCatalogEntry, choices_for, draw_readonly_value, draw_value_widget};
+use super::widgets::{
+    AssetCatalogEntry, bits_for, choices_for, draw_readonly_value, draw_value_widget,
+};
 
 /// A field value across multiple selected entities.
 pub(super) enum MultiFieldValue {
@@ -294,13 +296,14 @@ fn draw_multi_reflected_fields(
         .show(ui, |ui| {
             for (name, multi_val) in fields {
                 let choices = choices_for(field_metas, name);
+                let bits = bits_for(field_metas, name);
                 match multi_val {
                     MultiFieldValue::Uniform(value) => {
                         ui.label(name);
                         if read_only {
                             draw_readonly_value(ui, value, choices);
                         } else if let Some(new_value) =
-                            draw_value_widget(ui, value, name, choices, asset_catalog)
+                            draw_value_widget(ui, value, name, choices, bits, asset_catalog)
                         {
                             for &entity in targets {
                                 actions.push(EditorAction::SetField {
@@ -317,7 +320,7 @@ fn draw_multi_reflected_fields(
                         if read_only {
                             draw_readonly_value(ui, base, choices);
                         } else if let Some(new_value) =
-                            draw_value_widget(ui, base, name, choices, asset_catalog)
+                            draw_value_widget(ui, base, name, choices, bits, asset_catalog)
                         {
                             for &entity in targets {
                                 actions.push(EditorAction::SetField {
