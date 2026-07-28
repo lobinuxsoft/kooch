@@ -135,9 +135,18 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
     let names = resources.get::<ComponentNames>();
     // Components with no local Rust type, shown alongside the real ones.
     let dynamic = resources.get::<DynamicComponents>();
+    // A parked component is editable when *somebody* can apply the edit.
+    // Over the wire that is the connected project. Locally it is the
+    // editor itself: a plugin declared the type, so the schema is known
+    // and `DynamicComponents` is the editor's own store to write into.
+    // Without the second case, a project's components would show
+    // read-only in the very mode built to author them.
     let parked_editable = resources
         .get::<crate::remote_session::RemoteState>()
-        .is_some_and(|s| s.is_connected());
+        .is_some_and(|s| s.is_connected())
+        || resources
+            .get::<DynamicTypeRegistry>()
+            .is_some_and(|types| !types.is_empty());
     let ephemeral = resources
         .get::<EphemeralComponents>()
         .map(|e| e.clone())

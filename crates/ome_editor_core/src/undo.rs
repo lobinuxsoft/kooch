@@ -18,7 +18,8 @@ use ome_core::resource::Resources;
 use ome_ecs::reflect::ReflectValue;
 
 pub(crate) use commands::{
-    AddComponentCommand, DespawnCommand, DuplicateCommand, RemoveComponentCommand, SetFieldCommand,
+    AddComponentCommand, AddDynamicComponentCommand, DespawnCommand, DuplicateCommand,
+    RemoveComponentCommand, RemoveDynamicComponentCommand, SetDynamicFieldCommand, SetFieldCommand,
     SpawnCommand, SpawnMeshCommand, TransformEditCommand,
 };
 
