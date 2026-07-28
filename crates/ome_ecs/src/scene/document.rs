@@ -74,13 +74,53 @@ pub struct ComponentDescription {
 
 impl SceneDocument {
     /// Saves the scene as pretty-printed RON to `path`.
+    ///
+    /// Refuses a document still holding a live entity handle — see
+    /// [`Self::live_reference`].
     pub fn save(&self, path: &Path) -> Result<(), SceneError> {
+        if let Some(error) = self.live_reference() {
+            return Err(error);
+        }
         let config = ron::ser::PrettyConfig::default()
             .struct_names(false)
             .enumerate_arrays(false);
         let data = ron::ser::to_string_pretty(self, config)?;
         std::fs::write(path, data)?;
         Ok(())
+    }
+
+    /// The first field still holding a [`EntityRef::Live`], if any.
+    ///
+    /// An index and a generation are meaningless once reloaded, so writing
+    /// one produces a scene whose references point at whatever occupies
+    /// those slots next time. `entity_refs::to_persistent` resolves every
+    /// reference on the way into the document, so anything left here means
+    /// a document that did not come through it.
+    ///
+    /// The check lives at the file boundary rather than in
+    /// [`EntityRef`]'s serialiser because the editor protocol carries the
+    /// same values legitimately — and because a document knows *which*
+    /// entity, component and field, where a serialiser sees a bare pair of
+    /// numbers.
+    ///
+    /// [`EntityRef::Live`]: crate::reflect::EntityRef::Live
+    fn live_reference(&self) -> Option<SceneError> {
+        for entity in &self.entities {
+            for component in &entity.components {
+                for (field, value) in &component.fields {
+                    if let ReflectValue::EntityRef(Some(reference)) = value
+                        && reference.entity().is_some()
+                    {
+                        return Some(SceneError::UnresolvedReference {
+                            entity: entity.name.clone(),
+                            component: component.type_name.clone(),
+                            field: field.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Loads a scene from a RON file at `path`.
