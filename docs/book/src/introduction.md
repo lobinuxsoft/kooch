@@ -52,8 +52,6 @@ What does not work yet, stated plainly:
   ([#158](https://github.com/lobinuxsoft/oh_my_engine/issues/158)).
 - **Reflection is shallow.** No `Vec<T>`, no `HashMap`, no user enums in components
   ([#649](https://github.com/lobinuxsoft/oh_my_engine/issues/649)).
-- **Entity reference fields are read-only**, so `Joint` is not authorable
-  ([#655](https://github.com/lobinuxsoft/oh_my_engine/issues/655)).
 - **`glam` is not re-exported**, so a project has to add it itself and match the version
   ([#657](https://github.com/lobinuxsoft/oh_my_engine/issues/657)).
 

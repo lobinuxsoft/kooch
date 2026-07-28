@@ -583,9 +583,23 @@ hace lo mismo un nivel más abajo.
   identidad** — por eso `SceneDocument::from_ecs` toma `&mut Resources`. La alternativa era
   un id por entidad en una galaxia entera.
 - **`EntityRef` tiene dos estados explícitos**: `Live(Entity)` en memoria,
-  `Persistent { scene, id }` en disco. `Entity` sigue sin implementar `Serialize`, y
-  serializar un `Live` es **error** — si el save path no resolvió, la escena falla al
-  guardar en vez de cargar después apuntando a entidades arbitrarias.
+  `Persistent { scene, id }` en disco. `Entity` sigue sin implementar `Serialize`.
+- **Los dos estados serializan (revisado en #655).** La regla nunca fue "un handle no
+  serializa" sino **"un handle no llega a un archivo"**. El protocolo del editor son dos
+  procesos compartiendo *una* sesión viva: ahí un índice+generación es exactamente lo que un
+  lado le quiere decir al otro, y el protocolo ya pasea `EntityId` por lo mismo. Negarse a
+  codificar un `Live` hacía **indescriptible** cualquier referencia autorada, y el mirror se
+  congelaba en cuanto un componente tenía una.
+  - El guard vive en **`SceneDocument::save`**, que nombra entidad, componente y campo — el
+    serializador sólo veía dos números sueltos.
+  - Formato: **un struct con campos opcionales, no un enum**. RON no lee `untagged` (resuelve
+    por `deserialize_any`, que no implementa para structs) y un enum *tagged* metería un tag
+    delante de cada referencia persistente ya escrita en disco.
+- **Los `EntityRef` se traducen en los dos sentidos del protocolo.** Los dos procesos numeran
+  sus entidades por separado: el índice 4 de allá no es el 4 de acá. Sin traducir, el picker
+  apuntaría a lo que el proyecto tenga en ese índice. Y el mirror **mapea todos los ids antes
+  de sincronizar componentes** — una referencia puede nombrar una entidad que aparece más
+  tarde en el snapshot (el orden es por arquetipo, no de autoría).
 - **Los ids son locales a la escena, remapeados por instancia.** Es lo que hacen Unity
   (`SceneLoadFlags.NewInstance` + `PostLoadCommandBuffer`) y Unreal (Level Instances), y es
   lo que permite instanciar la misma escena dos veces sin que las dos copias reclamen la
@@ -699,7 +713,21 @@ su superficie la define lo que Rapier puede hacer, no lo que nos gustaría.
 **El joint nombra a los DOS cuerpos; no vive sobre uno de ellos.** La alternativa
 (`connectedBody` de Unity) le cuesta a un cuerpo poder estar en dos joints a la vez, porque
 un componente aparece una vez por entidad — y una pelvis de ragdoll está en cuatro. Con dos
-`Entity` el joint va en la entidad que el autor quiera, incluso una vacía.
+referencias el joint va en la entidad que el autor quiera, incluso una vacía.
+
+**Los cuerpos son `Option<EntityRef>`, no `Entity` (corregido en #655).** Un `Entity` no tiene
+dónde poner una referencia sin resolver, así que una carga cuyo target no está residente
+**pierde el link** en vez de conservarlo hasta que la escena que lo tiene abra. Y "sin cuerpo"
+deja de ser el centinela `Entity::INVALID`, que es lo que cruzaba el cable como
+`Live(4294967295:0)`.
+
+**El slot recuerda las entidades con las que se construyó**, además de los handles: un joint
+roto tiene que nombrarlas, y re-derivarlas del spec puede fallar justo donde el fallo no tiene
+a dónde ir.
+
+**`#[reflect(requires = "RigidBody")]`** en los dos campos. El picker filtra por eso y rechaza
+un drop que no lo cumpla, diciendo por qué — una referencia aceptada pero inerte es
+indistinguible de un joint roto. El widget no sabe de física: lee el metadato.
 
 **Los joints NO se direccionan con un componente de slot como los cuerpos.** `PhysicsBody`
 existe porque las dos direcciones del mapeo se recorren cada frame: sync pregunta "esta
@@ -1093,8 +1121,9 @@ falta lo primero.
 
 - **El proyecto es dueño del ECS; el editor standalone es cliente.** No cargar tipos del
   proyecto en el editor (no hay ABI Rust estable). Protocolo HTTP tipo BRP (`ome_remote`).
-- **Transporte = `tiny_http` SÍNCRONO en thread lateral + puente mpsc al main.** NUNCA async/
-  tokio en el core del engine. El server no toca el ECS fuera del main thread (`Stage::First`).
+- **Transporte = socket local (`interprocess`) SÍNCRONO en thread lateral + puente mpsc al
+  main** (PR #654; era `tiny_http` sobre TCP). NUNCA async/tokio en el core del engine. El
+  server no toca el ECS fuera del main thread (`Stage::First`).
 - **UNA fuente de datos + UN seam de edición.** ECS local (real o espejo `RemoteMirror`) leído
   por paneles/viewport igual en ambos modos; la ÚNICA bifurcación es `apply_actions` →
   `remote_edit::dispatch` si `RemoteState::is_connected()`. NO duplicar paths por modo.
@@ -1119,6 +1148,22 @@ falta lo primero.
 ---
 
 ## Gotchas activos / lecciones
+
+### Serialización: lo que RON no hace (2026-07-28, #655)
+
+- **RON no lee `#[serde(untagged)]`.** Resuelve por `deserialize_any`, que RON no implementa
+  para su sintaxis de struct. Falla en runtime con `data did not match any variant`, no en
+  compilación. Para "una forma u otra": **un struct con campos opcionales** y decidir mirando
+  cuál vino.
+- **JSON no tiene infinito ni NaN, y `serde_json` NO se niega: escribe `null`** — que después
+  no se puede leer como número. Un `f32::INFINITY` en un campo reflejado (así escribe un joint
+  "este motor no tiene techo") viajaba como `null` y explotaba del otro lado como error de
+  tipo, en otro lugar y sin nombrar el campo. `ReflectValue` escribe los tres sin número como
+  texto; los finitos conservan su forma de número, así que ninguna escena existente cambia.
+- **Un fallback de serialización que descarta el error convierte un fallo en tres.** El
+  `unwrap_or_else(|_| "{}")` del server hizo que el cliente fallara decodificando `{}`: otro
+  error, en otro proceso, sin nombrar nada. Si algo no se puede codificar, **la respuesta lo
+  dice**, con el mensaje del serializador.
 
 ### Herramientas: trampas que costaron tiempo real el 2026-07-25
 

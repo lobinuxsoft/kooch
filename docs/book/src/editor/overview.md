@@ -103,8 +103,5 @@ Honest list, so nothing below is mistaken for a bug in your setup:
   ([#648](https://github.com/lobinuxsoft/oh_my_engine/issues/648)).
 - **No New Scene.** Scenes have to exist on disk already
   ([#619](https://github.com/lobinuxsoft/oh_my_engine/issues/619)).
-- **`EntityRef` fields are read-only.** A component that points at another entity can display
-  the target but not let you pick one, which is why `Joint` is not authorable yet
-  ([#655](https://github.com/lobinuxsoft/oh_my_engine/issues/655)).
 - **The editor redraws while idle**, pinning a core with nothing happening
   ([#656](https://github.com/lobinuxsoft/oh_my_engine/issues/656)).

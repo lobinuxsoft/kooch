@@ -536,3 +536,42 @@ fn stopping_rebuilds_a_joint_that_broke_while_playing() {
         "the joint stayed broken across a stop",
     );
 }
+
+/// A Joint added from the component menu names no bodies at all. It has
+/// to warn and do nothing — the behaviour #655 established was correct
+/// and must survive the move to `EntityRef`, which is what let the
+/// component be added in the first place.
+#[test]
+fn a_joint_naming_no_bodies_builds_nothing() {
+    let mut resources = world();
+    let joint = spawn_joint(&mut resources, Joint::default());
+
+    physics_sync_system(&mut resources);
+
+    assert_eq!(joint_count(&resources), 0, "built against nothing");
+    assert!(!is_built(&resources, joint));
+
+    // And it keeps doing nothing rather than accumulating state.
+    physics_sync_system(&mut resources);
+    assert_eq!(joint_count(&resources), 0);
+}
+
+/// Naming only one body is the same situation: half a constraint is not a
+/// constraint.
+#[test]
+fn a_joint_naming_one_body_builds_nothing() {
+    let mut resources = world();
+    let a = anchor(&mut resources, Vec3::ZERO);
+    let joint = spawn_joint(
+        &mut resources,
+        Joint {
+            body_a: Some(EntityRef::live(a)),
+            ..Default::default()
+        },
+    );
+
+    physics_sync_system(&mut resources);
+
+    assert_eq!(joint_count(&resources), 0);
+    assert!(!is_built(&resources, joint));
+}
