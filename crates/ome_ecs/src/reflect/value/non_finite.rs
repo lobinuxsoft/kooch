@@ -53,9 +53,12 @@ impl<'de> Visitor<'de> for FloatVisitor {
 
     fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<f64, E> {
         match v {
-            INFINITY | "inf" | "Infinity" => Ok(f64::INFINITY),
+            // Beyond what this writes: RON spells them `inf` and `NaN`,
+            // and other producers use the long forms. Reading is generous
+            // and writing is not, which is the usual arrangement.
+            INFINITY | "Infinity" | "+inf" => Ok(f64::INFINITY),
             NEG_INFINITY | "-Infinity" => Ok(f64::NEG_INFINITY),
-            NAN | "nan" => Ok(f64::NAN),
+            NAN | "nan" | "NAN" => Ok(f64::NAN),
             other => Err(E::invalid_value(Unexpected::Str(other), &self)),
         }
     }
