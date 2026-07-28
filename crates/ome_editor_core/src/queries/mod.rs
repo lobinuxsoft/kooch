@@ -348,23 +348,56 @@ pub(crate) fn gather_archetype_data(resources: &Resources) -> Vec<ArchetypeDispl
     result
 }
 
+/// The rows the Components panel offers for drag-drop.
+///
+/// Reads the plugin registry beside the reflected one, for the same
+/// reason the Add Component menu does: a project's own types have no
+/// `TypeId` in this binary, so `ComponentRegistry` cannot list them.
+/// This panel is a second way to do the same thing as that menu, and it
+/// was still showing only what the editor was compiled with.
 pub(crate) fn gather_component_types(resources: &Resources) -> Vec<ComponentTypeInfo> {
-    let Some(registry) = resources.get::<ComponentRegistry>() else {
-        return Vec::new();
-    };
     let names = resources.get::<ComponentNames>();
-    let mut types: Vec<ComponentTypeInfo> = registry
-        .all_type_names()
-        .into_iter()
-        .map(|(tid, name)| {
-            let short = name.rsplit("::").next().unwrap_or(name).to_owned();
-            ComponentTypeInfo {
-                component: component_id(names, name),
-                short_name: short,
-                has_reflection: registry.has_reflector(&tid),
-            }
+    let mut types: Vec<ComponentTypeInfo> = resources
+        .get::<ComponentRegistry>()
+        .map(|registry| {
+            registry
+                .all_type_names()
+                .into_iter()
+                .map(|(tid, name)| ComponentTypeInfo {
+                    component: component_id(names, name),
+                    short_name: name.rsplit("::").next().unwrap_or(name).to_owned(),
+                    has_reflection: registry.has_reflector(&tid),
+                })
+                .collect()
         })
-        .collect();
+        .unwrap_or_default();
+
+    if let Some(dynamic) = resources.get::<DynamicTypeRegistry>() {
+        for ty in dynamic.iter() {
+            let already = types.iter().any(|t| {
+                names
+                    .and_then(|n| n.name(t.component))
+                    .is_some_and(|name| name == ty.type_name)
+            });
+            if already {
+                continue;
+            }
+            types.push(ComponentTypeInfo {
+                component: component_id(names, &ty.type_name),
+                short_name: ty
+                    .type_name
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(&ty.type_name)
+                    .to_owned(),
+                // Its schema is known, which is what "reflected" means to
+                // this panel: the row can be dragged onto an entity and
+                // the Inspector can draw the fields it lands as.
+                has_reflection: true,
+            });
+        }
+    }
+
     types.sort_by(|a, b| a.short_name.cmp(&b.short_name));
     types
 }
@@ -422,31 +455,41 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
                 })
                 .unwrap_or_default();
 
-            // Types a loaded plugin declared. They have no `TypeId` in
-            // this binary, so the reflected registry above cannot know
-            // them — without this the menu offers only what the editor
-            // itself was compiled with, which is the same gap remote
-            // mode exists to close.
-            if let Some(dynamic) = resources.get::<DynamicTypeRegistry>() {
-                local.extend(dynamic.iter().map(|ty| {
-                    ReflectedTypeInfo {
-                        component: component_id(names, &ty.type_name),
-                        short_name: ty
-                            .type_name
-                            .rsplit("::")
-                            .next()
-                            .unwrap_or(&ty.type_name)
-                            .to_owned(),
-                        // Grouped by the plugin that brought them, so a
-                        // project's components do not scatter through the
-                        // engine's own list.
-                        category: Some(ty.source.clone()),
-                    }
-                }));
-            }
             local
         }
     };
+
+    // Types a loaded plugin declared, added in either mode. They have no
+    // `TypeId` here, so the reflected registry cannot know them; and the
+    // remote schema lists what the *running* project registered, which is
+    // a different set from what its library declares.
+    if let Some(dynamic) = resources.get::<DynamicTypeRegistry>() {
+        for ty in dynamic.iter() {
+            // Skip anything the wire already reported, or the same
+            // component appears twice under two categories.
+            let already = types.iter().any(|t| {
+                names
+                    .and_then(|n| n.name(t.component))
+                    .is_some_and(|name| name == ty.type_name)
+            });
+            if already {
+                continue;
+            }
+            types.push(ReflectedTypeInfo {
+                component: component_id(names, &ty.type_name),
+                short_name: ty
+                    .type_name
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(&ty.type_name)
+                    .to_owned(),
+                // Grouped by the plugin that brought them, so a project's
+                // components do not scatter through the engine's own list.
+                category: Some(ty.source.clone()),
+            });
+        }
+    }
+
     // Sort: uncategorized first (None < Some), then by category, then by name.
     types.sort_by(|a, b| {
         a.category
