@@ -204,7 +204,7 @@ required-features = ["editor", "physics"]
 
 [[example]]
 name = "physics_smoke"
-path = "examples/physics_smoke.rs"
+path = "examples/physics_smoke/main.rs"
 required-features = ["physics", "physics-debug-render"]
 
 [[example]]
