@@ -843,12 +843,23 @@ responsabilidad**. Si se parte buscando ahorrar memoria, se corta donde no hay q
 - **Cortar por funcionalidad o pertenencia, nunca por tamaño.** Si el corte no se puede
   nombrar en una frase —"lo que el backend *es*" contra "cómo *cumple* el contrato"— es un
   corte arbitrario y va a estorbar más de lo que ayuda.
-- **400 líneas es un olor, no un límite.** Un archivo de 405 que es un solo `impl` coherente
-  está mejor que dos de 200 unidos por delegaciones inventadas.
+- **600 líneas dispara una revisión, no un split** (subido desde 400 el 2026-07-28). Pasar
+  el umbral es la señal para *preguntarse* dos cosas: ¿se volvió monolítico de verdad, o
+  simplemente es grande y coherente? ¿y hay adentro cosas que no le corresponden? Si la
+  respuesta es que cada parte pertenece donde está, el archivo se queda como está. Un
+  archivo de 559 que hace una sola cosa está mejor que tres de 190 unidos por delegaciones
+  inventadas.
 - **Los tests se mudan a archivo propio** cuando empujan al módulo sobre el umbral. No
   pierden nada por mudarse y el módulo recupera su tamaño real.
 - **No partir lo que va a morir.** Partir bien código que está por borrarse es trabajo
   tirado — la razón por la que el protocolo remoto queda intacto hasta demolerlo entero.
+
+**Estado al 2026-07-28:** con el umbral en 600, **queda un solo archivo por encima**:
+`actions/remote_edit.rs` (1136), que es precisamente el que no se toca hasta la demolición
+del remoto. Los 25 restantes entre 400 y 600 quedaron revisados y se dejan como están. La
+tanda de esta sesión bajó siete archivos: `components/body.rs`, `rapier_backend/backend.rs`,
+`asset_browser/tree.rs`, `examples/physics_smoke.rs`, `actions/handlers.rs`,
+`gizmos/visibility.rs`, `inspector/physics_warnings.rs` y `queries/tests.rs`.
 
 **Lo que Rust permite y lo que no**, porque decide qué cortes existen: se pueden tener
 **varios `impl` inherentes del mismo tipo en archivos distintos**, pero **NO se puede partir
