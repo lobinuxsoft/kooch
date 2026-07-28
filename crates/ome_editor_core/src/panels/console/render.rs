@@ -50,6 +50,25 @@ pub(crate) fn draw_console(
         if ui.button("Clear").clicked() {
             buffer.clear();
         }
+
+        // Copies what the filter currently shows, not the whole buffer:
+        // the lines on screen are the ones being looked at, and a
+        // thousand-line dump is not what anyone pastes into a report.
+        let visible = state.visible().len();
+        if ui
+            .add_enabled(visible > 0, egui::Button::new("Copy"))
+            .on_hover_text("Copy the lines this filter shows")
+            .clicked()
+        {
+            let text: String = state
+                .visible()
+                .iter()
+                .filter_map(|&i| state.entries().get(i))
+                .map(line_as_text)
+                .collect::<Vec<_>>()
+                .join("\n");
+            ui.ctx().copy_text(text);
+        }
     });
 
     ui.horizontal(|ui| {
@@ -84,7 +103,7 @@ pub(crate) fn draw_console(
                 let Some(entry) = entries.get(index) else {
                     continue;
                 };
-                ui.horizontal(|ui| {
+                let row = ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     ui.colored_label(
                         level_colour(entry.level),
@@ -95,6 +114,15 @@ pub(crate) fn draw_console(
                         mono(short_target(&entry.target)),
                     );
                     draw_message(ui, entry);
+                });
+
+                // Right-click the row for the one line, when the Copy
+                // button's "everything shown" is more than wanted.
+                row.response.context_menu(|ui| {
+                    if ui.button("Copy line").clicked() {
+                        ui.ctx().copy_text(line_as_text(entry));
+                        ui.close();
+                    }
                 });
             }
         });
@@ -120,17 +148,38 @@ fn draw_message(ui: &mut egui::Ui, entry: &LogEntry) {
     };
 
     for part in split_fields(&entry.message) {
+        // `selectable(true)` rather than `ui.label`: a plain label cannot
+        // be dragged over, so the text was unreachable — a log you can
+        // read and not quote is half a log. Selection still stops at each
+        // fragment, which is what the copy actions below are for.
         match part {
-            Part::Text(text) => match tint {
-                Some(colour) => ui.colored_label(colour, mono(text)),
-                None => ui.label(mono(text)),
-            },
+            Part::Text(text) => {
+                let rich = match tint {
+                    Some(colour) => mono(text).color(colour),
+                    None => mono(text),
+                };
+                ui.add(egui::Label::new(rich).selectable(true))
+            }
             Part::Field { key, value } => {
-                ui.label(mono(key).color(FIELD_KEY));
-                ui.label(mono(value).color(FIELD_VALUE).strong())
+                ui.add(egui::Label::new(mono(key).color(FIELD_KEY)).selectable(true));
+                ui.add(egui::Label::new(mono(value).color(FIELD_VALUE).strong()).selectable(true))
             }
         };
     }
+}
+
+/// One log line as plain text, the way someone would paste it.
+///
+/// Rebuilt from the entry rather than from the drawn fragments: what is
+/// on screen is split into coloured pieces for scanning, and pasting that
+/// separation into a bug report helps nobody.
+pub(super) fn line_as_text(entry: &LogEntry) -> String {
+    format!(
+        "{} {} {}",
+        level_name(entry.level),
+        entry.target,
+        entry.message
+    )
 }
 
 /// A run of the message: prose, or one `key=value`.

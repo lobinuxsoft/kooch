@@ -288,8 +288,17 @@ impl RemoteClient {
         let transport = started.elapsed();
 
         let decoding = Instant::now();
-        let decoded: Result<Response, _> =
-            serde_json::from_str(&raw).map_err(|e| ClientError::Decode(e.to_string()));
+        // The reply is quoted into the error on failure. Without it a
+        // decode error names the missing field and not the text that
+        // lacked it, which says nothing about whether the reply was
+        // truncated, framed wrong, or simply not what was expected.
+        let decoded: Result<Response, _> = serde_json::from_str(&raw).map_err(|e| {
+            let head: String = raw.chars().take(200).collect();
+            ClientError::Decode(format!(
+                "{e} — reply was {} bytes, starting: {head:?}",
+                raw.len()
+            ))
+        });
         // Recorded before the `?`, so a payload that is expensive to
         // parse *and* malformed still reports what it cost.
         self.last_call

@@ -475,3 +475,93 @@ fn the_server_is_not_reachable_over_tcp() {
         "something is listening on the old TCP port; the protocol must not be TCP-reachable"
     );
 }
+
+/// Where does the line framing stop working?
+///
+/// The reported failure — a snapshot that decodes as
+/// `missing field \`id\`` — appeared once entities carried enough fields
+/// to make the reply large. This grows the reply until it breaks, so the
+/// limit is a number rather than a guess.
+#[test]
+fn a_large_snapshot_survives_the_framing() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let server = RemoteServer::start(&test_socket_name()).expect("bind");
+    let socket = server.name().to_owned();
+
+    let done = Arc::new(AtomicBool::new(false));
+    let loop_done = Arc::clone(&done);
+    let main_loop = std::thread::spawn(move || {
+        let mut resources = ecs();
+        while !loop_done.load(Ordering::Relaxed) {
+            for item in server.take_pending() {
+                let response = handle(&item.request, &mut resources);
+                let _ = item.reply.send(response);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    });
+
+    let client = RemoteClient::new(&socket);
+
+    // Each entity carries a Transform, so the reply grows steadily.
+    for n in 0..400 {
+        let e = client.spawn(Some(&format!("Entity{n}"))).expect("spawn");
+        client
+            .add_component(e, std::any::type_name::<Transform>())
+            .expect("add");
+
+        match client.list_entities() {
+            Ok(entities) => assert_eq!(entities.len(), n + 1),
+            Err(e) => panic!("the snapshot stopped decoding at {} entities: {e}", n + 1),
+        }
+    }
+
+    done.store(true, Ordering::Relaxed);
+    main_loop.join().unwrap();
+}
+
+/// Every field value has to survive JSON as **one line**: the protocol
+/// frames messages by newline, so a value carrying a raw `\n` would cut
+/// the message in half and the second half would decode as a stray
+/// object — which is exactly the `missing field \`id\`` that was seen.
+#[test]
+fn no_field_value_serialises_with_a_raw_newline() {
+    let values = [
+        ReflectValue::F32(1.5),
+        ReflectValue::String("plain".into()),
+        ReflectValue::String("with\nnewline".into()),
+        ReflectValue::Bool(true),
+        ReflectValue::EntityRef(None),
+    ];
+    for v in &values {
+        let json = serde_json::to_string(v).expect("serialises");
+        assert!(
+            !json.contains('\n'),
+            "{v:?} serialised with a raw newline: {json}"
+        );
+    }
+}
+
+/// A non-finite float does not survive the wire.
+///
+/// JSON has no spelling for infinity or NaN, and `serde_json` does not
+/// refuse — it writes `null`, which then fails to read back as a float.
+/// So the value is silently lost rather than reported, and a component
+/// holding one cannot round-trip at all.
+///
+/// **Failing on purpose**: this is the check a fix has to satisfy.
+#[test]
+#[ignore = "reproduces a known bug: non-finite floats become null on the wire"]
+fn a_non_finite_float_survives_the_wire() {
+    for value in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+        let json = serde_json::to_string(&ReflectValue::F32(value))
+            .expect("serde_json writes null rather than erroring");
+        let back: Result<ReflectValue, _> = serde_json::from_str(&json);
+        assert!(
+            back.is_ok(),
+            "{value} serialised to {json} and could not be read back: {back:?}"
+        );
+    }
+}
