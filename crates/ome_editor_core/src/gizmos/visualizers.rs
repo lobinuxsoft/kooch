@@ -4,7 +4,6 @@
 //! [`super::register_builtin_visualizers_system`].
 
 use glam::Vec3;
-use ome_ecs::directional_light::DirectionalLight;
 use ome_ecs::hierarchy::GlobalTransform;
 use ome_ecs::orthographic_camera::OrthographicCamera;
 use ome_ecs::perspective_camera::PerspectiveCamera;

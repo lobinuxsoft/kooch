@@ -440,7 +440,7 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
             })
             .collect(),
         None => {
-            let mut local: Vec<ReflectedTypeInfo> = resources
+            let local: Vec<ReflectedTypeInfo> = resources
                 .get::<ComponentRegistry>()
                 .map(|registry| {
                     registry

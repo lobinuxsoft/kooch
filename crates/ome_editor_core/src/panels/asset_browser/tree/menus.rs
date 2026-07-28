@@ -7,7 +7,6 @@ use crate::actions::{EditorAction, NewFileKind};
 use crate::icons;
 
 use super::model::{CreateKind, FileLeaf, FolderNode, PendingCreate, RenameState};
-use super::RenderCtx;
 
 pub(super) fn folder_menu(
     ui: &mut egui::Ui,

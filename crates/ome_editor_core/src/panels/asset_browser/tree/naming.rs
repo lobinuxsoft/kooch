@@ -5,7 +5,6 @@ use std::path::Path;
 use crate::actions::{EditorAction, NewFileKind};
 
 use super::model::{CreateKind, PendingCreate, RenameState};
-use super::RenderCtx;
 
 pub(super) fn rename_edit(
     ui: &mut egui::Ui,

@@ -7,14 +7,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use egui::collapsing_header::CollapsingState;
 use ome_core::Guid;
 
-use crate::actions::{EditorAction, NewFileKind};
-use crate::drag_drop::DraggedAsset;
-use crate::icons;
+use crate::actions::NewFileKind;
 use crate::panels::inspector::AssetCatalogEntry;
-
 
 /// A folder node in the tree. Rebuilt fresh each frame (project trees,
 /// minus `target/`, are small enough that the fs walk is trivial).
