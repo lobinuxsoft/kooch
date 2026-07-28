@@ -3,7 +3,7 @@ authors = ["lobinuxsoft"]
 language = "en"
 src = "src"
 title = "Oh My Engine"
-description = "GPU-driven game engine in Rust — SDF ray-marching + hybrid CPU/GPU ECS."
+description = "GPU-driven game engine in Rust — Nanite-style meshlet rendering, CPU ECS, and an editor."
 
 [output.html]
 default-theme = "navy"

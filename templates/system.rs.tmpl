@@ -7,11 +7,13 @@ use oh_my_engine::prelude::*;
 
 /// The `{{name}}` system. A system is any `fn(&mut Resources)`.
 ///
-/// Register it in your project's `main.rs`, picking the stage it should
-/// run in (`Startup`, `Update`, `PreRender`, …):
-/// ```ignore
-/// app.add_system(Stage::Update, {{name}});
-/// ```
+/// You do not register it by hand. Press Register Scripts and the editor
+/// regenerates `src/registrations.rs`, adding it to `Stage::Update`
+/// behind the `Playing` gate — so it runs when you press Play, not while
+/// you are authoring.
+///
+/// To run in a different stage, register it yourself in your own plugin:
+/// `registrations.rs` is overwritten without warning.
 pub fn {{name}}(resources: &mut Resources) {
     let _ = resources;
     // Read/write resources and component storages here.

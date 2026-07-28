@@ -2,16 +2,25 @@
 
 [Introduction](./introduction.md)
 
+# User Guide
+
+- [Getting Started](./guide/getting-started.md)
+- [The Editor](./editor/overview.md)
+
+# Scripting
+
+- [Your First Project](./scripting/first-project.md)
+- [Creating a Project](./scripting/creating-a-project.md)
+- [Writing a Component](./scripting/components.md)
+- [Writing a System](./scripting/systems.md)
+
 # Architecture
 
 - [Crate Graph](./architecture/crate-graph.md)
 - [Render Pipeline](./architecture/render-pipeline.md)
-- [BVH-Driven Ray Marching](./architecture/bvh-raymarch.md)
-- [Multi-consumer BVH](./architecture/bvh-multi-consumer.md)
-
-# User Guide
-
-- [Getting Started](./guide/getting-started.md)
+- [Retired](./architecture/retired/index.md)
+  - [BVH-Driven Ray Marching](./architecture/retired/bvh-raymarch.md)
+  - [Multi-consumer BVH](./architecture/retired/bvh-multi-consumer.md)
 
 # Reference
 
