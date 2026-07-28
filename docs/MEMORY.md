@@ -875,6 +875,67 @@ tampoco las querríamos.
    módulo padre pasa a apuntar al nuevo `mod.rs`. Se arregla en el origen (subir la
    visibilidad de lo que ahora cruza archivos), **no** agregando re-exports para tapar.
 
+### El remoto se queda (locked 2026-07-28, #647/#648)
+
+**Decisión: NO se elimina el proceso remoto.** Se venía asumiendo lo contrario — que hot-reload
+del código del proyecto iba a dejar al editor sin necesidad del proceso separado, y que
+entonces el transporte se borraba junto con toda su superficie de ataque. Esa premisa está
+muerta y hay que dejar de razonar desde ella.
+
+**Por qué se queda:** el remoto es lo que permite **editar los datos de las entidades y probar
+los cambios contra un mundo corriendo**. Eso funciona hoy. Borrarlo sería sacar features que
+sirven para cerrar un agujero que ya se cerró de otra forma (socket local, ver abajo). El
+costo de mantenerlo es un transporte que hay que asegurar; el costo de matarlo era perder el
+único camino que ejecuta el código del proyecto.
+
+**Consecuencia práctica que ya mordió:** `actions/remote_edit.rs` (1148 líneas) se salteó en la
+tanda de splits *porque estaba en zona de demolición*. Ya no lo está. Vuelve a la lista.
+
+**Lo que sigue siendo cierto de la crítica original:** el remoto es un proceso separado porque
+Rust no tiene ABI estable y el editor standalone no puede cargar los tipos del proyecto. El
+editor **también** corre embebido (`cargo run` sin flags → `run_editor_with(ProjectRegistrations)`),
+así que el camino remoto es una elección, no una necesidad física. Se elige igual.
+
+### El límite del plugin es Rust plano, no una ABI en C (locked 2026-07-28, #120 cerrada)
+
+`stabby` + `cdylib` + tabla de punteros salió del workspace entero. No queda una referencia.
+
+**Lo que hay en su lugar:** el proyecto compila como **`dylib`** (no `cdylib`), depende de
+`ome_plugin_api` como cualquier crate, y **los tipos cruzan como tipos de Rust**. Sin vtables
+manuales, sin capa de traducción, sin `extern "C"` en el contrato.
+
+**El precio, aceptado a ojos abiertos:** Rust no tiene ABI estable, así que el plugin y el
+engine tienen que compilarse con **el mismo rustc**. Eso sirve para el código del propio
+proyecto — que es el caso de uso real, porque lo compila el mismo editor — y **no** sirve para
+plugins de terceros distribuidos como binario. Si ese caso vuelve a hacer falta, se abre una
+issue nueva con el problema, no se resucita el diseño de stabby.
+
+`BuildStamp` (`ome_plugin_api/src/version.rs`, capturado en `build.rs` desde `rustc -V -v`)
+graba compilador y versión de API para que un mismatch sea un rechazo claro y no un crash.
+
+**Medido, no supuesto:** `TypeId` sobrevive un rebuild sólo-del-proyecto. La identidad se
+mantiene mientras el lado del engine no cambie. Cuando cambia, falla ruidosamente — que es la
+propiedad que se quería.
+
+### El protocolo del editor va por socket local, nunca por TCP (locked 2026-07-28, PR #654)
+
+Unix domain socket en Linux, named pipe en Windows. Un objeto JSON por línea, en los dos
+sentidos. **HTTP no aportaba nada**: no hay routing, ni content negotiation, ni caching.
+
+**Las dos razones son de seguridad y ninguna es teórica:**
+
+1. **Un puerto TCP en loopback lo alcanza el navegador.** Una página cualquiera hace `fetch()`
+   con body `text/plain` — CORS *simple request*, sin preflight, el browser **lo manda**. La
+   respuesta no se puede leer, pero el comando ya corrió. Encadenado a `SaveScene`, que
+   escribe a cualquier ruta, eso es ejecución de código por visitar una página. Un socket
+   local no es direccionable así: el vector desaparece en vez de filtrarse.
+2. **El puerto era la constante 15703.** Un proyecto huérfano que sobrevivía a un editor
+   caído se quedaba con él, y el editor siguiente se conectaba a *ese* — espejando y editando
+   el mundo de una sesión muerta, en silencio. El nombre ahora se acuña por sesión.
+
+Si alguna vez hace falta debug remoto sobre la red (probar un build en la OneXFly), **es un
+segundo camino, opt-in, con token de sesión** — no es relajar este.
+
 ### El ECS se queda en CPU (locked 2026-07-27)
 
 Extiende y cierra lo que #603 dejó a medio decir. **El ECS no va a ir al GPU.** Lo que sí va,

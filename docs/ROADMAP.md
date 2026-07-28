@@ -6,7 +6,7 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
-Last updated 2026-07-27, `development` at `ea72349`.
+Last updated 2026-07-28, `development` at `d3bd885`.
 
 ---
 
@@ -29,6 +29,30 @@ Last updated 2026-07-27, `development` at `ea72349`.
 | **#640** | `BoxGravity` — a cube planet, each face along its own normal |
 | **#642** | Gravity no longer keeps every body awake (0.137 → 0.042 ms/step, 300 bodies) |
 | **#643** | The Console stopped redoing the whole log every frame (0.206 ms → 0.029 µs) |
+| **#120** | Closed unbuilt: `stabby` + C ABI replaced by plain Rust `dylib`, no translation layer |
+| **PR #651/#652** | The project's code loads into the editor as a `dylib` — its components appear in Add Component and render in the Inspector. Old projects migrate on open. Reload itself is still missing (#648) |
+| **PR #653** | The monoliths, split. One file over 600 lines left, and it is named below |
+| **PR #654** | The editor protocol left TCP for a local socket — closes the browser vector and the orphan-on-a-fixed-port confusion (#647) |
+
+---
+
+## First — the Joint cannot be authored
+
+**#655.** Adding a `Joint` from the component menu freezes the world: the component never
+appears, systems stop, the session has to be reconnected, and nothing is printed anywhere.
+
+Three defects stacked. `Joint` names its bodies with raw `Entity` rather than the `EntityRef`
+that #607 built for exactly this, so what crosses the wire is a `Live` handle, which refuses
+to serialise by design. The server discards that error and sends `{}`. The client logs the
+resulting decode failure at `debug!`. Every layer hid the one below it.
+
+Ahead of the performance work because it is the one thing a user can do by accident that
+breaks the session, and because two thirds of it are the error paths lying — which is worth
+fixing whatever else is being built on top.
+
+It carries a feature too: `EntityRef` fields are read-only in the Inspector, so even with the
+freeze fixed a joint cannot name its bodies. Needs an entity picker and a drop target from
+the World panel.
 
 ---
 
@@ -43,12 +67,17 @@ the same problem seen from two sides, so they are one push.
 Ordered by measured or estimated cost. **Measure first, then fix** — the last two wins came
 from a number, and the two guesses before them were wrong.
 
-1. **The remote pull blocks the editor's main thread every frame during Play.**
+0. **#656 — the editor redraws continuously while idle.** Two cores pinned with nothing
+   happening, because `winit_app.rs:192` requests a redraw unconditionally every frame.
+   Godot, in the same state, uses approximately nothing. Newly filed and ahead of everything
+   below: it is the largest waste in the editor and the cheapest to describe. It also changes
+   the meaning of every "every N frames" cadence, so it interacts with item 1.
+1. **#645 — the remote pull blocks the editor's main thread every frame during Play.**
    `REFRESH_INTERVAL_PLAYING = 1` in `systems/remote_sync.rs` → `session.refresh()` →
-   `client.list_entities()`, a synchronous HTTP round-trip plus a parse of the whole scene
-   snapshot, inline in the frame. This is the largest suspected cost in the editor and has
-   never been measured. Candidates: move it off-thread, diff server-side, or drop to a
-   cadence with interpolation.
+   `client.list_entities()`, inline in the frame. The editor is not waiting on the transport;
+   it is waiting for the project process to reach its next `Stage::First`. Still unmeasured —
+   the transport changed under it (#654), the instrumentation did not get written. Candidates:
+   move it off-thread, diff server-side, or drop to a cadence with interpolation.
 2. **#641 — egui `changed id between passes`.** 1919 warnings in a four-minute session, up
    from 450 in a ten-minute one: it scales with panels open. Each is a `format!` of two
    `Vec<Id>` plus a write to stdout *and* the log buffer. It is also a correctness bug — a
@@ -67,33 +96,22 @@ from a number, and the two guesses before them were wrong.
 does in its `draw` it does sixty times a second for as long as it is visible. The user's
 report was *"it depends on how many panels are open"*, and that was exactly right.
 
-### 2. The monolithic files
+### 2. The monolithic files — done, with one exception
 
-Thirty files over 400 lines. The Console bug lived in one and was invisible until it was
-split. Ordered by size; the ones carrying per-frame work are worth doing first.
+Thirty files were over 400 lines. PR #653 split them. What is left over 600 is a single file,
+and it was skipped on purpose:
 
-| Lines | File |
-|---|---|
-| 1136 | `ome_editor_core/src/actions/remote_edit.rs` |
-| 709 | `examples/physics_smoke.rs` |
-| 620 | `ome_physics/src/components/body.rs` |
-| 612 | `ome_physics/src/rapier_backend/backend.rs` |
-| 595 | `ome_editor_core/src/queries.rs` |
-| 595 | `ome_editor_core/src/panels/asset_browser/tree.rs` |
-| 562 | `ome_editor_core/src/actions/handlers.rs` |
-| 535 | `ome_editor_core/src/gizmos/visibility.rs` |
-| 507 | `ome_editor_core/src/panels/inspector/physics_warnings.rs` |
-| 499 | `ome_render/src/material/pipeline.rs` |
-| 488 | `ome_editor_core/src/actions/codegen.rs` |
-| 475 | `ome_editor_core/src/systems/render.rs` |
-| 466 | `ome_editor_core/src/gizmos.rs` |
+| Lines | File | Why it is still there |
+|---|---|---|
+| 1148 | `ome_editor_core/src/actions/remote_edit.rs` | Skipped as demolition-bound. **That premise is dead** — the remote stays (#647), so this file has to be split like the rest |
 
-Plus test and example files over the line (`tests/fields.rs`, `meshlet_bench.rs`,
-`plugin/tests/joints.rs`, `make_playground.rs`, and others) — lower priority, since a test
-file's size costs review attention rather than runtime.
+Twenty-five files sit between 400 and 600. That band is no longer an automatic split: the
+threshold moved to 600, above which a file is *examined* for whether it went monolithic or is
+carrying something that does not belong to it. Size alone is not the verdict. See `MEMORY.md`,
+"Cómo se parte un archivo monolítico".
 
-`cargo run --example` and the full list: `find crates src examples -name '*.rs' | xargs wc -l
-| sort -rn | awk '$1 > 400'`.
+The full list, any time: `find crates src examples -name '*.rs' | xargs wc -l | sort -rn |
+awk '$1 > 600'`.
 
 ### Then, the features that were next before this
 

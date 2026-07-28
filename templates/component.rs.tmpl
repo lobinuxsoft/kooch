@@ -9,11 +9,10 @@ use oh_my_engine::ome_ecs::component::Component;
 /// A `{{Name}}` component. Attach it to entities; its public fields show
 /// up in the editor Inspector automatically.
 ///
-/// Register it once (for scene serialization + the Inspector) in your
-/// project's `main.rs`, inside `register_components`:
-/// ```ignore
-/// registry.register_cpu_reflected::<{{Name}}>();
-/// ```
+/// You do not register it by hand. Press Register Scripts and the editor
+/// regenerates `src/registrations.rs` with both halves: the ECS
+/// registration (for scene save/load and the Inspector) and the schema a
+/// standalone editor reads from this project's dylib.
 #[derive(Default, Reflect)]
 pub struct {{Name}} {
     // Add fields here, e.g.:

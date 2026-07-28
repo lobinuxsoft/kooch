@@ -204,7 +204,7 @@ path = "src/main.rs"
 # without it `oh_my_engine::ome_plugin_api` is compiled out and the
 # generated `lib.rs` does not build at all.
 # `remote` lets `cargo run -- --remote` expose the ECS to the standalone
-# editor over HTTP; `physics` gives you rigid bodies — without it a
+# editor over a local socket; `physics` gives you rigid bodies — without it a
 # `RigidBody` is an inert component and nothing ever falls. `gravity` is
 # the same story one level up: without it a `PointGravity` is authorable,
 # mirrors to the editor, draws its gizmo, and pulls on nothing.
@@ -277,7 +277,8 @@ fn main() {
     // `cargo run -- --game`  → the game (what the editor's Play button runs).
     // `cargo run -- --remote`→ headless authoring host: your components +
     //                          the remote server, driven by the standalone
-    //                          editor over HTTP. Gameplay starts paused; the
+    //                          editor over a local socket. Gameplay starts
+    //                          paused; the
     //                          editor's Play button starts it without a
     //                          rebuild, in the editor's own viewport.
     let args: Vec<String> = std::env::args().collect();
