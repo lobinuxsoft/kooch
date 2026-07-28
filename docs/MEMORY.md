@@ -827,6 +827,54 @@ el contenido rompería el vínculo que hace que editar el origen actualice las i
 campo (Unity y Godot) o si una instancia modificada se vuelve su propia escena. Define el
 formato de archivo, y se toma con la instanciación ya andando.
 
+### Cómo se parte un archivo monolítico (locked 2026-07-28)
+
+**El motivo es humano, y sólo humano.** El tamaño de un archivo fuente **no influye en la
+carga en memoria ni en el binario**: en Rust los módulos son organización de *compilación*,
+un archivo de 1200 líneas y seis de 200 producen el mismo binario byte por byte. Lo que sí
+pesa es monomorfización, inlining, código muerto que el linker no elimina y el debuginfo —
+nada de eso mejora partiendo archivos.
+
+Se parte para **trackear más fácil, aislar problemas, y no darle a un solo archivo demasiada
+responsabilidad**. Si se parte buscando ahorrar memoria, se corta donde no hay que cortar.
+
+**Las reglas:**
+
+- **Cortar por funcionalidad o pertenencia, nunca por tamaño.** Si el corte no se puede
+  nombrar en una frase —"lo que el backend *es*" contra "cómo *cumple* el contrato"— es un
+  corte arbitrario y va a estorbar más de lo que ayuda.
+- **600 líneas dispara una revisión, no un split** (subido desde 400 el 2026-07-28). Pasar
+  el umbral es la señal para *preguntarse* dos cosas: ¿se volvió monolítico de verdad, o
+  simplemente es grande y coherente? ¿y hay adentro cosas que no le corresponden? Si la
+  respuesta es que cada parte pertenece donde está, el archivo se queda como está. Un
+  archivo de 559 que hace una sola cosa está mejor que tres de 190 unidos por delegaciones
+  inventadas.
+- **Los tests se mudan a archivo propio** cuando empujan al módulo sobre el umbral. No
+  pierden nada por mudarse y el módulo recupera su tamaño real.
+- **No partir lo que va a morir.** Partir bien código que está por borrarse es trabajo
+  tirado — la razón por la que el protocolo remoto queda intacto hasta demolerlo entero.
+
+**Estado al 2026-07-28:** con el umbral en 600, **queda un solo archivo por encima**:
+`actions/remote_edit.rs` (1136), que es precisamente el que no se toca hasta la demolición
+del remoto. Los 25 restantes entre 400 y 600 quedaron revisados y se dejan como están. La
+tanda de esta sesión bajó siete archivos: `components/body.rs`, `rapier_backend/backend.rs`,
+`asset_browser/tree.rs`, `examples/physics_smoke.rs`, `actions/handlers.rs`,
+`gizmos/visibility.rs`, `inspector/physics_warnings.rs` y `queries/tests.rs`.
+
+**Lo que Rust permite y lo que no**, porque decide qué cortes existen: se pueden tener
+**varios `impl` inherentes del mismo tipo en archivos distintos**, pero **NO se puede partir
+un `impl Trait for Type`**. Ese bloque es indivisible, y es la razón de que
+`rapier_backend/backend/contract.rs` quede en 405 líneas. Rust no tiene clases parciales y
+tampoco las querríamos.
+
+**Dos trampas del split mecánico, encontradas partiendo `tree.rs` y `body.rs`:**
+
+1. Cortar por número de línea deja cada archivo con el **doc comment de la función
+   siguiente** — error de compilación, fácil de arreglar, fácil de no ver venir.
+2. **`pub(super)` cambia de significado al bajar un nivel.** Un `pub(super)` que apuntaba al
+   módulo padre pasa a apuntar al nuevo `mod.rs`. Se arregla en el origen (subir la
+   visibilidad de lo que ahora cruza archivos), **no** agregando re-exports para tapar.
+
 ### El ECS se queda en CPU (locked 2026-07-27)
 
 Extiende y cierra lo que #603 dejó a medio decir. **El ECS no va a ir al GPU.** Lo que sí va,
