@@ -8,13 +8,18 @@ use crate::actions::EditorAction;
 use crate::drag_drop::DraggedAsset;
 use crate::icons;
 
-use super::model::{FileLeaf, FolderNode};
+use super::RenderCtx;
 use super::menus::{folder_menu, leaf_menu};
+use super::model::{FileLeaf, FolderNode};
 use super::naming::{create_edit, rename_edit};
 use super::visuals::{draw_drag_preview, file_icon, type_icon};
-use super::RenderCtx;
 
-pub(super) fn render_children(ui: &mut egui::Ui, node: &FolderNode, ctx: &mut RenderCtx<'_>, root: &Path) {
+pub(super) fn render_children(
+    ui: &mut egui::Ui,
+    node: &FolderNode,
+    ctx: &mut RenderCtx<'_>,
+    root: &Path,
+) {
     if ctx.pending.as_ref().is_some_and(|p| p.parent == node.path) {
         create_edit(ui, ctx.pending, ctx.actions);
     }
@@ -30,7 +35,12 @@ pub(super) fn render_children(ui: &mut egui::Ui, node: &FolderNode, ctx: &mut Re
     }
 }
 
-pub(super) fn render_folder(ui: &mut egui::Ui, node: &FolderNode, ctx: &mut RenderCtx<'_>, root: &Path) {
+pub(super) fn render_folder(
+    ui: &mut egui::Ui,
+    node: &FolderNode,
+    ctx: &mut RenderCtx<'_>,
+    root: &Path,
+) {
     if ctx.rename.as_ref().is_some_and(|r| r.path == node.path) {
         rename_edit(ui, &node.path, true, ctx.actions, ctx.rename);
         return;
@@ -59,7 +69,12 @@ pub(super) fn render_folder(ui: &mut egui::Ui, node: &FolderNode, ctx: &mut Rend
         .body(|ui| render_children(ui, node, ctx, root));
 }
 
-pub(super) fn render_leaf(ui: &mut egui::Ui, leaf: &FileLeaf, ctx: &mut RenderCtx<'_>, root: &Path) {
+pub(super) fn render_leaf(
+    ui: &mut egui::Ui,
+    leaf: &FileLeaf,
+    ctx: &mut RenderCtx<'_>,
+    root: &Path,
+) {
     if ctx.rename.as_ref().is_some_and(|r| r.path == leaf.path) {
         rename_edit(ui, &leaf.path, false, ctx.actions, ctx.rename);
         return;

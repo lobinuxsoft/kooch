@@ -7,3 +7,7 @@ pub(crate) mod inspector;
 pub(crate) mod performance;
 pub(crate) mod view;
 pub(crate) mod world;
+
+/// Shared harness for the per-panel widget-id stability tests (#641).
+#[cfg(test)]
+pub(crate) mod id_stability_probe;

@@ -15,6 +15,9 @@ mod rotation;
 mod single;
 mod widgets;
 
+#[cfg(test)]
+mod id_stability;
+
 use std::collections::{HashMap, HashSet};
 
 use glam::{Quat, Vec3};
