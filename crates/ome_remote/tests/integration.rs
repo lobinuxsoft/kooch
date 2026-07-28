@@ -1,8 +1,10 @@
 //! End-to-end tests: `handle` against a live ECS, and a full HTTP
 //! round-trip through the listener thread and main-loop bridge.
 
-use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::io::{BufRead, BufReader, Write};
+
+use interprocess::local_socket::traits::Stream as _;
+use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
 
 use ome_core::resource::Resources;
 use ome_ecs::allocator::EntityAllocator;
@@ -135,26 +137,53 @@ fn unknown_component_is_a_typed_error() {
     }
 }
 
-#[test]
-fn http_ping_round_trips_through_the_bridge() {
-    // Bind an ephemeral-ish port; retry a few offsets if taken.
-    let server = (0..8)
-        .find_map(|i| RemoteServer::start(17700 + i).ok())
-        .expect("bind a port");
-    let port = server.port();
+/// A socket name unique to this test.
+///
+/// Tests run in parallel in one process, so a shared name would have them
+/// binding over each other — the local-socket equivalent of the port
+/// scan this replaced, but solved instead of retried.
+fn test_socket_name() -> String {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static N: AtomicU32 = AtomicU32::new(0);
+    // The counter alone is not enough: it is per-module, so two test
+    // modules in one binary both start at zero and collide on the same
+    // name. The clock disambiguates without the modules having to know
+    // about each other.
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    format!(
+        "ome_test_{}_{}_{}.sock",
+        std::process::id(),
+        nanos,
+        N.fetch_add(1, Ordering::Relaxed)
+    )
+}
 
-    // Client thread: POST a ping and capture the HTTP response body.
+/// The wire format, exercised without `RemoteClient`.
+///
+/// Deliberately raw: if this only went through the client, the two could
+/// drift into agreeing on something the protocol does not actually
+/// specify. One JSON object per line, in and out.
+#[test]
+fn a_raw_line_round_trips_through_the_bridge() {
+    let server = RemoteServer::start(&test_socket_name()).expect("bind a socket");
+    let socket = server.name().to_owned();
+
+    // Client thread: write one line, read one line.
     let client = std::thread::spawn(move || {
-        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        let body = r#"{"id":42,"method":"ping"}"#;
-        let request = format!(
-            "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        stream.write_all(request.as_bytes()).unwrap();
+        let name = socket
+            .as_str()
+            .to_ns_name::<GenericNamespaced>()
+            .expect("valid name");
+        let stream = Stream::connect(name).expect("connect");
+        let mut conn = BufReader::new(stream);
+        conn.get_mut()
+            .write_all(b"{\"id\":42,\"method\":\"ping\"}\n")
+            .unwrap();
         let mut response = String::new();
-        stream.read_to_string(&mut response).unwrap();
+        conn.read_line(&mut response).unwrap();
         response
     });
 
@@ -176,9 +205,12 @@ fn http_ping_round_trips_through_the_bridge() {
     assert!(answered, "server never received the request");
 
     let response = client.join().unwrap();
-    assert!(response.contains("200 OK"), "status line: {response}");
     assert!(response.contains("\"kind\":\"pong\""), "body: {response}");
     assert!(response.contains("\"id\":42"), "id echoed: {response}");
+    assert!(
+        response.ends_with('\n'),
+        "replies are line-delimited: {response:?}"
+    );
 }
 
 #[test]
@@ -186,10 +218,8 @@ fn client_drives_server_end_to_end() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    let server = (0..8)
-        .find_map(|i| RemoteServer::start(17720 + i).ok())
-        .expect("bind a port");
-    let port = server.port();
+    let server = RemoteServer::start(&test_socket_name()).expect("bind a port");
+    let socket = server.name().to_owned();
 
     // The project's "main loop": owns the ECS, drains the queue and
     // answers, until the client signals it is done.
@@ -207,7 +237,7 @@ fn client_drives_server_end_to_end() {
     });
 
     // The editor client: typed calls over the wire.
-    let client = RemoteClient::new(port);
+    let client = RemoteClient::new(&socket);
     client.ping().expect("ping");
 
     let hero = client.spawn(Some("Hero")).expect("spawn");
@@ -418,4 +448,120 @@ fn repeated_play_keeps_the_original_snapshot() {
         other => panic!("list: {other:?}"),
     };
     assert!(entities.is_empty(), "runtime spawn survived Stop");
+}
+
+/// The security property, asserted rather than assumed.
+///
+/// A running server must not be reachable over TCP. The old transport
+/// bound 15703 on loopback, which any process — and any web page, via
+/// `fetch` with a `text/plain` body and no CORS preflight — could reach
+/// and drive. `SaveScene` writes to any path, so that was code execution
+/// from visiting a page (#647).
+///
+/// This does not prove the whole class is closed; it proves the port that
+/// was open is not.
+#[test]
+fn the_server_is_not_reachable_over_tcp() {
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let _server = RemoteServer::start(&test_socket_name()).expect("bind a socket");
+
+    // The port the protocol used to live on.
+    let addr = "127.0.0.1:15703".parse().unwrap();
+    let refused = TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_err();
+    assert!(
+        refused,
+        "something is listening on the old TCP port; the protocol must not be TCP-reachable"
+    );
+}
+
+/// Where does the line framing stop working?
+///
+/// The reported failure — a snapshot that decodes as
+/// `missing field \`id\`` — appeared once entities carried enough fields
+/// to make the reply large. This grows the reply until it breaks, so the
+/// limit is a number rather than a guess.
+#[test]
+fn a_large_snapshot_survives_the_framing() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let server = RemoteServer::start(&test_socket_name()).expect("bind");
+    let socket = server.name().to_owned();
+
+    let done = Arc::new(AtomicBool::new(false));
+    let loop_done = Arc::clone(&done);
+    let main_loop = std::thread::spawn(move || {
+        let mut resources = ecs();
+        while !loop_done.load(Ordering::Relaxed) {
+            for item in server.take_pending() {
+                let response = handle(&item.request, &mut resources);
+                let _ = item.reply.send(response);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    });
+
+    let client = RemoteClient::new(&socket);
+
+    // Each entity carries a Transform, so the reply grows steadily.
+    for n in 0..400 {
+        let e = client.spawn(Some(&format!("Entity{n}"))).expect("spawn");
+        client
+            .add_component(e, std::any::type_name::<Transform>())
+            .expect("add");
+
+        match client.list_entities() {
+            Ok(entities) => assert_eq!(entities.len(), n + 1),
+            Err(e) => panic!("the snapshot stopped decoding at {} entities: {e}", n + 1),
+        }
+    }
+
+    done.store(true, Ordering::Relaxed);
+    main_loop.join().unwrap();
+}
+
+/// Every field value has to survive JSON as **one line**: the protocol
+/// frames messages by newline, so a value carrying a raw `\n` would cut
+/// the message in half and the second half would decode as a stray
+/// object — which is exactly the `missing field \`id\`` that was seen.
+#[test]
+fn no_field_value_serialises_with_a_raw_newline() {
+    let values = [
+        ReflectValue::F32(1.5),
+        ReflectValue::String("plain".into()),
+        ReflectValue::String("with\nnewline".into()),
+        ReflectValue::Bool(true),
+        ReflectValue::EntityRef(None),
+    ];
+    for v in &values {
+        let json = serde_json::to_string(v).expect("serialises");
+        assert!(
+            !json.contains('\n'),
+            "{v:?} serialised with a raw newline: {json}"
+        );
+    }
+}
+
+/// A non-finite float does not survive the wire.
+///
+/// JSON has no spelling for infinity or NaN, and `serde_json` does not
+/// refuse — it writes `null`, which then fails to read back as a float.
+/// So the value is silently lost rather than reported, and a component
+/// holding one cannot round-trip at all.
+///
+/// **Failing on purpose**: this is the check a fix has to satisfy.
+#[test]
+#[ignore = "reproduces a known bug: non-finite floats become null on the wire"]
+fn a_non_finite_float_survives_the_wire() {
+    for value in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+        let json = serde_json::to_string(&ReflectValue::F32(value))
+            .expect("serde_json writes null rather than erroring");
+        let back: Result<ReflectValue, _> = serde_json::from_str(&json);
+        assert!(
+            back.is_ok(),
+            "{value} serialised to {json} and could not be read back: {back:?}"
+        );
+    }
 }

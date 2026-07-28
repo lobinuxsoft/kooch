@@ -90,7 +90,7 @@ fn connected_with_schema(port: u16, components: &[(&str, Option<&str>)]) -> Remo
     use ome_remote::protocol::ComponentSchema;
 
     let mut state = RemoteState::new();
-    let mut session = crate::remote_session::RemoteSession::attach(port);
+    let mut session = crate::remote_session::RemoteSession::attach("ome_test_schema_only.sock");
     session.connected_with_schema_for_test(
         components
             .iter()
@@ -165,7 +165,9 @@ fn a_connecting_session_falls_back_to_the_local_registry() {
     let mut resources = mirrored_world();
     // `attach` starts in Connecting, and `is_connected` is false there.
     let mut state = RemoteState::new();
-    state.session = Some(crate::remote_session::RemoteSession::attach(1));
+    state.session = Some(crate::remote_session::RemoteSession::attach(
+        "ome_test_never_connects.sock",
+    ));
     resources.insert(state);
 
     intern_registry_names(&mut resources);

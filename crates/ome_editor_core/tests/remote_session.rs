@@ -47,12 +47,34 @@ fn seeded_ecs() -> Resources {
     resources
 }
 
+/// A socket name unique to this test.
+///
+/// Tests run in parallel in one process, so a shared name would have them
+/// binding over each other — the local-socket equivalent of the port
+/// scan this replaced, but solved instead of retried.
+fn test_socket_name() -> String {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static N: AtomicU32 = AtomicU32::new(0);
+    // The counter alone is not enough: it is per-module, so two test
+    // modules in one binary both start at zero and collide on the same
+    // name. The clock disambiguates without the modules having to know
+    // about each other.
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    format!(
+        "ome_test_{}_{}_{}.sock",
+        std::process::id(),
+        nanos,
+        N.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 #[test]
 fn attach_connects_and_pulls_a_snapshot() {
-    let server = (0..8)
-        .find_map(|i| RemoteServer::start(17740 + i).ok())
-        .expect("bind a port");
-    let port = server.port();
+    let server = RemoteServer::start(&test_socket_name()).expect("bind a port");
+    let socket = server.name().to_owned();
 
     let done = Arc::new(AtomicBool::new(false));
     let loop_done = Arc::clone(&done);
@@ -67,7 +89,7 @@ fn attach_connects_and_pulls_a_snapshot() {
         }
     });
 
-    let mut session = RemoteSession::attach(port);
+    let mut session = RemoteSession::attach(&socket);
     assert_eq!(session.state(), ConnectionState::Connecting);
 
     // Drive the handshake; the server is up, so this connects promptly.
@@ -113,9 +135,9 @@ fn attach_connects_and_pulls_a_snapshot() {
 
 #[test]
 fn attach_to_dead_port_stays_connecting() {
-    // Attached to a port with no server, a session never leaves
-    // `Connecting`: there is no child process to mark it `Failed`, and
-    // no server to answer the ping.
-    let mut session = RemoteSession::attach(59999);
+    // Attached to a socket nothing is listening on, a session never
+    // leaves `Connecting`: there is no child process to mark it `Failed`,
+    // and no server to answer the ping.
+    let mut session = RemoteSession::attach("ome_nothing_listens_here.sock");
     assert_eq!(session.poll_ready(), ConnectionState::Connecting);
 }

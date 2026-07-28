@@ -10,7 +10,7 @@ authors.workspace = true
 [dependencies]
 ome_core.workspace = true
 ome_ecs.workspace = true
-tiny_http.workspace = true
+interprocess.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

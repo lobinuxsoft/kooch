@@ -1,21 +1,27 @@
-//! Blocking HTTP client for the remote editor protocol.
+//! Blocking client for the remote editor protocol.
 //!
 //! The editor calls this to drive a project's running ECS. It is the
 //! mirror of [`server`](crate::server) and speaks the same
 //! [`protocol`](crate::protocol) types, so a request built here
 //! deserializes there and back with no schema drift.
 //!
-//! The transport is a bare `std::net::TcpStream` per request — one
-//! `POST`, one JSON body, `Connection: close`, read to EOF. No HTTP
-//! client crate and no async runtime: the editor calls from its own
-//! frame loop and a tooling client polling a loopback socket does not
-//! need connection pooling. If that ever bites, the transport is behind
-//! [`RemoteClient::call`] and swappable without touching callers.
+//! The transport is a **local socket** — a Unix domain socket or a
+//! Windows named pipe — carrying one JSON object per line. It is not a
+//! TCP port, which is the point: a port is reachable by anything on the
+//! machine, including a web page, and this protocol can write files
+//! (#647). A local socket is not addressable from a browser at all.
+//!
+//! One connection per request, as before. That is more than a local
+//! socket needs and is worth revisiting, but changing the transport and
+//! the connection lifetime at once would make a regression impossible to
+//! attribute.
 
-use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+use interprocess::local_socket::traits::Stream as _;
+use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
 
 use ome_ecs::reflect::ReflectValue;
 
@@ -117,29 +123,30 @@ impl CallStatsCell {
 
 /// Connection details for a running project's remote server.
 ///
-/// Cheap to clone and hold; each call opens its own short-lived socket,
-/// so a [`RemoteClient`] is just an address plus a request-id counter.
+/// Cheap to hold; each call opens its own short-lived connection, so a
+/// [`RemoteClient`] is just a socket name plus a request-id counter.
 pub struct RemoteClient {
-    host: String,
-    port: u16,
+    /// Name of the local socket the project is listening on.
+    name: String,
     /// Monotonic request ids, so a reply can be matched to its call.
     next_id: AtomicU64,
-    /// Per-request socket timeout.
-    timeout: Duration,
     /// Cost of the last completed call, for the editor's perf HUD.
     last_call: CallStatsCell,
 }
 
 impl RemoteClient {
-    /// A client for the loopback server on `port`.
-    pub fn new(port: u16) -> Self {
+    /// A client for the project listening on the local socket `name`.
+    pub fn new(name: impl Into<String>) -> Self {
         Self {
-            host: "127.0.0.1".to_owned(),
-            port,
+            name: name.into(),
             next_id: AtomicU64::new(1),
-            timeout: Duration::from_secs(2),
             last_call: CallStatsCell::default(),
         }
+    }
+
+    /// The socket name this client talks to.
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// What the last completed [`Self::call`] cost, split by transport
@@ -148,12 +155,6 @@ impl RemoteClient {
     /// reporting a zero that reads like "free".
     pub fn last_call_stats(&self) -> CallStats {
         self.last_call.load()
-    }
-
-    /// Overrides the per-request socket timeout (default 2s).
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
     }
 
     /// Liveness probe. `Ok(())` means the server answered a ping.
@@ -287,8 +288,17 @@ impl RemoteClient {
         let transport = started.elapsed();
 
         let decoding = Instant::now();
-        let decoded: Result<Response, _> =
-            serde_json::from_str(&raw).map_err(|e| ClientError::Decode(e.to_string()));
+        // The reply is quoted into the error on failure. Without it a
+        // decode error names the missing field and not the text that
+        // lacked it, which says nothing about whether the reply was
+        // truncated, framed wrong, or simply not what was expected.
+        let decoded: Result<Response, _> = serde_json::from_str(&raw).map_err(|e| {
+            let head: String = raw.chars().take(200).collect();
+            ClientError::Decode(format!(
+                "{e} — reply was {} bytes, starting: {head:?}",
+                raw.len()
+            ))
+        });
         // Recorded before the `?`, so a payload that is expensive to
         // parse *and* malformed still reports what it cost.
         self.last_call
@@ -301,31 +311,28 @@ impl RemoteClient {
         }
     }
 
-    /// Opens a socket, POSTs `body`, and returns the response body.
+    /// Connects, writes one JSON line, and reads the reply line.
     fn round_trip(&self, body: &str) -> Result<String, ClientError> {
-        let mut stream = TcpStream::connect((self.host.as_str(), self.port))?;
-        stream.set_read_timeout(Some(self.timeout))?;
-        stream.set_write_timeout(Some(self.timeout))?;
+        let name = self
+            .name
+            .as_str()
+            .to_ns_name::<GenericNamespaced>()
+            .map_err(|e| ClientError::Decode(format!("invalid socket name: {e}")))?;
+        let stream = Stream::connect(name)?;
+        let mut conn = BufReader::new(stream);
 
-        let request = format!(
-            "POST / HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\n\
-             Content-Length: {}\r\nConnection: close\r\n\r\n{}",
-            self.host,
-            body.len(),
-            body,
-        );
-        stream.write_all(request.as_bytes())?;
+        conn.get_mut().write_all(body.as_bytes())?;
+        conn.get_mut().write_all(b"\n")?;
 
-        let mut raw = String::new();
-        stream.read_to_string(&mut raw)?;
-        split_body(&raw).ok_or_else(|| ClientError::Decode("no HTTP body in response".to_owned()))
+        let mut reply = String::new();
+        conn.read_line(&mut reply)?;
+        if reply.is_empty() {
+            return Err(ClientError::Decode(
+                "server closed without replying".to_owned(),
+            ));
+        }
+        Ok(reply)
     }
-}
-
-/// Returns the body that follows the first blank line of an HTTP
-/// response, i.e. everything after the `\r\n\r\n` header terminator.
-fn split_body(raw: &str) -> Option<String> {
-    raw.split_once("\r\n\r\n").map(|(_, body)| body.to_owned())
 }
 
 #[cfg(test)]
@@ -333,13 +340,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn split_body_takes_everything_after_the_blank_line() {
-        let raw = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}";
-        assert_eq!(split_body(raw).as_deref(), Some("{}"));
-    }
+    fn stats_start_empty_and_saturate_rather_than_wrap() {
+        let cell = CallStatsCell::default();
+        assert_eq!(cell.load(), CallStats::default());
 
-    #[test]
-    fn split_body_is_none_without_a_header_terminator() {
-        assert_eq!(split_body("garbage without terminator"), None);
+        cell.store(
+            Duration::from_secs(u64::MAX / 2),
+            Duration::ZERO,
+            usize::MAX,
+        );
+        let stats = cell.load();
+        assert_eq!(
+            stats.transport_us,
+            u32::MAX,
+            "a stuck call must read as enormous"
+        );
+        assert_eq!(stats.response_bytes, u32::MAX);
     }
 }

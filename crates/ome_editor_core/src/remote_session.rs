@@ -17,10 +17,9 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use ome_remote::protocol::{ComponentSchema, EntitySnapshot};
-use ome_remote::{DEFAULT_PORT, RemoteClient};
+use ome_remote::{NAME_ENV, RemoteClient};
 
 use crate::remote_mirror::RemoteMirror;
 
@@ -107,6 +106,13 @@ impl RemoteSession {
     pub fn launch(manifest_path: &Path, engine_root: Option<&Path>) -> std::io::Result<Self> {
         let output = Arc::new(Mutex::new(Vec::new()));
 
+        // A name unique to this launch. The old fixed port meant an
+        // orphaned project — one that outlived a crashed editor — still
+        // held it, so the next editor connected to *that* and mirrored a
+        // dead session's world in silence. Yesterday's process cannot
+        // answer to a name minted today.
+        let socket = unique_socket_name();
+
         let mut cmd = Command::new("cargo");
         cmd.arg("run")
             .arg("--manifest-path")
@@ -127,6 +133,7 @@ impl RemoteSession {
             // the editor's directory and comes up with an empty world.
             cmd.current_dir(project_root);
         }
+        cmd.env(NAME_ENV, &socket);
         if std::env::var_os("RUST_LOG").is_none() {
             cmd.env("RUST_LOG", "info");
         }
@@ -145,20 +152,20 @@ impl RemoteSession {
         Ok(Self {
             child: Some(child),
             output,
-            client: RemoteClient::new(DEFAULT_PORT).with_timeout(Duration::from_millis(500)),
+            client: RemoteClient::new(socket),
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
             schema: Vec::new(),
         })
     }
 
-    /// Attaches to a server already listening on `port`, launching no
+    /// Attaches to a server already listening on `socket`, launching no
     /// process. Used to drive an externally-run project and by tests.
-    pub fn attach(port: u16) -> Self {
+    pub fn attach(socket: impl Into<String>) -> Self {
         Self {
             child: None,
             output: Arc::new(Mutex::new(Vec::new())),
-            client: RemoteClient::new(port).with_timeout(Duration::from_millis(500)),
+            client: RemoteClient::new(socket),
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
             schema: Vec::new(),
@@ -272,6 +279,20 @@ impl Drop for RemoteSession {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// A socket name no other launch will produce.
+///
+/// The editor's pid plus a counter: unique across concurrent editors and
+/// across relaunches of one, which is the property the old fixed port
+/// lacked. Kept short and alphanumeric because Windows named pipes and
+/// Linux abstract sockets have different rules about what a name may
+/// contain, and the intersection is narrow.
+fn unique_socket_name() -> String {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("ome_{}_{}.sock", std::process::id(), n)
 }
 
 /// Spawns a thread that appends each line of `stream` to `sink`.
