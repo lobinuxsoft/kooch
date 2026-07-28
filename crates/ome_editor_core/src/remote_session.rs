@@ -89,6 +89,14 @@ pub struct RemoteSession {
     snapshot: Vec<EntitySnapshot>,
     /// Component schema, pulled once on connect.
     schema: Vec<ComponentSchema>,
+    /// Why the snapshot stopped tracking the project, or `None` while it
+    /// tracks.
+    ///
+    /// A refresh that fails leaves the previous snapshot in place, which
+    /// is right for a hiccup and a lie for anything lasting: the editor
+    /// goes on showing a world that no longer exists and answering edits
+    /// against it. A stale mirror has to be visibly stale.
+    stale: Option<String>,
 }
 
 impl RemoteSession {
@@ -156,6 +164,7 @@ impl RemoteSession {
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
             schema: Vec::new(),
+            stale: None,
         })
     }
 
@@ -169,6 +178,7 @@ impl RemoteSession {
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
             schema: Vec::new(),
+            stale: None,
         }
     }
 
@@ -237,16 +247,41 @@ impl RemoteSession {
     }
 
     /// Re-pulls the entity snapshot from the server. No-op unless
-    /// connected. Errors are logged and leave the previous snapshot in
-    /// place, so a transient hiccup does not blank the editor.
+    /// connected. The previous snapshot survives a failure, so a transient
+    /// hiccup does not blank the editor — but the session is marked stale
+    /// until one succeeds, because a mirror that stopped tracking looks
+    /// exactly like a world where nothing happens to be moving.
+    ///
+    /// The complaint is `warn!` and it is said once. It used to be
+    /// `debug!`, invisible under `RUST_LOG=info`, so a snapshot that froze
+    /// for good did so in silence.
     pub fn refresh(&mut self) {
         if self.state != ConnectionState::Connected {
             return;
         }
         match self.client.list_entities() {
-            Ok(entities) => self.snapshot = entities,
-            Err(e) => tracing::debug!("remote refresh failed: {e}"),
+            Ok(entities) => {
+                self.snapshot = entities;
+                if self.stale.take().is_some() {
+                    tracing::info!("remote snapshot is tracking the project again");
+                }
+            }
+            Err(e) => {
+                let reason = e.to_string();
+                if self.stale.replace(reason.clone()).is_none() {
+                    tracing::warn!(
+                        "the remote snapshot stopped updating: {reason}. \
+                         The editor is showing the last world it could read",
+                    );
+                }
+            }
         }
+    }
+
+    /// Why the snapshot stopped tracking the project, or `None` while it
+    /// tracks. Shown in the menu bar's remote indicator.
+    pub fn stale_reason(&self) -> Option<&str> {
+        self.stale.as_deref()
     }
 
     /// Drains captured child output lines.

@@ -544,16 +544,14 @@ fn no_field_value_serialises_with_a_raw_newline() {
     }
 }
 
-/// A non-finite float does not survive the wire.
+/// A non-finite float survives the wire.
 ///
 /// JSON has no spelling for infinity or NaN, and `serde_json` does not
 /// refuse — it writes `null`, which then fails to read back as a float.
-/// So the value is silently lost rather than reported, and a component
-/// holding one cannot round-trip at all.
-///
-/// **Failing on purpose**: this is the check a fix has to satisfy.
+/// `ReflectValue` writes the three that have no number as text instead;
+/// infinity is how a joint spells "this motor has no ceiling", so it is
+/// not a corner case.
 #[test]
-#[ignore = "reproduces a known bug: non-finite floats become null on the wire"]
 fn a_non_finite_float_survives_the_wire() {
     for value in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
         let json = serde_json::to_string(&ReflectValue::F32(value))

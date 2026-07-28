@@ -5,10 +5,16 @@ use ome_core::Guid;
 use super::entity_ref::EntityRef;
 use super::field::FieldKind;
 
+mod non_finite;
+
 /// Type-erased value for getting and setting reflected fields.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ReflectValue {
+    /// A single-precision float, infinities and NaN included — see
+    /// [`non_finite`] for why those need saying.
+    #[serde(with = "non_finite::f32_repr")]
     F32(f32),
+    #[serde(with = "non_finite::f64_repr")]
     F64(f64),
     U8(u8),
     U16(u16),
