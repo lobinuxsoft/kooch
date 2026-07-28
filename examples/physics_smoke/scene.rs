@@ -11,6 +11,7 @@ use ome_core::prelude::*;
 use ome_ecs::commands::Commands;
 use ome_ecs::component::{Component, ComponentRegistry};
 use ome_ecs::entity::Entity;
+use ome_ecs::reflect::EntityRef;
 use ome_ecs::transform::Transform;
 use ome_physics::components::{
     Collider, JOINT_REVOLUTE, Joint, KIND_STATIC, RigidBody, SHAPE_CUBOID,
@@ -87,8 +88,8 @@ pub(super) fn build_scene(resources: &mut Resources) {
         resources,
         Joint {
             kind: JOINT_REVOLUTE,
-            body_a: frame,
-            body_b: door,
+            body_a: Some(EntityRef::live(frame)),
+            body_b: Some(EntityRef::live(door)),
             axis: Vec3::Z,
             anchor_a: Vec3::new(1.0, 0.0, 0.0),
             anchor_b: Vec3::new(-0.5, 0.0, 0.0),
@@ -115,8 +116,8 @@ pub(super) fn build_scene(resources: &mut Resources) {
     cast.fuse_joint = Some(spawn_joint(
         resources,
         Joint {
-            body_a: hook,
-            body_b: fuse,
+            body_a: Some(EntityRef::live(hook)),
+            body_b: Some(EntityRef::live(fuse)),
             anchor_a: Vec3::new(0.0, -1.0, 0.0),
             breakable: true,
             break_impulse: 0.02,

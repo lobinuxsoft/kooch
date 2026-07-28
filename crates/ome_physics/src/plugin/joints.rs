@@ -29,6 +29,7 @@ use std::collections::{HashMap, HashSet};
 use ome_core::resource::Resources;
 use ome_ecs::component::ComponentRegistry;
 use ome_ecs::entity::Entity;
+use ome_ecs::reflect::EntityRef;
 
 use crate::backend::{BodyHandle, JointDesc, JointHandle};
 use crate::components::Joint;
@@ -44,6 +45,14 @@ struct JointSlot {
     /// The bodies it was built from. These moving means the bodies were
     /// rebuilt, and a joint into a dead handle holds nothing.
     bodies: (BodyHandle, BodyHandle),
+    /// The entities those bodies belong to.
+    ///
+    /// Kept rather than re-derived from [`Self::spec`], because a broken
+    /// joint has to name them and the spec holds references, which resolve
+    /// to entities only while their targets are loaded. A joint the solver
+    /// built had both; that fact should not have to be rediscovered at
+    /// report time, where failing would be unreportable.
+    targets: (Entity, Entity),
     /// The live joint, or `None` when the backend refused to build it or
     /// it broke under load.
     ///
@@ -98,6 +107,8 @@ struct Authored {
     /// The bodies both references resolve to, or `None` while either is
     /// still unresolved.
     bodies: Option<(BodyHandle, BodyHandle)>,
+    /// The entities behind [`Self::bodies`], resolved in the same pass.
+    targets: Option<(Entity, Entity)>,
 }
 
 /// Reconciles the solver's joints with the authored [`Joint`] components.
@@ -125,21 +136,30 @@ fn read_authored(resources: &Resources, world: &PhysicsWorld) -> Vec<Authored> {
     };
     let slots = registry.get_cpu::<PhysicsBody>();
 
-    let resolve = |entity: Entity| -> Option<BodyHandle> {
+    // An unresolved reference yields no body, exactly like a missing one:
+    // the target's scene is not open yet, so the joint waits rather than
+    // being built against the wrong entity.
+    let resolve = |reference: Option<EntityRef>| -> Option<(Entity, BodyHandle)> {
+        let entity = reference?.entity()?;
         let slot = slots?.get(entity)?.slot();
         // Both checks matter: the slot could have been recycled by another
         // entity since this component last looked at it.
         (world.entity(slot) == Some(entity))
             .then(|| world.handle(slot))
             .flatten()
+            .map(|handle| (entity, handle))
     };
 
     let mut authored: Vec<Authored> = joints
         .iter()
-        .map(|(&entity, spec)| Authored {
-            entity,
-            spec: *spec,
-            bodies: resolve(spec.body_a).zip(resolve(spec.body_b)),
+        .map(|(&entity, spec)| {
+            let pair = resolve(spec.body_a).zip(resolve(spec.body_b));
+            Authored {
+                entity,
+                spec: *spec,
+                bodies: pair.map(|((_, a), (_, b))| (a, b)),
+                targets: pair.map(|((a, _), (b, _))| (a, b)),
+            }
         })
         .collect();
     authored.sort_unstable_by_key(|a| (a.entity.index(), a.entity.generation()));
@@ -181,7 +201,7 @@ fn build_missing_joints(world: &mut PhysicsWorld, authored: &[Authored]) {
         if world.joints().slots.contains_key(&entry.entity) {
             continue;
         }
-        let Some(bodies) = entry.bodies else {
+        let (Some(bodies), Some(targets)) = (entry.bodies, entry.targets) else {
             warn_unresolved(world, entry);
             continue;
         };
@@ -193,6 +213,7 @@ fn build_missing_joints(world: &mut PhysicsWorld, authored: &[Authored]) {
             JointSlot {
                 spec: entry.spec,
                 bodies,
+                targets,
                 joint,
             },
         );
@@ -259,7 +280,7 @@ pub(super) fn collect_broken_joints(world: &mut PhysicsWorld) {
             continue;
         };
         slot.joint = None;
-        reported.push((entity, slot.spec.body_a, slot.spec.body_b, impulse));
+        reported.push((entity, slot.targets.0, slot.targets.1, impulse));
         tracing::info!(
             target: "ome_physics",
             entity = entity.index(),

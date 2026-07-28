@@ -9,6 +9,7 @@ use super::*;
 
 use crate::backend::{DebugCategories, DebugLine};
 use crate::components::{JOINT_FIXED, Joint};
+use ome_ecs::reflect::EntityRef;
 
 fn lines(resources: &Resources, categories: DebugCategories) -> Vec<DebugLine> {
     let mut out = Vec::new();
@@ -122,8 +123,8 @@ fn joints_produce_geometry() {
         joint,
         Joint {
             kind: JOINT_FIXED,
-            body_a: anchor,
-            body_b: hanging,
+            body_a: Some(EntityRef::live(anchor)),
+            body_b: Some(EntityRef::live(hanging)),
             ..Default::default()
         },
     );
@@ -193,8 +194,8 @@ fn each_category_contributes_on_its_own() {
         joint,
         Joint {
             kind: JOINT_FIXED,
-            body_a: anchor,
-            body_b: hanging,
+            body_a: Some(EntityRef::live(anchor)),
+            body_b: Some(EntityRef::live(hanging)),
             ..Default::default()
         },
     );

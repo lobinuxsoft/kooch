@@ -4,6 +4,7 @@
 use super::*;
 
 use crate::components::{JOINT_FIXED, JOINT_REVOLUTE, JOINT_SPHERICAL, Joint, MOTOR_ACCELERATION};
+use ome_ecs::reflect::EntityRef;
 
 /// Spawns an entity carrying only a joint, as an author would: the joint
 /// lives on its own entity so a body can be in as many as it likes.
@@ -88,8 +89,8 @@ fn a_joint_naming_two_bodies_reaches_the_solver() {
         &mut resources,
         Joint {
             kind: JOINT_FIXED,
-            body_a: a,
-            body_b: b,
+            body_a: Some(EntityRef::live(a)),
+            body_b: Some(EntityRef::live(b)),
             ..Default::default()
         },
     );
@@ -111,8 +112,8 @@ fn a_joint_waits_for_a_body_that_does_not_exist_yet() {
     let joint = spawn_joint(
         &mut resources,
         Joint {
-            body_a: a,
-            body_b: b,
+            body_a: Some(EntityRef::live(a)),
+            body_b: Some(EntityRef::live(b)),
             ..Default::default()
         },
     );
@@ -140,8 +141,8 @@ fn syncing_repeatedly_does_not_duplicate_joints() {
     spawn_joint(
         &mut resources,
         Joint {
-            body_a: a,
-            body_b: b,
+            body_a: Some(EntityRef::live(a)),
+            body_b: Some(EntityRef::live(b)),
             ..Default::default()
         },
     );
@@ -164,8 +165,8 @@ fn editing_a_joint_rebuilds_it() {
     let joint = spawn_joint(
         &mut resources,
         Joint {
-            body_a: a,
-            body_b: b,
+            body_a: Some(EntityRef::live(a)),
+            body_b: Some(EntityRef::live(b)),
             ..Default::default()
         },
     );
@@ -192,8 +193,8 @@ fn losing_a_body_removes_the_joint() {
     let joint = spawn_joint(
         &mut resources,
         Joint {
-            body_a: a,
-            body_b: b,
+            body_a: Some(EntityRef::live(a)),
+            body_b: Some(EntityRef::live(b)),
             ..Default::default()
         },
     );
@@ -215,8 +216,8 @@ fn losing_the_joint_component_removes_the_joint() {
     let joint = spawn_joint(
         &mut resources,
         Joint {
-            body_a: a,
-            body_b: b,
+            body_a: Some(EntityRef::live(a)),
+            body_b: Some(EntityRef::live(b)),
             ..Default::default()
         },
     );
@@ -236,8 +237,8 @@ fn a_joint_cannot_constrain_a_body_to_itself() {
     let joint = spawn_joint(
         &mut resources,
         Joint {
-            body_a: a,
-            body_b: a,
+            body_a: Some(EntityRef::live(a)),
+            body_b: Some(EntityRef::live(a)),
             ..Default::default()
         },
     );
@@ -263,8 +264,8 @@ fn a_fixed_joint_holds_a_body_up_against_gravity() {
         &mut resources,
         Joint {
             kind: JOINT_FIXED,
-            body_a: a,
-            body_b: b,
+            body_a: Some(EntityRef::live(a)),
+            body_b: Some(EntityRef::live(b)),
             anchor_a: Vec3::new(1.0, 0.0, 0.0),
             ..Default::default()
         },
@@ -297,8 +298,8 @@ fn a_hinged_door_swings_and_stops_at_its_limit() {
             &mut resources,
             Joint {
                 kind: JOINT_REVOLUTE,
-                body_a: frame,
-                body_b: door,
+                body_a: Some(EntityRef::live(frame)),
+                body_b: Some(EntityRef::live(door)),
                 // A horizontal hinge, so gravity has a torque about it and
                 // the door actually swings.
                 axis: Vec3::Z,
@@ -357,8 +358,8 @@ fn a_chain_of_spherical_joints_does_not_stretch() {
             &mut resources,
             Joint {
                 kind: JOINT_SPHERICAL,
-                body_a: pair[0],
-                body_b: pair[1],
+                body_a: Some(EntityRef::live(pair[0])),
+                body_b: Some(EntityRef::live(pair[1])),
                 anchor_a: Vec3::new(0.0, -SPACING / 2.0, 0.0),
                 anchor_b: Vec3::new(0.0, SPACING / 2.0, 0.0),
                 ..Default::default()
@@ -395,8 +396,8 @@ fn a_motorised_hinge_drives_a_wheel() {
             &mut resources,
             Joint {
                 kind: JOINT_REVOLUTE,
-                body_a: hub,
-                body_b: wheel,
+                body_a: Some(EntityRef::live(hub)),
+                body_b: Some(EntityRef::live(wheel)),
                 axis: Vec3::Y,
                 motor_enabled: true,
                 motor_model: MOTOR_ACCELERATION,
@@ -440,8 +441,8 @@ fn a_joint_breaks_above_its_threshold_and_stays_broken() {
         &mut resources,
         Joint {
             kind: JOINT_FIXED,
-            body_a: hook,
-            body_b: load,
+            body_a: Some(EntityRef::live(hook)),
+            body_b: Some(EntityRef::live(load)),
             anchor_a: Vec3::new(0.0, -1.0, 0.0),
             breakable: true,
             break_impulse: 0.02,
@@ -478,8 +479,8 @@ fn a_joint_below_its_threshold_holds() {
         &mut resources,
         Joint {
             kind: JOINT_FIXED,
-            body_a: hook,
-            body_b: load,
+            body_a: Some(EntityRef::live(hook)),
+            body_b: Some(EntityRef::live(load)),
             anchor_a: Vec3::new(0.0, -1.0, 0.0),
             breakable: true,
             break_impulse: 1000.0,
@@ -510,8 +511,8 @@ fn stopping_rebuilds_a_joint_that_broke_while_playing() {
         &mut resources,
         Joint {
             kind: JOINT_FIXED,
-            body_a: hook,
-            body_b: load,
+            body_a: Some(EntityRef::live(hook)),
+            body_b: Some(EntityRef::live(load)),
             anchor_a: Vec3::new(0.0, -1.0, 0.0),
             breakable: true,
             break_impulse: 0.02,
