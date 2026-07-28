@@ -14,8 +14,9 @@
 //! ## Threading
 //!
 //! The engine loop is single-threaded and touches no async runtime, and
-//! this crate keeps it that way. [`tiny_http`] blocks on a **dedicated
-//! thread**; each request is forwarded to the main loop over a channel
+//! this crate keeps it that way. The socket listener blocks on a
+//! **dedicated thread**; each request is forwarded to the main loop over
+//! a channel
 //! and answered there, so the ECS is only ever touched from the main
 //! thread. See [`server`]. Nothing here makes the engine async or
 //! multi-threaded in its own logic — the server is one side thread with
@@ -46,4 +47,4 @@ pub mod server;
 pub use client::{CallStats, ClientError, RemoteClient};
 pub use plugin::RemotePlugin;
 pub use protocol::{Request, Response};
-pub use server::{DEFAULT_PORT, RemoteServer};
+pub use server::{DEFAULT_NAME, NAME_ENV, RemoteServer};

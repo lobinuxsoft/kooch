@@ -498,6 +498,30 @@ fn send(
 
 #[cfg(test)]
 mod tests {
+    /// A socket name unique to this test.
+    ///
+    /// Tests run in parallel in one process, so a shared name would have
+    /// them binding over each other — the local-socket equivalent of the
+    /// port scan this replaced, but solved instead of retried.
+    fn test_socket_name() -> String {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        static N: AtomicU32 = AtomicU32::new(0);
+        // The counter alone is not enough: it is per-module, so two test
+        // modules in one binary both start at zero and collide on the same
+        // name. The clock disambiguates without the modules having to know
+        // about each other.
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
+        format!(
+            "ome_test_{}_{}_{}.sock",
+            std::process::id(),
+            nanos,
+            N.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
     use std::any::TypeId;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -544,10 +568,8 @@ mod tests {
         let transform_ty = std::any::type_name::<Transform>();
 
         // Server side: a project with one Transform-bearing entity.
-        let server = (0..8)
-            .find_map(|i| RemoteServer::start(17760 + i).ok())
-            .expect("bind");
-        let port = server.port();
+        let server = RemoteServer::start(&test_socket_name()).expect("bind");
+        let socket = server.name().to_owned();
         let done = Arc::new(AtomicBool::new(false));
         let loop_done = Arc::clone(&done);
         let main_loop = std::thread::spawn(move || {
@@ -590,7 +612,7 @@ mod tests {
         // Editor side: connect, mirror, then issue an edit.
         let mut editor = ecs();
         let mut state = RemoteState::new();
-        state.session = Some(RemoteSession::attach(port));
+        state.session = Some(RemoteSession::attach(&socket));
         for _ in 0..200 {
             if state.session.as_mut().unwrap().poll_ready() == ConnectionState::Connected {
                 break;
@@ -622,7 +644,7 @@ mod tests {
         );
 
         // The server now holds the edited value.
-        let client = RemoteClient::new(port);
+        let client = RemoteClient::new(&socket);
         let entities = client.list_entities().unwrap();
         let pos = entities[0]
             .components
@@ -644,10 +666,8 @@ mod tests {
     /// the toolbar and the refresh cadence follow.
     #[test]
     fn play_toggles_the_remote_gate() {
-        let server = (0..8)
-            .find_map(|i| RemoteServer::start(17780 + i).ok())
-            .expect("bind");
-        let port = server.port();
+        let server = RemoteServer::start(&test_socket_name()).expect("bind");
+        let socket = server.name().to_owned();
         let done = Arc::new(AtomicBool::new(false));
         let loop_done = Arc::clone(&done);
         let main_loop = std::thread::spawn(move || {
@@ -664,7 +684,7 @@ mod tests {
 
         let mut editor = ecs();
         let mut state = RemoteState::new();
-        state.session = Some(RemoteSession::attach(port));
+        state.session = Some(RemoteSession::attach(&socket));
         for _ in 0..200 {
             if state.session.as_mut().unwrap().poll_ready() == ConnectionState::Connected {
                 break;
@@ -732,10 +752,8 @@ mod tests {
     fn spawn_mesh_builds_the_entity_on_the_project() {
         use ome_ecs::mesh_renderer::MeshRenderer;
 
-        let server = (0..8)
-            .find_map(|i| RemoteServer::start(17820 + i).ok())
-            .expect("bind");
-        let port = server.port();
+        let server = RemoteServer::start(&test_socket_name()).expect("bind");
+        let socket = server.name().to_owned();
         let done = Arc::new(AtomicBool::new(false));
         let loop_done = Arc::clone(&done);
 
@@ -757,7 +775,7 @@ mod tests {
 
         let mut editor = editor_with_assets();
         let mut state = RemoteState::new();
-        state.session = Some(RemoteSession::attach(port));
+        state.session = Some(RemoteSession::attach(&socket));
         for _ in 0..200 {
             if state.session.as_mut().unwrap().poll_ready() == ConnectionState::Connected {
                 break;
@@ -777,7 +795,7 @@ mod tests {
         );
 
         // Ask the project what it has.
-        let client = RemoteClient::new(port);
+        let client = RemoteClient::new(&socket);
         let entities = client.list_entities().unwrap();
         let spawned = entities
             .iter()
@@ -843,10 +861,8 @@ mod tests {
     fn spawn_carries_its_extra_components_over_the_wire() {
         use ome_ecs::directional_light::DirectionalLight;
 
-        let server = (0..8)
-            .find_map(|i| RemoteServer::start(17840 + i).ok())
-            .expect("bind");
-        let port = server.port();
+        let server = RemoteServer::start(&test_socket_name()).expect("bind");
+        let socket = server.name().to_owned();
         let done = Arc::new(AtomicBool::new(false));
         let loop_done = Arc::clone(&done);
 
@@ -871,7 +887,7 @@ mod tests {
             reg.register_cpu_reflected::<DirectionalLight>();
         }
         let mut state = RemoteState::new();
-        state.session = Some(RemoteSession::attach(port));
+        state.session = Some(RemoteSession::attach(&socket));
         for _ in 0..200 {
             if state.session.as_mut().unwrap().poll_ready() == ConnectionState::Connected {
                 break;
@@ -887,7 +903,7 @@ mod tests {
         };
         assert!(dispatch(&mut editor, &action));
 
-        let client = RemoteClient::new(port);
+        let client = RemoteClient::new(&socket);
         let entities = client.list_entities().unwrap();
         let light = entities
             .iter()
@@ -939,10 +955,8 @@ mod tests {
     fn reparent_reaches_the_project() {
         use ome_ecs::hierarchy::Parent;
 
-        let server = (0..8)
-            .find_map(|i| RemoteServer::start(17860 + i).ok())
-            .expect("bind");
-        let port = server.port();
+        let server = RemoteServer::start(&test_socket_name()).expect("bind");
+        let socket = server.name().to_owned();
         let done = Arc::new(AtomicBool::new(false));
         let loop_done = Arc::clone(&done);
 
@@ -981,7 +995,7 @@ mod tests {
             reg.register_cpu_reflected::<ome_ecs::hierarchy::Children>();
         }
         let mut state = RemoteState::new();
-        state.session = Some(RemoteSession::attach(port));
+        state.session = Some(RemoteSession::attach(&socket));
         for _ in 0..200 {
             if state.session.as_mut().unwrap().poll_ready() == ConnectionState::Connected {
                 break;
@@ -1007,7 +1021,7 @@ mod tests {
 
         // The project itself has to report the relationship — not the mirror,
         // which is exactly what used to be mutated instead.
-        let client = RemoteClient::new(port);
+        let client = RemoteClient::new(&socket);
         let entities = client.list_entities().unwrap();
         let child_remote = entities
             .iter()
@@ -1040,10 +1054,8 @@ mod tests {
     /// mode it was a silent no-op.
     #[test]
     fn duplicate_creates_a_copy_on_the_project() {
-        let server = (0..8)
-            .find_map(|i| RemoteServer::start(17880 + i).ok())
-            .expect("bind");
-        let port = server.port();
+        let server = RemoteServer::start(&test_socket_name()).expect("bind");
+        let socket = server.name().to_owned();
         let done = Arc::new(AtomicBool::new(false));
         let loop_done = Arc::clone(&done);
 
@@ -1081,7 +1093,7 @@ mod tests {
 
         let mut editor = ecs();
         let mut state = RemoteState::new();
-        state.session = Some(RemoteSession::attach(port));
+        state.session = Some(RemoteSession::attach(&socket));
         for _ in 0..200 {
             if state.session.as_mut().unwrap().poll_ready() == ConnectionState::Connected {
                 break;
@@ -1105,10 +1117,10 @@ mod tests {
         }
         editor.insert(state);
 
-        let before = RemoteClient::new(port).list_entities().unwrap().len();
+        let before = RemoteClient::new(&socket).list_entities().unwrap().len();
         assert!(dispatch(&mut editor, &EditorAction::Duplicate(source)));
 
-        let entities = RemoteClient::new(port).list_entities().unwrap();
+        let entities = RemoteClient::new(&socket).list_entities().unwrap();
         assert_eq!(
             entities.len(),
             before + 1,

@@ -6,7 +6,7 @@ use ome_core::resource::Resources;
 use ome_core::stage::Stage;
 
 use crate::handlers::handle;
-use crate::server::{DEFAULT_PORT, RemoteServer};
+use crate::server::RemoteServer;
 
 /// Adds the remote editor server to a running project.
 ///
@@ -15,18 +15,25 @@ use crate::server::{DEFAULT_PORT, RemoteServer};
 /// A bind failure is logged and the plugin becomes inert rather than
 /// aborting the app — a project should still run if the port is taken.
 pub struct RemotePlugin {
-    port: u16,
+    /// Socket name to bind, or `None` to read it from the environment.
+    name: Option<String>,
 }
 
 impl RemotePlugin {
-    /// The plugin on the [`DEFAULT_PORT`].
+    /// The plugin on the socket name the launcher passed down.
+    ///
+    /// Reads [`NAME_ENV`](crate::NAME_ENV), falling back to
+    /// [`DEFAULT_NAME`](crate::DEFAULT_NAME) so a project run by hand
+    /// still works.
     pub fn new() -> Self {
-        Self { port: DEFAULT_PORT }
+        Self { name: None }
     }
 
-    /// The plugin on a specific port.
-    pub fn on_port(port: u16) -> Self {
-        Self { port }
+    /// The plugin on a specific socket name.
+    pub fn on_socket(name: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+        }
     }
 }
 
@@ -38,7 +45,11 @@ impl Default for RemotePlugin {
 
 impl Plugin for RemotePlugin {
     fn build(&self, app: &mut App) {
-        match RemoteServer::start(self.port) {
+        let started = match &self.name {
+            Some(name) => RemoteServer::start(name),
+            None => RemoteServer::start_from_env(),
+        };
+        match started {
             Ok(server) => {
                 app.insert_resource(server);
                 // First stage: apply remote edits before this frame's

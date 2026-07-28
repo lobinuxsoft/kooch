@@ -59,13 +59,35 @@ fn dragging_handles() -> HandleSet {
     handles
 }
 
+/// A socket name unique to this test.
+///
+/// Tests run in parallel in one process, so a shared name would have them
+/// binding over each other — the local-socket equivalent of the port
+/// scan this replaced, but solved instead of retried.
+fn test_socket_name() -> String {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static N: AtomicU32 = AtomicU32::new(0);
+    // The counter alone is not enough: it is per-module, so two test
+    // modules in one binary both start at zero and collide on the same
+    // name. The clock disambiguates without the modules having to know
+    // about each other.
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    format!(
+        "ome_test_{}_{}_{}.sock",
+        std::process::id(),
+        nanos,
+        N.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 /// A project with one Transform-bearing entity at the origin, served
 /// until `done` flips.
-fn project(done: Arc<AtomicBool>) -> (u16, std::thread::JoinHandle<()>) {
-    let server = (0..8)
-        .find_map(|i| RemoteServer::start(17800 + i).ok())
-        .expect("bind");
-    let port = server.port();
+fn project(done: Arc<AtomicBool>) -> (String, std::thread::JoinHandle<()>) {
+    let server = RemoteServer::start(&test_socket_name()).expect("bind");
+    let socket = server.name().to_owned();
     let thread = std::thread::spawn(move || {
         let mut res = ecs();
         let entity = {
@@ -84,7 +106,7 @@ fn project(done: Arc<AtomicBool>) -> (u16, std::thread::JoinHandle<()>) {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     });
-    (port, thread)
+    (socket, thread)
 }
 
 fn insert_transform(resources: &mut Resources, entity: Entity) {
@@ -102,9 +124,9 @@ fn insert_transform(resources: &mut Resources, entity: Entity) {
 }
 
 /// Connects an editor-side `RemoteState` and mirrors once.
-fn connected(port: u16, resources: &mut Resources) -> RemoteState {
+fn connected(socket: &str, resources: &mut Resources) -> RemoteState {
     let mut state = RemoteState::new();
-    state.session = Some(RemoteSession::attach(port));
+    state.session = Some(RemoteSession::attach(socket));
     for _ in 0..200 {
         if state.session.as_mut().unwrap().poll_ready() == ConnectionState::Connected {
             break;
@@ -166,10 +188,10 @@ fn tick(resources: &mut Resources, frames: u32) {
 #[test]
 fn a_drag_in_flight_survives_the_refresh_cadence() {
     let done = Arc::new(AtomicBool::new(false));
-    let (port, thread) = project(Arc::clone(&done));
+    let (socket, thread) = project(Arc::clone(&done));
 
     let mut editor = ecs();
-    let state = connected(port, &mut editor);
+    let state = connected(&socket, &mut editor);
     let dragged_to = Vec3::new(4.0, 5.0, 6.0);
     drag_it_to(&mut editor, &state, dragged_to);
 
@@ -195,10 +217,10 @@ fn a_drag_in_flight_survives_the_refresh_cadence() {
 #[test]
 fn the_refresh_resumes_once_the_drag_ends() {
     let done = Arc::new(AtomicBool::new(false));
-    let (port, thread) = project(Arc::clone(&done));
+    let (socket, thread) = project(Arc::clone(&done));
 
     let mut editor = ecs();
-    let state = connected(port, &mut editor);
+    let state = connected(&socket, &mut editor);
     drag_it_to(&mut editor, &state, Vec3::new(4.0, 5.0, 6.0));
 
     editor.insert(state);
@@ -221,11 +243,11 @@ fn the_refresh_resumes_once_the_drag_ends() {
 #[test]
 fn a_pull_records_what_it_cost() {
     let done = Arc::new(AtomicBool::new(false));
-    let (port, thread) = project(Arc::clone(&done));
+    let (socket, thread) = project(Arc::clone(&done));
 
     let mut editor = ecs();
     editor.insert(EditorPerfStats::default());
-    let state = connected(port, &mut editor);
+    let state = connected(&socket, &mut editor);
     editor.insert(state);
     tick(&mut editor, REFRESH_INTERVAL_IDLE + 1);
 
@@ -254,11 +276,11 @@ fn a_pull_records_what_it_cost() {
 #[test]
 fn the_wait_for_the_project_is_transport_not_decode() {
     let done = Arc::new(AtomicBool::new(false));
-    let (port, thread) = project(Arc::clone(&done));
+    let (socket, thread) = project(Arc::clone(&done));
 
     let mut editor = ecs();
     editor.insert(EditorPerfStats::default());
-    let state = connected(port, &mut editor);
+    let state = connected(&socket, &mut editor);
     editor.insert(state);
     tick(&mut editor, REFRESH_INTERVAL_IDLE + 1);
 
@@ -283,11 +305,11 @@ fn the_wait_for_the_project_is_transport_not_decode() {
 #[test]
 fn the_sample_survives_the_frames_that_do_not_pull() {
     let done = Arc::new(AtomicBool::new(false));
-    let (port, thread) = project(Arc::clone(&done));
+    let (socket, thread) = project(Arc::clone(&done));
 
     let mut editor = ecs();
     editor.insert(EditorPerfStats::default());
-    let state = connected(port, &mut editor);
+    let state = connected(&socket, &mut editor);
     editor.insert(state);
     tick(&mut editor, REFRESH_INTERVAL_IDLE + 1);
     let after_pull = editor

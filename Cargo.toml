@@ -103,12 +103,11 @@ libloading = "0.8"
 # components) — keeps the dep light and binary small.
 sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 # Remote editor protocol — blocking HTTP server on a dedicated thread.
-# `tiny_http` is synchronous (no async runtime), matching the engine's
-# no-tokio stance: the server lives on a side thread and bridges to the
-# main loop over a channel. It is what a minimal Bevy Remote Protocol
-# server uses. `serde_json` is the JSON-RPC payload codec (the engine
-# ships RON for scenes; JSON is the interop wire format for tooling).
-tiny_http = "0.12"
+# `interprocess` gives one API over Unix domain sockets and Windows
+# named pipes. Synchronous, matching the engine's own loop, and it keeps
+# the editor protocol off any TCP port — see ome_remote::server for why
+# that is a security property and not a preference (#647).
+interprocess = "2.4"
 serde_json = "1"
 
 # Internal crates
