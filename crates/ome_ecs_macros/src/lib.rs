@@ -50,7 +50,7 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
 use crate::attrs::{
     parse_category_attr, parse_field_asset_type, parse_field_bits, parse_field_choices,
-    parse_field_shown_when, parse_field_skip, parse_inspector_attr,
+    parse_field_requires, parse_field_shown_when, parse_field_skip, parse_inspector_attr,
 };
 use crate::type_mapping::type_mapping;
 use crate::unit_struct::unit_struct_impl;
@@ -141,6 +141,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     // An asset picker has no variant to depend on yet.
                     shown_when: ::core::option::Option::None,
                     asset_type: #asset_type,
+                    requires: "",
                 }
             });
             get_arms.push(quote! {
@@ -192,6 +193,10 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 Ok(None) => quote! { ::core::option::Option::None },
                 Err(e) => return e,
             };
+            let requires = match parse_field_requires(field) {
+                Ok(requires) => requires.unwrap_or_default(),
+                Err(e) => return e,
+            };
 
             field_metas.push(quote! {
                 ::ome_ecs::reflect::FieldMeta {
@@ -202,6 +207,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     bits: &[],
                     shown_when: #shown_when_expr,
                     asset_type: "",
+                    requires: #requires,
                 }
             });
 
@@ -261,6 +267,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     bits: &[],
                     shown_when: #shown_when_expr,
                     asset_type: "",
+                    requires: "",
                 }
             });
 
@@ -378,6 +385,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 bits: #bits_expr,
                 shown_when: #shown_when_expr,
                 asset_type: "",
+                requires: "",
             }
         });
 

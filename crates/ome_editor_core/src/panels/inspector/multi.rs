@@ -12,7 +12,8 @@ use crate::icons;
 use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
 
 use super::widgets::{
-    AssetCatalogEntry, bits_for, choices_for, draw_readonly_value, draw_value_widget,
+    AssetCatalogEntry, FieldContext, bits_for, choices_for, draw_readonly_value, draw_value_widget,
+    requires_for,
 };
 
 /// A field value across multiple selected entities.
@@ -267,6 +268,7 @@ pub(super) fn draw_multi_entity_inspector(
                                 is_read_only,
                                 actions,
                                 asset_catalog,
+                                entities,
                             );
                         }
                     } else {
@@ -289,6 +291,7 @@ fn draw_multi_reflected_fields(
     read_only: bool,
     actions: &mut Vec<EditorAction>,
     asset_catalog: &[AssetCatalogEntry],
+    entities: &[EntityDisplayInfo],
 ) {
     egui::Grid::new(format!("multi_fields_{:?}", type_id))
         .num_columns(2)
@@ -297,14 +300,20 @@ fn draw_multi_reflected_fields(
             for (name, multi_val) in fields {
                 let choices = choices_for(field_metas, name);
                 let bits = bits_for(field_metas, name);
+                let field = FieldContext {
+                    name,
+                    choices,
+                    bits,
+                    assets: asset_catalog,
+                    entities,
+                    requires: requires_for(field_metas, name),
+                };
                 match multi_val {
                     MultiFieldValue::Uniform(value) => {
                         ui.label(name);
                         if read_only {
                             draw_readonly_value(ui, value, choices, bits);
-                        } else if let Some(new_value) =
-                            draw_value_widget(ui, value, name, choices, bits, asset_catalog)
-                        {
+                        } else if let Some(new_value) = draw_value_widget(ui, value, &field) {
                             for &entity in targets {
                                 actions.push(EditorAction::SetField {
                                     entity,
@@ -319,9 +328,7 @@ fn draw_multi_reflected_fields(
                         ui.label(format!("{name} \u{2014}"));
                         if read_only {
                             draw_readonly_value(ui, base, choices, bits);
-                        } else if let Some(new_value) =
-                            draw_value_widget(ui, base, name, choices, bits, asset_catalog)
-                        {
+                        } else if let Some(new_value) = draw_value_widget(ui, base, &field) {
                             for &entity in targets {
                                 actions.push(EditorAction::SetField {
                                     entity,

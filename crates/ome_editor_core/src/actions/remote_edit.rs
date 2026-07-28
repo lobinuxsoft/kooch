@@ -380,6 +380,38 @@ fn classify(action: &EditorAction) -> Option<Edit<'_>> {
     }
 }
 
+/// Translates a value's entity references from mirror handles to the ones
+/// the project uses.
+///
+/// The mirror's entities are the editor's own; the project has its own
+/// handles for the same entities, and every method that names an entity
+/// goes through `remote_of` for exactly this reason. A reference *inside*
+/// a value needs it too — sent as-is, the picker would point a joint at
+/// whatever the project happens to have at that index.
+///
+/// Anything else passes through untouched.
+fn to_remote_value(
+    value: ome_ecs::reflect::ReflectValue,
+    mirror: &crate::remote_mirror::RemoteMirror,
+) -> Result<ome_ecs::reflect::ReflectValue, String> {
+    use ome_ecs::reflect::{EntityRef, ReflectValue};
+
+    let ReflectValue::EntityRef(Some(reference)) = value else {
+        return Ok(value);
+    };
+    // A persistent reference names an identity, not a handle, and means
+    // the same thing in both processes.
+    let Some(local) = reference.entity() else {
+        return Ok(ReflectValue::EntityRef(Some(reference)));
+    };
+    let remote = mirror
+        .remote_of(local)
+        .ok_or_else(|| "the referenced entity is not in the mirror".to_owned())?;
+    Ok(ReflectValue::EntityRef(Some(EntityRef::live(
+        remote.into(),
+    ))))
+}
+
 /// Sends one [`Edit`] to the project's server.
 fn send(
     edit: Edit<'_>,
@@ -413,7 +445,12 @@ fn send(
             field,
             value,
         } => client
-            .set_field(remote(entity)?, &name(component)?, field, value.clone())
+            .set_field(
+                remote(entity)?,
+                &name(component)?,
+                field,
+                to_remote_value(value.clone(), mirror)?,
+            )
             .map_err(map_err),
         Edit::AddComponent { entity, component } => client
             .add_component(remote(entity)?, &name(component)?)

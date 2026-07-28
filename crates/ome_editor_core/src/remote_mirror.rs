@@ -94,21 +94,27 @@ impl RemoteMirror {
         self.retain_only(snapshot, resources);
 
         // First pass: reuse or create the local entity for each snapshot
-        // entry, then sync its component set to match.
+        // entry, so every id is mapped before anything reads the map.
         for snap in snapshot {
-            let entity = match self.id_map.get(&snap.id) {
-                Some(&entity) => entity,
-                None => {
-                    let entity = self.spawn_mirror(resources);
-                    self.id_map.insert(snap.id, entity);
-                    self.remote_map.insert(entity, snap.id);
-                    entity
-                }
+            if !self.id_map.contains_key(&snap.id) {
+                let entity = self.spawn_mirror(resources);
+                self.id_map.insert(snap.id, entity);
+                self.remote_map.insert(entity, snap.id);
+            }
+        }
+
+        // Second pass: sync each entity's components. Separate from the
+        // pass above because a component can point at another entity, and
+        // translating that reference needs the whole map — an entity later
+        // in the snapshot than the one referring to it is ordinary.
+        for snap in snapshot {
+            let Some(&entity) = self.id_map.get(&snap.id) else {
+                continue;
             };
             self.sync_components(resources, entity, snap);
         }
 
-        // Second pass: wire parents now that every id is mapped.
+        // Third pass: wire parents now that every id is mapped.
         //
         // The parent travels as its own snapshot field rather than as a
         // component, so it needs its own sync — `sync_components` above
@@ -163,7 +169,8 @@ impl RemoteMirror {
         snap: &EntitySnapshot,
     ) {
         for comp in &snap.components {
-            insert_component(resources, entity, &comp.type_name, &comp.fields);
+            let fields = self.localise_refs(&comp.fields);
+            insert_component(resources, entity, &comp.type_name, &fields);
         }
 
         let present: Vec<String> = snap
@@ -177,6 +184,47 @@ impl RemoteMirror {
             }
         }
         self.components.insert(entity, present);
+    }
+
+    /// Rewrites the entity references in `fields` to name mirror entities.
+    ///
+    /// The project's handles mean nothing here: index 4 in the project is
+    /// not index 4 in the editor. Left untranslated, a joint's Body A
+    /// would read as whichever mirror entity happened to land on that
+    /// index — or as missing, which is what it looked like.
+    ///
+    /// A reference the map does not know is passed through rather than
+    /// blanked: the target is an entity the snapshot does not carry (an
+    /// ephemeral one), and the Inspector saying "missing" is truer than it
+    /// saying "none".
+    ///
+    /// Allocates only for a component that actually holds a reference —
+    /// the common case borrows nothing and copies the slice as it is.
+    fn localise_refs(
+        &self,
+        fields: &[(String, ome_ecs::reflect::ReflectValue)],
+    ) -> Vec<(String, ome_ecs::reflect::ReflectValue)> {
+        use ome_ecs::reflect::{EntityRef, ReflectValue};
+
+        fields
+            .iter()
+            .map(|(name, value)| {
+                let ReflectValue::EntityRef(Some(reference)) = value else {
+                    return (name.clone(), value.clone());
+                };
+                let localised = match reference.entity() {
+                    Some(remote) => self
+                        .id_map
+                        .get(&EntityId::from(remote))
+                        .map(|&local| EntityRef::live(local))
+                        .unwrap_or(*reference),
+                    // Persistent: an identity, not a handle. It means the
+                    // same thing in both processes.
+                    None => *reference,
+                };
+                (name.clone(), ReflectValue::EntityRef(Some(localised)))
+            })
+            .collect()
     }
 
     /// Spawns one marked mirror entity and returns it.

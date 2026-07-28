@@ -32,6 +32,7 @@ impl Reflect for Health {
                 bits: &[],
                 shown_when: None,
                 asset_type: "",
+                requires: "",
             },
             FieldMeta {
                 name: "max_hp",
@@ -41,6 +42,7 @@ impl Reflect for Health {
                 bits: &[],
                 shown_when: None,
                 asset_type: "",
+                requires: "",
             },
         ];
         FIELDS

@@ -60,6 +60,21 @@ pub(crate) fn parse_inspector_attr(
 /// inspector as a typed asset reference (renderered as a dropdown
 /// picker filtered by `TypeName`).
 pub(crate) fn parse_field_asset_type(field: &syn::Field) -> Result<Option<String>, TokenStream> {
+    parse_field_string(field, "asset")
+}
+
+/// Parses `#[reflect(requires = "ComponentName")]` on an entity-reference
+/// field: the short name of a component the target has to carry.
+///
+/// The inspector filters its picker by it and refuses a drop that does not
+/// satisfy it. A `Joint` body without a `RigidBody` is not a body, and a
+/// reference accepted but inert is indistinguishable from a broken one.
+pub(crate) fn parse_field_requires(field: &syn::Field) -> Result<Option<String>, TokenStream> {
+    parse_field_string(field, "requires")
+}
+
+/// The shared shape of `#[reflect(<key> = "...")]` on a field.
+fn parse_field_string(field: &syn::Field, key: &str) -> Result<Option<String>, TokenStream> {
     for attr in &field.attrs {
         if !attr.path().is_ident("reflect") {
             continue;
@@ -76,7 +91,7 @@ pub(crate) fn parse_field_asset_type(field: &syn::Field) -> Result<Option<String
                 value: syn::Expr::Lit(expr_lit),
                 ..
             }) = meta
-                && path.is_ident("asset")
+                && path.is_ident(key)
                 && let Lit::Str(lit_str) = &expr_lit.lit
             {
                 return Ok(Some(lit_str.value()));

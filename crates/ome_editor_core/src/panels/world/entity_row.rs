@@ -119,7 +119,7 @@ pub(super) fn draw_entity_row(
     handle_context_menu(&resp, info, entities, selected, reflected_types, actions);
 }
 
-fn display_name_for(info: &EntityDisplayInfo) -> Option<String> {
+pub(crate) fn display_name_for(info: &EntityDisplayInfo) -> Option<String> {
     info.components
         .iter()
         .find(|c| c.short_name == "Name")

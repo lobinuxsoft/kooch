@@ -157,8 +157,10 @@ pub struct Joint {
     /// The first body. Anchors and `axis` are in *its* local space, which
     /// is what makes a hinge authorable: the axis belongs to the door
     /// frame, not to the world.
+    #[reflect(requires = "RigidBody")]
     pub body_a: Option<EntityRef>,
     /// The second body.
+    #[reflect(requires = "RigidBody")]
     pub body_b: Option<EntityRef>,
     /// Where the joint attaches on `body_a`, in its local space.
     pub anchor_a: Vec3,

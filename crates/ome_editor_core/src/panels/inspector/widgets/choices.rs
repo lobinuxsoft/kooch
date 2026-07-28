@@ -291,3 +291,13 @@ mod bitmask_tests {
         assert_eq!(reflect_value_as_i64(&ReflectValue::F32(1.0)), None);
     }
 }
+
+/// Looks up the `requires` hint for an entity-reference field: the short
+/// name of a component its target has to carry, or `""` when anything
+/// will do.
+pub(crate) fn requires_for(field_metas: Option<&'static [FieldMeta]>, name: &str) -> &'static str {
+    field_metas
+        .and_then(|metas| metas.iter().find(|m| m.name == name))
+        .map(|m| m.requires)
+        .unwrap_or("")
+}

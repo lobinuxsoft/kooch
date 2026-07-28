@@ -277,3 +277,118 @@ fn a_changed_parent_is_followed() {
         "the mirror did not follow the new parent"
     );
 }
+
+/// A component pointing at another entity has to point at the *mirror's*
+/// entity, not at the project's handle.
+///
+/// The two processes number their entities independently, so index 9 over
+/// there is not index 9 here. Untranslated, a joint's Body A read as
+/// whichever mirror entity happened to land on that index — or as
+/// missing, which is how it looked.
+#[test]
+fn an_entity_reference_is_translated_into_the_mirror() {
+    use ome_ecs::reflect::EntityRef;
+    use ome_physics::components::Joint;
+
+    let mut resources = ecs();
+    resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<Joint>();
+    let mut mirror = RemoteMirror::new();
+
+    // The project's handles are deliberately nothing like the mirror's:
+    // high indices no freshly-spawned local entity would be given.
+    let target = EntityId {
+        index: 900,
+        generation: 3,
+    };
+    let holder = EntityId {
+        index: 901,
+        generation: 3,
+    };
+    let snapshot = vec![
+        EntitySnapshot {
+            id: target,
+            name: Some("Door frame".into()),
+            parent: None,
+            components: vec![],
+        },
+        EntitySnapshot {
+            id: holder,
+            name: Some("Hinge".into()),
+            parent: None,
+            components: vec![ComponentSnapshot {
+                type_name: std::any::type_name::<Joint>().into(),
+                fields: vec![(
+                    "body_a".into(),
+                    ReflectValue::EntityRef(Some(EntityRef::live(target.into()))),
+                )],
+            }],
+        },
+    ];
+
+    mirror.apply(&snapshot, &mut resources);
+
+    let local_target = mirror.local_of(target).expect("the target is mirrored");
+    let local_holder = mirror.local_of(holder).expect("the holder is mirrored");
+    let joint = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<Joint>())
+        .and_then(|s| s.get(local_holder).copied())
+        .expect("the Joint was mirrored");
+
+    assert_eq!(
+        joint.body_a,
+        Some(EntityRef::live(local_target)),
+        "the reference still names the project's handle",
+    );
+}
+
+/// The reference is translated even when its target appears *after* the
+/// entity holding it — snapshot order is archetype order, not authoring
+/// order, so this is the ordinary case rather than a corner.
+#[test]
+fn a_reference_to_a_later_entity_is_translated_too() {
+    use ome_ecs::reflect::EntityRef;
+    use ome_physics::components::Joint;
+
+    let mut resources = ecs();
+    resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<Joint>();
+    let mut mirror = RemoteMirror::new();
+
+    let snapshot = vec![
+        EntitySnapshot {
+            id: eid(5),
+            name: Some("Hinge".into()),
+            parent: None,
+            components: vec![ComponentSnapshot {
+                type_name: std::any::type_name::<Joint>().into(),
+                fields: vec![(
+                    "body_b".into(),
+                    ReflectValue::EntityRef(Some(EntityRef::live(eid(6).into()))),
+                )],
+            }],
+        },
+        EntitySnapshot {
+            id: eid(6),
+            name: Some("Door".into()),
+            parent: None,
+            components: vec![],
+        },
+    ];
+
+    mirror.apply(&snapshot, &mut resources);
+
+    let local_target = mirror.local_of(eid(6)).expect("the target is mirrored");
+    let joint = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<Joint>())
+        .and_then(|s| s.get(mirror.local_of(eid(5)).unwrap()).copied())
+        .expect("the Joint was mirrored");
+
+    assert_eq!(joint.body_b, Some(EntityRef::live(local_target)));
+}
