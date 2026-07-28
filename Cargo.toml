@@ -188,6 +188,16 @@ editor = ["dep:ome_editor_core"]
 dynamic = ["ome_core/dynamic", "ome_ecs/dynamic", "dep:ome_plugin_api"]
 
 [[example]]
+name = "load_project_smoke"
+path = "examples/load_project_smoke.rs"
+required-features = ["editor", "dynamic"]
+
+[[example]]
+name = "make_project"
+path = "examples/make_project.rs"
+required-features = ["editor"]
+
+[[example]]
 name = "make_playground"
 path = "examples/make_playground.rs"
 required-features = ["editor", "physics"]
