@@ -280,6 +280,7 @@ fn draw_inspector_body(
                                 rotation_ctx,
                                 actions,
                                 asset_catalog,
+                                entities,
                             );
                         }
                     } else {

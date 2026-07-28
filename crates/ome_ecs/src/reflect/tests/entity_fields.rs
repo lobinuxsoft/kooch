@@ -122,6 +122,74 @@ fn setting_an_unresolved_reference_is_rejected() {
     assert_eq!(joint.body_a, original, "the field must be left alone");
 }
 
+/// The shape an authorable reference uses: it stores the reference, not a
+/// handle extracted from it.
+#[derive(Debug, Default, Clone, PartialEq, DeriveReflect)]
+struct Link {
+    target: Option<EntityRef>,
+}
+
+impl crate::component::traits::Component for Link {}
+
+#[test]
+fn an_entity_ref_field_is_reported_as_an_entity_ref() {
+    let meta = Link::default()
+        .reflect_fields()
+        .iter()
+        .find(|f| f.name == "target")
+        .copied()
+        .expect("target");
+
+    assert_eq!(meta.kind, FieldKind::EntityRef);
+    assert_eq!(meta.type_name, "Option<EntityRef>");
+}
+
+#[test]
+fn an_entity_ref_field_round_trips_a_live_reference() {
+    let mut link = Link::default();
+    let target = EntityRef::live(Entity::new(6, 2));
+
+    link.reflect_set("target", ReflectValue::EntityRef(Some(target)))
+        .expect("a live reference is accepted");
+
+    assert_eq!(link.target, Some(target));
+    assert_eq!(
+        link.reflect_get("target"),
+        Some(ReflectValue::EntityRef(Some(target))),
+    );
+}
+
+/// The difference that makes this shape worth having: an `Entity` field
+/// rejects an unresolved reference because it has nowhere to put one.
+/// Losing it would drop the link every time the target's scene is not
+/// resident, which under world-cell streaming is ordinary.
+#[test]
+fn an_entity_ref_field_keeps_an_unresolved_reference() {
+    let mut link = Link::default();
+    let unresolved = EntityRef::same_scene(EntityGuid::new(4).expect("non-zero"));
+
+    link.reflect_set("target", ReflectValue::EntityRef(Some(unresolved)))
+        .expect("an unresolved reference is kept, not rejected");
+
+    assert_eq!(link.target, Some(unresolved));
+}
+
+#[test]
+fn clearing_an_entity_ref_field_leaves_no_target() {
+    let mut link = Link {
+        target: Some(EntityRef::live(Entity::new(1, 1))),
+    };
+
+    link.reflect_set("target", ReflectValue::EntityRef(None))
+        .expect("clearing is accepted");
+
+    assert_eq!(link.target, None);
+    assert_eq!(
+        link.reflect_get("target"),
+        Some(ReflectValue::EntityRef(None)),
+    );
+}
+
 #[test]
 fn setting_a_wrong_value_type_is_a_type_mismatch() {
     let mut joint = joint();

@@ -8,8 +8,7 @@ use glam::Vec3;
 
 use ome_ecs::Reflect;
 use ome_ecs::component::Component;
-use ome_ecs::entity::Entity;
-use ome_ecs::reflect::{FieldChoice, FieldCondition};
+use ome_ecs::reflect::{EntityRef, FieldChoice, FieldCondition};
 
 use crate::backend::{JointKind, JointMotor, MotorModel};
 
@@ -158,9 +157,11 @@ pub struct Joint {
     /// The first body. Anchors and `axis` are in *its* local space, which
     /// is what makes a hinge authorable: the axis belongs to the door
     /// frame, not to the world.
-    pub body_a: Entity,
+    #[reflect(requires = "RigidBody")]
+    pub body_a: Option<EntityRef>,
     /// The second body.
-    pub body_b: Entity,
+    #[reflect(requires = "RigidBody")]
+    pub body_b: Option<EntityRef>,
     /// Where the joint attaches on `body_a`, in its local space.
     pub anchor_a: Vec3,
     /// Where the joint attaches on `body_b`, in its local space.
@@ -248,8 +249,8 @@ impl Default for Joint {
     fn default() -> Self {
         Self {
             kind: JOINT_FIXED,
-            body_a: Entity::INVALID,
-            body_b: Entity::INVALID,
+            body_a: None,
+            body_b: None,
             anchor_a: Vec3::ZERO,
             anchor_b: Vec3::ZERO,
             axis: Vec3::Y,

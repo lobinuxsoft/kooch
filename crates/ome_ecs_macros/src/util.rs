@@ -33,3 +33,8 @@ pub(crate) fn option_inner(ty: &Type) -> Option<&Type> {
 pub(crate) fn is_entity(ty: &Type) -> bool {
     last_type_segment(ty).is_some_and(|ident| ident == "Entity")
 }
+
+/// Whether a type names `EntityRef`, bare or behind a path.
+pub(crate) fn is_entity_ref(ty: &Type) -> bool {
+    last_type_segment(ty).is_some_and(|ident| ident == "EntityRef")
+}

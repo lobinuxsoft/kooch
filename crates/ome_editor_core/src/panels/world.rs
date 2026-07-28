@@ -1,6 +1,6 @@
 //! World panel — entity hierarchy list with context menu.
 
-mod entity_row;
+pub(crate) mod entity_row;
 mod scene_bar;
 mod spawn_menu;
 

@@ -33,26 +33,7 @@ Last updated 2026-07-28, `development` at `d3bd885`.
 | **PR #651/#652** | The project's code loads into the editor as a `dylib` — its components appear in Add Component and render in the Inspector. Old projects migrate on open. Reload itself is still missing (#648) |
 | **PR #653** | The monoliths, split. One file over 600 lines left, and it is named below |
 | **PR #654** | The editor protocol left TCP for a local socket — closes the browser vector and the orphan-on-a-fixed-port confusion (#647) |
-
----
-
-## First — the Joint cannot be authored
-
-**#655.** Adding a `Joint` from the component menu freezes the world: the component never
-appears, systems stop, the session has to be reconnected, and nothing is printed anywhere.
-
-Three defects stacked. `Joint` names its bodies with raw `Entity` rather than the `EntityRef`
-that #607 built for exactly this, so what crosses the wire is a `Live` handle, which refuses
-to serialise by design. The server discards that error and sends `{}`. The client logs the
-resulting decode failure at `debug!`. Every layer hid the one below it.
-
-Ahead of the performance work because it is the one thing a user can do by accident that
-breaks the session, and because two thirds of it are the error paths lying — which is worth
-fixing whatever else is being built on top.
-
-It carries a feature too: `EntityRef` fields are read-only in the Inspector, so even with the
-freeze fixed a joint cannot name its bodies. Needs an entity picker and a drop target from
-the World panel.
+| **#655** | A `Joint` can be authored. Bodies are named with `Option<EntityRef>`, the Inspector has an entity picker and a World-panel drop target, and the three error paths that turned one failure into a frozen session stopped lying |
 
 ---
 

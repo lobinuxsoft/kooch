@@ -99,6 +99,7 @@ impl Reflect for GlobalTransform {
             bits: &[],
             shown_when: None,
             asset_type: "",
+            requires: "",
         }];
         FIELDS
     }

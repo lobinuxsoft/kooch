@@ -209,6 +209,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         remote: resources
             .get::<crate::remote_session::RemoteState>()
             .and_then(|s| s.session.as_ref().map(|s| s.state())),
+        remote_stale: resources
+            .get::<crate::remote_session::RemoteState>()
+            .and_then(|s| s.session.as_ref()?.stale_reason().map(String::from)),
         // In remote mode the project runs gameplay in place, so Play
         // is a wire toggle rather than a launched process.
         is_playing: is_playing

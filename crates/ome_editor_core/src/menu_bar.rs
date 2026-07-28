@@ -20,6 +20,7 @@ pub(crate) fn draw_menu_bar(
     actions: &mut Vec<EditorAction>,
     is_playing: bool,
     remote: Option<ConnectionState>,
+    remote_stale: Option<&str>,
     can_undo: bool,
     can_redo: bool,
     undo_desc: Option<&str>,
@@ -192,7 +193,7 @@ pub(crate) fn draw_menu_bar(
             // enough that a silent editor reads as a hang.
             if let Some(remote) = remote {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    draw_remote_status(ui, remote, actions);
+                    draw_remote_status(ui, remote, remote_stale, actions);
                 });
             }
         });
@@ -200,26 +201,34 @@ pub(crate) fn draw_menu_bar(
 }
 
 /// Draws the remote session indicator and its rebuild control.
-fn draw_remote_status(ui: &mut egui::Ui, remote: ConnectionState, actions: &mut Vec<EditorAction>) {
-    let (icon, text, color, hover) = match remote {
-        ConnectionState::Connecting => (
-            icons::GEAR,
-            "Connecting",
-            egui::Color32::from_rgb(210, 180, 90),
-            "Building and starting the project. The world appears once it answers.",
-        ),
-        ConnectionState::Connected => (
-            icons::ROCKET,
-            "Remote",
-            egui::Color32::from_rgb(100, 200, 100),
-            "Editing the project's live world. Edits are applied by the project, not here.",
-        ),
-        ConnectionState::Failed => (
-            icons::X,
-            "Disconnected",
-            egui::Color32::from_rgb(200, 80, 80),
-            "The project exited before answering. Check its build output in the terminal.",
-        ),
+///
+/// `stale` is why the snapshot stopped tracking the project. It overrides
+/// the connected look: the socket being up says nothing about whether what
+/// is on screen still matches the world, and a mirror that quietly stopped
+/// updating is indistinguishable from a world where nothing is moving.
+fn draw_remote_status(
+    ui: &mut egui::Ui,
+    remote: ConnectionState,
+    stale: Option<&str>,
+    actions: &mut Vec<EditorAction>,
+) {
+    let stale_hover;
+    let (icon, text, color, hover) = match (remote, stale) {
+        (ConnectionState::Connected, Some(reason)) => {
+            stale_hover = format!(
+                "The project stopped answering with a readable world, so this is the \
+                 last one the editor could read — edits from here may not land.\n\n{reason}",
+            );
+            (
+                // The same glyph the Inspector uses for a warning; the
+                // icon font has no triangle of its own.
+                "\u{26a0}",
+                "Stale",
+                egui::Color32::from_rgb(210, 150, 60),
+                stale_hover.as_str(),
+            )
+        }
+        _ => remote_status_look(remote),
     };
     // Right-to-left layout: this lands to the left of the status text.
     if ui
@@ -238,4 +247,30 @@ fn draw_remote_status(ui: &mut egui::Ui, remote: ConnectionState, actions: &mut 
     }
     ui.label(egui::RichText::new(format!("{icon} {text}")).color(color))
         .on_hover_text(hover);
+}
+
+/// How each handshake state reads, before staleness is taken into account.
+fn remote_status_look(
+    remote: ConnectionState,
+) -> (&'static str, &'static str, egui::Color32, &'static str) {
+    match remote {
+        ConnectionState::Connecting => (
+            icons::GEAR,
+            "Connecting",
+            egui::Color32::from_rgb(210, 180, 90),
+            "Building and starting the project. The world appears once it answers.",
+        ),
+        ConnectionState::Connected => (
+            icons::ROCKET,
+            "Remote",
+            egui::Color32::from_rgb(100, 200, 100),
+            "Editing the project's live world. Edits are applied by the project, not here.",
+        ),
+        ConnectionState::Failed => (
+            icons::X,
+            "Disconnected",
+            egui::Color32::from_rgb(200, 80, 80),
+            "The project exited before answering. Check its build output in the terminal.",
+        ),
+    }
 }

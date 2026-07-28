@@ -27,6 +27,7 @@ impl Reflect for Health {
             bits: &[],
             shown_when: None,
             asset_type: "",
+            requires: "",
         }];
         FIELDS
     }

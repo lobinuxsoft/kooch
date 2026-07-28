@@ -5,24 +5,49 @@ use ome_ecs::reflect::{FieldChoice, ReflectValue};
 use super::asset::{AssetCatalogEntry, asset_filter_for};
 use super::asset_picker::draw_asset_picker;
 use super::choices::{draw_bitmask, draw_choice_dropdown};
+use super::entity_picker::draw_entity_picker;
+use crate::state::EntityDisplayInfo;
+
+/// Everything a widget needs about the field it is drawing, other than
+/// the value itself.
+///
+/// A struct rather than a parameter list: the reference picker needs the
+/// scene's entities and the field's `requires` hint, and eight positional
+/// arguments threaded through three call sites is how the next one gets
+/// passed in the wrong order.
+pub(in crate::panels::inspector) struct FieldContext<'a> {
+    /// Field name. Also the colour-field and asset-path heuristic's input.
+    pub name: &'a str,
+    /// Renders an integer field as a dropdown when non-empty.
+    pub choices: &'static [FieldChoice],
+    /// Renders an integer field as named checkboxes when non-empty. A
+    /// field is one of a set or a combination of them, never both, so
+    /// `choices` wins if somehow given both.
+    pub bits: &'static [FieldChoice],
+    /// Per-frame snapshot of `AssetDatabase`, filtered by the `AssetRef`
+    /// widget when it populates its dropdown.
+    pub assets: &'a [AssetCatalogEntry],
+    /// The entities the reference picker offers.
+    pub entities: &'a [EntityDisplayInfo],
+    /// `FieldMeta::requires`: a component the reference's target must
+    /// carry, or `""` for no constraint.
+    pub requires: &'a str,
+}
 
 /// Draws an editable widget for a single reflected value.
 /// Returns `Some(new_value)` if the user modified it.
-/// `field_name` is used to detect color fields and show a color picker.
-/// `choices` renders integer fields as a dropdown when non-empty, and
-/// `bits` renders them as named checkboxes — a field is one of a set or a
-/// combination of them, never both, so `choices` wins if somehow given
-/// both.
-/// `asset_catalog` is the per-frame snapshot of `AssetDatabase` the
-/// `AssetRef` widget filters when populating its picker dropdown.
 pub(in crate::panels::inspector) fn draw_value_widget(
     ui: &mut egui::Ui,
     value: &ReflectValue,
-    field_name: &str,
-    choices: &'static [FieldChoice],
-    bits: &'static [FieldChoice],
-    asset_catalog: &[AssetCatalogEntry],
+    field: &FieldContext<'_>,
 ) -> Option<ReflectValue> {
+    let FieldContext {
+        name: field_name,
+        choices,
+        bits,
+        assets: asset_catalog,
+        ..
+    } = *field;
     if !choices.is_empty() {
         // Returns `None` while the popup is merely open, so the dropdown
         // cannot fall through to the numeric widget behind it.
@@ -240,15 +265,8 @@ pub(in crate::panels::inspector) fn draw_value_widget(
         ReflectValue::AssetRef { guid, asset_type } => {
             draw_asset_picker(ui, *guid, asset_type, asset_catalog)
         }
-        // Read-only for now. Editing a reference needs an entity picker
-        // and a drop target from the World panel, which is editor work
-        // rather than reflection work — see #607.
         ReflectValue::EntityRef(reference) => {
-            match reference {
-                Some(reference) => ui.label(reference.to_string()),
-                None => ui.weak("None"),
-            };
-            None
+            draw_entity_picker(ui, *reference, field.entities, field.requires, field_name)
         }
         ReflectValue::Mat4(m) => {
             let (scale, rotation, translation) = m.to_scale_rotation_translation();

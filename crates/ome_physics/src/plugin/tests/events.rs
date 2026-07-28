@@ -3,6 +3,7 @@
 use super::*;
 
 use ome_core::event::Events;
+use ome_ecs::reflect::EntityRef;
 
 use crate::components::{JOINT_FIXED, Joint};
 use crate::plugin::{CollisionStarted, CollisionStopped, ContactForce, JointBroke};
@@ -499,8 +500,8 @@ fn a_broken_joint_raises_an_event() {
         joint,
         Joint {
             kind: JOINT_FIXED,
-            body_a: hook,
-            body_b: load,
+            body_a: Some(EntityRef::live(hook)),
+            body_b: Some(EntityRef::live(load)),
             anchor_a: Vec3::new(0.0, -1.0, 0.0),
             breakable: true,
             break_impulse: 0.02,

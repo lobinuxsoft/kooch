@@ -56,12 +56,7 @@ fn ecs() -> Resources {
 }
 
 /// The whole reported flow: spawn, add a Joint, list again.
-///
-/// **Currently failing on purpose** — it reproduces the reported bug and
-/// is the check that the fix will have to satisfy. See the issue linked
-/// in this file's module docs.
 #[test]
-#[ignore = "reproduces a known bug: EntityRef::Live cannot cross the protocol"]
 fn a_joint_added_over_the_wire_comes_back_in_the_snapshot() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -128,7 +123,6 @@ fn a_joint_added_over_the_wire_comes_back_in_the_snapshot() {
 /// A Joint carries `EntityRef` fields, which are the ones most likely to
 /// trip serialisation. Asserted separately so a failure names the cause.
 #[test]
-#[ignore = "reproduces a known bug: EntityRef::Live cannot cross the protocol"]
 fn a_joints_fields_survive_the_round_trip() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -172,30 +166,38 @@ fn a_joints_fields_survive_the_round_trip() {
     main_loop.join().unwrap();
 }
 
-/// What exactly fails when a `Joint` is serialised?
+/// Every field of a `Joint` survives the protocol's format.
 ///
-/// The server falls back to writing `{}` when `to_string` errors, so the
-/// cause never reaches anyone. This asks it directly, and names the field.
+/// Asked directly, field by field, so a failure names the one that did it.
+/// The server used to answer `{}` when this failed, and the cause reached
+/// nobody: the client then failed decoding `{}`, a different error in a
+/// different process, naming nothing.
+///
+/// A round trip rather than an eyeball over the text — `null` is a
+/// perfectly good encoding of a reference to nothing, and the question is
+/// whether the value comes back, not what it looks like on the way.
 #[test]
-#[ignore = "reproduces a known bug: EntityRef::Live cannot cross the protocol"]
-fn a_joint_snapshot_serialises() {
-    use ome_ecs::reflect::Reflect;
+fn every_joint_field_survives_the_wire() {
+    use ome_ecs::reflect::{Reflect, ReflectValue};
 
     let joint = Joint::default();
-    let fields = joint.reflect_fields();
 
-    for meta in fields {
+    for meta in joint.reflect_fields() {
         let value = joint.reflect_get(meta.name).expect("field readable");
-        match ome_remote::serde_json::to_string(&value) {
-            Ok(json) => {
-                assert!(
-                    !json.contains("null"),
-                    "field `{}` serialised to null — a non-finite float does that, \
-                     and it decodes back as a type error: {json}",
-                    meta.name
-                );
-            }
+        let json = match ome_remote::serde_json::to_string(&value) {
+            Ok(json) => json,
             Err(e) => panic!("field `{}` failed to serialise: {e}", meta.name),
-        }
+        };
+        let back: ReflectValue = ome_remote::serde_json::from_str(&json).unwrap_or_else(|e| {
+            panic!(
+                "field `{}` encoded as {json} and would not read back: {e}",
+                meta.name
+            )
+        });
+        assert_eq!(
+            back, value,
+            "field `{}` changed crossing the wire",
+            meta.name
+        );
     }
 }

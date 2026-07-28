@@ -25,6 +25,7 @@ impl Reflect for Children {
             bits: &[],
             shown_when: None,
             asset_type: "",
+            requires: "",
         }];
         FIELDS
     }

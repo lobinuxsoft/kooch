@@ -15,7 +15,8 @@ use crate::state::{EntityDisplayInfo, EulerCacheKey};
 use super::RotationContext;
 use super::rotation::{draw_quat_with_cache, is_transform_rotation};
 use super::widgets::{
-    AssetCatalogEntry, bits_for, choices_for, draw_readonly_value, draw_value_widget,
+    AssetCatalogEntry, FieldContext, bits_for, choices_for, draw_readonly_value, draw_value_widget,
+    requires_for,
 };
 
 /// Draws an editable name field for the Name component (shown above the component list).
@@ -50,14 +51,6 @@ pub(super) fn draw_name_editor(
     ui.separator();
 }
 
-/// Renders editable widgets for reflected component fields.
-///
-/// `euler_cache` lets the Quat path preserve editor-side Euler state to
-/// avoid gimbal lock from a per-frame Quat→Euler→Quat round-trip (#202).
-/// `rotation_ctx` is only consulted for `Transform.rotation` so the
-/// Inspector can toggle Local vs World display (#205). Other Quat fields
-/// always edit in local space.
-#[allow(clippy::too_many_arguments)]
 /// Whether a field's [`FieldCondition`] is met by the component's current
 /// values.
 ///
@@ -102,6 +95,16 @@ fn integer_value(value: &ReflectValue) -> Option<i64> {
     }
 }
 
+/// Renders editable widgets for reflected component fields.
+///
+/// `euler_cache` lets the Quat path preserve editor-side Euler state to
+/// avoid gimbal lock from a per-frame Quat→Euler→Quat round-trip (#202).
+/// `rotation_ctx` is only consulted for `Transform.rotation` so the
+/// Inspector can toggle Local vs World display (#205). Other Quat fields
+/// always edit in local space.
+///
+/// `entities` is what the reference picker offers as targets.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_reflected_fields(
     ui: &mut egui::Ui,
     entity: Entity,
@@ -113,6 +116,7 @@ pub(super) fn draw_reflected_fields(
     rotation_ctx: RotationContext,
     actions: &mut Vec<EditorAction>,
     asset_catalog: &[AssetCatalogEntry],
+    entities: &[EntityDisplayInfo],
 ) {
     egui::Grid::new(format!("fields_{:?}_{}", component, entity.index()))
         .num_columns(2)
@@ -126,8 +130,14 @@ pub(super) fn draw_reflected_fields(
                     continue;
                 }
                 ui.label(name);
-                let choices = choices_for(field_metas, name);
-                let bits = bits_for(field_metas, name);
+                let field = FieldContext {
+                    name,
+                    choices: choices_for(field_metas, name),
+                    bits: bits_for(field_metas, name),
+                    assets: asset_catalog,
+                    entities,
+                    requires: requires_for(field_metas, name),
+                };
                 let new_value = match value {
                     ReflectValue::Quat(q) => {
                         let ctx = if is_transform_rotation(type_id, name) {
@@ -137,7 +147,7 @@ pub(super) fn draw_reflected_fields(
                         };
                         draw_quat_with_cache(ui, entity, type_id, name, *q, ctx, euler_cache)
                     }
-                    _ => draw_value_widget(ui, value, name, choices, bits, asset_catalog),
+                    _ => draw_value_widget(ui, value, &field),
                 };
                 if let Some(new_value) = new_value {
                     actions.push(EditorAction::SetField {

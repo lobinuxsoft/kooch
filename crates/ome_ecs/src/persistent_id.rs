@@ -100,6 +100,7 @@ impl Reflect for PersistentId {
             bits: &[],
             shown_when: None,
             asset_type: "",
+            requires: "",
         }];
         FIELDS
     }

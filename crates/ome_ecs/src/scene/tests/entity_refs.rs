@@ -286,3 +286,44 @@ fn two_references_in_one_component_both_survive() {
     assert_eq!(ids.len(), 2, "both targets should carry an identity");
     assert_ne!(ids[0], ids[1], "the two targets share an identity");
 }
+
+/// The check that replaced the serialiser's refusal. A document holding a
+/// live handle must not reach a file — and the complaint has to name what
+/// to look at, which `4294967295:0` never did.
+#[test]
+fn saving_a_document_holding_a_live_handle_is_refused() {
+    use crate::reflect::EntityRef;
+    use crate::scene::document::{ComponentDescription, EntityDescription};
+
+    let document = SceneDocument {
+        id: ome_core::Guid::new_v4(),
+        name: "broken".into(),
+        version: "1".into(),
+        entities: vec![EntityDescription {
+            name: "Hinge".into(),
+            parent_index: None,
+            parent: None,
+            components: vec![ComponentDescription {
+                type_name: "ome_physics::components::Joint".into(),
+                fields: vec![(
+                    "body_a".into(),
+                    ReflectValue::EntityRef(Some(EntityRef::live(Entity::new(4, 1)))),
+                )],
+            }],
+        }],
+    };
+
+    let path = std::env::temp_dir().join("ome_live_handle_refused.ome_scene");
+    let error = document
+        .save(&path)
+        .expect_err("a live handle must not be written");
+
+    let text = error.to_string();
+    for expected in ["Hinge", "Joint", "body_a"] {
+        assert!(
+            text.contains(expected),
+            "the error should name {expected}, got: {text}",
+        );
+    }
+    assert!(!path.exists(), "nothing should have been written");
+}

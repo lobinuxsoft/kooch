@@ -14,8 +14,12 @@
 //! papering over the other. The conversion happens at exactly two places —
 //! the scene save path and the load path's remapping pass — so the rest of
 //! the engine only ever sees [`EntityRef::Live`].
+//!
+//! Both states serialise. A file must never receive a `Live`, but the
+//! editor protocol must, and it is the same value crossing a different
+//! boundary — see the note on the [`Serialize`] impl.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::Error as _};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use ome_core::Guid;
 
@@ -45,43 +49,76 @@ pub enum EntityRef {
     },
 }
 
-/// The on-disk shape. Only [`EntityRef::Persistent`] has one.
+/// The wire and on-disk shapes, told apart by which field is present.
+///
+/// One struct with optional fields rather than a two-variant enum: RON
+/// cannot read an `untagged` enum — it resolves through `deserialize_any`,
+/// which RON does not implement for its struct syntax — and a *tagged* one
+/// would put a tag in front of every persistent reference already written
+/// to every scene on disk. A field that is simply absent costs neither.
 #[derive(Serialize, Deserialize)]
-struct PersistentRef {
+struct Repr {
+    /// The scene owning the target, for a persistent reference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scene: Option<Guid>,
-    id: EntityGuid,
+    /// Present on a persistent reference: what a file holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id: Option<EntityGuid>,
+    /// Present on a live one: the index and generation the editor protocol
+    /// carries, which mean something only to the session that issued them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    live: Option<(u32, u32)>,
 }
 
-/// Serialising a [`EntityRef::Live`] fails loudly rather than writing a
-/// runtime handle into a file.
+/// Both states serialise, because the editor protocol is not a file.
 ///
-/// [`Entity`] deliberately does not implement [`Serialize`] — an index and
-/// a generation mean nothing once reloaded. A `Live` reaching a serialiser
-/// means the save path failed to resolve it, and the difference between an
-/// error here and a silently written handle is the difference between a
-/// failed save and a scene that loads with references pointing at
-/// arbitrary entities.
+/// The engine and the editor are two processes sharing one live session,
+/// and a handle is exactly what one means when it tells the other which
+/// entity a field points at — the protocol already passes `EntityId`
+/// around for the same reason. Refusing to encode a [`EntityRef::Live`]
+/// used to make an authored reference undescribable, which is what froze
+/// the mirror the moment a component held one.
+///
+/// What must not happen is a handle reaching a *file*: an index and a
+/// generation are reassigned on the next load, so a saved one points at
+/// whatever occupies that slot. That is checked where it can be said
+/// properly — see [`SceneDocument::save`](crate::scene::SceneDocument::save),
+/// which names the entity, component and field rather than a bare pair of
+/// numbers.
 impl Serialize for EntityRef {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match *self {
-            Self::Persistent { scene, id } => PersistentRef { scene, id }.serialize(serializer),
-            Self::Live(entity) => Err(S::Error::custom(format!(
-                "cannot serialise a live entity reference ({}:{}); \
-                 the save path must resolve it to a PersistentId first",
-                entity.index(),
-                entity.generation(),
-            ))),
+            Self::Persistent { scene, id } => Repr {
+                scene,
+                id: Some(id),
+                live: None,
+            },
+            Self::Live(entity) => Repr {
+                scene: None,
+                id: None,
+                live: Some((entity.index(), entity.generation())),
+            },
         }
+        .serialize(serializer)
     }
 }
 
-/// A reference read from a file is always unresolved — the load pass turns
-/// it into a [`EntityRef::Live`] once the target entity exists.
+/// A reference read from a file is unresolved — the load pass turns it
+/// into a [`EntityRef::Live`] once the target entity exists. One read off
+/// the protocol is already live, and is taken as it came.
 impl<'de> Deserialize<'de> for EntityRef {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let PersistentRef { scene, id } = PersistentRef::deserialize(deserializer)?;
-        Ok(Self::Persistent { scene, id })
+        let repr = Repr::deserialize(deserializer)?;
+        match (repr.live, repr.id) {
+            (Some((index, generation)), _) => Ok(Self::Live(Entity::new(index, generation))),
+            (None, Some(id)) => Ok(Self::Persistent {
+                scene: repr.scene,
+                id,
+            }),
+            (None, None) => Err(serde::de::Error::custom(
+                "an entity reference needs either `id` (persistent) or `live`",
+            )),
+        }
     }
 }
 
@@ -200,18 +237,28 @@ mod tests {
         );
     }
 
-    /// Writing a runtime handle into a file is the exact bug this type
-    /// exists to prevent, so it has to fail rather than round-trip.
+    /// The editor protocol has to be able to say "this field points at
+    /// that entity" about a session both ends share. Refusing to encode a
+    /// live reference made an authored one undescribable.
     #[test]
-    fn serialising_a_live_reference_is_an_error() {
-        let result = ron::to_string(&EntityRef::live(Entity::new(3, 1)));
-        let Err(error) = result else {
-            panic!("a live reference must not serialise");
-        };
-        assert!(
-            error.to_string().contains("resolve"),
-            "the error should say what to do, got: {error}",
-        );
+    fn a_live_reference_round_trips() {
+        let original = EntityRef::live(Entity::new(3, 1));
+        let encoded = ron::to_string(&original).expect("serialises");
+        let decoded: EntityRef = ron::from_str(&encoded).expect("deserialises");
+        assert_eq!(decoded, original);
+    }
+
+    /// The two shapes have to stay tellable apart with no tag in front of
+    /// them, or a scene written before `Live` existed would read back as
+    /// the wrong variant.
+    #[test]
+    fn the_two_shapes_do_not_collide() {
+        let live = ron::to_string(&EntityRef::live(Entity::new(3, 1))).expect("serialises");
+        let persistent = ron::to_string(&EntityRef::same_scene(guid(3))).expect("serialises");
+        assert_ne!(live, persistent);
+
+        let decoded: EntityRef = ron::from_str(&persistent).expect("deserialises");
+        assert_eq!(decoded, EntityRef::same_scene(guid(3)));
     }
 
     #[test]

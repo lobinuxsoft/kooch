@@ -154,6 +154,46 @@ fn listen(listener: interprocess::local_socket::Listener, tx: Sender<PendingRequ
     }
 }
 
+/// Encodes a response, falling back to an encodable complaint about why
+/// it could not be encoded.
+///
+/// This used to be `unwrap_or_else(|_| "{}")`. The client then failed
+/// decoding `{}` — a different error, in a different process, naming
+/// nothing — and its mirror stopped updating for good. A snapshot that
+/// cannot be described has to say so, in the reply, where the caller is
+/// already looking.
+///
+/// The fallback carries the serialiser's own message: whatever refused to
+/// encode says why, and that sentence is the whole diagnosis.
+fn encode(response: &Response) -> String {
+    match serde_json::to_string(response) {
+        Ok(json) => json,
+        Err(e) => {
+            tracing::error!(
+                target: "ome_remote",
+                id = response.id,
+                error = %e,
+                "a response could not be encoded",
+            );
+            let complaint = Response::err(
+                response.id,
+                crate::protocol::RemoteError::Unavailable {
+                    detail: format!("the reply could not be encoded: {e}"),
+                },
+            );
+            // Strings and a number: nothing here can fail. Spelled out
+            // rather than unwrapped, because this path exists precisely
+            // for the case where a serialiser did fail.
+            serde_json::to_string(&complaint).unwrap_or_else(|_| {
+                format!(
+                    r#"{{"id":{},"error":{{"code":"unavailable","detail":"the reply could not be encoded"}}}}"#,
+                    response.id,
+                )
+            })
+        }
+    }
+}
+
 /// Handles one connection. Returns `false` when the main loop is gone and
 /// the listener should stop.
 fn serve_one(conn: Stream, tx: &Sender<PendingRequest>) -> bool {
@@ -190,7 +230,7 @@ fn serve_one(conn: Stream, tx: &Sender<PendingRequest>) -> bool {
         ),
     };
 
-    let mut json = serde_json::to_string(&response).unwrap_or_else(|_| "{}".into());
+    let mut json = encode(&response);
     json.push('\n');
     if let Err(e) = reader.get_mut().write_all(json.as_bytes()) {
         tracing::debug!("remote: failed to write response: {e}");

@@ -44,6 +44,19 @@ pub struct FieldMeta {
     /// inspector passes this to `AssetDatabase::entries_of_type` to
     /// build the picker dropdown. `""` for non-asset fields.
     pub asset_type: &'static str,
+    /// For [`FieldKind::EntityRef`] fields, the short name of a component
+    /// the target must carry (e.g. `"RigidBody"`). `""` when anything
+    /// will do.
+    ///
+    /// The inspector filters its picker by this and refuses a drop that
+    /// does not satisfy it, saying why. A joint body without a rigid body
+    /// is not a body: accepted, it would leave the joint inert, which
+    /// looks exactly like the joint being broken.
+    ///
+    /// A short name rather than a type path, because the component may
+    /// live in a crate this one cannot name, and the editor already keys
+    /// its display on short names.
+    pub requires: &'static str,
 }
 
 /// A labelled value in a [`FieldMeta::choices`] set.

@@ -42,7 +42,8 @@ Each field's Rust type maps to a `FieldKind`, and the kind decides the widget:
 | `Quat` | Euler angles, in degrees |
 | `Mat4` | Decomposed to translation / rotation / lossy scale, read-only |
 | `Option<Guid>` + `#[reflect(asset = "…")]` | Typed asset picker |
-| `Entity` | Entity reference — **read-only today**, see [#655](https://github.com/lobinuxsoft/oh_my_engine/issues/655) |
+| `Option<EntityRef>` | Entity picker, and a drop target for a drag from the World panel |
+| `Entity`, `Option<Entity>` | Same widget, but see "Pointing at another entity" below |
 | A struct that also derives `Reflect` | Nested, drawn inline |
 
 > **`glam` is not re-exported yet.** `Vec3`, `Quat` and `Mat4` are `glam` types, and a project
@@ -91,6 +92,11 @@ pub struct Weapon {
     /// Only drawn when another field says it is relevant.
     #[reflect(shown_when = BURST_ONLY)]
     pub burst_count: u32,
+
+    /// A reference the picker will only let you point at an entity
+    /// carrying a `RigidBody`.
+    #[reflect(requires = "RigidBody")]
+    pub anchored_to: Option<EntityRef>,
 }
 ```
 
@@ -99,6 +105,42 @@ same table is used by the Inspector and by your code, and they cannot drift apar
 
 `shown_when` is what keeps a component with many mutually-exclusive fields readable: the
 engine's own `Joint` uses it so a hinge does not show you spring stiffness.
+
+`requires` names a component, by its short name, that the target has to carry. The picker
+filters by it and refuses a drop that fails it, saying why — a reference accepted but inert
+is indistinguishable from a broken one.
+
+## Pointing at another entity
+
+Use `Option<EntityRef>`.
+
+```rust
+use ome_ecs::reflect::EntityRef;
+
+#[derive(Default, Reflect)]
+pub struct Turret {
+    pub target: Option<EntityRef>,
+}
+```
+
+Three things assign it, and all three write the same value: your code
+(`turret.target = Some(EntityRef::live(entity))`), the Inspector's picker, and dragging an
+entity from the World panel onto the field.
+
+`EntityRef` is two states, because a reference means two different things depending on where
+it lives:
+
+- **`Live`** — an index and a generation. What a running component holds, and what
+  `EntityRef::entity()` gives you back for a query or a lookup.
+- **`Persistent`** — an identity that survives a reload. What a scene file holds.
+
+You do not convert between them. Saving resolves live to persistent, loading resolves back,
+and a reference whose target's scene is not open stays persistent until it is — which is why
+the field is `Option<EntityRef>` and not `Option<Entity>`. An `Entity` field has nowhere to
+put an unresolved reference, so it loses the link instead of keeping it.
+
+`Entity` and `Option<Entity>` still reflect, for a handle the engine resolves itself
+(`Parent` is one). They refuse to store anything but a live reference.
 
 ## Registration
 
@@ -123,8 +165,8 @@ a component:
 
 - **`#[reflect(skip)]` fields are not saved.** They are reconstructed by your code, or they
   are gone.
-- **A reference to another entity has to be persistent, not live.** An `Entity` is an index
-  and a generation, which mean nothing after a reload. `EntityRef::Persistent` is the type
-  that survives, and resolving one to the other is the save path's job. Getting this wrong is
-  how [#655](https://github.com/lobinuxsoft/oh_my_engine/issues/655) happened — the engine's
-  own `Joint` still holds raw `Entity` fields and cannot be saved because of it.
+- **A reference to another entity is saved as an identity, not as a handle.** The save path
+  resolves it and assigns the target a persistent id if it has none, which is why saving a
+  scene can modify the world. Nothing is asked of you beyond using `Option<EntityRef>`; a
+  handle reaching a file is refused by name, and the save fails rather than writing a
+  reference that would load pointing at some other entity.

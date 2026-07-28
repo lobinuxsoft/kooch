@@ -22,6 +22,9 @@ ome_plugin_api = { workspace = true, optional = true }
 
 [dev-dependencies]
 pollster.workspace = true
+# The editor protocol's format. Reflected values have to survive it, and
+# JSON is where the ones RON takes in its stride go wrong.
+serde_json.workspace = true
 
 [features]
 dynamic = ["ome_core/dynamic", "dep:ome_plugin_api"]
