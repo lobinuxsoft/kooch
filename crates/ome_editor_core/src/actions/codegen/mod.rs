@@ -63,6 +63,22 @@ pub(crate) fn register_scripts(resources: &mut Resources) {
 
     ensure_main_wired(&project_root, resources);
     ensure_features(&project_root);
+
+    // Bring a project made before the library split up to date. Runs
+    // last: it rewrites `main.rs`'s module line, which `ensure_main_wired`
+    // above may have just recreated from the scaffold.
+    let crate_name = resources
+        .get::<ProjectState>()
+        .and_then(|ps| {
+            ps.active_project
+                .as_ref()
+                .map(|ap| ap.manifest.name.clone())
+        })
+        .map(|name| crate::project::sanitize_crate_name(&name))
+        .unwrap_or_default();
+    if !crate_name.is_empty() {
+        migrate_to_library(&project_root, &crate_name);
+    }
 }
 
 /// Adds engine features a project predates.
@@ -113,6 +129,83 @@ fn ensure_features(project_root: &Path) {
         && let Err(e) = std::fs::write(&manifest, out)
     {
         tracing::error!(file = %manifest.display(), error = %e, "failed to update Cargo.toml");
+    }
+}
+
+/// Brings a project created before the library split up to date.
+///
+/// Projects scaffolded earlier are a plain binary: `src/main.rs` with
+/// `mod registrations;` and a manifest with no `[lib]`. The editor can
+/// only load a project's component types from a `dylib`, so without this
+/// every existing project would silently show none of its own
+/// components — the failure mode being "the menu looks the same as
+/// always", which nobody would report as a bug.
+///
+/// Three narrow edits, each skipped when already applied:
+///
+/// 1. `[lib] crate-type = ["rlib", "dylib"]` plus an explicit `[[bin]]`,
+///    because declaring a lib target makes cargo stop inferring the bin.
+/// 2. `src/lib.rs`, if absent.
+/// 3. `mod registrations;` in `main.rs` becomes `use <crate>::registrations;`,
+///    since the module now belongs to the library.
+///
+/// Nothing here rewrites gameplay code, and a manifest that does not
+/// look like the editor's own is left alone — same rule as
+/// [`ensure_features`].
+fn migrate_to_library(project_root: &Path, crate_name: &str) {
+    let manifest_path = project_root.join("Cargo.toml");
+    let Ok(manifest) = std::fs::read_to_string(&manifest_path) else {
+        return;
+    };
+    // Somebody else's manifest: leave it be.
+    if !manifest.contains("oh_my_engine = {") {
+        return;
+    }
+
+    if !manifest.contains("[lib]") {
+        let targets = format!(
+            "\n[lib]\ncrate-type = [\"rlib\", \"dylib\"]\n\n[[bin]]\nname = \"{crate_name}\"\npath = \"src/main.rs\"\n"
+        );
+        // Before `[dependencies]` so the file still reads top-down.
+        let updated = match manifest.find("[dependencies]") {
+            Some(at) => {
+                let mut out = manifest.clone();
+                out.insert_str(at, targets.trim_start_matches('\n'));
+                out
+            }
+            None => format!("{manifest}{targets}"),
+        };
+        if let Err(e) = std::fs::write(&manifest_path, updated) {
+            tracing::error!(file = %manifest_path.display(), error = %e, "failed to add lib target");
+            return;
+        }
+        tracing::info!("Cargo.toml: added the library target the editor loads");
+    }
+
+    let lib_path = project_root.join("src").join("lib.rs");
+    if !lib_path.exists() {
+        let contents = crate::project::generate_lib_rs(crate_name);
+        if let Err(e) = std::fs::write(&lib_path, contents) {
+            tracing::error!(file = %lib_path.display(), error = %e, "failed to write lib.rs");
+            return;
+        }
+        tracing::info!("src/lib.rs: created, so the editor can load this project's components");
+    }
+
+    let main_path = project_root.join("src").join("main.rs");
+    if let Ok(main) = std::fs::read_to_string(&main_path)
+        && main.contains("mod registrations;")
+        && !main.contains("::registrations;")
+    {
+        let updated = main.replace(
+            "mod registrations;",
+            &format!("use {crate_name}::registrations;"),
+        );
+        if let Err(e) = std::fs::write(&main_path, updated) {
+            tracing::error!(file = %main_path.display(), error = %e, "failed to rewire main.rs");
+        } else {
+            tracing::info!("src/main.rs: registrations now come from the project library");
+        }
     }
 }
 
@@ -249,6 +342,26 @@ fn render_registrations(files: &[SourceFile]) -> String {
             ));
         }
     }
+    s.push_str("}\n\n");
+
+    // The other direction: describing these same types outward, so the
+    // standalone editor can list them without compiling them. The engine
+    // reads each type's own reflection, so this only has to name them.
+    s.push_str("/// Describes project components to an editor that loads this library.\n");
+    s.push_str("///\n");
+    s.push_str("/// Called from `lib.rs` when the editor loads the project's dylib.\n");
+    s.push_str(
+        "pub fn declare_components(engine: &mut dyn oh_my_engine::ome_plugin_api::Engine) {\n",
+    );
+    s.push_str("    use oh_my_engine::ome_ecs::component::plugin_bridge::declare_component;\n");
+    for f in files {
+        for c in &f.components {
+            s.push_str(&format!(
+                "    let _ = declare_component::<{}::{}>(engine, \"{}::{}\");\n",
+                f.module, c, f.module, c
+            ));
+        }
+    }
     s.push_str("}\n");
     s
 }
@@ -348,141 +461,6 @@ fn ensure_main_wired(project_root: &Path, resources: &Resources) {
     }
 }
 
+
 #[cfg(test)]
-mod tests {
-    use super::{detect, ensure_features, module_name};
-
-    /// A manifest in its own directory, the way the rest of the repo does
-    /// it — there is no `tempfile` in this workspace.
-    fn manifest_dir(name: &str, contents: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("ome_codegen_{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create dir");
-        std::fs::write(dir.join("Cargo.toml"), contents).expect("write");
-        dir
-    }
-
-    fn manifest_of(dir: &std::path::Path) -> String {
-        std::fs::read_to_string(dir.join("Cargo.toml")).expect("read")
-    }
-
-    /// A project scaffolded before `gravity` existed compiles a host with
-    /// no gravity system, so a `PointGravity` is authorable, mirrors, draws
-    /// its gizmo and pulls on nothing — which reads as "physics is broken".
-    #[test]
-    fn an_older_project_gains_the_gravity_feature() {
-        let dir = manifest_dir(
-            "older",
-            "oh_my_engine = { path = \"../..\", features = [\"editor\", \"physics\"] }\n",
-        );
-
-        ensure_features(&dir);
-
-        let out = manifest_of(&dir);
-        assert!(out.contains("\"gravity\""), "{out}");
-        assert!(
-            out.contains("\"physics\""),
-            "the existing features survived: {out}",
-        );
-    }
-
-    /// Running twice must not append it twice, because this runs on every
-    /// script regeneration.
-    #[test]
-    fn adding_a_feature_is_idempotent() {
-        let dir = manifest_dir(
-            "idempotent",
-            "oh_my_engine = { path = \"../..\", features = [\"physics\", \"gravity\"] }\n",
-        );
-        let before = manifest_of(&dir);
-
-        ensure_features(&dir);
-        ensure_features(&dir);
-
-        assert_eq!(manifest_of(&dir), before);
-    }
-
-    /// A manifest that does not depend on the engine the way the scaffold
-    /// writes it is somebody's own file, and is left alone.
-    #[test]
-    fn a_hand_written_manifest_is_untouched() {
-        let original = "oh_my_engine = { git = \"…\" }\n";
-        let dir = manifest_dir("hand_written", original);
-
-        ensure_features(&dir);
-
-        assert_eq!(manifest_of(&dir), original);
-    }
-
-    #[test]
-    fn detects_component_and_system() {
-        let src = "\
-#[derive(Default, Reflect)]
-pub struct Health {}
-impl Component for Health {}
-
-pub fn movement(resources: &mut Resources) {}
-";
-        let (components, systems) = detect(src);
-        assert_eq!(components, vec!["Health".to_owned()]);
-        assert_eq!(systems, vec!["movement".to_owned()]);
-    }
-
-    #[test]
-    fn module_name_flattens_nested_paths() {
-        assert_eq!(module_name("player_health.rs"), "player_health");
-        assert_eq!(module_name("enemies/ai.rs"), "enemies_ai");
-    }
-
-    /// The migration rewrites only the exact arm the editor generated,
-    /// and leaves a hand-written or already-headless main alone.
-    #[test]
-    fn remote_host_migration_is_narrow() {
-        use super::migrate_remote_host;
-
-        let generated = "\
-        app.add_plugins(DefaultPlugins);
-        app.add_plugin(registrations::ProjectRegistrations { run_systems: false });
-        app.add_plugin(oh_my_engine::ome_remote::RemotePlugin::new());";
-        assert!(migrate_remote_host(generated).contains("RemoteHostPlugins"));
-
-        // The game arm uses DefaultPlugins too and must survive.
-        let game = "\
-        app.add_plugins(DefaultPlugins);
-        app.add_plugin(registrations::ProjectRegistrations { run_systems: true });";
-        assert_eq!(migrate_remote_host(game), game);
-
-        // Already migrated: unchanged, and not migrated twice.
-        let migrated = migrate_remote_host(generated);
-        assert_eq!(migrate_remote_host(&migrated), migrated);
-    }
-
-    /// Gameplay systems must be registered unconditionally and wrapped
-    /// in the runtime gate — registering them only when `run_systems` is
-    /// set would make Play require a rebuild, which is the whole point
-    /// of the gate.
-    #[test]
-    fn generated_plugin_wraps_systems_in_the_runtime_gate() {
-        use super::{SourceFile, render_registrations};
-        let files = vec![SourceFile {
-            rel: "movement.rs".to_owned(),
-            module: "movement".to_owned(),
-            components: vec![],
-            systems: vec!["move_system".to_owned()],
-        }];
-        let out = render_registrations(&files);
-        assert!(out.contains("pub run_systems: bool"));
-        assert!(
-            out.contains("insert_resource(Playing(self.run_systems))"),
-            "run_systems must seed the gate, not branch on it"
-        );
-        assert!(
-            out.contains("add_system(Stage::Update, run_if_playing(movement::move_system))"),
-            "system must be registered wrapped, got:\n{out}"
-        );
-        assert!(
-            !out.contains("if self.run_systems"),
-            "compile-time branch survived"
-        );
-    }
-}
+mod tests;

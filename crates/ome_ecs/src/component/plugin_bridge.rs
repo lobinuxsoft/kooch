@@ -46,6 +46,67 @@ pub(crate) const fn map_field_kind(kind: PluginFieldKind) -> FieldKind {
     }
 }
 
+/// Translates the ECS's field kind into a plugin's.
+///
+/// The direction a *project* needs: it owns the Rust types, so it reads
+/// its own `FieldMeta` and describes them outward. Exhaustive for the
+/// same reason as its inverse.
+pub const fn to_plugin_field_kind(kind: FieldKind) -> PluginFieldKind {
+    match kind {
+        FieldKind::F32 => PluginFieldKind::F32,
+        FieldKind::F64 => PluginFieldKind::F64,
+        FieldKind::U8 => PluginFieldKind::U8,
+        FieldKind::U16 => PluginFieldKind::U16,
+        FieldKind::U32 => PluginFieldKind::U32,
+        FieldKind::U64 => PluginFieldKind::U64,
+        FieldKind::I8 => PluginFieldKind::I8,
+        FieldKind::I16 => PluginFieldKind::I16,
+        FieldKind::I32 => PluginFieldKind::I32,
+        FieldKind::I64 => PluginFieldKind::I64,
+        FieldKind::Bool => PluginFieldKind::Bool,
+        FieldKind::String => PluginFieldKind::String,
+        FieldKind::Vec2 => PluginFieldKind::Vec2,
+        FieldKind::Vec3 => PluginFieldKind::Vec3,
+        FieldKind::Vec4 => PluginFieldKind::Vec4,
+        FieldKind::Quat => PluginFieldKind::Quat,
+        FieldKind::Mat4 => PluginFieldKind::Mat4,
+        FieldKind::AssetRef => PluginFieldKind::AssetRef,
+        FieldKind::EntityRef => PluginFieldKind::EntityRef,
+        FieldKind::Nested => PluginFieldKind::Nested,
+    }
+}
+
+/// Describes a project's own component type to the engine.
+///
+/// A project links `ome_ecs`, so it can read `T`'s reflection and build
+/// the schema itself — the editor's codegen only has to name the type,
+/// never parse its fields. `Default` provides the instance
+/// `Reflect::reflect_fields` needs; every editor-authored component
+/// derives it already, because `insert_default_reflected` requires it.
+///
+/// This is what a generated project's plugin calls, once per component.
+pub fn declare_component<T>(
+    engine: &mut dyn ome_plugin_api::Engine,
+    type_name: &str,
+) -> Result<(), RegisterError>
+where
+    T: crate::reflect::Reflect + Default,
+{
+    let probe = T::default();
+    let schema = ComponentSchema {
+        type_name: type_name.to_owned(),
+        fields: probe
+            .reflect_fields()
+            .iter()
+            .map(|meta| ome_plugin_api::component::FieldSchema {
+                name: meta.name.to_owned(),
+                kind: to_plugin_field_kind(meta.kind),
+            })
+            .collect(),
+    };
+    engine.register_component(schema)
+}
+
 /// Converts a plugin's schema into a registrable type.
 pub(crate) fn to_dynamic_type(schema: &ComponentSchema, source: &str) -> DynamicType {
     DynamicType {
@@ -96,6 +157,20 @@ mod tests {
             "a kind was added to the plugin API without extending ALL, \
              so the mapping above may be missing it"
         );
+    }
+
+    /// The two directions must be inverses, or a project describing its
+    /// own component would produce a schema the engine reads back as a
+    /// different type of field.
+    #[test]
+    fn the_mapping_round_trips_both_ways() {
+        for kind in PluginFieldKind::ALL {
+            assert_eq!(
+                to_plugin_field_kind(map_field_kind(*kind)),
+                *kind,
+                "{kind:?} did not survive a round trip"
+            );
+        }
     }
 
     #[test]
