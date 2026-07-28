@@ -38,20 +38,31 @@ mod tests {
         );
     }
 
-    /// Running twice must not append it twice, because this runs on every
-    /// script regeneration.
+    /// Running twice must not append anything twice, because this runs on
+    /// every script regeneration.
+    ///
+    /// Compares the second pass against the first rather than against the
+    /// original: the point is that repetition is a no-op, not which
+    /// features `ADDED` currently holds — pinning the list here made this
+    /// fail every time a feature was added, which is noise, not a signal.
     #[test]
     fn adding_a_feature_is_idempotent() {
         let dir = manifest_dir(
             "idempotent",
-            "oh_my_engine = { path = \"../..\", features = [\"physics\", \"gravity\"] }\n",
+            "oh_my_engine = { path = \"../..\", features = [\"physics\"] }\n",
         );
-        let before = manifest_of(&dir);
 
         ensure_features(&dir);
-        ensure_features(&dir);
+        let after_first = manifest_of(&dir);
 
-        assert_eq!(manifest_of(&dir), before);
+        ensure_features(&dir);
+        assert_eq!(manifest_of(&dir), after_first, "a second pass changed it");
+
+        // And it did do something the first time, or the test proves nothing.
+        assert!(
+            after_first.matches("gravity").count() == 1,
+            "expected exactly one gravity: {after_first}"
+        );
     }
 
     /// A manifest that does not depend on the engine the way the scaffold
@@ -271,5 +282,66 @@ pub fn movement(resources: &mut Resources) {}
             !out.contains("if self.run_systems"),
             "compile-time branch survived"
         );
+    }
+
+    /// The regression that broke three real projects: `ensure_main_wired`
+    /// re-added `mod registrations;` beside the `use` the migration had
+    /// just written, declaring the name twice so the project stopped
+    /// compiling. The remote host then died on launch and the editor
+    /// reported only "remote project exited".
+    #[test]
+    fn a_duplicated_registrations_module_is_cleaned_up() {
+        let dir = std::env::temp_dir().join("ome_double_mod_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"g\"\n\n[lib]\ncrate-type = [\"rlib\", \"dylib\"]\n\n             [dependencies]\noh_my_engine = { path = \"../..\" }\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("src").join("lib.rs"), "pub mod registrations;\n").unwrap();
+        // Both lines, as the two passes left it.
+        std::fs::write(
+            dir.join("src").join("main.rs"),
+            "mod registrations;\n\nuse oh_my_engine::prelude::*;\n\nuse g::registrations;\n\nfn main() {}\n",
+        )
+        .unwrap();
+
+        super::super::migrate_to_library(&dir, "g");
+
+        let main = std::fs::read_to_string(dir.join("src").join("main.rs")).unwrap();
+        assert!(
+            !main.contains("mod registrations;"),
+            "the stray module declaration survived: {main}"
+        );
+        assert!(
+            main.contains("use g::registrations;"),
+            "the library import was lost: {main}"
+        );
+        assert!(main.contains("fn main()"), "body was mangled: {main}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// And the other end: once the `use` is there, rewiring must not put
+    /// the module back.
+    #[test]
+    fn wiring_does_not_re_add_a_module_that_moved_to_the_library() {
+        let dir = std::env::temp_dir().join("ome_no_readd_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        let main = "use oh_my_engine::prelude::*;\n\nuse g::registrations;\n\n                    fn main() {\n    let mut app = App::new();\n                        app.add_plugins(DefaultPlugins);\n                        app.add_plugin(registrations::ProjectRegistrations { run_systems: true });\n}\n";
+        std::fs::write(dir.join("src").join("main.rs"), main).unwrap();
+
+        let mut resources = ome_core::resource::Resources::new();
+        super::super::ensure_main_wired(&dir, &mut resources);
+
+        let after = std::fs::read_to_string(dir.join("src").join("main.rs")).unwrap();
+        assert!(
+            !after.contains("mod registrations;"),
+            "the module was re-added beside the library import: {after}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

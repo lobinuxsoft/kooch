@@ -84,17 +84,24 @@ pub const fn to_plugin_field_kind(kind: FieldKind) -> PluginFieldKind {
 /// `Reflect::reflect_fields` needs; every editor-authored component
 /// derives it already, because `insert_default_reflected` requires it.
 ///
+/// # The name is derived, not supplied
+///
+/// It comes from [`std::any::type_name`], which is what
+/// [`ComponentRegistry`](super::ComponentRegistry) and the remote
+/// protocol already key components by. Letting a caller pass its own
+/// string produced two names for one type: the editor listed a component
+/// under the codegen's spelling and then asked the running project to add
+/// it, which answered `UnknownComponent` because it had registered the
+/// other one. One source, no divergence.
+///
 /// This is what a generated project's plugin calls, once per component.
-pub fn declare_component<T>(
-    engine: &mut dyn ome_plugin_api::Engine,
-    type_name: &str,
-) -> Result<(), RegisterError>
+pub fn declare_component<T>(engine: &mut dyn ome_plugin_api::Engine) -> Result<(), RegisterError>
 where
     T: crate::reflect::Reflect + Default,
 {
     let probe = T::default();
     let schema = ComponentSchema {
-        type_name: type_name.to_owned(),
+        type_name: std::any::type_name::<T>().to_owned(),
         fields: probe
             .reflect_fields()
             .iter()
@@ -125,7 +132,7 @@ pub(crate) fn to_dynamic_type(schema: &ComponentSchema, source: &str) -> Dynamic
 
 /// Registers `schema` into the [`DynamicTypeRegistry`], creating it if
 /// this is the first plugin type to arrive.
-pub(crate) fn register_schema(
+pub fn register_schema(
     registry: &mut DynamicTypeRegistry,
     schema: &ComponentSchema,
     source: &str,
@@ -181,6 +188,52 @@ mod tests {
         assert_eq!(
             map_field_kind(PluginFieldKind::EntityRef),
             FieldKind::EntityRef
+        );
+    }
+
+    /// An `Engine` that records what a plugin declared.
+    #[derive(Default)]
+    struct Recorder {
+        schemas: Vec<ComponentSchema>,
+    }
+
+    impl ome_plugin_api::Engine for Recorder {
+        fn spawn_entity(&mut self) -> Option<u64> {
+            None
+        }
+        fn despawn_entity(&mut self, _: u64) -> bool {
+            false
+        }
+        fn register_component(&mut self, schema: ComponentSchema) -> Result<(), RegisterError> {
+            self.schemas.push(schema);
+            Ok(())
+        }
+        fn add_system(&mut self, _: ome_plugin_api::Stage, _: ome_plugin_api::PluginSystem) {}
+        fn log(&self, _: &str) {}
+        fn set_data(&mut self, _: &str, _: &[u8]) {}
+        fn get_data(&self, _: &str) -> Option<&[u8]> {
+            None
+        }
+    }
+
+    /// The bug a real drag-drop exposed: the editor listed a component
+    /// under the codegen's spelling and then asked the running project to
+    /// add it, which answered `UnknownComponent` because its registry had
+    /// keyed the type by `type_name`. Declaring must produce exactly the
+    /// name the registry uses, or the two halves disagree silently.
+    #[test]
+    fn a_declared_type_is_named_the_way_the_registry_names_it() {
+        let mut recorder = Recorder::default();
+        declare_component::<crate::transform::Transform>(&mut recorder).unwrap();
+
+        assert_eq!(
+            recorder.schemas[0].type_name,
+            std::any::type_name::<crate::transform::Transform>(),
+            "a declared name that is not the type's own name cannot be resolved by the project"
+        );
+        assert!(
+            !recorder.schemas[0].fields.is_empty(),
+            "Transform has reflected fields; the schema must carry them"
         );
     }
 

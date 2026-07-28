@@ -314,14 +314,26 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
                 let _ = wh.window().set_title(&format!("{title} — Oh My Engine"));
             }
 
-            // If the project built a library, let it declare its own
-            // component types so they appear in the Add Component menu.
-            // A project without one — every project made before this
-            // existed — opens exactly as before.
+            // Bring an older project's layout up to date *before* looking
+            // for its library: a project that predates the library split
+            // has none, and migrating first is what gives it one to build.
             if let Some(root) = ps.active_project.as_ref().map(|p| p.root_path.clone()) {
-                let gained = crate::project_plugin::load_project_plugin(resources, &root, &title);
+                let crate_name = crate::project::sanitize_crate_name(&title);
+                super::migrate_to_library(&root, &crate_name);
+
+                // Then load it, if it has been built. Writing lib.rs does
+                // not produce a .so — that needs a compile — so the first
+                // open after a migration finds nothing and says so rather
+                // than leaving the menu quietly short.
+                let gained =
+                    crate::project_plugin::load_project_plugin(resources, &root, &crate_name);
                 if gained > 0 {
                     tracing::info!(types = gained, "project components available in the editor");
+                } else if crate::project_plugin::library_path(&root, &crate_name).is_none() {
+                    tracing::info!(
+                        project = %root.display(),
+                        "this project has not been built yet — build it and reopen to see its own components"
+                    );
                 }
             }
 

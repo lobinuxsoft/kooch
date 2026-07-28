@@ -200,12 +200,15 @@ path = "src/main.rs"
 # `physics-debug-render` lets the host answer the editor's physics overlay
 # — without it the solver walk is not compiled and the overlay draws
 # nothing (#634).
+# `dynamic` is what makes this project loadable by the standalone editor:
+# without it `oh_my_engine::ome_plugin_api` is compiled out and the
+# generated `lib.rs` does not build at all.
 # `remote` lets `cargo run -- --remote` expose the ECS to the standalone
 # editor over HTTP; `physics` gives you rigid bodies — without it a
 # `RigidBody` is an inert component and nothing ever falls. `gravity` is
 # the same story one level up: without it a `PointGravity` is authorable,
 # mirrors to the editor, draws its gizmo, and pulls on nothing.
-oh_my_engine = {{ path = "{engine_path}", features = ["editor", "physics", "gravity", "remote", "physics-debug-render"] }}
+oh_my_engine = {{ path = "{engine_path}", features = ["editor", "physics", "gravity", "remote", "physics-debug-render", "dynamic"] }}
 # Direct dep needed until `Reflect` proc-macro resolves through the facade.
 ome_ecs = {{ path = "{engine_path}/crates/ome_ecs" }}
 "#,

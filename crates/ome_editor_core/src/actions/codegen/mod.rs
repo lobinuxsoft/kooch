@@ -95,7 +95,16 @@ pub(crate) fn register_scripts(resources: &mut Resources) {
 fn ensure_features(project_root: &Path) {
     /// Features added after the first scaffolds shipped, each with the
     /// component it makes real.
-    const ADDED: &[(&str, &str)] = &[("gravity", "PointGravity / AreaGravity")];
+    const ADDED: &[(&str, &str)] = &[
+        ("gravity", "PointGravity / AreaGravity"),
+        // Without this the generated lib.rs does not compile: the plugin
+        // API it calls is behind this feature. Every project that
+        // predates the library split needs it.
+        (
+            "dynamic",
+            "loading this project's components into the editor",
+        ),
+    ];
 
     let manifest = project_root.join("Cargo.toml");
     let Ok(content) = std::fs::read_to_string(&manifest) else {
@@ -152,7 +161,7 @@ fn ensure_features(project_root: &Path) {
 /// Nothing here rewrites gameplay code, and a manifest that does not
 /// look like the editor's own is left alone — same rule as
 /// [`ensure_features`].
-fn migrate_to_library(project_root: &Path, crate_name: &str) {
+pub(crate) fn migrate_to_library(project_root: &Path, crate_name: &str) {
     let manifest_path = project_root.join("Cargo.toml");
     let Ok(manifest) = std::fs::read_to_string(&manifest_path) else {
         return;
@@ -193,18 +202,35 @@ fn migrate_to_library(project_root: &Path, crate_name: &str) {
     }
 
     let main_path = project_root.join("src").join("main.rs");
-    if let Ok(main) = std::fs::read_to_string(&main_path)
-        && main.contains("mod registrations;")
-        && !main.contains("::registrations;")
-    {
-        let updated = main.replace(
-            "mod registrations;",
-            &format!("use {crate_name}::registrations;"),
-        );
-        if let Err(e) = std::fs::write(&main_path, updated) {
-            tracing::error!(file = %main_path.display(), error = %e, "failed to rewire main.rs");
-        } else {
-            tracing::info!("src/main.rs: registrations now come from the project library");
+    let Ok(main) = std::fs::read_to_string(&main_path) else {
+        return;
+    };
+    if !main.contains("mod registrations;") {
+        return;
+    }
+
+    let use_line = format!("use {crate_name}::registrations;");
+    let updated = if main.contains("::registrations;") {
+        // Both lines present: the module was re-added beside the `use`,
+        // which declares the name twice. Drop the stray `mod`.
+        main.lines()
+            .filter(|line| line.trim() != "mod registrations;")
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"
+    } else {
+        main.replace("mod registrations;", &use_line)
+    };
+
+    if updated == main {
+        return;
+    }
+    match std::fs::write(&main_path, updated) {
+        Ok(()) => {
+            tracing::info!("src/main.rs: registrations now come from the project library")
+        }
+        Err(e) => {
+            tracing::error!(file = %main_path.display(), error = %e, "failed to rewire main.rs")
         }
     }
 }
@@ -357,8 +383,8 @@ fn render_registrations(files: &[SourceFile]) -> String {
     for f in files {
         for c in &f.components {
             s.push_str(&format!(
-                "    let _ = declare_component::<{}::{}>(engine, \"{}::{}\");\n",
-                f.module, c, f.module, c
+                "    let _ = declare_component::<{}::{}>(engine);\n",
+                f.module, c
             ));
         }
     }
@@ -425,7 +451,11 @@ fn ensure_main_wired(project_root: &Path, resources: &Resources) {
     let mut lines: Vec<String> = content.lines().map(str::to_owned).collect();
     let mut changed = content != std::fs::read_to_string(&main).unwrap_or_default();
 
-    if !content.contains("mod registrations;") {
+    // `use <crate>::registrations;` means the module belongs to the
+    // project's library now. Re-adding `mod registrations;` beside it
+    // declares the name twice and the project stops compiling — which is
+    // exactly what happened the first time these two ran together.
+    if !content.contains("mod registrations;") && !content.contains("::registrations;") {
         lines.insert(0, "mod registrations;".to_owned());
         lines.insert(1, String::new());
         changed = true;
@@ -460,7 +490,6 @@ fn ensure_main_wired(project_root: &Path, resources: &Resources) {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests;
