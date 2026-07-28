@@ -6,12 +6,23 @@
 //! # Supported field types
 //!
 //! `f32`, `f64`, `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`,
-//! `bool`, `String`, `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat4`, `Entity`
-//! and `Option<Entity>`.
+//! `bool`, `String`, `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat4`,
+//! `Option<EntityRef>`, `Entity` and `Option<Entity>`.
 //!
-//! An `Entity` field becomes a `FieldKind::EntityRef`. A live component
-//! always holds `EntityRef::Live`; turning that into something a file can
-//! hold is the scene save path's job, not the derive's.
+//! # Pointing at an entity
+//!
+//! Three field shapes reflect as [`FieldKind::EntityRef`], and which one a
+//! component wants is a real choice:
+//!
+//! - `Option<EntityRef>` — what an authorable reference should be. It
+//!   stores the reference itself, so a target whose scene is not resident
+//!   survives as `Persistent` until it can be resolved.
+//! - `Entity` / `Option<Entity>` — a handle the engine resolves itself.
+//!   Reflects as `EntityRef::Live` and refuses to store anything else,
+//!   because there is nowhere to put an unresolved reference.
+//!
+//! Bare `EntityRef` is rejected: a reference field has to be able to say
+//! it points at nothing.
 //!
 //! # Requirements
 //!
@@ -43,7 +54,7 @@ use crate::attrs::{
 };
 use crate::type_mapping::type_mapping;
 use crate::unit_struct::unit_struct_impl;
-use crate::util::{is_entity, option_inner};
+use crate::util::{is_entity, is_entity_ref, option_inner};
 
 /// Derives the `Reflect` trait for a named-field struct.
 ///
@@ -147,6 +158,72 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     other => Err(::ome_ecs::reflect::ReflectError::TypeMismatch {
                         field: #field_name_str.into(),
                         expected: ::ome_ecs::reflect::FieldKind::AssetRef,
+                        got: other.kind(),
+                    }),
+                },
+            });
+            continue;
+        }
+
+        // `Option<EntityRef>` is the shape a component reaches for when it
+        // points at an entity the author picks.
+        //
+        // It stores what reflection carries, so the value assigned by code,
+        // by the inspector's picker and by a drag from the World panel is
+        // one and the same thing. An `Entity` field cannot do that: it has
+        // no room for a `Persistent` reference, so a load whose target is
+        // not resident yet loses the link instead of keeping it until the
+        // scene holding it opens.
+        //
+        // Bare `EntityRef` is deliberately unsupported — "points at
+        // nothing" has to be representable, and `Option` already says it.
+        if is_entity_ref(ty) {
+            return syn::Error::new_spanned(
+                ty,
+                "Reflect derive: use `Option<EntityRef>` rather than a bare `EntityRef`. \
+                 A reference field has to be able to say it points at nothing.",
+            )
+            .to_compile_error()
+            .into();
+        }
+        if option_inner(ty).is_some_and(is_entity_ref) {
+            let shown_when_expr = match parse_field_shown_when(field) {
+                Ok(Some(expr)) => quote! { ::core::option::Option::Some(&#expr) },
+                Ok(None) => quote! { ::core::option::Option::None },
+                Err(e) => return e,
+            };
+
+            field_metas.push(quote! {
+                ::ome_ecs::reflect::FieldMeta {
+                    name: #field_name_str,
+                    type_name: "Option<EntityRef>",
+                    kind: ::ome_ecs::reflect::FieldKind::EntityRef,
+                    choices: &[],
+                    bits: &[],
+                    shown_when: #shown_when_expr,
+                    asset_type: "",
+                }
+            });
+
+            get_arms.push(quote! {
+                #field_name_str => Some(::ome_ecs::reflect::ReflectValue::EntityRef(self.#field_name)),
+            });
+
+            // Both reference states are accepted, unlike an `Entity` field.
+            // A `Persistent` one arrives when the load pass could not
+            // resolve it — the target's scene is not open, which under
+            // world-cell streaming is ordinary. Storing it keeps the link
+            // alive to be resolved later and saved back unchanged; the
+            // `Entity` shape had to reject it because it cannot hold one.
+            set_arms.push(quote! {
+                #field_name_str => match value {
+                    ::ome_ecs::reflect::ReflectValue::EntityRef(reference) => {
+                        self.#field_name = reference;
+                        Ok(())
+                    }
+                    other => Err(::ome_ecs::reflect::ReflectError::TypeMismatch {
+                        field: #field_name_str.into(),
+                        expected: ::ome_ecs::reflect::FieldKind::EntityRef,
                         got: other.kind(),
                     }),
                 },
