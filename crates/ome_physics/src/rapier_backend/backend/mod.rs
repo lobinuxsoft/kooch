@@ -9,21 +9,15 @@
 
 mod contract;
 
-use glam::{Quat, Vec3};
+use glam::Vec3;
 use rapier3d::geometry::ColliderHandle as RapierColliderHandle;
 use rapier3d::prelude::*;
 use slotmap::SlotMap;
 
-use crate::backend::{
-    BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, ColliderInteraction,
-    CollisionEvent, CollisionShape, ContactForceEvent, JointDesc, JointHandle, PhysicsBackend,
-    RayHit, SurfaceMaterial,
-};
+use crate::backend::{BodyHandle, BrokenJoint, ColliderHandle, JointHandle, PhysicsBackend};
 
-use super::conv::{collider_for, collider_for_pose, mass_properties_for};
 use super::events::{EventCollector, parent_of};
-use super::joints::{JointEntry, JointRef, generic_joint_for, linear_impulse};
-
+use super::joints::{JointEntry, JointRef, linear_impulse};
 
 /// Rapier-backed [`PhysicsBackend`].
 ///
@@ -237,4 +231,3 @@ impl Default for RapierBackend {
         Self::new()
     }
 }
-

@@ -10,12 +10,7 @@ use ome_ecs::Reflect;
 use ome_ecs::component::Component;
 use ome_ecs::reflect::{FieldChoice, FieldCondition};
 
-use crate::backend::{
-    BodyKind, ColliderInteraction, CollisionShape, CombineRule, Damping, InteractionMask,
-    SurfaceMaterial,
-};
-
-
+use crate::backend::{BodyKind, Damping};
 
 /// Solver-driven: gravity and collisions move it.
 pub const KIND_DYNAMIC: u32 = 0;
@@ -173,4 +168,3 @@ impl RigidBody {
         .sanitised()
     }
 }
-

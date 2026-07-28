@@ -11,11 +11,8 @@ use ome_ecs::component::Component;
 use ome_ecs::reflect::{FieldChoice, FieldCondition};
 
 use crate::backend::{
-    BodyKind, ColliderInteraction, CollisionShape, CombineRule, Damping, InteractionMask,
-    SurfaceMaterial,
+    ColliderInteraction, CollisionShape, CombineRule, InteractionMask, SurfaceMaterial,
 };
-
-
 
 /// Ball of radius `radius`.
 pub const SHAPE_SPHERE: u32 = 0;
@@ -377,4 +374,3 @@ impl Collider {
         }
     }
 }
-

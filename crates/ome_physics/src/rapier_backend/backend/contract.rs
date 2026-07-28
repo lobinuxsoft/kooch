@@ -5,9 +5,7 @@
 //! stepping and gravity, bodies, colliders, joints, events, then queries.
 
 use glam::{Quat, Vec3};
-use rapier3d::geometry::ColliderHandle as RapierColliderHandle;
 use rapier3d::prelude::*;
-use slotmap::SlotMap;
 
 use super::RapierBackend;
 use crate::backend::{
@@ -17,7 +15,6 @@ use crate::backend::{
 };
 
 use super::super::conv::{collider_for, collider_for_pose, mass_properties_for};
-use super::super::events::{EventCollector, parent_of};
 use super::super::joints::{JointEntry, JointRef, generic_joint_for, linear_impulse};
 
 impl PhysicsBackend for RapierBackend {
