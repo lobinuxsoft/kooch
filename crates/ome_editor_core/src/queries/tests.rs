@@ -287,3 +287,281 @@ mod remote_and_local {
         );
     }
 }
+
+/// The full authoring loop for a component the editor never compiled:
+/// it is listed, it can be added, it shows its fields, and they edit.
+#[cfg(test)]
+mod the_whole_cycle {
+    use ome_core::resource::Resources;
+    use ome_ecs::allocator::EntityAllocator;
+    use ome_ecs::archetype_registry::ArchetypeRegistry;
+    use ome_ecs::commands::Commands;
+    use ome_ecs::component::{
+        ComponentNames, ComponentRegistry, DynamicField, DynamicType, DynamicTypeRegistry,
+    };
+    use ome_ecs::dynamic_components::DynamicComponents;
+    use ome_ecs::query::AccessTracker;
+    use ome_ecs::reflect::{FieldKind, InspectorVisibility, ReflectValue};
+
+    use crate::actions::EditorAction;
+
+    use super::super::{gather_entity_data, gather_reflected_types, intern_registry_names};
+
+    fn world() -> (Resources, ome_ecs::Entity) {
+        let mut r = Resources::new();
+        let mut alloc = EntityAllocator::new();
+        let entity = alloc.spawn();
+        r.insert(alloc);
+        r.insert(ComponentRegistry::new());
+        let mut archetypes = ArchetypeRegistry::new();
+        let empty = archetypes.get_or_create(Default::default());
+        archetypes.register_entity(entity, empty);
+        r.insert(archetypes);
+        r.insert(AccessTracker::new());
+        r.insert(Commands::new());
+        r.insert(DynamicComponents::new());
+        r.insert(ComponentNames::new());
+        r.insert(crate::undo::UndoStack::new());
+
+        let mut types = DynamicTypeRegistry::new();
+        types
+            .register(DynamicType {
+                type_name: "my_game::Health".into(),
+                fields: vec![DynamicField {
+                    name: "current".into(),
+                    kind: FieldKind::U32,
+                }],
+                source: "my_game".into(),
+            })
+            .unwrap();
+        r.insert(types);
+        (r, entity)
+    }
+
+    #[test]
+    fn list_add_inspect_edit_undo() {
+        let (mut resources, entity) = world();
+        intern_registry_names(&mut resources);
+
+        // 1. It is offered by the menu, with a usable id.
+        let listed = gather_reflected_types(&resources);
+        let health = listed
+            .iter()
+            .find(|t| t.short_name == "Health")
+            .expect("Health must be listed");
+
+        // 2. Adding it goes through the ordinary action path.
+        let mut undo = resources.remove::<crate::undo::UndoStack>().unwrap();
+        crate::actions::apply_actions(
+            &mut resources,
+            &[EditorAction::AddComponent {
+                entity,
+                component: health.component,
+            }],
+            &mut undo,
+        );
+        resources.insert(undo);
+
+        // 3. The Inspector sees it, with its field, editable.
+        let shown = gather_entity_data(&resources);
+        let row = shown
+            .iter()
+            .find(|e| e.entity == entity)
+            .expect("entity present");
+        let comp = row
+            .components
+            .iter()
+            .find(|c| c.short_name == "Health")
+            .expect("Health must be on the entity");
+        assert_eq!(
+            comp.visibility,
+            InspectorVisibility::Editable,
+            "a project's own component must be editable in the editor that authors it"
+        );
+        let fields = comp.fields.as_ref().expect("fields shown");
+        assert_eq!(fields[0].0, "current");
+        assert_eq!(fields[0].1, ReflectValue::U32(0));
+
+        // 4. Editing it lands.
+        let mut undo = resources.remove::<crate::undo::UndoStack>().unwrap();
+        crate::actions::apply_actions(
+            &mut resources,
+            &[EditorAction::SetField {
+                entity,
+                component: health.component,
+                field: "current".into(),
+                value: ReflectValue::U32(80),
+            }],
+            &mut undo,
+        );
+        resources.insert(undo);
+        let stored = resources
+            .get::<DynamicComponents>()
+            .unwrap()
+            .iter_entity(entity)
+            .find(|(n, _)| *n == "my_game::Health")
+            .map(|(_, f)| f[0].1.clone())
+            .unwrap();
+        assert_eq!(stored, ReflectValue::U32(80), "the edit did not land");
+    }
+}
+
+/// The regression the first real smoke found: opening a project always
+/// starts a remote session, and the menu then took the wire's schema
+/// *instead of* the plugin's types rather than as well as. A component
+/// the library declared was loaded, registered, and silently dropped
+/// before it reached the menu.
+#[cfg(test)]
+mod plugin_types_survive_remote_mode {
+    use ome_core::resource::Resources;
+    use ome_ecs::component::{
+        ComponentNames, ComponentRegistry, DynamicField, DynamicType, DynamicTypeRegistry,
+    };
+    use ome_ecs::dynamic_components::DynamicComponents;
+    use ome_ecs::reflect::FieldKind;
+
+    use super::super::{gather_reflected_types, intern_registry_names};
+
+    fn world_with_plugin_type() -> Resources {
+        let mut r = Resources::new();
+        r.insert(ComponentRegistry::new());
+        r.insert(DynamicComponents::new());
+        r.insert(ComponentNames::new());
+
+        let mut types = DynamicTypeRegistry::new();
+        types
+            .register(DynamicType {
+                type_name: "move_component::MoveComponent".into(),
+                fields: vec![DynamicField {
+                    name: "speed".into(),
+                    kind: FieldKind::F32,
+                }],
+                source: "move_component".into(),
+            })
+            .unwrap();
+        r.insert(types);
+        r
+    }
+
+    /// With no session at all the type is listed — the case that already
+    /// worked, kept so the union does not regress it.
+    #[test]
+    fn listed_without_a_session() {
+        let mut resources = world_with_plugin_type();
+        intern_registry_names(&mut resources);
+
+        let names: Vec<String> = gather_reflected_types(&resources)
+            .into_iter()
+            .map(|t| t.short_name)
+            .collect();
+        assert!(names.contains(&"MoveComponent".to_owned()), "{names:?}");
+    }
+
+    /// And it must still be listed once a `RemoteState` exists, which is
+    /// what opening any project creates.
+    #[test]
+    fn still_listed_with_a_remote_state_present() {
+        let mut resources = world_with_plugin_type();
+        resources.insert(crate::remote_session::RemoteState::new());
+        intern_registry_names(&mut resources);
+
+        let names: Vec<String> = gather_reflected_types(&resources)
+            .into_iter()
+            .map(|t| t.short_name)
+            .collect();
+        assert!(
+            names.contains(&"MoveComponent".to_owned()),
+            "a plugin type vanished once a project was open: {names:?}"
+        );
+    }
+
+    /// A type reported by both routes must appear once, not twice.
+    #[test]
+    fn not_listed_twice() {
+        let mut resources = world_with_plugin_type();
+        intern_registry_names(&mut resources);
+
+        let count = gather_reflected_types(&resources)
+            .iter()
+            .filter(|t| t.short_name == "MoveComponent")
+            .count();
+        assert_eq!(count, 1, "duplicated in the menu");
+    }
+}
+
+/// The Components panel is a second route to the same thing as the Add
+/// Component menu — drag a row onto an entity. It read only the local
+/// registry, so a project's own types were missing from it even after
+/// the menu learned about them.
+#[cfg(test)]
+mod plugin_types_in_the_components_panel {
+    use ome_core::resource::Resources;
+    use ome_ecs::component::{
+        ComponentId, ComponentNames, ComponentRegistry, DynamicField, DynamicType,
+        DynamicTypeRegistry,
+    };
+    use ome_ecs::dynamic_components::DynamicComponents;
+    use ome_ecs::reflect::FieldKind;
+    use ome_ecs::transform::Transform;
+
+    use super::super::{gather_component_types, intern_registry_names};
+
+    fn world() -> Resources {
+        let mut r = Resources::new();
+        r.insert(ComponentRegistry::new());
+        r.insert(DynamicComponents::new());
+        r.insert(ComponentNames::new());
+        r.get_mut::<ComponentRegistry>()
+            .unwrap()
+            .register_cpu_reflected::<Transform>();
+
+        let mut types = DynamicTypeRegistry::new();
+        types
+            .register(DynamicType {
+                type_name: "move_component::MoveComponent".into(),
+                fields: vec![DynamicField {
+                    name: "speed".into(),
+                    kind: FieldKind::F32,
+                }],
+                source: "move_component".into(),
+            })
+            .unwrap();
+        r.insert(types);
+        r
+    }
+
+    #[test]
+    fn a_plugin_type_is_listed_for_drag_drop() {
+        let mut resources = world();
+        intern_registry_names(&mut resources);
+
+        let rows = gather_component_types(&resources);
+        let row = rows
+            .iter()
+            .find(|t| t.short_name == "MoveComponent")
+            .expect("plugin type missing from the Components panel");
+
+        assert_ne!(
+            row.component,
+            ComponentId::INVALID,
+            "listed but not draggable — the name was never interned"
+        );
+        assert!(
+            row.has_reflection,
+            "its schema is known, so the panel must not mark it unreflected"
+        );
+        assert!(rows.iter().any(|t| t.short_name == "Transform"));
+    }
+
+    #[test]
+    fn it_is_not_listed_twice() {
+        let mut resources = world();
+        intern_registry_names(&mut resources);
+
+        let count = gather_component_types(&resources)
+            .iter()
+            .filter(|t| t.short_name == "MoveComponent")
+            .count();
+        assert_eq!(count, 1);
+    }
+}

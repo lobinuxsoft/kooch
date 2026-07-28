@@ -6,7 +6,8 @@ use ome_core::resource::Resources;
 use ome_ecs::component::{ComponentId, ComponentNames, ComponentRegistry};
 
 use crate::undo::{
-    AddComponentCommand, DespawnCommand, DuplicateCommand, EditorCommand, RemoveComponentCommand,
+    AddComponentCommand, AddDynamicComponentCommand, DespawnCommand, DuplicateCommand,
+    EditorCommand, RemoveComponentCommand, RemoveDynamicComponentCommand, SetDynamicFieldCommand,
     SetFieldCommand, SpawnCommand, SpawnMeshCommand, TransformEditCommand,
 };
 
@@ -21,14 +22,18 @@ use super::EditorAction;
 /// the project's server process handles it instead.
 fn resolve_component(resources: &Resources, component: ComponentId) -> Option<TypeId> {
     let name = resources.get::<ComponentNames>()?.name(component)?;
-    let type_id = resources.get::<ComponentRegistry>()?.type_id_by_name(name);
-    if type_id.is_none() {
-        tracing::warn!(
-            component = name,
-            "no local type for component; action dropped"
-        );
-    }
-    type_id
+    // No warning when this misses: a plugin-declared component has no
+    // local TypeId by construction, and callers fall through to the
+    // by-name commands. Warning here fired once per keystroke.
+    resources.get::<ComponentRegistry>()?.type_id_by_name(name)
+}
+
+/// The interned name behind a [`ComponentId`].
+fn component_name(resources: &Resources, component: ComponentId) -> Option<String> {
+    resources
+        .get::<ComponentNames>()?
+        .name(component)
+        .map(str::to_owned)
 }
 
 /// Converts an action into an undoable command, capturing before-state.
@@ -55,7 +60,19 @@ pub(super) fn action_to_command(
             field,
             value,
         } => {
-            let type_id = resolve_component(resources, *component)?;
+            // A plugin's component has no local TypeId, so it is edited
+            // by name against DynamicComponents instead.
+            let Some(type_id) = resolve_component(resources, *component) else {
+                let name = component_name(resources, *component)?;
+                return SetDynamicFieldCommand::new(
+                    resources,
+                    *entity,
+                    &name,
+                    field.clone(),
+                    value.clone(),
+                )
+                .map(|cmd| Box::new(cmd) as Box<dyn EditorCommand>);
+            };
             if let Some(cmd) =
                 SetFieldCommand::new(resources, *entity, type_id, field.clone(), value.clone())
             {
@@ -66,11 +83,20 @@ pub(super) fn action_to_command(
             }
         }
         EditorAction::AddComponent { entity, component } => {
-            let type_id = resolve_component(resources, *component)?;
+            let Some(type_id) = resolve_component(resources, *component) else {
+                let name = component_name(resources, *component)?;
+                return AddDynamicComponentCommand::new(resources, *entity, &name)
+                    .map(|cmd| Box::new(cmd) as Box<dyn EditorCommand>);
+            };
             Some(Box::new(AddComponentCommand::new(*entity, type_id)))
         }
         EditorAction::RemoveComponent { entity, component } => {
-            let type_id = resolve_component(resources, *component)?;
+            let Some(type_id) = resolve_component(resources, *component) else {
+                let name = component_name(resources, *component)?;
+                return Some(Box::new(RemoveDynamicComponentCommand::new(
+                    resources, *entity, &name,
+                )));
+            };
             Some(Box::new(RemoveComponentCommand::new(
                 resources, *entity, type_id,
             )))

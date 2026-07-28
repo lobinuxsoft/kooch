@@ -46,6 +46,74 @@ pub(crate) const fn map_field_kind(kind: PluginFieldKind) -> FieldKind {
     }
 }
 
+/// Translates the ECS's field kind into a plugin's.
+///
+/// The direction a *project* needs: it owns the Rust types, so it reads
+/// its own `FieldMeta` and describes them outward. Exhaustive for the
+/// same reason as its inverse.
+pub const fn to_plugin_field_kind(kind: FieldKind) -> PluginFieldKind {
+    match kind {
+        FieldKind::F32 => PluginFieldKind::F32,
+        FieldKind::F64 => PluginFieldKind::F64,
+        FieldKind::U8 => PluginFieldKind::U8,
+        FieldKind::U16 => PluginFieldKind::U16,
+        FieldKind::U32 => PluginFieldKind::U32,
+        FieldKind::U64 => PluginFieldKind::U64,
+        FieldKind::I8 => PluginFieldKind::I8,
+        FieldKind::I16 => PluginFieldKind::I16,
+        FieldKind::I32 => PluginFieldKind::I32,
+        FieldKind::I64 => PluginFieldKind::I64,
+        FieldKind::Bool => PluginFieldKind::Bool,
+        FieldKind::String => PluginFieldKind::String,
+        FieldKind::Vec2 => PluginFieldKind::Vec2,
+        FieldKind::Vec3 => PluginFieldKind::Vec3,
+        FieldKind::Vec4 => PluginFieldKind::Vec4,
+        FieldKind::Quat => PluginFieldKind::Quat,
+        FieldKind::Mat4 => PluginFieldKind::Mat4,
+        FieldKind::AssetRef => PluginFieldKind::AssetRef,
+        FieldKind::EntityRef => PluginFieldKind::EntityRef,
+        FieldKind::Nested => PluginFieldKind::Nested,
+    }
+}
+
+/// Describes a project's own component type to the engine.
+///
+/// A project links `ome_ecs`, so it can read `T`'s reflection and build
+/// the schema itself — the editor's codegen only has to name the type,
+/// never parse its fields. `Default` provides the instance
+/// `Reflect::reflect_fields` needs; every editor-authored component
+/// derives it already, because `insert_default_reflected` requires it.
+///
+/// # The name is derived, not supplied
+///
+/// It comes from [`std::any::type_name`], which is what
+/// [`ComponentRegistry`](super::ComponentRegistry) and the remote
+/// protocol already key components by. Letting a caller pass its own
+/// string produced two names for one type: the editor listed a component
+/// under the codegen's spelling and then asked the running project to add
+/// it, which answered `UnknownComponent` because it had registered the
+/// other one. One source, no divergence.
+///
+/// This is what a generated project's plugin calls, once per component.
+pub fn declare_component<T>(engine: &mut dyn ome_plugin_api::Engine) -> Result<(), RegisterError>
+where
+    T: crate::reflect::Reflect + Default,
+{
+    let probe = T::default();
+    let schema = ComponentSchema {
+        type_name: std::any::type_name::<T>().to_owned(),
+        fields: probe
+            .reflect_fields()
+            .iter()
+            .map(|meta| ome_plugin_api::component::FieldSchema {
+                name: meta.name.to_owned(),
+                kind: to_plugin_field_kind(meta.kind),
+            })
+            .collect(),
+    };
+    engine.register_component(schema)
+}
+
 /// Converts a plugin's schema into a registrable type.
 pub(crate) fn to_dynamic_type(schema: &ComponentSchema, source: &str) -> DynamicType {
     DynamicType {
@@ -64,7 +132,7 @@ pub(crate) fn to_dynamic_type(schema: &ComponentSchema, source: &str) -> Dynamic
 
 /// Registers `schema` into the [`DynamicTypeRegistry`], creating it if
 /// this is the first plugin type to arrive.
-pub(crate) fn register_schema(
+pub fn register_schema(
     registry: &mut DynamicTypeRegistry,
     schema: &ComponentSchema,
     source: &str,
@@ -98,6 +166,20 @@ mod tests {
         );
     }
 
+    /// The two directions must be inverses, or a project describing its
+    /// own component would produce a schema the engine reads back as a
+    /// different type of field.
+    #[test]
+    fn the_mapping_round_trips_both_ways() {
+        for kind in PluginFieldKind::ALL {
+            assert_eq!(
+                to_plugin_field_kind(map_field_kind(*kind)),
+                *kind,
+                "{kind:?} did not survive a round trip"
+            );
+        }
+    }
+
     #[test]
     fn kinds_map_to_their_counterparts() {
         assert_eq!(map_field_kind(PluginFieldKind::F32), FieldKind::F32);
@@ -106,6 +188,52 @@ mod tests {
         assert_eq!(
             map_field_kind(PluginFieldKind::EntityRef),
             FieldKind::EntityRef
+        );
+    }
+
+    /// An `Engine` that records what a plugin declared.
+    #[derive(Default)]
+    struct Recorder {
+        schemas: Vec<ComponentSchema>,
+    }
+
+    impl ome_plugin_api::Engine for Recorder {
+        fn spawn_entity(&mut self) -> Option<u64> {
+            None
+        }
+        fn despawn_entity(&mut self, _: u64) -> bool {
+            false
+        }
+        fn register_component(&mut self, schema: ComponentSchema) -> Result<(), RegisterError> {
+            self.schemas.push(schema);
+            Ok(())
+        }
+        fn add_system(&mut self, _: ome_plugin_api::Stage, _: ome_plugin_api::PluginSystem) {}
+        fn log(&self, _: &str) {}
+        fn set_data(&mut self, _: &str, _: &[u8]) {}
+        fn get_data(&self, _: &str) -> Option<&[u8]> {
+            None
+        }
+    }
+
+    /// The bug a real drag-drop exposed: the editor listed a component
+    /// under the codegen's spelling and then asked the running project to
+    /// add it, which answered `UnknownComponent` because its registry had
+    /// keyed the type by `type_name`. Declaring must produce exactly the
+    /// name the registry uses, or the two halves disagree silently.
+    #[test]
+    fn a_declared_type_is_named_the_way_the_registry_names_it() {
+        let mut recorder = Recorder::default();
+        declare_component::<crate::transform::Transform>(&mut recorder).unwrap();
+
+        assert_eq!(
+            recorder.schemas[0].type_name,
+            std::any::type_name::<crate::transform::Transform>(),
+            "a declared name that is not the type's own name cannot be resolved by the project"
+        );
+        assert!(
+            !recorder.schemas[0].fields.is_empty(),
+            "Transform has reflected fields; the schema must carry them"
         );
     }
 

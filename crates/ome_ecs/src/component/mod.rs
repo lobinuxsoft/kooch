@@ -11,7 +11,7 @@ pub mod cpu_storage;
 pub mod dynamic_types;
 pub mod names;
 #[cfg(feature = "dynamic")]
-pub(crate) mod plugin_bridge;
+pub mod plugin_bridge;
 pub mod registry;
 pub(crate) mod traits;
 
