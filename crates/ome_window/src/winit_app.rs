@@ -1,18 +1,29 @@
 //! Internal winit application handler.
 //!
-//! Implements `ApplicationHandler` to bridge winit's event loop with the engine's
-//! game loop. Frame ticks happen on `RedrawRequested`, synchronized with the
-//! compositor (critical for Wayland).
+//! Implements `ApplicationHandler` to bridge winit's event loop with the
+//! engine's game loop. Frame ticks happen on `RedrawRequested`, synchronized
+//! with the compositor (critical for Wayland).
+//!
+//! # Why the loop is allowed to stop
+//!
+//! It used to ask for the next redraw at the end of every frame, no matter
+//! what, so the loop fed itself forever and an idle process still pinned a
+//! core (#656). Now each frame states what the next one needs through
+//! [`FrameRequest`], and this handler turns that into a `ControlFlow`. An
+//! app that never inserts the resource keeps spinning — which is right for
+//! a game, and wrong for an editor showing a still image.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
-use winit::event_loop::ActiveEventLoop;
+use winit::event::{StartCause, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use ome_core::app::App;
 use ome_core::event::{AppExit, Events};
+use ome_core::frame_pacing::{FramePace, FrameRequest, FrameWaker};
 use ome_core::gpu::GpuContext;
 use ome_core::raw_event::RawEventHandler;
 use ome_core::time::Time;
@@ -21,6 +32,12 @@ use crate::WindowConfig;
 use crate::event::{WindowCloseRequested, WindowResized};
 use crate::handle::WindowHandle;
 
+/// The user event a [`FrameWaker`] sends to break the loop out of a sleep.
+///
+/// It carries nothing: arriving *is* the message.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WakeUp;
+
 /// Bridges winit's event loop with the engine's frame-based game loop.
 ///
 /// Owns the `App` and drives the engine tick from `RedrawRequested` events.
@@ -28,15 +45,64 @@ pub(crate) struct WinitApp {
     app: App,
     window: Option<Arc<Window>>,
     startup_complete: bool,
+    /// Cloned out of `Resources` up front so the sleep decision is a
+    /// field read rather than a resource lookup on every frame.
+    waker: Option<FrameWaker>,
 }
 
 impl WinitApp {
     /// Creates a new `WinitApp` wrapping the given engine app.
     pub(crate) fn new(app: App) -> Self {
+        let waker = app.resources.get::<FrameWaker>().cloned();
         Self {
             app,
             window: None,
             startup_complete: false,
+            waker,
+        }
+    }
+
+    /// Asks for one more frame, if there is a window to ask.
+    fn request_redraw(&self) {
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+
+    /// Turns this frame's [`FrameRequest`] into the next `ControlFlow`.
+    ///
+    /// A missing resource means the app never opted into idling, so it
+    /// keeps the pre-#656 behaviour: poll and redraw, always.
+    fn schedule_next_frame(&mut self, event_loop: &ActiveEventLoop) {
+        let mut pace = self
+            .app
+            .resources
+            .get_mut::<FrameRequest>()
+            .map(FrameRequest::take)
+            .unwrap_or(FramePace::Continuous);
+
+        // A wake that landed *during* the frame we just ran would
+        // otherwise be slept straight through: the requester did its
+        // store while we were busy, and we are only now deciding to
+        // stop. Clearing the flag here — after the frame, before the
+        // sleep — is what closes that window.
+        if self.waker.as_ref().is_some_and(FrameWaker::take_pending) {
+            pace = FramePace::Continuous;
+        }
+
+        match pace {
+            FramePace::Continuous => {
+                event_loop.set_control_flow(ControlFlow::Poll);
+                self.request_redraw();
+            }
+            // A deadline far enough out to overflow the clock is a
+            // deadline that never arrives; sleep rather than panic on
+            // the addition.
+            FramePace::After(delay) => match Instant::now().checked_add(delay) {
+                Some(deadline) => event_loop.set_control_flow(ControlFlow::WaitUntil(deadline)),
+                None => event_loop.set_control_flow(ControlFlow::Wait),
+            },
+            FramePace::Wait => event_loop.set_control_flow(ControlFlow::Wait),
         }
     }
 
@@ -86,7 +152,22 @@ impl WinitApp {
     }
 }
 
-impl ApplicationHandler for WinitApp {
+impl ApplicationHandler<WakeUp> for WinitApp {
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+        // A `WaitUntil` deadline expiring is the only wake-up nothing
+        // else reports: no window event arrives, so without this the
+        // frame the deadline was set for never happens.
+        if matches!(cause, StartCause::ResumeTimeReached { .. }) {
+            self.request_redraw();
+        }
+    }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: WakeUp) {
+        // Some other thread wants a frame — the remote server's listener,
+        // parked on a reply only the main loop can produce.
+        self.request_redraw();
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -178,6 +259,7 @@ impl ApplicationHandler for WinitApp {
                     });
                 }
                 tracing::debug!(width = size.width, height = size.height, "Window resized");
+                self.request_redraw();
             }
 
             WindowEvent::RedrawRequested => {
@@ -188,12 +270,15 @@ impl ApplicationHandler for WinitApp {
                     return;
                 }
 
-                if let Some(window) = &self.window {
-                    window.request_redraw();
-                }
+                self.schedule_next_frame(event_loop);
             }
 
-            _ => {}
+            // Everything else — a moved cursor, a key, a scroll, a focus
+            // change — is an input the UI has not drawn yet. While the
+            // loop is idle it is also the *only* thing that will produce
+            // a frame, so it asks for one rather than assuming the next
+            // one is already on its way.
+            _ => self.request_redraw(),
         }
     }
 }

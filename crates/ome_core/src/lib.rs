@@ -52,6 +52,7 @@ pub mod buffer;
 pub mod compute;
 pub mod coord;
 pub mod event;
+pub mod frame_pacing;
 pub mod gpu;
 pub mod guid;
 pub mod log_console;
