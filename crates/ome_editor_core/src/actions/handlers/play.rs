@@ -1,12 +1,9 @@
 //! Play and Stop.
 
-
 use ome_core::resource::Resources;
 
 use crate::play_state::PlayState;
 use crate::project_state::ProjectState;
-
-
 
 pub(super) fn handle_play(resources: &mut Resources) {
     let (manifest_path, engine_root) = match resources.get::<ProjectState>() {

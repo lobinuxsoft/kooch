@@ -106,35 +106,54 @@ pub(crate) fn draw_console(
         ui.text_style_height(&egui::TextStyle::Monospace) + ui.spacing().item_spacing.y;
 
     egui::ScrollArea::both()
+        .id_salt("console_rows")
         .stick_to_bottom(state.follow)
         .auto_shrink([false, false])
         .show_rows(ui, row_height, state.visible().len(), |ui, rows| {
             ui.spacing_mut().item_spacing.y = 1.0;
             let entries = state.entries();
+            let dropped = state.dropped();
             for &index in &state.visible()[rows] {
                 let Some(entry) = entries.get(index) else {
                     continue;
                 };
-                let row = ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    ui.colored_label(
-                        level_colour(entry.level),
-                        mono(format!("{:<5}", level_name(entry.level))),
-                    );
-                    ui.colored_label(
-                        target_colour(entry.from_project),
-                        mono(short_target(&entry.target)),
-                    );
-                    draw_message(ui, entry);
-                });
+                // Keyed on the line, not on the slot it landed in.
+                //
+                // Without this every widget takes an automatic id, which
+                // egui hands out by order of creation — so a row emitting a
+                // different number of fragments renames every widget after
+                // it. Rows are a fixed height, so nothing moves on screen:
+                // same rect, new id, which is exactly what egui reports
+                // (#641). And the report is itself a log line, which shifts
+                // the rows again — that is why one bad frame produced three
+                // hundred of them.
+                //
+                // The absolute sequence, not the index: the buffer drops
+                // from the front, so index 0 is a different line after
+                // every eviction.
+                let seq = dropped + index as u64;
+                ui.push_id(seq, |ui| {
+                    let row = ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        ui.colored_label(
+                            level_colour(entry.level),
+                            mono(format!("{:<5}", level_name(entry.level))),
+                        );
+                        ui.colored_label(
+                            target_colour(entry.from_project),
+                            mono(short_target(&entry.target)),
+                        );
+                        draw_message(ui, entry);
+                    });
 
-                // Right-click the row for the one line, when the Copy
-                // button's "everything shown" is more than wanted.
-                row.response.context_menu(|ui| {
-                    if ui.button("Copy line").clicked() {
-                        ui.ctx().copy_text(line_as_text(entry));
-                        ui.close();
-                    }
+                    // Right-click the row for the one line, when the Copy
+                    // button's "everything shown" is more than wanted.
+                    row.response.context_menu(|ui| {
+                        if ui.button("Copy line").clicked() {
+                            ui.ctx().copy_text(line_as_text(entry));
+                            ui.close();
+                        }
+                    });
                 });
             }
         });

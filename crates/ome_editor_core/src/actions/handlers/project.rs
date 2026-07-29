@@ -1,7 +1,6 @@
 //! Opening, creating and closing a project, plus the recent list and
 //! launching a built one.
 
-
 use ome_core::resource::Resources;
 use ome_ecs::EphemeralComponents;
 use ome_ecs::allocator::EntityAllocator;
@@ -13,9 +12,8 @@ use crate::project_state::ProjectState;
 use crate::state::EditorOverlay;
 use crate::undo::UndoStack;
 
-use crate::actions::scene_io::load_scene;
 use super::remote::{disconnect_remote, start_remote_session};
-
+use crate::actions::scene_io::load_scene;
 
 pub(super) fn handle_open_project(resources: &mut Resources, path: &std::path::Path) {
     if !path.join("Cargo.toml").exists() {
@@ -117,7 +115,11 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
 /// way back from a session that died — the launch is a `cargo run`, so
 /// it recompiles and relaunches in one step.
 
-pub(super) fn handle_create_project(resources: &mut Resources, name: &str, parent_path: &std::path::Path) {
+pub(super) fn handle_create_project(
+    resources: &mut Resources,
+    name: &str,
+    parent_path: &std::path::Path,
+) {
     let engine_root = resources
         .get::<ProjectState>()
         .and_then(|ps| ps.engine_root.clone());

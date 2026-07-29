@@ -13,11 +13,9 @@ mod remote;
 mod scene;
 mod settings;
 
-
 use ome_core::resource::Resources;
 
 use crate::undo::UndoStack;
-
 
 use crate::actions::EditorAction;
 
@@ -70,7 +68,6 @@ pub(super) fn apply_non_ecs_action(
 
 /// Copies each source file into `dest`, then forces a project asset
 /// re-scan so the new files register (and get `.meta` sidecars) and
-
 use assets::{handle_edit_material, handle_import_assets};
 use play::{handle_play, handle_stop};
 use project::{

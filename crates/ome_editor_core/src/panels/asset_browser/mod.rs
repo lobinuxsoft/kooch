@@ -98,28 +98,30 @@ pub(crate) fn draw_asset_browser_content(
     let mut rename: Option<RenameState> = ui.ctx().data(|d| d.get_temp(rename_id));
     let mut pending: Option<PendingCreate> = ui.ctx().data(|d| d.get_temp(pending_id));
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        let mut ctx = RenderCtx {
-            needle: &needle,
-            selected_asset,
-            current_folder,
-            actions,
-            rename: &mut rename,
-            pending: &mut pending,
-            writable: true,
-        };
+    egui::ScrollArea::vertical()
+        .id_salt("asset_browser_grid")
+        .show(ui, |ui| {
+            let mut ctx = RenderCtx {
+                needle: &needle,
+                selected_asset,
+                current_folder,
+                actions,
+                rename: &mut rename,
+                pending: &mut pending,
+                writable: true,
+            };
 
-        if let Some(root) = project_root {
-            let entries = entries_under(catalog, root);
-            ctx.writable = true;
-            tree::render_root(ui, "Project", root, &entries, &mut ctx);
-        }
-        if let Some(root) = engine_root {
-            let entries = entries_under(catalog, root);
-            ctx.writable = false;
-            tree::render_root(ui, "Engine (read-only)", root, &entries, &mut ctx);
-        }
-    });
+            if let Some(root) = project_root {
+                let entries = entries_under(catalog, root);
+                ctx.writable = true;
+                tree::render_root(ui, "Project", root, &entries, &mut ctx);
+            }
+            if let Some(root) = engine_root {
+                let entries = entries_under(catalog, root);
+                ctx.writable = false;
+                tree::render_root(ui, "Engine (read-only)", root, &entries, &mut ctx);
+            }
+        });
 
     ui.ctx().data_mut(|d| {
         match rename {

@@ -1,7 +1,6 @@
 //! Scene I/O: save, open, open additive, close, and switching the active
 //! one.
 
-
 use ome_core::resource::Resources;
 
 use crate::undo::UndoStack;
@@ -9,7 +8,6 @@ use crate::undo::UndoStack;
 use crate::actions::scene_io::{
     close_scene, load_scene, open_scene_additive, save_scene_as, scene_dialog,
 };
-
 
 pub(super) fn handle_save_scene(resources: &mut Resources) {
     let Some(path) = scene_dialog(resources).save_file() else {

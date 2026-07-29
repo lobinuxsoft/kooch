@@ -211,12 +211,18 @@ pub(super) fn draw_multi_entity_inspector(
         return;
     }
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for comp in &multi_info {
-            let is_read_only = comp.visibility == InspectorVisibility::ReadOnly;
-            let id = ui.make_persistent_id(format!("multi_comp_{:?}", comp.component));
+    egui::ScrollArea::vertical()
+        .id_salt("inspector_multi")
+        .show(ui, |ui| {
+            for comp in &multi_info {
+                let is_read_only = comp.visibility == InspectorVisibility::ReadOnly;
+                let id = ui.make_persistent_id(format!("multi_comp_{:?}", comp.component));
 
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+                egui::collapsing_header::CollapsingState::load_with_default_open(
+                    ui.ctx(),
+                    id,
+                    true,
+                )
                 .show_header(ui, |ui| {
                     let label = if comp.present_count < comp.total_count {
                         format!(
@@ -275,8 +281,8 @@ pub(super) fn draw_multi_entity_inspector(
                         ui.weak("(no reflection)");
                     }
                 });
-        }
-    });
+            }
+        });
 }
 
 /// Renders merged fields for multi-entity editing.

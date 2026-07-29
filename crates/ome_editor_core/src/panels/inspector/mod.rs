@@ -236,24 +236,38 @@ fn draw_inspector_body(
         parent_global: info.parent_global_rotation,
     };
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for comp in &visible_components {
-            let is_read_only = comp.visibility == InspectorVisibility::ReadOnly;
-            // Keyed on the component, *not* on the entity holding it.
-            //
-            // With the entity's index in the id, every widget under the
-            // header was renamed the moment the selection moved — and two
-            // entities carrying the same components lay out identically,
-            // so the ids changed while nothing moved on screen. That is
-            // #641: egui reports it as a widget whose id is unstable,
-            // because from the outside that is exactly what it looks like.
-            //
-            // Dropping the entity also fixes what it cost: whether
-            // `Transform` was expanded now survives clicking to the next
-            // entity, which is what any inspector is expected to do and
-            // what this one did not.
-            let id = ui.make_persistent_id(format!("comp_{:?}", comp.component));
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+    // Named, not automatic.
+    //
+    // An unsalted `ScrollArea` takes its id from the parent's widget
+    // counter, and what precedes this one is not a fixed number of widgets:
+    // the physics warnings are zero or more, and "Add Component" is there
+    // only while something is left to add. Both change as the selection
+    // moves, which renamed the scroll area — and with it its bar — while it
+    // stayed exactly where it was. That is the Inspector half of #641.
+    egui::ScrollArea::vertical()
+        .id_salt("inspector_components")
+        .show(ui, |ui| {
+            for comp in &visible_components {
+                let is_read_only = comp.visibility == InspectorVisibility::ReadOnly;
+                // Keyed on the component, *not* on the entity holding it.
+                //
+                // With the entity's index in the id, every widget under the
+                // header was renamed the moment the selection moved — and two
+                // entities carrying the same components lay out identically,
+                // so the ids changed while nothing moved on screen. That is
+                // #641: egui reports it as a widget whose id is unstable,
+                // because from the outside that is exactly what it looks like.
+                //
+                // Dropping the entity also fixes what it cost: whether
+                // `Transform` was expanded now survives clicking to the next
+                // entity, which is what any inspector is expected to do and
+                // what this one did not.
+                let id = ui.make_persistent_id(format!("comp_{:?}", comp.component));
+                egui::collapsing_header::CollapsingState::load_with_default_open(
+                    ui.ctx(),
+                    id,
+                    true,
+                )
                 .show_header(ui, |ui| {
                     ui.strong(format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name));
                     // Removal is always available regardless of visibility:
@@ -279,7 +293,6 @@ fn draw_inspector_body(
                         } else if is_read_only {
                             single::draw_readonly_fields(
                                 ui,
-                                entity,
                                 comp.component,
                                 fields,
                                 comp.field_metas,
@@ -303,8 +316,8 @@ fn draw_inspector_body(
                         ui.weak("(no reflection)");
                     }
                 });
-        }
-    });
+            }
+        });
 }
 
 /// Draws any physics warnings that apply to `entity`.
