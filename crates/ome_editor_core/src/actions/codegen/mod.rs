@@ -97,6 +97,7 @@ fn ensure_features(project_root: &Path) {
     /// component it makes real.
     const ADDED: &[(&str, &str)] = &[
         ("gravity", "PointGravity / AreaGravity"),
+        ("camera", "CameraRig"),
         // Without this the generated lib.rs does not compile: the plugin
         // API it calls is behind this feature. Every project that
         // predates the library split needs it.

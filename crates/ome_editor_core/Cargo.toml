@@ -19,6 +19,7 @@ ome_gizmos_handles.workspace = true
 ome_physics = { workspace = true, features = ["debug-render"] }
 # Authored here, applied in the project's process. The editor needs the
 # components to mirror and the gizmos to draw a field that has no mesh.
+ome_camera.workspace = true
 ome_gravity.workspace = true
 ome_window.workspace = true
 ome_world.workspace = true

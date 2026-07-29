@@ -15,6 +15,7 @@
 //! | `lighting` | Lighting system             | —            |
 //! | `physics`  | Physics simulation          | —            |
 //! | `gravity`  | Gravity system              | —            |
+//! | `camera`   | Authorable camera rigs      | —            |
 //! | `world`    | World management            | —            |
 //! | `scripting`| Scripting via rhai          | —            |
 //! | `editor`   | Editor UI                   | —            |
@@ -34,6 +35,8 @@ pub use ome_plugin_api;
 // Conditional re-exports
 #[cfg(feature = "audio")]
 pub use ome_audio;
+#[cfg(feature = "camera")]
+pub use ome_camera;
 #[cfg(feature = "editor")]
 pub use ome_editor_core;
 #[cfg(feature = "gizmos")]
@@ -168,6 +171,11 @@ impl ome_core::plugin::PluginGroup for RemoteHostPlugins {
         #[cfg(all(feature = "physics", feature = "gravity"))]
         let builder = builder.add(ome_gravity::GravityPlugin);
 
+        // Camera rigs run here for the same reason physics does: the host
+        // is what simulates, and the editor draws the pose it produced.
+        #[cfg(feature = "camera")]
+        let builder = builder.add(ome_camera::CameraPlugin);
+
         // What lets the editor draw the solver's state from over there.
         #[cfg(all(feature = "physics", feature = "remote"))]
         let builder = builder.add(PhysicsRemotePlugin);
@@ -205,6 +213,11 @@ impl ome_core::plugin::PluginGroup for DefaultPlugins {
         // scene holds a source, so adding it changes nothing on its own.
         #[cfg(all(feature = "physics", feature = "gravity"))]
         let builder = builder.add(ome_gravity::GravityPlugin);
+
+        // A camera that follows something is not an optional idea for a
+        // 3D game, and the crate is inert until a rig is authored.
+        #[cfg(feature = "camera")]
+        let builder = builder.add(ome_camera::CameraPlugin);
 
         // What lets the editor draw the solver's state from over there.
         #[cfg(all(feature = "physics", feature = "remote"))]

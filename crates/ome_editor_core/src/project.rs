@@ -207,8 +207,10 @@ path = "src/main.rs"
 # editor over a local socket; `physics` gives you rigid bodies — without it a
 # `RigidBody` is an inert component and nothing ever falls. `gravity` is
 # the same story one level up: without it a `PointGravity` is authorable,
-# mirrors to the editor, draws its gizmo, and pulls on nothing.
-oh_my_engine = {{ path = "{engine_path}", features = ["editor", "physics", "gravity", "remote", "physics-debug-render", "dynamic"] }}
+# mirrors to the editor, draws its gizmo, and pulls on nothing. `camera` is
+# the third instance of that pattern: without it a `CameraRig` is authorable
+# and moves no camera.
+oh_my_engine = {{ path = "{engine_path}", features = ["editor", "physics", "gravity", "camera", "remote", "physics-debug-render", "dynamic"] }}
 # Direct dep needed until `Reflect` proc-macro resolves through the facade.
 ome_ecs = {{ path = "{engine_path}/crates/ome_ecs" }}
 "#,
