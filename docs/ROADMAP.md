@@ -6,7 +6,7 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
-Last updated 2026-07-29, `development` at `a2bf355`.
+Last updated 2026-07-29, `development` at `55338d7`.
 
 ---
 
@@ -36,7 +36,7 @@ Last updated 2026-07-29, `development` at `a2bf355`.
 | **#655** | A `Joint` can be authored. Bodies are named with `Option<EntityRef>`, the Inspector has an entity picker and a World-panel drop target, and the three error paths that turned one failure into a frozen session stopped lying |
 | **PR #660/#662** | The Console copies to the system clipboard, and filters by severity with one toggle per level instead of a minimum-level dropdown |
 | **PR #664** | egui 0.35. Widget ids stabilised (see #641 below), numeric fields evaluate arithmetic — `9/2` is 4.5 — the name field keeps its caret, and a remotely spawned entity carries `Name` and `Transform` like a locally spawned one |
-| **#656** | The editor and its project stopped burning two cores to show a still image. 200% → 3% CPU, 51.8 → 31.5 W, measured on the same host |
+| **#656 / PR #667** | The editor and its project stopped burning two cores to show a still image. 200% → 3% CPU, 51.8 → 31.5 W. Four causes, one of them a bare `loop {}` in the headless runner that predated the issue |
 
 ---
 
@@ -120,6 +120,32 @@ carrying something that does not belong to it. Size alone is not the verdict. Se
 
 The full list, any time: `find crates src examples -name '*.rs' | xargs wc -l | sort -rn |
 awk '$1 > 600'`.
+
+### The audit that changed what "next" means — #669
+
+**#669 — Roll a Ball, a first-user pass over the whole engine.** We have been testing the
+engine as its authors; this tests it as its first user, in a project, against the public API
+only. Each phase ends in a verdict about the engine rather than a feature for the game.
+
+Reading the tree to plan it turned up how much of the presentation layer does not exist:
+
+| Subsystem | State |
+|---|---|
+| Physics, gravity, meshlet path, materials | **strong** |
+| Input, scripting | present, unproven from a project |
+| **Lights** | **authorable and inert** — see below |
+| Audio | kira backend, no `AudioSource` to author (#63) |
+| Shadows (#476/#477), post (#254), particles (#97), runtime UI (#280/#96) | **missing** |
+
+**`DirectionalLight`, `PointLight` and `SpotLight` exist in `ome_ecs` and nothing reads
+them.** `ome_lighting/src/lib.rs` is nine lines; `ome_render` never mentions them; #441 is
+open. They are the exact shape of the gotcha in `MEMORY.md` — *a missing feature does not fail
+the build: the component is authored, mirrored, draws a gizmo, and does nothing.* A user who
+places a light and sees no change is the first bug #669 will find.
+
+**#668 — how systems get to run in parallel**, given that users write their own. Blocked on a
+scene that needs it: a hosting project currently does **0.17 ms** of work per frame, so there
+is nothing to parallelise. #669's terrain phase produces that scene.
 
 ### Then, the features that were next before this
 
