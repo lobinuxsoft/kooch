@@ -22,10 +22,15 @@
 use ome_core::{LogBuffer, LogEntry};
 use tracing::Level;
 
+mod levels;
+
+pub(crate) use levels::{ALL as ALL_LEVELS, LevelSet};
+
 /// What the panel is currently showing, kept between frames.
 pub(crate) struct ConsoleState {
-    /// Minimum level shown.
-    pub(crate) level: Level,
+    /// Which severities are shown. A set rather than a threshold, so one
+    /// noisy level can be hidden without taking the rest with it.
+    pub(crate) levels: LevelSet,
     /// Substring filter, matched against the message and the target.
     pub(crate) filter: String,
     /// Follow the tail. Turned off by scrolling up, so reading something
@@ -48,7 +53,7 @@ pub(crate) struct ConsoleState {
 /// The filter settings, as something comparable.
 #[derive(Clone, PartialEq, Eq)]
 struct FilterKey {
-    level: Level,
+    levels: LevelSet,
     filter: String,
     project_only: bool,
     /// The newest line included, so arriving lines invalidate the view
@@ -59,10 +64,7 @@ struct FilterKey {
 impl Default for ConsoleState {
     fn default() -> Self {
         Self {
-            // Not `INFO`: the interesting lines are warnings and errors,
-            // and the first thing anyone does at info is scroll past a
-            // hundred asset lines. The level picker is right there.
-            level: Level::INFO,
+            levels: LevelSet::DEFAULT,
             filter: String::new(),
             follow: true,
             project_only: false,
@@ -80,11 +82,7 @@ impl ConsoleState {
     /// `needle` is the filter already lowercased, because lowercasing it
     /// per entry was most of what this function used to do.
     pub(crate) fn shows_with(&self, entry: &LogEntry, needle: &str) -> bool {
-        // `tracing::Level` orders with ERROR as the *smallest*, so "at
-        // least this severe" is `<=`. Getting this backwards shows debug
-        // spam when someone asks for errors, which is the wrong way to be
-        // wrong.
-        if entry.level > self.level {
+        if !self.levels.shows(entry.level) {
             return false;
         }
         if self.project_only && !entry.is_from_project() {
@@ -158,7 +156,7 @@ impl ConsoleState {
 
     fn rebuild_view(&mut self) {
         let key = FilterKey {
-            level: self.level,
+            levels: self.levels,
             filter: self.filter.clone(),
             project_only: self.project_only,
             newest: self.entries.last().map(|entry| entry.seq),

@@ -14,7 +14,7 @@ fn entry(level: Level, target: &str, message: &str) -> LogEntry {
 #[test]
 fn the_level_filter_keeps_the_more_severe() {
     let state = ConsoleState {
-        level: Level::WARN,
+        levels: errors_and_warnings(),
         ..Default::default()
     };
     assert!(state.shows(&entry(Level::ERROR, "t", "m")));
@@ -58,7 +58,7 @@ fn the_search_matches_at_both_ends() {
 #[test]
 fn the_filters_are_combined() {
     let state = ConsoleState {
-        level: Level::WARN,
+        levels: errors_and_warnings(),
         filter: "joint".to_owned(),
         ..Default::default()
     };
@@ -183,9 +183,27 @@ fn changing_the_filter_rebuilds_the_view() {
     state.sync(&buffer);
     assert_eq!(state.visible().len(), 1);
 
-    state.level = Level::ERROR;
+    state.levels = only(Level::ERROR);
     state.sync(&buffer);
     assert_eq!(state.visible().len(), 0);
+}
+
+/// The set the old `WARN` threshold stood for.
+fn errors_and_warnings() -> super::LevelSet {
+    only_these(&[Level::ERROR, Level::WARN])
+}
+
+/// A set with one level shown.
+fn only(level: Level) -> super::LevelSet {
+    only_these(&[level])
+}
+
+fn only_these(levels: &[Level]) -> super::LevelSet {
+    let mut set = super::LevelSet::default();
+    for level in super::ALL_LEVELS {
+        set.set(level, levels.contains(&level));
+    }
+    set
 }
 
 fn from_project(level: Level, target: &str, message: &str) -> LogEntry {
@@ -211,7 +229,7 @@ fn project_only_hides_the_editors_own_lines() {
 #[test]
 fn a_projects_line_is_filtered_by_its_own_level() {
     let state = ConsoleState {
-        level: Level::WARN,
+        levels: errors_and_warnings(),
         ..Default::default()
     };
     assert!(state.shows(&from_project(

@@ -138,7 +138,13 @@ pub(crate) fn draw_entity_picker(
                     ),
                     None => "that entity is not in the loaded scenes".to_owned(),
                 };
-                egui::show_tooltip_text(ui.ctx(), ui.layer_id(), slot.id.with("refused"), reason);
+                egui::Tooltip::always_open(
+                    ui.ctx().clone(),
+                    ui.layer_id(),
+                    slot.id.with("refused"),
+                    egui::PopupAnchor::Pointer,
+                )
+                .show(|ui| ui.label(reason));
                 // Take the payload so the drop ends here rather than
                 // falling through to whatever is underneath.
                 let _ = slot.dnd_release_payload::<Entity>();

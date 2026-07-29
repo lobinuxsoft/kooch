@@ -36,3 +36,8 @@ dirs.workspace = true
 serde.workspace = true
 ron.workspace = true
 sysinfo.workspace = true
+
+[dev-dependencies]
+# egui reports unstable widget ids through `log`, and the id-stability
+# test reads those complaints rather than reimplementing the check.
+log = "0.4"

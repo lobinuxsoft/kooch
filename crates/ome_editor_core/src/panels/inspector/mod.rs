@@ -15,6 +15,9 @@ mod rotation;
 mod single;
 mod widgets;
 
+#[cfg(test)]
+mod id_stability;
+
 use std::collections::{HashMap, HashSet};
 
 use glam::{Quat, Vec3};
@@ -236,7 +239,20 @@ fn draw_inspector_body(
     egui::ScrollArea::vertical().show(ui, |ui| {
         for comp in &visible_components {
             let is_read_only = comp.visibility == InspectorVisibility::ReadOnly;
-            let id = ui.make_persistent_id(format!("comp_{}_{:?}", entity.index(), comp.component));
+            // Keyed on the component, *not* on the entity holding it.
+            //
+            // With the entity's index in the id, every widget under the
+            // header was renamed the moment the selection moved — and two
+            // entities carrying the same components lay out identically,
+            // so the ids changed while nothing moved on screen. That is
+            // #641: egui reports it as a widget whose id is unstable,
+            // because from the outside that is exactly what it looks like.
+            //
+            // Dropping the entity also fixes what it cost: whether
+            // `Transform` was expanded now survives clicking to the next
+            // entity, which is what any inspector is expected to do and
+            // what this one did not.
+            let id = ui.make_persistent_id(format!("comp_{:?}", comp.component));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
                     ui.strong(format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name));

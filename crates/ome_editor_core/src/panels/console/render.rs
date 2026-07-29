@@ -3,7 +3,7 @@
 use ome_core::{LogBuffer, LogEntry};
 use tracing::Level;
 
-use super::ConsoleState;
+use super::{ALL_LEVELS, ConsoleState};
 
 /// Content of the "Console" tab.
 pub(crate) fn draw_console(
@@ -21,20 +21,32 @@ pub(crate) fn draw_console(
     state.sync(buffer);
 
     ui.horizontal(|ui| {
-        egui::ComboBox::from_id_salt("console_level")
-            .selected_text(level_name(state.level))
-            .width(90.0)
-            .show_ui(ui, |ui| {
-                for level in [
-                    Level::ERROR,
-                    Level::WARN,
-                    Level::INFO,
-                    Level::DEBUG,
-                    Level::TRACE,
-                ] {
-                    ui.selectable_value(&mut state.level, level, level_name(level));
-                }
+        // One toggle per severity rather than a "minimum level" dropdown.
+        // A threshold cannot express "hide the warnings, keep the rest",
+        // which is the thing anyone wants when one warning repeats three
+        // hundred times and buries the log (#641).
+        for level in ALL_LEVELS {
+            let mut shown = state.levels.shows(level);
+            let label = egui::RichText::new(level_name(level)).color(match shown {
+                true => level_colour(level),
+                false => egui::Color32::DARK_GRAY,
             });
+            if ui
+                .toggle_value(&mut shown, label)
+                .on_hover_text(format!("Show {} lines", level_name(level)))
+                .changed()
+            {
+                state.levels.set(level, shown);
+            }
+        }
+        if state.levels.is_empty() {
+            // An empty Console otherwise reads as "nothing happened".
+            ui.colored_label(
+                egui::Color32::from_rgb(240, 180, 40),
+                "\u{26a0} every level is off",
+            );
+        }
+        ui.separator();
 
         ui.add(
             egui::TextEdit::singleline(&mut state.filter)
