@@ -175,7 +175,11 @@ fn drag_it_to(resources: &mut Resources, state: &RemoteState, position: Vec3) {
     }
 }
 
-/// Runs the system `frames` times, enough to cross the idle cadence.
+/// Runs the system `frames` times.
+///
+/// The paused cadence is a duration now (#656), so a test that wants a
+/// pull asks for one through [`RemoteSyncState::every_frame`] rather
+/// than by running enough frames to outlast a real half-second.
 fn tick(resources: &mut Resources, frames: u32) {
     for _ in 0..frames {
         remote_sync_system(resources);
@@ -197,7 +201,8 @@ fn a_drag_in_flight_survives_the_refresh_cadence() {
 
     editor.insert(state);
     editor.insert(dragging_handles());
-    tick(&mut editor, REFRESH_INTERVAL_IDLE * 3);
+    editor.insert(RemoteSyncState::every_frame());
+    tick(&mut editor, 90);
 
     let state = editor.remove::<RemoteState>().unwrap();
     assert_eq!(
@@ -225,7 +230,8 @@ fn the_refresh_resumes_once_the_drag_ends() {
 
     editor.insert(state);
     // No HandleSet at all — the same as a released handle.
-    tick(&mut editor, REFRESH_INTERVAL_IDLE + 1);
+    editor.insert(RemoteSyncState::every_frame());
+    tick(&mut editor, 2);
 
     let state = editor.remove::<RemoteState>().unwrap();
     assert_eq!(
@@ -249,7 +255,8 @@ fn a_pull_records_what_it_cost() {
     editor.insert(EditorPerfStats::default());
     let state = connected(&socket, &mut editor);
     editor.insert(state);
-    tick(&mut editor, REFRESH_INTERVAL_IDLE + 1);
+    editor.insert(RemoteSyncState::every_frame());
+    tick(&mut editor, 2);
 
     let remote = editor
         .get::<EditorPerfStats>()
@@ -282,7 +289,8 @@ fn the_wait_for_the_project_is_transport_not_decode() {
     editor.insert(EditorPerfStats::default());
     let state = connected(&socket, &mut editor);
     editor.insert(state);
-    tick(&mut editor, REFRESH_INTERVAL_IDLE + 1);
+    editor.insert(RemoteSyncState::every_frame());
+    tick(&mut editor, 2);
 
     let remote = editor
         .get::<EditorPerfStats>()
@@ -300,8 +308,11 @@ fn the_wait_for_the_project_is_transport_not_decode() {
     thread.join().unwrap();
 }
 
-/// The cadence skips most frames, so the reading must persist
-/// instead of blinking to zero twenty-nine frames out of thirty.
+/// The cadence skips most frames, so the reading must persist instead
+/// of blinking to zero on every frame that does not pull.
+///
+/// The real interval, deliberately: the whole point is the frames in
+/// between, and `every_frame` would leave none.
 #[test]
 fn the_sample_survives_the_frames_that_do_not_pull() {
     let done = Arc::new(AtomicBool::new(false));
@@ -311,7 +322,7 @@ fn the_sample_survives_the_frames_that_do_not_pull() {
     editor.insert(EditorPerfStats::default());
     let state = connected(&socket, &mut editor);
     editor.insert(state);
-    tick(&mut editor, REFRESH_INTERVAL_IDLE + 1);
+    tick(&mut editor, 2);
     let after_pull = editor
         .get::<EditorPerfStats>()
         .and_then(|s| s.remote)
