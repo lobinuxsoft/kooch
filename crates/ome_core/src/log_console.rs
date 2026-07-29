@@ -16,6 +16,20 @@
 //! A parallel channel would drift: someone would log to one and not the
 //! other, and the panel would disagree with the terminal about what
 //! happened.
+//!
+//! # Why egui does not reach the panel
+//!
+//! Showing a line changes what the panel shows. For every other emitter
+//! that is fine; for the UI library drawing the panel it is a loop. egui
+//! complains when a widget keeps its rectangle but changes id — which is
+//! exactly what a scrolling list does when a line arrives, since the row
+//! at a given height is now a *different* row. The complaint is a log
+//! line, it lands in the panel, the panel scrolls, and the next frame
+//! complains again. Measured: one core, indefinitely, on an editor
+//! nobody was touching (#656, #641).
+//!
+//! So `egui*` is muted **here only**. It still goes to stdout, where
+//! reading it does not change it.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -246,6 +260,10 @@ impl LogBuffer {
     }
 }
 
+/// Target prefixes that never reach the panel — see the module docs for
+/// why the UI library is not allowed to log into the UI.
+const MUTED_TARGETS: &[&str] = &["egui"];
+
 /// A `tracing` layer that records into a [`LogBuffer`].
 pub struct LogBufferLayer {
     buffer: LogBuffer,
@@ -255,11 +273,27 @@ impl<S: Subscriber> Layer<S> for LogBufferLayer {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
         let mut visitor = MessageVisitor::default();
         event.record(&mut visitor);
-        self.buffer.push(
-            *event.metadata().level(),
-            event.metadata().target().to_owned(),
-            visitor.finish(),
-        );
+
+        // A crate logging through the `log` crate arrives via the tracing
+        // bridge, whose metadata target is the literal `"log"` for every
+        // one of them — the real one travels as a `log.target` field. Use
+        // it when it is there, or the panel's own filter sees a single
+        // undifferentiated target and every mute would have to be by
+        // message text.
+        let target = visitor
+            .log_target
+            .take()
+            .unwrap_or_else(|| event.metadata().target().to_owned());
+
+        if MUTED_TARGETS
+            .iter()
+            .any(|muted| target == *muted || target.starts_with(&format!("{muted}::")))
+        {
+            return;
+        }
+
+        self.buffer
+            .push(*event.metadata().level(), target, visitor.finish());
     }
 }
 
@@ -271,6 +305,9 @@ impl<S: Subscriber> Layer<S> for LogBufferLayer {
 struct MessageVisitor {
     message: String,
     fields: Vec<String>,
+    /// The emitter's real target, when the event came through the `log`
+    /// bridge rather than from `tracing` directly.
+    log_target: Option<String>,
 }
 
 impl MessageVisitor {
@@ -282,18 +319,37 @@ impl MessageVisitor {
     }
 }
 
+impl MessageVisitor {
+    /// Files a non-message field, keeping the bridge's bookkeeping out of
+    /// the line.
+    ///
+    /// `log.target` becomes the entry's target; `log.module_path`,
+    /// `log.file` and `log.line` are dropped. They say the same thing as
+    /// the target and made every bridged line three times its length —
+    /// which, in a panel, is three times the scrolling.
+    fn field(&mut self, name: &str, value: String) {
+        match name {
+            // Recorded as a string by the bridge, but a `Debug` capture
+            // would arrive quoted and no prefix would ever match.
+            "log.target" => self.log_target = Some(value.trim_matches('"').to_owned()),
+            "log.module_path" | "log.file" | "log.line" => {}
+            _ => self.fields.push(format!("{name}={value}")),
+        }
+    }
+}
+
 impl Visit for MessageVisitor {
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         match field.name() {
             "message" => self.message = format!("{value:?}"),
-            name => self.fields.push(format!("{name}={value:?}")),
+            name => self.field(name, format!("{value:?}")),
         }
     }
 
     fn record_str(&mut self, field: &Field, value: &str) {
         match field.name() {
             "message" => self.message = value.to_owned(),
-            name => self.fields.push(format!("{name}={value}")),
+            name => self.field(name, value.to_owned()),
         }
     }
 }
@@ -304,6 +360,85 @@ mod tests {
 
     fn entry(buffer: &LogBuffer, message: &str) {
         buffer.push(Level::INFO, "test".to_owned(), message.to_owned());
+    }
+
+    /// Runs `emit` with only this buffer's layer installed, and returns
+    /// what reached the buffer.
+    ///
+    /// A local subscriber rather than the global one: these run in
+    /// parallel with every other test in the crate, and a global default
+    /// can only be set once per process.
+    fn through_the_layer(emit: impl FnOnce()) -> Vec<LogEntry> {
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let buffer = LogBuffer::new();
+        let subscriber = tracing_subscriber::registry().with(buffer.layer());
+        tracing::subscriber::with_default(subscriber, emit);
+        buffer.snapshot()
+    }
+
+    /// egui's own complaints must not land in the panel egui is drawing.
+    ///
+    /// The complaint is about a widget whose rect stayed and whose id
+    /// changed — which is what a scrolling list does when a line arrives.
+    /// Showing it adds a line, which scrolls the list, which produces the
+    /// next complaint: one core, forever (#656).
+    #[test]
+    fn egui_never_reaches_the_panel() {
+        let entries = through_the_layer(|| {
+            tracing::warn!(target: "egui", "changed id between passes");
+            tracing::warn!(target: "egui::context", "changed id between passes");
+            tracing::info!(target: "ome_render", "uploaded meshlet asset");
+        });
+
+        let targets: Vec<_> = entries.iter().map(|e| e.target.as_str()).collect();
+        assert_eq!(
+            targets,
+            vec!["ome_render"],
+            "an egui line reached the buffer",
+        );
+    }
+
+    /// A near-miss must still get through: muting is by target, not by
+    /// "contains egui somewhere".
+    #[test]
+    fn a_crate_merely_named_after_egui_still_logs() {
+        let entries = through_the_layer(|| {
+            tracing::warn!(target: "eguide", "not egui");
+        });
+        assert_eq!(entries.len(), 1, "an unrelated crate was muted");
+    }
+
+    /// Everything arriving through the `log` bridge shares the metadata
+    /// target `"log"`. Without reading `log.target` the panel's filter
+    /// sees one undifferentiated emitter — and the mute above would never
+    /// match, because egui logs through exactly that bridge.
+    #[test]
+    fn the_bridge_target_is_the_one_recorded() {
+        let entries = through_the_layer(|| {
+            tracing::warn!(log.target = "wgpu_core", message = "surface lost");
+        });
+
+        assert_eq!(entries[0].target, "wgpu_core");
+        assert_eq!(
+            entries[0].message, "surface lost",
+            "the bridge's bookkeeping leaked into the line",
+        );
+    }
+
+    /// Same bridge, muted crate: the mute has to survive the indirection
+    /// or it does nothing at all for the case it exists for.
+    #[test]
+    fn egui_through_the_bridge_is_muted_too() {
+        let entries = through_the_layer(|| {
+            tracing::warn!(
+                log.target = "egui::context",
+                log.file = "context.rs",
+                log.line = 4254,
+                message = "Widget rect changed id between passes",
+            );
+        });
+        assert!(entries.is_empty(), "egui got in through the log bridge");
     }
 
     #[test]
