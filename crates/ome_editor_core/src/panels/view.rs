@@ -147,7 +147,7 @@ pub(crate) fn draw_view_content(
                 // matching gizmo mode without spending toolbar width on
                 // text labels.
                 ui.add(
-                    egui::DragValue::new(&mut snap_settings.translate)
+                    crate::numeric::drag(&mut snap_settings.translate)
                         .speed(0.01)
                         .range(0.001..=10.0)
                         .max_decimals(3)
@@ -156,7 +156,7 @@ pub(crate) fn draw_view_content(
                 .on_hover_text("Translate snap step (world units, hold Ctrl while dragging)");
 
                 ui.add(
-                    egui::DragValue::new(&mut snap_settings.rotate_deg)
+                    crate::numeric::drag(&mut snap_settings.rotate_deg)
                         .speed(0.1)
                         .range(0.1..=180.0)
                         .suffix("°")

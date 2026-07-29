@@ -70,6 +70,9 @@ egui-winit = { version = "0.35", default-features = false, features = [
 ] }
 egui-wgpu = "0.35"
 egui_dock = { version = "0.20", features = ["serde"] }
+# Arithmetic in numeric fields: `9/2` instead of 4.5. MIT/Apache, and its
+# two deps (regex, smallvec) were already in the tree.
+exmex = "0.21"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 ron = "0.8"

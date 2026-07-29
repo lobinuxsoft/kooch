@@ -59,55 +59,55 @@ pub(in crate::panels::inspector) fn draw_value_widget(
     match value {
         ReflectValue::F32(v) => {
             let mut val = *v;
-            let resp = ui.add(egui::DragValue::new(&mut val).speed(0.1));
+            let resp = ui.add(crate::numeric::drag(&mut val).speed(0.1));
             resp.changed().then_some(ReflectValue::F32(val))
         }
         ReflectValue::F64(v) => {
             let mut val = *v as f32;
-            let resp = ui.add(egui::DragValue::new(&mut val).speed(0.1));
+            let resp = ui.add(crate::numeric::drag(&mut val).speed(0.1));
             resp.changed().then_some(ReflectValue::F64(val as f64))
         }
         ReflectValue::U8(v) => {
             let mut val = *v as i64;
-            let resp = ui.add(egui::DragValue::new(&mut val).range(0..=u8::MAX as i64));
+            let resp = ui.add(crate::numeric::drag(&mut val).range(0..=u8::MAX as i64));
             resp.changed().then_some(ReflectValue::U8(val as u8))
         }
         ReflectValue::U16(v) => {
             let mut val = *v as i64;
-            let resp = ui.add(egui::DragValue::new(&mut val).range(0..=u16::MAX as i64));
+            let resp = ui.add(crate::numeric::drag(&mut val).range(0..=u16::MAX as i64));
             resp.changed().then_some(ReflectValue::U16(val as u16))
         }
         ReflectValue::U32(v) => {
             let mut val = *v as i64;
-            let resp = ui.add(egui::DragValue::new(&mut val).range(0..=u32::MAX as i64));
+            let resp = ui.add(crate::numeric::drag(&mut val).range(0..=u32::MAX as i64));
             resp.changed().then_some(ReflectValue::U32(val as u32))
         }
         ReflectValue::U64(v) => {
             let mut val = *v as i64;
-            let resp = ui.add(egui::DragValue::new(&mut val));
+            let resp = ui.add(crate::numeric::drag(&mut val));
             resp.changed()
                 .then_some(ReflectValue::U64(val.max(0) as u64))
         }
         ReflectValue::I8(v) => {
             let mut val = *v as i64;
             let resp =
-                ui.add(egui::DragValue::new(&mut val).range(i8::MIN as i64..=i8::MAX as i64));
+                ui.add(crate::numeric::drag(&mut val).range(i8::MIN as i64..=i8::MAX as i64));
             resp.changed().then_some(ReflectValue::I8(val as i8))
         }
         ReflectValue::I16(v) => {
             let mut val = *v as i64;
             let resp =
-                ui.add(egui::DragValue::new(&mut val).range(i16::MIN as i64..=i16::MAX as i64));
+                ui.add(crate::numeric::drag(&mut val).range(i16::MIN as i64..=i16::MAX as i64));
             resp.changed().then_some(ReflectValue::I16(val as i16))
         }
         ReflectValue::I32(v) => {
             let mut val = *v;
-            let resp = ui.add(egui::DragValue::new(&mut val));
+            let resp = ui.add(crate::numeric::drag(&mut val));
             resp.changed().then_some(ReflectValue::I32(val))
         }
         ReflectValue::I64(v) => {
             let mut val = *v;
-            let resp = ui.add(egui::DragValue::new(&mut val));
+            let resp = ui.add(crate::numeric::drag(&mut val));
             resp.changed().then_some(ReflectValue::I64(val))
         }
         ReflectValue::Bool(v) => {
@@ -181,9 +181,9 @@ pub(in crate::panels::inspector) fn draw_value_widget(
             let mut changed = false;
             ui.horizontal(|ui| {
                 ui.label("x");
-                changed |= ui.add(egui::DragValue::new(&mut x).speed(0.1)).changed();
+                changed |= ui.add(crate::numeric::drag(&mut x).speed(0.1)).changed();
                 ui.label("y");
-                changed |= ui.add(egui::DragValue::new(&mut y).speed(0.1)).changed();
+                changed |= ui.add(crate::numeric::drag(&mut y).speed(0.1)).changed();
             });
             changed.then_some(ReflectValue::Vec2(glam::Vec2::new(x, y)))
         }
@@ -200,11 +200,11 @@ pub(in crate::panels::inspector) fn draw_value_widget(
                 let mut changed = false;
                 ui.horizontal(|ui| {
                     ui.label("x");
-                    changed |= ui.add(egui::DragValue::new(&mut x).speed(0.1)).changed();
+                    changed |= ui.add(crate::numeric::drag(&mut x).speed(0.1)).changed();
                     ui.label("y");
-                    changed |= ui.add(egui::DragValue::new(&mut y).speed(0.1)).changed();
+                    changed |= ui.add(crate::numeric::drag(&mut y).speed(0.1)).changed();
                     ui.label("z");
-                    changed |= ui.add(egui::DragValue::new(&mut z).speed(0.1)).changed();
+                    changed |= ui.add(crate::numeric::drag(&mut z).speed(0.1)).changed();
                 });
                 changed.then_some(ReflectValue::Vec3(glam::Vec3::new(x, y, z)))
             }
@@ -225,7 +225,7 @@ pub(in crate::panels::inspector) fn draw_value_widget(
                     for (i, label) in labels.iter().enumerate() {
                         ui.label(*label);
                         changed |= ui
-                            .add(egui::DragValue::new(&mut vals[i]).speed(0.1))
+                            .add(crate::numeric::drag(&mut vals[i]).speed(0.1))
                             .changed();
                     }
                 });
@@ -244,15 +244,15 @@ pub(in crate::panels::inspector) fn draw_value_widget(
             ui.horizontal(|ui| {
                 ui.label("x");
                 changed |= ui
-                    .add(egui::DragValue::new(&mut dx).speed(0.5).suffix("\u{00b0}"))
+                    .add(crate::numeric::drag(&mut dx).speed(0.5).suffix("\u{00b0}"))
                     .changed();
                 ui.label("y");
                 changed |= ui
-                    .add(egui::DragValue::new(&mut dy).speed(0.5).suffix("\u{00b0}"))
+                    .add(crate::numeric::drag(&mut dy).speed(0.5).suffix("\u{00b0}"))
                     .changed();
                 ui.label("z");
                 changed |= ui
-                    .add(egui::DragValue::new(&mut dz).speed(0.5).suffix("\u{00b0}"))
+                    .add(crate::numeric::drag(&mut dz).speed(0.5).suffix("\u{00b0}"))
                     .changed();
             });
             changed.then_some(ReflectValue::Quat(glam::Quat::from_euler(

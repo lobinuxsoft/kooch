@@ -63,15 +63,15 @@ pub(super) fn draw_quat_with_cache(
     ui.horizontal(|ui| {
         ui.label("x");
         changed |= ui
-            .add(egui::DragValue::new(&mut dx).speed(0.5).suffix("\u{00b0}"))
+            .add(crate::numeric::drag(&mut dx).speed(0.5).suffix("\u{00b0}"))
             .changed();
         ui.label("y");
         changed |= ui
-            .add(egui::DragValue::new(&mut dy).speed(0.5).suffix("\u{00b0}"))
+            .add(crate::numeric::drag(&mut dy).speed(0.5).suffix("\u{00b0}"))
             .changed();
         ui.label("z");
         changed |= ui
-            .add(egui::DragValue::new(&mut dz).speed(0.5).suffix("\u{00b0}"))
+            .add(crate::numeric::drag(&mut dz).speed(0.5).suffix("\u{00b0}"))
             .changed();
     });
     if !changed {

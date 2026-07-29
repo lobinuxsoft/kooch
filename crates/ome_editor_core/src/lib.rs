@@ -25,6 +25,7 @@ pub mod icons;
 pub mod launch_screen;
 pub(crate) mod layout;
 pub(crate) mod menu_bar;
+pub(crate) mod numeric;
 pub(crate) mod panels;
 pub mod perf;
 pub mod play_state;
