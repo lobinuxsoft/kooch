@@ -6,7 +6,7 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
-Last updated 2026-07-28, `development` at `d3bd885`.
+Last updated 2026-07-29, `development` at `f1e69d7`.
 
 ---
 
@@ -34,6 +34,8 @@ Last updated 2026-07-28, `development` at `d3bd885`.
 | **PR #653** | The monoliths, split. One file over 600 lines left, and it is named below |
 | **PR #654** | The editor protocol left TCP for a local socket — closes the browser vector and the orphan-on-a-fixed-port confusion (#647) |
 | **#655** | A `Joint` can be authored. Bodies are named with `Option<EntityRef>`, the Inspector has an entity picker and a World-panel drop target, and the three error paths that turned one failure into a frozen session stopped lying |
+| **PR #660/#662** | The Console copies to the system clipboard, and filters by severity with one toggle per level instead of a minimum-level dropdown |
+| **PR #664** | egui 0.35. Widget ids stabilised (see #641 below), numeric fields evaluate arithmetic — `9/2` is 4.5 — the name field keeps its caret, and a remotely spawned entity carries `Name` and `Transform` like a locally spawned one |
 
 ---
 
@@ -50,19 +52,35 @@ from a number, and the two guesses before them were wrong.
 
 0. **#656 — the editor redraws continuously while idle.** Two cores pinned with nothing
    happening, because `winit_app.rs:192` requests a redraw unconditionally every frame.
-   Godot, in the same state, uses approximately nothing. Newly filed and ahead of everything
-   below: it is the largest waste in the editor and the cheapest to describe. It also changes
-   the meaning of every "every N frames" cadence, so it interacts with item 1.
+   Godot, in the same state, uses approximately nothing. Ahead of everything below: it is the
+   largest waste in the editor and the cheapest to describe. It also changes the meaning of
+   every "every N frames" cadence, so it interacts with item 1.
+
+   **Measured 2026-07-29 and now the agreed next task.** Editor plus one project, idle, on a
+   9800X3D: two cores pinned for the whole minute sampled, six near idle, 51.8 W, 67 °C. Two
+   cores is what this issue predicted — one busy loop per process, and both processes use the
+   same `ome_window`, so one fix covers both. `AutoVsync` is the only reason it is one core
+   each and not all eight.
 1. **#645 — the remote pull blocks the editor's main thread every frame during Play.**
    `REFRESH_INTERVAL_PLAYING = 1` in `systems/remote_sync.rs` → `session.refresh()` →
    `client.list_entities()`, inline in the frame. The editor is not waiting on the transport;
    it is waiting for the project process to reach its next `Stage::First`. Still unmeasured —
    the transport changed under it (#654), the instrumentation did not get written. Candidates:
    move it off-thread, diff server-side, or drop to a cadence with interpolation.
-2. **#641 — egui `changed id between passes`.** 1919 warnings in a four-minute session, up
-   from 450 in a ten-minute one: it scales with panels open. Each is a `format!` of two
-   `Vec<Id>` plus a write to stdout *and* the log buffer. It is also a correctness bug — a
-   widget whose id changes between passes loses its interaction state.
+2. **#641 — egui `changed id between passes`. Mostly closed by PR #664, and the remainder is
+   not ours.** The Console was the whole of the volume: widgets took automatic ids, handed out
+   by order of creation, and `draw_message` emits a variable number of them — so one row
+   renamed every row below it, and each of egui's complaints is itself a log line that shifts
+   the rows again. Rows are now keyed on the log line. Measured: hundreds per session to zero
+   in that panel.
+
+   Two things to know before anyone reopens this. The check is `#[cfg(debug_assertions)]` and
+   the red rectangles are drawn by that same function, so **none of it reaches a shippable
+   build** — verified by running the editor in release. And the block that survived carries
+   byte-identical ids across three builds, immune to every change: that is
+   [egui #8343](https://github.com/emilk/egui/issues/8343), open upstream, where
+   `with_layout(right_to_left)` inside `horizontal` warns spuriously. `menu_bar.rs` does
+   exactly that. **This is no longer a performance item.**
 3. **`asset_browser/tree.rs::render_root` rebuilds the whole folder tree every frame, twice**
    (Project and Engine roots), cloning a `PathBuf` per node. ~12 assets today, so invisible;
    the same shape as the Console bug that was not.
