@@ -250,26 +250,7 @@ fn draw_launcher_overlay(
         ui.vertical_centered(|ui| {
             ui.set_max_width(panel_width);
 
-            ui.label(egui::RichText::new(format!("{} Output", icons::TERMINAL)).strong());
-            ui.add_space(4.0);
-
-            let output_lines = &project_state.launcher_output;
-            let frame = egui::Frame::group(ui.style()).fill(egui::Color32::from_rgb(20, 20, 20));
-            frame.show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(300.0)
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        for line in output_lines {
-                            ui.label(
-                                egui::RichText::new(line)
-                                    .monospace()
-                                    .size(11.0)
-                                    .color(egui::Color32::from_rgb(200, 200, 200)),
-                            );
-                        }
-                    });
-            });
+            draw_output_console(ui, &project_state.launcher_output, 300.0);
 
             ui.add_space(12.0);
 
@@ -296,4 +277,57 @@ fn draw_launcher_overlay(
 
     // Request repaint while the launcher is active for live output.
     ui.ctx().request_repaint();
+}
+
+/// Draws a build log that can be read *and* taken away.
+///
+/// Every line used to be a plain `ui.label`, and an egui label carries no
+/// selection — so a failed build put its error on screen and nothing
+/// could reach it: not a paste into a bug report, not a search. The one
+/// moment this matters is the one moment the Console tab does not exist
+/// yet, because the dock is not up until a project is open (#672).
+pub(crate) fn draw_output_console(ui: &mut egui::Ui, lines: &[String], max_height: f32) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(format!("{} Output", icons::TERMINAL)).strong());
+        ui.add_space(8.0);
+        // A button as well as selection: a build has just failed, and
+        // hunting for a drag gesture is not what anyone wants to be doing.
+        let enabled = !lines.is_empty();
+        if ui
+            .add_enabled(enabled, egui::Button::new(format!("{} Copy", icons::COPY)))
+            .on_hover_text("Copy every line above to the clipboard")
+            .clicked()
+        {
+            ui.ctx().copy_text(lines.join("\n"));
+        }
+        if !enabled {
+            ui.label(egui::RichText::new("nothing yet").weak().small());
+        }
+    });
+    ui.add_space(4.0);
+
+    let frame = egui::Frame::group(ui.style()).fill(egui::Color32::from_rgb(20, 20, 20));
+    frame.show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .max_height(max_height)
+            .stick_to_bottom(true)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for line in lines {
+                    // `selectable(true)` is the whole fix: the text can be
+                    // dragged over and copied with the keyboard like text
+                    // anywhere else.
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(line)
+                                .monospace()
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(200, 200, 200)),
+                        )
+                        .selectable(true)
+                        .wrap(),
+                    );
+                }
+            });
+    });
 }

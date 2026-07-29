@@ -42,6 +42,15 @@ pub struct RemoteState {
     /// connected project always starts paused, so this starts `false`
     /// and only the editor's Play/Stop moves it.
     pub playing: bool,
+    /// The last line the project said while connecting, and every line
+    /// of it.
+    ///
+    /// The output is drained into the log each frame, so without keeping
+    /// a copy there is nothing left to *show*: opening a project builds
+    /// it — twenty-two seconds, measured — and the editor looked dead for
+    /// all of it (#672). The tail is what a progress banner reads; the
+    /// whole thing is what a failed build needs to be copyable.
+    pub connect_output: Vec<String>,
 }
 
 impl RemoteState {

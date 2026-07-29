@@ -90,6 +90,9 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
         session,
         mirror,
         playing,
+        // The connecting banner's copy of the build log. Nothing here
+        // reads it; it is kept and cleared where the session is made.
+        connect_output: _,
     } = state;
     let Some(session) = session.as_mut() else {
         // Local mode costs nothing remote, and saying so is not the

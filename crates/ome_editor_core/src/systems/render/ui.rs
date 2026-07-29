@@ -72,6 +72,7 @@ pub(super) fn run_editor_ui(
     physics_debug: &mut ome_physics::backend::DebugCategories,
     log_buffer: Option<&ome_core::LogBuffer>,
     console: &mut crate::panels::console::ConsoleState,
+    connect_output: &[String],
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut selected_asset = overlay.selected_asset;
@@ -109,6 +110,13 @@ pub(super) fn run_editor_ui(
                     .as_ref()
                     .and_then(|ps| ps.editor_config.ide_command.as_deref()),
             );
+
+            // A build is running and the dock has nothing to show yet.
+            // The toolbar chip alone read as "dead" — a static gear, easy
+            // to miss, and silent about what it was doing (#672).
+            if toolbar.remote == Some(ConnectionState::Connecting) {
+                draw_connecting_banner(ui, connect_output);
+            }
 
             let selection_has_transform = data.entities.iter().any(|info| {
                 selected.contains(&info.entity)
@@ -192,4 +200,55 @@ fn forward_launch_actions(launch_actions: Vec<LaunchAction>, actions: &mut Vec<E
             LaunchAction::CancelLaunch => actions.push(EditorAction::CancelLaunch),
         }
     }
+}
+
+/// Says that a project is being built, and what it is building.
+///
+/// Opening a project compiles it — twenty-two seconds on this session's
+/// own log — and until it answers the dock is furniture. A spinner is the
+/// part that matters: motion is what distinguishes "working" from "hung",
+/// which a static icon cannot do however well labelled.
+fn draw_connecting_banner(ui: &mut egui::Ui, output: &[String]) {
+    let frame = egui::Frame::group(ui.style()).fill(egui::Color32::from_rgb(48, 40, 16));
+    frame.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.add(egui::Spinner::new().size(14.0));
+            ui.label(
+                egui::RichText::new("Building the project")
+                    .strong()
+                    .color(egui::Color32::from_rgb(230, 205, 130)),
+            );
+
+            // Cargo's own words, not a percentage we would have to invent:
+            // "Compiling ome_render" is true, and a bar would not be.
+            if let Some(last) = output.iter().rev().find(|line| !line.trim().is_empty()) {
+                ui.label(
+                    egui::RichText::new(last.trim())
+                        .monospace()
+                        .size(11.0)
+                        .weak(),
+                );
+            }
+
+            // The output is here rather than only in the Console, because
+            // this is the surface a user is already looking at while they
+            // wait — and if the build fails, what they need to send on.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(
+                        !output.is_empty(),
+                        egui::Button::new(format!("{} Copy", crate::icons::COPY)),
+                    )
+                    .on_hover_text("Copy the build output so far")
+                    .clicked()
+                {
+                    ui.ctx().copy_text(output.join("\n"));
+                }
+            });
+        });
+    });
+    // Without this the spinner freezes between input events: an idle
+    // editor sleeps now (#656), and a spinner that does not move is worse
+    // than no spinner at all.
+    ui.ctx().request_repaint();
 }

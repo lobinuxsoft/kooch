@@ -296,6 +296,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut console = resources
         .remove::<crate::panels::console::ConsoleState>()
         .unwrap_or_default();
+    // Cloned rather than borrowed: the egui closure holds `Resources`
+    // immutably and the banner needs these lines inside it.
+    let connect_output = resources
+        .get::<crate::remote_session::RemoteState>()
+        .map(|state| state.connect_output.clone())
+        .unwrap_or_default();
 
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
@@ -332,6 +338,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut physics_debug,
         log_buffer.as_ref(),
         &mut console,
+        &connect_output,
     );
 
     // #656 — egui's own answer to "does anything need redrawing", read
@@ -486,11 +493,24 @@ fn forward_remote_output(resources: &mut Resources) {
     let Some(session) = state.session.as_ref() else {
         return;
     };
+    // Kept as well as forwarded, while the handshake is still in flight:
+    // the log is where these belong, but the connecting banner needs
+    // something to show and draining is destructive (#672). Once the
+    // project answers, the Console is the place to read it and the copy
+    // stops growing.
+    let keep = session.state() == crate::remote_session::ConnectionState::Connecting;
     let Some(buffer) = resources.get::<ome_core::LogBuffer>() else {
         return;
     };
     let buffer = buffer.clone();
-    for line in session.drain_output() {
-        crate::project_log::record(&buffer, &line);
+    let lines = session.drain_output();
+    for line in &lines {
+        crate::project_log::record(&buffer, line);
+    }
+    if keep
+        && !lines.is_empty()
+        && let Some(state) = resources.get_mut::<crate::remote_session::RemoteState>()
+    {
+        state.connect_output.extend(lines);
     }
 }
