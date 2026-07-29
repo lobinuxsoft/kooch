@@ -21,8 +21,7 @@
 //! treats a missing [`FrameRequest`] as [`FramePace::Continuous`]. A game
 //! is *supposed* to spin.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 /// What the next frame needs, in order of urgency.
@@ -128,6 +127,15 @@ impl FrameRequest {
 /// runner clears the flag itself and finds it set. Without that, the
 /// window between "frame done" and "now sleeping" would silently drop
 /// requests — rarely, and only under load, which is the worst kind.
+///
+/// There are two ways for a runner to stop:
+///
+/// - **Under a window**, the platform event loop does the sleeping and
+///   [`set_notify`](Self::set_notify) hands it the interrupt — for winit,
+///   an `EventLoopProxy`, the one API documented as callable from another
+///   thread.
+/// - **Headless**, there is no event loop to sleep in, so
+///   [`wait`](Self::wait) blocks on a condvar here.
 #[derive(Clone, Default)]
 pub struct FrameWaker {
     inner: Arc<WakerInner>,
@@ -135,17 +143,23 @@ pub struct FrameWaker {
 
 #[derive(Default)]
 struct WakerInner {
-    pending: AtomicBool,
+    /// Whether a frame has been asked for since the runner last looked.
+    pending: Mutex<bool>,
+    /// Signalled on every wake, for the headless runner parked in
+    /// [`FrameWaker::wait`].
+    woken: Condvar,
     /// Set by the runner once it owns something that can interrupt a
-    /// platform sleep (a winit `EventLoopProxy`). Absent before then, and
-    /// in headless runners, where the loop never sleeps anyway.
+    /// platform sleep. Absent headless, where `wait` does the sleeping.
     notify: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
 impl FrameWaker {
     /// Requests one more frame, from wherever.
     pub fn wake(&self) {
-        self.inner.pending.store(true, Ordering::Release);
+        if let Ok(mut pending) = self.inner.pending.lock() {
+            *pending = true;
+        }
+        self.inner.woken.notify_all();
         if let Ok(notify) = self.inner.notify.lock()
             && let Some(notify) = notify.as_ref()
         {
@@ -163,14 +177,61 @@ impl FrameWaker {
     /// Clears and returns the pending flag. Called by the runner right
     /// before it commits to sleeping.
     pub fn take_pending(&self) -> bool {
-        self.inner.pending.swap(false, Ordering::AcqRel)
+        match self.inner.pending.lock() {
+            Ok(mut pending) => std::mem::replace(&mut *pending, false),
+            Err(_) => false,
+        }
+    }
+
+    /// Blocks until someone calls [`wake`](Self::wake), or `timeout`
+    /// elapses. `None` waits indefinitely.
+    ///
+    /// Returns whether a wake actually arrived, as opposed to the
+    /// deadline passing. Clears the pending flag either way: this *is*
+    /// the runner looking.
+    ///
+    /// A wake that landed before the call returns immediately — the flag
+    /// is checked before parking, which is what keeps a request that
+    /// arrived mid-frame from being slept through.
+    pub fn wait(&self, timeout: Option<Duration>) -> bool {
+        let Ok(mut pending) = self.inner.pending.lock() else {
+            // A poisoned lock means something already panicked; spinning
+            // is better than deadlocking the loop that would report it.
+            return false;
+        };
+        if std::mem::replace(&mut *pending, false) {
+            return true;
+        }
+
+        match timeout {
+            Some(timeout) => {
+                let Ok((mut pending, _)) =
+                    self.inner
+                        .woken
+                        .wait_timeout_while(pending, timeout, |pending| !*pending)
+                else {
+                    return false;
+                };
+                std::mem::replace(&mut *pending, false)
+            }
+            None => {
+                let Ok(mut pending) = self.inner.woken.wait_while(pending, |pending| !*pending)
+                else {
+                    return false;
+                };
+                std::mem::replace(&mut *pending, false)
+            }
+        }
     }
 }
 
 impl std::fmt::Debug for FrameWaker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FrameWaker")
-            .field("pending", &self.inner.pending.load(Ordering::Relaxed))
+            .field(
+                "pending",
+                &self.inner.pending.lock().map(|p| *p).unwrap_or(false),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -178,7 +239,7 @@ impl std::fmt::Debug for FrameWaker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[test]
     fn continuous_beats_everything() {
