@@ -48,6 +48,13 @@ pub(crate) struct WinitApp {
     /// Cloned out of `Resources` up front so the sleep decision is a
     /// field read rather than a resource lookup on every frame.
     waker: Option<FrameWaker>,
+    /// Last pace logged, so the decision is reported on change rather
+    /// than sixty times a second.
+    last_pace: Option<FramePace>,
+    /// Name of the last window event that asked for a redraw, for the
+    /// same log line — "who woke it" is the question that matters when
+    /// an idle editor refuses to idle.
+    last_waker_event: &'static str,
 }
 
 impl WinitApp {
@@ -59,6 +66,8 @@ impl WinitApp {
             window: None,
             startup_complete: false,
             waker,
+            last_pace: None,
+            last_waker_event: "none",
         }
     }
 
@@ -88,6 +97,11 @@ impl WinitApp {
         // sleep — is what closes that window.
         if self.waker.as_ref().is_some_and(FrameWaker::take_pending) {
             pace = FramePace::Continuous;
+        }
+
+        if self.last_pace != Some(pace) {
+            tracing::debug!(?pace, woken_by = self.last_waker_event, "frame pacing");
+            self.last_pace = Some(pace);
         }
 
         match pace {
@@ -273,12 +287,136 @@ impl ApplicationHandler<WakeUp> for WinitApp {
                 self.schedule_next_frame(event_loop);
             }
 
-            // Everything else — a moved cursor, a key, a scroll, a focus
-            // change — is an input the UI has not drawn yet. While the
-            // loop is idle it is also the *only* thing that will produce
-            // a frame, so it asks for one rather than assuming the next
-            // one is already on its way.
-            _ => self.request_redraw(),
+            // An input the UI has not drawn yet. While the loop is idle
+            // this is also the *only* thing that will produce a frame, so
+            // it asks for one rather than assuming the next is on its way.
+            //
+            // By list rather than by catch-all, because two of the events
+            // winit sends most often change nothing that is drawn, and
+            // asking for a frame on each of them cost more than every
+            // real input put together — measured over five seconds of
+            // ordinary mouse movement: 966 `AxisMotion` and 212 `Moved`
+            // against 486 `CursorMoved`.
+            other if wants_a_frame(&other) => {
+                self.last_waker_event = window_event_name(&other);
+                self.request_redraw();
+            }
+
+            _ => {}
         }
+    }
+}
+
+/// A stable name for a window event, for the pacing log.
+///
+/// `Debug` would print the payload, and a cursor position changing every
+/// line is the opposite of what this is read for.
+fn window_event_name(event: &WindowEvent) -> &'static str {
+    match event {
+        WindowEvent::CursorMoved { .. } => "CursorMoved",
+        WindowEvent::CursorEntered { .. } => "CursorEntered",
+        WindowEvent::CursorLeft { .. } => "CursorLeft",
+        WindowEvent::MouseInput { .. } => "MouseInput",
+        WindowEvent::MouseWheel { .. } => "MouseWheel",
+        WindowEvent::KeyboardInput { .. } => "KeyboardInput",
+        WindowEvent::ModifiersChanged(_) => "ModifiersChanged",
+        WindowEvent::Focused(_) => "Focused",
+        WindowEvent::Moved(_) => "Moved",
+        WindowEvent::Occluded(_) => "Occluded",
+        WindowEvent::AxisMotion { .. } => "AxisMotion",
+        WindowEvent::ScaleFactorChanged { .. } => "ScaleFactorChanged",
+        WindowEvent::Ime(_) => "Ime",
+        WindowEvent::TouchpadPressure { .. } => "TouchpadPressure",
+        WindowEvent::PinchGesture { .. } => "PinchGesture",
+        WindowEvent::PanGesture { .. } => "PanGesture",
+        WindowEvent::DoubleTapGesture { .. } => "DoubleTapGesture",
+        WindowEvent::RotationGesture { .. } => "RotationGesture",
+        WindowEvent::ThemeChanged(_) => "ThemeChanged",
+        WindowEvent::HoveredFile(_) => "HoveredFile",
+        WindowEvent::HoveredFileCancelled => "HoveredFileCancelled",
+        WindowEvent::DroppedFile(_) => "DroppedFile",
+        WindowEvent::ActivationTokenDone { .. } => "ActivationTokenDone",
+        WindowEvent::Destroyed => "Destroyed",
+        WindowEvent::Touch(_) => "Touch",
+        _ => "other",
+    }
+}
+
+/// Whether an event changes something the next frame would draw.
+///
+/// The two exclusions are the point:
+///
+/// - **`AxisMotion`** duplicates `CursorMoved`. winit reports the raw
+///   device axes *as well as* the resulting cursor position, at roughly
+///   twice the rate, and egui reads the cursor. Redrawing for both draws
+///   the same frame twice.
+/// - **`Moved`** is the window changing position on the desktop. Not one
+///   pixel of its contents differs, and a compositor emits it for every
+///   step of a drag.
+///
+/// Everything unmatched is excluded too. A new winit event is far more
+/// likely to be bookkeeping than something the UI must react to, and the
+/// failure mode of a miss is one late repaint — against a catch-all,
+/// whose failure mode is the loop never sleeping again.
+fn wants_a_frame(event: &WindowEvent) -> bool {
+    matches!(
+        event,
+        WindowEvent::CursorMoved { .. }
+            | WindowEvent::CursorEntered { .. }
+            | WindowEvent::CursorLeft { .. }
+            | WindowEvent::MouseInput { .. }
+            | WindowEvent::MouseWheel { .. }
+            | WindowEvent::KeyboardInput { .. }
+            | WindowEvent::ModifiersChanged(_)
+            | WindowEvent::Ime(_)
+            | WindowEvent::Focused(_)
+            | WindowEvent::Occluded(_)
+            | WindowEvent::ScaleFactorChanged { .. }
+            | WindowEvent::ThemeChanged(_)
+            | WindowEvent::HoveredFile(_)
+            | WindowEvent::HoveredFileCancelled
+            | WindowEvent::DroppedFile(_)
+            | WindowEvent::Touch(_)
+            | WindowEvent::TouchpadPressure { .. }
+            | WindowEvent::PinchGesture { .. }
+            | WindowEvent::PanGesture { .. }
+            | WindowEvent::DoubleTapGesture { .. }
+            | WindowEvent::RotationGesture { .. }
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The events that cost the most and change the least.
+    #[test]
+    fn redundant_events_do_not_ask_for_a_frame() {
+        assert!(
+            !wants_a_frame(&WindowEvent::Moved(winit::dpi::PhysicalPosition::new(3, 4))),
+            "moving the window changes nothing inside it",
+        );
+        assert!(
+            !wants_a_frame(&WindowEvent::AxisMotion {
+                device_id: winit::event::DeviceId::dummy(),
+                axis: 0,
+                value: 1.0,
+            }),
+            "AxisMotion duplicates CursorMoved, at twice the rate",
+        );
+    }
+
+    /// And the ones that must never be dropped: while the loop idles,
+    /// this is the only thing that produces a frame at all.
+    #[test]
+    fn input_always_asks_for_a_frame() {
+        assert!(wants_a_frame(&WindowEvent::CursorMoved {
+            device_id: winit::event::DeviceId::dummy(),
+            position: winit::dpi::PhysicalPosition::new(1.0, 2.0),
+        }));
+        assert!(wants_a_frame(&WindowEvent::Focused(true)));
+        assert!(wants_a_frame(&WindowEvent::CursorLeft {
+            device_id: winit::event::DeviceId::dummy(),
+        }));
     }
 }
