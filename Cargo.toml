@@ -53,7 +53,7 @@ gilrs = "0.11"
 # required so ScriptingBackend impls can live in the engine's Resource set
 rhai = { version = "1.21", features = ["sync"] }
 # Editor UI
-egui = "0.34"
+egui = "0.35"
 # `clipboard` is not optional in practice: without it `Clipboard::set_text`
 # compiles to an empty function, so Copy does nothing and says nothing —
 # `handle_platform_output` hands it the text and it is dropped on the floor.
@@ -62,15 +62,14 @@ egui = "0.34"
 #
 # `wayland` and `x11` name winit's backends. Left off, the editor depends
 # on some other crate happening to turn them on.
-egui-winit = { version = "0.34", default-features = false, features = [
+egui-winit = { version = "0.35", default-features = false, features = [
     "clipboard",
     "links",
     "wayland",
     "x11",
 ] }
-egui-wgpu = "0.34"
-egui_dock = { version = "0.19", features = ["serde"] }
-eframe = { version = "0.34", default-features = false, features = ["default_fonts", "glow", "wgpu"] }
+egui-wgpu = "0.35"
+egui_dock = { version = "0.20", features = ["serde"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 ron = "0.8"

@@ -1,6 +1,10 @@
 //! What the panel's copy of the log has to get right.
 
 use super::*;
+// The panel itself no longer names a level — it holds a `LevelSet` — but
+// these tests still build entries at specific ones.
+use tracing::Level;
+
 fn entry(level: Level, target: &str, message: &str) -> LogEntry {
     LogEntry {
         seq: 0,

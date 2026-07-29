@@ -122,8 +122,10 @@ pub(crate) fn drawing_with(
         };
 
         let mut produced = Frame::default();
-        ctx.run(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| produced = draw(ui, frame));
+        // `run_ui` gives the root `Ui` the editor's own render loop uses,
+        // so the probe draws through the same path egui 0.35 expects.
+        ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| produced = draw(ui, frame));
         });
         next = produced;
     }
