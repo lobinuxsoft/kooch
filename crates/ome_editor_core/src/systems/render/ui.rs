@@ -161,9 +161,17 @@ pub(super) fn run_editor_ui(
                 perf_stats,
             };
 
-            DockArea::new(&mut overlay.dock_state)
-                .style(egui_dock::Style::from_egui(ui.style().as_ref()))
-                .show_inside(ui, &mut tab_viewer);
+            // Greyed out while the project is still building, because the
+            // world it edits has not arrived: the guard in `apply_actions`
+            // already refuses those edits, and a panel that looks live
+            // while silently ignoring clicks reads as a broken editor
+            // rather than a busy one (#672).
+            let editable = toolbar.remote != Some(ConnectionState::Connecting);
+            ui.add_enabled_ui(editable, |ui| {
+                DockArea::new(&mut overlay.dock_state)
+                    .style(egui_dock::Style::from_egui(ui.style().as_ref()))
+                    .show_inside(ui, &mut tab_viewer);
+            });
         } else if let Some(ps) = project_state.as_mut() {
             let launch_actions = launch_screen::draw_launch_screen(ui, ps);
             forward_launch_actions(launch_actions, &mut actions);
