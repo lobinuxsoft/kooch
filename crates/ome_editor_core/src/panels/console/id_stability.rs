@@ -11,16 +11,11 @@
 //! rows again: the warning feeds itself. That is why one bad frame
 //! produced three hundred of them.
 
-use std::sync::Mutex;
-
 use ome_core::LogBuffer;
 use tracing::Level;
 
 use super::{ConsoleState, render::draw_console};
 use crate::panels::id_stability_probe::{drawing, install_logger};
-
-/// Serialises against the other id-stability tests: the log is global.
-static LOCK: Mutex<()> = Mutex::new(());
 
 /// Lines shaped like the ones the editor actually logs — some with
 /// structured fields, some without, because that difference is the bug.
@@ -42,7 +37,9 @@ fn fill(buffer: &LogBuffer, from: u32, count: u32) {
 #[test]
 fn console_rows_keep_their_ids_as_lines_arrive() {
     install_logger();
-    let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = crate::panels::id_stability_probe::PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
 
     let buffer = LogBuffer::new();
     // Far more lines than fit, so `show_rows` actually virtualises and the
@@ -73,7 +70,9 @@ fn console_rows_keep_their_ids_as_lines_arrive() {
 #[test]
 fn console_rows_are_stable_when_nothing_arrives() {
     install_logger();
-    let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = crate::panels::id_stability_probe::PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
 
     let buffer = LogBuffer::new();
     fill(&buffer, 0, 400);
@@ -106,7 +105,9 @@ fn scrolling_under_the_mouse_keeps_the_row_ids() {
     use crate::panels::id_stability_probe::{Frame, drawing_with};
 
     install_logger();
-    let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = crate::panels::id_stability_probe::PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
 
     let buffer = LogBuffer::new();
     fill(&buffer, 0, 400);
@@ -170,7 +171,9 @@ fn scrolling_inside_a_dock_keeps_the_row_ids() {
     }
 
     install_logger();
-    let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = crate::panels::id_stability_probe::PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
 
     let buffer = LogBuffer::new();
     fill(&buffer, 0, 400);

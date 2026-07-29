@@ -36,10 +36,37 @@ pub(super) fn draw_name_editor(
         return;
     };
 
-    let mut val = current.clone();
+    // While the field has focus it owns the text; the snapshot does not.
+    //
+    // The edit leaves as a `SetField` and the value comes back through the
+    // world snapshot, which in a remote project is at least a frame later.
+    // Rebuilding the box from the snapshot every frame therefore showed
+    // the *previous* text for a frame — one character shorter than what
+    // egui had just been told. egui clamps the caret to the text it is
+    // given, so the caret fell back a place and stayed there: type `abc`
+    // and get `cba`, which is what this looked like from the outside.
+    //
+    // Held in egui's temp store rather than the editor state: it lives
+    // exactly as long as the focus does, and it is keyed per entity, so
+    // clicking to another entity cannot inherit a half-typed name. The
+    // reference picker's search box already works this way.
+    // The box is keyed on nothing: it is the same box whichever entity is
+    // selected, it never moves, and giving it the entity would rename it
+    // on every selection change — the id churn of #641, reintroduced by
+    // the fix for the caret. Only the *buffer* is per-entity, so a
+    // half-typed name cannot follow the selection to the next entity.
+    let buffer_id = ui.make_persistent_id(("name_edit", entity));
+    let field_id = ui.make_persistent_id("name_edit_field");
+    let focused = ui.memory(|m| m.has_focus(field_id));
+
+    let buffer = ui.ctx().data(|d| d.get_temp::<String>(buffer_id));
+    let mut val = text_to_show(focused, buffer, current);
+
     ui.horizontal(|ui| {
         ui.label("Name");
-        if ui.text_edit_singleline(&mut val).changed() {
+        let response = ui.add(egui::TextEdit::singleline(&mut val).id(field_id));
+        if response.changed() {
+            ui.ctx().data_mut(|d| d.insert_temp(buffer_id, val.clone()));
             actions.push(EditorAction::SetField {
                 entity,
                 component: comp.component,
@@ -47,8 +74,28 @@ pub(super) fn draw_name_editor(
                 value: ReflectValue::String(val),
             });
         }
+        // Leaving the field hands ownership back to the snapshot, so a
+        // rename that the project rejected or altered shows what actually
+        // landed rather than what was typed.
+        if response.lost_focus() {
+            ui.ctx().data_mut(|d| d.remove_temp::<String>(buffer_id));
+        }
     });
     ui.separator();
+}
+
+/// Which text the name box shows: what is being typed, or what the world
+/// says.
+///
+/// The whole of the caret bug is in this choice. The snapshot is a frame
+/// or more behind the keystroke, so preferring it while the field has
+/// focus hands egui a string one character shorter than the one it just
+/// produced — and egui clamps the caret to the text it is given.
+pub(super) fn text_to_show(focused: bool, buffer: Option<String>, snapshot: &str) -> String {
+    match focused {
+        true => buffer.unwrap_or_else(|| snapshot.to_owned()),
+        false => snapshot.to_owned(),
+    }
 }
 
 /// Whether a field's [`FieldCondition`] is met by the component's current
@@ -118,7 +165,10 @@ pub(super) fn draw_reflected_fields(
     asset_catalog: &[AssetCatalogEntry],
     entities: &[EntityDisplayInfo],
 ) {
-    egui::Grid::new(format!("fields_{:?}_{}", component, entity.index()))
+    // Keyed on the component alone — see the note in `mod.rs`. The entity
+    // used to be part of it, which renamed every widget in the grid the
+    // moment the selection moved, while the grid stayed in the same place.
+    egui::Grid::new(format!("fields_{component:?}"))
         .num_columns(2)
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
@@ -129,34 +179,44 @@ pub(super) fn draw_reflected_fields(
                 if !field_is_shown(field_metas, name, fields) {
                     continue;
                 }
-                ui.label(name);
-                let field = FieldContext {
-                    name,
-                    choices: choices_for(field_metas, name),
-                    bits: bits_for(field_metas, name),
-                    assets: asset_catalog,
-                    entities,
-                    requires: requires_for(field_metas, name),
-                };
-                let new_value = match value {
-                    ReflectValue::Quat(q) => {
-                        let ctx = if is_transform_rotation(type_id, name) {
-                            rotation_ctx
-                        } else {
-                            RotationContext::local_only()
-                        };
-                        draw_quat_with_cache(ui, entity, type_id, name, *q, ctx, euler_cache)
+                // Keyed on the field, not on its position in the grid.
+                // `field_is_shown` hides a variant's unused parameters, so
+                // the row count changes as a collider switches shape — and
+                // with automatic ids that renames every widget below.
+                //
+                // One scope per cell, not one around the row: a scope
+                // advances the grid's cursor, so wrapping both would put
+                // the label and its editor in the same column.
+                ui.push_id(("label", name), |ui| ui.label(name));
+                ui.push_id(name, |ui| {
+                    let field = FieldContext {
+                        name,
+                        choices: choices_for(field_metas, name),
+                        bits: bits_for(field_metas, name),
+                        assets: asset_catalog,
+                        entities,
+                        requires: requires_for(field_metas, name),
+                    };
+                    let new_value = match value {
+                        ReflectValue::Quat(q) => {
+                            let ctx = if is_transform_rotation(type_id, name) {
+                                rotation_ctx
+                            } else {
+                                RotationContext::local_only()
+                            };
+                            draw_quat_with_cache(ui, entity, type_id, name, *q, ctx, euler_cache)
+                        }
+                        _ => draw_value_widget(ui, value, &field),
+                    };
+                    if let Some(new_value) = new_value {
+                        actions.push(EditorAction::SetField {
+                            entity,
+                            component,
+                            field: name.clone(),
+                            value: new_value,
+                        });
                     }
-                    _ => draw_value_widget(ui, value, &field),
-                };
-                if let Some(new_value) = new_value {
-                    actions.push(EditorAction::SetField {
-                        entity,
-                        component,
-                        field: name.clone(),
-                        value: new_value,
-                    });
-                }
+                });
                 ui.end_row();
             }
         });
@@ -165,12 +225,11 @@ pub(super) fn draw_reflected_fields(
 /// Renders read-only display for component fields.
 pub(super) fn draw_readonly_fields(
     ui: &mut egui::Ui,
-    entity: Entity,
     component: ComponentId,
     fields: &[(String, ReflectValue)],
     field_metas: Option<&'static [FieldMeta]>,
 ) {
-    egui::Grid::new(format!("ro_fields_{:?}_{}", component, entity.index()))
+    egui::Grid::new(format!("ro_fields_{component:?}"))
         .num_columns(2)
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
@@ -181,10 +240,12 @@ pub(super) fn draw_readonly_fields(
                 if !field_is_shown(field_metas, name, fields) {
                     continue;
                 }
-                ui.label(name);
-                let choices = choices_for(field_metas, name);
-                let bits = bits_for(field_metas, name);
-                draw_readonly_value(ui, value, choices, bits);
+                ui.push_id(("label", name), |ui| ui.label(name));
+                ui.push_id(name, |ui| {
+                    let choices = choices_for(field_metas, name);
+                    let bits = bits_for(field_metas, name);
+                    draw_readonly_value(ui, value, choices, bits);
+                });
                 ui.end_row();
             }
         });
@@ -295,5 +356,33 @@ mod condition_tests {
             !field_is_shown(Some(collider.reflect_fields()), "half_extents", &fields),
             "test is not exercising a hidden field"
         );
+    }
+}
+
+#[cfg(test)]
+mod name_editor_tests {
+    use super::text_to_show;
+
+    /// The reported bug, stated as the rule that caused it: with focus,
+    /// the lagging snapshot must not win. It is one character behind what
+    /// was just typed, and egui pulls the caret back to fit.
+    #[test]
+    fn the_typed_text_wins_while_the_field_has_focus() {
+        let shown = text_to_show(true, Some("Doo".to_owned()), "Do");
+        assert_eq!(shown, "Doo", "the stale snapshot overwrote the keystroke");
+    }
+
+    /// Focused with nothing typed yet — the first frame after clicking in.
+    #[test]
+    fn focus_without_a_buffer_falls_back_to_the_world() {
+        assert_eq!(text_to_show(true, None, "Door frame"), "Door frame");
+    }
+
+    /// Unfocused, the world is authoritative: a rename the project
+    /// altered or refused has to show what actually landed.
+    #[test]
+    fn the_world_wins_once_focus_is_gone() {
+        let shown = text_to_show(false, Some("what I typed".to_owned()), "what landed");
+        assert_eq!(shown, "what landed");
     }
 }

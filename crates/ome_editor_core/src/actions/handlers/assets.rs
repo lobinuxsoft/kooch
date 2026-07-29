@@ -1,14 +1,11 @@
 //! Importing files into the project, and editing a material in place.
 
-
 use ome_core::Guid;
 use ome_core::asset_database::AssetDatabase;
 use ome_core::asset_loader::AssetServer;
 use ome_core::assets::Assets;
 use ome_core::resource::Resources;
 use ome_render::material::Material;
-
-
 
 /// surface in the Asset Browser + pickers next frame.
 pub(super) fn handle_import_assets(

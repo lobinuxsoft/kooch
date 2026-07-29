@@ -19,24 +19,30 @@ pub(crate) fn draw_archetypes_content(ui: &mut egui::Ui, archetypes: &[Archetype
         return;
     }
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for (i, arch) in archetypes.iter().enumerate() {
-            let header = if arch.component_names.is_empty() {
-                format!("{} Empty  —  {} entities", icons::STACK, arch.entity_count,)
-            } else {
-                format!(
-                    "{} [{}]  —  {} entities",
-                    icons::STACK,
-                    arch.component_names.join(", "),
-                    arch.entity_count,
+    egui::ScrollArea::vertical()
+        .id_salt("archetypes_list")
+        .show(ui, |ui| {
+            for (i, arch) in archetypes.iter().enumerate() {
+                let header = if arch.component_names.is_empty() {
+                    format!("{} Empty  —  {} entities", icons::STACK, arch.entity_count,)
+                } else {
+                    format!(
+                        "{} [{}]  —  {} entities",
+                        icons::STACK,
+                        arch.component_names.join(", "),
+                        arch.entity_count,
+                    )
+                };
+
+                // Dim empty archetypes.
+                let is_empty = arch.entity_count == 0;
+
+                let id = ui.make_persistent_id(format!("arch_{}", i));
+                egui::collapsing_header::CollapsingState::load_with_default_open(
+                    ui.ctx(),
+                    id,
+                    false,
                 )
-            };
-
-            // Dim empty archetypes.
-            let is_empty = arch.entity_count == 0;
-
-            let id = ui.make_persistent_id(format!("arch_{}", i));
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
                 .show_header(ui, |ui| {
                     if is_empty {
                         ui.weak(header);
@@ -56,6 +62,6 @@ pub(crate) fn draw_archetypes_content(ui: &mut egui::Ui, archetypes: &[Archetype
                         }
                     }
                 });
-        }
-    });
+            }
+        });
 }

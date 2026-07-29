@@ -19,6 +19,7 @@ use ome_ecs::entity::Entity;
 use ome_ecs::hierarchy::Parent;
 use ome_ecs::name::Name;
 use ome_ecs::scene::{SceneDocument, sync_scene_to_ecs};
+use ome_ecs::transform::Transform;
 use ome_ecs::world_snapshot::WorldSnapshot;
 
 use crate::protocol::{
@@ -300,6 +301,15 @@ fn remove_component(
     Ok(())
 }
 
+/// Spawns an entity carrying what every authored entity carries.
+///
+/// `Name` and `Transform` go on unconditionally, named or not. The
+/// editor's local path (`undo/commands/spawn.rs`) has always added both,
+/// and this one only added `Name`, and only when a name came with it — so
+/// "Spawn → Entity", which sends no name, produced an entity with neither
+/// in a remote project and one with both in a local one. An entity with no
+/// `Name` cannot be renamed from the Inspector at all: the name editor
+/// reads the component, and there was nothing to read.
 fn spawn(resources: &mut Resources, name: Option<&str>) -> Entity {
     let mut commands = resources
         .remove::<Commands>()
@@ -307,21 +317,31 @@ fn spawn(resources: &mut Resources, name: Option<&str>) -> Entity {
     let entity = commands.spawn(resources).id();
     resources.insert(commands);
 
+    add_default(resources, entity, TypeId::of::<Name>());
+    add_default(resources, entity, TypeId::of::<Transform>());
+
     if let Some(name) = name
-        && resources
-            .get_mut::<ComponentRegistry>()
-            .is_some_and(|r| r.insert_default_reflected(&TypeId::of::<Name>(), entity))
-    {
-        update_archetype_add(resources, entity, TypeId::of::<Name>());
-        if let Some(storage) = resources
+        && let Some(storage) = resources
             .get_mut::<ComponentRegistry>()
             .and_then(|r| r.get_cpu_mut::<Name>())
-            && let Some(n) = storage.get_mut(entity)
-        {
-            n.value = name.to_owned();
-        }
+        && let Some(n) = storage.get_mut(entity)
+    {
+        n.value = name.to_owned();
     }
     entity
+}
+
+/// Inserts `type_id`'s default on `entity` and moves it to the archetype
+/// that now describes it. A type this binary has no registration for is
+/// skipped rather than fatal — the same stance the rest of this module
+/// takes towards names it cannot resolve.
+fn add_default(resources: &mut Resources, entity: Entity, type_id: TypeId) {
+    let inserted = resources
+        .get_mut::<ComponentRegistry>()
+        .is_some_and(|r| r.insert_default_reflected(&type_id, entity));
+    if inserted {
+        update_archetype_add(resources, entity, type_id);
+    }
 }
 
 /// Reparents an entity, or unparents it when `parent` is `None`.

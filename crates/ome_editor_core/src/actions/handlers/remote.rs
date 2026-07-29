@@ -7,13 +7,10 @@
 //! what it costs while it lives. Kept whole and separate so that removal
 //! is deleting a file, not unpicking one.
 
-
 use ome_core::resource::Resources;
 
 use crate::project_state::ProjectState;
 use crate::remote_session::{RemoteSession, RemoteState};
-
-
 
 pub(super) fn handle_rebuild_remote(resources: &mut Resources) {
     disconnect_remote(resources);

@@ -25,6 +25,15 @@ use std::sync::{Mutex, OnceLock};
 /// Warnings egui emitted, collected by the logger installed below.
 static WARNINGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
+/// Held for the whole of one probe run, by every caller.
+///
+/// [`WARNINGS`] is global — there is one `log` logger per process — so two
+/// probes running at once read each other's complaints. This used to be a
+/// `Mutex` per test module, which is not mutual exclusion at all: the
+/// Console's tests and the Inspector's took *different* locks and happily
+/// ran together, and the first failure blamed whichever test noticed.
+pub(crate) static PROBE_LOCK: Mutex<()> = Mutex::new(());
+
 struct Collector;
 
 impl log::Log for Collector {
@@ -122,8 +131,10 @@ pub(crate) fn drawing_with(
         };
 
         let mut produced = Frame::default();
-        ctx.run(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| produced = draw(ui, frame));
+        // `run_ui` gives the root `Ui` the editor's own render loop uses,
+        // so the probe draws through the same path egui 0.35 expects.
+        ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| produced = draw(ui, frame));
         });
         next = produced;
     }

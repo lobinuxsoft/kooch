@@ -73,19 +73,21 @@ pub(crate) fn draw_asset_inspector(
         .on_hover_text(format!("guid: {}", entry.guid));
     ui.separator();
 
-    egui::ScrollArea::vertical().show(ui, |ui| match detail {
-        Some(AssetDetail::Material(mat)) => {
-            draw_material_editor(ui, entry.guid, mat, catalog, actions)
-        }
-        Some(AssetDetail::Mesh(info)) => draw_mesh_import(ui, info),
-        Some(AssetDetail::Image(info)) => draw_image_import(ui, info),
-        Some(AssetDetail::Unknown { type_name }) => {
-            ui.weak(format!("No import settings for {type_name}."));
-        }
-        None => {
-            ui.weak("Loading asset…");
-        }
-    });
+    egui::ScrollArea::vertical()
+        .id_salt("asset_detail")
+        .show(ui, |ui| match detail {
+            Some(AssetDetail::Material(mat)) => {
+                draw_material_editor(ui, entry.guid, mat, catalog, actions)
+            }
+            Some(AssetDetail::Mesh(info)) => draw_mesh_import(ui, info),
+            Some(AssetDetail::Image(info)) => draw_image_import(ui, info),
+            Some(AssetDetail::Unknown { type_name }) => {
+                ui.weak(format!("No import settings for {type_name}."));
+            }
+            None => {
+                ui.weak("Loading asset…");
+            }
+        });
 }
 
 /// Editable material parameters. Emits a single `EditMaterial` action
@@ -126,7 +128,7 @@ fn draw_material_editor(
             ui.label("Emissive");
             changed |= ui
                 .add(
-                    egui::DragValue::new(&mut edited.emissive)
+                    crate::numeric::drag(&mut edited.emissive)
                         .speed(0.01)
                         .range(0.0..=100.0),
                 )

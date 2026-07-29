@@ -8,14 +8,9 @@ use crate::icons;
 use crate::remote_session::ConnectionState;
 use crate::state::{ALL_TABS, EditorTab, dock_has_tab};
 
-// Migrating off `TopBottomPanel::top(...).show(ctx, ...)` requires
-// adopting the eframe 0.34+ `App::ui(&mut self, ui: &mut Ui)` pattern,
-// which is a structural change to the editor's render loop. Out of
-// scope for the #299 cleanup.
-#[allow(deprecated)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_menu_bar(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     dock_state: &mut DockState<EditorTab>,
     actions: &mut Vec<EditorAction>,
     is_playing: bool,
@@ -29,8 +24,12 @@ pub(crate) fn draw_menu_bar(
     ide_command: Option<&str>,
 ) {
     // Keyboard shortcuts — check before any UI so they work regardless of focus.
-    let ctrl_z = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z));
-    let ctrl_y = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Y));
+    let ctrl_z = ui
+        .ctx()
+        .input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z));
+    let ctrl_y = ui
+        .ctx()
+        .input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Y));
 
     if ctrl_z && can_undo {
         actions.push(EditorAction::Undo);
@@ -39,7 +38,9 @@ pub(crate) fn draw_menu_bar(
         actions.push(EditorAction::Redo);
     }
 
-    egui::TopBottomPanel::top("editor_menu").show(ctx, |ui| {
+    // `Panel::top` in egui 0.35: `SidePanel` and `TopBottomPanel` were
+    // unified into one `Panel` type (egui #5659).
+    egui::Panel::top("editor_menu").show(ui, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("Save Scene...").clicked() {

@@ -48,12 +48,6 @@ pub(super) struct ViewportUi<'a> {
 
 /// Runs the egui UI for one frame. Produces the tessellation input and the
 /// editor actions queued by widgets.
-//
-// Migrating off `Context::run` + `DockArea::show(ctx, ...)` requires
-// adopting the eframe 0.34+ `App::ui(&mut self, ui: &mut Ui)` pattern,
-// which is a structural change to the editor's render loop. Out of
-// scope for the #299 cleanup.
-#[allow(deprecated)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_editor_ui(
     overlay: &mut EditorOverlay,
@@ -94,10 +88,13 @@ pub(super) fn run_editor_ui(
         handle_mode,
     } = viewport;
 
-    let full_output = overlay.ctx.run(raw_input, |ctx| {
+    // `run_ui` rather than `run`: egui 0.35 hands the closure a root `Ui`
+    // instead of the `Context`, and panels are placed inside a `Ui` now
+    // rather than onto a context (egui #5659, #7781, #7783).
+    let full_output = overlay.ctx.run_ui(raw_input, |ui| {
         if project_loaded {
             draw_menu_bar(
-                ctx,
+                ui,
                 &mut overlay.dock_state,
                 &mut actions,
                 toolbar.is_playing,
@@ -157,10 +154,10 @@ pub(super) fn run_editor_ui(
             };
 
             DockArea::new(&mut overlay.dock_state)
-                .style(egui_dock::Style::from_egui(ctx.global_style().as_ref()))
-                .show(ctx, &mut tab_viewer);
+                .style(egui_dock::Style::from_egui(ui.style().as_ref()))
+                .show_inside(ui, &mut tab_viewer);
         } else if let Some(ps) = project_state.as_mut() {
-            let launch_actions = launch_screen::draw_launch_screen(ctx, ps);
+            let launch_actions = launch_screen::draw_launch_screen(ui, ps);
             forward_launch_actions(launch_actions, &mut actions);
         }
     });

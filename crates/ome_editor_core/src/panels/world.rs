@@ -69,58 +69,60 @@ pub(crate) fn draw_world_content(
 
     handle_keyboard(ui, entities, selected, last_clicked_index, actions);
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        // One scene: no headers, since every row would sit under the same
-        // one and the grouping would only cost a level of indentation.
-        if scenes.len() < 2 {
-            for (idx, info) in entities.iter().enumerate() {
-                draw_entity_row(
+    egui::ScrollArea::vertical()
+        .id_salt("world_tree")
+        .show(ui, |ui| {
+            // One scene: no headers, since every row would sit under the same
+            // one and the grouping would only cost a level of indentation.
+            if scenes.len() < 2 {
+                for (idx, info) in entities.iter().enumerate() {
+                    draw_entity_row(
+                        ui,
+                        idx,
+                        info,
+                        entities,
+                        selected,
+                        reflected_types,
+                        actions,
+                        last_clicked_index,
+                    );
+                }
+            } else {
+                draw_grouped_by_scene(
                     ui,
-                    idx,
-                    info,
                     entities,
+                    scenes,
                     selected,
                     reflected_types,
                     actions,
                     last_clicked_index,
                 );
             }
-        } else {
-            draw_grouped_by_scene(
-                ui,
-                entities,
-                scenes,
-                selected,
-                reflected_types,
-                actions,
-                last_clicked_index,
-            );
-        }
 
-        // Empty space: click to deselect, drop target to unparent an entity.
-        let remaining = ui.available_rect_before_wrap();
-        let empty_resp = ui.allocate_rect(remaining, egui::Sense::click_and_drag());
-        if empty_resp.clicked() {
-            selected.clear();
-            *last_clicked_index = None;
-        }
-        if empty_resp.dnd_hover_payload::<Entity>().is_some() {
-            ui.painter().rect_filled(
-                remaining,
-                0.0,
-                egui::Color32::from_rgba_unmultiplied(100, 100, 100, 20),
-            );
-        }
-        if let Some(dragged) = empty_resp.dnd_release_payload::<Entity>() {
-            let d = *dragged;
-            if entities.iter().any(|e| e.entity == d && e.parent.is_some()) {
-                actions.push(EditorAction::Reparent {
-                    entity: d,
-                    new_parent: None,
-                });
+            // Empty space: click to deselect, drop target to unparent an entity.
+            let remaining = ui.available_rect_before_wrap();
+            let empty_resp = ui.allocate_rect(remaining, egui::Sense::click_and_drag());
+            if empty_resp.clicked() {
+                selected.clear();
+                *last_clicked_index = None;
             }
-        }
-    });
+            if empty_resp.dnd_hover_payload::<Entity>().is_some() {
+                ui.painter().rect_filled(
+                    remaining,
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(100, 100, 100, 20),
+                );
+            }
+            if let Some(dragged) = empty_resp.dnd_release_payload::<Entity>() {
+                let d = *dragged;
+                if entities.iter().any(|e| e.entity == d && e.parent.is_some()) {
+                    actions.push(EditorAction::Reparent {
+                        entity: d,
+                        new_parent: None,
+                    });
+                }
+            }
+        });
 }
 
 /// Keyboard shortcuts for the World panel: Delete, Ctrl+A, arrow up/down.

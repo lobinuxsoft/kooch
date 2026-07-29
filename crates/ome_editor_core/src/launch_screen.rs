@@ -19,24 +19,23 @@ pub enum LaunchAction {
 }
 
 /// Draws the full launch screen UI. Returns a list of actions to apply.
-// Migrating off `egui::CentralPanel::default().show(ctx, ...)` requires
-// adopting the eframe 0.34+ `App::ui(&mut self, ui: &mut Ui)` pattern,
-// which is a structural change to the editor's render loop. Out of
-// scope for the #299 cleanup.
-#[allow(deprecated)]
+///
+/// Takes a `Ui` rather than the `Context`: egui 0.35 places panels inside
+/// a `Ui`, and `Context::run_ui` hands the render loop a root one. That is
+/// the structural change this signature was waiting for.
 pub fn draw_launch_screen(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     project_state: &mut ProjectState,
 ) -> Vec<LaunchAction> {
     let mut actions = Vec::new();
 
     // If a launcher process is active, show the launcher overlay instead.
     if project_state.launcher_process.is_some() {
-        draw_launcher_overlay(ctx, project_state, &mut actions);
+        draw_launcher_overlay(ui, project_state, &mut actions);
         return actions;
     }
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         ui.vertical_centered(|ui| {
             ui.add_space(40.0);
             ui.heading(egui::RichText::new("Oh My Engine").size(32.0).strong());
@@ -201,9 +200,8 @@ fn draw_new_project_form(
 }
 
 /// Draws the launcher compilation/running overlay.
-#[allow(deprecated)] // CentralPanel::show — see draw_launch_screen note.
 fn draw_launcher_overlay(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     project_state: &mut ProjectState,
     actions: &mut Vec<LaunchAction>,
 ) {
@@ -212,7 +210,7 @@ fn draw_launcher_overlay(
         .cloned()
         .unwrap_or(LauncherStatus::Compiling);
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         ui.vertical_centered(|ui| {
             ui.add_space(40.0);
             ui.heading(egui::RichText::new("Oh My Engine").size(32.0).strong());
@@ -297,5 +295,5 @@ fn draw_launcher_overlay(
     });
 
     // Request repaint while the launcher is active for live output.
-    ctx.request_repaint();
+    ui.ctx().request_repaint();
 }

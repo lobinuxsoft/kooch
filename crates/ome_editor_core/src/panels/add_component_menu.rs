@@ -29,8 +29,21 @@ pub(crate) fn draw_categorized(
         }
     }
 
+    // Each entry keyed on the component it adds, not on where it landed
+    // in the list.
+    //
+    // `available` is what the entity does *not* already carry, so the list
+    // changes with the selection: an entry taking an automatic id — handed
+    // out by order of creation — is renamed by every component added or
+    // removed above it, while the menu stays open in the same place. Same
+    // rect, new id, which is what egui reports (#641).
     for type_info in &uncategorized {
-        if ui.selectable_label(false, &type_info.short_name).clicked() {
+        let clicked = ui
+            .push_id(type_info.component, |ui| {
+                ui.selectable_label(false, &type_info.short_name).clicked()
+            })
+            .inner;
+        if clicked {
             on_select(type_info.component);
             ui.close();
         }
@@ -41,13 +54,20 @@ pub(crate) fn draw_categorized(
     }
 
     for (category, entries) in &by_category {
-        ui.menu_button(*category, |ui| {
-            for type_info in entries {
-                if ui.selectable_label(false, &type_info.short_name).clicked() {
-                    on_select(type_info.component);
-                    ui.close();
+        ui.push_id(*category, |ui| {
+            ui.menu_button(*category, |ui| {
+                for type_info in entries {
+                    let clicked = ui
+                        .push_id(type_info.component, |ui| {
+                            ui.selectable_label(false, &type_info.short_name).clicked()
+                        })
+                        .inner;
+                    if clicked {
+                        on_select(type_info.component);
+                        ui.close();
+                    }
                 }
-            }
+            });
         });
     }
 }

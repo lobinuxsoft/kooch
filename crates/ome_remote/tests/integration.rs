@@ -110,6 +110,44 @@ fn spawn_set_field_and_list_round_trip() {
     );
 }
 
+/// A spawned entity carries `Name` and `Transform` whether or not a name
+/// came with it.
+///
+/// "Spawn → Entity" in the World panel sends no name, and this path used
+/// to add `Name` only when one was given — so a remote project produced an
+/// entity the Inspector could not rename, because the name editor reads
+/// the component and there was none. The editor's local spawn has always
+/// added both; the two paths have to agree or the same menu entry means
+/// two different things.
+#[test]
+fn a_nameless_spawn_still_carries_name_and_transform() {
+    let mut resources = ecs();
+    let entity = match call(&mut resources, Method::Spawn { name: None }) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("{other:?}"),
+    };
+
+    let entities = match call(&mut resources, Method::ListEntities) {
+        ResponseData::Entities { entities } => entities,
+        other => panic!("{other:?}"),
+    };
+    let spawned = entities
+        .iter()
+        .find(|e| e.id == entity)
+        .expect("the spawned entity is listed");
+    let carried: Vec<&str> = spawned
+        .components
+        .iter()
+        .map(|c| c.type_name.rsplit("::").next().unwrap_or(&c.type_name))
+        .collect();
+
+    assert!(carried.contains(&"Name"), "no Name component: {carried:?}");
+    assert!(
+        carried.contains(&"Transform"),
+        "no Transform component: {carried:?}",
+    );
+}
+
 #[test]
 fn unknown_component_is_a_typed_error() {
     let mut resources = ecs();

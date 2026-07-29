@@ -17,8 +17,6 @@
 //! anything moved. Nothing about the data changes between the frames, so
 //! any complaint is the Inspector's own doing.
 
-use std::sync::Mutex;
-
 use ome_ecs::component::ComponentId;
 use ome_ecs::entity::Entity;
 use ome_ecs::reflect::{EntityRef, InspectorVisibility, ReflectValue};
@@ -26,9 +24,6 @@ use ome_ecs::reflect::{EntityRef, InspectorVisibility, ReflectValue};
 use super::{RotationDisplayMode, draw_inspector_content};
 use crate::panels::id_stability_probe::{drawing, install_logger};
 use crate::state::{ComponentDisplayInfo, EntityDisplayInfo};
-
-/// Serialises against the other id-stability tests: the log is global.
-static LOCK: Mutex<()> = Mutex::new(());
 
 fn component(name: &str, fields: Vec<(String, ReflectValue)>) -> ComponentDisplayInfo {
     ComponentDisplayInfo {
@@ -102,7 +97,9 @@ fn draw_repeatedly(
     frames: usize,
 ) -> Vec<String> {
     install_logger();
-    let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = crate::panels::id_stability_probe::PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
 
     let mut euler_cache = std::collections::HashMap::new();
     let mut mode = RotationDisplayMode::Local;
@@ -171,16 +168,33 @@ fn a_second_selection_is_stable_too() {
 #[test]
 fn moving_the_selection_keeps_the_widget_ids() {
     install_logger();
-    let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = crate::panels::id_stability_probe::PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
 
     let mut euler_cache = std::collections::HashMap::new();
     let mut mode = RotationDisplayMode::Local;
 
     // Two entities carrying the same components, so the layout is identical
     // and only the selection moves.
+    //
+    // The fields are the point. An earlier version of this test gave the
+    // components none, so the field grid — whose id carried the entity's
+    // index, and under which every widget takes an automatic id — was never
+    // drawn at all. The test passed against the bug it was written for.
+    let body = || {
+        component(
+            "RigidBody",
+            vec![
+                ("mass".into(), ReflectValue::F32(1.0)),
+                ("kind".into(), ReflectValue::U32(0)),
+                ("ccd".into(), ReflectValue::Bool(false)),
+            ],
+        )
+    };
     let entities = vec![
-        named(0, "Crate A", vec![component("RigidBody", vec![])]),
-        named(1, "Crate B", vec![component("RigidBody", vec![])]),
+        named(0, "Crate A", vec![body()]),
+        named(1, "Crate B", vec![body()]),
     ];
 
     let complaints = drawing(4, |ui, frame| {

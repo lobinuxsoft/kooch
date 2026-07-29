@@ -40,6 +40,7 @@ pub(crate) fn draw_performance_content(
     // `set_max_width`; vertical scroll kicks in only when the
     // sections together exceed the viewport.
     egui::ScrollArea::vertical()
+        .id_salt("performance_body")
         .auto_shrink([true, true])
         .show(ui, |ui| {
             collapsing(ui, "Debug", true, |ui| {
@@ -243,7 +244,7 @@ fn debug_controls(
         ui.label(egui::RichText::new("LOD ≤").small())
             .on_hover_text("Pixel-error threshold for the continuous-LOD selector.");
         ui.add(
-            egui::DragValue::new(&mut meshlet_lod_settings.target_error_pixels)
+            crate::numeric::drag(&mut meshlet_lod_settings.target_error_pixels)
                 .speed(0.05)
                 .range(0.1_f32..=50.0_f32)
                 .max_decimals(2)

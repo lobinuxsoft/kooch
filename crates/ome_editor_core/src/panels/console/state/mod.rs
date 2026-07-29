@@ -20,7 +20,6 @@
 //! is the only one.
 
 use ome_core::{LogBuffer, LogEntry};
-use tracing::Level;
 
 mod levels;
 
