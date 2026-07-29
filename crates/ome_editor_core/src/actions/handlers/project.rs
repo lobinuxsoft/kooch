@@ -141,8 +141,18 @@ pub(super) fn handle_create_project(
                     tracing::warn!("failed to save editor config: {e}");
                 }
                 ps.show_new_project_form = false;
-                ps.spawn_launcher(&root);
             }
+            // Open it the way Open Project opens one, rather than handing
+            // control to the new project's own embedded editor and
+            // exiting.
+            //
+            // `spawn_launcher` did the latter, which meant creating a
+            // project killed the window it was created from: the Hub's
+            // recents list, its dock layout and its output all went with
+            // it, and what came back was a *different* editor binary than
+            // the one Open Project gives you. Two actions that land in the
+            // same place should get there the same way.
+            handle_open_project(resources, &root);
         }
         Err(e) => {
             tracing::error!("failed to create project: {e}");
