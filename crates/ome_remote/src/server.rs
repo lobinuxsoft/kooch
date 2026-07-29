@@ -43,6 +43,8 @@ use interprocess::local_socket::{
     GenericNamespaced, ListenerOptions, Stream, ToNsName, prelude::*,
 };
 
+use ome_core::frame_pacing::FrameWaker;
+
 use crate::protocol::{Request, Response};
 
 /// Environment variable carrying the socket name to a launched project.
@@ -83,11 +85,28 @@ pub struct RemoteServer {
 }
 
 impl RemoteServer {
-    /// Binds `name` and spawns the listener thread.
+    /// Binds `name` and spawns the listener thread, with no way to wake
+    /// a sleeping main loop.
+    ///
+    /// Fine for a test, which drives the frame itself. A real project
+    /// wants [`Self::start_waking`] — see it for why.
     ///
     /// Returns an error string if the name cannot be bound — most often
     /// because another process already holds it.
     pub fn start(name: &str) -> Result<Self, String> {
+        Self::start_waking(name, FrameWaker::default())
+    }
+
+    /// Binds `name` and spawns the listener thread, waking the main loop
+    /// whenever a request is queued.
+    ///
+    /// The listener parks on a reply that only the main thread can
+    /// produce. Once that thread is allowed to sleep between frames
+    /// (#656), a request arriving while it sleeps would be answered
+    /// only when something else happened to wake it — from the editor's
+    /// side, an indefinite hang on a project that is running perfectly
+    /// well. The wake is what keeps "asleep" from meaning "unreachable".
+    pub fn start_waking(name: &str, waker: FrameWaker) -> Result<Self, String> {
         let ns_name = name
             .to_ns_name::<GenericNamespaced>()
             .map_err(|e| format!("invalid socket name {name}: {e}"))?;
@@ -99,7 +118,7 @@ impl RemoteServer {
         let (tx, rx) = channel::<PendingRequest>();
         let handle = std::thread::Builder::new()
             .name("ome_remote".into())
-            .spawn(move || listen(listener, tx))
+            .spawn(move || listen(listener, tx, waker))
             .map_err(|e| format!("failed to spawn remote server thread: {e}"))?;
 
         tracing::info!(socket = name, "remote editor server listening");
@@ -111,9 +130,9 @@ impl RemoteServer {
     }
 
     /// Binds the name in [`NAME_ENV`], or [`DEFAULT_NAME`] if unset.
-    pub fn start_from_env() -> Result<Self, String> {
+    pub fn start_from_env(waker: FrameWaker) -> Result<Self, String> {
         let name = std::env::var(NAME_ENV).unwrap_or_else(|_| DEFAULT_NAME.to_owned());
-        Self::start(&name)
+        Self::start_waking(&name, waker)
     }
 
     /// The bound socket name.
@@ -139,7 +158,11 @@ impl RemoteServer {
 /// Listener thread body: accept, decode, hand off, wait for the reply,
 /// and write it back. Runs until the socket errors or the main-thread
 /// receiver is dropped.
-fn listen(listener: interprocess::local_socket::Listener, tx: Sender<PendingRequest>) {
+fn listen(
+    listener: interprocess::local_socket::Listener,
+    tx: Sender<PendingRequest>,
+    waker: FrameWaker,
+) {
     for conn in listener.incoming() {
         let conn = match conn {
             Ok(conn) => conn,
@@ -148,7 +171,7 @@ fn listen(listener: interprocess::local_socket::Listener, tx: Sender<PendingRequ
                 continue;
             }
         };
-        if !serve_one(conn, &tx) {
+        if !serve_one(conn, &tx, &waker) {
             break;
         }
     }
@@ -196,7 +219,7 @@ fn encode(response: &Response) -> String {
 
 /// Handles one connection. Returns `false` when the main loop is gone and
 /// the listener should stop.
-fn serve_one(conn: Stream, tx: &Sender<PendingRequest>) -> bool {
+fn serve_one(conn: Stream, tx: &Sender<PendingRequest>, waker: &FrameWaker) -> bool {
     let mut reader = BufReader::new(conn);
     let mut line = String::new();
     if let Err(e) = reader.read_line(&mut line) {
@@ -215,6 +238,11 @@ fn serve_one(conn: Stream, tx: &Sender<PendingRequest>) -> bool {
             if tx.send(pending).is_err() {
                 return false;
             }
+            // Queued, so wake whoever drains the queue. Ordering matters:
+            // waking before the send could have the loop run a frame,
+            // find nothing, and go back to sleep just as the request
+            // lands — a wake for the previous request, wasted on this one.
+            waker.wake();
             // Block until the main thread executes and answers. If the
             // reply channel drops, the caller gets nothing and times out.
             match reply_rx.recv() {

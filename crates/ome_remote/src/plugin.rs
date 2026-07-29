@@ -1,8 +1,10 @@
 //! [`RemotePlugin`] — starts the server and drains it each tick.
 
 use ome_core::app::App;
+use ome_core::frame_pacing::{FramePace, FrameRequest, FrameWaker};
 use ome_core::plugin::Plugin;
 use ome_core::resource::Resources;
+use ome_core::run_state::Playing;
 use ome_core::stage::Stage;
 
 use crate::handlers::handle;
@@ -45,22 +47,51 @@ impl Default for RemotePlugin {
 
 impl Plugin for RemotePlugin {
     fn build(&self, app: &mut App) {
+        // Present since `App::new`; cloned rather than borrowed because
+        // the listener thread outlives this call.
+        let waker = app
+            .resources
+            .get::<FrameWaker>()
+            .cloned()
+            .unwrap_or_default();
         let started = match &self.name {
-            Some(name) => RemoteServer::start(name),
-            None => RemoteServer::start_from_env(),
+            Some(name) => RemoteServer::start_waking(name, waker),
+            None => RemoteServer::start_from_env(waker),
         };
         match started {
             Ok(server) => {
                 app.insert_resource(server);
+                // #656 — a project under an editor is not a game running:
+                // between edits nothing simulates, and a frame that
+                // nobody asked for is a core spent mirroring a still
+                // scene. The baseline sleeps; the socket wakes it, and
+                // Play overrides it for as long as Play lasts. A project
+                // launched without this plugin never gets a
+                // `FrameRequest` and keeps spinning, as a game should.
+                app.insert_resource(FrameRequest::new(FramePace::Wait));
                 // First stage: apply remote edits before this frame's
                 // systems observe the world, so a client edit lands the
                 // same tick it arrives.
                 app.add_system(Stage::First, serve_pending_system);
+                // Last, so it sees the flag the frame ended with rather
+                // than the one it started with — pressing Play must not
+                // cost a frame of latency at the far end of a socket.
+                app.add_system(Stage::Last, pace_system);
             }
             Err(e) => {
                 tracing::warn!("remote editor server disabled: {e}");
             }
         }
+    }
+}
+
+/// Keeps the loop spinning while the project is playing.
+///
+/// Only ever raises the pace: a frame that is simulating needs the next
+/// one, and nothing else in the frame gets to say otherwise.
+fn pace_system(resources: &mut Resources) {
+    if Playing::is_playing(resources) {
+        FrameRequest::raise(resources, FramePace::Continuous);
     }
 }
 

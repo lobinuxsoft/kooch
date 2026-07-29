@@ -601,3 +601,70 @@ fn a_non_finite_float_survives_the_wire() {
         );
     }
 }
+
+/// A queued request wakes a main loop that is allowed to sleep.
+///
+/// The listener parks on a reply only the main thread can produce. Once
+/// that thread stops spinning between frames (#656), a request arriving
+/// mid-sleep has to be what wakes it — otherwise the editor asking a
+/// perfectly healthy project a question hangs until something unrelated
+/// happens to produce a frame.
+#[test]
+fn a_queued_request_wakes_a_sleeping_main_loop() {
+    use std::time::Duration;
+
+    use ome_core::frame_pacing::FrameWaker;
+
+    let waker = FrameWaker::default();
+    let (wake_tx, wake_rx) = std::sync::mpsc::channel::<()>();
+    waker.set_notify(move || {
+        let _ = wake_tx.send(());
+    });
+
+    let server = RemoteServer::start_waking(&test_socket_name(), waker.clone()).expect("bind");
+    let socket = server.name().to_owned();
+
+    let client = std::thread::spawn(move || {
+        let name = socket
+            .as_str()
+            .to_ns_name::<GenericNamespaced>()
+            .expect("valid name");
+        let stream = Stream::connect(name).expect("connect");
+        let mut conn = BufReader::new(stream);
+        conn.get_mut()
+            .write_all(b"{\"id\":7,\"method\":\"ping\"}\n")
+            .unwrap();
+        let mut response = String::new();
+        conn.read_line(&mut response).unwrap();
+        response
+    });
+
+    // Nothing has drained the queue yet — this is the sleeping loop, and
+    // the only thing that can end the wait is the listener.
+    wake_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("a queued request must wake the loop");
+    assert!(
+        waker.take_pending(),
+        "the wake is recorded as well as signalled, so a loop that was \
+         mid-frame when it landed does not sleep through it",
+    );
+
+    let mut resources = ecs();
+    let mut answered = false;
+    for _ in 0..2000 {
+        for item in server.take_pending() {
+            let response = handle(&item.request, &mut resources);
+            item.reply.send(response).unwrap();
+            answered = true;
+        }
+        if answered {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(answered, "the woken frame found nothing to answer");
+
+    let response = client.join().unwrap();
+    assert!(response.contains("\"kind\":\"pong\""), "body: {response}");
+}
