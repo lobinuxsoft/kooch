@@ -158,43 +158,38 @@ fn a_second_selection_is_stable_too() {
     );
 }
 
-/// The condition the reported log had and the tests above do not: the
-/// selected entity is the *same* entity, drawn at the same place, holding
-/// the same components — but its `Entity` handle changed.
+/// Selecting a different entity: the reported case, at last.
 ///
-/// That is what a mirror does when it despawns and respawns rather than
-/// reusing a local entity. The Inspector keys its per-component id on
-/// `entity.index()`, so every widget under it is renamed while the layout
-/// stays put — a stable parent with a child whose id came from the data,
-/// which is exactly the shape egui warns about.
+/// The Inspector keys each component's collapsing state on the selected
+/// entity's *index*, so moving the selection renames every widget under it
+/// while the layout stays exactly where it was — two entities with the
+/// same components lay out identically. A stable parent with children
+/// whose ids came from the data, which is the shape egui warns about.
+///
+/// The earlier version of this test varied the entity's *generation* and
+/// found nothing, because the id is built from `index()` alone.
 #[test]
-fn an_entity_whose_handle_changes_renames_every_widget() {
+fn moving_the_selection_keeps_the_widget_ids() {
     install_logger();
     let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let mut euler_cache = std::collections::HashMap::new();
     let mut mode = RotationDisplayMode::Local;
 
+    // Two entities carrying the same components, so the layout is identical
+    // and only the selection moves.
+    let entities = vec![
+        named(0, "Crate A", vec![component("RigidBody", vec![])]),
+        named(1, "Crate B", vec![component("RigidBody", vec![])]),
+    ];
+
     let complaints = drawing(4, |ui, frame| {
-        // The same world, renumbered — one despawn/respawn cycle per frame.
-        let generation = frame as u32;
-        let body = Entity::new(0, generation);
-        let hinge = Entity::new(1, generation);
-        let entities = vec![
-            EntityDisplayInfo {
-                entity: body,
-                ..named(0, "Door frame", vec![component("RigidBody", vec![])])
-            },
-            EntityDisplayInfo {
-                entity: hinge,
-                ..named(1, "Hinge", vec![component("Joint", vec![])])
-            },
-        ];
+        let selected = [entities[frame % 2].entity];
         let mut actions = Vec::new();
         draw_inspector_content(
             ui,
             &entities,
-            &[hinge],
+            &selected,
             &[],
             &mut actions,
             &mut euler_cache,
@@ -208,7 +203,7 @@ fn an_entity_whose_handle_changes_renames_every_widget() {
     drop(guard);
     assert!(
         complaints.is_empty(),
-        "a renumbered entity renamed {} widget(s):\n{}",
+        "moving the selection renamed {} widget(s):\n{}",
         complaints.len(),
         complaints.join("\n"),
     );

@@ -45,13 +45,17 @@ fn console_rows_keep_their_ids_as_lines_arrive() {
     let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let buffer = LogBuffer::new();
-    fill(&buffer, 0, 40);
+    // Far more lines than fit, so `show_rows` actually virtualises and the
+    // visible window moves as the tail arrives. With a log that fits on
+    // screen nothing scrolls, and nothing scrolling is not the reported
+    // case.
+    fill(&buffer, 0, 400);
     let mut state = ConsoleState::default();
 
     let complaints = drawing(6, |ui, frame| {
-        // A line lands between frames, which is the ordinary state of a
-        // console attached to a running project.
-        fill(&buffer, 100 + frame as u32, 1);
+        // Several lines land between frames — the state of a console
+        // attached to a project that is talking.
+        fill(&buffer, 1000 + frame as u32 * 10, 7);
         draw_console(ui, Some(&buffer), &mut state);
     });
 
@@ -72,7 +76,7 @@ fn console_rows_are_stable_when_nothing_arrives() {
     let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let buffer = LogBuffer::new();
-    fill(&buffer, 0, 40);
+    fill(&buffer, 0, 400);
     let mut state = ConsoleState::default();
 
     let complaints = drawing(4, |ui, _| draw_console(ui, Some(&buffer), &mut state));
