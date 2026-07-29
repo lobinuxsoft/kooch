@@ -903,6 +903,40 @@ tampoco las querríamos.
    módulo padre pasa a apuntar al nuevo `mod.rs`. Se arregla en el origen (subir la
    visibilidad de lo que ahora cruza archivos), **no** agregando re-exports para tapar.
 
+### Un frame se pide, no se asume (locked 2026-07-29, #656)
+
+**Decisión: ningún loop del engine vuelve a pedir el frame siguiente incondicionalmente.**
+Cada frame declara qué necesita el próximo vía `ome_core::frame_pacing::FrameRequest`
+(`Wait` / `After(d)` / `Continuous`), y el runner lo traduce. Es monotónico dentro del frame:
+gana el más urgente, así que el orden de dibujo no puede convencer a un sistema de renunciar
+a un repaint que pidió.
+
+**Una app que no inserta `FrameRequest` sigue girando.** Es lo correcto para un juego, y hace
+que optar por dormir sea explícito en cada call site.
+
+Los dos runners lo respetan, y **eso importa más de lo que parece**: `RemoteHostPlugins`
+**no tiene ventana a propósito**, así que un proyecto hospedando al editor corre bajo
+`default_runner`, no bajo el de winit. Era un `loop {}` pelado sin vsync — el core al 100%
+que se veía en el monitor, y venía de antes del issue. Sin ventana no hay `EventLoopProxy`,
+así que `FrameWaker` duerme en un condvar; lo despierta el socket remoto.
+
+**Corolario que se cobra caro: los frames dejaron de ser un reloj.** Un editor idle dibuja
+~4 frames por segundo, así que "cada 30 frames" pasó de medio segundo a siete y medio. Toda
+cadencia se expresa en `Duration`. La del pull remoto ya se migró.
+
+**Y egui no puede loguear en el panel que dibuja.** Su aviso de "changed id between passes"
+es él mismo una línea de log: entra a la Consola, la scrollea, y el aviso siguiente sale por
+eso. Cientos por segundo, indefinidamente. `egui*` está muteado en `LogBuffer` — a stdout
+sigue yendo, donde leerlo no lo cambia. **No eran ids inestables**: las filas ya estaban
+keyeadas por línea de log desde #664; el rect se queda quieto y el contenido se corre.
+
+**Un evento que no cambia lo dibujado no merece un frame.** `AxisMotion` duplica a
+`CursorMoved` al doble de tasa y egui lee el cursor; `Moved` es la posición de la ventana en
+el escritorio. Medido en 5 s de movimiento normal de mouse: 966 + 212 contra 486. El
+handler filtra por lista explícita, no por catch-all.
+
+Medido en la misma máquina: **200% → 3% de CPU, 51.8 → 31.5 W** con editor y proyecto idle.
+
 ### El remoto se queda (locked 2026-07-28, #647/#648)
 
 **Decisión: NO se elimina el proceso remoto.** Se venía asumiendo lo contrario — que hot-reload

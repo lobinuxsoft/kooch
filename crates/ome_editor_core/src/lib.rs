@@ -79,6 +79,13 @@ impl Plugin for EditorPlugin {
         // process applies it.
         app.add_plugin(ome_gravity::GravityComponentsPlugin);
 
+        // #656 — the editor sleeps by default and every frame has to
+        // earn the next one. The baseline is what the accumulator falls
+        // back to after the runner reads it, so a frame that asks for
+        // nothing is a frame that stops the loop.
+        app.insert_resource(ome_core::frame_pacing::FrameRequest::new(
+            ome_core::frame_pacing::FramePace::Wait,
+        ));
         app.insert_resource(PlayState::new());
         // Remote mode starts inert: no session means the editor drives
         // its own ECS exactly as before. "Open Remote" fills it in.

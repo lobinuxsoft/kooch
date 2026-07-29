@@ -72,6 +72,11 @@ impl App {
         // Register AppExit event by default
         app.add_event::<AppExit>();
 
+        // Present from the start so a plugin's `build` can clone it into
+        // a worker thread — the remote server spawns its listener there
+        // and needs a way back to a loop that may be asleep (#656).
+        app.insert_resource(crate::frame_pacing::FrameWaker::default());
+
         app
     }
 

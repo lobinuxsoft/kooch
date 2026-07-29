@@ -6,7 +6,7 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
-Last updated 2026-07-29, `development` at `f1e69d7`.
+Last updated 2026-07-29, `development` at `a2bf355`.
 
 ---
 
@@ -36,6 +36,7 @@ Last updated 2026-07-29, `development` at `f1e69d7`.
 | **#655** | A `Joint` can be authored. Bodies are named with `Option<EntityRef>`, the Inspector has an entity picker and a World-panel drop target, and the three error paths that turned one failure into a frozen session stopped lying |
 | **PR #660/#662** | The Console copies to the system clipboard, and filters by severity with one toggle per level instead of a minimum-level dropdown |
 | **PR #664** | egui 0.35. Widget ids stabilised (see #641 below), numeric fields evaluate arithmetic — `9/2` is 4.5 — the name field keeps its caret, and a remotely spawned entity carries `Name` and `Transform` like a locally spawned one |
+| **#656** | The editor and its project stopped burning two cores to show a still image. 200% → 3% CPU, 51.8 → 31.5 W, measured on the same host |
 
 ---
 
@@ -50,17 +51,21 @@ the same problem seen from two sides, so they are one push.
 Ordered by measured or estimated cost. **Measure first, then fix** — the last two wins came
 from a number, and the two guesses before them were wrong.
 
-0. **#656 — the editor redraws continuously while idle.** Two cores pinned with nothing
-   happening, because `winit_app.rs:192` requests a redraw unconditionally every frame.
-   Godot, in the same state, uses approximately nothing. Ahead of everything below: it is the
-   largest waste in the editor and the cheapest to describe. It also changes the meaning of
-   every "every N frames" cadence, so it interacts with item 1.
+0. **#656 — DONE.** Two cores, idle, to display a still image: **200% → 3% CPU, 51.8 → 31.5 W**
+   on the same host. It was four things, not one. The windowed loop asked for the next redraw
+   unconditionally and now derives `ControlFlow` from a `FrameRequest` each frame fills in,
+   with the editor taking its answer from egui's `repaint_delay`. The *project* was never in
+   that loop at all — `RemoteHostPlugins` has no window on purpose, so it ran under
+   `default_runner`, a bare `loop {}` with no vsync; that was the 100% core, and it predated
+   the issue. The Console and egui were feeding each other: egui's "changed id between passes"
+   is itself a log line, so it landed in the Console, scrolled it, and produced the next one.
+   And most window events change nothing drawn — 966 `AxisMotion` and 212 `Moved` against 486
+   `CursorMoved` over five seconds of ordinary mouse movement.
 
-   **Measured 2026-07-29 and now the agreed next task.** Editor plus one project, idle, on a
-   9800X3D: two cores pinned for the whole minute sampled, six near idle, 51.8 W, 67 °C. Two
-   cores is what this issue predicted — one busy loop per process, and both processes use the
-   same `ome_window`, so one fix covers both. `AutoVsync` is the only reason it is one core
-   each and not all eight.
+   **It broke every "every N frames" clock, as predicted.** An idle editor draws about four
+   frames a second, so the remote pull's thirty-frame cadence went from half a second to seven
+   and a half. It is a `Duration` now, and **any new cadence must be too**.
+
 1. **#645 — the remote pull blocks the editor's main thread every frame during Play.**
    `REFRESH_INTERVAL_PLAYING = 1` in `systems/remote_sync.rs` → `session.refresh()` →
    `client.list_entities()`, inline in the frame. The editor is not waiting on the transport;
@@ -81,14 +86,18 @@ from a number, and the two guesses before them were wrong.
    [egui #8343](https://github.com/emilk/egui/issues/8343), open upstream, where
    `with_layout(right_to_left)` inside `horizontal` warns spuriously. `menu_bar.rs` does
    exactly that. **This is no longer a performance item.**
-3. **`asset_browser/tree.rs::render_root` rebuilds the whole folder tree every frame, twice**
+3. **#666 — the editor gathers a full snapshot of the world every frame, for every panel,
+   visible or not.** `frame_display.rs::gather` walks entities, archetypes, component types,
+   reflected types and scenes before anyone decides whether to draw. With #656 done, this is
+   what is left on an idle frame, and it scales with the scene rather than with the UI.
+4. **`asset_browser/tree.rs::render_root` rebuilds the whole folder tree every frame, twice**
    (Project and Engine roots), cloning a `PathBuf` per node. ~12 assets today, so invisible;
    the same shape as the Console bug that was not.
-4. **Panels with unbounded lists are not virtualised.** The Console now is (#643). The
+5. **Panels with unbounded lists are not virtualised.** The Console now is (#643). The
    hierarchy in `panels/world.rs` is not, and a large scene is exactly when it matters.
-5. **`ome_gravity::plugin` walks and allocates its source list twice per frame** — once in
+6. **`ome_gravity::plugin` walks and allocates its source list twice per frame** — once in
    `reconcile_world_gravity`, once in `apply_gravity_sources`. Small, but it is per frame.
-6. **#569 — per-stage counters in the perf HUD.** Out of order on purpose: without it every
+7. **#569 — per-stage counters in the perf HUD.** Out of order on purpose: without it every
    item above is argued rather than measured. Consider doing this *first*.
 
 **The rule this session earned:** egui redraws everything every frame, so whatever a panel

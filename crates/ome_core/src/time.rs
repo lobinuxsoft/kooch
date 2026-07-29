@@ -225,6 +225,26 @@ impl Time {
         self.frame_count
     }
 
+    /// When [`update`](Self::update) last ran — the start of this frame.
+    ///
+    /// What a late-stage system needs to time the frame's *work*:
+    /// `time.frame_start().elapsed()` at `Stage::Last` excludes whatever
+    /// the loop then spends waiting, which [`delta`](Self::delta) does
+    /// not.
+    #[inline]
+    pub fn frame_start(&self) -> Instant {
+        self.frame_start
+    }
+
+    /// How long until the next fixed step comes due.
+    ///
+    /// Zero when a step is already owed. A loop with nothing to draw has
+    /// no reason to wake before this: running faster only re-reads the
+    /// clock and finds no work (#656).
+    pub fn until_next_fixed_step(&self) -> Duration {
+        self.fixed_delta.saturating_sub(self.accumulator)
+    }
+
     /// Number of fixed timestep updates since startup.
     #[inline]
     pub fn fixed_count(&self) -> u64 {
@@ -240,6 +260,38 @@ impl Time {
 
 #[cfg(test)]
 mod tests {
+    /// A loop with nothing to draw paces itself off this. Zero means a
+    /// step is already owed, so the caller must not treat it as "sleep
+    /// forever" (#656).
+    #[test]
+    fn the_wait_for_the_next_fixed_step_shrinks_as_time_accumulates() {
+        let mut time = Time::new();
+        time.set_fixed_hz(60.0);
+        let step = time.fixed_delta();
+
+        // Fresh: a whole step away.
+        assert_eq!(time.until_next_fixed_step(), step);
+
+        // Two thirds of a step in, so a third of a step to go.
+        time.advance(step.mul_f32(2.0 / 3.0));
+        let remaining = time.until_next_fixed_step();
+        assert!(
+            remaining < step && remaining > Duration::ZERO,
+            "expected part of a step, got {remaining:?}",
+        );
+
+        // Advancing exactly one step runs one and leaves the *phase*
+        // intact — the accumulator keeps the remainder rather than being
+        // drained. A pacer that assumed a reset here would sleep a third
+        // of a step too long, every frame, and the sim would run slow.
+        assert_eq!(time.advance(step), 1);
+        assert_eq!(
+            time.until_next_fixed_step(),
+            remaining,
+            "the remainder was dropped instead of carried",
+        );
+    }
+
     use super::*;
 
     #[test]

@@ -19,30 +19,53 @@ use ome_gizmos_handles::HandleSet;
 use crate::perf::{EditorPerfStats, RemoteSyncStats};
 use crate::remote_session::{ConnectionState, RemoteSession, RemoteState};
 
-/// Frames between snapshot pulls while the project sits paused.
+/// Time between snapshot pulls while the project sits paused.
 ///
 /// The project owns the world and may mutate it behind the editor's
-/// back, so the mirror is a poll, not a subscription. Twice a second at
-/// 60 fps keeps the editor responsive to outside change without
-/// spending a synchronous HTTP round-trip per frame.
-const REFRESH_INTERVAL_IDLE: u32 = 30;
-
-/// Frames between snapshot pulls while the project is playing.
+/// back, so the mirror is a poll, not a subscription. Twice a second
+/// keeps the editor responsive to outside change without spending a
+/// synchronous round-trip per frame.
 ///
-/// Gameplay moves things every tick, so a paused-mode cadence would
-/// render as a slideshow. The cost is one round-trip per frame over
-/// loopback; the mirror diffs in place, so a pull that changes nothing
-/// structural is just field writes.
-const REFRESH_INTERVAL_PLAYING: u32 = 1;
+/// This used to be "every thirtieth frame", which was the same thing
+/// only for as long as frames arrived at a fixed rate. Since #656 an
+/// idle editor draws roughly four frames a second, and thirty of those
+/// is seven and a half seconds — the mirror would have looked frozen.
+/// A cadence is a duration; counting frames was always a stand-in for
+/// one.
+const REFRESH_INTERVAL_IDLE: Duration = Duration::from_millis(500);
 
-/// Per-frame cadence bookkeeping for [`remote_sync_system`].
-#[derive(Default)]
+/// Cadence bookkeeping for [`remote_sync_system`].
 pub(crate) struct RemoteSyncState {
-    /// Frames since the last snapshot pull.
-    frames: u32,
+    /// When the last snapshot pull finished, or `None` before the first.
+    last_pull: Option<Instant>,
+    /// How long to wait between pulls while paused. A field rather than
+    /// the constant so a test can ask for every frame without sleeping
+    /// through a real half-second.
+    idle_interval: Duration,
     /// Whether the failure of the current session was already reported,
     /// so a dead project logs once instead of every frame.
     failure_reported: bool,
+}
+
+impl Default for RemoteSyncState {
+    fn default() -> Self {
+        Self {
+            last_pull: None,
+            idle_interval: REFRESH_INTERVAL_IDLE,
+            failure_reported: false,
+        }
+    }
+}
+
+impl RemoteSyncState {
+    /// The same state on a different paused-mode cadence.
+    #[cfg(test)]
+    pub(crate) fn every_frame() -> Self {
+        Self {
+            idle_interval: Duration::ZERO,
+            ..Self::default()
+        }
+    }
 }
 
 /// Advances the handshake, refreshes the snapshot, and re-applies the
@@ -112,29 +135,35 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
     // first apply, and there is nothing to select — let alone drag —
     // before it has run.
     if drag_in_flight(resources) && !just_connected {
-        // Hold the cadence at zero so the frame after release does not
+        // Restart the cadence so the frame after release does not
         // immediately apply the snapshot we just skipped.
-        sync.frames = 0;
+        sync.last_pull = Some(Instant::now());
         return;
     }
 
     // `None` on the handshake frame: the snapshot came from
-    // `poll_ready`, so there is no refresh of ours to time.
+    // `poll_ready`, so there is no refresh of ours to time — and that
+    // snapshot starts the clock, so the first pull of our own is a full
+    // interval away rather than one frame later.
     let mut refresh = None;
-    if !just_connected {
-        let interval = if *playing {
-            REFRESH_INTERVAL_PLAYING
-        } else {
-            REFRESH_INTERVAL_IDLE
-        };
-        sync.frames += 1;
-        if sync.frames < interval {
+    if just_connected {
+        sync.last_pull = Some(Instant::now());
+    } else {
+        // Gameplay moves things every tick, so a paused-mode cadence
+        // would render as a slideshow. The cost is one round-trip per
+        // frame over a local socket; the mirror diffs in place, so a
+        // pull that changes nothing structural is just field writes.
+        let due = *playing
+            || sync
+                .last_pull
+                .is_none_or(|last| last.elapsed() >= sync.idle_interval);
+        if !due {
             return;
         }
-        sync.frames = 0;
         let started = Instant::now();
         session.refresh();
         refresh = Some(started.elapsed());
+        sync.last_pull = Some(Instant::now());
     }
 
     let applying = Instant::now();
