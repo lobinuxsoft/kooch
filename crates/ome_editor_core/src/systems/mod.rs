@@ -1,6 +1,7 @@
 //! Editor systems — startup and per-frame render.
 
 mod asset_detail;
+mod pacing;
 mod present;
 mod project_assets;
 mod remote_sync;

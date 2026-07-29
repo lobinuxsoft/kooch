@@ -23,6 +23,7 @@ use crate::perf::record_cpu_frame_ms;
 use crate::play_state::PlayState;
 use crate::project_state::{LauncherStatus, ProjectState};
 use crate::state::EditorOverlay;
+use crate::systems::pacing::{editor_pace, shortest_repaint_delay};
 use crate::systems::present::present_editor_frame;
 use crate::undo::UndoStack;
 use crate::viewport::render::MeshletPathInputs;
@@ -333,6 +334,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut console,
     );
 
+    // #656 — egui's own answer to "does anything need redrawing", read
+    // before `full_output` is handed to the presenter and consumed.
+    let ui_repaint_delay = shortest_repaint_delay(&full_output);
+
     // Put the choices back so the batch system and the save system see
     // whatever the dropdown just changed.
     resources.insert(gizmo_visibility);
@@ -425,7 +430,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         );
     }
 
-    let _presented = present_editor_frame(&gpu, &mut overlay, &window, full_output);
+    let presented = present_editor_frame(&gpu, &mut overlay, &window, full_output);
 
     resources.insert(gpu);
     resources.insert(overlay);
@@ -448,6 +453,19 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     apply_deferred_actions(resources, &actions, &mut undo_stack);
 
     resources.insert(undo_stack);
+
+    // #656 — say what the next frame needs, so the loop can stop when it
+    // needs nothing. Actions are applied first: one of them may have
+    // opened a project or started Play, and the frame that does so must
+    // not go to sleep before the effect is visible. A frame that failed
+    // to present asks for another unconditionally — the image on screen
+    // is not the one this frame drew.
+    let pace = if presented {
+        editor_pace(ui_repaint_delay, toolbar.is_playing, toolbar.remote)
+    } else {
+        ome_core::frame_pacing::FramePace::Continuous
+    };
+    ome_core::frame_pacing::FrameRequest::raise(resources, pace);
 
     // #463.2 — write the CPU side of the frame budget into the perf
     // HUD Resource. Last call so the elapsed measurement covers
