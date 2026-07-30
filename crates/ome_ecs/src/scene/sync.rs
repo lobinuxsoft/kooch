@@ -139,14 +139,23 @@ fn spawn_returning(
     let mut deferred: Vec<DeferredRef> = Vec::new();
 
     for entity_desc in &scene.entities {
-        // Spawn a fresh entity.
-        let entity = {
-            let mut commands = resources
-                .remove::<Commands>()
-                .expect("Commands not found in Resources");
-            let entity = commands.spawn(resources).id();
-            resources.insert(commands);
-            entity
+        // A description carrying `PrefabInstance` is a *reference*: the
+        // scene did not store this entity's components, the prefab has
+        // them. Building it means instancing the prefab and then applying
+        // what the user changed.
+        //
+        // The result stands in for the description, so a `Parent` pointing
+        // at this instance resolves to the root the prefab produced.
+        let entity = match instance_source(entity_desc) {
+            Some(source) => rebuild_instance(entity_desc, source, resources),
+            None => {
+                let mut commands = resources
+                    .remove::<Commands>()
+                    .expect("Commands not found in Resources");
+                let entity = commands.spawn(resources).id();
+                resources.insert(commands);
+                entity
+            }
         };
 
         name_to_entity.insert(entity_desc.name.clone(), entity);
@@ -271,6 +280,159 @@ fn spawn_returning(
     resolve_deferred(resources, deferred);
 
     Ok(spawned_order)
+}
+
+/// The prefab a description references, if it is an instance.
+fn instance_source(entity_desc: &super::document::EntityDescription) -> Option<ome_core::Guid> {
+    let instance = entity_desc
+        .components
+        .iter()
+        .find(|c| c.type_name.ends_with("PrefabInstance"))?;
+    instance
+        .fields
+        .iter()
+        .find_map(|(name, value)| match value {
+            crate::reflect::ReflectValue::AssetRef { guid, .. } if name == "source" => *guid,
+            _ => None,
+        })
+}
+
+/// The override list a description carries, still encoded.
+fn instance_overrides(entity_desc: &super::document::EntityDescription) -> String {
+    entity_desc
+        .components
+        .iter()
+        .find(|c| c.type_name.ends_with("PrefabInstance"))
+        .and_then(|c| {
+            c.fields.iter().find_map(|(name, value)| match value {
+                crate::reflect::ReflectValue::String(s) if name == "overrides" => Some(s.clone()),
+                _ => None,
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// Instances `source` and applies the description's overrides, returning
+/// the instance root.
+///
+/// # When the prefab cannot be found
+///
+/// A placeholder entity is spawned, named `missing prefab [guid]`. The
+/// alternative — dropping it — loses the user's placement and their
+/// overrides with no way to notice, and this is a reference now: a broken
+/// one is something the scene should *show* rather than something it
+/// quietly loads without.
+fn rebuild_instance(
+    entity_desc: &super::document::EntityDescription,
+    source: ome_core::Guid,
+    resources: &mut Resources,
+) -> crate::entity::Entity {
+    match super::prefab::spawn_members(source, resources) {
+        Ok((root, members)) => {
+            crate::prefab_instance::attach(resources, root, &members, source);
+            apply_overrides(&instance_overrides(entity_desc), &members, resources);
+            root
+        }
+        Err(e) => {
+            tracing::error!(
+                target: "ome_ecs::scene",
+                %source,
+                "prefab could not be instanced: {e}",
+            );
+            spawn_missing_placeholder(source, resources)
+        }
+    }
+}
+
+/// An entity that says out loud which prefab is missing.
+fn spawn_missing_placeholder(
+    source: ome_core::Guid,
+    resources: &mut Resources,
+) -> crate::entity::Entity {
+    let entity = {
+        let mut commands = resources
+            .remove::<Commands>()
+            .expect("Commands not found in Resources");
+        let entity = commands.spawn(resources).id();
+        resources.insert(commands);
+        entity
+    };
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu_reflected::<crate::name::Name>();
+        if let Some(storage) = registry.get_cpu_mut::<crate::name::Name>() {
+            storage.insert(
+                entity,
+                crate::name::Name {
+                    value: format!("missing prefab [{source}]"),
+                },
+            );
+        }
+    }
+    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(entity)
+    {
+        let next = archetypes
+            .archetype_after_add_dynamic(current, std::any::TypeId::of::<crate::name::Name>());
+        archetypes.register_entity(entity, next);
+    }
+    entity
+}
+
+/// Writes a saved override list onto a freshly built instance.
+fn apply_overrides(encoded: &str, members: &[crate::entity::Entity], resources: &mut Resources) {
+    let mut instance = crate::prefab_instance::PrefabInstance::default();
+    instance.overrides = encoded.to_owned();
+
+    for entry in instance.overrides() {
+        let Some(&entity) = members.get(entry.address.entity) else {
+            // The prefab lost the entity this override addressed. The
+            // override is dropped rather than guessed at.
+            continue;
+        };
+        let type_id = resources
+            .get::<ComponentRegistry>()
+            .and_then(|registry| registry.type_id_by_name(&entry.address.component));
+        let Some(type_id) = type_id else {
+            continue;
+        };
+        match entry.value {
+            // A field the user changed.
+            Some(value) => {
+                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                    // The component may be one the user *added* to this
+                    // instance, in which case the prefab did not build it.
+                    if registry.reflect_get_fields(&type_id, entity).is_none() {
+                        registry.insert_default_reflected(&type_id, entity);
+                        add_to_archetype(resources, entity, type_id);
+                    }
+                }
+                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                    let _ =
+                        registry.reflect_set_field(&type_id, entity, &entry.address.field, value);
+                }
+            }
+            // A component the user took off this instance.
+            None => {
+                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                    registry.remove_component(entity, &type_id);
+                }
+            }
+        }
+    }
+}
+
+/// Tells the archetype about a component just inserted.
+fn add_to_archetype(
+    resources: &mut Resources,
+    entity: crate::entity::Entity,
+    type_id: std::any::TypeId,
+) {
+    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(entity)
+    {
+        let next = archetypes.archetype_after_add_dynamic(current, type_id);
+        archetypes.register_entity(entity, next);
+    }
 }
 
 /// Records which scene an entity was authored in.
