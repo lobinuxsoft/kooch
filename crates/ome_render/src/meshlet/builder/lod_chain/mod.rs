@@ -106,16 +106,15 @@ pub fn build_meshlets_lod_chain(
     let mesh_aabb = total_aabb(&mesh.vertices);
 
     // LOD 0 — full detail, single global cluster pass.
-    let (mut all_descriptors, mut all_meshlet_vertices, mut all_meshlet_triangles) =
-        clusterize_lod(
-            &mesh.indices,
-            &adapter,
-            &mesh.vertices,
-            max_vertices,
-            max_triangles,
-            cone_weight,
-            0.0,
-        );
+    let (mut all_descriptors, mut all_meshlet_vertices, mut all_meshlet_triangles) = clusterize_lod(
+        &mesh.indices,
+        &adapter,
+        &mesh.vertices,
+        max_vertices,
+        max_triangles,
+        cone_weight,
+        0.0,
+    );
 
     let lod_zero_count = all_descriptors.len();
     tracing::info!(
@@ -167,8 +166,7 @@ pub fn build_meshlets_lod_chain(
             .collect();
 
         let target_groups = (prev_count / NANITE_GROUP_SIZE).max(1);
-        let groups =
-            group_meshlets_metis(&prev_meshlets, &all_meshlet_vertices, target_groups);
+        let groups = group_meshlets_metis(&prev_meshlets, &all_meshlet_vertices, target_groups);
         let group_boundary_globals =
             collect_group_boundary_vertices(&groups, &prev_meshlets, &all_meshlet_vertices);
 
@@ -288,8 +286,7 @@ pub fn build_meshlets_lod_chain(
             // standard Bevy / open-source Nanite recipe.
             let mut child_max_lod_error = 0.0f32;
             for &child_local in group {
-                child_max_lod_error =
-                    child_max_lod_error.max(prev_meshlets[child_local].lod_error);
+                child_max_lod_error = child_max_lod_error.max(prev_meshlets[child_local].lod_error);
             }
             let parent_lod_error = actual_error.max(child_max_lod_error);
 

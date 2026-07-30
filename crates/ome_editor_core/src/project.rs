@@ -11,8 +11,12 @@ use std::path::{Path, PathBuf};
 use ome_ecs::reflect::ReflectValue;
 use ome_ecs::scene::{ComponentDescription, EntityDescription, SceneDocument};
 
-/// Convention path of the default scene relative to the project root.
-pub const DEFAULT_SCENE_REL_PATH: &str = "scenes/default.ome_scene";
+// The names live in `ome_core` because the runtime's scene bootstrap needs
+// them too, and it cannot depend on the editor to learn them. They were
+// duplicated in both, which is how a rename changed one copy and left the
+// runtime looking for a file the editor no longer wrote — see
+// `ome_core::scene_paths`.
+pub use ome_core::scene_paths::{DEFAULT_SCENE_REL_PATH, PREFAB_EXTENSION, SCENE_EXTENSION};
 
 // ---------------------------------------------------------------------------
 // Project manifest (project.ome)
@@ -437,7 +441,7 @@ pub fn create_project(
     Ok(project_root)
 }
 
-/// Ensures `scenes/default.ome_scene` exists under `project_root`.
+/// Ensures `scenes/default.scene` exists under `project_root`.
 ///
 /// If the file is missing, writes a minimal starter scene with one Camera
 /// entity (Transform + PerspectiveCamera + Name) and one Sky entity

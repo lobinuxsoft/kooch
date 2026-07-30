@@ -313,7 +313,7 @@ fn saving_a_document_holding_a_live_handle_is_refused() {
         }],
     };
 
-    let path = std::env::temp_dir().join("ome_live_handle_refused.ome_scene");
+    let path = std::env::temp_dir().join("ome_live_handle_refused.scene");
     let error = document
         .save(&path)
         .expect_err("a live handle must not be written");

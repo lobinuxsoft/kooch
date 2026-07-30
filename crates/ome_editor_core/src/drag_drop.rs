@@ -26,3 +26,14 @@ pub(crate) struct DraggedAsset {
     pub guid: Guid,
     pub type_name: String,
 }
+
+/// Payload dragged from the Asset Browser to somewhere that can spawn it.
+///
+/// Carries a path rather than a [`Guid`]: a prefab is not a registered
+/// asset — nothing holds a reference to one, because a Phase A instance is
+/// baked into the scene that receives it (#611) — so there is no guid to
+/// carry. The path is what `InstantiatePrefab` needs anyway.
+#[derive(Debug, Clone)]
+pub(crate) struct DraggedPrefab {
+    pub path: std::path::PathBuf,
+}

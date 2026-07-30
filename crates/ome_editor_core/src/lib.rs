@@ -28,6 +28,7 @@ pub(crate) mod menu_bar;
 pub(crate) mod numeric;
 pub(crate) mod panels;
 pub mod perf;
+mod picking;
 pub mod play_state;
 pub mod project;
 pub mod project_log;
@@ -41,6 +42,7 @@ pub(crate) mod style;
 pub(crate) mod systems;
 pub(crate) mod undo;
 pub(crate) mod viewport;
+pub(crate) mod viewport_pick;
 
 use ome_core::app::App;
 use ome_core::plugin::Plugin;

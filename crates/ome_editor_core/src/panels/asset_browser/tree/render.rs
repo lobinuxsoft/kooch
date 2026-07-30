@@ -5,13 +5,15 @@ use std::path::Path;
 use egui::collapsing_header::CollapsingState;
 
 use crate::actions::EditorAction;
-use crate::drag_drop::DraggedAsset;
+use crate::drag_drop::{DraggedAsset, DraggedPrefab};
 use crate::icons;
+use ome_ecs::entity::Entity;
 
 use super::RenderCtx;
 use super::menus::{folder_menu, leaf_menu};
 use super::model::{FileLeaf, FolderNode};
 use super::naming::{create_edit, rename_edit};
+use super::nav::AssetRow;
 use super::visuals::{draw_drag_preview, file_icon, type_icon};
 
 pub(super) fn render_children(
@@ -47,18 +49,61 @@ pub(super) fn render_folder(
     }
 
     let id = ui.make_persistent_id(("asset_folder", &node.path));
-    let is_current = ctx.writable && ctx.current_folder.as_deref() == Some(node.path.as_path());
-
     let mut state = CollapsingState::load_with_default_open(ui.ctx(), id, false);
     if !ctx.needle.is_empty() || ctx.pending.as_ref().is_some_and(|p| p.parent == node.path) {
         state.set_open(true);
     }
+    // The keyboard's request, applied here because this is the only place
+    // the folder's persistent id exists.
+    if let Some(open) = ctx.nav.take_toggle_for(&node.path) {
+        state.set_open(open);
+    }
+    let is_cursor = ctx.nav.is_cursor(&node.path);
+    // Read before `show_header` consumes `state`, and used for both the
+    // row record and the glyph so the two cannot disagree.
+    let is_open = state.is_open();
+    ctx.nav.rows.push(AssetRow {
+        path: node.path.clone(),
+        is_folder: true,
+        open: is_open,
+    });
     state
         .show_header(ui, |ui| {
-            let resp =
-                ui.selectable_label(is_current, format!("{} {}", icons::FOLDER_OPEN, node.name));
-            if resp.clicked() && ctx.writable {
-                *ctx.current_folder = Some(node.path.clone());
+            // Open or closed, so the glyph says what the arrow beside it
+            // says. Both were `FOLDER_OPEN`, which until now drew a flag.
+            let glyph = match is_open {
+                true => icons::FOLDER_OPEN,
+                false => icons::FOLDER,
+            };
+            let resp = ui.selectable_label(is_cursor, format!("{glyph} {}", node.name));
+            if is_cursor && ctx.nav.scroll_to_cursor {
+                resp.scroll_to_me(Some(egui::Align::Center));
+            }
+            // Moving the cursor is the whole of what a click does here.
+            // What that selects is derived from it once, by the panel —
+            // see `AssetNav::take_cursor_move`.
+            if resp.clicked() {
+                ctx.nav.cursor = Some(node.path.clone());
+            }
+            // An entity dragged out of the World panel and dropped here is
+            // saved as a prefab in this folder — the second of the two
+            // ways to author one, beside the entity's own context menu.
+            //
+            // Guarded behind `dnd_hover_payload` because
+            // `dnd_release_payload` takes the payload before checking its
+            // type; see the ordering note in `panels/world/entity_row.rs`.
+            if ctx.writable && resp.dnd_hover_payload::<Entity>().is_some() {
+                ui.painter().rect_filled(
+                    resp.rect,
+                    2.0,
+                    egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
+                );
+                if let Some(entity) = resp.dnd_release_payload::<Entity>() {
+                    ctx.actions.push(EditorAction::SavePrefab {
+                        entity: *entity,
+                        dest: Some(node.path.clone()),
+                    });
+                }
             }
             let writable = ctx.writable;
             let actions = &mut *ctx.actions;
@@ -84,12 +129,17 @@ pub(super) fn render_leaf(
         Some((_, type_name)) => type_icon(type_name),
         None => file_icon(&leaf.name),
     };
-    let selected = leaf
-        .asset
-        .as_ref()
-        .is_some_and(|(g, _)| *ctx.selected_asset == Some(*g));
+    let is_cursor = ctx.nav.is_cursor(&leaf.path);
+    ctx.nav.rows.push(AssetRow {
+        path: leaf.path.clone(),
+        is_folder: false,
+        open: false,
+    });
 
-    let mut resp = ui.selectable_label(selected, format!("{icon} {}", leaf.name));
+    let mut resp = ui.selectable_label(is_cursor, format!("{icon} {}", leaf.name));
+    if is_cursor && ctx.nav.scroll_to_cursor {
+        resp.scroll_to_me(Some(egui::Align::Center));
+    }
 
     // Typed assets are drag sources for the Inspector's asset slots
     // (#439). The sense is upgraded in place rather than wrapping the row
@@ -104,15 +154,26 @@ pub(super) fn render_leaf(
         if resp.dragged() {
             draw_drag_preview(ui, icon, &leaf.name);
         }
+    } else if leaf
+        .path
+        .extension()
+        .is_some_and(|ext| ext == crate::project::PREFAB_EXTENSION)
+    {
+        // A prefab is not a registered asset — nothing holds a reference to
+        // one — so it has no guid and cannot use `DraggedAsset`. It carries
+        // its path, which is what instancing needs anyway.
+        resp = resp.interact(egui::Sense::click_and_drag());
+        resp.dnd_set_drag_payload(DraggedPrefab {
+            path: leaf.path.clone(),
+        });
+        if resp.dragged() {
+            draw_drag_preview(ui, icon, &leaf.name);
+        }
     }
     let resp = resp.on_hover_text(leaf.path.display().to_string());
 
     if resp.clicked() {
-        // Single-click selects a typed asset for the Inspector; plain
-        // files have nothing to inspect.
-        if let Some((guid, _)) = &leaf.asset {
-            *ctx.selected_asset = if selected { None } else { Some(*guid) };
-        }
+        ctx.nav.cursor = Some(leaf.path.clone());
     }
     if resp.double_clicked() {
         ctx.actions.push(EditorAction::OpenInIde {

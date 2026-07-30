@@ -73,6 +73,34 @@ pub(crate) enum EditorAction {
     Redo,
     SaveScene,
     OpenScene,
+    /// Write an entity and its descendants to a scene file — a prefab.
+    ///
+    /// A prefab is a scene; see
+    /// [`SceneDocument::from_ecs_subtree`](ome_ecs::scene::SceneDocument::from_ecs_subtree)
+    /// for why there is no separate format (#611).
+    ///
+    /// The file is named after the entity, read from the entity itself
+    /// rather than passed in: the name lives on a `Name` component, and a
+    /// caller that had to look it up first — the Assets panel, which only
+    /// receives a dragged handle — would need the world it does not have.
+    SavePrefab {
+        entity: Entity,
+        /// Folder to write into; `None` means the project's assets root.
+        /// The drag-to-Assets path names the folder it was dropped on, the
+        /// context menu does not.
+        dest: Option<std::path::PathBuf>,
+    },
+    /// Stamp a prefab file into the open scene.
+    InstantiatePrefab {
+        path: std::path::PathBuf,
+        /// Where to put the instance's root.
+        ///
+        /// Unresolved on purpose: a viewport drop names a place on
+        /// *screen*, and turning that into a world position needs the
+        /// camera, which the panel that reported the drop cannot read. See
+        /// [`DropPoint`](crate::viewport_pick::DropPoint).
+        at: crate::viewport_pick::DropPoint,
+    },
     /// Open a scene beside the ones already loaded, rather than replacing
     /// them. The scene becomes the active one, so newly spawned entities
     /// land in it.
@@ -235,6 +263,8 @@ impl EditorAction {
             | Self::Undo
             | Self::Redo
             | Self::SaveScene
+            | Self::SavePrefab { .. }
+            | Self::InstantiatePrefab { .. }
             | Self::OpenScene
             | Self::OpenSceneAdditive
             | Self::CloseScene(_)

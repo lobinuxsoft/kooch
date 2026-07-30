@@ -13,7 +13,7 @@
 //! - **Audio**: Xiph (Vorbis, FLAC) plus PCM `.wav`. Drops `.mp3`
 //!   because `kira` gates it behind a feature flag and the historical
 //!   patent baggage adds zero value when Vorbis covers the same niche.
-//! - **Material**: RON only. Same format as `.ome_scene`, handles
+//! - **Material**: RON only. Same format as `.scene`, handles
 //!   nested structures cleanly. Drops TOML.
 //!
 //! `extensions` is empty when the kind is recognised but no specific
@@ -162,7 +162,7 @@ pub(super) fn asset_filter_for(
     } else if n.contains("audio") || n.contains("sound") {
         Some(("Audio", &["ogg", "wav", "flac"]))
     } else if n.contains("scene") {
-        Some(("Scene", &["ome_scene"]))
+        Some(("Scene", &["scene"]))
     } else if n.contains("shader") {
         Some(("Shader", &["wgsl"]))
     } else if n.contains("material") {

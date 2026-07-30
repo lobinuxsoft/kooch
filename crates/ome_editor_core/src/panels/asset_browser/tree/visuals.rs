@@ -36,7 +36,8 @@ pub(super) fn file_icon(name: &str) -> &'static str {
     match name.rsplit('.').next().unwrap_or("") {
         "rs" => icons::TERMINAL,
         "toml" | "lock" => icons::GEAR,
-        "ome_scene" => icons::TREE_STRUCTURE,
+        "scene" => icons::TREE_STRUCTURE,
+        "prefab" => icons::PACKAGE,
         _ => icons::LIST_BULLETS,
     }
 }

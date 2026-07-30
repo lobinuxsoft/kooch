@@ -14,6 +14,8 @@
 
 mod tree;
 
+pub(crate) use tree::AssetNav;
+
 use std::path::{Path, PathBuf};
 
 use ome_core::Guid;
@@ -27,6 +29,8 @@ use self::tree::{PendingCreate, RenameState, RenderCtx};
 /// Content of the "Asset Browser" tab.
 pub(crate) fn draw_asset_browser_content(
     ui: &mut egui::Ui,
+    focused: bool,
+    nav: &mut tree::AssetNav,
     catalog: &[AssetCatalogEntry],
     selected_asset: &mut Option<Guid>,
     current_folder: &mut Option<PathBuf>,
@@ -98,18 +102,24 @@ pub(crate) fn draw_asset_browser_content(
     let mut rename: Option<RenameState> = ui.ctx().data(|d| d.get_temp(rename_id));
     let mut pending: Option<PendingCreate> = ui.ctx().data(|d| d.get_temp(pending_id));
 
+    if focused {
+        handle_keyboard(ui, nav, actions, project_root);
+    }
+
     egui::ScrollArea::vertical()
         .id_salt("asset_browser_grid")
         .show(ui, |ui| {
             let mut ctx = RenderCtx {
                 needle: &needle,
-                selected_asset,
-                current_folder,
                 actions,
                 rename: &mut rename,
                 pending: &mut pending,
                 writable: true,
+                nav,
             };
+            // Cleared here and refilled as rows are drawn, so the list the
+            // keyboard reads next frame is exactly what is on screen now.
+            ctx.nav.rows.clear();
 
             if let Some(root) = project_root {
                 let entries = entries_under(catalog, root);
@@ -122,6 +132,26 @@ pub(crate) fn draw_asset_browser_content(
                 tree::render_root(ui, "Engine (read-only)", root, &entries, &mut ctx);
             }
         });
+
+    // The single writer. The cursor was moved above by whichever hand the
+    // user used, and this is where — and the only place — that becomes a
+    // selection. Placed after the tree so it reads the rows just drawn
+    // rather than last frame's.
+    if let Some(row) = nav.take_cursor_move() {
+        match row.is_folder {
+            true => {
+                *current_folder = Some(row.path);
+                *selected_asset = None;
+            }
+            false => {
+                // A file's folder is what new files go into, so arrowing
+                // onto a file keeps the import destination somewhere that
+                // exists.
+                *current_folder = row.path.parent().map(Path::to_path_buf);
+                *selected_asset = asset_guid_at(&row.path);
+            }
+        }
+    }
 
     ui.ctx().data_mut(|d| {
         match rename {
@@ -193,4 +223,86 @@ fn entries_under<'a>(catalog: &'a [AssetCatalogEntry], root: &Path) -> Vec<&'a A
         .iter()
         .filter(|e| e.path.starts_with(root))
         .collect()
+}
+
+/// Moves the cursor through the tree, and acts on the row it lands on.
+///
+/// Reads the rows the renderer recorded last frame — see `tree::nav` for
+/// why the list comes from there rather than from a second walk. Only
+/// reached when this panel has focus (#661).
+fn handle_keyboard(
+    ui: &egui::Ui,
+    nav: &mut tree::AssetNav,
+    actions: &mut Vec<EditorAction>,
+    project_root: Option<&Path>,
+) {
+    // Cleared every frame: a scroll request is for the frame after the key,
+    // and leaving it set would fight the scrollbar for as long as the
+    // cursor existed.
+    nav.scroll_to_cursor = false;
+
+    // A text field with keyboard focus owns the arrows. Inline rename and
+    // inline create both put one in this tree, and a caret that cannot
+    // move is worse than a cursor that does not.
+    if ui.memory(|m| m.focused().is_some()) {
+        return;
+    }
+
+    let (up, down, left, right, home, end, enter) = ui.input(|i| {
+        (
+            i.key_pressed(egui::Key::ArrowUp),
+            i.key_pressed(egui::Key::ArrowDown),
+            i.key_pressed(egui::Key::ArrowLeft),
+            i.key_pressed(egui::Key::ArrowRight),
+            i.key_pressed(egui::Key::Home),
+            i.key_pressed(egui::Key::End),
+            i.key_pressed(egui::Key::Enter),
+        )
+    });
+
+    if up {
+        nav.step(-1);
+    }
+    if down {
+        nav.step(1);
+    }
+    if right {
+        nav.expand_or_enter();
+    }
+    if left {
+        nav.collapse_or_parent();
+    }
+    if home {
+        nav.to_edge(false);
+    }
+    if end {
+        nav.to_edge(true);
+    }
+
+    // Enter used to *commit* the cursor — make it the create target, or
+    // send it to the Inspector. Both of those now happen the moment the
+    // cursor moves, so all that is left is the one thing Enter does that
+    // moving a cursor does not: open the file, same as a double-click.
+    if enter
+        && let Some(row) = nav.current()
+        && !row.is_folder
+        && let Some(root) = project_root
+    {
+        actions.push(EditorAction::OpenInIde {
+            root: root.to_path_buf(),
+            file: row.path.clone(),
+        });
+    }
+}
+
+/// The registered asset at `path`, if there is one.
+///
+/// Read from the `.meta` beside the file rather than from the catalog:
+/// the catalog is keyed by guid, and the keyboard only knows a path.
+fn asset_guid_at(path: &Path) -> Option<Guid> {
+    // `read_meta`, not `read_or_create`: navigating past a plain file must
+    // not write a `.meta` beside it.
+    ome_core::asset_meta::read_meta(path)
+        .ok()
+        .map(|meta| meta.guid)
 }

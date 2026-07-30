@@ -93,7 +93,7 @@ fn save_as_then_load_round_trips() {
     }
 
     let mut sm = SceneManager::new();
-    let path = tmp_path("round_trip.ome_scene");
+    let path = tmp_path("round_trip.scene");
     sm.save_as(path.clone(), &mut resources).unwrap();
 
     assert_eq!(sm.current(), Some(path.as_path()));
@@ -157,7 +157,7 @@ fn load_preserves_ephemeral_entities() {
 
     // Save a scene containing only the persistent entity (hp=1).
     let mut sm = SceneManager::new();
-    let path = tmp_path("ephemeral.ome_scene");
+    let path = tmp_path("ephemeral.scene");
     sm.save_as(path.clone(), &mut resources).unwrap();
 
     // Reload — ephemeral hp=99 entity must survive the swap.

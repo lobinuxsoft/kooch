@@ -36,8 +36,8 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     }
 
     let mut limits = wgpu::Limits::default();
-    limits.max_storage_textures_per_shader_stage = 16
-        .min(adapter.limits().max_storage_textures_per_shader_stage);
+    limits.max_storage_textures_per_shader_stage =
+        16.min(adapter.limits().max_storage_textures_per_shader_stage);
     // #493 vbuf64 raster pipeline uses 5 bind groups (camera, pool,
     // visible, instances, vbuf64); #454 adds bind group 5 for the
     // triangle-density accumulator + the uniform that gates the
@@ -46,8 +46,8 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
     // #454.6 cull pipeline jumps from 8 → 9 storage buffers; bump
     // alongside the production GpuContext.
-    limits.max_storage_buffers_per_shader_stage = 16
-        .min(adapter.limits().max_storage_buffers_per_shader_stage);
+    limits.max_storage_buffers_per_shader_stage =
+        16.min(adapter.limits().max_storage_buffers_per_shader_stage);
 
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("vbuf64_stage_creation_test_device"),
@@ -63,9 +63,7 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
 #[test]
 fn vbuf64_stage_creates_without_uncaptured_errors() {
     let Some((device, _queue)) = try_acquire_device_vbuf64() else {
-        eprintln!(
-            "vbuf64 features unavailable on this adapter — skipping pipeline creation test"
-        );
+        eprintln!("vbuf64 features unavailable on this adapter — skipping pipeline creation test");
         return;
     };
 

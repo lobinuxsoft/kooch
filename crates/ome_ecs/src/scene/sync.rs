@@ -36,6 +36,69 @@ pub fn spawn_scene_into(
     scene: &SceneDocument,
     resources: &mut Resources,
 ) -> Result<(), SceneError> {
+    spawn_returning(scene, resources).map(|_| ())
+}
+
+/// Stamps out a copy of `prefab` inside the scene `into`, and hands back
+/// its root.
+///
+/// # Instancing is not opening
+///
+/// Opening a scene maps the file's entity ids one-to-one onto entities and
+/// can be saved back to the file. Instancing remaps them, and the result
+/// belongs to the scene that contains it. Only the first has a reason to
+/// refuse a second copy — which is why #609's "already open" rule must not
+/// reach here.
+///
+/// # What an instance keeps, and what it does not
+///
+/// The entities are baked into `into`: they carry no link back to the file
+/// they came from, so editing the prefab afterwards does not update them
+/// (#611 Phase B is where that link and its per-field overrides live). What
+/// this does give is the operation a game actually needs — spawn a bullet,
+/// a tree, an enemy — and none of it is thrown away by adding the link
+/// later.
+///
+/// Fails with [`SceneError::NotASingleRoot`] when the document is not one
+/// tree; see there for why a unit needs a single root.
+pub fn instantiate(
+    prefab: &SceneDocument,
+    resources: &mut Resources,
+    into: ome_core::Guid,
+) -> Result<crate::entity::Entity, SceneError> {
+    use crate::persistent_id::PersistentIdAllocator;
+
+    // Checked before anything is spawned: a multi-root document would
+    // otherwise leave its entities in the world with no root to hand back,
+    // and the caller has no way to undo a partial spawn.
+    let root = prefab.root_index()?;
+
+    // Created on demand — a hand-built `Resources` (tests, headless tools)
+    // will not have had `EcsPlugin` insert one.
+    if resources.get::<PersistentIdAllocator>().is_none() {
+        resources.insert(PersistentIdAllocator::new());
+    }
+    let instance = {
+        let mut allocator = resources
+            .remove::<PersistentIdAllocator>()
+            .expect("just inserted");
+        let instance = prefab.as_instance_of(into, &mut allocator);
+        resources.insert(allocator);
+        instance
+    };
+
+    let spawned = spawn_returning(&instance, resources)?;
+    // `spawn_returning` pushes one entity per description, in order, so the
+    // index the root was found at addresses the same entity here.
+    Ok(spawned[root])
+}
+
+/// Shared body of [`spawn_scene_into`] and [`instantiate`], handing back
+/// the entities it spawned in document order.
+fn spawn_returning(
+    scene: &SceneDocument,
+    resources: &mut Resources,
+) -> Result<Vec<crate::entity::Entity>, SceneError> {
     use crate::hierarchy::Parent;
 
     // Identity has to be a known type before the spawn pass, or the ids
@@ -188,7 +251,7 @@ pub fn spawn_scene_into(
     // Resolve entity references now that every entity exists.
     resolve_deferred(resources, deferred);
 
-    Ok(())
+    Ok(spawned_order)
 }
 
 /// Records which scene an entity was authored in.

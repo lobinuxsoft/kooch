@@ -16,13 +16,13 @@
 mod menus;
 mod model;
 mod naming;
+mod nav;
 mod render;
 mod visuals;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use egui::collapsing_header::CollapsingState;
-use ome_core::Guid;
 
 use crate::icons;
 
@@ -33,17 +33,26 @@ use menus::folder_menu;
 use render::render_children;
 
 pub(in crate::panels) use model::{FolderNode, PendingCreate, RenameState};
+pub(crate) use nav::AssetNav;
 
+/// What drawing the tree needs.
+///
+/// Deliberately without the selection. The renderer's only job regarding
+/// it is to move the cursor; what that selects is derived from the cursor
+/// once, by the panel, so there is a single writer — see
+/// [`AssetNav::take_cursor_move`]. Handing the selection down here is what
+/// let a click and an arrow key disagree about which row was selected.
 pub(crate) struct RenderCtx<'a> {
     pub needle: &'a str,
-    pub selected_asset: &'a mut Option<Guid>,
-    pub current_folder: &'a mut Option<PathBuf>,
     pub actions: &'a mut Vec<EditorAction>,
     pub rename: &'a mut Option<RenameState>,
     pub pending: &'a mut Option<PendingCreate>,
     /// `true` for the project root (writable: menus + folder targeting),
     /// `false` for the read-only engine root.
     pub writable: bool,
+    /// Keyboard state. The renderer records the rows it draws here, and
+    /// applies whatever the keyboard asked for on the way past.
+    pub nav: &'a mut AssetNav,
 }
 
 /// Renders one source root as a top-level collapsible node. `root_path`

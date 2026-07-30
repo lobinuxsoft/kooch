@@ -64,7 +64,7 @@ pub(super) fn save_scene_as(
 /// the same picker — the two processes see the same filesystem, so the
 /// path the user picks is meaningful on either side of the wire.
 pub(crate) fn scene_dialog(resources: &Resources) -> rfd::FileDialog {
-    let mut dialog = rfd::FileDialog::new().add_filter("OME Scene", &["ome_scene"]);
+    let mut dialog = rfd::FileDialog::new().add_filter("Scene", &[crate::project::SCENE_EXTENSION]);
     if let Some(dir) = resources
         .get::<crate::project_state::ProjectState>()
         .and_then(|ps| {

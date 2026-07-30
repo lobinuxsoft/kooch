@@ -100,6 +100,27 @@ pub(super) fn leaf_menu(
     actions: &mut Vec<EditorAction>,
     rename: &mut Option<RenameState>,
 ) {
+    // Prefabs only. A scene is the same format but not the same invariant:
+    // it may have any number of roots, and instancing needs exactly one.
+    // Offering this on a scene meant a four-root scene failed at the click
+    // instead of never being offered — see `project::PREFAB_EXTENSION`.
+    //
+    // Instancing adds to the open scene, unlike File > Open Scene which
+    // replaces it.
+    if leaf
+        .path
+        .extension()
+        .is_some_and(|ext| ext == crate::project::PREFAB_EXTENSION)
+        && ui
+            .button(format!("{} Instantiate into Scene", icons::PACKAGE))
+            .clicked()
+    {
+        actions.push(EditorAction::InstantiatePrefab {
+            path: leaf.path.clone(),
+            at: crate::viewport_pick::DropPoint::Authored,
+        });
+        ui.close();
+    }
     if ui.button("Open in IDE").clicked() {
         actions.push(EditorAction::OpenInIde {
             root: root.to_path_buf(),

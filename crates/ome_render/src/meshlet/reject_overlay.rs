@@ -97,7 +97,7 @@ impl MeshletRejectOverlay {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: NonZeroU64::new(
-                            std::mem::size_of::<OverlayParams>() as u64,
+                            std::mem::size_of::<OverlayParams>() as u64
                         ),
                     },
                     count: None,

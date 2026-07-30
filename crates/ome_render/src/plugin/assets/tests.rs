@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use ome_core::app::App;
 use ome_core::asset_database::AssetDatabase;
 use ome_core::asset_loader::AssetServer;
-use ome_core::asset_meta::{write_meta, AssetMeta};
+use ome_core::asset_meta::{AssetMeta, write_meta};
 use ome_core::assets::Assets;
 use ome_core::plugin::Plugin;
 

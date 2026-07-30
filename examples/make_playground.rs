@@ -69,7 +69,7 @@ fn main() {
     let root = ome_editor_core::project::create_project(name, &parent, &engine_root)
         .expect("creating the project");
     scene(&assets)
-        .save(&root.join("scenes/default.ome_scene"))
+        .save(&root.join(ome_core::scene_paths::DEFAULT_SCENE_REL_PATH))
         .expect("writing the scene");
 
     println!("\nproject ready: {}\n", root.display());

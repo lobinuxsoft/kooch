@@ -126,6 +126,17 @@ pub struct EditorOverlay {
     pub(crate) winit_state: SharedWinitState,
     pub(crate) renderer: egui_wgpu::Renderer,
     pub(crate) dock_state: DockState<EditorTab>,
+    /// Which panel the keyboard belongs to.
+    ///
+    /// Session state rather than persisted: on a fresh start nothing is
+    /// focused, so no panel answers the arrows until the user has said
+    /// which one they mean (#661).
+    pub(crate) focused_tab: Option<EditorTab>,
+    /// The Asset Browser's keyboard cursor, and the rows the renderer drew
+    /// last frame for it to walk.
+    pub(crate) asset_nav: crate::panels::asset_browser::AssetNav,
+    /// The Inspector's cursor over component sections.
+    pub(crate) inspector_nav: crate::panels::inspector::InspectorNav,
     pub(crate) selected_entities: Vec<Entity>,
     /// Anchor index for Shift+Click range selection in the World panel.
     pub(crate) last_clicked_index: Option<usize>,

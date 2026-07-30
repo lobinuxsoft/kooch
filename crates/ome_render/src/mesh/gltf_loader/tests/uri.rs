@@ -2,10 +2,8 @@
 //! `.bin` resolution, embedded `data:` URI decoding, and the hygiene
 //! gates that reject traversal / absolute-path / malformed payloads.
 
-use super::helpers::{
-    build_data_uri_gltf, cleanup_tmpdir, make_tmpdir, write_separate_gltf_pair,
-};
-use super::super::{parse_mesh_bytes_full, GltfMeshError};
+use super::super::{GltfMeshError, parse_mesh_bytes_full};
+use super::helpers::{build_data_uri_gltf, cleanup_tmpdir, make_tmpdir, write_separate_gltf_pair};
 
 #[test]
 fn separate_gltf_loads_with_sidecar_buffer() {
@@ -16,8 +14,7 @@ fn separate_gltf_loads_with_sidecar_buffer() {
     let (gltf_path, _bin_path) = write_separate_gltf_pair(&dir, "scene", "scene.bin");
 
     let bytes = std::fs::read(&gltf_path).expect("read gltf");
-    let mesh = parse_mesh_bytes_full(&bytes, 1.0, Some(&dir))
-        .expect("sidecar buffer must resolve");
+    let mesh = parse_mesh_bytes_full(&bytes, 1.0, Some(&dir)).expect("sidecar buffer must resolve");
 
     assert_eq!(mesh.vertex_count(), 3);
     assert_eq!(mesh.indices, vec![0, 1, 2]);

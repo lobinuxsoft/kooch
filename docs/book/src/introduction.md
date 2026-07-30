@@ -36,7 +36,7 @@ What works today:
 - Rigid-body physics on rapier3d: colliders, joints, collision events, sensors, materials,
   and custom gravity fields that sum.
 - Procedural sky and volumetric clouds.
-- Scene serialisation (`.ome_scene`, RON) driven by reflection, with more than one scene
+- Scene serialisation (`.scene`, RON) driven by reflection, with more than one scene
   loadable at once.
 - An editor: viewport, hierarchy, Inspector, Console, asset browser, drag-and-drop, dockable
   layout, undo/redo, project Hub, and Play/Stop that snapshots and restores the authored

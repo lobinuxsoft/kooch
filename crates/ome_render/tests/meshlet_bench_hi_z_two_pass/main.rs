@@ -39,8 +39,8 @@
 
 #[path = "../common/mod.rs"]
 mod common;
-mod rig;
 mod render_paths;
+mod rig;
 
 pub(crate) const RT_SIZE: u32 = 256;
 pub(crate) const FRAME_COUNT: usize = 32;
@@ -52,8 +52,8 @@ pub(crate) const OVERHEAD_BUDGET: f64 = 2.25;
 
 pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-use rig::build_rig;
 use render_paths::{render_single_pass, render_two_pass};
+use rig::build_rig;
 
 fn measure(label: &str, mut step: impl FnMut()) -> f64 {
     for _ in 0..WARMUP_FRAMES {

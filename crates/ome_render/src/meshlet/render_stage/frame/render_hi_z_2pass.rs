@@ -70,36 +70,31 @@ impl MeshletRenderStage {
         // the conservative "nothing in front" baseline.
         if !self.hi_z_initialized {
             {
-                let mut clear_enc = device.create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor {
+                let mut clear_enc =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                         label: Some("meshlet_hi_z_init_depth_clear_encoder"),
-                    },
-                );
-                let _depth_clear =
-                    clear_enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("meshlet_hi_z_first_frame_depth_clear"),
-                        color_attachments: &[],
-                        depth_stencil_attachment: Some(
-                            wgpu::RenderPassDepthStencilAttachment {
-                                view: &self.depth_view,
-                                depth_ops: Some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(0.0),
-                                    store: wgpu::StoreOp::Store,
-                                }),
-                                stencil_ops: None,
-                            },
-                        ),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
                     });
+                let _depth_clear = clear_enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("meshlet_hi_z_first_frame_depth_clear"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(0.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
                 drop(_depth_clear);
                 queue.submit(std::iter::once(clear_enc.finish()));
             }
-            let mut init_enc =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("meshlet_hi_z_init_build_encoder"),
-                });
+            let mut init_enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("meshlet_hi_z_init_build_encoder"),
+            });
             {
                 let hiz_prev = self.hiz_prev.as_ref().expect("just allocated");
                 hiz_prev.init_to_far(
@@ -118,12 +113,8 @@ impl MeshletRenderStage {
             let (w, h) = hiz_prev.dimensions();
             (w, h, hiz_prev.mip_count())
         };
-        let hi_z_params = crate::meshlet::dispatcher::HiZTestParams::new(
-            view_proj,
-            hiz_w,
-            hiz_h,
-            mip_count,
-        );
+        let hi_z_params =
+            crate::meshlet::dispatcher::HiZTestParams::new(view_proj, hiz_w, hiz_h, mip_count);
 
         // Pass A: AABB-based cull against hiz_prev.
         {

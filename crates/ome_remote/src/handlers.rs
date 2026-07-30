@@ -102,6 +102,14 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
                 ),
             }
         }
+        Method::SavePrefab { entity, path } => match save_prefab(resources, *entity, path) {
+            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Err(e) => Response::err(id, e),
+        },
+        Method::InstantiatePrefab { path } => match instantiate_prefab(resources, path) {
+            Ok(entity) => Response::ok(id, ResponseData::Spawned { entity }),
+            Err(e) => Response::err(id, e),
+        },
         Method::LoadScene { path } => match load_scene(resources, path) {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
@@ -235,6 +243,44 @@ fn resolve_entity(resources: &Resources, id: EntityId) -> Result<Entity, RemoteE
     } else {
         Err(RemoteError::NoSuchEntity { entity: id })
     }
+}
+
+/// Captures `entity` and its descendants into a scene file.
+fn save_prefab(resources: &mut Resources, entity: EntityId, path: &str) -> Result<(), RemoteError> {
+    let entity = resolve_entity(resources, entity)?;
+    let document = SceneDocument::from_ecs_subtree(resources, entity);
+    // A prefab file promises exactly one root — the invariant its extension
+    // names. Enforced on write so it cannot be discovered at the click that
+    // instances it.
+    document.root_index().map_err(|e| RemoteError::SceneError {
+        detail: e.to_string(),
+    })?;
+    document
+        .save(path.as_ref())
+        .map_err(|e| RemoteError::SceneError {
+            detail: e.to_string(),
+        })
+}
+
+/// Stamps a prefab file into the live world and hands back its root.
+fn instantiate_prefab(resources: &mut Resources, path: &str) -> Result<EntityId, RemoteError> {
+    let prefab = SceneDocument::load(path.as_ref()).map_err(|e| RemoteError::SceneError {
+        detail: e.to_string(),
+    })?;
+
+    // The instance belongs to the scene being edited. With no scene active
+    // it becomes its own — a fresh guid rather than a shared sentinel,
+    // which two unrelated instances would collide inside.
+    let into = resources
+        .get::<ome_ecs::SceneManager>()
+        .and_then(|scenes| scenes.active_id())
+        .unwrap_or_else(ome_core::Guid::new_v4);
+
+    ome_ecs::scene::instantiate(&prefab, resources, into)
+        .map(EntityId::from)
+        .map_err(|e| RemoteError::SceneError {
+            detail: e.to_string(),
+        })
 }
 
 /// Resolves a component name to a local `TypeId`.

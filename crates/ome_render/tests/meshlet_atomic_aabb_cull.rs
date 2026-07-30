@@ -17,8 +17,8 @@ mod common;
 use common::{build_cube_mesh, try_acquire_device};
 use glam::{Mat4, Vec3};
 use ome_render::meshlet::{
-    build_default_meshlets, decode_scene_visible_id, CullParams, GlobalMeshPool, MeshInstance,
-    MeshletCull, MeshletScene, SceneCullParams, DEFAULT_MAX_TRIANGLES,
+    CullParams, DEFAULT_MAX_TRIANGLES, GlobalMeshPool, MeshInstance, MeshletCull, MeshletScene,
+    SceneCullParams, build_default_meshlets, decode_scene_visible_id,
 };
 use std::collections::BTreeSet;
 
@@ -43,10 +43,26 @@ fn atomic_pool_cull_drops_off_frustum_aabb() {
     // last two; sphere bounds would also drop them, but we keep the
     // gap large so even a buggy AABB couldn't pass them.
     let instances = vec![
-        MeshInstance::new(Mat4::from_translation(Vec3::new(-0.5, 0.0, 0.0)), mesh_handle.mesh_id, 0),
-        MeshInstance::new(Mat4::from_translation(Vec3::new(0.5, 0.0, 0.0)), mesh_handle.mesh_id, 0),
-        MeshInstance::new(Mat4::from_translation(Vec3::new(0.0, 0.0, -200.0)), mesh_handle.mesh_id, 0),
-        MeshInstance::new(Mat4::from_translation(Vec3::new(100.0, 0.0, 0.0)), mesh_handle.mesh_id, 0),
+        MeshInstance::new(
+            Mat4::from_translation(Vec3::new(-0.5, 0.0, 0.0)),
+            mesh_handle.mesh_id,
+            0,
+        ),
+        MeshInstance::new(
+            Mat4::from_translation(Vec3::new(0.5, 0.0, 0.0)),
+            mesh_handle.mesh_id,
+            0,
+        ),
+        MeshInstance::new(
+            Mat4::from_translation(Vec3::new(0.0, 0.0, -200.0)),
+            mesh_handle.mesh_id,
+            0,
+        ),
+        MeshInstance::new(
+            Mat4::from_translation(Vec3::new(100.0, 0.0, 0.0)),
+            mesh_handle.mesh_id,
+            0,
+        ),
     ];
 
     let scene = MeshletScene::new(&device, instances.len() as u32);
@@ -95,13 +111,7 @@ fn atomic_pool_cull_drops_off_frustum_aabb() {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("atomic_pool_cull_readback"),
         });
-        enc.copy_buffer_to_buffer(
-            cull.visible_meshlets_buffer(),
-            0,
-            &staging,
-            0,
-            byte_count,
-        );
+        enc.copy_buffer_to_buffer(cull.visible_meshlets_buffer(), 0, &staging, 0, byte_count);
         queue.submit(std::iter::once(enc.finish()));
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();

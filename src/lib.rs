@@ -92,7 +92,7 @@ pub mod prelude {
 /// [`RenderPlugin`](ome_render::RenderPlugin) based on enabled features.
 ///
 /// `SceneBootstrapPlugin` resolves the initial scene from `--scene <path>`
-/// CLI args or falls back to `scenes/default.ome_scene` relative to cwd.
+/// CLI args or falls back to `scenes/default.scene` relative to cwd.
 ///
 /// # Example
 /// ```ignore

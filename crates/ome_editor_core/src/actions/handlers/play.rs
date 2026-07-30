@@ -27,7 +27,7 @@ pub(super) fn handle_play(resources: &mut Resources) {
         return;
     }
     let doc = ome_ecs::SceneDocument::from_ecs(resources);
-    let scene_path = std::env::temp_dir().join("ome_play_scene.ome_scene");
+    let scene_path = std::env::temp_dir().join("ome_play_scene.scene");
     if let Err(e) = doc.save(&scene_path) {
         tracing::error!("failed to save play scene: {e}");
     } else if let Some(play_state) = resources.get_mut::<PlayState>()

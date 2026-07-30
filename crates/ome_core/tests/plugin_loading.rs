@@ -41,7 +41,10 @@ fn plugin_path() -> PathBuf {
 
 /// Collects what a plugin registers, so the test asserts on the effect
 /// rather than on the absence of an error.
-fn recording_resources() -> (Resources, std::sync::Arc<std::sync::Mutex<Vec<ComponentSchema>>>) {
+fn recording_resources() -> (
+    Resources,
+    std::sync::Arc<std::sync::Mutex<Vec<ComponentSchema>>>,
+) {
     let seen: std::sync::Arc<std::sync::Mutex<Vec<ComponentSchema>>> = Default::default();
     let recorder = std::sync::Arc::clone(&seen);
 

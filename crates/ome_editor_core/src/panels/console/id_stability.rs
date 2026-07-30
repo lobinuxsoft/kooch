@@ -53,7 +53,7 @@ fn console_rows_keep_their_ids_as_lines_arrive() {
         // Several lines land between frames — the state of a console
         // attached to a project that is talking.
         fill(&buffer, 1000 + frame as u32 * 10, 7);
-        draw_console(ui, Some(&buffer), &mut state);
+        draw_console(ui, false, Some(&buffer), &mut state);
     });
 
     drop(guard);
@@ -78,7 +78,9 @@ fn console_rows_are_stable_when_nothing_arrives() {
     fill(&buffer, 0, 400);
     let mut state = ConsoleState::default();
 
-    let complaints = drawing(4, |ui, _| draw_console(ui, Some(&buffer), &mut state));
+    let complaints = drawing(4, |ui, _| {
+        draw_console(ui, false, Some(&buffer), &mut state)
+    });
 
     drop(guard);
     assert!(
@@ -117,7 +119,7 @@ fn scrolling_under_the_mouse_keeps_the_row_ids() {
     state.follow = false;
 
     let complaints = drawing_with(30, |ui, frame| {
-        draw_console(ui, Some(&buffer), &mut state);
+        draw_console(ui, false, Some(&buffer), &mut state);
         Frame {
             // Over the rows, near the right edge where the bar lives.
             pointer: Some(egui::pos2(880.0, 300.0 + (frame % 5) as f32 * 20.0)),
@@ -166,7 +168,7 @@ fn scrolling_inside_a_dock_keeps_the_row_ids() {
         }
 
         fn ui(&mut self, ui: &mut egui::Ui, _tab: &mut Self::Tab) {
-            draw_console(ui, Some(self.buffer), self.state);
+            draw_console(ui, false, Some(self.buffer), self.state);
         }
     }
 

@@ -87,10 +87,7 @@ impl MeshletVisRasterizer {
 
         let camera_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("meshlet_vbuf_camera_bgl"),
-            entries: &[
-                ubo_entry(0, 64),
-                ubo_entry(1, 64),
-            ],
+            entries: &[ubo_entry(0, 64), ubo_entry(1, 64)],
         });
         let visible_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("meshlet_vbuf_visible_bgl"),
@@ -106,16 +103,17 @@ impl MeshletVisRasterizer {
             bind_group_layouts: &[Some(&camera_bgl), Some(meshlet_bgl), Some(&visible_bgl)],
             immediate_size: 0,
         });
-        let pipeline_layout_scene = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("meshlet_vbuf_pipeline_layout_scene"),
-            bind_group_layouts: &[
-                Some(&camera_bgl),
-                Some(meshlet_bgl),
-                Some(&visible_bgl),
-                Some(&instances_bgl),
-            ],
-            immediate_size: 0,
-        });
+        let pipeline_layout_scene =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("meshlet_vbuf_pipeline_layout_scene"),
+                bind_group_layouts: &[
+                    Some(&camera_bgl),
+                    Some(meshlet_bgl),
+                    Some(&visible_bgl),
+                    Some(&instances_bgl),
+                ],
+                immediate_size: 0,
+            });
 
         let depth_stencil = depth_format.map(|format| wgpu::DepthStencilState {
             format,

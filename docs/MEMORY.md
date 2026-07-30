@@ -1324,3 +1324,23 @@ Hoy son ~12 assets así que no se nota; con un catálogo grande es el mismo bug.
 - `docs/research/implementation_checklist_2026-05-02.md` — phased roadmap con exit gates.
 - `docs/research/editor-three-system-architecture.md`, `sdf-csg-composition.md`, `wgpu-capabilities.md`.
 - `docs/book/` — mdBook.
+
+## 2026-07-30 — `.scene` y `.prefab`, no `.ome_scene`
+
+Un prefab y una escena son el **mismo `SceneDocument`** escrito por el mismo serializador.
+Lo que difiere es un **invariante**: un prefab tiene exactamente una raíz, una escena
+cualquier cantidad. Con una sola extensión no había nada que los distinguiera, así que el
+editor ofrecía "instantiate" sobre cualquier escena y una de 4 raíces fallaba *en el click*
+con un error que el usuario no podía anticipar.
+
+Dos extensiones, un formato — la misma línea que traza Unity (`.unity` y `.prefab` son el
+mismo YAML). El invariante se chequea **al escribir**, así que todo `.prefab` en disco se
+puede instanciar.
+
+Se cayó el prefijo `ome_`: namespaceaba contra una colisión que no ocurre (los archivos
+viven en el `scenes/`/`assets/` del propio proyecto, no en una carpeta compartida) y hacía
+del *engine* lo visible de un archivo cuya propiedad interesante es su formato.
+
+Migración: 10 archivos renombrados en 4 proyectos, más el `main_scene` de 3 `project.ome`
+— ese puntero es lo que habría roto el arranque en silencio. Sin fallback de lectura:
+no quedó nada con la extensión vieja.

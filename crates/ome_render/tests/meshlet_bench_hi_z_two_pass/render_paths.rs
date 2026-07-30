@@ -1,7 +1,7 @@
 use ome_render::meshlet::HiZTestParams;
 
-use crate::rig::BenchRig;
 use crate::RT_SIZE;
+use crate::rig::BenchRig;
 
 pub(crate) fn render_single_pass(rig: &BenchRig) {
     let mut enc = rig
@@ -87,12 +87,8 @@ pub(crate) fn render_two_pass(rig: &mut BenchRig, arena: &mut Vec<wgpu::BindGrou
         0,
         true,
     );
-    rig.hiz_curr.build_from_depth(
-        &rig.device,
-        &mut enc,
-        &rig.depth_sample_view,
-        arena,
-    );
+    rig.hiz_curr
+        .build_from_depth(&rig.device, &mut enc, &rig.depth_sample_view, arena);
     rig.cull.dispatch_cull_pass_b(
         &rig.device,
         &rig.queue,

@@ -4,21 +4,17 @@ use crate::meshlet::cull::CullParams;
 use crate::meshlet::gpu_meshlet::meshlet_bind_group_layout;
 use crate::meshlet::scene::{MeshletScene, SceneCullParams};
 
-use super::super::types::{DrawIndirectArgs, HiZTestParams};
 use super::super::MeshletCull;
-use super::bgls::*;
+use super::super::types::{DrawIndirectArgs, HiZTestParams};
 use super::CULL_SHADER_SOURCE;
+use super::bgls::*;
 
 impl MeshletCull {
     /// Creates a dispatcher sized for at most `capacity` visible
     /// meshlets per frame. `max_triangles_per_meshlet` controls the
     /// fixed `vertex_count` used by the indirect draw — must match the
     /// builder's setting (default `meshlet::DEFAULT_MAX_TRIANGLES`).
-    pub fn new(
-        device: &wgpu::Device,
-        capacity: u32,
-        max_triangles_per_meshlet: u32,
-    ) -> Self {
+    pub fn new(device: &wgpu::Device, capacity: u32, max_triangles_per_meshlet: u32) -> Self {
         assert!(capacity > 0, "MeshletCull capacity must be non-zero");
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -73,11 +69,12 @@ impl MeshletCull {
         // shared with the per-mesh path, group(2) instance buffer +
         // SceneCullParams. group(1) is unused here so the layout array
         // marks it None.
-        let pipeline_layout_scene = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("meshlet_cull_scene_pipeline_layout"),
-            bind_group_layouts: &[Some(&cull_bgl), None, Some(&scene_bgl)],
-            immediate_size: 0,
-        });
+        let pipeline_layout_scene =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("meshlet_cull_scene_pipeline_layout"),
+                bind_group_layouts: &[Some(&cull_bgl), None, Some(&scene_bgl)],
+                immediate_size: 0,
+            });
         let pipeline_scene = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("meshlet_cull_scene_pipeline"),
             layout: Some(&pipeline_layout_scene),

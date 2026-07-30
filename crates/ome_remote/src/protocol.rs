@@ -142,6 +142,23 @@ pub enum Method {
     },
     /// Persist the live ECS to a scene file on the server's disk.
     SaveScene { path: String },
+    /// Write one entity and its descendants to a scene file — a prefab.
+    ///
+    /// Server-side because the world it captures lives here; the editor's
+    /// mirror is a projection and is not what should be written to disk.
+    SavePrefab { entity: EntityId, path: String },
+    /// Stamp a prefab file into the live ECS, returning its root.
+    ///
+    /// Distinct from [`Self::LoadScene`], which *replaces* the world. This
+    /// adds to it, with identity remapped so the same file can be
+    /// instanced more than once.
+    ///
+    /// No position parameter: the root comes back, so placing it is a
+    /// `SetField` on its `Transform`. The wire format carries no spatial
+    /// types of its own — everything spatial travels as a `ReflectValue`,
+    /// and a second way to move an entity is a second thing to keep in step
+    /// with the first.
+    InstantiatePrefab { path: String },
     /// Replace the live ECS with a scene file from the server's disk.
     LoadScene { path: String },
     /// Start or stop the project's gameplay systems in place.

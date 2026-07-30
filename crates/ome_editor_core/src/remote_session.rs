@@ -146,7 +146,7 @@ impl RemoteSession {
             // `cargo run --manifest-path` does NOT move the child's
             // working directory to the manifest's folder — it inherits
             // the editor's. Without this the project resolves its boot
-            // scene (`scenes/default.ome_scene`, cwd-relative) against
+            // scene (`scenes/default.scene`, cwd-relative) against
             // the editor's directory and comes up with an empty world.
             cmd.current_dir(project_root);
         }

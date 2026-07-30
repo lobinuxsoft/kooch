@@ -68,6 +68,33 @@ pub struct ComponentDescription {
     pub fields: Vec<(String, ReflectValue)>,
 }
 
+/// The last segment of a full type path.
+///
+/// Component descriptions store the full path, which differs between a
+/// type moving crates and the same type staying put; the tail is what
+/// stays stable and is already what the capture pass matches `Name` on.
+fn short_name(type_name: &str) -> &str {
+    type_name.rsplit("::").next().unwrap_or(type_name)
+}
+
+/// What a capture takes out of the live world.
+///
+/// Three answers to one question, named rather than encoded as an
+/// `Option<Guid>` that meant "one scene, or else everything". A prefab
+/// is a third answer, and bolting it on as a second flag would let the
+/// two disagree about what "everything" excludes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Capture {
+    /// The whole world. What Play and the remote protocol mirror — they
+    /// reflect what is running, not what one file owns.
+    Everything,
+    /// One scene's members. With several scenes open, saving one must not
+    /// drag in another's entities.
+    Scene(Guid),
+    /// One entity and everything under it — a prefab (#611).
+    Subtree(crate::entity::Entity),
+}
+
 // ---------------------------------------------------------------------------
 // SceneDocument methods
 // ---------------------------------------------------------------------------
@@ -123,6 +150,118 @@ impl SceneDocument {
         None
     }
 
+    /// The index of the one entity with no parent inside this document.
+    ///
+    /// Every non-root of a captured subtree carries a `Parent` pointing
+    /// inside the file, so the root is what is left. Returns
+    /// [`SceneError::NotASingleRoot`] for zero or several — see there for
+    /// why instancing needs exactly one.
+    pub fn root_index(&self) -> Result<usize, SceneError> {
+        let mut roots = self.entities.iter().enumerate().filter(|(_, entity)| {
+            !entity
+                .components
+                .iter()
+                .any(|component| short_name(&component.type_name) == "Parent")
+        });
+        match (roots.next(), roots.next()) {
+            (Some((index, _)), None) => Ok(index),
+            (first, second) => Err(SceneError::NotASingleRoot {
+                roots: first.is_some() as usize + second.is_some() as usize + roots.count(),
+            }),
+        }
+    }
+
+    /// A copy of this document ready to be spawned as an instance living
+    /// inside the scene `into`.
+    ///
+    /// # What has to change, and what deliberately does not
+    ///
+    /// An [`EntityGuid`] is unique within its scene, not globally — which
+    /// is what makes instancing possible at all. Stamp the same prefab out
+    /// twice without remapping and both copies claim to be "entity 4", so
+    /// a reference to one resolves to whichever was loaded last.
+    ///
+    /// Only the **ids** are remapped. Internal references are already
+    /// written as `scene: None`, meaning "the same scene as the reference
+    /// itself" — a shape that exists precisely so a scene can be relocated
+    /// without rewriting every reference in it. References that name
+    /// another scene are left alone: they point outside this prefab and
+    /// remapping them would break them.
+    ///
+    /// The copy takes `into` as its own id, which is what tags the spawned
+    /// entities as members of the scene that now contains them. A Phase A
+    /// instance is *baked* into that scene: it keeps no link back to the
+    /// file it came from, so editing the prefab later does not update it
+    /// (#611 Phase B).
+    pub fn as_instance_of(
+        &self,
+        into: Guid,
+        allocator: &mut crate::persistent_id::PersistentIdAllocator,
+    ) -> Self {
+        use crate::persistent_id::EntityGuid;
+        use std::collections::HashMap;
+
+        // Every id the file mentions, mapped once, so two fields pointing
+        // at the same entity still point at the same entity afterwards.
+        let mut remap: HashMap<EntityGuid, EntityGuid> = HashMap::new();
+        let mut fresh = |old: EntityGuid, allocator: &mut _| -> EntityGuid {
+            *remap
+                .entry(old)
+                .or_insert_with(|| crate::persistent_id::PersistentIdAllocator::allocate(allocator))
+        };
+
+        // Two passes: identity first, so a reference reaching a field
+        // before its target's `PersistentId` still lands on the same new
+        // id rather than allocating a second one.
+        let mut entities = self.entities.clone();
+        for entity in &mut entities {
+            for component in &mut entity.components {
+                if short_name(&component.type_name) != "PersistentId" {
+                    continue;
+                }
+                for (name, value) in &mut component.fields {
+                    // Reflected as a bare `u64`, so the component it
+                    // belongs to is what identifies it. Zero is the
+                    // `EntityGuid` niche rather than an id, and a file
+                    // carrying one is corrupt — left alone here so the load
+                    // path is the one place that rejects it.
+                    if name == "id"
+                        && let ReflectValue::U64(raw) = value
+                        && let Some(old) = EntityGuid::new(*raw)
+                    {
+                        *value = ReflectValue::U64(fresh(old, allocator).get());
+                    }
+                }
+            }
+        }
+        for entity in &mut entities {
+            for component in &mut entity.components {
+                for (_, value) in &mut component.fields {
+                    let ReflectValue::EntityRef(Some(reference)) = value else {
+                        continue;
+                    };
+                    if let crate::reflect::EntityRef::Persistent { scene, id } = reference {
+                        // `None` is an internal reference; `Some(self.id)`
+                        // is the same thing spelled out. Anything else
+                        // points outside the prefab.
+                        let internal = scene.is_none() || *scene == Some(self.id);
+                        if internal {
+                            *scene = None;
+                            *id = fresh(*id, allocator);
+                        }
+                    }
+                }
+            }
+        }
+
+        Self {
+            id: into,
+            name: self.name.clone(),
+            version: self.version.clone(),
+            entities,
+        }
+    }
+
     /// Loads a scene from a RON file at `path`.
     pub fn load(path: &Path) -> Result<Self, SceneError> {
         let data = std::fs::read_to_string(path)?;
@@ -145,7 +284,7 @@ impl SceneDocument {
     /// skipped entirely — used by editor crates to keep helper entities
     /// (cameras, gizmos) out of user scene files.
     pub fn from_ecs(resources: &mut Resources) -> Self {
-        Self::capture(resources, None, Guid::new_v4())
+        Self::capture(resources, Capture::Everything, Guid::new_v4())
     }
 
     /// Snapshots only the entities belonging to `scene`.
@@ -154,15 +293,36 @@ impl SceneDocument {
     /// entities — that would duplicate them into both files and make the
     /// next load spawn each twice.
     pub fn from_ecs_scene(resources: &mut Resources, scene: Guid) -> Self {
-        Self::capture(resources, Some(scene), scene)
+        Self::capture(resources, Capture::Scene(scene), scene)
     }
 
-    /// Shared body of [`Self::from_ecs`] and [`Self::from_ecs_scene`].
+    /// Snapshots one entity and its descendants as a standalone scene — a
+    /// prefab.
     ///
-    /// `only` restricts the walk to one scene's members; `None` captures
-    /// the whole world, which is what Play and the remote protocol want —
-    /// they mirror what is running, not what one file owns.
-    fn capture(resources: &mut Resources, only: Option<Guid>, id: Guid) -> Self {
+    /// # Why this is a scene and not a new format
+    ///
+    /// A prefab *is* a serialised scene; Unity's is, and Godot makes it
+    /// explicit with `PackedScene`. A second format would mean a second
+    /// serialiser to keep in step with this one, and the one that is not
+    /// exercised by every save is the one that drifts (#611).
+    ///
+    /// # What the capture drops
+    ///
+    /// The root's [`Parent`](crate::hierarchy::Parent) — it points at
+    /// whatever the entity happened to be attached to while being
+    /// authored, which is not part of the prefab. Keeping it would leave
+    /// the file holding a reference to an entity the file does not
+    /// contain, and every instance would try to resolve it.
+    ///
+    /// The document takes a fresh [`Guid`]: it is a new scene, not another
+    /// view of the one it was captured from.
+    pub fn from_ecs_subtree(resources: &mut Resources, root: crate::entity::Entity) -> Self {
+        Self::capture(resources, Capture::Subtree(root), Guid::new_v4())
+    }
+
+    /// Shared body of every `from_ecs*` constructor; see [`Capture`] for
+    /// what each one takes.
+    fn capture(resources: &mut Resources, what: Capture, id: Guid) -> Self {
         // Saving assigns identity: `PersistentId` is opt-in, and whether
         // something is referenced is only known once references are
         // written. See `scene::entity_refs`.
@@ -179,6 +339,22 @@ impl SceneDocument {
             std::any::TypeId::of::<Children>(),
             std::any::TypeId::of::<GlobalTransform>(),
         ];
+        let parent_tid = std::any::TypeId::of::<crate::hierarchy::Parent>();
+
+        // A subtree's membership is resolved once, up front: the walk below
+        // visits archetypes in whatever order they were created, so
+        // "is this entity under the root" cannot be answered as it goes.
+        let subtree = match what {
+            Capture::Subtree(root) => resources
+                .get::<ComponentRegistry>()
+                .map(|components| {
+                    crate::hierarchy::collect_descendants(root, components)
+                        .into_iter()
+                        .collect::<std::collections::HashSet<_>>()
+                })
+                .unwrap_or_default(),
+            _ => std::collections::HashSet::new(),
+        };
 
         // Membership is derived on load, never written — see
         // `SceneMember`. It is read here only to decide what belongs.
@@ -208,15 +384,17 @@ impl SceneDocument {
                     continue;
                 }
                 for &entity in archetype.entities() {
-                    // Restrict to one scene's members when asked.
-                    if let Some(only) = only {
-                        let belongs = components
+                    // Restrict the walk to what was asked for.
+                    let belongs = match what {
+                        Capture::Everything => true,
+                        Capture::Scene(only) => components
                             .get_cpu::<crate::scene_member::SceneMember>()
                             .and_then(|storage| storage.get(entity))
-                            .is_some_and(|member| member.scene == only);
-                        if !belongs {
-                            continue;
-                        }
+                            .is_some_and(|member| member.scene == only),
+                        Capture::Subtree(_) => subtree.contains(&entity),
+                    };
+                    if !belongs {
+                        continue;
                     }
 
                     let mut comp_descs = Vec::new();
@@ -224,6 +402,12 @@ impl SceneDocument {
                     for &type_id in archetype.components() {
                         // Skip hierarchy components and membership.
                         if skip_types.contains(&type_id) || type_id == member_tid {
+                            continue;
+                        }
+
+                        // The prefab's root has no parent inside the file —
+                        // see `from_ecs_subtree`.
+                        if type_id == parent_tid && what == Capture::Subtree(entity) {
                             continue;
                         }
 
@@ -314,6 +498,17 @@ impl SceneDocument {
             indexed_entities.sort_by_key(|(idx, _, _)| *idx);
         }
 
+        // A prefab is named after the entity it was captured from, so the
+        // file and the thing inside it say the same name.
+        let name = match what {
+            Capture::Subtree(root) => indexed_entities
+                .iter()
+                .find(|(_, entity, _)| *entity == root)
+                .map(|(_, _, desc)| desc.name.clone())
+                .unwrap_or_else(|| "Untitled Scene".into()),
+            _ => "Untitled Scene".into(),
+        };
+
         let entities: Vec<EntityDescription> = indexed_entities
             .into_iter()
             .map(|(_, _, desc)| desc)
@@ -321,7 +516,7 @@ impl SceneDocument {
 
         SceneDocument {
             id,
-            name: "Untitled Scene".into(),
+            name,
             version: "0.1.0".into(),
             entities,
         }

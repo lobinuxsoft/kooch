@@ -47,7 +47,7 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     // Non-ECS actions stay on the local path even in remote mode: closing
     // the project, toggling power profiles all act on the editor, not the
     // remote world.
-    let Some(edit) = classify(action) else {
+    let Some(edit) = classify(action, resources) else {
         return false;
     };
 
@@ -312,13 +312,30 @@ enum Edit<'a> {
     /// Write the project's world to a scene file, or replace it from one.
     SaveScene,
     LoadScene,
+    /// Capture one of the project's entities as a prefab file.
+    SavePrefab {
+        entity: ome_ecs::entity::Entity,
+        dest: Option<std::path::PathBuf>,
+    },
+    /// Stamp a prefab file into the project's world, optionally placing it.
+    InstantiatePrefab {
+        path: std::path::PathBuf,
+        /// Already resolved to a world position: `classify` runs with the
+        /// world available and `dispatch` only has the wire.
+        at: Option<glam::Vec3>,
+    },
     /// Start or stop the project's gameplay systems in place.
     SetPlaying(bool),
 }
 
 /// Reduces an action to an [`Edit`], or `None` if remote mode does not
 /// own it.
-fn classify(action: &EditorAction) -> Option<Edit<'_>> {
+///
+/// Takes the world because a couple of actions cannot be reduced without
+/// reading it: a viewport drop names a place on screen, and the camera that
+/// turns it into a world position lives here. `dispatch` is past that point
+/// — it has the wire and nothing else.
+fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<'a>> {
     match action {
         EditorAction::SetField {
             entity,
@@ -361,6 +378,18 @@ fn classify(action: &EditorAction) -> Option<Edit<'_>> {
         // project's own scene file.
         EditorAction::SaveScene => Some(Edit::SaveScene),
         EditorAction::OpenScene => Some(Edit::LoadScene),
+        // Same reason as scene I/O: the world being captured is the
+        // project's, and the mirror is a view of it. Writing the mirror
+        // would save a partly-parked copy — every component this editor
+        // binary has no type for is a name and a bag of fields here.
+        EditorAction::SavePrefab { entity, dest } => Some(Edit::SavePrefab {
+            entity: *entity,
+            dest: dest.clone(),
+        }),
+        EditorAction::InstantiatePrefab { path, at } => Some(Edit::InstantiatePrefab {
+            path: path.clone(),
+            at: crate::viewport_pick::resolve(resources, *at),
+        }),
         // Play runs the project's systems in the project we are already
         // driving, instead of launching a second copy of it.
         EditorAction::Play => Some(Edit::SetPlaying(true)),
@@ -530,6 +559,42 @@ fn send(
             None => Ok(()),
         },
         Edit::SetPlaying(playing) => client.set_playing(playing).map_err(map_err),
+        // Both processes see the same filesystem, so a path resolved here
+        // is meaningful on the project's side of the wire — the same
+        // assumption scene I/O above already makes.
+        Edit::SavePrefab { entity, dest } => {
+            let id = remote(entity)?;
+            let Some(root) = crate::actions::handlers::prefab_root(resources) else {
+                return Err("cannot save a prefab without a project open".to_owned());
+            };
+            // The mirror's `Name` is the project's `Name`; reading it here
+            // saves a round trip purely to learn what to call the file.
+            let name = crate::actions::handlers::entity_name(resources, entity);
+            let path = crate::actions::handlers::prefab_path(&root, &name, dest.as_deref());
+            client
+                .save_prefab(id, &path.to_string_lossy())
+                .map_err(map_err)
+        }
+        Edit::InstantiatePrefab { path, at } => {
+            let root = client
+                .instantiate_prefab(&path.to_string_lossy())
+                .map_err(map_err)?;
+            // Placing the instance is a `SetField` on the root that just
+            // came back, rather than a parameter on the call. It reuses the
+            // path that already knows how to write a reflected field, and
+            // keeps spatial types out of the wire format.
+            let Some(at) = at else {
+                return Ok(());
+            };
+            client
+                .set_field(
+                    root,
+                    std::any::type_name::<ome_ecs::transform::Transform>(),
+                    "position",
+                    ReflectValue::Vec3(at),
+                )
+                .map_err(map_err)
+        }
     }
 }
 

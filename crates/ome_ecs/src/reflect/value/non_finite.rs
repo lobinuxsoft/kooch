@@ -150,7 +150,7 @@ mod tests {
     }
 
     /// The values scenes actually hold must keep the shape they had, or
-    /// every existing `.ome_scene` reads differently than it was written.
+    /// every existing `.scene` reads differently than it was written.
     #[test]
     fn an_ordinary_float_keeps_its_number_form() {
         let encoded = ron::to_string(&ReflectValue::F32(1.5)).expect("serialises");
