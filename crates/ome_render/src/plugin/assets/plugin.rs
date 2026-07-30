@@ -34,6 +34,8 @@ use super::eager::eager_import_typed_assets;
 #[derive(Debug, Clone)]
 pub struct AssetPlugin {
     roots: Vec<PathBuf>,
+    /// Whether to pull every typed asset into memory at build time.
+    eager_import: bool,
 }
 
 impl AssetPlugin {
@@ -42,6 +44,7 @@ impl AssetPlugin {
     pub fn new() -> Self {
         Self {
             roots: vec![PathBuf::from("assets")],
+            eager_import: true,
         }
     }
 
@@ -58,6 +61,21 @@ impl AssetPlugin {
     /// runtime so the binary sees both at first frame.
     pub fn with_extra_root(mut self, root: impl Into<PathBuf>) -> Self {
         self.roots.push(root.into());
+        self
+    }
+
+    /// Registers identity and loaders but decodes nothing up front.
+    ///
+    /// For a host that has to *resolve* assets without drawing any. The
+    /// remote authoring host is one: a prefab instance in a scene is a
+    /// reference now, so loading a scene means looking a guid up — but
+    /// decoding every texture and mesh for a process that never renders
+    /// is work with no result.
+    ///
+    /// Anything actually asked for still loads on demand; this only skips
+    /// the pass that pulls in everything ahead of time.
+    pub fn headless(mut self) -> Self {
+        self.eager_import = false;
         self
     }
 
@@ -156,7 +174,9 @@ impl Plugin for AssetPlugin {
         // glb is wired today because nothing else has a typed asset
         // story yet.
         for root in &roots {
-            eager_import_typed_assets(app, root);
+            if self.eager_import {
+                eager_import_typed_assets(app, root);
+            }
         }
     }
 }

@@ -150,13 +150,21 @@ fn default_asset_plugin() -> ome_render::plugin::AssetPlugin {
 /// editor draws the world in its own viewport. Opening a second window
 /// here would show the same scene twice and steal focus from the editor
 /// — the project is a headless host, not a game.
+///
+/// It does carry the asset plugin, in headless form. Asset *identity* is
+/// not a rendering concern: a prefab instance in a scene is a reference
+/// now, so loading a scene means resolving a guid. Without it the host
+/// spawned `missing prefab [...]` for prefabs that were sitting right
+/// there. Eager import stays off — decoding every texture for a process
+/// that never draws is work with no result.
 pub struct RemoteHostPlugins;
 
 impl ome_core::plugin::PluginGroup for RemoteHostPlugins {
     fn build(self) -> ome_core::plugin::PluginGroupBuilder {
         let builder = ome_core::plugin::PluginGroupBuilder::new()
             .add(ome_core::plugin::CorePlugin)
-            .add(ome_ecs::EcsPlugin);
+            .add(ome_ecs::EcsPlugin)
+            .add(default_asset_plugin().headless());
 
         // The host is what actually simulates when the editor presses
         // Play, so it needs physics even though it draws nothing.
