@@ -91,7 +91,16 @@ pub(crate) enum EditorAction {
         dest: Option<std::path::PathBuf>,
     },
     /// Stamp a prefab file into the open scene.
-    InstantiatePrefab(std::path::PathBuf),
+    InstantiatePrefab {
+        path: std::path::PathBuf,
+        /// Where to put the instance's root.
+        ///
+        /// Unresolved on purpose: a viewport drop names a place on
+        /// *screen*, and turning that into a world position needs the
+        /// camera, which the panel that reported the drop cannot read. See
+        /// [`DropPoint`](crate::viewport_pick::DropPoint).
+        at: crate::viewport_pick::DropPoint,
+    },
     /// Open a scene beside the ones already loaded, rather than replacing
     /// them. The scene becomes the active one, so newly spawned entities
     /// land in it.
@@ -255,7 +264,7 @@ impl EditorAction {
             | Self::Redo
             | Self::SaveScene
             | Self::SavePrefab { .. }
-            | Self::InstantiatePrefab(_)
+            | Self::InstantiatePrefab { .. }
             | Self::OpenScene
             | Self::OpenSceneAdditive
             | Self::CloseScene(_)

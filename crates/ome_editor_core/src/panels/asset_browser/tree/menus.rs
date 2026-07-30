@@ -115,7 +115,10 @@ pub(super) fn leaf_menu(
             .button(format!("{} Instantiate into Scene", icons::PACKAGE))
             .clicked()
     {
-        actions.push(EditorAction::InstantiatePrefab(leaf.path.clone()));
+        actions.push(EditorAction::InstantiatePrefab {
+            path: leaf.path.clone(),
+            at: crate::viewport_pick::DropPoint::Authored,
+        });
         ui.close();
     }
     if ui.button("Open in IDE").clicked() {

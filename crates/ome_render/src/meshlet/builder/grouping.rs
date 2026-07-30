@@ -261,9 +261,16 @@ mod tests {
             prev_meshlets.push(synthetic_descriptor(off, 2));
         }
         let groups = group_meshlets_metis(&prev_meshlets, &pool_meshlet_vertices, 3);
-        assert_eq!(groups.len(), 3, "round-robin must populate every requested partition");
+        assert_eq!(
+            groups.len(),
+            3,
+            "round-robin must populate every requested partition"
+        );
         let total: usize = groups.iter().map(|g| g.len()).sum();
-        assert_eq!(total, 6, "every meshlet must be assigned to exactly one group");
+        assert_eq!(
+            total, 6,
+            "every meshlet must be assigned to exactly one group"
+        );
     }
 
     #[test]
@@ -273,21 +280,29 @@ mod tests {
         // and 11 must be flagged as cell-boundary; the rest must not.
         let pool_meshlet_vertices: Vec<u32> = vec![
             // meshlet 0: globals 1, 2, 10, 11
-            1, 2, 10, 11,
-            // meshlet 1: globals 5, 6, 10, 11
+            1, 2, 10, 11, // meshlet 1: globals 5, 6, 10, 11
             5, 6, 10, 11,
         ];
         let prev_meshlets = vec![synthetic_descriptor(0, 4), synthetic_descriptor(4, 4)];
         let groups = vec![vec![0usize], vec![1usize]];
-        let boundary = collect_group_boundary_vertices(
-            &groups,
-            &prev_meshlets,
-            &pool_meshlet_vertices,
+        let boundary =
+            collect_group_boundary_vertices(&groups, &prev_meshlets, &pool_meshlet_vertices);
+        assert!(
+            boundary.contains(&10),
+            "vertex 10 shared between groups must be flagged"
         );
-        assert!(boundary.contains(&10), "vertex 10 shared between groups must be flagged");
-        assert!(boundary.contains(&11), "vertex 11 shared between groups must be flagged");
-        assert!(!boundary.contains(&1), "vertex 1 (only in group A) must NOT be flagged");
-        assert!(!boundary.contains(&5), "vertex 5 (only in group B) must NOT be flagged");
+        assert!(
+            boundary.contains(&11),
+            "vertex 11 shared between groups must be flagged"
+        );
+        assert!(
+            !boundary.contains(&1),
+            "vertex 1 (only in group A) must NOT be flagged"
+        );
+        assert!(
+            !boundary.contains(&5),
+            "vertex 5 (only in group B) must NOT be flagged"
+        );
         assert_eq!(boundary.len(), 2, "exactly 2 shared vertices expected");
     }
 
@@ -298,10 +313,8 @@ mod tests {
         // in another group.
         let pool_meshlet_vertices: Vec<u32> = vec![
             // meshlet 0: globals 1, 2
-            1, 2,
-            // meshlet 1: globals 2, 3 (vertex 2 is intra-group repeat)
-            2, 3,
-            // meshlet 2: globals 4, 5 (different group)
+            1, 2, // meshlet 1: globals 2, 3 (vertex 2 is intra-group repeat)
+            2, 3, // meshlet 2: globals 4, 5 (different group)
             4, 5,
         ];
         let prev_meshlets = vec![
@@ -310,11 +323,8 @@ mod tests {
             synthetic_descriptor(4, 2),
         ];
         let groups = vec![vec![0usize, 1usize], vec![2usize]];
-        let boundary = collect_group_boundary_vertices(
-            &groups,
-            &prev_meshlets,
-            &pool_meshlet_vertices,
-        );
+        let boundary =
+            collect_group_boundary_vertices(&groups, &prev_meshlets, &pool_meshlet_vertices);
         assert!(
             boundary.is_empty(),
             "no vertex is actually shared across groups; got {:?}",

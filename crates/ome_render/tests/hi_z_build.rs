@@ -19,11 +19,7 @@ const HEIGHT: u32 = 64;
 const PIXELS: usize = (WIDTH * HEIGHT) as usize;
 const ROW_BYTES: u32 = WIDTH * 4; // R32Float: 4 bytes per texel; 64×4 = 256 = wgpu alignment
 
-fn upload_r32(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    values: &[f32],
-) -> wgpu::Texture {
+fn upload_r32(device: &wgpu::Device, queue: &wgpu::Queue, values: &[f32]) -> wgpu::Texture {
     assert_eq!(values.len(), PIXELS);
 
     // wgpu refuses Queue::write_texture into Depth32Float, so the
@@ -68,12 +64,7 @@ fn upload_r32(
     tex
 }
 
-fn read_mip(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    hi_z: &HiZ,
-    mip: u32,
-) -> Vec<f32> {
+fn read_mip(device: &wgpu::Device, queue: &wgpu::Queue, hi_z: &HiZ, mip: u32) -> Vec<f32> {
     let (w, h) = ome_render::hi_z::mip_size(WIDTH, HEIGHT, mip);
     let bytes_per_row = (w * 4).max(256);
     let staging = device.create_buffer(&wgpu::BufferDescriptor {

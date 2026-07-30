@@ -5,9 +5,7 @@
 use glam::Vec3;
 
 use crate::mesh::{Aabb, MeshVertex};
-use crate::meshlet::asset::{
-    MeshletDescriptor, MESHLET_GROUP_NONE, MESHLET_ROOT_PARENT,
-};
+use crate::meshlet::asset::{MESHLET_GROUP_NONE, MESHLET_ROOT_PARENT, MeshletDescriptor};
 
 /// Runs `meshopt::build_meshlets` over `indices` and returns the
 /// per-meshlet descriptors plus the per-LOD `meshlet_vertices` and
@@ -26,8 +24,7 @@ pub(super) fn clusterize_lod(
     cone_weight: f32,
     lod_error: f32,
 ) -> (Vec<MeshletDescriptor>, Vec<u32>, Vec<u8>) {
-    let raw =
-        meshopt::build_meshlets(indices, adapter, max_vertices, max_triangles, cone_weight);
+    let raw = meshopt::build_meshlets(indices, adapter, max_vertices, max_triangles, cone_weight);
 
     let mut descriptors = Vec::with_capacity(raw.len());
     for i in 0..raw.len() {

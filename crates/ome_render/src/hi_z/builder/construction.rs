@@ -1,6 +1,6 @@
 use wgpu::util::DeviceExt;
 
-use super::super::{mip_count_for, mip_size, HI_Z_FORMAT};
+use super::super::{HI_Z_FORMAT, mip_count_for, mip_size};
 use super::legacy::{bgl_copy_r32, bgl_reduce};
 use super::spd::build_spd_bgl;
 use super::types::{HiZ, SpdConstants};
@@ -148,14 +148,15 @@ impl HiZ {
             compilation_options: Default::default(),
             cache: None,
         });
-        let spd_second_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("hi_z_spd_second_pipeline"),
-            layout: Some(&spd_pipeline_layout),
-            module: &spd_shader,
-            entry_point: Some("cs_downsample_second"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let spd_second_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("hi_z_spd_second_pipeline"),
+                layout: Some(&spd_pipeline_layout),
+                module: &spd_shader,
+                entry_point: Some("cs_downsample_second"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         // mip_0 source binding is filled by `build_from_depth` per
         // call (the depth view changes between callers / frames).
@@ -219,9 +220,7 @@ impl HiZ {
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
-                            resource: wgpu::BindingResource::TextureView(
-                                &mip_views[mip as usize],
-                            ),
+                            resource: wgpu::BindingResource::TextureView(&mip_views[mip as usize]),
                         },
                     ],
                 })

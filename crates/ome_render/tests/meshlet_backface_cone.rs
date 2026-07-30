@@ -14,7 +14,7 @@ use common::try_acquire_device;
 use glam::{Mat4, Vec3};
 use ome_render::mesh::{Aabb, MeshVertex};
 use ome_render::meshlet::{
-    CullParams, MeshletCull, MeshletDescriptor, MeshletMesh, DEFAULT_MAX_TRIANGLES,
+    CullParams, DEFAULT_MAX_TRIANGLES, MeshletCull, MeshletDescriptor, MeshletMesh,
 };
 
 fn synthetic_meshlet_facing(normal: Vec3) -> MeshletMesh {
@@ -83,11 +83,7 @@ fn synthetic_meshlet_facing(normal: Vec3) -> MeshletMesh {
     }
 }
 
-fn read_visible_count(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    cull: &MeshletCull,
-) -> u32 {
+fn read_visible_count(device: &wgpu::Device, queue: &wgpu::Queue, cull: &MeshletCull) -> u32 {
     common::read_u32(device, queue, cull.visible_count_buffer(), 0)
 }
 

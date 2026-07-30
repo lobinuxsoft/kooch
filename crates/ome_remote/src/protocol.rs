@@ -152,6 +152,12 @@ pub enum Method {
     /// Distinct from [`Self::LoadScene`], which *replaces* the world. This
     /// adds to it, with identity remapped so the same file can be
     /// instanced more than once.
+    ///
+    /// No position parameter: the root comes back, so placing it is a
+    /// `SetField` on its `Transform`. The wire format carries no spatial
+    /// types of its own — everything spatial travels as a `ReflectValue`,
+    /// and a second way to move an entity is a second thing to keep in step
+    /// with the first.
     InstantiatePrefab { path: String },
     /// Replace the live ECS with a scene file from the server's disk.
     LoadScene { path: String },

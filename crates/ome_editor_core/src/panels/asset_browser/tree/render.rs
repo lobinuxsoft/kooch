@@ -5,7 +5,7 @@ use std::path::Path;
 use egui::collapsing_header::CollapsingState;
 
 use crate::actions::EditorAction;
-use crate::drag_drop::DraggedAsset;
+use crate::drag_drop::{DraggedAsset, DraggedPrefab};
 use crate::icons;
 use ome_ecs::entity::Entity;
 
@@ -150,6 +150,21 @@ pub(super) fn render_leaf(
         resp.dnd_set_drag_payload(DraggedAsset {
             guid: *guid,
             type_name: type_name.clone(),
+        });
+        if resp.dragged() {
+            draw_drag_preview(ui, icon, &leaf.name);
+        }
+    } else if leaf
+        .path
+        .extension()
+        .is_some_and(|ext| ext == crate::project::PREFAB_EXTENSION)
+    {
+        // A prefab is not a registered asset — nothing holds a reference to
+        // one — so it has no guid and cannot use `DraggedAsset`. It carries
+        // its path, which is what instancing needs anyway.
+        resp = resp.interact(egui::Sense::click_and_drag());
+        resp.dnd_set_drag_payload(DraggedPrefab {
+            path: leaf.path.clone(),
         });
         if resp.dragged() {
             draw_drag_preview(ui, icon, &leaf.name);

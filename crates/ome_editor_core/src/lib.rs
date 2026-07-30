@@ -41,6 +41,7 @@ pub(crate) mod style;
 pub(crate) mod systems;
 pub(crate) mod undo;
 pub(crate) mod viewport;
+pub(crate) mod viewport_pick;
 
 use ome_core::app::App;
 use ome_core::plugin::Plugin;

@@ -2,8 +2,8 @@ use crate::meshlet::cull::CullParams;
 use crate::meshlet::pool::GpuGlobalMeshPool;
 use crate::meshlet::scene::{MeshletScene, SceneCullParams};
 
-use super::super::types::HiZTestParams;
 use super::super::MeshletCull;
+use super::super::types::HiZTestParams;
 
 impl MeshletCull {
     /// Hi-Z 2-pass cull (#445), pass A. Same as

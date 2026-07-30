@@ -44,7 +44,9 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::SavePrefab { entity, dest } => {
             prefab::handle_save_prefab(resources, *entity, dest.as_deref())
         }
-        EditorAction::InstantiatePrefab(path) => prefab::handle_instantiate_prefab(resources, path),
+        EditorAction::InstantiatePrefab { path, at } => {
+            prefab::handle_instantiate_prefab(resources, path, *at)
+        }
         EditorAction::OpenScene => handle_open_scene(resources, undo_stack),
         EditorAction::OpenSceneAdditive => handle_open_scene_additive(resources),
         EditorAction::CloseScene(id) => handle_close_scene(resources, *id),

@@ -242,15 +242,29 @@ mod tests {
     fn reject_reason_code_tracks_cull_shader_constants() {
         // `REJECT_REASON_*` in meshlet_cull/atomic.wgsl pin these.
         // Reordering or renumbering breaks the overlay's match.
-        assert_eq!(MeshletDebugMode::FrustumRejected.reject_reason_code(), Some(2));
-        assert_eq!(MeshletDebugMode::BackfaceRejected.reject_reason_code(), Some(3));
+        assert_eq!(
+            MeshletDebugMode::FrustumRejected.reject_reason_code(),
+            Some(2)
+        );
+        assert_eq!(
+            MeshletDebugMode::BackfaceRejected.reject_reason_code(),
+            Some(3)
+        );
         assert_eq!(MeshletDebugMode::HiZRejected.reject_reason_code(), Some(4));
         // Non-reject modes never write into reject_reasons[] — the
         // orchestrator must NOT lift `debug_active` for them.
         assert!(MeshletDebugMode::Off.reject_reason_code().is_none());
-        assert!(MeshletDebugMode::TriangleDensity.reject_reason_code().is_none());
+        assert!(
+            MeshletDebugMode::TriangleDensity
+                .reject_reason_code()
+                .is_none()
+        );
         assert!(MeshletDebugMode::Overdraw.reject_reason_code().is_none());
-        assert!(MeshletDebugMode::CullPassthrough.reject_reason_code().is_none());
+        assert!(
+            MeshletDebugMode::CullPassthrough
+                .reject_reason_code()
+                .is_none()
+        );
         assert!(MeshletDebugMode::OnlyLod0.reject_reason_code().is_none());
         assert!(MeshletDebugMode::OnlyRoots.reject_reason_code().is_none());
         assert!(MeshletDebugMode::MeshletIds.reject_reason_code().is_none());

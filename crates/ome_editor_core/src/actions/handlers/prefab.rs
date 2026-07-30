@@ -126,8 +126,15 @@ pub(super) fn handle_save_prefab(resources: &mut Resources, entity: Entity, dest
     }
 }
 
-/// Stamps a prefab file into the open scene.
-pub(super) fn handle_instantiate_prefab(resources: &mut Resources, path: &Path) {
+/// Stamps a prefab file into the open scene, optionally placing its root.
+pub(super) fn handle_instantiate_prefab(
+    resources: &mut Resources,
+    path: &Path,
+    at: crate::viewport_pick::DropPoint,
+) {
+    // Resolved before the spawn: it reads the camera, and the borrow ends
+    // before the world is mutated.
+    let at = crate::viewport_pick::resolve(resources, at);
     let prefab = match SceneDocument::load(path) {
         Ok(prefab) => prefab,
         Err(e) => {
@@ -140,10 +147,23 @@ pub(super) fn handle_instantiate_prefab(resources: &mut Resources, path: &Path) 
         .and_then(|scenes| scenes.active_id())
         .unwrap_or_else(ome_core::Guid::new_v4);
 
-    match ome_ecs::scene::instantiate(&prefab, resources, into) {
-        Ok(_) => tracing::info!("instanced {}", path.display()),
-        Err(e) => tracing::error!("failed to instance {}: {e}", path.display()),
+    let root = match ome_ecs::scene::instantiate(&prefab, resources, into) {
+        Ok(root) => root,
+        Err(e) => {
+            tracing::error!("failed to instance {}: {e}", path.display());
+            return;
+        }
+    };
+    // A drop into the viewport names a place; the World panel and the
+    // context menu do not, and leave the prefab where it was authored.
+    if let Some(at) = at
+        && let Some(registry) = resources.get_mut::<ome_ecs::component::ComponentRegistry>()
+        && let Some(storage) = registry.get_cpu_mut::<ome_ecs::transform::Transform>()
+        && let Some(transform) = storage.get_mut(root)
+    {
+        transform.position = at;
     }
+    tracing::info!("instanced {}", path.display());
 }
 
 #[cfg(test)]

@@ -89,9 +89,7 @@ impl Vbuf64Support {
         let needed = required_features();
         let supported = device.features().contains(needed);
         if supported {
-            tracing::info!(
-                "Vbuf64Support: atomic R64 path active (Nanite-style winner-takes-all)"
-            );
+            tracing::info!("Vbuf64Support: atomic R64 path active (Nanite-style winner-takes-all)");
         } else {
             let missing = needed - device.features();
             tracing::warn!(

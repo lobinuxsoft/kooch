@@ -34,7 +34,7 @@ mod visualizers;
 
 use std::any::TypeId;
 
-use glam::{Mat3, Vec3, Vec4};
+use glam::{Mat3, Vec3};
 use ome_core::resource::Resources;
 use ome_ecs::component::ComponentRegistry;
 use ome_ecs::directional_light::DirectionalLight;
@@ -371,45 +371,33 @@ fn handle_mode_desc(mode: HandleMode) -> &'static str {
 /// Constructs a world-space ray from the viewport cursor + active
 /// camera. Returns `None` when the cursor isn't over the viewport or
 /// no active perspective camera exists.
+///
+/// The unprojection itself lives in `ome_render::projection`, beside the
+/// reversed-Z projection it inverts — a second copy here is a second place
+/// to forget that the far plane is `ndc.z = 0` (#488). This function is now
+/// only the part that is about *this* editor: finding the active camera and
+/// the cursor.
 fn build_world_ray(resources: &Resources, delta: ViewportInputDelta) -> Option<Ray> {
     let cursor = delta.cursor_local?;
-    let viewport_size = delta.viewport_size;
-    if viewport_size.x < 1.0 || viewport_size.y < 1.0 {
-        return None;
-    }
-    let aspect = viewport_size.x / viewport_size.y;
-
     let (camera, gt) = active_camera(resources)?;
 
-    let view = gt.matrix.inverse();
-    let proj = ome_render::perspective_rh_reverse_z(
+    let ray = ome_render::projection::viewport_cursor_to_ray(
+        cursor,
+        delta.viewport_size,
+        gt.matrix,
         camera.fov.to_radians(),
-        aspect.max(0.001),
-        camera.near.max(0.001),
-        camera.far.max(camera.near + 0.001),
-    );
-    let inv_vp = (proj * view).inverse();
-
-    // Cursor in NDC. egui's Y is down; NDC's Y is up.
-    let ndc_x = 2.0 * (cursor.x / viewport_size.x) - 1.0;
-    let ndc_y = 1.0 - 2.0 * (cursor.y / viewport_size.y);
-
-    // Project a point on the far plane back to world space.
-    // Reversed-Z (#488): far plane is ndc.z = 0, near is 1.
-    let far_world = inv_vp * Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
-    if far_world.w.abs() < 1e-6 {
-        return None;
-    }
-    let far_world = far_world.truncate() / far_world.w;
-    let camera_pos = gt.matrix.w_axis.truncate();
-    let direction = (far_world - camera_pos).normalize_or_zero();
-    if direction == Vec3::ZERO {
-        return None;
-    }
-    Some(Ray::new(camera_pos, direction))
+        camera.near,
+        camera.far,
+    )?;
+    Some(Ray::new(ray.origin, ray.direction))
 }
 
-fn active_camera(resources: &Resources) -> Option<(PerspectiveCamera, GlobalTransform)> {
+/// The highest-priority perspective camera in the world.
+///
+/// `pub(crate)` because a viewport drop has to unproject against the same
+/// camera the gizmos pick with — two answers to "which camera" would let a
+/// handle and a drop disagree about where the cursor points.
+pub(crate) fn active_camera(resources: &Resources) -> Option<(PerspectiveCamera, GlobalTransform)> {
     let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
     let mut best: Option<(i32, PerspectiveCamera, GlobalTransform)> = None;
     query.for_each(|(cam, gt)| {

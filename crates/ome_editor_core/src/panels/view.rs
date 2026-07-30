@@ -50,6 +50,7 @@ pub(crate) fn draw_view_content(
     gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
     gizmo_groups: &[crate::gizmos::GizmoGroup],
     physics_debug: &mut ome_physics::backend::DebugCategories,
+    actions: &mut Vec<crate::actions::EditorAction>,
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -73,6 +74,42 @@ pub(crate) fn draw_view_content(
     let response =
         ui.add(egui::Image::new((texture_id, available)).sense(egui::Sense::click_and_drag()));
     let mut delta = collect_viewport_input(&response, ui, controller, focused);
+
+    // A prefab dropped here lands under the cursor. What is passed on is the
+    // cursor, not a world position: unprojecting needs the camera's
+    // orientation, which lives on the camera entity and not in anything this
+    // panel is handed. See `viewport_pick`.
+    //
+    // Guarded behind `dnd_hover_payload` because `dnd_release_payload` takes
+    // the payload before checking its type; see the ordering note in
+    // `panels/world/entity_row.rs`.
+    if response
+        .dnd_hover_payload::<crate::drag_drop::DraggedPrefab>()
+        .is_some()
+    {
+        ui.painter().rect_stroke(
+            response.rect,
+            0.0,
+            egui::Stroke::new(2.0, egui::Color32::from_rgb(60, 200, 100)),
+            egui::StrokeKind::Inside,
+        );
+        if let Some(prefab) = response.dnd_release_payload::<crate::drag_drop::DraggedPrefab>() {
+            // `cursor_local` is `None` once the pointer leaves the image, so
+            // a release recorded outside it has no place to name and falls
+            // back to the authored position rather than to a guess.
+            let at = match delta.cursor_local {
+                Some(cursor) => crate::viewport_pick::DropPoint::Viewport {
+                    cursor,
+                    viewport_size: delta.viewport_size,
+                },
+                None => crate::viewport_pick::DropPoint::Authored,
+            };
+            actions.push(crate::actions::EditorAction::InstantiatePrefab {
+                path: prefab.path.clone(),
+                at,
+            });
+        }
+    }
 
     // Horizontal toolbar at the top edge of the viewport. Hosts only
     // gizmo controls (mode + basis + snap), shown when a Transform is

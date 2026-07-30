@@ -73,15 +73,9 @@ pub enum GltfMeshError {
     BufferUriUnresolvable,
     /// Buffer URI rejected for hygiene reasons (absolute path, `..`
     /// traversal, unsupported scheme).
-    BufferUriRejected {
-        uri: String,
-        reason: &'static str,
-    },
+    BufferUriRejected { uri: String, reason: &'static str },
     /// Filesystem read failed for a sidecar buffer.
-    BufferIo {
-        uri: String,
-        source: std::io::Error,
-    },
+    BufferIo { uri: String, source: std::io::Error },
     /// `data:` URI buffer was present but its payload could not be
     /// decoded (missing separator, unsupported encoding, malformed
     /// base64). The static reason describes which gate tripped.
@@ -139,10 +133,7 @@ pub fn parse_mesh_bytes(bytes: &[u8]) -> Result<Mesh, GltfMeshError> {
 
 /// Parses a glTF / GLB byte slice into a [`Mesh`] with a custom
 /// import scale. Memory-only convenience over [`parse_mesh_bytes_full`].
-pub fn parse_mesh_bytes_with_scale(
-    bytes: &[u8],
-    import_scale: f32,
-) -> Result<Mesh, GltfMeshError> {
+pub fn parse_mesh_bytes_with_scale(bytes: &[u8], import_scale: f32) -> Result<Mesh, GltfMeshError> {
     parse_mesh_bytes_full(bytes, import_scale, None)
 }
 
@@ -176,7 +167,10 @@ pub fn parse_mesh_bytes_full(
 
     let scale_root = Mat4::from_scale(Vec3::splat(import_scale));
 
-    if let Some(scene) = document.default_scene().or_else(|| document.scenes().next()) {
+    if let Some(scene) = document
+        .default_scene()
+        .or_else(|| document.scenes().next())
+    {
         for root in scene.nodes() {
             walk::walk_node(
                 &root,

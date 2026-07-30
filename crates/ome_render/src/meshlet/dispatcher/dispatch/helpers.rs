@@ -38,12 +38,6 @@ impl MeshletCull {
     ///   [4..8)   instance_count  (this copy)
     ///   [8..16)  first_vertex / first_instance (zero, immutable)
     pub(super) fn mirror_count_to_indirect_args(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.copy_buffer_to_buffer(
-            &self.visible_count,
-            0,
-            &self.indirect_args,
-            4,
-            4,
-        );
+        encoder.copy_buffer_to_buffer(&self.visible_count, 0, &self.indirect_args, 4, 4);
     }
 }

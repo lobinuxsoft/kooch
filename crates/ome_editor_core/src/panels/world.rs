@@ -116,6 +116,29 @@ pub(crate) fn draw_world_content(
             empty_resp.context_menu(|ui| {
                 spawn_entries(ui, actions);
             });
+            // A prefab dropped into the hierarchy spawns at the position it
+            // was authored at: a list of names has no geometry to read a
+            // place out of, and defaulting to the origin would silently move
+            // a prefab that was deliberately authored elsewhere. Drop it in
+            // the View panel to choose a spot.
+            if empty_resp
+                .dnd_hover_payload::<crate::drag_drop::DraggedPrefab>()
+                .is_some()
+            {
+                ui.painter().rect_filled(
+                    remaining,
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
+                );
+                if let Some(prefab) =
+                    empty_resp.dnd_release_payload::<crate::drag_drop::DraggedPrefab>()
+                {
+                    actions.push(EditorAction::InstantiatePrefab {
+                        path: prefab.path.clone(),
+                        at: crate::viewport_pick::DropPoint::Authored,
+                    });
+                }
+            }
             if empty_resp.dnd_hover_payload::<Entity>().is_some() {
                 ui.painter().rect_filled(
                     remaining,

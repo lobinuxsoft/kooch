@@ -216,6 +216,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.gizmo_visibility,
                 self.gizmo_groups,
                 self.physics_debug,
+                self.actions,
             ),
             EditorTab::Console => {
                 crate::panels::console::draw_console(ui, focused, self.log_buffer, self.console)
