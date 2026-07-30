@@ -279,6 +279,15 @@ fn spawn_returning(
     // Resolve entity references now that every entity exists.
     resolve_deferred(resources, deferred);
 
+    // `Parent` is the authoritative side and `Children` is derived from it
+    // by a system — which has not run yet. Anything reading the hierarchy
+    // between here and the next frame sees a tree with no branches:
+    // capturing a freshly instanced prefab gave back its root alone.
+    //
+    // Derived here so a spawn hands back a world that is already
+    // consistent, rather than one that becomes consistent shortly.
+    rebuild_children(&spawned_order, resources);
+
     Ok(spawned_order)
 }
 
@@ -447,6 +456,46 @@ fn add_to_archetype(
     {
         let next = archetypes.archetype_after_add_dynamic(current, type_id);
         archetypes.register_entity(entity, next);
+    }
+}
+
+/// Fills in `Children` for a freshly spawned set from their `Parent`.
+fn rebuild_children(spawned: &[crate::entity::Entity], resources: &mut Resources) {
+    use crate::hierarchy::{Children, Parent};
+
+    let mut links: Vec<(crate::entity::Entity, crate::entity::Entity)> = Vec::new();
+    if let Some(registry) = resources.get::<ComponentRegistry>()
+        && let Some(storage) = registry.get_cpu::<Parent>()
+    {
+        for &entity in spawned {
+            if let Some(parent) = storage.get(entity) {
+                links.push((parent.entity, entity));
+            }
+        }
+    }
+    if links.is_empty() {
+        return;
+    }
+
+    for (parent, child) in links {
+        let existing = resources
+            .get::<ComponentRegistry>()
+            .and_then(|registry| registry.get_cpu::<Children>())
+            .and_then(|storage| storage.get(parent))
+            .map(|children| children.entities.clone())
+            .unwrap_or_default();
+        if existing.contains(&child) {
+            continue;
+        }
+        let mut entities = existing;
+        entities.push(child);
+        if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+            registry.register_cpu_reflected::<Children>();
+            if let Some(storage) = registry.get_cpu_mut::<Children>() {
+                storage.insert(parent, Children { entities });
+            }
+        }
+        add_to_archetype(resources, parent, std::any::TypeId::of::<Children>());
     }
 }
 

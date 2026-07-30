@@ -398,12 +398,17 @@ impl SceneDocument {
                         .get_cpu::<crate::prefab_instance::PrefabMember>()
                         .and_then(|storage| storage.get(entity))
                         .map(|member| member.root);
-                    // Only the root survives into the file; the rest of the
-                    // instance is not the scene's to describe.
-                    if membership.is_some_and(|root| root != entity) {
+                    // Capturing a *prefab* takes the entities as they
+                    // stand: a blueprint describes things, and an instance
+                    // of something else is still a thing. Only a scene
+                    // writes the reference instead — see below.
+                    let describing_a_prefab = matches!(what, Capture::Subtree(_));
+                    // Only the root survives into a scene file; the rest of
+                    // the instance is not the scene's to describe.
+                    if !describing_a_prefab && membership.is_some_and(|root| root != entity) {
                         continue;
                     }
-                    let is_instance_root = membership == Some(entity);
+                    let is_instance_root = !describing_a_prefab && membership == Some(entity);
 
                     // Restrict the walk to what was asked for.
                     let belongs = match what {
@@ -443,7 +448,20 @@ impl SceneDocument {
                         if is_instance_root && type_id != instance_tid && type_id != parent_tid {
                             continue;
                         }
-                        if type_id == member_tid_prefab {
+                        // Instance bookkeeping never enters a prefab. A
+                        // blueprint that carried a link would make every
+                        // copy of it an instance of whatever the original
+                        // was made from — and re-saving an instance over
+                        // its own prefab would leave the prefab
+                        // referencing itself.
+                        //
+                        // Same rule as the root losing its `Parent`: where
+                        // something sits, and what it was stamped from,
+                        // are facts about this copy rather than about the
+                        // thing being described.
+                        if type_id == member_tid_prefab
+                            || (describing_a_prefab && type_id == instance_tid)
+                        {
                             continue;
                         }
 

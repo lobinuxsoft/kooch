@@ -743,3 +743,47 @@ fn loading_a_reference_rebuilds_the_instance() {
         "an unresolvable prefab must say so rather than vanish: {names:?}",
     );
 }
+
+/// Saving an instance as a prefab — including over the prefab it came
+/// from, which is how "apply these changes to the prefab" is spelled.
+///
+/// Two ways this broke at once. The scene rule "write the reference, not
+/// the entities" applied to prefab capture too, so the new prefab came out
+/// holding a link and nothing else. And the link it held pointed at the
+/// original, so instancing the result made an instance of *that* — and
+/// saving over the same file left a prefab referencing itself.
+#[test]
+fn capturing_an_instance_as_a_prefab_takes_its_components_not_its_link() {
+    use crate::prefab_instance::{PrefabInstance, PrefabMember};
+
+    let (mut resources, root) = world_with_a_deep_subtree();
+    let original = SceneDocument::from_ecs_subtree(&mut resources, root);
+    let (spawned, members) =
+        crate::scene::sync::instantiate_members(&original, &mut resources, Guid::new_v4()).unwrap();
+    crate::prefab_instance::attach(&mut resources, spawned, &members, Guid::new_v4());
+
+    let again = SceneDocument::from_ecs_subtree(&mut resources, spawned);
+
+    assert_eq!(
+        again.entities.len(),
+        3,
+        "the instance's entities were replaced by its link",
+    );
+    let types: Vec<&str> = again
+        .entities
+        .iter()
+        .flat_map(|e| e.components.iter())
+        .map(|c| c.type_name.as_str())
+        .collect();
+    assert!(
+        !types.iter().any(|t| t.ends_with("PrefabInstance")),
+        "the new prefab references the one it was made from: {types:?}",
+    );
+    assert!(!types.iter().any(|t| t.ends_with("PrefabMember")));
+    // And it still describes the thing itself.
+    assert!(types.iter().any(|t| t.ends_with("Health")));
+    let _ = (
+        std::any::type_name::<PrefabInstance>(),
+        std::any::type_name::<PrefabMember>(),
+    );
+}
