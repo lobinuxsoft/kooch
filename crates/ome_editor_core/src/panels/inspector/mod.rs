@@ -305,15 +305,25 @@ fn draw_inspector_body(
                 section
                     .show_header(ui, |ui| {
                         let title = format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name);
+                        // Sensed for clicks so the header can carry a
+                        // context menu. `ui.strong` returns a hover-only
+                        // response, and `context_menu` on one never fires —
+                        // it attaches and silently does nothing.
+                        let label = |ui: &mut egui::Ui, text: egui::RichText| {
+                            ui.add(egui::Label::new(text).sense(egui::Sense::click()))
+                        };
                         let title = if is_cursor {
                             // Coloured rather than boxed: a section header is
                             // already a row of furniture, and another outline
                             // would be one more line to read past.
-                            ui.strong(
-                                egui::RichText::new(title).color(ui.visuals().selection.bg_fill),
+                            label(
+                                ui,
+                                egui::RichText::new(title)
+                                    .strong()
+                                    .color(ui.visuals().selection.bg_fill),
                             )
                         } else {
-                            ui.strong(title)
+                            label(ui, egui::RichText::new(title).strong())
                         };
                         if scroll_here {
                             title.scroll_to_me(Some(egui::Align::Center));

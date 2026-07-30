@@ -66,11 +66,24 @@ pub(crate) struct PlannedWrite {
 /// way.
 pub(crate) fn plan(resources: &Resources, prefab: Guid) -> Vec<PlannedWrite> {
     let Some(document) = cached_document(resources, prefab) else {
+        // Every step below is silent on failure, and a silent propagation
+        // is indistinguishable from one that decided there was nothing to
+        // do. Said out loud so the next report is about a stage rather
+        // than about "it does not work".
+        tracing::warn!(target: "ome_editor_core::prefab", %prefab, "no cached document; nothing to propagate");
         return Vec::new();
     };
 
+    let instances = instances_of(resources, prefab);
+    tracing::info!(
+        target: "ome_editor_core::prefab",
+        %prefab,
+        instances = instances.len(),
+        "propagating",
+    );
+
     let mut writes = Vec::new();
-    for (root, instance) in instances_of(resources, prefab) {
+    for (root, instance) in instances {
         for (entity, index) in members_of(resources, root) {
             let Some(described) = document.entities.get(index) else {
                 // The prefab lost an entity this instance still has. Its
@@ -120,6 +133,12 @@ pub(crate) fn plan(resources: &Resources, prefab: Guid) -> Vec<PlannedWrite> {
             }
         }
     }
+    tracing::info!(
+        target: "ome_editor_core::prefab",
+        writes = writes.len(),
+        adds = writes.iter().filter(|w| w.add_component).count(),
+        "propagation planned",
+    );
     writes
 }
 
@@ -264,6 +283,7 @@ pub(crate) fn anything_queued(resources: &Resources) -> bool {
 
 /// Notes that `prefab` changed and its instances are behind.
 pub(crate) fn queue(resources: &mut Resources, prefab: Guid) {
+    tracing::info!(target: "ome_editor_core::prefab", %prefab, "queued for propagation");
     if resources.get::<PendingPropagation>().is_none() {
         resources.insert(PendingPropagation::default());
     }

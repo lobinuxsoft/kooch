@@ -500,6 +500,13 @@ pub(crate) fn apply_actions(
         .into_iter()
         .map(EditorAction::PropagatePrefab)
         .collect();
+    if !queued.is_empty() {
+        tracing::info!(
+            target: "ome_editor_core::prefab",
+            drained = queued.len(),
+            "propagation drained into actions",
+        );
+    }
 
     // Asked before the local/remote split so the prompt appears once
     // regardless of which path would have written the file.

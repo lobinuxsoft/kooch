@@ -289,11 +289,24 @@ fn instantiate_prefab(resources: &mut Resources, path: &str) -> Result<EntityId,
     // method *is* the editor's instancing — a shipped game does not run
     // this server, and its own spawner calls `spawn_prefab`, which
     // deliberately attaches nothing.
-    if let Some(guid) = ome_core::asset_meta::read_meta(path.as_ref())
-        .ok()
-        .map(|meta| meta.guid)
-    {
-        ome_ecs::prefab_instance::attach(resources, root, &members, guid);
+    match ome_core::asset_meta::read_meta(path.as_ref()) {
+        Ok(meta) => {
+            ome_ecs::prefab_instance::attach(resources, root, &members, meta.guid);
+            tracing::info!(
+                target: "ome_remote::prefab",
+                prefab = %meta.guid,
+                members = members.len(),
+                "instance linked to its prefab",
+            );
+        }
+        // Without an identity there is nothing to link *to*. Said out loud
+        // because the instance still spawns, so the only visible symptom
+        // is that it never follows the prefab afterwards.
+        Err(e) => tracing::warn!(
+            target: "ome_remote::prefab",
+            path = %path,
+            "instanced but not linked, no asset identity: {e}",
+        ),
     }
     Ok(EntityId::from(root))
 }
