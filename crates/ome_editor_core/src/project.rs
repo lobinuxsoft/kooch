@@ -11,40 +11,12 @@ use std::path::{Path, PathBuf};
 use ome_ecs::reflect::ReflectValue;
 use ome_ecs::scene::{ComponentDescription, EntityDescription, SceneDocument};
 
-/// Extension of a scene file.
-pub const SCENE_EXTENSION: &str = "scene";
-
-/// Extension of a prefab file.
-///
-/// # Why a second extension for one format
-///
-/// A prefab and a scene are the same `SceneDocument`, written by the same
-/// serialiser — see
-/// [`from_ecs_subtree`](ome_ecs::scene::SceneDocument::from_ecs_subtree)
-/// for why a second format would be a mistake. What differs is an
-/// **invariant**: a prefab has exactly one root entity, a scene may have
-/// any number.
-///
-/// With one extension there was nothing to tell them apart, so the editor
-/// offered "instantiate" on every scene file and a four-root scene failed
-/// at the point of instancing — a check the user had no way to anticipate.
-/// The extension is what makes the invariant visible before the click,
-/// and lets it be enforced when the file is *written* instead.
-///
-/// Unity draws the same line the same way: `.unity` and `.prefab` hold the
-/// same YAML.
-///
-/// # Why not `ome_`-prefixed
-///
-/// The prefix was namespacing against a collision that does not happen —
-/// these files sit in a project's own `scenes/` and `assets/`, not in a
-/// shared folder — and it made the *engine* the visible thing about a file
-/// whose interesting property is its format. What matters is what is
-/// inside; the extension only has to be legible.
-pub const PREFAB_EXTENSION: &str = "prefab";
-
-/// Convention path of the default scene relative to the project root.
-pub const DEFAULT_SCENE_REL_PATH: &str = "scenes/default.scene";
+// The names live in `ome_core` because the runtime's scene bootstrap needs
+// them too, and it cannot depend on the editor to learn them. They were
+// duplicated in both, which is how a rename changed one copy and left the
+// runtime looking for a file the editor no longer wrote — see
+// `ome_core::scene_paths`.
+pub use ome_core::scene_paths::{DEFAULT_SCENE_REL_PATH, PREFAB_EXTENSION, SCENE_EXTENSION};
 
 // ---------------------------------------------------------------------------
 // Project manifest (project.ome)

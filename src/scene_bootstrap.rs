@@ -4,7 +4,7 @@
 //! 1. Explicit override via [`SceneBootstrapPlugin::with_scene`].
 //! 2. `--scene <path>` CLI argument (used by the editor when launching
 //!    the play binary).
-//! 3. `scenes/default.ome_scene` relative to the current working directory.
+//! 3. [`DEFAULT_SCENE_REL_PATH`] relative to the current working directory.
 //!
 //! The cwd convention holds for a plain `cargo run` inside the project.
 //! It does **not** hold for `cargo run --manifest-path …`, which leaves
@@ -21,7 +21,7 @@ use ome_core::resource::Resources;
 use ome_core::stage::Stage;
 use ome_ecs::SceneManager;
 
-const DEFAULT_SCENE_REL_PATH: &str = "scenes/default.ome_scene";
+use ome_core::scene_paths::DEFAULT_SCENE_REL_PATH;
 
 /// Resource holding the path queued for the startup loader.
 struct BootScene(PathBuf);

@@ -64,6 +64,7 @@ pub mod raw_event;
 pub mod resource;
 pub mod run_state;
 pub mod runner;
+pub mod scene_paths;
 pub mod schedule;
 pub mod stage;
 pub mod system;
