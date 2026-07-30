@@ -357,7 +357,10 @@ enum Edit<'a> {
     /// Carries the writes rather than a guid: working out *which* fields
     /// go where needs the mirror, the prefab's cached document and each
     /// instance's override set, all of which live on this side.
-    PropagatePrefab(Vec<crate::actions::prefab_propagate::PlannedWrite>),
+    PropagatePrefab(
+        Vec<crate::actions::prefab_propagate::PlannedWrite>,
+        Vec<crate::actions::prefab_propagate::PlannedRemoval>,
+    ),
     /// Drop an instance's overrides and put the prefab's values back.
     ///
     /// The new override set travels with the writes: applying one without
@@ -451,9 +454,10 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
                 writes,
             })
         }
-        EditorAction::PropagatePrefab(prefab) => Some(Edit::PropagatePrefab(
-            crate::actions::prefab_propagate::plan(resources, *prefab),
-        )),
+        EditorAction::PropagatePrefab(prefab) => {
+            let (writes, removals) = crate::actions::prefab_propagate::plan(resources, *prefab);
+            Some(Edit::PropagatePrefab(writes, removals))
+        }
         // Play runs the project's systems in the project we are already
         // driving, instead of launching a second copy of it.
         EditorAction::Play => Some(Edit::SetPlaying(true)),
@@ -682,7 +686,18 @@ fn send(
                 )
                 .map_err(map_err)
         }
-        Edit::PropagatePrefab(writes) => push_writes(client, &writes, &remote),
+        Edit::PropagatePrefab(writes, removals) => {
+            for removal in &removals {
+                let id = remote(removal.entity)?;
+                if let Err(e) = client.remove_component(id, &removal.component) {
+                    tracing::warn!(
+                        "prefab propagation could not remove {}: {e}",
+                        removal.component,
+                    );
+                }
+            }
+            push_writes(client, &writes, &remote)
+        }
         // Both processes see the same filesystem, so a path resolved here
         // is meaningful on the project's side of the wire — the same
         // assumption scene I/O above already makes.

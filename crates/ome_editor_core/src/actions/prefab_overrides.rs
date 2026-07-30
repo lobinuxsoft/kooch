@@ -93,6 +93,28 @@ pub(super) fn record(resources: &Resources, actions: &[&EditorAction]) -> Vec<Ed
                     }
                 }
             }
+            // Adding or removing a component on an instance is a decision
+            // about its *presence*, and propagation has to respect it both
+            // ways: it must not delete what the user added, and must not
+            // restore what they took off. Without this, removing a
+            // component from an instance lasted exactly until the next
+            // time the prefab was saved.
+            EditorAction::AddComponent { entity, component }
+            | EditorAction::RemoveComponent { entity, component } => {
+                let Some(type_name) = component_name(resources, *component) else {
+                    continue;
+                };
+                if is_bookkeeping(&type_name) {
+                    continue;
+                }
+                push(
+                    resources,
+                    &mut marked,
+                    *entity,
+                    type_name,
+                    ome_ecs::prefab_instance::WHOLE_COMPONENT.to_owned(),
+                );
+            }
             _ => {}
         }
     }

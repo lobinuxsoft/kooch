@@ -68,6 +68,16 @@ pub struct PrefabInstance {
     pub overrides: String,
 }
 
+/// The field name that means "the component itself", rather than a field
+/// on it.
+///
+/// A user who adds or removes a component on an instance has made a
+/// decision about its *presence*, and propagation has to respect it in
+/// both directions: it must not delete a component they added, and must
+/// not restore one they removed. Encoded as an address with no field so it
+/// travels with the rest of the set instead of needing a second one.
+pub const WHOLE_COMPONENT: &str = "";
+
 /// One field the user changed on an instance, addressed relative to the
 /// prefab rather than to the world.
 ///
@@ -157,6 +167,16 @@ impl PrefabInstance {
     /// Whether `address` is one the prefab must not overwrite.
     pub fn is_overridden(&self, address: &OverrideAddress) -> bool {
         self.overrides().contains(address)
+    }
+
+    /// Whether the user decided whether this component is on this
+    /// instance — by adding it, or by taking it off.
+    pub fn owns_component(&self, entity: usize, component: &str) -> bool {
+        self.is_overridden(&OverrideAddress {
+            entity,
+            component: component.to_owned(),
+            field: WHOLE_COMPONENT.to_owned(),
+        })
     }
 }
 

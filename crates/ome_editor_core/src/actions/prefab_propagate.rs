@@ -19,19 +19,23 @@
 //! into the registry locally, and as protocol calls in remote mode, both
 //! bypassing the action layer that records.
 //!
-//! # Adding is propagated; removing is not
+//! # Components appear and disappear with the prefab
 //!
-//! A component added to a prefab appears on its instances. That case is
-//! tractable: the worst collision is an instance that already added the
-//! same component by hand, and it simply starts following the prefab,
-//! which is what it now is.
+//! Adding a component to a prefab puts it on the instances; removing it
+//! takes it off. Removing was held back at first as too destructive, and
+//! that was the wrong call — a prefab whose instances keep a component it
+//! no longer has is not a link, it is a link that works in one direction
+//! and surprises you in the other.
 //!
-//! Removing is not, and the asymmetry is the point. Taking a component off
-//! every instance is *destroying* whatever the user configured on it,
-//! irreversibly and in twelve places at once, on the strength of an edit
-//! made somewhere else. A new child entity is deferred for the same
-//! reason — it has to be positioned relative to whatever the instance
-//! became, and there is no answer that is right often enough.
+//! What makes it safe is that presence is recorded like any other
+//! override. A component the user added to *this* instance is theirs and
+//! is never deleted; one they took off stays off. So the destructive case
+//! — losing something configured by hand — cannot happen, because
+//! anything configured by hand is marked as such.
+//!
+//! A new child entity is still deferred: it has to be positioned relative
+//! to whatever the instance became, and there is no answer that is right
+//! often enough.
 
 use ome_core::Guid;
 use ome_core::resource::Resources;
@@ -40,6 +44,13 @@ use ome_ecs::prefab_instance::{OverrideAddress, PrefabInstance, PrefabMember};
 use ome_ecs::query::Query;
 use ome_ecs::reflect::ReflectValue;
 use ome_ecs::scene::SceneDocument;
+
+/// A component to take off an instance because the prefab dropped it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PlannedRemoval {
+    pub entity: Entity,
+    pub component: String,
+}
 
 /// One field to write into one live entity.
 #[derive(Debug, Clone, PartialEq)]
@@ -64,14 +75,17 @@ pub(crate) struct PlannedWrite {
 /// reach the world — the editor's own registry, or the project's over the
 /// wire. Both need the same answer, and it depends on the mirror either
 /// way.
-pub(crate) fn plan(resources: &Resources, prefab: Guid) -> Vec<PlannedWrite> {
+pub(crate) fn plan(
+    resources: &Resources,
+    prefab: Guid,
+) -> (Vec<PlannedWrite>, Vec<PlannedRemoval>) {
     let Some(document) = cached_document(resources, prefab) else {
         // Every step below is silent on failure, and a silent propagation
         // is indistinguishable from one that decided there was nothing to
         // do. Said out loud so the next report is about a stage rather
         // than about "it does not work".
         tracing::warn!(target: "ome_editor_core::prefab", %prefab, "no cached document; nothing to propagate");
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
 
     let instances = instances_of(resources, prefab);
@@ -83,6 +97,7 @@ pub(crate) fn plan(resources: &Resources, prefab: Guid) -> Vec<PlannedWrite> {
     );
 
     let mut writes = Vec::new();
+    let mut removals = Vec::new();
     for (root, instance) in instances {
         for (entity, index) in members_of(resources, root) {
             let Some(described) = document.entities.get(index) else {
@@ -97,6 +112,12 @@ pub(crate) fn plan(resources: &Resources, prefab: Guid) -> Vec<PlannedWrite> {
                 // placed. The instance has to grow it too, or the change
                 // reaches every instance except as the one thing people
                 // most often change about a prefab.
+                // A component the user took off this instance stays off.
+                // Restoring it on the next save would make removing one
+                // impossible to keep.
+                if instance.owns_component(index, &component.type_name) {
+                    continue;
+                }
                 let missing = !has_component(resources, entity, &component.type_name);
                 let mut first = true;
                 for (field, value) in &component.fields {
@@ -131,22 +152,87 @@ pub(crate) fn plan(resources: &Resources, prefab: Guid) -> Vec<PlannedWrite> {
                     });
                 }
             }
+            // Whatever the instance still carries that the prefab no
+            // longer describes — minus anything the user put there.
+            for component in live_components(resources, entity) {
+                let dropped = !described
+                    .components
+                    .iter()
+                    .any(|c| c.type_name == component);
+                if dropped
+                    && !instance.owns_component(index, &component)
+                    && !is_bookkeeping(&component)
+                {
+                    removals.push(PlannedRemoval { entity, component });
+                }
+            }
         }
     }
     tracing::info!(
         target: "ome_editor_core::prefab",
         writes = writes.len(),
         adds = writes.iter().filter(|w| w.add_component).count(),
+        removals = removals.len(),
         "propagation planned",
     );
-    writes
+    (writes, removals)
+}
+
+/// Components that hold the instance together rather than describing it.
+///
+/// Stripping these would cut an instance loose from its prefab and orphan
+/// its children, which no prefab edit should ever do.
+fn is_bookkeeping(type_name: &str) -> bool {
+    matches!(
+        type_name.rsplit("::").next().unwrap_or(type_name),
+        "PrefabInstance" | "PrefabMember" | "Parent" | "Children" | "GlobalTransform"
+    )
+}
+
+/// Every component the live entity currently carries, by full type path.
+fn live_components(resources: &Resources, entity: Entity) -> Vec<String> {
+    let Some(archetypes) = resources.get::<ome_ecs::archetype_registry::ArchetypeRegistry>() else {
+        return Vec::new();
+    };
+    let Some(registry) = resources.get::<ome_ecs::component::ComponentRegistry>() else {
+        return Vec::new();
+    };
+    let Some(archetype) = archetypes.entity_archetype(entity) else {
+        return Vec::new();
+    };
+    archetypes
+        .get(archetype)
+        .map(|archetype| {
+            archetype
+                .components()
+                .iter()
+                .filter_map(|type_id| registry.component_name(type_id).map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Applies a plan to the editor's own world.
 ///
 /// The local half. In remote mode the project owns the world and the same
 /// plan goes over the wire instead — see `remote_edit`.
-pub(crate) fn apply(resources: &mut Resources, writes: &[PlannedWrite]) {
+pub(crate) fn apply(
+    resources: &mut Resources,
+    writes: &[PlannedWrite],
+    removals: &[PlannedRemoval],
+) {
+    // Removals first: a component the prefab dropped and re-added under
+    // another name would otherwise be added and then taken straight off.
+    for removal in removals {
+        let type_id = resources
+            .get::<ome_ecs::component::ComponentRegistry>()
+            .and_then(|registry| registry.type_id_by_name(&removal.component));
+        if let Some(type_id) = type_id
+            && let Some(registry) = resources.get_mut::<ome_ecs::component::ComponentRegistry>()
+        {
+            registry.remove_component(removal.entity, &type_id);
+        }
+    }
     for write in writes {
         let type_id = resources
             .get::<ome_ecs::component::ComponentRegistry>()
@@ -406,7 +492,8 @@ mod tests {
     #[test]
     fn nothing_is_planned_for_a_prefab_with_no_instances() {
         let resources = world();
-        assert!(plan(&resources, Guid::new_v4()).is_empty());
+        let (writes, removals) = plan(&resources, Guid::new_v4());
+        assert!(writes.is_empty() && removals.is_empty());
     }
 
     #[test]
@@ -517,6 +604,12 @@ fn plan_for(
             continue;
         };
         for component in &described.components {
+            // Reverting restores the prefab's fields, not the user's
+            // decision to drop a component — that is its own override and
+            // is released by the same revert if it was asked for.
+            if instance.owns_component(index, &component.type_name) {
+                continue;
+            }
             for (field, value) in &component.fields {
                 let address = OverrideAddress {
                     entity: index,
@@ -537,4 +630,57 @@ fn plan_for(
         }
     }
     Some(writes)
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::*;
+    use ome_ecs::prefab_instance::WHOLE_COMPONENT;
+
+    /// Removing a component from an instance has to survive the next
+    /// prefab save. Without this it lasted exactly until then, and the
+    /// component came back with no explanation.
+    #[test]
+    fn a_component_the_user_removed_is_not_restored() {
+        let mut instance = PrefabInstance::new(Guid::new_v4());
+        instance.mark(OverrideAddress {
+            entity: 0,
+            component: "test::Health".into(),
+            field: WHOLE_COMPONENT.into(),
+        });
+        assert!(instance.owns_component(0, "test::Health"));
+        assert!(!instance.owns_component(0, "test::Other"));
+        assert!(
+            !instance.owns_component(1, "test::Health"),
+            "another entity of the prefab"
+        );
+    }
+
+    /// Presence and a field on the same component are separate decisions:
+    /// overriding a value must not read as owning the component.
+    #[test]
+    fn overriding_a_field_does_not_claim_the_component() {
+        let mut instance = PrefabInstance::new(Guid::new_v4());
+        instance.mark(OverrideAddress {
+            entity: 0,
+            component: "test::Health".into(),
+            field: "hp".into(),
+        });
+        assert!(!instance.owns_component(0, "test::Health"));
+    }
+
+    /// The link and the hierarchy hold the instance together. A prefab
+    /// edit must never strip them, whatever the document says.
+    #[test]
+    fn the_components_that_hold_an_instance_together_are_never_removed() {
+        for name in [
+            "ome_ecs::prefab_instance::PrefabInstance",
+            "ome_ecs::prefab_instance::PrefabMember",
+            "ome_ecs::hierarchy::Parent",
+            "ome_ecs::hierarchy::Children",
+        ] {
+            assert!(is_bookkeeping(name), "{name} would have been stripped");
+        }
+        assert!(!is_bookkeeping("ome_ecs::transform::Transform"));
+    }
 }

@@ -51,13 +51,13 @@ pub(super) fn apply_non_ecs_action(
             if let Some((root, overrides, writes)) =
                 crate::actions::prefab_propagate::plan_revert(resources, *entity, *component)
             {
-                crate::actions::prefab_propagate::apply(resources, &writes);
+                crate::actions::prefab_propagate::apply(resources, &writes, &[]);
                 crate::actions::prefab_propagate::write_overrides(resources, root, &overrides);
             }
         }
         EditorAction::PropagatePrefab(prefab) => {
-            let plan = crate::actions::prefab_propagate::plan(resources, *prefab);
-            crate::actions::prefab_propagate::apply(resources, &plan);
+            let (writes, removals) = crate::actions::prefab_propagate::plan(resources, *prefab);
+            crate::actions::prefab_propagate::apply(resources, &writes, &removals);
         }
         EditorAction::EditPrefabField {
             prefab: guid,
