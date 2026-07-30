@@ -312,6 +312,13 @@ enum Edit<'a> {
     /// Write the project's world to a scene file, or replace it from one.
     SaveScene,
     LoadScene,
+    /// Capture one of the project's entities as a prefab file.
+    SavePrefab {
+        entity: ome_ecs::entity::Entity,
+        dest: Option<std::path::PathBuf>,
+    },
+    /// Stamp a prefab file into the project's world.
+    InstantiatePrefab(std::path::PathBuf),
     /// Start or stop the project's gameplay systems in place.
     SetPlaying(bool),
 }
@@ -361,6 +368,15 @@ fn classify(action: &EditorAction) -> Option<Edit<'_>> {
         // project's own scene file.
         EditorAction::SaveScene => Some(Edit::SaveScene),
         EditorAction::OpenScene => Some(Edit::LoadScene),
+        // Same reason as scene I/O: the world being captured is the
+        // project's, and the mirror is a view of it. Writing the mirror
+        // would save a partly-parked copy — every component this editor
+        // binary has no type for is a name and a bag of fields here.
+        EditorAction::SavePrefab { entity, dest } => Some(Edit::SavePrefab {
+            entity: *entity,
+            dest: dest.clone(),
+        }),
+        EditorAction::InstantiatePrefab(path) => Some(Edit::InstantiatePrefab(path.clone())),
         // Play runs the project's systems in the project we are already
         // driving, instead of launching a second copy of it.
         EditorAction::Play => Some(Edit::SetPlaying(true)),
@@ -530,6 +546,26 @@ fn send(
             None => Ok(()),
         },
         Edit::SetPlaying(playing) => client.set_playing(playing).map_err(map_err),
+        // Both processes see the same filesystem, so a path resolved here
+        // is meaningful on the project's side of the wire — the same
+        // assumption scene I/O above already makes.
+        Edit::SavePrefab { entity, dest } => {
+            let id = remote(entity)?;
+            let Some(root) = crate::actions::handlers::prefab_root(resources) else {
+                return Err("cannot save a prefab without a project open".to_owned());
+            };
+            // The mirror's `Name` is the project's `Name`; reading it here
+            // saves a round trip purely to learn what to call the file.
+            let name = crate::actions::handlers::entity_name(resources, entity);
+            let path = crate::actions::handlers::prefab_path(&root, &name, dest.as_deref());
+            client
+                .save_prefab(id, &path.to_string_lossy())
+                .map_err(map_err)
+        }
+        Edit::InstantiatePrefab(path) => client
+            .instantiate_prefab(&path.to_string_lossy())
+            .map(|_| ())
+            .map_err(map_err),
     }
 }
 

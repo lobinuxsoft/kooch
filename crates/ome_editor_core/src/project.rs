@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 use ome_ecs::reflect::ReflectValue;
 use ome_ecs::scene::{ComponentDescription, EntityDescription, SceneDocument};
 
+/// Extension of a scene file — and therefore of a prefab, which is one.
+pub const SCENE_EXTENSION: &str = "ome_scene";
+
 /// Convention path of the default scene relative to the project root.
 pub const DEFAULT_SCENE_REL_PATH: &str = "scenes/default.ome_scene";
 

@@ -7,6 +7,7 @@ use egui::collapsing_header::CollapsingState;
 use crate::actions::EditorAction;
 use crate::drag_drop::DraggedAsset;
 use crate::icons;
+use ome_ecs::entity::Entity;
 
 use super::RenderCtx;
 use super::menus::{folder_menu, leaf_menu};
@@ -83,6 +84,26 @@ pub(super) fn render_folder(
             // see `AssetNav::take_cursor_move`.
             if resp.clicked() {
                 ctx.nav.cursor = Some(node.path.clone());
+            }
+            // An entity dragged out of the World panel and dropped here is
+            // saved as a prefab in this folder — the second of the two
+            // ways to author one, beside the entity's own context menu.
+            //
+            // Guarded behind `dnd_hover_payload` because
+            // `dnd_release_payload` takes the payload before checking its
+            // type; see the ordering note in `panels/world/entity_row.rs`.
+            if ctx.writable && resp.dnd_hover_payload::<Entity>().is_some() {
+                ui.painter().rect_filled(
+                    resp.rect,
+                    2.0,
+                    egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
+                );
+                if let Some(entity) = resp.dnd_release_payload::<Entity>() {
+                    ctx.actions.push(EditorAction::SavePrefab {
+                        entity: *entity,
+                        dest: Some(node.path.clone()),
+                    });
+                }
             }
             let writable = ctx.writable;
             let actions = &mut *ctx.actions;

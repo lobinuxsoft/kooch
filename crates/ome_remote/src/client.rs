@@ -250,6 +250,24 @@ impl RemoteClient {
         })
     }
 
+    /// Writes one entity and its descendants to a scene file — a prefab.
+    pub fn save_prefab(&self, entity: EntityId, path: &str) -> Result<(), ClientError> {
+        self.expect_ok(Method::SavePrefab {
+            entity,
+            path: path.to_owned(),
+        })
+    }
+
+    /// Stamps a prefab file into the live world; returns its root.
+    pub fn instantiate_prefab(&self, path: &str) -> Result<EntityId, ClientError> {
+        match self.call(Method::InstantiatePrefab {
+            path: path.to_owned(),
+        })? {
+            ResponseData::Spawned { entity } => Ok(entity),
+            other => Err(ClientError::Unexpected(other)),
+        }
+    }
+
     /// Replaces the server's live ECS with a scene file from its disk.
     /// Starts or stops the project's gameplay systems.
     ///

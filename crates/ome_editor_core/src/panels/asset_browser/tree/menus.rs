@@ -100,6 +100,21 @@ pub(super) fn leaf_menu(
     actions: &mut Vec<EditorAction>,
     rename: &mut Option<RenameState>,
 ) {
+    // A scene file is a prefab, so this is offered on any of them (#611).
+    // Instancing adds to the open scene, unlike File > Open Scene which
+    // replaces it — two operations that read the same file for different
+    // reasons.
+    if leaf
+        .path
+        .extension()
+        .is_some_and(|ext| ext == crate::project::SCENE_EXTENSION)
+        && ui
+            .button(format!("{} Instantiate into Scene", icons::TREE_STRUCTURE))
+            .clicked()
+    {
+        actions.push(EditorAction::InstantiatePrefab(leaf.path.clone()));
+        ui.close();
+    }
     if ui.button("Open in IDE").clicked() {
         actions.push(EditorAction::OpenInIde {
             root: root.to_path_buf(),

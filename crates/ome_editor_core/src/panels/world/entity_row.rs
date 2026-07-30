@@ -282,6 +282,24 @@ fn handle_context_menu(
             ui.close();
         }
 
+        // One entity only. A prefab is one tree with one root — see
+        // `SceneDocument::root_index` — so N selected entities are either N
+        // prefabs or one thing that is not a tree, and neither is what this
+        // menu item means.
+        if selected.len() == 1 {
+            let entity = selected[0];
+            // The same glyph the asset tree shows for a scene file, since
+            // that is what this produces.
+            if ui
+                .button(format!("{} Save as Prefab", icons::TREE_STRUCTURE))
+                .on_hover_text("Write this entity and its children to a scene file in assets/")
+                .clicked()
+            {
+                actions.push(EditorAction::SavePrefab { entity, dest: None });
+                ui.close();
+            }
+        }
+
         // Add Component submenu (only for single entity).
         if selected.len() == 1 {
             let entity = selected[0];
