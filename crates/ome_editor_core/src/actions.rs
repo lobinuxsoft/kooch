@@ -98,6 +98,13 @@ pub(crate) enum EditorAction {
         parent_path: PathBuf,
     },
     CloseProject,
+    /// Run `cargo clean` on the open project.
+    ///
+    /// `cargo clean` rather than deleting `target/` by hand: the
+    /// directory is not always there. `CARGO_TARGET_DIR` and
+    /// `.cargo/config.toml` can move it, and a `rm -rf ./target` against
+    /// a redirected build would remove nothing while reporting success.
+    CleanProject,
     Reparent {
         entity: Entity,
         new_parent: Option<Entity>,
@@ -244,7 +251,10 @@ impl EditorAction {
             | Self::CloseProject
             | Self::LaunchProject(_)
             | Self::CancelLaunch
-            | Self::RemoveRecent(_) => false,
+            | Self::RemoveRecent(_)
+            // Cleaning is what you do *because* the world is not there,
+            // and it disconnects the session itself before it starts.
+            | Self::CleanProject => false,
 
             // Editor preferences and things that act on files rather than
             // on the world. An asset edit is about a `.ron` on disk, and
