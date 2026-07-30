@@ -115,10 +115,16 @@ pub(super) fn leaf_menu(
             .button(format!("{} Instantiate into Scene", icons::PACKAGE))
             .clicked()
     {
-        actions.push(EditorAction::InstantiatePrefab {
-            path: leaf.path.clone(),
-            at: crate::viewport_pick::DropPoint::Authored,
-        });
+        // Only a *registered* prefab can be instanced: the guid is what
+        // both the local spawn and the wire call address it by. An
+        // unregistered file has no identity yet, and the menu says nothing
+        // rather than offering an action that would fail.
+        if let Some((guid, _)) = &leaf.asset {
+            actions.push(EditorAction::InstantiatePrefab {
+                prefab: *guid,
+                at: crate::viewport_pick::DropPoint::Authored,
+            });
+        }
         ui.close();
     }
     if ui.button("Open in IDE").clicked() {

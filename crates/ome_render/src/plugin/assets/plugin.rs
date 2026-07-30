@@ -86,6 +86,12 @@ impl Plugin for AssetPlugin {
         server.register_loader::<MeshletMesh, _>(MeshletMeshLoader);
         server.register_loader::<Image, _>(ImageLoader::srgb());
         server.register_loader::<Material, _>(MaterialLoader);
+        // Registered here rather than by `EcsPlugin`, which owns the type:
+        // the server is built in this function, and a plugin reaching for a
+        // resource another plugin may not have inserted yet is an ordering
+        // bug waiting to happen. This is what gives a `.prefab` a guid, so a
+        // component field can reference one.
+        ome_ecs::scene::prefab::register_loader(&mut server);
 
         let mut database = AssetDatabase::new();
         for root in &self.roots {

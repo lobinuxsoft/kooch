@@ -255,8 +255,10 @@ fn save_prefab(resources: &mut Resources, entity: EntityId, path: &str) -> Resul
     document.root_index().map_err(|e| RemoteError::SceneError {
         detail: e.to_string(),
     })?;
-    document
-        .save(path.as_ref())
+    // Writes the `.meta` alongside, so the prefab is a registered asset the
+    // moment it exists rather than the first time something loads it.
+    ome_ecs::scene::prefab::save(&document, path.as_ref())
+        .map(|_| ())
         .map_err(|e| RemoteError::SceneError {
             detail: e.to_string(),
         })

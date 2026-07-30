@@ -13,6 +13,9 @@ mod sync;
 #[cfg(test)]
 mod tests;
 
+pub mod prefab;
+
 pub use document::{ComponentDescription, EntityDescription, SceneDocument};
 pub use error::SceneError;
+pub use prefab::{PrefabLoader, spawn as spawn_prefab};
 pub use sync::{despawn_scene, instantiate, spawn_scene_into, sync_scene_to_ecs};

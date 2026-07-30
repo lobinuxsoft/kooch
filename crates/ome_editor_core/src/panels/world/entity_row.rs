@@ -295,7 +295,11 @@ fn handle_context_menu(
                 .on_hover_text("Write this entity and its children to a scene file in assets/")
                 .clicked()
             {
-                actions.push(EditorAction::SavePrefab { entity, dest: None });
+                actions.push(EditorAction::SavePrefab {
+                    entity,
+                    dest: None,
+                    overwrite: false,
+                });
                 ui.close();
             }
         }

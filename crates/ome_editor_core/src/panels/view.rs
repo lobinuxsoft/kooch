@@ -84,8 +84,8 @@ pub(crate) fn draw_view_content(
     // the payload before checking its type; see the ordering note in
     // `panels/world/entity_row.rs`.
     if response
-        .dnd_hover_payload::<crate::drag_drop::DraggedPrefab>()
-        .is_some()
+        .dnd_hover_payload::<crate::drag_drop::DraggedAsset>()
+        .is_some_and(|a| a.type_name == crate::drag_drop::PREFAB_TYPE_NAME)
     {
         ui.painter().rect_stroke(
             response.rect,
@@ -93,7 +93,7 @@ pub(crate) fn draw_view_content(
             egui::Stroke::new(2.0, egui::Color32::from_rgb(60, 200, 100)),
             egui::StrokeKind::Inside,
         );
-        if let Some(prefab) = response.dnd_release_payload::<crate::drag_drop::DraggedPrefab>() {
+        if let Some(prefab) = response.dnd_release_payload::<crate::drag_drop::DraggedAsset>() {
             // `cursor_local` is `None` once the pointer leaves the image, so
             // a release recorded outside it has no place to name and falls
             // back to the authored position rather than to a guess.
@@ -105,7 +105,7 @@ pub(crate) fn draw_view_content(
                 None => crate::viewport_pick::DropPoint::Authored,
             };
             actions.push(crate::actions::EditorAction::InstantiatePrefab {
-                path: prefab.path.clone(),
+                prefab: prefab.guid,
                 at,
             });
         }

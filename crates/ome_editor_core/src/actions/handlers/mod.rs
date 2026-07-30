@@ -41,11 +41,14 @@ pub(super) fn apply_non_ecs_action(
     }
     match action {
         EditorAction::SaveScene => handle_save_scene(resources),
-        EditorAction::SavePrefab { entity, dest } => {
+        // Removing the pending prompt already happened in `apply_actions`;
+        // there is nothing left for this to do.
+        EditorAction::CancelPrefabOverwrite => {}
+        EditorAction::SavePrefab { entity, dest, .. } => {
             prefab::handle_save_prefab(resources, *entity, dest.as_deref())
         }
-        EditorAction::InstantiatePrefab { path, at } => {
-            prefab::handle_instantiate_prefab(resources, path, *at)
+        EditorAction::InstantiatePrefab { prefab: guid, at } => {
+            prefab::handle_instantiate_prefab(resources, *guid, *at)
         }
         EditorAction::OpenScene => handle_open_scene(resources, undo_stack),
         EditorAction::OpenSceneAdditive => handle_open_scene_additive(resources),

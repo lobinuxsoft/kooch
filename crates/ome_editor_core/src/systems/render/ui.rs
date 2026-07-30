@@ -7,9 +7,10 @@ use ome_render::meshlet::{
     MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
 };
 
-use crate::actions::EditorAction;
+use crate::actions::{EditorAction, PendingPrefabOverwrite};
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::ViewportInputDelta;
+use crate::icons;
 use crate::launch_screen::{self, LaunchAction};
 use crate::menu_bar::draw_menu_bar;
 use crate::project_state::ProjectState;
@@ -73,6 +74,7 @@ pub(super) fn run_editor_ui(
     log_buffer: Option<&ome_core::LogBuffer>,
     console: &mut crate::panels::console::ConsoleState,
     connect_output: &[String],
+    prefab_overwrite: Option<&PendingPrefabOverwrite>,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut selected_asset = overlay.selected_asset;
@@ -183,6 +185,10 @@ pub(super) fn run_editor_ui(
             let launch_actions = launch_screen::draw_launch_screen(ui, ps);
             forward_launch_actions(launch_actions, &mut actions);
         }
+
+        if let Some(pending) = prefab_overwrite {
+            draw_prefab_overwrite_prompt(ui, pending, &mut actions);
+        }
     });
 
     // Selection arbitration — the Inspector renders one thing. Picking
@@ -283,6 +289,64 @@ fn draw_connecting_banner(ui: &mut egui::Ui, output: &[String]) {
 /// Deliberately only the dock's rect. The menu bar keeps Cancel, Close and
 /// Clean Project, and the banner keeps its Copy — those are how a user
 /// gets out of a build that never finishes.
+/// Asks before replacing an existing prefab file.
+///
+/// # Why this is asked rather than avoided
+///
+/// Saving a prefab again after editing the entity is how a prefab is
+/// iterated on, so the file has to be replaced. Suffixing instead — the
+/// previous behaviour — never destroyed anything and made that impossible,
+/// leaving `Enemy_1`, `Enemy_2`, `Enemy_3` behind and no updated `Enemy`.
+///
+/// So the destructive thing is the correct thing, and a prompt is what
+/// makes it safe. A modal rather than an inline confirmation because it is
+/// answering for a file the user cannot see from here.
+fn draw_prefab_overwrite_prompt(
+    ui: &egui::Ui,
+    pending: &PendingPrefabOverwrite,
+    actions: &mut Vec<EditorAction>,
+) {
+    let name = pending
+        .path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| pending.path.display().to_string());
+
+    let mut answered = None;
+    egui::Modal::new(egui::Id::new("prefab_overwrite_prompt")).show(ui.ctx(), |ui| {
+        ui.set_width(360.0);
+        ui.heading(format!("{} Replace prefab?", icons::PACKAGE));
+        ui.add_space(6.0);
+        // The file name, not "a prefab": the user is answering about
+        // something they can recognise.
+        ui.label(format!("{name} already exists."));
+        ui.add_space(2.0);
+        ui.weak("Its contents are replaced. Anything already referencing it keeps working — the file keeps its id.");
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if ui.button("Cancel").clicked() {
+                answered = Some(false);
+            }
+            if ui.button("Replace").clicked() {
+                answered = Some(true);
+            }
+        });
+    });
+
+    // Both answers are actions: this function draws, and the action layer
+    // owns the pending state. Cancelling still has to be said out loud, or
+    // the prompt would come back next frame.
+    match answered {
+        Some(true) => actions.push(EditorAction::SavePrefab {
+            entity: pending.entity,
+            dest: pending.dest.clone(),
+            overwrite: true,
+        }),
+        Some(false) => actions.push(EditorAction::CancelPrefabOverwrite),
+        None => {}
+    }
+}
+
 fn shade_out(ui: &egui::Ui, rect: egui::Rect) {
     let area = egui::Area::new(ui.id().with("dock_shade"))
         .order(egui::Order::Foreground)

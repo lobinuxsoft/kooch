@@ -70,10 +70,11 @@ pub(crate) fn sanitize_file_stem(name: &str) -> String {
 /// `dest` is the folder a drag was dropped on; without one the project's
 /// `assets/` is used, which is where the user asked prefabs to live.
 ///
-/// A name already taken gets a numeric suffix. Saving a prefab must never
-/// overwrite a file the user did not name — two entities called "Enemy" is
-/// ordinary, and the second one silently replacing the first would be data
-/// loss triggered by a menu item that reads as additive.
+/// The same entity always resolves to the same file, so saving a prefab
+/// again after editing the entity updates it. It used to suffix — `Enemy`,
+/// `Enemy_1`, `Enemy_2` — which never destroyed anything and made
+/// iterating on a prefab impossible. Replacement is guarded by a
+/// confirmation prompt instead; see `actions::intercept_prefab_overwrites`.
 pub(crate) fn prefab_path(root: &Path, name: &str, dest: Option<&Path>) -> PathBuf {
     let folder = match dest {
         // A folder outside the project would put the file somewhere the
@@ -81,23 +82,7 @@ pub(crate) fn prefab_path(root: &Path, name: &str, dest: Option<&Path>) -> PathB
         Some(dest) if dest.starts_with(root) => dest.to_path_buf(),
         _ => root.join("assets"),
     };
-    let stem = sanitize_file_stem(name);
-
-    let first = folder.join(format!("{stem}.{PREFAB_EXTENSION}"));
-    if !first.exists() {
-        return first;
-    }
-    // Bounded rather than `loop`: a thousand identically named prefabs in
-    // one folder is a different problem, and an unbounded search on a
-    // filesystem that is answering "yes" to everything would hang the
-    // editor.
-    for suffix in 1..1000 {
-        let candidate = folder.join(format!("{stem}_{suffix}.{PREFAB_EXTENSION}"));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    first
+    folder.join(format!("{}.{PREFAB_EXTENSION}", sanitize_file_stem(name)))
 }
 
 /// Writes `entity` and its descendants to a prefab file.
@@ -120,37 +105,33 @@ pub(super) fn handle_save_prefab(resources: &mut Resources, entity: Entity, dest
         tracing::error!("refusing to write a prefab that cannot be instanced: {e}");
         return;
     }
-    match document.save(&path) {
-        Ok(()) => tracing::info!("prefab saved to {}", path.display()),
+    // `prefab::save`, not `document.save`: it also writes the `.meta` that
+    // makes the file a registered asset. Without one it is invisible to the
+    // picker and cannot be spawned.
+    match ome_ecs::scene::prefab::save(&document, &path) {
+        Ok(guid) => tracing::info!("prefab saved to {} as {guid}", path.display()),
         Err(e) => tracing::error!("failed to save prefab: {e}"),
     }
 }
 
-/// Stamps a prefab file into the open scene, optionally placing its root.
+/// Stamps a prefab into the open scene, optionally placing its root.
+///
+/// Goes through `spawn_prefab`, which is the same entry point a game's own
+/// spawner uses — so the editor exercises the runtime path rather than a
+/// parallel one that could rot.
 pub(super) fn handle_instantiate_prefab(
     resources: &mut Resources,
-    path: &Path,
+    prefab: ome_core::Guid,
     at: crate::viewport_pick::DropPoint,
 ) {
     // Resolved before the spawn: it reads the camera, and the borrow ends
     // before the world is mutated.
     let at = crate::viewport_pick::resolve(resources, at);
-    let prefab = match SceneDocument::load(path) {
-        Ok(prefab) => prefab,
-        Err(e) => {
-            tracing::error!("failed to read prefab {}: {e}", path.display());
-            return;
-        }
-    };
-    let into = resources
-        .get::<ome_ecs::SceneManager>()
-        .and_then(|scenes| scenes.active_id())
-        .unwrap_or_else(ome_core::Guid::new_v4);
 
-    let root = match ome_ecs::scene::instantiate(&prefab, resources, into) {
+    let root = match ome_ecs::scene::spawn_prefab(prefab, resources) {
         Ok(root) => root,
         Err(e) => {
-            tracing::error!("failed to instance {}: {e}", path.display());
+            tracing::error!("failed to instance prefab {prefab}: {e}");
             return;
         }
     };
@@ -163,7 +144,7 @@ pub(super) fn handle_instantiate_prefab(
     {
         transform.position = at;
     }
-    tracing::info!("instanced {}", path.display());
+    tracing::info!("instanced prefab {prefab}");
 }
 
 #[cfg(test)]
@@ -220,25 +201,24 @@ mod tests {
         );
     }
 
-    /// Two entities with one name is ordinary; the second must not replace
-    /// the first.
+    /// The same entity resolves to the same file every time, which is what
+    /// makes re-saving update a prefab rather than litter the folder. The
+    /// prompt is what keeps that from being destructive.
     ///
     /// `std::env::temp_dir` rather than a crate — there is no `tempfile` in
     /// this workspace, and the rest of the editor's file tests do the same.
     #[test]
-    fn an_existing_name_is_suffixed_rather_than_overwritten() {
+    fn re_saving_resolves_to_the_same_file() {
         let root = std::env::temp_dir().join("ome_prefab_name_clash");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("assets")).unwrap();
-        std::fs::write(root.join("assets/Enemy.prefab"), "").unwrap();
 
-        let next = prefab_path(&root, "Enemy", None);
-        assert_eq!(next, root.join("assets/Enemy_1.prefab"));
-
-        std::fs::write(&next, "").unwrap();
+        let first = prefab_path(&root, "Enemy", None);
+        std::fs::write(&first, "").unwrap();
         assert_eq!(
             prefab_path(&root, "Enemy", None),
-            root.join("assets/Enemy_2.prefab"),
+            first,
+            "an existing file must resolve to itself, not to a new name",
         );
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -382,14 +382,23 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
         // project's, and the mirror is a view of it. Writing the mirror
         // would save a partly-parked copy — every component this editor
         // binary has no type for is a name and a bag of fields here.
-        EditorAction::SavePrefab { entity, dest } => Some(Edit::SavePrefab {
+        EditorAction::SavePrefab { entity, dest, .. } => Some(Edit::SavePrefab {
             entity: *entity,
             dest: dest.clone(),
         }),
-        EditorAction::InstantiatePrefab { path, at } => Some(Edit::InstantiatePrefab {
-            path: path.clone(),
-            at: crate::viewport_pick::resolve(resources, *at),
-        }),
+        // The guid is resolved to a path here, not sent as one: the wire
+        // call names a file on the shared filesystem, and this side is
+        // where the asset database that knows the mapping lives.
+        EditorAction::InstantiatePrefab { prefab, at } => {
+            let path = resources
+                .get::<ome_core::asset_database::AssetDatabase>()
+                .and_then(|db| db.entry(*prefab))
+                .map(|entry| entry.path.clone())?;
+            Some(Edit::InstantiatePrefab {
+                path,
+                at: crate::viewport_pick::resolve(resources, *at),
+            })
+        }
         // Play runs the project's systems in the project we are already
         // driving, instead of launching a second copy of it.
         EditorAction::Play => Some(Edit::SetPlaying(true)),
