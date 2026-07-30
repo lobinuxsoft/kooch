@@ -278,11 +278,37 @@ fn instantiate_prefab(resources: &mut Resources, path: &str) -> Result<EntityId,
         .and_then(|scenes| scenes.active_id())
         .unwrap_or_else(ome_core::Guid::new_v4);
 
-    ome_ecs::scene::instantiate(&prefab, resources, into)
-        .map(EntityId::from)
-        .map_err(|e| RemoteError::SceneError {
-            detail: e.to_string(),
-        })
+    let (root, members) =
+        ome_ecs::scene::instantiate_members(&prefab, resources, into).map_err(|e| {
+            RemoteError::SceneError {
+                detail: e.to_string(),
+            }
+        })?;
+
+    // The link is attached here and not inside `instantiate`, because this
+    // method *is* the editor's instancing — a shipped game does not run
+    // this server, and its own spawner calls `spawn_prefab`, which
+    // deliberately attaches nothing.
+    match ome_core::asset_meta::read_meta(path.as_ref()) {
+        Ok(meta) => {
+            ome_ecs::prefab_instance::attach(resources, root, &members, meta.guid);
+            tracing::info!(
+                target: "ome_remote::prefab",
+                prefab = %meta.guid,
+                members = members.len(),
+                "instance linked to its prefab",
+            );
+        }
+        // Without an identity there is nothing to link *to*. Said out loud
+        // because the instance still spawns, so the only visible symptom
+        // is that it never follows the prefab afterwards.
+        Err(e) => tracing::warn!(
+            target: "ome_remote::prefab",
+            path = %path,
+            "instanced but not linked, no asset identity: {e}",
+        ),
+    }
+    Ok(EntityId::from(root))
 }
 
 /// Resolves a component name to a local `TypeId`.
@@ -450,7 +476,13 @@ fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> 
     })?;
     sync_scene_to_ecs(&doc, resources).map_err(|e| RemoteError::SceneError {
         detail: e.to_string(),
-    })
+    })?;
+    // A prefab edited while this scene was closed left stale copies in it.
+    // Done here rather than editor-side because this is where the scene
+    // actually arrives — the editor would have to wait for the mirror
+    // before it even knew what was in it.
+    ome_ecs::scene::propagate::refresh_all(resources);
+    Ok(())
 }
 
 /// The authored world, held while a play session runs so Stop can put

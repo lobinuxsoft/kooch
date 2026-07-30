@@ -14,8 +14,11 @@ mod sync;
 mod tests;
 
 pub mod prefab;
+pub mod propagate;
 
 pub use document::{ComponentDescription, EntityDescription, SceneDocument};
 pub use error::SceneError;
-pub use prefab::{PrefabLoader, spawn as spawn_prefab};
-pub use sync::{despawn_scene, instantiate, spawn_scene_into, sync_scene_to_ecs};
+pub use prefab::{PrefabLoader, spawn as spawn_prefab, spawn_members as spawn_prefab_members};
+pub use sync::{
+    despawn_scene, instantiate, instantiate_members, spawn_scene_into, sync_scene_to_ecs,
+};

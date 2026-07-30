@@ -66,6 +66,25 @@ pub fn instantiate(
     resources: &mut Resources,
     into: ome_core::Guid,
 ) -> Result<crate::entity::Entity, SceneError> {
+    let (root, _) = instantiate_members(prefab, resources, into)?;
+    Ok(root)
+}
+
+/// Instances `prefab` and hands back its root **and** every entity it
+/// spawned, in document order.
+///
+/// `members[i]` is the entity for `prefab.entities[i]`. The editor needs
+/// that correspondence in both directions: to record that the field a user
+/// just changed belongs to entity *i* of the prefab, and to find the live
+/// entity for entity *i* when the prefab changes and the value has to be
+/// pushed back. Recovering it afterwards would mean guessing — names are
+/// not unique and child order is not stable — so it is handed out by the
+/// only code that actually knows.
+pub fn instantiate_members(
+    prefab: &SceneDocument,
+    resources: &mut Resources,
+    into: ome_core::Guid,
+) -> Result<(crate::entity::Entity, Vec<crate::entity::Entity>), SceneError> {
     use crate::persistent_id::PersistentIdAllocator;
 
     // Checked before anything is spawned: a multi-root document would
@@ -90,7 +109,7 @@ pub fn instantiate(
     let spawned = spawn_returning(&instance, resources)?;
     // `spawn_returning` pushes one entity per description, in order, so the
     // index the root was found at addresses the same entity here.
-    Ok(spawned[root])
+    Ok((spawned[root], spawned))
 }
 
 /// Shared body of [`spawn_scene_into`] and [`instantiate`], handing back

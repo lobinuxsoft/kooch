@@ -91,7 +91,14 @@ fn load_boot_scene(resources: &mut Resources) {
         std::env::current_dir().unwrap_or_default().join(&boot.0)
     };
     match manager.load(&path, resources) {
-        Ok(()) => tracing::info!("SceneBootstrapPlugin: loaded {}", path.display()),
+        Ok(()) => {
+            tracing::info!("SceneBootstrapPlugin: loaded {}", path.display());
+            // The scene holds its prefab instances in full, so a prefab
+            // edited while it was closed left stale copies. This is the
+            // case that motivates it: opening a project is the longest a
+            // scene is ever closed for.
+            ome_ecs::scene::propagate::refresh_all(resources);
+        }
         Err(err) => tracing::error!(
             "SceneBootstrapPlugin: failed to load {}: {err}",
             path.display()

@@ -161,6 +161,10 @@ pub(crate) fn refresh_cached_prefab(resources: &mut Resources, path: &Path) {
     if let Some(dirty) = resources.get_mut::<crate::actions::DirtyPrefabs>() {
         dirty.clear(meta.guid);
     }
+    // Instances are now behind the document. Queued rather than applied
+    // here: this runs in the middle of handling an action, and the writes
+    // have to travel the same way an edit does.
+    crate::actions::prefab_propagate::queue(resources, meta.guid);
 }
 
 /// Writes `entity` and its descendants to a prefab file.
@@ -210,13 +214,16 @@ pub(super) fn handle_instantiate_prefab(
     // before the world is mutated.
     let at = crate::viewport_pick::resolve(resources, at);
 
-    let root = match ome_ecs::scene::spawn_prefab(prefab, resources) {
-        Ok(root) => root,
+    let (root, members) = match ome_ecs::scene::spawn_prefab_members(prefab, resources) {
+        Ok(spawned) => spawned,
         Err(e) => {
             tracing::error!("failed to instance prefab {prefab}: {e}");
             return;
         }
     };
+    // Placing a prefab in the editor links the instance to it; spawning
+    // one from a game does not. Same spawn, different intent.
+    ome_ecs::prefab_instance::attach(resources, root, &members, prefab);
     // A drop into the viewport names a place; the World panel and the
     // context menu do not, and leave the prefab where it was authored.
     if let Some(at) = at
@@ -457,6 +464,7 @@ pub(super) fn handle_save_prefab_asset(resources: &mut Resources, prefab: ome_co
             if let Some(dirty) = resources.get_mut::<crate::actions::DirtyPrefabs>() {
                 dirty.clear(prefab);
             }
+            crate::actions::prefab_propagate::queue(resources, prefab);
             tracing::info!("prefab saved to {}", path.display());
         }
         Err(e) => tracing::error!("failed to save prefab: {e}"),

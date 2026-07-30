@@ -111,6 +111,19 @@ pub fn save(document: &SceneDocument, path: &std::path::Path) -> Result<Guid, Sc
 /// after that is a lookup in `Assets<SceneDocument>` plus the spawn itself.
 /// Spawning is proportional to the prefab's entity count, not its file size.
 pub fn spawn(prefab: Guid, resources: &mut Resources) -> Result<crate::entity::Entity, SceneError> {
+    spawn_members(prefab, resources).map(|(root, _)| root)
+}
+
+/// Spawns a prefab and hands back its root **and** every entity it built,
+/// in document order.
+///
+/// What the editor uses: linking an instance to its prefab needs to know
+/// which live entity is which entity of the document, in both directions.
+/// A game spawning bullets wants [`spawn`], which throws that away.
+pub fn spawn_members(
+    prefab: Guid,
+    resources: &mut Resources,
+) -> Result<(crate::entity::Entity, Vec<crate::entity::Entity>), SceneError> {
     // Taken out and put back so `load_by_guid` can borrow `resources` for
     // the load it may have to perform.
     let mut server = resources
@@ -140,7 +153,7 @@ pub fn spawn(prefab: Guid, resources: &mut Resources) -> Result<crate::entity::E
         .and_then(|scenes| scenes.active_id())
         .unwrap_or_else(Guid::new_v4);
 
-    super::sync::instantiate(&document, resources, into)
+    super::sync::instantiate_members(&document, resources, into)
 }
 
 /// Why a `.prefab` file could not be parsed.

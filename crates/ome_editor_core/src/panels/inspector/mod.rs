@@ -305,15 +305,25 @@ fn draw_inspector_body(
                 section
                     .show_header(ui, |ui| {
                         let title = format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name);
+                        // Sensed for clicks so the header can carry a
+                        // context menu. `ui.strong` returns a hover-only
+                        // response, and `context_menu` on one never fires —
+                        // it attaches and silently does nothing.
+                        let label = |ui: &mut egui::Ui, text: egui::RichText| {
+                            ui.add(egui::Label::new(text).sense(egui::Sense::click()))
+                        };
                         let title = if is_cursor {
                             // Coloured rather than boxed: a section header is
                             // already a row of furniture, and another outline
                             // would be one more line to read past.
-                            ui.strong(
-                                egui::RichText::new(title).color(ui.visuals().selection.bg_fill),
+                            label(
+                                ui,
+                                egui::RichText::new(title)
+                                    .strong()
+                                    .color(ui.visuals().selection.bg_fill),
                             )
                         } else {
-                            ui.strong(title)
+                            label(ui, egui::RichText::new(title).strong())
                         };
                         if scroll_here {
                             title.scroll_to_me(Some(egui::Align::Center));
@@ -332,6 +342,33 @@ fn draw_inspector_body(
                         }
                         if comp.short_name == "RigidBody" && !is_read_only {
                             draw_calculate_mass(ui, entity, comp.component, entities, actions);
+                        }
+                        // Only on an instance, and only for a component
+                        // that came from the prefab. Reverting is what
+                        // makes an override safe to have — without it an
+                        // accidental drag pins that field forever.
+                        //
+                        // On the header rather than as a button, because
+                        // it is a rare action beside two frequent ones and
+                        // a third button in the row is a third thing to
+                        // read past every time.
+                        if info.is_prefab_instance {
+                            title.context_menu(|ui| {
+                                if ui
+                                    .button(format!(
+                                        "{} Revert {} to Prefab",
+                                        icons::ARROWS_CLOCKWISE,
+                                        comp.short_name,
+                                    ))
+                                    .clicked()
+                                {
+                                    actions.push(EditorAction::RevertToPrefab {
+                                        entity,
+                                        component: Some(comp.component),
+                                    });
+                                    ui.close();
+                                }
+                            });
                         }
                     })
                     .body(|ui| {

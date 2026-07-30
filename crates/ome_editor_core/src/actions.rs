@@ -22,6 +22,9 @@ use crate::undo::{CompoundCommand, EditorCommand, UndoStack};
 use self::dispatch::{action_to_command, batch_description, same_ecs_variant};
 use self::handlers::apply_non_ecs_action;
 
+mod prefab_overrides;
+pub(crate) mod prefab_propagate;
+
 pub(crate) use self::codegen::{migrate_to_library, register_scripts};
 
 pub(crate) enum EditorAction {
@@ -121,6 +124,30 @@ pub(crate) enum EditorAction {
     },
     /// Write a prefab's edited document back to its file.
     SavePrefabAsset(ome_core::Guid),
+    /// Drop an instance's overrides so its fields follow the prefab again.
+    ///
+    /// `component` is `None` for the whole instance. Without this an
+    /// override is permanent: an accidental gizmo drag detaches that
+    /// transform from the prefab forever, and the only way back is
+    /// deleting the instance and placing a new one.
+    RevertToPrefab {
+        /// Any entity of the instance; the root is found from it.
+        entity: Entity,
+        /// `None` reverts the whole instance.
+        ///
+        /// A `ComponentId` because that is what a panel has; the document
+        /// stores type names, and the registry that translates lives with
+        /// the handler.
+        component: Option<ome_ecs::component::ComponentId>,
+    },
+    /// Push a saved prefab's values out to every instance of it, except
+    /// the fields each instance overrode.
+    ///
+    /// Carries its own writes rather than expanding into `SetField`s: an
+    /// edit on an instance is recorded as an override, so propagating that
+    /// way would pin every field it touched and the instance would never
+    /// follow the prefab again.
+    PropagatePrefab(ome_core::Guid),
     /// Dismiss the "replace this prefab?" prompt without saving.
     CancelPrefabOverwrite,
     /// Stamp a prefab into the open scene.
@@ -324,6 +351,9 @@ impl EditorAction {
             // Answering a prompt is editor state; refusing it while a
             // project builds would leave the modal permanently up.
             | Self::CancelPrefabOverwrite
+            // Both write into the world, so they wait for one.
+            | Self::PropagatePrefab(_)
+            | Self::RevertToPrefab { .. }
             // A prefab is a file and a cached document. Neither is the
             // world, so editing one while a project builds is fine.
             | Self::EditPrefabField { .. }
@@ -459,9 +489,45 @@ pub(crate) fn apply_actions(
     // refresh would overwrite). Actions remote mode does not own fall
     // through to the local path below. This is the one place the two
     // modes diverge.
+    // A prefab saved while the previous batch was being handled. Drained
+    // into actions here so propagation goes through the same dispatch as
+    // everything else, one frame after the save rather than in the middle
+    // of it.
+    let queued: Vec<EditorAction> = resources
+        .get_mut::<prefab_propagate::PendingPropagation>()
+        .map(|pending| pending.drain())
+        .unwrap_or_default()
+        .into_iter()
+        .map(EditorAction::PropagatePrefab)
+        .collect();
+    if !queued.is_empty() {
+        tracing::info!(
+            target: "ome_editor_core::prefab",
+            drained = queued.len(),
+            "propagation drained into actions",
+        );
+    }
+
     // Asked before the local/remote split so the prompt appears once
     // regardless of which path would have written the file.
-    let actions = &intercept_prefab_overwrites(resources, actions);
+    let mut actions = intercept_prefab_overwrites(resources, actions);
+    actions.extend(queued.iter());
+    let actions = &actions;
+
+    // Recorded before the edits are applied, while the instance still
+    // holds the values the user is changing away from — and appended so
+    // the write that persists the set travels the same path as the edit
+    // that caused it.
+    let recorded = prefab_overrides::record(resources, actions);
+    let mut owned: Vec<&EditorAction>;
+    let actions = match recorded.is_empty() {
+        true => actions,
+        false => {
+            owned = actions.clone();
+            owned.extend(recorded.iter());
+            &owned
+        }
+    };
 
     let remote = resources
         .get::<crate::remote_session::RemoteState>()

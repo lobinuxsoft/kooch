@@ -352,6 +352,26 @@ enum Edit<'a> {
     },
     /// Start or stop the project's gameplay systems in place.
     SetPlaying(bool),
+    /// Push a saved prefab's values into every instance the project holds.
+    ///
+    /// Carries the writes rather than a guid: working out *which* fields
+    /// go where needs the mirror, the prefab's cached document and each
+    /// instance's override set, all of which live on this side.
+    PropagatePrefab(
+        Vec<crate::actions::prefab_propagate::PlannedWrite>,
+        Vec<crate::actions::prefab_propagate::PlannedRemoval>,
+    ),
+    /// Drop an instance's overrides and put the prefab's values back.
+    ///
+    /// The new override set travels with the writes: applying one without
+    /// the other leaves the instance either showing the user's numbers
+    /// while claiming to be clean, or clean until the next propagation
+    /// puts them back.
+    RevertToPrefab {
+        root: ome_ecs::entity::Entity,
+        overrides: String,
+        writes: Vec<crate::actions::prefab_propagate::PlannedWrite>,
+    },
 }
 
 /// Reduces an action to an [`Edit`], or `None` if remote mode does not
@@ -425,6 +445,19 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
                 at: crate::viewport_pick::resolve(resources, *at),
             })
         }
+        EditorAction::RevertToPrefab { entity, component } => {
+            let (root, overrides, writes) =
+                crate::actions::prefab_propagate::plan_revert(resources, *entity, *component)?;
+            Some(Edit::RevertToPrefab {
+                root,
+                overrides,
+                writes,
+            })
+        }
+        EditorAction::PropagatePrefab(prefab) => {
+            let (writes, removals) = crate::actions::prefab_propagate::plan(resources, *prefab);
+            Some(Edit::PropagatePrefab(writes, removals))
+        }
         // Play runs the project's systems in the project we are already
         // driving, instead of launching a second copy of it.
         EditorAction::Play => Some(Edit::SetPlaying(true)),
@@ -442,6 +475,44 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
         // Not something remote mode owns (project mgmt, settings, …).
         _ => None,
     }
+}
+
+/// Sends a propagation plan to the project as ordinary protocol calls.
+///
+/// Not as `EditorAction`s: an edit on an instance is recorded as an
+/// override, so routing propagation through the action layer would pin
+/// every field it touched and the instance would stop following the
+/// prefab. A protocol call has no such side effect.
+fn push_writes(
+    client: &ome_remote::RemoteClient,
+    writes: &[crate::actions::prefab_propagate::PlannedWrite],
+    remote: &dyn Fn(ome_ecs::entity::Entity) -> Result<ome_remote::protocol::EntityId, String>,
+) -> Result<(), String> {
+    for write in writes {
+        let id = remote(write.entity)?;
+        // Before the field, always: a value written into a component that
+        // does not exist yet is dropped.
+        if write.add_component
+            && let Err(e) = client.add_component(id, &write.component)
+        {
+            tracing::debug!("prefab propagation could not add {}: {e}", write.component);
+            continue;
+        }
+        if write.field.is_empty() {
+            continue;
+        }
+        // A field the project refuses is skipped rather than aborting the
+        // rest: one stale component must not stop the other instances from
+        // catching up.
+        if let Err(e) = client.set_field(id, &write.component, &write.field, write.value.clone()) {
+            tracing::debug!(
+                "prefab propagation skipped {}.{}: {e}",
+                write.component,
+                write.field,
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Translates a value's entity references from mirror handles to the ones
@@ -594,6 +665,39 @@ fn send(
             None => Ok(()),
         },
         Edit::SetPlaying(playing) => client.set_playing(playing).map_err(map_err),
+        // Sent as ordinary field writes, but *not* as `EditorAction`s: an
+        // edit on an instance is recorded as an override, so routing
+        // propagation through the action layer would pin every field it
+        // touched and the instance would stop following the prefab. The
+        // protocol call has no such side effect.
+        Edit::RevertToPrefab {
+            root,
+            overrides,
+            writes,
+        } => {
+            push_writes(client, &writes, &remote)?;
+            let id = remote(root)?;
+            client
+                .set_field(
+                    id,
+                    std::any::type_name::<ome_ecs::prefab_instance::PrefabInstance>(),
+                    "overrides",
+                    ReflectValue::String(overrides),
+                )
+                .map_err(map_err)
+        }
+        Edit::PropagatePrefab(writes, removals) => {
+            for removal in &removals {
+                let id = remote(removal.entity)?;
+                if let Err(e) = client.remove_component(id, &removal.component) {
+                    tracing::warn!(
+                        "prefab propagation could not remove {}: {e}",
+                        removal.component,
+                    );
+                }
+            }
+            push_writes(client, &writes, &remote)
+        }
         // Both processes see the same filesystem, so a path resolved here
         // is meaningful on the project's side of the wire — the same
         // assumption scene I/O above already makes.

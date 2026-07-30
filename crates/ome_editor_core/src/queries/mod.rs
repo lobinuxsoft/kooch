@@ -234,6 +234,9 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
             entity_idx_map.insert(entity, idx);
             flat.push(EntityDisplayInfo {
                 entity,
+                // Read off the component the editor's instancing attaches,
+                // so the World panel can offer Revert without a world.
+                is_prefab_instance: comps.iter().any(|c| c.short_name == "PrefabMember"),
                 components: comps,
                 parent: None,
                 children: Vec::new(),
@@ -292,6 +295,7 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                 EntityDisplayInfo {
                     scene: None,
                     entity: ome_ecs::Entity::INVALID,
+                    is_prefab_instance: false,
                     components: Vec::new(),
                     parent: None,
                     children: Vec::new(),
