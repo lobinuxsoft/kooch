@@ -124,6 +124,7 @@ pub(super) fn run_editor_ui(
             });
             let mut tab_viewer = EditorTabViewer {
                 focused_tab: &mut overlay.focused_tab,
+                accent: ui.visuals().selection.bg_fill,
                 asset_nav: &mut overlay.asset_nav,
                 entities: &data.entities,
                 scenes: &data.scenes,

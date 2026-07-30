@@ -31,6 +31,9 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Which panel the keyboard belongs to, updated here as panels are
     /// drawn. `None` before the user has clicked anything.
     pub(crate) focused_tab: &'a mut Option<EditorTab>,
+    /// The colour a focused panel is lit with, read from the theme so it
+    /// follows it rather than being a second opinion about it.
+    pub(crate) accent: egui::Color32,
     /// The Asset Browser's keyboard cursor and the rows it walks.
     pub(crate) asset_nav: &'a mut crate::panels::asset_browser::AssetNav,
     pub(crate) entities: &'a [EntityDisplayInfo],
@@ -104,6 +107,42 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
         tab.to_string().into()
     }
 
+    /// Lights the focused panel's own border, rather than drawing a line
+    /// inside its contents.
+    ///
+    /// The first attempt painted a stroke on the body rect from in here,
+    /// and it landed a few pixels inside the border egui_dock had already
+    /// drawn — so instead of the panel standing out there were two lines,
+    /// one of them crooked. This hands egui_dock a brighter stroke and
+    /// lets it draw in the place it was going to draw anyway, which is the
+    /// only way the alignment is right by construction.
+    ///
+    /// The tab's title is lit too: it is the part a user's eye is already
+    /// using to tell panels apart.
+    fn tab_style_override(
+        &self,
+        tab: &Self::Tab,
+        global: &egui_dock::TabStyle,
+    ) -> Option<egui_dock::TabStyle> {
+        if *self.focused_tab != Some(*tab) {
+            return None;
+        }
+        let mut style = global.clone();
+        style.tab_body.stroke.color = self.accent;
+        // Hairlines disappear at a bright colour as readily as at a dim
+        // one; a focused border has to survive being looked at.
+        style.tab_body.stroke.width = style.tab_body.stroke.width.max(1.0);
+        for interaction in [
+            &mut style.active,
+            &mut style.focused,
+            &mut style.active_with_kb_focus,
+            &mut style.focused_with_kb_focus,
+        ] {
+            interaction.outline_color = self.accent;
+        }
+        Some(style)
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         // One place decides focus for every panel, including View.
         //
@@ -124,15 +163,6 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             *self.focused_tab = Some(*tab);
         }
         let focused = *self.focused_tab == Some(*tab);
-        if focused {
-            // Or "why did nothing happen" has no answer on screen.
-            ui.painter().rect_stroke(
-                body.shrink(1.0),
-                2.0,
-                egui::Stroke::new(1.0, ui.visuals().selection.bg_fill),
-                egui::StrokeKind::Inside,
-            );
-        }
 
         match tab {
             EditorTab::World => draw_world_content(
