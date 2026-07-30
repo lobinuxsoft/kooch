@@ -23,6 +23,7 @@ use crate::actions::EditorAction;
 // The remote path resolves a prefab's destination with the same rules as
 // the local one, rather than a second copy that could disagree about where
 // prefabs live.
+pub(crate) use prefab::PendingHostReloads;
 pub(crate) use prefab::{
     entity_name, prefab_path, project_root as prefab_root, refresh_cached_prefab,
     register_saved_asset,
@@ -47,6 +48,8 @@ pub(super) fn apply_non_ecs_action(
         // Removing the pending prompt already happened in `apply_actions`;
         // there is nothing left for this to do.
         EditorAction::CancelPrefabOverwrite => {}
+        // Local mode has one cache and it was refreshed on save.
+        EditorAction::ReloadPrefabOnHost(_) => {}
         EditorAction::RevertToPrefab { entity, component } => {
             if let Some((root, overrides, writes)) =
                 crate::actions::prefab_propagate::plan_revert(resources, *entity, *component)

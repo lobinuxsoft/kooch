@@ -106,6 +106,10 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
         },
+        Method::ReloadPrefab { path } => {
+            reload_prefab(resources, path);
+            Response::ok(id, ResponseData::Ok)
+        }
         Method::InstantiatePrefab { path } => match instantiate_prefab(resources, path) {
             Ok(entity) => Response::ok(id, ResponseData::Spawned { entity }),
             Err(e) => Response::err(id, e),
@@ -262,6 +266,15 @@ fn save_prefab(resources: &mut Resources, entity: EntityId, path: &str) -> Resul
         .map_err(|e| RemoteError::SceneError {
             detail: e.to_string(),
         })
+}
+
+/// Drops the project's cached copy of a prefab so the next instancing
+/// re-reads it.
+fn reload_prefab(resources: &mut Resources, path: &str) {
+    if let Some(server) = resources.get_mut::<ome_core::asset_loader::AssetServer>() {
+        server.forget::<SceneDocument>(path);
+    }
+    tracing::info!(target: "ome_remote::prefab", %path, "prefab cache dropped");
 }
 
 /// Stamps a prefab file into the live world and hands back its root.

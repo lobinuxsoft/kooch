@@ -258,6 +258,14 @@ impl RemoteClient {
         })
     }
 
+    /// Tells the project a prefab file changed, so it stops using the
+    /// copy it read first.
+    pub fn reload_prefab(&self, path: &str) -> Result<(), ClientError> {
+        self.expect_ok(Method::ReloadPrefab {
+            path: path.to_owned(),
+        })
+    }
+
     /// Stamps a prefab file into the live world; returns its root.
     pub fn instantiate_prefab(&self, path: &str) -> Result<EntityId, ClientError> {
         match self.call(Method::InstantiatePrefab {

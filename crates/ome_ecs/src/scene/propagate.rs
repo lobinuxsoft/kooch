@@ -438,12 +438,12 @@ pub fn plan_revert(
 
     // Narrowed by *this* entity as well as the component: reverting a
     // child's Transform must not revert the root's.
-    let kept: Vec<OverrideAddress> = instance
+    let kept: Vec<crate::prefab_instance::Override> = instance
         .overrides()
         .into_iter()
-        .filter(|address| match component {
+        .filter(|o| match component {
             Some(component) => {
-                !(address.entity == member.index as usize && address.component == component)
+                !(o.address.entity == member.index as usize && o.address.component == component)
             }
             None => false,
         })

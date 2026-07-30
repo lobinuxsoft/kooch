@@ -343,6 +343,8 @@ enum Edit<'a> {
         entity: ome_ecs::entity::Entity,
         dest: Option<std::path::PathBuf>,
     },
+    /// Tell the project a prefab file changed.
+    ReloadPrefabOnHost(std::path::PathBuf),
     /// Stamp a prefab file into the project's world, optionally placing it.
     InstantiatePrefab {
         path: std::path::PathBuf,
@@ -454,6 +456,7 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
                 writes,
             })
         }
+        EditorAction::ReloadPrefabOnHost(path) => Some(Edit::ReloadPrefabOnHost(path.clone())),
         EditorAction::PropagatePrefab(prefab) => {
             let (writes, removals) = crate::actions::prefab_propagate::plan(resources, *prefab);
             Some(Edit::PropagatePrefab(writes, removals))
@@ -686,6 +689,9 @@ fn send(
                 )
                 .map_err(map_err)
         }
+        Edit::ReloadPrefabOnHost(path) => client
+            .reload_prefab(&path.to_string_lossy())
+            .map_err(map_err),
         Edit::PropagatePrefab(writes, removals) => {
             for removal in &removals {
                 let id = remote(removal.entity)?;

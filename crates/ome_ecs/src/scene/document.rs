@@ -340,6 +340,8 @@ impl SceneDocument {
             std::any::TypeId::of::<GlobalTransform>(),
         ];
         let parent_tid = std::any::TypeId::of::<crate::hierarchy::Parent>();
+        let instance_tid = std::any::TypeId::of::<crate::prefab_instance::PrefabInstance>();
+        let member_tid_prefab = std::any::TypeId::of::<crate::prefab_instance::PrefabMember>();
 
         // A subtree's membership is resolved once, up front: the walk below
         // visits archetypes in whatever order they were created, so
@@ -384,6 +386,30 @@ impl SceneDocument {
                     continue;
                 }
                 for &entity in archetype.entities() {
+                    // A prefab instance is written as a *reference* — the
+                    // link and what the user changed — not as the entities
+                    // it built. Those come back from the prefab on load.
+                    //
+                    // This is the whole point of the model: a value held in
+                    // two places drifts, and every prefab bug found while
+                    // building this was that. Storing it once removes the
+                    // class rather than propagating around it (#611).
+                    let membership = components
+                        .get_cpu::<crate::prefab_instance::PrefabMember>()
+                        .and_then(|storage| storage.get(entity))
+                        .map(|member| member.root);
+                    // Capturing a *prefab* takes the entities as they
+                    // stand: a blueprint describes things, and an instance
+                    // of something else is still a thing. Only a scene
+                    // writes the reference instead — see below.
+                    let describing_a_prefab = matches!(what, Capture::Subtree(_));
+                    // Only the root survives into a scene file; the rest of
+                    // the instance is not the scene's to describe.
+                    if !describing_a_prefab && membership.is_some_and(|root| root != entity) {
+                        continue;
+                    }
+                    let is_instance_root = !describing_a_prefab && membership == Some(entity);
+
                     // Restrict the walk to what was asked for.
                     let belongs = match what {
                         Capture::Everything => true,
@@ -408,6 +434,34 @@ impl SceneDocument {
                         // The prefab's root has no parent inside the file —
                         // see `from_ecs_subtree`.
                         if type_id == parent_tid && what == Capture::Subtree(entity) {
+                            continue;
+                        }
+
+                        // An instance root writes what makes it an instance
+                        // and where it sits, and nothing else: its
+                        // components are the prefab's, and any that differ
+                        // are already in the override list.
+                        //
+                        // `PrefabMember` is rebuilt by `attach` on load, so
+                        // writing it would be storing a fact twice — the
+                        // mistake this whole change exists to stop making.
+                        if is_instance_root && type_id != instance_tid && type_id != parent_tid {
+                            continue;
+                        }
+                        // Instance bookkeeping never enters a prefab. A
+                        // blueprint that carried a link would make every
+                        // copy of it an instance of whatever the original
+                        // was made from — and re-saving an instance over
+                        // its own prefab would leave the prefab
+                        // referencing itself.
+                        //
+                        // Same rule as the root losing its `Parent`: where
+                        // something sits, and what it was stamped from,
+                        // are facts about this copy rather than about the
+                        // thing being described.
+                        if type_id == member_tid_prefab
+                            || (describing_a_prefab && type_id == instance_tid)
+                        {
                             continue;
                         }
 

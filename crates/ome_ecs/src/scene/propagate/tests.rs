@@ -76,7 +76,7 @@ fn an_untouched_instance_takes_every_value() {
 #[test]
 fn an_overridden_field_is_left_alone_and_the_rest_are_not() {
     let mut instance = PrefabInstance::new(Guid::new_v4());
-    instance.mark(address("hp"));
+    instance.mark(address("hp"), None);
 
     let writes = plan_against(&instance, &document());
     assert_eq!(writes.len(), 1);
@@ -91,8 +91,8 @@ fn an_overridden_field_is_left_alone_and_the_rest_are_not() {
 #[test]
 fn an_instance_that_overrode_everything_takes_nothing() {
     let mut instance = PrefabInstance::new(Guid::new_v4());
-    instance.mark(address("hp"));
-    instance.mark(address("max_hp"));
+    instance.mark(address("hp"), None);
+    instance.mark(address("max_hp"), None);
     assert!(plan_against(&instance, &document()).is_empty());
 }
 
@@ -102,7 +102,7 @@ fn an_instance_that_overrode_everything_takes_nothing() {
 #[test]
 fn a_component_the_user_removed_is_not_written_back() {
     let mut instance = PrefabInstance::new(Guid::new_v4());
-    instance.mark(address(WHOLE_COMPONENT));
+    instance.mark(address(WHOLE_COMPONENT), None);
     assert!(plan_against(&instance, &document()).is_empty());
 }
 
@@ -111,7 +111,7 @@ fn a_component_the_user_removed_is_not_written_back() {
 #[test]
 fn overriding_a_field_does_not_claim_the_component() {
     let mut instance = PrefabInstance::new(Guid::new_v4());
-    instance.mark(address("hp"));
+    instance.mark(address("hp"), None);
     assert!(!instance.owns_component(0, "test::Health"));
 }
 
@@ -120,7 +120,7 @@ fn overriding_a_field_does_not_claim_the_component() {
 #[test]
 fn owning_a_component_is_per_entity() {
     let mut instance = PrefabInstance::new(Guid::new_v4());
-    instance.mark(address(WHOLE_COMPONENT));
+    instance.mark(address(WHOLE_COMPONENT), None);
     assert!(instance.owns_component(0, "test::Health"));
     assert!(!instance.owns_component(1, "test::Health"));
 }

@@ -223,6 +223,16 @@ impl AssetServer {
         self.cache.clear();
     }
 
+    /// Forgets the cached handle for one path, so the next load re-reads
+    /// it from disk.
+    ///
+    /// Targeted rather than [`Self::clear_cache`] because one file
+    /// changing is not a reason to make every other asset load again.
+    pub fn forget<T: Asset>(&mut self, path: impl AsRef<Path>) {
+        let path = self.resolve_path(path.as_ref());
+        self.cache.remove(&(TypeId::of::<T>(), path));
+    }
+
     /// Guarantees that `path` has a `.meta` sidecar with a stable
     /// [`Guid`] and the recorded `asset_type` set to `type_name`, and
     /// that, if an `AssetDatabase` resource is present, the resulting

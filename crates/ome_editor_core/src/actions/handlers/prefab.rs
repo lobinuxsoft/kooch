@@ -165,7 +165,27 @@ pub(crate) fn refresh_cached_prefab(resources: &mut Resources, path: &Path) {
     // here: this runs in the middle of handling an action, and the writes
     // have to travel the same way an edit does.
     crate::actions::prefab_propagate::queue(resources, meta.guid);
+    announce_to_host(resources, path);
 }
+
+/// Queues the message that tells the project its cached copy is stale.
+///
+/// The project caches the documents it instances from, and the editor is
+/// what writes those files. Without this the project keeps rebuilding
+/// instances from the version it read first — so a component removed from
+/// a prefab came back the next time the scene loaded.
+fn announce_to_host(resources: &mut Resources, path: &Path) {
+    if resources.get::<PendingHostReloads>().is_none() {
+        resources.insert(PendingHostReloads::default());
+    }
+    if let Some(pending) = resources.get_mut::<PendingHostReloads>() {
+        pending.0.push(path.to_path_buf());
+    }
+}
+
+/// Prefab files the project has not been told about yet.
+#[derive(Default)]
+pub(crate) struct PendingHostReloads(pub(crate) Vec<std::path::PathBuf>);
 
 /// Writes `entity` and its descendants to a prefab file.
 ///
@@ -465,6 +485,7 @@ pub(super) fn handle_save_prefab_asset(resources: &mut Resources, prefab: ome_co
                 dirty.clear(prefab);
             }
             crate::actions::prefab_propagate::queue(resources, prefab);
+            announce_to_host(resources, &path);
             tracing::info!("prefab saved to {}", path.display());
         }
         Err(e) => tracing::error!("failed to save prefab: {e}"),

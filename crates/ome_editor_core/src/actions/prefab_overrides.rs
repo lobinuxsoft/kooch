@@ -48,14 +48,14 @@ fn is_bookkeeping(type_name: &str) -> bool {
 /// edit does. That matters in remote mode: the override set is saved with
 /// the scene, and the scene belongs to the project.
 pub(super) fn record(resources: &Resources, actions: &[&EditorAction]) -> Vec<EditorAction> {
-    let mut marked: Vec<(Entity, OverrideAddress)> = Vec::new();
+    let mut marked: Vec<(Entity, OverrideAddress, Option<ReflectValue>)> = Vec::new();
     for action in actions.iter().copied() {
         match action {
             EditorAction::SetField {
                 entity,
                 component,
                 field,
-                ..
+                value,
             } => {
                 let Some(type_name) = component_name(resources, *component) else {
                     continue;
@@ -63,7 +63,14 @@ pub(super) fn record(resources: &Resources, actions: &[&EditorAction]) -> Vec<Ed
                 if is_bookkeeping(&type_name) {
                     continue;
                 }
-                push(resources, &mut marked, *entity, type_name, field.clone());
+                push(
+                    resources,
+                    &mut marked,
+                    *entity,
+                    type_name,
+                    field.clone(),
+                    Some(value.clone()),
+                );
             }
             // A drag replaces the whole transform, but the user only moved
             // one thing. Comparing before and after keeps a translate from
@@ -77,10 +84,22 @@ pub(super) fn record(resources: &Resources, actions: &[&EditorAction]) -> Vec<Ed
                 ..
             } => {
                 let transform = std::any::type_name::<ome_ecs::transform::Transform>().to_owned();
-                for (field, changed) in [
-                    ("position", before.position != after.position),
-                    ("rotation", before.rotation != after.rotation),
-                    ("scale", before.scale != after.scale),
+                for (field, changed, value) in [
+                    (
+                        "position",
+                        before.position != after.position,
+                        ReflectValue::Vec3(after.position),
+                    ),
+                    (
+                        "rotation",
+                        before.rotation != after.rotation,
+                        ReflectValue::Quat(after.rotation),
+                    ),
+                    (
+                        "scale",
+                        before.scale != after.scale,
+                        ReflectValue::Vec3(after.scale),
+                    ),
                 ] {
                     if changed {
                         push(
@@ -89,6 +108,7 @@ pub(super) fn record(resources: &Resources, actions: &[&EditorAction]) -> Vec<Ed
                             *entity,
                             transform.clone(),
                             field.to_owned(),
+                            Some(value),
                         );
                     }
                 }
@@ -107,13 +127,33 @@ pub(super) fn record(resources: &Resources, actions: &[&EditorAction]) -> Vec<Ed
                 if is_bookkeeping(&type_name) {
                     continue;
                 }
+                // Presence carries no value — it is a decision about
+                // whether the component belongs, not about what it holds.
+                // A component the user *added* also gets a record per
+                // field below, so its values survive a scene that no
+                // longer writes the entity out.
                 push(
                     resources,
                     &mut marked,
                     *entity,
-                    type_name,
+                    type_name.clone(),
                     ome_ecs::prefab_instance::WHOLE_COMPONENT.to_owned(),
+                    None,
                 );
+                if matches!(action, EditorAction::AddComponent { .. })
+                    && let Some(defaults) = default_fields(resources, &type_name)
+                {
+                    for (field, value) in defaults {
+                        push(
+                            resources,
+                            &mut marked,
+                            *entity,
+                            type_name.clone(),
+                            field,
+                            Some(value),
+                        );
+                    }
+                }
             }
             _ => {}
         }
@@ -125,12 +165,14 @@ pub(super) fn record(resources: &Resources, actions: &[&EditorAction]) -> Vec<Ed
 }
 
 /// Records one address, if the entity is part of an instance at all.
+#[allow(clippy::too_many_arguments)]
 fn push(
     resources: &Resources,
-    marked: &mut Vec<(Entity, OverrideAddress)>,
+    marked: &mut Vec<(Entity, OverrideAddress, Option<ReflectValue>)>,
     entity: Entity,
     component: String,
     field: String,
+    value: Option<ReflectValue>,
 ) {
     let Some(member) = member_of(resources, entity) else {
         // Not part of any instance. Most edits are this.
@@ -143,7 +185,15 @@ fn push(
             component,
             field,
         },
+        value,
     ));
+}
+
+/// The values a freshly-added component starts with.
+fn default_fields(resources: &Resources, type_name: &str) -> Option<Vec<(String, ReflectValue)>> {
+    let registry = resources.get::<ComponentRegistry>()?;
+    let type_id = registry.type_id_by_name(type_name)?;
+    registry.reflect_default_fields(&type_id)
 }
 
 /// Folds the new marks into each instance's existing set and emits the
@@ -151,7 +201,10 @@ fn push(
 ///
 /// Grouped by instance so a drag that touched two entities of one prefab
 /// produces one write rather than two that overwrite each other.
-fn persist(resources: &Resources, marked: Vec<(Entity, OverrideAddress)>) -> Vec<EditorAction> {
+fn persist(
+    resources: &Resources,
+    marked: Vec<(Entity, OverrideAddress, Option<ReflectValue>)>,
+) -> Vec<EditorAction> {
     let Some(component) = resources
         .get::<ComponentNames>()
         .and_then(|names| names.id(std::any::type_name::<PrefabInstance>()))
@@ -159,10 +212,12 @@ fn persist(resources: &Resources, marked: Vec<(Entity, OverrideAddress)>) -> Vec
         return Vec::new();
     };
 
-    let mut by_root: std::collections::HashMap<Entity, Vec<OverrideAddress>> =
-        std::collections::HashMap::new();
-    for (root, address) in marked {
-        by_root.entry(root).or_default().push(address);
+    let mut by_root: std::collections::HashMap<
+        Entity,
+        Vec<(OverrideAddress, Option<ReflectValue>)>,
+    > = std::collections::HashMap::new();
+    for (root, address, value) in marked {
+        by_root.entry(root).or_default().push((address, value));
     }
 
     by_root
@@ -170,8 +225,8 @@ fn persist(resources: &Resources, marked: Vec<(Entity, OverrideAddress)>) -> Vec
         .filter_map(|(root, addresses)| {
             let mut instance = instance_at(resources, root)?;
             let before = instance.overrides.clone();
-            for address in addresses {
-                instance.mark(address);
+            for (address, value) in addresses {
+                instance.mark(address, value);
             }
             // Nothing new: the user re-touched a field they had already
             // overridden. Emitting the write anyway would put an identical
