@@ -26,6 +26,23 @@ fn component_id(names: Option<&ComponentNames>, full_name: &str) -> ComponentId 
         .unwrap_or(ComponentId::INVALID)
 }
 
+/// The order components are shown in: `Name` first, `Transform` second,
+/// everything else alphabetically.
+///
+/// Shared rather than duplicated because a prefab is inspected in the same
+/// panel as an entity, and two orderings for the same list is the sort of
+/// difference that is only ever noticed by the person using it.
+pub(crate) fn display_order(a: &str, b: &str) -> std::cmp::Ordering {
+    fn priority(name: &str) -> u8 {
+        match name {
+            "Name" => 0,
+            "Transform" => 1,
+            _ => 2,
+        }
+    }
+    priority(a).cmp(&priority(b)).then_with(|| a.cmp(b))
+}
+
 /// Stand-in type handle for a component this binary has no Rust type
 /// for. Such a component is addressed only by its [`ComponentId`]; the
 /// `TypeId` slot in the DTO exists for the reflection-facing paths,
@@ -211,19 +228,7 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                 comps.extend(parked_components(dynamic, names, entity, parked_editable));
             }
 
-            // Sort: Name first, Transform second, rest alphabetically.
-            comps.sort_by(|a, b| {
-                fn priority(name: &str) -> u8 {
-                    match name {
-                        "Name" => 0,
-                        "Transform" => 1,
-                        _ => 2,
-                    }
-                }
-                let pa = priority(&a.short_name);
-                let pb = priority(&b.short_name);
-                pa.cmp(&pb).then_with(|| a.short_name.cmp(&b.short_name))
-            });
+            comps.sort_by(|a, b| display_order(&a.short_name, &b.short_name));
 
             let idx = flat.len();
             entity_idx_map.insert(entity, idx);

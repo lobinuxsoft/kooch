@@ -106,26 +106,7 @@ fn gather_prefab(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
                 .components
                 .iter()
                 .any(|c| short_name(&c.type_name) == "Parent"),
-            components: entity
-                .components
-                .iter()
-                .map(|component| PrefabComponentView {
-                    short_name: short_name(&component.type_name).to_owned(),
-                    type_name: component.type_name.clone(),
-                    fields: component.fields.clone(),
-                    resolved: registry.as_deref().and_then(|registry| {
-                        let type_id = registry.type_id_by_name(&component.type_name)?;
-                        Some(ResolvedComponent {
-                            type_id,
-                            component: names
-                                .as_deref()
-                                .and_then(|n| n.id(&component.type_name))
-                                .unwrap_or(ome_ecs::component::ComponentId::INVALID),
-                            field_metas: registry.reflect_field_metas(&type_id),
-                        })
-                    }),
-                })
-                .collect(),
+            components: sorted_visible(entity, registry.as_deref(), names.as_deref()),
         })
         .collect();
 
@@ -133,6 +114,57 @@ fn gather_prefab(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
         dirty,
         entities,
     })))
+}
+
+/// A prefab entity's components, ordered and filtered the way the entity
+/// inspector does it — same rule, same hidden types, so the two panels do
+/// not disagree about a list of the same thing.
+fn sorted_visible(
+    entity: &ome_ecs::scene::EntityDescription,
+    registry: Option<&ome_ecs::component::ComponentRegistry>,
+    names: Option<&ome_ecs::component::ComponentNames>,
+) -> Vec<PrefabComponentView> {
+    let mut components: Vec<PrefabComponentView> = entity
+        .components
+        .iter()
+        .filter_map(|component| {
+            let resolved = registry.and_then(|registry| {
+                let type_id = registry.type_id_by_name(&component.type_name)?;
+                // Hidden means hidden here too. A component the entity
+                // inspector never shows appearing in the prefab one
+                // reads as the prefab having something extra.
+                if registry.reflect_inspector_visibility(&type_id)
+                    == Some(ome_ecs::reflect::InspectorVisibility::Hidden)
+                {
+                    return None;
+                }
+                Some(ResolvedComponent {
+                    type_id,
+                    component: names
+                        .and_then(|n| n.id(&component.type_name))
+                        .unwrap_or(ome_ecs::component::ComponentId::INVALID),
+                    field_metas: registry.reflect_field_metas(&type_id),
+                })
+            });
+            // A known-but-hidden type resolves to `None` above, and so
+            // does one this binary has no type for — told apart here,
+            // because the second must still be shown.
+            let known = registry
+                .and_then(|r| r.type_id_by_name(&component.type_name))
+                .is_some();
+            if known && resolved.is_none() {
+                return None;
+            }
+            Some(PrefabComponentView {
+                short_name: short_name(&component.type_name).to_owned(),
+                type_name: component.type_name.clone(),
+                fields: component.fields.clone(),
+                resolved,
+            })
+        })
+        .collect();
+    components.sort_by(|a, b| crate::queries::display_order(&a.short_name, &b.short_name));
+    components
 }
 
 fn short_name(type_name: &str) -> &str {

@@ -162,10 +162,44 @@ fn draw_component_section(
     actions: &mut Vec<EditorAction>,
 ) {
     let name = component.short_name.clone();
-    egui::CollapsingHeader::new(format!("{} {name}", icons::PUZZLE_PIECE))
-        .id_salt(("prefab_component", entity_index, &component.type_name))
-        .default_open(true)
-        .show(ui, |ui| {
+    // Built the same way the entity inspector builds a section — a bold
+    // title beside the same glyph, and removal as a small X in the header
+    // rather than a button under the fields. They are the same panel
+    // showing the same kind of thing, and looking almost-alike is worse
+    // than looking different: it reads as a second implementation, which
+    // is exactly what it would have become.
+    //
+    // Keyed on the entity index as well as the type: unlike an entity's
+    // sections, several of these are on screen at once and two entities of
+    // one prefab can carry the same component.
+    let id = ui.make_persistent_id(format!(
+        "prefab_comp_{entity_index}_{}",
+        component.type_name
+    ));
+    let section =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
+    section
+        .show_header(ui, |ui| {
+            ui.strong(format!("{} {name}", icons::PUZZLE_PIECE));
+            // `Parent` is the hierarchy, not a component to take off by
+            // hand — removing it would orphan a child inside a file whose
+            // whole point is being one tree.
+            if component.short_name != "Parent"
+                && ui
+                    .small_button(icons::X)
+                    .on_hover_text("Remove component")
+                    .clicked()
+                && let Some(resolved) = component.resolved
+            {
+                actions.push(EditorAction::EditPrefabComponent {
+                    prefab: guid,
+                    entity_index,
+                    component: resolved.component,
+                    add: false,
+                });
+            }
+        })
+        .body(|ui| {
             let Some(resolved) = component.resolved else {
                 ui.weak("(this build has no type for this component)");
                 return;
@@ -197,25 +231,6 @@ fn draw_component_section(
                         component: component.type_name.clone(),
                         field,
                         value,
-                    });
-                }
-            }
-
-            // `Parent` is the hierarchy, not a component to remove by hand
-            // — the same rule the entity inspector's Add Component menu
-            // follows. Removing it here would orphan a child inside a file
-            // whose whole point is being one tree.
-            if component.short_name != "Parent" {
-                ui.add_space(4.0);
-                if ui
-                    .button(format!("{} Remove {name}", icons::MINUS))
-                    .clicked()
-                {
-                    actions.push(EditorAction::EditPrefabComponent {
-                        prefab: guid,
-                        entity_index,
-                        component: resolved.component,
-                        add: false,
                     });
                 }
             }
