@@ -278,11 +278,12 @@ fn instantiate_prefab(resources: &mut Resources, path: &str) -> Result<EntityId,
         .and_then(|scenes| scenes.active_id())
         .unwrap_or_else(ome_core::Guid::new_v4);
 
-    let root = ome_ecs::scene::instantiate(&prefab, resources, into).map_err(|e| {
-        RemoteError::SceneError {
-            detail: e.to_string(),
-        }
-    })?;
+    let (root, members) =
+        ome_ecs::scene::instantiate_members(&prefab, resources, into).map_err(|e| {
+            RemoteError::SceneError {
+                detail: e.to_string(),
+            }
+        })?;
 
     // The link is attached here and not inside `instantiate`, because this
     // method *is* the editor's instancing — a shipped game does not run
@@ -292,7 +293,7 @@ fn instantiate_prefab(resources: &mut Resources, path: &str) -> Result<EntityId,
         .ok()
         .map(|meta| meta.guid)
     {
-        ome_ecs::prefab_instance::attach(resources, root, guid);
+        ome_ecs::prefab_instance::attach(resources, root, &members, guid);
     }
     Ok(EntityId::from(root))
 }

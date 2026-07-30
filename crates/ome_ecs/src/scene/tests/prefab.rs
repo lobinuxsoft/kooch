@@ -557,9 +557,10 @@ fn an_attached_link_names_its_prefab_and_overrides_nothing() {
     let (mut resources, root) = world_with_a_deep_subtree();
     let prefab = SceneDocument::from_ecs_subtree(&mut resources, root);
     let source = Guid::new_v4();
-    let spawned = crate::scene::sync::instantiate(&prefab, &mut resources, Guid::new_v4()).unwrap();
+    let (spawned, members) =
+        crate::scene::sync::instantiate_members(&prefab, &mut resources, Guid::new_v4()).unwrap();
 
-    crate::prefab_instance::attach(&mut resources, spawned, source);
+    crate::prefab_instance::attach(&mut resources, spawned, &members, source);
 
     let registry = resources.get::<ComponentRegistry>().unwrap();
     let link = registry
@@ -576,11 +577,80 @@ fn an_attached_link_names_its_prefab_and_overrides_nothing() {
 fn a_linked_instance_is_findable_by_query() {
     let (mut resources, root) = world_with_a_deep_subtree();
     let prefab = SceneDocument::from_ecs_subtree(&mut resources, root);
-    let spawned = crate::scene::sync::instantiate(&prefab, &mut resources, Guid::new_v4()).unwrap();
-    crate::prefab_instance::attach(&mut resources, spawned, Guid::new_v4());
+    let (spawned, members) =
+        crate::scene::sync::instantiate_members(&prefab, &mut resources, Guid::new_v4()).unwrap();
+    crate::prefab_instance::attach(&mut resources, spawned, &members, Guid::new_v4());
 
     let query = crate::query::Query::<&crate::prefab_instance::PrefabInstance>::new(&resources);
     let mut found = Vec::new();
     query.for_each_entity(|entity, _| found.push(entity));
     assert_eq!(found, vec![spawned], "the archetype never learned about it");
+}
+
+/// Every entity of an instance has to say which entity of the prefab it
+/// is, in both directions: recording an override needs "this is entity 2",
+/// and propagation needs "entity 2 is this one". A link on the root alone
+/// answers neither for a prefab with children.
+#[test]
+fn every_member_of_an_instance_knows_which_prefab_entity_it_is() {
+    use crate::prefab_instance::{PrefabInstance, PrefabMember};
+
+    let (mut resources, root) = world_with_a_deep_subtree();
+    let prefab = SceneDocument::from_ecs_subtree(&mut resources, root);
+    let (spawned_root, members) =
+        crate::scene::sync::instantiate_members(&prefab, &mut resources, Guid::new_v4()).unwrap();
+    assert_eq!(members.len(), 3, "root, child and grandchild");
+
+    crate::prefab_instance::attach(&mut resources, spawned_root, &members, Guid::new_v4());
+
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    let storage = registry.get_cpu::<PrefabMember>().unwrap();
+    for (index, entity) in members.iter().enumerate() {
+        let member = storage
+            .get(*entity)
+            .unwrap_or_else(|| panic!("member {index} was not tagged"));
+        assert_eq!(
+            member.index as usize, index,
+            "member {index} points at the wrong prefab entity"
+        );
+        assert_eq!(
+            member.root, spawned_root,
+            "member {index} points at the wrong instance"
+        );
+    }
+    // And the root is the one carrying the link itself.
+    assert!(
+        registry
+            .get_cpu::<PrefabInstance>()
+            .and_then(|s| s.get(spawned_root))
+            .is_some()
+    );
+}
+
+/// Two instances of one prefab must not claim each other's members, or
+/// propagating to one would reach into the other.
+#[test]
+fn members_belong_to_the_instance_that_spawned_them() {
+    use crate::prefab_instance::PrefabMember;
+
+    let (mut resources, root) = world_with_a_deep_subtree();
+    let prefab = SceneDocument::from_ecs_subtree(&mut resources, root);
+    let scene = Guid::new_v4();
+    let source = Guid::new_v4();
+
+    let (first, first_members) =
+        crate::scene::sync::instantiate_members(&prefab, &mut resources, scene).unwrap();
+    crate::prefab_instance::attach(&mut resources, first, &first_members, source);
+    let (second, second_members) =
+        crate::scene::sync::instantiate_members(&prefab, &mut resources, scene).unwrap();
+    crate::prefab_instance::attach(&mut resources, second, &second_members, source);
+
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    let storage = registry.get_cpu::<PrefabMember>().unwrap();
+    for entity in &first_members {
+        assert_eq!(storage.get(*entity).unwrap().root, first);
+    }
+    for entity in &second_members {
+        assert_eq!(storage.get(*entity).unwrap().root, second);
+    }
 }

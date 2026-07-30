@@ -41,6 +41,7 @@
 use ome_core::Guid;
 
 use crate::component::Component;
+use crate::entity::Entity;
 use crate::reflect::{
     FieldKind, FieldMeta, InspectorVisibility, Reflect, ReflectError, ReflectValue,
 };
@@ -225,35 +226,91 @@ impl Reflect for PrefabInstance {
     }
 }
 
+/// Marks one entity of an instance as the prefab entity it was built from.
+///
+/// # Why every member is tagged and not just the root
+///
+/// An override names *which entity of the prefab* it belongs to, and
+/// propagation has to go the other way — given entity `i` of the prefab,
+/// which live entity holds it. A link on the root alone cannot answer
+/// either question for a prefab with children.
+///
+/// The alternatives were addressing by name path, which this codebase has
+/// already learned does not work — a scene with five meshes called `Mesh`
+/// is ordinary, and resolving parents by name was a bug it fixed — or by
+/// child index, which is unique until someone adds or reorders a child in
+/// the instance, at which point every override after it silently addresses
+/// a different entity.
+#[derive(Debug, Clone, Default, crate::Reflect)]
+#[reflect(inspector = "read_only")]
+pub struct PrefabMember {
+    /// The instance this belongs to — the entity carrying
+    /// [`PrefabInstance`].
+    ///
+    /// Saved and resolved by the same generic entity-reference pass that
+    /// handles `Parent`, so it survives a scene round trip.
+    pub root: Entity,
+    /// Index into the prefab document's `entities`.
+    ///
+    /// `u32` rather than `usize`: a prefab is one authored object, and this
+    /// sits on every entity of every instance in a scene.
+    pub index: u32,
+}
+
+impl Component for PrefabMember {}
+
 /// Marks `root` as an instance of the prefab `source`.
 ///
 /// Called by the **editor's** instancing, not by
 /// [`spawn_prefab`](crate::scene::spawn_prefab): a game spawning bullets
 /// wants entities, not a relationship to maintain. Both go through the
 /// same spawn; only one attaches the link.
+/// `members[i]` must be the entity spawned for the prefab's entity `i` —
+/// which is what
+/// [`instantiate_members`](crate::scene::instantiate_members) hands back.
 pub fn attach(
     resources: &mut ome_core::resource::Resources,
     root: crate::entity::Entity,
+    members: &[crate::entity::Entity],
     source: Guid,
+) {
+    insert_reflected(resources, root, PrefabInstance::new(source));
+    for (index, entity) in members.iter().enumerate() {
+        insert_reflected(
+            resources,
+            *entity,
+            PrefabMember {
+                root,
+                index: index as u32,
+            },
+        );
+    }
+}
+
+/// Inserts a reflected component and tells the archetype about it.
+///
+/// The archetype half is not optional: a component the archetype does not
+/// know about is invisible to every query, so an instance the propagation
+/// pass cannot find is an instance it walks straight past.
+fn insert_reflected<T: Component + crate::reflect::Reflect + Clone>(
+    resources: &mut ome_core::resource::Resources,
+    entity: crate::entity::Entity,
+    value: T,
 ) {
     use crate::archetype_registry::ArchetypeRegistry;
     use crate::component::ComponentRegistry;
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.register_cpu_reflected::<PrefabInstance>();
-        if let Some(storage) = registry.get_cpu_mut::<PrefabInstance>() {
-            storage.insert(root, PrefabInstance::new(source));
+        registry.register_cpu_reflected::<T>();
+        if let Some(storage) = registry.get_cpu_mut::<T>() {
+            storage.insert(entity, value);
         }
     }
-    // The archetype has to learn about it too, or every query that would
-    // find the instance walks past it — including the one that propagates
-    // a prefab change.
     if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(root)
+        && let Some(current) = archetypes.entity_archetype(entity)
     {
-        let next = archetypes
-            .archetype_after_add_dynamic(current, std::any::TypeId::of::<PrefabInstance>());
-        archetypes.register_entity(root, next);
+        let next = archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<T>());
+        archetypes.register_entity(entity, next);
     }
 }
 
