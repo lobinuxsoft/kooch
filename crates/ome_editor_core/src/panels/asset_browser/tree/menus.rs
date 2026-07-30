@@ -112,7 +112,7 @@ pub(super) fn leaf_menu(
         .extension()
         .is_some_and(|ext| ext == crate::project::PREFAB_EXTENSION)
         && ui
-            .button(format!("{} Instantiate into Scene", icons::PUZZLE_PIECE))
+            .button(format!("{} Instantiate into Scene", icons::PACKAGE))
             .clicked()
     {
         actions.push(EditorAction::InstantiatePrefab(leaf.path.clone()));

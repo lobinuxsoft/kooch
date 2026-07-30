@@ -288,10 +288,10 @@ fn handle_context_menu(
         // menu item means.
         if selected.len() == 1 {
             let entity = selected[0];
-            // The same glyph the asset tree shows for a scene file, since
+            // The same glyph the asset tree shows for a prefab file, since
             // that is what this produces.
             if ui
-                .button(format!("{} Save as Prefab", icons::TREE_STRUCTURE))
+                .button(format!("{} Save as Prefab", icons::PACKAGE))
                 .on_hover_text("Write this entity and its children to a scene file in assets/")
                 .clicked()
             {

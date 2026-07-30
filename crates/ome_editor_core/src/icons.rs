@@ -66,6 +66,12 @@ pub const X: &str = "\u{e4f6}";
 /// Puzzle piece icon — used for components.
 pub const PUZZLE_PIECE: &str = "\u{e596}";
 
+/// A prefab. Deliberately *not* `PUZZLE_PIECE`, which already means
+/// "component" in the Components panel, the Archetypes panel and every
+/// Inspector section header — a prefab is not one of those, and a shared
+/// glyph is a claim that it is.
+pub const PACKAGE: &str = "\u{e390}";
+
 /// Magnifying glass icon — used for search.
 pub const MAGNIFYING_GLASS: &str = "\u{e30c}";
 
