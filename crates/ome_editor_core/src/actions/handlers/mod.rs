@@ -48,11 +48,9 @@ pub(super) fn apply_non_ecs_action(
         // there is nothing left for this to do.
         EditorAction::CancelPrefabOverwrite => {}
         EditorAction::RevertToPrefab { entity, component } => {
-            if let Some((root, overrides, writes)) = crate::actions::prefab_propagate::plan_revert(
-                resources,
-                *entity,
-                component.as_deref(),
-            ) {
+            if let Some((root, overrides, writes)) =
+                crate::actions::prefab_propagate::plan_revert(resources, *entity, *component)
+            {
                 crate::actions::prefab_propagate::apply(resources, &writes);
                 crate::actions::prefab_propagate::write_overrides(resources, root, &overrides);
             }

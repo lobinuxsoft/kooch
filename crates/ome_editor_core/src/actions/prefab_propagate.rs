@@ -244,6 +244,22 @@ impl PendingPropagation {
     pub(crate) fn drain(&mut self) -> Vec<Guid> {
         self.0.drain().collect()
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Whether any prefab is waiting to reach its instances.
+///
+/// Asked by the caller that skips action handling on idle frames.
+/// Propagation is queued while an action is being handled and drained on
+/// the next pass, so a queue that only drains when the user happens to do
+/// something else is a queue that does not drain.
+pub(crate) fn anything_queued(resources: &Resources) -> bool {
+    resources
+        .get::<PendingPropagation>()
+        .is_some_and(|pending| !pending.is_empty())
 }
 
 /// Notes that `prefab` changed and its instances are behind.
@@ -422,8 +438,20 @@ pub(crate) fn write_overrides(resources: &mut Resources, root: Entity, overrides
 pub(crate) fn plan_revert(
     resources: &Resources,
     entity: Entity,
-    component: Option<&str>,
+    component: Option<ome_ecs::component::ComponentId>,
 ) -> Option<(Entity, String, Vec<PlannedWrite>)> {
+    // The panel speaks `ComponentId`; an override address is a type name,
+    // because it outlives the process that recorded it.
+    let component = match component {
+        Some(id) => Some(
+            resources
+                .get::<ome_ecs::component::ComponentNames>()?
+                .name(id)?
+                .to_owned(),
+        ),
+        None => None,
+    };
+    let component = component.as_deref();
     let member = resources
         .get::<ome_ecs::component::ComponentRegistry>()?
         .get_cpu::<PrefabMember>()?

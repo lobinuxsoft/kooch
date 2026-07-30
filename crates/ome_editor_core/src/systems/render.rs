@@ -55,7 +55,13 @@ fn apply_deferred_actions(
     actions: &[EditorAction],
     undo_stack: &mut UndoStack,
 ) {
-    if actions.is_empty() {
+    // Not just "did the user do something": a prefab saved last frame
+    // queued work that is drained inside `apply_actions`, and an idle
+    // frame returning early is a frame that queue does not drain. It then
+    // waits for the next unrelated action and lands in *that* batch, which
+    // is how propagating a prefab appeared to only happen when the user
+    // reverted an instance.
+    if actions.is_empty() && !crate::actions::prefab_propagate::anything_queued(resources) {
         return;
     }
     let has_open_scene = actions.iter().any(|a| matches!(a, EditorAction::OpenScene));

@@ -333,6 +333,33 @@ fn draw_inspector_body(
                         if comp.short_name == "RigidBody" && !is_read_only {
                             draw_calculate_mass(ui, entity, comp.component, entities, actions);
                         }
+                        // Only on an instance, and only for a component
+                        // that came from the prefab. Reverting is what
+                        // makes an override safe to have — without it an
+                        // accidental drag pins that field forever.
+                        //
+                        // On the header rather than as a button, because
+                        // it is a rare action beside two frequent ones and
+                        // a third button in the row is a third thing to
+                        // read past every time.
+                        if info.is_prefab_instance {
+                            title.context_menu(|ui| {
+                                if ui
+                                    .button(format!(
+                                        "{} Revert {} to Prefab",
+                                        icons::ARROWS_CLOCKWISE,
+                                        comp.short_name,
+                                    ))
+                                    .clicked()
+                                {
+                                    actions.push(EditorAction::RevertToPrefab {
+                                        entity,
+                                        component: Some(comp.component),
+                                    });
+                                    ui.close();
+                                }
+                            });
+                        }
                     })
                     .body(|ui| {
                         if let Some(fields) = &comp.fields {

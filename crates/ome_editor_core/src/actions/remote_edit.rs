@@ -443,11 +443,8 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
             })
         }
         EditorAction::RevertToPrefab { entity, component } => {
-            let (root, overrides, writes) = crate::actions::prefab_propagate::plan_revert(
-                resources,
-                *entity,
-                component.as_deref(),
-            )?;
+            let (root, overrides, writes) =
+                crate::actions::prefab_propagate::plan_revert(resources, *entity, *component)?;
             Some(Edit::RevertToPrefab {
                 root,
                 overrides,

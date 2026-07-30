@@ -133,8 +133,12 @@ pub(crate) enum EditorAction {
     RevertToPrefab {
         /// Any entity of the instance; the root is found from it.
         entity: Entity,
-        /// Full type path, or `None` to revert everything.
-        component: Option<String>,
+        /// `None` reverts the whole instance.
+        ///
+        /// A `ComponentId` because that is what a panel has; the document
+        /// stores type names, and the registry that translates lives with
+        /// the handler.
+        component: Option<ome_ecs::component::ComponentId>,
     },
     /// Push a saved prefab's values out to every instance of it, except
     /// the fields each instance overrode.
