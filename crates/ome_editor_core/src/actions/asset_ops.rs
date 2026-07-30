@@ -262,14 +262,46 @@ fn duplicate_asset(resources: &mut Resources, path: &Path) {
     let dest = unique_target(parent, name);
     match std::fs::copy(path, &dest) {
         Ok(_) => {
-            // Intentionally do NOT copy the `.meta`: the re-scan's eager
-            // import assigns the copy a fresh GUID so it is a distinct
-            // asset, not an alias of the original.
+            // The `.meta` is never copied — two files sharing a guid are
+            // two files claiming one identity — but the copy still needs
+            // one of its own, and it is given here rather than left to the
+            // rescan's eager import.
+            //
+            // Eager import decides by extension from a fixed list, so it
+            // knew nothing about `.prefab`: a duplicated prefab got no
+            // identity at all, which made it unselectable, uninspectable
+            // and unspawnable. Every asset type added later would have
+            // broken the same way. Deriving the copy's type from the
+            // source's own sidecar works for all of them.
+            duplicate_identity(resources, path, &dest);
             tracing::info!(from = %path.display(), to = %dest.display(), "asset duplicated");
             force_rescan(resources);
         }
         Err(e) => tracing::error!(from = %path.display(), error = %e, "duplicate failed"),
     }
+}
+
+/// Gives a freshly copied asset an identity of its own.
+///
+/// A fresh guid carrying the *source's* type: the copy is a distinct asset
+/// holding the same kind of thing. Does nothing when the source had no
+/// identity — a plain file copied in the browser is still a plain file.
+fn duplicate_identity(resources: &mut Resources, source: &Path, dest: &Path) {
+    let Ok(source_meta) = ome_core::asset_meta::read_meta(source) else {
+        return;
+    };
+    let meta = match source_meta.asset_type {
+        Some(asset_type) => ome_core::asset_meta::AssetMeta::with_type(asset_type),
+        None => ome_core::asset_meta::AssetMeta::new(),
+    };
+    if let Err(e) = ome_core::asset_meta::write_meta(dest, &meta) {
+        tracing::error!(path = %dest.display(), error = %e, "copy has no asset identity");
+        return;
+    }
+    // Registered now rather than at the next project change, for the same
+    // reason a saved prefab is: the scan only runs when the active project
+    // changes, so a file created mid-session is otherwise invisible.
+    crate::actions::handlers::register_saved_asset(resources, dest);
 }
 
 fn delete_asset(resources: &mut Resources, path: &Path) {
@@ -378,5 +410,61 @@ mod tests {
         assert_eq!(to_snake_case("NewSystem"), "new_system");
         assert_eq!(to_snake_case("PlayerHealth"), "player_health");
         assert_eq!(to_snake_case("enemy ai"), "enemy_ai");
+    }
+}
+
+#[cfg(test)]
+mod duplicate_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A copy is a distinct asset, so it needs an id of its own — sharing
+    /// the source's would make two files claim one identity and whichever
+    /// registered last would win.
+    #[test]
+    fn a_copy_gets_a_fresh_id_carrying_the_source_type() {
+        let dir = scratch("ome_dup_identity");
+        let source = dir.join("Enemy.prefab");
+        let dest = dir.join("Enemy_1.prefab");
+        std::fs::write(&source, "()").unwrap();
+        std::fs::write(&dest, "()").unwrap();
+        let original = ome_core::asset_meta::AssetMeta::with_type("test::Thing");
+        ome_core::asset_meta::write_meta(&source, &original).unwrap();
+
+        let mut resources = ome_core::resource::Resources::new();
+        duplicate_identity(&mut resources, &source, &dest);
+
+        let copy = ome_core::asset_meta::read_meta(&dest).expect("the copy has an identity");
+        assert_ne!(copy.guid, original.guid, "the copy aliased the original");
+        assert_eq!(
+            copy.asset_type,
+            Some("test::Thing".to_owned()),
+            "the copy holds the same kind of thing as its source",
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A plain file copied in the browser is still a plain file. Inventing
+    /// an identity for it would list it in asset pickers as a typeless
+    /// entry nothing can load.
+    #[test]
+    fn copying_something_that_is_not_an_asset_stays_not_an_asset() {
+        let dir = scratch("ome_dup_plain");
+        let source = dir.join("notes.txt");
+        let dest = dir.join("notes_1.txt");
+        std::fs::write(&source, "hello").unwrap();
+        std::fs::write(&dest, "hello").unwrap();
+
+        let mut resources = ome_core::resource::Resources::new();
+        duplicate_identity(&mut resources, &source, &dest);
+
+        assert!(ome_core::asset_meta::read_meta(&dest).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
