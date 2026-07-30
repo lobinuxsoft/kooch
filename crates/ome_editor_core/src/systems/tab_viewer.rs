@@ -31,6 +31,8 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Which panel the keyboard belongs to, updated here as panels are
     /// drawn. `None` before the user has clicked anything.
     pub(crate) focused_tab: &'a mut Option<EditorTab>,
+    /// The Asset Browser's keyboard cursor and the rows it walks.
+    pub(crate) asset_nav: &'a mut crate::panels::asset_browser::AssetNav,
     pub(crate) entities: &'a [EntityDisplayInfo],
     pub(crate) scenes: &'a [crate::state::SceneDisplayInfo],
     pub(crate) archetypes: &'a [ArchetypeDisplayInfo],
@@ -185,6 +187,8 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             EditorTab::Components => draw_components_content(ui, self.component_types),
             EditorTab::AssetBrowser => draw_asset_browser_content(
                 ui,
+                focused,
+                self.asset_nav,
                 self.asset_catalog,
                 self.selected_asset,
                 self.current_folder,

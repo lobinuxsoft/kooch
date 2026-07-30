@@ -12,6 +12,7 @@ use super::RenderCtx;
 use super::menus::{folder_menu, leaf_menu};
 use super::model::{FileLeaf, FolderNode};
 use super::naming::{create_edit, rename_edit};
+use super::nav::AssetRow;
 use super::visuals::{draw_drag_preview, file_icon, type_icon};
 
 pub(super) fn render_children(
@@ -53,10 +54,26 @@ pub(super) fn render_folder(
     if !ctx.needle.is_empty() || ctx.pending.as_ref().is_some_and(|p| p.parent == node.path) {
         state.set_open(true);
     }
+    // The keyboard's request, applied here because this is the only place
+    // the folder's persistent id exists.
+    if let Some(open) = ctx.nav.take_toggle_for(&node.path) {
+        state.set_open(open);
+    }
+    let is_cursor = ctx.nav.is_cursor(&node.path);
+    ctx.nav.rows.push(AssetRow {
+        path: node.path.clone(),
+        is_folder: true,
+        open: state.is_open(),
+    });
     state
         .show_header(ui, |ui| {
-            let resp =
-                ui.selectable_label(is_current, format!("{} {}", icons::FOLDER_OPEN, node.name));
+            let resp = ui.selectable_label(
+                is_current || is_cursor,
+                format!("{} {}", icons::FOLDER_OPEN, node.name),
+            );
+            if is_cursor && ctx.nav.scroll_to_cursor {
+                resp.scroll_to_me(Some(egui::Align::Center));
+            }
             if resp.clicked() && ctx.writable {
                 *ctx.current_folder = Some(node.path.clone());
             }
@@ -88,8 +105,17 @@ pub(super) fn render_leaf(
         .asset
         .as_ref()
         .is_some_and(|(g, _)| *ctx.selected_asset == Some(*g));
+    let is_cursor = ctx.nav.is_cursor(&leaf.path);
+    ctx.nav.rows.push(AssetRow {
+        path: leaf.path.clone(),
+        is_folder: false,
+        open: false,
+    });
 
-    let mut resp = ui.selectable_label(selected, format!("{icon} {}", leaf.name));
+    let mut resp = ui.selectable_label(selected || is_cursor, format!("{icon} {}", leaf.name));
+    if is_cursor && ctx.nav.scroll_to_cursor {
+        resp.scroll_to_me(Some(egui::Align::Center));
+    }
 
     // Typed assets are drag sources for the Inspector's asset slots
     // (#439). The sense is upgraded in place rather than wrapping the row

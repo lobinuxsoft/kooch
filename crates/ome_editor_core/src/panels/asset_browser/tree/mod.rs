@@ -16,6 +16,7 @@
 mod menus;
 mod model;
 mod naming;
+mod nav;
 mod render;
 mod visuals;
 
@@ -33,6 +34,7 @@ use menus::folder_menu;
 use render::render_children;
 
 pub(in crate::panels) use model::{FolderNode, PendingCreate, RenameState};
+pub(crate) use nav::{AssetNav, AssetRow};
 
 pub(crate) struct RenderCtx<'a> {
     pub needle: &'a str,
@@ -44,6 +46,9 @@ pub(crate) struct RenderCtx<'a> {
     /// `true` for the project root (writable: menus + folder targeting),
     /// `false` for the read-only engine root.
     pub writable: bool,
+    /// Keyboard state. The renderer records the rows it draws here, and
+    /// applies whatever the keyboard asked for on the way past.
+    pub nav: &'a mut AssetNav,
 }
 
 /// Renders one source root as a top-level collapsible node. `root_path`

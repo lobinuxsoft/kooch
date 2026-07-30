@@ -55,6 +55,13 @@ pub(crate) struct ConsoleState {
     /// arrows move through what is on screen, and a line the filter hides
     /// is not somewhere the cursor can be.
     cursor: Option<usize>,
+    /// Set when the cursor moves, so the view scrolls to follow it.
+    ///
+    /// Without this the cursor moved and nothing happened on screen:
+    /// `show_rows` only builds the rows in view, so a cursor one row past
+    /// the edge was never drawn and never scrolled to. Moving something
+    /// invisible is indistinguishable from the key not arriving.
+    scroll_to_cursor: bool,
 }
 
 /// The filter settings, as something comparable.
@@ -80,6 +87,7 @@ impl Default for ConsoleState {
             built_for: None,
             dropped: 0,
             cursor: None,
+            scroll_to_cursor: false,
         }
     }
 }
@@ -185,6 +193,7 @@ impl ConsoleState {
             None => last as isize + 1,
         };
         self.cursor = Some((from + delta).clamp(0, last as isize) as usize);
+        self.scroll_to_cursor = true;
         // Following the tail would drag the view off whatever is being
         // read; moving the cursor is a statement that the user is reading.
         self.follow = false;
@@ -197,7 +206,13 @@ impl ConsoleState {
             return;
         }
         self.cursor = Some(if end { self.visible.len() - 1 } else { 0 });
+        self.scroll_to_cursor = true;
         self.follow = false;
+    }
+
+    /// Whether the view should jump to the cursor, clearing the request.
+    pub(crate) fn take_scroll_request(&mut self) -> bool {
+        std::mem::take(&mut self.scroll_to_cursor)
     }
 
     /// The text of the highlighted row, for a copy shortcut.
