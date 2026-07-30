@@ -34,7 +34,7 @@ use menus::folder_menu;
 use render::render_children;
 
 pub(in crate::panels) use model::{FolderNode, PendingCreate, RenameState};
-pub(crate) use nav::{AssetNav, AssetRow};
+pub(crate) use nav::AssetNav;
 
 pub(crate) struct RenderCtx<'a> {
     pub needle: &'a str,

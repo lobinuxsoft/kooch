@@ -166,6 +166,23 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
         }
         let focused = *self.focused_tab == Some(*tab);
 
+        // A cursor left lit on a panel that no longer owns the keyboard is
+        // a highlight that means nothing: it says "the arrows go here" when
+        // they do not. Clearing it on focus loss is the whole fix.
+        //
+        // Only the *keyboard* cursors. The World panel's entity selection
+        // is not one of these — you pick an entity there and then edit it
+        // in the Inspector, so clearing that would break the one workflow
+        // the editor is for.
+        if !focused {
+            match tab {
+                EditorTab::AssetBrowser => self.asset_nav.cursor = None,
+                EditorTab::Inspector => self.inspector_nav.cursor = None,
+                EditorTab::Console => self.console.clear_cursor(),
+                _ => {}
+            }
+        }
+
         match tab {
             EditorTab::World => draw_world_content(
                 ui,

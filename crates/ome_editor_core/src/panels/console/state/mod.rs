@@ -210,6 +210,14 @@ impl ConsoleState {
         self.follow = false;
     }
 
+    /// Forgets where the cursor was.
+    ///
+    /// Called when the panel loses focus: a highlighted line that the
+    /// arrows no longer move is a lie about where the keyboard is.
+    pub(crate) fn clear_cursor(&mut self) {
+        self.cursor = None;
+    }
+
     /// Whether the view should jump to the cursor, clearing the request.
     pub(crate) fn take_scroll_request(&mut self) -> bool {
         std::mem::take(&mut self.scroll_to_cursor)

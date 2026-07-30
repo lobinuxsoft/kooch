@@ -60,17 +60,24 @@ pub(super) fn render_folder(
         state.set_open(open);
     }
     let is_cursor = ctx.nav.is_cursor(&node.path);
+    // Read before `show_header` consumes `state`, and used for both the
+    // row record and the glyph so the two cannot disagree.
+    let is_open = state.is_open();
     ctx.nav.rows.push(AssetRow {
         path: node.path.clone(),
         is_folder: true,
-        open: state.is_open(),
+        open: is_open,
     });
     state
         .show_header(ui, |ui| {
-            let resp = ui.selectable_label(
-                is_current || is_cursor,
-                format!("{} {}", icons::FOLDER_OPEN, node.name),
-            );
+            // Open or closed, so the glyph says what the arrow beside it
+            // says. Both were `FOLDER_OPEN`, which until now drew a flag.
+            let glyph = match is_open {
+                true => icons::FOLDER_OPEN,
+                false => icons::FOLDER,
+            };
+            let resp =
+                ui.selectable_label(is_current || is_cursor, format!("{glyph} {}", node.name));
             if is_cursor && ctx.nav.scroll_to_cursor {
                 resp.scroll_to_me(Some(egui::Align::Center));
             }
