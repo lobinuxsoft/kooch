@@ -11,8 +11,29 @@ use std::path::{Path, PathBuf};
 use ome_ecs::reflect::ReflectValue;
 use ome_ecs::scene::{ComponentDescription, EntityDescription, SceneDocument};
 
-/// Extension of a scene file — and therefore of a prefab, which is one.
+/// Extension of a scene file.
 pub const SCENE_EXTENSION: &str = "ome_scene";
+
+/// Extension of a prefab file.
+///
+/// # Why a second extension for one format
+///
+/// A prefab and a scene are the same `SceneDocument`, written by the same
+/// serialiser — see
+/// [`from_ecs_subtree`](ome_ecs::scene::SceneDocument::from_ecs_subtree)
+/// for why a second format would be a mistake. What differs is an
+/// **invariant**: a prefab has exactly one root entity, a scene may have
+/// any number.
+///
+/// With one extension there was nothing to tell them apart, so the editor
+/// offered "instantiate" on every scene file and a four-root scene failed
+/// at the point of instancing — a check the user had no way to anticipate.
+/// The extension is what makes the invariant visible before the click,
+/// and lets it be enforced when the file is *written* instead.
+///
+/// Unity draws the same line the same way: `.unity` and `.prefab` hold the
+/// same YAML.
+pub const PREFAB_EXTENSION: &str = "ome_prefab";
 
 /// Convention path of the default scene relative to the project root.
 pub const DEFAULT_SCENE_REL_PATH: &str = "scenes/default.ome_scene";

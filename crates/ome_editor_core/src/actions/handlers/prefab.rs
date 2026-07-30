@@ -11,7 +11,7 @@ use ome_core::resource::Resources;
 use ome_ecs::entity::Entity;
 use ome_ecs::scene::SceneDocument;
 
-use crate::project::SCENE_EXTENSION;
+use crate::project::PREFAB_EXTENSION;
 use crate::project_state::ProjectState;
 
 /// The root of the project currently open.
@@ -83,7 +83,7 @@ pub(crate) fn prefab_path(root: &Path, name: &str, dest: Option<&Path>) -> PathB
     };
     let stem = sanitize_file_stem(name);
 
-    let first = folder.join(format!("{stem}.{SCENE_EXTENSION}"));
+    let first = folder.join(format!("{stem}.{PREFAB_EXTENSION}"));
     if !first.exists() {
         return first;
     }
@@ -92,7 +92,7 @@ pub(crate) fn prefab_path(root: &Path, name: &str, dest: Option<&Path>) -> PathB
     // filesystem that is answering "yes" to everything would hang the
     // editor.
     for suffix in 1..1000 {
-        let candidate = folder.join(format!("{stem}_{suffix}.{SCENE_EXTENSION}"));
+        let candidate = folder.join(format!("{stem}_{suffix}.{PREFAB_EXTENSION}"));
         if !candidate.exists() {
             return candidate;
         }
@@ -111,7 +111,16 @@ pub(super) fn handle_save_prefab(resources: &mut Resources, entity: Entity, dest
         return;
     };
     let path = prefab_path(&root, &entity_name(resources, entity), dest);
-    match SceneDocument::from_ecs_subtree(resources, entity).save(&path) {
+    let document = SceneDocument::from_ecs_subtree(resources, entity);
+    // The extension promises one root; checked here so the promise holds
+    // for everything on disk rather than being discovered at the click
+    // that instances it. A subtree has one by construction — this catches
+    // an entity with nothing capturable on it, which yields no root at all.
+    if let Err(e) = document.root_index() {
+        tracing::error!("refusing to write a prefab that cannot be instanced: {e}");
+        return;
+    }
+    match document.save(&path) {
         Ok(()) => tracing::info!("prefab saved to {}", path.display()),
         Err(e) => tracing::error!("failed to save prefab: {e}"),
     }
@@ -167,7 +176,7 @@ mod tests {
         let root = Path::new("/p");
         assert_eq!(
             prefab_path(root, "Ball", None),
-            PathBuf::from("/p/assets/Ball.ome_scene"),
+            PathBuf::from("/p/assets/Ball.ome_prefab"),
         );
     }
 
@@ -178,7 +187,7 @@ mod tests {
         let root = Path::new("/p");
         assert_eq!(
             prefab_path(root, "Ball", Some(Path::new("/somewhere/else"))),
-            PathBuf::from("/p/assets/Ball.ome_scene"),
+            PathBuf::from("/p/assets/Ball.ome_prefab"),
         );
     }
 
@@ -187,7 +196,7 @@ mod tests {
         let root = Path::new("/p");
         assert_eq!(
             prefab_path(root, "Ball", Some(Path::new("/p/assets/enemies"))),
-            PathBuf::from("/p/assets/enemies/Ball.ome_scene"),
+            PathBuf::from("/p/assets/enemies/Ball.ome_prefab"),
         );
     }
 
@@ -201,15 +210,15 @@ mod tests {
         let root = std::env::temp_dir().join("ome_prefab_name_clash");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("assets")).unwrap();
-        std::fs::write(root.join("assets/Enemy.ome_scene"), "").unwrap();
+        std::fs::write(root.join("assets/Enemy.ome_prefab"), "").unwrap();
 
         let next = prefab_path(&root, "Enemy", None);
-        assert_eq!(next, root.join("assets/Enemy_1.ome_scene"));
+        assert_eq!(next, root.join("assets/Enemy_1.ome_prefab"));
 
         std::fs::write(&next, "").unwrap();
         assert_eq!(
             prefab_path(&root, "Enemy", None),
-            root.join("assets/Enemy_2.ome_scene"),
+            root.join("assets/Enemy_2.ome_prefab"),
         );
         let _ = std::fs::remove_dir_all(&root);
     }

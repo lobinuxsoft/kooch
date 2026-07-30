@@ -37,6 +37,7 @@ pub(super) fn file_icon(name: &str) -> &'static str {
         "rs" => icons::TERMINAL,
         "toml" | "lock" => icons::GEAR,
         "ome_scene" => icons::TREE_STRUCTURE,
+        "ome_prefab" => icons::PUZZLE_PIECE,
         _ => icons::LIST_BULLETS,
     }
 }

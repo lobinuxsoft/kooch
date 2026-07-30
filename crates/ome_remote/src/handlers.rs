@@ -248,7 +248,14 @@ fn resolve_entity(resources: &Resources, id: EntityId) -> Result<Entity, RemoteE
 /// Captures `entity` and its descendants into a scene file.
 fn save_prefab(resources: &mut Resources, entity: EntityId, path: &str) -> Result<(), RemoteError> {
     let entity = resolve_entity(resources, entity)?;
-    SceneDocument::from_ecs_subtree(resources, entity)
+    let document = SceneDocument::from_ecs_subtree(resources, entity);
+    // A prefab file promises exactly one root — the invariant its extension
+    // names. Enforced on write so it cannot be discovered at the click that
+    // instances it.
+    document.root_index().map_err(|e| RemoteError::SceneError {
+        detail: e.to_string(),
+    })?;
+    document
         .save(path.as_ref())
         .map_err(|e| RemoteError::SceneError {
             detail: e.to_string(),
