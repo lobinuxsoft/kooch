@@ -22,6 +22,8 @@ Last updated 2026-07-29, `development` at `55338d7`.
 | **#618** | Mass control — `mass` means kilograms, shapes are massless, explicit centre of mass |
 | **#563** | Physics debug render — the solver's own account of itself, in the viewport |
 | **#623** | Collider material — friction, restitution, combine rules and damping, all authorable |
+| **#611** | **Prefabs, both phases.** A prefab is a scene file; an instance in a scene is a *reference* to it plus what the user changed. #676, #677, #678, #679 |
+| **#661** | The keyboard belongs to the focused panel, not to World |
 | **#561** | Collision events, sensors and groups — the solver can finally report back |
 | **#630** | Event delivery — `Events<T>` had never been rotated by the editor's runner |
 | **#635** | A Console tab, and structured project logs to put in it |
@@ -167,14 +169,36 @@ is nothing to parallelise. #669's terrain phase produces that scene.
 
 ---
 
-## Then — prefabs
+## Prefabs — done, and what it taught
 
-**#611**, in two phases. Phase A is runtime instancing: a scene instanced with its entity
-ids remapped. Phase B is the linked-with-overrides prefab system.
+**#611** shipped in four PRs. Both questions it flagged got answered: a document instanced
+as a unit needs exactly one root and says so rather than picking one, and identity is
+remapped per instance so two copies never claim to be the same entity.
 
-Two things phase A must settle because they touch merged types: whether a scene needs a
-single root, and how an outside reference names *this instance* rather than the prefab —
-`EntityRef::Persistent { scene, id }` is ambiguous once a scene is instanced twice.
+What is worth carrying forward is the reversal. Phase B first stored an instance's entities
+in full *and* a link, on the argument that a scene should open with its prefab missing and
+that nothing should depend on load order. Both true, and outweighed:
+
+> **Every prefab bug found while building it was the same bug.** A value held in two places
+> drifts.
+
+The Inspector showed a prefab from before it was overwritten. A component removed from an
+instance came back on the next save. A second scene never saw a change. The project kept
+instancing from the copy it read first. Four fixes, one class, still producing new ones.
+
+A scene now stores the reference and the overrides; the values exist once. The load-order
+dependency came back and is accepted, because an unresolvable prefab spawns
+`missing prefab [guid]` — a broken reference is something the scene *shows*, where a stale
+copy looks exactly like a correct one.
+
+**The rule this leaves:** when a design keeps producing bugs that each need their own fix,
+count how many are the same shape before writing the fifth.
+
+### The one limit left
+
+A child entity **added** to a prefab appears when a scene loads, but a running editor does
+not grow one mid-session — placing it means positioning relative to whatever the instance
+became. Worth its own issue if it ever hurts.
 
 ---
 
