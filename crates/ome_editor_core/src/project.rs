@@ -367,6 +367,34 @@ pub fn declare_components(engine: &mut dyn oh_my_engine::ome_plugin_api::Engine)
 /// `parent_dir` is the parent folder; a subdirectory named `name` will be
 /// created inside it. `engine_root` is the path to the oh_my_engine repo
 /// root, used to generate `Cargo.toml` dependency paths.
+
+/// What a new project tells git to leave alone.
+///
+/// `target/` is the whole point: a debug build of a project that links
+/// this engine is gigabytes, and a repository that commits it is a
+/// repository nobody can clone.
+///
+/// Two things are deliberately *not* here, because ignoring them breaks a
+/// fresh clone:
+///
+/// - **`Cargo.lock`** — this crate builds a binary, and for a binary the
+///   lock file is the record of what actually compiled. Libraries omit
+///   it; games want the exact versions back.
+/// - **`src/registrations.rs`** — editor-managed, but the build needs it:
+///   `lib.rs` declares the module, so a clone without it does not compile
+///   until the editor happens to regenerate it.
+const PROJECT_GITIGNORE: &str = "\
+# Rust build output. Gigabytes, and every byte of it regenerable.
+/target
+
+# rustfmt leftovers.
+**/*.rs.bk
+
+# OS clutter.
+.DS_Store
+Thumbs.db
+";
+
 pub fn create_project(
     name: &str,
     parent_dir: &Path,
@@ -398,6 +426,10 @@ pub fn create_project(
         INITIAL_REGISTRATIONS,
     )
     .map_err(ProjectError::Io)?;
+
+    // Written before anything large exists, so a project is never
+    // briefly committable with its build output in it.
+    fs::write(project_root.join(".gitignore"), PROJECT_GITIGNORE).map_err(ProjectError::Io)?;
 
     // Bootstrap the default scene file so the editor never opens empty.
     ensure_default_scene(&project_root)?;
@@ -505,3 +537,33 @@ impl fmt::Display for ProjectError {
 }
 
 impl std::error::Error for ProjectError {}
+
+#[cfg(test)]
+mod gitignore_tests {
+    use super::PROJECT_GITIGNORE;
+
+    /// The reason the file exists: a debug build of a project linking this
+    /// engine is gigabytes.
+    #[test]
+    fn build_output_is_ignored() {
+        assert!(PROJECT_GITIGNORE.lines().any(|line| line == "/target"));
+    }
+
+    /// Ignoring either of these breaks `git clone && cargo run`, which is
+    /// the one thing a project's repository has to do.
+    #[test]
+    fn nothing_a_fresh_clone_needs_is_ignored() {
+        for needed in [
+            "Cargo.lock",
+            "registrations.rs",
+            "project.ome",
+            "scenes",
+            "assets",
+        ] {
+            assert!(
+                !PROJECT_GITIGNORE.contains(needed),
+                "{needed} is required to build or open the project; ignoring it breaks a clone",
+            );
+        }
+    }
+}

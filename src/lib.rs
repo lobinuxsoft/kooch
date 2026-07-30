@@ -17,7 +17,6 @@
 //! | `gravity`  | Gravity system              | —            |
 //! | `camera`   | Authorable camera rigs      | —            |
 //! | `world`    | World management            | —            |
-//! | `scripting`| Scripting via rhai          | —            |
 //! | `editor`   | Editor UI                   | —            |
 //!
 //! Default features: `window`, `render`.
@@ -53,8 +52,6 @@ pub use ome_physics;
 pub use ome_remote;
 #[cfg(feature = "render")]
 pub use ome_render;
-#[cfg(feature = "scripting")]
-pub use ome_scripting;
 #[cfg(feature = "window")]
 pub use ome_window;
 #[cfg(feature = "world")]
