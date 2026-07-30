@@ -422,12 +422,54 @@ fn remote_schema(resources: &Resources) -> Option<&[ome_remote::protocol::Compon
 /// everything the project defines. That is why `RigidBody` was missing from
 /// the menu until `ome_editor_core` grew an `ome_physics` dependency — a
 /// workaround that did nothing for project-defined components.
+
+/// Whether a component is one the engine writes rather than one a user
+/// authors.
+///
+/// The Add Component menu is not a catalogue — the Components panel is
+/// that, and it still lists every one of these so you can see they exist.
+/// This is the shorter question: would adding it by hand mean anything?
+///
+/// For each of these it does not, and for two of them it is actively
+/// harmful:
+///
+/// - **`Parent`** is set by dragging a row onto another, which also fixes
+///   up the other side. Added by hand it is a parent reference to nothing.
+/// - **`Children`** is derived from `Parent` by `hierarchy_sync_system`,
+///   so whatever you put there is overwritten on the next frame.
+/// - **`GlobalTransform`** is the output of transform propagation. It is
+///   read constantly and authored never.
+/// - **`PersistentId`** is the identity a scene file uses to point at an
+///   entity. Handing out a second one is how two entities come to claim
+///   the same reference.
+///
+/// # Matched on the name, and why
+///
+/// In remote mode this list arrives over the wire carrying a type name and
+/// a category, and nothing else — so a name is what there is to match. The
+/// `ome_` prefix check keeps a project's own `Parent` from being caught by
+/// a rule about the engine's.
+///
+/// A project component that wants out of the menu needs a real mechanism:
+/// a `#[reflect(...)]` flag, carried as a field on the schema. Worth
+/// building when something asks for it, rather than guessing at the
+/// spelling now.
+fn is_engine_owned(type_name: &str) -> bool {
+    const DERIVED: &[&str] = &["Parent", "Children", "GlobalTransform", "PersistentId"];
+
+    let Some(short) = type_name.rsplit("::").next() else {
+        return false;
+    };
+    type_name.starts_with("ome_") && DERIVED.contains(&short)
+}
+
 pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedTypeInfo> {
     let names = resources.get::<ComponentNames>();
 
     let mut types: Vec<ReflectedTypeInfo> = match remote_schema(resources) {
         Some(schema) => schema
             .iter()
+            .filter(|component| !is_engine_owned(&component.type_name))
             .map(|component| ReflectedTypeInfo {
                 component: component_id(names, &component.type_name),
                 short_name: component
@@ -446,6 +488,7 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
                     registry
                         .reflected_type_names()
                         .into_iter()
+                        .filter(|(_, name)| !is_engine_owned(name))
                         .map(|(tid, name)| ReflectedTypeInfo {
                             component: component_id(names, name),
                             short_name: name.rsplit("::").next().unwrap_or(name).to_owned(),
@@ -501,3 +544,48 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod engine_owned_tests {
+    use super::is_engine_owned;
+
+    /// The four the engine writes. Two of them are overwritten on the next
+    /// frame; two of them break something if a second one exists.
+    #[test]
+    fn derived_components_are_not_offered() {
+        for name in [
+            "ome_ecs::hierarchy::parent::Parent",
+            "ome_ecs::hierarchy::children::Children",
+            "ome_ecs::transform::GlobalTransform",
+            "ome_ecs::persistent_id::PersistentId",
+        ] {
+            assert!(
+                is_engine_owned(name),
+                "{name} should not be addable by hand"
+            );
+        }
+    }
+
+    /// Everything a user actually places has to stay in the menu. This is
+    /// the assertion that fails if the list is ever widened carelessly.
+    #[test]
+    fn authorable_components_stay() {
+        for name in [
+            "ome_ecs::transform::Transform",
+            "ome_ecs::name::Name",
+            "ome_ecs::perspective_camera::PerspectiveCamera",
+            "ome_physics::components::RigidBody",
+            "ome_camera::rig::CameraRig",
+        ] {
+            assert!(!is_engine_owned(name), "{name} must remain addable");
+        }
+    }
+
+    /// A project's own `Parent` is not the engine's. The prefix check is
+    /// the whole reason the rule is not just "any type called Parent".
+    #[test]
+    fn a_projects_own_type_is_never_caught_by_an_engine_rule() {
+        assert!(!is_engine_owned("my_game::hierarchy::Parent"));
+        assert!(!is_engine_owned("roll_a_ball::Children"));
+    }
+}
