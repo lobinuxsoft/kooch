@@ -161,6 +161,10 @@ pub(crate) fn refresh_cached_prefab(resources: &mut Resources, path: &Path) {
     if let Some(dirty) = resources.get_mut::<crate::actions::DirtyPrefabs>() {
         dirty.clear(meta.guid);
     }
+    // Instances are now behind the document. Queued rather than applied
+    // here: this runs in the middle of handling an action, and the writes
+    // have to travel the same way an edit does.
+    crate::actions::prefab_propagate::queue(resources, meta.guid);
 }
 
 /// Writes `entity` and its descendants to a prefab file.
@@ -460,6 +464,7 @@ pub(super) fn handle_save_prefab_asset(resources: &mut Resources, prefab: ome_co
             if let Some(dirty) = resources.get_mut::<crate::actions::DirtyPrefabs>() {
                 dirty.clear(prefab);
             }
+            crate::actions::prefab_propagate::queue(resources, prefab);
             tracing::info!("prefab saved to {}", path.display());
         }
         Err(e) => tracing::error!("failed to save prefab: {e}"),

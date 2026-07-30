@@ -23,6 +23,7 @@ use self::dispatch::{action_to_command, batch_description, same_ecs_variant};
 use self::handlers::apply_non_ecs_action;
 
 mod prefab_overrides;
+pub(crate) mod prefab_propagate;
 
 pub(crate) use self::codegen::{migrate_to_library, register_scripts};
 
@@ -123,6 +124,14 @@ pub(crate) enum EditorAction {
     },
     /// Write a prefab's edited document back to its file.
     SavePrefabAsset(ome_core::Guid),
+    /// Push a saved prefab's values out to every instance of it, except
+    /// the fields each instance overrode.
+    ///
+    /// Carries its own writes rather than expanding into `SetField`s: an
+    /// edit on an instance is recorded as an override, so propagating that
+    /// way would pin every field it touched and the instance would never
+    /// follow the prefab again.
+    PropagatePrefab(ome_core::Guid),
     /// Dismiss the "replace this prefab?" prompt without saving.
     CancelPrefabOverwrite,
     /// Stamp a prefab into the open scene.
@@ -326,6 +335,8 @@ impl EditorAction {
             // Answering a prompt is editor state; refusing it while a
             // project builds would leave the modal permanently up.
             | Self::CancelPrefabOverwrite
+            // Writes into the world, so it waits for one.
+            | Self::PropagatePrefab(_)
             // A prefab is a file and a cached document. Neither is the
             // world, so editing one while a project builds is fine.
             | Self::EditPrefabField { .. }
@@ -461,9 +472,23 @@ pub(crate) fn apply_actions(
     // refresh would overwrite). Actions remote mode does not own fall
     // through to the local path below. This is the one place the two
     // modes diverge.
+    // A prefab saved while the previous batch was being handled. Drained
+    // into actions here so propagation goes through the same dispatch as
+    // everything else, one frame after the save rather than in the middle
+    // of it.
+    let queued: Vec<EditorAction> = resources
+        .get_mut::<prefab_propagate::PendingPropagation>()
+        .map(|pending| pending.drain())
+        .unwrap_or_default()
+        .into_iter()
+        .map(EditorAction::PropagatePrefab)
+        .collect();
+
     // Asked before the local/remote split so the prompt appears once
     // regardless of which path would have written the file.
-    let actions = &intercept_prefab_overwrites(resources, actions);
+    let mut actions = intercept_prefab_overwrites(resources, actions);
+    actions.extend(queued.iter());
+    let actions = &actions;
 
     // Recorded before the edits are applied, while the instance still
     // holds the values the user is changing away from — and appended so

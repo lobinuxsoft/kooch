@@ -352,6 +352,12 @@ enum Edit<'a> {
     },
     /// Start or stop the project's gameplay systems in place.
     SetPlaying(bool),
+    /// Push a saved prefab's values into every instance the project holds.
+    ///
+    /// Carries the writes rather than a guid: working out *which* fields
+    /// go where needs the mirror, the prefab's cached document and each
+    /// instance's override set, all of which live on this side.
+    PropagatePrefab(Vec<crate::actions::prefab_propagate::PlannedWrite>),
 }
 
 /// Reduces an action to an [`Edit`], or `None` if remote mode does not
@@ -425,6 +431,9 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
                 at: crate::viewport_pick::resolve(resources, *at),
             })
         }
+        EditorAction::PropagatePrefab(prefab) => Some(Edit::PropagatePrefab(
+            crate::actions::prefab_propagate::plan(resources, *prefab),
+        )),
         // Play runs the project's systems in the project we are already
         // driving, instead of launching a second copy of it.
         EditorAction::Play => Some(Edit::SetPlaying(true)),
@@ -594,6 +603,27 @@ fn send(
             None => Ok(()),
         },
         Edit::SetPlaying(playing) => client.set_playing(playing).map_err(map_err),
+        // Sent as ordinary field writes, but *not* as `EditorAction`s: an
+        // edit on an instance is recorded as an override, so routing
+        // propagation through the action layer would pin every field it
+        // touched and the instance would stop following the prefab. The
+        // protocol call has no such side effect.
+        Edit::PropagatePrefab(writes) => {
+            for write in writes {
+                let id = remote(write.entity)?;
+                // A field the project refuses is skipped rather than
+                // aborting the rest: one stale component must not stop the
+                // other instances from catching up.
+                if let Err(e) = client.set_field(id, &write.component, &write.field, write.value) {
+                    tracing::debug!(
+                        "prefab propagation skipped {}.{}: {e}",
+                        write.component,
+                        write.field,
+                    );
+                }
+            }
+            Ok(())
+        }
         // Both processes see the same filesystem, so a path resolved here
         // is meaningful on the project's side of the wire — the same
         // assumption scene I/O above already makes.
