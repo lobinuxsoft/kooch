@@ -395,9 +395,21 @@ fn apply_overrides(encoded: &str, members: &[crate::entity::Entity], resources: 
         let Some(type_id) = type_id else {
             continue;
         };
-        match entry.value {
+        // What a record *means* is decided by its field, not by whether a
+        // value came with it. A removal is the record with no field; a
+        // field record that arrived without a value — hand-edited, or
+        // written by an older build — is one this cannot apply, and
+        // treating it as a removal would delete the component instead.
+        let is_removal = entry.address.field == crate::prefab_instance::WHOLE_COMPONENT;
+        match (is_removal, entry.value) {
+            // A component the user took off this instance.
+            (true, _) => {
+                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                    registry.remove_component(entity, &type_id);
+                }
+            }
             // A field the user changed.
-            Some(value) => {
+            (false, Some(value)) => {
                 if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                     // The component may be one the user *added* to this
                     // instance, in which case the prefab did not build it.
@@ -411,12 +423,15 @@ fn apply_overrides(encoded: &str, members: &[crate::entity::Entity], resources: 
                         registry.reflect_set_field(&type_id, entity, &entry.address.field, value);
                 }
             }
-            // A component the user took off this instance.
-            None => {
-                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                    registry.remove_component(entity, &type_id);
-                }
-            }
+            // A field override with nothing to write. Skipped rather than
+            // guessed at: the prefab's own value is the honest fallback,
+            // and it is already there.
+            (false, None) => tracing::debug!(
+                target: "ome_ecs::scene",
+                component = %entry.address.component,
+                field = %entry.address.field,
+                "override carries no value; leaving the prefab's",
+            ),
         }
     }
 }
