@@ -24,7 +24,8 @@ use crate::actions::EditorAction;
 // the local one, rather than a second copy that could disagree about where
 // prefabs live.
 pub(crate) use prefab::{
-    entity_name, prefab_path, project_root as prefab_root, register_saved_asset,
+    entity_name, prefab_path, project_root as prefab_root, refresh_cached_prefab,
+    register_saved_asset,
 };
 
 /// Dispatches a non-ECS, non-undo action to the appropriate handler.

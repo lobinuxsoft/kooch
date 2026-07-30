@@ -116,6 +116,53 @@ pub(crate) fn register_saved_asset(resources: &mut Resources, path: &Path) {
     }
 }
 
+/// Makes the cached document match the file that was just written.
+///
+/// # Why this is not automatic
+///
+/// `Assets<SceneDocument>` is a cache keyed by guid, and `load_by_guid`
+/// returns what it already holds without looking at the file. Saving over
+/// a prefab — from an entity, over a name that already exists — writes
+/// bytes the cache has never seen, so the Inspector kept showing the copy
+/// from before the overwrite. Spawning it looked right, because the entity
+/// it was spawned from *was* right; the two disagreed and only the panel
+/// admitted it.
+///
+/// Re-reading rather than pushing the in-memory document in: the file is
+/// the thing that changed, and the remote path writes it from the other
+/// process, so this side has nothing to push.
+pub(crate) fn refresh_cached_prefab(resources: &mut Resources, path: &Path) {
+    let Ok(meta) = ome_core::asset_meta::read_meta(path) else {
+        return;
+    };
+    let reloaded = match SceneDocument::load(path) {
+        Ok(document) => document,
+        Err(e) => {
+            tracing::warn!("prefab saved but could not be re-read: {e}");
+            return;
+        }
+    };
+
+    let Some(mut server) = resources.remove::<ome_core::asset_loader::AssetServer>() else {
+        return;
+    };
+    let handle = server
+        .load_by_guid::<SceneDocument>(meta.guid, resources)
+        .ok();
+    resources.insert(server);
+
+    if let Some(handle) = handle
+        && let Some(assets) = resources.get_mut::<ome_core::assets::Assets<SceneDocument>>()
+        && let Some(slot) = assets.get_mut(handle)
+    {
+        *slot = reloaded;
+    }
+    // The file and the cache agree again, so there is nothing outstanding.
+    if let Some(dirty) = resources.get_mut::<crate::actions::DirtyPrefabs>() {
+        dirty.clear(meta.guid);
+    }
+}
+
 /// Writes `entity` and its descendants to a prefab file.
 ///
 /// The local path — used when the editor is driving its own world. With a
@@ -142,6 +189,7 @@ pub(super) fn handle_save_prefab(resources: &mut Resources, entity: Entity, dest
     match ome_ecs::scene::prefab::save(&document, &path) {
         Ok(guid) => {
             register_saved_asset(resources, &path);
+            refresh_cached_prefab(resources, &path);
             tracing::info!("prefab saved to {} as {guid}", path.display());
         }
         Err(e) => tracing::error!("failed to save prefab: {e}"),

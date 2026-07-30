@@ -92,6 +92,8 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     // immutably so it can borrow the session alongside it.
     if let Some(path) = saved_prefab.filter(|_| sent) {
         crate::actions::handlers::register_saved_asset(resources, &path);
+        // The project wrote bytes this side's cache has never seen.
+        crate::actions::handlers::refresh_cached_prefab(resources, &path);
     }
     true
 }
