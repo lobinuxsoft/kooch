@@ -25,11 +25,11 @@ The boot scene is resolved in this order:
 
 1. `SceneBootstrapPlugin::with_scene(path)`, if your `main.rs` sets one explicitly.
 2. `--scene <path>` on the command line — absolute, or relative to the working directory.
-3. `scenes/default.ome_scene`, relative to the working directory.
+3. `scenes/default.scene`, relative to the working directory.
 
 So `cargo run -- --game` from the project root just works: the default path resolves because
 the working directory is the project. A different level is
-`cargo run -- --game --scene scenes/Level1.ome_scene`.
+`cargo run -- --game --scene scenes/Level1.scene`.
 
 ## Component registration runs before the scene loads
 

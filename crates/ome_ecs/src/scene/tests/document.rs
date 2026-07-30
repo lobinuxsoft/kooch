@@ -47,7 +47,7 @@ fn round_trip_save_load() {
 
     let dir = std::env::temp_dir().join("ome_scene_test");
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("round_trip.ome_scene");
+    let path = dir.join("round_trip.scene");
 
     doc.save(&path).unwrap();
     let loaded = SceneDocument::load(&path).unwrap();

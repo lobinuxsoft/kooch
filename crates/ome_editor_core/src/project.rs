@@ -12,7 +12,7 @@ use ome_ecs::reflect::ReflectValue;
 use ome_ecs::scene::{ComponentDescription, EntityDescription, SceneDocument};
 
 /// Extension of a scene file.
-pub const SCENE_EXTENSION: &str = "ome_scene";
+pub const SCENE_EXTENSION: &str = "scene";
 
 /// Extension of a prefab file.
 ///
@@ -33,10 +33,18 @@ pub const SCENE_EXTENSION: &str = "ome_scene";
 ///
 /// Unity draws the same line the same way: `.unity` and `.prefab` hold the
 /// same YAML.
-pub const PREFAB_EXTENSION: &str = "ome_prefab";
+///
+/// # Why not `ome_`-prefixed
+///
+/// The prefix was namespacing against a collision that does not happen —
+/// these files sit in a project's own `scenes/` and `assets/`, not in a
+/// shared folder — and it made the *engine* the visible thing about a file
+/// whose interesting property is its format. What matters is what is
+/// inside; the extension only has to be legible.
+pub const PREFAB_EXTENSION: &str = "prefab";
 
 /// Convention path of the default scene relative to the project root.
-pub const DEFAULT_SCENE_REL_PATH: &str = "scenes/default.ome_scene";
+pub const DEFAULT_SCENE_REL_PATH: &str = "scenes/default.scene";
 
 // ---------------------------------------------------------------------------
 // Project manifest (project.ome)
@@ -461,7 +469,7 @@ pub fn create_project(
     Ok(project_root)
 }
 
-/// Ensures `scenes/default.ome_scene` exists under `project_root`.
+/// Ensures `scenes/default.scene` exists under `project_root`.
 ///
 /// If the file is missing, writes a minimal starter scene with one Camera
 /// entity (Transform + PerspectiveCamera + Name) and one Sky entity

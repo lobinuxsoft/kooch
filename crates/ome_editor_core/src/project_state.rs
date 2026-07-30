@@ -277,7 +277,7 @@ impl ProjectState {
             tracing::warn!("failed to save editor config: {e}");
         }
 
-        // Self-heal default scene: keep `scenes/default.ome_scene` on disk
+        // Self-heal default scene: keep `scenes/default.scene` on disk
         // and point `main_scene` at it whenever the manifest has no entry.
         // Existing main_scene values are respected even if the file is
         // missing — that's a load error, not a manifest problem.

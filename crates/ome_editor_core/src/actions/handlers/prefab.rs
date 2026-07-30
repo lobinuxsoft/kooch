@@ -176,7 +176,7 @@ mod tests {
         let root = Path::new("/p");
         assert_eq!(
             prefab_path(root, "Ball", None),
-            PathBuf::from("/p/assets/Ball.ome_prefab"),
+            PathBuf::from("/p/assets/Ball.prefab"),
         );
     }
 
@@ -187,7 +187,7 @@ mod tests {
         let root = Path::new("/p");
         assert_eq!(
             prefab_path(root, "Ball", Some(Path::new("/somewhere/else"))),
-            PathBuf::from("/p/assets/Ball.ome_prefab"),
+            PathBuf::from("/p/assets/Ball.prefab"),
         );
     }
 
@@ -196,7 +196,7 @@ mod tests {
         let root = Path::new("/p");
         assert_eq!(
             prefab_path(root, "Ball", Some(Path::new("/p/assets/enemies"))),
-            PathBuf::from("/p/assets/enemies/Ball.ome_prefab"),
+            PathBuf::from("/p/assets/enemies/Ball.prefab"),
         );
     }
 
@@ -210,15 +210,15 @@ mod tests {
         let root = std::env::temp_dir().join("ome_prefab_name_clash");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("assets")).unwrap();
-        std::fs::write(root.join("assets/Enemy.ome_prefab"), "").unwrap();
+        std::fs::write(root.join("assets/Enemy.prefab"), "").unwrap();
 
         let next = prefab_path(&root, "Enemy", None);
-        assert_eq!(next, root.join("assets/Enemy_1.ome_prefab"));
+        assert_eq!(next, root.join("assets/Enemy_1.prefab"));
 
         std::fs::write(&next, "").unwrap();
         assert_eq!(
             prefab_path(&root, "Enemy", None),
-            root.join("assets/Enemy_2.ome_prefab"),
+            root.join("assets/Enemy_2.prefab"),
         );
         let _ = std::fs::remove_dir_all(&root);
     }

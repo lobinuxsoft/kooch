@@ -2,7 +2,7 @@
 //!
 //! [`PlayState`] manages the lifecycle of a separate game process that
 //! the editor launches for testing. The game reads a serialized
-//! `.ome_scene` file; when stopped, the process is killed and the
+//! `.scene` file; when stopped, the process is killed and the
 //! editor state remains untouched.
 
 use std::io::{BufRead, BufReader};

@@ -48,7 +48,10 @@ fn create_file(resources: &Resources, folder: &Path, name: &str, kind: NewFileKi
         NewFileKind::RustComponent => ("component.rs.tmpl", COMPONENT_TMPL, "rs"),
         NewFileKind::RustSystem => ("system.rs.tmpl", SYSTEM_TMPL, "rs"),
         NewFileKind::Scene => {
-            let file = unique_target(folder, OsStr::new(&format!("{name}.ome_scene")));
+            let file = unique_target(
+                folder,
+                OsStr::new(&format!("{name}.{}", crate::project::SCENE_EXTENSION)),
+            );
             let doc = ome_ecs::SceneDocument {
                 // A new scene gets its identity now, so references into it are
                 // stable from the first save.
