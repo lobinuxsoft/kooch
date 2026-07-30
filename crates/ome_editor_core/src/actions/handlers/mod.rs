@@ -23,7 +23,9 @@ use crate::actions::EditorAction;
 // The remote path resolves a prefab's destination with the same rules as
 // the local one, rather than a second copy that could disagree about where
 // prefabs live.
-pub(crate) use prefab::{entity_name, prefab_path, project_root as prefab_root};
+pub(crate) use prefab::{
+    entity_name, prefab_path, project_root as prefab_root, register_saved_asset,
+};
 
 /// Dispatches a non-ECS, non-undo action to the appropriate handler.
 /// ECS actions (`Spawn`, `Despawn`, `SetField`, `AddComponent`,

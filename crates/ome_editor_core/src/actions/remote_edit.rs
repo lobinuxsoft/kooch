@@ -59,16 +59,40 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     let playing = matches!(edit, Edit::SetPlaying(playing) if playing);
     let is_play_toggle = matches!(edit, Edit::SetPlaying(_));
 
+    // Recomputed before the send, which consumes `edit`. Deterministic —
+    // the same inputs that produced the path the project is about to write.
+    let saved_prefab = match &edit {
+        Edit::SavePrefab { entity, dest } => {
+            crate::actions::handlers::prefab_root(resources).map(|root| {
+                let name = crate::actions::handlers::entity_name(resources, *entity);
+                crate::actions::handlers::prefab_path(&root, &name, dest.as_deref())
+            })
+        }
+        _ => None,
+    };
+
+    let mut sent = false;
     if let Some(session) = state.session.as_ref() {
         let names = resources.get::<ComponentNames>();
         match send(edit, session, &state.mirror, names, resources) {
-            Ok(()) if is_play_toggle => state.playing = playing,
-            Ok(()) => {}
+            Ok(()) if is_play_toggle => {
+                state.playing = playing;
+                sent = true;
+            }
+            Ok(()) => sent = true,
             Err(e) => tracing::warn!("remote edit dropped: {e}"),
         }
     }
 
     resources.insert(state);
+
+    // The project wrote the file; this side has to be told it exists, or
+    // the Inspector cannot find what the user just made until the editor
+    // restarts. Done here rather than in `send`, which holds the world
+    // immutably so it can borrow the session alongside it.
+    if let Some(path) = saved_prefab.filter(|_| sent) {
+        crate::actions::handlers::register_saved_asset(resources, &path);
+    }
     true
 }
 

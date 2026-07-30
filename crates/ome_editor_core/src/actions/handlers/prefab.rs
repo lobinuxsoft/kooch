@@ -85,6 +85,37 @@ pub(crate) fn prefab_path(root: &Path, name: &str, dest: Option<&Path>) -> PathB
     folder.join(format!("{}.{PREFAB_EXTENSION}", sanitize_file_stem(name)))
 }
 
+/// Puts a just-written asset into the database so it exists *now*.
+///
+/// The project's asset scan only runs when the active project changes, so
+/// a file created mid-session is invisible until the editor is restarted:
+/// its `.meta` gives it a guid, which is why it can be selected, but the
+/// catalog the Inspector looks it up in has never heard of it. The result
+/// was a prefab you could click and an Inspector that showed nothing.
+///
+/// Registering at the moment of creation is narrower than rescanning the
+/// tree — the one file that changed is the one thing the editor learns
+/// about, and it costs nothing per frame.
+pub(crate) fn register_saved_asset(resources: &mut Resources, path: &Path) {
+    let Ok(meta) = ome_core::asset_meta::read_meta(path) else {
+        tracing::warn!("no asset identity beside {}", path.display());
+        return;
+    };
+    let mtime = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    if let Some(database) = resources.get_mut::<ome_core::asset_database::AssetDatabase>() {
+        database.register(
+            meta.guid,
+            ome_core::asset_database::AssetEntry {
+                path: path.to_path_buf(),
+                mtime,
+                type_name: meta.asset_type,
+            },
+        );
+    }
+}
+
 /// Writes `entity` and its descendants to a prefab file.
 ///
 /// The local path — used when the editor is driving its own world. With a
@@ -109,7 +140,10 @@ pub(super) fn handle_save_prefab(resources: &mut Resources, entity: Entity, dest
     // makes the file a registered asset. Without one it is invisible to the
     // picker and cannot be spawned.
     match ome_ecs::scene::prefab::save(&document, &path) {
-        Ok(guid) => tracing::info!("prefab saved to {} as {guid}", path.display()),
+        Ok(guid) => {
+            register_saved_asset(resources, &path);
+            tracing::info!("prefab saved to {} as {guid}", path.display());
+        }
         Err(e) => tracing::error!("failed to save prefab: {e}"),
     }
 }
