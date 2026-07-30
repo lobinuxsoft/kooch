@@ -167,7 +167,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.physics_debug,
             ),
             EditorTab::Console => {
-                crate::panels::console::draw_console(ui, self.log_buffer, self.console)
+                crate::panels::console::draw_console(ui, focused, self.log_buffer, self.console)
             }
             EditorTab::Inspector => draw_inspector_content(
                 ui,

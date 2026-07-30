@@ -377,6 +377,19 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // First give the gizmo handle system a chance to absorb input. If a
     // handle is hovered or being dragged, suppress camera input so the
     // user doesn't inadvertently orbit while moving an entity.
+    // Any camera motion at all, not only the fly keys: an orbit or pan
+    // drag has the same problem if the pointer stops moving for a frame
+    // while a button is still down.
+    let driving_camera = viewport_input.is_some_and(|delta| {
+        delta.fly_active
+            || delta.fly_keys.any()
+            || delta.orbit_yaw != 0.0
+            || delta.orbit_pitch != 0.0
+            || delta.pan_dx != 0.0
+            || delta.pan_dy != 0.0
+            || delta.zoom_lines != 0.0
+    });
+
     if let Some(delta) = viewport_input {
         let selected_snapshot: Vec<_> = overlay.selected_entities.iter().copied().collect();
         let rotation_mode = overlay.rotation_display_mode;
@@ -468,7 +481,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // to present asks for another unconditionally — the image on screen
     // is not the one this frame drew.
     let pace = if presented {
-        editor_pace(ui_repaint_delay, toolbar.is_playing, toolbar.remote)
+        editor_pace(
+            ui_repaint_delay,
+            toolbar.is_playing,
+            toolbar.remote,
+            driving_camera,
+        )
     } else {
         ome_core::frame_pacing::FramePace::Continuous
     };

@@ -8,6 +8,7 @@ use super::{ALL_LEVELS, ConsoleState};
 /// Content of the "Console" tab.
 pub(crate) fn draw_console(
     ui: &mut egui::Ui,
+    focused: bool,
     buffer: Option<&LogBuffer>,
     state: &mut ConsoleState,
 ) {
@@ -97,6 +98,10 @@ pub(crate) fn draw_console(
     });
     ui.separator();
 
+    if focused {
+        handle_keyboard(ui, state);
+    }
+
     // One line per row, and only the rows on screen are built. Wrapping
     // would make rows different heights, and a virtualised list needs to
     // know where row N starts without having laid out the N-1 before it —
@@ -113,7 +118,9 @@ pub(crate) fn draw_console(
             ui.spacing_mut().item_spacing.y = 1.0;
             let entries = state.entries();
             let dropped = state.dropped();
-            for &index in &state.visible()[rows] {
+            let cursor = state.cursor();
+            for (offset, &index) in state.visible()[rows.clone()].iter().enumerate() {
+                let is_cursor = cursor == Some(rows.start + offset);
                 let Some(entry) = entries.get(index) else {
                     continue;
                 };
@@ -134,6 +141,17 @@ pub(crate) fn draw_console(
                 let seq = dropped + index as u64;
                 ui.push_id(seq, |ui| {
                     let row = ui.horizontal(|ui| {
+                        // Painted behind the text: moving a cursor nobody
+                        // can see is the same as not moving it.
+                        if is_cursor {
+                            let mut band = ui.available_rect_before_wrap();
+                            band.set_height(ui.text_style_height(&egui::TextStyle::Monospace));
+                            ui.painter().rect_filled(
+                                band,
+                                0.0,
+                                ui.visuals().selection.bg_fill.linear_multiply(0.45),
+                            );
+                        }
                         ui.spacing_mut().item_spacing.x = 6.0;
                         ui.colored_label(
                             level_colour(entry.level),
@@ -370,5 +388,51 @@ mod tests {
             "handlers"
         );
         assert_eq!(short_target("physics_smoke"), "physics_smoke");
+    }
+}
+
+/// Moves the console's cursor with the keyboard.
+///
+/// Only reached when this panel has focus; the arrows belong to whichever
+/// panel the user last clicked (#661).
+fn handle_keyboard(ui: &egui::Ui, state: &mut ConsoleState) {
+    // A page is a screenful of rows rather than a fixed number, so the key
+    // means the same thing in a tall panel and a short one.
+    let row_height = ui.text_style_height(&egui::TextStyle::Monospace) + 1.0;
+    let page = ((ui.available_height() / row_height).floor() as isize - 1).max(1);
+
+    let (up, down, page_up, page_down, home, end, copy) = ui.input(|i| {
+        (
+            i.key_pressed(egui::Key::ArrowUp),
+            i.key_pressed(egui::Key::ArrowDown),
+            i.key_pressed(egui::Key::PageUp),
+            i.key_pressed(egui::Key::PageDown),
+            i.key_pressed(egui::Key::Home),
+            i.key_pressed(egui::Key::End),
+            i.modifiers.command && i.key_pressed(egui::Key::C),
+        )
+    });
+
+    match (up, down, page_up, page_down) {
+        (true, _, _, _) => state.move_cursor(-1),
+        (_, true, _, _) => state.move_cursor(1),
+        (_, _, true, _) => state.move_cursor(-page),
+        (_, _, _, true) => state.move_cursor(page),
+        _ => {}
+    }
+    if home {
+        state.cursor_to_edge(false);
+    }
+    if end {
+        // End means "back to the newest", so it also resumes following:
+        // asking for the bottom of a log is asking to keep seeing it.
+        state.cursor_to_edge(true);
+        state.follow = true;
+    }
+
+    // Ctrl+C copies the highlighted line. The panel's Copy button takes
+    // everything the filter shows; this takes the one line being read.
+    if copy && let Some(entry) = state.cursor_line() {
+        ui.ctx().copy_text(line_as_text(entry));
     }
 }

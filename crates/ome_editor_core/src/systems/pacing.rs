@@ -34,11 +34,19 @@ pub(crate) fn editor_pace(
     repaint_delay: Duration,
     is_playing: bool,
     remote: Option<ConnectionState>,
+    driving_camera: bool,
 ) -> FramePace {
     // A handshake in flight advances one frame at a time, and it is over
     // in the time it takes a project to boot. Slowing that down to save
     // power would only make opening a project feel worse.
-    if is_playing || remote == Some(ConnectionState::Connecting) {
+    //
+    // `driving_camera` is the one egui cannot see. A held key is not an
+    // animation as far as egui is concerned — it reports nothing to
+    // repaint — so the loop slept and woke on the operating system's key
+    // *repeat*, about 25 times a second. The camera then advanced in
+    // visible steps, which is what "not fluid" was (#656 taking something
+    // back).
+    if is_playing || driving_camera || remote == Some(ConnectionState::Connecting) {
         return FramePace::Continuous;
     }
 
@@ -69,10 +77,20 @@ pub(crate) fn shortest_repaint_delay(output: &egui::FullOutput) -> Duration {
 mod tests {
     use super::*;
 
+    /// A held movement key is not an animation to egui, so this is the
+    /// only thing standing between flying the camera and a slideshow.
+    #[test]
+    fn driving_the_camera_keeps_the_frames_coming() {
+        assert_eq!(
+            editor_pace(Duration::MAX, false, None, true),
+            FramePace::Continuous,
+        );
+    }
+
     #[test]
     fn an_idle_editor_sleeps() {
         assert_eq!(
-            editor_pace(Duration::MAX, false, None),
+            editor_pace(Duration::MAX, false, None, false),
             FramePace::Wait,
             "nothing animating, nothing connected: the loop should stop",
         );
@@ -83,7 +101,7 @@ mod tests {
         // The viewport texture changes from the project process; egui has
         // no widget to notice that through.
         assert_eq!(
-            editor_pace(Duration::MAX, true, Some(ConnectionState::Connected)),
+            editor_pace(Duration::MAX, true, Some(ConnectionState::Connected), false),
             FramePace::Continuous
         );
     }
@@ -91,7 +109,7 @@ mod tests {
     #[test]
     fn an_animating_widget_keeps_the_loop_running() {
         assert_eq!(
-            editor_pace(Duration::ZERO, false, None),
+            editor_pace(Duration::ZERO, false, None, false),
             FramePace::Continuous
         );
     }
@@ -99,7 +117,12 @@ mod tests {
     #[test]
     fn a_handshake_in_flight_is_not_slowed_down() {
         assert_eq!(
-            editor_pace(Duration::MAX, false, Some(ConnectionState::Connecting)),
+            editor_pace(
+                Duration::MAX,
+                false,
+                Some(ConnectionState::Connecting),
+                false
+            ),
             FramePace::Continuous
         );
     }
@@ -107,7 +130,7 @@ mod tests {
     #[test]
     fn a_dead_session_does_not_keep_the_editor_awake() {
         assert_eq!(
-            editor_pace(Duration::MAX, false, Some(ConnectionState::Failed)),
+            editor_pace(Duration::MAX, false, Some(ConnectionState::Failed), false),
             FramePace::Wait
         );
     }
@@ -115,7 +138,12 @@ mod tests {
     #[test]
     fn a_connected_project_is_polled_while_the_ui_idles() {
         assert_eq!(
-            editor_pace(Duration::MAX, false, Some(ConnectionState::Connected)),
+            editor_pace(
+                Duration::MAX,
+                false,
+                Some(ConnectionState::Connected),
+                false
+            ),
             FramePace::After(REMOTE_IDLE_POLL),
         );
     }
@@ -124,7 +152,7 @@ mod tests {
     fn a_ui_deadline_shorter_than_the_poll_wins() {
         let blink = Duration::from_millis(16);
         assert_eq!(
-            editor_pace(blink, false, Some(ConnectionState::Connected)),
+            editor_pace(blink, false, Some(ConnectionState::Connected), false),
             FramePace::After(blink),
             "the remote poll is a floor on wake-ups, not a ceiling",
         );

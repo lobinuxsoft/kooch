@@ -47,6 +47,14 @@ pub(crate) struct ConsoleState {
     built_for: Option<FilterKey>,
     /// How many lines the log had dropped when last read.
     dropped: u64,
+    /// Which visible row the keyboard is on, as an index into
+    /// [`visible`](Self::visible).
+    ///
+    /// `None` until a key or a click puts it somewhere. Stored as a
+    /// position in the *filtered* list rather than an entry sequence: the
+    /// arrows move through what is on screen, and a line the filter hides
+    /// is not somewhere the cursor can be.
+    cursor: Option<usize>,
 }
 
 /// The filter settings, as something comparable.
@@ -71,6 +79,7 @@ impl Default for ConsoleState {
             visible: Vec::new(),
             built_for: None,
             dropped: 0,
+            cursor: None,
         }
     }
 }
@@ -149,6 +158,54 @@ impl ConsoleState {
     }
 
     /// How many lines the buffer has dropped.
+    /// The highlighted row, clamped to what is currently visible.
+    ///
+    /// Clamped on read rather than on write, because the filter can shrink
+    /// the list under a cursor that was valid when it was set.
+    pub(crate) fn cursor(&self) -> Option<usize> {
+        self.cursor
+            .filter(|_| !self.visible.is_empty())
+            .map(|row| row.min(self.visible.len() - 1))
+    }
+
+    /// Moves the cursor by `delta` rows, clamped, starting from the last
+    /// row when nothing is highlighted yet.
+    ///
+    /// Starting at the end is deliberate: a log is read from the bottom,
+    /// so the first press of Up should offer the newest line rather than
+    /// the oldest one thousands of rows above.
+    pub(crate) fn move_cursor(&mut self, delta: isize) {
+        if self.visible.is_empty() {
+            self.cursor = None;
+            return;
+        }
+        let last = self.visible.len() - 1;
+        let from = match self.cursor() {
+            Some(row) => row as isize,
+            None => last as isize + 1,
+        };
+        self.cursor = Some((from + delta).clamp(0, last as isize) as usize);
+        // Following the tail would drag the view off whatever is being
+        // read; moving the cursor is a statement that the user is reading.
+        self.follow = false;
+    }
+
+    /// Puts the cursor on the first or last visible row.
+    pub(crate) fn cursor_to_edge(&mut self, end: bool) {
+        if self.visible.is_empty() {
+            self.cursor = None;
+            return;
+        }
+        self.cursor = Some(if end { self.visible.len() - 1 } else { 0 });
+        self.follow = false;
+    }
+
+    /// The text of the highlighted row, for a copy shortcut.
+    pub(crate) fn cursor_line(&self) -> Option<&LogEntry> {
+        let row = self.cursor()?;
+        self.entries.get(*self.visible.get(row)?)
+    }
+
     pub(crate) fn dropped(&self) -> u64 {
         self.dropped
     }
@@ -203,3 +260,75 @@ fn contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+
+    fn with_lines(n: usize) -> ConsoleState {
+        let mut state = ConsoleState::default();
+        for i in 0..n {
+            state.entries.push(LogEntry {
+                seq: i as u64,
+                level: tracing::Level::INFO,
+                target: "test".to_owned(),
+                message: format!("line {i}"),
+                from_project: false,
+            });
+            state.visible.push(i);
+        }
+        state
+    }
+
+    /// A log is read from the bottom, so the first Up offers the newest
+    /// line rather than the oldest one thousands of rows above.
+    #[test]
+    fn the_first_step_up_lands_on_the_newest_line() {
+        let mut state = with_lines(50);
+        state.move_cursor(-1);
+        assert_eq!(state.cursor(), Some(49));
+    }
+
+    #[test]
+    fn the_cursor_stops_at_both_ends() {
+        let mut state = with_lines(3);
+        state.cursor_to_edge(false);
+        state.move_cursor(-10);
+        assert_eq!(state.cursor(), Some(0), "walked off the top");
+        state.move_cursor(100);
+        assert_eq!(state.cursor(), Some(2), "walked off the bottom");
+    }
+
+    /// Moving the cursor is a statement that the user is reading, and
+    /// following the tail would drag the view out from under them.
+    #[test]
+    fn moving_the_cursor_stops_following() {
+        let mut state = with_lines(5);
+        assert!(state.follow, "the default is to follow");
+        state.move_cursor(-1);
+        assert!(!state.follow);
+    }
+
+    /// The filter can shrink the list under a cursor that was valid when
+    /// it was set, so the clamp is on read.
+    #[test]
+    fn a_cursor_past_the_end_is_clamped_not_lost() {
+        let mut state = with_lines(10);
+        state.cursor_to_edge(true);
+        assert_eq!(state.cursor(), Some(9));
+        state.visible.truncate(3);
+        assert_eq!(
+            state.cursor(),
+            Some(2),
+            "should clamp into the shorter list"
+        );
+    }
+
+    #[test]
+    fn an_empty_log_has_nowhere_for_a_cursor() {
+        let mut state = ConsoleState::default();
+        state.move_cursor(-1);
+        assert_eq!(state.cursor(), None);
+        assert!(state.cursor_line().is_none());
+    }
+}
