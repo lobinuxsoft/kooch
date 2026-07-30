@@ -47,6 +47,16 @@ pub(super) fn apply_non_ecs_action(
         // Removing the pending prompt already happened in `apply_actions`;
         // there is nothing left for this to do.
         EditorAction::CancelPrefabOverwrite => {}
+        EditorAction::RevertToPrefab { entity, component } => {
+            if let Some((root, overrides, writes)) = crate::actions::prefab_propagate::plan_revert(
+                resources,
+                *entity,
+                component.as_deref(),
+            ) {
+                crate::actions::prefab_propagate::apply(resources, &writes);
+                crate::actions::prefab_propagate::write_overrides(resources, root, &overrides);
+            }
+        }
         EditorAction::PropagatePrefab(prefab) => {
             let plan = crate::actions::prefab_propagate::plan(resources, *prefab);
             crate::actions::prefab_propagate::apply(resources, &plan);

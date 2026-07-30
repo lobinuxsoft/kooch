@@ -124,6 +124,18 @@ pub(crate) enum EditorAction {
     },
     /// Write a prefab's edited document back to its file.
     SavePrefabAsset(ome_core::Guid),
+    /// Drop an instance's overrides so its fields follow the prefab again.
+    ///
+    /// `component` is `None` for the whole instance. Without this an
+    /// override is permanent: an accidental gizmo drag detaches that
+    /// transform from the prefab forever, and the only way back is
+    /// deleting the instance and placing a new one.
+    RevertToPrefab {
+        /// Any entity of the instance; the root is found from it.
+        entity: Entity,
+        /// Full type path, or `None` to revert everything.
+        component: Option<String>,
+    },
     /// Push a saved prefab's values out to every instance of it, except
     /// the fields each instance overrode.
     ///
@@ -335,8 +347,9 @@ impl EditorAction {
             // Answering a prompt is editor state; refusing it while a
             // project builds would leave the modal permanently up.
             | Self::CancelPrefabOverwrite
-            // Writes into the world, so it waits for one.
+            // Both write into the world, so they wait for one.
             | Self::PropagatePrefab(_)
+            | Self::RevertToPrefab { .. }
             // A prefab is a file and a cached document. Neither is the
             // world, so editing one while a project builds is fine.
             | Self::EditPrefabField { .. }

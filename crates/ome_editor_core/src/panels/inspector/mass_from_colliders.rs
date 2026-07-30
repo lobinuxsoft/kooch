@@ -242,6 +242,7 @@ mod tests {
         components: Vec<ComponentDisplayInfo>,
     ) -> EntityDisplayInfo {
         EntityDisplayInfo {
+            is_prefab_instance: false,
             entity: Entity::new(index, 0),
             components,
             parent: None,

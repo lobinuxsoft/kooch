@@ -282,6 +282,25 @@ fn handle_context_menu(
             ui.close();
         }
 
+        // Only on an instance. Reverting is the operation that makes an
+        // override safe to have: without it an accidental gizmo drag
+        // detaches that transform from the prefab forever, and the only
+        // way back is deleting the instance and placing a new one.
+        if selected.len() == 1 && info.is_prefab_instance {
+            let entity = selected[0];
+            if ui
+                .button(format!("{} Revert to Prefab", icons::ARROWS_CLOCKWISE))
+                .on_hover_text("Drop this instance's changes and follow the prefab again")
+                .clicked()
+            {
+                actions.push(EditorAction::RevertToPrefab {
+                    entity,
+                    component: None,
+                });
+                ui.close();
+            }
+        }
+
         // One entity only. A prefab is one tree with one root — see
         // `SceneDocument::root_index` — so N selected entities are either N
         // prefabs or one thing that is not a tree, and neither is what this

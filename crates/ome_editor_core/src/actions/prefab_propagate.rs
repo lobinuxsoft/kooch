@@ -19,13 +19,19 @@
 //! into the registry locally, and as protocol calls in remote mode, both
 //! bypassing the action layer that records.
 //!
-//! # What is not propagated
+//! # Adding is propagated; removing is not
 //!
-//! Only field *values*, on components both sides already have. Adding a
-//! component to a prefab does not add it to instances, removing one does
-//! not remove it, and a new child entity does not appear. That is where
-//! Unity gets genuinely complicated — each can collide with something the
-//! user did to the instance — and it waits until it hurts (#611).
+//! A component added to a prefab appears on its instances. That case is
+//! tractable: the worst collision is an instance that already added the
+//! same component by hand, and it simply starts following the prefab,
+//! which is what it now is.
+//!
+//! Removing is not, and the asymmetry is the point. Taking a component off
+//! every instance is *destroying* whatever the user configured on it,
+//! irreversibly and in twelve places at once, on the strength of an edit
+//! made somewhere else. A new child entity is deferred for the same
+//! reason — it has to be positioned relative to whatever the instance
+//! became, and there is no answer that is right often enough.
 
 use ome_core::Guid;
 use ome_core::resource::Resources;
@@ -43,6 +49,13 @@ pub(crate) struct PlannedWrite {
     pub component: String,
     pub field: String,
     pub value: ReflectValue,
+    /// Whether the entity has to grow the component before the field can
+    /// be written.
+    ///
+    /// Carried on the write rather than kept as a separate list so the two
+    /// cannot be applied out of order — a field written before its
+    /// component exists is silently dropped.
+    pub add_component: bool,
 }
 
 /// Works out everything that should change when `prefab` is saved.
@@ -67,6 +80,12 @@ pub(crate) fn plan(resources: &Resources, prefab: Guid) -> Vec<PlannedWrite> {
                 continue;
             };
             for component in &described.components {
+                // A component the prefab grew since this instance was
+                // placed. The instance has to grow it too, or the change
+                // reaches every instance except as the one thing people
+                // most often change about a prefab.
+                let missing = !has_component(resources, entity, &component.type_name);
+                let mut first = true;
                 for (field, value) in &component.fields {
                     let address = OverrideAddress {
                         entity: index,
@@ -82,6 +101,20 @@ pub(crate) fn plan(resources: &Resources, prefab: Guid) -> Vec<PlannedWrite> {
                         component: component.type_name.clone(),
                         field: field.clone(),
                         value: value.clone(),
+                        // Asked for once, on the first write that needs
+                        // it: adding is idempotent but a round trip is not
+                        // free, and in remote mode each one is a call.
+                        add_component: missing && std::mem::take(&mut first),
+                    });
+                }
+                // A component with no fields still has to arrive.
+                if missing && first {
+                    writes.push(PlannedWrite {
+                        entity,
+                        component: component.type_name.clone(),
+                        field: String::new(),
+                        value: ReflectValue::Bool(false),
+                        add_component: true,
                     });
                 }
             }
@@ -116,6 +149,35 @@ pub(crate) fn apply(resources: &mut Resources, writes: &[PlannedWrite]) {
                 write.field,
             );
         }
+    }
+}
+
+/// Whether `entity` already carries the component named `type_name`.
+fn has_component(resources: &Resources, entity: Entity, type_name: &str) -> bool {
+    let Some(registry) = resources.get::<ome_ecs::component::ComponentRegistry>() else {
+        return false;
+    };
+    let Some(type_id) = registry.type_id_by_name(type_name) else {
+        // Unknown to this binary. Treated as present so propagation does
+        // not try to add something it cannot construct.
+        return true;
+    };
+    registry.reflect_get_fields(&type_id, entity).is_some()
+}
+
+/// Grows `entity` by a default-constructed component, archetype included.
+fn add_component(resources: &mut Resources, entity: Entity, type_id: std::any::TypeId) {
+    let inserted = resources
+        .get_mut::<ome_ecs::component::ComponentRegistry>()
+        .is_some_and(|registry| registry.insert_default_reflected(&type_id, entity));
+    if !inserted {
+        return;
+    }
+    if let Some(archetypes) = resources.get_mut::<ome_ecs::archetype_registry::ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(entity)
+    {
+        let next = archetypes.archetype_after_add_dynamic(current, type_id);
+        archetypes.register_entity(entity, next);
     }
 }
 
@@ -244,6 +306,7 @@ mod tests {
                     component: component.type_name.clone(),
                     field: field.clone(),
                     value: value.clone(),
+                    add_component: false,
                 });
             }
         }
@@ -319,4 +382,111 @@ mod tests {
         assert_eq!(pending.drain(), vec![prefab]);
         assert!(pending.drain().is_empty(), "draining leaves it empty");
     }
+}
+
+/// Stores an instance's override set locally.
+///
+/// The remote path sends this as a `SetField` instead — which is safe
+/// because the recorder skips `PrefabInstance` for exactly this reason.
+pub(crate) fn write_overrides(resources: &mut Resources, root: Entity, overrides: &str) {
+    let type_id = resources
+        .get::<ome_ecs::component::ComponentRegistry>()
+        .and_then(|registry| registry.type_id_by_name(std::any::type_name::<PrefabInstance>()));
+    let Some(type_id) = type_id else {
+        return;
+    };
+    if let Some(registry) = resources.get_mut::<ome_ecs::component::ComponentRegistry>() {
+        let _ = registry.reflect_set_field(
+            &type_id,
+            root,
+            "overrides",
+            ReflectValue::String(overrides.to_owned()),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Revert
+// ---------------------------------------------------------------------------
+
+/// Drops overrides on the instance `entity` belongs to, and plans the
+/// writes that put the prefab's values back.
+///
+/// `component` narrows it to one type; `None` reverts the instance.
+///
+/// Returns the new override set for the root alongside the writes, because
+/// both have to be applied: dropping the record without restoring the
+/// values leaves the instance looking overridden-free while still showing
+/// the user's numbers, and restoring without dropping means the next
+/// propagation puts them back.
+pub(crate) fn plan_revert(
+    resources: &Resources,
+    entity: Entity,
+    component: Option<&str>,
+) -> Option<(Entity, String, Vec<PlannedWrite>)> {
+    let member = resources
+        .get::<ome_ecs::component::ComponentRegistry>()?
+        .get_cpu::<PrefabMember>()?
+        .get(entity)
+        .cloned()?;
+    let root = member.root;
+    let mut instance = resources
+        .get::<ome_ecs::component::ComponentRegistry>()?
+        .get_cpu::<PrefabInstance>()?
+        .get(root)
+        .cloned()?;
+
+    // Narrowed by *this* entity as well as the component: reverting a
+    // child's Transform must not revert the root's.
+    let kept: Vec<OverrideAddress> = instance
+        .overrides()
+        .into_iter()
+        .filter(|address| match component {
+            Some(component) => {
+                !(address.entity == member.index as usize && address.component == component)
+            }
+            None => false,
+        })
+        .collect();
+    instance.set_overrides(kept);
+
+    // Planned against the instance as it will be, so the fields just
+    // released are the ones that come back.
+    let writes = plan_for(resources, root, &instance)?;
+    Some((root, instance.overrides, writes))
+}
+
+/// The writes a single instance needs, given the override set to respect.
+fn plan_for(
+    resources: &Resources,
+    root: Entity,
+    instance: &PrefabInstance,
+) -> Option<Vec<PlannedWrite>> {
+    let document = cached_document(resources, instance.source?)?;
+    let mut writes = Vec::new();
+    for (entity, index) in members_of(resources, root) {
+        let Some(described) = document.entities.get(index) else {
+            continue;
+        };
+        for component in &described.components {
+            for (field, value) in &component.fields {
+                let address = OverrideAddress {
+                    entity: index,
+                    component: component.type_name.clone(),
+                    field: field.clone(),
+                };
+                if instance.is_overridden(&address) {
+                    continue;
+                }
+                writes.push(PlannedWrite {
+                    entity,
+                    component: component.type_name.clone(),
+                    field: field.clone(),
+                    value: value.clone(),
+                    add_component: !has_component(resources, entity, &component.type_name),
+                });
+            }
+        }
+    }
+    Some(writes)
 }

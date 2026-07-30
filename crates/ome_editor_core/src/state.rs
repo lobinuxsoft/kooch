@@ -220,6 +220,11 @@ pub(crate) struct SceneDisplayInfo {
 }
 
 pub(crate) struct EntityDisplayInfo {
+    /// Whether this entity belongs to a prefab instance.
+    ///
+    /// Gathered rather than looked up in the panel: the World panel draws
+    /// with `&mut Ui` and the components live in a world.
+    pub(crate) is_prefab_instance: bool,
     pub(crate) entity: Entity,
     pub(crate) components: Vec<ComponentDisplayInfo>,
     /// Parent entity, if any.

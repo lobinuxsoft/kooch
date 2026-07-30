@@ -43,6 +43,7 @@ fn named(index: u32, name: &str, mut extra: Vec<ComponentDisplayInfo>) -> Entity
     )];
     components.append(&mut extra);
     EntityDisplayInfo {
+        is_prefab_instance: false,
         entity: Entity::new(index, 0),
         components,
         parent: None,
