@@ -103,14 +103,7 @@ pub(crate) fn draw_asset_browser_content(
     let mut pending: Option<PendingCreate> = ui.ctx().data(|d| d.get_temp(pending_id));
 
     if focused {
-        handle_keyboard(
-            ui,
-            nav,
-            selected_asset,
-            current_folder,
-            actions,
-            project_root,
-        );
+        handle_keyboard(ui, nav, actions, project_root);
     }
 
     egui::ScrollArea::vertical()
@@ -118,8 +111,6 @@ pub(crate) fn draw_asset_browser_content(
         .show(ui, |ui| {
             let mut ctx = RenderCtx {
                 needle: &needle,
-                selected_asset,
-                current_folder,
                 actions,
                 rename: &mut rename,
                 pending: &mut pending,
@@ -242,8 +233,6 @@ fn entries_under<'a>(catalog: &'a [AssetCatalogEntry], root: &Path) -> Vec<&'a A
 fn handle_keyboard(
     ui: &egui::Ui,
     nav: &mut tree::AssetNav,
-    selected_asset: &mut Option<Guid>,
-    current_folder: &mut Option<PathBuf>,
     actions: &mut Vec<EditorAction>,
     project_root: Option<&Path>,
 ) {
