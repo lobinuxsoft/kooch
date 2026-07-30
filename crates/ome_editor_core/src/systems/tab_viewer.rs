@@ -36,6 +36,8 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) accent: egui::Color32,
     /// The Asset Browser's keyboard cursor and the rows it walks.
     pub(crate) asset_nav: &'a mut crate::panels::asset_browser::AssetNav,
+    /// The Inspector's cursor over component sections.
+    pub(crate) inspector_nav: &'a mut crate::panels::inspector::InspectorNav,
     pub(crate) entities: &'a [EntityDisplayInfo],
     pub(crate) scenes: &'a [crate::state::SceneDisplayInfo],
     pub(crate) archetypes: &'a [ArchetypeDisplayInfo],
@@ -203,6 +205,8 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             }
             EditorTab::Inspector => draw_inspector_content(
                 ui,
+                focused,
+                self.inspector_nav,
                 self.entities,
                 self.selected,
                 self.reflected_types,

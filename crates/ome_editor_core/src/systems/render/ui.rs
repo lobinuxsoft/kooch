@@ -126,6 +126,7 @@ pub(super) fn run_editor_ui(
                 focused_tab: &mut overlay.focused_tab,
                 accent: ui.visuals().selection.bg_fill,
                 asset_nav: &mut overlay.asset_nav,
+                inspector_nav: &mut overlay.inspector_nav,
                 entities: &data.entities,
                 scenes: &data.scenes,
                 archetypes: &data.archetypes,

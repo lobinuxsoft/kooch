@@ -90,6 +90,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     let overlay = EditorOverlay {
         focused_tab: None,
         asset_nav: Default::default(),
+        inspector_nav: Default::default(),
         ctx,
         winit_state: Arc::clone(&winit_state),
         renderer,

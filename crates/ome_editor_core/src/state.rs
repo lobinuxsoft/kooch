@@ -135,6 +135,8 @@ pub struct EditorOverlay {
     /// The Asset Browser's keyboard cursor, and the rows the renderer drew
     /// last frame for it to walk.
     pub(crate) asset_nav: crate::panels::asset_browser::AssetNav,
+    /// The Inspector's cursor over component sections.
+    pub(crate) inspector_nav: crate::panels::inspector::InspectorNav,
     pub(crate) selected_entities: Vec<Entity>,
     /// Anchor index for Shift+Click range selection in the World panel.
     pub(crate) last_clicked_index: Option<usize>,

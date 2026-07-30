@@ -107,6 +107,8 @@ fn draw_repeatedly(
         let mut actions = Vec::new();
         draw_inspector_content(
             ui,
+            false,
+            &mut Default::default(),
             entities,
             selected,
             &[],
@@ -202,6 +204,8 @@ fn moving_the_selection_keeps_the_widget_ids() {
         let mut actions = Vec::new();
         draw_inspector_content(
             ui,
+            false,
+            &mut Default::default(),
             &entities,
             &selected,
             &[],

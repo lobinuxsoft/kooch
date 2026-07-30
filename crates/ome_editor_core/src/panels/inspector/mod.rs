@@ -9,6 +9,8 @@
 
 mod asset_view;
 mod mass_from_colliders;
+mod nav;
+pub(crate) use nav::InspectorNav;
 mod multi;
 mod physics_warnings;
 mod rotation;
@@ -70,6 +72,8 @@ impl RotationContext {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_inspector_content(
     ui: &mut egui::Ui,
+    focused: bool,
+    nav: &mut InspectorNav,
     entities: &[EntityDisplayInfo],
     selected: &[Entity],
     reflected_types: &[ReflectedTypeInfo],
@@ -80,6 +84,13 @@ pub(crate) fn draw_inspector_content(
     selected_asset: Option<Guid>,
     asset_detail: Option<&AssetDetail>,
 ) {
+    if focused {
+        nav.handle_keyboard(ui);
+    }
+    // Refilled as sections are drawn, so next frame's arrows walk exactly
+    // what is on screen now.
+    nav.rows.clear();
+
     // Asset selection takes over the Inspector — it serves both entities
     // and assets. When an asset is selected, render its view and return.
     if let Some(guid) = selected_asset
@@ -101,6 +112,7 @@ pub(crate) fn draw_inspector_content(
     let (_, dropped) = ui.dnd_drop_zone::<DraggedComponent, ()>(egui::Frame::default(), |ui| {
         draw_inspector_body(
             ui,
+            nav,
             entities,
             selected,
             reflected_types,
@@ -127,6 +139,7 @@ pub(crate) fn draw_inspector_content(
 #[allow(clippy::too_many_arguments)]
 fn draw_inspector_body(
     ui: &mut egui::Ui,
+    nav: &mut InspectorNav,
     entities: &[EntityDisplayInfo],
     selected: &[Entity],
     reflected_types: &[ReflectedTypeInfo],
@@ -263,59 +276,81 @@ fn draw_inspector_body(
                 // entity, which is what any inspector is expected to do and
                 // what this one did not.
                 let id = ui.make_persistent_id(format!("comp_{:?}", comp.component));
-                egui::collapsing_header::CollapsingState::load_with_default_open(
+                nav.rows.push(comp.component);
+                let mut section = egui::collapsing_header::CollapsingState::load_with_default_open(
                     ui.ctx(),
                     id,
                     true,
-                )
-                .show_header(ui, |ui| {
-                    ui.strong(format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name));
-                    // Removal is always available regardless of visibility:
-                    // `ReadOnly` gates field edits, not component lifecycle.
-                    if ui
-                        .small_button(icons::X)
-                        .on_hover_text("Remove component")
-                        .clicked()
-                    {
-                        actions.push(EditorAction::RemoveComponent {
-                            entity,
-                            component: comp.component,
-                        });
-                    }
-                    if comp.short_name == "RigidBody" && !is_read_only {
-                        draw_calculate_mass(ui, entity, comp.component, entities, actions);
-                    }
-                })
-                .body(|ui| {
-                    if let Some(fields) = &comp.fields {
-                        if fields.is_empty() {
-                            ui.weak("(no fields)");
-                        } else if is_read_only {
-                            single::draw_readonly_fields(
-                                ui,
-                                comp.component,
-                                fields,
-                                comp.field_metas,
-                            );
+                );
+                // The keyboard's request, applied here because this is the
+                // only place the section's persistent id exists.
+                if let Some(open) = nav.take_toggle_for(comp.component) {
+                    section.set_open(open);
+                }
+                let is_cursor = nav.is_cursor(comp.component);
+                let scroll_here = is_cursor && nav.scroll_to_cursor;
+                section
+                    .show_header(ui, |ui| {
+                        let title = format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name);
+                        let title = if is_cursor {
+                            // Coloured rather than boxed: a section header is
+                            // already a row of furniture, and another outline
+                            // would be one more line to read past.
+                            ui.strong(
+                                egui::RichText::new(title).color(ui.visuals().selection.bg_fill),
+                            )
                         } else {
-                            single::draw_reflected_fields(
-                                ui,
-                                entity,
-                                comp.type_id,
-                                comp.component,
-                                fields,
-                                comp.field_metas,
-                                euler_cache,
-                                rotation_ctx,
-                                actions,
-                                asset_catalog,
-                                entities,
-                            );
+                            ui.strong(title)
+                        };
+                        if scroll_here {
+                            title.scroll_to_me(Some(egui::Align::Center));
                         }
-                    } else {
-                        ui.weak("(no reflection)");
-                    }
-                });
+                        // Removal is always available regardless of visibility:
+                        // `ReadOnly` gates field edits, not component lifecycle.
+                        if ui
+                            .small_button(icons::X)
+                            .on_hover_text("Remove component")
+                            .clicked()
+                        {
+                            actions.push(EditorAction::RemoveComponent {
+                                entity,
+                                component: comp.component,
+                            });
+                        }
+                        if comp.short_name == "RigidBody" && !is_read_only {
+                            draw_calculate_mass(ui, entity, comp.component, entities, actions);
+                        }
+                    })
+                    .body(|ui| {
+                        if let Some(fields) = &comp.fields {
+                            if fields.is_empty() {
+                                ui.weak("(no fields)");
+                            } else if is_read_only {
+                                single::draw_readonly_fields(
+                                    ui,
+                                    comp.component,
+                                    fields,
+                                    comp.field_metas,
+                                );
+                            } else {
+                                single::draw_reflected_fields(
+                                    ui,
+                                    entity,
+                                    comp.type_id,
+                                    comp.component,
+                                    fields,
+                                    comp.field_metas,
+                                    euler_cache,
+                                    rotation_ctx,
+                                    actions,
+                                    asset_catalog,
+                                    entities,
+                                );
+                            }
+                        } else {
+                            ui.weak("(no reflection)");
+                        }
+                    });
             }
         });
 }
