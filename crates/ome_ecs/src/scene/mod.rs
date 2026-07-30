@@ -14,6 +14,7 @@ mod sync;
 mod tests;
 
 pub mod prefab;
+pub mod propagate;
 
 pub use document::{ComponentDescription, EntityDescription, SceneDocument};
 pub use error::SceneError;

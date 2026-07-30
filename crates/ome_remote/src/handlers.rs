@@ -476,7 +476,13 @@ fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> 
     })?;
     sync_scene_to_ecs(&doc, resources).map_err(|e| RemoteError::SceneError {
         detail: e.to_string(),
-    })
+    })?;
+    // A prefab edited while this scene was closed left stale copies in it.
+    // Done here rather than editor-side because this is where the scene
+    // actually arrives — the editor would have to wait for the mirror
+    // before it even knew what was in it.
+    ome_ecs::scene::propagate::refresh_all(resources);
+    Ok(())
 }
 
 /// The authored world, held while a play session runs so Stop can put
