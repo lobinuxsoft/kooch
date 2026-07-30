@@ -30,6 +30,17 @@ fn display_name(stem: &str) -> String {
 /// `EditorAction::Spawn` entries to `actions` when the user picks an item.
 pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) {
     ui.menu_button(format!("{} Spawn", icons::PLUS), |ui| {
+        spawn_entries(ui, actions);
+    });
+}
+
+/// The entries themselves, without the button that opens them.
+///
+/// Split out so the right-click menu on the World panel's empty space
+/// offers exactly what the toolbar does. Two lists would drift, and the
+/// one that drifts is always the one fewer people use (#591).
+pub(super) fn spawn_entries(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) {
+    {
         if ui.button(format!("{} Entity", icons::CUBE)).clicked() {
             actions.push(EditorAction::Spawn {
                 extra: vec![],
@@ -110,5 +121,5 @@ pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>
                 ui.close();
             }
         });
-    });
+    }
 }
