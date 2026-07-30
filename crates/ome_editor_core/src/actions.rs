@@ -22,6 +22,8 @@ use crate::undo::{CompoundCommand, EditorCommand, UndoStack};
 use self::dispatch::{action_to_command, batch_description, same_ecs_variant};
 use self::handlers::apply_non_ecs_action;
 
+mod prefab_overrides;
+
 pub(crate) use self::codegen::{migrate_to_library, register_scripts};
 
 pub(crate) enum EditorAction {
@@ -462,6 +464,21 @@ pub(crate) fn apply_actions(
     // Asked before the local/remote split so the prompt appears once
     // regardless of which path would have written the file.
     let actions = &intercept_prefab_overwrites(resources, actions);
+
+    // Recorded before the edits are applied, while the instance still
+    // holds the values the user is changing away from — and appended so
+    // the write that persists the set travels the same path as the edit
+    // that caused it.
+    let recorded = prefab_overrides::record(resources, actions);
+    let mut owned: Vec<&EditorAction>;
+    let actions = match recorded.is_empty() {
+        true => actions,
+        false => {
+            owned = actions.clone();
+            owned.extend(recorded.iter());
+            &owned
+        }
+    };
 
     let remote = resources
         .get::<crate::remote_session::RemoteState>()
