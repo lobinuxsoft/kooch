@@ -127,6 +127,14 @@ impl ComponentRegistry {
         self.reflectors.get(type_id).map(|r| r.fields())
     }
 
+    /// The field values a freshly-constructed component would have.
+    ///
+    /// No entity involved: this is for building a component somewhere an
+    /// entity does not exist, such as adding one to a prefab document.
+    pub fn reflect_default_fields(&self, type_id: &TypeId) -> Option<Vec<(String, ReflectValue)>> {
+        Some(self.reflectors.get(type_id)?.default_fields())
+    }
+
     /// Reads all reflected field values for a component on an entity.
     ///
     /// Returns `None` if the component type has no reflector, no storage,

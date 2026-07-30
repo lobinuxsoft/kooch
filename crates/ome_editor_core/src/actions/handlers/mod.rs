@@ -44,6 +44,29 @@ pub(super) fn apply_non_ecs_action(
         // Removing the pending prompt already happened in `apply_actions`;
         // there is nothing left for this to do.
         EditorAction::CancelPrefabOverwrite => {}
+        EditorAction::EditPrefabField {
+            prefab: guid,
+            entity_index,
+            component,
+            field,
+            value,
+        } => prefab::handle_edit_prefab_field(
+            resources,
+            *guid,
+            *entity_index,
+            component,
+            field,
+            value.clone(),
+        ),
+        EditorAction::EditPrefabComponent {
+            prefab: guid,
+            entity_index,
+            component,
+            add,
+        } => {
+            prefab::handle_edit_prefab_component(resources, *guid, *entity_index, *component, *add)
+        }
+        EditorAction::SavePrefabAsset(guid) => prefab::handle_save_prefab_asset(resources, *guid),
         EditorAction::SavePrefab { entity, dest, .. } => {
             prefab::handle_save_prefab(resources, *entity, dest.as_deref())
         }

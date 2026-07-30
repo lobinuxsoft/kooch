@@ -41,6 +41,19 @@ pub(crate) trait ReflectAccessor: Send + Sync {
     /// Creates a boxed default instance (for spawning).
     fn default_value(&self) -> Box<dyn std::any::Any + Send + Sync>;
 
+    /// The field values a freshly-constructed component would have.
+    ///
+    /// Read off the type's own `reflect_default` rather than synthesised
+    /// from field *kinds*: a component whose default sets `visible: true`
+    /// has to arrive that way, and a zero-per-kind table would disagree
+    /// with what actually spawning it gives. Reading it needs `T`, which
+    /// only exists inside this impl — [`Self::default_value`] hands back a
+    /// `Box<dyn Any>` that a caller cannot look into.
+    ///
+    /// Used to add a component to a prefab, where there is no entity to
+    /// insert one on and then read back.
+    fn default_fields(&self) -> Vec<(String, ReflectValue)>;
+
     /// Inserts a default instance into the storage for the given entity.
     ///
     /// Returns `true` if inserted successfully.
@@ -85,6 +98,19 @@ impl<T: Component + Reflect> TypedReflectAccessor<T> {
 impl<T: Reflect> ReflectAccessor for TypedReflectAccessor<T> {
     fn fields(&self) -> &'static [FieldMeta] {
         T::reflect_default().reflect_fields()
+    }
+
+    fn default_fields(&self) -> Vec<(String, ReflectValue)> {
+        let component = T::reflect_default();
+        component
+            .reflect_fields()
+            .iter()
+            .filter_map(|meta| {
+                component
+                    .reflect_get(meta.name)
+                    .map(|value| (meta.name.to_owned(), value))
+            })
+            .collect()
     }
 
     fn get_fields(

@@ -223,3 +223,160 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Editing a prefab as a document
+// ---------------------------------------------------------------------------
+
+/// Runs `edit` against the cached document for `prefab` and marks it dirty.
+///
+/// Edits land in `Assets<SceneDocument>` rather than on disk, so they are
+/// live for anything spawning the prefab and the file is behind until the
+/// user saves. That is the whole shape of an explicit save; the Inspector's
+/// button is what makes it visible.
+fn with_cached_document<R>(
+    resources: &mut Resources,
+    prefab: ome_core::Guid,
+    edit: impl FnOnce(&mut SceneDocument) -> R,
+) -> Option<R> {
+    let mut server = resources.remove::<ome_core::asset_loader::AssetServer>()?;
+    let handle = server.load_by_guid::<SceneDocument>(prefab, resources).ok();
+    resources.insert(server);
+
+    let handle = handle?;
+    let assets = resources.get_mut::<ome_core::assets::Assets<SceneDocument>>()?;
+    let result = edit(assets.get_mut(handle)?);
+
+    // Created on first edit rather than at startup: a session that never
+    // touches a prefab never grows the set.
+    if resources.get::<crate::actions::DirtyPrefabs>().is_none() {
+        resources.insert(crate::actions::DirtyPrefabs::default());
+    }
+    if let Some(dirty) = resources.get_mut::<crate::actions::DirtyPrefabs>() {
+        dirty.mark(prefab);
+    }
+    Some(result)
+}
+
+pub(super) fn handle_edit_prefab_field(
+    resources: &mut Resources,
+    prefab: ome_core::Guid,
+    entity_index: usize,
+    component: &str,
+    field: &str,
+    value: ome_ecs::reflect::ReflectValue,
+) {
+    let applied = with_cached_document(resources, prefab, |document| {
+        let Some(entity) = document.entities.get_mut(entity_index) else {
+            return false;
+        };
+        let Some(component) = entity
+            .components
+            .iter_mut()
+            .find(|c| c.type_name == component)
+        else {
+            return false;
+        };
+        // Replaces in place rather than appending: a field written twice
+        // would round-trip as two entries and the loader would take
+        // whichever came last.
+        match component.fields.iter_mut().find(|(name, _)| name == field) {
+            Some(slot) => slot.1 = value,
+            None => component.fields.push((field.to_owned(), value)),
+        }
+        true
+    });
+    if applied != Some(true) {
+        tracing::warn!(
+            "prefab edit did not land: {prefab} entity {entity_index} {component}.{field}"
+        );
+    }
+}
+
+pub(super) fn handle_edit_prefab_component(
+    resources: &mut Resources,
+    prefab: ome_core::Guid,
+    entity_index: usize,
+    component: ome_ecs::component::ComponentId,
+    add: bool,
+) {
+    // The document stores a type name, the menu speaks `ComponentId`, and
+    // the registry is the only thing that knows both.
+    let Some(type_name) = resources
+        .get::<ome_ecs::component::ComponentNames>()
+        .and_then(|names| names.name(component).map(str::to_owned))
+    else {
+        tracing::warn!("no type name for component {component:?}");
+        return;
+    };
+    let defaults = match add {
+        true => match default_fields(resources, &type_name) {
+            Some(fields) => fields,
+            None => {
+                tracing::warn!("no default value for {type_name}; not added");
+                return;
+            }
+        },
+        false => Vec::new(),
+    };
+
+    with_cached_document(resources, prefab, |document| {
+        let Some(entity) = document.entities.get_mut(entity_index) else {
+            return;
+        };
+        match add {
+            true => {
+                if !entity.components.iter().any(|c| c.type_name == type_name) {
+                    entity
+                        .components
+                        .push(ome_ecs::scene::ComponentDescription {
+                            type_name,
+                            fields: defaults,
+                        });
+                }
+            }
+            false => entity.components.retain(|c| c.type_name != type_name),
+        }
+    });
+}
+
+/// The fields a freshly-constructed component would have.
+///
+/// Built from the type's own `Default` rather than from field *kinds*: a
+/// component whose default sets `visible: true` must arrive that way, and a
+/// zero-per-kind table would silently disagree with what spawning the same
+/// component in the World gives.
+fn default_fields(
+    resources: &Resources,
+    type_name: &str,
+) -> Option<Vec<(String, ome_ecs::reflect::ReflectValue)>> {
+    let registry = resources.get::<ome_ecs::component::ComponentRegistry>()?;
+    let type_id = registry.type_id_by_name(type_name)?;
+    registry.reflect_default_fields(&type_id)
+}
+
+/// Writes a prefab's edited document back to its file.
+pub(super) fn handle_save_prefab_asset(resources: &mut Resources, prefab: ome_core::Guid) {
+    let Some(path) = resources
+        .get::<ome_core::asset_database::AssetDatabase>()
+        .and_then(|db| db.entry(prefab))
+        .map(|entry| entry.path.clone())
+    else {
+        tracing::error!("prefab {prefab} is not registered; nothing to save to");
+        return;
+    };
+    let Some(document) = with_cached_document(resources, prefab, |document| document.clone())
+    else {
+        tracing::error!("prefab {prefab} has no cached document to save");
+        return;
+    };
+    match ome_ecs::scene::prefab::save(&document, &path) {
+        Ok(_) => {
+            if let Some(dirty) = resources.get_mut::<crate::actions::DirtyPrefabs>() {
+                dirty.clear(prefab);
+            }
+            tracing::info!("prefab saved to {}", path.display());
+        }
+        Err(e) => tracing::error!("failed to save prefab: {e}"),
+    }
+}

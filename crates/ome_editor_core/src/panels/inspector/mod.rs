@@ -10,6 +10,7 @@
 mod asset_view;
 mod mass_from_colliders;
 mod nav;
+mod prefab_view;
 pub(crate) use nav::InspectorNav;
 mod multi;
 mod physics_warnings;
@@ -36,7 +37,10 @@ use crate::state::{
     ComponentDisplayInfo, EntityDisplayInfo, EulerCacheKey, ReflectedTypeInfo, RotationDisplayMode,
 };
 
-pub(crate) use asset_view::{AssetDetail, ImageImportInfo, MeshImportInfo};
+pub(crate) use asset_view::{
+    AssetDetail, ImageImportInfo, MeshImportInfo, PrefabComponentView, PrefabDetail,
+    PrefabEntityView, ResolvedComponent,
+};
 pub(crate) use widgets::{AssetCatalogEntry, draw_asset_picker};
 
 /// Threshold for considering a cached Euler still in sync with the
@@ -96,7 +100,16 @@ pub(crate) fn draw_inspector_content(
     if let Some(guid) = selected_asset
         && let Some(entry) = asset_catalog.iter().find(|e| e.guid == guid)
     {
-        asset_view::draw_asset_inspector(ui, entry, asset_detail, asset_catalog, actions);
+        asset_view::draw_asset_inspector(
+            ui,
+            entry,
+            asset_detail,
+            asset_catalog,
+            euler_cache,
+            entities,
+            reflected_types,
+            actions,
+        );
         return;
     }
 
@@ -333,7 +346,7 @@ fn draw_inspector_body(
                                     comp.field_metas,
                                 );
                             } else {
-                                single::draw_reflected_fields(
+                                let edits = single::draw_reflected_fields(
                                     ui,
                                     entity,
                                     comp.type_id,
@@ -342,10 +355,18 @@ fn draw_inspector_body(
                                     comp.field_metas,
                                     euler_cache,
                                     rotation_ctx,
-                                    actions,
                                     asset_catalog,
                                     entities,
                                 );
+                                // An entity's edits go to the world.
+                                for (field, value) in edits {
+                                    actions.push(EditorAction::SetField {
+                                        entity,
+                                        component: comp.component,
+                                        field,
+                                        value,
+                                    });
+                                }
                             }
                         } else {
                             ui.weak("(no reflection)");

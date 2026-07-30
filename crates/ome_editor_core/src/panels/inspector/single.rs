@@ -151,6 +151,18 @@ fn integer_value(value: &ReflectValue) -> Option<i64> {
 /// always edit in local space.
 ///
 /// `entities` is what the reference picker offers as targets.
+///
+/// # Why it reports rather than applies
+///
+/// It returns the fields that changed instead of emitting `SetField`
+/// actions itself, because what a change *means* depends on what is being
+/// inspected: a live entity edits the world, and a prefab edits a document
+/// on disk. Both want the same grid, the same pickers and the same
+/// `shown_when` rules, and the only way to have one of those is for this
+/// function not to decide.
+///
+/// `entity` is used solely to key the euler-angle cache; a caller with no
+/// entity passes a synthetic one.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw_reflected_fields(
     ui: &mut egui::Ui,
@@ -161,10 +173,10 @@ pub(super) fn draw_reflected_fields(
     field_metas: Option<&'static [FieldMeta]>,
     euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
     rotation_ctx: RotationContext,
-    actions: &mut Vec<EditorAction>,
     asset_catalog: &[AssetCatalogEntry],
     entities: &[EntityDisplayInfo],
-) {
+) -> Vec<(String, ReflectValue)> {
+    let mut edits = Vec::new();
     // Keyed on the component alone — see the note in `mod.rs`. The entity
     // used to be part of it, which renamed every widget in the grid the
     // moment the selection moved, while the grid stayed in the same place.
@@ -209,17 +221,13 @@ pub(super) fn draw_reflected_fields(
                         _ => draw_value_widget(ui, value, &field),
                     };
                     if let Some(new_value) = new_value {
-                        actions.push(EditorAction::SetField {
-                            entity,
-                            component,
-                            field: name.clone(),
-                            value: new_value,
-                        });
+                        edits.push((name.clone(), new_value));
                     }
                 });
                 ui.end_row();
             }
         });
+    edits
 }
 
 /// Renders read-only display for component fields.

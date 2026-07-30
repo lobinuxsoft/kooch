@@ -97,6 +97,30 @@ pub(crate) enum EditorAction {
         /// local and the remote path.
         overwrite: bool,
     },
+    /// Replace a field on one component of one entity inside a prefab.
+    ///
+    /// Addresses the entity by its index in the document rather than by a
+    /// handle: a prefab's entities do not exist, which is the whole
+    /// difference between editing one and editing a scene.
+    EditPrefabField {
+        prefab: ome_core::Guid,
+        entity_index: usize,
+        component: String,
+        field: String,
+        value: ome_ecs::reflect::ReflectValue,
+    },
+    /// Add or remove a component on one entity inside a prefab.
+    EditPrefabComponent {
+        prefab: ome_core::Guid,
+        entity_index: usize,
+        /// The menu speaks `ComponentId`; the document stores a type name.
+        /// Translating needs the registry, which the handler has and the
+        /// panel does not.
+        component: ome_ecs::component::ComponentId,
+        add: bool,
+    },
+    /// Write a prefab's edited document back to its file.
+    SavePrefabAsset(ome_core::Guid),
     /// Dismiss the "replace this prefab?" prompt without saving.
     CancelPrefabOverwrite,
     /// Stamp a prefab into the open scene.
@@ -299,7 +323,12 @@ impl EditorAction {
             | Self::CleanProject
             // Answering a prompt is editor state; refusing it while a
             // project builds would leave the modal permanently up.
-            | Self::CancelPrefabOverwrite => false,
+            | Self::CancelPrefabOverwrite
+            // A prefab is a file and a cached document. Neither is the
+            // world, so editing one while a project builds is fine.
+            | Self::EditPrefabField { .. }
+            | Self::EditPrefabComponent { .. }
+            | Self::SavePrefabAsset(_) => false,
 
             // Editor preferences and things that act on files rather than
             // on the world. An asset edit is about a `.ron` on disk, and
@@ -319,6 +348,28 @@ impl EditorAction {
             | Self::OpenInIde { .. }
             | Self::CreateFile { .. } => false,
         }
+    }
+}
+
+/// Prefabs edited in the Inspector whose file is behind the cache.
+///
+/// The edits themselves live in `Assets<SceneDocument>` — which is what
+/// `spawn_prefab` reads — so an unsaved prefab is already live for anything
+/// spawning it. This is what lets the Inspector say so.
+#[derive(Default)]
+pub(crate) struct DirtyPrefabs(std::collections::HashSet<ome_core::Guid>);
+
+impl DirtyPrefabs {
+    pub(crate) fn contains(&self, prefab: ome_core::Guid) -> bool {
+        self.0.contains(&prefab)
+    }
+
+    pub(crate) fn mark(&mut self, prefab: ome_core::Guid) {
+        self.0.insert(prefab);
+    }
+
+    pub(crate) fn clear(&mut self, prefab: ome_core::Guid) {
+        self.0.remove(&prefab);
     }
 }
 

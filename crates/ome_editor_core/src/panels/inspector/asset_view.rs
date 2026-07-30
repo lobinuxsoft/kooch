@@ -14,9 +14,11 @@
 use glam::Vec3;
 
 use ome_core::Guid;
-use ome_ecs::reflect::ReflectValue;
+use ome_ecs::component::ComponentId;
+use ome_ecs::reflect::{FieldMeta, ReflectValue};
 use ome_render::material::Material;
 
+use super::prefab_view;
 use super::{AssetCatalogEntry, draw_asset_picker};
 use crate::actions::EditorAction;
 
@@ -32,8 +34,65 @@ pub(crate) enum AssetDetail {
     Mesh(MeshImportInfo),
     /// Decoded image — read-only import stats.
     Image(ImageImportInfo),
+    /// A prefab, editable as the entities it describes.
+    ///
+    /// Carries the document as it currently stands in
+    /// `Assets<SceneDocument>` — which is where edits land — rather than
+    /// what is on disk. The two differ exactly while there are unsaved
+    /// changes, which is what the Save button is for.
+    Prefab(Box<PrefabDetail>),
     /// A typed asset with no dedicated detail view yet.
     Unknown { type_name: String },
+}
+
+/// A prefab, resolved against this binary's registry and ready to draw.
+///
+/// Resolution happens in the snapshot rather than in the panel for the
+/// same reason `EntityDisplayInfo` does: a panel draws with `&mut Ui` and
+/// has no world, and the registry is in one.
+pub(crate) struct PrefabDetail {
+    /// Set while the cached document differs from the file.
+    ///
+    /// Shown rather than inferred: the edits are already live for anything
+    /// spawning this prefab, so the only thing that says the file is behind
+    /// is the editor saying so.
+    pub dirty: bool,
+    pub entities: Vec<PrefabEntityView>,
+}
+
+/// One entity described by a prefab.
+pub(crate) struct PrefabEntityView {
+    pub name: String,
+    /// Index into the document — how an edit addresses this entity, since
+    /// there is no handle to name it by.
+    pub index: usize,
+    /// The entity with no `Parent`. Labelled because "which of these is
+    /// the thing I dragged in" is the first question a nested prefab
+    /// raises.
+    pub is_root: bool,
+    pub components: Vec<PrefabComponentView>,
+}
+
+/// One component on one of a prefab's entities.
+pub(crate) struct PrefabComponentView {
+    /// Full path — what the document stores, because it outlives the
+    /// process that wrote it.
+    pub type_name: String,
+    pub short_name: String,
+    pub fields: Vec<(String, ReflectValue)>,
+    /// `None` for a component this binary has no Rust type for. Such a
+    /// component is parked verbatim and round-trips intact; showing it as
+    /// un-editable is the truth, and hiding it would make saving look like
+    /// it dropped data.
+    pub resolved: Option<ResolvedComponent>,
+}
+
+/// What the registry knows about a component named in a document.
+#[derive(Clone, Copy)]
+pub(crate) struct ResolvedComponent {
+    pub type_id: std::any::TypeId,
+    pub component: ComponentId,
+    pub field_metas: Option<&'static [FieldMeta]>,
 }
 
 /// Read-only import statistics for a meshlet mesh.
@@ -56,11 +115,15 @@ pub(crate) struct ImageImportInfo {
 /// Renders the Inspector's asset view. `detail` is `None` while the
 /// snapshot for a freshly-selected asset is still being resolved (one
 /// frame of lag).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_asset_inspector(
     ui: &mut egui::Ui,
     entry: &AssetCatalogEntry,
     detail: Option<&AssetDetail>,
     catalog: &[AssetCatalogEntry],
+    euler_cache: &mut std::collections::HashMap<crate::state::EulerCacheKey, Vec3>,
+    entities: &[super::EntityDisplayInfo],
+    reflected_types: &[crate::state::ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
 ) {
     ui.label(format!(
@@ -79,6 +142,16 @@ pub(crate) fn draw_asset_inspector(
             Some(AssetDetail::Material(mat)) => {
                 draw_material_editor(ui, entry.guid, mat, catalog, actions)
             }
+            Some(AssetDetail::Prefab(detail)) => prefab_view::draw_prefab_inspector(
+                ui,
+                entry.guid,
+                detail,
+                euler_cache,
+                catalog,
+                entities,
+                reflected_types,
+                actions,
+            ),
             Some(AssetDetail::Mesh(info)) => draw_mesh_import(ui, info),
             Some(AssetDetail::Image(info)) => draw_image_import(ui, info),
             Some(AssetDetail::Unknown { type_name }) => {
