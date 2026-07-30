@@ -291,6 +291,17 @@ fn spawn_returning(
     Ok(spawned_order)
 }
 
+/// Prefabs currently being instanced, innermost last.
+///
+/// A prefab that references itself — directly, or around a longer loop —
+/// instances forever and takes the process out with a stack overflow. The
+/// capture path refuses to write one, but that only covers files this
+/// build creates: a scene can arrive from a repository, from a hand edit,
+/// or from a build that had the bug. A cycle has to be survivable on the
+/// way *in*.
+#[derive(Default)]
+struct InstancingChain(Vec<ome_core::Guid>);
+
 /// The prefab a description references, if it is an instance.
 fn instance_source(entity_desc: &super::document::EntityDescription) -> Option<ome_core::Guid> {
     let instance = entity_desc
@@ -336,7 +347,26 @@ fn rebuild_instance(
     source: ome_core::Guid,
     resources: &mut Resources,
 ) -> crate::entity::Entity {
-    match super::prefab::spawn_members(source, resources) {
+    // Depth-first, so the chain is exactly the prefabs above this one.
+    if resources.get::<InstancingChain>().is_none() {
+        resources.insert(InstancingChain::default());
+    }
+    let cyclic = resources
+        .get::<InstancingChain>()
+        .is_some_and(|chain| chain.0.contains(&source));
+    if cyclic {
+        tracing::error!(
+            target: "ome_ecs::scene",
+            %source,
+            "prefab references itself; instancing it would not terminate",
+        );
+        return spawn_placeholder(resources, format!("cyclic prefab [{source}]"));
+    }
+    if let Some(chain) = resources.get_mut::<InstancingChain>() {
+        chain.0.push(source);
+    }
+
+    let built = match super::prefab::spawn_members(source, resources) {
         Ok((root, members)) => {
             crate::prefab_instance::attach(resources, root, &members, source);
             apply_overrides(&instance_overrides(entity_desc), &members, resources);
@@ -348,16 +378,24 @@ fn rebuild_instance(
                 %source,
                 "prefab could not be instanced: {e}",
             );
-            spawn_missing_placeholder(source, resources)
+            spawn_placeholder(resources, format!("missing prefab [{source}]"))
         }
+    };
+
+    // Popped whichever way it went, or one failure would poison every
+    // later instancing of the same prefab in this load.
+    if let Some(chain) = resources.get_mut::<InstancingChain>() {
+        chain.0.pop();
     }
+    built
 }
 
-/// An entity that says out loud which prefab is missing.
-fn spawn_missing_placeholder(
-    source: ome_core::Guid,
-    resources: &mut Resources,
-) -> crate::entity::Entity {
+/// An entity that says out loud what went wrong, instead of vanishing.
+///
+/// Dropping the instance loses the user's placement and their overrides
+/// with nothing to notice. A reference that cannot be followed is
+/// something the scene should show.
+fn spawn_placeholder(resources: &mut Resources, name: String) -> crate::entity::Entity {
     let entity = {
         let mut commands = resources
             .remove::<Commands>()
@@ -369,12 +407,7 @@ fn spawn_missing_placeholder(
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<crate::name::Name>();
         if let Some(storage) = registry.get_cpu_mut::<crate::name::Name>() {
-            storage.insert(
-                entity,
-                crate::name::Name {
-                    value: format!("missing prefab [{source}]"),
-                },
-            );
+            storage.insert(entity, crate::name::Name { value: name });
         }
     }
     if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()

@@ -787,3 +787,65 @@ fn capturing_an_instance_as_a_prefab_takes_its_components_not_its_link() {
         std::any::type_name::<PrefabMember>(),
     );
 }
+
+/// A prefab whose document contains a reference to itself.
+///
+/// Instancing it instances it, forever, and the process dies of a stack
+/// overflow rather than reporting anything — which showed up as the
+/// project failing to start with no error to read.
+///
+/// Capture refuses to write one now, but that only covers files this build
+/// creates. A scene can arrive from a repository, from a hand edit, or
+/// from a build that had the bug, so a cycle has to be survivable on the
+/// way *in*.
+#[test]
+fn a_self_referencing_prefab_does_not_recurse_forever() {
+    let mut resources = setup_resources();
+    let source = Guid::new_v4();
+
+    // A scene holding one instance of `source`.
+    let scene = SceneDocument {
+        id: Guid::new_v4(),
+        name: "Level".into(),
+        version: "0.1.0".into(),
+        entities: vec![EntityDescription {
+            name: "Instance".into(),
+            parent_index: None,
+            parent: None,
+            components: vec![ComponentDescription {
+                type_name: "ome_ecs::prefab_instance::PrefabInstance".into(),
+                fields: vec![
+                    (
+                        "source".into(),
+                        ReflectValue::AssetRef {
+                            guid: Some(source),
+                            asset_type: "ome_ecs::scene::document::SceneDocument".into(),
+                        },
+                    ),
+                    ("overrides".into(), ReflectValue::String(String::new())),
+                ],
+            }],
+        }],
+    };
+
+    // No asset server, so the prefab cannot be resolved at all — which is
+    // the other way this must not hang or panic.
+    crate::scene::sync::spawn_scene_into(&scene, &mut resources).unwrap();
+
+    let named: Vec<String> = {
+        let registry = resources.get::<ComponentRegistry>().unwrap();
+        let storage = registry.get_cpu::<crate::name::Name>();
+        let allocator = resources
+            .get::<crate::allocator::EntityAllocator>()
+            .unwrap();
+        (0..8u32)
+            .map(|i| crate::entity::Entity::new(i, 0))
+            .filter(|e| allocator.is_alive(*e))
+            .filter_map(|e| storage.and_then(|s| s.get(e)).map(|n| n.value.clone()))
+            .collect()
+    };
+    assert!(
+        named.iter().any(|n| n.contains(&source.to_string())),
+        "the unresolvable prefab should be named, got {named:?}",
+    );
+}
