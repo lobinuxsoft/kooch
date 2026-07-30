@@ -50,6 +50,11 @@ pub(crate) struct AssetNav {
     pub(crate) toggle: Option<(PathBuf, bool)>,
     /// Set when the cursor moves, so the view scrolls to follow it.
     pub(crate) scroll_to_cursor: bool,
+    /// The cursor position the selection was last derived from.
+    ///
+    /// The selection is not stored beside the cursor, it is *derived*
+    /// from it — see [`Self::take_cursor_move`].
+    last_synced: Option<PathBuf>,
 }
 
 impl AssetNav {
@@ -144,6 +149,31 @@ impl AssetNav {
     /// Whether `path` is where the cursor is.
     pub(crate) fn is_cursor(&self, path: &Path) -> bool {
         self.cursor.as_deref() == Some(path)
+    }
+
+    /// The row the cursor has just landed on, reported once.
+    ///
+    /// # Why the selection is derived rather than stored
+    ///
+    /// The panel used to keep the cursor and the selection as two pieces
+    /// of state, written by two different hands: the arrows moved the
+    /// cursor, and a click wrote the selection. Two writers meant they
+    /// could hold different rows, and drawing both made the panel claim
+    /// two selections at once. Deriving one from the other removes the
+    /// possibility rather than papering over it — there is nothing left to
+    /// keep in agreement.
+    ///
+    /// Returns `None` when the cursor has not moved, and when it has moved
+    /// to nothing. A cleared cursor must not clear the selection: the
+    /// cursor is cleared when this panel loses focus, and emptying the
+    /// Inspector at that moment would mean clicking into the Inspector
+    /// wiped the thing it was about to show.
+    pub(crate) fn take_cursor_move(&mut self) -> Option<AssetRow> {
+        if self.cursor == self.last_synced {
+            return None;
+        }
+        self.last_synced = self.cursor.clone();
+        self.current().cloned()
     }
 
     /// Takes the pending toggle for `path`, if it is for this folder.
@@ -279,6 +309,34 @@ mod tests {
         assert_eq!(n.take_toggle_for(Path::new("/p/assets")), None);
         assert_eq!(n.take_toggle_for(Path::new("/p/src")), Some(true));
         assert_eq!(n.take_toggle_for(Path::new("/p/src")), None, "taken once");
+    }
+
+    /// The selection follows the cursor however it was moved, and reports
+    /// once — a repeat would re-select every frame and fight a click.
+    #[test]
+    fn a_cursor_move_is_reported_exactly_once() {
+        let mut n = nav();
+        assert_eq!(n.take_cursor_move(), None, "nothing has moved yet");
+        n.step(1);
+        assert_eq!(n.take_cursor_move(), Some(folder("/p/assets", true)));
+        assert_eq!(n.take_cursor_move(), None, "reported once");
+        n.cursor = Some(PathBuf::from("/p/assets/b.png"));
+        assert_eq!(n.take_cursor_move(), Some(file("/p/assets/b.png")));
+    }
+
+    /// Losing focus clears the cursor. That must not read as "select
+    /// nothing", or clicking into the Inspector would empty it.
+    #[test]
+    fn a_cleared_cursor_does_not_report_a_selection() {
+        let mut n = nav();
+        n.cursor = Some(PathBuf::from("/p/src"));
+        n.take_cursor_move();
+        n.cursor = None;
+        assert_eq!(n.take_cursor_move(), None);
+        // And the same row is selectable again afterwards, rather than
+        // being swallowed as "unchanged".
+        n.cursor = Some(PathBuf::from("/p/src"));
+        assert_eq!(n.take_cursor_move(), Some(folder("/p/src", false)));
     }
 
     #[test]

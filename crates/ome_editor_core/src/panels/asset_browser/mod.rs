@@ -142,6 +142,26 @@ pub(crate) fn draw_asset_browser_content(
             }
         });
 
+    // The single writer. The cursor was moved above by whichever hand the
+    // user used, and this is where — and the only place — that becomes a
+    // selection. Placed after the tree so it reads the rows just drawn
+    // rather than last frame's.
+    if let Some(row) = nav.take_cursor_move() {
+        match row.is_folder {
+            true => {
+                *current_folder = Some(row.path);
+                *selected_asset = None;
+            }
+            false => {
+                // A file's folder is what new files go into, so arrowing
+                // onto a file keeps the import destination somewhere that
+                // exists.
+                *current_folder = row.path.parent().map(Path::to_path_buf);
+                *selected_asset = asset_guid_at(&row.path);
+            }
+        }
+    }
+
     ui.ctx().data_mut(|d| {
         match rename {
             Some(state) => {
@@ -270,21 +290,19 @@ fn handle_keyboard(
         nav.to_edge(true);
     }
 
-    // Enter does what a double-click does, chosen by what the row is: a
-    // folder becomes the target for new files, a typed asset goes to the
-    // Inspector, and a plain file opens in the IDE. Anything else would be
-    // a fourth meaning for a key that already has three obvious ones.
-    if enter && let Some(row) = nav.current().cloned() {
-        if row.is_folder {
-            *current_folder = Some(row.path);
-        } else if let Some(guid) = asset_guid_at(&row.path) {
-            *selected_asset = Some(guid);
-        } else if let Some(root) = project_root {
-            actions.push(EditorAction::OpenInIde {
-                root: root.to_path_buf(),
-                file: row.path,
-            });
-        }
+    // Enter used to *commit* the cursor — make it the create target, or
+    // send it to the Inspector. Both of those now happen the moment the
+    // cursor moves, so all that is left is the one thing Enter does that
+    // moving a cursor does not: open the file, same as a double-click.
+    if enter
+        && let Some(row) = nav.current()
+        && !row.is_folder
+        && let Some(root) = project_root
+    {
+        actions.push(EditorAction::OpenInIde {
+            root: root.to_path_buf(),
+            file: row.path.clone(),
+        });
     }
 }
 
