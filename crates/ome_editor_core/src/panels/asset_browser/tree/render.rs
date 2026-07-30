@@ -81,8 +81,14 @@ pub(super) fn render_folder(
             if is_cursor && ctx.nav.scroll_to_cursor {
                 resp.scroll_to_me(Some(egui::Align::Center));
             }
-            if resp.clicked() && ctx.writable {
-                *ctx.current_folder = Some(node.path.clone());
+            if resp.clicked() {
+                // One cursor for both hands: clicking used to leave the
+                // keyboard's cursor where it was, so the next arrow jumped
+                // back to somewhere the user had stopped looking.
+                ctx.nav.cursor = Some(node.path.clone());
+                if ctx.writable {
+                    *ctx.current_folder = Some(node.path.clone());
+                }
             }
             let writable = ctx.writable;
             let actions = &mut *ctx.actions;
@@ -119,7 +125,15 @@ pub(super) fn render_leaf(
         open: false,
     });
 
-    let mut resp = ui.selectable_label(selected || is_cursor, format!("{icon} {}", leaf.name));
+    // Same split as a folder: the band is the cursor, and a selected asset
+    // — which is a separate thing, shown in the Inspector — is tinted.
+    let label = match selected {
+        true => {
+            egui::RichText::new(format!("{icon} {}", leaf.name)).color(ui.visuals().hyperlink_color)
+        }
+        false => egui::RichText::new(format!("{icon} {}", leaf.name)),
+    };
+    let mut resp = ui.selectable_label(is_cursor, label);
     if is_cursor && ctx.nav.scroll_to_cursor {
         resp.scroll_to_me(Some(egui::Align::Center));
     }
@@ -141,6 +155,7 @@ pub(super) fn render_leaf(
     let resp = resp.on_hover_text(leaf.path.display().to_string());
 
     if resp.clicked() {
+        ctx.nav.cursor = Some(leaf.path.clone());
         // Single-click selects a typed asset for the Inspector; plain
         // files have nothing to inspect.
         if let Some((guid, _)) = &leaf.asset {
