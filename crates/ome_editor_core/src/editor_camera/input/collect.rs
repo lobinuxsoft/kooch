@@ -25,8 +25,18 @@ pub fn collect_viewport_input(
     response: &egui::Response,
     ui: &egui::Ui,
     controller: &EditorCameraController,
+    focused: bool,
 ) -> ViewportInputDelta {
     let mut delta = ViewportInputDelta::default();
+
+    // Keys need focus, the pointer needs only hover.
+    //
+    // Hover alone was the gate, and it is right for the wheel and for a
+    // drag — pointing at a panel is how you address it. It is wrong for
+    // keys: a pointer resting over the viewport while the user types a name
+    // in the Inspector made every `d` both a letter and a step sideways
+    // (#661).
+    let keys_here = focused && response.hovered();
 
     let modifiers = ui.input(|i| i.modifiers);
     let shift_held = modifiers.shift;
@@ -73,8 +83,8 @@ pub fn collect_viewport_input(
         }
     }
 
-    // --- F key → focus on selection (only if hovered) ---------------------
-    if response.hovered() {
+    // --- F key → focus on selection --------------------------------------
+    if keys_here {
         delta.focus_pressed = ui.input(|i| i.key_pressed(egui::Key::F));
     }
 
@@ -82,7 +92,7 @@ pub fn collect_viewport_input(
     //
     // Suppressed during fly mode so the WASD camera movement keys don't
     // accidentally toggle the gizmo mode each time they're tapped.
-    if response.hovered() && !modifiers.any() && !delta.fly_active {
+    if keys_here && !modifiers.any() && !delta.fly_active {
         delta.mode_request = ui.input(|i| {
             if i.key_pressed(egui::Key::W) {
                 Some(HandleModeRequest::Translate)

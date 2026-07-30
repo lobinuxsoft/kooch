@@ -28,6 +28,9 @@ use crate::state::{
 };
 
 pub(crate) struct EditorTabViewer<'a> {
+    /// Which panel the keyboard belongs to, updated here as panels are
+    /// drawn. `None` before the user has clicked anything.
+    pub(crate) focused_tab: &'a mut Option<EditorTab>,
     pub(crate) entities: &'a [EntityDisplayInfo],
     pub(crate) scenes: &'a [crate::state::SceneDisplayInfo],
     pub(crate) archetypes: &'a [ArchetypeDisplayInfo],
@@ -100,9 +103,39 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        // One place decides focus for every panel, including View.
+        //
+        // Any pointer press inside the body counts, left or right. That is
+        // deliberate: right-drag already means "fly the camera", so
+        // requiring a left click would make the viewport the one panel you
+        // cannot focus with the gesture you actually use — and starting the
+        // drag inside is what keeps focus from being lost mid-flight
+        // (#661).
+        let body = ui.available_rect_before_wrap();
+        let pressed_here = ui.input(|i| {
+            i.pointer.any_pressed()
+                && i.pointer
+                    .interact_pos()
+                    .is_some_and(|pos| body.contains(pos))
+        });
+        if pressed_here {
+            *self.focused_tab = Some(*tab);
+        }
+        let focused = *self.focused_tab == Some(*tab);
+        if focused {
+            // Or "why did nothing happen" has no answer on screen.
+            ui.painter().rect_stroke(
+                body.shrink(1.0),
+                2.0,
+                egui::Stroke::new(1.0, ui.visuals().selection.bg_fill),
+                egui::StrokeKind::Inside,
+            );
+        }
+
         match tab {
             EditorTab::World => draw_world_content(
                 ui,
+                focused,
                 self.entities,
                 self.selected,
                 self.reflected_types,
@@ -115,6 +148,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             ),
             EditorTab::View => draw_view_content(
                 ui,
+                focused,
                 self.viewport_texture_id,
                 self.viewport_request,
                 self.viewport_input,

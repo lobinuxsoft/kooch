@@ -33,6 +33,7 @@ const TOOLBAR_OFFSET: egui::Vec2 = egui::vec2(8.0, 8.0);
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_view_content(
     ui: &mut egui::Ui,
+    focused: bool,
     texture_id: egui::TextureId,
     request: &mut Option<(u32, u32)>,
     input: &mut Option<ViewportInputDelta>,
@@ -71,7 +72,7 @@ pub(crate) fn draw_view_content(
     // through to the viewport drag layer.
     let response =
         ui.add(egui::Image::new((texture_id, available)).sense(egui::Sense::click_and_drag()));
-    let mut delta = collect_viewport_input(&response, ui, controller);
+    let mut delta = collect_viewport_input(&response, ui, controller, focused);
 
     // Horizontal toolbar at the top edge of the viewport. Hosts only
     // gizmo controls (mode + basis + snap), shown when a Transform is

@@ -88,6 +88,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
 
     let overlay = EditorOverlay {
+        focused_tab: None,
         ctx,
         winit_state: Arc::clone(&winit_state),
         renderer,

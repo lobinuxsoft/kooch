@@ -17,6 +17,7 @@ use self::spawn_menu::{draw_spawn_menu, spawn_entries};
 /// Content of the "World" tab — entity hierarchy list with context menu.
 pub(crate) fn draw_world_content(
     ui: &mut egui::Ui,
+    focused: bool,
     entities: &[EntityDisplayInfo],
     selected: &mut Vec<Entity>,
     reflected_types: &[ReflectedTypeInfo],
@@ -67,7 +68,7 @@ pub(crate) fn draw_world_content(
     });
     ui.separator();
 
-    handle_keyboard(ui, entities, selected, last_clicked_index, actions);
+    handle_keyboard(ui, focused, entities, selected, last_clicked_index, actions);
 
     egui::ScrollArea::vertical()
         .id_salt("world_tree")
@@ -137,11 +138,23 @@ pub(crate) fn draw_world_content(
 /// Keyboard shortcuts for the World panel: Delete, Ctrl+A, arrow up/down.
 fn handle_keyboard(
     ui: &egui::Ui,
+    focused: bool,
     entities: &[EntityDisplayInfo],
     selected: &mut Vec<Entity>,
     last_clicked_index: &mut Option<usize>,
     actions: &mut Vec<EditorAction>,
 ) {
+    // Navigation belongs to the panel with focus. Without this the arrows
+    // moved the hierarchy's selection from inside the Console, and Ctrl+A
+    // fought the select-all of whatever text field was being typed in
+    // (#661).
+    //
+    // Document shortcuts stay global on purpose — Ctrl+Z, Ctrl+S, Play are
+    // about the project, not about a panel — and they live elsewhere.
+    if !focused {
+        return;
+    }
+
     // Delete/Suprimir: despawn selected entities.
     let kb_delete = ui.input(|i| i.key_pressed(egui::Key::Delete));
     if kb_delete && !selected.is_empty() {

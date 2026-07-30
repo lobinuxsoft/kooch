@@ -123,6 +123,7 @@ pub(super) fn run_editor_ui(
                     && info.components.iter().any(|c| c.short_name == "Transform")
             });
             let mut tab_viewer = EditorTabViewer {
+                focused_tab: &mut overlay.focused_tab,
                 entities: &data.entities,
                 scenes: &data.scenes,
                 archetypes: &data.archetypes,
