@@ -217,6 +217,9 @@ pub(super) fn handle_instantiate_prefab(
             return;
         }
     };
+    // Placing a prefab in the editor links the instance to it; spawning
+    // one from a game does not. Same spawn, different intent.
+    ome_ecs::prefab_instance::attach(resources, root, prefab);
     // A drop into the viewport names a place; the World panel and the
     // context menu do not, and leave the prefab where it was authored.
     if let Some(at) = at

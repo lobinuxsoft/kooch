@@ -526,3 +526,61 @@ fn instantiating_a_multi_root_document_spawns_nothing() {
         "a refused instance must not leave entities behind"
     );
 }
+
+// -- the editor's link ---------------------------------------------------
+
+/// `spawn_prefab` is what a game calls, and a game wants entities rather
+/// than a relationship to maintain. The link belongs to the editor's
+/// instancing, which attaches it afterwards.
+#[test]
+fn instancing_on_its_own_attaches_no_link() {
+    let (mut resources, root) = world_with_a_deep_subtree();
+    let prefab = SceneDocument::from_ecs_subtree(&mut resources, root);
+    let spawned = crate::scene::sync::instantiate(&prefab, &mut resources, Guid::new_v4()).unwrap();
+
+    let linked = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<crate::prefab_instance::PrefabInstance>())
+        .and_then(|s| s.get(spawned))
+        .is_some();
+    assert!(
+        !linked,
+        "a bare instantiation must not carry an editor link"
+    );
+}
+
+/// And when the editor does attach it, the instance names the prefab it
+/// came from and starts with nothing overridden — every field still
+/// follows the prefab.
+#[test]
+fn an_attached_link_names_its_prefab_and_overrides_nothing() {
+    let (mut resources, root) = world_with_a_deep_subtree();
+    let prefab = SceneDocument::from_ecs_subtree(&mut resources, root);
+    let source = Guid::new_v4();
+    let spawned = crate::scene::sync::instantiate(&prefab, &mut resources, Guid::new_v4()).unwrap();
+
+    crate::prefab_instance::attach(&mut resources, spawned, source);
+
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    let link = registry
+        .get_cpu::<crate::prefab_instance::PrefabInstance>()
+        .and_then(|s| s.get(spawned))
+        .expect("the editor's instancing links what it places");
+    assert_eq!(link.source, Some(source));
+    assert!(link.overrides().is_empty());
+}
+
+/// The link has to be visible to a query, or the propagation pass walks
+/// past every instance it exists to find.
+#[test]
+fn a_linked_instance_is_findable_by_query() {
+    let (mut resources, root) = world_with_a_deep_subtree();
+    let prefab = SceneDocument::from_ecs_subtree(&mut resources, root);
+    let spawned = crate::scene::sync::instantiate(&prefab, &mut resources, Guid::new_v4()).unwrap();
+    crate::prefab_instance::attach(&mut resources, spawned, Guid::new_v4());
+
+    let query = crate::query::Query::<&crate::prefab_instance::PrefabInstance>::new(&resources);
+    let mut found = Vec::new();
+    query.for_each_entity(|entity, _| found.push(entity));
+    assert_eq!(found, vec![spawned], "the archetype never learned about it");
+}

@@ -278,11 +278,23 @@ fn instantiate_prefab(resources: &mut Resources, path: &str) -> Result<EntityId,
         .and_then(|scenes| scenes.active_id())
         .unwrap_or_else(ome_core::Guid::new_v4);
 
-    ome_ecs::scene::instantiate(&prefab, resources, into)
-        .map(EntityId::from)
-        .map_err(|e| RemoteError::SceneError {
+    let root = ome_ecs::scene::instantiate(&prefab, resources, into).map_err(|e| {
+        RemoteError::SceneError {
             detail: e.to_string(),
-        })
+        }
+    })?;
+
+    // The link is attached here and not inside `instantiate`, because this
+    // method *is* the editor's instancing — a shipped game does not run
+    // this server, and its own spawner calls `spawn_prefab`, which
+    // deliberately attaches nothing.
+    if let Some(guid) = ome_core::asset_meta::read_meta(path.as_ref())
+        .ok()
+        .map(|meta| meta.guid)
+    {
+        ome_ecs::prefab_instance::attach(resources, root, guid);
+    }
+    Ok(EntityId::from(root))
 }
 
 /// Resolves a component name to a local `TypeId`.

@@ -56,6 +56,10 @@ fn register_builtin_components(resources: &mut ome_core::resource::Resources) {
         registry.register_cpu_reflected::<SpotLight>();
         registry.register_cpu_reflected::<SkyRenderer>();
         registry.register_cpu_reflected::<MeshRenderer>();
+        // Ordinary scene data despite being an editor concept: the link
+        // between an instance and its prefab has to survive closing the
+        // editor, so it is written to the scene file like anything else.
+        registry.register_cpu_reflected::<crate::prefab_instance::PrefabInstance>();
         registry.register_cpu_reflected::<LodForceLevel>();
         registry.register_cpu_reflected::<PersistentId>();
     }

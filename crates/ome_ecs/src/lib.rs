@@ -33,6 +33,7 @@ pub mod persistent_id;
 pub mod perspective_camera;
 pub mod plugin;
 pub mod point_light;
+pub mod prefab_instance;
 pub mod query;
 pub mod reflect;
 pub mod scene;
