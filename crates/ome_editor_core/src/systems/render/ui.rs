@@ -161,17 +161,20 @@ pub(super) fn run_editor_ui(
                 perf_stats,
             };
 
-            // Greyed out while the project is still building, because the
-            // world it edits has not arrived: the guard in `apply_actions`
-            // already refuses those edits, and a panel that looks live
-            // while silently ignoring clicks reads as a broken editor
-            // rather than a busy one (#672).
+            // While the project is still building, the world these panels
+            // edit has not arrived. `apply_actions` already refuses those
+            // edits, but a dock that looks live and silently swallows
+            // clicks reads as a broken editor rather than a busy one.
             let editable = toolbar.remote != Some(ConnectionState::Connecting);
-            ui.add_enabled_ui(editable, |ui| {
-                DockArea::new(&mut overlay.dock_state)
-                    .style(egui_dock::Style::from_egui(ui.style().as_ref()))
-                    .show_inside(ui, &mut tab_viewer);
-            });
+            let dock_rect = ui.available_rect_before_wrap();
+
+            DockArea::new(&mut overlay.dock_state)
+                .style(egui_dock::Style::from_egui(ui.style().as_ref()))
+                .show_inside(ui, &mut tab_viewer);
+
+            if !editable {
+                shade_out(ui, dock_rect);
+            }
         } else if let Some(ps) = project_state.as_mut() {
             let launch_actions = launch_screen::draw_launch_screen(ui, ps);
             forward_launch_actions(launch_actions, &mut actions);
@@ -259,4 +262,40 @@ fn draw_connecting_banner(ui: &mut egui::Ui, output: &[String]) {
     // editor sleeps now (#656), and a spinner that does not move is worse
     // than no spinner at all.
     ui.ctx().request_repaint();
+}
+
+/// Covers `rect` with a layer that dims it and swallows the pointer.
+///
+/// `add_enabled_ui` around the dock was the obvious try and does nothing:
+/// `egui_dock` renders each tab body into a `UiBuilder` carrying its own
+/// `layer_id` (`leaf.rs:316`), and a parent `Ui`'s disabled flag does not
+/// reach a new layer. So the panels stayed live and clickable while the
+/// banner above them said the project was still building.
+///
+/// A foreground layer needs no cooperation from anything underneath: it is
+/// above every dock layer, and a response sensing clicks and drags over
+/// the whole rect means nothing below ever sees them.
+///
+/// Deliberately only the dock's rect. The menu bar keeps Cancel, Close and
+/// Clean Project, and the banner keeps its Copy — those are how a user
+/// gets out of a build that never finishes.
+fn shade_out(ui: &egui::Ui, rect: egui::Rect) {
+    let area = egui::Area::new(ui.id().with("dock_shade"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(rect.min)
+        .interactable(true);
+
+    area.show(ui.ctx(), |ui| {
+        // The response is the functional half: allocated over the whole
+        // rect so the pointer lands here and not on a panel.
+        ui.allocate_response(rect.size(), egui::Sense::click_and_drag());
+        ui.painter().rect_filled(
+            rect,
+            0.0,
+            // Dark enough to read as "not now", light enough that the
+            // panels stay legible — a user waiting on a build still wants
+            // to see the Console scroll past.
+            egui::Color32::from_black_alpha(110),
+        );
+    });
 }
