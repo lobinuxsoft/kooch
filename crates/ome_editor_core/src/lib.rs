@@ -28,6 +28,7 @@ pub(crate) mod menu_bar;
 pub(crate) mod numeric;
 pub(crate) mod panels;
 pub mod perf;
+mod picking;
 pub mod play_state;
 pub mod project;
 pub mod project_log;

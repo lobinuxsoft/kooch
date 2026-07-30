@@ -74,6 +74,14 @@ pub struct ViewportInputDelta {
     pub lmb_pressed: bool,
     /// `true` when the primary (left) mouse button is currently held.
     pub lmb_held: bool,
+    /// `true` when the viewport received a *click* — pressed and released
+    /// without dragging.
+    ///
+    /// Distinct from `lmb_pressed`, which fires on the way down and cannot
+    /// tell a selection click from the start of an orbit. egui already
+    /// draws that line, so this is its answer rather than a second
+    /// reimplementation of drag detection.
+    pub lmb_clicked: bool,
     /// Keyboard modifier state at this frame. Threaded through to the
     /// gizmo handle system for snap modifiers (Ctrl on translate,
     /// Shift on rotate).

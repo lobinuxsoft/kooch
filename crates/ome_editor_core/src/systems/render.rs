@@ -404,6 +404,11 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             &mut actions,
         );
         if !handle_active {
+            // Clicking picks only when a gizmo did not take the click:
+            // a handle sits *over* the thing it moves, so picking first
+            // would select whatever is behind the arrow the user grabbed.
+            apply_viewport_click(delta, resources, &mut overlay);
+
             let selection_world = overlay
                 .selected_entities
                 .first()
@@ -530,5 +535,59 @@ fn forward_remote_output(resources: &mut Resources) {
         && let Some(state) = resources.get_mut::<crate::remote_session::RemoteState>()
     {
         state.connect_output.extend(lines);
+    }
+}
+
+/// Selects the entity under the cursor, if the viewport was clicked.
+///
+/// # Why not while playing
+///
+/// Play runs the project's gameplay in this same viewport, and a running
+/// game wants its own clicks — aiming, shooting, pressing whatever is on
+/// screen. Selecting an entity out from under that would fight the game for
+/// the mouse, and the selection would be stale the moment Stop restores the
+/// pre-play world anyway.
+///
+/// # Clicking nothing
+///
+/// Clears the selection, the way clicking empty space in the World panel
+/// does. Leaving it alone would make an intentional deselect impossible
+/// without finding a blank row in another panel.
+fn apply_viewport_click(
+    delta: ViewportInputDelta,
+    resources: &mut Resources,
+    overlay: &mut EditorOverlay,
+) {
+    if !delta.lmb_clicked {
+        return;
+    }
+    let playing = resources
+        .get::<crate::remote_session::RemoteState>()
+        .is_some_and(|state| state.playing);
+    if playing {
+        return;
+    }
+    let Some(cursor) = delta.cursor_local else {
+        return;
+    };
+
+    let hit = crate::picking::entity_at(resources, cursor, delta.viewport_size);
+    match (hit, delta.ctrl_held) {
+        // Ctrl adds and removes, the same chord the World panel uses, so
+        // building a multi-selection does not depend on which panel it was
+        // started in.
+        (Some(entity), true) => match overlay.selected_entities.iter().position(|e| *e == entity) {
+            Some(index) => {
+                overlay.selected_entities.remove(index);
+            }
+            None => overlay.selected_entities.push(entity),
+        },
+        (Some(entity), false) => {
+            overlay.selected_entities.clear();
+            overlay.selected_entities.push(entity);
+        }
+        (None, false) => overlay.selected_entities.clear(),
+        // Ctrl+click on nothing is a miss, not "deselect everything".
+        (None, true) => {}
     }
 }

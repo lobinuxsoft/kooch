@@ -28,6 +28,7 @@ pub fn collect_viewport_input(
     focused: bool,
 ) -> ViewportInputDelta {
     let mut delta = ViewportInputDelta::default();
+    delta.lmb_clicked = response.clicked();
 
     // Keys need focus, the pointer needs only hover.
     //
