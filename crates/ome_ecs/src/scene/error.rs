@@ -29,6 +29,18 @@ pub enum SceneError {
         component: String,
         field: String,
     },
+    /// Asked to instance a document that is not a single tree.
+    ///
+    /// Instancing something *as a unit* means one entity to place, parent
+    /// and transform. N loose roots have no such entity, so there is
+    /// nothing for the caller to be handed and nothing for a transform to
+    /// apply to. Godot enforces the same rule on a `PackedScene`.
+    ///
+    /// A prefab captured with
+    /// [`from_ecs_subtree`](super::document::SceneDocument::from_ecs_subtree)
+    /// has exactly one root by construction; reaching here means a
+    /// hand-written or multi-root scene was instanced instead.
+    NotASingleRoot { roots: usize },
 }
 
 impl fmt::Display for SceneError {
@@ -38,6 +50,10 @@ impl fmt::Display for SceneError {
             Self::Ron(e) => write!(f, "failed to serialize scene RON: {e}"),
             Self::RonSpanned(e) => write!(f, "failed to parse scene RON: {e}"),
             Self::Reflect(e) => write!(f, "reflection error: {e}"),
+            Self::NotASingleRoot { roots } => write!(
+                f,
+                "a scene instanced as a unit needs exactly one root entity, found {roots}",
+            ),
             Self::UnresolvedReference {
                 entity,
                 component,
@@ -58,7 +74,7 @@ impl std::error::Error for SceneError {
             Self::Ron(e) => Some(e),
             Self::RonSpanned(e) => Some(e),
             Self::Reflect(e) => Some(e),
-            Self::UnresolvedReference { .. } => None,
+            Self::UnresolvedReference { .. } | Self::NotASingleRoot { .. } => None,
         }
     }
 }
