@@ -121,9 +121,11 @@ pub(crate) fn draw_world_content(
             // place out of, and defaulting to the origin would silently move
             // a prefab that was deliberately authored elsewhere. Drop it in
             // the View panel to choose a spot.
+            // Filtered by type the way an Inspector asset slot is: a mesh
+            // dragged over the hierarchy is not something to instance.
             if empty_resp
-                .dnd_hover_payload::<crate::drag_drop::DraggedPrefab>()
-                .is_some()
+                .dnd_hover_payload::<crate::drag_drop::DraggedAsset>()
+                .is_some_and(|a| a.type_name == crate::drag_drop::PREFAB_TYPE_NAME)
             {
                 ui.painter().rect_filled(
                     remaining,
@@ -131,10 +133,10 @@ pub(crate) fn draw_world_content(
                     egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
                 );
                 if let Some(prefab) =
-                    empty_resp.dnd_release_payload::<crate::drag_drop::DraggedPrefab>()
+                    empty_resp.dnd_release_payload::<crate::drag_drop::DraggedAsset>()
                 {
                     actions.push(EditorAction::InstantiatePrefab {
-                        path: prefab.path.clone(),
+                        prefab: prefab.guid,
                         at: crate::viewport_pick::DropPoint::Authored,
                     });
                 }

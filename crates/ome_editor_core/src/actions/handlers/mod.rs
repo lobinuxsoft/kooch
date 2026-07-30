@@ -23,7 +23,10 @@ use crate::actions::EditorAction;
 // The remote path resolves a prefab's destination with the same rules as
 // the local one, rather than a second copy that could disagree about where
 // prefabs live.
-pub(crate) use prefab::{entity_name, prefab_path, project_root as prefab_root};
+pub(crate) use prefab::{
+    entity_name, prefab_path, project_root as prefab_root, refresh_cached_prefab,
+    register_saved_asset,
+};
 
 /// Dispatches a non-ECS, non-undo action to the appropriate handler.
 /// ECS actions (`Spawn`, `Despawn`, `SetField`, `AddComponent`,
@@ -41,11 +44,37 @@ pub(super) fn apply_non_ecs_action(
     }
     match action {
         EditorAction::SaveScene => handle_save_scene(resources),
-        EditorAction::SavePrefab { entity, dest } => {
+        // Removing the pending prompt already happened in `apply_actions`;
+        // there is nothing left for this to do.
+        EditorAction::CancelPrefabOverwrite => {}
+        EditorAction::EditPrefabField {
+            prefab: guid,
+            entity_index,
+            component,
+            field,
+            value,
+        } => prefab::handle_edit_prefab_field(
+            resources,
+            *guid,
+            *entity_index,
+            component,
+            field,
+            value.clone(),
+        ),
+        EditorAction::EditPrefabComponent {
+            prefab: guid,
+            entity_index,
+            component,
+            add,
+        } => {
+            prefab::handle_edit_prefab_component(resources, *guid, *entity_index, *component, *add)
+        }
+        EditorAction::SavePrefabAsset(guid) => prefab::handle_save_prefab_asset(resources, *guid),
+        EditorAction::SavePrefab { entity, dest, .. } => {
             prefab::handle_save_prefab(resources, *entity, dest.as_deref())
         }
-        EditorAction::InstantiatePrefab { path, at } => {
-            prefab::handle_instantiate_prefab(resources, path, *at)
+        EditorAction::InstantiatePrefab { prefab: guid, at } => {
+            prefab::handle_instantiate_prefab(resources, *guid, *at)
         }
         EditorAction::OpenScene => handle_open_scene(resources, undo_stack),
         EditorAction::OpenSceneAdditive => handle_open_scene_additive(resources),

@@ -255,8 +255,10 @@ fn save_prefab(resources: &mut Resources, entity: EntityId, path: &str) -> Resul
     document.root_index().map_err(|e| RemoteError::SceneError {
         detail: e.to_string(),
     })?;
-    document
-        .save(path.as_ref())
+    // Writes the `.meta` alongside, so the prefab is a registered asset the
+    // moment it exists rather than the first time something loads it.
+    ome_ecs::scene::prefab::save(&document, path.as_ref())
+        .map(|_| ())
         .map_err(|e| RemoteError::SceneError {
             detail: e.to_string(),
         })
@@ -412,12 +414,31 @@ fn set_parent(
     Ok(())
 }
 
+/// Despawns an entity **and everything under it**.
+///
+/// A child holds a `Parent` pointing at an entity that no longer exists;
+/// leaving it behind gives an entity whose transform is derived from a
+/// dead handle and which nothing in the hierarchy can reach. It survives
+/// the save, too, so the orphans accumulate in the scene file.
+///
+/// `collect_descendants` existed for exactly this and had never been
+/// wired to anything but its own tests.
 fn despawn(resources: &mut Resources, entity: EntityId) -> Result<(), RemoteError> {
     let entity = resolve_entity(resources, entity)?;
+
+    // Collected before anything is despawned: the walk reads `Children`,
+    // and despawning as it goes would cut the branch it is standing on.
+    let doomed = match resources.get::<ComponentRegistry>() {
+        Some(registry) => ome_ecs::hierarchy::collect_descendants(entity, &registry),
+        None => vec![entity],
+    };
+
     let mut commands = resources
         .remove::<Commands>()
         .expect("Commands not in Resources");
-    commands.despawn(entity);
+    for entity in doomed {
+        commands.despawn(entity);
+    }
     commands.apply(resources);
     resources.insert(commands);
     Ok(())
@@ -493,5 +514,96 @@ fn update_archetype_remove(resources: &mut Resources, entity: Entity, type_id: T
     {
         let new_arch = archetypes.archetype_after_remove_dynamic(current, type_id);
         archetypes.register_entity(entity, new_arch);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ome_ecs::hierarchy::{Children, Parent};
+
+    fn world() -> Resources {
+        let mut resources = Resources::new();
+        resources.insert(ome_ecs::allocator::EntityAllocator::new());
+        resources.insert(ComponentRegistry::new());
+        resources.insert(ome_ecs::archetype_registry::ArchetypeRegistry::new());
+        resources.insert(ome_ecs::query::AccessTracker::new());
+        resources.insert(Commands::new());
+        resources
+    }
+
+    fn spawn(resources: &mut Resources) -> ome_ecs::entity::Entity {
+        let mut commands = resources.remove::<Commands>().unwrap();
+        let entity = commands.spawn(resources).id();
+        commands.apply(resources);
+        resources.insert(commands);
+        entity
+    }
+
+    fn attach(
+        resources: &mut Resources,
+        parent: ome_ecs::entity::Entity,
+        child: ome_ecs::entity::Entity,
+    ) {
+        let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+        registry.register_cpu_reflected::<Parent>();
+        registry.register_cpu_reflected::<Children>();
+        if let Some(storage) = registry.get_cpu_mut::<Parent>() {
+            storage.insert(child, Parent { entity: parent });
+        }
+        if let Some(storage) = registry.get_cpu_mut::<Children>() {
+            let existing = storage.get(parent).map(|c| c.entities.clone());
+            let mut entities = existing.unwrap_or_default();
+            entities.push(child);
+            storage.insert(parent, Children { entities });
+        }
+    }
+
+    fn alive(resources: &Resources, entity: ome_ecs::entity::Entity) -> bool {
+        resources
+            .get::<EntityAllocator>()
+            .is_some_and(|a| a.is_alive(entity))
+    }
+
+    /// Despawning a parent has to take its whole subtree. A child left
+    /// behind holds a `Parent` pointing at a dead handle: nothing in the
+    /// hierarchy can reach it, its transform derives from an entity that
+    /// no longer exists, and it survives into the saved scene.
+    #[test]
+    fn despawning_a_parent_takes_its_descendants() {
+        let mut resources = world();
+        let root = spawn(&mut resources);
+        let child = spawn(&mut resources);
+        let grandchild = spawn(&mut resources);
+        attach(&mut resources, root, child);
+        attach(&mut resources, child, grandchild);
+
+        despawn(&mut resources, EntityId::from(root)).unwrap();
+
+        assert!(!alive(&resources, root));
+        assert!(!alive(&resources, child), "the child outlived its parent");
+        assert!(
+            !alive(&resources, grandchild),
+            "a deeper descendant outlived the subtree",
+        );
+    }
+
+    /// A sibling is not a descendant. Over-collecting would silently
+    /// delete half the scene.
+    #[test]
+    fn despawning_leaves_everything_outside_the_subtree_alone() {
+        let mut resources = world();
+        let root = spawn(&mut resources);
+        let child = spawn(&mut resources);
+        let bystander = spawn(&mut resources);
+        attach(&mut resources, root, child);
+
+        despawn(&mut resources, EntityId::from(root)).unwrap();
+
+        assert!(!alive(&resources, child));
+        assert!(
+            alive(&resources, bystander),
+            "an unrelated entity was taken"
+        );
     }
 }

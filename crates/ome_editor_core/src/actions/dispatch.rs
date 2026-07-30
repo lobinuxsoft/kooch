@@ -114,9 +114,9 @@ pub(super) fn action_to_command(
 }
 
 /// Returns a description for a group of same-variant actions.
-pub(super) fn batch_description(actions: &[EditorAction]) -> String {
+pub(super) fn batch_description(actions: &[&EditorAction]) -> String {
     let count = actions.len();
-    match actions.first() {
+    match actions.first().copied() {
         Some(EditorAction::Spawn { .. }) => format!("Spawn {count} Entities"),
         Some(EditorAction::SpawnMesh { .. }) => format!("Spawn {count} Mesh Entities"),
         Some(EditorAction::Despawn(_)) => format!("Despawn {count} Entities"),

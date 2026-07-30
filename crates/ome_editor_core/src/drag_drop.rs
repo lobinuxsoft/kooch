@@ -27,13 +27,10 @@ pub(crate) struct DraggedAsset {
     pub type_name: String,
 }
 
-/// Payload dragged from the Asset Browser to somewhere that can spawn it.
+/// The canonical type name a prefab asset is registered under.
 ///
-/// Carries a path rather than a [`Guid`]: a prefab is not a registered
-/// asset — nothing holds a reference to one, because a Phase A instance is
-/// baked into the scene that receives it (#611) — so there is no guid to
-/// carry. The path is what `InstantiatePrefab` needs anyway.
-#[derive(Debug, Clone)]
-pub(crate) struct DraggedPrefab {
-    pub path: std::path::PathBuf,
-}
+/// `std::any::type_name` of the document a `.prefab` parses into. A drop
+/// target compares against this the way an asset slot compares against its
+/// own field type, so dragging a mesh into the viewport does not try to
+/// instance it.
+pub(crate) const PREFAB_TYPE_NAME: &str = "ome_ecs::scene::document::SceneDocument";

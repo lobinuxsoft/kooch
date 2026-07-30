@@ -59,16 +59,42 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     let playing = matches!(edit, Edit::SetPlaying(playing) if playing);
     let is_play_toggle = matches!(edit, Edit::SetPlaying(_));
 
+    // Recomputed before the send, which consumes `edit`. Deterministic —
+    // the same inputs that produced the path the project is about to write.
+    let saved_prefab = match &edit {
+        Edit::SavePrefab { entity, dest } => {
+            crate::actions::handlers::prefab_root(resources).map(|root| {
+                let name = crate::actions::handlers::entity_name(resources, *entity);
+                crate::actions::handlers::prefab_path(&root, &name, dest.as_deref())
+            })
+        }
+        _ => None,
+    };
+
+    let mut sent = false;
     if let Some(session) = state.session.as_ref() {
         let names = resources.get::<ComponentNames>();
         match send(edit, session, &state.mirror, names, resources) {
-            Ok(()) if is_play_toggle => state.playing = playing,
-            Ok(()) => {}
+            Ok(()) if is_play_toggle => {
+                state.playing = playing;
+                sent = true;
+            }
+            Ok(()) => sent = true,
             Err(e) => tracing::warn!("remote edit dropped: {e}"),
         }
     }
 
     resources.insert(state);
+
+    // The project wrote the file; this side has to be told it exists, or
+    // the Inspector cannot find what the user just made until the editor
+    // restarts. Done here rather than in `send`, which holds the world
+    // immutably so it can borrow the session alongside it.
+    if let Some(path) = saved_prefab.filter(|_| sent) {
+        crate::actions::handlers::register_saved_asset(resources, &path);
+        // The project wrote bytes this side's cache has never seen.
+        crate::actions::handlers::refresh_cached_prefab(resources, &path);
+    }
     true
 }
 
@@ -382,14 +408,23 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
         // project's, and the mirror is a view of it. Writing the mirror
         // would save a partly-parked copy — every component this editor
         // binary has no type for is a name and a bag of fields here.
-        EditorAction::SavePrefab { entity, dest } => Some(Edit::SavePrefab {
+        EditorAction::SavePrefab { entity, dest, .. } => Some(Edit::SavePrefab {
             entity: *entity,
             dest: dest.clone(),
         }),
-        EditorAction::InstantiatePrefab { path, at } => Some(Edit::InstantiatePrefab {
-            path: path.clone(),
-            at: crate::viewport_pick::resolve(resources, *at),
-        }),
+        // The guid is resolved to a path here, not sent as one: the wire
+        // call names a file on the shared filesystem, and this side is
+        // where the asset database that knows the mapping lives.
+        EditorAction::InstantiatePrefab { prefab, at } => {
+            let path = resources
+                .get::<ome_core::asset_database::AssetDatabase>()
+                .and_then(|db| db.entry(*prefab))
+                .map(|entry| entry.path.clone())?;
+            Some(Edit::InstantiatePrefab {
+                path,
+                at: crate::viewport_pick::resolve(resources, *at),
+            })
+        }
         // Play runs the project's systems in the project we are already
         // driving, instead of launching a second copy of it.
         EditorAction::Play => Some(Edit::SetPlaying(true)),

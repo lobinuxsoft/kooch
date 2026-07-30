@@ -70,10 +70,11 @@ pub(crate) fn sanitize_file_stem(name: &str) -> String {
 /// `dest` is the folder a drag was dropped on; without one the project's
 /// `assets/` is used, which is where the user asked prefabs to live.
 ///
-/// A name already taken gets a numeric suffix. Saving a prefab must never
-/// overwrite a file the user did not name — two entities called "Enemy" is
-/// ordinary, and the second one silently replacing the first would be data
-/// loss triggered by a menu item that reads as additive.
+/// The same entity always resolves to the same file, so saving a prefab
+/// again after editing the entity updates it. It used to suffix — `Enemy`,
+/// `Enemy_1`, `Enemy_2` — which never destroyed anything and made
+/// iterating on a prefab impossible. Replacement is guarded by a
+/// confirmation prompt instead; see `actions::intercept_prefab_overwrites`.
 pub(crate) fn prefab_path(root: &Path, name: &str, dest: Option<&Path>) -> PathBuf {
     let folder = match dest {
         // A folder outside the project would put the file somewhere the
@@ -81,23 +82,85 @@ pub(crate) fn prefab_path(root: &Path, name: &str, dest: Option<&Path>) -> PathB
         Some(dest) if dest.starts_with(root) => dest.to_path_buf(),
         _ => root.join("assets"),
     };
-    let stem = sanitize_file_stem(name);
+    folder.join(format!("{}.{PREFAB_EXTENSION}", sanitize_file_stem(name)))
+}
 
-    let first = folder.join(format!("{stem}.{PREFAB_EXTENSION}"));
-    if !first.exists() {
-        return first;
+/// Puts a just-written asset into the database so it exists *now*.
+///
+/// The project's asset scan only runs when the active project changes, so
+/// a file created mid-session is invisible until the editor is restarted:
+/// its `.meta` gives it a guid, which is why it can be selected, but the
+/// catalog the Inspector looks it up in has never heard of it. The result
+/// was a prefab you could click and an Inspector that showed nothing.
+///
+/// Registering at the moment of creation is narrower than rescanning the
+/// tree — the one file that changed is the one thing the editor learns
+/// about, and it costs nothing per frame.
+pub(crate) fn register_saved_asset(resources: &mut Resources, path: &Path) {
+    let Ok(meta) = ome_core::asset_meta::read_meta(path) else {
+        tracing::warn!("no asset identity beside {}", path.display());
+        return;
+    };
+    let mtime = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    if let Some(database) = resources.get_mut::<ome_core::asset_database::AssetDatabase>() {
+        database.register(
+            meta.guid,
+            ome_core::asset_database::AssetEntry {
+                path: path.to_path_buf(),
+                mtime,
+                type_name: meta.asset_type,
+            },
+        );
     }
-    // Bounded rather than `loop`: a thousand identically named prefabs in
-    // one folder is a different problem, and an unbounded search on a
-    // filesystem that is answering "yes" to everything would hang the
-    // editor.
-    for suffix in 1..1000 {
-        let candidate = folder.join(format!("{stem}_{suffix}.{PREFAB_EXTENSION}"));
-        if !candidate.exists() {
-            return candidate;
+}
+
+/// Makes the cached document match the file that was just written.
+///
+/// # Why this is not automatic
+///
+/// `Assets<SceneDocument>` is a cache keyed by guid, and `load_by_guid`
+/// returns what it already holds without looking at the file. Saving over
+/// a prefab — from an entity, over a name that already exists — writes
+/// bytes the cache has never seen, so the Inspector kept showing the copy
+/// from before the overwrite. Spawning it looked right, because the entity
+/// it was spawned from *was* right; the two disagreed and only the panel
+/// admitted it.
+///
+/// Re-reading rather than pushing the in-memory document in: the file is
+/// the thing that changed, and the remote path writes it from the other
+/// process, so this side has nothing to push.
+pub(crate) fn refresh_cached_prefab(resources: &mut Resources, path: &Path) {
+    let Ok(meta) = ome_core::asset_meta::read_meta(path) else {
+        return;
+    };
+    let reloaded = match SceneDocument::load(path) {
+        Ok(document) => document,
+        Err(e) => {
+            tracing::warn!("prefab saved but could not be re-read: {e}");
+            return;
         }
+    };
+
+    let Some(mut server) = resources.remove::<ome_core::asset_loader::AssetServer>() else {
+        return;
+    };
+    let handle = server
+        .load_by_guid::<SceneDocument>(meta.guid, resources)
+        .ok();
+    resources.insert(server);
+
+    if let Some(handle) = handle
+        && let Some(assets) = resources.get_mut::<ome_core::assets::Assets<SceneDocument>>()
+        && let Some(slot) = assets.get_mut(handle)
+    {
+        *slot = reloaded;
     }
-    first
+    // The file and the cache agree again, so there is nothing outstanding.
+    if let Some(dirty) = resources.get_mut::<crate::actions::DirtyPrefabs>() {
+        dirty.clear(meta.guid);
+    }
 }
 
 /// Writes `entity` and its descendants to a prefab file.
@@ -120,37 +183,37 @@ pub(super) fn handle_save_prefab(resources: &mut Resources, entity: Entity, dest
         tracing::error!("refusing to write a prefab that cannot be instanced: {e}");
         return;
     }
-    match document.save(&path) {
-        Ok(()) => tracing::info!("prefab saved to {}", path.display()),
+    // `prefab::save`, not `document.save`: it also writes the `.meta` that
+    // makes the file a registered asset. Without one it is invisible to the
+    // picker and cannot be spawned.
+    match ome_ecs::scene::prefab::save(&document, &path) {
+        Ok(guid) => {
+            register_saved_asset(resources, &path);
+            refresh_cached_prefab(resources, &path);
+            tracing::info!("prefab saved to {} as {guid}", path.display());
+        }
         Err(e) => tracing::error!("failed to save prefab: {e}"),
     }
 }
 
-/// Stamps a prefab file into the open scene, optionally placing its root.
+/// Stamps a prefab into the open scene, optionally placing its root.
+///
+/// Goes through `spawn_prefab`, which is the same entry point a game's own
+/// spawner uses — so the editor exercises the runtime path rather than a
+/// parallel one that could rot.
 pub(super) fn handle_instantiate_prefab(
     resources: &mut Resources,
-    path: &Path,
+    prefab: ome_core::Guid,
     at: crate::viewport_pick::DropPoint,
 ) {
     // Resolved before the spawn: it reads the camera, and the borrow ends
     // before the world is mutated.
     let at = crate::viewport_pick::resolve(resources, at);
-    let prefab = match SceneDocument::load(path) {
-        Ok(prefab) => prefab,
-        Err(e) => {
-            tracing::error!("failed to read prefab {}: {e}", path.display());
-            return;
-        }
-    };
-    let into = resources
-        .get::<ome_ecs::SceneManager>()
-        .and_then(|scenes| scenes.active_id())
-        .unwrap_or_else(ome_core::Guid::new_v4);
 
-    let root = match ome_ecs::scene::instantiate(&prefab, resources, into) {
+    let root = match ome_ecs::scene::spawn_prefab(prefab, resources) {
         Ok(root) => root,
         Err(e) => {
-            tracing::error!("failed to instance {}: {e}", path.display());
+            tracing::error!("failed to instance prefab {prefab}: {e}");
             return;
         }
     };
@@ -163,7 +226,7 @@ pub(super) fn handle_instantiate_prefab(
     {
         transform.position = at;
     }
-    tracing::info!("instanced {}", path.display());
+    tracing::info!("instanced prefab {prefab}");
 }
 
 #[cfg(test)]
@@ -220,26 +283,182 @@ mod tests {
         );
     }
 
-    /// Two entities with one name is ordinary; the second must not replace
-    /// the first.
+    /// The same entity resolves to the same file every time, which is what
+    /// makes re-saving update a prefab rather than litter the folder. The
+    /// prompt is what keeps that from being destructive.
     ///
     /// `std::env::temp_dir` rather than a crate — there is no `tempfile` in
     /// this workspace, and the rest of the editor's file tests do the same.
     #[test]
-    fn an_existing_name_is_suffixed_rather_than_overwritten() {
+    fn re_saving_resolves_to_the_same_file() {
         let root = std::env::temp_dir().join("ome_prefab_name_clash");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("assets")).unwrap();
-        std::fs::write(root.join("assets/Enemy.prefab"), "").unwrap();
 
-        let next = prefab_path(&root, "Enemy", None);
-        assert_eq!(next, root.join("assets/Enemy_1.prefab"));
-
-        std::fs::write(&next, "").unwrap();
+        let first = prefab_path(&root, "Enemy", None);
+        std::fs::write(&first, "").unwrap();
         assert_eq!(
             prefab_path(&root, "Enemy", None),
-            root.join("assets/Enemy_2.prefab"),
+            first,
+            "an existing file must resolve to itself, not to a new name",
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Editing a prefab as a document
+// ---------------------------------------------------------------------------
+
+/// Runs `edit` against the cached document for `prefab` and marks it dirty.
+///
+/// Edits land in `Assets<SceneDocument>` rather than on disk, so they are
+/// live for anything spawning the prefab and the file is behind until the
+/// user saves. That is the whole shape of an explicit save; the Inspector's
+/// button is what makes it visible.
+fn with_cached_document<R>(
+    resources: &mut Resources,
+    prefab: ome_core::Guid,
+    edit: impl FnOnce(&mut SceneDocument) -> R,
+) -> Option<R> {
+    let mut server = resources.remove::<ome_core::asset_loader::AssetServer>()?;
+    let handle = server.load_by_guid::<SceneDocument>(prefab, resources).ok();
+    resources.insert(server);
+
+    let handle = handle?;
+    let assets = resources.get_mut::<ome_core::assets::Assets<SceneDocument>>()?;
+    let result = edit(assets.get_mut(handle)?);
+
+    // Created on first edit rather than at startup: a session that never
+    // touches a prefab never grows the set.
+    if resources.get::<crate::actions::DirtyPrefabs>().is_none() {
+        resources.insert(crate::actions::DirtyPrefabs::default());
+    }
+    if let Some(dirty) = resources.get_mut::<crate::actions::DirtyPrefabs>() {
+        dirty.mark(prefab);
+    }
+    Some(result)
+}
+
+pub(super) fn handle_edit_prefab_field(
+    resources: &mut Resources,
+    prefab: ome_core::Guid,
+    entity_index: usize,
+    component: &str,
+    field: &str,
+    value: ome_ecs::reflect::ReflectValue,
+) {
+    let applied = with_cached_document(resources, prefab, |document| {
+        let Some(entity) = document.entities.get_mut(entity_index) else {
+            return false;
+        };
+        let Some(component) = entity
+            .components
+            .iter_mut()
+            .find(|c| c.type_name == component)
+        else {
+            return false;
+        };
+        // Replaces in place rather than appending: a field written twice
+        // would round-trip as two entries and the loader would take
+        // whichever came last.
+        match component.fields.iter_mut().find(|(name, _)| name == field) {
+            Some(slot) => slot.1 = value,
+            None => component.fields.push((field.to_owned(), value)),
+        }
+        true
+    });
+    if applied != Some(true) {
+        tracing::warn!(
+            "prefab edit did not land: {prefab} entity {entity_index} {component}.{field}"
+        );
+    }
+}
+
+pub(super) fn handle_edit_prefab_component(
+    resources: &mut Resources,
+    prefab: ome_core::Guid,
+    entity_index: usize,
+    component: ome_ecs::component::ComponentId,
+    add: bool,
+) {
+    // The document stores a type name, the menu speaks `ComponentId`, and
+    // the registry is the only thing that knows both.
+    let Some(type_name) = resources
+        .get::<ome_ecs::component::ComponentNames>()
+        .and_then(|names| names.name(component).map(str::to_owned))
+    else {
+        tracing::warn!("no type name for component {component:?}");
+        return;
+    };
+    let defaults = match add {
+        true => match default_fields(resources, &type_name) {
+            Some(fields) => fields,
+            None => {
+                tracing::warn!("no default value for {type_name}; not added");
+                return;
+            }
+        },
+        false => Vec::new(),
+    };
+
+    with_cached_document(resources, prefab, |document| {
+        let Some(entity) = document.entities.get_mut(entity_index) else {
+            return;
+        };
+        match add {
+            true => {
+                if !entity.components.iter().any(|c| c.type_name == type_name) {
+                    entity
+                        .components
+                        .push(ome_ecs::scene::ComponentDescription {
+                            type_name,
+                            fields: defaults,
+                        });
+                }
+            }
+            false => entity.components.retain(|c| c.type_name != type_name),
+        }
+    });
+}
+
+/// The fields a freshly-constructed component would have.
+///
+/// Built from the type's own `Default` rather than from field *kinds*: a
+/// component whose default sets `visible: true` must arrive that way, and a
+/// zero-per-kind table would silently disagree with what spawning the same
+/// component in the World gives.
+fn default_fields(
+    resources: &Resources,
+    type_name: &str,
+) -> Option<Vec<(String, ome_ecs::reflect::ReflectValue)>> {
+    let registry = resources.get::<ome_ecs::component::ComponentRegistry>()?;
+    let type_id = registry.type_id_by_name(type_name)?;
+    registry.reflect_default_fields(&type_id)
+}
+
+/// Writes a prefab's edited document back to its file.
+pub(super) fn handle_save_prefab_asset(resources: &mut Resources, prefab: ome_core::Guid) {
+    let Some(path) = resources
+        .get::<ome_core::asset_database::AssetDatabase>()
+        .and_then(|db| db.entry(prefab))
+        .map(|entry| entry.path.clone())
+    else {
+        tracing::error!("prefab {prefab} is not registered; nothing to save to");
+        return;
+    };
+    let Some(document) = with_cached_document(resources, prefab, |document| document.clone())
+    else {
+        tracing::error!("prefab {prefab} has no cached document to save");
+        return;
+    };
+    match ome_ecs::scene::prefab::save(&document, &path) {
+        Ok(_) => {
+            if let Some(dirty) = resources.get_mut::<crate::actions::DirtyPrefabs>() {
+                dirty.clear(prefab);
+            }
+            tracing::info!("prefab saved to {}", path.display());
+        }
+        Err(e) => tracing::error!("failed to save prefab: {e}"),
     }
 }

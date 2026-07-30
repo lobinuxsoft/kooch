@@ -89,10 +89,46 @@ pub(crate) enum EditorAction {
         /// The drag-to-Assets path names the folder it was dropped on, the
         /// context menu does not.
         dest: Option<std::path::PathBuf>,
+        /// Whether the user has already agreed to replace an existing file.
+        ///
+        /// Emitted `false` by every trigger. `apply_actions` turns a
+        /// collision into a confirmation prompt and re-emits with `true`
+        /// once answered, so the check lives in one place for both the
+        /// local and the remote path.
+        overwrite: bool,
     },
-    /// Stamp a prefab file into the open scene.
+    /// Replace a field on one component of one entity inside a prefab.
+    ///
+    /// Addresses the entity by its index in the document rather than by a
+    /// handle: a prefab's entities do not exist, which is the whole
+    /// difference between editing one and editing a scene.
+    EditPrefabField {
+        prefab: ome_core::Guid,
+        entity_index: usize,
+        component: String,
+        field: String,
+        value: ome_ecs::reflect::ReflectValue,
+    },
+    /// Add or remove a component on one entity inside a prefab.
+    EditPrefabComponent {
+        prefab: ome_core::Guid,
+        entity_index: usize,
+        /// The menu speaks `ComponentId`; the document stores a type name.
+        /// Translating needs the registry, which the handler has and the
+        /// panel does not.
+        component: ome_ecs::component::ComponentId,
+        add: bool,
+    },
+    /// Write a prefab's edited document back to its file.
+    SavePrefabAsset(ome_core::Guid),
+    /// Dismiss the "replace this prefab?" prompt without saving.
+    CancelPrefabOverwrite,
+    /// Stamp a prefab into the open scene.
     InstantiatePrefab {
-        path: std::path::PathBuf,
+        /// The prefab asset. A guid rather than a path, so moving or
+        /// renaming the file does not break whatever is holding it — the
+        /// same reason `MeshRenderer.mesh` is one.
+        prefab: ome_core::Guid,
         /// Where to put the instance's root.
         ///
         /// Unresolved on purpose: a viewport drop names a place on
@@ -284,7 +320,15 @@ impl EditorAction {
             | Self::RemoveRecent(_)
             // Cleaning is what you do *because* the world is not there,
             // and it disconnects the session itself before it starts.
-            | Self::CleanProject => false,
+            | Self::CleanProject
+            // Answering a prompt is editor state; refusing it while a
+            // project builds would leave the modal permanently up.
+            | Self::CancelPrefabOverwrite
+            // A prefab is a file and a cached document. Neither is the
+            // world, so editing one while a project builds is fine.
+            | Self::EditPrefabField { .. }
+            | Self::EditPrefabComponent { .. }
+            | Self::SavePrefabAsset(_) => false,
 
             // Editor preferences and things that act on files rather than
             // on the world. An asset edit is about a `.ron` on disk, and
@@ -307,6 +351,103 @@ impl EditorAction {
     }
 }
 
+/// Prefabs edited in the Inspector whose file is behind the cache.
+///
+/// The edits themselves live in `Assets<SceneDocument>` — which is what
+/// `spawn_prefab` reads — so an unsaved prefab is already live for anything
+/// spawning it. This is what lets the Inspector say so.
+#[derive(Default)]
+pub(crate) struct DirtyPrefabs(std::collections::HashSet<ome_core::Guid>);
+
+impl DirtyPrefabs {
+    pub(crate) fn contains(&self, prefab: ome_core::Guid) -> bool {
+        self.0.contains(&prefab)
+    }
+
+    pub(crate) fn mark(&mut self, prefab: ome_core::Guid) {
+        self.0.insert(prefab);
+    }
+
+    pub(crate) fn clear(&mut self, prefab: ome_core::Guid) {
+        self.0.remove(&prefab);
+    }
+}
+
+/// A prefab save waiting on the user's answer about replacing a file.
+///
+/// A resource rather than a field on the overlay: it is set by the action
+/// layer and read by the renderer, and neither owns the other.
+#[derive(Clone)]
+pub(crate) struct PendingPrefabOverwrite {
+    pub(crate) entity: Entity,
+    pub(crate) dest: Option<std::path::PathBuf>,
+    /// The file that would be replaced. Shown to the user, so they are
+    /// answering about a name they recognise rather than about "a prefab".
+    pub(crate) path: std::path::PathBuf,
+}
+
+/// Holds back any `SavePrefab` that would replace an existing file.
+///
+/// # Why overwriting rather than a numeric suffix
+///
+/// Suffixing never destroyed anything, which sounds safe and made the
+/// common case impossible: saving a prefab again after editing the entity
+/// is how a prefab is *iterated on*, and it produced `Enemy_1`, `Enemy_2`,
+/// `Enemy_3` instead of an updated `Enemy`. Replacing is what the user
+/// means; the prompt is what makes it safe.
+///
+/// Re-saving keeps the file's guid — see `ome_ecs::scene::prefab::save` —
+/// so every component already pointing at that prefab still does.
+/// Borrows rather than clones: this runs on every batch of actions, and
+/// `EditorAction` carries paths, names and reflected values that nothing
+/// here needs a copy of.
+fn intercept_prefab_overwrites<'a>(
+    resources: &mut Resources,
+    actions: &'a [EditorAction],
+) -> Vec<&'a EditorAction> {
+    let mut out = Vec::with_capacity(actions.len());
+    for action in actions {
+        // The answer arrived; the prompt has done its job either way.
+        if matches!(
+            action,
+            EditorAction::CancelPrefabOverwrite
+                | EditorAction::SavePrefab {
+                    overwrite: true,
+                    ..
+                }
+        ) {
+            resources.remove::<PendingPrefabOverwrite>();
+        }
+        let EditorAction::SavePrefab {
+            entity,
+            dest,
+            overwrite: false,
+        } = action
+        else {
+            out.push(action);
+            continue;
+        };
+        // No project open: the handler says so. Not this function's job to
+        // report, and holding the action back would swallow the message.
+        let Some(root) = crate::actions::handlers::prefab_root(resources) else {
+            out.push(action);
+            continue;
+        };
+        let name = crate::actions::handlers::entity_name(resources, *entity);
+        let path = crate::actions::handlers::prefab_path(&root, &name, dest.as_deref());
+        if !path.exists() {
+            out.push(action);
+            continue;
+        }
+        resources.insert(PendingPrefabOverwrite {
+            entity: *entity,
+            dest: dest.clone(),
+            path,
+        });
+    }
+    out
+}
+
 pub(crate) fn apply_actions(
     resources: &mut Resources,
     actions: &[EditorAction],
@@ -318,6 +459,10 @@ pub(crate) fn apply_actions(
     // refresh would overwrite). Actions remote mode does not own fall
     // through to the local path below. This is the one place the two
     // modes diverge.
+    // Asked before the local/remote split so the prompt appears once
+    // regardless of which path would have written the file.
+    let actions = &intercept_prefab_overwrites(resources, actions);
+
     let remote = resources
         .get::<crate::remote_session::RemoteState>()
         .is_some_and(|s| s.is_connected());
@@ -341,14 +486,14 @@ pub(crate) fn apply_actions(
                 "the project is still starting — edits are refused until its world arrives",
             );
         }
-        for action in actions.iter().filter(|a| !a.needs_a_live_world()) {
+        for action in actions.iter().copied().filter(|a| !a.needs_a_live_world()) {
             apply_non_ecs_action(action, resources, undo_stack);
         }
         return;
     }
 
     if remote {
-        for action in actions {
+        for action in actions.iter().copied() {
             if !remote_edit::dispatch(resources, action) {
                 apply_non_ecs_action(action, resources, undo_stack);
             }
@@ -358,7 +503,7 @@ pub(crate) fn apply_actions(
 
     let mut i = 0;
     while i < actions.len() {
-        let action = &actions[i];
+        let action = actions[i];
 
         // Undo/Redo are handled directly.
         if matches!(action, EditorAction::Undo) {
@@ -385,14 +530,14 @@ pub(crate) fn apply_actions(
             if run.len() == 1 {
                 // Single action — execute directly (snapshot already captured above
                 // was discarded; re-capture since resources may have changed).
-                if let Some(cmd) = action_to_command(&run[0], resources) {
+                if let Some(cmd) = action_to_command(run[0], resources) {
                     undo_stack.execute(cmd, resources);
                 }
             } else {
                 // Multiple same-type actions — batch into a CompoundCommand.
                 let desc = batch_description(run);
                 let mut cmds: Vec<Box<dyn EditorCommand>> = Vec::with_capacity(run.len());
-                for a in run {
+                for a in run.iter().copied() {
                     // Snapshot must be taken sequentially: each command's
                     // before-state depends on the previous command's execution.
                     if let Some(cmd) = action_to_command(a, resources) {

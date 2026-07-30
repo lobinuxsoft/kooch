@@ -121,3 +121,66 @@ fn contains_type_check() {
     registry.register_cpu::<Position>();
     assert!(registry.contains_type(&TypeId::of::<Position>()));
 }
+
+/// A component whose `Default` is deliberately not all zeroes.
+#[derive(Default, Clone, Debug, PartialEq, ome_ecs_macros::Reflect)]
+struct Spawnable {
+    enabled: bool,
+    rate: f32,
+}
+
+impl Component for Spawnable {}
+
+impl Spawnable {
+    fn awake() -> Self {
+        Self {
+            enabled: true,
+            rate: 2.5,
+        }
+    }
+}
+
+/// Adding a component somewhere no entity exists — a prefab document —
+/// needs the type's own default, not one synthesised per field kind. A
+/// component whose default sets a flag must arrive with it set, or the
+/// prefab silently disagrees with what spawning the same component gives.
+#[test]
+fn default_fields_come_from_the_type_not_from_zeroes() {
+    use crate::reflect::{Reflect, ReflectValue};
+
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu_reflected::<Spawnable>();
+
+    let fields = registry
+        .reflect_default_fields(&TypeId::of::<Spawnable>())
+        .expect("a registered reflected type has defaults");
+
+    // Compared against the type itself rather than against literals, so the
+    // test keeps meaning if the default changes.
+    let expected = Spawnable::default();
+    for (name, value) in &fields {
+        assert_eq!(
+            Some(value.clone()),
+            expected.reflect_get(name),
+            "field {name} does not match the type's own default",
+        );
+    }
+    assert_eq!(fields.len(), expected.reflect_fields().len());
+    // And it is really reading the value, not handing back a zero that
+    // happens to match: `awake()` differs from the default in both fields.
+    let awake = Spawnable::awake();
+    assert_ne!(awake.reflect_get("rate"), Some(ReflectValue::F32(0.0)));
+}
+
+/// A type with no reflector has no defaults to report, rather than an
+/// empty list that would read as "no fields".
+#[test]
+fn an_unreflected_type_reports_no_defaults() {
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu::<Name>();
+    assert!(
+        registry
+            .reflect_default_fields(&TypeId::of::<Name>())
+            .is_none()
+    );
+}

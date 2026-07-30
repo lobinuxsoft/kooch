@@ -41,6 +41,25 @@ pub enum SceneError {
     /// has exactly one root by construction; reaching here means a
     /// hand-written or multi-root scene was instanced instead.
     NotASingleRoot { roots: usize },
+    /// Asked to spawn a prefab with no `AssetServer` to resolve it.
+    ///
+    /// A headless tool or a hand-built `Resources` that never installed the
+    /// asset plugin. Said out loud rather than treated as "prefab missing",
+    /// which would send the caller looking for a file that is fine.
+    NoAssetServer,
+    /// The prefab could not be loaded: unregistered guid, missing file, or
+    /// contents that would not parse.
+    PrefabUnavailable {
+        prefab: ome_core::Guid,
+        detail: String,
+    },
+    /// The file was written but its `.meta` sidecar was not.
+    ///
+    /// Reported as a failure even though the bytes are on disk: without an
+    /// identity the scan does not register the file, so it is invisible to
+    /// asset pickers and cannot be spawned. A prefab nothing can reference
+    /// is not a saved prefab.
+    AssetIdentity { detail: String },
 }
 
 impl fmt::Display for SceneError {
@@ -50,6 +69,16 @@ impl fmt::Display for SceneError {
             Self::Ron(e) => write!(f, "failed to serialize scene RON: {e}"),
             Self::RonSpanned(e) => write!(f, "failed to parse scene RON: {e}"),
             Self::Reflect(e) => write!(f, "reflection error: {e}"),
+            Self::NoAssetServer => {
+                write!(f, "cannot spawn a prefab without an AssetServer")
+            }
+            Self::PrefabUnavailable { prefab, detail } => {
+                write!(f, "prefab {prefab} is unavailable: {detail}")
+            }
+            Self::AssetIdentity { detail } => write!(
+                f,
+                "the file was written but has no asset identity, so nothing can reference it: {detail}",
+            ),
             Self::NotASingleRoot { roots } => write!(
                 f,
                 "a scene instanced as a unit needs exactly one root entity, found {roots}",
@@ -74,7 +103,11 @@ impl std::error::Error for SceneError {
             Self::Ron(e) => Some(e),
             Self::RonSpanned(e) => Some(e),
             Self::Reflect(e) => Some(e),
-            Self::UnresolvedReference { .. } | Self::NotASingleRoot { .. } => None,
+            Self::UnresolvedReference { .. }
+            | Self::NotASingleRoot { .. }
+            | Self::NoAssetServer
+            | Self::PrefabUnavailable { .. }
+            | Self::AssetIdentity { .. } => None,
         }
     }
 }

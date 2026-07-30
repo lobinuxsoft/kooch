@@ -303,6 +303,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .map(|state| state.connect_output.clone())
         .unwrap_or_default();
 
+    // Cloned out for the same reason as `connect_output`: the UI closure
+    // borrows `resources` immutably and the prompt needs this inside it.
+    let prefab_overwrite = resources
+        .get::<crate::actions::PendingPrefabOverwrite>()
+        .cloned();
+
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
@@ -339,6 +345,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         log_buffer.as_ref(),
         &mut console,
         &connect_output,
+        prefab_overwrite.as_ref(),
     );
 
     // #656 — egui's own answer to "does anything need redrawing", read
