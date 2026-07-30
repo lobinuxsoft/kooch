@@ -47,9 +47,16 @@ impl PendingPropagation {
 /// the next pass, so a queue that only drains when the user happens to do
 /// something else is a queue that does not drain.
 pub(crate) fn anything_queued(resources: &Resources) -> bool {
-    resources
+    let propagation = resources
         .get::<PendingPropagation>()
-        .is_some_and(|pending| !pending.is_empty())
+        .is_some_and(|pending| !pending.is_empty());
+    // The reload notice rides the same drain, so the guard has to ask
+    // about it too — the last time one of these was left out, the queue
+    // only emptied when the user happened to do something else.
+    let reloads = resources
+        .get::<crate::actions::handlers::PendingHostReloads>()
+        .is_some_and(|pending| !pending.0.is_empty());
+    propagation || reloads
 }
 
 /// Notes that `prefab` changed and its instances are behind.

@@ -147,6 +147,13 @@ pub enum Method {
     /// Server-side because the world it captures lives here; the editor's
     /// mirror is a projection and is not what should be written to disk.
     SavePrefab { entity: EntityId, path: String },
+    /// Tell the project a prefab file on disk has changed.
+    ///
+    /// The project caches the documents it instances from, and the editor
+    /// writes those files. Without this the project keeps building
+    /// instances from the version it read first — which is a value held in
+    /// two places, the exact thing the reference model exists to avoid.
+    ReloadPrefab { path: String },
     /// Stamp a prefab file into the live ECS, returning its root.
     ///
     /// Distinct from [`Self::LoadScene`], which *replaces* the world. This

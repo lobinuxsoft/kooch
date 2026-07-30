@@ -148,6 +148,9 @@ pub(crate) enum EditorAction {
     /// way would pin every field it touched and the instance would never
     /// follow the prefab again.
     PropagatePrefab(ome_core::Guid),
+    /// Tell the project a prefab file changed, so it stops instancing
+    /// from the copy it read first.
+    ReloadPrefabOnHost(std::path::PathBuf),
     /// Dismiss the "replace this prefab?" prompt without saving.
     CancelPrefabOverwrite,
     /// Stamp a prefab into the open scene.
@@ -351,6 +354,8 @@ impl EditorAction {
             // Answering a prompt is editor state; refusing it while a
             // project builds would leave the modal permanently up.
             | Self::CancelPrefabOverwrite
+            // Nothing to do locally; it exists to reach the project.
+            | Self::ReloadPrefabOnHost(_)
             // Both write into the world, so they wait for one.
             | Self::PropagatePrefab(_)
             | Self::RevertToPrefab { .. }
@@ -493,13 +498,25 @@ pub(crate) fn apply_actions(
     // into actions here so propagation goes through the same dispatch as
     // everything else, one frame after the save rather than in the middle
     // of it.
-    let queued: Vec<EditorAction> = resources
+    let mut queued: Vec<EditorAction> = resources
         .get_mut::<prefab_propagate::PendingPropagation>()
         .map(|pending| pending.drain())
         .unwrap_or_default()
         .into_iter()
         .map(EditorAction::PropagatePrefab)
         .collect();
+    // Ahead of the propagation, so the project has dropped its stale copy
+    // before anything asks it to rebuild from one.
+    let reloads: Vec<EditorAction> = resources
+        .get_mut::<handlers::PendingHostReloads>()
+        .map(|pending| std::mem::take(&mut pending.0))
+        .unwrap_or_default()
+        .into_iter()
+        .map(EditorAction::ReloadPrefabOnHost)
+        .collect();
+    if !reloads.is_empty() {
+        queued.splice(0..0, reloads);
+    }
     if !queued.is_empty() {
         tracing::info!(
             target: "ome_editor_core::prefab",
