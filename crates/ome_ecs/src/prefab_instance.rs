@@ -19,6 +19,16 @@
 //! The component is still ordinary scene data — it is written to the scene
 //! file, because the link has to survive closing the editor.
 //!
+//! # Why an override carries its value
+//!
+//! Because nothing else does. A scene stores an instance as a reference to
+//! its prefab plus this list — the instance's entities are not written —
+//! so an override that recorded only *which* field changed would be a
+//! change that vanished on save.
+//!
+//! A record with no value is the other kind of decision: the user took
+//! that component off this instance, and there is no value to keep.
+//!
 //! # Why the overrides are a string
 //!
 //! An override is "the user changed this field on *this* instance, so
@@ -46,9 +56,15 @@ use crate::reflect::{
     FieldKind, FieldMeta, InspectorVisibility, Reflect, ReflectError, ReflectValue,
 };
 
-/// Separates one override address from the next.
-const RECORD: char = ';';
-/// Separates the parts of a single address.
+/// Separates one override from the next.
+///
+/// ASCII's own record separator rather than a punctuation character: a
+/// record now ends in a serialised value, and a value can contain any
+/// punctuation you care to name. Control characters are the one thing RON
+/// will not emit raw — it escapes them inside strings — which is what
+/// makes this safe where `;` was not.
+const RECORD: char = '\u{1e}';
+/// Separates the parts of a single record.
 const PART: char = '\u{1f}';
 
 /// Marks an entity as an instance of a prefab, and records what has been
@@ -91,6 +107,15 @@ pub struct OverrideAddress {
     pub field: String,
 }
 
+/// One override: where it applies, and what it changed the value to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Override {
+    pub address: OverrideAddress,
+    /// `None` means the component was taken off this instance — a
+    /// decision about presence, which has no value to carry.
+    pub value: Option<ReflectValue>,
+}
+
 impl PrefabInstance {
     pub fn new(source: Guid) -> Self {
         Self {
@@ -104,7 +129,7 @@ impl PrefabInstance {
     /// Malformed records are skipped rather than failing the whole set: a
     /// hand-edited scene file should cost the overrides it corrupted, not
     /// the instance's link to its prefab.
-    pub fn overrides(&self) -> Vec<OverrideAddress> {
+    pub fn overrides(&self) -> Vec<Override> {
         self.overrides
             .split(RECORD)
             .filter(|record| !record.is_empty())
@@ -113,48 +138,79 @@ impl PrefabInstance {
                 let entity = parts.next()?.parse().ok()?;
                 let component = parts.next()?.to_owned();
                 let field = parts.next()?.to_owned();
-                Some(OverrideAddress {
-                    entity,
-                    component,
-                    field,
+                // A value that will not parse costs its own record rather
+                // than the whole set — the same rule as a malformed
+                // address, for the same reason.
+                let value = match parts.next() {
+                    Some(encoded) if !encoded.is_empty() => Some(ron::from_str(encoded).ok()?),
+                    _ => None,
+                };
+                Some(Override {
+                    address: OverrideAddress {
+                        entity,
+                        component,
+                        field,
+                    },
+                    value,
                 })
             })
             .collect()
     }
 
-    /// Replaces the set, in a stable order so re-saving a scene does not
-    /// produce a different file for the same state.
-    pub fn set_overrides(&mut self, addresses: impl IntoIterator<Item = OverrideAddress>) {
-        let mut sorted: Vec<OverrideAddress> = addresses.into_iter().collect();
-        sorted.sort_by(|a, b| {
-            a.entity
-                .cmp(&b.entity)
-                .then_with(|| a.component.cmp(&b.component))
-                .then_with(|| a.field.cmp(&b.field))
-        });
-        sorted.dedup();
-        self.overrides = sorted
-            .iter()
-            .map(|a| format!("{}{PART}{}{PART}{}", a.entity, a.component, a.field))
-            .collect::<Vec<_>>()
-            .join(&RECORD.to_string());
+    /// Just the addresses, for the lookups that do not care what changed.
+    pub fn addresses(&self) -> Vec<OverrideAddress> {
+        self.overrides().into_iter().map(|o| o.address).collect()
     }
 
-    /// Records that `address` now differs from the prefab.
-    pub fn mark(&mut self, address: OverrideAddress) {
+    /// Replaces the set, in a stable order so re-saving a scene does not
+    /// produce a different file for the same state.
+    pub fn set_overrides(&mut self, overrides: impl IntoIterator<Item = Override>) {
+        let mut sorted: Vec<Override> = overrides.into_iter().collect();
+        sorted.sort_by(|a, b| {
+            a.address
+                .entity
+                .cmp(&b.address.entity)
+                .then_with(|| a.address.component.cmp(&b.address.component))
+                .then_with(|| a.address.field.cmp(&b.address.field))
+        });
+        sorted.dedup_by(|a, b| a.address == b.address);
+        self.overrides = sorted
+            .iter()
+            .map(|o| {
+                let encoded = o
+                    .value
+                    .as_ref()
+                    .and_then(|value| ron::to_string(value).ok())
+                    .unwrap_or_default();
+                format!(
+                    "{}{PART}{}{PART}{}{PART}{encoded}",
+                    o.address.entity, o.address.component, o.address.field,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(&RECORD.to_string())
+    }
+
+    /// Records that `address` now differs from the prefab, and to what.
+    ///
+    /// Re-marking replaces the value: the user changing the same field
+    /// twice is one override, not two, and the second value is the one
+    /// that survives.
+    pub fn mark(&mut self, address: OverrideAddress, value: Option<ReflectValue>) {
         let mut current = self.overrides();
-        if !current.contains(&address) {
-            current.push(address);
-            self.set_overrides(current);
+        match current.iter_mut().find(|o| o.address == address) {
+            Some(existing) => existing.value = value,
+            None => current.push(Override { address, value }),
         }
+        self.set_overrides(current);
     }
 
     /// Drops one override, so the field follows the prefab again.
     pub fn revert(&mut self, address: &OverrideAddress) {
-        let kept: Vec<OverrideAddress> = self
+        let kept: Vec<Override> = self
             .overrides()
             .into_iter()
-            .filter(|a| a != address)
+            .filter(|o| &o.address != address)
             .collect();
         self.set_overrides(kept);
     }
@@ -166,7 +222,15 @@ impl PrefabInstance {
 
     /// Whether `address` is one the prefab must not overwrite.
     pub fn is_overridden(&self, address: &OverrideAddress) -> bool {
-        self.overrides().contains(address)
+        self.overrides().iter().any(|o| &o.address == address)
+    }
+
+    /// What the user set this field to, if they set it.
+    pub fn value_of(&self, address: &OverrideAddress) -> Option<ReflectValue> {
+        self.overrides()
+            .into_iter()
+            .find(|o| &o.address == address)
+            .and_then(|o| o.value)
     }
 
     /// Whether the user decided whether this component is on this
@@ -349,15 +413,15 @@ mod tests {
     #[test]
     fn an_instance_starts_with_nothing_overridden() {
         let instance = PrefabInstance::new(Guid::new_v4());
-        assert!(instance.overrides().is_empty());
+        assert!(instance.addresses().is_empty());
     }
 
     #[test]
     fn marking_then_reading_round_trips() {
         let mut instance = PrefabInstance::new(Guid::new_v4());
         let moved = address(0, "ome_ecs::transform::Transform", "position");
-        instance.mark(moved.clone());
-        assert_eq!(instance.overrides(), vec![moved.clone()]);
+        instance.mark(moved.clone(), None);
+        assert_eq!(instance.addresses(), vec![moved.clone()]);
         assert!(instance.is_overridden(&moved));
     }
 
@@ -368,9 +432,9 @@ mod tests {
     fn marking_the_same_field_twice_records_it_once() {
         let mut instance = PrefabInstance::default();
         let moved = address(0, "T", "position");
-        instance.mark(moved.clone());
-        instance.mark(moved);
-        assert_eq!(instance.overrides().len(), 1);
+        instance.mark(moved.clone(), None);
+        instance.mark(moved, None);
+        assert_eq!(instance.addresses().len(), 1);
     }
 
     /// The whole point of recording: reverting has something to remove.
@@ -380,8 +444,8 @@ mod tests {
         let mut instance = PrefabInstance::default();
         let position = address(0, "T", "position");
         let scale = address(0, "T", "scale");
-        instance.mark(position.clone());
-        instance.mark(scale.clone());
+        instance.mark(position.clone(), None);
+        instance.mark(scale.clone(), None);
 
         instance.revert(&position);
         assert!(!instance.is_overridden(&position));
@@ -394,10 +458,10 @@ mod tests {
     #[test]
     fn reverting_everything_leaves_nothing() {
         let mut instance = PrefabInstance::default();
-        instance.mark(address(0, "T", "position"));
-        instance.mark(address(1, "U", "health"));
+        instance.mark(address(0, "T", "position"), None);
+        instance.mark(address(1, "U", "health"), None);
         instance.revert_all();
-        assert!(instance.overrides().is_empty());
+        assert!(instance.addresses().is_empty());
     }
 
     /// Two instances in the same state must produce the same bytes, or
@@ -405,12 +469,12 @@ mod tests {
     #[test]
     fn the_encoding_does_not_depend_on_the_order_marks_arrived_in() {
         let mut first = PrefabInstance::default();
-        first.mark(address(1, "B", "y"));
-        first.mark(address(0, "A", "x"));
+        first.mark(address(1, "B", "y"), None);
+        first.mark(address(0, "A", "x"), None);
 
         let mut second = PrefabInstance::default();
-        second.mark(address(0, "A", "x"));
-        second.mark(address(1, "B", "y"));
+        second.mark(address(0, "A", "x"), None);
+        second.mark(address(1, "B", "y"), None);
 
         assert_eq!(first.overrides, second.overrides);
     }
@@ -420,10 +484,12 @@ mod tests {
     #[test]
     fn a_malformed_record_is_skipped_rather_than_poisoning_the_set() {
         let mut instance = PrefabInstance::new(Guid::new_v4());
-        instance.mark(address(0, "T", "position"));
-        instance.overrides.push_str(";garbage;also\u{1f}bad");
+        instance.mark(address(0, "T", "position"), None);
+        instance
+            .overrides
+            .push_str("\u{1e}garbage\u{1e}also\u{1f}bad");
 
-        assert_eq!(instance.overrides().len(), 1);
+        assert_eq!(instance.addresses().len(), 1);
         assert!(instance.source.is_some(), "the link survived");
     }
 
@@ -433,7 +499,97 @@ mod tests {
     fn a_realistic_address_survives_the_encoding() {
         let mut instance = PrefabInstance::default();
         let real = address(3, "ome_render::mesh_renderer::MeshRenderer", "cast_shadows");
-        instance.mark(real.clone());
-        assert_eq!(instance.overrides(), vec![real]);
+        instance.mark(real.clone(), None);
+        assert_eq!(instance.addresses(), vec![real]);
+    }
+}
+
+#[cfg(test)]
+mod value_tests {
+    use super::*;
+
+    fn at(field: &str) -> OverrideAddress {
+        OverrideAddress {
+            entity: 0,
+            component: "test::Health".into(),
+            field: field.into(),
+        }
+    }
+
+    /// The whole reason values are carried: a scene stores the instance as
+    /// a reference plus this list, so an override that recorded only
+    /// *which* field changed would be a change that vanished on save.
+    #[test]
+    fn a_value_survives_the_round_trip() {
+        let mut instance = PrefabInstance::new(Guid::new_v4());
+        instance.mark(at("hp"), Some(ReflectValue::U32(37)));
+        assert_eq!(instance.value_of(&at("hp")), Some(ReflectValue::U32(37)));
+    }
+
+    /// Changing the same field twice is one override, and the second value
+    /// is the one that survives — otherwise a drag would leave a trail of
+    /// stale values, and whichever the loader read last would win.
+    #[test]
+    fn re_marking_replaces_the_value() {
+        let mut instance = PrefabInstance::default();
+        instance.mark(at("hp"), Some(ReflectValue::U32(1)));
+        instance.mark(at("hp"), Some(ReflectValue::U32(2)));
+        assert_eq!(instance.addresses().len(), 1);
+        assert_eq!(instance.value_of(&at("hp")), Some(ReflectValue::U32(2)));
+    }
+
+    /// A removal is the other kind of decision and has nothing to carry.
+    #[test]
+    fn a_presence_record_carries_no_value() {
+        let mut instance = PrefabInstance::default();
+        instance.mark(at(WHOLE_COMPONENT), None);
+        assert!(instance.owns_component(0, "test::Health"));
+        assert_eq!(instance.value_of(&at(WHOLE_COMPONENT)), None);
+    }
+
+    /// The old separator was `;`, which a record could not contain while
+    /// it was only an address. Now it ends in a serialised value, and a
+    /// string field holding a semicolon would have split one record into
+    /// two.
+    #[test]
+    fn a_value_containing_punctuation_does_not_split_the_record() {
+        let mut instance = PrefabInstance::default();
+        let awkward = ReflectValue::String("a;b\u{1f}c".into());
+        instance.mark(at("name"), Some(awkward.clone()));
+        instance.mark(at("hp"), Some(ReflectValue::U32(1)));
+
+        assert_eq!(instance.addresses().len(), 2, "the value split the record");
+        assert_eq!(instance.value_of(&at("name")), Some(awkward));
+    }
+
+    /// Every `ReflectValue` a component can hold has to survive, not just
+    /// the scalars — a Transform override is three of these.
+    #[test]
+    fn the_shapes_a_transform_override_needs_all_round_trip() {
+        let mut instance = PrefabInstance::default();
+        for (field, value) in [
+            (
+                "position",
+                ReflectValue::Vec3(glam::Vec3::new(1.0, -2.5, 3.0)),
+            ),
+            ("rotation", ReflectValue::Quat(glam::Quat::IDENTITY)),
+            ("visible", ReflectValue::Bool(true)),
+        ] {
+            instance.mark(at(field), Some(value.clone()));
+            assert_eq!(instance.value_of(&at(field)), Some(value), "{field}");
+        }
+    }
+
+    /// A hand-edited file costs the record it corrupted, not the set.
+    #[test]
+    fn a_value_that_will_not_parse_costs_only_its_own_record() {
+        let mut instance = PrefabInstance::new(Guid::new_v4());
+        instance.mark(at("hp"), Some(ReflectValue::U32(5)));
+        instance
+            .overrides
+            .push_str("\u{1e}0\u{1f}test::Health\u{1f}max_hp\u{1f}not-ron");
+
+        assert_eq!(instance.addresses().len(), 1);
+        assert!(instance.source.is_some());
     }
 }
