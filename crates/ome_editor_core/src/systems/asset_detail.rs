@@ -70,11 +70,21 @@ fn gather_mesh(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
 fn gather_prefab(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
     use ome_ecs::scene::SceneDocument;
 
-    let handle = load_handle::<SceneDocument>(guid, resources)?;
-    let document = resources
-        .get::<Assets<SceneDocument>>()?
-        .get(handle)?
-        .clone();
+    // Logged rather than swallowed: the panel's only other state is
+    // "Loading asset…", so a load that can never succeed is indistinguishable
+    // from one that has not finished. This is how a missing `Assets` store
+    // presented as a permanent spinner.
+    let Some(handle) = load_handle::<SceneDocument>(guid, resources) else {
+        tracing::warn!(target: "ome_editor_core::asset_detail", %guid, "prefab could not be loaded");
+        return None;
+    };
+    let Some(document) = resources
+        .get::<Assets<SceneDocument>>()
+        .and_then(|assets| assets.get(handle).cloned())
+    else {
+        tracing::warn!(target: "ome_editor_core::asset_detail", %guid, "prefab loaded but absent from its asset store");
+        return None;
+    };
     let dirty = resources
         .get::<crate::actions::DirtyPrefabs>()
         .is_some_and(|dirty| dirty.contains(guid));

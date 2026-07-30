@@ -123,6 +123,12 @@ impl Plugin for AssetPlugin {
         app.insert_resource(Assets::<MeshletMesh>::new());
         app.insert_resource(Assets::<Image>::new());
         app.insert_resource(Assets::<Material>::new());
+        // The store the prefab loader fills, and the cache `spawn_prefab`
+        // reads. `load_by_guid` requires it to exist rather than creating
+        // it, so without this every prefab load failed with
+        // `MissingAssetStorage` and the Inspector sat on "Loading asset…"
+        // forever.
+        app.insert_resource(Assets::<ome_ecs::scene::SceneDocument>::new());
 
         // The `MaterialPipeline` needs a `wgpu::Device`, which is
         // not available at plugin-build time. Defer construction to
