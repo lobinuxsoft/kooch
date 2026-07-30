@@ -98,6 +98,13 @@ pub(crate) enum EditorAction {
         parent_path: PathBuf,
     },
     CloseProject,
+    /// Run `cargo clean` on the open project.
+    ///
+    /// `cargo clean` rather than deleting `target/` by hand: the
+    /// directory is not always there. `CARGO_TARGET_DIR` and
+    /// `.cargo/config.toml` can move it, and a `rm -rf ./target` against
+    /// a redirected build would remove nothing while reporting success.
+    CleanProject,
     Reparent {
         entity: Entity,
         new_parent: Option<Entity>,
@@ -192,6 +199,84 @@ pub(crate) enum NewFileKind {
     Scene,
 }
 
+impl EditorAction {
+    /// Whether applying this needs the project's world to already be
+    /// there.
+    ///
+    /// # Why this exists
+    ///
+    /// Opening a project builds it, which takes tens of seconds, and the
+    /// dock is up and clickable for all of them while the mirror is still
+    /// empty. `apply_actions` routes over the wire only once the session
+    /// is *connected*; before that every edit falls through to the local
+    /// path and mutates the empty mirror instead.
+    ///
+    /// `SaveScene` is the one that hurts: it would write that empty ECS
+    /// over the project's real scene file. Not a panic — a scene deleted
+    /// by pressing Ctrl+S during a build.
+    ///
+    /// # Why an exhaustive match
+    ///
+    /// No wildcard arm on purpose. A new variant has to come here and say
+    /// which side it is on, which is the only way this stays true as the
+    /// list grows past forty.
+    pub(crate) fn needs_a_live_world(&self) -> bool {
+        match self {
+            // Everything that reads or writes the world, or persists it.
+            Self::Spawn { .. }
+            | Self::SpawnMesh { .. }
+            | Self::Despawn(_)
+            | Self::Duplicate(_)
+            | Self::SetField { .. }
+            | Self::AddComponent { .. }
+            | Self::RemoveComponent { .. }
+            | Self::TransformEdit { .. }
+            | Self::Reparent { .. }
+            | Self::Undo
+            | Self::Redo
+            | Self::SaveScene
+            | Self::OpenScene
+            | Self::OpenSceneAdditive
+            | Self::CloseScene(_)
+            | Self::SetActiveScene(_)
+            | Self::Play
+            | Self::Stop
+            | Self::RegisterScripts => true,
+
+            // Session and project lifecycle: these are how a user gets
+            // *out* of a stuck build, so they must keep working.
+            Self::OpenProject(_)
+            | Self::RebuildRemote
+            | Self::CreateProject { .. }
+            | Self::CloseProject
+            | Self::LaunchProject(_)
+            | Self::CancelLaunch
+            | Self::RemoveRecent(_)
+            // Cleaning is what you do *because* the world is not there,
+            // and it disconnects the session itself before it starts.
+            | Self::CleanProject => false,
+
+            // Editor preferences and things that act on files rather than
+            // on the world. An asset edit is about a `.ron` on disk, and
+            // the project is not holding it.
+            Self::SetPowerProfile(_)
+            | Self::SetIdeCommand { .. }
+            | Self::EditMaterial { .. }
+            | Self::ImportAssets { .. }
+            | Self::CreateFolder { .. }
+            | Self::CreateMaterial { .. }
+            | Self::RenameAsset { .. }
+            | Self::RenameFolder { .. }
+            | Self::DuplicateAsset { .. }
+            | Self::DeleteAsset { .. }
+            | Self::DeleteFolder { .. }
+            | Self::RevealInFileManager { .. }
+            | Self::OpenInIde { .. }
+            | Self::CreateFile { .. } => false,
+        }
+    }
+}
+
 pub(crate) fn apply_actions(
     resources: &mut Resources,
     actions: &[EditorAction],
@@ -206,6 +291,32 @@ pub(crate) fn apply_actions(
     let remote = resources
         .get::<crate::remote_session::RemoteState>()
         .is_some_and(|s| s.is_connected());
+
+    // A session that exists but has not answered yet: the project is
+    // still building and its world has not arrived. Dropping the actions
+    // that need it is what stops a Ctrl+S from writing the empty mirror
+    // over the project's scene — see `needs_a_live_world`.
+    let awaiting_world = !remote
+        && resources
+            .get::<crate::remote_session::RemoteState>()
+            .is_some_and(|state| state.session.is_some());
+    if awaiting_world {
+        let held = actions
+            .iter()
+            .filter(|action| action.needs_a_live_world())
+            .count();
+        if held > 0 {
+            tracing::warn!(
+                refused = held,
+                "the project is still starting — edits are refused until its world arrives",
+            );
+        }
+        for action in actions.iter().filter(|a| !a.needs_a_live_world()) {
+            apply_non_ecs_action(action, resources, undo_stack);
+        }
+        return;
+    }
+
     if remote {
         for action in actions {
             if !remote_edit::dispatch(resources, action) {
@@ -269,5 +380,50 @@ pub(crate) fn apply_actions(
         // Non-ECS actions: process directly (no undo).
         apply_non_ecs_action(action, resources, undo_stack);
         i += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The one that motivated the guard: a Save during a build would
+    /// write the empty mirror over the project's real scene. Not a panic
+    /// — a deleted scene.
+    #[test]
+    fn saving_needs_a_live_world() {
+        assert!(EditorAction::SaveScene.needs_a_live_world());
+    }
+
+    /// Every escape hatch has to keep working, or a build that never
+    /// finishes leaves the editor with no way out.
+    #[test]
+    fn the_ways_out_of_a_stuck_build_are_not_blocked() {
+        for (name, action) in [
+            ("CancelLaunch", EditorAction::CancelLaunch),
+            ("RebuildRemote", EditorAction::RebuildRemote),
+            ("CloseProject", EditorAction::CloseProject),
+        ] {
+            assert!(
+                !action.needs_a_live_world(),
+                "{name} is how a user recovers; blocking it traps them",
+            );
+        }
+    }
+
+    /// Play asks the *project* to start simulating. Sent before it can
+    /// answer, it is a message into a socket nobody is reading yet.
+    #[test]
+    fn play_and_stop_wait_for_the_project() {
+        assert!(EditorAction::Play.needs_a_live_world());
+        assert!(EditorAction::Stop.needs_a_live_world());
+    }
+
+    /// An asset edit is about a file on disk, and the project is not
+    /// holding it — refusing these would block work that is perfectly
+    /// safe during a build.
+    #[test]
+    fn preferences_and_file_work_stay_available() {
+        assert!(!EditorAction::SetPowerProfile(PowerProfile::Battery).needs_a_live_world());
     }
 }

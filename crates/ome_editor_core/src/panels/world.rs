@@ -12,7 +12,7 @@ use crate::state::{EntityDisplayInfo, ReflectedTypeInfo, SceneDisplayInfo};
 
 use self::entity_row::draw_entity_row;
 use self::scene_bar::draw_scene_bar;
-use self::spawn_menu::draw_spawn_menu;
+use self::spawn_menu::{draw_spawn_menu, spawn_entries};
 
 /// Content of the "World" tab — entity hierarchy list with context menu.
 pub(crate) fn draw_world_content(
@@ -99,13 +99,22 @@ pub(crate) fn draw_world_content(
                 );
             }
 
-            // Empty space: click to deselect, drop target to unparent an entity.
+            // Empty space: click to deselect, right-click to create, drop
+            // target to unparent an entity.
             let remaining = ui.available_rect_before_wrap();
             let empty_resp = ui.allocate_rect(remaining, egui::Sense::click_and_drag());
             if empty_resp.clicked() {
                 selected.clear();
                 *last_clicked_index = None;
             }
+
+            // The same entries the toolbar's Spawn button offers, reached
+            // where people actually reach for them: right-click in the
+            // empty part of the hierarchy. A row's own right-click menu
+            // handles per-entity actions, including Add Component (#591).
+            empty_resp.context_menu(|ui| {
+                spawn_entries(ui, actions);
+            });
             if empty_resp.dnd_hover_payload::<Entity>().is_some() {
                 ui.painter().rect_filled(
                     remaining,

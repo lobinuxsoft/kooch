@@ -73,6 +73,17 @@ pub(crate) fn draw_menu_bar(
                     ui.close();
                 }
                 ui.separator();
+                if ui
+                    .button("Clean Project")
+                    .on_hover_text(
+                        "Run cargo clean: deletes the build output and nothing else. \
+                         The project has to be rebuilt afterwards.",
+                    )
+                    .clicked()
+                {
+                    actions.push(EditorAction::CleanProject);
+                    ui.close();
+                }
                 if ui.button("Close Project").clicked() {
                     actions.push(EditorAction::CloseProject);
                     ui.close();

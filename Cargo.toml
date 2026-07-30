@@ -11,10 +11,10 @@ members = [
     "crates/ome_gizmos",
     "crates/ome_gizmos_handles",
     "crates/ome_physics",
+    "crates/ome_camera",
     "crates/ome_gravity",
     "crates/ome_world",
     "crates/ome_audio",
-    "crates/ome_scripting",
     "crates/ome_ecs_macros",
     "crates/ome_remote",
     "crates/ome_editor_core",
@@ -51,7 +51,6 @@ kira = "0.9"
 gilrs = "0.11"
 # Scripting — `sync` feature makes Engine + AST + Dynamic Send + Sync,
 # required so ScriptingBackend impls can live in the engine's Resource set
-rhai = { version = "1.21", features = ["sync"] }
 # Editor UI
 egui = "0.35"
 # `clipboard` is not optional in practice: without it `Clipboard::set_text`
@@ -136,10 +135,10 @@ ome_render = { path = "crates/ome_render" }
 ome_gizmos = { path = "crates/ome_gizmos" }
 ome_gizmos_handles = { path = "crates/ome_gizmos_handles" }
 ome_physics = { path = "crates/ome_physics" }
+ome_camera = { path = "crates/ome_camera" }
 ome_gravity = { path = "crates/ome_gravity" }
 ome_world = { path = "crates/ome_world" }
 ome_audio = { path = "crates/ome_audio" }
-ome_scripting = { path = "crates/ome_scripting" }
 ome_remote = { path = "crates/ome_remote" }
 ome_editor_core = { path = "crates/ome_editor_core" }
 ome_editor = { path = "crates/ome_editor" }
@@ -164,9 +163,9 @@ ome_input = { workspace = true, optional = true }
 ome_audio = { workspace = true, optional = true }
 ome_lighting = { workspace = true, optional = true }
 ome_physics = { workspace = true, optional = true }
+ome_camera = { workspace = true, optional = true }
 ome_gravity = { workspace = true, optional = true }
 ome_world = { workspace = true, optional = true }
-ome_scripting = { workspace = true, optional = true }
 ome_remote = { workspace = true, optional = true }
 ome_editor_core = { workspace = true, optional = true }
 ome_plugin_api = { workspace = true, optional = true }
@@ -191,9 +190,9 @@ physics = ["dep:ome_physics"]
 # the physics_smoke example prints counts from. Never enabled by a game
 # build — see #558.
 physics-debug-render = ["physics", "ome_physics/debug-render"]
+camera = ["dep:ome_camera"]
 gravity = ["dep:ome_gravity", "physics"]
 world = ["dep:ome_world"]
-scripting = ["dep:ome_scripting"]
 # Remote editor server: lets a project expose its ECS over HTTP so the
 # standalone editor can drive it. Pulled in by projects that run in
 # `--remote` mode; independent of the embedded `editor`.

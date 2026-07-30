@@ -78,6 +78,10 @@ impl Plugin for EditorPlugin {
         // Components only: the editor authors gravity, the project's
         // process applies it.
         app.add_plugin(ome_gravity::GravityComponentsPlugin);
+        // Same split again: the editor authors camera behaviour and never
+        // runs it. A rig driving a camera here would fight the editor's
+        // own, which owns the viewport.
+        app.add_plugin(ome_camera::CameraComponentsPlugin);
 
         // #656 — the editor sleeps by default and every frame has to
         // earn the next one. The baseline is what the accumulator falls

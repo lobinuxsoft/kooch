@@ -141,8 +141,18 @@ pub(super) fn handle_create_project(
                     tracing::warn!("failed to save editor config: {e}");
                 }
                 ps.show_new_project_form = false;
-                ps.spawn_launcher(&root);
             }
+            // Open it the way Open Project opens one, rather than handing
+            // control to the new project's own embedded editor and
+            // exiting.
+            //
+            // `spawn_launcher` did the latter, which meant creating a
+            // project killed the window it was created from: the Hub's
+            // recents list, its dock layout and its output all went with
+            // it, and what came back was a *different* editor binary than
+            // the one Open Project gives you. Two actions that land in the
+            // same place should get there the same way.
+            handle_open_project(resources, &root);
         }
         Err(e) => {
             tracing::error!("failed to create project: {e}");
@@ -151,6 +161,70 @@ pub(super) fn handle_create_project(
             }
         }
     }
+}
+
+/// Runs `cargo clean` on the open project.
+///
+/// The session goes down first, and that is not politeness. The editor
+/// has the project's `dylib` mapped and its `--remote` binary is running,
+/// both out of `target/`; cleaning underneath them leaves a session whose
+/// executable no longer exists and a reload that cannot find its library.
+/// Disconnecting makes the state after the clean the same as the state
+/// before a first build, which is a state everything already handles.
+pub(super) fn handle_clean_project(resources: &mut Resources) {
+    let Some(root) = resources
+        .get::<ProjectState>()
+        .and_then(|ps| ps.active_project.as_ref().map(|ap| ap.root_path.clone()))
+    else {
+        tracing::warn!("clean: no project open");
+        return;
+    };
+
+    disconnect_remote(resources);
+
+    let before = directory_size(&root.join("target"));
+    match std::process::Command::new("cargo")
+        .arg("clean")
+        .current_dir(&root)
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let freed = before.saturating_sub(directory_size(&root.join("target")));
+            tracing::info!(
+                freed_mb = freed / 1_048_576,
+                "cleaned the project — press Rebuild to build it again",
+            );
+        }
+        Ok(output) => {
+            // cargo's own words: a broken manifest is the usual reason,
+            // and paraphrasing it would hide which line.
+            tracing::error!(
+                status = ?output.status.code(),
+                stderr = %String::from_utf8_lossy(&output.stderr).trim(),
+                "cargo clean failed",
+            );
+        }
+        Err(e) => tracing::error!("could not run cargo clean: {e}"),
+    }
+}
+
+/// Bytes under `path`, or zero if it is missing or unreadable.
+///
+/// Only used to report what a clean reclaimed, so an unreadable entry is
+/// skipped rather than escalated: a number that is slightly low is better
+/// than refusing to clean over a permission on one file.
+fn directory_size(path: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => directory_size(&entry.path()),
+            Ok(_) => entry.metadata().map(|m| m.len()).unwrap_or(0),
+            Err(_) => 0,
+        })
+        .sum()
 }
 
 pub(super) fn handle_close_project(resources: &mut Resources, undo_stack: &mut UndoStack) {

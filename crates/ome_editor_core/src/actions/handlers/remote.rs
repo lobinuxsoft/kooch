@@ -45,6 +45,9 @@ pub(super) fn start_remote_session(resources: &mut Resources) {
     match RemoteSession::launch(&manifest_path, engine_root.as_deref()) {
         Ok(session) => {
             if let Some(state) = resources.get_mut::<RemoteState>() {
+                // A fresh attempt, so the banner does not show the
+                // previous build's output above this one's.
+                state.connect_output.clear();
                 state.session = Some(session);
                 state.playing = false;
             }

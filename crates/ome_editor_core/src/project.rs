@@ -156,7 +156,14 @@ impl EditorConfig {
 // ---------------------------------------------------------------------------
 
 /// Standard project subdirectories.
-const PROJECT_DIRS: &[&str] = &["scenes", "assets", "scripts", "src"];
+///
+/// `scripts/` used to be here, from when a script meant a `.rhai` file on
+/// disk. A script is a Rust component or system in `src/` now: codegen
+/// scans `src/`, the Asset Browser's "Register scripts" reads Rust, and
+/// `ome_scripting` keeps its ASTs in memory and loads nothing from a
+/// path. So the directory was created, never read, and suggested a place
+/// to put code the engine would never look at.
+const PROJECT_DIRS: &[&str] = &["scenes", "assets", "src"];
 
 /// Sanitizes a project name into a valid Rust crate name.
 ///
@@ -207,8 +214,10 @@ path = "src/main.rs"
 # editor over a local socket; `physics` gives you rigid bodies — without it a
 # `RigidBody` is an inert component and nothing ever falls. `gravity` is
 # the same story one level up: without it a `PointGravity` is authorable,
-# mirrors to the editor, draws its gizmo, and pulls on nothing.
-oh_my_engine = {{ path = "{engine_path}", features = ["editor", "physics", "gravity", "remote", "physics-debug-render", "dynamic"] }}
+# mirrors to the editor, draws its gizmo, and pulls on nothing. `camera` is
+# the third instance of that pattern: without it a `CameraRig` is authorable
+# and moves no camera.
+oh_my_engine = {{ path = "{engine_path}", features = ["editor", "physics", "gravity", "camera", "remote", "physics-debug-render", "dynamic"] }}
 # Direct dep needed until `Reflect` proc-macro resolves through the facade.
 ome_ecs = {{ path = "{engine_path}/crates/ome_ecs" }}
 "#,
@@ -358,6 +367,34 @@ pub fn declare_components(engine: &mut dyn oh_my_engine::ome_plugin_api::Engine)
 /// `parent_dir` is the parent folder; a subdirectory named `name` will be
 /// created inside it. `engine_root` is the path to the oh_my_engine repo
 /// root, used to generate `Cargo.toml` dependency paths.
+
+/// What a new project tells git to leave alone.
+///
+/// `target/` is the whole point: a debug build of a project that links
+/// this engine is gigabytes, and a repository that commits it is a
+/// repository nobody can clone.
+///
+/// Two things are deliberately *not* here, because ignoring them breaks a
+/// fresh clone:
+///
+/// - **`Cargo.lock`** — this crate builds a binary, and for a binary the
+///   lock file is the record of what actually compiled. Libraries omit
+///   it; games want the exact versions back.
+/// - **`src/registrations.rs`** — editor-managed, but the build needs it:
+///   `lib.rs` declares the module, so a clone without it does not compile
+///   until the editor happens to regenerate it.
+const PROJECT_GITIGNORE: &str = "\
+# Rust build output. Gigabytes, and every byte of it regenerable.
+/target
+
+# rustfmt leftovers.
+**/*.rs.bk
+
+# OS clutter.
+.DS_Store
+Thumbs.db
+";
+
 pub fn create_project(
     name: &str,
     parent_dir: &Path,
@@ -389,6 +426,10 @@ pub fn create_project(
         INITIAL_REGISTRATIONS,
     )
     .map_err(ProjectError::Io)?;
+
+    // Written before anything large exists, so a project is never
+    // briefly committable with its build output in it.
+    fs::write(project_root.join(".gitignore"), PROJECT_GITIGNORE).map_err(ProjectError::Io)?;
 
     // Bootstrap the default scene file so the editor never opens empty.
     ensure_default_scene(&project_root)?;
@@ -496,3 +537,33 @@ impl fmt::Display for ProjectError {
 }
 
 impl std::error::Error for ProjectError {}
+
+#[cfg(test)]
+mod gitignore_tests {
+    use super::PROJECT_GITIGNORE;
+
+    /// The reason the file exists: a debug build of a project linking this
+    /// engine is gigabytes.
+    #[test]
+    fn build_output_is_ignored() {
+        assert!(PROJECT_GITIGNORE.lines().any(|line| line == "/target"));
+    }
+
+    /// Ignoring either of these breaks `git clone && cargo run`, which is
+    /// the one thing a project's repository has to do.
+    #[test]
+    fn nothing_a_fresh_clone_needs_is_ignored() {
+        for needed in [
+            "Cargo.lock",
+            "registrations.rs",
+            "project.ome",
+            "scenes",
+            "assets",
+        ] {
+            assert!(
+                !PROJECT_GITIGNORE.contains(needed),
+                "{needed} is required to build or open the project; ignoring it breaks a clone",
+            );
+        }
+    }
+}

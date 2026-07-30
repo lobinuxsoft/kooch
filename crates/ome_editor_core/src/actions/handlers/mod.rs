@@ -51,6 +51,7 @@ pub(super) fn apply_non_ecs_action(
             handle_reparent(resources, *entity, *new_parent);
         }
         EditorAction::RemoveRecent(path) => handle_remove_recent(resources, path),
+        EditorAction::CleanProject => handle_clean_project(resources),
         EditorAction::LaunchProject(path) => handle_launch_project(resources, path),
         EditorAction::CancelLaunch => handle_cancel_launch(resources),
         EditorAction::SetPowerProfile(profile) => handle_set_power_profile(resources, *profile),
@@ -71,8 +72,8 @@ pub(super) fn apply_non_ecs_action(
 use assets::{handle_edit_material, handle_import_assets};
 use play::{handle_play, handle_stop};
 use project::{
-    handle_close_project, handle_create_project, handle_launch_project, handle_open_project,
-    handle_remove_recent,
+    handle_clean_project, handle_close_project, handle_create_project, handle_launch_project,
+    handle_open_project, handle_remove_recent,
 };
 use remote::handle_rebuild_remote;
 use scene::{
