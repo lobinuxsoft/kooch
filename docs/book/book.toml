@@ -2,14 +2,14 @@
 authors = ["lobinuxsoft"]
 language = "en"
 src = "src"
-title = "Oh My Engine"
+title = "Kóoch"
 description = "GPU-driven game engine in Rust — Nanite-style meshlet rendering, CPU ECS, and an editor."
 
 [output.html]
 default-theme = "navy"
 preferred-dark-theme = "navy"
-git-repository-url = "https://github.com/lobinuxsoft/oh_my_engine"
-edit-url-template = "https://github.com/lobinuxsoft/oh_my_engine/edit/development/docs/book/{path}"
+git-repository-url = "https://github.com/lobinuxsoft/kooch"
+edit-url-template = "https://github.com/lobinuxsoft/kooch/edit/development/docs/book/{path}"
 additional-js = ["mermaid.min.js", "mermaid-init.js", "theme/diagram-zoom.js"]
 additional-css = ["theme/custom.css"]
 

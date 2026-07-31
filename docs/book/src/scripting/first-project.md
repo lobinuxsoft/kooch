@@ -8,7 +8,7 @@ them run. Roughly fifteen minutes, most of it the first compile.
 ## 1. Open the Hub
 
 ```bash
-cargo run -p ome_editor
+cargo run -p kooch_editor
 ```
 
 ![The Hub — new, open, and recent projects](../images/hub.png)
@@ -24,8 +24,8 @@ too — several minutes, once.
 New Component from the editor, named `Spinner`, then open `src/spinner.rs` and fill it in:
 
 ```rust
-use oh_my_engine::ome_ecs::Reflect;
-use oh_my_engine::ome_ecs::component::Component;
+use kooch::kooch_ecs::Reflect;
+use kooch::kooch_ecs::component::Component;
 
 /// Makes an entity rotate. Attach it and set the speed in the Inspector.
 #[derive(Default, Reflect)]
@@ -44,7 +44,7 @@ see [Writing a Component](./components.md) for the attributes that change how it
 ## 3. Write a system
 
 This one touches `Transform`, whose fields are `glam` types — and **`glam` is not re-exported
-by the engine yet** ([#657](https://github.com/lobinuxsoft/oh_my_engine/issues/657)). So first
+by the engine yet** ([#657](https://github.com/lobinuxsoft/kooch/issues/657)). So first
 add it to your `Cargo.toml`, matching the engine's version exactly:
 
 ```toml
@@ -59,9 +59,9 @@ New System, named `spin`, then open `src/spin.rs`:
 
 ```rust
 use glam::Quat;
-use oh_my_engine::ome_ecs::Query;
-use oh_my_engine::ome_ecs::transform::Transform;
-use oh_my_engine::prelude::*;
+use kooch::kooch_ecs::Query;
+use kooch::kooch_ecs::transform::Transform;
+use kooch::prelude::*;
 
 use crate::spinner::Spinner;
 
@@ -95,8 +95,8 @@ cargo build
 
 and **reopening the editor**, because the project's library is loaded once when the project
 opens. A build button and a live reload are
-[#158](https://github.com/lobinuxsoft/oh_my_engine/issues/158) and
-[#648](https://github.com/lobinuxsoft/oh_my_engine/issues/648); until they land, this step is
+[#158](https://github.com/lobinuxsoft/kooch/issues/158) and
+[#648](https://github.com/lobinuxsoft/kooch/issues/648); until they land, this step is
 manual and it is the slow part of the loop.
 
 ## 5. Use it
@@ -124,7 +124,7 @@ before it starts and restores on stop, so testing never costs you your scene.
 | Symptom | Cause |
 |---|---|
 | The component is not in the Add Component menu | Register Scripts not pressed, or the project not rebuilt and reopened |
-| A field is not in the Inspector | It is private, has `#[reflect(skip)]`, or is a type reflection does not support yet ([#649](https://github.com/lobinuxsoft/oh_my_engine/issues/649)) |
+| A field is not in the Inspector | It is private, has `#[reflect(skip)]`, or is a type reflection does not support yet ([#649](https://github.com/lobinuxsoft/kooch/issues/649)) |
 | The derive does not compile | A field's type is not supported — `Vec<T>`, `HashMap`, your own enums. Mark it `#[reflect(skip)]` |
 | The system never runs | It is in `Update` behind the `Playing` gate; press Play. Or its signature does not match `pub fn f(_: &mut Resources)` exactly, so the scanner missed it |
-| Play opens a second window and takes minutes | The old local-Play path ([#633](https://github.com/lobinuxsoft/oh_my_engine/issues/633)) |
+| Play opens a second window and takes minutes | The old local-Play path ([#633](https://github.com/lobinuxsoft/kooch/issues/633)) |

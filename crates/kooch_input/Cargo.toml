@@ -1,0 +1,15 @@
+[package]
+name = "kooch_input"
+description = "Input handling: keyboard, mouse, gamepad, and Steam Input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core.workspace = true
+winit.workspace = true
+gilrs.workspace = true
+glam.workspace = true
+tracing.workspace = true

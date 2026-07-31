@@ -1,7 +1,7 @@
 # BVH-Driven Ray Marching
 
 This chapter documents how the SDF ray-marcher integrates with the
-GPU LBVH builder shipped in `ome_bvh` (issue #115 PR-3) to skip
+GPU LBVH builder shipped in `kooch_bvh` (issue #115 PR-3) to skip
 evaluating primitives whose AABB does not contain the current
 sample point. The integration is the subject of #115 PR-4.
 
@@ -151,15 +151,15 @@ cull is the dominant cost saver, exactly as the
 
 ## What lives where
 
-- `crates/ome_bvh/` — the GPU LBVH builder (PR-3). Public API:
+- `crates/kooch_bvh/` — the GPU LBVH builder (PR-3). Public API:
   `Bvh::build_gpu`, `BvhGpuBuilder`, `BvhGpuBuild`, `GpuBvhHandle`.
-- `crates/ome_render/src/raymarch/bvh.rs` — `BvhState`: double-
+- `crates/kooch_render/src/raymarch/bvh.rs` — `BvhState`: double-
   buffered slots + dirty hash + kick / poll_swap lifecycle.
-- `crates/ome_render/src/raymarch/aabb.rs` — `primitive_aabb`:
+- `crates/kooch_render/src/raymarch/aabb.rs` — `primitive_aabb`:
   per-type local half-extents → world-space inflated AABB.
-- `crates/ome_render/src/raymarch/instance.rs` — `LeafAabb` (32 B
+- `crates/kooch_render/src/raymarch/instance.rs` — `LeafAabb` (32 B
   std430), `SceneMeta` (64 B uniform), CSG role constants.
-- `crates/ome_render/shaders/raymarch_main.wgsl` —
+- `crates/kooch_render/shaders/raymarch_main.wgsl` —
   `eval_scene_bvh` traversal + per-role accumulators + fixed final
   combination.
 

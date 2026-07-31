@@ -10,7 +10,7 @@
 //! `std` and of the engine, and the two halves stop sharing globals —
 //! including the log subscriber, so the plugin's output would vanish.
 
-use ome_plugin_api::prelude::*;
+use kooch_plugin_api::prelude::*;
 
 /// Counts frames, and keeps the count where a reload cannot lose it.
 #[derive(Default)]
@@ -69,4 +69,4 @@ impl OmePlugin for HelloPlugin {
     }
 }
 
-ome_plugin_api::export_plugin!(HelloPlugin);
+kooch_plugin_api::export_plugin!(HelloPlugin);

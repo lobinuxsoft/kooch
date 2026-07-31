@@ -1,9 +1,9 @@
-# OhMyEngine — Implementation Checklist (Post-Pivot)
+# Kooch — Implementation Checklist (Post-Pivot)
 
 **Fecha base:** 2026-05-02
 **Última actualización:** 2026-05-02 (post-session: 14 PRs merged)
 **Master plan:** `docs/research/stack_decisions_2026-05-02.md`
-**Continuation memory:** `~/.claude/projects/-var-mnt-DATA-Repos-oh-my-engine/memory/project_phase1_progress.md`
+**Continuation memory:** `~/.claude/projects/-var-mnt-DATA-Repos-kooch/memory/project_phase1_progress.md`
 
 Orden de ataque diseñado para **matar el path SDF de render lo antes posible** y construir el pipeline mesh GPU-driven (Nanite-style) en capas estables.
 
@@ -25,33 +25,33 @@ Cada fase tiene gate de exit explícito — no se avanza hasta que el gate pasa.
 
 ---
 
-## Fase 0 — Eliminar SDF render path (preserve `ome_sdf` para DC pipeline) ✅ DONE (PR #401)
+## Fase 0 — Eliminar SDF render path (preserve `kooch_sdf` para DC pipeline) ✅ DONE (PR #401)
 
-**Objetivo:** sacar el path de render SDF (raymarch + tile-cull + GDF). Preservar `ome_sdf` re-purposeado como sampling lib + brushes para alimentar el pipeline Dual Contouring (Phase 2.5).
+**Objetivo:** sacar el path de render SDF (raymarch + tile-cull + GDF). Preservar `kooch_sdf` re-purposeado como sampling lib + brushes para alimentar el pipeline Dual Contouring (Phase 2.5).
 
 **Tiempo estimado:** 2-3 días. **Tiempo real: 1 sesión.**
 
 - [x] Branch `feat/kill-sdf-render` (was `396-tech-debt-...`)
 - [x] **Editor:** remover llamada a `raymarch.update_scene()` + `raymarch.render()` en `viewport/render.rs`. Flow queda sky_pass → mesh_pass
 - [x] **Eliminar módulos render SDF:**
-  - `crates/ome_render/src/raymarch/` (directorio entero) ✅
-  - `crates/ome_render/src/raymarch_plugin.rs` ✅
-  - `crates/ome_render/src/tile_cull/` (directorio entero) ✅
-  - `crates/ome_render/shaders/raymarch_*.wgsl` ✅
-  - `crates/ome_render/shaders/tile_cull.wgsl` ✅
-  - `crates/ome_render/shaders/gdf_populate.wgsl` ✅
-  - `crates/ome_render/shaders/raymarch_gdf_sample.wgsl` ✅
-  - `crates/ome_render/shaders/raymarch_pool_*.wgsl` ✅
+  - `crates/kooch_render/src/raymarch/` (directorio entero) ✅
+  - `crates/kooch_render/src/raymarch_plugin.rs` ✅
+  - `crates/kooch_render/src/tile_cull/` (directorio entero) ✅
+  - `crates/kooch_render/shaders/raymarch_*.wgsl` ✅
+  - `crates/kooch_render/shaders/tile_cull.wgsl` ✅
+  - `crates/kooch_render/shaders/gdf_populate.wgsl` ✅
+  - `crates/kooch_render/shaders/raymarch_gdf_sample.wgsl` ✅
+  - `crates/kooch_render/shaders/raymarch_pool_*.wgsl` ✅
 - [x] **Eliminar examples:**
   - `examples/raymarch_demo.rs` ✅
   - `examples/raymarch_hierarchy_demo.rs` ✅
 - [x] **Eliminar tests SDF render:** todos los archivos AC*, raymarch_*, tile_cull, gdf_*, pool_eval_smoke ✅
-- [ ] **Evaluar y eliminar:** `crates/ome_bvh/` — **NO eliminado**, todavía usado por `ome_world` (revisar cuando Rapier reemplace queries físicas)
+- [ ] **Evaluar y eliminar:** `crates/kooch_bvh/` — **NO eliminado**, todavía usado por `kooch_world` (revisar cuando Rapier reemplace queries físicas)
 - [x] **PRESERVAR (re-purposear comentarios y docs internos):**
-  - `crates/ome_sdf/` — preservado (pendiente: renombrar categoría "SDF" → "SDF Brushes" en editor)
+  - `crates/kooch_sdf/` — preservado (pendiente: renombrar categoría "SDF" → "SDF Brushes" en editor)
   - Componentes SDF — preservados
   - `sdf_primitives.wgsl` — preservado
-- [x] **Workspace cleanup:** ome_render dropped ome_bvh / ome_sdf / ome_world / ome_physics deps
+- [x] **Workspace cleanup:** kooch_render dropped kooch_bvh / kooch_sdf / kooch_world / kooch_physics deps
 - [ ] **TestEngine2.0:** no documentado explícitamente en el PR (entidades con SDF brushes seguirán existiendo)
 - [x] Commit + PR a development (PR #401, merged)
 
@@ -217,7 +217,7 @@ Phase 1.E promueve los primitivos a un pipeline de producción genuino: instance
 
 - [x] **`MeshletRenderStage` (1.E.3a)** — orquestador headless: scene cull → vbuf raster scene-path → deferred shade scene-path → ouput Rgba8Unorm view. Integration test corre 2 ECS entities (distinct GlobalTransform / material id) y assert non-clear pixels en ambos lados de la pantalla.
 - [x] **`RenderPlugin` toggle (1.E.3b)** — `UseMeshletPath { enabled: bool }` resource (default off). `init_renderers` construye `MeshletRenderStage` + `MeshletBlit`; `render_frame_system` enruta entre legacy y meshlet+blit según el toggle. `MeshletBlit` compone `Rgba8Unorm` → surface format (`Bgra8Unorm`/etc.) vía full-screen triangle. `sync_assets_to_gpu` bridges `Assets<MeshletMesh>` → GPU cache.
-- [x] **Editor viewport (1.E.3c)** — `ome_editor_core::systems::startup` construye `MeshletRenderStage` + `MeshletBlit` + `UseMeshletPath::default()`. `viewport::render::render_viewport` recibe `MeshletPathInputs` y, cuando el toggle está ON, corre stage (con `resize` al `ViewportTarget` size) + blit a `target.view()` en lugar del legacy `MeshPassRenderer`. Visual confirmation diferida a 1.E.4.
+- [x] **Editor viewport (1.E.3c)** — `kooch_editor_core::systems::startup` construye `MeshletRenderStage` + `MeshletBlit` + `UseMeshletPath::default()`. `viewport::render::render_viewport` recibe `MeshletPathInputs` y, cuando el toggle está ON, corre stage (con `resize` al `ViewportTarget` size) + blit a `target.view()` en lugar del legacy `MeshPassRenderer`. Visual confirmation diferida a 1.E.4.
 - [ ] AC: levantar editor + spawn entity con MeshRenderer + Suzanne (o sphere) → ver el modelo renderizado por la meshlet pipeline real, sin pasar por `MeshPassRenderer`.
 - [ ] **Multi-mesh path (1.E.3c)** — `cs_cull_scene_pool` shader entry + `GpuGlobalMeshPool` bind group para escenas con varios meshes registrados.
 - [ ] Hi-Z 2-pass ping-pong wiring entra acá (no antes — antes no había scene plumbing donde aterrizarlo).
@@ -335,7 +335,7 @@ Issues que no bloquean fase pero suman:
 
 | Fase | Trabajo | Tiempo focused |
 |---|---|---|
-| **Fase 0** | Eliminar SDF render path (preserva ome_sdf) | 2-3 días |
+| **Fase 0** | Eliminar SDF render path (preserva kooch_sdf) | 2-3 días |
 | **Fase 1.A** | Asset Pipeline foundation | 1-2 semanas |
 | **Fase 1.B** | Subsystem trait abstractions | 1-2 semanas (paralelo) |
 | **Fase 1.C** | Render graph propio | 2-3 semanas |

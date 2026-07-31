@@ -1,4 +1,4 @@
-# OhMyEngine — Decisiones de Stack y Roadmap
+# Kooch — Decisiones de Stack y Roadmap
 
 **Fecha:** 2026-05-02
 **Status:** Decisión cerrada. Fundamenta el pivot de render y la integración de physics.
@@ -18,19 +18,19 @@
 **Solo el path de render SDF se elimina. SDF como representación se preserva y repurposea para alimentar el pipeline Dual Contouring.**
 
 A ELIMINAR:
-- `crates/ome_render/src/raymarch/` (directorio entero)
-- `crates/ome_render/src/raymarch_plugin.rs`
-- `crates/ome_render/src/tile_cull/` (directorio entero)
+- `crates/kooch_render/src/raymarch/` (directorio entero)
+- `crates/kooch_render/src/raymarch_plugin.rs`
+- `crates/kooch_render/src/tile_cull/` (directorio entero)
 - Todos los shaders raymarch_*, tile_cull, gdf_*, raymarch_pool_*
 - `examples/raymarch_demo.rs`, `examples/raymarch_hierarchy_demo.rs`
 - Tests AC1-AC7, raymarch_*, tile_cull, gdf_*, pool_eval_smoke
-- `crates/ome_bvh/` (solo lo usaba el raymarcher)
+- `crates/kooch_bvh/` (solo lo usaba el raymarcher)
 
 A PRESERVAR (re-purposeado):
-- `crates/ome_sdf/` — repurposeado como **"SDF sampling lib + brushes para voxel authoring"** (alimenta DC)
+- `crates/kooch_sdf/` — repurposeado como **"SDF sampling lib + brushes para voxel authoring"** (alimenta DC)
 - Componentes SDF (`SdfSphere/Box/Capsule/Cylinder/Torus/Plane`) — son **brushes** que generan SDF samples para voxelizar (no render directo)
 - `sdf_primitives.wgsl` — alimenta el pipeline DC
-- `crates/ome_world/` — generaliza a streaming de mesh chunks (probable que sí)
+- `crates/kooch_world/` — generaliza a streaming de mesh chunks (probable que sí)
 
 ### Lo que se construye en su lugar — pipeline híbrido
 
@@ -66,7 +66,7 @@ Floating origin / hierarchical reference frames (precisión a escala planetaria)
 | **Physics** | `rapier3d` | latest | ❌ Falta | Agregar + diseñar trait `PhysicsBackend` |
 | **Window + kbd + mouse** | `winit` | 0.30 | ✅ Tenés | Sin cambios |
 | **Gamepad** | `gilrs` | 0.11 | ✅ Tenés | Sin cambios |
-| **Input actions** | Custom (`ome_input`) | — | ❌ Falta | Issue #55 (Input Action) |
+| **Input actions** | Custom (`kooch_input`) | — | ❌ Falta | Issue #55 (Input Action) |
 | **Editor GUI** | `egui` + `egui_dock` + `egui-wgpu` | 0.34 / 0.19 / 0.34 | ✅ Tenés | Sin cambios |
 | **File dialogs** | `rfd` | 0.15 | ✅ Tenés | Sin cambios |
 | **Audio** | `kira` | 0.9 | ✅ Tenés | Sin cambios |
@@ -122,9 +122,9 @@ meshopt = "..."
 
 ### Implementación propia
 
-- **Trait `PhysicsBackend`** en `ome_physics/lib.rs` — métodos `step`, `add_body`, `query_ray`, `query_shape`. Primer impl: `RapierBackend`.
-- **Sistema de acciones** en `ome_input` — desbloquea issues #55, #56-61.
-- **Render graph** en `ome_render` — nodos con inputs/outputs, transient resources, automatic barriers.
+- **Trait `PhysicsBackend`** en `kooch_physics/lib.rs` — métodos `step`, `add_body`, `query_ray`, `query_shape`. Primer impl: `RapierBackend`.
+- **Sistema de acciones** en `kooch_input` — desbloquea issues #55, #56-61.
+- **Render graph** en `kooch_render` — nodos con inputs/outputs, transient resources, automatic barriers.
 
 ### Estrategia de adopción de deps (Phase 2.5 + Phase 3 hybrid)
 
@@ -211,7 +211,7 @@ meshopt = "..."
 - **Epic: Mesh GPU-driven pipeline (Fase 1)** — meshlet + visibility buffer + culling + indirect
 - **Epic: Virtual geometry + streaming (Fase 2)** — DAG, LOD, streaming
 - **Epic: Planetary scale (Fase 3)** — floating origin, cubed sphere, atmosphere
-- **`PhysicsBackend` trait + `RapierBackend` impl** — base para `ome_physics`
+- **`PhysicsBackend` trait + `RapierBackend` impl** — base para `kooch_physics`
 - **Bridge SDF → Mesh (dual contouring)** — Fase 2
 
 ### Issues a futuro lejano

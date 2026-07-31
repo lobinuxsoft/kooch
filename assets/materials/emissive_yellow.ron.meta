@@ -1,2 +1,2 @@
 guid = "77eb8efc-1ce9-4482-ac4e-1b6c464f3ff6"
-asset_type = "ome_render::material::asset::Material"
+asset_type = "kooch_render::material::asset::Material"

@@ -142,7 +142,7 @@ Format:
 
 > **2026-04-23 · Editor is the render orchestrator for offscreen** *(PR #235 closes #129)*
 >
-> **Decision:** `ome_editor_core::systems::startup` instantiates
+> **Decision:** `kooch_editor_core::systems::startup` instantiates
 > `RayMarchRenderer + MeshPassRenderer + SkyRenderPass` directly as
 > `Resources` and `viewport::render::render_viewport` runs the three
 > passes in one encoder against the offscreen `ViewportTarget`. The
@@ -155,7 +155,7 @@ Format:
 
 > **2026-04-25 · `RenderPlugin` IS the game render path** *(PR #267 closes #260)*
 >
-> **Decision:** `RenderPlugin` (in `ome_render`) is the play-binary
+> **Decision:** `RenderPlugin` (in `kooch_render`) is the play-binary
 > orchestrator. Same 3-pass pipeline as the editor's `render_viewport`,
 > but writing to the swapchain surface instead of an offscreen texture.
 > `RayMarchPlugin` stays as the standalone demo path (`raymarch_demo`).
@@ -180,7 +180,7 @@ Format:
 > **2026-04-23 · `Depth32Float` constant + `LessEqual` for sky** *(PR #237 closes #236)*
 >
 > **Decision:** All passes share `VIEWPORT_DEPTH_FORMAT = Depth32Float`
-> as a public `ome_render` constant. Sky pipeline uses
+> as a public `kooch_render` constant. Sky pipeline uses
 > `CompareFunction::LessEqual`; mesh pipeline uses `Less`.
 > **Why:** Sky writes `frag_depth = 1.0` explicitly so meshes behind it
 > can supersede. Depth clears to 1.0. With `Less`, `1.0 < 1.0` is false
@@ -222,14 +222,14 @@ Format:
 
 > **2026-04-24 · `SceneManager` agnostic of component types** *(PR #266 closes #259)*
 >
-> **Decision:** `SceneManager` lives in `ome_ecs` and knows nothing
+> **Decision:** `SceneManager` lives in `kooch_ecs` and knows nothing
 > about Camera, Sky, or any specific component. The default scene
 > bootstrap (Camera + Sky entities written to disk on project create)
-> lives in `ome_editor_core::project::ensure_default_scene`.
+> lives in `kooch_editor_core::project::ensure_default_scene`.
 > **Why:** Same split as `EphemeralComponents`: mechanism in core,
 > policy in editor. Lets `SceneManager` be reused by headless tools that
 > have a different "default scene" idea.
-> **Consequence:** `ome_ecs` cannot be the place to teach the engine
+> **Consequence:** `kooch_ecs` cannot be the place to teach the engine
 > "every project starts with a Camera and a Sky." That decision is the
 > editor's.
 
@@ -305,15 +305,15 @@ Format:
 > accumulate (they're tiny). Deleting them is harmless; engine
 > regenerates on next run.
 
-> **2026-04-24 · `PowerProfile` enum lives in `ome_core::power`** *(PR #258 closes #253)*
+> **2026-04-24 · `PowerProfile` enum lives in `kooch_core::power`** *(PR #258 closes #253)*
 >
 > **Decision:** `PowerProfile::{Plugged, Balanced, Battery, Debug}` as a
-> `Resource` in `ome_core::power`. Auto-detect on Linux via sysfs and
-> `$SteamDeck` env var. Override via `OME_POWER_PROFILE`.
+> `Resource` in `kooch_core::power`. Auto-detect on Linux via sysfs and
+> `$SteamDeck` env var. Override via `KOOCH_POWER_PROFILE`.
 > **Why:** The Steam Deck / OneXFly target makes battery awareness
 > non-negotiable. Renderers will gate quality defaults (DoF, SSR, TAA
 > off in Battery) per-feature in future PRs.
-> **Consequence:** `ome_core` carries the policy enum but renderers do
+> **Consequence:** `kooch_core` carries the policy enum but renderers do
 > not yet read it. Integration is per-feature PR work, intentional.
 
 ---
@@ -332,15 +332,15 @@ Format:
 > **Consequence:** Users authoring shear-causing parent chains see the
 > warning. No automatic "fix" is offered.
 
-> **2026-04-25 · Three-system editor architecture: Gizmos / Editor / UI Toolkit** *(research [#276](https://github.com/lobinuxsoft/oh_my_engine/issues/276), doc `docs/research/editor-three-system-architecture.md`)*
+> **2026-04-25 · Three-system editor architecture: Gizmos / Editor / UI Toolkit** *(research [#276](https://github.com/lobinuxsoft/kooch/issues/276), doc `docs/research/editor-three-system-architecture.md`)*
 >
 > **Decision:** Editor evolves into three separate, pure-Rust,
-> custom-built subsystems: **`ome_gizmos`** (visual gizmo API +
-> visualizer registry, usable at runtime too) + **`ome_gizmos_handles`**
-> (interactive translate/rotate/scale, editor-only); **`ome_editor_api`**
+> custom-built subsystems: **`kooch_gizmos`** (visual gizmo API +
+> visualizer registry, usable at runtime too) + **`kooch_gizmos_handles`**
+> (interactive translate/rotate/scale, editor-only); **`kooch_editor_api`**
 > (user editor extensions: inspectors, panels, actions, loaded via
-> libloading from a user `editor/` crate); **`ome_ui`** (declarative
-> HTML-like UI Toolkit: `.ome_ui` markup + `.ome_style` CSS subset +
+> libloading from a user `editor/` crate); **`kooch_ui`** (declarative
+> HTML-like UI Toolkit: `.kooch_ui` markup + `.kooch_style` CSS subset +
 > Rust behavior, retained-mode with fine-grained signals, coexists
 > with `egui`).
 > **Why:** Godot's self-hosted monolith couples concerns; Unity's
@@ -353,14 +353,14 @@ Format:
 > Rust with no FFI.
 > **Consequence:** A multi-quarter commitment. Three implementation
 > epics (one per subsystem) replace the original gizmo epic #198 as
-> sub-epic of the Gizmos one. The current `ome_render::gizmos`
-> module (PR #277) migrates into `ome_gizmos` in phase 1. The
-> `ome_ui` toolkit is the heaviest piece (multi-month) and runs in
+> sub-epic of the Gizmos one. The current `kooch_render::gizmos`
+> module (PR #277) migrates into `kooch_gizmos` in phase 1. The
+> `kooch_ui` toolkit is the heaviest piece (multi-month) and runs in
 > parallel with the others.
 
-> **2026-07-25 · Keep `ome_ecs`; do not adopt `bevy_ecs`** *(decision [#605](https://github.com/lobinuxsoft/oh_my_engine/issues/605))*
+> **2026-07-25 · Keep `kooch_ecs`; do not adopt `bevy_ecs`** *(decision [#605](https://github.com/lobinuxsoft/kooch/issues/605))*
 >
-> **Decision:** `ome_ecs` stays and improves in place. `bevy_ecs` is the
+> **Decision:** `kooch_ecs` stays and improves in place. `bevy_ecs` is the
 > reference to steal individual designs from, never a dependency.
 > **Why:** #603 removed the GPU component storages that had justified a
 > custom ECS, so the justification was re-derived from measurements
@@ -369,19 +369,19 @@ Format:
 > GPU-driven renderer touches the ECS through `Query` in four places, and
 > `bevy_reflect` expresses our custom field attributes. What decided it:
 > 42 call sites reach into component storage directly against 3 that use
-> `Query`, which is work required in *every* path and which `ome_ecs`
+> `Query`, which is work required in *every* path and which `kooch_ecs`
 > can already express; `EntityAllocator::revive` preserves entity
 > identity across Play/Stop, which `bevy_ecs` refuses by design while 177
 > sites outside the crate hold an `Entity` in a field; and 51 of the 80
-> affected files are `ome_editor_core`, the one area where Bevy offers no
+> affected files are `kooch_editor_core`, the one area where Bevy offers no
 > upstream design to copy because it has no editor.
 > **Consequence:** improvements are ordered by demonstrated pain, not by
 > feature parity. Encapsulating the ECS behind `Query` is the
 > prerequisite for any future backend change — today the contact surface
-> is 80 files. The schedule graph belongs in `ome_core`, not the ECS:
+> is 80 files. The schedule graph belongs in `kooch_core`, not the ECS:
 > the ordering bugs it would fix live in `app.rs`.
 
-> **2026-07-25 · Entities are referenced by a persistent id, not a handle or an index** *(feat [#607](https://github.com/lobinuxsoft/oh_my_engine/issues/607))*
+> **2026-07-25 · Entities are referenced by a persistent id, not a handle or an index** *(feat [#607](https://github.com/lobinuxsoft/kooch/issues/607))*
 >
 > **Decision:** a component may hold an `Entity` and have it survive a
 > save. Identity is an opt-in `PersistentId(EntityGuid)`; the wire form
@@ -406,7 +406,7 @@ Format:
 > reference into a non-resident cell under #566. Unblocks #560 and
 > cross-scene references.
 
-> **2026-07-25 · The world is the container; scenes are content loaded into it** *(feat [#609](https://github.com/lobinuxsoft/oh_my_engine/issues/609))*
+> **2026-07-25 · The world is the container; scenes are content loaded into it** *(feat [#609](https://github.com/lobinuxsoft/kooch/issues/609))*
 >
 > **Decision:** `SceneManager` becomes a registry of open scenes with one
 > active, instead of a single current path whose load replaced the world.
@@ -429,7 +429,7 @@ Format:
 > decision on whether the transform bakes at load, as Unreal's Embedded
 > Level Instances do.
 
-> **2026-07-26 · A scene is the prefab; instancing and editing are different operations** *(epic [#611](https://github.com/lobinuxsoft/oh_my_engine/issues/611))*
+> **2026-07-26 · A scene is the prefab; instancing and editing are different operations** *(epic [#611](https://github.com/lobinuxsoft/kooch/issues/611))*
 >
 > **Decision:** prefabs are scenes instanced with their entity ids remapped
 > per instance. No separate format. Built in two phases: runtime

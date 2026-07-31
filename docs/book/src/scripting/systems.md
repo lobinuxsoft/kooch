@@ -14,7 +14,7 @@ system does whatever it wants with it.
 ## The smallest one that works
 
 ```rust
-use oh_my_engine::prelude::*;
+use kooch::prelude::*;
 
 /// Ticks every entity's regeneration.
 pub fn regenerate_health(resources: &mut Resources) {
@@ -31,8 +31,8 @@ Components are reached through `Query`, which is constructed from `Resources` an
 it names:
 
 ```rust
-use oh_my_engine::prelude::*;
-use oh_my_engine::ome_ecs::query::Query;
+use kooch::prelude::*;
+use kooch::kooch_ecs::query::Query;
 
 use crate::health::Health;
 
@@ -118,7 +118,7 @@ moves an entity between archetypes and that cannot happen while a query is itera
 while it is used. Take it out, use it, put it back:
 
 ```rust
-use oh_my_engine::ome_ecs::commands::Commands;
+use kooch::kooch_ecs::commands::Commands;
 
 pub fn spawn_a_pickup(resources: &mut Resources) {
     let Some(mut commands) = resources.remove::<Commands>() else { return };

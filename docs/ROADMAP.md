@@ -97,7 +97,7 @@ from a number, and the two guesses before them were wrong.
    the same shape as the Console bug that was not.
 5. **Panels with unbounded lists are not virtualised.** The Console now is (#643). The
    hierarchy in `panels/world.rs` is not, and a large scene is exactly when it matters.
-6. **`ome_gravity::plugin` walks and allocates its source list twice per frame** — once in
+6. **`kooch_gravity::plugin` walks and allocates its source list twice per frame** — once in
    `reconcile_world_gravity`, once in `apply_gravity_sources`. Small, but it is per frame.
 7. **#569 — per-stage counters in the perf HUD.** Out of order on purpose: without it every
    item above is argued rather than measured. Consider doing this *first*.
@@ -113,7 +113,7 @@ and it was skipped on purpose:
 
 | Lines | File | Why it is still there |
 |---|---|---|
-| 1148 | `ome_editor_core/src/actions/remote_edit.rs` | Skipped as demolition-bound. **That premise is dead** — the remote stays (#647), so this file has to be split like the rest |
+| 1148 | `kooch_editor_core/src/actions/remote_edit.rs` | Skipped as demolition-bound. **That premise is dead** — the remote stays (#647), so this file has to be split like the rest |
 
 Twenty-five files sit between 400 and 600. That band is no longer an automatic split: the
 threshold moved to 600, above which a file is *examined* for whether it went monolithic or is
@@ -139,8 +139,8 @@ Reading the tree to plan it turned up how much of the presentation layer does no
 | Audio | kira backend, no `AudioSource` to author (#63) |
 | Shadows (#476/#477), post (#254), particles (#97), runtime UI (#280/#96) | **missing** |
 
-**`DirectionalLight`, `PointLight` and `SpotLight` exist in `ome_ecs` and nothing reads
-them.** `ome_lighting/src/lib.rs` is nine lines; `ome_render` never mentions them; #441 is
+**`DirectionalLight`, `PointLight` and `SpotLight` exist in `kooch_ecs` and nothing reads
+them.** `kooch_lighting/src/lib.rs` is nine lines; `kooch_render` never mentions them; #441 is
 open. They are the exact shape of the gotcha in `MEMORY.md` — *a missing feature does not fail
 the build: the component is authored, mirrored, draws a gizmo, and does nothing.* A user who
 places a light and sees no change is the first bug #669 will find.

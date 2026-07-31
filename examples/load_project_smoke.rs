@@ -4,12 +4,12 @@
 //! ```text
 //! cargo run --example load_project_smoke --features editor -- <project-root> <crate-name>
 //! ```
-use oh_my_engine::ome_core::resource::Resources;
-use oh_my_engine::ome_ecs::component::DynamicTypeRegistry;
-use oh_my_engine::ome_editor_core::project_plugin::load_project_plugin;
+use kooch::kooch_core::resource::Resources;
+use kooch::kooch_ecs::component::DynamicTypeRegistry;
+use kooch::kooch_editor_core::project_plugin::load_project_plugin;
 
 fn main() {
-    oh_my_engine::ome_core::init_tracing();
+    kooch::kooch_core::init_tracing();
 
     let args: Vec<String> = std::env::args().collect();
     let root = std::path::PathBuf::from(&args[1]);
@@ -17,8 +17,8 @@ fn main() {
 
     let mut resources = Resources::new();
     resources.insert(DynamicTypeRegistry::new());
-    resources.insert(oh_my_engine::ome_core::dynamic::PluginData::new());
-    resources.insert(oh_my_engine::ome_core::dynamic::ComponentBridge::new(
+    resources.insert(kooch::kooch_core::dynamic::PluginData::new());
+    resources.insert(kooch::kooch_core::dynamic::ComponentBridge::new(
         |resources, schema| {
             let registry = resources
                 .get_mut::<DynamicTypeRegistry>()
@@ -29,7 +29,7 @@ fn main() {
                 .next()
                 .unwrap_or(&schema.type_name)
                 .to_owned();
-            oh_my_engine::ome_ecs::component::plugin_bridge::register_schema(
+            kooch::kooch_ecs::component::plugin_bridge::register_schema(
                 registry, schema, &source,
             )
         },

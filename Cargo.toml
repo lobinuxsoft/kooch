@@ -1,24 +1,24 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/ome_core",
-    "crates/ome_ecs",
-    "crates/ome_plugin_api",
-    "crates/ome_window",
-    "crates/ome_input",
-    "crates/ome_lighting",
-    "crates/ome_render",
-    "crates/ome_gizmos",
-    "crates/ome_gizmos_handles",
-    "crates/ome_physics",
-    "crates/ome_camera",
-    "crates/ome_gravity",
-    "crates/ome_world",
-    "crates/ome_audio",
-    "crates/ome_ecs_macros",
-    "crates/ome_remote",
-    "crates/ome_editor_core",
-    "crates/ome_editor",
+    "crates/kooch_core",
+    "crates/kooch_ecs",
+    "crates/kooch_plugin_api",
+    "crates/kooch_window",
+    "crates/kooch_input",
+    "crates/kooch_lighting",
+    "crates/kooch_render",
+    "crates/kooch_gizmos",
+    "crates/kooch_gizmos_handles",
+    "crates/kooch_physics",
+    "crates/kooch_camera",
+    "crates/kooch_gravity",
+    "crates/kooch_world",
+    "crates/kooch_audio",
+    "crates/kooch_ecs_macros",
+    "crates/kooch_remote",
+    "crates/kooch_editor_core",
+    "crates/kooch_editor",
     "examples/example_plugin",
 ]
 
@@ -26,7 +26,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "LicenseRef-Proprietary"
-repository = "https://github.com/lobinuxsoft/oh_my_engine"
+repository = "https://github.com/lobinuxsoft/kooch"
 authors = ["lobinuxsoft"]
 
 [workspace.dependencies]
@@ -119,56 +119,56 @@ sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 # Remote editor protocol — blocking HTTP server on a dedicated thread.
 # `interprocess` gives one API over Unix domain sockets and Windows
 # named pipes. Synchronous, matching the engine's own loop, and it keeps
-# the editor protocol off any TCP port — see ome_remote::server for why
+# the editor protocol off any TCP port — see kooch_remote::server for why
 # that is a security property and not a preference (#647).
 interprocess = "2.4"
 serde_json = "1"
 
 # Internal crates
-ome_core = { path = "crates/ome_core" }
-ome_ecs = { path = "crates/ome_ecs" }
-ome_ecs_macros = { path = "crates/ome_ecs_macros" }
-ome_window = { path = "crates/ome_window" }
-ome_input = { path = "crates/ome_input" }
-ome_lighting = { path = "crates/ome_lighting" }
-ome_render = { path = "crates/ome_render" }
-ome_gizmos = { path = "crates/ome_gizmos" }
-ome_gizmos_handles = { path = "crates/ome_gizmos_handles" }
-ome_physics = { path = "crates/ome_physics" }
-ome_camera = { path = "crates/ome_camera" }
-ome_gravity = { path = "crates/ome_gravity" }
-ome_world = { path = "crates/ome_world" }
-ome_audio = { path = "crates/ome_audio" }
-ome_remote = { path = "crates/ome_remote" }
-ome_editor_core = { path = "crates/ome_editor_core" }
-ome_editor = { path = "crates/ome_editor" }
-ome_plugin_api = { path = "crates/ome_plugin_api" }
+kooch_core = { path = "crates/kooch_core" }
+kooch_ecs = { path = "crates/kooch_ecs" }
+kooch_ecs_macros = { path = "crates/kooch_ecs_macros" }
+kooch_window = { path = "crates/kooch_window" }
+kooch_input = { path = "crates/kooch_input" }
+kooch_lighting = { path = "crates/kooch_lighting" }
+kooch_render = { path = "crates/kooch_render" }
+kooch_gizmos = { path = "crates/kooch_gizmos" }
+kooch_gizmos_handles = { path = "crates/kooch_gizmos_handles" }
+kooch_physics = { path = "crates/kooch_physics" }
+kooch_camera = { path = "crates/kooch_camera" }
+kooch_gravity = { path = "crates/kooch_gravity" }
+kooch_world = { path = "crates/kooch_world" }
+kooch_audio = { path = "crates/kooch_audio" }
+kooch_remote = { path = "crates/kooch_remote" }
+kooch_editor_core = { path = "crates/kooch_editor_core" }
+kooch_editor = { path = "crates/kooch_editor" }
+kooch_plugin_api = { path = "crates/kooch_plugin_api" }
 
 [package]
-name = "oh_my_engine"
+name = "kooch"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 # Always present
-ome_core.workspace = true
-ome_ecs.workspace = true
+kooch_core.workspace = true
+kooch_ecs.workspace = true
 
 # Optional (controlled by features)
-ome_window = { workspace = true, optional = true }
-ome_render = { workspace = true, optional = true }
-ome_gizmos = { workspace = true, optional = true }
-ome_input = { workspace = true, optional = true }
-ome_audio = { workspace = true, optional = true }
-ome_lighting = { workspace = true, optional = true }
-ome_physics = { workspace = true, optional = true }
-ome_camera = { workspace = true, optional = true }
-ome_gravity = { workspace = true, optional = true }
-ome_world = { workspace = true, optional = true }
-ome_remote = { workspace = true, optional = true }
-ome_editor_core = { workspace = true, optional = true }
-ome_plugin_api = { workspace = true, optional = true }
+kooch_window = { workspace = true, optional = true }
+kooch_render = { workspace = true, optional = true }
+kooch_gizmos = { workspace = true, optional = true }
+kooch_input = { workspace = true, optional = true }
+kooch_audio = { workspace = true, optional = true }
+kooch_lighting = { workspace = true, optional = true }
+kooch_physics = { workspace = true, optional = true }
+kooch_camera = { workspace = true, optional = true }
+kooch_gravity = { workspace = true, optional = true }
+kooch_world = { workspace = true, optional = true }
+kooch_remote = { workspace = true, optional = true }
+kooch_editor_core = { workspace = true, optional = true }
+kooch_plugin_api = { workspace = true, optional = true }
 
 # External (used by examples)
 wgpu.workspace = true
@@ -179,26 +179,26 @@ tracing.workspace = true
 
 [features]
 default = ["window", "render", "gizmos", "world"]
-window = ["dep:ome_window"]
-render = ["dep:ome_render", "window"]
-gizmos = ["dep:ome_gizmos", "render"]
-input = ["dep:ome_input", "window"]
-audio = ["dep:ome_audio"]
-lighting = ["dep:ome_lighting"]
-physics = ["dep:ome_physics"]
+window = ["dep:kooch_window"]
+render = ["dep:kooch_render", "window"]
+gizmos = ["dep:kooch_gizmos", "render"]
+input = ["dep:kooch_input", "window"]
+audio = ["dep:kooch_audio"]
+lighting = ["dep:kooch_lighting"]
+physics = ["dep:kooch_physics"]
 # Rapier's world walk, which the editor turns into a viewport overlay and
 # the physics_smoke example prints counts from. Never enabled by a game
 # build — see #558.
-physics-debug-render = ["physics", "ome_physics/debug-render"]
-camera = ["dep:ome_camera"]
-gravity = ["dep:ome_gravity", "physics"]
-world = ["dep:ome_world"]
+physics-debug-render = ["physics", "kooch_physics/debug-render"]
+camera = ["dep:kooch_camera"]
+gravity = ["dep:kooch_gravity", "physics"]
+world = ["dep:kooch_world"]
 # Remote editor server: lets a project expose its ECS over HTTP so the
 # standalone editor can drive it. Pulled in by projects that run in
 # `--remote` mode; independent of the embedded `editor`.
-remote = ["dep:ome_remote"]
-editor = ["dep:ome_editor_core"]
-dynamic = ["ome_core/dynamic", "ome_ecs/dynamic", "dep:ome_plugin_api"]
+remote = ["dep:kooch_remote"]
+editor = ["dep:kooch_editor_core"]
+dynamic = ["kooch_core/dynamic", "kooch_ecs/dynamic", "dep:kooch_plugin_api"]
 
 [[example]]
 name = "load_project_smoke"

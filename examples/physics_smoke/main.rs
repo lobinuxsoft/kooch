@@ -16,11 +16,11 @@
 //!     --features physics,physics-debug-render
 //! ```
 
-use ome_core::prelude::*;
-use ome_core::run_state::Playing;
-use ome_ecs::entity::Entity;
-use ome_ecs::plugin::EcsPlugin;
-use ome_physics::plugin::PhysicsPlugin;
+use kooch_core::prelude::*;
+use kooch_core::run_state::Playing;
+use kooch_ecs::entity::Entity;
+use kooch_ecs::plugin::EcsPlugin;
+use kooch_physics::plugin::PhysicsPlugin;
 
 /// How many *fixed steps* to run before reporting and quitting.
 ///
@@ -72,7 +72,7 @@ struct Heard {
 }
 
 fn main() {
-    ome_core::init_tracing();
+    kooch_core::init_tracing();
 
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);

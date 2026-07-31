@@ -12,12 +12,12 @@
 //! for, and a system that keeps a frame counter in host-owned storage —
 //! the shape that survives a reload.
 
-use oh_my_engine::ome_core::prelude::*;
-use oh_my_engine::ome_ecs::EcsPlugin;
+use kooch::kooch_core::prelude::*;
+use kooch::kooch_ecs::EcsPlugin;
 use std::path::PathBuf;
 
 fn main() {
-    ome_core::init_tracing();
+    kooch_core::init_tracing();
 
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);

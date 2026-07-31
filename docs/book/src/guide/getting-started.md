@@ -3,7 +3,7 @@
 You need a recent Rust toolchain (edition 2024) and this repository cloned somewhere.
 
 ```bash
-cargo run -p ome_editor
+cargo run -p kooch_editor
 ```
 
 That opens the Hub, where projects are created and opened. Everything else follows from

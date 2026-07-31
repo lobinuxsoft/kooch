@@ -1,0 +1,26 @@
+[package]
+name = "kooch_physics"
+description = "Physics subsystem: PhysicsBackend trait + Rapier-backed CPU implementation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core.workspace = true
+kooch_ecs.workspace = true
+glam.workspace = true
+tracing.workspace = true
+rapier3d.workspace = true
+slotmap = "1.0"
+
+[features]
+# Rapier's debug-render walk, which the editor turns into a viewport
+# overlay. Off by default so a shipped game never compiles it — the
+# overlay is a tool, and #558 keeps tools out of game builds.
+debug-render = ["rapier3d/debug-render"]
+
+[dev-dependencies]
+# The overlay's own tests need the walk they are testing.
+kooch_physics = { path = ".", features = ["debug-render"] }

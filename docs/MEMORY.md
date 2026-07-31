@@ -1,4 +1,4 @@
-# oh_my_engine — Project Memory (agent briefing)
+# kooch — Project Memory (agent briefing)
 
 > **READ FIRST** al retomar el engine desde cualquier máquina (Linux/Windows).
 > Fuente de verdad = este archivo + issues de GitHub. Consolidado de la memoria del asistente el 2026-07-13.
@@ -13,9 +13,9 @@ gameplay/lógica en CPU, física/render en GPU. Diseñado **planet-scale + GPU-d
 desde la foundation — todo se evalúa contra (a) escala planetaria, (b) GPU-driven hot
 loop sin CPU readback en frame.
 
-- **Licencia:** All Rights Reserved (repo privado/personal `lobinuxsoft/oh_my_engine`).
+- **Licencia:** All Rights Reserved (repo privado/personal `lobinuxsoft/kooch`).
 - **Branches:** `main` (release-please) ← `development` (integración) ← `feat/*`.
-- **Disambiguación:** `oh_my_engine` = motor (underscore). `oh-my-agent` = CLI coding agent
+- **Disambiguación:** `kooch` = motor (underscore). `oh-my-agent` = CLI coding agent
   con LLMs embebidos (guiones). Ambos en `/var/mnt/DATA/Repos/`. Si el user dice solo
   "oh my", preguntar cuál.
 
@@ -28,22 +28,22 @@ mínimo** (audit #239).
 
 ## Workspace (crates)
 
-`ome_core, ome_ecs, ome_window, ome_input, ome_lighting, ome_render, ome_physics,
-ome_gravity, ome_world, ome_audio, ome_scripting, ome_editor_core, ome_editor,
-ome_gizmos, ome_gizmos_handles, ome_editor_api`. Facade top-level `oh_my_engine` con
+`kooch_core, kooch_ecs, kooch_window, kooch_input, kooch_lighting, kooch_render, kooch_physics,
+kooch_gravity, kooch_world, kooch_audio, kooch_scripting, kooch_editor_core, kooch_editor,
+kooch_gizmos, kooch_gizmos_handles, kooch_editor_api`. Facade top-level `kooch` con
 `DefaultPlugins` PluginGroup (estilo Bevy).
 
-`ome_sdf` **ELIMINADO (2026-07)**. Contenía dos cosas sin relación: la librería de
+`kooch_sdf` **ELIMINADO (2026-07)**. Contenía dos cosas sin relación: la librería de
 primitivas CSG en WGSL, que alimentaba el raymarcher ya borrado en el pivot, y el
 almacenamiento de vóxeles disperso con LOD (#136). Lo primero murió con su renderer;
-lo segundo era el sustrato de Phase 2.5 y se mudó a **`ome_world::voxel`**, que es
+lo segundo era el sustrato de Phase 2.5 y se mudó a **`kooch_world::voxel`**, que es
 donde vive el resto del streaming.
 
-`ome_bvh` **ELIMINADO (2026-07)** junto con `ome_world::content` y el
+`kooch_bvh` **ELIMINADO (2026-07)** junto con `kooch_world::content` y el
 `ProceduralCitySource`. Era la estructura de aceleración del raymarcher — sus flags se
 llamaban `IS_RAYMARCH` / `ROLE_RAYMARCH_*` — y su único consumidor era contenido de chunk
 que nadie rendeaba desde el pivote: el path meshlet tiene su propio culling con Hi-Z. El
-`Aabb` se mudó a `ome_core`, que es donde correspondía. ~14k líneas.
+`Aabb` se mudó a `kooch_core`, que es donde correspondía. ~14k líneas.
 
 **El mundo contiene escenas, NO al revés (#566, corregido 2026-07-21).** Verificado contra
 los engines ECS: Bevy escribe `Scene`/`DynamicScene` DENTRO de un `World`
@@ -145,7 +145,7 @@ sería un caso que todo consumidor tendría que manejar y que se lee/escribe id�
 **#623 material de collider.** #560, #618, #563 mergeados; #626 y #627 también.
 
 **Antes de esto no había NADA autorable de material.** Todo collider tomaba la fricción 0.5
-y restitución 0.0 de rapier, y todo cuerpo damping 0.0. Un `grep` de `ome_physics` sólo
+y restitución 0.0 de rapier, y todo cuerpo damping 0.0. Un `grep` de `kooch_physics` sólo
 encontraba `damping` en los joints. Una escena se comportaba de un modo que nadie eligió y
 nadie podía cambiar.
 
@@ -222,7 +222,7 @@ Lo que sólo el solver sabe y no se derivaba de ningún componente: **contactos*
 masa**, **anclas de joints**, **AABBs de broad-phase**, y **sleep state** (gratis: rapier
 oscurece con `sleep_color_multiplier`).
 
-**`debug-render` es feature de cargo de rapier**, envuelta en una de `ome_physics` que sólo
+**`debug-render` es feature de cargo de rapier**, envuelta en una de `kooch_physics` que sólo
 prende el editor. Un build de juego ni la compila — #558 aplicado donde sale más barato. El
 método del trait tiene impl por defecto vacía: un backend que no puede introspeccionarse dice
 nada en vez de inventar una aproximación.
@@ -335,7 +335,7 @@ terminar teniendo un componente.* Joints (#560) es el hueco más grande; scene q
 
 ## Estado anterior (development HEAD `26ceeb0`, 2026-07-25)
 
-- **#605 CERRADO: `ome_ecs` se queda.** `bevy_ecs` evaluado con mediciones y descartado;
+- **#605 CERRADO: `kooch_ecs` se queda.** `bevy_ecs` evaluado con mediciones y descartado;
   ver la decisión sticky abajo. El ECS se mejora en el lugar, ordenado por dolor
   demostrado.
 - **#609 en curso (`feat/multi-scene`): varias escenas abiertas a la vez.** El world es el
@@ -429,7 +429,7 @@ disponible porque Avian está soldado a `bevy_ecs`.
 > recorrió los 38 variantes de `EditorAction`. El histórico de fases queda abajo como
 > contexto de *por qué* el código está armado así.
 
-**Problema raíz:** el editor standalone (`ome_editor`, launcher hub) NO puede cargar escenas
+**Problema raíz:** el editor standalone (`kooch_editor`, launcher hub) NO puede cargar escenas
 con componentes del proyecto (`unknown component type: test3::...::MoveComponent`). No es bug:
 es un editor genérico compilado antes que el proyecto exista; Rust resuelve tipos en
 compile-time, no hay ABI dinámica estable. **Solución (elegida por el user, "no alambre"):
@@ -445,21 +445,21 @@ separado; cuando el remoto madure, "Open Project" pasa a remoto (borrar un botó
 reescribir).
 
 **Fases (todas MERGED salvo la última):**
-- ✅ **1 — componentes dinámicos** (#548). `ome_ecs::dynamic_components`: componente sin tipo
+- ✅ **1 — componentes dinámicos** (#548). `kooch_ecs::dynamic_components`: componente sin tipo
   local se PARKEA (no aborta la carga, no vacía el mundo). Round-trip intacto. Mató pérdida
   de datos real. `SceneError::UnknownComponent` eliminado.
-- ✅ **2 — identidad portable** (#549). `ome_ecs::component::{ComponentId, ComponentNames}`:
+- ✅ **2 — identidad portable** (#549). `kooch_ecs::component::{ComponentId, ComponentNames}`:
   interner nombre↔u32 process-local. `EditorAction`/DTOs llevan `ComponentId`; `TypeId` se
   queda en reflexión local. Seam `dispatch::action_to_command` resuelve ComponentId→TypeId.
-- ✅ **3 — crate `ome_remote`** (#550). Server `tiny_http` SÍNCRONO (thread dedicado + puente
+- ✅ **3 — crate `kooch_remote`** (#550). Server `tiny_http` SÍNCRONO (thread dedicado + puente
   mpsc al main, NO async, NO tokio) + `RemoteClient` blocking (std::net). `protocol` (serde,
   componentes por nombre, Entity=(index,generation), reusa ReflectValue). Métodos:
   ping/list_entities/get_schema/set_field/add/remove/spawn/despawn/save/load. DEFAULT_PORT 15703.
 - ✅ **4a — modo `--remote`** (#551). Facade: dep opcional tras feature `remote` + prelude.
   Scaffold main.rs 3er modo `cargo run -- --remote` = DefaultPlugins + RemotePlugin +
   run_systems:false. Verificado vs TEST3 real por HTTP.
-- ✅ **4b.1 — `RemoteSession`** (#552). `ome_editor_core::remote_session`: lanza el proyecto
-  (patrón PlayState + env OME_ENGINE_ROOT/OME_PROJECT_ROOT), handshake poll_ready, cachea
+- ✅ **4b.1 — `RemoteSession`** (#552). `kooch_editor_core::remote_session`: lanza el proyecto
+  (patrón PlayState + env KOOCH_ENGINE_ROOT/KOOCH_PROJECT_ROOT), handshake poll_ready, cachea
   snapshot+schema.
 - ✅ **4b.2 — `RemoteMirror`** (#553). Reconstruye el snapshot en el ECS local del editor,
   keyed por `EntityId` (NO por nombre; 5 "Mesh" duplicados). Engine components → reflected
@@ -516,15 +516,15 @@ el compute deferred):
 
 **Decidido por el user el 2026-07-25. Es lo primero de la próxima sesión, antes de #137.**
 
-El motivo declarado por el que `ome_ecs` era propio eran los storages GPU, que `bevy_ecs`
-no tiene. **#603 los borró — nunca los usó nadie.** Así que `ome_ecs` es ahora un ECS
+El motivo declarado por el que `kooch_ecs` era propio eran los storages GPU, que `bevy_ecs`
+no tiene. **#603 los borró — nunca los usó nadie.** Así que `kooch_ecs` es ahora un ECS
 archetype CPU-only: la misma categoría que `bevy_ecs`, con mucha menos madurez detrás. La
 justificación hay que re-derivarla, no repetirla.
 
-Medido: `ome_ecs` son **9.467 líneas y 186 tests**, con **21 manifests dependiendo** y **43
+Medido: `kooch_ecs` son **9.467 líneas y 186 tests**, con **21 manifests dependiendo** y **43
 símbolos** usados desde afuera del crate.
 
-El dato que reencuadra la pregunta: **`ome_ecs` no es sólo un ECS.** Es ECS core +
+El dato que reencuadra la pregunta: **`kooch_ecs` no es sólo un ECS.** Es ECS core +
 reflexión (`bevy_reflect`) + formato de escena (`bevy_scene`) + componentes de engine
 (`bevy_transform`, componentes de `bevy_render`) + soporte del editor remoto
 (`dynamic_components`, `ephemeral`). Así que "adoptar `bevy_ecs`" es en realidad adoptar
@@ -537,7 +537,7 @@ change detection (`Changed<T>`/`Added<T>`), `SystemParam`, `par_iter`, y grafo d
 problemas de orden** —el orden del frame en #570, la carrera mirror-vs-drag en #572— y un
 schedule de verdad los expresa declarativamente en vez de por orden de inserción.
 
-Salida plausible: quedarse con `ome_ecs` y portar mecanismos sueltos (schedule graph,
+Salida plausible: quedarse con `kooch_ecs` y portar mecanismos sueltos (schedule graph,
 change detection) a medida que duelan. Esta sesión demostró que robarle diseños a Bevy de
 a uno funciona: el fix de #602 (padre por índice, no por nombre) salió de leer cómo Bevy
 remapea referencias a entidades con `EntityMapper`.
@@ -845,7 +845,7 @@ el contenido rompería el vínculo que hace que editar el origen actualice las i
 **Dos cosas a resolver en la Fase A porque tocan tipos YA MERGEADOS:**
 
 1. **Raíz única.** Instanciar algo como unidad con transform exige una raíz; Godot lo
-   obliga. Nuestro `.ome_scene` es lista plana con parents opcionales → N raíces sueltas no
+   obliga. Nuestro `.kooch_scene` es lista plana con parents opcionales → N raíces sueltas no
    tienen "un" transform. O se exige raíz única, o se envuelve la instancia al instanciar.
 2. **Identidad de la instancia.** `EntityRef::Persistent { scene, id }` dice "la entidad 1
    de la escena X". Con X instanciada tres veces eso es **ambiguo**. La respuesta de Unity:
@@ -906,7 +906,7 @@ tampoco las querríamos.
 ### Un frame se pide, no se asume (locked 2026-07-29, #656)
 
 **Decisión: ningún loop del engine vuelve a pedir el frame siguiente incondicionalmente.**
-Cada frame declara qué necesita el próximo vía `ome_core::frame_pacing::FrameRequest`
+Cada frame declara qué necesita el próximo vía `kooch_core::frame_pacing::FrameRequest`
 (`Wait` / `After(d)` / `Continuous`), y el runner lo traduce. Es monotónico dentro del frame:
 gana el más urgente, así que el orden de dibujo no puede convencer a un sistema de renunciar
 a un repaint que pidió.
@@ -963,7 +963,7 @@ así que el camino remoto es una elección, no una necesidad física. Se elige i
 `stabby` + `cdylib` + tabla de punteros salió del workspace entero. No queda una referencia.
 
 **Lo que hay en su lugar:** el proyecto compila como **`dylib`** (no `cdylib`), depende de
-`ome_plugin_api` como cualquier crate, y **los tipos cruzan como tipos de Rust**. Sin vtables
+`kooch_plugin_api` como cualquier crate, y **los tipos cruzan como tipos de Rust**. Sin vtables
 manuales, sin capa de traducción, sin `extern "C"` en el contrato.
 
 **El precio, aceptado a ojos abiertos:** Rust no tiene ABI estable, así que el plugin y el
@@ -972,7 +972,7 @@ proyecto — que es el caso de uso real, porque lo compila el mismo editor — y
 plugins de terceros distribuidos como binario. Si ese caso vuelve a hacer falta, se abre una
 issue nueva con el problema, no se resucita el diseño de stabby.
 
-`BuildStamp` (`ome_plugin_api/src/version.rs`, capturado en `build.rs` desde `rustc -V -v`)
+`BuildStamp` (`kooch_plugin_api/src/version.rs`, capturado en `build.rs` desde `rustc -V -v`)
 graba compilador y versión de API para que un mismatch sea un rechazo claro y no un crash.
 
 **Medido, no supuesto:** `TypeId` sobrevive un rebuild sólo-del-proyecto. La identidad se
@@ -1039,31 +1039,31 @@ de proyecto con campos no escalares.
 Existían, nunca los usó nadie, y dos sistemas corrían cada frame sin consumidor. Los datos
 llegan al GPU por los buffers de instancia del pipeline de meshlets, armados desde una
 query CPU. **Un solo camino, no dos.** Esto invalidó la justificación histórica de por qué
-`ome_ecs` es propio — la re-derivación está abajo.
+`kooch_ecs` es propio — la re-derivación está abajo.
 
-### `ome_ecs` se queda y se mejora (locked 2026-07-25, #605 cerrado)
+### `kooch_ecs` se queda y se mejora (locked 2026-07-25, #605 cerrado)
 
 `bevy_ecs` **no se adopta**. Evaluado con mediciones, no con opiniones; no apareció ningún
 blocker técnico, así que la decisión es sobre qué compra la migración frente a qué cuesta.
 
 Lo que la evaluación descartó como riesgo: `bevy_ecs` es standalone de verdad (65 crates
 con `reflect+serialize+multi_threaded`, cero `bevy_app`/`bevy_render`); el pipeline
-GPU-driven ni se entera (todo `ome_render` toca el ECS por `Query` en **4 lugares**); y
+GPU-driven ni se entera (todo `kooch_render` toca el ECS por `Query` en **4 lugares**); y
 `bevy_reflect` expresa `choices`/`shown_when` con custom attributes.
 
 Lo que lo decidió:
 
 - **Los 42 sitios que acceden al storage directo (`get_cpu`) contra 3 usos de `Query`** son
   un problema en *todos* los caminos. No son motivo para migrar: son trabajo que hay que
-  hacer igual, y `ome_ecs::Query` ya expresa tuplas, `Option<Q>`, `With`/`Without` y
+  hacer igual, y `kooch_ecs::Query` ya expresa tuplas, `Option<Q>`, `With`/`Without` y
   `&mut T`. **Encapsular el ECS detrás de `Query` es el prerequisito de cualquier cambio
   de backend** — hoy la superficie de contacto son 80 archivos.
 - **`EntityAllocator::revive`** — identidad literal a través del Play/Stop — es algo que
   `bevy_ecs` rechaza **por diseño** (`spawn_at` no acepta una generación consumida; eso
-  *es* su garantía de seguridad de handles), y hay **177 sitios fuera de `ome_ecs`** que
+  *es* su garantía de seguridad de handles), y hay **177 sitios fuera de `kooch_ecs`** que
   guardan un `Entity` en un campo. Para un engine con editor, nuestro diseño resuelve mejor
   un problema que Bevy no tiene.
-- **51 de los 80 archivos afectados son `ome_editor_core`**, que es justo donde Bevy no
+- **51 de los 80 archivos afectados son `kooch_editor_core`**, que es justo donde Bevy no
   ofrece diseño para copiar: no tiene editor (`bevy_editor_prototypes` archivado, el
   trabajo se movió al repo principal alrededor de BSN).
 
@@ -1072,7 +1072,7 @@ produjo el port de SPD, `aabb_in_frustum` y el remapeo de entidades. No se adopt
 dependencia.
 
 Mejoras ordenadas por dolor demostrado, no por paridad de features: identidad de entidades
-(#607, hecho) → grafo de scheduling en `ome_core` (los bugs de orden #570/#572 viven en
+(#607, hecho) → grafo de scheduling en `kooch_core` (los bugs de orden #570/#572 viven en
 `app.rs`, no en el ECS) → convertir los 42 storage-sites a `Query` → change detection
 (recién tiene sentido después de eso: `Changed<T>` sólo existe dentro de una query).
 Sparse sets y `par_iter` cuando duelan; medido, hoy no duelen.
@@ -1089,7 +1089,7 @@ GPU-driven sobre wgpu eso decide solo. Bonus: rapier 0.32+ trae **collider de v�
 disperso**, único entre engines rigid-body generales — clave con el pipeline voxel/DC.
 
 **El backend va SIEMPRE detrás del trait `PhysicsBackend`.** `rapier3d::` solo puede
-importarse dentro de `ome_physics::rapier_backend`; en cualquier otro archivo es un bug de
+importarse dentro de `kooch_physics::rapier_backend`; en cualquier otro archivo es un bug de
 arquitectura. Los componentes ECS describen intención (forma, masa, tipo de cuerpo), no
 handles. Motivo: la migración a wgrapier tiene que ser reemplazar un crate, no reescribir
 el engine.
@@ -1108,23 +1108,23 @@ escenas solapadas en el mismo volumen, edición paralela sin conflicto en git, y
 distinción entre descargar una escena y descargar una celda.
 
 `SceneDocument` NO se reemplaza: pasa a ser el payload por `(escena, celda)`. El
-`.ome_scene` actual es "el mundo entero en una sección" — la sección 0 de Unity antes de
+`.kooch_scene` actual es "el mundo entero en una sección" — la sección 0 de Unity antes de
 partir nada. **Sección siempre residente** (carga primera, descarga última) = ahí vive la
 entidad de focus, que no puede ser dueña de una celda que se descarga sola.
 
 ### SDF: murió la técnica, vive el dato (#565)
 
-`ome_sdf` y `ome_bvh` ELIMINADOS, ~14k líneas. Criterio del usuario: *se queda lo que sirve
+`kooch_sdf` y `kooch_bvh` ELIMINADOS, ~14k líneas. Criterio del usuario: *se queda lo que sirve
 al sistema galáctico y a planetas terraformables; lo demás muere y se rehace bien contra el
 motor de física actual.* Nada de "tal vez lo usemos" — si hace falta, cherry-pick del
 historial.
 
-Fuera: brushes CSG en WGSL, los 7 componentes `Sdf*` de ome_ecs, `ome_bvh` entero (flags
+Fuera: brushes CSG en WGSL, los 7 componentes `Sdf*` de kooch_ecs, `kooch_bvh` entero (flags
 `IS_RAYMARCH`/`ROLE_RAYMARCH_*`; su único consumidor era contenido que nadie rendeaba desde
 el pivote), `ChunkContent`, `ProceduralCitySource` (el editor la registraba y generaba
 primitivas para un pool que nadie leía — "nunca funcionó" = desconectada, no rota),
-`VolumePrimitive`. Adentro: `ome_world::voxel` (sparse storage con LOD, mudado desde
-ome_sdf) y todo el streaming por distancia. `Aabb` se mudó a `ome_core`.
+`VolumePrimitive`. Adentro: `kooch_world::voxel` (sparse storage con LOD, mudado desde
+kooch_sdf) y todo el streaming por distancia. `Aabb` se mudó a `kooch_core`.
 
 **No confundir los dos SDF**: murió SDF-como-técnica-de-render/authoring. Vive
 SDF-como-formato-de-dato (un vóxel guarda una distancia con signo) — de ahí extrae malla
@@ -1154,7 +1154,7 @@ falta lo primero.
 ### Editor remoto (locked 2026-07-21, épico C)
 
 - **El proyecto es dueño del ECS; el editor standalone es cliente.** No cargar tipos del
-  proyecto en el editor (no hay ABI Rust estable). Protocolo HTTP tipo BRP (`ome_remote`).
+  proyecto en el editor (no hay ABI Rust estable). Protocolo HTTP tipo BRP (`kooch_remote`).
 - **Transporte = socket local (`interprocess`) SÍNCRONO en thread lateral + puente mpsc al
   main** (PR #654; era `tiny_http` sobre TCP). NUNCA async/tokio en el core del engine. El
   server no toca el ECS fuera del main thread (`Stage::First`).
@@ -1202,8 +1202,8 @@ falta lo primero.
 ### Herramientas: trampas que costaron tiempo real el 2026-07-25
 
 - **`rustfmt <mod.rs>` formatea TODOS los módulos que ese archivo declara.** Formatear
-  `mesh/mod.rs` arrastró `gltf_loader/*`; `ome_gizmos/src/lib.rs` arrastró `mesh/` y
-  `renderer/`; `ome_ecs/src/lib.rs` arrastró 15 módulos. **Tres veces en una sesión.**
+  `mesh/mod.rs` arrastró `gltf_loader/*`; `kooch_gizmos/src/lib.rs` arrastró `mesh/` y
+  `renderer/`; `kooch_ecs/src/lib.rs` arrastró 15 módulos. **Tres veces en una sesión.**
   Formatear sólo archivos hoja y verificar con `git status` antes de commitear.
 - **`--delete-branch` en un PR que es base de otro CIERRA el de arriba** y GitHub no lo deja
   reabrir si la base ya no existe. Pasó con #582 → hubo que abrir #583. Retargetear a
@@ -1220,7 +1220,7 @@ falta lo primero.
 - **`grep -c` con 0 matches sale con exit 1** y corta cadenas `&&`. Separar la verificación
   del commit.
 - **No correr suites de GPU con el editor abierto**: un `cargo test --workspace` murió con
-  SIGSEGV en `ome_render --lib` compitiendo por la GPU con un editor vivo. No reprodujo.
+  SIGSEGV en `kooch_render --lib` compitiendo por la GPU con un editor vivo. No reprodujo.
 
 - **rustfmt version drift (CRÍTICO):** rustfmt local (1.8.0) reformatea TODO el repo distinto a
   como está commiteado, y NO hay toolchain pin ni CI fmt-check. **NUNCA `git add -A crates/<x>/`
@@ -1240,7 +1240,7 @@ falta lo primero.
   texture del render stage necesita `RENDER_ATTACHMENT`. `FLOAT32_FILTERABLE` required para linear
   sampler sobre R32Float. `R16Float` NO expone `STORAGE_BINDING` garantizado → usar R32Float.
 - **Reversed-Z:** nuevos passes → clear `0.0`, comparator `Greater`/`GreaterEqual`.
-  `ome_render::perspective_rh_reverse_z` helper canon. Frustum: usar `row2` para clip.z>=0,
+  `kooch_render::perspective_rh_reverse_z` helper canon. Frustum: usar `row2` para clip.z>=0,
   NUNCA `row3 + row2` (eso es OpenGL [-1,1]).
 - **Mesa radv SIGSEGV** con test threads paralelos en crates que init wgpu → `--test-threads=1`.
   naga parse+validate a nivel lib corre seguro sin GPU.
@@ -1269,7 +1269,7 @@ falta lo primero.
 Viewport panel → `egui::Image` (offscreen ViewportTarget) · Inspector gimbal-safe (Euler-cached) +
 Local/World rotation toggle · drag-drop Components · Hierarchy propagation · `GlobalTransform::lossy_scale()`
 + warning shear · Editor camera (orbit MMB / pan Shift+MMB / zoom rueda / fly RMB+WASD+QE / focus F) ·
-Scene serialization `.ome_scene` (RON) con `EphemeralComponents` filter · SceneManager (path+dirty+load/save)
+Scene serialization `.kooch_scene` (RON) con `EphemeralComponents` filter · SceneManager (path+dirty+load/save)
 · default scene auto-create · gizmos (translate/rotate/scale + snap + Local/World) · undo/redo per drag ·
 native asset picker · persistent dock layout · Perf HUD (FPS/CPU/GPU/RAM/VRAM/draws) · mdBook docs en `docs/book/`
 · **Asset Browser** (árbol del crate + drag-drop import + menú contextual + inline create/rename + drag
@@ -1325,7 +1325,7 @@ Hoy son ~12 assets así que no se nota; con un catálogo grande es el mismo bug.
 - `docs/research/editor-three-system-architecture.md`, `sdf-csg-composition.md`, `wgpu-capabilities.md`.
 - `docs/book/` — mdBook.
 
-## 2026-07-30 — `.scene` y `.prefab`, no `.ome_scene`
+## 2026-07-30 — `.scene` y `.prefab`, no `.kooch_scene`
 
 Un prefab y una escena son el **mismo `SceneDocument`** escrito por el mismo serializador.
 Lo que difiere es un **invariante**: un prefab tiene exactamente una raíz, una escena
@@ -1337,7 +1337,7 @@ Dos extensiones, un formato — la misma línea que traza Unity (`.unity` y `.pr
 mismo YAML). El invariante se chequea **al escribir**, así que todo `.prefab` en disco se
 puede instanciar.
 
-Se cayó el prefijo `ome_`: namespaceaba contra una colisión que no ocurre (los archivos
+Se cayó el prefijo `kooch_`: namespaceaba contra una colisión que no ocurre (los archivos
 viven en el `scenes/`/`assets/` del propio proyecto, no en una carpeta compartida) y hacía
 del *engine* lo visible de un archivo cuya propiedad interesante es su formato.
 
