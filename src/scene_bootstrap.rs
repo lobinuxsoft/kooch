@@ -15,13 +15,13 @@
 
 use std::path::PathBuf;
 
-use ome_core::app::App;
-use ome_core::plugin::Plugin;
-use ome_core::resource::Resources;
-use ome_core::stage::Stage;
-use ome_ecs::SceneManager;
+use kooch_core::app::App;
+use kooch_core::plugin::Plugin;
+use kooch_core::resource::Resources;
+use kooch_core::stage::Stage;
+use kooch_ecs::SceneManager;
 
-use ome_core::scene_paths::DEFAULT_SCENE_REL_PATH;
+use kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH;
 
 /// Resource holding the path queued for the startup loader.
 struct BootScene(PathBuf);
@@ -97,7 +97,7 @@ fn load_boot_scene(resources: &mut Resources) {
             // edited while it was closed left stale copies. This is the
             // case that motivates it: opening a project is the longest a
             // scene is ever closed for.
-            ome_ecs::scene::propagate::refresh_all(resources);
+            kooch_ecs::scene::propagate::refresh_all(resources);
         }
         Err(err) => tracing::error!(
             "SceneBootstrapPlugin: failed to load {}: {err}",

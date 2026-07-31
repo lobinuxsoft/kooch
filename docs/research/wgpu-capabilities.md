@@ -2,7 +2,7 @@
 
 **Scope**: authoritative, project-grounded audit of what `wgpu 29` (our current pinned version) can and cannot do, so future rendering features can be designed against a known capability matrix instead of ad-hoc research per issue.
 
-**Related issue**: [#238](https://github.com/lobinuxsoft/oh_my_engine/issues/238).
+**Related issue**: [#238](https://github.com/lobinuxsoft/kooch/issues/238).
 **Pinned version**: `wgpu = "29"` (workspace `Cargo.toml`).
 **Target hardware**: AMD RDNA 4 (RX 9070 XT) on Linux Bazzite / RADV primary; Windows and Steam Deck RDNA 2 as secondary targets.
 **Status as of this revision**: **complete — Areas A through I cover the full audit.**
@@ -532,7 +532,7 @@ RDNA 2 gfx1033 @ 15 W TDP cannot afford the full stack at 60 Hz 1280×800, let a
 - **ON by default**: tone mapping (AgX analytic — no LUT sample), SMAA 1x (cheaper + sharper than FXAA at low res), bloom **half-res** chain with 4 mips max, vignette, sharpen.
 - **OFF by default, user-opt-in**: DoF (2–3 ms, battery killer), SSR (3–6 ms — catastrophic), motion blur (1+ ms), GTAO bent normals (0.25× extra), 3D-LUT color grading (swap for analytic).
 - **Replace, don't remove**: TAA → SMAA-T2x or plain SMAA. TAA on 8-CU Deck is feasible (~1.5 ms est) but motion-vector prepass doubles G-buffer bandwidth — avoid unless Area B MRT already paid for.
-- **Catastrophic combo**: SSR + DoF + TAA + bloom-at-full-res simultaneously exceeds handheld 16.6 ms / 60 Hz budget on RDNA 2 before the scene is even shaded. CoD:AW explicitly targeted 16.6 ms on console-class — Deck is slower. Gate with a single `PowerProfile::{Plugged, Battery}` enum queried from `ome_window`.
+- **Catastrophic combo**: SSR + DoF + TAA + bloom-at-full-res simultaneously exceeds handheld 16.6 ms / 60 Hz budget on RDNA 2 before the scene is even shaded. CoD:AW explicitly targeted 16.6 ms on console-class — Deck is slower. Gate with a single `PowerProfile::{Plugged, Battery}` enum queried from `kooch_window`.
 
 ### I.5 Upscaling options
 
@@ -619,11 +619,11 @@ Concrete signals that would justify dropping wgpu for `ash` or hybrid. **None ac
 
 Opened as tracking issues in this repo:
 
-- [#240 — research(render): wgpu deferred pipeline capabilities (area B)](https://github.com/lobinuxsoft/oh_my_engine/issues/240)
-- [#241 — research(render): wgpu compute shader capabilities (area C)](https://github.com/lobinuxsoft/oh_my_engine/issues/241)
-- [#242 — research(render): wgpu 3D texture / volumetric capabilities (area D)](https://github.com/lobinuxsoft/oh_my_engine/issues/242)
-- [#243 — research(render): wgpu ergonomics + debugging (area G)](https://github.com/lobinuxsoft/oh_my_engine/issues/243)
-- [#244 — research(render): wgpu deployment + packaging (area H)](https://github.com/lobinuxsoft/oh_my_engine/issues/244)
-- [#245 — research(render): post-processing effects feasibility (area I)](https://github.com/lobinuxsoft/oh_my_engine/issues/245)
+- [#240 — research(render): wgpu deferred pipeline capabilities (area B)](https://github.com/lobinuxsoft/kooch/issues/240)
+- [#241 — research(render): wgpu compute shader capabilities (area C)](https://github.com/lobinuxsoft/kooch/issues/241)
+- [#242 — research(render): wgpu 3D texture / volumetric capabilities (area D)](https://github.com/lobinuxsoft/kooch/issues/242)
+- [#243 — research(render): wgpu ergonomics + debugging (area G)](https://github.com/lobinuxsoft/kooch/issues/243)
+- [#244 — research(render): wgpu deployment + packaging (area H)](https://github.com/lobinuxsoft/kooch/issues/244)
+- [#245 — research(render): post-processing effects feasibility (area I)](https://github.com/lobinuxsoft/kooch/issues/245)
 
 All six consolidated into this document in the same PR; close on merge.

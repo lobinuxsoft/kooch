@@ -2,8 +2,8 @@
 
 **Scope**: design analysis for the order-independent / commutative CSG operator semantics in the SDF ray-march renderer. Outcome is a recommended approach with explicit trade-offs, sized as the foundation of the destructible-terrain + planet-scale rendering roadmap.
 
-**Related issue**: [#211](https://github.com/lobinuxsoft/oh_my_engine/issues/211).
-**Status**: **complete** — recommendation issued, follow-up implementation issue is [#307](https://github.com/lobinuxsoft/oh_my_engine/issues/307).
+**Related issue**: [#211](https://github.com/lobinuxsoft/kooch/issues/211).
+**Status**: **complete** — recommendation issued, follow-up implementation issue is [#307](https://github.com/lobinuxsoft/kooch/issues/307).
 
 ## Table of contents
 
@@ -30,7 +30,7 @@ Beyond the immediate bug, this directional semantics blocks every higher-scale f
 
 ## Current behaviour
 
-`crates/ome_render/shaders/raymarch_main.wgsl::eval_scene` (truncated):
+`crates/kooch_render/shaders/raymarch_main.wgsl::eval_scene` (truncated):
 
 ```wgsl
 fn eval_scene(p: vec3<f32>) -> f32 {
@@ -47,7 +47,7 @@ fn eval_scene(p: vec3<f32>) -> f32 {
 
 `apply_blend` dispatches to `sdf_smooth_union` / `sdf_smooth_intersection` / `sdf_smooth_subtraction` per-instance. Each one is a **left-fold** of the current accumulated field with this instance's distance.
 
-The `SdfBlend` component (`crates/ome_ecs/src/sdf_blend.rs`) carries `mode` and `smoothness` as **per-entity intent**, but the shader interprets them as **per-step operators** in a sequence — that's where the semantic mismatch lives.
+The `SdfBlend` component (`crates/kooch_ecs/src/sdf_blend.rs`) carries `mode` and `smoothness` as **per-entity intent**, but the shader interprets them as **per-step operators** in a sequence — that's where the semantic mismatch lives.
 
 ## Approaches surveyed
 
@@ -188,7 +188,7 @@ The smoothness now sits on the **edge between subtrees**, which is where smooth 
 
 ### Migration of existing scenes
 
-A scene migration pass runs once when an old `.ome_scene` is loaded:
+A scene migration pass runs once when an old `.kooch_scene` is loaded:
 
 1. Group existing entities by `SdfBlend.mode` into three buckets: ADD-like (`MODE_REPLACE` + `MODE_SMOOTH_UNION`), SUB (`MODE_SMOOTH_SUBTRACTION`), INTERSECT (`MODE_SMOOTH_INTERSECTION`).
 2. Build a default tree with this shape:
@@ -221,19 +221,19 @@ The user-facing goal: render a planet visible from space, traversable to surface
 
 | Piece | What it does | Status |
 |---|---|---|
-| **1. CSG tree dynamic (RPN)** | Edit-time and runtime CSG model: every shape, every explosion, every carve is a tree node | This doc → [#307](https://github.com/lobinuxsoft/oh_my_engine/issues/307) |
-| **2. Spatial chunking** | World divided into chunks (e.g. 32³ m); edits affect only chunks they touch; LOD per chunk by distance | [#54](https://github.com/lobinuxsoft/oh_my_engine/issues/54) — already designed for planet-scale |
-| **3. BVH per-chunk culling** | Sphere-trace only the chunks the ray actually enters; shared BVH for ray, frustum, and broadphase queries | [#115](https://github.com/lobinuxsoft/oh_my_engine/issues/115) — GPU LBVH design done |
-| **4. Sparse SDF storage** | Per-chunk: a sparse subgrid voxel field (the "baked" SDF) plus a tail of recent edits | [#136](https://github.com/lobinuxsoft/oh_my_engine/issues/136) — sparse 16³ subgrids designed |
-| **5. Edit Baker pipeline** | Bridge: when a chunk's RPN delta tree exceeds a threshold, rasterise it into the sparse subgrids and reset the delta to empty | [#309](https://github.com/lobinuxsoft/oh_my_engine/issues/309) |
+| **1. CSG tree dynamic (RPN)** | Edit-time and runtime CSG model: every shape, every explosion, every carve is a tree node | This doc → [#307](https://github.com/lobinuxsoft/kooch/issues/307) |
+| **2. Spatial chunking** | World divided into chunks (e.g. 32³ m); edits affect only chunks they touch; LOD per chunk by distance | [#54](https://github.com/lobinuxsoft/kooch/issues/54) — already designed for planet-scale |
+| **3. BVH per-chunk culling** | Sphere-trace only the chunks the ray actually enters; shared BVH for ray, frustum, and broadphase queries | [#115](https://github.com/lobinuxsoft/kooch/issues/115) — GPU LBVH design done |
+| **4. Sparse SDF storage** | Per-chunk: a sparse subgrid voxel field (the "baked" SDF) plus a tail of recent edits | [#136](https://github.com/lobinuxsoft/kooch/issues/136) — sparse 16³ subgrids designed |
+| **5. Edit Baker pipeline** | Bridge: when a chunk's RPN delta tree exceeds a threshold, rasterise it into the sparse subgrids and reset the delta to empty | [#309](https://github.com/lobinuxsoft/kooch/issues/309) |
 
 Adjacent / supporting issues that consume the result:
 
-- [#91](https://github.com/lobinuxsoft/oh_my_engine/issues/91) **Hybrid Rendering Pipeline (SDF + Mesh)** — overall architecture; SDF pass evaluates the chunked CSG, mesh pass paints rasterised geometry on top, depth-tested against the SDF.
-- [#90](https://github.com/lobinuxsoft/oh_my_engine/issues/90) **Navigation with terraformation** — NavOctree generated from the SDF resulting from CSG + bake; explicitly assumes the SDF is dynamically modifiable (which D + #136 + Baker provides).
-- [#248](https://github.com/lobinuxsoft/oh_my_engine/issues/248) **AtmosphereVolume per-planet** — volumetric scattering shell rendered around each planet; "planet visible from space" = atmosphere shell + planet's chunked SDF behind it. Independent of the CSG model; consumes the depth result.
-- [#53](https://github.com/lobinuxsoft/oh_my_engine/issues/53) **LOD by distance** — per-chunk LOD selection; the sparse subgrid #136 already designs LOD into its storage layer.
-- [#117](https://github.com/lobinuxsoft/oh_my_engine/issues/117) **Virtual Geometry (Nanite-inspired)** — the mesh side of #91; not directly part of this roadmap but composes via the depth buffer.
+- [#91](https://github.com/lobinuxsoft/kooch/issues/91) **Hybrid Rendering Pipeline (SDF + Mesh)** — overall architecture; SDF pass evaluates the chunked CSG, mesh pass paints rasterised geometry on top, depth-tested against the SDF.
+- [#90](https://github.com/lobinuxsoft/kooch/issues/90) **Navigation with terraformation** — NavOctree generated from the SDF resulting from CSG + bake; explicitly assumes the SDF is dynamically modifiable (which D + #136 + Baker provides).
+- [#248](https://github.com/lobinuxsoft/kooch/issues/248) **AtmosphereVolume per-planet** — volumetric scattering shell rendered around each planet; "planet visible from space" = atmosphere shell + planet's chunked SDF behind it. Independent of the CSG model; consumes the depth result.
+- [#53](https://github.com/lobinuxsoft/kooch/issues/53) **LOD by distance** — per-chunk LOD selection; the sparse subgrid #136 already designs LOD into its storage layer.
+- [#117](https://github.com/lobinuxsoft/kooch/issues/117) **Virtual Geometry (Nanite-inspired)** — the mesh side of #91; not directly part of this roadmap but composes via the depth buffer.
 
 ### Per-chunk data model (the unifying contract)
 
@@ -277,14 +277,14 @@ For the implementation issue derived from this doc — minimum to land **just D*
   - New `Token` SSBO replaces / augments `instances`. Layout: `kind: u32, op: u32, smoothness: f32, primitive_index: u32` (one slot per node, ~16 bytes; primitives still live in their own SSBO indexed by `primitive_index` for leaves).
   - `eval_scene` becomes the postfix evaluator above. Stack size constant `MAX_STACK = 16` — validate at scene-build time.
 - **CPU-side**:
-  - `crates/ome_render/src/raymarch/update.rs` builds the CSG tree from the ECS, walks it DFS, emits tokens into the buffer.
+  - `crates/kooch_render/src/raymarch/update.rs` builds the CSG tree from the ECS, walks it DFS, emits tokens into the buffer.
   - For the MVP, the tree is built automatically from the existing flat ECS (group by old `SdfBlend.mode`, build the canonical 3-role default tree from the migration section above).
   - `SceneMeta` gains `token_count` (replaces `instance_count`).
 - **Editor**:
   - The current Inspector for `SdfBlend.mode` continues to work — it edits the operator edge that connects the entity into its auto-built default tree. No World-panel UX change needed for MVP.
   - "Tree editor" (manual nesting / grouping in the World panel) is **out of scope** for #307 — filed as a separate UX issue when needed.
 - **Migration**:
-  - Old `.ome_scene` files load via the migration described above. Render output is byte-identical to A (golden image test).
+  - Old `.kooch_scene` files load via the migration described above. Render output is byte-identical to A (golden image test).
 
 ### Acceptance for `#307`
 
@@ -303,8 +303,8 @@ Filed as separate issues only when concrete need emerges:
 - **Tree editor UX in the World panel** (manual grouping, drag-into-group, tree visualisation). Once the user wants mixed hard/smooth across nested groups.
 - **Per-edge smoothness manual override** in Inspector. Today the migration sets it from the entity's old `SdfBlend.smoothness`; later, surface the edge directly.
 - **N-ary smin operators** (collapse a chain of pairwise smooth-unions into one N-ary node). Optimisation for fan-in heavy scenes; needs derivation for variants beyond exponential.
-- **Spatial partitioning + chunking** — [#54](https://github.com/lobinuxsoft/oh_my_engine/issues/54), [#115](https://github.com/lobinuxsoft/oh_my_engine/issues/115), [#136](https://github.com/lobinuxsoft/oh_my_engine/issues/136), Edit Baker (new issue).
-- **Per-edge LOD smoothing** — distant chunks could use cheaper smin variants. Companion to [#53](https://github.com/lobinuxsoft/oh_my_engine/issues/53).
+- **Spatial partitioning + chunking** — [#54](https://github.com/lobinuxsoft/kooch/issues/54), [#115](https://github.com/lobinuxsoft/kooch/issues/115), [#136](https://github.com/lobinuxsoft/kooch/issues/136), Edit Baker (new issue).
+- **Per-edge LOD smoothing** — distant chunks could use cheaper smin variants. Companion to [#53](https://github.com/lobinuxsoft/kooch/issues/53).
 
 ## References
 
@@ -312,9 +312,9 @@ Filed as separate issues only when concrete need emerges:
 - [Inigo Quilez — *Modeling with Distance Functions*][iq-distfunc]. The classic CSG operators. Hard `min` / `max` are commutative; `max(-a, b)` (subtraction) is **not** commutative across operands. The smooth variants are bounds, not exact SDFs — that's why sphere-tracing under heavy smin needs a Lipschitz floor (the reduction we already do for non-uniform scale).
 - [Media Molecule — *Learning from failure: A survey of promising, unconventional and mostly abandoned renderers for 'dreams ps4'*, SIGGRAPH 2015 (Alex Evans)][dreams-talk]. Operationally Transformed CSG trees, baked to point clouds at runtime. Their answer to "scale to millions of edits": tree structure + chunking + bake. Validates D + the chunking + baker roadmap.
 - [Beyond3D forum — *Signed Distance Field rendering — pros and cons (as used in PS4 title Dreams)*][dreams-forum]. Community discussion expanding on Evans's talk. Dreams encodes its CSG tree in a custom serialisation, not stored as a runtime tree — they bake to point clouds.
-- [Galin et al. — *Synchronized Tracing of Primitive-based Implicit Volumes* (ACM TOG 2024)][galin-paper]. Optimised sphere-tracing over BVH-organised CSG primitives. Companion to [#224](https://github.com/lobinuxsoft/oh_my_engine/issues/224); useful when the chunked CSG roadmap (pieces 2 + 3) lands.
+- [Galin et al. — *Synchronized Tracing of Primitive-based Implicit Volumes* (ACM TOG 2024)][galin-paper]. Optimised sphere-tracing over BVH-organised CSG primitives. Companion to [#224](https://github.com/lobinuxsoft/kooch/issues/224); useful when the chunked CSG roadmap (pieces 2 + 3) lands.
 - [Blender Manual — *Metaball*][blender-meta]. Order-independent additive field model. **Incompatible with sphere-tracing** because the sum-of-fields is not a true SDF; would require marching cubes / dual contouring. Discarded for our renderer.
-- Internal: [#21](https://github.com/lobinuxsoft/oh_my_engine/issues/21) (SDF scene structure with ECS, merged, contains the original bug), [#221](https://github.com/lobinuxsoft/oh_my_engine/issues/221) (concave intersection seams, fixed), [#225](https://github.com/lobinuxsoft/oh_my_engine/issues/225) (over-relaxation normal-discontinuity research, closed), [#127](https://github.com/lobinuxsoft/oh_my_engine/issues/127) (SDF pathtracer future), [#40](https://github.com/lobinuxsoft/oh_my_engine/issues/40) (SDF collision future — should reuse the same `eval_scene_chunk`).
+- Internal: [#21](https://github.com/lobinuxsoft/kooch/issues/21) (SDF scene structure with ECS, merged, contains the original bug), [#221](https://github.com/lobinuxsoft/kooch/issues/221) (concave intersection seams, fixed), [#225](https://github.com/lobinuxsoft/kooch/issues/225) (over-relaxation normal-discontinuity research, closed), [#127](https://github.com/lobinuxsoft/kooch/issues/127) (SDF pathtracer future), [#40](https://github.com/lobinuxsoft/kooch/issues/40) (SDF collision future — should reuse the same `eval_scene_chunk`).
 
 [iq-smin]: https://iquilezles.org/articles/smin/
 [iq-distfunc]: https://iquilezles.org/articles/distfunctions/

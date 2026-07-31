@@ -1,6 +1,6 @@
 [package]
 name = "example_plugin"
-description = "Example dynamic plugin for OhMyEngine"
+description = "Example dynamic plugin for Kooch"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,4 +14,4 @@ authors.workspace = true
 crate-type = ["rlib", "dylib"]
 
 [dependencies]
-ome_plugin_api.workspace = true
+kooch_plugin_api.workspace = true

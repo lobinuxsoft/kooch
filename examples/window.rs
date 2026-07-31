@@ -2,8 +2,8 @@
 //!
 //! Run with: cargo run --example window
 
-use ome_core::prelude::*;
-use ome_window::{WindowCloseRequested, WindowHandle, WindowPlugin, WindowResized};
+use kooch_core::prelude::*;
+use kooch_window::{WindowCloseRequested, WindowHandle, WindowPlugin, WindowResized};
 
 fn startup(resources: &mut Resources) {
     if let Some(handle) = resources.get::<WindowHandle>() {
@@ -39,7 +39,7 @@ fn on_close(resources: &mut Resources) {
 }
 
 fn main() {
-    ome_core::init_tracing();
+    kooch_core::init_tracing();
 
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);

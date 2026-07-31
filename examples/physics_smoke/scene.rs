@@ -7,13 +7,13 @@
 
 use glam::Vec3;
 
-use ome_core::prelude::*;
-use ome_ecs::commands::Commands;
-use ome_ecs::component::{Component, ComponentRegistry};
-use ome_ecs::entity::Entity;
-use ome_ecs::reflect::EntityRef;
-use ome_ecs::transform::Transform;
-use ome_physics::components::{
+use kooch_core::prelude::*;
+use kooch_ecs::commands::Commands;
+use kooch_ecs::component::{Component, ComponentRegistry};
+use kooch_ecs::entity::Entity;
+use kooch_ecs::reflect::EntityRef;
+use kooch_ecs::transform::Transform;
+use kooch_physics::components::{
     Collider, JOINT_REVOLUTE, Joint, KIND_STATIC, RigidBody, SHAPE_CUBOID,
 };
 
@@ -335,7 +335,7 @@ fn child_collider(resources: &mut Resources, parent: Entity, offset: Vec3) {
     insert(
         resources,
         child,
-        ome_ecs::hierarchy::Parent { entity: parent },
+        kooch_ecs::hierarchy::Parent { entity: parent },
     );
 }
 
@@ -361,7 +361,7 @@ fn insert<T: Component>(resources: &mut Resources, entity: Entity, value: T) {
     {
         storage.insert(entity, value);
     }
-    let Some(archetypes) = resources.get_mut::<ome_ecs::archetype_registry::ArchetypeRegistry>()
+    let Some(archetypes) = resources.get_mut::<kooch_ecs::archetype_registry::ArchetypeRegistry>()
     else {
         return;
     };

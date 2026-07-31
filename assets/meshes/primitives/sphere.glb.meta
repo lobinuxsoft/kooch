@@ -1,2 +1,2 @@
 guid = "0b1ec7a0-0000-4000-8000-000000000002"
-asset_type = "ome_render::meshlet::asset::MeshletMesh"
+asset_type = "kooch_render::meshlet::asset::MeshletMesh"

@@ -1,6 +1,6 @@
 # Editor Three-System Architecture
 
-**Issue:** [#276](https://github.com/lobinuxsoft/oh_my_engine/issues/276)
+**Issue:** [#276](https://github.com/lobinuxsoft/kooch/issues/276)
 **Status:** Research conclusion — implementation deferred to follow-up epics.
 **Date:** 2026-04-25
 
@@ -13,9 +13,9 @@ No C / C++ / FFI dependencies at any layer.
 
 | Subsystem | Crate(s) | Usable by | First epic |
 |-----------|----------|-----------|------------|
-| **Gizmos** (visual + interactive) | `ome_gizmos` (visual), `ome_gizmos_handles` (interactive) | engine, editor, user code | follows §A |
-| **Editor extensibility** (scripts, custom inspectors, custom panels) | `ome_editor_api` | user code | follows §B |
-| **UI Toolkit** (HTML-like declarative UI for the editor) | `ome_ui` | editor, eventually user runtime UI | follows §C |
+| **Gizmos** (visual + interactive) | `kooch_gizmos` (visual), `kooch_gizmos_handles` (interactive) | engine, editor, user code | follows §A |
+| **Editor extensibility** (scripts, custom inspectors, custom panels) | `kooch_editor_api` | user code | follows §B |
+| **UI Toolkit** (HTML-like declarative UI for the editor) | `kooch_ui` | editor, eventually user runtime UI | follows §C |
 
 The split is **Unity-style, not Godot-style**. Godot bundles the editor
 into one self-hosted codebase; Unity separates Gizmos / Handles /
@@ -26,20 +26,20 @@ Rust analogs from scratch.
 ```mermaid
 flowchart TD
     USER[User game code]
-    EDITOR[ome_editor binary]
+    EDITOR[kooch_editor binary]
     RUNTIME[Game runtime]
 
     subgraph A["A. Gizmos"]
-        GVIS[ome_gizmos<br/>visual line/arrow/aabb API<br/>+ visualizer registry]
-        GHAN[ome_gizmos_handles<br/>interactive translate/rotate/scale<br/>+ picking + drag state]
+        GVIS[kooch_gizmos<br/>visual line/arrow/aabb API<br/>+ visualizer registry]
+        GHAN[kooch_gizmos_handles<br/>interactive translate/rotate/scale<br/>+ picking + drag state]
     end
 
     subgraph B["B. Editor extensibility"]
-        EDAPI[ome_editor_api<br/>CustomInspector trait<br/>EditorPanel trait<br/>EditorAction trait]
+        EDAPI[kooch_editor_api<br/>CustomInspector trait<br/>EditorPanel trait<br/>EditorAction trait]
     end
 
     subgraph C["C. UI Toolkit"]
-        UI[ome_ui<br/>declarative markup + style<br/>retained widget tree]
+        UI[kooch_ui<br/>declarative markup + style<br/>retained widget tree]
     end
 
     USER -.uses.-> GVIS
@@ -59,14 +59,14 @@ Three reasons, in order of weight:
    through the gizmo math. A change to gizmo picking doesn't touch
    the inspector loading mechanism. Crate boundaries enforce this at
    the compile level.
-2. **Optional consumption.** A headless build can use `ome_gizmos`
+2. **Optional consumption.** A headless build can use `kooch_gizmos`
    for in-game debug visualization without pulling the editor or UI
-   toolkit. A custom editor host can use `ome_ui` without gizmos.
+   toolkit. A custom editor host can use `kooch_ui` without gizmos.
 3. **User-facing clarity.** When a user wants "draw a line in 3D",
-   they reach for `ome_gizmos`. When they want "add a button to the
-   editor toolbar", they reach for `ome_editor_api`. When they want
+   they reach for `kooch_gizmos`. When they want "add a button to the
+   editor toolbar", they reach for `kooch_editor_api`. When they want
    "build a custom inspector panel with a layout", they reach for
-   `ome_ui`. One concept per crate.
+   `kooch_ui`. One concept per crate.
 
 The Godot self-hosted approach is elegant when the editor IS the
 runtime, but couples concerns. Our editor runs as its own binary; the
@@ -78,7 +78,7 @@ asymmetry already exists, the three-system split makes it explicit.
 - **Pure Rust.** No FFI to C/C++. No `transform-gizmo`, no Dioxus, no
   Slint, no `egui-extras`-from-NPM. The existing `wgpu` + `winit` +
   `egui` stack stays for now (egui will eventually be supplemented or
-  partially replaced by `ome_ui` for declarative UI).
+  partially replaced by `kooch_ui` for declarative UI).
 - **Custom-built.** External crates are referenced as design
   precedents in this document, never adopted as runtime dependencies.
   We learn from them, we don't bind to them.
@@ -105,10 +105,10 @@ Three audiences, three use cases:
 | Audience | Use case | Visibility |
 |----------|----------|-----------|
 | **Engine internals** | Selection bbox, axis arrows in editor viewport | always-on when editor renders |
-| **User game code** | Debug visualization at runtime (collision shapes, AI vision cones, navigation paths) | gated by `--debug-gizmos` flag or `OME_DEBUG_GIZMOS=1` |
+| **User game code** | Debug visualization at runtime (collision shapes, AI vision cones, navigation paths) | gated by `--debug-gizmos` flag or `KOOCH_DEBUG_GIZMOS=1` |
 | **User editor code** | Custom visualizer for a custom component (Health bar, AI sight range, spawn radius) | rendered when component is expanded in Inspector + entity is selected |
 
-The same `ome_gizmos` API serves all three. The editor wraps it with
+The same `kooch_gizmos` API serves all three. The editor wraps it with
 selection-aware logic; runtime gates it behind a flag; user editor
 code plugs into the visualizer registry.
 
@@ -116,14 +116,14 @@ code plugs into the visualizer registry.
 
 Like Unity's `Gizmos` / `Handles` divide:
 
-| | `ome_gizmos` (visual) | `ome_gizmos_handles` (interactive) |
+| | `kooch_gizmos` (visual) | `kooch_gizmos_handles` (interactive) |
 |---|---|---|
 | Operations | line, arrow, aabb, sphere, frustum, circle, cone, polyline | translate handle, rotate handle, scale handle, custom handle |
 | State | stateless per call | drag state machine, hover, picked entity |
-| Used by | engine + editor + runtime + user code | editor only (and user editor code via `ome_editor_api`) |
+| Used by | engine + editor + runtime + user code | editor only (and user editor code via `kooch_editor_api`) |
 | Render | always-on-top wgpu line pass (already built in PR #277) | same render path + egui::Painter overlay for hover hints |
 | Picking | none | ray-vs-AABB per handle |
-| Crate dep | `ome_core`, `ome_ecs` | `ome_gizmos`, `ome_core`, `ome_ecs` |
+| Crate dep | `kooch_core`, `kooch_ecs` | `kooch_gizmos`, `kooch_core`, `kooch_ecs` |
 
 The split mirrors how the user thinks: "I want to *show* something"
 vs "I want the user to *manipulate* something". Conflating them
@@ -235,12 +235,12 @@ fn draw_ai_paths(query: Query<&AiAgent>, mut gizmos: ResMut<Gizmos>) {
 }
 ```
 
-`gizmos.runtime_enabled()` checks the `OME_DEBUG_GIZMOS` env var or
+`gizmos.runtime_enabled()` checks the `KOOCH_DEBUG_GIZMOS` env var or
 a CLI flag (`--debug-gizmos`) parsed by `SceneBootstrapPlugin`. In the
 editor, runtime-enabled is forced to `true` while in play mode; in
 edit mode it's irrelevant (editor uses its own gizmo path).
 
-### A.6 Interactive handles — the `ome_gizmos_handles` API
+### A.6 Interactive handles — the `kooch_gizmos_handles` API
 
 ```rust,ignore
 pub trait Handle: Send + Sync {
@@ -269,7 +269,7 @@ pub struct HandleSet {
 ```
 
 `HandleSet` is the editor-side controller that lives in
-`ome_editor_core`. It owns the three modes (Translate / Rotate /
+`kooch_editor_core`. It owns the three modes (Translate / Rotate /
 Scale), switches between them on W/E/R, and on each frame:
 
 1. Calls `draw` on every handle to populate the gizmo batch.
@@ -289,39 +289,39 @@ for v1; documented as a future extension point.
 
 ```text
 crates/
-├── ome_gizmos/                    # Visual API + render. NEW.
+├── kooch_gizmos/                    # Visual API + render. NEW.
 │   ├── src/
 │   │   ├── lib.rs                 # GizmoBatch, GizmoRenderer, Gizmos, Color, ...
 │   │   ├── primitives.rs          # line, arrow, aabb, sphere, circle, ...
 │   │   ├── visualizer.rs          # Visualizer trait + VisualizerRegistry
-│   │   └── runtime.rs             # OME_DEBUG_GIZMOS gate
+│   │   └── runtime.rs             # KOOCH_DEBUG_GIZMOS gate
 │   └── shaders/
-│       └── gizmo_main.wgsl        # moved from ome_render/shaders
-└── ome_gizmos_handles/            # Interactive handles. NEW.
+│       └── gizmo_main.wgsl        # moved from kooch_render/shaders
+└── kooch_gizmos_handles/            # Interactive handles. NEW.
     ├── src/
     │   ├── lib.rs                 # Handle trait, HandleSet, HandleState, DragInfo
     │   ├── translate.rs
     │   ├── rotate.rs
     │   └── scale.rs
-    └── (no shaders — uses ome_gizmos primitives)
+    └── (no shaders — uses kooch_gizmos primitives)
 ```
 
-The render-pass infrastructure currently in `ome_render::gizmos` (PR
-#277) **moves into `ome_gizmos`**. `ome_render` no longer knows about
+The render-pass infrastructure currently in `kooch_render::gizmos` (PR
+#277) **moves into `kooch_gizmos`**. `kooch_render` no longer knows about
 gizmos; it's pure 3D scene rendering.
 
-Editor wires `HandleSet` in `ome_editor_core` and consumes both
-`ome_gizmos` (for visuals) and `ome_gizmos_handles` (for interaction).
-User game code consumes only `ome_gizmos`.
+Editor wires `HandleSet` in `kooch_editor_core` and consumes both
+`kooch_gizmos` (for visuals) and `kooch_gizmos_handles` (for interaction).
+User game code consumes only `kooch_gizmos`.
 
 ### A.8 Migration from PR #277 foundation
 
 | Today (PR #277) | After §A implementation |
 |---|---|
-| `ome_render::gizmos::GizmoBatch` | `ome_gizmos::GizmoBatch` |
-| `ome_render::gizmos::GizmoRenderer` | `ome_gizmos::GizmoRenderer` |
-| `ome_editor_core::gizmos::build_gizmo_batch_system` | Same module, but builds via `Gizmos<'_>` API + visualizer dispatch |
-| `axis_arrows`, `aabb` helpers | Same names, in `ome_gizmos::Gizmos` |
+| `kooch_render::gizmos::GizmoBatch` | `kooch_gizmos::GizmoBatch` |
+| `kooch_render::gizmos::GizmoRenderer` | `kooch_gizmos::GizmoRenderer` |
+| `kooch_editor_core::gizmos::build_gizmo_batch_system` | Same module, but builds via `Gizmos<'_>` API + visualizer dispatch |
+| `axis_arrows`, `aabb` helpers | Same names, in `kooch_gizmos::Gizmos` |
 | Fixed unit-cube selection bbox | Real component-aware bbox via visualizer registry (Transform's visualizer draws axis arrows; user-registered visualizers draw their own bbox shape) |
 
 Migration is a refactor, not a rewrite. The shaders, the line-pass
@@ -356,7 +356,7 @@ Two choices:
 | Iteration | Slow (full rebuild) | Fast (drop-in) |
 | Type safety | Full (one process, one type system) | Partial (stable ABI required) |
 | Versioning | Implicit (compile fails if mismatch) | Explicit (we maintain ABI compat) |
-| Existing infra | None — would need `editor` feature on engine | `ome_plugin_api` (stabby + libloading) |
+| Existing infra | None — would need `editor` feature on engine | `kooch_plugin_api` (stabby + libloading) |
 
 **Recommendation: start static, defer dynamic to v2.**
 
@@ -364,7 +364,7 @@ Reason: editor extensions are *content authoring* tools, not
 *shipped game features*. The user iterates on them while building
 their game; they do not ship them to players. Recompile cost is
 acceptable for this audience. The dynamic plugin path
-(`ome_plugin_api`) stays for **runtime** plugins (ship a `.so` with
+(`kooch_plugin_api`) stays for **runtime** plugins (ship a `.so` with
 your game for modding); we will not conflate it with editor scripts.
 
 The static loading model:
@@ -383,7 +383,7 @@ requires the user to have their own forked editor binary, which is
 ugly. So actually we end up at:
 
 - **v1: scripts as a separate crate, loaded via libloading** with a
-  thin stable-ABI surface (use existing `ome_plugin_api`
+  thin stable-ABI surface (use existing `kooch_plugin_api`
   infrastructure: `stabby` + `libloading`). Same mechanism as runtime
   plugins, different registration interface.
 - **v2: hot reload** within an editor session (no restart needed).
@@ -496,9 +496,9 @@ my_game/
 ├── Cargo.toml                # main user game crate
 ├── src/main.rs               # play binary entry
 ├── editor/                   # user editor extensions (optional)
-│   ├── Cargo.toml            # depends on `oh_my_engine` + `ome_editor_api`
+│   ├── Cargo.toml            # depends on `kooch` + `kooch_editor_api`
 │   └── src/lib.rs            # registers inspectors, panels, actions
-├── scenes/                   # *.ome_scene files
+├── scenes/                   # *.kooch_scene files
 └── project.toml              # references editor crate for editor binary to load
 ```
 
@@ -507,14 +507,14 @@ my_game/
 ```toml
 [editor]
 # Path relative to the project root; editor binary cargo-builds this
-# crate with `--release` (or `--debug` if `OME_EDITOR_DEBUG=1`).
+# crate with `--release` (or `--debug` if `KOOCH_EDITOR_DEBUG=1`).
 extension_crate = "editor"
 ```
 
 When the editor opens this project, it reads `extension_crate`,
 runs `cargo build --release --manifest-path editor/Cargo.toml --crate-type cdylib`,
 loads the resulting `.so` via `libloading`, calls a stable-ABI
-`fn ome_editor_register(registry: &mut EditorRegistry)` exported by
+`fn kooch_editor_register(registry: &mut EditorRegistry)` exported by
 the user crate, and the user's inspectors / panels / actions land in
 the editor.
 
@@ -526,7 +526,7 @@ cargo build.
 
 ```text
 crates/
-└── ome_editor_api/            # NEW
+└── kooch_editor_api/            # NEW
     └── src/
         ├── lib.rs             # EditorRegistry, registration prelude
         ├── inspector.rs       # CustomInspector trait + InspectorRegistry
@@ -534,9 +534,9 @@ crates/
         └── action.rs          # EditorAction trait + ActionRegistry
 ```
 
-`ome_editor_core` consumes `ome_editor_api` and owns the loaders +
-dispatchers. User editor crates depend on `ome_editor_api` (stable
-ABI surface) but **not** on `ome_editor_core` (which has internal
+`kooch_editor_core` consumes `kooch_editor_api` and owns the loaders +
+dispatchers. User editor crates depend on `kooch_editor_api` (stable
+ABI surface) but **not** on `kooch_editor_core` (which has internal
 APIs that change frequently). The split mirrors what Unity does
 with `UnityEditor` (engine-internal) vs `UnityEditor.Build` (user-
 facing API).
@@ -585,12 +585,12 @@ ergonomics (Rust-first behavior, no FFI).
 Three file types per UI:
 
 ```text
-my_panel.ome_ui           # markup (XML-like, our format)
-my_panel.ome_style        # style (CSS subset)
+my_panel.kooch_ui           # markup (XML-like, our format)
+my_panel.kooch_style        # style (CSS subset)
 my_panel.rs               # behavior (Rust; trait impl)
 ```
 
-**Markup (`.ome_ui`)** — XML-ish, inspired by UXML:
+**Markup (`.kooch_ui`)** — XML-ish, inspired by UXML:
 
 ```xml
 <panel id="health-bar">
@@ -602,7 +602,7 @@ my_panel.rs               # behavior (Rust; trait impl)
 </panel>
 ```
 
-**Style (`.ome_style`)** — CSS subset:
+**Style (`.kooch_style`)** — CSS subset:
 
 ```css
 .caption {
@@ -628,8 +628,8 @@ panel#health-bar {
 pub struct HealthPanel { health: Health }
 
 impl Panel for HealthPanel {
-    fn markup(&self) -> &'static str { include_str!("health.ome_ui") }
-    fn style(&self) -> &'static str { include_str!("health.ome_style") }
+    fn markup(&self) -> &'static str { include_str!("health.kooch_ui") }
+    fn style(&self) -> &'static str { include_str!("health.kooch_style") }
 
     fn data(&self) -> PanelData {
         let mut data = PanelData::new();
@@ -654,15 +654,15 @@ the value changes, no virtual DOM diff.
 
 ```text
 crates/
-└── ome_ui/                     # NEW
+└── kooch_ui/                     # NEW
     └── src/
         ├── lib.rs              # public API: Panel trait, PanelData, ...
         ├── markup/
-        │   ├── parser.rs       # .ome_ui parser
+        │   ├── parser.rs       # .kooch_ui parser
         │   ├── ast.rs          # widget tree AST
         │   └── macro.rs        # proc-macro for compile-time parsing
         ├── style/
-        │   ├── parser.rs       # .ome_style parser (CSS subset)
+        │   ├── parser.rs       # .kooch_style parser (CSS subset)
         │   └── apply.rs        # style → widget property table
         ├── widgets/
         │   ├── label.rs
@@ -685,27 +685,27 @@ inheritance, hot reload.
 
 ### C.5 egui coexistence
 
-`ome_ui` does not replace `egui` — they coexist:
+`kooch_ui` does not replace `egui` — they coexist:
 
 | Concern | Tool |
 |---|---|
 | Toolbars, menu bars, contextual menus, file dialogs | `egui` (immediate-mode is right for these) |
-| Inspector content (per-component) | `egui` for built-in inspectors; `ome_ui` for user `CustomInspector` impls (optional) |
-| Custom panels with complex layout (asset browser, animation timeline, node graph) | `ome_ui` |
-| In-game UI (HUD, menus) | `ome_ui` (eventually; v1 editor-only) |
+| Inspector content (per-component) | `egui` for built-in inspectors; `kooch_ui` for user `CustomInspector` impls (optional) |
+| Custom panels with complex layout (asset browser, animation timeline, node graph) | `kooch_ui` |
+| In-game UI (HUD, menus) | `kooch_ui` (eventually; v1 editor-only) |
 
 The two render through `wgpu` independently. Egui keeps its
-immediate-mode loop; `ome_ui` keeps its retained tree. They share
+immediate-mode loop; `kooch_ui` keeps its retained tree. They share
 the surface and depth target via the editor's existing render
 orchestration.
 
 ### C.6 Hot reload
 
-A killer feature for the user's daily iteration: edit `.ome_ui`,
+A killer feature for the user's daily iteration: edit `.kooch_ui`,
 save, see the change without restarting the editor. Implementation
 sketch:
 
-- Watch the `.ome_ui` and `.ome_style` files via `notify` crate.
+- Watch the `.kooch_ui` and `.kooch_style` files via `notify` crate.
 - On change → re-parse → diff against current widget tree → apply
   minimal patch (insert / remove / update nodes).
 - Behavior code (Rust) does NOT hot reload (would require dynamic
@@ -731,14 +731,14 @@ parallel reflection system.
 ### Versioning and stability
 
 Pre-1.0:
-- `ome_gizmos` API: breaking changes welcomed during early dev.
-- `ome_editor_api` API: stable-ABI via `stabby`, breaking changes
+- `kooch_gizmos` API: breaking changes welcomed during early dev.
+- `kooch_editor_api` API: stable-ABI via `stabby`, breaking changes
   bump major version of the crate.
-- `ome_ui` API: pre-stable, no commitments.
+- `kooch_ui` API: pre-stable, no commitments.
 
 Post-1.0 (when the engine has external users):
 - Same SemVer rules as the rest of the workspace.
-- `ome_editor_api` becomes the most stability-sensitive — user
+- `kooch_editor_api` becomes the most stability-sensitive — user
   editor extensions break loudly when ABI changes.
 
 ### User project layout convention
@@ -749,8 +749,8 @@ Recommended:
 my_game/
 ├── src/                   # game code
 ├── editor/                # editor extension code (optional)
-├── ui/                    # .ome_ui + .ome_style files (optional)
-├── scenes/                # *.ome_scene files
+├── ui/                    # .kooch_ui + .kooch_style files (optional)
+├── scenes/                # *.kooch_scene files
 ├── assets/                # meshes, textures, audio
 ├── Cargo.toml
 └── project.toml
@@ -765,20 +765,20 @@ conventional defaults reduce friction.
 ## Migration plan
 
 The current state (after PR #277):
-- `ome_render::gizmos` module (visual line API + render pass).
-- `ome_editor_core::gizmos` module (selection-driven batch builder).
+- `kooch_render::gizmos` module (visual line API + render pass).
+- `kooch_editor_core::gizmos` module (selection-driven batch builder).
 - No visualizer registry, no handles, no editor API, no UI toolkit.
 
 Migration to the proposed architecture:
 
 | Phase | Scope | Deliverable |
 |---|---|---|
-| 1 | Move gizmo render to dedicated crate + add visualizer registry | `ome_gizmos` crate, `ome_render::gizmos` deprecated and removed |
-| 2 | Build `ome_gizmos_handles` with translate/rotate/scale | First interactive gizmos in editor |
+| 1 | Move gizmo render to dedicated crate + add visualizer registry | `kooch_gizmos` crate, `kooch_render::gizmos` deprecated and removed |
+| 2 | Build `kooch_gizmos_handles` with translate/rotate/scale | First interactive gizmos in editor |
 | 3 | Camera frustum + light visualizers + first user-extensible visualizer test | Visualizer registry validated end-to-end |
-| 4 | `ome_editor_api` crate: CustomInspector + EditorPanel + EditorAction | Editor can load user extensions (libloading) |
-| 5 | `ome_ui` crate scaffolding: markup parser + 5 builtin widgets + basic style | First panel rendered through `ome_ui` |
-| 6 | `ome_ui` widget set expansion + hot reload | Production-ready UI Toolkit v1 |
+| 4 | `kooch_editor_api` crate: CustomInspector + EditorPanel + EditorAction | Editor can load user extensions (libloading) |
+| 5 | `kooch_ui` crate scaffolding: markup parser + 5 builtin widgets + basic style | First panel rendered through `kooch_ui` |
+| 6 | `kooch_ui` widget set expansion + hot reload | Production-ready UI Toolkit v1 |
 
 Phase 1 is the most urgent (unblocks everything that depends on the
 visualizer registry). Phase 5-6 are multi-month and can run in
@@ -793,9 +793,9 @@ subsystem. Each epic has its own sub-issues for granular tracking.
 
 | # | Epic | Phases covered |
 |---|------|----------------|
-| [#278](https://github.com/lobinuxsoft/oh_my_engine/issues/278) | `epic(gizmos): three-system foundation — visualizer registry + handles + crate split` | 1–3 |
-| [#279](https://github.com/lobinuxsoft/oh_my_engine/issues/279) | `epic(editor): user extension API — inspectors, panels, actions` | 4 |
-| [#280](https://github.com/lobinuxsoft/oh_my_engine/issues/280) | `epic(ui): pure-Rust UI Toolkit — markup + style + retained widgets` | 5–6 |
+| [#278](https://github.com/lobinuxsoft/kooch/issues/278) | `epic(gizmos): three-system foundation — visualizer registry + handles + crate split` | 1–3 |
+| [#279](https://github.com/lobinuxsoft/kooch/issues/279) | `epic(editor): user extension API — inspectors, panels, actions` | 4 |
+| [#280](https://github.com/lobinuxsoft/kooch/issues/280) | `epic(ui): pure-Rust UI Toolkit — markup + style + retained widgets` | 5–6 |
 
 Existing epic #198 (viewport gizmos) **becomes a sub-epic of
 epic-A** — its sub-issues #270 (done), #271, #272, #273, #274, #275
@@ -809,15 +809,15 @@ Numbers will be assigned when the epics are opened.
 
 - **Hot reload of editor extensions** (B.6) — desirable but requires
   redesigning the libloading boundary. v2 work.
-- **Animation curves** in `ome_ui` — out of v1 scope.
-- **Theme inheritance** in `ome_ui` styles — out of v1; flat themes
+- **Animation curves** in `kooch_ui` — out of v1 scope.
+- **Theme inheritance** in `kooch_ui` styles — out of v1; flat themes
   only.
 - **Mobile / web targets** — out of scope; engine targets desktop
   only for the foreseeable future.
 - **Custom interactive handles by user code** — possible via
   `Handle` trait, but UI for registering them needs design (where
   does a "Drag Slider Handle" go in the user's editor menu?).
-- **In-game UI through `ome_ui`** — listed as eventual goal; v1
+- **In-game UI through `kooch_ui`** — listed as eventual goal; v1
   ships editor-only to keep scope contained.
 
 ---
@@ -827,12 +827,12 @@ Numbers will be assigned when the epics are opened.
 1. **Three separated subsystems**, not a Godot-style monolith.
 2. **Pure Rust, custom-built.** No external libraries even when
    pure-Rust options exist.
-3. **`ome_gizmos` + `ome_gizmos_handles`** for visual / interactive
+3. **`kooch_gizmos` + `kooch_gizmos_handles`** for visual / interactive
    gizmos respectively, with user-extensible visualizer registry.
-4. **`ome_editor_api`** for inspector / panel / action extensions,
+4. **`kooch_editor_api`** for inspector / panel / action extensions,
    loaded via `libloading` from a user `editor/` crate.
-5. **`ome_ui`** for declarative HTML-like UI (markup `.ome_ui` +
-   style `.ome_style` + Rust behavior), retained-mode with
+5. **`kooch_ui`** for declarative HTML-like UI (markup `.kooch_ui` +
+   style `.kooch_style` + Rust behavior), retained-mode with
    fine-grained signals. Coexists with `egui` rather than replacing.
 6. **Migration in 6 phases**, with phase 1 (gizmo crate split +
    visualizer registry) being the immediate next session.

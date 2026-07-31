@@ -6,12 +6,12 @@
 
 use glam::Vec3;
 
-use ome_core::prelude::*;
-use ome_ecs::component::ComponentRegistry;
-use ome_ecs::entity::Entity;
-use ome_ecs::transform::Transform;
-use ome_physics::backend::DebugCategories;
-use ome_physics::plugin::{
+use kooch_core::prelude::*;
+use kooch_ecs::component::ComponentRegistry;
+use kooch_ecs::entity::Entity;
+use kooch_ecs::transform::Transform;
+use kooch_physics::backend::DebugCategories;
+use kooch_physics::plugin::{
     CollisionStarted, CollisionStopped, ContactForce, JointBroke, PhysicsBody, PhysicsWorld,
 };
 
@@ -59,7 +59,7 @@ pub(super) fn launch(resources: &mut Resources) {
     resources.insert(cast);
 }
 
-fn handle_of(resources: &Resources, entity: Entity) -> Option<ome_physics::BodyHandle> {
+fn handle_of(resources: &Resources, entity: Entity) -> Option<kooch_physics::BodyHandle> {
     let slot = resources
         .get::<ComponentRegistry>()?
         .get_cpu::<PhysicsBody>()?

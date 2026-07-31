@@ -5,13 +5,13 @@
 //!
 //! No window or surface is needed — runs entirely headless.
 
-use ome_core::compute::VectorAddCompute;
+use kooch_core::compute::VectorAddCompute;
 use wgpu::util::DeviceExt;
 
 const ELEMENT_COUNT: u32 = 1024;
 
 fn main() {
-    ome_core::init_tracing();
+    kooch_core::init_tracing();
 
     // -- Headless wgpu setup (no surface) --
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {

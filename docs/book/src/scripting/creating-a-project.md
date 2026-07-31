@@ -36,7 +36,7 @@ runtime.
 The engine dependency carries feature flags, and each one buys something specific:
 
 ```toml
-oh_my_engine = { path = "…", features = [
+kooch = { path = "…", features = [
     "editor",                 # the embedded editor, so `cargo run` opens it
     "physics",                # rigid bodies — without it, RigidBody is inert
     "gravity",                # gravity sources — without it, PointGravity pulls on nothing
@@ -47,7 +47,7 @@ oh_my_engine = { path = "…", features = [
 ```
 
 `dynamic` is the one that is not optional in practice: leave it out and `lib.rs` fails to
-build, because `oh_my_engine::ome_plugin_api` is compiled out.
+build, because `kooch::kooch_plugin_api` is compiled out.
 
 ### `main.rs` — three ways to run
 
@@ -66,11 +66,11 @@ fn main() {
         let mut app = App::new();
         app.add_plugins(RemoteHostPlugins);
         app.add_plugin(registrations::ProjectRegistrations { run_systems: false });
-        app.add_plugin(oh_my_engine::ome_remote::RemotePlugin::new());
+        app.add_plugin(kooch::kooch_remote::RemotePlugin::new());
         app.run();
     } else {
         // The editor, embedded in your project.
-        oh_my_engine::ome_editor_core::run_editor_with(
+        kooch::kooch_editor_core::run_editor_with(
             registrations::ProjectRegistrations { run_systems: false },
         );
     }
@@ -104,14 +104,14 @@ Also generated. It exports one plugin whose only job is to describe your compone
 standalone editor that loaded this `dylib`:
 
 ```rust
-impl oh_my_engine::ome_plugin_api::OmePlugin for ProjectPlugin {
+impl kooch::kooch_plugin_api::OmePlugin for ProjectPlugin {
     fn name(&self) -> &str { "my_game" }
-    fn build(&mut self, engine: &mut dyn oh_my_engine::ome_plugin_api::Engine) {
+    fn build(&mut self, engine: &mut dyn kooch::kooch_plugin_api::Engine) {
         registrations::declare_components(engine);
     }
 }
 
-oh_my_engine::ome_plugin_api::export_plugin!(ProjectPlugin);
+kooch::kooch_plugin_api::export_plugin!(ProjectPlugin);
 ```
 
 ## Opening an older project

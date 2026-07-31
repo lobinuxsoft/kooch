@@ -1,0 +1,34 @@
+//! kooch_world — chunk-based world streaming for `kooch`.
+//!
+//! Defines the chunk identity / state types, the streaming-focus
+//! component that drives load/unload decisions, the LOD ring
+//! configuration, and the [`ChunkManager`] resource that mediates
+//! between them.
+//!
+//! Hierarchical coordinates live in `kooch_core::coord` (issue #50).
+//! Sparse SDF storage (#136), BVH (#115), Edit Baker (#309), physics
+//! regions (#311) and persistent edit logs (#312) compose with this
+//! crate as separate concerns; see issue #54 + epic #313 for the
+//! roadmap.
+
+pub mod activation;
+pub mod chunk;
+pub mod focus;
+pub mod focus_cache;
+pub mod lod;
+pub mod manager;
+pub mod plugin;
+pub mod voxel;
+
+pub use activation::{activate_chunks, activation_system};
+pub use chunk::{BASE_CHUNK_SIZE_METERS, ChunkData, ChunkId, ChunkState, MAX_LOD_LEVEL};
+// since PR #115 PR-1; consumers can keep importing it through `kooch_world`.
+pub use kooch_core::Aabb;
+pub use focus::StreamingFocus;
+pub use focus_cache::{DirtyFocusLod, FocusCacheState, FocusPosition};
+pub use lod::{LodRing, LodRingConfig};
+pub use manager::{ChunkEvictionListener, ChunkManager};
+pub use plugin::{
+    DEFAULT_MAX_LOADS_PER_FRAME, DEFAULT_MAX_UNLOADS_PER_FRAME, WorldStreamingPlugin,
+    world_streaming_system,
+};

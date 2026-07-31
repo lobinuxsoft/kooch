@@ -1,6 +1,6 @@
 # Introduction
 
-**Oh My Engine** (OME) is a GPU-driven game engine written in Rust, with an editor.
+**Kóoch** (OME) is a GPU-driven game engine written in Rust, with an editor.
 
 The rendering path is a **Nanite-style GPU-driven meshlet pipeline**: the hot loop runs in
 compute on the GPU, and the CPU only coordinates. The ECS stays on the CPU — that is a
@@ -47,13 +47,13 @@ What works today:
 What does not work yet, stated plainly:
 
 - **No hot reload.** Seeing a code change means rebuilding and reopening the editor
-  ([#648](https://github.com/lobinuxsoft/oh_my_engine/issues/648)).
+  ([#648](https://github.com/lobinuxsoft/kooch/issues/648)).
 - **No build button.** `cargo build` is yours to run
-  ([#158](https://github.com/lobinuxsoft/oh_my_engine/issues/158)).
+  ([#158](https://github.com/lobinuxsoft/kooch/issues/158)).
 - **Reflection is shallow.** No `Vec<T>`, no `HashMap`, no user enums in components
-  ([#649](https://github.com/lobinuxsoft/oh_my_engine/issues/649)).
+  ([#649](https://github.com/lobinuxsoft/kooch/issues/649)).
 - **`glam` is not re-exported**, so a project has to add it itself and match the version
-  ([#657](https://github.com/lobinuxsoft/oh_my_engine/issues/657)).
+  ([#657](https://github.com/lobinuxsoft/kooch/issues/657)).
 
 ## Stack
 
@@ -81,7 +81,7 @@ internals. **Reference** holds the long-form material: the Decisions Log is a ch
 record of architectural choices, why they were made, and what was traded away.
 
 Two files in the repository outrank this book when they disagree:
-[`docs/MEMORY.md`](https://github.com/lobinuxsoft/oh_my_engine/blob/development/docs/MEMORY.md)
+[`docs/MEMORY.md`](https://github.com/lobinuxsoft/kooch/blob/development/docs/MEMORY.md)
 is canonical on **decisions**, and
-[`docs/ROADMAP.md`](https://github.com/lobinuxsoft/oh_my_engine/blob/development/docs/ROADMAP.md)
+[`docs/ROADMAP.md`](https://github.com/lobinuxsoft/kooch/blob/development/docs/ROADMAP.md)
 is canonical on **order**.

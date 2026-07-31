@@ -12,7 +12,7 @@ changing.
 
 ## The contract
 
-Two types in `ome_core::frame_pacing`:
+Two types in `kooch_core::frame_pacing`:
 
 - **`FrameRequest`** — what *this* frame decided the next one needs.
   Systems raise it; the runner reads it once per frame and resets it to

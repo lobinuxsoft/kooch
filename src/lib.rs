@@ -1,4 +1,4 @@
-//! OhMyEngine — GPU-driven game engine.
+//! Kooch — GPU-driven game engine.
 //!
 //! Facade crate that re-exports all engine modules.
 //! Use Cargo features to control which modules are compiled.
@@ -24,60 +24,60 @@
 mod scene_bootstrap;
 
 // Always present
-pub use ome_core;
-pub use ome_ecs;
+pub use kooch_core;
+pub use kooch_ecs;
 
 // Dynamic plugin API (optional)
 #[cfg(feature = "dynamic")]
-pub use ome_plugin_api;
+pub use kooch_plugin_api;
 
 // Conditional re-exports
 #[cfg(feature = "audio")]
-pub use ome_audio;
+pub use kooch_audio;
 #[cfg(feature = "camera")]
-pub use ome_camera;
+pub use kooch_camera;
 #[cfg(feature = "editor")]
-pub use ome_editor_core;
+pub use kooch_editor_core;
 #[cfg(feature = "gizmos")]
-pub use ome_gizmos;
+pub use kooch_gizmos;
 #[cfg(feature = "gravity")]
-pub use ome_gravity;
+pub use kooch_gravity;
 #[cfg(feature = "input")]
-pub use ome_input;
+pub use kooch_input;
 #[cfg(feature = "lighting")]
-pub use ome_lighting;
+pub use kooch_lighting;
 #[cfg(feature = "physics")]
-pub use ome_physics;
+pub use kooch_physics;
 #[cfg(feature = "remote")]
-pub use ome_remote;
+pub use kooch_remote;
 #[cfg(feature = "render")]
-pub use ome_render;
+pub use kooch_render;
 #[cfg(feature = "window")]
-pub use ome_window;
+pub use kooch_window;
 #[cfg(feature = "world")]
-pub use ome_world;
+pub use kooch_world;
 
 pub use scene_bootstrap::SceneBootstrapPlugin;
 
 /// Convenient re-exports for common usage.
 ///
 /// ```ignore
-/// use oh_my_engine::prelude::*;
+/// use kooch::prelude::*;
 /// ```
 pub mod prelude {
-    pub use ome_core::prelude::*;
-    pub use ome_ecs::{EcsPlugin, Entity, EntityAllocator};
+    pub use kooch_core::prelude::*;
+    pub use kooch_ecs::{EcsPlugin, Entity, EntityAllocator};
 
     #[cfg(feature = "physics")]
-    pub use ome_physics::{Collider, PhysicsPlugin, RigidBody};
+    pub use kooch_physics::{Collider, PhysicsPlugin, RigidBody};
     #[cfg(feature = "dynamic")]
-    pub use ome_plugin_api::prelude as plugin_api;
+    pub use kooch_plugin_api::prelude as plugin_api;
     #[cfg(feature = "remote")]
-    pub use ome_remote::RemotePlugin;
+    pub use kooch_remote::RemotePlugin;
     #[cfg(feature = "render")]
-    pub use ome_render::RenderPlugin;
+    pub use kooch_render::RenderPlugin;
     #[cfg(feature = "window")]
-    pub use ome_window::{WindowCloseRequested, WindowHandle, WindowPlugin, WindowResized};
+    pub use kooch_window::{WindowCloseRequested, WindowHandle, WindowPlugin, WindowResized};
 
     #[cfg(feature = "remote")]
     pub use crate::RemoteHostPlugins;
@@ -86,17 +86,17 @@ pub mod prelude {
 
 /// Default set of plugins for a windowed game application.
 ///
-/// Includes [`CorePlugin`](ome_core::plugin::CorePlugin),
-/// [`EcsPlugin`](ome_ecs::EcsPlugin), [`SceneBootstrapPlugin`], and
-/// conditionally [`WindowPlugin`](ome_window::WindowPlugin) and
-/// [`RenderPlugin`](ome_render::RenderPlugin) based on enabled features.
+/// Includes [`CorePlugin`](kooch_core::plugin::CorePlugin),
+/// [`EcsPlugin`](kooch_ecs::EcsPlugin), [`SceneBootstrapPlugin`], and
+/// conditionally [`WindowPlugin`](kooch_window::WindowPlugin) and
+/// [`RenderPlugin`](kooch_render::RenderPlugin) based on enabled features.
 ///
 /// `SceneBootstrapPlugin` resolves the initial scene from `--scene <path>`
 /// CLI args or falls back to `scenes/default.scene` relative to cwd.
 ///
 /// # Example
 /// ```ignore
-/// use oh_my_engine::prelude::*;
+/// use kooch::prelude::*;
 ///
 /// fn main() {
 ///     let mut app = App::new();
@@ -104,8 +104,8 @@ pub mod prelude {
 ///     app.run();
 /// }
 /// ```
-/// Builds the engine-side `AssetPlugin` honoring the `OME_ENGINE_ROOT`
-/// and `OME_PROJECT_ROOT` env vars the editor's launcher injects when
+/// Builds the engine-side `AssetPlugin` honoring the `KOOCH_ENGINE_ROOT`
+/// and `KOOCH_PROJECT_ROOT` env vars the editor's launcher injects when
 /// it spawns a game binary in Play mode. With both set, the plugin's
 /// primary `asset_root` is `<engine>/assets` (so engine GUIDs resolve)
 /// and `<project>/assets` rides as a secondary scan target (so project-
@@ -115,11 +115,11 @@ pub mod prelude {
 /// plugin falls back to `<exe_dir>/assets` if it exists, otherwise
 /// the historical `assets/` working-directory default.
 #[cfg(feature = "render")]
-fn default_asset_plugin() -> ome_render::plugin::AssetPlugin {
+fn default_asset_plugin() -> kooch_render::plugin::AssetPlugin {
     use std::path::PathBuf;
 
-    let engine_root = std::env::var_os("OME_ENGINE_ROOT").map(PathBuf::from);
-    let project_root = std::env::var_os("OME_PROJECT_ROOT").map(PathBuf::from);
+    let engine_root = std::env::var_os("KOOCH_ENGINE_ROOT").map(PathBuf::from);
+    let project_root = std::env::var_os("KOOCH_PROJECT_ROOT").map(PathBuf::from);
 
     let primary = engine_root
         .as_ref()
@@ -132,7 +132,7 @@ fn default_asset_plugin() -> ome_render::plugin::AssetPlugin {
         })
         .unwrap_or_else(|| PathBuf::from("assets"));
 
-    let mut plugin = ome_render::plugin::AssetPlugin::new().with_root(primary);
+    let mut plugin = kooch_render::plugin::AssetPlugin::new().with_root(primary);
     if let Some(project) = project_root {
         let project_assets = project.join("assets");
         if project_assets.exists() {
@@ -159,27 +159,27 @@ fn default_asset_plugin() -> ome_render::plugin::AssetPlugin {
 /// that never draws is work with no result.
 pub struct RemoteHostPlugins;
 
-impl ome_core::plugin::PluginGroup for RemoteHostPlugins {
-    fn build(self) -> ome_core::plugin::PluginGroupBuilder {
-        let builder = ome_core::plugin::PluginGroupBuilder::new()
-            .add(ome_core::plugin::CorePlugin)
-            .add(ome_ecs::EcsPlugin)
+impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
+    fn build(self) -> kooch_core::plugin::PluginGroupBuilder {
+        let builder = kooch_core::plugin::PluginGroupBuilder::new()
+            .add(kooch_core::plugin::CorePlugin)
+            .add(kooch_ecs::EcsPlugin)
             .add(default_asset_plugin().headless());
 
         // The host is what actually simulates when the editor presses
         // Play, so it needs physics even though it draws nothing.
         #[cfg(feature = "physics")]
-        let builder = builder.add(ome_physics::PhysicsPlugin::new());
+        let builder = builder.add(kooch_physics::PhysicsPlugin::new());
 
         // Gravity that points somewhere other than down. Inert until a
         // scene holds a source, so adding it changes nothing on its own.
         #[cfg(all(feature = "physics", feature = "gravity"))]
-        let builder = builder.add(ome_gravity::GravityPlugin);
+        let builder = builder.add(kooch_gravity::GravityPlugin);
 
         // Camera rigs run here for the same reason physics does: the host
         // is what simulates, and the editor draws the pose it produced.
         #[cfg(feature = "camera")]
-        let builder = builder.add(ome_camera::CameraPlugin);
+        let builder = builder.add(kooch_camera::CameraPlugin);
 
         // What lets the editor draw the solver's state from over there.
         #[cfg(all(feature = "physics", feature = "remote"))]
@@ -191,38 +191,38 @@ impl ome_core::plugin::PluginGroup for RemoteHostPlugins {
 
 pub struct DefaultPlugins;
 
-impl ome_core::plugin::PluginGroup for DefaultPlugins {
-    fn build(self) -> ome_core::plugin::PluginGroupBuilder {
-        let builder = ome_core::plugin::PluginGroupBuilder::new()
-            .add(ome_core::plugin::CorePlugin)
-            .add(ome_ecs::EcsPlugin);
+impl kooch_core::plugin::PluginGroup for DefaultPlugins {
+    fn build(self) -> kooch_core::plugin::PluginGroupBuilder {
+        let builder = kooch_core::plugin::PluginGroupBuilder::new()
+            .add(kooch_core::plugin::CorePlugin)
+            .add(kooch_ecs::EcsPlugin);
 
         #[cfg(all(feature = "physics", feature = "gravity"))]
-        let builder = builder.add(ome_gravity::GravityPlugin);
+        let builder = builder.add(kooch_gravity::GravityPlugin);
 
         #[cfg(feature = "window")]
-        let builder = builder.add(ome_window::WindowPlugin::default());
+        let builder = builder.add(kooch_window::WindowPlugin::default());
 
         #[cfg(feature = "render")]
         let builder = builder
             .add(default_asset_plugin())
-            .add(ome_render::RenderPlugin);
+            .add(kooch_render::RenderPlugin);
 
         #[cfg(feature = "world")]
-        let builder = builder.add(ome_world::WorldStreamingPlugin);
+        let builder = builder.add(kooch_world::WorldStreamingPlugin);
 
         #[cfg(feature = "physics")]
-        let builder = builder.add(ome_physics::PhysicsPlugin::new());
+        let builder = builder.add(kooch_physics::PhysicsPlugin::new());
 
         // Gravity that points somewhere other than down. Inert until a
         // scene holds a source, so adding it changes nothing on its own.
         #[cfg(all(feature = "physics", feature = "gravity"))]
-        let builder = builder.add(ome_gravity::GravityPlugin);
+        let builder = builder.add(kooch_gravity::GravityPlugin);
 
         // A camera that follows something is not an optional idea for a
         // 3D game, and the crate is inert until a rig is authored.
         #[cfg(feature = "camera")]
-        let builder = builder.add(ome_camera::CameraPlugin);
+        let builder = builder.add(kooch_camera::CameraPlugin);
 
         // What lets the editor draw the solver's state from over there.
         #[cfg(all(feature = "physics", feature = "remote"))]
@@ -236,8 +236,8 @@ impl ome_core::plugin::PluginGroup for DefaultPlugins {
 ///
 /// # Why this lives in the facade
 ///
-/// `ome_remote` knows about entities and components and deliberately not
-/// about physics; `ome_physics` knows about bodies and deliberately not
+/// `kooch_remote` knows about entities and components and deliberately not
+/// about physics; `kooch_physics` knows about bodies and deliberately not
 /// about wires. Neither should learn the other. This crate already depends
 /// on both, so it is the one place they can meet — the extension registry
 /// exists exactly so this can be a plugin rather than a dependency.
@@ -250,38 +250,38 @@ impl ome_core::plugin::PluginGroup for DefaultPlugins {
 pub struct PhysicsRemotePlugin;
 
 #[cfg(all(feature = "physics", feature = "remote"))]
-impl ome_core::plugin::Plugin for PhysicsRemotePlugin {
-    fn build(&self, app: &mut ome_core::app::App) {
+impl kooch_core::plugin::Plugin for PhysicsRemotePlugin {
+    fn build(&self, app: &mut kooch_core::app::App) {
         app.add_system(
-            ome_core::stage::Stage::Startup,
-            |resources: &mut ome_core::resource::Resources| {
-                if !resources.contains::<ome_remote::extensions::RemoteExtensions>() {
-                    resources.insert(ome_remote::extensions::RemoteExtensions::default());
+            kooch_core::stage::Stage::Startup,
+            |resources: &mut kooch_core::resource::Resources| {
+                if !resources.contains::<kooch_remote::extensions::RemoteExtensions>() {
+                    resources.insert(kooch_remote::extensions::RemoteExtensions::default());
                 }
                 let Some(extensions) =
-                    resources.get_mut::<ome_remote::extensions::RemoteExtensions>()
+                    resources.get_mut::<kooch_remote::extensions::RemoteExtensions>()
                 else {
                     return;
                 };
                 extensions.register(
                     "physics.debug_lines",
                     Box::new(|resources, payload| {
-                        let categories: ome_physics::backend::DebugCategories =
+                        let categories: kooch_physics::backend::DebugCategories =
                             debug_categories_from(payload);
                         // Off means off: the walk is per-frame CPU work, and a
                         // request with nothing switched on must not pay for it.
                         if !categories.any() {
-                            return Ok(ome_remote::serde_json::json!({ "lines": [] }));
+                            return Ok(kooch_remote::serde_json::json!({ "lines": [] }));
                         }
                         let world = resources
-                            .get::<ome_physics::plugin::PhysicsWorld>()
+                            .get::<kooch_physics::plugin::PhysicsWorld>()
                             .ok_or_else(|| "this host has no physics world".to_owned())?;
                         let mut lines = Vec::new();
                         world.backend().debug_lines(categories, &mut lines);
-                        Ok(ome_remote::serde_json::json!({
+                        Ok(kooch_remote::serde_json::json!({
                             "lines": lines
                                 .iter()
-                                .map(|line| ome_remote::serde_json::json!({
+                                .map(|line| kooch_remote::serde_json::json!({
                                     "start": line.start.to_array(),
                                     "end": line.end.to_array(),
                                     "color": line.color.to_array(),
@@ -307,15 +307,15 @@ impl ome_core::plugin::Plugin for PhysicsRemotePlugin {
 /// should get the rest instead of a failure.
 #[cfg(all(feature = "physics", feature = "remote"))]
 fn debug_categories_from(
-    payload: &ome_remote::serde_json::Value,
-) -> ome_physics::backend::DebugCategories {
+    payload: &kooch_remote::serde_json::Value,
+) -> kooch_physics::backend::DebugCategories {
     let flag = |name: &str| {
         payload
             .get(name)
-            .and_then(ome_remote::serde_json::Value::as_bool)
+            .and_then(kooch_remote::serde_json::Value::as_bool)
             == Some(true)
     };
-    ome_physics::backend::DebugCategories {
+    kooch_physics::backend::DebugCategories {
         collider_shapes: flag("collider_shapes"),
         contacts: flag("contacts"),
         joints: flag("joints"),

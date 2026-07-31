@@ -9,7 +9,7 @@ here describes the engine as it is.**
 ## SDF ray-marching and its BVH
 
 The engine's original rendering path was signed-distance-field ray-marching, accelerated by a
-BVH that several consumers shared. Both crates — `ome_sdf` and `ome_bvh` — were deleted in
+BVH that several consumers shared. Both crates — `kooch_sdf` and `kooch_bvh` — were deleted in
 July 2026.
 
 The technique died; **the data did not**. Signed distance fields remain the representation

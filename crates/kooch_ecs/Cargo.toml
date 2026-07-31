@@ -1,0 +1,30 @@
+[package]
+name = "kooch_ecs"
+description = "GPU-driven Entity Component System"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+glam.workspace = true
+tracing.workspace = true
+serde.workspace = true
+ron.workspace = true
+kooch_ecs_macros.workspace = true
+
+# Dynamic plugin support (optional)
+kooch_plugin_api = { workspace = true, optional = true }
+
+[dev-dependencies]
+pollster.workspace = true
+# The editor protocol's format. Reflected values have to survive it, and
+# JSON is where the ones RON takes in its stride go wrong.
+serde_json.workspace = true
+
+[features]
+dynamic = ["kooch_core/dynamic", "dep:kooch_plugin_api"]

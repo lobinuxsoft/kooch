@@ -9,8 +9,8 @@ the derive.
 ## The smallest one that works
 
 ```rust
-use oh_my_engine::ome_ecs::Reflect;
-use oh_my_engine::ome_ecs::component::Component;
+use kooch::kooch_ecs::Reflect;
+use kooch::kooch_ecs::component::Component;
 
 /// How much damage this entity can still take.
 #[derive(Default, Reflect)]
@@ -49,11 +49,11 @@ Each field's Rust type maps to a `FieldKind`, and the kind decides the widget:
 > **`glam` is not re-exported yet.** `Vec3`, `Quat` and `Mat4` are `glam` types, and a project
 > reaches them only by adding `glam = "0.33"` to its own `Cargo.toml` — the same version the
 > engine pins, or the types will not match. Tracked in
-> [#657](https://github.com/lobinuxsoft/oh_my_engine/issues/657).
+> [#657](https://github.com/lobinuxsoft/kooch/issues/657).
 
 Anything outside that list — `Vec<T>`, `HashMap<K, V>`, your own enums — is **not supported
 yet**. Recursive reflection for nested types and collections is
-[#649](https://github.com/lobinuxsoft/oh_my_engine/issues/649). Until it lands, a field of an
+[#649](https://github.com/lobinuxsoft/kooch/issues/649). Until it lands, a field of an
 unsupported type needs `#[reflect(skip)]` or the derive will not compile.
 
 ## Attributes
@@ -115,7 +115,7 @@ is indistinguishable from a broken one.
 Use `Option<EntityRef>`.
 
 ```rust
-use ome_ecs::reflect::EntityRef;
+use kooch_ecs::reflect::EntityRef;
 
 #[derive(Default, Reflect)]
 pub struct Turret {

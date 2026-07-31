@@ -6,8 +6,8 @@ changes.
 ## Procedure
 
 ```bash
-cargo build -p ome_editor          # once
-./target/debug/ome_editor          # launch; do NOT use OME_EDITOR_AUTO_OPEN
+cargo build -p kooch_editor          # once
+./target/debug/kooch_editor          # launch; do NOT use KOOCH_EDITOR_AUTO_OPEN
 ```
 
 Get the editor into the state you want, then, with its window focused:

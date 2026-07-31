@@ -1,0 +1,13 @@
+[package]
+name = "kooch_camera"
+description = "Authorable camera rigs — follow, look-at and damping as data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core.workspace = true
+kooch_ecs.workspace = true
+glam.workspace = true

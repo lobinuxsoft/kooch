@@ -2,14 +2,14 @@
 
 This chapter documents the engine-shared GPU BVH that backs three
 consumers in lockstep: the SDF raymarch culling from PR-4, the
-physics broadphase from `ome_physics::broadphase`, and the GPU
+physics broadphase from `kooch_physics::broadphase`, and the GPU
 frustum cull behind the mesh pass. It is the subject of #115 PR-5,
 the closing PR of issue #115.
 
 The previous chapter ([BVH-Driven Ray Marching](./bvh-raymarch.md))
 introduced the GPU LBVH builder and the two-slot double-buffer that
 sidesteps wgpu's read-after-write hazard. PR-5 generalises that
-state into `ome_bvh::SharedBvhState` — a single resource the rest of
+state into `kooch_bvh::SharedBvhState` — a single resource the rest of
 the engine binds against.
 
 ## Why one structure for three consumers
@@ -58,8 +58,8 @@ primitive count and grown on demand:
 | `leaf_aabbs`      | shared  | CPU `kick(...)`     | raymarch (gating), frustum cull               |
 | side payloads     | private | per-consumer kick   | raymarch fragment shader (RaymarchPayload[])  |
 
-The first three live in `ome_bvh::shared::OutputSlot`. Side payloads
-live in the consuming crate (`ome_render::raymarch::bvh::PayloadSlot`
+The first three live in `kooch_bvh::shared::OutputSlot`. Side payloads
+live in the consuming crate (`kooch_render::raymarch::bvh::PayloadSlot`
 holds `RaymarchPayload[]` at binding 5 of the raymarch pipeline). The
 private buffers' double-buffer mirrors the shared one — when
 `poll_swap` flips `current_slot`, every parallel double-buffer must
@@ -205,7 +205,7 @@ The Karras AABB union is element-wise (`union(min, min) = min`,
 `union(max, max) = max`) and order-independent, so the GPU's parallel
 multi-dispatch propagation and the CPU's post-order DFS produce the
 same `BvhNode` array down to the bit pattern. The S7 sync goldens
-in `crates/ome_bvh/src/shared/sync_tests.rs` field-by-field
+in `crates/kooch_bvh/src/shared/sync_tests.rs` field-by-field
 compare each `BvhNode` post-build *and* post-refit; any divergence
 is a CPU↔GPU desync bug, not a precision issue.
 
@@ -247,7 +247,7 @@ there is no separate hit-list pass. Postfix CSG token streams from
 
 ### Physics broadphase (S4 of #115 PR-5, #42)
 
-`ome_physics::broadphase::BroadphasePairs::collect(&shared)` walks
+`kooch_physics::broadphase::BroadphasePairs::collect(&shared)` walks
 the CPU mirror, filters leaves by `IS_COLLIDER`, queries
 `Bvh::for_each_aabb` for every collider, and returns canonical
 `(low, high)` entity-id pairs deduplicated across the symmetric
@@ -258,7 +258,7 @@ optimisation.
 
 ### Frustum cull (S5 of #115 PR-5, #91)
 
-`ome_render::frustum::FrustumCull` dispatches a compute pass over
+`kooch_render::frustum::FrustumCull` dispatches a compute pass over
 the GPU's `leaf_aabbs` buffer and writes one
 `DrawIndexedIndirectArgs` per leaf in original input order. Visible
 leaves get `instance_count = 1`; culled or non-`IS_VISIBLE_MESH`
@@ -286,7 +286,7 @@ return true;
 ```
 
 The 10k-cube AC test in
-`crates/ome_render/src/frustum/tests/cull.rs` runs the same
+`crates/kooch_render/src/frustum/tests/cull.rs` runs the same
 algorithm on the CPU and asserts byte-perfect agreement on every
 one of the 10000 leaves — the GPU cull is the same computation
 parallelised, not an approximation.
@@ -295,17 +295,17 @@ parallelised, not an approximation.
 
 | Path | Role |
 |------|------|
-| `ome_bvh::shared::state::SharedBvhState` | orchestrator + counters |
-| `ome_bvh::shared::pending::{BuildToken, SwapInfo, Pending}` | type-state lifecycle handles |
-| `ome_bvh::shared::mirror::CpuMirror` | CPU mirror struct + `from_build` / `apply_refit` |
-| `ome_bvh::shared::heuristic::{should_refit, kick_auto}` | rebuild-vs-refit policy |
-| `ome_bvh::shared::slot::OutputSlot` | per-slot stable buffer set |
-| `ome_bvh::leaf::LeafAabb` | per-leaf metadata + flag bits |
-| `ome_bvh::Bvh::refit_in_place` | CPU refit over an existing topology |
-| `ome_render::raymarch::bvh::BvhState` | raymarch consumer wrapper |
-| `ome_render::frustum::FrustumCull` | frustum cull GPU compute |
-| `ome_physics::broadphase::BroadphasePairs` | CPU broadphase consumer |
-| `ome_render/shaders/frustum_cull.wgsl` | the compute shader |
+| `kooch_bvh::shared::state::SharedBvhState` | orchestrator + counters |
+| `kooch_bvh::shared::pending::{BuildToken, SwapInfo, Pending}` | type-state lifecycle handles |
+| `kooch_bvh::shared::mirror::CpuMirror` | CPU mirror struct + `from_build` / `apply_refit` |
+| `kooch_bvh::shared::heuristic::{should_refit, kick_auto}` | rebuild-vs-refit policy |
+| `kooch_bvh::shared::slot::OutputSlot` | per-slot stable buffer set |
+| `kooch_bvh::leaf::LeafAabb` | per-leaf metadata + flag bits |
+| `kooch_bvh::Bvh::refit_in_place` | CPU refit over an existing topology |
+| `kooch_render::raymarch::bvh::BvhState` | raymarch consumer wrapper |
+| `kooch_render::frustum::FrustumCull` | frustum cull GPU compute |
+| `kooch_physics::broadphase::BroadphasePairs` | CPU broadphase consumer |
+| `kooch_render/shaders/frustum_cull.wgsl` | the compute shader |
 
 ## Out of scope (filed as follow-ups)
 

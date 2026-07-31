@@ -144,11 +144,11 @@ Académico (point clouds, scan data). No es game asset format.
 
 ### Inmediatas (Phase 1)
 
-- `ome_core::assets` introduce `Mesh` asset type
+- `kooch_core::assets` introduce `Mesh` asset type
 - `GltfLoader` y `ObjLoader` impls del trait `AssetLoader<T>` (#391)
 - Pipeline: archivo → loader → CPU `Mesh` → upload to GPU buffers
 - `MeshRenderer` componente cambia `mesh: String` → `mesh: AssetHandle<Mesh>`
-- Tests con assets pequeños en `assets/` o `crates/ome_render/test_assets/`
+- Tests con assets pequeños en `assets/` o `crates/kooch_render/test_assets/`
 
 ### Workflow para usuarios del engine
 

@@ -2,11 +2,11 @@
 
 OME has **one rendering model with two orchestration callsites**:
 
-1. **Editor offscreen** — `ome_editor_core::viewport::render::render_viewport`
+1. **Editor offscreen** — `kooch_editor_core::viewport::render::render_viewport`
    draws into a `ViewportTarget` texture which the egui `View` panel then
    shows as an `egui::Image`. Lets the editor compose the engine's render
    output with its own overlay UI.
-2. **Play surface** — `ome_render::plugin::RenderPlugin` (the
+2. **Play surface** — `kooch_render::plugin::RenderPlugin` (the
    `Stage::Render` system) draws into the swapchain surface directly. Used
    by the play-mode binary launched via `cargo run --manifest-path` from
    the editor's Play action, or run standalone.
@@ -62,7 +62,7 @@ Mesh always draws last, depth-tested.
 
 ### Pass 1 — Sky
 
-`crates/ome_render/src/sky/renderer.rs`
+`crates/kooch_render/src/sky/renderer.rs`
 
 Runs only when an ECS entity has an active `SkyRenderer` component. The
 shader is a fullscreen triangle with:
@@ -82,7 +82,7 @@ Without an active `SkyRenderer`, this pass is skipped entirely.
 
 ### Pass 2 — Ray-march (SDFs)
 
-`crates/ome_render/src/raymarch/renderer.rs`
+`crates/kooch_render/src/raymarch/renderer.rs`
 
 Sphere-traces visible SDF primitives (`SdfSphere`, `SdfBox`, `SdfCapsule`,
 `SdfCylinder`, `SdfTorus`, `SdfPlane`) with optional `SdfBlend`
@@ -110,7 +110,7 @@ for #221 gaps until Segment Tracing lands per #224).
 
 ### Pass 3 — Mesh
 
-`crates/ome_render/src/mesh/renderer.rs`
+`crates/kooch_render/src/mesh/renderer.rs`
 
 Rasterized pass for entities with `MeshRenderer + GlobalTransform`. Loads
 glTF meshes lazily, caches them in a `HashMap<String, MeshGpu>` owned by
@@ -126,7 +126,7 @@ Material: vertex normals only for now (PR #129 MVP). PBR is #130.
 ## Depth target
 
 A single `Depth32Float` texture (`VIEWPORT_DEPTH_FORMAT` constant in
-`ome_render::lib`) is shared by all three passes within a frame. Two
+`kooch_render::lib`) is shared by all three passes within a frame. Two
 copies exist at any given time:
 
 - Editor: `ViewportTarget` owns both color + depth, recreated on resize.

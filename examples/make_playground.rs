@@ -40,9 +40,9 @@ use std::path::{Path, PathBuf};
 
 use glam::Vec3;
 
-use ome_core::Guid;
-use ome_ecs::reflect::ReflectValue;
-use ome_ecs::scene::{ComponentDescription, EntityDescription, SceneDocument};
+use kooch_core::Guid;
+use kooch_ecs::reflect::ReflectValue;
+use kooch_ecs::scene::{ComponentDescription, EntityDescription, SceneDocument};
 
 fn main() {
     let engine_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -66,10 +66,10 @@ fn main() {
     }
 
     let assets = Assets::read(&engine_root);
-    let root = ome_editor_core::project::create_project(name, &parent, &engine_root)
+    let root = kooch_editor_core::project::create_project(name, &parent, &engine_root)
         .expect("creating the project");
     scene(&assets)
-        .save(&root.join(ome_core::scene_paths::DEFAULT_SCENE_REL_PATH))
+        .save(&root.join(kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH))
         .expect("writing the scene");
 
     println!("\nproject ready: {}\n", root.display());
@@ -284,11 +284,11 @@ fn camera(position: Vec3) -> EntityDescription {
         components: vec![
             name_of("Camera"),
             ComponentDescription {
-                type_name: type_name_of::<ome_ecs::transform::Transform>(),
+                type_name: type_name_of::<kooch_ecs::transform::Transform>(),
                 fields: vec![("position".to_owned(), ReflectValue::Vec3(position))],
             },
             ComponentDescription {
-                type_name: type_name_of::<ome_ecs::perspective_camera::PerspectiveCamera>(),
+                type_name: type_name_of::<kooch_ecs::perspective_camera::PerspectiveCamera>(),
                 fields: vec![],
             },
         ],
@@ -303,11 +303,11 @@ fn sky() -> EntityDescription {
         components: vec![
             name_of("Sky"),
             ComponentDescription {
-                type_name: type_name_of::<ome_ecs::transform::Transform>(),
+                type_name: type_name_of::<kooch_ecs::transform::Transform>(),
                 fields: vec![],
             },
             ComponentDescription {
-                type_name: type_name_of::<ome_ecs::sky_renderer::SkyRenderer>(),
+                type_name: type_name_of::<kooch_ecs::sky_renderer::SkyRenderer>(),
                 fields: vec![],
             },
         ],
@@ -324,14 +324,14 @@ fn light() -> EntityDescription {
         components: vec![
             name_of("Sun"),
             ComponentDescription {
-                type_name: type_name_of::<ome_ecs::transform::Transform>(),
+                type_name: type_name_of::<kooch_ecs::transform::Transform>(),
                 fields: vec![(
                     "rotation".to_owned(),
                     ReflectValue::Quat(glam::Quat::from_euler(glam::EulerRot::XYZ, -0.9, 0.6, 0.0)),
                 )],
             },
             ComponentDescription {
-                type_name: type_name_of::<ome_ecs::directional_light::DirectionalLight>(),
+                type_name: type_name_of::<kooch_ecs::directional_light::DirectionalLight>(),
                 fields: vec![],
             },
         ],
@@ -339,12 +339,12 @@ fn light() -> EntityDescription {
 }
 
 /// The asset type names the `.meta` sidecars carry.
-const MESH_TYPE: &str = "ome_render::meshlet::asset::MeshletMesh";
-const MATERIAL_TYPE: &str = "ome_render::material::asset::Material";
+const MESH_TYPE: &str = "kooch_render::meshlet::asset::MeshletMesh";
+const MATERIAL_TYPE: &str = "kooch_render::material::asset::Material";
 
 /// A body: transform, rigid body, unit collider, and a mesh to see it by.
 fn body(spec: Spec<'_>) -> EntityDescription {
-    use ome_physics::components::{
+    use kooch_physics::components::{
         Collider, KIND_DYNAMIC, KIND_STATIC, RigidBody, SHAPE_CUBOID, SHAPE_SPHERE,
     };
 
@@ -379,14 +379,14 @@ fn body(spec: Spec<'_>) -> EntityDescription {
         components: vec![
             name_of(spec.label),
             ComponentDescription {
-                type_name: type_name_of::<ome_ecs::transform::Transform>(),
+                type_name: type_name_of::<kooch_ecs::transform::Transform>(),
                 fields: vec![
                     ("position".to_owned(), ReflectValue::Vec3(spec.position)),
                     ("scale".to_owned(), ReflectValue::Vec3(spec.scale)),
                 ],
             },
             ComponentDescription {
-                type_name: type_name_of::<ome_ecs::mesh_renderer::MeshRenderer>(),
+                type_name: type_name_of::<kooch_ecs::mesh_renderer::MeshRenderer>(),
                 fields: vec![
                     (
                         "mesh".to_owned(),
@@ -425,7 +425,7 @@ fn body(spec: Spec<'_>) -> EntityDescription {
 
 fn name_of(label: &str) -> ComponentDescription {
     ComponentDescription {
-        type_name: type_name_of::<ome_ecs::name::Name>(),
+        type_name: type_name_of::<kooch_ecs::name::Name>(),
         fields: vec![("value".to_owned(), ReflectValue::String(label.to_owned()))],
     }
 }
@@ -434,7 +434,7 @@ fn name_of(label: &str) -> ComponentDescription {
 ///
 /// Asked of the compiler rather than typed out: the registry uses
 /// `std::any::type_name`, and a hand-written string goes stale the moment a
-/// module moves — which `ome_physics::components` did when it was split.
+/// module moves — which `kooch_physics::components` did when it was split.
 fn type_name_of<T: 'static>() -> String {
     std::any::type_name::<T>().to_owned()
 }

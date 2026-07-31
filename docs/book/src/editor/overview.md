@@ -23,7 +23,7 @@ between them.
 **Standalone** — the editor opens, and you point it at a project:
 
 ```bash
-cargo run -p ome_editor      # from the engine repo
+cargo run -p kooch_editor      # from the engine repo
 # then: Open Project
 ```
 
@@ -39,10 +39,10 @@ gets them two ways at once:
 > **Why the split exists.** Rust has no stable ABI, so a pre-built editor cannot simply link
 > a project compiled separately. The `dylib` gets around that by requiring the same compiler
 > for both — fine for code the editor itself built. The remote host covers the rest: running
-> your systems against a live world. See [`docs/MEMORY.md`](https://github.com/lobinuxsoft/oh_my_engine/blob/development/docs/MEMORY.md)
+> your systems against a live world. See [`docs/MEMORY.md`](https://github.com/lobinuxsoft/kooch/blob/development/docs/MEMORY.md)
 > for the full reasoning.
 
-The Hub — the window you get from `cargo run -p ome_editor` — is where projects are created
+The Hub — the window you get from `cargo run -p kooch_editor` — is where projects are created
 and opened.
 
 ![The Hub](../images/hub.png)
@@ -70,7 +70,7 @@ the snapshot, so the world goes back exactly as authored — you do not lose you
 testing it.
 
 ```rust
-// ome_remote::handlers::set_playing, in essence
+// kooch_remote::handlers::set_playing, in essence
 if playing {
     resources.insert(PlaySnapshot(WorldSnapshot::capture(resources)));
     Playing::set(resources, true);
@@ -90,18 +90,18 @@ recompiling.
 > **Known rough edge.** A locally-opened project's Play button still has an older path that
 > shells out to `cargo run -- --game`, which builds the project and opens a second window —
 > minutes of nothing, and no snapshot. Tracked in
-> [#633](https://github.com/lobinuxsoft/oh_my_engine/issues/633).
+> [#633](https://github.com/lobinuxsoft/kooch/issues/633).
 
 ## What the editor does not do yet
 
 Honest list, so nothing below is mistaken for a bug in your setup:
 
 - **No build button.** Changing Rust code means running `cargo build` yourself
-  ([#158](https://github.com/lobinuxsoft/oh_my_engine/issues/158)).
+  ([#158](https://github.com/lobinuxsoft/kooch/issues/158)).
 - **No reload.** The project's `dylib` loads once, when the project opens. Seeing a code
   change means reopening the editor
-  ([#648](https://github.com/lobinuxsoft/oh_my_engine/issues/648)).
+  ([#648](https://github.com/lobinuxsoft/kooch/issues/648)).
 - **No New Scene.** Scenes have to exist on disk already
-  ([#619](https://github.com/lobinuxsoft/oh_my_engine/issues/619)).
+  ([#619](https://github.com/lobinuxsoft/kooch/issues/619)).
 - **The editor redraws while idle**, pinning a core with nothing happening
-  ([#656](https://github.com/lobinuxsoft/oh_my_engine/issues/656)).
+  ([#656](https://github.com/lobinuxsoft/kooch/issues/656)).

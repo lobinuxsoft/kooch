@@ -10,7 +10,7 @@ fn main() {
     let engine = std::env::current_dir().expect("cwd");
     let name = args.get(2).map(String::as_str).unwrap_or("HealthDemo");
 
-    match oh_my_engine::ome_editor_core::project::create_project(name, parent, &engine) {
+    match kooch::kooch_editor_core::project::create_project(name, parent, &engine) {
         Ok(path) => println!("CREATED {}", path.display()),
         Err(e) => {
             eprintln!("ERROR {e}");
