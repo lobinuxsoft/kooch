@@ -157,9 +157,18 @@ pub const SETTLE_EPSILON: f32 = 1e-4;
 ///
 /// # Default
 ///
-/// A freshly added vcam does nothing: `follow` and `look_at` are `None`
-/// and `target` is empty. A component that started moving the camera the
-/// instant it was added would fight whoever placed the camera.
+/// A third-person vcam looking at its target — everything set except
+/// the target, which is empty, so a fresh one still moves nothing.
+/// [`VirtualCamera::is_inert`] is what guarantees that, not the modes.
+///
+/// The modes used to default to `None` as well, on the grounds that a
+/// component moving the camera the instant it was added would fight
+/// whoever placed it. That was true when this lived *on* the camera.
+/// A vcam is its own entity now, with nobody to fight, and three fields
+/// to set before anything happens is three chances to give up. Upstream
+/// starts at `NONE` too, but it is a node added to a scene tree, where
+/// nothing is expected to happen on its own; a menu entry called
+/// "Virtual Camera" promises a camera, not an empty component.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Camera")]
 pub struct VirtualCamera {
@@ -256,13 +265,13 @@ impl Default for VirtualCamera {
         Self {
             priority: 0,
             enabled: true,
-            follow: FOLLOW_NONE,
+            follow: FOLLOW_THIRD_PERSON,
             target: None,
             offset: Vec3::new(0.0, 2.0, 6.0),
             distance: 6.0,
             yaw: 0.0,
             pitch: 20.0,
-            look_at: LOOK_AT_NONE,
+            look_at: LOOK_AT_SIMPLE,
             damping: true,
             damping_value: Vec3::splat(0.15),
             up_mode: UP_WORLD,
@@ -485,11 +494,48 @@ mod tests {
         assert!(!r.is_inert());
     }
 
-    /// A freshly added component must not move the camera, or dropping a
-    /// vcam on a placed camera would teleport it.
+    /// The default has working modes now, so the *only* thing keeping a
+    /// freshly spawned vcam from moving a camera is the empty target.
+    /// This is the assertion that guarantee rests on.
     #[test]
-    fn the_default_does_nothing() {
-        assert!(VirtualCamera::default().is_inert());
+    fn the_default_does_nothing_until_it_has_a_target() {
+        let fresh = VirtualCamera::default();
+        assert!(
+            fresh.is_inert(),
+            "a vcam with no target must not move anything"
+        );
+        assert_ne!(
+            fresh.follow, FOLLOW_NONE,
+            "the default should be usable the moment a target is picked",
+        );
+        assert_ne!(fresh.look_at, LOOK_AT_NONE);
+    }
+
+    /// Spawning a Virtual Camera and picking a target should be all it
+    /// takes. If this ever needs a third step, the menu entry is lying.
+    #[test]
+    fn picking_a_target_is_enough_to_make_the_default_work() {
+        let mut v = VirtualCamera::default();
+        v.target = Some(EntityRef::Live(kooch_ecs::entity::Entity::new(0, 0)));
+        assert!(!v.is_inert());
+
+        let target = Vec3::new(0.0, 0.0, -20.0);
+        let (pos, rot) = v.desired(
+            target,
+            glam::Quat::IDENTITY,
+            Vec3::ZERO,
+            glam::Quat::IDENTITY,
+            Vec3::Y,
+        );
+        assert!(
+            (pos - target).length() > 0.1,
+            "a third-person default should stand off its target, got {pos:?}",
+        );
+        let facing = rot * -Vec3::Z;
+        assert!(
+            facing.dot((target - pos).normalize()) > 0.999,
+            "and it should be looking at it, facing {facing:?}",
+        );
     }
 
     #[test]
