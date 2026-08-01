@@ -1341,6 +1341,6 @@ Se cayó el prefijo `kooch_`: namespaceaba contra una colisión que no ocurre (l
 viven en el `scenes/`/`assets/` del propio proyecto, no en una carpeta compartida) y hacía
 del *engine* lo visible de un archivo cuya propiedad interesante es su formato.
 
-Migración: 10 archivos renombrados en 4 proyectos, más el `main_scene` de 3 `project.ome`
+Migración: 10 archivos renombrados en 4 proyectos, más el `main_scene` de 3 `project.kooch`
 — ese puntero es lo que habría roto el arranque en silencio. Sin fallback de lectura:
 no quedó nada con la extensión vieja.

@@ -1,6 +1,6 @@
 # Introduction
 
-**Kóoch** (OME) is a GPU-driven game engine written in Rust, with an editor.
+**Kóoch** is a GPU-driven game engine written in Rust, with an editor.
 
 The rendering path is a **Nanite-style GPU-driven meshlet pipeline**: the hot loop runs in
 compute on the GPU, and the CPU only coordinates. The ECS stays on the CPU — that is a
@@ -16,7 +16,7 @@ broken, this book says so and links the issue.
 
 Two readers, with overlapping needs:
 
-1. **Engine users** — anyone writing a game on top of OME. Start with
+1. **Engine users** — anyone writing a game on top of Kóoch. Start with
    [Your First Project](./scripting/first-project.md), then
    [The Editor](./editor/overview.md).
 2. **Engine contributors** — anyone touching `crates/*`. Start with
@@ -65,8 +65,8 @@ What does not work yet, stated plainly:
 | Physics | `rapier3d 0.34` |
 | Audio | `kira 0.9` |
 | Input | `gilrs 0.11` (gamepad), winit (keyboard/mouse) |
-| Scripting | `rhai 1.21` |
-| Editor UI | `egui 0.34` + `egui_dock 0.19` |
+| Gameplay code | Plain Rust — native plugin via `kooch_plugin_api` |
+| Editor UI | `egui 0.35` + `egui_dock 0.20` |
 | Mesh | `gltf 1.4` |
 | Serialisation | `serde 1` + `ron 0.8` |
 

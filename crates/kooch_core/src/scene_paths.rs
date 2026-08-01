@@ -43,6 +43,26 @@ pub const SCENE_EXTENSION: &str = "scene";
 /// whose interesting property is its format.
 pub const PREFAB_EXTENSION: &str = "prefab";
 
+/// Name of a project's manifest file, at the project root.
+///
+/// # Why this one *is* named after the engine
+///
+/// The opposite of [`PREFAB_EXTENSION`]. A scene file's interesting
+/// property is its format, so the engine's name has no business in it. A
+/// manifest's interesting property is precisely *which engine owns this
+/// directory* — it is the marker the launch screen looks for to decide a
+/// folder is a project at all. Godot draws the same line with
+/// `project.godot`.
+///
+/// # Why here and not beside the manifest
+///
+/// Same reason as the rest of this module: three places already agree
+/// about this name — the manifest writes and reads it, the launch screen
+/// tests for it to enable a row, and the delete guard in the launch
+/// screen refuses to touch a directory without it. It was three string
+/// literals until the engine was renamed and all three had to move.
+pub const PROJECT_MANIFEST_FILE: &str = "project.kooch";
+
 /// Convention path of a project's default scene, relative to its root.
 ///
 /// Also the path the runtime falls back to relative to the working
@@ -69,6 +89,16 @@ mod tests {
     #[test]
     fn a_scene_and_a_prefab_are_told_apart() {
         assert_ne!(SCENE_EXTENSION, PREFAB_EXTENSION);
+    }
+
+    /// The manifest is a file name, not an extension: it carries its dot
+    /// in the middle. Asserting it stops a future rename from turning it
+    /// into a bare `kooch` that `join()` would happily create as a folder.
+    #[test]
+    fn the_manifest_is_a_file_name() {
+        assert!(PROJECT_MANIFEST_FILE.contains('.'));
+        assert!(!PROJECT_MANIFEST_FILE.starts_with('.'));
+        assert!(!PROJECT_MANIFEST_FILE.ends_with('.'));
     }
 
     /// A leading dot would make every `format!(".{ext}")` produce `..scene`.

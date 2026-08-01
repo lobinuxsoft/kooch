@@ -1,6 +1,6 @@
 //! Proving a plugin was built against this engine, by this compiler.
 //!
-//! The plugin hands the host a `Box<dyn OmePlugin>` — a Rust trait
+//! The plugin hands the host a `Box<dyn KoochPlugin>` — a Rust trait
 //! object, whose vtable layout Rust does not guarantee between compiler
 //! versions. Passing one across a library boundary is sound *only* when
 //! both sides were built by the same compiler against the same API.
@@ -13,7 +13,7 @@
 /// Current plugin API version.
 ///
 /// Increment on any breaking change to [`Engine`](crate::Engine),
-/// [`OmePlugin`](crate::OmePlugin), or the schema types.
+/// [`KoochPlugin`](crate::KoochPlugin), or the schema types.
 pub const API_VERSION: u32 = 2;
 
 /// The compiler that built this crate, as `rustc -V -v` reported it.

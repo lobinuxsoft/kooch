@@ -25,20 +25,20 @@ const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Returns the directory where pipeline cache blobs are stored.
 ///
-/// Linux: `$XDG_CACHE_HOME/ome/pipeline_cache` or `$HOME/.cache/ome/pipeline_cache`.
-/// Windows: `%LOCALAPPDATA%/ome/pipeline_cache`.
+/// Linux: `$XDG_CACHE_HOME/kooch/pipeline_cache` or `$HOME/.cache/kooch/pipeline_cache`.
+/// Windows: `%LOCALAPPDATA%/kooch/pipeline_cache`.
 fn cache_dir() -> Option<PathBuf> {
     if let Some(xdg) = std::env::var_os("XDG_CACHE_HOME") {
-        return Some(PathBuf::from(xdg).join("ome").join("pipeline_cache"));
+        return Some(PathBuf::from(xdg).join("kooch").join("pipeline_cache"));
     }
     #[cfg(windows)]
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        return Some(PathBuf::from(local).join("ome").join("pipeline_cache"));
+        return Some(PathBuf::from(local).join("kooch").join("pipeline_cache"));
     }
     std::env::var_os("HOME").map(|h| {
         PathBuf::from(h)
             .join(".cache")
-            .join("ome")
+            .join("kooch")
             .join("pipeline_cache")
     })
 }

@@ -20,7 +20,7 @@ contributors) or [Getting Started](docs/book/src/guide/getting-started.md)
 
 ## Overview
 
-Kooch (OME) is an experimental game engine that leverages modern GPU capabilities for rendering and physics, while keeping gameplay logic on CPU for flexibility. Instead of traditional rasterization, it uses **Signed Distance Fields (SDF)** and **ray marching** for rendering.
+Kóoch is an experimental game engine that leverages modern GPU capabilities for rendering and physics, while keeping gameplay logic on CPU for flexibility. Instead of traditional rasterization, it uses **Signed Distance Fields (SDF)** and **ray marching** for rendering.
 
 ## Features
 

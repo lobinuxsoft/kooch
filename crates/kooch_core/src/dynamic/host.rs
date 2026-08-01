@@ -51,7 +51,7 @@ pub struct EngineHost<'a> {
 }
 
 impl<'a> EngineHost<'a> {
-    /// A host for `OmePlugin::build`, where registering systems is
+    /// A host for `KoochPlugin::build`, where registering systems is
     /// allowed.
     pub fn building(resources: &'a mut Resources, schedule: &'a mut Schedule) -> Self {
         Self {

@@ -1,6 +1,6 @@
 # Crate Graph
 
-OME is a Cargo workspace of 16 internal crates plus one top-level facade
+Kóoch is a Cargo workspace of 18 internal crates plus one top-level facade
 crate. The structure is intentionally fine-grained: each subsystem lives in
 its own crate so that downstream crates only depend on what they actually
 need. This keeps compile times low when iterating on a single subsystem and
@@ -8,7 +8,7 @@ makes the dependency surface auditable at a glance.
 
 ## Layers at a glance
 
-The 16 internal crates (plus the top-level `kooch` facade) sit in
+The 18 internal crates (plus the top-level `kooch` facade) sit in
 seven layers. Each layer may only depend on layers below it.
 
 | Layer | Crates | Role |
@@ -92,7 +92,7 @@ form the type vocabulary the rest of the engine uses.
 
 | Crate | Role |
 |-------|------|
-| `kooch_core` | `App`, `Plugin`, `PluginGroup`, `Stage`, `Schedule`, `Resources`, `Time`, `GpuContext`, event system, pipeline cache, power profile detection. The minimum any OME binary needs. |
+| `kooch_core` | `App`, `Plugin`, `PluginGroup`, `Stage`, `Schedule`, `Resources`, `Time`, `GpuContext`, event system, pipeline cache, power profile detection. The minimum any Kóoch binary needs. |
 
 ### Primitives (L2)
 

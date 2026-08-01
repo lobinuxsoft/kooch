@@ -45,7 +45,9 @@ use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::query::Query;
 use kooch_ecs::transform::Transform;
 use kooch_gizmos::{GizmoBatch, Gizmos, MeshBatch, VisualizerRegistry};
-use kooch_gizmos_handles::{DragModifiers, HandleMode, HandleSet, Ray, SnapSettings, TransformDelta};
+use kooch_gizmos_handles::{
+    DragModifiers, HandleMode, HandleSet, Ray, SnapSettings, TransformDelta,
+};
 
 use crate::actions::EditorAction;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta};

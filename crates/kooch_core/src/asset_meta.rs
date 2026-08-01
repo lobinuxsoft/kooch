@@ -314,8 +314,8 @@ mod tests {
         let asset = dir.path.join("foo.glb");
         touch(&asset);
 
-        let meta =
-            read_or_create_typed(&asset, "kooch_render::meshlet::MeshletMesh").expect("create typed");
+        let meta = read_or_create_typed(&asset, "kooch_render::meshlet::MeshletMesh")
+            .expect("create typed");
         assert_eq!(
             meta.asset_type.as_deref(),
             Some("kooch_render::meshlet::MeshletMesh"),

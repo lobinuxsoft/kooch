@@ -22,7 +22,11 @@ use crate::panels::id_stability_probe::{drawing, install_logger};
 fn fill(buffer: &LogBuffer, from: u32, count: u32) {
     for n in from..from + count {
         match n % 3 {
-            0 => buffer.push_project(Level::INFO, "kooch_physics", format!("a body spawned n={n}")),
+            0 => buffer.push_project(
+                Level::INFO,
+                "kooch_physics",
+                format!("a body spawned n={n}"),
+            ),
             1 => buffer.push_project(
                 Level::WARN,
                 "kooch_remote",

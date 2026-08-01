@@ -1,6 +1,6 @@
 //! Persists the editor's dock layout between sessions.
 //!
-//! Saves to `$XDG_CONFIG_HOME/ome/editor_layout.ron` (Linux/macOS) or the
+//! Saves to `$XDG_CONFIG_HOME/kooch/editor_layout.ron` (Linux/macOS) or the
 //! platform equivalent. The file is per-user and **not** versioned with
 //! the project — it's UI preference, not scene data.
 //!
@@ -26,7 +26,7 @@ pub(crate) struct LayoutPersistence {
 /// Returns the absolute path of the editor layout file, or `None` when
 /// the platform's config directory cannot be resolved (rare).
 pub(crate) fn layout_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("ome").join("editor_layout.ron"))
+    dirs::config_dir().map(|dir| dir.join("kooch").join("editor_layout.ron"))
 }
 
 /// Tries to read and parse the saved layout file. Returns `None` on
@@ -165,7 +165,7 @@ mod tests {
     #[test]
     fn layout_path_resolves_under_config_dir() {
         let path = layout_path().expect("config dir resolves on test platform");
-        assert!(path.ends_with("ome/editor_layout.ron"));
+        assert!(path.ends_with("kooch/editor_layout.ron"));
     }
 
     #[test]

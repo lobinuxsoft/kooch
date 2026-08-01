@@ -8,7 +8,7 @@
 //! #[derive(Default)]
 //! struct MyPlugin;
 //!
-//! impl OmePlugin for MyPlugin {
+//! impl KoochPlugin for MyPlugin {
 //!     fn name(&self) -> &str {
 //!         "MyPlugin"
 //!     }
@@ -40,7 +40,7 @@ use crate::engine_api::Engine;
 /// with it; state that must persist belongs to the host, through
 /// [`Engine::set_data`]. Every project that has built this arrives at
 /// the same rule, and it is not one the type system can enforce.
-pub trait OmePlugin: Send + Sync {
+pub trait KoochPlugin: Send + Sync {
     /// Name for logs and diagnostics.
     fn name(&self) -> &str;
 
@@ -55,7 +55,7 @@ pub trait OmePlugin: Send + Sync {
 
 /// Signature of the constructor a plugin exports as `kooch_create_plugin`.
 ///
-/// `Box<dyn OmePlugin>` is not FFI-safe in the general case, which is
+/// `Box<dyn KoochPlugin>` is not FFI-safe in the general case, which is
 /// precisely why [`version::check`](crate::version::check) runs first:
 /// it refuses to load anything not built by the same compiler against
 /// the same API version, and that agreement is the condition under
@@ -66,7 +66,7 @@ pub trait OmePlugin: Send + Sync {
 // same compiler and the same API version. Silenced here, once, with the
 // reason attached — rather than left to fire at every call site.
 #[allow(improper_ctypes_definitions)]
-pub type CreatePluginFn = unsafe extern "C" fn() -> Box<dyn OmePlugin>;
+pub type CreatePluginFn = unsafe extern "C" fn() -> Box<dyn KoochPlugin>;
 
 /// Symbol name of the constructor, for `libloading`.
 pub const CREATE_SYMBOL: &[u8] = b"kooch_create_plugin";
@@ -93,7 +93,7 @@ macro_rules! export_plugin {
         /// which is why the loader reads the stamp first.
         #[unsafe(no_mangle)]
         #[allow(improper_ctypes_definitions)]
-        pub extern "C" fn kooch_create_plugin() -> ::std::boxed::Box<dyn $crate::OmePlugin> {
+        pub extern "C" fn kooch_create_plugin() -> ::std::boxed::Box<dyn $crate::KoochPlugin> {
             ::std::boxed::Box::new(<$ty as ::std::default::Default>::default())
         }
     };

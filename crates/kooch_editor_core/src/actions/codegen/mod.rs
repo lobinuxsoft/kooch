@@ -377,9 +377,7 @@ fn render_registrations(files: &[SourceFile]) -> String {
     s.push_str("/// Describes project components to an editor that loads this library.\n");
     s.push_str("///\n");
     s.push_str("/// Called from `lib.rs` when the editor loads the project's dylib.\n");
-    s.push_str(
-        "pub fn declare_components(engine: &mut dyn kooch::kooch_plugin_api::Engine) {\n",
-    );
+    s.push_str("pub fn declare_components(engine: &mut dyn kooch::kooch_plugin_api::Engine) {\n");
     s.push_str("    use kooch::kooch_ecs::component::plugin_bridge::declare_component;\n");
     for f in files {
         for c in &f.components {

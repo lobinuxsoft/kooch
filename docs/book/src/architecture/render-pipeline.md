@@ -1,6 +1,6 @@
 # Render Pipeline
 
-OME has **one rendering model with two orchestration callsites**:
+Kóoch has **one rendering model with two orchestration callsites**:
 
 1. **Editor offscreen** — `kooch_editor_core::viewport::render::render_viewport`
    draws into a `ViewportTarget` texture which the egui `View` panel then

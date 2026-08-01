@@ -985,7 +985,9 @@ mod tests {
         );
         r.insert(server);
         r.insert(AssetDatabase::new());
-        r.insert(kooch_core::assets::Assets::<kooch_render::meshlet::MeshletMesh>::new());
+        r.insert(kooch_core::assets::Assets::<
+            kooch_render::meshlet::MeshletMesh,
+        >::new());
         r
     }
 
