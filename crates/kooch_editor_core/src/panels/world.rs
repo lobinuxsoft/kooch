@@ -480,7 +480,7 @@ fn build_rows(
 /// entities are absent from the row list entirely rather than skipped
 /// one at a time.
 fn draw_group_header(ui: &mut egui::Ui, header: &GroupHeader, row_h: f32) {
-    let size = egui::vec2(ui.available_width(), row_h - ui.spacing().item_spacing.y);
+    let size = egui::vec2(ui.available_width(), row_h);
     let (rect, resp) = ui.allocate_at_least(size, egui::Sense::click());
 
     let mut open = header.is_open(ui);
@@ -850,15 +850,57 @@ mod tests {
         );
     }
 
-    /// The one invariant virtualization rests on. `show_rows` places every
-    /// row from an index times this height without drawing the rows above,
-    /// so a row that occupies anything else puts the whole list out of
-    /// step with the scrollbar — and clicks land on a neighbour.
+    /// `show_rows` names its parameter `row_height_sans_spacing` and adds
+    /// `item_spacing.y` itself. A height that already includes it makes
+    /// egui reserve two gaps per row while each row leaves one — four
+    /// pixels of empty panel per row, growing with the panel because the
+    /// number of visible rows does (#708).
+    ///
+    /// # This restates the formula, deliberately
+    ///
+    /// Measuring a drawn row cannot catch it: the cursor advances by the
+    /// widget's size plus the spacing, so height and advance scale
+    /// together and the assertion holds either way. That is exactly what
+    /// the first attempt at this test did, and it passed with the bug
+    /// reinstated.
+    ///
+    /// What is being pinned is not the formula but that **nothing is
+    /// added to it** — so the formula has to appear here for the addition
+    /// to be visible.
     #[test]
-    fn a_row_occupies_exactly_the_height_the_list_reserved() {
+    fn the_row_height_excludes_the_spacing_show_rows_adds() {
+        with_ui(|ui| {
+            let line = ui.text_style_height(&egui::TextStyle::Button);
+            let content =
+                (line + 2.0 * ui.spacing().button_padding.y).max(ui.spacing().interact_size.y);
+            assert!(ui.spacing().item_spacing.y > 0.0, "otherwise vacuous");
+            assert!(
+                (entity_row::row_height(ui) - content).abs() < 0.01,
+                "row_height is {} but the content is {content}; anything extra is \
+                 space egui will reserve and no row will fill",
+                entity_row::row_height(ui),
+            );
+        });
+    }
+
+    /// The one invariant virtualization rests on. `show_rows` places every
+    /// row from an index times this pitch without drawing the rows above,
+    /// so a row that advances the cursor by anything else puts the whole
+    /// list out of step with the scrollbar — and clicks land on a
+    /// neighbour.
+    ///
+    /// # Against the pitch, not the height
+    ///
+    /// This compared the cursor's advance to `row_height` and passed,
+    /// which is how the bug in #708 survived being tested: the advance
+    /// includes `item_spacing.y`, so the test was asserting that the
+    /// height *is* the pitch — and `row_height` obliged by including the
+    /// spacing, leaving egui to add a second one.
+    #[test]
+    fn a_row_advances_the_cursor_by_exactly_one_pitch() {
         let entities = vec![entity_info(0, None)];
         let (reserved, occupied) = with_ui(|ui| {
-            let reserved = entity_row::row_height(ui);
+            let reserved = row_pitch(ui, entity_row::row_height(ui));
             let before = ui.cursor().top();
             draw_entity_row(
                 ui,
@@ -875,7 +917,7 @@ mod tests {
         });
         assert!(
             (reserved - occupied).abs() < 0.01,
-            "row reserved {reserved} but occupied {occupied}",
+            "the list reserves {reserved} per row and the row advanced {occupied}",
         );
     }
 
@@ -900,7 +942,7 @@ mod tests {
         let entities = vec![long];
 
         let (reserved, occupied) = with_ui(|ui| {
-            let reserved = entity_row::row_height(ui);
+            let reserved = row_pitch(ui, entity_row::row_height(ui));
             let before = ui.cursor().top();
             draw_entity_row(
                 ui,
@@ -917,7 +959,7 @@ mod tests {
         });
         assert!(
             (reserved - occupied).abs() < 0.01,
-            "a 400-character name made its row {occupied} tall, not {reserved}",
+            "a 400-character name advanced the cursor {occupied}, not {reserved}",
         );
     }
 }
