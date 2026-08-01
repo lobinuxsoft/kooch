@@ -68,12 +68,19 @@ from a number, and the two guesses before them were wrong.
    frames a second, so the remote pull's thirty-frame cadence went from half a second to seven
    and a half. It is a `Duration` now, and **any new cadence must be too**.
 
-1. **#645 — the remote pull blocks the editor's main thread every frame during Play.**
-   `REFRESH_INTERVAL_PLAYING = 1` in `systems/remote_sync.rs` → `session.refresh()` →
-   `client.list_entities()`, inline in the frame. The editor is not waiting on the transport;
-   it is waiting for the project process to reach its next `Stage::First`. Still unmeasured —
-   the transport changed under it (#654), the instrumentation did not get written. Candidates:
-   move it off-thread, diff server-side, or drop to a cadence with interpolation.
+1. **#645 / #691 — the remote pull. Measured, mostly fixed, one term left.** It was 32 ms a
+   frame: 424.6 KB of JSON for 610 entities, 13.7 ms of it parsing, plus 7.5 ms rebuilding the
+   mirror. Diffing server-side (#694) took the payload to **0.1 KB** and decode to 0.02 ms;
+   skipping the mirror when the delta is empty (#695) took its 7.5 ms to **0.00**. Binary
+   encoding was **cancelled, not deferred** — it would optimise 0.02 ms.
+
+   What is left is `transport`: **4.4 ms**, waiting for the project to reach its next
+   `Stage::First`. The HUD tooltip predicted this exactly — *"if this dominates, the fix is to
+   stop doing it on the main thread"* — and it now dominates. That is #691 step 3.
+
+   ⚠️ **`DenseScene` has no colliders.** With physics every entity changes every frame and the
+   delta becomes the whole world again. **The diff solved authoring, not Play**, and nothing
+   here has been measured with a solver running.
 2. **#641 — egui `changed id between passes`. Mostly closed by PR #664, and the remainder is
    not ours.** The Console was the whole of the volume: widgets took automatic ids, handed out
    by order of creation, and `draw_message` emits a variable number of them — so one row
@@ -88,23 +95,60 @@ from a number, and the two guesses before them were wrong.
    [egui #8343](https://github.com/emilk/egui/issues/8343), open upstream, where
    `with_layout(right_to_left)` inside `horizontal` warns spuriously. `menu_bar.rs` does
    exactly that. **This is no longer a performance item.**
-3. **#666 — the editor gathers a full snapshot of the world every frame, for every panel,
-   visible or not.** `frame_display.rs::gather` walks entities, archetypes, component types,
-   reflected types and scenes before anyone decides whether to draw. With #656 done, this is
-   what is left on an idle frame, and it scales with the scene rather than with the UI.
+3. **#666 — ⭐ THE NEXT ONE. The gather builds the whole world to draw twenty rows.**
+   `Gather · entities` is **4.33 ms of a 13.5 ms frame** on 610 entities, and 96% of the gather
+   stage. It is also the part nobody can make cheaper by closing a panel: collapsing every
+   panel takes the UI pass from 9.2 ms to 3.1 ms and leaves gather untouched.
+
+   The original framing — skip panels whose tab is not visible — cannot fix it: **the World
+   panel is always visible**, so the entity walk runs in full, and the four sub-stages that
+   visibility gating would remove total 0.1 ms.
+
+   The cost is the shape of what is built. One `EntityDisplayInfo` per entity, each carrying a
+   `Vec<ComponentDisplayInfo>`, each of those allocating a `String` for a short name that is
+   `&'static str` at its source: **2440 String allocations a frame** to draw twenty rows. #695
+   removed the reflected *values* from this path and got 0.9 ms of 5.26 — which is the proof
+   the values were never the cost.
+
+   A row needs a name, a depth, a child count, a component count and a scene. The full
+   descriptor is read by the Inspector, for the selection. The gather is producing a structure
+   shaped for the panel that shows one entity and handing it to the panel that shows six
+   hundred.
 4. **`asset_browser/tree.rs::render_root` rebuilds the whole folder tree every frame, twice**
    (Project and Engine roots), cloning a `PathBuf` per node. ~12 assets today, so invisible;
    the same shape as the Console bug that was not.
-5. **Panels with unbounded lists are not virtualised.** The Console now is (#643). The
-   hierarchy in `panels/world.rs` is not, and a large scene is exactly when it matters.
+5. **Panels with unbounded lists are not virtualised. DONE** — the Console (#643) and now the
+   hierarchy (#695): `ScrollArea::show_rows` draws the twenty rows that fit instead of all 610.
+   UI pass 9.23 → 4.79 ms. What it demands is that a row's height be known before the rows
+   above it are drawn, so `entity_row::row_height` is the single definition both the list and
+   the row read, and **rows truncate rather than wrap** — a wrapped name would be taller than
+   the list promised and every row below it would land in the wrong place.
 6. **`kooch_gravity::plugin` walks and allocates its source list twice per frame** — once in
    `reconcile_world_gravity`, once in `apply_gravity_sources`. Small, but it is per frame.
-7. **#569 — per-stage counters in the perf HUD.** Out of order on purpose: without it every
-   item above is argued rather than measured. Consider doing this *first*.
+7. **#569 — per-stage counters in the perf HUD. DONE (#695), and it should have been first.**
+   The HUD's **CPU frame** section reports gather / UI / input / viewport / present / actions,
+   what no stage claims, and the gizmo batch that runs outside the measured span; gather splits
+   again into intern / entities / archetypes / types / assets. `Unaccounted` reads **0.01 ms**,
+   so the split describes the frame rather than approximating it.
+
+   Two things to know before reading it. **`cpu_frame_ms` does not include the remote pull** —
+   `remote_sync_system` runs in `Stage::PreUpdate`, outside the measured span, so subtracting
+   the pull from it subtracts something that was never inside. And **with vsync on the HUD does
+   not move when real work is removed**: `KOOCH_PRESENT_MODE=novsync` exists so the frame can
+   be measured at all. Vsync stays the default; an uncapped editor burns a GPU drawing frames
+   nobody sees.
 
 **The rule this session earned:** egui redraws everything every frame, so whatever a panel
 does in its `draw` it does sixty times a second for as long as it is visible. The user's
 report was *"it depends on how many panels are open"*, and that was exactly right.
+
+**The rule the next session earned, which supersedes the order of this list:** four hypotheses
+were raised about this frame in one day. The cull sizing (#689) was arithmetically damning —
+815× of wasted threads, verified — and costs **0.076 ms**. Vsync was refuted outright. The
+panels were real, and were found by asking the user to collapse them. The reflected values were
+predicted at ~4 ms and delivered 0.9. **One hit in four by analysis; four in four by
+measurement.** Item 7 was listed last and was the one that should have been done first.
+Instrument, then argue.
 
 ### 2. The monolithic files — done, with one exception
 
