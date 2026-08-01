@@ -207,7 +207,15 @@ impl MeshletRenderStage {
             pool_meshlets_roots,
             gpu_frame_ms: self.gpu_timers.last_frame_ms(),
             draw_calls: meshlet_draw_calls,
-            cull_stage_counts: self.stage_counters.last_frame_counts(),
+            // Only when this frame asked for them. The cache holds
+            // whatever the last debug-active frame read, and handing
+            // that to the HUD draws a number from an unknown moment as
+            // if it described the frame on screen (#703).
+            cull_stage_counts: if cull_params.debug_active != 0 {
+                self.stage_counters.last_frame_counts()
+            } else {
+                None
+            },
             stage_timings,
         }
     }

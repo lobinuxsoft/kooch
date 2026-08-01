@@ -279,7 +279,15 @@ impl MeshletRenderStage {
             // editor stats overlay still shows the LATEST counts
             // from any frame the R64 path also ran (which it
             // doesn't on this branch — stays None on legacy R32).
-            cull_stage_counts: self.stage_counters.last_frame_counts(),
+            // Only when this frame asked for them. The cache holds
+            // whatever the last debug-active frame read, and handing
+            // that to the HUD draws a number from an unknown moment as
+            // if it described the frame on screen (#703).
+            cull_stage_counts: if cull_params.debug_active != 0 {
+                self.stage_counters.last_frame_counts()
+            } else {
+                None
+            },
             stage_timings,
         }
     }
