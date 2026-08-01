@@ -192,11 +192,13 @@ impl RemoteClient {
                 removed,
                 revision,
                 full,
+                host,
             } => Ok(EntityUpdate {
                 entities,
                 removed,
                 revision,
                 full,
+                host,
             }),
             other => Err(ClientError::Unexpected(other)),
         }
@@ -426,4 +428,6 @@ pub struct EntityUpdate {
     /// Pass back as `since` on the next call.
     pub revision: u64,
     pub full: bool,
+    /// What the host's frame cost, if it reported one.
+    pub host: Option<crate::protocol::HostMetrics>,
 }

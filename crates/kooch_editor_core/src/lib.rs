@@ -109,6 +109,27 @@ impl Plugin for EditorPlugin {
         app.insert_resource(perf::SysMetricsState::default());
         app.insert_resource(editor_camera::EditorCameraController::default());
         app.insert_resource(layout::LayoutPersistence::default());
+        // The engine's own frame reporting is for a game, which has no
+        // other way to say how fast it runs (#698). The editor has the
+        // perf HUD, so a line per second in the Console is noise on top of
+        // a number already on screen — and the Console keeps every line it
+        // is given.
+        //
+        // Silenced in `Startup` rather than by overwriting the resource
+        // here, because `CorePlugin` builds it from the environment and
+        // which plugin's `build` runs last is not a thing to depend on.
+        // The variable stays set in the process environment, so a game
+        // launched by Play still inherits it and still reports.
+        app.add_system(
+            Stage::Startup,
+            |resources: &mut kooch_core::resource::Resources| {
+                if let Some(metrics) =
+                    resources.get_mut::<kooch_core::frame_metrics::FrameMetrics>()
+                {
+                    metrics.report = kooch_core::frame_metrics::MetricsReport::Silent;
+                }
+            },
+        );
         app.add_system(Stage::Startup, systems::editor_startup_system);
         // Loads the saved dock layout from disk (if any) and replaces the
         // overlay's default. Must run AFTER editor_startup_system so the

@@ -212,8 +212,29 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
             removed: delta.removed,
             revision: delta.revision,
             full: delta.full,
+            host: host_metrics(resources),
         },
     )
+}
+
+/// The host's own frame cost, read from the engine's measurement rather
+/// than timed again here.
+///
+/// `None` before the first frame has been described — `FrameMetrics`
+/// publishes a frame late on purpose, and a zero would read as a project
+/// running infinitely fast rather than as one that has not been measured
+/// yet.
+fn host_metrics(resources: &Resources) -> Option<crate::protocol::HostMetrics> {
+    let metrics = resources.get::<kooch_core::frame_metrics::FrameMetrics>()?;
+    if metrics.frame_ms <= 0.0 {
+        return None;
+    }
+    Some(crate::protocol::HostMetrics {
+        frame_ms: metrics.frame_ms,
+        cpu_frame_ms: metrics.cpu_frame_ms,
+        ticks_instant: metrics.fps_instant,
+        ticks_per_second: metrics.fps_average,
+    })
 }
 
 /// Reports every registered component type and its editable field layout.

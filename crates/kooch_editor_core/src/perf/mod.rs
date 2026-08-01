@@ -71,6 +71,12 @@ pub struct EditorPerfStats {
     pub draw_calls: u32,
     /// Cost of the remote snapshot pull, or `None` in local mode.
     pub remote: Option<RemoteSyncStats>,
+    /// What the *project's* process reported its own frame to cost
+    /// (#699). Distinct from everything else here, which describes the
+    /// editor: when Play is pressed in remote mode, this is the process
+    /// that is actually simulating, and until now nothing on screen came
+    /// from it.
+    pub host: Option<kooch_remote::protocol::HostMetrics>,
     /// Where `cpu_frame_ms` went, stage by stage (#691). Zeroed until
     /// the render system has completed a frame.
     pub breakdown: FrameBreakdown,
