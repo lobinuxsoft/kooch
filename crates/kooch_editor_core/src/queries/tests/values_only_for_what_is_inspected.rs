@@ -154,7 +154,7 @@ fn an_unselected_entity_still_lists_its_components() {
         .expect("entity gathered")
         .components
         .iter()
-        .map(|c| c.short_name.as_str())
+        .map(|c| c.short_name.as_ref())
         .collect();
     assert!(listed.contains(&"Name"));
     assert!(listed.contains(&"Transform"));

@@ -10,7 +10,7 @@ fn component(name: &str, fields: Vec<(String, ReflectValue)>) -> ComponentDispla
     ComponentDisplayInfo {
         type_id: TypeId::of::<()>(),
         component: kooch_ecs::ComponentId(0),
-        short_name: name.to_owned(),
+        short_name: name.to_owned().into(),
         fields: ReflectedFields::Values(fields),
         field_metas: None,
         visibility: Default::default(),

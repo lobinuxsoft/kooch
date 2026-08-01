@@ -28,7 +28,7 @@ pub(super) enum MultiFieldValue {
 pub(super) struct MultiComponentInfo {
     pub(super) type_id: TypeId,
     pub(super) component: ComponentId,
-    pub(super) short_name: String,
+    pub(super) short_name: std::borrow::Cow<'static, str>,
     /// How many of the selected entities have this component.
     pub(super) present_count: usize,
     /// Total number of selected entities.
@@ -64,7 +64,7 @@ pub(super) fn gather_multi_component_info(
         /// Local type handle, kept for the reflection-facing calls.
         /// Identity is `component`; this is only carried along.
         type_id: TypeId,
-        short_name: String,
+        short_name: std::borrow::Cow<'static, str>,
         count: usize,
         visibility: InspectorVisibility,
         field_metas: Option<&'static [FieldMeta]>,

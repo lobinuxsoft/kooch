@@ -257,7 +257,13 @@ pub(crate) struct ComponentDisplayInfo {
     pub(crate) type_id: TypeId,
     /// Portable identity, carried by any action this component emits.
     pub(crate) component: ComponentId,
-    pub(crate) short_name: String,
+    /// The type's name without its module path.
+    ///
+    /// Borrowed for anything the registry knows: `component_name` hands
+    /// back a `&'static str` and owning a copy of it cost 2440 `String`
+    /// allocations per frame on a 610-entity scene (#666). Owned only for
+    /// a parked component, whose name arrived over the wire.
+    pub(crate) short_name: std::borrow::Cow<'static, str>,
     pub(crate) fields: ReflectedFields,
     /// Static field metadata parallel to `fields`. Used to pick widget
     /// kinds (e.g. dropdown for `choices`) without re-querying the

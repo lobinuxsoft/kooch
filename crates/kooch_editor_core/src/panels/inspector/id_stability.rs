@@ -30,7 +30,7 @@ fn component(name: &str, fields: Vec<(String, ReflectValue)>) -> ComponentDispla
     ComponentDisplayInfo {
         type_id: std::any::TypeId::of::<()>(),
         component: ComponentId(name.len() as u32),
-        short_name: name.to_owned(),
+        short_name: name.to_owned().into(),
         fields: ReflectedFields::Values(fields),
         field_metas: None,
         visibility: InspectorVisibility::Editable,
