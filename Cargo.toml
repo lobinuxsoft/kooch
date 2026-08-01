@@ -216,6 +216,17 @@ path = "examples/make_playground.rs"
 required-features = ["editor", "physics"]
 
 [[example]]
+name = "make_dense_scene"
+path = "examples/make_dense_scene.rs"
+required-features = ["editor", "physics"]
+
+# Measures the meshlet pool, which needs no editor and no solver — the
+# pool is CPU-side geometry.
+[[example]]
+name = "measure_mesh_pool"
+path = "examples/measure_mesh_pool.rs"
+
+[[example]]
 name = "physics_smoke"
 path = "examples/physics_smoke/main.rs"
 required-features = ["physics", "physics-debug-render"]

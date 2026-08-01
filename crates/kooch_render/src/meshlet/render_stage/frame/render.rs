@@ -130,12 +130,17 @@ impl MeshletRenderStage {
             instances = instances.len(),
             "render dispatching meshlet pipeline",
         );
-        assert!(
-            (instances.len() as u32) <= self.instance_capacity,
-            "MeshletRenderStage: collected {} instances exceeds capacity {}",
-            instances.len(),
-            self.instance_capacity,
-        );
+        // Grow to fit rather than abort. A scene is authored, not
+        // declared: the count arrives from the ECS walk above, and the
+        // construction-time capacity was only ever a starting guess.
+        // Before this, the 257th instance panicked — in the editor and
+        // in a shipped game alike.
+        //
+        // Ahead of any encoder for this frame, so the buffer being
+        // replaced cannot be in flight.
+        let required = instances.len() as u32;
+        self.scene.ensure_capacity(device, required);
+        self.instance_capacity = self.scene.capacity();
 
         self.scene.upload_instances(queue, &instances);
         // Worst-case meshlet stride covers every mesh; the pool path
