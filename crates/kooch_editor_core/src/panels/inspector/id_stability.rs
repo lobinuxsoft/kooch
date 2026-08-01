@@ -17,6 +17,7 @@
 //! anything moved. Nothing about the data changes between the frames, so
 //! any complaint is the Inspector's own doing.
 
+use crate::state::ReflectedFields;
 use kooch_ecs::component::ComponentId;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::{EntityRef, InspectorVisibility, ReflectValue};
@@ -30,7 +31,7 @@ fn component(name: &str, fields: Vec<(String, ReflectValue)>) -> ComponentDispla
         type_id: std::any::TypeId::of::<()>(),
         component: ComponentId(name.len() as u32),
         short_name: name.to_owned(),
-        fields: Some(fields),
+        fields: ReflectedFields::Values(fields),
         field_metas: None,
         visibility: InspectorVisibility::Editable,
     }

@@ -30,7 +30,7 @@ use crate::state::{ComponentDisplayInfo, EntityDisplayInfo};
 fn f32_field(component: &ComponentDisplayInfo, name: &str) -> Option<f32> {
     component
         .fields
-        .as_ref()?
+        .values()?
         .iter()
         .find_map(|(field, value)| match value {
             ReflectValue::F32(number) if field == name => Some(*number),
@@ -42,7 +42,7 @@ fn f32_field(component: &ComponentDisplayInfo, name: &str) -> Option<f32> {
 fn u32_field(component: &ComponentDisplayInfo, name: &str) -> Option<u32> {
     component
         .fields
-        .as_ref()?
+        .values()?
         .iter()
         .find_map(|(field, value)| match value {
             ReflectValue::U32(number) if field == name => Some(*number),
@@ -54,7 +54,7 @@ fn u32_field(component: &ComponentDisplayInfo, name: &str) -> Option<u32> {
 fn vec3_field(component: &ComponentDisplayInfo, name: &str) -> Option<glam::Vec3> {
     component
         .fields
-        .as_ref()?
+        .values()?
         .iter()
         .find_map(|(field, value)| match value {
             ReflectValue::Vec3(vector) if field == name => Some(*vector),
@@ -77,7 +77,7 @@ fn world_scale(info: &EntityDisplayInfo) -> glam::Vec3 {
         .and_then(|global| {
             global
                 .fields
-                .as_ref()?
+                .values()?
                 .iter()
                 .find_map(|(field, value)| match value {
                     ReflectValue::Mat4(matrix) if field == "matrix" => {
@@ -185,6 +185,7 @@ pub(super) fn mass_from_colliders(entity: Entity, entities: &[EntityDisplayInfo]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::ReflectedFields;
     use std::any::TypeId;
     use std::f32::consts::PI;
 
@@ -193,7 +194,7 @@ mod tests {
             type_id: TypeId::of::<()>(),
             component: kooch_ecs::ComponentId(0),
             short_name: name.to_owned(),
-            fields: Some(fields),
+            fields: ReflectedFields::Values(fields),
             field_metas: None,
             visibility: Default::default(),
         }

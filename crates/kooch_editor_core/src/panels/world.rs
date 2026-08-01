@@ -425,6 +425,7 @@ fn handle_keyboard(
 mod tests {
     use super::*;
     use crate::state::EntityDisplayInfo;
+    use crate::state::ReflectedFields;
 
     fn entity_info(index: u32, scene: Option<kooch_core::Guid>) -> EntityDisplayInfo {
         EntityDisplayInfo {
@@ -583,7 +584,7 @@ mod tests {
             type_id: std::any::TypeId::of::<()>(),
             component: kooch_ecs::component::ComponentId::INVALID,
             short_name: "Name".to_owned(),
-            fields: Some(vec![(
+            fields: ReflectedFields::Values(vec![(
                 "value".to_owned(),
                 kooch_ecs::reflect::ReflectValue::String("x".repeat(400)),
             )]),

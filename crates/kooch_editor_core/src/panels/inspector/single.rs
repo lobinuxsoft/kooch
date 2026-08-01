@@ -28,7 +28,9 @@ pub(super) fn draw_name_editor(
 ) {
     let name_comp = info.components.iter().find(|c| c.short_name == "Name");
     let Some(comp) = name_comp else { return };
-    let Some(fields) = &comp.fields else { return };
+    let Some(fields) = comp.fields.values() else {
+        return;
+    };
     let Some((_, value)) = fields.iter().find(|(n, _)| n == "value") else {
         return;
     };

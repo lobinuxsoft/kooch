@@ -100,7 +100,7 @@ pub(super) fn gather_multi_component_info(
                 info.components
                     .iter()
                     .find(|c| c.component == *component)
-                    .and_then(|c| c.fields.as_ref())
+                    .and_then(|c| c.fields.values())
             })
             .collect();
 

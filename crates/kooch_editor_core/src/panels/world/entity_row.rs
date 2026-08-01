@@ -176,7 +176,7 @@ pub(crate) fn display_name_for(info: &EntityDisplayInfo) -> Option<String> {
     info.components
         .iter()
         .find(|c| c.short_name == "Name")
-        .and_then(|c| c.fields.as_ref())
+        .and_then(|c| c.fields.values())
         .and_then(|fields| {
             fields.iter().find_map(|(name, val)| {
                 if name == "value"

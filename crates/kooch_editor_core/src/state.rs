@@ -206,6 +206,50 @@ impl RawEventHandler for EguiEventHandler {
 // Display data (gathered before egui frame)
 // ---------------------------------------------------------------------------
 
+/// A component's reflected field values, or why they are not here.
+///
+/// Reading them costs a `String` and a `Vec` per field, per component,
+/// per entity — 5.26 of the frame's 5.45 ms of gather on a 610-entity
+/// scene (#691), for values only the Inspector reads, of the one entity
+/// it shows. So they are read for the selection and skipped for
+/// everything else.
+///
+/// Three states rather than an `Option`, because "not read" and "this
+/// type has no reflection" are different facts and only one of them
+/// means the component cannot be edited. Collapsed into `None` they
+/// would be indistinguishable, and a panel that read the fields of an
+/// unselected entity would quietly render it as unreflectable — no
+/// error, no log, just a component that looks like it lost its schema.
+pub(crate) enum ReflectedFields {
+    /// Read from the component.
+    Values(Vec<(String, ReflectValue)>),
+    /// The type is not registered for reflection. There is nothing to
+    /// read and there never will be.
+    Unreflected,
+    /// Not read: nothing on screen needed this entity's values.
+    NotGathered,
+}
+
+impl ReflectedFields {
+    /// The values, if they were read.
+    ///
+    /// Deliberately not `Option<&Vec>` by `From`: a caller that wants to
+    /// treat "absent" as one case has to say so at the call site.
+    pub(crate) fn values(&self) -> Option<&Vec<(String, ReflectValue)>> {
+        match self {
+            Self::Values(values) => Some(values),
+            Self::Unreflected | Self::NotGathered => None,
+        }
+    }
+
+    /// Whether the type carries reflection at all — true even when the
+    /// values were skipped, because the schema does not depend on
+    /// whether anyone asked for them this frame.
+    pub(crate) fn is_reflectable(&self) -> bool {
+        !matches!(self, Self::Unreflected)
+    }
+}
+
 /// Display data for a single component on an entity.
 pub(crate) struct ComponentDisplayInfo {
     /// Local type handle, used for reflection and egui id salts. Absent
@@ -214,7 +258,7 @@ pub(crate) struct ComponentDisplayInfo {
     /// Portable identity, carried by any action this component emits.
     pub(crate) component: ComponentId,
     pub(crate) short_name: String,
-    pub(crate) fields: Option<Vec<(String, ReflectValue)>>,
+    pub(crate) fields: ReflectedFields,
     /// Static field metadata parallel to `fields`. Used to pick widget
     /// kinds (e.g. dropdown for `choices`) without re-querying the
     /// ComponentRegistry during the UI pass.

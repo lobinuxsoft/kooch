@@ -10,7 +10,7 @@ use kooch_ecs::reflect::InspectorVisibility;
 
 use crate::state::{
     ArchetypeDisplayInfo, ComponentDisplayInfo, ComponentTypeInfo, EntityDisplayInfo,
-    ReflectedTypeInfo,
+    ReflectedFields, ReflectedTypeInfo,
 };
 
 /// Resolves a component's interned identity for a DTO.
@@ -101,6 +101,7 @@ fn parked_components(
     names: Option<&ComponentNames>,
     entity: kooch_ecs::Entity,
     editable: bool,
+    detailed: bool,
 ) -> Vec<ComponentDisplayInfo> {
     let visibility = if editable {
         InspectorVisibility::Editable
@@ -117,7 +118,15 @@ fn parked_components(
                 .next()
                 .unwrap_or(full_name)
                 .to_owned(),
-            fields: Some(fields.to_vec()),
+            // A parked component's values live in the editor's own
+            // store, so this is a clone rather than a reflection read —
+            // but a clone per field per entity is the same cost in the
+            // same place, and the Inspector is the only reader.
+            fields: if detailed {
+                ReflectedFields::Values(fields.to_vec())
+            } else {
+                ReflectedFields::NotGathered
+            },
             field_metas: None,
             visibility,
         })
@@ -140,7 +149,28 @@ fn archetype_is_ephemeral(archetype: &Archetype, ephemeral: &EphemeralComponents
         .any(|tid| *tid != mirror && ephemeral.contains(tid))
 }
 
-pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo> {
+/// Gathers every entity for the panels, reading reflected field values
+/// only for `detail_for`.
+///
+/// # Why the caller decides
+///
+/// Reading a component's fields allocates a `String` and a `Vec` per
+/// field. Across 610 entities that measured 5.26 ms per frame — 97% of
+/// the gather stage, and gather is the part of the frame that a person
+/// cannot make cheaper by closing a panel (#691). The values feed the
+/// Inspector, which shows the selection: one entity, occasionally a few.
+///
+/// Everything else the panels do with a component — the hierarchy's
+/// `[4]` count, the prefab marker, "does this entity have a Collider" —
+/// needs the component to be *listed*, not read. Those are unaffected.
+///
+/// `Name` is read for every entity regardless: the World panel shows it
+/// on each row, so skipping it would trade a real cost for a list of
+/// "Entity 412".
+pub(crate) fn gather_entity_data(
+    resources: &Resources,
+    detail_for: &std::collections::HashSet<kooch_ecs::Entity>,
+) -> Vec<EntityDisplayInfo> {
     use glam::Quat;
     use kooch_ecs::hierarchy::{GlobalTransform, Parent};
     use std::collections::HashMap;
@@ -197,6 +227,7 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
             continue;
         }
         for &entity in archetype.entities() {
+            let detailed = detail_for.contains(&entity);
             let mut comps: Vec<ComponentDisplayInfo> = archetype
                 .components()
                 .iter()
@@ -208,7 +239,20 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                         .next()
                         .unwrap_or(full_name)
                         .to_owned();
-                    let fields = registry.reflect_get_fields(tid, entity);
+                    let fields = if !registry.has_reflector(tid) {
+                        ReflectedFields::Unreflected
+                    } else if detailed || short_name == "Name" {
+                        match registry.reflect_get_fields(tid, entity) {
+                            Some(values) => ReflectedFields::Values(values),
+                            // Registered for reflection but the read came
+                            // back empty — the entity does not actually
+                            // hold this component. Not "unreflectable":
+                            // the type's schema is fine.
+                            None => ReflectedFields::NotGathered,
+                        }
+                    } else {
+                        ReflectedFields::NotGathered
+                    };
                     let field_metas = registry.reflect_field_metas(tid);
                     let visibility = registry
                         .reflect_inspector_visibility(tid)
@@ -225,7 +269,13 @@ pub(crate) fn gather_entity_data(resources: &Resources) -> Vec<EntityDisplayInfo
                 .collect();
 
             if let Some(dynamic) = dynamic.as_ref() {
-                comps.extend(parked_components(dynamic, names, entity, parked_editable));
+                comps.extend(parked_components(
+                    dynamic,
+                    names,
+                    entity,
+                    parked_editable,
+                    detailed,
+                ));
             }
 
             comps.sort_by(|a, b| display_order(&a.short_name, &b.short_name));

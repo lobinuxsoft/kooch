@@ -123,10 +123,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<ProjectState>()
         .is_some_and(|ps| ps.is_project_loaded());
 
-    let display_data = if project_loaded {
+    let (display_data, mut gather_stages) = if project_loaded {
         FrameDisplayData::gather(resources)
     } else {
-        FrameDisplayData::empty()
+        (FrameDisplayData::empty(), Default::default())
     };
 
     let window = resources
@@ -270,6 +270,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let project_crate_root = project_state
         .as_ref()
         .and_then(|ps| ps.active_project.as_ref().map(|ap| ap.root_path.clone()));
+    let assets_start = std::time::Instant::now();
     let asset_catalog = resources
         .get::<kooch_core::asset_database::AssetDatabase>()
         .map(|db| {
@@ -287,6 +288,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let asset_detail = overlay
         .selected_asset
         .and_then(|guid| crate::systems::asset_detail::gather_asset_detail(guid, resources));
+    gather_stages.assets_ms = crate::perf::ms_since(assets_start);
 
     // Lifted out for the frame: the Gizmos dropdown mutates it, and the
     // egui closure already holds Resources immutably. Groups are resolved
@@ -325,6 +327,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // catalog. It walks the world, so it grows with the scene.
     let mut stages = crate::perf::RenderStages {
         gather_ms: crate::perf::ms_since(frame_cpu_start),
+        gather: gather_stages,
         ..Default::default()
     };
 

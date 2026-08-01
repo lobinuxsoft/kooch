@@ -187,6 +187,50 @@ pub(crate) fn draw_performance_content(
                          inspector data, asset catalog. Walks every entity, so it grows \
                          with the scene.",
                     );
+                    let gather = render.gather;
+                    metric_with_tooltip(
+                        ui,
+                        "  · entities",
+                        &format!("{:.2} ms", gather.entities_ms),
+                        "Every entity with its components and their reflected field \
+                         values. Grows with the world twice over — entities times \
+                         components — and is paid whether or not a panel is open to \
+                         read it.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "  · types",
+                        &format!("{:.2} ms", gather.types_ms),
+                        "The registered-type lists behind Add Component. Scales with \
+                         the number of component types, not with the scene.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "  · archetypes",
+                        &format!("{:.2} ms", gather.archetypes_ms),
+                        "The archetype list for the Components panel.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "  · intern",
+                        &format!("{:.2} ms", gather.intern_ms),
+                        "Resolving every registered component name to a stable id, \
+                         before the gathers above can use one.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "  · assets",
+                        &format!("{:.2} ms", gather.assets_ms),
+                        "The asset catalog for the Inspector's pickers, plus the \
+                         contents of whatever the Asset Browser has selected.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "  · rest",
+                        &format!("{:.2} ms", (render.gather_ms - gather.total_ms()).max(0.0)),
+                        "The open scenes and the resource shuffling around the gathers \
+                         — what gather spends outside the rows above.",
+                    );
                     metric_with_tooltip(
                         ui,
                         "UI pass",

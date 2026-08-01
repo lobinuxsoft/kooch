@@ -1,5 +1,7 @@
 //! The editor's read-only view of the ECS, mirrored and local.
 
+use std::collections::HashSet;
+
 use kooch_ecs::allocator::EntityAllocator;
 use kooch_ecs::commands::Commands;
 use kooch_ecs::query::AccessTracker;
@@ -59,7 +61,7 @@ fn mirrored_world() -> Resources {
 fn mirrored_entities_are_not_filtered_as_ephemeral() {
     let mut resources = mirrored_world();
     intern_registry_names(&mut resources);
-    assert_eq!(gather_entity_data(&resources).len(), 1);
+    assert_eq!(gather_entity_data(&resources, &HashSet::new()).len(), 1);
 }
 
 /// A component with no local Rust type still reaches the Inspector,
@@ -69,7 +71,13 @@ fn parked_components_surface_read_only_without_a_session() {
     let mut resources = mirrored_world();
     intern_registry_names(&mut resources);
 
-    let entities = gather_entity_data(&resources);
+    // Selected: this is the Inspector's view, and the values are what
+    // the test is about.
+    let all: HashSet<_> = gather_entity_data(&resources, &HashSet::new())
+        .iter()
+        .map(|e| e.entity)
+        .collect();
+    let entities = gather_entity_data(&resources, &all);
     let spin = entities[0]
         .components
         .iter()
@@ -79,7 +87,7 @@ fn parked_components_surface_read_only_without_a_session() {
     assert_eq!(spin.visibility, InspectorVisibility::ReadOnly);
     assert_ne!(spin.component, ComponentId::INVALID);
     assert_eq!(
-        spin.fields.as_deref(),
+        spin.fields.values().map(Vec::as_slice),
         Some(&[("rpm".to_owned(), ReflectValue::F32(33.0))][..])
     );
 }

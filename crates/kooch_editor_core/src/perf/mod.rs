@@ -15,7 +15,9 @@ pub(crate) mod sys_metrics;
 pub(crate) mod timing;
 
 pub(crate) use breakdown::ms_since;
-pub use breakdown::{FrameBreakdown, RenderStages, record_gizmo_batch_ms, record_render_stages};
+pub use breakdown::{
+    FrameBreakdown, GatherStages, RenderStages, record_gizmo_batch_ms, record_render_stages,
+};
 pub(crate) use sys_metrics::{SysMetricsState, sys_metrics_system};
 pub use timing::record_cpu_frame_ms;
 pub(crate) use timing::{PerfTimingState, frame_timer_system};
