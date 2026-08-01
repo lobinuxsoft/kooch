@@ -3,6 +3,7 @@
 
 use std::any::TypeId;
 
+use kooch_camera::VirtualCamera;
 use kooch_ecs::directional_light::DirectionalLight;
 use kooch_ecs::mesh_renderer::MeshRenderer;
 use kooch_ecs::orthographic_camera::OrthographicCamera;
@@ -60,6 +61,13 @@ pub(super) fn spawn_entries(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) 
             actions.push(EditorAction::Spawn {
                 extra: vec![TypeId::of::<OrthographicCamera>()],
                 name: Some("Orthographic Camera".to_owned()),
+            });
+            ui.close();
+        }
+        if ui.button("Virtual Camera").clicked() {
+            actions.push(EditorAction::Spawn {
+                extra: vec![TypeId::of::<VirtualCamera>()],
+                name: Some("Virtual Camera".to_owned()),
             });
             ui.close();
         }

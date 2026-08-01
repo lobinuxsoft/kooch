@@ -553,6 +553,72 @@ remapea referencias a entidades con `EntityMapper`.
 
 ## Decisiones arquitecturales sticky (NO reabrir sin OK explícito)
 
+### Cámara: dos prioridades, y `VirtualCamera` NO va en la cámara (locked 2026-07-31, #671)
+
+**`VirtualCamera` vive en una entidad propia** que tiene el encuadre + `Transform`
+y nada más. Un sistema Host elige una y **copia su pose a la cámara que renderiza**. Es el
+modelo de phantom-camera (MIT) y de Cinemachine.
+
+**Son dos preguntas distintas y ninguna reemplaza a la otra:**
+
+| Prioridad | Elige | Dónde |
+|---|---|---|
+| `PerspectiveCamera.priority` | qué cámara **renderiza** | `render/plugin/mod.rs`, `sky/renderer.rs`, `viewport/render.rs` — **intactos** |
+| `VirtualCamera.priority` | qué vcam **maneja** esa cámara | `kooch_camera::plugin::elect` |
+
+**El nombre es de Cinemachine, no de phantom-camera** (que las llama `PhantomCamera`/`PCam`, marca inútil para un engine). Se descartó `CameraRig` porque en Cinemachine un *rig* es otra cosa: un `FreeLook` se arma con tres.
+
+Ese split es lo que dejó entrar el modelo Host de upstream **sin reescribir los tres call
+sites** de elección de render que ya existían.
+
+**La primera versión la puso sobre la cámara**, argumentando que sin blending una
+segunda elección era peso muerto. Estaba mal por dos razones que no son el blending:
+tres encuadres exigían tres cámaras reales, y el split posterior habría sido una migración
+de escenas guardadas — o sea, del tipo caro, porque una escena guarda componentes por nombre
+de tipo (ver `## 2026-07-31 — type_name`).
+
+**Desempate por índice de entidad, no "el último gana".** Upstream puede permitirse `>=`
+sobre un scene tree ordenado; acá el storage de componentes no tiene orden en el que
+confiar, y un empate le daría la cámara a una vcam distinta cada frame.
+
+**El editor NO corre vcams.** `CameraComponentsPlugin` registra el tipo para inspeccionarlo y
+mirrorearlo; `CameraPlugin` (con `run_if_playing`) es el único que mueve algo, y vive en el
+proceso del proyecto. Mismo patrón que `PhysicsComponentsPlugin`.
+
+### Cámara: el up es de la VCAM, y sale de la gravedad (locked 2026-07-31, #671)
+
+`VirtualCamera.up_mode`: **World (+Y)** · **Align to gravity** · **Align to target**. El spring
+arm y el look-at dejaron de asumir `Vec3::Y`; el yaw gira alrededor del up y el pitch se mide
+sobre **su** horizonte.
+
+**Por qué NO alcanza con leer la rotación del target.** Un character controller se alinea solo
+a la gravedad y su up sirve; **una bola con `RigidBody` rueda por fricción** y su rotación gira
+sin parar — seguir su up pondría el horizonte en un asador. Preguntarle al campo
+(`kooch_gravity::gravity_at`) es la única fuente correcta en los dos casos. `Align to target`
+queda igual porque es gratis y sirve para el primer caso.
+
+**Por qué el up va en la vcam y no en la cámara.** Una cámara no opina sobre el up; un
+*encuadre* sí. Dos vcams sobre la misma cámara pueden querer respuestas distintas.
+
+**Dependencia opcional:** `kooch_camera` tiene feature `gravity` (dep opcional a
+`kooch_gravity`); el facade la activa con `gravity = [..., "kooch_camera?/gravity"]`. Sin la
+feature, `Align to gravity` se comporta como World y **el campo igual round-trip-ea al
+guardar** — una build sin la feature no debe borrar el setting de una escena.
+
+**Damping rotacional (`rotation_damping_value`, slerp con arco corto).** Con up variable la
+rotación dejó de ser constante: cruzar entre dos campos gravitatorios rota la base entera y
+sin easing el horizonte se da vuelta en un frame. Escalar, no per-axis: una orientación no
+tiene ejes que tratar distinto.
+
+**Referencia de horizonte continua.** El yaw se mide desde un eje del mundo **proyectado** al
+plano del up, no desde uno fijo: si saltara de eje, una cámara cruzando entre campos cambiaría
+de origen de yaw en pleno vuelo.
+
+Esto reemplaza el workaround de Godot en `stellar_delivery`
+(`AlignedCameraRig > YawNode > PitchNode > CameraTarget` + una `PhantomCamera3D` en `Glued` +
+`Mimic` que sólo copiaba): cuatro nodos y una vcam degradada a clonadora, porque
+phantom-camera no expresa un up arbitrario. Acá es un enum.
+
 ### Física: cómo se conecta al ECS (locked 2026-07-25, #570)
 
 - **`PhysicsBody(u32)` va SIN reflejar.** Es lo que hace funcionar el Stop: `WorldSnapshot`

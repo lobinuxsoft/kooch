@@ -584,7 +584,7 @@ mod engine_owned_tests {
             "kooch_ecs::name::Name",
             "kooch_ecs::perspective_camera::PerspectiveCamera",
             "kooch_physics::components::RigidBody",
-            "kooch_camera::rig::CameraRig",
+            "kooch_camera::virtual_camera::VirtualCamera",
         ] {
             assert!(!is_engine_owned(name), "{name} must remain addable");
         }
