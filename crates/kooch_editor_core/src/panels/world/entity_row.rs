@@ -28,10 +28,22 @@ use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
 /// Rows are exactly one line because [`draw_entity_row`] truncates
 /// rather than wraps. A wrapped name would make its own row taller than
 /// this and desynchronize the whole list below it.
+///
+/// # Without the spacing between rows
+///
+/// `ScrollArea::show_rows` names its parameter `row_height_sans_spacing`
+/// and adds `item_spacing.y` itself. This used to include the spacing,
+/// so egui reserved a row's height *plus two* gaps while each row
+/// occupied its height plus one — four pixels of nothing per row.
+/// Invisible on ten rows, a finger's width of empty panel on forty, and
+/// growing with the panel because the number of visible rows does. That
+/// is what finally identified it (#708): the gap scaled with the height.
+///
+/// The two places that draw a row used to subtract the spacing back out.
+/// They agreed with each other and with nothing else.
 pub(super) fn row_height(ui: &egui::Ui) -> f32 {
     let line = ui.text_style_height(&egui::TextStyle::Button);
     (line + 2.0 * ui.spacing().button_padding.y).at_least(ui.spacing().interact_size.y)
-        + ui.spacing().item_spacing.y
 }
 
 /// Walks up from `entity` through the parent chain looking for `ancestor`.
@@ -110,10 +122,7 @@ pub(super) fn draw_entity_row(
     // click, for a drop, for the highlight that says which entity is
     // selected — and a target that stops where the text stops leaves
     // most of the panel dead to the pointer.
-    let desired_size = egui::vec2(
-        ui.available_width(),
-        row_height(ui) - ui.spacing().item_spacing.y,
-    );
+    let desired_size = egui::vec2(ui.available_width(), row_height(ui));
     let (rect, resp) = ui.allocate_at_least(desired_size, egui::Sense::click_and_drag());
 
     if ui.is_rect_visible(rect) {
