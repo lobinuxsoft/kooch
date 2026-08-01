@@ -169,9 +169,21 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
         sync.last_pull = Some(Instant::now());
     }
 
+    // Applying a snapshot walks every entity — about 7.5 ms on 610 of
+    // them, more than the pull costs now that the pull is a diff. When
+    // the project reported nothing new there is nothing to walk for, so
+    // the mirror keeps what it has and the frame keeps the time (#691).
+    //
+    // `just_connected` is exempt: the handshake's snapshot has never
+    // been applied, and the mirror on that frame is empty.
     let applying = Instant::now();
-    mirror.apply(session.snapshot(), resources);
-    record_stats(resources, session, refresh, applying.elapsed());
+    let mirror_time = if just_connected || session.changed_last_refresh() {
+        mirror.apply(session.snapshot(), resources);
+        applying.elapsed()
+    } else {
+        Duration::ZERO
+    };
+    record_stats(resources, session, refresh, mirror_time);
 }
 
 /// Folds this pull's cost into [`EditorPerfStats`] (#645).

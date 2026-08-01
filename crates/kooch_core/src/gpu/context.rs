@@ -97,7 +97,7 @@ impl GpuContext {
             format,
             width,
             height,
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: present_mode(),
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -200,5 +200,35 @@ impl Drop for GpuContext {
         {
             tracing::warn!(error = %e, "failed to persist pipeline cache on shutdown");
         }
+    }
+}
+
+/// How frames are presented. Vsync unless `KOOCH_PRESENT_MODE=novsync`.
+///
+/// # Why this needs to be switchable
+///
+/// With vsync on, a frame takes 16.67 ms at 60 Hz whatever the engine
+/// does, because most of that number is waiting for the vblank. That
+/// makes the frame-time readout useless for optimisation work: removing
+/// 7.5 ms of real CPU work changed the HUD by nothing, since the time
+/// simply moved from working to waiting (#691).
+///
+/// Vsync stays the default — it is what anyone editing or playing wants,
+/// and an uncapped editor burns a GPU to draw frames nobody sees. The
+/// variable exists so that measuring is possible at all.
+///
+/// `AutoNoVsync` rather than `Immediate`: it falls back to whatever the
+/// surface actually supports instead of failing on a driver that has no
+/// immediate mode.
+fn present_mode() -> wgpu::PresentMode {
+    match std::env::var("KOOCH_PRESENT_MODE").as_deref() {
+        Ok("novsync") => {
+            tracing::info!(
+                "KOOCH_PRESENT_MODE=novsync: frame times will show work rather than \
+                 the wait for the vblank"
+            );
+            wgpu::PresentMode::AutoNoVsync
+        }
+        _ => wgpu::PresentMode::AutoVsync,
     }
 }

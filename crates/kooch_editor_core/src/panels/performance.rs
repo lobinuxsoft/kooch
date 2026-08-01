@@ -208,7 +208,9 @@ pub(crate) fn draw_performance_content(
                             "Mirror apply",
                             &format!("{:.2} ms", remote.mirror_ms),
                             "Rebuilding the snapshot into the editor's own ECS, on the \
-                             same frames as the pull.",
+                             same frames as the pull. Reads 0.00 when the project \
+                             reported nothing new — the mirror already matches the \
+                             world, so there is nothing to walk.",
                         );
                         metric(ui, "Entities mirrored", &remote.entities.to_string());
                         metric(
