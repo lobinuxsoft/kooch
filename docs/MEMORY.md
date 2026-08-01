@@ -1403,6 +1403,73 @@ contar, otra para dibujar) **alocando 3 `to_lowercase()` por entrada por pasada*
 el `FolderNode` entero (con `PathBuf` clonados) **cada frame, dos veces** (Project + Engine).
 Hoy son ~12 assets así que no se nota; con un catálogo grande es el mismo bug.
 
+### 2026-08-01: la jerarquía también, y lo que exige virtualizar (#695)
+
+La regla 3 se aplicó al World: `show_rows` dibuja las ~20 filas que entran en vez de las 610.
+**UI pass 9,23 → 4,79 ms.** Lo que cuesta, y hay que saberlo antes de virtualizar otra lista:
+
+- **La altura de fila se declara antes de dibujar nada.** `entity_row::row_height()` es la
+  **única** definición: la lista reserva con ella, la fila ocupa con ella. Dos copias se
+  desfasan un píxel por fila y para el fondo de una escena larga el scrollbar apunta a otra
+  cosa. Hay test.
+- **Truncar, no wrappear** — es el trade que menciona la regla 3, acá con dientes: un nombre
+  wrappeado es más alto que lo prometido y **todas las filas de abajo quedan corridas**. Test
+  con un nombre de 400 caracteres.
+- **`CollapsingHeader` es incompatible**: dibuja los hijos dentro de su propio closure y las
+  filas tienen que ser hermanas para direccionarlas por índice. Los headers de escena se
+  dibujan a mano. A cambio, un grupo cerrado **no aporta** sus filas a la lista, en vez de
+  saltearlas de a una.
+- **`available_rect_before_wrap()` adentro de `show_rows` miente**: las filas scrolleadas
+  siguen reservando su espacio, así que "lo que queda" incluye el de ellas. El drop-target del
+  espacio vacío se dibujaba **al lado** de la lista en vez de abajo.
+
+## 🔴🔴 Antes de optimizar: instrumentar. No es una preferencia (2026-08-01, #695)
+
+Cuatro hipótesis sobre el mismo frame en un día:
+
+| Hipótesis | Predicción | Real |
+|---|---|---|
+| #689 — el cull dimensionado por `instancias × asset más pesado` | 815× de threads, verificado | **0,076 ms** |
+| Vsync escondía el trabajo | — | **refutada** |
+| Los paneles | — | **acertó (~6 ms)** |
+| Leer los valores reflejados de las 610 entidades | ~4 ms | **0,9 ms** |
+
+**1 de 4 por análisis. 4 de 4 por medición.** El desglose por etapas (#569) estaba último en el
+roadmap y era lo que había que hacer primero.
+
+**Cómo se mide hoy:** HUD → Performance → **CPU frame** — gather / UI / input / viewport /
+present / actions / **unaccounted** / gizmo batch, y gather se abre en intern / entities /
+archetypes / types / assets / rest. `Unaccounted` da 0,01 ms, o sea el desglose **describe** el
+frame, no lo aproxima.
+
+Dos trampas que costaron tiempo:
+
+- ⚠️ **`cpu_frame_ms` NO incluye el pull remoto.** `remote_sync_system` corre en
+  `Stage::PreUpdate`, fuera del span medido. Restárselo es restar algo que nunca estuvo adentro.
+- ⚠️ **Con vsync el HUD no se mueve aunque saques 7,5 ms reales** — el frame espera el vblank
+  igual. `KOOCH_PRESENT_MODE=novsync` existe para poder medir. Vsync sigue siendo el default:
+  un editor sin cap quema GPU dibujando frames que nadie ve.
+
+### El corolario que vale para todo el editor
+
+**El costo que importa no es el que se ve, es el que se paga con los paneles cerrados.**
+Cerrar todo lleva el UI pass de 9,2 a 3,1 ms y deja `Gather` intacto en 4,5. Gather arma el
+mismo snapshot del mundo lo mire alguien o no — y `entities` es el 96% de eso. Es #666.
+
+## 🔴 Un valor que significa dos cosas, tercera vez (2026-08-01)
+
+`ComponentDisplayInfo.fields` era `Option<Vec<…>>` donde `None` = "este tipo no tiene
+reflexión". Al dejar de leer los valores de las entidades no seleccionadas, ese salteo habría
+producido **el mismo `None`** — y un panel que leyera una entidad no seleccionada mostraría un
+componente perfectamente reflejable como "sin reflexión", en silencio, sin log.
+
+Ahora es `ReflectedFields` con tres estados: `Values` / `Unreflected` / `NotGathered`. El
+fallback del Inspector dice cuál de los dos se encontró.
+
+**Es el mismo bug de los prefabs (#611): un valor guardado/interpretado en dos sentidos se
+desincroniza.** Cuando una optimización agrega un caso nuevo a un tipo existente, el caso nuevo
+va en el tipo — no en un valor que ya significaba otra cosa.
+
 ## Workflow rules (NEVER violate sin OK explícito del user)
 
 - **Branch first** (`feat/<slug>` desde `development`, nunca directo). Después de crear PR: **STOP**
