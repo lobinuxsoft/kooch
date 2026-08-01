@@ -79,7 +79,7 @@ kooch/                  # Top-level facade crate (`kooch::*`)
 │   ├── kooch_audio              # Audio playback (kira)
 │   ├── kooch_render             # Meshlet pipeline, Hi-Z, materials, sky
 │   ├── kooch_physics            # Rigid bodies and colliders (Rapier)
-│   ├── kooch_camera             # Camera components and CameraRig
+│   ├── kooch_camera             # Camera components and VirtualCamera
 │   ├── kooch_lighting           # Light components
 │   ├── kooch_world              # Hierarchical coordinates, streaming
 │   ├── kooch_remote             # Local-socket protocol for the editor

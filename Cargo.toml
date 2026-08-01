@@ -191,7 +191,7 @@ physics = ["dep:kooch_physics"]
 # build — see #558.
 physics-debug-render = ["physics", "kooch_physics/debug-render"]
 camera = ["dep:kooch_camera"]
-gravity = ["dep:kooch_gravity", "physics"]
+gravity = ["dep:kooch_gravity", "physics", "kooch_camera?/gravity"]
 world = ["dep:kooch_world"]
 # Remote editor server: lets a project expose its ECS over HTTP so the
 # standalone editor can drive it. Pulled in by projects that run in

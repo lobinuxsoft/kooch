@@ -119,7 +119,7 @@ Crates built directly on the ECS.
 |-------|------|
 | `kooch_render` | The GPU work: meshlet pipeline (cull, visibility buffer, deferred, Hi-Z), `MeshPassRenderer`, `SkyRenderPass`, `RenderPlugin`, materials. |
 | `kooch_physics` | Physics simulation. Rapier is the backend, behind `kooch_physics`'s own types. |
-| `kooch_camera` | Camera components and `CameraRig` (follow / look-at with damping). |
+| `kooch_camera` | Camera components and `VirtualCamera` (follow / look-at with damping). |
 | `kooch_lighting` | Light components (DirectionalLight, PointLight, SpotLight). Currently authored but not consumed by the renderer. |
 | `kooch_world` | Scene/world organisation, chunk streaming and activation. |
 | `kooch_remote` | The local-socket protocol that lets the standalone editor drive a running project's ECS. |
