@@ -2,7 +2,7 @@
 //!
 //! Lives in `kooch_core` so every consumer — world streaming, voxel
 //! storage, physics — composes against the same type with no conversion
-//! glue. It was in `kooch_bvh` until that crate was removed; the type
+//! glue. It was in the BVH crate until that crate was removed; the type
 //! itself is plain geometry and never belonged to the acceleration
 //! structure that happened to host it.
 

@@ -1,6 +1,9 @@
-# Kooch
+# Kóoch
 
-A hybrid CPU-GPU game engine written in Rust, featuring SDF-based rendering and compute-first architecture.
+A GPU-driven game engine written in Rust, with meshlet-based rendering and an editor.
+
+Named after the creator deity of the Tehuelche (Aonikenk) people of Patagonia,
+who existed alone in darkness and wept the sea into being.
 
 ## Documentation
 
@@ -20,40 +23,44 @@ contributors) or [Getting Started](docs/book/src/guide/getting-started.md)
 
 ## Overview
 
-Kóoch is an experimental game engine that leverages modern GPU capabilities for rendering and physics, while keeping gameplay logic on CPU for flexibility. Instead of traditional rasterization, it uses **Signed Distance Fields (SDF)** and **ray marching** for rendering.
+Kóoch is an experimental game engine that pushes the rendering hot loop onto the GPU while keeping gameplay logic and simulation on the CPU. Geometry is drawn with a **Nanite-style meshlet pipeline**: cluster culling, a visibility buffer and a deferred pass, driven by indirect dispatch with no per-frame readback.
+
+An earlier SDF ray-marching renderer was built and then retired; see
+[Retired architecture](docs/book/src/architecture/retired/index.md) for what
+it did and why it was replaced.
 
 ## Features
 
-- **Hybrid ECS**: CPU handles gameplay logic (quests, inventory, AI), GPU handles physics and rendering
-- **SDF Rendering**: Ray marching renderer using Signed Distance Fields
+- **GPU-driven meshlet rendering**: cluster culling, visibility buffer, deferred shading, two-pass Hi-Z occlusion
+- **CPU ECS**: archetype storage, reflection, hierarchy, scene and prefab serialisation
+- **Physics**: rigid bodies and colliders via Rapier
 - **Multi-Gravity System**: Mario Galaxy-style gravity fields
-- **Batched Physics Queries**: Raycasts/overlaps queued on CPU, executed in batch on GPU
-- **Spatial Audio**: 3D audio with kira backend
-- **Hot-Reload Scripting**: Rhai scripting integration
-- **Integrated Editor**: Built-in editor overlay and standalone editor
+- **Prefabs**: scenes reference prefabs and store overrides, rather than copying them
+- **Audio**: playback through kira
+- **Editor**: standalone editor that drives a running project over a local socket, plus an embedded mode
+- **Native plugins**: a project is plain Rust, loaded as a `dylib` implementing `KoochPlugin`
 
-## Hybrid Architecture
+## Where work happens
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         CPU SIDE                                │
 ├─────────────────────────────────────────────────────────────────┤
 │  • Entity management (spawn/despawn, generational IDs)          │
-│  • Gameplay logic (quests, inventory, dialogs, AI)              │
-│  • Scripting (Rhai)                                             │
-│  • Input processing                                             │
-│  • Audio triggers                                               │
+│  • Gameplay logic, written in Rust as components and systems    │
+│  • Physics simulation (Rapier)                                  │
+│  • Transform hierarchy                                          │
+│  • Input processing, audio triggers, asset streaming            │
 └──────────────────────────┬──────────────────────────────────────┘
-                           │ Sync once per frame
+                           │ Uploads once per frame
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                         GPU SIDE                                │
 ├─────────────────────────────────────────────────────────────────┤
-│  • Physics simulation (velocity, collisions, gravity)           │
-│  • Batched physics queries (raycast, overlap)                   │
-│  • Particle systems                                             │
-│  • Transform hierarchy                                          │
-│  • Ray marching rendering                                       │
+│  • Meshlet culling (frustum + Hi-Z occlusion, two passes)       │
+│  • Visibility buffer rasterisation                              │
+│  • Deferred shading pass                                        │
+│  • Indirect dispatch — the GPU issues its own draw arguments    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -69,14 +76,16 @@ kooch/                  # Top-level facade crate (`kooch::*`)
 │   ├── kooch_plugin_api         # Stable ABI for dynamic plugins
 │   ├── kooch_window             # Windowing (winit + GPU surface)
 │   ├── kooch_input              # Keyboard, mouse, gamepad (gilrs)
-│   ├── kooch_sdf                # SDF primitive math
+│   ├── kooch_audio              # Audio playback (kira)
+│   ├── kooch_render             # Meshlet pipeline, Hi-Z, materials, sky
+│   ├── kooch_physics            # Rigid bodies and colliders (Rapier)
+│   ├── kooch_camera             # Camera components and CameraRig
 │   ├── kooch_lighting           # Light components
-│   ├── kooch_render             # Sky + raymarch + mesh pipelines
-│   ├── kooch_physics            # GPU physics + batched queries
-│   ├── kooch_gravity            # Multi-gravity system
 │   ├── kooch_world              # Hierarchical coordinates, streaming
-│   ├── kooch_audio              # Spatial audio (kira)
-│   ├── kooch_scripting          # Rhai integration
+│   ├── kooch_remote             # Local-socket protocol for the editor
+│   ├── kooch_gizmos             # Gizmo drawing
+│   ├── kooch_gizmos_handles     # Draggable translate/rotate/scale handles
+│   ├── kooch_gravity            # Multi-gravity system
 │   ├── kooch_editor_core        # Editor as a library
 │   └── kooch_editor             # Editor binary (egui)
 ├── docs/
@@ -97,10 +106,11 @@ dependency layering and rationale.
 | Language | Rust (Edition 2024) |
 | GPU API | wgpu |
 | Windowing | winit |
+| Physics | rapier3d |
 | Audio | kira |
 | Input | gilrs |
-| Scripting | rhai |
-| Editor UI | egui / eframe |
+| Gameplay code | Plain Rust, loaded as a native plugin |
+| Editor UI | egui + egui_dock |
 
 ## Status
 

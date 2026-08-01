@@ -165,10 +165,10 @@ impl EditorConfig {
 ///
 /// `scripts/` used to be here, from when a script meant a `.rhai` file on
 /// disk. A script is a Rust component or system in `src/` now: codegen
-/// scans `src/`, the Asset Browser's "Register scripts" reads Rust, and
-/// `kooch_scripting` keeps its ASTs in memory and loads nothing from a
-/// path. So the directory was created, never read, and suggested a place
-/// to put code the engine would never look at.
+/// scans `src/` and the Asset Browser's "Register scripts" reads Rust.
+/// The scripting crate that loaded those files is gone. So the directory
+/// was created, never read, and suggested a place to put code the engine
+/// would never look at.
 const PROJECT_DIRS: &[&str] = &["scenes", "assets", "src"];
 
 /// Sanitizes a project name into a valid Rust crate name.
