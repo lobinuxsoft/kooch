@@ -23,7 +23,7 @@ struct HelloPlugin;
 /// state parked here survives it.
 const FRAMES_KEY: &str = "example_plugin::frames";
 
-impl OmePlugin for HelloPlugin {
+impl KoochPlugin for HelloPlugin {
     fn name(&self) -> &str {
         "HelloPlugin"
     }

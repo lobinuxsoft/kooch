@@ -2,7 +2,7 @@
 //!
 //! A plugin is a Rust `dylib` the engine loads at run time. It defines:
 //!
-//! - [`OmePlugin`] — the trait a plugin implements
+//! - [`KoochPlugin`] — the trait a plugin implements
 //! - [`Engine`] — what a plugin can ask the engine to do
 //! - [`component`] — describing component types the engine cannot name
 //! - [`types`] — stages and entity handles
@@ -54,7 +54,7 @@
 //! #[derive(Default)]
 //! struct MyPlugin;
 //!
-//! impl OmePlugin for MyPlugin {
+//! impl KoochPlugin for MyPlugin {
 //!     fn name(&self) -> &str { "MyPlugin" }
 //!
 //!     fn build(&mut self, engine: &mut dyn Engine) {
@@ -82,7 +82,7 @@ pub mod version;
 
 pub use component::{ComponentSchema, FieldKind, FieldSchema, RegisterError};
 pub use engine_api::{Engine, PluginSystem};
-pub use plugin::{CREATE_SYMBOL, CreatePluginFn, OmePlugin, STAMP_SYMBOL};
+pub use plugin::{CREATE_SYMBOL, CreatePluginFn, KoochPlugin, STAMP_SYMBOL};
 pub use types::Stage;
 pub use version::{API_VERSION, BuildStamp};
 
@@ -90,7 +90,7 @@ pub use version::{API_VERSION, BuildStamp};
 pub mod prelude {
     pub use crate::component::{ComponentSchema, FieldKind, FieldSchema, RegisterError};
     pub use crate::engine_api::{Engine, PluginSystem};
-    pub use crate::plugin::OmePlugin;
+    pub use crate::plugin::KoochPlugin;
     pub use crate::types::{Stage, pack_entity, unpack_entity};
     pub use crate::version::API_VERSION;
 }

@@ -301,7 +301,7 @@ Format:
 > `Device::create_pipeline_cache` is covered by `fallback: true` —
 > driver rejects an invalid blob without UB. Hash key invalidates
 > on driver upgrades.
-> **Consequence:** `~/.cache/ome/pipeline_cache/<hash>.bin` files
+> **Consequence:** `~/.cache/kooch/pipeline_cache/<hash>.bin` files
 > accumulate (they're tiny). Deleting them is harmless; engine
 > regenerates on next run.
 

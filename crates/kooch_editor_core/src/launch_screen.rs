@@ -90,7 +90,10 @@ pub fn draw_launch_screen(
                 ui.label(egui::RichText::new("No recent projects").weak().italics());
             } else {
                 for entry in &recent {
-                    let exists = entry.path.join("project.ome").exists();
+                    let exists = entry
+                        .path
+                        .join(kooch_core::scene_paths::PROJECT_MANIFEST_FILE)
+                        .exists();
                     ui.horizontal(|ui| {
                         // Clickable project entry.
                         let label_text = if exists {

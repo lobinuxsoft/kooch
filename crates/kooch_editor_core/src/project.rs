@@ -1,6 +1,6 @@
 //! Project manifest and file system operations.
 //!
-//! Handles `project.ome` manifests, project directory creation,
+//! Handles `project.kooch` manifests, project directory creation,
 //! and persistent editor configuration (recent projects).
 
 use serde::{Deserialize, Serialize};
@@ -16,13 +16,15 @@ use kooch_ecs::scene::{ComponentDescription, EntityDescription, SceneDocument};
 // duplicated in both, which is how a rename changed one copy and left the
 // runtime looking for a file the editor no longer wrote — see
 // `kooch_core::scene_paths`.
-pub use kooch_core::scene_paths::{DEFAULT_SCENE_REL_PATH, PREFAB_EXTENSION, SCENE_EXTENSION};
+pub use kooch_core::scene_paths::{
+    DEFAULT_SCENE_REL_PATH, PREFAB_EXTENSION, PROJECT_MANIFEST_FILE, SCENE_EXTENSION,
+};
 
 // ---------------------------------------------------------------------------
-// Project manifest (project.ome)
+// Project manifest (project.kooch)
 // ---------------------------------------------------------------------------
 
-/// The project manifest stored in `project.ome` at the project root.
+/// The project manifest stored in `project.kooch` at the project root.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectManifest {
     pub name: String,
@@ -56,9 +58,9 @@ impl ProjectManifest {
         }
     }
 
-    /// Saves the manifest to `project.ome` in the given directory.
+    /// Saves the manifest to `project.kooch` in the given directory.
     pub fn save(&self, project_root: &Path) -> Result<(), ProjectError> {
-        let path = project_root.join("project.ome");
+        let path = project_root.join(PROJECT_MANIFEST_FILE);
         let pretty = ron::ser::PrettyConfig::new()
             .struct_names(false)
             .enumerate_arrays(false);
@@ -68,9 +70,9 @@ impl ProjectManifest {
         Ok(())
     }
 
-    /// Loads a manifest from the `project.ome` file in the given directory.
+    /// Loads a manifest from the `project.kooch` file in the given directory.
     pub fn load(project_root: &Path) -> Result<Self, ProjectError> {
-        let path = project_root.join("project.ome");
+        let path = project_root.join(PROJECT_MANIFEST_FILE);
         if !path.exists() {
             return Err(ProjectError::NotAProject(project_root.to_path_buf()));
         }
@@ -163,10 +165,10 @@ impl EditorConfig {
 ///
 /// `scripts/` used to be here, from when a script meant a `.rhai` file on
 /// disk. A script is a Rust component or system in `src/` now: codegen
-/// scans `src/`, the Asset Browser's "Register scripts" reads Rust, and
-/// `kooch_scripting` keeps its ASTs in memory and loads nothing from a
-/// path. So the directory was created, never read, and suggested a place
-/// to put code the engine would never look at.
+/// scans `src/` and the Asset Browser's "Register scripts" reads Rust.
+/// The scripting crate that loaded those files is gone. So the directory
+/// was created, never read, and suggested a place to put code the engine
+/// would never look at.
 const PROJECT_DIRS: &[&str] = &["scenes", "assets", "src"];
 
 /// Sanitizes a project name into a valid Rust crate name.
@@ -254,7 +256,7 @@ pub mod registrations;
 #[derive(Default)]
 pub struct ProjectPlugin;
 
-impl kooch::kooch_plugin_api::OmePlugin for ProjectPlugin {{
+impl kooch::kooch_plugin_api::KoochPlugin for ProjectPlugin {{
     fn name(&self) -> &str {{
         "{crate_name}"
     }}
@@ -533,7 +535,9 @@ impl fmt::Display for ProjectError {
             Self::Io(e) => write!(f, "IO error: {e}"),
             Self::Serialize(e) => write!(f, "failed to serialize: {e}"),
             Self::Deserialize(e) => write!(f, "failed to deserialize: {e}"),
-            Self::NotAProject(p) => write!(f, "no project.ome found in {}", p.display()),
+            Self::NotAProject(p) => {
+                write!(f, "no {PROJECT_MANIFEST_FILE} found in {}", p.display())
+            }
             Self::AlreadyExists(p) => write!(f, "directory already exists: {}", p.display()),
             Self::NoConfigDir => write!(f, "could not determine config directory"),
         }
@@ -544,7 +548,7 @@ impl std::error::Error for ProjectError {}
 
 #[cfg(test)]
 mod gitignore_tests {
-    use super::PROJECT_GITIGNORE;
+    use super::{PROJECT_GITIGNORE, PROJECT_MANIFEST_FILE};
 
     /// The reason the file exists: a debug build of a project linking this
     /// engine is gigabytes.
@@ -560,7 +564,7 @@ mod gitignore_tests {
         for needed in [
             "Cargo.lock",
             "registrations.rs",
-            "project.ome",
+            PROJECT_MANIFEST_FILE,
             "scenes",
             "assets",
         ] {

@@ -21,17 +21,26 @@ loop sin CPU readback en frame.
 
 ## Stack
 
-wgpu **29**, winit, kira (audio), gilrs (gamepad), rhai (scripting), egui/eframe **0.34**,
-rapier3d 0.22 (física), meshopt 0.6, metis (vendored, meshlet grouping), glam, bytemuck,
-slotmap, gltf, image. PipelineCache vía wgpu unsafe + fallback. **Stay-on-wgpu 24 meses
-mínimo** (audit #239).
+wgpu **29**, winit 0.30, kira 0.9 (audio), gilrs 0.11 (gamepad), egui/egui_dock **0.35/0.20**,
+rapier3d **0.34** (física), meshopt 0.6, metis (vendored, meshlet grouping), glam 0.33,
+bytemuck, gltf 1.4, image 0.25. PipelineCache vía wgpu unsafe + fallback.
+**Stay-on-wgpu 24 meses mínimo** (audit #239).
+
+**Rhai NO está en el árbol** — cero hits en los manifests y en `Cargo.lock`. El código de
+gameplay es Rust plano, cargado como plugin nativo (`KoochPlugin`). Esta línea decía
+"rhai (scripting)" hasta el 2026-07-31; si volvés a leerlo en algún lado, está viejo.
 
 ## Workspace (crates)
 
-`kooch_core, kooch_ecs, kooch_window, kooch_input, kooch_lighting, kooch_render, kooch_physics,
-kooch_gravity, kooch_world, kooch_audio, kooch_scripting, kooch_editor_core, kooch_editor,
-kooch_gizmos, kooch_gizmos_handles, kooch_editor_api`. Facade top-level `kooch` con
-`DefaultPlugins` PluginGroup (estilo Bevy).
+Los 18, verificados con `cargo metadata`: `kooch_audio, kooch_camera, kooch_core, kooch_ecs,
+kooch_ecs_macros, kooch_editor, kooch_editor_core, kooch_gizmos, kooch_gizmos_handles,
+kooch_gravity, kooch_input, kooch_lighting, kooch_physics, kooch_plugin_api, kooch_remote,
+kooch_render, kooch_window, kooch_world`. Facade top-level `kooch` con `DefaultPlugins`
+PluginGroup (estilo Bevy).
+
+**NO existen** `kooch_scripting` ni `kooch_editor_api` (este último es un plan, fase 4 de
+#278). El grafo de dependencias real y por capas está en
+`docs/book/src/architecture/crate-graph.md`, derivado de `cargo metadata`.
 
 `kooch_sdf` **ELIMINADO (2026-07)**. Contenía dos cosas sin relación: la librería de
 primitivas CSG en WGSL, que alimentaba el raymarcher ya borrado en el pivot, y el
@@ -1341,6 +1350,6 @@ Se cayó el prefijo `kooch_`: namespaceaba contra una colisión que no ocurre (l
 viven en el `scenes/`/`assets/` del propio proyecto, no en una carpeta compartida) y hacía
 del *engine* lo visible de un archivo cuya propiedad interesante es su formato.
 
-Migración: 10 archivos renombrados en 4 proyectos, más el `main_scene` de 3 `project.ome`
+Migración: 10 archivos renombrados en 4 proyectos, más el `main_scene` de 3 `project.kooch`
 — ese puntero es lo que habría roto el arranque en silencio. Sin fallback de lectura:
 no quedó nada con la extensión vieja.

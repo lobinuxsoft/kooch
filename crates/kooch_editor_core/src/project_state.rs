@@ -106,7 +106,7 @@ impl LauncherProcess {
         let manifest_path = project_root.join("Cargo.toml");
         let output = Arc::new(Mutex::new(Vec::new()));
 
-        // Determine the binary name from project.ome or directory name.
+        // Determine the binary name from project.kooch or directory name.
         let crate_name = project_root
             .file_name()
             .map(|n| sanitize_crate_name(&n.to_string_lossy()))

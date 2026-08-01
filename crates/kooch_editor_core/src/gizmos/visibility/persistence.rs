@@ -15,7 +15,7 @@ use super::GizmoVisibility;
 /// into it would mean a dragged splitter and a hidden gizmo group sharing
 /// one write path — and one corrupt file losing both.
 pub(crate) fn visibility_path() -> Option<std::path::PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("ome").join("gizmo_visibility.ron"))
+    dirs::config_dir().map(|dir| dir.join("kooch").join("gizmo_visibility.ron"))
 }
 
 /// Reads the saved choices. Missing file or unparseable content both mean

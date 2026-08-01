@@ -20,7 +20,7 @@ pub type PluginSystem = Box<dyn FnMut(&mut dyn Engine) + Send + Sync>;
 
 /// The engine services available to a plugin.
 ///
-/// Implemented by the host, passed to [`OmePlugin`](crate::OmePlugin) as
+/// Implemented by the host, passed to [`KoochPlugin`](crate::KoochPlugin) as
 /// `&mut dyn Engine`. A plugin never constructs one.
 pub trait Engine {
     /// Spawns an entity and returns its packed handle.

@@ -1,9 +1,9 @@
-//! Adapts a loaded [`OmePlugin`] to the engine's own [`Plugin`] trait,
+//! Adapts a loaded [`KoochPlugin`] to the engine's own [`Plugin`] trait,
 //! so a dynamic plugin goes through the same lifecycle as a static one.
 
 use std::cell::UnsafeCell;
 
-use kooch_plugin_api::OmePlugin;
+use kooch_plugin_api::KoochPlugin;
 
 use crate::app::App;
 use crate::plugin::Plugin;
@@ -19,17 +19,17 @@ use super::resource_registry::ResourceRegistry;
 /// sequentially from `App::finish_plugins`, so no other reference to the
 /// inner value exists while it is used.
 pub struct DynamicPlugin {
-    inner: UnsafeCell<Option<Box<dyn OmePlugin>>>,
+    inner: UnsafeCell<Option<Box<dyn KoochPlugin>>>,
 }
 
-// SAFETY: `OmePlugin` requires `Send + Sync`, and the engine drives
+// SAFETY: `KoochPlugin` requires `Send + Sync`, and the engine drives
 // plugins from a single thread.
 unsafe impl Send for DynamicPlugin {}
 unsafe impl Sync for DynamicPlugin {}
 
 impl DynamicPlugin {
     /// Wraps a loaded plugin instance.
-    pub fn new(plugin: Box<dyn OmePlugin>) -> Self {
+    pub fn new(plugin: Box<dyn KoochPlugin>) -> Self {
         Self {
             inner: UnsafeCell::new(Some(plugin)),
         }

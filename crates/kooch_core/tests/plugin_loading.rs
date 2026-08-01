@@ -156,14 +156,17 @@ fn a_library_without_the_symbols_is_refused() {
     let not_a_plugin = plugin_path().with_file_name("definitely-not-here.so");
 
     // SAFETY: nothing is opened; the path does not exist.
-    // `expect_err` is unavailable because `dyn OmePlugin` is not Debug,
+    // `expect_err` is unavailable because `dyn KoochPlugin` is not Debug,
     // so the Ok arm is rejected explicitly.
     let err = match unsafe { loader.load(&not_a_plugin) } {
         Ok(_) => panic!("a non-existent library must not load"),
         Err(e) => e,
     };
     assert!(
-        matches!(err, kooch_core::dynamic::PluginLoadError::LibraryOpen { .. }),
+        matches!(
+            err,
+            kooch_core::dynamic::PluginLoadError::LibraryOpen { .. }
+        ),
         "got {err}"
     );
     assert_eq!(loader.count(), 0, "a failed load must not be recorded");

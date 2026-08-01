@@ -5,7 +5,7 @@
 //!
 //! # Why the stamp is read first
 //!
-//! The constructor hands back a `Box<dyn OmePlugin>` — a Rust trait
+//! The constructor hands back a `Box<dyn KoochPlugin>` — a Rust trait
 //! object, whose vtable layout Rust does not guarantee across compiler
 //! versions. Calling it when the plugin was built by a different
 //! compiler is undefined behaviour, and it would look like a working
@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use libloading::Library;
 
-use kooch_plugin_api::OmePlugin;
+use kooch_plugin_api::KoochPlugin;
 use kooch_plugin_api::plugin::{CREATE_SYMBOL, CreatePluginFn, STAMP_SYMBOL};
 use kooch_plugin_api::version::{BuildStamp, Incompatibility};
 
@@ -61,7 +61,7 @@ impl PluginLoader {
     ///
     /// If the library cannot be opened, either symbol is missing, or the
     /// stamp does not match this engine's.
-    pub unsafe fn load(&mut self, path: &Path) -> Result<Box<dyn OmePlugin>, PluginLoadError> {
+    pub unsafe fn load(&mut self, path: &Path) -> Result<Box<dyn KoochPlugin>, PluginLoadError> {
         let library = unsafe {
             Library::new(path).map_err(|e| PluginLoadError::LibraryOpen {
                 path: path.to_path_buf(),

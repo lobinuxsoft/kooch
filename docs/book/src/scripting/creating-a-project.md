@@ -104,7 +104,7 @@ Also generated. It exports one plugin whose only job is to describe your compone
 standalone editor that loaded this `dylib`:
 
 ```rust
-impl kooch::kooch_plugin_api::OmePlugin for ProjectPlugin {
+impl kooch::kooch_plugin_api::KoochPlugin for ProjectPlugin {
     fn name(&self) -> &str { "my_game" }
     fn build(&mut self, engine: &mut dyn kooch::kooch_plugin_api::Engine) {
         registrations::declare_components(engine);

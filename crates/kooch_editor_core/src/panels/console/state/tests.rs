@@ -224,7 +224,11 @@ fn project_only_hides_the_editors_own_lines() {
         project_only: true,
         ..Default::default()
     };
-    assert!(state.shows(&from_project(Level::INFO, "kooch_physics", "a sensor fired")));
+    assert!(state.shows(&from_project(
+        Level::INFO,
+        "kooch_physics",
+        "a sensor fired"
+    )));
     assert!(!state.shows(&entry(Level::INFO, "handlers", "scene loaded")));
 }
 /// The point of carrying the project's own level: asking for warnings

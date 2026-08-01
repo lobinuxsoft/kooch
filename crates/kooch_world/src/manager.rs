@@ -20,7 +20,6 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
-
 use crate::chunk::{ChunkData, ChunkId, ChunkState};
 
 /// Listener invoked when a chunk is about to be evicted (transition
@@ -111,10 +110,9 @@ impl ChunkManager {
         self.listeners.push(listener);
     }
 
-
     /// Drain chunks evicted by the most recent `process_queues` pass.
     /// Caller mirrors the eviction into the GPU pool via
-    /// `OmeAccel::remove_chunk`.
+    /// `KoochAccel::remove_chunk`.
     pub fn drain_pending_unloads(&mut self) -> Vec<ChunkId> {
         std::mem::take(&mut self.pending_unloads)
     }
