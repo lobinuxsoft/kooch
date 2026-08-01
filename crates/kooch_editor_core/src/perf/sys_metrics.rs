@@ -32,6 +32,10 @@ pub(crate) struct SysMetricsState {
     /// stats until at least two refreshes have established a real
     /// baseline. RAM is exempt; one refresh is enough for it.
     samples_taken: u32,
+    /// Whether the last frame wanted these numbers. Reset to `false`
+    /// while the section is closed, so reopening it re-establishes the
+    /// CPU baseline instead of reporting the idle average as current.
+    was_wanted: bool,
 }
 
 impl Default for SysMetricsState {
@@ -56,6 +60,7 @@ impl Default for SysMetricsState {
             pid,
             last_refresh: None,
             samples_taken: 0,
+            was_wanted: true,
         }
     }
 }
@@ -69,12 +74,36 @@ impl Default for SysMetricsState {
 /// `refresh_processes_specifics` call (μs-range on Linux) plus the
 /// HashMap lookup of our own PID.
 pub(crate) fn sys_metrics_system(resources: &mut Resources) {
+    // 2.082 ms per refresh, measured — a 23% spike on a 9 ms frame,
+    // twice a second, for two numbers that may not be on screen (#703).
+    // Read before the state is removed so a hidden section costs a
+    // resource lookup and nothing else.
+    let wanted = resources
+        .get::<super::HudVisibility>()
+        .copied()
+        .unwrap_or_default()
+        .wants_system_metrics();
+
     let mut state = resources.remove::<SysMetricsState>().unwrap_or_default();
 
-    let should_refresh = match state.last_refresh {
-        None => true,
-        Some(prev) => prev.elapsed() >= REFRESH_INTERVAL,
-    };
+    // Coming back after the section was closed, the previous sample is
+    // from whenever it was last open. `cpu_usage()` is a delta against
+    // that, so publishing the first reading would report the average CPU
+    // over the entire time nobody was looking, as this instant's number.
+    //
+    // Dropping the baseline makes the next refresh a baseline again and
+    // the one after it a real delta — the same two-sample warm-up the
+    // process gets at startup, for the same reason.
+    if wanted && !state.was_wanted {
+        state.samples_taken = 0;
+    }
+    state.was_wanted = wanted;
+
+    let should_refresh = wanted
+        && match state.last_refresh {
+            None => true,
+            Some(prev) => prev.elapsed() >= REFRESH_INTERVAL,
+        };
 
     if should_refresh {
         // Refresh global CPU usage FIRST so the per-process delta
@@ -124,6 +153,77 @@ pub(crate) fn sys_metrics_system(resources: &mut Resources) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The whole point: a closed section costs nothing (#703).
+    #[test]
+    fn a_hidden_section_is_never_polled() {
+        let mut resources = Resources::default();
+        resources.insert(EditorPerfStats::default());
+        resources.insert(super::super::HudVisibility {
+            sidebar: false,
+            system_section: true,
+        });
+        sys_metrics_system(&mut resources);
+
+        assert!(
+            resources
+                .get::<SysMetricsState>()
+                .unwrap()
+                .last_refresh
+                .is_none(),
+            "the OS was asked about a section nobody can see",
+        );
+    }
+
+    /// Both halves of the question. The section being open inside a
+    /// hidden sidebar is not the same as being on screen.
+    #[test]
+    fn a_collapsed_section_inside_a_visible_sidebar_is_also_skipped() {
+        let mut resources = Resources::default();
+        resources.insert(EditorPerfStats::default());
+        resources.insert(super::super::HudVisibility {
+            sidebar: true,
+            system_section: false,
+        });
+        sys_metrics_system(&mut resources);
+
+        assert!(
+            resources
+                .get::<SysMetricsState>()
+                .unwrap()
+                .last_refresh
+                .is_none(),
+        );
+    }
+
+    /// Reopening re-establishes the baseline instead of publishing the
+    /// average CPU over however long the section was closed as if it
+    /// were this moment's.
+    #[test]
+    fn reopening_the_section_does_not_report_the_idle_average_as_current() {
+        let mut resources = Resources::default();
+        resources.insert(EditorPerfStats::default());
+        resources.insert(super::super::HudVisibility::default());
+        // Warm up: two refreshes establish a real delta.
+        sys_metrics_system(&mut resources);
+        resources.get_mut::<SysMetricsState>().unwrap().last_refresh = None;
+        sys_metrics_system(&mut resources);
+        assert!(resources.get::<SysMetricsState>().unwrap().samples_taken >= 2);
+
+        // Hidden, then shown again.
+        resources.insert(super::super::HudVisibility {
+            sidebar: false,
+            system_section: true,
+        });
+        sys_metrics_system(&mut resources);
+        resources.insert(super::super::HudVisibility::default());
+        sys_metrics_system(&mut resources);
+
+        assert!(
+            resources.get::<SysMetricsState>().unwrap().samples_taken < 2,
+            "the first reading after reopening must be a baseline, not a published sample",
+        );
+    }
 
     #[test]
     fn first_call_populates_ram_eventually() {

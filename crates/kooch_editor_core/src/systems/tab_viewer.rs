@@ -66,6 +66,8 @@ pub(crate) struct EditorTabViewer<'a> {
     /// can mutate it from the viewport toolbar.
     pub(crate) gizmo_visibility: &'a mut crate::gizmos::GizmoVisibility,
     pub(crate) physics_debug: &'a mut kooch_physics::backend::DebugCategories,
+    /// Whether anyone is looking at the metrics that cost to take (#703).
+    pub(crate) hud_visibility: &'a mut crate::perf::HudVisibility,
     pub(crate) log_buffer: Option<&'a kooch_core::LogBuffer>,
     pub(crate) console: &'a mut crate::panels::console::ConsoleState,
     /// The registered visualizers, grouped by category, for that dropdown.
@@ -219,6 +221,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.gizmo_visibility,
                 self.gizmo_groups,
                 self.physics_debug,
+                self.hud_visibility,
                 self.actions,
             ),
             EditorTab::Console => {
