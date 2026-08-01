@@ -101,15 +101,14 @@ pub(crate) fn draw_world_content(
         area = area.vertical_scroll_offset(offset);
     }
     area.show_rows(ui, row_h, rows.len(), |ui, range| {
-        // Remembered so the next selection can tell whether its row is
+        // Recorded so the next selection can tell whether its row is
         // already on screen. Written here because this is the only place
-        // that knows it.
+        // that knows it — and read by `scroll_offset_for`, which is what
+        // stops a click on a visible row from yanking the list.
         ui.data_mut(|d| {
-            d.insert_temp(
-                egui::Id::new("world_visible_range"),
-                (range.start, range.end),
-            )
+            d.insert_temp(visible_range_id(), (range.start, range.end));
         });
+
         // The range is the slice of rows that fits on screen — twenty
         // of them, whether the scene holds six hundred entities or
         // sixty thousand. Everything a row costs (laying out its
@@ -284,6 +283,14 @@ impl GroupHeader {
     }
 }
 
+/// Where the last drawn row range is kept, so the writer and the reader
+/// cannot drift apart by a typo. They already did once: a refactor took
+/// the write with it and left the read, which every test passed because
+/// each one wrote the value itself.
+fn visible_range_id() -> egui::Id {
+    egui::Id::new("world_visible_range")
+}
+
 /// The entity the selection just moved to, or `None` if it did not move.
 ///
 /// Consumes the change: called once per frame, it answers `Some` exactly
@@ -342,7 +349,7 @@ fn scroll_offset_for(
     // needed nothing, which is what clicking a visible row would feel
     // like. The range is last frame's; one frame of staleness is worth
     // less than the alternative of guessing.
-    let visible = ui.data(|d| d.get_temp::<(usize, usize)>(egui::Id::new("world_visible_range")));
+    let visible = ui.data(|d| d.get_temp::<(usize, usize)>(visible_range_id()));
     if let Some((start, end)) = visible
         && (start..end).contains(&index)
     {
@@ -630,7 +637,7 @@ mod tests {
         let offset = with_ui(|ui| {
             let rows = build_rows(ui, &entities, &[]);
             // The list has been sitting at the top.
-            ui.data_mut(|d| d.insert_temp(egui::Id::new("world_visible_range"), (0usize, 20usize)));
+            ui.data_mut(|d| d.insert_temp(visible_range_id(), (0usize, 20usize)));
             let focus = newly_focused(ui, &selected).expect("selection is new");
             scroll_offset_for(ui, &rows, &entities, focus, 20.0)
                 .map(|offset| (offset, row_pitch(ui, 20.0)))
@@ -643,6 +650,44 @@ mod tests {
             (offset - (900.0 - 9.5) * pitch).abs() < 1.0,
             "expected the row centred, got offset {offset} at pitch {pitch}",
         );
+    }
+
+    /// The half of the exchange no other test covered: every test here
+    /// wrote the visible range itself, so deleting the line that records
+    /// it left them all green while the list scrolled on every click.
+    ///
+    /// Which is what happened — a refactor took the write and left the
+    /// read, and the suite said nothing.
+    #[test]
+    fn the_panel_records_the_range_it_drew() {
+        let mut entities: Vec<_> = (0..500).map(|i| entity_info(i, None)).collect();
+        let mut selected = Vec::new();
+        let mut pinned = std::collections::HashSet::new();
+        let mut actions = Vec::new();
+        let mut last_clicked = None;
+
+        let recorded = with_ui(|ui| {
+            ui.data_mut(|d| d.remove::<(usize, usize)>(visible_range_id()));
+            draw_world_content(
+                ui,
+                true,
+                &mut entities,
+                &mut selected,
+                &mut pinned,
+                &[],
+                &mut actions,
+                500,
+                1,
+                1,
+                &mut last_clicked,
+                &[],
+            );
+            ui.data(|d| d.get_temp::<(usize, usize)>(visible_range_id()))
+        });
+
+        let (start, end) = recorded.expect("the panel has to say what it drew");
+        assert!(end > start, "an empty range describes nothing");
+        assert!(end <= 500, "the range cannot exceed the rows");
     }
 
     /// The offset has to be measured in the same unit `show_rows`
@@ -672,7 +717,7 @@ mod tests {
 
         let offset = with_ui(|ui| {
             let rows = build_rows(ui, &entities, &[]);
-            ui.data_mut(|d| d.insert_temp(egui::Id::new("world_visible_range"), (0usize, 20usize)));
+            ui.data_mut(|d| d.insert_temp(visible_range_id(), (0usize, 20usize)));
             let focus = newly_focused(ui, &selected).expect("selection is new");
             scroll_offset_for(ui, &rows, &entities, focus, 20.0)
         });
