@@ -1,4 +1,4 @@
-//! [`CameraPlugin`] — registers [`CameraRig`] and the system that drives it.
+//! [`CameraPlugin`] — registers [`CameraRig`] and the Host that drives it.
 
 use glam::Vec3;
 use kooch_core::app::App;
@@ -64,26 +64,47 @@ impl Plugin for CameraPlugin {
     }
 }
 
-/// Moves every active rig's camera towards the pose its target implies.
+/// Advances every live rig, then hands the winner's pose to the camera.
+///
+/// Two steps, in the order phantom-camera's Host uses them: each virtual
+/// camera works out where *it* wants to be, and then one of them is
+/// elected and copied onto the camera that actually renders. Keeping the
+/// vcam poses separate is what makes blending (#671 phase 3) a matter of
+/// interpolating between two of them.
 pub fn drive_camera_rigs(resources: &mut Resources) {
-    let plan = plan_moves(resources);
+    let plan = plan_rig_poses(resources);
     if plan.is_empty() {
         return;
     }
-    apply_moves(resources, &plan);
+    apply_poses(resources, &plan);
+
+    if let Some((winner, pose)) = elect(&plan)
+        && let Some(camera) = rendering_camera(resources, winner)
+    {
+        apply_poses(
+            resources,
+            &[Pose {
+                entity: camera,
+                position: pose.position,
+                rotation: pose.rotation,
+                priority: 0,
+            }],
+        );
+    }
 }
 
-/// A camera and where it should end up.
-struct Move {
-    camera: Entity,
+/// A vcam and where it decided to be this frame.
+struct Pose {
+    entity: Entity,
     position: Vec3,
     rotation: glam::Quat,
+    priority: i32,
 }
 
-/// Works out every move without holding a borrow, because writing a
-/// `Transform` needs the storage mutably and reading the target's pose
+/// Works out every vcam's pose without holding a borrow, because writing
+/// a `Transform` needs the storage mutably and reading the target's pose
 /// needs it shared.
-fn plan_moves(resources: &Resources) -> Vec<Move> {
+fn plan_rig_poses(resources: &Resources) -> Vec<Pose> {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
     };
@@ -113,18 +134,19 @@ fn plan_moves(resources: &Resources) -> Vec<Move> {
     };
 
     let mut plan = Vec::new();
-    for (&camera, rig) in rigs.iter() {
+    for (&vcam, rig) in rigs.iter() {
         if rig.is_inert() {
             continue;
         }
 
-        // A rig on a camera nobody is rendering does nothing, unless it
-        // asked to. Straight from phantom-camera's `InactiveUpdateMode`,
-        // and the same lesson as #656: work nobody sees is work not worth
-        // doing. Absent `PerspectiveCamera` counts as active — an
-        // orthographic or not-yet-configured camera still has a pose.
+        // A rig on an entity that also renders, and is not rendering,
+        // does nothing unless it asked to. Straight from
+        // phantom-camera's `InactiveUpdateMode`, and the same lesson as
+        // #656: work nobody sees is work not worth doing. A plain vcam
+        // has no `PerspectiveCamera` at all and is always a candidate —
+        // being unelected is what makes it cheap, not being invisible.
         if rig.inactive_update != INACTIVE_ALWAYS
-            && let Some(cam) = cameras.and_then(|s| s.get(camera))
+            && let Some(cam) = cameras.and_then(|s| s.get(vcam))
             && !cam.active
         {
             continue;
@@ -134,38 +156,64 @@ fn plan_moves(resources: &Resources) -> Vec<Move> {
             continue;
         };
         // A target that was despawned, or that a scene never resolved,
-        // leaves the camera where it is rather than snapping it to the
+        // leaves the vcam where it is rather than snapping it to the
         // origin.
         let Some((target_pos, target_rot)) = pose_of(target) else {
             continue;
         };
-        let Some(current) = transforms.and_then(|s| s.get(camera)) else {
+        let Some(current) = transforms.and_then(|s| s.get(vcam)) else {
             continue;
         };
 
-        let (desired_pos, rotation) = rig.desired(target_pos, target_rot, current.position);
+        let (desired_pos, rotation) =
+            rig.desired(target_pos, target_rot, current.position, current.rotation);
         let position = rig.damped(current.position, desired_pos, dt);
 
-        // Below the floor the camera has arrived. Writing anyway would
-        // dirty a transform to propagate and mirror on every frame of a
-        // scene that is standing still.
-        let settled = position.abs_diff_eq(current.position, SETTLE_EPSILON)
-            && rotation.abs_diff_eq(current.rotation, SETTLE_EPSILON);
-        if settled {
-            continue;
-        }
-
-        plan.push(Move {
-            camera,
+        plan.push(Pose {
+            entity: vcam,
             position,
             rotation,
+            priority: rig.priority,
         });
     }
     plan
 }
 
-/// Writes the planned poses.
-fn apply_moves(resources: &mut Resources, plan: &[Move]) {
+/// The rig that drives the camera this frame: highest priority, ties
+/// broken on the lower entity index.
+///
+/// The tie-break is not cosmetic. Component storage has no iteration
+/// order worth relying on, so "whichever came last" — which is what
+/// upstream can afford inside an ordered scene tree — would hand the
+/// camera to a different rig on different frames and read as jitter.
+fn elect(plan: &[Pose]) -> Option<(Entity, &Pose)> {
+    plan.iter()
+        .min_by_key(|pose| (-pose.priority, pose.entity.index()))
+        .map(|pose| (pose.entity, pose))
+}
+
+/// The camera the elected rig should drive: the highest-priority active
+/// one, which is the same rule the renderer uses to pick what it draws.
+///
+/// A vcam that is itself a camera drives itself, which is how a scene
+/// with one camera and one rig on it keeps working.
+fn rendering_camera(resources: &Resources, winner: Entity) -> Option<Entity> {
+    let registry = resources.get::<ComponentRegistry>()?;
+    let Some(cameras) = registry.get_cpu::<PerspectiveCamera>() else {
+        // No camera component anywhere: the rig's own entity is all
+        // there is to move.
+        return Some(winner);
+    };
+    cameras
+        .iter()
+        .filter(|(_, cam)| cam.active)
+        .min_by_key(|(entity, cam)| (-cam.priority, entity.index()))
+        .map(|(entity, _)| *entity)
+        .or(Some(winner))
+}
+
+/// Writes the planned poses, skipping the ones that have arrived.
+fn apply_poses(resources: &mut Resources, plan: &[Pose]) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
@@ -173,9 +221,22 @@ fn apply_moves(resources: &mut Resources, plan: &[Move]) {
         return;
     };
     for step in plan {
-        if let Some(transform) = transforms.get_mut(step.camera) {
-            transform.position = step.position;
-            transform.rotation = step.rotation;
+        let Some(transform) = transforms.get_mut(step.entity) else {
+            continue;
+        };
+        // Below the floor it has arrived. Writing anyway would dirty a
+        // transform to propagate and mirror on every frame of a scene
+        // that is standing still.
+        if step
+            .position
+            .abs_diff_eq(transform.position, SETTLE_EPSILON)
+            && step
+                .rotation
+                .abs_diff_eq(transform.rotation, SETTLE_EPSILON)
+        {
+            continue;
         }
+        transform.position = step.position;
+        transform.rotation = step.rotation;
     }
 }

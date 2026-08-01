@@ -553,6 +553,36 @@ remapea referencias a entidades con `EntityMapper`.
 
 ## Decisiones arquitecturales sticky (NO reabrir sin OK explícito)
 
+### Cámara: dos prioridades, y el rig NO va en la cámara (locked 2026-07-31, #671)
+
+**`CameraRig` vive en una entidad propia — una virtual camera** que tiene rig + `Transform`
+y nada más. Un sistema Host elige una y **copia su pose a la cámara que renderiza**. Es el
+modelo de phantom-camera (MIT) y de Cinemachine.
+
+**Son dos preguntas distintas y ninguna reemplaza a la otra:**
+
+| Prioridad | Elige | Dónde |
+|---|---|---|
+| `PerspectiveCamera.priority` | qué cámara **renderiza** | `render/plugin/mod.rs`, `sky/renderer.rs`, `viewport/render.rs` — **intactos** |
+| `CameraRig.priority` | qué rig **maneja** esa cámara | `kooch_camera::plugin::elect` |
+
+Ese split es lo que dejó entrar el modelo Host de upstream **sin reescribir los tres call
+sites** de elección de render que ya existían.
+
+**La primera versión puso el rig sobre la cámara**, argumentando que sin blending una
+segunda elección era peso muerto. Estaba mal por dos razones que no son el blending:
+tres encuadres exigían tres cámaras reales, y el split posterior habría sido una migración
+de escenas guardadas — o sea, del tipo caro, porque una escena guarda componentes por nombre
+de tipo (ver `## 2026-07-31 — type_name`).
+
+**Desempate por índice de entidad, no "el último gana".** Upstream puede permitirse `>=`
+sobre un scene tree ordenado; acá el storage de componentes no tiene orden en el que
+confiar, y un empate le daría la cámara a un rig distinto cada frame.
+
+**El editor NO corre rigs.** `CameraComponentsPlugin` registra el tipo para inspeccionarlo y
+mirrorearlo; `CameraPlugin` (con `run_if_playing`) es el único que mueve algo, y vive en el
+proceso del proyecto. Mismo patrón que `PhysicsComponentsPlugin`.
+
 ### Física: cómo se conecta al ECS (locked 2026-07-25, #570)
 
 - **`PhysicsBody(u32)` va SIN reflejar.** Es lo que hace funcionar el Stop: `WorldSnapshot`
