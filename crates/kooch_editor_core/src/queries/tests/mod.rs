@@ -4,6 +4,7 @@
 //! and a single file made it hard to see which behaviour was already
 //! covered.
 
+mod measure_gather;
 mod plugin_types_in_the_components_panel;
 mod plugin_types_in_the_menu;
 mod plugin_types_survive_remote_mode;
