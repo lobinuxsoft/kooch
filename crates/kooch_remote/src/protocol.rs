@@ -109,7 +109,19 @@ pub enum Method {
         payload: serde_json::Value,
     },
     /// Every non-ephemeral entity with its components and fields.
-    ListEntities,
+    ///
+    /// `since` is the revision the caller already holds. When it matches
+    /// the one the server last handed out, the reply carries only what
+    /// changed; anything else — a fresh client, a missed frame, a
+    /// restarted project — gets everything, with `full` set.
+    ///
+    /// Asking for a diff is not a promise of receiving one. The server
+    /// decides, and says which it sent, because a client that assumed
+    /// wrong would silently keep entities the project had deleted.
+    ListEntities {
+        #[serde(default)]
+        since: Option<u64>,
+    },
     /// Every registered component type with its field schema.
     GetSchema,
     /// Overwrite one field of one component on one entity.
@@ -193,7 +205,27 @@ pub enum ResponseData {
     /// Reply to [`Method::Ping`].
     Pong,
     /// Reply to [`Method::ListEntities`].
-    Entities { entities: Vec<EntitySnapshot> },
+    ///
+    /// `entities` is the whole world when `full`, and only what changed
+    /// otherwise. `removed` is always the entities that went away since
+    /// the caller's revision — empty in a full reply, since absence
+    /// already says it.
+    Entities {
+        entities: Vec<EntitySnapshot>,
+        /// Entities that no longer exist. Only meaningful in a diff.
+        #[serde(default)]
+        removed: Vec<EntityId>,
+        /// The revision this reply brings the caller to. Pass it back as
+        /// `since` on the next call.
+        #[serde(default)]
+        revision: u64,
+        /// Whether `entities` is the entire world. A client must replace
+        /// its mirror wholesale when this is set, rather than merging —
+        /// merging a full reply into a stale mirror keeps whatever the
+        /// full reply omitted.
+        #[serde(default)]
+        full: bool,
+    },
     /// Reply to [`Method::GetSchema`].
     Schema { components: Vec<ComponentSchema> },
     /// Reply to [`Method::Spawn`] — the new entity's handle.

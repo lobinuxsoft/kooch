@@ -169,9 +169,35 @@ impl RemoteClient {
     }
 
     /// Every non-ephemeral entity with its components and fields.
+    ///
+    /// Kept for callers that want the world outright — tests, and any
+    /// one-shot inspection. A client mirroring every frame wants
+    /// [`RemoteClient::list_entities_since`] instead, which is what
+    /// makes an unchanged scene cost nothing to receive.
     pub fn list_entities(&self) -> Result<Vec<EntitySnapshot>, ClientError> {
-        match self.call(Method::ListEntities)? {
-            ResponseData::Entities { entities } => Ok(entities),
+        Ok(self.list_entities_since(None)?.entities)
+    }
+
+    /// The world, or what changed in it since `since`.
+    ///
+    /// Pass the `revision` from the previous reply. The server decides
+    /// whether it can honour the request and says so in
+    /// [`EntityUpdate::full`] — a caller must not assume, because
+    /// merging what it thought was a diff would keep entities the
+    /// project has deleted.
+    pub fn list_entities_since(&self, since: Option<u64>) -> Result<EntityUpdate, ClientError> {
+        match self.call(Method::ListEntities { since })? {
+            ResponseData::Entities {
+                entities,
+                removed,
+                revision,
+                full,
+            } => Ok(EntityUpdate {
+                entities,
+                removed,
+                revision,
+                full,
+            }),
             other => Err(ClientError::Unexpected(other)),
         }
     }
@@ -383,4 +409,21 @@ mod tests {
         );
         assert_eq!(stats.response_bytes, u32::MAX);
     }
+}
+
+/// One reply to [`RemoteClient::list_entities_since`].
+///
+/// `full` is the field that matters: it decides whether the caller
+/// replaces its mirror or merges into it, and merging a full reply
+/// would silently keep whatever the reply left out.
+#[derive(Debug, Clone)]
+pub struct EntityUpdate {
+    /// The whole world when `full`, otherwise only what changed.
+    pub entities: Vec<EntitySnapshot>,
+    /// Entities that no longer exist. Empty in a full reply — absence
+    /// says it there.
+    pub removed: Vec<crate::protocol::EntityId>,
+    /// Pass back as `since` on the next call.
+    pub revision: u64,
+    pub full: bool,
 }

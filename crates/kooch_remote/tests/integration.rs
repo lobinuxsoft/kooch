@@ -63,8 +63,8 @@ fn spawn_set_field_and_list_round_trip() {
     };
 
     // It shows up in the listing with its name.
-    let listed = match call(&mut resources, Method::ListEntities) {
-        ResponseData::Entities { entities } => entities,
+    let listed = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { entities, .. } => entities,
         other => panic!("expected Entities, got {other:?}"),
     };
     assert_eq!(listed.len(), 1);
@@ -90,8 +90,8 @@ fn spawn_set_field_and_list_round_trip() {
     );
 
     // The listing reflects the edit.
-    let listed = match call(&mut resources, Method::ListEntities) {
-        ResponseData::Entities { entities } => entities,
+    let listed = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { entities, .. } => entities,
         other => panic!("expected Entities, got {other:?}"),
     };
     let transform = listed[0]
@@ -127,8 +127,8 @@ fn a_nameless_spawn_still_carries_name_and_transform() {
         other => panic!("{other:?}"),
     };
 
-    let entities = match call(&mut resources, Method::ListEntities) {
-        ResponseData::Entities { entities } => entities,
+    let entities = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { entities, .. } => entities,
         other => panic!("{other:?}"),
     };
     let spawned = entities
@@ -380,8 +380,8 @@ fn entities_are_listed_in_authored_order() {
         }
     }
 
-    let entities = match call(&mut resources, Method::ListEntities) {
-        ResponseData::Entities { entities } => entities,
+    let entities = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { entities, .. } => entities,
         other => panic!("list: {other:?}"),
     };
     assert_eq!(
@@ -436,8 +436,8 @@ fn play_snapshots_the_world_and_stop_restores_it() {
     call(&mut resources, Method::SetPlaying { playing: false });
     assert!(!Playing::is_playing(&resources));
 
-    let entities = match call(&mut resources, Method::ListEntities) {
-        ResponseData::Entities { entities } => entities,
+    let entities = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { entities, .. } => entities,
         other => panic!("list: {other:?}"),
     };
     // The handle survives the round-trip: a client that mirrored this
@@ -481,8 +481,8 @@ fn repeated_play_keeps_the_original_snapshot() {
     call(&mut resources, Method::SetPlaying { playing: false });
 
     assert!(!Playing::is_playing(&resources));
-    let entities = match call(&mut resources, Method::ListEntities) {
-        ResponseData::Entities { entities } => entities,
+    let entities = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { entities, .. } => entities,
         other => panic!("list: {other:?}"),
     };
     assert!(entities.is_empty(), "runtime spawn survived Stop");
