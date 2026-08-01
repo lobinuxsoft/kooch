@@ -451,7 +451,8 @@ fn handle_context_menu(
                 .collect();
 
             if !selected_infos.is_empty() {
-                let mut shared: Vec<(ComponentId, String)> = selected_infos[0]
+                let first = selected_infos[0];
+                let mut shared: Vec<(ComponentId, std::borrow::Cow<'static, str>)> = first
                     .components
                     .iter()
                     .filter(|c| {
@@ -468,7 +469,7 @@ fn handle_context_menu(
                         format!("{} Remove Component from all", icons::MINUS),
                         |ui| {
                             for (component, name) in &shared {
-                                if ui.selectable_label(false, name).clicked() {
+                                if ui.selectable_label(false, name.as_ref()).clicked() {
                                     for &entity in selected.iter() {
                                         actions.push(EditorAction::RemoveComponent {
                                             entity,

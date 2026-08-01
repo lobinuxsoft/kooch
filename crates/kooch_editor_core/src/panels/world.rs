@@ -583,7 +583,7 @@ mod tests {
         long.components = vec![crate::state::ComponentDisplayInfo {
             type_id: std::any::TypeId::of::<()>(),
             component: kooch_ecs::component::ComponentId::INVALID,
-            short_name: "Name".to_owned(),
+            short_name: "Name".into(),
             fields: ReflectedFields::Values(vec![(
                 "value".to_owned(),
                 kooch_ecs::reflect::ReflectValue::String("x".repeat(400)),
