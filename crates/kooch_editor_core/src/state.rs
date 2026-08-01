@@ -138,6 +138,23 @@ pub struct EditorOverlay {
     /// The Inspector's cursor over component sections.
     pub(crate) inspector_nav: crate::panels::inspector::InspectorNav,
     pub(crate) selected_entities: Vec<Entity>,
+    /// Entities whose gizmos draw whether or not they are selected.
+    ///
+    /// # Why per entity and not per component type
+    ///
+    /// Switching a whole kind on answers "show me every gravity field",
+    /// which is a real question but a different one. "Keep an eye on
+    /// *this* camera while I work on it" is the common one, and doing it
+    /// by type floods the viewport with every other camera to answer it.
+    ///
+    /// # Why the session and not a file
+    ///
+    /// A pin is a working gesture, not a property of the level, so it has
+    /// no business in a scene that someone else opens. Persisting it
+    /// per user would need a stable identity across restarts, and
+    /// `PersistentId` counts from zero in every project — the same guid
+    /// means a different entity in the next one.
+    pub(crate) pinned_gizmos: std::collections::HashSet<Entity>,
     /// Anchor index for Shift+Click range selection in the World panel.
     pub(crate) last_clicked_index: Option<usize>,
     /// Per-field Euler angle cache (radians, XYZ convention) for Quat

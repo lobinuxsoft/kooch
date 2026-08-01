@@ -96,6 +96,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         renderer,
         dock_state: crate::state::default_dock_state(),
         selected_entities: Vec::new(),
+        pinned_gizmos: std::collections::HashSet::new(),
         last_clicked_index: None,
         rotation_euler_cache: std::collections::HashMap::new(),
         rotation_display_mode: crate::state::RotationDisplayMode::default(),

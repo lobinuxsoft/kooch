@@ -11,6 +11,13 @@
 //! registered visualizer runs for every selected entity, unless its
 //! component or its category is switched off in the Gizmos panel.
 //!
+//! An entity can also be **pinned**, from the World panel's context
+//! menu, and then its gizmos draw while something else is selected. That
+//! is per entity rather than per component type on purpose: "show every
+//! gravity field" is a real question, but the common one is "keep an eye
+//! on this camera while I move what it follows", and answering it by
+//! type floods the viewport with every other camera.
+//!
 //! Two earlier rules are gone. Gating on the Inspector's
 //! `CollapsingHeader` (#581) coupled display to unrelated UI state.
 //! Suppressing everything but `Transform` on a multi-selection (#587) was
@@ -29,6 +36,7 @@ mod physics_debug;
 pub(crate) use physics_debug::PhysicsDebugOverlay;
 mod lights;
 mod parent_space;
+mod virtual_camera;
 mod visibility;
 mod visualizers;
 
@@ -70,6 +78,10 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     let mut registry = resources.remove::<VisualizerRegistry>().unwrap_or_default();
     registry.register::<PerspectiveCamera, PerspectiveCameraVisualizer>();
     registry.register::<OrthographicCamera, OrthographicCameraVisualizer>();
+    // A vcam has no mesh and no frustum of its own: without this it is an
+    // empty entity in a list, and which way a framing aims is the whole
+    // thing you are authoring.
+    registry.register::<kooch_camera::VirtualCamera, virtual_camera::VirtualCameraVisualizer>();
     // Lights: where they point and how far they reach. `range` and the
     // cone angles are otherwise numbers with nothing to check them against.
     registry.register::<DirectionalLight, lights::DirectionalLightVisualizer>();
@@ -100,10 +112,22 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
 /// Pre-render system that rebuilds the gizmo line + mesh batches from
 /// current selection by dispatching through the [`VisualizerRegistry`].
 pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
-    let selected = match resources.get::<EditorOverlay>() {
-        Some(overlay) => overlay.selected_entities.clone(),
+    let (selected, pinned) = match resources.get::<EditorOverlay>() {
+        Some(overlay) => (
+            overlay.selected_entities.clone(),
+            overlay.pinned_gizmos.clone(),
+        ),
         None => return,
     };
+    // Pinned entities draw alongside the selection, minus any that are
+    // both — dispatching twice would double every line and make one
+    // gizmo read brighter than its neighbours for no reason anyone
+    // could act on.
+    let also_drawn: Vec<Entity> = pinned
+        .iter()
+        .copied()
+        .filter(|entity| !selected.contains(entity))
+        .collect();
 
     let mut line_batch = resources.remove::<GizmoBatch>().unwrap_or_default();
     let mut mesh_batch = resources.remove::<MeshBatch>().unwrap_or_default();
@@ -116,7 +140,7 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
     // is selected.
     physics_debug::draw(resources, &mut line_batch);
 
-    if selected.is_empty() {
+    if selected.is_empty() && also_drawn.is_empty() {
         resources.insert(line_batch);
         resources.insert(mesh_batch);
         return;
@@ -161,7 +185,7 @@ pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
     {
         let mut gizmos = Gizmos::new(&mut line_batch, &mut mesh_batch);
         let resources_ref: &Resources = &*resources;
-        for entity in &selected {
+        for entity in selected.iter().chain(also_drawn.iter()) {
             for &type_id in &drawable {
                 registry.dispatch(type_id, *entity, resources_ref, &mut gizmos);
             }

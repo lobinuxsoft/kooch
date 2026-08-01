@@ -101,11 +101,53 @@ impl Plugin for CameraPlugin {
         //
         // It also means `dt` is the fixed step, which is what makes the
         // damping deterministic instead of frame-rate dependent.
+        app.insert_resource(CameraBlend::default());
         app.add_system(Stage::PostPhysics, run_if_playing(drive_virtual_cameras));
     }
 
     fn name(&self) -> &str {
         "CameraPlugin"
+    }
+}
+
+/// What the Host remembers between frames to blend one handover.
+///
+/// Only the pose it is coming *from* and how far along it is. The pose
+/// it is going to is recomputed every frame, because the winning vcam
+/// keeps following its target while the blend runs — freezing the
+/// destination would make the camera arrive where the target used to
+/// be.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CameraBlend {
+    /// The vcam currently driving, if any.
+    pub active: Option<Entity>,
+    /// Where the render camera was when this handover started.
+    from_pos: Vec3,
+    from_rot: glam::Quat,
+    /// Seconds since it started, and how many it was given.
+    elapsed: f32,
+    duration: f32,
+}
+
+impl CameraBlend {
+    /// Whether a handover is still in progress.
+    fn running(&self) -> bool {
+        self.duration > 0.0 && self.elapsed < self.duration
+    }
+
+    /// Begins a handover from wherever the camera is right now.
+    ///
+    /// From the *camera's* pose, not the outgoing vcam's. Mid-blend the
+    /// two are different, and starting from the vcam would snap back to
+    /// a pose nobody has seen since the last handover — which is exactly
+    /// the interruption case upstream needs a `tween_interrupted` signal
+    /// to handle. Reading the visible pose handles it by construction.
+    fn begin(&mut self, winner: Entity, from: (Vec3, glam::Quat), duration: f32) {
+        self.active = Some(winner);
+        self.from_pos = from.0;
+        self.from_rot = from.1;
+        self.elapsed = 0.0;
+        self.duration = duration.max(0.0);
     }
 }
 
@@ -123,19 +165,152 @@ pub fn drive_virtual_cameras(resources: &mut Resources) {
     }
     apply_poses(resources, &plan);
 
-    if let Some((winner, pose)) = elect(&plan)
-        && let Some(camera) = rendering_camera(resources, winner)
-    {
-        apply_poses(
-            resources,
-            &[Pose {
-                entity: camera,
-                position: pose.position,
-                rotation: pose.rotation,
-                priority: 0,
-            }],
+    let Some((winner, pose)) = elect(&plan) else {
+        return;
+    };
+    let Some(camera) = rendering_camera(resources, winner) else {
+        return;
+    };
+    let (target_pos, target_rot) = (pose.position, pose.rotation);
+    let (duration, curve, ease) = (pose.blend_duration, pose.blend_curve, pose.blend_ease);
+
+    let dt = fixed_dt(resources);
+    let mut blend = resources.get::<CameraBlend>().copied().unwrap_or_default();
+
+    let (position, rotation) = if blend.active == Some(winner) {
+        blend.elapsed += dt;
+        if blend.running() {
+            let t = crate::blend::eased(blend.elapsed / blend.duration, curve, ease);
+            (
+                blend.from_pos.lerp(target_pos, t),
+                short_slerp(blend.from_rot, target_rot, t),
+            )
+        } else {
+            (target_pos, target_rot)
+        }
+    } else {
+        // A different vcam won. Start from where the camera is now — and
+        // on the very first frame there is nowhere to come from, so a
+        // scene opens on its camera instead of flying in from wherever
+        // the entity happened to be placed.
+        let from = camera_pose(resources, camera).unwrap_or((target_pos, target_rot));
+        let duration = if blend.active.is_none() {
+            0.0
+        } else {
+            duration
+        };
+        blend.begin(winner, from, duration);
+        if blend.running() {
+            (from.0, from.1)
+        } else {
+            (target_pos, target_rot)
+        }
+    };
+
+    resources.insert(blend);
+    apply_poses(
+        resources,
+        &[Pose {
+            entity: camera,
+            position,
+            rotation,
+            priority: 0,
+            blend_duration: 0.0,
+            blend_curve: 0,
+            blend_ease: 0,
+        }],
+    );
+}
+
+/// The fixed step, or a 60 Hz stand-in when there is no clock.
+fn fixed_dt(resources: &Resources) -> f32 {
+    resources
+        .get::<Time>()
+        .map(|time| time.fixed_delta_secs())
+        .unwrap_or(1.0 / 60.0)
+}
+
+/// Where the render camera is right now.
+fn camera_pose(resources: &Resources, camera: Entity) -> Option<(Vec3, glam::Quat)> {
+    let registry = resources.get::<ComponentRegistry>()?;
+    let transform = registry.get_cpu::<Transform>()?.get(camera)?;
+    Some((transform.position, transform.rotation))
+}
+
+#[cfg(test)]
+mod blend_tests {
+    use super::*;
+    use kooch_ecs::entity::Entity;
+
+    fn vcam(index: u32) -> Entity {
+        Entity::new(index, 0)
+    }
+
+    fn started(duration: f32) -> CameraBlend {
+        let mut b = CameraBlend::default();
+        b.begin(vcam(1), (Vec3::ZERO, glam::Quat::IDENTITY), duration);
+        b
+    }
+
+    #[test]
+    fn a_zero_duration_handover_is_a_cut() {
+        assert!(!started(0.0).running(), "zero seconds must not blend");
+    }
+
+    #[test]
+    fn a_handover_runs_for_its_duration_and_then_stops() {
+        let mut b = started(0.5);
+        assert!(b.running());
+        b.elapsed = 0.49;
+        assert!(b.running());
+        b.elapsed = 0.5;
+        assert!(!b.running(), "it should be done at exactly its duration");
+    }
+
+    /// The interruption case. Taking over mid-blend has to continue from
+    /// the pose on screen, not from the outgoing vcam — which is behind
+    /// the camera by however far the blend had got.
+    #[test]
+    fn interrupting_a_handover_starts_from_where_the_camera_is() {
+        let mut b = started(1.0);
+        b.elapsed = 0.5;
+        let on_screen = Vec3::new(3.0, 1.0, -2.0);
+        b.begin(vcam(2), (on_screen, glam::Quat::IDENTITY), 1.0);
+
+        assert_eq!(b.active, Some(vcam(2)));
+        assert_eq!(b.from_pos, on_screen);
+        assert_eq!(b.elapsed, 0.0, "the new handover starts at the beginning");
+    }
+
+    /// `q` and `-q` are the same rotation. Without picking the shorter
+    /// arc a small handover can roll almost all the way round.
+    #[test]
+    fn the_slerp_takes_the_short_way() {
+        let from = glam::Quat::IDENTITY;
+        let to = -glam::Quat::from_rotation_y(0.2);
+        let quarter = short_slerp(from, to, 0.25);
+        assert!(
+            quarter.angle_between(from) < 0.1,
+            "went the long way: {} rad at t=0.25",
+            quarter.angle_between(from),
         );
     }
+
+    #[test]
+    fn the_slerp_reaches_its_destination() {
+        let from = glam::Quat::IDENTITY;
+        let to = glam::Quat::from_rotation_z(1.0);
+        assert!(short_slerp(from, to, 1.0).angle_between(to) < 1e-4);
+    }
+}
+
+/// Slerp along the shorter arc.
+///
+/// `q` and `-q` are the same rotation, so without flipping one to match
+/// the other a 1° handover can be interpolated as 359° of roll.
+fn short_slerp(from: glam::Quat, to: glam::Quat, t: f32) -> glam::Quat {
+    let to = if from.dot(to) < 0.0 { -to } else { to };
+    from.slerp(to, t).normalize()
 }
 
 /// A vcam and where it decided to be this frame.
@@ -144,6 +319,11 @@ struct Pose {
     position: Vec3,
     rotation: glam::Quat,
     priority: i32,
+    /// Copied off the vcam so electing one does not need a second lookup
+    /// while the component storage is borrowed elsewhere.
+    blend_duration: f32,
+    blend_curve: u32,
+    blend_ease: u32,
 }
 
 /// Works out every vcam's pose without holding a borrow, because writing
@@ -160,10 +340,7 @@ fn plan_vcam_poses(resources: &Resources) -> Vec<Pose> {
     let transforms = registry.get_cpu::<Transform>();
     let globals = registry.get_cpu::<GlobalTransform>();
 
-    let dt = resources
-        .get::<Time>()
-        .map(|time| time.fixed_delta_secs())
-        .unwrap_or(1.0 / 60.0);
+    let dt = fixed_dt(resources);
 
     // A target's world pose. `GlobalTransform` first so a target parented
     // to something moving is followed where it actually is, not where its
@@ -229,6 +406,9 @@ fn plan_vcam_poses(resources: &Resources) -> Vec<Pose> {
             position,
             rotation,
             priority: vcam.priority,
+            blend_duration: vcam.blend_duration,
+            blend_curve: vcam.blend_curve,
+            blend_ease: vcam.blend_ease,
         });
     }
     plan

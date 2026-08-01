@@ -77,6 +77,7 @@ pub(super) fn run_editor_ui(
     prefab_overwrite: Option<&PendingPrefabOverwrite>,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
+    let mut pinned_gizmos = std::mem::take(&mut overlay.pinned_gizmos);
     let mut selected_asset = overlay.selected_asset;
     let mut current_folder = overlay.current_folder.take();
     let selected_before = selected.clone();
@@ -125,6 +126,7 @@ pub(super) fn run_editor_ui(
                     && info.components.iter().any(|c| c.short_name == "Transform")
             });
             let mut tab_viewer = EditorTabViewer {
+                pinned: &mut pinned_gizmos,
                 focused_tab: &mut overlay.focused_tab,
                 accent: ui.visuals().selection.bg_fill,
                 asset_nav: &mut overlay.asset_nav,
@@ -203,6 +205,7 @@ pub(super) fn run_editor_ui(
     }
 
     overlay.selected_entities = selected;
+    overlay.pinned_gizmos = pinned_gizmos;
     overlay.selected_asset = selected_asset;
     overlay.current_folder = current_folder;
     overlay.last_clicked_index = last_clicked_index;

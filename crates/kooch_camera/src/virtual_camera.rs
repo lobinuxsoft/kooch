@@ -215,6 +215,32 @@ pub struct VirtualCamera {
     /// usually shipped with. Zero on an axis is rigid on that axis.
     #[reflect(shown_when = DAMPING_WHEN)]
     pub damping_value: Vec3,
+    /// Seconds to take when the camera hands over **to** this vcam.
+    ///
+    /// # Why the incoming vcam owns the transition
+    ///
+    /// Because the interesting question is "how do we arrive here", not
+    /// "how do we leave there": a cutscene framing wants to be eased
+    /// into, a hit-reaction framing wants to be cut to, and neither
+    /// depends on which framing was on screen before. Upstream draws the
+    /// same line — its tween resource is documented as defining "how
+    /// transitioning *to* that instance will look".
+    ///
+    /// Zero cuts. Priority ties are settled before this is consulted, so
+    /// a blend never starts against a winner that is about to change.
+    pub blend_duration: f32,
+    /// Shape of the blend. One of the `CURVE_*` constants.
+    ///
+    /// Shown even at `blend_duration == 0`, where it does nothing:
+    /// `shown_when` matches a field against a list of integers, and
+    /// "any duration above zero" is not something a float can enumerate.
+    /// Hiding it with a condition that happens to hold would be relying
+    /// on an accident.
+    #[reflect(choices = crate::blend::BLEND_CURVE_CHOICES)]
+    pub blend_curve: u32,
+    /// Which end of the blend is slow. One of the `EASE_*` constants.
+    #[reflect(choices = crate::blend::BLEND_EASE_CHOICES)]
+    pub blend_ease: u32,
     /// Which way is up for this vcam. One of the `UP_*` constants.
     ///
     /// # Why the vcam owns this and not the camera
@@ -275,6 +301,11 @@ impl Default for VirtualCamera {
             damping: true,
             damping_value: Vec3::splat(0.15),
             up_mode: UP_WORLD,
+            // Long enough to read as a transition, short enough not to
+            // feel like the game took the camera away.
+            blend_duration: 0.5,
+            blend_curve: crate::blend::CURVE_SINE,
+            blend_ease: crate::blend::EASE_IN_OUT,
             inactive_update: INACTIVE_NEVER,
             rotation_damping_value: 0.12,
         }

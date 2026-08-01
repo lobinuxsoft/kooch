@@ -268,6 +268,11 @@ pub(super) fn handle_close_project(resources: &mut Resources, undo_stack: &mut U
 
     if let Some(overlay) = resources.get_mut::<EditorOverlay>() {
         overlay.selected_entities.clear();
+        // Pins name entities from the world that just went away. Entity
+        // ids are generational, so a stale one cannot match a new
+        // entity — but keeping them would grow the set for the life of
+        // the session with ids nothing will ever draw.
+        overlay.pinned_gizmos.clear();
         overlay.last_clicked_index = None;
     }
 

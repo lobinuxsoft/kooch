@@ -48,12 +48,18 @@ pub(super) fn draw_entity_row(
     info: &EntityDisplayInfo,
     entities: &[EntityDisplayInfo],
     selected: &mut Vec<Entity>,
+    pinned: &mut HashSet<Entity>,
     reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
     last_clicked_index: &mut Option<usize>,
 ) {
     let display_name = display_name_for(info);
-    let label = build_label(info, display_name.as_deref());
+    let mut label = build_label(info, display_name.as_deref());
+    // A pin has to be visible from the row, or it is a state you can
+    // enter and then forget you are in.
+    if pinned.contains(&info.entity) {
+        label = format!("{label} {}", icons::EYE);
+    }
     let is_selected = selected.contains(&info.entity);
 
     let indent_str = "  ".repeat(info.depth);
@@ -116,7 +122,15 @@ pub(super) fn draw_entity_row(
         last_clicked_index,
         is_selected,
     );
-    handle_context_menu(&resp, info, entities, selected, reflected_types, actions);
+    handle_context_menu(
+        &resp,
+        info,
+        entities,
+        selected,
+        pinned,
+        reflected_types,
+        actions,
+    );
 }
 
 pub(crate) fn display_name_for(info: &EntityDisplayInfo) -> Option<String> {
@@ -258,6 +272,7 @@ fn handle_context_menu(
     info: &EntityDisplayInfo,
     entities: &[EntityDisplayInfo],
     selected: &mut Vec<Entity>,
+    pinned: &mut HashSet<Entity>,
     reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
 ) {
@@ -267,6 +282,36 @@ fn handle_context_menu(
             selected.clear();
             selected.push(info.entity);
         }
+
+        // Pinning is what makes a gizmo answerable without keeping the
+        // entity selected — you pin the camera you are aiming, then go
+        // move the thing it follows.
+        //
+        // Applied to the whole selection, because pinning six colliders
+        // one at a time to compare them is the case you would want it
+        // for.
+        let all_pinned = selected.iter().all(|e| pinned.contains(e));
+        let pin_label = match (all_pinned, selected.len()) {
+            (true, 1) => format!("{} Unpin gizmos", icons::EYE),
+            (true, n) => format!("{} Unpin gizmos ({n})", icons::EYE),
+            (false, 1) => format!("{} Pin gizmos", icons::EYE),
+            (false, n) => format!("{} Pin gizmos ({n})", icons::EYE),
+        };
+        if ui
+            .button(pin_label)
+            .on_hover_text("Keep this entity's gizmos drawn while something else is selected")
+            .clicked()
+        {
+            for entity in selected.iter() {
+                if all_pinned {
+                    pinned.remove(entity);
+                } else {
+                    pinned.insert(*entity);
+                }
+            }
+            ui.close();
+        }
+        ui.separator();
 
         let count = selected.len();
         let label = if count == 1 {

@@ -41,10 +41,15 @@
 //!   queries (#562).
 //! - **Noise and shake.** Impulse-driven, once there is an impulse.
 
+pub mod blend;
 pub mod plugin;
 pub mod virtual_camera;
 
-pub use plugin::{CameraComponentsPlugin, CameraPlugin, drive_virtual_cameras};
+pub use blend::{
+    BLEND_CURVE_CHOICES, BLEND_EASE_CHOICES, CURVE_CUBIC, CURVE_EXPO, CURVE_LINEAR, CURVE_QUAD,
+    CURVE_SINE, EASE_IN, EASE_IN_OUT, EASE_OUT,
+};
+pub use plugin::{CameraBlend, CameraComponentsPlugin, CameraPlugin, drive_virtual_cameras};
 pub use virtual_camera::{
     FOLLOW_GLUED, FOLLOW_NONE, FOLLOW_SIMPLE, FOLLOW_THIRD_PERSON, INACTIVE_ALWAYS, INACTIVE_NEVER,
     LOOK_AT_MIMIC, LOOK_AT_NONE, LOOK_AT_SIMPLE, UP_GRAVITY, UP_TARGET, UP_WORLD, VirtualCamera,
