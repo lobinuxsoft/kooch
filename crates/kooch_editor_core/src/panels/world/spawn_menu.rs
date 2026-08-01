@@ -1,5 +1,9 @@
 //! "Spawn" dropdown menu in the World panel toolbar — one entry per
-//! commonly-spawned entity archetype, plus an SDF / Lights submenu.
+//! commonly-spawned entity archetype.
+//!
+//! Anything with more than one variant gets a submenu: `Cameras`,
+//! `3D Object`, `Lights`. The cameras were loose at the top level until
+//! a third one arrived and made the inconsistency obvious.
 
 use std::any::TypeId;
 
@@ -50,27 +54,33 @@ pub(super) fn spawn_entries(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) 
             ui.close();
         }
         ui.separator();
-        if ui.button("Perspective Camera").clicked() {
-            actions.push(EditorAction::Spawn {
-                extra: vec![TypeId::of::<PerspectiveCamera>()],
-                name: Some("Perspective Camera".to_owned()),
-            });
-            ui.close();
-        }
-        if ui.button("Orthographic Camera").clicked() {
-            actions.push(EditorAction::Spawn {
-                extra: vec![TypeId::of::<OrthographicCamera>()],
-                name: Some("Orthographic Camera".to_owned()),
-            });
-            ui.close();
-        }
-        if ui.button("Virtual Camera").clicked() {
-            actions.push(EditorAction::Spawn {
-                extra: vec![TypeId::of::<VirtualCamera>()],
-                name: Some("Virtual Camera".to_owned()),
-            });
-            ui.close();
-        }
+        ui.menu_button("Cameras", |ui| {
+            if ui.button("Perspective Camera").clicked() {
+                actions.push(EditorAction::Spawn {
+                    extra: vec![TypeId::of::<PerspectiveCamera>()],
+                    name: Some("Perspective Camera".to_owned()),
+                });
+                ui.close();
+            }
+            if ui.button("Orthographic Camera").clicked() {
+                actions.push(EditorAction::Spawn {
+                    extra: vec![TypeId::of::<OrthographicCamera>()],
+                    name: Some("Orthographic Camera".to_owned()),
+                });
+                ui.close();
+            }
+            ui.separator();
+            // Separated because it is not a camera: it is a framing that
+            // drives one. Sitting in the same list unmarked invites
+            // spawning it and wondering why nothing renders through it.
+            if ui.button("Virtual Camera").clicked() {
+                actions.push(EditorAction::Spawn {
+                    extra: vec![TypeId::of::<VirtualCamera>()],
+                    name: Some("Virtual Camera".to_owned()),
+                });
+                ui.close();
+            }
+        });
         if ui.button("Mesh Renderer").clicked() {
             actions.push(EditorAction::Spawn {
                 extra: vec![TypeId::of::<MeshRenderer>()],
