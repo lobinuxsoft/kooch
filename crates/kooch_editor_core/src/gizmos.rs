@@ -29,6 +29,7 @@ mod physics_debug;
 pub(crate) use physics_debug::PhysicsDebugOverlay;
 mod lights;
 mod parent_space;
+mod virtual_camera;
 mod visibility;
 mod visualizers;
 
@@ -70,6 +71,10 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     let mut registry = resources.remove::<VisualizerRegistry>().unwrap_or_default();
     registry.register::<PerspectiveCamera, PerspectiveCameraVisualizer>();
     registry.register::<OrthographicCamera, OrthographicCameraVisualizer>();
+    // A vcam has no mesh and no frustum of its own: without this it is an
+    // empty entity in a list, and which way a framing aims is the whole
+    // thing you are authoring.
+    registry.register::<kooch_camera::VirtualCamera, virtual_camera::VirtualCameraVisualizer>();
     // Lights: where they point and how far they reach. `range` and the
     // cone angles are otherwise numbers with nothing to check them against.
     registry.register::<DirectionalLight, lights::DirectionalLightVisualizer>();
