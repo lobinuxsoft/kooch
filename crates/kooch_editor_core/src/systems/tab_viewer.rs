@@ -43,6 +43,8 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) archetypes: &'a [ArchetypeDisplayInfo],
     pub(crate) component_types: &'a [ComponentTypeInfo],
     pub(crate) selected: &'a mut Vec<Entity>,
+    /// Entities whose gizmos stay drawn while something else is selected.
+    pub(crate) pinned: &'a mut std::collections::HashSet<Entity>,
     pub(crate) reflected_types: &'a [ReflectedTypeInfo],
     pub(crate) actions: &'a mut Vec<EditorAction>,
     pub(crate) entity_count: usize,
@@ -189,6 +191,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 focused,
                 self.entities,
                 self.selected,
+                self.pinned,
                 self.reflected_types,
                 self.actions,
                 self.entity_count,
