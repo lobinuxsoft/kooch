@@ -29,7 +29,6 @@ use kooch_ecs::query::Query;
 use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
 
 use crate::VIEWPORT_DEPTH_FORMAT;
-use crate::fps::FpsTracker;
 use crate::meshlet::{MeshletBlit, MeshletDebugCaps, MeshletRenderStage, MeshletRenderStageConfig};
 use crate::sky::SkyRenderPass;
 use crate::vbuf64::Vbuf64Support;
@@ -49,7 +48,6 @@ pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(FpsTracker::new());
         app.add_system(Stage::Startup, init_renderers);
         app.add_system(Stage::Render, render_frame_system);
     }
@@ -129,6 +127,12 @@ fn init_renderers(resources: &mut Resources) {
             ..Default::default()
         },
     );
+    let mut meshlet_stage = meshlet_stage;
+    // The editor did this at its own startup and a game never did, so the
+    // GPU frame time existed on this adapter and was reported by nobody.
+    // A no-op on adapters without `TIMESTAMP_QUERY`.
+    meshlet_stage.enable_gpu_timers(gpu.device(), gpu.queue(), gpu.adapter());
+
     let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
     resources.insert(vbuf64);
     resources.insert(debug_caps);
@@ -140,12 +144,6 @@ fn init_renderers(resources: &mut Resources) {
 }
 
 fn render_frame_system(resources: &mut Resources) {
-    if let Some(tracker) = resources.get_mut::<FpsTracker>()
-        && let Some(fps) = tracker.tick()
-    {
-        tracing::debug!(fps = format!("{fps:.1}"), "FPS");
-    }
-
     if resources.get::<MeshletRenderStage>().is_none() {
         init_renderers(resources);
     }
@@ -273,8 +271,16 @@ fn render_passes(
     // must complete first on the queue.
     let (view_proj, cam_pos) = active_camera_matrices(resources, aspect)
         .unwrap_or((glam::Mat4::IDENTITY, glam::Vec3::ZERO));
-    let _ =
+    let stats =
         meshlet_stage.render_with_assets(gpu.device(), gpu.queue(), resources, view_proj, cam_pos);
+
+    // The one measurement a game could not otherwise have: the editor
+    // reads these stats, and until now a windowed game threw them away.
+    // Written into the engine's own metrics rather than kept here, so
+    // there is one place that answers "how long did the frame take".
+    if let Some(metrics) = resources.get_mut::<kooch_core::frame_metrics::FrameMetrics>() {
+        metrics.gpu_frame_ms = stats.gpu_frame_ms;
+    }
 
     let mut encoder = gpu
         .device()

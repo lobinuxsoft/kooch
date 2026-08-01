@@ -1450,6 +1450,42 @@ Dos trampas que costaron tiempo:
   igual. `KOOCH_PRESENT_MODE=novsync` existe para poder medir. Vsync sigue siendo el default:
   un editor sin cap quema GPU dibujando frames que nadie ve.
 
+### 🔴 Y todo eso mide EL EDITOR, no el juego (#698)
+
+Cuando el user preguntó "¿por qué no suben los FPS en Play?", la respuesta fue que estaba
+mirando el frame equivocado — y que el correcto no existía.
+
+**Hay dos botones Play distintos:**
+
+| | qué corre | qué ves |
+|---|---|---|
+| Play **sin** remoto | `cargo run -- --game`: proceso propio, ventana propia, renderer | **el juego** |
+| Play **en** remoto | `Edit::SetPlaying(true)` por el socket | la simulación del host, dibujada por el editor |
+
+`RemoteHostPlugins` (`src/lib.rs`) **no tiene ventana ni renderer** — su comentario dice "it
+draws nothing". En remoto, "FPS del juego" no existe como concepto.
+
+**Lo que había del lado del motor, y sólo el editor encendía:**
+
+- `kooch_render::fps::FpsTracker` contaba FPS y los mandaba a `tracing::debug!`. Con
+  `RUST_LOG=info` (el default) **nunca se vio, jamás**.
+- `enable_gpu_timers` se llamaba desde **un solo lugar**: el startup del editor. Su propio doc
+  decía "call this from the editor / game runtime" y el runtime del juego nunca lo hizo.
+- `render_frame_system` hacía `let _ = meshlet_stage.render_with_assets(...)`: un juego
+  calculaba sus stats de render y las tiraba.
+
+**Hoy:** `kooch_core::frame_metrics::FrameMetrics` en `Stage::Last` (la única stage que
+comparten los dos runners — el de winit y el headless tienen cada uno su tick). Reporte por
+**`KOOCH_FRAME_METRICS=log|title|both`**, silencioso por defecto. `FpsTracker` borrado: una
+sola definición de FPS en el motor.
+
+**Medido en DenseScene (608 instancias, debug):** el juego va a **200 fps — frame 4,99 ms,
+cpu 5,06 ms, gpu 0,16 ms**. El editor sobre la misma escena iba a 66-117. **Lo lento nunca fue
+el juego.**
+
+⚠️ **No hay overlay en pantalla y no puede haberlo**: un juego no sabe dibujar texto. `egui` es
+del editor y la UI runtime es #96. El título de la ventana es el único lugar que hay.
+
 ### El corolario que vale para todo el editor
 
 **El costo que importa no es el que se ve, es el que se paga con los paneles cerrados.**

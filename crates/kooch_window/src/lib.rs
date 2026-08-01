@@ -23,6 +23,7 @@
 pub mod event;
 pub mod handle;
 pub mod runner;
+pub mod title_metrics;
 mod winit_app;
 
 pub use event::{WindowCloseRequested, WindowResized};
@@ -111,6 +112,16 @@ impl Plugin for WindowPlugin {
 
         app.add_event::<WindowResized>();
         app.add_event::<WindowCloseRequested>();
+
+        // Runs whether or not it will write anything: the system checks
+        // `FrameMetrics::report` and returns, which keeps the decision in
+        // one place instead of splitting it between here and there.
+        app.insert_resource(title_metrics::TitleMetricsState::default());
+        app.add_system(
+            kooch_core::stage::Stage::Last,
+            title_metrics::title_metrics_system,
+        );
+
         app.set_runner(winit_runner);
     }
 
@@ -141,9 +152,7 @@ mod tests {
 
         assert!(app.resources().contains::<WindowConfig>());
         assert!(app.resources().contains::<Events<WindowResized>>());
-        assert!(app
-            .resources()
-            .contains::<Events<WindowCloseRequested>>());
+        assert!(app.resources().contains::<Events<WindowCloseRequested>>());
     }
 
     #[test]
