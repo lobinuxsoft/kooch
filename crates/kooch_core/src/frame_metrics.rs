@@ -128,6 +128,9 @@ pub struct FrameMetrics {
     next: usize,
     /// When the last log line went out.
     last_report: Option<Instant>,
+    /// This frame's work, held until the next frame's wall-clock time says
+    /// how long the frame it belongs to actually took. See [`Self::record`].
+    pending_work: Option<Duration>,
 }
 
 impl Default for FrameMetrics {
@@ -142,6 +145,7 @@ impl Default for FrameMetrics {
             recent: Vec::with_capacity(AVERAGE_WINDOW),
             next: 0,
             last_report: None,
+            pending_work: None,
         }
     }
 }
@@ -154,11 +158,35 @@ impl FrameMetrics {
         }
     }
 
-    /// Records one frame. `work` is what happened inside it; `wall` is the
-    /// gap to the previous frame's start.
+    /// Takes this frame's numbers and publishes the *previous* frame's.
+    ///
+    /// # Why a frame late
+    ///
+    /// `wall` is `Time::delta`: the gap between this frame's start and the
+    /// one before it — which is the total duration of the **previous**
+    /// frame, waiting included. `work` is what this frame did, measured
+    /// before it waits.
+    ///
+    /// Reporting them together is comparing two different frames. It reads
+    /// fine while the frame rate is steady and produces nonsense the moment
+    /// it is not: a measured `394 fps — frame 2.53 ms, cpu 7.51 ms`, where
+    /// the work does not fit inside the frame it is claimed to belong to.
+    ///
+    /// So this holds each frame's work until the next frame's `wall`
+    /// arrives, and publishes the pair. The numbers are one frame old and
+    /// they describe the same frame, which is the trade worth making — a
+    /// stale number is a measurement, an inconsistent one is a bug that
+    /// looks like a measurement.
     pub fn record(&mut self, wall: Duration, work: Duration) {
+        let Some(previous_work) = self.pending_work.replace(work) else {
+            // The first frame has no predecessor to describe. Its `wall` is
+            // whatever `Time` was constructed with, which is not a frame
+            // anybody rendered.
+            return;
+        };
+
         self.frame_ms = wall.as_secs_f32() * 1000.0;
-        self.cpu_frame_ms = work.as_secs_f32() * 1000.0;
+        self.cpu_frame_ms = previous_work.as_secs_f32() * 1000.0;
 
         let seconds = wall.as_secs_f32();
         // The first frame's delta is whatever `Time` was constructed with,
@@ -238,6 +266,8 @@ mod tests {
     #[test]
     fn a_frame_of_sixteen_milliseconds_is_sixty_fps() {
         let mut metrics = FrameMetrics::default();
+        // The first call only banks its work; the second publishes it.
+        metrics.record(Duration::from_micros(16_667), Duration::from_millis(4));
         metrics.record(Duration::from_micros(16_667), Duration::from_millis(4));
         assert!((metrics.fps_instant - 60.0).abs() < 0.1);
         assert!((metrics.frame_ms - 16.667).abs() < 0.01);
@@ -251,7 +281,9 @@ mod tests {
     fn work_moves_when_the_wall_clock_cannot() {
         let mut light = FrameMetrics::default();
         light.record(Duration::from_micros(16_667), Duration::from_millis(2));
+        light.record(Duration::from_micros(16_667), Duration::from_millis(2));
         let mut heavy = FrameMetrics::default();
+        heavy.record(Duration::from_micros(16_667), Duration::from_millis(8));
         heavy.record(Duration::from_micros(16_667), Duration::from_millis(8));
 
         assert_eq!(light.fps_instant, heavy.fps_instant);
@@ -262,7 +294,7 @@ mod tests {
     #[test]
     fn one_late_frame_does_not_swing_the_average() {
         let mut metrics = FrameMetrics::default();
-        for _ in 0..AVERAGE_WINDOW {
+        for _ in 0..AVERAGE_WINDOW + 1 {
             metrics.record(Duration::from_micros(16_667), Duration::from_millis(4));
         }
         metrics.record(Duration::from_millis(100), Duration::from_millis(90));
@@ -279,7 +311,7 @@ mod tests {
     #[test]
     fn the_window_stays_the_size_it_says() {
         let mut metrics = FrameMetrics::default();
-        for _ in 0..AVERAGE_WINDOW * 3 {
+        for _ in 0..AVERAGE_WINDOW * 3 + 1 {
             metrics.record(Duration::from_micros(16_667), Duration::from_millis(4));
         }
         assert_eq!(metrics.recent.len(), AVERAGE_WINDOW);
@@ -290,8 +322,55 @@ mod tests {
     fn a_zero_length_frame_reports_no_measurement_rather_than_infinity() {
         let mut metrics = FrameMetrics::default();
         metrics.record(Duration::ZERO, Duration::ZERO);
+        metrics.record(Duration::ZERO, Duration::ZERO);
         assert_eq!(metrics.fps_instant, 0.0);
         assert!(metrics.fps_average.is_finite());
+    }
+
+    /// The bug this alignment exists for, in the shape it was found in.
+    ///
+    /// A game whose frame rate changes — someone turned the camera —
+    /// reported `394 fps, frame 2.53 ms, cpu 7.51 ms`: work that does not
+    /// fit inside the frame it is attributed to. The two numbers came from
+    /// different frames, and while the rate was steady they agreed by
+    /// coincidence.
+    #[test]
+    fn the_work_always_fits_inside_the_frame_it_is_reported_with() {
+        let mut metrics = FrameMetrics::default();
+        // A cheap frame followed by a short wall clock and heavy work —
+        // reported together, the work does not fit in the frame.
+        metrics.record(Duration::from_millis(10), Duration::from_millis(1));
+        metrics.record(Duration::from_millis(2), Duration::from_millis(8));
+        assert!(
+            metrics.cpu_frame_ms <= metrics.frame_ms,
+            "cpu {} ms cannot exceed frame {} ms",
+            metrics.cpu_frame_ms,
+            metrics.frame_ms,
+        );
+    }
+
+    /// Specifically: the published work is the one banked a frame earlier,
+    /// not the one that just arrived.
+    #[test]
+    fn the_pair_describes_one_frame_not_two() {
+        let mut metrics = FrameMetrics::default();
+        metrics.record(Duration::from_millis(10), Duration::from_millis(6));
+        metrics.record(Duration::from_millis(10), Duration::from_millis(1));
+
+        assert!(
+            (metrics.cpu_frame_ms - 6.0).abs() < 0.01,
+            "publishes the frame whose duration it just learned, got {}",
+            metrics.cpu_frame_ms,
+        );
+    }
+
+    /// One frame in and there is nothing honest to say yet.
+    #[test]
+    fn the_first_frame_publishes_nothing() {
+        let mut metrics = FrameMetrics::default();
+        metrics.record(Duration::from_millis(1900), Duration::from_millis(50));
+        assert_eq!(metrics.frame_ms, 0.0);
+        assert_eq!(metrics.fps_instant, 0.0);
     }
 
     #[test]
