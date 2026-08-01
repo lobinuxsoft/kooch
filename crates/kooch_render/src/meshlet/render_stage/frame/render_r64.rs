@@ -40,6 +40,7 @@ impl MeshletRenderStage {
     ) -> MeshletRenderStats {
         let gpu_pool = self.gpu_pool.as_ref().expect("checked by render() prelude");
         let vbuf64 = self
+            .view
             .vbuf64_stage
             .as_ref()
             .expect("path selected only when vbuf64_stage is Some");
@@ -79,6 +80,7 @@ impl MeshletRenderStage {
             _ => 0,
         };
         let density_view = self
+            .view
             .triangle_density_view
             .as_ref()
             .expect("density texture must be allocated whenever vbuf64 path is active");
@@ -93,8 +95,8 @@ impl MeshletRenderStage {
             device,
             queue,
             &mut encoder,
-            &self.depth_view,
-            &self.color_view,
+            &self.view.depth_view,
+            &self.view.color_view,
             density_view,
             density_mode,
             meshlet_bg,
@@ -134,12 +136,12 @@ impl MeshletRenderStage {
                 device,
                 queue,
                 &mut encoder,
-                &self.color_view,
+                &self.view.color_view,
                 &self.cull,
                 &self.scene,
                 gpu_pool,
                 view_proj,
-                self.size,
+                self.view.size,
                 reason,
                 /* line_thickness_px */ 2,
                 total_threads,

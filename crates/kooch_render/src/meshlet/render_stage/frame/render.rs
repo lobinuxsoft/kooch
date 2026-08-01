@@ -148,7 +148,7 @@ impl MeshletRenderStage {
         // is preserved exactly. Skewed cameras pay a small error that the
         // 1-pixel target tolerance absorbs.
         let proj_scale_y = view_proj.y_axis.y.abs();
-        let viewport_h_px = self.size.1 as f32;
+        let viewport_h_px = self.view.size.1 as f32;
         let lod_target = resources
             .get::<MeshletLodSettings>()
             .copied()
@@ -238,7 +238,7 @@ impl MeshletRenderStage {
         // ── Path switch ─────────────────────────────────────────────
         // Atomic R64 vbuf path (#493) when the device supports it;
         // otherwise the legacy R32 + Hi-Z 2-pass orchestrator.
-        if self.vbuf64_stage.is_some() {
+        if self.view.vbuf64_stage.is_some() {
             return self.render_path_r64(
                 device,
                 queue,
