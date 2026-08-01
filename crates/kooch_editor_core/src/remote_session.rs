@@ -101,6 +101,10 @@ pub struct RemoteSession {
     /// mirror, the panels, the stats — still sees the entire world and
     /// did not have to learn about revisions.
     snapshot: Vec<EntitySnapshot>,
+    /// What the project last said its own frame cost. The editor's HUD
+    /// shows its own frame; this is the process that is actually
+    /// simulating (#699).
+    host_metrics: Option<kooch_remote::protocol::HostMetrics>,
     /// Whether the last [`Self::refresh`] actually changed the world.
     ///
     /// The mirror walks every entity to apply a snapshot, which costs
@@ -196,6 +200,7 @@ impl RemoteSession {
             client: RemoteClient::new(socket),
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
+            host_metrics: None,
             changed_last_refresh: true,
             revision: None,
             schema: Vec::new(),
@@ -212,6 +217,7 @@ impl RemoteSession {
             client: RemoteClient::new(socket),
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
+            host_metrics: None,
             changed_last_refresh: true,
             revision: None,
             schema: Vec::new(),
@@ -300,6 +306,14 @@ impl RemoteSession {
         self.changed_last_refresh
     }
 
+    /// What the project's process last reported its own frame cost to be.
+    ///
+    /// `None` in local mode, before the first pull, and from a host too
+    /// old to send it.
+    pub fn host_metrics(&self) -> Option<kooch_remote::protocol::HostMetrics> {
+        self.host_metrics
+    }
+
     pub fn refresh(&mut self) {
         if self.state != ConnectionState::Connected {
             return;
@@ -321,6 +335,13 @@ impl RemoteSession {
                     merge_into(&mut self.snapshot, update.entities, &update.removed);
                 }
                 self.revision = Some(update.revision);
+                // Kept rather than overwritten with `None`: a pull that
+                // reaches an older host, or one that has not finished its
+                // first frame, should leave the last known numbers on
+                // screen instead of blanking them every other frame.
+                if update.host.is_some() {
+                    self.host_metrics = update.host;
+                }
                 if self.stale.take().is_some() {
                     tracing::info!("remote snapshot is tracking the project again");
                 }

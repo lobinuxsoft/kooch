@@ -225,6 +225,14 @@ pub enum ResponseData {
         /// full reply omitted.
         #[serde(default)]
         full: bool,
+        /// What the host's own frame cost, when it is measuring one.
+        ///
+        /// `None` from a host that predates this field, which is why it
+        /// is an `Option` and not a zeroed struct: a zero would render as
+        /// "the project runs infinitely fast" rather than as "nobody
+        /// said".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host: Option<HostMetrics>,
     },
     /// Reply to [`Method::GetSchema`].
     Schema { components: Vec<ComponentSchema> },
@@ -238,6 +246,27 @@ pub enum ResponseData {
         name: String,
         result: serde_json::Value,
     },
+}
+
+/// What the project's process costs per frame.
+///
+/// Rides along with the world snapshot the editor already pulls every
+/// frame, so it needs no request of its own and no second round trip.
+///
+/// # These are not frames per second in the rendering sense
+///
+/// A remote host has no window and no renderer — `RemoteHostPlugins`
+/// draws nothing. What it has is a simulation tick: ECS, physics,
+/// gravity, camera rigs. That is what these describe, and calling it FPS
+/// would be a lie drawn in a nice font.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct HostMetrics {
+    /// Wall-clock milliseconds between tick starts, waiting included.
+    pub frame_ms: f32,
+    /// Milliseconds of work in the tick, waiting excluded.
+    pub cpu_frame_ms: f32,
+    /// Ticks per second, averaged over the host's own window.
+    pub ticks_per_second: f32,
 }
 
 /// A typed failure. Serialized as `{"error": {...}}` in [`Response`].
@@ -367,5 +396,62 @@ mod tests {
         let json = serde_json::to_string(&resp).unwrap();
         let back: Response = serde_json::from_str(&json).unwrap();
         assert_eq!(resp, back);
+    }
+
+    /// A host built before this field existed sends a reply without it.
+    /// That has to keep parsing, and has to arrive as "nobody said"
+    /// rather than as a project running infinitely fast.
+    #[test]
+    fn a_reply_without_host_metrics_still_parses() {
+        let json =
+            r#"{"id":1,"result":{"kind":"entities","entities":[],"revision":7,"full":true}}"#;
+        let parsed: Response = serde_json::from_str(json).expect("older host still understood");
+        match parsed.payload {
+            ResponsePayload::Result(ResponseData::Entities { host, revision, .. }) => {
+                assert_eq!(host, None, "absent, not zeroed");
+                assert_eq!(revision, 7);
+            }
+            other => panic!("expected entities, got {other:?}"),
+        }
+    }
+
+    /// And a reply that carries them survives the round trip.
+    #[test]
+    fn host_metrics_round_trip() {
+        let resp = Response::ok(
+            9,
+            ResponseData::Entities {
+                entities: Vec::new(),
+                removed: Vec::new(),
+                revision: 2,
+                full: false,
+                host: Some(HostMetrics {
+                    frame_ms: 16.67,
+                    cpu_frame_ms: 4.2,
+                    ticks_per_second: 60.0,
+                }),
+            },
+        );
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: Response = serde_json::from_str(&json).unwrap();
+        assert_eq!(resp, back);
+    }
+
+    /// Nothing to say costs nothing to send: the field is skipped, so a
+    /// host with no measurement yet does not widen every snapshot.
+    #[test]
+    fn absent_host_metrics_are_not_serialized() {
+        let resp = Response::ok(
+            1,
+            ResponseData::Entities {
+                entities: Vec::new(),
+                removed: Vec::new(),
+                revision: 1,
+                full: true,
+                host: None,
+            },
+        );
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(!json.contains("host"), "{json}");
     }
 }

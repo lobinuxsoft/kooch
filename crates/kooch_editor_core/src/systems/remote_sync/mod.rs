@@ -99,6 +99,7 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
         // same as saying zero — the HUD hides the section entirely.
         if let Some(stats) = resources.get_mut::<EditorPerfStats>() {
             stats.remote = None;
+            stats.host = None;
         }
         return;
     };
@@ -205,6 +206,12 @@ fn record_stats(
     let Some(stats) = resources.get_mut::<EditorPerfStats>() else {
         return;
     };
+    // Held across frames that skip the pull, like the numbers above: a
+    // section that blanks on twenty-nine frames out of thirty is a
+    // section nobody can read.
+    if let Some(host) = session.host_metrics() {
+        stats.host = Some(host);
+    }
     let previous = stats.remote.unwrap_or_default();
     stats.remote = Some(RemoteSyncStats {
         refresh_ms: refresh.map_or(previous.refresh_ms, ms),

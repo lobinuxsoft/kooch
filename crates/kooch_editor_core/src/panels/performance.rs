@@ -341,6 +341,41 @@ pub(crate) fn draw_performance_content(
                     });
                 });
             }
+
+            // #699 — the process that is actually simulating. Everything
+            // above this describes the editor, which is not what a person
+            // pressing Play is asking about.
+            if let Some(host) = perf_stats.host {
+                collapsing(ui, "Project", true, |ui| {
+                    grid(ui, "perf_grid_host", |ui| {
+                        metric_with_tooltip(
+                            ui,
+                            "Tick rate",
+                            &format!("{:.0} /s", host.ticks_per_second),
+                            "How many times a second the project's own process runs \
+                             its update. Not frames per second: the host has no \
+                             window and no renderer — the editor draws its world. \
+                             This is the number that says whether the gameplay and \
+                             the solver keep up.",
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "Tick time",
+                            &format!("{:.2} ms", host.frame_ms),
+                            "Wall-clock between the project's ticks, waiting \
+                             included. A paused project still ticks.",
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "  · work",
+                            &format!("{:.2} ms", host.cpu_frame_ms),
+                            "The part of the tick that was work rather than waiting. \
+                             This is what grows when the scene gets heavier, and the \
+                             one to watch while a project is playing.",
+                        );
+                    });
+                });
+            }
         });
 }
 
