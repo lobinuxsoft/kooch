@@ -18,7 +18,7 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-use kooch_remote::protocol::{ComponentSchema, EntitySnapshot};
+use kooch_remote::protocol::{ComponentSchema, EntityId, EntitySnapshot};
 use kooch_remote::{NAME_ENV, RemoteClient};
 
 use crate::remote_mirror::RemoteMirror;
@@ -95,7 +95,20 @@ pub struct RemoteSession {
     client: RemoteClient,
     state: ConnectionState,
     /// Last entity snapshot pulled by [`Self::refresh`].
+    ///
+    /// Kept whole even though the project now sends only what changed:
+    /// the delta is folded in here, so everything downstream — the
+    /// mirror, the panels, the stats — still sees the entire world and
+    /// did not have to learn about revisions.
     snapshot: Vec<EntitySnapshot>,
+    /// The revision the project last handed out, passed back on the next
+    /// pull so it can answer with a diff.
+    ///
+    /// `None` until the first reply, and reset by anything that makes
+    /// the local snapshot untrustworthy — a failed refresh leaves the
+    /// old world in place, and diffing onto a world we are not sure of
+    /// would compound the error silently.
+    revision: Option<u64>,
     /// Component schema, pulled once on connect.
     schema: Vec<ComponentSchema>,
     /// Why the snapshot stopped tracking the project, or `None` while it
@@ -172,6 +185,7 @@ impl RemoteSession {
             client: RemoteClient::new(socket),
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
+            revision: None,
             schema: Vec::new(),
             stale: None,
         })
@@ -186,6 +200,7 @@ impl RemoteSession {
             client: RemoteClient::new(socket),
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
+            revision: None,
             schema: Vec::new(),
             stale: None,
         }
@@ -268,14 +283,28 @@ impl RemoteSession {
         if self.state != ConnectionState::Connected {
             return;
         }
-        match self.client.list_entities() {
-            Ok(entities) => {
-                self.snapshot = entities;
+        match self.client.list_entities_since(self.revision) {
+            Ok(update) => {
+                // `full` is the project's decision, not ours: it sends
+                // everything whenever it cannot honour the revision we
+                // hold. Merging a full reply would keep entities it had
+                // deliberately left out.
+                if update.full {
+                    self.snapshot = update.entities;
+                } else {
+                    merge_into(&mut self.snapshot, update.entities, &update.removed);
+                }
+                self.revision = Some(update.revision);
                 if self.stale.take().is_some() {
                     tracing::info!("remote snapshot is tracking the project again");
                 }
             }
             Err(e) => {
+                // Drop the revision: the next pull has to be a full one.
+                // The snapshot we keep showing is the last good world,
+                // and a diff computed against a revision we may have
+                // diverged from would layer new errors on top of it.
+                self.revision = None;
                 let reason = e.to_string();
                 if self.stale.replace(reason.clone()).is_none() {
                     tracing::warn!(
@@ -354,4 +383,133 @@ where
             }
         }
     });
+}
+
+/// Folds a diff into a world.
+///
+/// A free function rather than a method: it is the part of the delta
+/// path that can be wrong in ways nobody notices — a dropped removal
+/// leaves a deleted entity on screen, editable, with every edit going
+/// nowhere — and testing it should not require standing up a project to
+/// talk to.
+///
+/// Order matters. Removals go first: an index despawned and reused
+/// inside one revision arrives as both a removal and a change, and
+/// removing afterwards would delete what had just been added.
+fn merge_into(
+    snapshot: &mut Vec<EntitySnapshot>,
+    changed: Vec<EntitySnapshot>,
+    removed: &[EntityId],
+) {
+    if !removed.is_empty() {
+        snapshot.retain(|e| !removed.contains(&e.id));
+    }
+    for entity in changed {
+        match snapshot.iter_mut().find(|e| e.id == entity.id) {
+            Some(existing) => *existing = entity,
+            None => snapshot.push(entity),
+        }
+    }
+    // The project sends its world sorted by index and downstream reads
+    // that as authored order; appending would put every new entity last
+    // regardless of where it belongs.
+    snapshot.sort_by_key(|e| e.id.index);
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+    use kooch_ecs::reflect::ReflectValue;
+    use kooch_remote::protocol::ComponentSnapshot;
+
+    fn entity(index: u32, x: f32) -> EntitySnapshot {
+        EntitySnapshot {
+            id: EntityId {
+                index,
+                generation: 0,
+            },
+            name: Some(format!("Entity {index}")),
+            parent: None,
+            components: vec![ComponentSnapshot {
+                type_name: "Transform".to_owned(),
+                fields: vec![("x".to_owned(), ReflectValue::F32(x))],
+            }],
+        }
+    }
+
+    #[test]
+    fn a_changed_entity_replaces_its_previous_value() {
+        let mut world = vec![entity(0, 1.0), entity(1, 2.0)];
+        merge_into(&mut world, vec![entity(1, 9.0)], &[]);
+
+        assert_eq!(world.len(), 2);
+        let moved = &world[1].components[0].fields[0].1;
+        assert_eq!(*moved, ReflectValue::F32(9.0));
+    }
+
+    #[test]
+    fn a_new_entity_is_added() {
+        let mut world = vec![entity(0, 1.0)];
+        merge_into(&mut world, vec![entity(5, 3.0)], &[]);
+        assert_eq!(world.len(), 2);
+    }
+
+    /// A despawn only travels as an id. Miss it and the mirror shows an
+    /// entity the project deleted, editable and going nowhere.
+    #[test]
+    fn a_removed_entity_disappears() {
+        let mut world = vec![entity(0, 1.0), entity(1, 2.0)];
+        merge_into(
+            &mut world,
+            vec![],
+            &[EntityId {
+                index: 1,
+                generation: 0,
+            }],
+        );
+
+        assert_eq!(world.len(), 1);
+        assert_eq!(world[0].id.index, 0);
+    }
+
+    /// Removals are applied before additions. An index despawned and
+    /// reused inside one revision arrives as both, and the wrong order
+    /// would delete the entity that had just been added.
+    #[test]
+    fn an_index_removed_and_re_added_survives() {
+        let mut world = vec![entity(0, 1.0), entity(1, 2.0)];
+        merge_into(
+            &mut world,
+            vec![entity(1, 7.0)],
+            &[EntityId {
+                index: 1,
+                generation: 0,
+            }],
+        );
+
+        assert_eq!(world.len(), 2, "the re-added entity was dropped");
+        let value = &world[1].components[0].fields[0].1;
+        assert_eq!(*value, ReflectValue::F32(7.0));
+    }
+
+    /// Downstream reads the snapshot as authored order, which is
+    /// ascending index. Appending would put every new entity last.
+    #[test]
+    fn the_world_stays_sorted_by_index() {
+        let mut world = vec![entity(0, 1.0), entity(9, 1.0)];
+        merge_into(&mut world, vec![entity(4, 1.0)], &[]);
+
+        let order: Vec<u32> = world.iter().map(|e| e.id.index).collect();
+        assert_eq!(order, vec![0, 4, 9]);
+    }
+
+    /// The common case, and the reason the feature exists: a world that
+    /// did not move is left exactly as it was.
+    #[test]
+    fn an_empty_delta_changes_nothing() {
+        let world = vec![entity(0, 1.0), entity(1, 2.0)];
+        let mut world = world.clone();
+        merge_into(&mut world, vec![], &[]);
+        assert_eq!(world, world);
+    }
 }

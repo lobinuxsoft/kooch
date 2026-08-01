@@ -51,7 +51,7 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
                 None => Response::err(id, RemoteError::UnknownExtension { name: name.clone() }),
             }
         }
-        Method::ListEntities => list_entities(id, resources),
+        Method::ListEntities { since } => list_entities(id, resources, *since),
         Method::GetSchema => get_schema(id, resources),
         Method::SetField {
             entity,
@@ -131,7 +131,7 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
 /// save would, then annotated with live [`EntityId`]s the client needs
 /// to address entities — the scene format keys parents by name, but a
 /// remote client needs stable handles.
-fn list_entities(id: u64, resources: &Resources) -> Response {
+fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Response {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Response::err(
             id,
@@ -196,7 +196,24 @@ fn list_entities(id: u64, resources: &Resources) -> Response {
     }
     entities.sort_by_key(|e| e.id.index);
 
-    Response::ok(id, ResponseData::Entities { entities })
+    // Diffed against the last world described, so a scene that did not
+    // move costs the editor nothing to receive or parse (#691). The
+    // cache lives in `Resources` because it has to outlive the request.
+    let mut cache = resources
+        .remove::<crate::snapshot_cache::SnapshotCache>()
+        .unwrap_or_default();
+    let delta = cache.reply(entities, since);
+    resources.insert(cache);
+
+    Response::ok(
+        id,
+        ResponseData::Entities {
+            entities: delta.entities,
+            removed: delta.removed,
+            revision: delta.revision,
+            full: delta.full,
+        },
+    )
 }
 
 /// Reports every registered component type and its editable field layout.
