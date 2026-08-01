@@ -238,6 +238,31 @@ mod tests {
         assert_eq!(unfiltered.len(), MeshletDebugMode::all_implemented().len());
     }
 
+    /// The same predicate decides two things that look unrelated: whether
+    /// the cull shader records reject reasons, and whether the HUD has
+    /// per-stage survivor counts to show at all (#703).
+    ///
+    /// A mode added later that measures the counters but returns `None`
+    /// here would read them and then hide them. One that returns `Some`
+    /// without the shader writing reasons would show four zeros. Both
+    /// failures are silent, which is why this is pinned rather than left
+    /// to the two call sites to agree.
+    #[test]
+    fn only_the_modes_that_measure_the_counters_report_them() {
+        let measures = |mode: MeshletDebugMode| mode.reject_reason_code().is_some();
+
+        // These three ask the cull shader to record, so the HUD gets rows.
+        assert!(measures(MeshletDebugMode::FrustumRejected));
+        assert!(measures(MeshletDebugMode::BackfaceRejected));
+        assert!(measures(MeshletDebugMode::HiZRejected));
+
+        // These do not — and the rows have to be absent rather than
+        // showing whatever the last measuring frame happened to read.
+        assert!(!measures(MeshletDebugMode::Off));
+        assert!(!measures(MeshletDebugMode::TriangleDensity));
+        assert!(!measures(MeshletDebugMode::Overdraw));
+    }
+
     #[test]
     fn reject_reason_code_tracks_cull_shader_constants() {
         // `REJECT_REASON_*` in meshlet_cull/atomic.wgsl pin these.
