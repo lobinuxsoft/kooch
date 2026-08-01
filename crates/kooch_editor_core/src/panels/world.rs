@@ -87,7 +87,14 @@ pub(crate) fn draw_world_content(
     let row_h = entity_row::row_height(ui);
     let scroll_to = focus.and_then(|focus| scroll_offset_for(ui, &rows, entities, focus, row_h));
 
-    let mut area = egui::ScrollArea::vertical().id_salt("world_tree");
+    let mut area = egui::ScrollArea::vertical()
+        .id_salt("world_tree")
+        // Fills the panel instead of shrinking to whatever is drawn. A
+        // virtualized list only ever draws the rows that fit, so letting
+        // it shrink leaves a gap under the last one and puts the drop
+        // target for "unparent" somewhere other than the bottom of the
+        // panel.
+        .auto_shrink([false; 2]);
     if let Some(offset) = scroll_to {
         // Applied on this frame only. Setting it every frame would pin
         // the list in place and there would be no scrolling by hand.
@@ -320,6 +327,12 @@ fn scroll_offset_for(
     focus: Entity,
     row_h: f32,
 ) -> Option<f32> {
+    // What `show_rows` actually divides a scroll offset by. The row
+    // height it is handed is *sans spacing* — `scroll_area.rs` adds
+    // `item_spacing.y` before mapping an offset to a row index. Using
+    // the bare height here loses a few pixels per row, which nobody
+    // notices at row ten and lands sixty-eight rows off at row 460.
+    let pitch = row_pitch(ui, row_h);
     let index = rows.iter().position(|row| match row {
         WorldRow::Entity(idx) => entities.get(*idx).is_some_and(|e| e.entity == focus),
         _ => false,
@@ -341,7 +354,18 @@ fn scroll_offset_for(
     // is the thing you just picked".
     let viewport_rows = visible.map_or(0.0, |(start, end)| (end - start) as f32);
     let centre = (viewport_rows / 2.0 - 0.5).max(0.0);
-    Some(((index as f32 - centre) * row_h).max(0.0))
+    Some(((index as f32 - centre) * pitch).max(0.0))
+}
+
+/// The distance from one row's top to the next, which is what a scroll
+/// offset is measured in.
+///
+/// [`entity_row::row_height`] is the height of a row's contents;
+/// `ScrollArea::show_rows` adds `item_spacing.y` on top of it. Both
+/// numbers are needed and they are not the same one — which is the sort
+/// of difference that reads as correct on screen until the list is long.
+fn row_pitch(ui: &egui::Ui, row_h: f32) -> f32 {
+    row_h + ui.spacing().item_spacing.y
 }
 
 /// Opens whatever group holds `entity`, so it has a row to scroll to.
@@ -609,14 +633,34 @@ mod tests {
             ui.data_mut(|d| d.insert_temp(egui::Id::new("world_visible_range"), (0usize, 20usize)));
             let focus = newly_focused(ui, &selected).expect("selection is new");
             scroll_offset_for(ui, &rows, &entities, focus, 20.0)
+                .map(|offset| (offset, row_pitch(ui, 20.0)))
         });
 
-        let offset = offset.expect("a row 900 places down is not on screen");
-        // Centred on row 900 with twenty rows visible: (900 - 9.5) * 20.
+        let (offset, pitch) = offset.expect("a row 900 places down is not on screen");
+        // Centred on row 900 with twenty rows visible, measured in the
+        // pitch `show_rows` uses — height *plus* item spacing.
         assert!(
-            (offset - 17_810.0).abs() < 1.0,
-            "expected the row centred, got offset {offset}",
+            (offset - (900.0 - 9.5) * pitch).abs() < 1.0,
+            "expected the row centred, got offset {offset} at pitch {pitch}",
         );
+    }
+
+    /// The offset has to be measured in the same unit `show_rows`
+    /// divides by, or it is right at row ten and sixty rows off at row
+    /// 460 — which is what shipped and what a person saw immediately.
+    ///
+    /// Pinned against `egui`'s own arithmetic
+    /// (`scroll_area.rs`: `row_height_sans_spacing + spacing.y`) rather
+    /// than a number copied here, so an upstream change to it fails this
+    /// instead of silently drifting the list.
+    #[test]
+    fn the_offset_is_in_the_unit_show_rows_reads() {
+        with_ui(|ui| {
+            let row_h = entity_row::row_height(ui);
+            let spacing = ui.spacing().item_spacing.y;
+            assert!(spacing > 0.0, "a zero spacing would make this test vacuous");
+            assert_eq!(row_pitch(ui, row_h), row_h + spacing);
+        });
     }
 
     /// Clicking a row that is already visible must not move the list —
