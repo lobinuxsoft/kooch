@@ -15,6 +15,25 @@ use crate::drag_drop::DraggedComponent;
 use crate::icons;
 use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
 
+/// Height of one row in the hierarchy, in points.
+///
+/// Virtualizing the list means egui is told how tall the rows are before
+/// any of them is drawn — it has to place a scrollbar for six hundred
+/// entities while laying out the twenty that fit on screen. So this is
+/// the **single** definition: the list asks it how much space to reserve
+/// and the row asks it how much to occupy. Two copies of this formula
+/// would drift by a pixel per row and the scrollbar would lie about
+/// where it is by the bottom of a long scene.
+///
+/// Rows are exactly one line because [`draw_entity_row`] truncates
+/// rather than wraps. A wrapped name would make its own row taller than
+/// this and desynchronize the whole list below it.
+pub(super) fn row_height(ui: &egui::Ui) -> f32 {
+    let line = ui.text_style_height(&egui::TextStyle::Button);
+    (line + 2.0 * ui.spacing().button_padding.y).at_least(ui.spacing().interact_size.y)
+        + ui.spacing().item_spacing.y
+}
+
 /// Walks up from `entity` through the parent chain looking for `ancestor`.
 /// Returns `true` if `entity` is a descendant of `ancestor` (cycle prevention).
 pub(super) fn is_descendant(
@@ -75,16 +94,36 @@ pub(super) fn draw_entity_row(
     let total_extra = button_padding + button_padding;
     let wrap_width = ui.available_width() - total_extra.x;
     let text: egui::WidgetText = indented_label.as_str().into();
-    let galley = text.into_galley(ui, None, wrap_width, egui::TextStyle::Button);
-    let mut desired_size = total_extra + galley.size();
-    desired_size.y = desired_size.y.at_least(ui.spacing().interact_size.y);
+    // Truncate, never wrap. A wrapped name would be taller than
+    // [`row_height`] promised, and every row below it in a virtualized
+    // list would be drawn where the scrollbar says the previous one
+    // ended rather than where it actually did. Truncating is also what
+    // a hierarchy panel should do with a long name: the tree structure
+    // is what is being read, not the full string.
+    let galley = text.into_galley(
+        ui,
+        Some(egui::TextWrapMode::Truncate),
+        wrap_width,
+        egui::TextStyle::Button,
+    );
+    // Full width, not the width of the name. A row is a target — for a
+    // click, for a drop, for the highlight that says which entity is
+    // selected — and a target that stops where the text stops leaves
+    // most of the panel dead to the pointer.
+    let desired_size = egui::vec2(
+        ui.available_width(),
+        row_height(ui) - ui.spacing().item_spacing.y,
+    );
     let (rect, resp) = ui.allocate_at_least(desired_size, egui::Sense::click_and_drag());
 
     if ui.is_rect_visible(rect) {
-        let text_pos = ui
-            .layout()
-            .align_size_within_rect(galley.size(), rect.shrink2(button_padding))
-            .min;
+        // Left-aligned and vertically centred, stated rather than
+        // inherited from the layout: now that the row is as wide as the
+        // panel, asking the layout where to put the text would centre a
+        // short name in the middle of a wide row and lose the
+        // indentation that shows the hierarchy.
+        let inner = rect.shrink2(button_padding);
+        let text_pos = egui::pos2(inner.left(), inner.center().y - galley.size().y * 0.5);
         let visuals = ui.style().interact_selectable(&resp, is_selected);
         if is_selected || resp.hovered() || resp.highlighted() || resp.has_focus() {
             let r = rect.expand(visuals.expansion);

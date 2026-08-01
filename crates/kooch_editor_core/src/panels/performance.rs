@@ -15,7 +15,11 @@
 //! 4. **Render**           — engine-tracked VRAM, draw calls
 //! 5. **Meshlet pipeline** — instances uploaded, dispatch threads,
 //!                           pool size + roots
-//! 6. **Remote**           — cost of the snapshot pull, split by
+//! 6. **CPU frame**        — where `cpu_frame_ms` went, stage by stage,
+//!                           plus what no stage claims. Collapsed by
+//!                           default: it is a diagnostic, opened when a
+//!                           number above looks wrong.
+//! 7. **Remote**           — cost of the snapshot pull, split by
 //!                           transport / decode. Hidden in local mode.
 
 use kooch_render::meshlet::{
@@ -168,6 +172,78 @@ pub(crate) fn draw_performance_content(
                         metric(ui, "After Hi-Z", &after_hi_z.to_string());
                         metric(ui, "Total visible", &total_visible.to_string());
                     }
+                });
+            });
+
+            collapsing(ui, "CPU frame", false, |ui| {
+                let breakdown = perf_stats.breakdown;
+                let render = breakdown.render;
+                grid(ui, "perf_grid_breakdown", |ui| {
+                    metric_with_tooltip(
+                        ui,
+                        "Gather",
+                        &format!("{:.2} ms", render.gather_ms),
+                        "Building the frame's view of the world for the UI: hierarchy, \
+                         inspector data, asset catalog. Walks every entity, so it grows \
+                         with the scene.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "UI pass",
+                        &format!("{:.2} ms", render.ui_ms),
+                        "Laying out and painting every panel. egui is immediate mode: a \
+                         list of 600 rows costs 600 rows every frame, whether or not one \
+                         of them changed. Collapsing the panels is the quickest way to \
+                         confirm this number.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "Input",
+                        &format!("{:.2} ms", render.input_ms),
+                        "Gizmo handles, viewport picking, camera. Near zero unless the \
+                         pointer is doing something — which is exactly when it matters.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "Viewport",
+                        &format!("{:.2} ms", render.viewport_ms),
+                        "Recording the viewport's GPU commands — sky, meshlets, gizmos, \
+                         blit. CPU-side encoding only; what the GPU then spends is the \
+                         GPU frame row above.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "Present",
+                        &format!("{:.2} ms", render.present_ms),
+                        "Handing the frame to the surface, including egui's tessellation \
+                         and texture uploads. With vsync on this also absorbs the wait \
+                         for the vblank.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "Actions",
+                        &format!("{:.2} ms", render.actions_ms),
+                        "Applying what the UI queued: spawns, despawns, edits, saves. \
+                         Zero on a frame where the user did nothing.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "Unaccounted",
+                        &format!("{:.2} ms", breakdown.residual_ms(perf_stats.cpu_frame_ms)),
+                        "CPU frame time minus the rows above. Near zero means the split \
+                         describes the frame and the biggest row is the thing to fix. \
+                         Large means the split is in the wrong place — the next stage \
+                         boundary belongs inside whatever these rows are missing.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "Gizmo batch",
+                        &format!("{:.2} ms", breakdown.gizmo_batch_ms),
+                        "Rebuilding the gizmo line and mesh batches, before the render \
+                         system runs. NOT part of CPU frame time and deliberately not \
+                         deducted above — it is listed here because it is per-frame cost \
+                         that scales with the scene and was otherwise invisible.",
+                    );
                 });
             });
 

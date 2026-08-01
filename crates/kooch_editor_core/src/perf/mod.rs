@@ -10,9 +10,12 @@
 //! systems wired by [`crate::EditorPlugin`]. Reads are zero-cost: a
 //! single `resources.get::<EditorPerfStats>()` from the View toolbar.
 
+pub(crate) mod breakdown;
 pub(crate) mod sys_metrics;
 pub(crate) mod timing;
 
+pub(crate) use breakdown::ms_since;
+pub use breakdown::{FrameBreakdown, RenderStages, record_gizmo_batch_ms, record_render_stages};
 pub(crate) use sys_metrics::{SysMetricsState, sys_metrics_system};
 pub use timing::record_cpu_frame_ms;
 pub(crate) use timing::{PerfTimingState, frame_timer_system};
@@ -66,6 +69,9 @@ pub struct EditorPerfStats {
     pub draw_calls: u32,
     /// Cost of the remote snapshot pull, or `None` in local mode.
     pub remote: Option<RemoteSyncStats>,
+    /// Where `cpu_frame_ms` went, stage by stage (#691). Zeroed until
+    /// the render system has completed a frame.
+    pub breakdown: FrameBreakdown,
 }
 
 /// What one remote snapshot pull cost the editor's main thread (#645).
@@ -136,6 +142,7 @@ mod tests {
         assert_eq!(s.vram_tracked_bytes, 0);
         assert_eq!(s.draw_calls, 0);
         assert_eq!(s.remote, None, "local mode reports no remote cost");
+        assert_eq!(s.breakdown, FrameBreakdown::default());
     }
 
     #[test]
