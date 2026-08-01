@@ -306,6 +306,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<crate::gizmos::PhysicsDebugOverlay>()
         .map(|overlay| overlay.categories)
         .unwrap_or_default();
+    // Lifted for the same reason: the panel writes what it drew, and the
+    // metric systems read it next frame to decide whether to pay (#703).
+    let mut hud_visibility = resources
+        .get::<crate::perf::HudVisibility>()
+        .copied()
+        .unwrap_or_default();
     let mut console = resources
         .remove::<crate::panels::console::ConsoleState>()
         .unwrap_or_default();
@@ -365,6 +371,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut gizmo_visibility,
         &gizmo_groups,
         &mut physics_debug,
+        &mut hud_visibility,
         log_buffer.as_ref(),
         &mut console,
         &connect_output,
@@ -381,6 +388,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // whatever the dropdown just changed.
     resources.insert(gizmo_visibility);
     resources.insert(console);
+    // What the panel actually drew. Without this the UI writes into a
+    // copy and every metric system keeps paying for a section nobody has
+    // open — the whole point of lifting it.
+    resources.insert(hud_visibility);
 
     // The overlay resource is created on first use rather than at startup:
     // a host with no physics never grows one.

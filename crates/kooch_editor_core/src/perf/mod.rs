@@ -160,3 +160,56 @@ mod tests {
         assert_eq!(s.vram_tracked_mb(), 5);
     }
 }
+
+/// Whether anyone is looking at the metrics that cost something to take.
+///
+/// # Why this is a resource and not egui memory
+///
+/// The perf sidebar's open/closed state used to live in `egui`'s temp
+/// memory, which the UI pass can read and nothing else can. The systems
+/// that *produce* these numbers run in `PreRender`, before that pass
+/// exists — so the one thing that knew whether a metric was being read
+/// was the one place a metric could not ask.
+///
+/// Moved here rather than copied here: `panels/view.rs` reads and writes
+/// this and keeps no second copy. A flag duplicated between egui memory
+/// and a resource is the same bug as #703 in a different costume — two
+/// places holding one truth, drifting the moment one of them is updated
+/// and the other is not.
+///
+/// # A frame behind, on purpose
+///
+/// The UI writes what it drew; the next frame's systems read it. For a
+/// metric refreshed twice a second that lag is invisible, and the
+/// alternative — asking the UI mid-`PreRender` what it is about to draw —
+/// does not exist.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HudVisibility {
+    /// The perf sidebar as a whole.
+    pub(crate) sidebar: bool,
+    /// The **System** section inside it, which is the only reader of the
+    /// sysinfo poll.
+    pub(crate) system_section: bool,
+}
+
+impl Default for HudVisibility {
+    /// Visible until the UI says otherwise.
+    ///
+    /// The first frame runs before any panel has drawn, and a default of
+    /// "hidden" would skip the first refresh — which is the one that
+    /// establishes the CPU% baseline, without which every later sample
+    /// reads zero.
+    fn default() -> Self {
+        Self {
+            sidebar: true,
+            system_section: true,
+        }
+    }
+}
+
+impl HudVisibility {
+    /// Whether the OS is worth asking about CPU and memory this frame.
+    pub(crate) fn wants_system_metrics(self) -> bool {
+        self.sidebar && self.system_section
+    }
+}

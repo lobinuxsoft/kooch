@@ -50,6 +50,7 @@ pub(crate) fn draw_view_content(
     gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
     gizmo_groups: &[crate::gizmos::GizmoGroup],
     physics_debug: &mut kooch_physics::backend::DebugCategories,
+    hud_visibility: &mut crate::perf::HudVisibility,
     actions: &mut Vec<crate::actions::EditorAction>,
 ) {
     let available = ui.available_size();
@@ -252,13 +253,13 @@ pub(crate) fn draw_view_content(
     // Vertical perf sidebar anchored to the right edge of the
     // viewport. The toggle chevron sits at the very top-right
     // corner (always visible); the panel itself only renders when
-    // toggled on. State is stored in egui memory so it survives
-    // across frames without an extra Resource.
-    let sidebar_visible_id = egui::Id::new("perf_sidebar_visible");
-    let mut sidebar_visible = ui
-        .ctx()
-        .memory(|m| m.data.get_temp::<bool>(sidebar_visible_id))
-        .unwrap_or(true);
+    // toggled on.
+    //
+    // State lives in `HudVisibility` rather than in egui memory: the
+    // systems that pay for these metrics run in `PreRender` and cannot
+    // read egui's memory, so a flag kept only there meant nothing could
+    // ask whether anyone was looking (#703).
+    let mut sidebar_visible = hud_visibility.sidebar;
 
     let panel_top_right =
         panel_origin + egui::vec2(available.x - TOOLBAR_OFFSET.x, TOOLBAR_OFFSET.y);
@@ -295,8 +296,6 @@ pub(crate) fn draw_view_content(
             });
             if resp.clicked() {
                 sidebar_visible = !sidebar_visible;
-                ui.ctx()
-                    .memory_mut(|m| m.data.insert_temp(sidebar_visible_id, sidebar_visible));
             }
         });
 
@@ -333,9 +332,17 @@ pub(crate) fn draw_view_content(
                     meshlet_debug_mode,
                     meshlet_debug_caps,
                     meshlet_lod_settings,
+                    hud_visibility,
                 );
             });
     }
+
+    // Written after drawing, so it records what was actually on screen
+    // this frame rather than what was asked for. A collapsed sidebar
+    // leaves `system_section` at whatever it last was, which is correct:
+    // an invisible section is not an open one, and `wants_system_metrics`
+    // requires both.
+    hud_visibility.sidebar = sidebar_visible;
 
     *input = Some(delta);
 }

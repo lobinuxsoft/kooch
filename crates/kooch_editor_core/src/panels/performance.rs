@@ -36,6 +36,7 @@ pub(crate) fn draw_performance_content(
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
+    hud_visibility: &mut crate::perf::HudVisibility,
 ) {
     // auto_shrink=[true, true] lets the ScrollArea report only the
     // height its content actually needs, so the surrounding Frame
@@ -139,7 +140,10 @@ pub(crate) fn draw_performance_content(
                 });
             }
 
-            collapsing(ui, "System", true, |ui| {
+            // The only reader of the sysinfo poll, which costs 2.08 ms
+            // every time it runs (#703). Recorded so `sys_metrics_system`
+            // can skip the frames nobody is reading.
+            hud_visibility.system_section = collapsing(ui, "System", true, |ui| {
                 grid(ui, "perf_grid_system", |ui| {
                     // {:.2} so sub-1 % (typical for an idle editor
                     // at 60 FPS waiting on vsync) is visible
@@ -428,16 +432,24 @@ fn debug_controls(
 /// Default-open collapsing header — section toggles with the chevron
 /// next to the title. Persists across frames via egui's `Id`-keyed
 /// state so the artist's preferences survive editor reloads.
+/// One collapsible section. Returns whether its body was drawn.
+///
+/// The return value matters for exactly one section — **System**, whose
+/// numbers cost 2.08 ms to take (#703) — but is returned for all of them
+/// rather than special-casing one, so the next expensive metric can be
+/// gated without changing this signature again.
 fn collapsing(
     ui: &mut egui::Ui,
     title: &str,
     default_open: bool,
     body: impl FnOnce(&mut egui::Ui),
-) {
+) -> bool {
     egui::CollapsingHeader::new(egui::RichText::new(title).strong())
         .id_salt(format!("perf_section_{title}"))
         .default_open(default_open)
-        .show(ui, body);
+        .show(ui, body)
+        .body_returned
+        .is_some()
 }
 
 /// Two-column grid for label / value rows.
