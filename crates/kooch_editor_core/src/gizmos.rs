@@ -111,7 +111,18 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
 
 /// Pre-render system that rebuilds the gizmo line + mesh batches from
 /// current selection by dispatching through the [`VisualizerRegistry`].
+///
+/// Timed as a whole (#691): it runs before the render system, so its
+/// cost is real per-frame editor work that `cpu_frame_ms` does not
+/// cover, and the physics overlay inside it walks the entire world
+/// rather than the selection.
 pub(crate) fn build_gizmo_batch_system(resources: &mut Resources) {
+    let start = std::time::Instant::now();
+    build_gizmo_batch(resources);
+    crate::perf::record_gizmo_batch_ms(resources, crate::perf::ms_since(start));
+}
+
+fn build_gizmo_batch(resources: &mut Resources) {
     let (selected, pinned) = match resources.get::<EditorOverlay>() {
         Some(overlay) => (
             overlay.selected_entities.clone(),

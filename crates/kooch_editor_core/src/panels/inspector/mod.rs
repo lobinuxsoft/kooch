@@ -189,7 +189,7 @@ fn draw_inspector_body(
         .components
         .iter()
         .find(|c| c.short_name == "Name")
-        .and_then(|c| c.fields.as_ref())
+        .and_then(|c| c.fields.values())
         .and_then(|fields| {
             fields.iter().find_map(|(name, val)| {
                 if name == "value" {
@@ -372,7 +372,7 @@ fn draw_inspector_body(
                         }
                     })
                     .body(|ui| {
-                        if let Some(fields) = &comp.fields {
+                        if let Some(fields) = comp.fields.values() {
                             if fields.is_empty() {
                                 ui.weak("(no fields)");
                             } else if is_read_only {
@@ -405,6 +405,14 @@ fn draw_inspector_body(
                                     });
                                 }
                             }
+                        } else if comp.fields.is_reflectable() {
+                            // Reflectable, but its values were not read
+                            // for this entity — the Inspector is showing
+                            // something the gather did not count as
+                            // selected. That is a bug in this editor, and
+                            // it says so rather than blaming the
+                            // component for a schema it does have.
+                            ui.weak("(values not gathered — please report)");
                         } else {
                             ui.weak("(no reflection)");
                         }

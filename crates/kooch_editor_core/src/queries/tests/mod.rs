@@ -9,3 +9,4 @@ mod plugin_types_in_the_menu;
 mod plugin_types_survive_remote_mode;
 mod remote_and_local;
 mod the_whole_cycle;
+mod values_only_for_what_is_inspected;

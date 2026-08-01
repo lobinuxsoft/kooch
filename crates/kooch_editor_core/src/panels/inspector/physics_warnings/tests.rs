@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::state::ComponentDisplayInfo;
+use crate::state::ReflectedFields;
 use kooch_ecs::reflect::ReflectValue;
 use std::any::TypeId;
 
@@ -10,7 +11,7 @@ fn component(name: &str, fields: Vec<(String, ReflectValue)>) -> ComponentDispla
         type_id: TypeId::of::<()>(),
         component: kooch_ecs::ComponentId(0),
         short_name: name.to_owned(),
-        fields: Some(fields),
+        fields: ReflectedFields::Values(fields),
         field_metas: None,
         visibility: Default::default(),
     }

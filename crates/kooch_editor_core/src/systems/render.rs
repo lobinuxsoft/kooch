@@ -123,10 +123,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<ProjectState>()
         .is_some_and(|ps| ps.is_project_loaded());
 
-    let display_data = if project_loaded {
+    let (display_data, mut gather_stages) = if project_loaded {
         FrameDisplayData::gather(resources)
     } else {
-        FrameDisplayData::empty()
+        (FrameDisplayData::empty(), Default::default())
     };
 
     let window = resources
@@ -270,6 +270,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let project_crate_root = project_state
         .as_ref()
         .and_then(|ps| ps.active_project.as_ref().map(|ap| ap.root_path.clone()));
+    let assets_start = std::time::Instant::now();
     let asset_catalog = resources
         .get::<kooch_core::asset_database::AssetDatabase>()
         .map(|db| {
@@ -287,6 +288,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let asset_detail = overlay
         .selected_asset
         .and_then(|guid| crate::systems::asset_detail::gather_asset_detail(guid, resources));
+    gather_stages.assets_ms = crate::perf::ms_since(assets_start);
 
     // Lifted out for the frame: the Gizmos dropdown mutates it, and the
     // egui closure already holds Resources immutably. Groups are resolved
@@ -320,6 +322,16 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<crate::actions::PendingPrefabOverwrite>()
         .cloned();
 
+    // #691 — everything above was assembling what the UI is about to
+    // read: the hierarchy, the inspector's view of it, the asset
+    // catalog. It walks the world, so it grows with the scene.
+    let mut stages = crate::perf::RenderStages {
+        gather_ms: crate::perf::ms_since(frame_cpu_start),
+        gather: gather_stages,
+        ..Default::default()
+    };
+
+    let ui_start = std::time::Instant::now();
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
@@ -358,6 +370,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &connect_output,
         prefab_overwrite.as_ref(),
     );
+    stages.ui_ms = crate::perf::ms_since(ui_start);
+    let input_start = std::time::Instant::now();
 
     // #656 — egui's own answer to "does anything need redrawing", read
     // before `full_output` is handed to the presenter and consumed.
@@ -436,6 +450,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         }
     }
 
+    stages.input_ms = crate::perf::ms_since(input_start);
+
+    let viewport_start = std::time::Instant::now();
     {
         // The meshlet stage + blit are constructed at startup and live
         // for the whole editor session; if either is missing, another
@@ -473,7 +490,11 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         );
     }
 
+    stages.viewport_ms = crate::perf::ms_since(viewport_start);
+
+    let present_start = std::time::Instant::now();
     let presented = present_editor_frame(&gpu, &mut overlay, &window, full_output);
+    stages.present_ms = crate::perf::ms_since(present_start);
 
     resources.insert(gpu);
     resources.insert(overlay);
@@ -493,7 +514,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         resources.insert(ps);
     }
 
+    let actions_start = std::time::Instant::now();
     apply_deferred_actions(resources, &actions, &mut undo_stack);
+    stages.actions_ms = crate::perf::ms_since(actions_start);
 
     resources.insert(undo_stack);
 
@@ -520,6 +543,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // every CPU branch above (early returns excepted; those are
     // wall-clock-trivial).
     record_cpu_frame_ms(resources, frame_cpu_start);
+    // #691 — published after the total, so the residual the HUD derives
+    // from the two is read from the same frame.
+    crate::perf::record_render_stages(resources, stages);
 }
 
 /// Moves the mirrored project's stdout into the editor's log.

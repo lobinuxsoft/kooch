@@ -112,7 +112,7 @@ fn joint_warnings(info: &EntityDisplayInfo) -> Vec<PhysicsWarning> {
         .components
         .iter()
         .find(|component| component.short_name == "Joint")
-        .and_then(|component| component.fields.as_ref())
+        .and_then(|component| component.fields.values())
     else {
         return Vec::new();
     };
@@ -173,7 +173,7 @@ fn is_dynamic_body(info: &EntityDisplayInfo) -> bool {
     info.components
         .iter()
         .filter(|component| component.short_name == "RigidBody")
-        .filter_map(|component| component.fields.as_ref())
+        .filter_map(|component| component.fields.values())
         .flatten()
         .any(|(name, value)| {
             name == "kind"
@@ -215,7 +215,7 @@ fn is_sheared(info: &EntityDisplayInfo) -> bool {
 
     info.components
         .iter()
-        .filter_map(|component| component.fields.as_ref())
+        .filter_map(|component| component.fields.values())
         .flatten()
         .any(|(name, value)| match value {
             ReflectValue::Mat4(matrix) if name == "matrix" => {

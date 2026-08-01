@@ -180,13 +180,14 @@ fn handle_of(entity: Entity) -> String {
 mod tests {
     use super::*;
     use crate::state::ComponentDisplayInfo;
+    use crate::state::ReflectedFields;
 
     fn component(name: &str, fields: Vec<(String, ReflectValue)>) -> ComponentDisplayInfo {
         ComponentDisplayInfo {
             type_id: std::any::TypeId::of::<()>(),
             component: kooch_ecs::ComponentId(0),
             short_name: name.to_owned(),
-            fields: Some(fields),
+            fields: ReflectedFields::Values(fields),
             field_metas: None,
             visibility: Default::default(),
         }

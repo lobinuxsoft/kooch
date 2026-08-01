@@ -15,7 +15,11 @@
 //! 4. **Render**           — engine-tracked VRAM, draw calls
 //! 5. **Meshlet pipeline** — instances uploaded, dispatch threads,
 //!                           pool size + roots
-//! 6. **Remote**           — cost of the snapshot pull, split by
+//! 6. **CPU frame**        — where `cpu_frame_ms` went, stage by stage,
+//!                           plus what no stage claims. Collapsed by
+//!                           default: it is a diagnostic, opened when a
+//!                           number above looks wrong.
+//! 7. **Remote**           — cost of the snapshot pull, split by
 //!                           transport / decode. Hidden in local mode.
 
 use kooch_render::meshlet::{
@@ -171,6 +175,122 @@ pub(crate) fn draw_performance_content(
                 });
             });
 
+            collapsing(ui, "CPU frame", false, |ui| {
+                let breakdown = perf_stats.breakdown;
+                let render = breakdown.render;
+                grid(ui, "perf_grid_breakdown", |ui| {
+                    metric_with_tooltip(
+                        ui,
+                        "Gather",
+                        &format!("{:.2} ms", render.gather_ms),
+                        "Building the frame's view of the world for the UI: hierarchy, \
+                         inspector data, asset catalog. Walks every entity, so it grows \
+                         with the scene.",
+                    );
+                    let gather = render.gather;
+                    metric_with_tooltip(
+                        ui,
+                        "  · entities",
+                        &format!("{:.2} ms", gather.entities_ms),
+                        "Every entity with its components and their reflected field \
+                         values. Grows with the world twice over — entities times \
+                         components — and is paid whether or not a panel is open to \
+                         read it.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "  · types",
+                        &format!("{:.2} ms", gather.types_ms),
+                        "The registered-type lists behind Add Component. Scales with \
+                         the number of component types, not with the scene.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "  · archetypes",
+                        &format!("{:.2} ms", gather.archetypes_ms),
+                        "The archetype list for the Components panel.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "  · intern",
+                        &format!("{:.2} ms", gather.intern_ms),
+                        "Resolving every registered component name to a stable id, \
+                         before the gathers above can use one.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "  · assets",
+                        &format!("{:.2} ms", gather.assets_ms),
+                        "The asset catalog for the Inspector's pickers, plus the \
+                         contents of whatever the Asset Browser has selected.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "  · rest",
+                        &format!("{:.2} ms", (render.gather_ms - gather.total_ms()).max(0.0)),
+                        "The open scenes and the resource shuffling around the gathers \
+                         — what gather spends outside the rows above.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "UI pass",
+                        &format!("{:.2} ms", render.ui_ms),
+                        "Laying out and painting every panel. egui is immediate mode: a \
+                         list of 600 rows costs 600 rows every frame, whether or not one \
+                         of them changed. Collapsing the panels is the quickest way to \
+                         confirm this number.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "Input",
+                        &format!("{:.2} ms", render.input_ms),
+                        "Gizmo handles, viewport picking, camera. Near zero unless the \
+                         pointer is doing something — which is exactly when it matters.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "Viewport",
+                        &format!("{:.2} ms", render.viewport_ms),
+                        "Recording the viewport's GPU commands — sky, meshlets, gizmos, \
+                         blit. CPU-side encoding only; what the GPU then spends is the \
+                         GPU frame row above.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "Present",
+                        &format!("{:.2} ms", render.present_ms),
+                        "Handing the frame to the surface, including egui's tessellation \
+                         and texture uploads. With vsync on this also absorbs the wait \
+                         for the vblank.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "Actions",
+                        &format!("{:.2} ms", render.actions_ms),
+                        "Applying what the UI queued: spawns, despawns, edits, saves. \
+                         Zero on a frame where the user did nothing.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "Unaccounted",
+                        &format!("{:.2} ms", breakdown.residual_ms(perf_stats.cpu_frame_ms)),
+                        "CPU frame time minus the rows above. Near zero means the split \
+                         describes the frame and the biggest row is the thing to fix. \
+                         Large means the split is in the wrong place — the next stage \
+                         boundary belongs inside whatever these rows are missing.",
+                    );
+                    metric_with_tooltip(
+                        ui,
+                        "Gizmo batch",
+                        &format!("{:.2} ms", breakdown.gizmo_batch_ms),
+                        "Rebuilding the gizmo line and mesh batches, before the render \
+                         system runs. NOT part of CPU frame time and deliberately not \
+                         deducted above — it is listed here because it is per-frame cost \
+                         that scales with the scene and was otherwise invisible.",
+                    );
+                });
+            });
+
             // #645 — only with a session; local mode has no pull, and a
             // section of zeroes would read as "measured, costs nothing".
             if let Some(remote) = perf_stats.remote {
@@ -208,7 +328,9 @@ pub(crate) fn draw_performance_content(
                             "Mirror apply",
                             &format!("{:.2} ms", remote.mirror_ms),
                             "Rebuilding the snapshot into the editor's own ECS, on the \
-                             same frames as the pull.",
+                             same frames as the pull. Reads 0.00 when the project \
+                             reported nothing new — the mirror already matches the \
+                             world, so there is nothing to walk.",
                         );
                         metric(ui, "Entities mirrored", &remote.entities.to_string());
                         metric(

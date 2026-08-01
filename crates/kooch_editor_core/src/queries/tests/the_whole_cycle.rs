@@ -1,5 +1,7 @@
 //! List, add, inspect and edit a component the editor never compiled.
 
+use std::collections::HashSet;
+
 use kooch_core::resource::Resources;
 use kooch_ecs::allocator::EntityAllocator;
 use kooch_ecs::archetype_registry::ArchetypeRegistry;
@@ -71,7 +73,7 @@ fn list_add_inspect_edit_undo() {
     resources.insert(undo);
 
     // 3. The Inspector sees it, with its field, editable.
-    let shown = gather_entity_data(&resources);
+    let shown = gather_entity_data(&resources, &HashSet::from([entity]));
     let row = shown
         .iter()
         .find(|e| e.entity == entity)
@@ -86,7 +88,7 @@ fn list_add_inspect_edit_undo() {
         InspectorVisibility::Editable,
         "a project's own component must be editable in the editor that authors it"
     );
-    let fields = comp.fields.as_ref().expect("fields shown");
+    let fields = comp.fields.values().expect("fields shown");
     assert_eq!(fields[0].0, "current");
     assert_eq!(fields[0].1, ReflectValue::U32(0));
 
