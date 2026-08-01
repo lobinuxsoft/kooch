@@ -232,6 +232,7 @@ fn host_metrics(resources: &Resources) -> Option<crate::protocol::HostMetrics> {
     Some(crate::protocol::HostMetrics {
         frame_ms: metrics.frame_ms,
         cpu_frame_ms: metrics.cpu_frame_ms,
+        ticks_instant: metrics.fps_instant,
         ticks_per_second: metrics.fps_average,
     })
 }

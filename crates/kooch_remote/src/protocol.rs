@@ -265,6 +265,13 @@ pub struct HostMetrics {
     pub frame_ms: f32,
     /// Milliseconds of work in the tick, waiting excluded.
     pub cpu_frame_ms: f32,
+    /// Ticks per second from the last tick alone.
+    ///
+    /// Sent beside the average rather than left to be derived from
+    /// `frame_ms`: the two are read side by side, and a rate computed
+    /// from one field next to an average computed from sixty is how
+    /// `23 /s` ends up printed next to `513.99 ms`.
+    pub ticks_instant: f32,
     /// Ticks per second, averaged over the host's own window.
     pub ticks_per_second: f32,
 }
@@ -428,6 +435,7 @@ mod tests {
                 host: Some(HostMetrics {
                     frame_ms: 16.67,
                     cpu_frame_ms: 4.2,
+                    ticks_instant: 59.99,
                     ticks_per_second: 60.0,
                 }),
             },

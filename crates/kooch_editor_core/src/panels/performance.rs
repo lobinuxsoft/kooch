@@ -103,13 +103,22 @@ pub(crate) fn draw_performance_content(
                     grid(ui, "perf_grid_host", |ui| {
                         metric_with_tooltip(
                             ui,
-                            "Tick rate",
-                            &format!("{:.0} /s", host.ticks_per_second),
+                            "Ticks (instant)",
+                            &format!("{:.0} /s", host.ticks_instant),
                             "How many times a second the project's own process runs \
-                             its update. Not frames per second: the host has no \
-                             window and no renderer — the editor draws its world. \
-                             This is the number that says whether the gameplay and \
-                             the solver keep up.",
+                             its update, from the last tick alone. Not frames per \
+                             second: the host has no window and no renderer — the \
+                             editor draws its world. This is the number that says \
+                             whether the gameplay and the solver keep up.",
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "Ticks (60-tick avg)",
+                            &format!("{:.0} /s", host.ticks_per_second),
+                            "The same rate over the host's last sixty ticks. Lags \
+                             the instant reading after Play or Stop, which is what \
+                             an average is for — and why both are here instead of \
+                             one number that is sometimes each.",
                         );
                         metric_with_tooltip(
                             ui,
