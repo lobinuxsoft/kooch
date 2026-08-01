@@ -134,11 +134,18 @@ impl Plugin for CorePlugin {
 
         use crate::coord::ActiveOrigin;
         use crate::event::AppExit;
+        use crate::frame_metrics::{FrameMetrics, MetricsReport, frame_metrics_system};
         use crate::time::Time;
 
         app.insert_resource(Time::new());
         app.insert_resource(ActiveOrigin::default());
         app.add_event::<AppExit>();
+
+        // Measured always, reported only if asked. Two subtractions per
+        // frame is not a cost worth a switch, and a game that has to be
+        // rebuilt to answer "how fast am I going" answers it too late.
+        app.insert_resource(FrameMetrics::new(MetricsReport::from_env()));
+        app.add_system(crate::stage::Stage::Last, frame_metrics_system);
     }
 
     fn name(&self) -> &str {
