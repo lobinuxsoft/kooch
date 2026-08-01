@@ -123,8 +123,12 @@ impl SceneCullParams {
 }
 
 /// Owns the scene-wide instance storage buffer + an upload helper.
-/// Capacity is fixed at construction; growth re-creates the buffer
-/// (cheap relative to the per-frame upload).
+///
+/// Capacity starts at a construction-time guess and grows to fit via
+/// [`MeshletScene::ensure_capacity`]; growth re-creates the buffer, which
+/// is cheap next to the per-frame upload. Recreating it is safe because
+/// every consumer builds its bind group per frame — nothing caches a
+/// reference to the buffer across frames.
 pub struct MeshletScene {
     instance_buffer: wgpu::Buffer,
     capacity: u32,
@@ -151,6 +155,47 @@ impl MeshletScene {
 
     pub fn capacity(&self) -> u32 {
         self.capacity
+    }
+
+    /// Grows the instance buffer to hold at least `required` slots.
+    ///
+    /// Construction-time capacity is a starting guess, not a contract: a
+    /// scene is authored, not declared, and the renderer finds out how
+    /// many instances it has when it walks the ECS. Until this existed
+    /// the 257th mesh instance aborted the process — in the editor *and*
+    /// in a shipped game, since both build the stage with the same
+    /// default of 256.
+    ///
+    /// Geometric growth, matching
+    /// [`MeshletCull::ensure_capacity`](crate::meshlet::MeshletCull::ensure_capacity):
+    /// next power of two, and never less than double, so a scene that
+    /// grows an instance at a time does not reallocate every frame.
+    ///
+    /// The old buffer is dropped rather than retired into a frame slot.
+    /// This is called from `render()` **before** any command encoder for
+    /// the frame binds it, so nothing in flight can be referencing it.
+    pub fn ensure_capacity(&mut self, device: &wgpu::Device, required: u32) {
+        if required <= self.capacity {
+            return;
+        }
+        let new_capacity = required
+            .checked_next_power_of_two()
+            .unwrap_or(required)
+            .max(self.capacity.saturating_mul(2));
+        self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_scene_instances"),
+            size: new_capacity as u64 * std::mem::size_of::<MeshInstance>() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        tracing::debug!(
+            target: "kooch_render::meshlet::scene",
+            from = self.capacity,
+            to = new_capacity,
+            required,
+            "grew the instance buffer",
+        );
+        self.capacity = new_capacity;
     }
 
     pub fn instance_buffer(&self) -> &wgpu::Buffer {
@@ -270,5 +315,53 @@ mod tests {
     fn decode_extracts_high_low_halves() {
         let packed = (5u32 << 16) | 12u32;
         assert_eq!(decode_scene_visible_id(packed), (5, 12));
+    }
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    /// The growth policy, without a device. What matters is that it
+    /// reaches the requirement and does not creep up one slot at a time.
+    fn grown(from: u32, required: u32) -> u32 {
+        if required <= from {
+            return from;
+        }
+        required
+            .checked_next_power_of_two()
+            .unwrap_or(required)
+            .max(from.saturating_mul(2))
+    }
+
+    /// The case that panicked: 608 instances against the default 256.
+    #[test]
+    fn a_dense_scene_fits_after_growing() {
+        assert!(grown(256, 608) >= 608);
+    }
+
+    #[test]
+    fn growth_is_geometric_not_incremental() {
+        // A scene gaining one instance at a time must not reallocate on
+        // every frame, so one growth has to leave real headroom.
+        let after = grown(256, 257);
+        assert!(
+            after >= 512,
+            "grew to {after}, which is one frame away from growing again",
+        );
+    }
+
+    #[test]
+    fn a_capacity_that_already_fits_is_left_alone() {
+        assert_eq!(grown(1024, 608), 1024);
+        assert_eq!(grown(608, 608), 608);
+    }
+
+    /// `next_power_of_two` returns `None` past `2^31`; the fallback has
+    /// to be the requirement itself rather than a wrap to zero.
+    #[test]
+    fn an_enormous_requirement_does_not_wrap() {
+        let huge = u32::MAX - 1;
+        assert!(grown(256, huge) >= huge);
     }
 }

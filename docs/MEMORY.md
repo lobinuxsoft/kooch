@@ -553,6 +553,31 @@ remapea referencias a entidades con `EntityMapper`.
 
 ## Decisiones arquitecturales sticky (NO reabrir sin OK explícito)
 
+### Gráficos: NO hay capa RHI propia; los paths se eligen por capacidad (locked 2026-08-01)
+
+**Target: Linux primero, Windows después. macOS NUNCA.** Eso cambia el cálculo de features
+Vulkan-only: en Linux es nativo y en Windows alcanza con forzar `Backends::VULKAN`. Lo único
+que se pierde es Metal, que no está en el roadmap.
+
+**NO se abstrae la API gráfica.** `wgpu` **ya es** esa abstracción — existe para exponer una
+API sobre Vulkan/DX12/Metal. Una capa propia encima sería abstraer una abstracción, y filtran
+las dos: bind groups vs descriptor sets, sincronización implícita vs explícita, no son
+intercambiables. Godot tardó años en `RenderingDevice` y Unreal banca su RHI con un equipo;
+ambos empezaron **antes** de que wgpu existiera.
+
+**No es el caso de `rapier`.** Ahí se abstrajo una dep reemplazable
+([[feedback_physics_backend_swappable]]). Acá wgpu ES la capa de portabilidad: cambiarla por
+`ash` haría **perder** DX12 y Metal, no ganarlos. La protección real es mantener el uso de
+wgpu confinado, no inventar una API intermedia.
+
+**Lo que sí se hace: paths de render gateados por capacidad**, con el patrón que
+`Vbuf64Support` ya usa — probar features, loguear el path activo, ramificar en el
+orquestador. Mesh/task shaders entran así el día que se adopten: un camino **más**, no un
+reemplazo. Por eso el path base tiene que escalar solo (#689): `EXPERIMENTAL_MESH_SHADER` es
+Vulkan-only en naga, falla en LLVMPIPE, y está declarado sujeto a breaking changes.
+
+Migration triggers a `ash`: los 5 de `docs/research/wgpu-capabilities.md`. **Ninguno activo.**
+
 ### Cámara: dos prioridades, y `VirtualCamera` NO va en la cámara (locked 2026-07-31, #671)
 
 **`VirtualCamera` vive en una entidad propia** que tiene el encuadre + `Transform`

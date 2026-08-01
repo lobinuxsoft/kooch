@@ -42,6 +42,7 @@ mod helpers;
 mod new;
 mod stage;
 mod stats;
+mod view_targets;
 
 #[cfg(test)]
 mod tests;

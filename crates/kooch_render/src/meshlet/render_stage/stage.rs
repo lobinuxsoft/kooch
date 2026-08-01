@@ -40,96 +40,28 @@ pub struct MeshletRenderStage {
 
     pub(super) meshlet_bgl: wgpu::BindGroupLayout,
 
-    /// Atomic R64 visibility-buffer pipeline (#493). `Some` only when
-    /// the device supports `TEXTURE_INT64_ATOMIC | SHADER_INT64 |
-    /// SHADER_INT64_ATOMIC_MIN_MAX` (see [`Vbuf64Support`]). When set,
-    /// the per-frame orchestrator routes the scene draw through it
-    /// instead of the legacy R32Uint color-attachment vbuf — fixes the
-    /// coplanar-meshlet z-fighting that the legacy path exhibits, with
-    /// no functional difference for the rest of the engine.
-    pub(super) vbuf64_stage: Option<Vbuf64Stage>,
-
-    pub(super) vbuf_view: wgpu::TextureView,
-    pub(super) depth_view: wgpu::TextureView,
-    /// Depth-only view of the same depth texture, suitable for
-    /// `cs_copy_depth` in the Hi-Z builder. Sampling-bind requires
-    /// `TextureAspect::DepthOnly` whereas the render attachment uses
-    /// `TextureAspect::All`; sharing one view across both roles
-    /// would fail wgpu validation in the worst case.
-    pub(super) depth_sample_view: wgpu::TextureView,
-    pub(super) color_view: wgpu::TextureView,
-
-    pub(super) vbuf_texture: wgpu::Texture,
-    pub(super) depth_texture: wgpu::Texture,
-    pub(super) color_texture: wgpu::Texture,
-
-    /// Per-pixel R32Uint atomic accumulator (#454) backing the
-    /// `TriangleDensity` / `Overdraw` heatmap modes and the reject
-    /// overlay raster pass. `Some` only when the device exposes
-    /// `Features::TEXTURE_ATOMIC` (mirrored through
-    /// [`MeshletDebugCaps`]); otherwise stays `None` and the dropdown
-    /// filter never lets the user pick a mode that would read it.
-    /// Resized in lock-step with the vbuf / color targets and cleared
-    /// to zero before every raster pass that writes through it.
-    pub(super) triangle_density_texture: Option<wgpu::Texture>,
-    pub(super) triangle_density_view: Option<wgpu::TextureView>,
+    /// This stage's single view.
+    ///
+    /// A field rather than the fields themselves: everything in it is
+    /// per view, everything outside it is shared, and #592 turns this
+    /// into a collection. Keeping the boundary explicit now is what
+    /// makes that a data change instead of a hunt through 1800 lines.
+    pub(super) view: super::view_targets::MeshletViewTargets,
 
     /// Reject-reason overlay compute pipeline (#454.4). `Some` only
     /// when `MeshletDebugCaps::supports_texture_atomic` is true — the
-    /// same gate the density / overdraw modes ride. The orchestrator
-    /// dispatches it after the deferred shade only when the current
-    /// frame's [`MeshletDebugMode`](super::super::debug::MeshletDebugMode)
-    /// selects a reject-reason mode AND the cull pass actually wrote
-    /// `reject_reasons[]` (controlled via `CullParams.debug_active`).
+    /// same gate the density / overdraw modes ride.
+    ///
+    /// Shared rather than per view: it is a pipeline, and the texture
+    /// it writes through comes from whichever view is being rendered.
     pub(super) reject_overlay: Option<MeshletRejectOverlay>,
 
-    pub(super) size: (u32, u32),
     pub(super) instance_capacity: u32,
 
-    /// Twin Hi-Z pyramids for the 2-pass cull (#445). Pass A samples
-    /// `hiz_prev` (last frame's depth, may have false negatives on
-    /// newly-revealed geometry); pass B rebuilds `hiz_curr` from the
-    /// pass-A raster's depth and re-tests the pass-A rejects to
-    /// recover anything that became visible this frame. At the end of
-    /// the frame the orchestrator swaps `hiz_prev <- hiz_curr` so the
-    /// next frame's pass A reads the freshest pyramid we have.
-    ///
-    /// Lazy Hi-Z pyramids. The 2-pass orchestrator that samples
-    /// these is parked behind the SPD follow-up (#486); the current
-    /// single-pass orchestrator never reads them, so allocating them
-    /// at `new()` time wastes VRAM and surfaces wgpu validation
-    /// noise from the editor's per-frame placeholder stage. They
-    /// stay `None` until the SPD-backed orchestrator switches them
-    /// on via `ensure_hi_z_pyramids()`.
-    pub(super) hiz_prev: Option<HiZ>,
-    pub(super) hiz_curr: Option<HiZ>,
-    /// `false` until the orchestrator has called `clear_to_far` on
-    /// the freshly-created `hiz_prev`. Reset to `false` on `resize()`
-    /// because both pyramids are recreated and need re-init. The
-    /// next call to `render_with_assets` after that bump runs the
-    /// init upload so pass A samples a "nothing occluded" pyramid.
-    pub(super) hi_z_initialized: bool,
-    /// Triple-buffered per-frame arena reserved for the future SPD
-    /// follow-up that activates the Hi-Z 2-pass orchestrator. The
-    /// orchestrator currently uses `dispatch_scene_pool_atomic`
-    /// (no Hi-Z), so the arena stays empty in production. When the
-    /// SPD-backed pyramid build lands and the orchestrator switches
-    /// to `dispatch_scene_pool_atomic_hi_z` + `dispatch_cull_pass_b`,
-    /// each per-frame bind group parks here so it outlives the GPU's
-    /// use of it (Mesa radv invalidates bind groups dropped while
-    /// in flight). Three slots ≥ wgpu's max in-flight-frames headroom.
-    #[allow(dead_code)]
     pub(super) frame_bind_groups: [Vec<wgpu::BindGroup>; 3],
     /// Round-robin index for `frame_bind_groups`.
     #[allow(dead_code)]
     pub(super) frame_bind_groups_index: usize,
-    /// Pyramids retired by `resize()` that may still be in flight on
-    /// the GPU. Triple-buffered to defer the drop until after the
-    /// GPU has stopped using the views — same Mesa radv lifetime
-    /// rule as `frame_bind_groups`. Currently no-op since the
-    /// orchestrator doesn't sample the pyramids.
-    #[allow(dead_code)]
-    pub(super) retired_pyramids: [Vec<HiZ>; 3],
 
     /// GPU frame timing via wgpu timestamp queries. Disabled by
     /// default (see [`Self::enable_gpu_timers`]). Tests don't pay

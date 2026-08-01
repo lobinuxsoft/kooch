@@ -45,21 +45,21 @@ impl MeshletRenderStage {
         self.frame_bind_groups_index = (self.frame_bind_groups_index + 1) % 3;
         let arena_idx = self.frame_bind_groups_index;
         self.frame_bind_groups[arena_idx].clear();
-        self.retired_pyramids[arena_idx].clear();
+        self.view.retired_pyramids[arena_idx].clear();
 
-        if self.hiz_prev.is_none() {
-            let pyr = crate::hi_z::HiZ::new(device, self.size.0, self.size.1);
+        if self.view.hiz_prev.is_none() {
+            let pyr = crate::hi_z::HiZ::new(device, self.view.size.0, self.view.size.1);
             if let Some(tracker) = &self.vram_tracker {
                 tracker.add(pyr.byte_size());
             }
-            self.hiz_prev = Some(pyr);
+            self.view.hiz_prev = Some(pyr);
         }
-        if self.hiz_curr.is_none() {
-            let pyr = crate::hi_z::HiZ::new(device, self.size.0, self.size.1);
+        if self.view.hiz_curr.is_none() {
+            let pyr = crate::hi_z::HiZ::new(device, self.view.size.0, self.view.size.1);
             if let Some(tracker) = &self.vram_tracker {
                 tracker.add(pyr.byte_size());
             }
-            self.hiz_curr = Some(pyr);
+            self.view.hiz_curr = Some(pyr);
         }
 
         // First-frame init under reversed-Z: hiz_prev needs to be
@@ -68,7 +68,7 @@ impl MeshletRenderStage {
         // then SPD-build over it; the resulting pyramid says "every
         // tile's farthest fragment is at the far plane", which is
         // the conservative "nothing in front" baseline.
-        if !self.hi_z_initialized {
+        if !self.view.hi_z_initialized {
             {
                 let mut clear_enc =
                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -78,7 +78,7 @@ impl MeshletRenderStage {
                     label: Some("meshlet_hi_z_first_frame_depth_clear"),
                     color_attachments: &[],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.depth_view,
+                        view: &self.view.depth_view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(0.0),
                             store: wgpu::StoreOp::Store,
@@ -96,20 +96,20 @@ impl MeshletRenderStage {
                 label: Some("meshlet_hi_z_init_build_encoder"),
             });
             {
-                let hiz_prev = self.hiz_prev.as_ref().expect("just allocated");
+                let hiz_prev = self.view.hiz_prev.as_ref().expect("just allocated");
                 hiz_prev.init_to_far(
                     device,
                     &mut init_enc,
-                    &self.depth_sample_view,
+                    &self.view.depth_sample_view,
                     &mut self.frame_bind_groups[arena_idx],
                 );
             }
             queue.submit(std::iter::once(init_enc.finish()));
-            self.hi_z_initialized = true;
+            self.view.hi_z_initialized = true;
         }
 
         let (hiz_w, hiz_h, mip_count) = {
-            let hiz_prev = self.hiz_prev.as_ref().expect("allocated above");
+            let hiz_prev = self.view.hiz_prev.as_ref().expect("allocated above");
             let (w, h) = hiz_prev.dimensions();
             (w, h, hiz_prev.mip_count())
         };
@@ -119,7 +119,7 @@ impl MeshletRenderStage {
         // Pass A: AABB-based cull against hiz_prev.
         {
             let gpu_pool = self.gpu_pool.as_ref().expect("checked by render() prelude");
-            let hiz_prev = self.hiz_prev.as_ref().expect("allocated above");
+            let hiz_prev = self.view.hiz_prev.as_ref().expect("allocated above");
             let hiz_prev_view = hiz_prev.full_view();
             self.cull.dispatch_scene_pool_atomic_hi_z(
                 device,
@@ -139,8 +139,8 @@ impl MeshletRenderStage {
             device,
             queue,
             &mut encoder,
-            &self.vbuf_view,
-            &self.depth_view,
+            &self.view.vbuf_view,
+            &self.view.depth_view,
             meshlet_bg,
             &self.cull,
             &self.scene,
@@ -163,11 +163,11 @@ impl MeshletRenderStage {
             self.gpu_timers.write_stage_start(&mut build_enc, 1);
         }
         {
-            let hiz_curr = self.hiz_curr.as_ref().expect("allocated above");
+            let hiz_curr = self.view.hiz_curr.as_ref().expect("allocated above");
             hiz_curr.build_from_depth(
                 device,
                 &mut build_enc,
-                &self.depth_sample_view,
+                &self.view.depth_sample_view,
                 &mut self.frame_bind_groups[arena_idx],
             );
         }
@@ -185,7 +185,7 @@ impl MeshletRenderStage {
         }
         {
             let gpu_pool = self.gpu_pool.as_ref().expect("checked by render() prelude");
-            let hiz_curr = self.hiz_curr.as_ref().expect("allocated above");
+            let hiz_curr = self.view.hiz_curr.as_ref().expect("allocated above");
             let hiz_curr_view = hiz_curr.full_view();
             self.cull.dispatch_cull_pass_b(
                 device,
@@ -204,8 +204,8 @@ impl MeshletRenderStage {
             device,
             queue,
             &mut encoder,
-            &self.vbuf_view,
-            &self.depth_view,
+            &self.view.vbuf_view,
+            &self.view.depth_view,
             meshlet_bg,
             &self.cull,
             &self.scene,
@@ -222,14 +222,14 @@ impl MeshletRenderStage {
             device,
             queue,
             &mut encoder,
-            &self.vbuf_view,
-            &self.color_view,
+            &self.view.vbuf_view,
+            &self.view.color_view,
             meshlet_bg,
             material_bg,
             &self.cull,
             &self.scene,
             view_proj,
-            self.size,
+            self.view.size,
             debug_mode,
         );
         if let Some(slot_idx) = timer_slot {

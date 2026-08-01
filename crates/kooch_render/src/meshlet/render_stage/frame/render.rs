@@ -130,12 +130,17 @@ impl MeshletRenderStage {
             instances = instances.len(),
             "render dispatching meshlet pipeline",
         );
-        assert!(
-            (instances.len() as u32) <= self.instance_capacity,
-            "MeshletRenderStage: collected {} instances exceeds capacity {}",
-            instances.len(),
-            self.instance_capacity,
-        );
+        // Grow to fit rather than abort. A scene is authored, not
+        // declared: the count arrives from the ECS walk above, and the
+        // construction-time capacity was only ever a starting guess.
+        // Before this, the 257th instance panicked — in the editor and
+        // in a shipped game alike.
+        //
+        // Ahead of any encoder for this frame, so the buffer being
+        // replaced cannot be in flight.
+        let required = instances.len() as u32;
+        self.scene.ensure_capacity(device, required);
+        self.instance_capacity = self.scene.capacity();
 
         self.scene.upload_instances(queue, &instances);
         // Worst-case meshlet stride covers every mesh; the pool path
@@ -148,7 +153,7 @@ impl MeshletRenderStage {
         // is preserved exactly. Skewed cameras pay a small error that the
         // 1-pixel target tolerance absorbs.
         let proj_scale_y = view_proj.y_axis.y.abs();
-        let viewport_h_px = self.size.1 as f32;
+        let viewport_h_px = self.view.size.1 as f32;
         let lod_target = resources
             .get::<MeshletLodSettings>()
             .copied()
@@ -238,7 +243,7 @@ impl MeshletRenderStage {
         // ── Path switch ─────────────────────────────────────────────
         // Atomic R64 vbuf path (#493) when the device supports it;
         // otherwise the legacy R32 + Hi-Z 2-pass orchestrator.
-        if self.vbuf64_stage.is_some() {
+        if self.view.vbuf64_stage.is_some() {
             return self.render_path_r64(
                 device,
                 queue,
