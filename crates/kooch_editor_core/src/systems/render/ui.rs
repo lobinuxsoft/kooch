@@ -115,6 +115,17 @@ pub(super) fn run_editor_ui(
                     .and_then(|ps| ps.editor_config.ide_command.as_deref()),
             );
 
+            // Drawn on the context rather than inside a panel: a window is
+            // free-floating, and nesting it in the menu bar's `Ui` would
+            // clip it to that strip.
+            crate::menu_bar::draw_settings_window(
+                ui.ctx(),
+                &mut actions,
+                project_state
+                    .as_ref()
+                    .and_then(|ps| ps.editor_config.ide_command.as_deref()),
+            );
+
             // A build is running and the dock has nothing to show yet.
             // The toolbar chip alone read as "dead" — a static gear, easy
             // to miss, and silent about what it was doing (#672).

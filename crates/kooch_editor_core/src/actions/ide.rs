@@ -147,9 +147,16 @@ fn parse_exec(contents: &str) -> Option<IdeCommand> {
         };
         // `%F`, `%U`, `%f`, `%u`, `%i`, `%c`, `%k` are placeholders the
         // launcher substitutes. We supply our own paths, so they go.
-        let cleaned: Vec<&str> = exec
+        //
+        // Quotes are stripped because the spec allows them and real
+        // entries use them: Antigravity ships
+        // `Exec="/home/…/antigravity-ide" %F`, and keeping the quotes
+        // means asking the OS to run a program whose name starts with
+        // one.
+        let cleaned: Vec<String> = exec
             .split_whitespace()
             .filter(|part| !(part.len() == 2 && part.starts_with('%')))
+            .map(|part| part.trim_matches(['"', '\'']).to_owned())
             .collect();
         return IdeCommand::parse(&cleaned.join(" "));
     }
@@ -233,6 +240,20 @@ Exec=/home/linuxbrew/.linuxbrew/bin/codium --new-window %F
             !IdeCommand::parse("gnome-text-editor")
                 .unwrap()
                 .understands_goto()
+        );
+    }
+
+    /// A real entry, and the one that caught this: the spec allows
+    /// quoting and Antigravity uses it.
+    #[test]
+    fn a_quoted_exec_yields_a_runnable_path() {
+        let command = parse_exec(
+            "[Desktop Entry]\nExec=\"/home/me/.local/share/antigravity/antigravity-ide\" %F\n",
+        )
+        .expect("an Exec line");
+        assert_eq!(
+            command.program, "/home/me/.local/share/antigravity/antigravity-ide",
+            "the quotes must go, or the OS looks for a program called '\"/home/…'"
         );
     }
 

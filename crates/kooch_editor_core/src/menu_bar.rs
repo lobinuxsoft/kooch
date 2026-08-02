@@ -145,31 +145,14 @@ pub(crate) fn draw_menu_bar(
                     }
                 }
             });
-            ui.menu_button("Settings", |ui| {
-                ui.label("IDE command (opens project + file):");
-                let id = ui.id().with("ide_cmd_buffer");
-                let mut buf: String = ui
-                    .data(|d| d.get_temp::<String>(id))
-                    .unwrap_or_else(|| ide_command.unwrap_or_default().to_owned());
-                if ui.text_edit_singleline(&mut buf).changed() {
-                    ui.data_mut(|d| d.insert_temp(id, buf.clone()));
-                }
-                ui.horizontal(|ui| {
-                    if ui.button("Apply").clicked() {
-                        let trimmed = buf.trim();
-                        let command = (!trimmed.is_empty()).then(|| trimmed.to_owned());
-                        actions.push(EditorAction::SetIdeCommand { command });
-                        ui.data_mut(|d| d.remove::<String>(id));
-                        ui.close();
-                    }
-                    if ui.button("Auto-detect").clicked() {
-                        actions.push(EditorAction::SetIdeCommand { command: None });
-                        ui.data_mut(|d| d.remove::<String>(id));
-                        ui.close();
-                    }
-                });
-                ui.weak("Blank = codium / code. Args OK: 'flatpak run com.vscodium.codium'.");
-            });
+            // A button, not a menu with a form in it. An egui menu closes
+            // on any click it does not consume, so a text field inside one
+            // shuts the menu the moment it is clicked — which made the IDE
+            // path impossible to type. A menu picks an action; a form
+            // belongs in a window.
+            if ui.button("Settings").clicked() {
+                ui.data_mut(|d| d.insert_temp(settings_open_id(ui.ctx()), true));
+            }
 
             // Push Play/Stop buttons to the center of the remaining space.
             let available = ui.available_width();
@@ -285,4 +268,80 @@ fn remote_status_look(
             "The project exited before answering. Check its build output in the terminal.",
         ),
     }
+}
+
+/// Where the Settings window's open flag lives.
+fn settings_open_id(ctx: &egui::Context) -> egui::Id {
+    let _ = ctx;
+    egui::Id::new("kooch_settings_window_open")
+}
+
+/// The Settings window: editor preferences that are not per-project.
+///
+/// A window rather than a menu, because a menu closes on any click it
+/// does not consume and a text field inside one cannot be typed into.
+/// It is also movable and resizable, which a path worth pasting needs.
+pub(crate) fn draw_settings_window(
+    ctx: &egui::Context,
+    actions: &mut Vec<EditorAction>,
+    ide_command: Option<&str>,
+) {
+    let id = settings_open_id(ctx);
+    let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+    if !open {
+        return;
+    }
+
+    let buffer_id = id.with("ide_cmd_buffer");
+    let mut buf: String = ctx
+        .data(|d| d.get_temp::<String>(buffer_id))
+        .unwrap_or_else(|| ide_command.unwrap_or_default().to_owned());
+
+    egui::Window::new("Settings")
+        .open(&mut open)
+        .resizable(true)
+        .default_width(460.0)
+        .collapsible(false)
+        .show(ctx, |ui| {
+            ui.label("IDE command — opens the project folder, and the file if it can:");
+            if ui.text_edit_singleline(&mut buf).changed() {
+                ctx.data_mut(|d| d.insert_temp(buffer_id, buf.clone()));
+            }
+            ui.weak(
+                "A full path is safest: an IDE installed by Flatpak, Homebrew or an \
+                 AppImage is usually not on this process's PATH. Arguments are fine, \
+                 e.g. 'flatpak run com.vscodium.codium'.",
+            );
+
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button("Apply").clicked() {
+                    let trimmed = buf.trim();
+                    let command = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+                    actions.push(EditorAction::SetIdeCommand { command });
+                    ctx.data_mut(|d| d.remove::<String>(buffer_id));
+                }
+                // Fills the box rather than applying, so what was found can
+                // be read and edited before it is committed.
+                if ui.button("Detect").clicked()
+                    && let Some(found) = crate::actions::detected_ide_command()
+                {
+                    buf = found;
+                    ctx.data_mut(|d| d.insert_temp(buffer_id, buf.clone()));
+                }
+                if ui.button("Clear").clicked() {
+                    actions.push(EditorAction::SetIdeCommand { command: None });
+                    buf.clear();
+                    ctx.data_mut(|d| d.remove::<String>(buffer_id));
+                }
+            });
+
+            ui.add_space(4.0);
+            match ide_command {
+                Some(current) => ui.weak(format!("In use: {current}")),
+                None => ui.weak("In use: whatever the desktop says opens a source file."),
+            };
+        });
+
+    ctx.data_mut(|d| d.insert_temp(id, open));
 }
