@@ -539,6 +539,119 @@ mod blend_tests {
             "the member without a pose should be skipped, not void the group"
         );
     }
+
+    // ---- adopting an old target reference ------------------------------
+
+    use kooch_core::resource::Resources;
+    use kooch_ecs::reflect::EntityRef;
+
+    /// A world with one vcam still naming its subject the old way.
+    fn world_with_legacy_target() -> (Resources, Entity, Entity) {
+        let mut registry = ComponentRegistry::new();
+        registry.register_cpu::<VirtualCamera>();
+        registry.register_cpu::<CameraTarget>();
+        let mut allocator = EntityAllocator::new();
+
+        let subject = allocator.spawn();
+        let camera = allocator.spawn();
+        registry
+            .get_cpu_mut::<VirtualCamera>()
+            .expect("registered above")
+            .insert(
+                camera,
+                VirtualCamera {
+                    target: Some(EntityRef::Live(subject)),
+                    ..Default::default()
+                },
+            );
+
+        let mut resources = Resources::new();
+        resources.insert(registry);
+        (resources, camera, subject)
+    }
+
+    #[test]
+    fn an_old_target_reference_becomes_a_tag_on_the_subject() {
+        let (mut resources, _camera, subject) = world_with_legacy_target();
+
+        adopt_legacy_targets(&mut resources);
+
+        let registry = resources.get::<ComponentRegistry>().unwrap();
+        let tagged = registry
+            .get_cpu::<CameraTarget>()
+            .and_then(|storage| storage.get(subject));
+        assert!(
+            tagged.is_some(),
+            "the entity the camera named was not tagged"
+        );
+    }
+
+    #[test]
+    fn the_old_reference_is_cleared_so_the_migration_runs_once() {
+        let (mut resources, camera, _subject) = world_with_legacy_target();
+
+        adopt_legacy_targets(&mut resources);
+
+        let registry = resources.get::<ComponentRegistry>().unwrap();
+        let vcam = registry
+            .get_cpu::<VirtualCamera>()
+            .and_then(|storage| storage.get(camera))
+            .expect("the vcam is still there");
+        assert!(vcam.target.is_none(), "the deprecated field survived");
+    }
+
+    /// The tag must land in the group the camera actually follows.
+    #[test]
+    fn the_tag_lands_in_the_cameras_group() {
+        let (mut resources, camera, subject) = world_with_legacy_target();
+        {
+            let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+            registry
+                .get_cpu_mut::<VirtualCamera>()
+                .unwrap()
+                .get_mut(camera)
+                .unwrap()
+                .group = 3;
+        }
+
+        adopt_legacy_targets(&mut resources);
+
+        let registry = resources.get::<ComponentRegistry>().unwrap();
+        let tag = registry
+            .get_cpu::<CameraTarget>()
+            .and_then(|storage| storage.get(subject))
+            .expect("tagged");
+        assert_eq!(tag.group, 3);
+    }
+
+    /// Adopting must not overwrite a tag the author already placed.
+    #[test]
+    fn an_existing_tag_is_left_alone() {
+        let (mut resources, _camera, subject) = world_with_legacy_target();
+        {
+            let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+            registry.get_cpu_mut::<CameraTarget>().unwrap().insert(
+                subject,
+                CameraTarget {
+                    group: 9,
+                    weight: 4.0,
+                },
+            );
+        }
+
+        adopt_legacy_targets(&mut resources);
+
+        let registry = resources.get::<ComponentRegistry>().unwrap();
+        let tag = registry
+            .get_cpu::<CameraTarget>()
+            .and_then(|storage| storage.get(subject))
+            .expect("tagged");
+        assert_eq!(
+            (tag.group, tag.weight),
+            (9, 4.0),
+            "the migration overwrote what the author had set"
+        );
+    }
 }
 
 /// Slerp along the shorter arc.

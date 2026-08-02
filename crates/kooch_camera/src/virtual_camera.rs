@@ -210,9 +210,15 @@ pub struct VirtualCamera {
     pub group: u32,
     /// What this used to follow, kept so old scenes still load.
     ///
-    /// On load a resolvable value tags the entity it names and is
-    /// cleared. Nothing reads it while running.
-    #[reflect(skip)]
+    /// `adopt_legacy_targets` tags whatever it names and clears it on the
+    /// first frame, so in practice an author sees it empty. Nothing reads
+    /// it while running; tag the subject with
+    /// [`CameraTarget`](crate::CameraTarget) instead.
+    ///
+    /// **Not `#[reflect(skip)]`**, which was the first attempt: skipping
+    /// the field means the scene never deserialises it, so the migration
+    /// has nothing to migrate. A deprecated field has to keep arriving
+    /// for exactly as long as something still has to read it.
     pub target: Option<EntityRef>,
     /// Added to the target's position in `Simple`.
     #[reflect(shown_when = OFFSET_WHEN)]
