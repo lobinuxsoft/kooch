@@ -189,7 +189,30 @@ pub struct VirtualCamera {
     /// Where the camera sits. One of the `FOLLOW_*` constants.
     #[reflect(choices = FOLLOW_MODE_CHOICES)]
     pub follow: u32,
-    /// What to follow and look at. Inert until this is set.
+    /// Which [`CameraTarget`](crate::CameraTarget) group this framing
+    /// follows.
+    ///
+    /// Entities carrying that tag are the subject; several of them are a
+    /// group and the camera follows their weighted centre. Inert while
+    /// nothing carries it.
+    ///
+    /// # Why a group number and not a reference to the entity
+    ///
+    /// A reference has to survive being written to a file, and the one
+    /// this replaced did not: it named an identity the loader reassigned
+    /// every session, so a camera authored to follow the player followed
+    /// nothing after a reload (#712). A query has no identity to lose.
+    ///
+    /// And it is not only a repair. Several entities carrying the tag
+    /// *are* a group, so framing one subject and framing four are the
+    /// same code — where a reference needs a second mechanism for the
+    /// second case, as Cinemachine and phantom-camera both do.
+    pub group: u32,
+    /// What this used to follow, kept so old scenes still load.
+    ///
+    /// On load a resolvable value tags the entity it names and is
+    /// cleared. Nothing reads it while running.
+    #[reflect(skip)]
     pub target: Option<EntityRef>,
     /// Added to the target's position in `Simple`.
     #[reflect(shown_when = OFFSET_WHEN)]
@@ -292,6 +315,7 @@ impl Default for VirtualCamera {
             priority: 0,
             enabled: true,
             follow: FOLLOW_THIRD_PERSON,
+            group: 0,
             target: None,
             offset: Vec3::new(0.0, 2.0, 6.0),
             distance: 6.0,

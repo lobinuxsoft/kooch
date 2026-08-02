@@ -13,6 +13,7 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 
+use crate::target::CameraTarget;
 use crate::virtual_camera::{
     INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera,
 };
@@ -74,6 +75,7 @@ impl Plugin for CameraComponentsPlugin {
         app.add_system(Stage::Startup, |resources: &mut Resources| {
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 registry.register_cpu_reflected::<VirtualCamera>();
+                registry.register_cpu_reflected::<CameraTarget>();
             }
         });
     }
@@ -102,11 +104,90 @@ impl Plugin for CameraPlugin {
         // It also means `dt` is the fixed step, which is what makes the
         // damping deterministic instead of frame-rate dependent.
         app.insert_resource(CameraBlend::default());
+        // Before the driving, and every frame rather than at startup: a
+        // scene loaded mid-session brings its own old references.
+        app.add_system(Stage::PreUpdate, adopt_legacy_targets);
         app.add_system(Stage::PostPhysics, run_if_playing(drive_virtual_cameras));
     }
 
     fn name(&self) -> &str {
         "CameraPlugin"
+    }
+}
+
+/// Turns a vcam's old `target` reference into a tag on the entity it
+/// named.
+///
+/// A scene authored before [`CameraTarget`] existed still loads and
+/// still works: whatever the reference resolved to gets tagged with the
+/// vcam's group, and the reference is cleared so this runs once per
+/// vcam rather than fighting an author who later removes the tag.
+///
+/// A reference that resolves to nothing is simply dropped. It was
+/// already following nothing — that is the bug this replaced (#712) —
+/// and leaving it set would retry forever.
+pub fn adopt_legacy_targets(resources: &mut Resources) {
+    let mut adopt: Vec<(Entity, u32)> = Vec::new();
+    let mut clear: Vec<Entity> = Vec::new();
+    {
+        let Some(registry) = resources.get::<ComponentRegistry>() else {
+            return;
+        };
+        let Some(vcams) = registry.get_cpu::<VirtualCamera>() else {
+            return;
+        };
+        for (&entity, vcam) in vcams.iter() {
+            let Some(reference) = vcam.target else {
+                continue;
+            };
+            clear.push(entity);
+            if let Some(target) = reference.entity() {
+                adopt.push((target, vcam.group));
+            } else {
+                tracing::warn!(
+                    vcam = entity.index(),
+                    "a camera's saved target could not be resolved; \
+                     tag the subject with CameraTarget instead",
+                );
+            }
+        }
+    }
+    if clear.is_empty() {
+        return;
+    }
+
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return;
+    };
+    for (entity, group) in adopt {
+        let already = registry
+            .get_cpu::<CameraTarget>()
+            .is_some_and(|storage| storage.get(entity).is_some());
+        if already {
+            continue;
+        }
+        let Some(storage) = registry.get_cpu_mut::<CameraTarget>() else {
+            continue;
+        };
+        storage.insert(
+            entity,
+            CameraTarget {
+                group,
+                ..Default::default()
+            },
+        );
+        tracing::info!(
+            entity = entity.index(),
+            group,
+            "adopted a camera's saved target as a CameraTarget tag",
+        );
+    }
+    if let Some(vcams) = registry.get_cpu_mut::<VirtualCamera>() {
+        for entity in clear {
+            if let Some(vcam) = vcams.get_mut(entity) {
+                vcam.target = None;
+            }
+        }
     }
 }
 
@@ -302,6 +383,162 @@ mod blend_tests {
         let to = glam::Quat::from_rotation_z(1.0);
         assert!(short_slerp(from, to, 1.0).angle_between(to) < 1e-4);
     }
+
+    // ---- target resolution by tag -------------------------------------
+
+    use kooch_ecs::EntityAllocator;
+    use kooch_ecs::component::ComponentRegistry;
+
+    /// A registry with `CameraTarget` registered and nothing in it.
+    fn target_registry() -> (ComponentRegistry, EntityAllocator) {
+        let mut registry = ComponentRegistry::new();
+        registry.register_cpu::<CameraTarget>();
+        (registry, EntityAllocator::new())
+    }
+
+    fn tag(
+        registry: &mut ComponentRegistry,
+        allocator: &mut EntityAllocator,
+        group: u32,
+        weight: f32,
+    ) -> Entity {
+        let entity = allocator.spawn();
+        registry
+            .get_cpu_mut::<CameraTarget>()
+            .expect("registered above")
+            .insert(entity, CameraTarget { group, weight });
+        entity
+    }
+
+    /// Positions handed out by entity index, so a test can say where a
+    /// tagged entity is without a transform storage.
+    fn poses(placed: Vec<(Entity, Vec3)>) -> impl Fn(Entity) -> Option<(Vec3, glam::Quat)> {
+        move |entity| {
+            placed
+                .iter()
+                .find(|(candidate, _)| *candidate == entity)
+                .map(|(_, position)| (*position, glam::Quat::IDENTITY))
+        }
+    }
+
+    #[test]
+    fn a_vcam_follows_the_entity_tagged_with_its_group() {
+        let (mut registry, mut allocator) = target_registry();
+        let subject = tag(&mut registry, &mut allocator, 0, 1.0);
+        let at = Vec3::new(1.0, 2.0, 3.0);
+
+        let pose = target_pose(
+            registry.get_cpu::<CameraTarget>(),
+            0,
+            &poses(vec![(subject, at)]),
+        );
+
+        assert_eq!(pose.map(|(position, _)| position), Some(at));
+    }
+
+    #[test]
+    fn a_vcam_ignores_targets_of_another_group() {
+        let (mut registry, mut allocator) = target_registry();
+        let other = tag(&mut registry, &mut allocator, 7, 1.0);
+
+        let pose = target_pose(
+            registry.get_cpu::<CameraTarget>(),
+            0,
+            &poses(vec![(other, Vec3::ONE)]),
+        );
+
+        assert!(pose.is_none(), "group 0 followed a member of group 7");
+    }
+
+    #[test]
+    fn nothing_tagged_means_nothing_to_follow() {
+        let (registry, _) = target_registry();
+        let pose = target_pose(registry.get_cpu::<CameraTarget>(), 0, &poses(vec![]));
+        assert!(pose.is_none());
+    }
+
+    /// The case the tag exists for: several members are a group.
+    #[test]
+    fn two_members_of_a_group_are_followed_at_their_centre() {
+        let (mut registry, mut allocator) = target_registry();
+        let a = tag(&mut registry, &mut allocator, 0, 1.0);
+        let b = tag(&mut registry, &mut allocator, 0, 1.0);
+
+        let pose = target_pose(
+            registry.get_cpu::<CameraTarget>(),
+            0,
+            &poses(vec![(a, Vec3::ZERO), (b, Vec3::new(10.0, 0.0, 0.0))]),
+        );
+
+        assert_eq!(
+            pose.map(|(position, _)| position),
+            Some(Vec3::new(5.0, 0.0, 0.0))
+        );
+    }
+
+    /// Orientation comes from one member, not from an average — averaging
+    /// quaternions across a group produces an up-vector nobody asked for.
+    #[test]
+    fn the_heaviest_member_owns_the_orientation() {
+        let (mut registry, mut allocator) = target_registry();
+        let light = allocator.spawn();
+        let heavy = allocator.spawn();
+        {
+            let storage = registry.get_cpu_mut::<CameraTarget>().unwrap();
+            storage.insert(
+                light,
+                CameraTarget {
+                    group: 0,
+                    weight: 1.0,
+                },
+            );
+            storage.insert(
+                heavy,
+                CameraTarget {
+                    group: 0,
+                    weight: 5.0,
+                },
+            );
+        }
+        let turned = glam::Quat::from_rotation_y(1.0);
+        let pose_of = move |entity: Entity| -> Option<(Vec3, glam::Quat)> {
+            if entity == heavy {
+                Some((Vec3::ZERO, turned))
+            } else {
+                Some((Vec3::ZERO, glam::Quat::IDENTITY))
+            }
+        };
+
+        let (_, rotation) =
+            target_pose(registry.get_cpu::<CameraTarget>(), 0, &pose_of).expect("two members");
+
+        assert!(
+            rotation.angle_between(turned) < 1e-5,
+            "the light member's orientation won"
+        );
+    }
+
+    /// A tagged entity with no transform yet must not void the group.
+    #[test]
+    fn a_member_with_no_pose_is_skipped_rather_than_fatal() {
+        let (mut registry, mut allocator) = target_registry();
+        let placed = tag(&mut registry, &mut allocator, 0, 1.0);
+        let unplaced = tag(&mut registry, &mut allocator, 0, 1.0);
+        let _ = unplaced;
+        let at = Vec3::new(4.0, 0.0, 0.0);
+
+        let pose = target_pose(
+            registry.get_cpu::<CameraTarget>(),
+            0,
+            &poses(vec![(placed, at)]),
+        );
+
+        assert_eq!(
+            pose.map(|(position, _)| position),
+            Some(at),
+            "the member without a pose should be skipped, not void the group"
+        );
+    }
 }
 
 /// Slerp along the shorter arc.
@@ -326,6 +563,53 @@ struct Pose {
     blend_ease: u32,
 }
 
+/// Where a group's members are, and which way the framing calls up.
+///
+/// The position is their weighted centre; with one member that is
+/// exactly its position, which keeps the single-subject case identical
+/// to what the old `target` reference produced.
+///
+/// The rotation is the **heaviest** member's, not a blend. Averaging
+/// quaternions across a group has no meaning a player would recognise —
+/// two characters facing each other would produce a camera up-vector
+/// pointing sideways. One subject owns the orientation, and it is the
+/// one the framing is most about.
+fn target_pose(
+    targets: Option<&kooch_ecs::component::ComponentStorage<CameraTarget>>,
+    group: u32,
+    pose_of: &impl Fn(Entity) -> Option<(Vec3, glam::Quat)>,
+) -> Option<(Vec3, glam::Quat)> {
+    let targets = targets?;
+    let mut members: Vec<(Vec3, f32)> = Vec::new();
+    let mut heaviest: Option<(f32, glam::Quat, u32)> = None;
+
+    for (&entity, target) in targets.iter() {
+        if target.group != group {
+            continue;
+        }
+        let Some((position, rotation)) = pose_of(entity) else {
+            continue;
+        };
+        members.push((position, target.weight));
+        // Ties break on the lower entity index, for the same reason vcam
+        // election does: component storage has no order to rely on, and
+        // a tie resolved differently each frame reads as jitter.
+        let better = match heaviest {
+            None => true,
+            Some((weight, _, index)) => {
+                target.weight > weight || (target.weight == weight && entity.index() < index)
+            }
+        };
+        if better {
+            heaviest = Some((target.weight, rotation, entity.index()));
+        }
+    }
+
+    let centre = crate::target::weighted_centre(&members)?;
+    let rotation = heaviest.map(|(_, rotation, _)| rotation)?;
+    Some((centre, rotation))
+}
+
 /// Works out every vcam's pose without holding a borrow, because writing
 /// a `Transform` needs the storage mutably and reading the target's pose
 /// needs it shared.
@@ -339,6 +623,7 @@ fn plan_vcam_poses(resources: &Resources) -> Vec<Pose> {
     let cameras = registry.get_cpu::<PerspectiveCamera>();
     let transforms = registry.get_cpu::<Transform>();
     let globals = registry.get_cpu::<GlobalTransform>();
+    let targets = registry.get_cpu::<CameraTarget>();
 
     let dt = fixed_dt(resources);
 
@@ -374,13 +659,11 @@ fn plan_vcam_poses(resources: &Resources) -> Vec<Pose> {
             continue;
         }
 
-        let Some(target) = vcam.target.and_then(|reference| reference.entity()) else {
-            continue;
-        };
-        // A target that was despawned, or that a scene never resolved,
-        // leaves the vcam where it is rather than snapping it to the
-        // origin.
-        let Some((target_pos, target_rot)) = pose_of(target) else {
+        // Nothing carries this vcam's tag, or everything that does has
+        // zero weight: leave it where it is rather than snapping it to
+        // the origin. A group that fills up next frame is picked up next
+        // frame, with no resolving step in between.
+        let Some((target_pos, target_rot)) = target_pose(targets, vcam.group, &pose_of) else {
             continue;
         };
         let Some(current) = transforms.and_then(|s| s.get(entity)) else {

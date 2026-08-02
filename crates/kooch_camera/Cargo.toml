@@ -14,6 +14,7 @@ kooch_ecs.workspace = true
 # with no gravity should not link the solver to move a camera.
 kooch_gravity = { workspace = true, optional = true }
 glam.workspace = true
+tracing.workspace = true
 
 [features]
 # Lets `VirtualCamera::up_mode` consult the gravity field. Without it that
