@@ -109,7 +109,11 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });
     let power_profile: PowerProfile = power::detect();
     resources.insert(overlay);
-    resources.insert(handler);
+    // First in the list on purpose: a key typed into a focused text
+    // field belongs to egui, and gameplay input must not also see it.
+    resources
+        .get_or_default::<kooch_core::raw_event::RawEventHandlers>()
+        .push(handler);
     resources.insert(sky_pass);
     resources.insert(gizmo_renderer);
     resources.insert(mesh_gizmo_renderer);
