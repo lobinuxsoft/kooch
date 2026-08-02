@@ -36,6 +36,7 @@ use kooch_ecs::component::Component;
 /// about. A [`VirtualCamera`](crate::VirtualCamera) follows the tagged
 /// entities whose `group` matches its own.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
+#[reflect(category = "Camera")]
 pub struct CameraTarget {
     /// Which framing this entity belongs to.
     ///
