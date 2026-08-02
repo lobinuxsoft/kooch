@@ -11,12 +11,10 @@ use gilrs::Gilrs;
 use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
-use crate::backend::{
-    GamepadAxis, GamepadButton, GamepadId, InputBackend, InputEvent,
-};
+use crate::backend::{GamepadAxis, GamepadButton, GamepadId, InputBackend, InputEvent};
 
 /// Winit + gilrs powered backend. Stores per-frame state, accumulates
-/// events in [`feed_window_event`](Self::feed_window_event) and
+/// events in [`feed_window_event`](InputBackend::feed_window_event) and
 /// [`poll`](InputBackend::poll), and exposes immediate state via the
 /// [`InputBackend`] trait.
 ///
@@ -25,7 +23,13 @@ use crate::backend::{
 /// contention is irrelevant — only the main-thread `poll` ever touches
 /// it.
 pub struct WinitGilrsBackend {
-    gilrs: Mutex<Gilrs>,
+    /// `None` when gilrs could not enumerate a device backend.
+    ///
+    /// Gamepads are optional; a keyboard is not. Failing construction
+    /// over gilrs would have left a headless-ish Linux box — no evdev
+    /// access, a container, a bare Wayland session — with **no input at
+    /// all**, when the thing that failed drives none of the keys.
+    gilrs: Option<Mutex<Gilrs>>,
     pressed_keys: HashSet<KeyCode>,
     just_pressed_keys: HashSet<KeyCode>,
     just_released_keys: HashSet<KeyCode>,
@@ -43,13 +47,21 @@ struct GamepadState {
 }
 
 impl WinitGilrsBackend {
-    /// Creates a backend, initialising the gilrs context. Returns
-    /// `Err` when gilrs cannot enumerate any device backend (rare; on
-    /// Linux this can happen on headless / Wayland-without-evdev setups).
-    pub fn new() -> Result<Self, gilrs::Error> {
-        let gilrs = Gilrs::new()?;
-        Ok(Self {
-            gilrs: Mutex::new(gilrs),
+    /// Creates a backend, initialising the gilrs context.
+    ///
+    /// Gamepad support degrades to nothing if gilrs cannot enumerate a
+    /// device backend (on Linux: headless, no evdev access, a container).
+    /// Keyboard and mouse are unaffected — they arrive from winit.
+    pub fn new() -> Self {
+        let gilrs = match Gilrs::new() {
+            Ok(gilrs) => Some(Mutex::new(gilrs)),
+            Err(error) => {
+                tracing::warn!(%error, "gamepad support unavailable; keyboard and mouse still work");
+                None
+            }
+        };
+        Self {
+            gilrs,
             pressed_keys: HashSet::new(),
             just_pressed_keys: HashSet::new(),
             just_released_keys: HashSet::new(),
@@ -58,21 +70,19 @@ impl WinitGilrsBackend {
             mouse_delta: Vec2::ZERO,
             gamepads: HashMap::new(),
             queued_events: Vec::new(),
-        })
+        }
     }
 
-    /// Pushes a winit `WindowEvent` into the backend. Call this from the
-    /// `ApplicationHandler::window_event` handler before stepping the
-    /// engine.
-    pub fn feed_window_event(&mut self, event: &WindowEvent) {
+    fn apply_window_event(&mut self, event: &WindowEvent) {
         match event {
             WindowEvent::KeyboardInput {
-                event: KeyEvent {
-                    physical_key,
-                    state,
-                    repeat,
-                    ..
-                },
+                event:
+                    KeyEvent {
+                        physical_key,
+                        state,
+                        repeat,
+                        ..
+                    },
                 ..
             } => {
                 if *repeat {
@@ -123,7 +133,10 @@ impl WinitGilrsBackend {
     }
 
     fn drain_gilrs(&mut self) {
-        let mut gilrs = self.gilrs.lock().expect("gilrs mutex poisoned");
+        let Some(gilrs) = &self.gilrs else {
+            return;
+        };
+        let mut gilrs = gilrs.lock().expect("gilrs mutex poisoned");
         while let Some(gilrs::Event { id, event, .. }) = gilrs.next_event() {
             match event {
                 gilrs::EventType::Connected => {
@@ -132,8 +145,7 @@ impl WinitGilrsBackend {
                 }
                 gilrs::EventType::Disconnected => {
                     self.gamepads.remove(&id);
-                    self.queued_events
-                        .push(InputEvent::GamepadDisconnected(id));
+                    self.queued_events.push(InputEvent::GamepadDisconnected(id));
                 }
                 gilrs::EventType::ButtonPressed(button, _) => {
                     let entry = self.gamepads.entry(id).or_default();
@@ -169,11 +181,18 @@ impl WinitGilrsBackend {
 }
 
 impl InputBackend for WinitGilrsBackend {
-    fn poll(&mut self) -> Vec<InputEvent> {
-        self.drain_gilrs();
+    fn begin_frame(&mut self) {
         self.just_pressed_keys.clear();
         self.just_released_keys.clear();
         self.mouse_delta = Vec2::ZERO;
+    }
+
+    fn feed_window_event(&mut self, event: &WindowEvent) {
+        self.apply_window_event(event);
+    }
+
+    fn poll(&mut self) -> Vec<InputEvent> {
+        self.drain_gilrs();
         std::mem::take(&mut self.queued_events)
     }
 
