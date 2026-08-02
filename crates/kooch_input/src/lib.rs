@@ -34,6 +34,7 @@ pub mod backend;
 pub mod ids;
 pub mod mock_backend;
 pub mod plugin;
+pub mod remote_backend;
 pub mod winit_gilrs_backend;
 
 pub use action_map::{Action, ActionMap, InputBinding};
@@ -42,4 +43,5 @@ pub use backend::{
 };
 pub use mock_backend::MockInputBackend;
 pub use plugin::{InputPlugin, PendingWindowEvents};
+pub use remote_backend::{GamepadSnapshot, InputSnapshot, RemoteInputBackend};
 pub use winit_gilrs_backend::WinitGilrsBackend;
