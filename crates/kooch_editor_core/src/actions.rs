@@ -260,10 +260,18 @@ pub(crate) enum EditorAction {
     RevealInFileManager {
         path: PathBuf,
     },
-    /// Open `file` in an external IDE with `root` as the workspace, so
-    /// the whole project (Rust source, `Cargo.toml`, …) is editable.
+    /// Open `file` in an external IDE, with the project's **crate root**
+    /// as the workspace, so the whole project (Rust source,
+    /// `Cargo.toml`, …) is editable rather than the assets folder alone.
+    ///
+    /// # Why the workspace is not a parameter
+    ///
+    /// It was, and all three places that build this action passed the
+    /// asset browser's root — the `assets/` directory — so the IDE
+    /// opened a workspace with no source in it. The workspace is not a
+    /// property of the click; it is a property of where the file lives,
+    /// and the handler is the one place that knows.
     OpenInIde {
-        root: PathBuf,
         file: PathBuf,
     },
     /// Create a new source file (Rust / C# script) or an empty scene in

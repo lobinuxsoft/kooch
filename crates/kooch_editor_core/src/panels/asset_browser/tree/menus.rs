@@ -129,7 +129,6 @@ pub(super) fn leaf_menu(
     }
     if ui.button("Open in IDE").clicked() {
         actions.push(EditorAction::OpenInIde {
-            root: root.to_path_buf(),
             file: leaf.path.clone(),
         });
         ui.close();

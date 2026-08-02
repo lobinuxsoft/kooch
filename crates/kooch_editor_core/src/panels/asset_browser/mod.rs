@@ -289,7 +289,6 @@ fn handle_keyboard(
         && let Some(root) = project_root
     {
         actions.push(EditorAction::OpenInIde {
-            root: root.to_path_buf(),
             file: row.path.clone(),
         });
     }

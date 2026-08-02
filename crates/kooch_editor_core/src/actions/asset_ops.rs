@@ -27,7 +27,7 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         EditorAction::DeleteAsset { path } => delete_asset(resources, path),
         EditorAction::DeleteFolder { path } => delete_folder(resources, path),
         EditorAction::RevealInFileManager { path } => reveal(path),
-        EditorAction::OpenInIde { root, file } => open_in_ide(resources, root, file),
+        EditorAction::OpenInIde { file } => open_in_ide(resources, file),
         EditorAction::CreateFile { folder, name, kind } => {
             create_file(resources, folder, name, *kind)
         }
@@ -133,10 +133,18 @@ fn to_snake_case(name: &str) -> String {
     out.trim_matches('_').to_owned()
 }
 
-/// Opens `file` in an external IDE with `root` as the workspace folder.
+/// Opens `file` in an external IDE, with the crate root that owns it as
+/// the workspace folder.
+///
 /// Uses the configured `ide_command` (editor config), else `$KOOCH_IDE`,
 /// else `codium` / `code`; falls back to `xdg-open` when none launch.
-fn open_in_ide(resources: &Resources, root: &Path, file: &Path) {
+fn open_in_ide(resources: &Resources, file: &Path) {
+    let root = workspace_for(resources, file);
+    let root = root.as_deref().unwrap_or_else(|| {
+        // Nothing claims it: open the folder it sits in, which is still
+        // more useful than opening the file with no workspace at all.
+        file.parent().unwrap_or(file)
+    });
     let configured = resources
         .get::<crate::project_state::ProjectState>()
         .and_then(|ps| ps.editor_config.ide_command.clone())
@@ -152,6 +160,28 @@ fn open_in_ide(resources: &Resources, root: &Path, file: &Path) {
         );
         let _ = std::process::Command::new("xdg-open").arg(file).spawn();
     }
+}
+
+/// The crate root a file belongs to: the project's, or the engine's for
+/// something under the read-only engine assets.
+///
+/// **The project root, not its `assets/` folder** — a workspace without
+/// `Cargo.toml` or `src/` is not the project, and opening one is the bug
+/// this function exists to prevent.
+fn workspace_for(resources: &Resources, file: &Path) -> Option<PathBuf> {
+    let state = resources.get::<crate::project_state::ProjectState>()?;
+    if let Some(project) = state.active_project.as_ref()
+        && file.starts_with(&project.root_path)
+    {
+        return Some(project.root_path.clone());
+    }
+    // Engine assets are read-only, but opening them next to the engine's
+    // own source is what makes them worth looking at.
+    state
+        .engine_root
+        .as_ref()
+        .filter(|engine| file.starts_with(engine))
+        .cloned()
 }
 
 /// Spawns `cmd` (a whitespace-separated program + args, e.g.
@@ -466,5 +496,74 @@ mod duplicate_tests {
 
         assert!(kooch_core::asset_meta::read_meta(&dest).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- which folder the IDE opens as its workspace -------------------
+
+    use crate::project_state::{ActiveProject, ProjectState};
+    use kooch_core::resource::Resources;
+
+    fn resources_with_roots(project: &str, engine: &str) -> Resources {
+        let mut state = ProjectState::new();
+        state.active_project = Some(ActiveProject {
+            manifest: crate::project::ProjectManifest::new("test"),
+            root_path: PathBuf::from(project),
+        });
+        state.engine_root = Some(PathBuf::from(engine));
+        let mut resources = Resources::new();
+        resources.insert(state);
+        resources
+    }
+
+    /// The bug this replaced: all three call sites passed the asset
+    /// browser's root, so the IDE opened `<project>/assets` — a workspace
+    /// with no `Cargo.toml` and no `src/`.
+    #[test]
+    fn a_project_asset_opens_the_crate_root_not_the_assets_folder() {
+        let resources = resources_with_roots("/proj", "/engine");
+
+        let workspace = workspace_for(&resources, Path::new("/proj/assets/Player.prefab"));
+
+        assert_eq!(
+            workspace,
+            Some(PathBuf::from("/proj")),
+            "the workspace must be the crate root, or there is no source to edit"
+        );
+    }
+
+    #[test]
+    fn a_source_file_opens_the_same_root_as_an_asset() {
+        let resources = resources_with_roots("/proj", "/engine");
+        assert_eq!(
+            workspace_for(&resources, Path::new("/proj/src/player.rs")),
+            workspace_for(&resources, Path::new("/proj/assets/Player.prefab")),
+        );
+    }
+
+    /// Engine assets are read-only, and opening them beside the engine's
+    /// own source is what makes them worth looking at.
+    #[test]
+    fn an_engine_asset_opens_the_engine_root() {
+        let resources = resources_with_roots("/proj", "/engine");
+        assert_eq!(
+            workspace_for(&resources, Path::new("/engine/assets/meshes/cube.glb")),
+            Some(PathBuf::from("/engine")),
+        );
+    }
+
+    #[test]
+    fn a_file_under_neither_root_claims_no_workspace() {
+        let resources = resources_with_roots("/proj", "/engine");
+        assert_eq!(workspace_for(&resources, Path::new("/tmp/stray.ron")), None);
+    }
+
+    #[test]
+    fn no_project_open_claims_no_workspace() {
+        let mut resources = Resources::new();
+        resources.insert(ProjectState::new());
+        assert_eq!(
+            workspace_for(&resources, Path::new("/proj/assets/a.ron")),
+            None
+        );
     }
 }
