@@ -293,6 +293,10 @@ impl RemoteInputBackend {
 }
 
 impl InputBackend for RemoteInputBackend {
+    fn apply_snapshot(&mut self, snapshot: &InputSnapshot) {
+        self.apply(snapshot);
+    }
+
     /// Deliberately does nothing.
     ///
     /// # Why the frame boundary is not here

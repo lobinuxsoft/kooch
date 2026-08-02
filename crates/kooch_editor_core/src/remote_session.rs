@@ -42,6 +42,12 @@ pub struct RemoteState {
     /// connected project always starts paused, so this starts `false`
     /// and only the editor's Play/Stop moves it.
     pub playing: bool,
+    /// Whether the last input snapshot sent to the host was an idle one.
+    ///
+    /// The gate that stops a resting keyboard costing a round trip every
+    /// frame. Starts `false` so the first snapshot always goes: it is the
+    /// one that releases whatever the host thinks is still held.
+    pub last_input_was_idle: bool,
     /// The last line the project said while connecting, and every line
     /// of it.
     ///

@@ -93,6 +93,8 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
         // The connecting banner's copy of the build log. Nothing here
         // reads it; it is kept and cleared where the session is made.
         connect_output: _,
+        // Owned by the input sender, which runs after this.
+        last_input_was_idle: _,
     } = state;
     let Some(session) = session.as_mut() else {
         // Local mode costs nothing remote, and saying so is not the

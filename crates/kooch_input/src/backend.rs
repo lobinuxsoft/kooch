@@ -97,6 +97,18 @@ pub trait InputBackend: Send + Sync + 'static {
     /// costs a runtime failure mode.
     fn feed_window_event(&mut self, _event: &winit::event::WindowEvent) {}
 
+    /// Replaces the held state with one captured elsewhere.
+    ///
+    /// The counterpart of [`feed_window_event`](Self::feed_window_event)
+    /// for a backend fed over a wire rather than by devices. On the trait
+    /// for the same reason: the engine holds a `Box<dyn InputBackend>`
+    /// and the caller has no idea which one it is.
+    ///
+    /// Backends that read real devices take the default and ignore it —
+    /// being told what is held by someone else would fight what they can
+    /// see themselves.
+    fn apply_snapshot(&mut self, _snapshot: &crate::remote_backend::InputSnapshot) {}
+
     /// Drains pending events from device sources the backend polls
     /// itself (gamepads), and returns everything queued since the last
     /// call.
