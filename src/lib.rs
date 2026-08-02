@@ -68,6 +68,11 @@ pub mod prelude {
     pub use kooch_core::prelude::*;
     pub use kooch_ecs::{EcsPlugin, Entity, EntityAllocator};
 
+    #[cfg(feature = "input")]
+    pub use kooch_input::{
+        InputBackend, InputPlugin, KeyCode, MouseButton,
+        backend::{GamepadAxis, GamepadButton, GamepadId},
+    };
     #[cfg(feature = "physics")]
     pub use kooch_physics::{Collider, PhysicsPlugin, RigidBody};
     #[cfg(feature = "dynamic")]
@@ -202,6 +207,12 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
 
         #[cfg(feature = "window")]
         let builder = builder.add(kooch_window::WindowPlugin::default());
+
+        // Keyboard, mouse and gamepad. Needs the window: its events are
+        // what feed the keyboard, so a headless app gets nothing from it
+        // and the host in `RemoteHostPlugins` deliberately has neither.
+        #[cfg(all(feature = "window", feature = "input"))]
+        let builder = builder.add(kooch_input::InputPlugin);
 
         #[cfg(feature = "render")]
         let builder = builder

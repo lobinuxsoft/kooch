@@ -13,8 +13,8 @@ use crate::backend::{
 
 /// Test-friendly backend with direct setters for each piece of state.
 ///
-/// Polling drains queued events and clears `just_pressed` /
-/// `just_released` so frame deltas stay sharp.
+/// `poll` drains queued events; `begin_frame` is what expires
+/// `just_pressed` / `just_released`, exactly as in the real backend.
 #[derive(Default)]
 pub struct MockInputBackend {
     pressed_keys: HashSet<KeyCode>,
@@ -106,10 +106,13 @@ impl MockInputBackend {
 }
 
 impl InputBackend for MockInputBackend {
-    fn poll(&mut self) -> Vec<InputEvent> {
+    fn begin_frame(&mut self) {
         self.just_pressed_keys.clear();
         self.just_released_keys.clear();
         self.mouse_delta = Vec2::ZERO;
+    }
+
+    fn poll(&mut self) -> Vec<InputEvent> {
         std::mem::take(&mut self.queued_events)
     }
 
@@ -182,24 +185,37 @@ mod tests {
     }
 
     #[test]
-    fn just_pressed_clears_on_poll() {
+    fn just_pressed_clears_on_the_next_frame() {
         let mut backend = MockInputBackend::new();
         backend.press_key(KeyCode::KeyA);
         assert!(backend.just_pressed(KeyCode::KeyA));
-        backend.poll();
+        backend.begin_frame();
         assert!(!backend.just_pressed(KeyCode::KeyA));
         // Still pressed though.
         assert!(backend.is_pressed(KeyCode::KeyA));
     }
 
     #[test]
-    fn just_released_clears_on_poll() {
+    fn polling_does_not_expire_this_frames_edges() {
+        let mut backend = MockInputBackend::new();
+        backend.press_key(KeyCode::KeyA);
+
+        backend.poll();
+
+        assert!(
+            backend.just_pressed(KeyCode::KeyA),
+            "poll ate the edge, which is the whole reason no game could read a keypress"
+        );
+    }
+
+    #[test]
+    fn just_released_clears_on_the_next_frame() {
         let mut backend = MockInputBackend::new();
         backend.press_key(KeyCode::KeyB);
-        backend.poll();
+        backend.begin_frame();
         backend.release_key(KeyCode::KeyB);
         assert!(backend.just_released(KeyCode::KeyB));
-        backend.poll();
+        backend.begin_frame();
         assert!(!backend.just_released(KeyCode::KeyB));
     }
 
@@ -220,7 +236,7 @@ mod tests {
         backend.move_mouse_to(Vec2::new(10.0, 20.0));
         backend.move_mouse_to(Vec2::new(15.0, 30.0));
         assert_eq!(backend.mouse_delta(), Vec2::new(15.0, 30.0));
-        backend.poll();
+        backend.begin_frame();
         assert_eq!(backend.mouse_delta(), Vec2::ZERO);
         // Position stays.
         assert_eq!(backend.mouse_position(), Vec2::new(15.0, 30.0));
@@ -268,7 +284,7 @@ mod tests {
         let mut backend = MockInputBackend::new();
         backend.press_key(KeyCode::Space);
         assert!(map.just_pressed(TestAction::Jump, &backend));
-        backend.poll();
+        backend.begin_frame();
         assert!(!map.just_pressed(TestAction::Jump, &backend));
         // Still held but no longer "just".
         assert!(map.is_pressed(TestAction::Jump, &backend));
@@ -292,10 +308,7 @@ mod tests {
     #[test]
     fn action_map_axis_value_picks_strongest() {
         let mut map = ActionMap::<TestAction>::new();
-        map.bind(
-            TestAction::MoveForward,
-            InputBinding::Key(KeyCode::KeyW),
-        );
+        map.bind(TestAction::MoveForward, InputBinding::Key(KeyCode::KeyW));
         let id = unsafe { std::mem::zeroed::<GamepadId>() };
         map.bind(
             TestAction::MoveForward,

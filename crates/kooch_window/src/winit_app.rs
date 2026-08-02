@@ -25,7 +25,7 @@ use kooch_core::app::App;
 use kooch_core::event::{AppExit, Events};
 use kooch_core::frame_pacing::{FramePace, FrameRequest, FrameWaker};
 use kooch_core::gpu::GpuContext;
-use kooch_core::raw_event::RawEventHandler;
+use kooch_core::raw_event::RawEventHandlers;
 use kooch_core::time::Time;
 
 use crate::WindowConfig;
@@ -241,10 +241,11 @@ impl ApplicationHandler<WakeUp> for WinitApp {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        // Forward events to registered handler (e.g., egui overlay).
+        // Forward events to registered handlers (e.g., egui overlay,
+        // gameplay input), in order, until one consumes the event.
         if let Some(window) = self.window.clone() {
-            if let Some(handler) = self.app.resources.get_mut::<Box<dyn RawEventHandler>>() {
-                handler.on_event(&*window, &event);
+            if let Some(handlers) = self.app.resources.get_mut::<RawEventHandlers>() {
+                handlers.dispatch(&*window, &event);
             }
         }
 

@@ -60,6 +60,23 @@ impl Resources {
             .and_then(|boxed| boxed.downcast_mut())
     }
 
+    /// Returns the resource of type `T`, inserting `default()` first if
+    /// it is not there yet.
+    ///
+    /// For resources several plugins *contribute to* rather than own —
+    /// a list of handlers, a registry. Whoever asks first creates it and
+    /// the rest add to the same one, with no ordering rule between them.
+    /// The alternative every call site would otherwise write is a
+    /// `contains` check followed by an `insert` and an `unwrap`, which
+    /// is the same thing with a panic in it.
+    pub fn get_or_default<T: Send + Sync + Default + 'static>(&mut self) -> &mut T {
+        self.storage
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| Box::new(T::default()))
+            .downcast_mut()
+            .expect("resource stored under its own TypeId has that type")
+    }
+
     /// Removes and returns the resource of type `T`, if it exists.
     pub fn remove<T: Send + Sync + 'static>(&mut self) -> Option<T> {
         self.storage

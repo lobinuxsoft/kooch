@@ -178,7 +178,7 @@ pollster.workspace = true
 tracing.workspace = true
 
 [features]
-default = ["window", "render", "gizmos", "world"]
+default = ["window", "render", "gizmos", "world", "input"]
 window = ["dep:kooch_window"]
 render = ["dep:kooch_render", "window"]
 gizmos = ["dep:kooch_gizmos", "render"]
