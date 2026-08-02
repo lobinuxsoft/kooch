@@ -115,7 +115,12 @@ pub(crate) enum RotationDisplayMode {
 /// Scoped by `(Entity, component TypeId, field name, display mode)` so
 /// different Quat fields — or the same field under different display
 /// modes — do not collide.
-pub(crate) type EulerCacheKey = (Entity, TypeId, String, RotationDisplayMode);
+pub(crate) type EulerCacheKey = (
+    Entity,
+    kooch_ecs::component::ComponentId,
+    String,
+    RotationDisplayMode,
+);
 
 /// Editor overlay state, stored as a resource.
 ///

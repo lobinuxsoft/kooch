@@ -90,7 +90,10 @@ pub(crate) struct PrefabComponentView {
 /// What the registry knows about a component named in a document.
 #[derive(Clone, Copy)]
 pub(crate) struct ResolvedComponent {
-    pub type_id: std::any::TypeId,
+    /// `None` for a component this binary has no Rust type for — one a
+    /// project's plugin declared. Its fields are still known, from the
+    /// schema that plugin published, so it renders like any other.
+    pub type_id: Option<std::any::TypeId>,
     pub component: ComponentId,
     pub field_metas: Option<&'static [FieldMeta]>,
 }

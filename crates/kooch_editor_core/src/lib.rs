@@ -37,7 +37,7 @@ mod project_state;
 pub(crate) mod queries;
 pub(crate) mod remote_input;
 pub mod remote_mirror;
-mod remote_session;
+pub mod remote_session;
 pub(crate) mod state;
 pub(crate) mod style;
 pub(crate) mod systems;

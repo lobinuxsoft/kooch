@@ -201,7 +201,12 @@ fn draw_component_section(
         })
         .body(|ui| {
             let Some(resolved) = component.resolved else {
-                ui.weak("(this build has no type for this component)");
+                // Genuinely unknown now: not in the reflected registry
+                // and not declared by any loaded plugin. Naming the type
+                // rather than saying "no type", because the useful next
+                // question is *which* one — a scene written by a build
+                // with a feature this one lacks, or a renamed crate.
+                ui.weak(format!("Unknown component: {}", component.type_name));
                 return;
             };
 

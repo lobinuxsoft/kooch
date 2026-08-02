@@ -91,6 +91,11 @@ fn gather_prefab(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
 
     let registry = resources.get::<kooch_ecs::component::ComponentRegistry>();
     let names = resources.get::<kooch_ecs::component::ComponentNames>();
+    // The third place a component type can be known from: declared by a
+    // project's plugin rather than compiled into the editor. Asking only
+    // the reflected registry is what left a project's own component with
+    // no fields to edit (#722).
+    let dynamic = resources.get::<kooch_ecs::component::DynamicTypeRegistry>();
 
     let entities = document
         .entities
@@ -106,7 +111,12 @@ fn gather_prefab(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
                 .components
                 .iter()
                 .any(|c| short_name(&c.type_name) == "Parent"),
-            components: sorted_visible(entity, registry.as_deref(), names.as_deref()),
+            components: sorted_visible(
+                entity,
+                registry.as_deref(),
+                names.as_deref(),
+                dynamic.as_deref(),
+            ),
         })
         .collect();
 
@@ -123,6 +133,7 @@ fn sorted_visible(
     entity: &kooch_ecs::scene::EntityDescription,
     registry: Option<&kooch_ecs::component::ComponentRegistry>,
     names: Option<&kooch_ecs::component::ComponentNames>,
+    dynamic: Option<&kooch_ecs::component::DynamicTypeRegistry>,
 ) -> Vec<PrefabComponentView> {
     let mut components: Vec<PrefabComponentView> = entity
         .components
@@ -139,7 +150,7 @@ fn sorted_visible(
                     return None;
                 }
                 Some(ResolvedComponent {
-                    type_id,
+                    type_id: Some(type_id),
                     component: names
                         .and_then(|n| n.id(&component.type_name))
                         .unwrap_or(kooch_ecs::component::ComponentId::INVALID),
@@ -155,6 +166,26 @@ fn sorted_visible(
             if known && resolved.is_none() {
                 return None;
             }
+
+            // Not in the reflected registry, but a project's plugin
+            // declared it. Its fields are known and its values are right
+            // here in the document, so it renders like any other — which
+            // is what `DynamicTypeRegistry`'s own docs already promise.
+            //
+            // No `TypeId`: this binary has no Rust type for it. Nothing
+            // below needs one except the world-space rotation toggle,
+            // which only ever applies to the engine's own `Transform`.
+            let resolved = resolved.or_else(|| {
+                dynamic
+                    .filter(|registry| registry.get(&component.type_name).is_some())
+                    .map(|_| ResolvedComponent {
+                        type_id: None,
+                        component: names
+                            .and_then(|n| n.id(&component.type_name))
+                            .unwrap_or(kooch_ecs::component::ComponentId::INVALID),
+                        field_metas: None,
+                    })
+            });
             Some(PrefabComponentView {
                 short_name: short_name(&component.type_name).to_owned(),
                 type_name: component.type_name.clone(),
