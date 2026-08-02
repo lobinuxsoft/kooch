@@ -16,6 +16,16 @@ pub(super) fn folder_menu(
     rename: &mut Option<RenameState>,
     pending: &mut Option<PendingCreate>,
 ) {
+    // Offered on folders too, and on read-only ones: opening the crate
+    // that owns a folder is how you get at the code behind it, which is
+    // the whole point of the entry. The handler resolves the workspace,
+    // so this works the same on a project folder and an engine one.
+    if ui.button("Open in IDE").clicked() {
+        actions.push(EditorAction::OpenInIde {
+            file: node.path.clone(),
+        });
+        ui.close();
+    }
     if !writable {
         if ui.button("Reveal in file manager").clicked() {
             actions.push(EditorAction::RevealInFileManager {
@@ -96,7 +106,7 @@ pub(super) fn leaf_menu(
     ui: &mut egui::Ui,
     leaf: &FileLeaf,
     writable: bool,
-    root: &Path,
+    _root: &Path,
     actions: &mut Vec<EditorAction>,
     rename: &mut Option<RenameState>,
 ) {
@@ -129,7 +139,6 @@ pub(super) fn leaf_menu(
     }
     if ui.button("Open in IDE").clicked() {
         actions.push(EditorAction::OpenInIde {
-            root: root.to_path_buf(),
             file: leaf.path.clone(),
         });
         ui.close();

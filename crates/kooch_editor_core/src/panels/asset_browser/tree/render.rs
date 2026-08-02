@@ -163,7 +163,6 @@ pub(super) fn render_leaf(
     }
     if resp.double_clicked() {
         ctx.actions.push(EditorAction::OpenInIde {
-            root: root.to_path_buf(),
             file: leaf.path.clone(),
         });
     }

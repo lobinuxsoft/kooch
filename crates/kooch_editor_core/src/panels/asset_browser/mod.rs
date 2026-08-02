@@ -103,7 +103,7 @@ pub(crate) fn draw_asset_browser_content(
     let mut pending: Option<PendingCreate> = ui.ctx().data(|d| d.get_temp(pending_id));
 
     if focused {
-        handle_keyboard(ui, nav, actions, project_root);
+        handle_keyboard(ui, nav, actions);
     }
 
     egui::ScrollArea::vertical()
@@ -230,12 +230,7 @@ fn entries_under<'a>(catalog: &'a [AssetCatalogEntry], root: &Path) -> Vec<&'a A
 /// Reads the rows the renderer recorded last frame — see `tree::nav` for
 /// why the list comes from there rather than from a second walk. Only
 /// reached when this panel has focus (#661).
-fn handle_keyboard(
-    ui: &egui::Ui,
-    nav: &mut tree::AssetNav,
-    actions: &mut Vec<EditorAction>,
-    project_root: Option<&Path>,
-) {
+fn handle_keyboard(ui: &egui::Ui, nav: &mut tree::AssetNav, actions: &mut Vec<EditorAction>) {
     // Cleared every frame: a scroll request is for the frame after the key,
     // and leaving it set would fight the scrollbar for as long as the
     // cursor existed.
@@ -283,13 +278,14 @@ fn handle_keyboard(
     // send it to the Inspector. Both of those now happen the moment the
     // cursor moves, so all that is left is the one thing Enter does that
     // moving a cursor does not: open the file, same as a double-click.
+    // No longer conditional on a project root being known: the handler
+    // resolves the workspace, and a file under the engine tree is worth
+    // opening too.
     if enter
         && let Some(row) = nav.current()
         && !row.is_folder
-        && let Some(root) = project_root
     {
         actions.push(EditorAction::OpenInIde {
-            root: root.to_path_buf(),
             file: row.path.clone(),
         });
     }
