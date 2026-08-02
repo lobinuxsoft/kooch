@@ -230,12 +230,7 @@ fn entries_under<'a>(catalog: &'a [AssetCatalogEntry], root: &Path) -> Vec<&'a A
 /// Reads the rows the renderer recorded last frame — see `tree::nav` for
 /// why the list comes from there rather than from a second walk. Only
 /// reached when this panel has focus (#661).
-fn handle_keyboard(
-    ui: &egui::Ui,
-    nav: &mut tree::AssetNav,
-    actions: &mut Vec<EditorAction>,
-    project_root: Option<&Path>,
-) {
+fn handle_keyboard(ui: &egui::Ui, nav: &mut tree::AssetNav, actions: &mut Vec<EditorAction>) {
     // Cleared every frame: a scroll request is for the frame after the key,
     // and leaving it set would fight the scrollbar for as long as the
     // cursor existed.
