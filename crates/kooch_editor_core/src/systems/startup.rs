@@ -109,8 +109,11 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });
     let power_profile: PowerProfile = power::detect();
     resources.insert(overlay);
-    // First in the list on purpose: a key typed into a focused text
-    // field belongs to egui, and gameplay input must not also see it.
+    // Today the only handler: the editor builds its own plugin set in
+    // `bootstrap.rs` and `InputPlugin` is not in it. It still registers
+    // first on purpose, because the moment the editor grows an input
+    // backend of its own (#58's panel needs one, #710 feeds it) a key
+    // typed into a focused text field must reach egui and stop there.
     resources
         .get_or_default::<kooch_core::raw_event::RawEventHandlers>()
         .push(handler);
