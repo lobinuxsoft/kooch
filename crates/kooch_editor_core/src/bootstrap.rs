@@ -46,6 +46,11 @@ pub fn run_editor_with<P: Plugin + 'static>(project: P) {
     app.add_plugin(AssetPlugin::new().with_root(engine_root().join("assets")));
     app.add_plugin(WorldStreamingPlugin);
     app.add_plugin(EditorPlugin);
+    // After EditorPlugin on purpose: both register a raw-event handler in
+    // Startup, and the first one registered gets first refusal on a
+    // keystroke. egui has to be able to keep what a focused text field
+    // typed, or naming an entity would also drive the player (#710).
+    app.add_plugin(kooch_input::InputPlugin);
     app.add_plugin(project);
     app.add_system(Stage::Startup, set_engine_root);
     app.run();

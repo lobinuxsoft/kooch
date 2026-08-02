@@ -33,7 +33,7 @@ authors = ["lobinuxsoft"]
 # GPU
 wgpu = "29"
 # Windowing
-winit = "0.30"
+winit = { version = "0.30", features = ["serde"] }
 # Math
 glam = { version = "0.33", features = ["bytemuck", "serde"] }
 # Utils
@@ -48,7 +48,7 @@ raw-window-handle = "0.6"
 # Audio
 kira = "0.9"
 # Input
-gilrs = "0.11"
+gilrs = { version = "0.11", features = ["serde-serialize"] }
 # Scripting — `sync` feature makes Engine + AST + Dynamic Send + Sync,
 # required so ScriptingBackend impls can live in the engine's Resource set
 # Editor UI

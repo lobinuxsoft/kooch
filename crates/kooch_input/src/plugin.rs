@@ -102,18 +102,24 @@ impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         let pending = PendingWindowEvents::default();
 
-        let collector: Box<dyn RawEventHandler> = Box::new(WinitEventCollector {
-            pending: pending.clone(),
-        });
-        app.resources_mut()
-            .get_or_default::<RawEventHandlers>()
-            .push(collector);
-
         let backend: Box<dyn InputBackend> = Box::new(WinitGilrsBackend::new());
-        app.insert_resource(pending)
+        app.insert_resource(pending.clone())
             .insert_resource(backend)
             .add_event::<InputEvent>()
             .add_system(Stage::Input, pump_input);
+
+        // Registered from a Startup system rather than here, so the order
+        // is the order plugins were added rather than the order they were
+        // built. That is what lets an editor's egui overlay register
+        // first and keep a keystroke aimed at a focused text field.
+        app.add_system(Stage::Startup, move |resources: &mut Resources| {
+            let collector: Box<dyn RawEventHandler> = Box::new(WinitEventCollector {
+                pending: pending.clone(),
+            });
+            resources
+                .get_or_default::<RawEventHandlers>()
+                .push(collector);
+        });
     }
 
     fn name(&self) -> &str {

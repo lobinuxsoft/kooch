@@ -190,6 +190,11 @@ impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
         #[cfg(all(feature = "physics", feature = "remote"))]
         let builder = builder.add(PhysicsRemotePlugin);
 
+        // Input the editor captured on our behalf. Without it a headless
+        // host is a process no key can reach (#710).
+        #[cfg(all(feature = "input", feature = "remote"))]
+        let builder = builder.add(InputRemotePlugin);
+
         builder.add(SceneBootstrapPlugin::default())
     }
 }
@@ -307,6 +312,72 @@ impl kooch_core::plugin::Plugin for PhysicsRemotePlugin {
 
     fn name(&self) -> &str {
         "PhysicsRemotePlugin"
+    }
+}
+
+/// Lets the editor hand this host the input it captured.
+///
+/// # Why the host cannot read input itself
+///
+/// `RemoteHostPlugins` has no window, on purpose: the editor draws this
+/// world in its own viewport. But keyboard and mouse arrive as window
+/// events, so a headless host is a process no key can reach. Pressing
+/// Play in the editor and then a key did nothing at all (#710).
+///
+/// So the editor captures from its window and posts snapshots here, and
+/// `RemoteInputBackend` turns them back into the same
+/// `Box<dyn InputBackend>` a shipped game reads. Project code is
+/// identical either way; only who fills the buffer differs.
+///
+/// # Why this lives in the facade
+///
+/// Same reason as [`PhysicsRemotePlugin`]: `kooch_remote` knows about
+/// entities and deliberately not about input, and `kooch_input` knows
+/// about devices and deliberately not about the protocol. They meet
+/// here, in the crate that already depends on both.
+#[cfg(all(feature = "input", feature = "remote"))]
+pub struct InputRemotePlugin;
+
+#[cfg(all(feature = "input", feature = "remote"))]
+impl kooch_core::plugin::Plugin for InputRemotePlugin {
+    fn build(&self, app: &mut kooch_core::app::App) {
+        let backend: Box<dyn kooch_input::InputBackend> =
+            Box::new(kooch_input::RemoteInputBackend::new());
+        app.insert_resource(backend);
+        app.add_system(
+            kooch_core::stage::Stage::Startup,
+            |resources: &mut kooch_core::resource::Resources| {
+                if !resources.contains::<kooch_remote::extensions::RemoteExtensions>() {
+                    resources.insert(kooch_remote::extensions::RemoteExtensions::default());
+                }
+                let Some(extensions) =
+                    resources.get_mut::<kooch_remote::extensions::RemoteExtensions>()
+                else {
+                    return;
+                };
+                extensions.register(
+                    "input.state",
+                    Box::new(|resources, payload| {
+                        let snapshot: kooch_input::InputSnapshot =
+                            kooch_remote::serde_json::from_value(payload.clone())
+                                .map_err(|e| format!("malformed input snapshot: {e}"))?;
+                        let backend = resources
+                            .get_mut::<Box<dyn kooch_input::InputBackend>>()
+                            .ok_or_else(|| "this host has no input backend".to_owned())?;
+                        // Through the trait rather than a downcast: a
+                        // backend reading real devices takes the default
+                        // and ignores it, so this is safe to call on
+                        // whichever one the host happens to hold.
+                        backend.apply_snapshot(&snapshot);
+                        Ok(kooch_remote::serde_json::Value::Null)
+                    }),
+                );
+            },
+        );
+    }
+
+    fn name(&self) -> &str {
+        "InputRemotePlugin"
     }
 }
 

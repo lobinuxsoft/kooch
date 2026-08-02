@@ -35,8 +35,9 @@ pub mod project_log;
 pub mod project_plugin;
 mod project_state;
 pub(crate) mod queries;
+pub(crate) mod remote_input;
 pub mod remote_mirror;
-pub mod remote_session;
+mod remote_session;
 pub(crate) mod state;
 pub(crate) mod style;
 pub(crate) mod systems;
@@ -145,6 +146,9 @@ impl Plugin for EditorPlugin {
         // world into the local mirror. PreUpdate so the panels and the
         // viewport see a snapshot that is at most one frame stale.
         app.add_system(Stage::PreUpdate, systems::remote_sync_system);
+        // After the pull, so a snapshot describes the frame the editor is
+        // about to draw rather than the one it just finished.
+        app.add_system(Stage::PreUpdate, remote_input::send_input_to_host);
         // Register the EditorOnly marker as ephemeral *before* the camera
         // is spawned, so the entity is filtered from any save that races
         // the spawn (e.g. play-mode snapshot triggered immediately).
