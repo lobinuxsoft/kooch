@@ -21,7 +21,7 @@ pub(crate) fn draw_menu_bar(
     undo_desc: Option<&str>,
     redo_desc: Option<&str>,
     power_profile: PowerProfile,
-    ide_command: Option<&str>,
+    _ide_command: Option<&str>,
 ) {
     // Keyboard shortcuts — check before any UI so they work regardless of focus.
     let ctrl_z = ui

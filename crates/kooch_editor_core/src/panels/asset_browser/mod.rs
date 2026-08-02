@@ -103,7 +103,7 @@ pub(crate) fn draw_asset_browser_content(
     let mut pending: Option<PendingCreate> = ui.ctx().data(|d| d.get_temp(pending_id));
 
     if focused {
-        handle_keyboard(ui, nav, actions, project_root);
+        handle_keyboard(ui, nav, actions);
     }
 
     egui::ScrollArea::vertical()
@@ -283,10 +283,12 @@ fn handle_keyboard(
     // send it to the Inspector. Both of those now happen the moment the
     // cursor moves, so all that is left is the one thing Enter does that
     // moving a cursor does not: open the file, same as a double-click.
+    // No longer conditional on a project root being known: the handler
+    // resolves the workspace, and a file under the engine tree is worth
+    // opening too.
     if enter
         && let Some(row) = nav.current()
         && !row.is_folder
-        && let Some(root) = project_root
     {
         actions.push(EditorAction::OpenInIde {
             file: row.path.clone(),

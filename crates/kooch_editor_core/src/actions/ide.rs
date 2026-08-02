@@ -33,8 +33,17 @@ pub(crate) struct IdeCommand {
 impl IdeCommand {
     /// Parses a whitespace-separated command, e.g.
     /// `flatpak run com.vscodium.codium`.
+    ///
+    /// Quotes are stripped from every token. A `.desktop` file may quote
+    /// its `Exec`, and someone configuring this by hand copies the path
+    /// from exactly there — quotes included. Keeping them means asking
+    /// the OS for a program whose name begins with `\"`, which fails with
+    /// nothing to suggest why.
     pub(crate) fn parse(command: &str) -> Option<Self> {
-        let mut parts = command.split_whitespace();
+        let mut parts = command
+            .split_whitespace()
+            .map(|part| part.trim_matches(['"', '\'']))
+            .filter(|part| !part.is_empty());
         let program = parts.next()?.to_owned();
         Some(Self {
             program,
@@ -254,6 +263,17 @@ Exec=/home/linuxbrew/.linuxbrew/bin/codium --new-window %F
         assert_eq!(
             command.program, "/home/me/.local/share/antigravity/antigravity-ide",
             "the quotes must go, or the OS looks for a program called '\"/home/…'"
+        );
+    }
+
+    /// What someone does when they copy the path out of a `.desktop`.
+    #[test]
+    fn a_hand_typed_quoted_path_is_still_runnable() {
+        let command =
+            IdeCommand::parse("\"/home/me/.local/share/antigravity/antigravity-ide\"").unwrap();
+        assert_eq!(
+            command.program, "/home/me/.local/share/antigravity/antigravity-ide",
+            "quotes typed into Settings must not reach the OS"
         );
     }
 

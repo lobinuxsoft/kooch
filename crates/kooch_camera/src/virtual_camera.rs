@@ -10,7 +10,7 @@
 use glam::Vec3;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
-use kooch_ecs::reflect::{EntityRef, FieldChoice, FieldCondition};
+use kooch_ecs::reflect::{FieldChoice, FieldCondition};
 
 /// No follow logic; the pose is whatever else wrote it.
 pub const FOLLOW_NONE: u32 = 0;

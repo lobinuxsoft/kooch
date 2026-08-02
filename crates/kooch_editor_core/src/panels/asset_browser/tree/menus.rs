@@ -106,7 +106,7 @@ pub(super) fn leaf_menu(
     ui: &mut egui::Ui,
     leaf: &FileLeaf,
     writable: bool,
-    root: &Path,
+    _root: &Path,
     actions: &mut Vec<EditorAction>,
     rename: &mut Option<RenameState>,
 ) {

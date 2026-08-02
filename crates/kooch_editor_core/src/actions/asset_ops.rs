@@ -236,7 +236,9 @@ fn spawn_ide(ide: &super::ide::IdeCommand, root: &Path, file: &Path) -> bool {
     match command.spawn() {
         Ok(_) => true,
         Err(error) => {
-            tracing::debug!(ide = program, %error, "IDE did not launch");
+            // Warn, not debug: this is the line that explains an "IDE
+            // could not be launched", and at debug nobody ever saw it.
+            tracing::warn!(ide = %program, %error, "IDE did not launch");
             false
         }
     }
