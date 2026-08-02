@@ -208,18 +208,6 @@ pub struct VirtualCamera {
     /// same code — where a reference needs a second mechanism for the
     /// second case, as Cinemachine and phantom-camera both do.
     pub group: u32,
-    /// What this used to follow, kept so old scenes still load.
-    ///
-    /// `adopt_legacy_targets` tags whatever it names and clears it on the
-    /// first frame, so in practice an author sees it empty. Nothing reads
-    /// it while running; tag the subject with
-    /// [`CameraTarget`](crate::CameraTarget) instead.
-    ///
-    /// **Not `#[reflect(skip)]`**, which was the first attempt: skipping
-    /// the field means the scene never deserialises it, so the migration
-    /// has nothing to migrate. A deprecated field has to keep arriving
-    /// for exactly as long as something still has to read it.
-    pub target: Option<EntityRef>,
     /// Added to the target's position in `Simple`.
     #[reflect(shown_when = OFFSET_WHEN)]
     pub offset: Vec3,
@@ -322,7 +310,6 @@ impl Default for VirtualCamera {
             enabled: true,
             follow: FOLLOW_THIRD_PERSON,
             group: 0,
-            target: None,
             offset: Vec3::new(0.0, 2.0, 6.0),
             distance: 6.0,
             yaw: 0.0,
@@ -345,11 +332,15 @@ impl Default for VirtualCamera {
 impl Component for VirtualCamera {}
 
 impl VirtualCamera {
-    /// Whether this vcam has anything to do.
+    /// Whether this vcam has anything to do, as far as it can tell alone.
+    ///
+    /// It cannot tell whether anything carries its
+    /// [`CameraTarget`](crate::CameraTarget) group — that is a query over
+    /// the world, and the answer changes as entities spawn and despawn.
+    /// A vcam whose group is empty is skipped where the pose is planned,
+    /// not here.
     pub fn is_inert(&self) -> bool {
-        !self.enabled
-            || self.target.is_none()
-            || (self.follow == FOLLOW_NONE && self.look_at == LOOK_AT_NONE)
+        !self.enabled || (self.follow == FOLLOW_NONE && self.look_at == LOOK_AT_NONE)
     }
 
     /// The pose this vcam wants, given where its target is.
@@ -538,46 +529,52 @@ mod tests {
     fn vcam(follow: u32) -> VirtualCamera {
         VirtualCamera {
             follow,
-            target: Some(EntityRef::Live(kooch_ecs::entity::Entity::new(0, 0))),
             damping: false,
             ..Default::default()
         }
     }
 
+    /// A vcam cannot know whether anything carries its group — that is a
+    /// query over the world. So "nothing to follow" is enforced where the
+    /// pose is planned, and `plugin::nothing_tagged_means_nothing_to_follow`
+    /// is the test that guarantees it.
+    ///
+    /// What `is_inert` still answers is the part a vcam knows alone.
     #[test]
-    fn a_rig_without_a_target_is_inert() {
+    fn a_rig_with_both_modes_off_is_inert() {
         let mut r = VirtualCamera {
-            follow: FOLLOW_SIMPLE,
+            follow: FOLLOW_NONE,
+            look_at: LOOK_AT_NONE,
             ..Default::default()
         };
-        assert!(r.is_inert(), "no target means nothing to follow");
-        r.target = Some(EntityRef::Live(kooch_ecs::entity::Entity::new(0, 0)));
+        assert!(
+            r.is_inert(),
+            "neither following nor looking is nothing to do"
+        );
+        r.follow = FOLLOW_SIMPLE;
         assert!(!r.is_inert());
     }
 
-    /// The default has working modes now, so the *only* thing keeping a
-    /// freshly spawned vcam from moving a camera is the empty target.
-    /// This is the assertion that guarantee rests on.
+    /// The default must be usable the moment something is tagged — no
+    /// third step. If this ever needs one, the menu entry is lying.
     #[test]
-    fn the_default_does_nothing_until_it_has_a_target() {
+    fn the_default_is_ready_to_work_the_moment_something_is_tagged() {
         let fresh = VirtualCamera::default();
         assert!(
-            fresh.is_inert(),
-            "a vcam with no target must not move anything"
+            !fresh.is_inert(),
+            "a default vcam should be waiting for a subject, not switched off"
         );
-        assert_ne!(
-            fresh.follow, FOLLOW_NONE,
-            "the default should be usable the moment a target is picked",
-        );
+        assert_ne!(fresh.follow, FOLLOW_NONE);
         assert_ne!(fresh.look_at, LOOK_AT_NONE);
+        assert_eq!(
+            fresh.group, 0,
+            "the default group is what a first tag lands in"
+        );
     }
 
-    /// Spawning a Virtual Camera and picking a target should be all it
-    /// takes. If this ever needs a third step, the menu entry is lying.
     #[test]
-    fn picking_a_target_is_enough_to_make_the_default_work() {
-        let mut v = VirtualCamera::default();
-        v.target = Some(EntityRef::Live(kooch_ecs::entity::Entity::new(0, 0)));
+    fn the_default_frames_a_subject_correctly() {
+        let v = VirtualCamera::default();
         assert!(!v.is_inert());
 
         let target = Vec3::new(0.0, 0.0, -20.0);
