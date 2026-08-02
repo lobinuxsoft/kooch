@@ -1547,3 +1547,57 @@ del *engine* lo visible de un archivo cuya propiedad interesante es su formato.
 Migración: 10 archivos renombrados en 4 proyectos, más el `main_scene` de 3 `project.kooch`
 — ese puntero es lo que habría roto el arranque en silencio. Sin fallback de lectura:
 no quedó nada con la extensión vieja.
+
+## Migration is the cost of breaking, not of growing (2026-08-02)
+
+Adding a field or a component needs no migration: an old scene lacks it and takes the default.
+Only **changing the meaning of something already on disk** does — and paying for it is only
+worth it when someone else holds data you cannot reach.
+
+The engine is private and one project exists. So the policy is **break and fix the data by
+hand**. A migration written for the camera's deprecated `target` was deleted the same day: it
+existed to convert exactly one scene, and the deprecated field it required showed up in the
+Inspector and confused the person it was meant to serve.
+
+⚠️ **This is only safe while the loader is loud.** A scene naming a type the build does not
+know is currently skipped in silence (#719), which turns "break and fix" into "break and find
+out three days later". That issue is the precondition for this policy, not a nicety.
+
+Two traps found paying for it:
+- `#[reflect(skip)]` on a deprecated field stops the scene deserialising it, so the migration
+  has nothing to migrate. **A deprecated field has to keep arriving for as long as something
+  still reads it.**
+- A substring replace of `mod remote_session;` also matched inside `pub mod remote_session;`
+  and ate the `pub`. Its integration test did not compile for a whole merge, because
+  `cargo test --lib` does not build `tests/`.
+
+## A tag beats a reference when the question is "which one" (2026-08-02)
+
+A camera named its subject with an `EntityRef`, and that reference pointed at an identity
+nothing persists. It is now a `CameraTarget` tag on the subject.
+
+The argument that settles it is not the bug: **several entities carrying the tag *are* a
+group**. Framing one subject and framing four become one code path, where a reference needs a
+second mechanism — Cinemachine ships a `TargetGroup` object for exactly this.
+
+A query cannot dangle. Nothing to persist, no load order, no remapping, and a subject that
+respawns takes the tag with it. The shape generalises: **what in OOP is a reference is often a
+component here**, the same way an event is often a marker component.
+
+References still have their place — "this trigger opens *that* door" is not a tag — and #712
+tracks making them work.
+
+## Complete code with no reachable call site (2026-08-02)
+
+Seven cases in one day: the input crate had no caller anywhere, `feed_window_event` carried a
+doc comment naming a caller that did not exist, the standalone Play path is unreachable because
+remote mode intercepts the button, the prefab inspector never asked the registry a project's
+components live in, and three in the IDE launcher.
+
+**None of them fails a build.** A `pub` function nobody calls is not even a warning. Every one
+was found by *using* the editor, which is what #669 exists to do.
+
+The most expensive variant is not disconnected code but code that **fails towards something
+plausible**: `xdg-open` opened the file, so a missing workspace looked like success and went
+unreported for as long as the feature existed. An error that degrades into something believable
+never produces the report that would fix it.

@@ -6,7 +6,7 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
-Last updated 2026-07-29, `development` at `55338d7`.
+Last updated 2026-08-02, `development` at `a85b777`.
 
 ---
 
@@ -14,6 +14,12 @@ Last updated 2026-07-29, `development` at `55338d7`.
 
 | | |
 |---|---|
+| **#711** | **`kooch_input` was connected to nothing.** No backend was ever constructed and `WindowEvent::KeyboardInput` only asked for a redraw. `just_pressed` was permanently false, and four green tests were pinning that |
+| **#713** | **A game can be played inside the editor.** The editor captures input and sends snapshots to the headless host over the protocol. Identifiers became this engine's own — `gilrs::GamepadId` has no public constructor, which is what blocked it |
+| **#718** | A camera follows a **`CameraTarget` tag**, not an entity reference. Several tagged entities *are* a group, so following one and framing four are one code path |
+| **#723** | A project's component had no fields in the prefab inspector — three sources answer "what fields does this type have" and that panel asked the only one it was not in |
+| **#724** | "Open in IDE" opens the project root, in the IDE this machine has. Four bugs, each exposed by the previous fix |
+| **#669 phase 0** | **Done.** A ball rolls under WASD and a stick, camera-relative; a raycast gates the jump; a virtual camera follows. Verdict in the issue |
 | **#605** | The custom ECS stays. `bevy_ecs` evaluated on measurements and declined |
 | **#607** | Stable entity references — a component can point at an entity and survive a save |
 | **#609** | More than one scene loaded at once |
@@ -193,6 +199,42 @@ places a light and sees no change is the first bug #669 will find.
 scene that needs it: a hosting project currently does **0.17 ms** of work per frame, so there
 is nothing to parallelise. #669's terrain phase produces that scene.
 
+### #669 phase 0 is done, and what it found
+
+A ball that rolls, a jump gated on a downward ray, and a virtual camera following it — built in
+a project, against the public API only. **#671 phase 1 was proven for the first time**: the rig
+had been written since 31 July and had never been seen to move a camera.
+
+The finding that matters is not any single bug. It is that **neither Play showed a working
+game, and each failed differently**: remote Play could not receive a key (#710, now closed by
+#713), and the direct game lost the camera's target on load (#712). As the engine's authors,
+both halves had green tests. Only using it from outside put them in the same room.
+
+Seven separate cases turned up of **complete code with no reachable call site** — the input
+crate, `feed_window_event`, the standalone Play path (#720), the dynamic type registry the
+prefab inspector never asked, and three in the IDE launcher. **None of them fails a build.**
+That is the argument for this epic, and it is no longer a hypothesis.
+
+### Next — the action becomes data, and the player becomes parts
+
+**#55 — input actions as data.** `ActionMap<A>` is generic over a Rust *type*, which cannot be
+serialised, inspected or edited — so the editor can never author a binding. And
+`InputBinding::GamepadButton(GamepadId, …)` stores a runtime device id, so a gamepad binding
+cannot be written without the gamepad plugged in. This is the model **#58**'s binding panel
+draws, so it goes first.
+
+**Alongside it, in the game: decompose `PlayerController`.** Four fields that are three
+capabilities, together only because all three happened to belong to the player. It becomes a
+`Player` tag, `GroundMovement` and `Jump` for how *this* body behaves, and an **intent**
+written by whoever is driving.
+
+Separating the intent from the input is what makes the systems reusable: a system that reads
+keys serves only the player, while one that reads an intent serves an AI writing the same
+thing. It is also what lets #55 land without touching gameplay.
+
+> Working mode from 2026-08-02: **the engine's author writes this code.** Guidance, review and
+> diagnosis rather than patches.
+
 ### Then, the features that were next before this
 
 **#562** (scene queries), **#567** (PD/PID controllers), **#639** (split `RigidBody` into
@@ -245,6 +287,41 @@ not grow one mid-session — placing it means positioning relative to whatever t
 became. Worth its own issue if it ever hurts.
 
 ---
+
+
+## Animation — decided, not started
+
+Three layers people routinely merge, and merging them is how one cannot change without breaking
+the others:
+
+| Layer | Issue |
+|---|---|
+| Deformation — bones to vertices, on the GPU | **#453** |
+| Pose source — clips, sampling, blending | **#92** |
+| Control — which pose plays and how it mixes | **#717** |
+
+**#717 is the one that governs.** One Playables-style graph under skeletal animation, scene
+animation and a timeline, where **a timeline is a node** and so is a state machine, so they nest
+in each other. Unity does not get this far: Timeline and Animator are both Playables but
+nesting one in the other shows the seam. Here nodes are flat arrays with `u32` indices, so
+nesting is writing a number — and **the authored asset is just the arrays' initial state**,
+which means authoring and runtime composition are the same operation.
+
+**#715 — scene animation.** Any reflected field on any entity: *if you can see it in the
+Inspector, you can animate it*. Three kinds of track, and the middle one is the interesting
+one — **whether a component is present is sampled state, not a fired event**, so scrubbing
+backwards undoes it. Unity cannot do that, because adding a component there runs `Awake`.
+
+**#716 — target identity by hashed name path**, shared by both. Stable across reloads and
+re-instantiation precisely because it derives from nothing assigned at runtime.
+
+**#92 — adopt, do not write.** `ozz-animation-rs` is a deterministic Rust rewrite of ozz, data
+-oriented, engine-agnostic. It brings sampling, blending and the skeleton; the graph is ours.
+
+**Motion matching is a later feature, gated on data rather than effort.** Published work uses
+4.6 h (LAFAN) to 44 h (100STYLE) of capture. With a handful of clips it produces a *worse*
+result than a blend tree, and the failure mode is concluding the technique is bad when the
+dataset was. Public corpora are frequently non-commercial — check before building on one.
 
 ## Larger, not yet started
 
