@@ -13,3 +13,7 @@ winit.workspace = true
 gilrs.workspace = true
 glam.workspace = true
 tracing.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

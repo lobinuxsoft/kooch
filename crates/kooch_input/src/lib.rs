@@ -31,6 +31,7 @@
 
 pub mod action_map;
 pub mod backend;
+pub mod ids;
 pub mod mock_backend;
 pub mod plugin;
 pub mod winit_gilrs_backend;

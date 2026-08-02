@@ -17,9 +17,7 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use crate::backend::{
-    GamepadAxis, GamepadButton, GamepadId, InputBackend, KeyCode, MouseButton,
-};
+use crate::backend::{GamepadAxis, GamepadButton, GamepadId, InputBackend, KeyCode, MouseButton};
 
 /// Trait marker for action types. Any `Copy + Eq + Hash + Send + Sync +
 /// 'static` enum qualifies — blanket impl below.
@@ -77,10 +75,7 @@ impl<A: Action> ActionMap<A> {
 
     /// Returns the bindings for `action`, or `&[]` if none.
     pub fn bindings_for(&self, action: A) -> &[InputBinding] {
-        self.bindings
-            .get(&action)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
+        self.bindings.get(&action).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// `true` when ANY binding for `action` is currently active.

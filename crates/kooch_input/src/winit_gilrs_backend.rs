@@ -8,10 +8,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use gilrs::Gilrs;
-use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::keyboard::PhysicalKey;
 
-use crate::backend::{GamepadAxis, GamepadButton, GamepadId, InputBackend, InputEvent};
+use crate::backend::{
+    GamepadAxis, GamepadButton, GamepadId, InputBackend, InputEvent, KeyCode, MouseButton,
+};
 
 /// Winit + gilrs powered backend. Stores per-frame state, accumulates
 /// events in [`feed_window_event`](InputBackend::feed_window_event) and
@@ -88,9 +90,15 @@ impl WinitGilrsBackend {
                 if *repeat {
                     return; // ignore key repeats — we track press/release transitions
                 }
-                let PhysicalKey::Code(key) = physical_key else {
+                let PhysicalKey::Code(code) = physical_key else {
                     return;
                 };
+                // A key this engine has no name for is a key no binding
+                // can mention, so tracking it would only grow the set.
+                let Some(key) = KeyCode::from_upstream(*code) else {
+                    return;
+                };
+                let key = &key;
                 match state {
                     ElementState::Pressed => {
                         if self.pressed_keys.insert(*key) {
@@ -106,18 +114,23 @@ impl WinitGilrsBackend {
                     }
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } => match state {
-                ElementState::Pressed => {
-                    if self.pressed_mouse.insert(*button) {
-                        self.queued_events.push(InputEvent::MousePressed(*button));
+            WindowEvent::MouseInput { state, button, .. } => {
+                let Some(button) = MouseButton::from_upstream(*button) else {
+                    return;
+                };
+                match state {
+                    ElementState::Pressed => {
+                        if self.pressed_mouse.insert(button) {
+                            self.queued_events.push(InputEvent::MousePressed(button));
+                        }
+                    }
+                    ElementState::Released => {
+                        if self.pressed_mouse.remove(&button) {
+                            self.queued_events.push(InputEvent::MouseReleased(button));
+                        }
                     }
                 }
-                ElementState::Released => {
-                    if self.pressed_mouse.remove(button) {
-                        self.queued_events.push(InputEvent::MouseReleased(*button));
-                    }
-                }
-            },
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 let new_pos = Vec2::new(position.x as f32, position.y as f32);
                 let delta = new_pos - self.mouse_position;
@@ -138,6 +151,7 @@ impl WinitGilrsBackend {
         };
         let mut gilrs = gilrs.lock().expect("gilrs mutex poisoned");
         while let Some(gilrs::Event { id, event, .. }) = gilrs.next_event() {
+            let id = GamepadId::from(id);
             match event {
                 gilrs::EventType::Connected => {
                     self.gamepads.entry(id).or_default();
@@ -148,6 +162,9 @@ impl WinitGilrsBackend {
                     self.queued_events.push(InputEvent::GamepadDisconnected(id));
                 }
                 gilrs::EventType::ButtonPressed(button, _) => {
+                    let Some(button) = GamepadButton::from_upstream(button) else {
+                        continue;
+                    };
                     let entry = self.gamepads.entry(id).or_default();
                     if entry.pressed_buttons.insert(button) {
                         self.queued_events.push(InputEvent::GamepadButtonPressed {
@@ -157,6 +174,9 @@ impl WinitGilrsBackend {
                     }
                 }
                 gilrs::EventType::ButtonReleased(button, _) => {
+                    let Some(button) = GamepadButton::from_upstream(button) else {
+                        continue;
+                    };
                     let entry = self.gamepads.entry(id).or_default();
                     if entry.pressed_buttons.remove(&button) {
                         self.queued_events.push(InputEvent::GamepadButtonReleased {
@@ -166,6 +186,9 @@ impl WinitGilrsBackend {
                     }
                 }
                 gilrs::EventType::AxisChanged(axis, value, _) => {
+                    let Some(axis) = GamepadAxis::from_upstream(axis) else {
+                        continue;
+                    };
                     let entry = self.gamepads.entry(id).or_default();
                     entry.axes.insert(axis, value);
                     self.queued_events.push(InputEvent::GamepadAxisChanged {

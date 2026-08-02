@@ -4,17 +4,17 @@
 //! Input) implement the trait. Game code calls trait methods via
 //! `Box<dyn InputBackend>` stored as a [`Resource`](kooch_core::resource::Resources).
 //!
-//! Re-exports `winit::keyboard::KeyCode` + `winit::event::MouseButton` +
-//! `gilrs::{Button, Axis, GamepadId}` directly — engine-neutral wrapper
-//! types are deferred until a non-winit backend ships (which is unlikely
-//! in the foreseeable roadmap). Less surface area, less mapping code.
+//! The identifiers live in [`crate::ids`] and belong to this engine. They
+//! used to be re-exports of winit's and gilrs' own, under a note saying
+//! wrappers were deferred until a non-winit backend shipped. Three things
+//! came due at once — a remote host cannot construct a `gilrs::GamepadId`,
+//! a binding has to survive being written to a file, and Steam Input is
+//! that non-winit backend. See the module docs there.
 
 use glam::Vec2;
 use std::collections::HashSet;
 
-pub use gilrs::{Axis as GamepadAxis, Button as GamepadButton, GamepadId};
-pub use winit::event::MouseButton;
-pub use winit::keyboard::KeyCode;
+pub use crate::ids::{GamepadAxis, GamepadButton, GamepadId, KeyCode, MouseButton};
 
 /// Per-frame input event surfaced by [`InputBackend::poll`].
 ///
