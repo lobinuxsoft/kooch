@@ -4,6 +4,7 @@ mod asset_ops;
 mod codegen;
 mod dispatch;
 mod handlers;
+mod ide;
 mod remote_edit;
 pub(crate) mod scene_io;
 

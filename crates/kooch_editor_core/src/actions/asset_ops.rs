@@ -136,8 +136,18 @@ fn to_snake_case(name: &str) -> String {
 /// Opens `file` in an external IDE, with the crate root that owns it as
 /// the workspace folder.
 ///
-/// Uses the configured `ide_command` (editor config), else `$KOOCH_IDE`,
-/// else `codium` / `code`; falls back to `xdg-open` when none launch.
+/// Tried in order: the command configured in Settings, `$KOOCH_IDE`,
+/// `codium` / `code` on the PATH, and finally **whatever the desktop
+/// says opens a source file** — which is the one that works on a system
+/// where the IDE is installed by Flatpak, Homebrew or an AppImage and is
+/// therefore not on our PATH at all.
+///
+/// # Why `xdg-open` is no longer the fallback
+///
+/// It was, and it is worse than failing: `xdg-open <file>` opens the file
+/// with **no workspace**, and `xdg-open <folder>` opens the **file
+/// manager**, since that is a directory's default handler. Both look like
+/// success, which is exactly why the missing workspace went unnoticed.
 fn open_in_ide(resources: &Resources, file: &Path) {
     let root = workspace_for(resources, file);
     let root = root.as_deref().unwrap_or_else(|| {
@@ -150,15 +160,30 @@ fn open_in_ide(resources: &Resources, file: &Path) {
         .and_then(|ps| ps.editor_config.ide_command.clone())
         .or_else(|| std::env::var("KOOCH_IDE").ok());
 
-    let launched = match configured.as_deref() {
-        Some(cmd) => spawn_ide(cmd, root, file),
-        None => spawn_ide("codium", root, file) || spawn_ide("code", root, file),
+    let launched = match configured
+        .as_deref()
+        .and_then(super::ide::IdeCommand::parse)
+    {
+        Some(command) => spawn_ide(&command, root, file),
+        None => {
+            let on_path = ["codium", "code"]
+                .into_iter()
+                .filter_map(super::ide::IdeCommand::parse)
+                .any(|command| spawn_ide(&command, root, file));
+            on_path
+                || super::ide::from_desktop_defaults()
+                    .is_some_and(|command| spawn_ide(&command, root, file))
+        }
     };
     if !launched {
-        tracing::warn!(
-            "no IDE launched (set one in Settings, or install codium/code); using xdg-open"
+        // No `xdg-open` fallback: for a folder it opens the file manager,
+        // and for a file it opens an editor with no project. Saying so is
+        // more useful than doing something that looks like it worked.
+        tracing::error!(
+            path = %file.display(),
+            "no IDE could be launched — set one in Settings (a full path works, \
+             e.g. /home/you/.local/bin/codium)",
         );
-        let _ = std::process::Command::new("xdg-open").arg(file).spawn();
     }
 }
 
@@ -184,19 +209,16 @@ fn workspace_for(resources: &Resources, file: &Path) -> Option<PathBuf> {
         .cloned()
 }
 
-/// Spawns `cmd` (a whitespace-separated program + args, e.g.
-/// `flatpak run com.vscodium.codium`) appending `<root> -g <file>`.
-fn spawn_ide(cmd: &str, root: &Path, file: &Path) -> bool {
-    let mut parts = cmd.split_whitespace();
-    let Some(program) = parts.next() else {
-        return false;
-    };
+/// Spawns `ide`, appending `<root>` and, where the IDE understands it,
+/// `-g <file>`.
+fn spawn_ide(ide: &super::ide::IdeCommand, root: &Path, file: &Path) -> bool {
+    let program = &ide.program;
     let mut command = std::process::Command::new(program);
-    command.args(parts).arg(root);
-    // `-g` means "go to this file", and a folder is not somewhere to go.
-    // Asking an IDE to jump to a directory is how the whole invocation
-    // gets rejected, taking the workspace with it.
-    if file != root && file.is_file() {
+    command.args(&ide.args).arg(root);
+    // `-g` means "go to this file". Skipped for a directory, which is
+    // not somewhere to go, and for editors that do not know the flag —
+    // they would treat it as a filename and create a file called `-g`.
+    if file != root && file.is_file() && ide.understands_goto() {
         command.arg("-g").arg(file);
     }
 
