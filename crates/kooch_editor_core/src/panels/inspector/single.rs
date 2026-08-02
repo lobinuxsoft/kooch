@@ -169,7 +169,7 @@ fn integer_value(value: &ReflectValue) -> Option<i64> {
 pub(super) fn draw_reflected_fields(
     ui: &mut egui::Ui,
     entity: Entity,
-    type_id: TypeId,
+    type_id: Option<TypeId>,
     component: ComponentId,
     fields: &[(String, ReflectValue)],
     field_metas: Option<&'static [FieldMeta]>,
@@ -218,7 +218,7 @@ pub(super) fn draw_reflected_fields(
                             } else {
                                 RotationContext::local_only()
                             };
-                            draw_quat_with_cache(ui, entity, type_id, name, *q, ctx, euler_cache)
+                            draw_quat_with_cache(ui, entity, component, name, *q, ctx, euler_cache)
                         }
                         _ => draw_value_widget(ui, value, &field),
                     };

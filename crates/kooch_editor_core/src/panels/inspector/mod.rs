@@ -386,7 +386,7 @@ fn draw_inspector_body(
                                 let edits = single::draw_reflected_fields(
                                     ui,
                                     entity,
-                                    comp.type_id,
+                                    Some(comp.type_id),
                                     comp.component,
                                     fields,
                                     comp.field_metas,

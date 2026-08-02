@@ -19,8 +19,12 @@ use super::{EULER_CACHE_EPS, RotationContext};
 
 /// Identifies the specific `Transform.rotation` field, which is the
 /// only Quat with a meaningful world-space interpretation.
-pub(super) fn is_transform_rotation(type_id: TypeId, field_name: &str) -> bool {
-    type_id == TypeId::of::<Transform>() && field_name == "rotation"
+///
+/// `None` for a component this binary has no Rust type for — one
+/// declared by a project's plugin. Such a component is never
+/// `Transform`, which is the engine's own, so the answer is no.
+pub(super) fn is_transform_rotation(type_id: Option<TypeId>, field_name: &str) -> bool {
+    type_id == Some(TypeId::of::<Transform>()) && field_name == "rotation"
 }
 
 /// Renders a Quat field as XYZ Euler degrees with a persistent cache so
@@ -40,7 +44,7 @@ pub(super) fn is_transform_rotation(type_id: TypeId, field_name: &str) -> bool {
 pub(super) fn draw_quat_with_cache(
     ui: &mut egui::Ui,
     entity: Entity,
-    type_id: TypeId,
+    component: kooch_ecs::component::ComponentId,
     field_name: &str,
     local_quat: Quat,
     context: RotationContext,
@@ -54,7 +58,10 @@ pub(super) fn draw_quat_with_cache(
         RotationDisplayMode::World => context.self_global.unwrap_or(local_quat),
     };
 
-    let key: EulerCacheKey = (entity, type_id, field_name.to_owned(), mode);
+    // Keyed on the component rather than its `TypeId`: a component from
+    // a project's plugin has no `TypeId` in this binary, and the cache
+    // has to work for it too.
+    let key: EulerCacheKey = (entity, component, field_name.to_owned(), mode);
     let euler = fresh_cached_euler(euler_cache, &key, display_quat);
     let mut dx = euler.x.to_degrees();
     let mut dy = euler.y.to_degrees();
