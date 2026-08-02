@@ -191,18 +191,33 @@ fn spawn_ide(cmd: &str, root: &Path, file: &Path) -> bool {
     let Some(program) = parts.next() else {
         return false;
     };
-    let args: Vec<&str> = parts.collect();
-    let ok = std::process::Command::new(program)
-        .args(&args)
-        .arg(root)
-        .arg("-g")
-        .arg(file)
-        .spawn()
-        .is_ok();
-    if ok {
-        tracing::info!(ide = program, file = %file.display(), "opened in IDE");
+    let mut command = std::process::Command::new(program);
+    command.args(parts).arg(root);
+    // `-g` means "go to this file", and a folder is not somewhere to go.
+    // Asking an IDE to jump to a directory is how the whole invocation
+    // gets rejected, taking the workspace with it.
+    if file != root && file.is_file() {
+        command.arg("-g").arg(file);
     }
-    ok
+
+    // The full invocation, because when this opens the wrong thing the
+    // only useful question is what was actually run — and answering it
+    // from the outside means guessing at three layers at once.
+    tracing::info!(
+        ide = program,
+        root = %root.display(),
+        file = %file.display(),
+        command = ?command,
+        "launching IDE",
+    );
+
+    match command.spawn() {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::debug!(ide = program, %error, "IDE did not launch");
+            false
+        }
+    }
 }
 
 fn create_folder(parent: &Path, name: &str) {
