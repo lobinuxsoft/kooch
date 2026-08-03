@@ -9,6 +9,11 @@ authors.workspace = true
 
 [dependencies]
 kooch_core.workspace = true
+# For `InputMapSource`, the component a scene points at its `.inputmap`
+# with. Until it, this crate ran without a world at all — a keyboard
+# backend needs no entities — and that is worth knowing when reading the
+# dependency: it is here for one authorable component, not for the ECS.
+kooch_ecs.workspace = true
 winit.workspace = true
 gilrs.workspace = true
 glam.workspace = true

@@ -32,6 +32,7 @@
 mod action;
 mod asset;
 mod binding;
+mod component;
 mod path;
 mod plugin;
 mod processor;
@@ -40,7 +41,8 @@ mod state;
 pub use action::{Action, ActionId, ActionMap, ControlType};
 pub use asset::{INPUT_MAP_EXTENSION, InputMapLoader, InputMapParseError, save, to_ron};
 pub use binding::{Binding, BothHeld, Composite, Group, PartName, Role, Vector2Mode, groups};
+pub use component::InputMapSource;
 pub use path::{ControlPath, DeviceClass};
-pub use plugin::{ActionsPlugin, ActiveActionMap};
+pub use plugin::{ActionsPlugin, ActiveActionMap, InputComponentsPlugin};
 pub use processor::{DEFAULT_DEADZONE_MAX, DEFAULT_DEADZONE_MIN, Processor};
 pub use state::{ActionState, ActionValue};

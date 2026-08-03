@@ -27,11 +27,25 @@ use crate::backend::InputBackend;
 /// field is on [`ActionMap`] already, and a second consumer will say more
 /// about the shape than guessing does.
 #[derive(Debug, Default, Clone)]
-pub struct ActiveActionMap(pub ActionMap);
+pub struct ActiveActionMap {
+    pub map: ActionMap,
+    /// The asset this came from, when it came from one.
+    ///
+    /// What lets the sync system answer "is this already the map the
+    /// component asks for" without re-reading the file to find out.
+    pub source: Option<kooch_core::Guid>,
+}
 
 impl ActiveActionMap {
     pub fn new(map: ActionMap) -> Self {
-        Self(map)
+        Self { map, source: None }
+    }
+
+    pub fn from_asset(map: ActionMap, guid: kooch_core::Guid) -> Self {
+        Self {
+            map,
+            source: Some(guid),
+        }
     }
 }
 
@@ -45,7 +59,6 @@ impl Default for ActionMap {
 ///
 /// Add it after [`InputPlugin`](crate::InputPlugin): this reads what that
 /// one pumps, and plugin order is system order within a stage.
-#[derive(Default)]
 pub struct ActionsPlugin {
     /// Where the bindings come from.
     source: Source,
@@ -58,6 +71,14 @@ enum Source {
     /// for anything a player should be able to rebind: nothing the editor
     /// does can reach a value compiled into the binary.
     Literal(ActionMap),
+    /// Whatever the scene's [`InputMapSource`] points at.
+    ///
+    /// The default, because it is the one that needs no code: the field
+    /// is filled in the Inspector from the asset picker, travels with the
+    /// scene, and swaps live when changed.
+    ///
+    /// [`InputMapSource`]: super::component::InputMapSource
+    FromScene,
     /// An `.inputmap` asset, by guid.
     ///
     /// A guid rather than a path, for the same reason every other asset
@@ -67,6 +88,15 @@ enum Source {
     Asset(kooch_core::Guid),
     #[default]
     Empty,
+}
+
+impl Default for ActionsPlugin {
+    /// Follows the scene's `InputMapSource`.
+    fn default() -> Self {
+        Self {
+            source: Source::FromScene,
+        }
+    }
 }
 
 impl ActionsPlugin {
@@ -88,13 +118,48 @@ impl ActionsPlugin {
     }
 }
 
+/// Declares [`InputMapSource`] without running any input.
+///
+/// The editor needs the component to exist as data — to inspect it, to
+/// offer the asset picker, to mirror it — while gameplay lives in the
+/// project's process. Same split `CameraComponentsPlugin` makes, and for
+/// the same reason: a host that authors is not a host that plays.
+///
+/// [`InputMapSource`]: super::component::InputMapSource
+pub struct InputComponentsPlugin;
+
+impl Plugin for InputComponentsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_system(Stage::Startup, |resources: &mut Resources| {
+            if let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() {
+                registry.register_cpu_reflected::<super::component::InputMapSource>();
+            }
+        });
+    }
+
+    fn name(&self) -> &str {
+        "InputComponentsPlugin"
+    }
+}
+
 impl Plugin for ActionsPlugin {
     fn build(&self, app: &mut App) {
+        // The component has to exist wherever the actions do, or a scene
+        // pointing at a map would load into a world that cannot hold the
+        // pointer.
+        InputComponentsPlugin.build(app);
         match &self.source {
             Source::Literal(map) => {
                 let map = map.clone();
                 app.insert_resource(ActionState::for_map(&map))
                     .insert_resource(ActiveActionMap::new(map));
+            }
+            Source::FromScene => {
+                app.insert_resource(ActiveActionMap::default())
+                    .insert_resource(ActionState::default())
+                    // Before the actions are read, so the first frame
+                    // under a new map already resolves against it.
+                    .add_system(Stage::PreUpdate, sync_map_from_scene);
             }
             Source::Asset(guid) => {
                 // Loaded in `Startup` rather than here: the asset server
@@ -129,7 +194,7 @@ fn update_actions(resources: &mut Resources) {
     // borrow through two other resources.
     let Some(map) = resources
         .get::<ActiveActionMap>()
-        .map(|active| active.0.clone())
+        .map(|active| active.map.clone())
     else {
         return;
     };
@@ -215,11 +280,40 @@ fn load_map_asset(resources: &mut Resources, guid: kooch_core::Guid) {
             };
             tracing::info!(%guid, actions = map.actions.len(), "input map active");
             resources.insert(ActionState::for_map(&map));
-            resources.insert(ActiveActionMap::new(map));
+            resources.insert(ActiveActionMap::from_asset(map, guid));
         }
         // Named rather than silent: with no map every action resolves to
         // nothing, so the game simply does not respond — which reads as
         // broken input rather than as a missing file.
         Err(e) => tracing::error!(%guid, error = %e, "input map could not be loaded"),
     }
+}
+
+/// Makes the scene's [`InputMapSource`] the active map, when it changes.
+///
+/// Reads the component, compares against what is already active, and
+/// loads only on a mismatch. Loading every frame would re-parse a file to
+/// arrive at the same answer — and would overwrite whatever the editor's
+/// panel is in the middle of editing.
+///
+/// [`InputMapSource`]: super::component::InputMapSource
+fn sync_map_from_scene(resources: &mut Resources) {
+    let wanted = {
+        let query = kooch_ecs::Query::<&super::component::InputMapSource>::new(resources);
+        // First one wins. The active map is a property of the session, so
+        // two entities asking for different ones is a scene that has not
+        // decided — and picking the earlier one is at least stable.
+        query.iter().find_map(|source| source.map)
+    };
+
+    let Some(guid) = wanted else {
+        return;
+    };
+    if resources
+        .get::<ActiveActionMap>()
+        .is_some_and(|active| active.source == Some(guid))
+    {
+        return;
+    }
+    load_map_asset(resources, guid);
 }

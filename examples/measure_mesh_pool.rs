@@ -88,7 +88,11 @@ fn main() {
     }
 
     println!();
-    println!("pool total: {:.2} MiB for {} meshes", mib(pool.byte_size()), assets.len());
+    println!(
+        "pool total: {:.2} MiB for {} meshes",
+        mib(pool.byte_size()),
+        assets.len()
+    );
     println!();
     println!("A second MeshletRenderStage duplicates exactly this figure —");
     println!("it does not grow with instance count, only with distinct assets.");
