@@ -27,6 +27,7 @@ pub(super) fn type_icon(type_name: &str) -> &'static str {
     match type_name {
         "kooch_render::meshlet::asset::MeshletMesh" => icons::CUBE,
         "kooch_render::material::asset::Material" => icons::FADERS,
+        "kooch_input::actions::action::ActionMap" => icons::GAME_CONTROLLER,
         _ => icons::STACK,
     }
 }
@@ -38,6 +39,9 @@ pub(super) fn file_icon(name: &str) -> &'static str {
         "toml" | "lock" => icons::GEAR,
         "scene" => icons::TREE_STRUCTURE,
         "prefab" => icons::PACKAGE,
+        // Also by extension: a file only counts as a typed asset once it
+        // has a `.meta` beside it, and it is browsable before that.
+        "inputmap" => icons::GAME_CONTROLLER,
         _ => icons::LIST_BULLETS,
     }
 }
