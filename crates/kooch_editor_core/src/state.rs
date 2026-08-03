@@ -36,6 +36,7 @@ pub(crate) enum EditorTab {
     Archetypes,
     Components,
     AssetBrowser,
+    InputMap,
     Console,
 }
 
@@ -48,6 +49,7 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::Components,
     EditorTab::Console,
     EditorTab::AssetBrowser,
+    EditorTab::InputMap,
 ];
 
 impl EditorTab {
@@ -60,6 +62,7 @@ impl EditorTab {
             Self::Archetypes => format!("{} Archetypes", crate::icons::TREE_STRUCTURE),
             Self::Components => format!("{} Components", crate::icons::LIST_BULLETS),
             Self::AssetBrowser => format!("{} Assets", crate::icons::FOLDER_OPEN),
+            Self::InputMap => format!("{} Input Map", crate::icons::SLIDERS),
             Self::Console => format!("{} Console", crate::icons::TERMINAL),
         }
     }
