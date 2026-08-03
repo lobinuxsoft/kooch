@@ -29,6 +29,8 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         EditorAction::RevealInFileManager { path } => reveal(path),
         EditorAction::OpenInIde { file } => open_in_ide(resources, file),
         EditorAction::OpenInputMap { path } => open_input_map(resources, path),
+        EditorAction::EditInputMap(edit) => edit_input_map(resources, edit),
+        EditorAction::SaveInputMap => save_input_map(resources),
         EditorAction::InputMapFocused => {
             if let Some(open) = resources.get_mut::<crate::state::OpenInputMap>() {
                 open.focus_requested = false;
@@ -709,6 +711,7 @@ fn open_input_map(resources: &mut Resources, path: &std::path::Path) {
                 path: path.to_path_buf(),
                 map,
                 focus_requested: true,
+                dirty: false,
             });
         }
         // Named rather than swallowed: a map that will not parse is a
@@ -719,5 +722,263 @@ fn open_input_map(resources: &mut Resources, path: &std::path::Path) {
             error = %e,
             "input map could not be parsed",
         ),
+    }
+}
+
+/// Applies one edit to the open map, in memory.
+///
+/// Nothing here writes a file. That is `SaveInputMap`, and the split is
+/// the same one a prefab has: the document is the thing being edited, the
+/// file is where it is eventually put.
+fn edit_input_map(resources: &mut Resources, edit: &crate::panels::input_map::InputMapAction) {
+    use crate::panels::input_map::InputMapAction as Edit;
+    use kooch_input::actions::{Action, Binding, ControlPath, ControlType, Role};
+    use kooch_input::ids::KeyCode;
+
+    let Some(open) = resources.get_mut::<crate::state::OpenInputMap>() else {
+        return;
+    };
+    let map = &mut open.map;
+    let changed = match edit {
+        Edit::AddAction => {
+            // Named for what it is until renamed. An empty name would
+            // resolve to nothing and read as a broken action.
+            let name = unique_action_name(map, "new_action");
+            map.actions.push(Action::new(name, ControlType::Button));
+            true
+        }
+        Edit::RemoveAction { action } => {
+            if *action < map.actions.len() {
+                map.actions.remove(*action);
+                true
+            } else {
+                false
+            }
+        }
+        Edit::AddBinding { action } => match map.actions.get_mut(*action) {
+            // Unbound rather than guessing: `Space` on every new binding
+            // would silently collide with whatever already uses it.
+            Some(target) => {
+                target
+                    .bindings
+                    .push(Binding::to(ControlPath::Key(KeyCode::Space)));
+                true
+            }
+            None => false,
+        },
+        Edit::RemoveBinding(at) => match map.actions.get_mut(at.action) {
+            Some(target) if at.binding < target.bindings.len() => {
+                target.bindings.remove(at.binding);
+                true
+            }
+            _ => false,
+        },
+        Edit::Rebind { at, path } => match map
+            .actions
+            .get_mut(at.action)
+            .and_then(|a| a.bindings.get_mut(at.binding))
+        {
+            Some(binding) => {
+                // Only what it reads changes. Processors and the part it
+                // plays in a composite are properties of the binding, not
+                // of the control behind it.
+                binding.role = match &binding.role {
+                    Role::Part { name, .. } => Role::Part {
+                        name: *name,
+                        path: *path,
+                    },
+                    _ => Role::Whole(*path),
+                };
+                true
+            }
+            None => false,
+        },
+        // Rebind prompts are panel state, not document edits, and Save
+        // is routed before it gets here.
+        Edit::BeginRebind(_) | Edit::CancelRebind | Edit::Save => false,
+    };
+
+    if changed {
+        open.dirty = true;
+    }
+}
+
+/// A name no other action in `map` already has.
+fn unique_action_name(map: &kooch_input::actions::ActionMap, base: &str) -> String {
+    if map.resolve(base).is_none() {
+        return base.to_owned();
+    }
+    (2..)
+        .map(|n| format!("{base}_{n}"))
+        .find(|name| map.resolve(name).is_none())
+        .unwrap_or_else(|| base.to_owned())
+}
+
+/// Writes the open map back to its file.
+fn save_input_map(resources: &mut Resources) {
+    let Some((path, text)) = resources
+        .get::<crate::state::OpenInputMap>()
+        .map(|open| (open.path.clone(), kooch_input::actions::to_ron(&open.map)))
+    else {
+        return;
+    };
+    let text = match text {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::error!(error = %e, "input map could not be serialised; nothing written");
+            return;
+        }
+    };
+    match std::fs::write(&path, text) {
+        Ok(()) => {
+            tracing::info!(file = %path.display(), "input map saved");
+            if let Some(open) = resources.get_mut::<crate::state::OpenInputMap>() {
+                open.dirty = false;
+            }
+        }
+        // Left dirty on purpose: the edits are still the only copy that
+        // has them, and clearing the flag would claim they are safe.
+        Err(e) => tracing::error!(file = %path.display(), error = %e, "failed to save input map"),
+    }
+}
+
+#[cfg(test)]
+mod input_map_tests {
+    use super::*;
+    use crate::panels::input_map::{BindingAddress, InputMapAction as Edit};
+    use crate::state::OpenInputMap;
+    use kooch_input::actions::{Action, ActionMap, Binding, ControlPath, ControlType};
+    use kooch_input::ids::{GamepadButton, KeyCode};
+
+    fn open(path: std::path::PathBuf) -> OpenInputMap {
+        OpenInputMap {
+            path,
+            map: ActionMap::new("gameplay").add(
+                Action::new("jump", ControlType::Button)
+                    .bind(Binding::to(ControlPath::Key(KeyCode::Space))),
+            ),
+            focus_requested: false,
+            dirty: false,
+        }
+    }
+
+    fn resources_with(open_map: OpenInputMap) -> Resources {
+        let mut resources = Resources::new();
+        resources.insert(open_map);
+        resources
+    }
+
+    /// The contract the prefab already has: an edit changes the document
+    /// and **not** the file.
+    #[test]
+    fn an_edit_does_not_touch_the_file() {
+        let dir = std::env::temp_dir().join("kooch_inputmap_edit_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Gameplay.inputmap");
+        std::fs::write(&path, "original contents").unwrap();
+
+        let mut resources = resources_with(open(path.clone()));
+        edit_input_map(&mut resources, &Edit::AddAction);
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "original contents",
+            "the edit reached the file before anyone asked it to"
+        );
+        let open = resources.get::<OpenInputMap>().unwrap();
+        assert_eq!(
+            open.map.actions.len(),
+            2,
+            "the edit did not reach the document"
+        );
+        assert!(open.dirty, "an edit left the map looking saved");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// And saving is what writes, after which nothing is outstanding.
+    #[test]
+    fn saving_writes_the_file_and_clears_the_marker() {
+        let dir = std::env::temp_dir().join("kooch_inputmap_save_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Gameplay.inputmap");
+        std::fs::write(&path, "original contents").unwrap();
+
+        let mut resources = resources_with(open(path.clone()));
+        edit_input_map(&mut resources, &Edit::AddAction);
+        save_input_map(&mut resources);
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains("jump"),
+            "the saved file lost the map: {written}"
+        );
+        assert!(written.contains("new_action"), "the edit was not saved");
+        assert!(!resources.get::<OpenInputMap>().unwrap().dirty);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A rebind changes what a binding reads and nothing else — its
+    /// processors and its part in a composite belong to the binding, not
+    /// to the control behind it.
+    #[test]
+    fn a_rebind_replaces_only_the_control() {
+        let mut resources = resources_with(open("unused.inputmap".into()));
+        edit_input_map(
+            &mut resources,
+            &Edit::Rebind {
+                at: BindingAddress {
+                    action: 0,
+                    binding: 0,
+                },
+                path: ControlPath::Button(GamepadButton::South),
+            },
+        );
+        let open = resources.get::<OpenInputMap>().unwrap();
+        let binding = &open.map.actions[0].bindings[0];
+        assert_eq!(
+            binding.path(),
+            Some(ControlPath::Button(GamepadButton::South))
+        );
+        assert!(binding.processors.is_empty());
+    }
+
+    /// Two actions of one name make `resolve` a coin toss, so adding one
+    /// has to pick a name nobody is using.
+    #[test]
+    fn a_new_action_does_not_collide() {
+        let mut resources = resources_with(open("unused.inputmap".into()));
+        for _ in 0..3 {
+            edit_input_map(&mut resources, &Edit::AddAction);
+        }
+        let open = resources.get::<OpenInputMap>().unwrap();
+        assert!(
+            open.map.duplicate_names().is_empty(),
+            "adding actions produced duplicates: {:?}",
+            open.map.duplicate_names()
+        );
+    }
+
+    /// An index out of range is a stale click — the panel drew a list one
+    /// frame and the document changed. It must not panic the editor.
+    #[test]
+    fn an_edit_aimed_past_the_end_is_ignored() {
+        let mut resources = resources_with(open("unused.inputmap".into()));
+        for edit in [
+            Edit::RemoveAction { action: 99 },
+            Edit::AddBinding { action: 99 },
+            Edit::RemoveBinding(BindingAddress {
+                action: 0,
+                binding: 99,
+            }),
+        ] {
+            edit_input_map(&mut resources, &edit);
+        }
+        let open = resources.get::<OpenInputMap>().unwrap();
+        assert_eq!(open.map.actions.len(), 1);
+        assert!(!open.dirty, "a no-op edit marked the map unsaved");
     }
 }

@@ -53,6 +53,13 @@ pub(crate) struct OpenInputMap {
     /// Set when the panel should be brought to the front. Cleared by the
     /// dock once it has done so.
     pub focus_requested: bool,
+    /// Whether this diverges from what is on disk.
+    ///
+    /// Edits land here and nowhere else until saved — the same contract a
+    /// prefab has (`DirtyPrefabs`). An editor that wrote the file on every
+    /// keystroke would make undo mean "read the file back", and a crash
+    /// mid-edit would leave a half-written binding on disk.
+    pub dirty: bool,
 }
 
 /// All tab variants, used for the Window menu.

@@ -302,6 +302,14 @@ pub(crate) enum EditorAction {
     /// Rescan the project's `src/` for components + systems and rewrite
     /// the editor-managed `src/registrations.rs` (regenerating `main.rs`
     /// if it is missing).
+    /// Apply an edit to the open map, in memory.
+    ///
+    /// The file is not touched. `SaveInputMap` is what reaches disk, so
+    /// closing without saving discards — which is what every other
+    /// document editor does and what a prefab already does here.
+    EditInputMap(crate::panels::input_map::InputMapAction),
+    /// Write the open map back to its file.
+    SaveInputMap,
     /// The dock has brought the Input Map panel forward; stop asking.
     ///
     /// A one-shot rather than the panel clearing the flag itself: the
@@ -407,6 +415,8 @@ impl EditorAction {
             // project builds is exactly the half of #58 that works
             // without anything running.
             | Self::OpenInputMap { .. }
+            | Self::EditInputMap(_)
+            | Self::SaveInputMap
             | Self::InputMapFocused => false,
 
             // Editor preferences and things that act on files rather than

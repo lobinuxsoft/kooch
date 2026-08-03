@@ -35,6 +35,8 @@ pub(crate) struct InputMapView<'a> {
     pub live: &'a [LiveAction],
     /// The binding waiting for a key, if a rebind is in progress.
     pub awaiting: Option<BindingAddress>,
+    /// Whether the open map diverges from its file.
+    pub dirty: bool,
 }
 
 /// What the host says an action is worth right now.
@@ -63,6 +65,8 @@ pub(crate) struct BindingAddress {
 /// that writes through all three is a panel that knows about all three.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum InputMapAction {
+    /// Write the map back to its file.
+    Save,
     /// Start listening for an input to put on this binding.
     BeginRebind(BindingAddress),
     /// Stop listening without changing anything.
@@ -96,10 +100,23 @@ pub(crate) fn draw_input_map_content(
     };
 
     ui.horizontal(|ui| {
-        ui.label(format!("{} {}", icons::SLIDERS, map.name));
+        ui.label(format!("{} {}", icons::GAME_CONTROLLER, map.name));
         ui.weak(format!("priority {}", map.priority));
         if ui.button(format!("{} Action", icons::PLUS)).clicked() {
             actions.push(InputMapAction::AddAction);
+        }
+        // Edits live in memory until this is pressed, the same contract a
+        // prefab has. The marker is what makes that visible rather than
+        // something you find out by closing the tab.
+        if ui
+            .add_enabled(view.dirty, egui::Button::new("Save"))
+            .on_hover_text("Write these bindings back to the file")
+            .clicked()
+        {
+            actions.push(InputMapAction::Save);
+        }
+        if view.dirty {
+            ui.weak("• unsaved");
         }
     });
     if view.live.is_empty() {
@@ -330,6 +347,7 @@ mod tests {
                     map: None,
                     live: &[],
                     awaiting: None,
+                    dirty: false,
                 },
             )
         });
@@ -348,6 +366,7 @@ mod tests {
                     map: Some(&map),
                     live: &[],
                     awaiting: None,
+                    dirty: false,
                 },
             )
         });
@@ -369,6 +388,7 @@ mod tests {
                     map: Some(&map),
                     live: &live,
                     awaiting: None,
+                    dirty: false,
                 },
             )
         });

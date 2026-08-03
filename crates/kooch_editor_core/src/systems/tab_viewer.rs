@@ -248,7 +248,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             // the panel already says what to do with no map open, which
             // is the honest state until the asset handle reaches here.
             EditorTab::InputMap => {
-                let _ = crate::panels::input_map::draw_input_map_content(
+                let requested = crate::panels::input_map::draw_input_map_content(
                     ui,
                     crate::panels::input_map::InputMapView {
                         map: self.open_input_map.map(|open| &open.map),
@@ -256,8 +256,17 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                         // host, which is the only process that simulates.
                         live: &[],
                         awaiting: None,
+                        dirty: self.open_input_map.is_some_and(|open| open.dirty),
                     },
                 );
+                for request in requested {
+                    self.actions.push(match request {
+                        crate::panels::input_map::InputMapAction::Save => {
+                            crate::actions::EditorAction::SaveInputMap
+                        }
+                        edit => crate::actions::EditorAction::EditInputMap(edit),
+                    });
+                }
             }
             EditorTab::Components => draw_components_content(ui, self.component_types),
             EditorTab::AssetBrowser => draw_asset_browser_content(
