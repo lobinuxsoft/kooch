@@ -1,4 +1,4 @@
-//! [`RigidBody`] and [`Collider`] — what an entity is physically.
+//! [`PhysicsBody`] and [`Collider`] — what an entity is physically.
 //!
 //! Split by the two components rather than by kind of item: each file
 //! carries its struct together with the choice sets and field conditions
@@ -9,9 +9,9 @@
 //! rather than an enum.
 
 mod collider;
-mod rigid_body;
+mod physics_body;
 #[cfg(test)]
 mod tests;
 
 pub use collider::*;
-pub use rigid_body::*;
+pub use physics_body::*;

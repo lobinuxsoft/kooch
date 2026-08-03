@@ -16,7 +16,7 @@ fn the_components_plugin_registers_the_authored_types() {
     app.schedule.run_startup(&mut app.resources);
 
     let registry = app.resources.get::<ComponentRegistry>().unwrap();
-    for name in ["RigidBody", "Collider"] {
+    for name in ["PhysicsBody", "Collider"] {
         assert!(
             registry
                 .reflected_type_names()
@@ -78,7 +78,7 @@ fn a_body_without_a_collider_falls_on_the_default_shape() {
         entity,
         Transform::from_position(Vec3::new(0.0, 10.0, 0.0)),
     );
-    insert(&mut resources, entity, RigidBody::default());
+    insert(&mut resources, entity, PhysicsBody::default());
 
     Playing::set(&mut resources, true);
     simulate(&mut resources, 30);
@@ -103,7 +103,7 @@ fn a_body_without_a_collider_falls_on_the_default_shape() {
 fn a_body_without_a_transform_starts_at_the_origin() {
     let mut resources = world();
     let entity = spawn_bare(&mut resources);
-    insert(&mut resources, entity, RigidBody::default());
+    insert(&mut resources, entity, PhysicsBody::default());
 
     physics_sync_system(&mut resources);
 

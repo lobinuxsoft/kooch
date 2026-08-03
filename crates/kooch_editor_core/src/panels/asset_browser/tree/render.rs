@@ -9,6 +9,8 @@ use crate::drag_drop::DraggedAsset;
 use crate::icons;
 use kooch_ecs::entity::Entity;
 
+use crate::widgets::SelectableRow;
+
 use super::RenderCtx;
 use super::menus::{folder_menu, leaf_menu};
 use super::model::{FileLeaf, FolderNode};
@@ -75,7 +77,9 @@ pub(super) fn render_folder(
                 true => icons::FOLDER_OPEN,
                 false => icons::FOLDER,
             };
-            let resp = ui.selectable_label(is_cursor, format!("{glyph} {}", node.name));
+            let resp = SelectableRow::new(format!("{glyph} {}", node.name))
+                .selected(is_cursor)
+                .show(ui);
             if is_cursor && ctx.nav.scroll_to_cursor {
                 resp.scroll_to_me(Some(egui::Align::Center));
             }
@@ -137,17 +141,23 @@ pub(super) fn render_leaf(
         open: false,
     });
 
-    let mut resp = ui.selectable_label(is_cursor, format!("{icon} {}", leaf.name));
+    // Typed assets are drag sources for the Inspector's asset slots
+    // (#439); the sense is decided up front rather than upgraded after
+    // the fact, so click / double-click / context menu all come off the
+    // one response.
+    let sense = match leaf.asset {
+        Some(_) => egui::Sense::click_and_drag(),
+        None => egui::Sense::click(),
+    };
+    let resp = SelectableRow::new(format!("{icon} {}", leaf.name))
+        .selected(is_cursor)
+        .sense(sense)
+        .show(ui);
     if is_cursor && ctx.nav.scroll_to_cursor {
         resp.scroll_to_me(Some(egui::Align::Center));
     }
 
-    // Typed assets are drag sources for the Inspector's asset slots
-    // (#439). The sense is upgraded in place rather than wrapping the row
-    // in `dnd_drag_source`, so click / double-click / context menu keep
-    // working on the same response.
     if let Some((guid, type_name)) = &leaf.asset {
-        resp = resp.interact(egui::Sense::click_and_drag());
         resp.dnd_set_drag_payload(DraggedAsset {
             guid: *guid,
             type_name: type_name.clone(),

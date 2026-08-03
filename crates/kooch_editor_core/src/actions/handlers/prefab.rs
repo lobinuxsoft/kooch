@@ -455,13 +455,39 @@ pub(super) fn handle_edit_prefab_component(
 /// component whose default sets `visible: true` must arrive that way, and a
 /// zero-per-kind table would silently disagree with what spawning the same
 /// component in the World gives.
+/// What a freshly added component of `type_name` should hold.
+///
+/// Two sources, and both are needed. The reflected registry knows the
+/// types the editor itself compiled. A project's component was compiled
+/// into its dylib, so the editor cannot call `Default` on it and knows it
+/// only through [`DynamicTypeRegistry`], which now carries the values the
+/// plugin read off its own `Default` when it declared the type.
+///
+/// Asking only the first is why adding a project component to a prefab
+/// answered "no default value; not added" — the fourth time a panel has
+/// asked one of these registries when the answer lived in the other
+/// (#722 was the third).
+///
+/// [`DynamicTypeRegistry`]: kooch_ecs::component::DynamicTypeRegistry
 fn default_fields(
     resources: &Resources,
     type_name: &str,
 ) -> Option<Vec<(String, kooch_ecs::reflect::ReflectValue)>> {
-    let registry = resources.get::<kooch_ecs::component::ComponentRegistry>()?;
-    let type_id = registry.type_id_by_name(type_name)?;
-    registry.reflect_default_fields(&type_id)
+    let reflected = resources
+        .get::<kooch_ecs::component::ComponentRegistry>()
+        .and_then(|registry| {
+            let type_id = registry.type_id_by_name(type_name)?;
+            registry.reflect_default_fields(&type_id)
+        });
+    if let Some(fields) = reflected {
+        return Some(fields);
+    }
+    // A marker component has no fields, so an empty list is a real
+    // answer here rather than a miss — `Player` is a valid thing to add.
+    resources
+        .get::<kooch_ecs::component::DynamicTypeRegistry>()
+        .and_then(|types| types.get(type_name))
+        .map(|ty| ty.defaults.clone())
 }
 
 /// Writes a prefab's edited document back to its file.

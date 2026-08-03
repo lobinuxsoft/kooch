@@ -132,6 +132,17 @@ pub trait InputBackend: Send + Sync + 'static {
     // ─── gamepad ─────────────────────────────────────────────────────
     fn gamepads(&self) -> Vec<GamepadId>;
     fn is_button_pressed(&self, gamepad: GamepadId, button: GamepadButton) -> bool;
+    /// `true` only on the frame the button went down.
+    ///
+    /// The keyboard has had this since the beginning and the gamepad had
+    /// not, so anything wanting "on press" — a jump, a menu confirm —
+    /// had to settle for "while held" on a pad. Written into a per-frame
+    /// intent that means an impulse *every* frame the button is down:
+    /// the jump that works on the keyboard fires the player off the map
+    /// on a controller (#57).
+    fn just_button_pressed(&self, gamepad: GamepadId, button: GamepadButton) -> bool;
+    /// `true` only on the frame the button came back up.
+    fn just_button_released(&self, gamepad: GamepadId, button: GamepadButton) -> bool;
     /// Returns the axis value in `[-1.0, 1.0]`, or `0.0` if the gamepad
     /// is disconnected / axis is unknown.
     fn axis_value(&self, gamepad: GamepadId, axis: GamepadAxis) -> f32;

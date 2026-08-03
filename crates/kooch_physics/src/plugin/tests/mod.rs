@@ -38,11 +38,11 @@ use kooch_ecs::transform::Transform;
 use kooch_ecs::world_snapshot::WorldSnapshot;
 
 use crate::backend::CollisionShape;
-use crate::components::{Collider, Joint, KIND_KINEMATIC, KIND_STATIC, RigidBody, SHAPE_CUBOID};
+use crate::components::{Collider, Joint, KIND_KINEMATIC, KIND_STATIC, PhysicsBody, SHAPE_CUBOID};
 use crate::rapier_backend::RapierBackend;
 
 use super::systems::{physics_step_system, physics_sync_system, physics_writeback_system};
-use super::world::{BodySpec, PhysicsBody, PhysicsWorld};
+use super::world::{BodySpec, PhysicsWorld, SolverBody};
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -62,10 +62,10 @@ fn world() -> Resources {
 
     let registry = r.get_mut::<ComponentRegistry>().unwrap();
     registry.register_cpu_reflected::<Transform>();
-    registry.register_cpu_reflected::<RigidBody>();
+    registry.register_cpu_reflected::<PhysicsBody>();
     registry.register_cpu_reflected::<Collider>();
     registry.register_cpu_reflected::<Joint>();
-    registry.register_cpu::<PhysicsBody>();
+    registry.register_cpu::<SolverBody>();
     // The hierarchy the compound walk reads. Normally registered by
     // EcsPlugin; this harness builds its Resources by hand.
     registry.register_cpu_reflected::<kooch_ecs::hierarchy::Parent>();
@@ -74,11 +74,11 @@ fn world() -> Resources {
     r
 }
 
-/// Spawns an entity carrying `Transform`, `RigidBody` and `Collider`.
+/// Spawns an entity carrying `Transform`, `PhysicsBody` and `Collider`.
 fn spawn_body(
     resources: &mut Resources,
     transform: Transform,
-    body: RigidBody,
+    body: PhysicsBody,
     collider: Collider,
 ) -> Entity {
     let entity = spawn_bare(resources);
@@ -148,9 +148,9 @@ fn body_count(resources: &Resources) -> usize {
 fn slot_of(resources: &Resources, entity: Entity) -> Option<u32> {
     resources
         .get::<ComponentRegistry>()?
-        .get_cpu::<PhysicsBody>()?
+        .get_cpu::<SolverBody>()?
         .get(entity)
-        .map(PhysicsBody::slot)
+        .map(SolverBody::slot)
 }
 
 /// The geometry the solver was actually built with, scale folded in.
@@ -193,7 +193,7 @@ fn falling_sphere(resources: &mut Resources, height: f32) -> Entity {
     spawn_body(
         resources,
         Transform::from_position(Vec3::new(0.0, height, 0.0)),
-        RigidBody::default(),
+        PhysicsBody::default(),
         Collider::default(),
     )
 }

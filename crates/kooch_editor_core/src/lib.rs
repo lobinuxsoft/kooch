@@ -44,6 +44,7 @@ pub(crate) mod systems;
 pub(crate) mod undo;
 pub(crate) mod viewport;
 pub(crate) mod viewport_pick;
+pub(crate) mod widgets;
 
 use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
@@ -72,7 +73,7 @@ pub struct EditorPlugin;
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
         // Physics is authored here but never simulated here: the editor
-        // needs RigidBody and Collider reflected so they reach the
+        // needs PhysicsBody and Collider reflected so they reach the
         // add-component menu and the Inspector, while the project (local
         // Play, or the remote host) owns the solver. Without this the
         // menu offers no body component at all — the registry it reads is

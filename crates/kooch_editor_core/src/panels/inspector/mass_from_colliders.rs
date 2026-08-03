@@ -1,6 +1,6 @@
 //! Computing a body's mass from the volume of its collision shapes.
 //!
-//! The simulation takes `RigidBody.mass` literally — shapes carry no mass
+//! The simulation takes `PhysicsBody.mass` literally — shapes carry no mass
 //! (#618). That is deterministic, and it gives up the one thing deriving
 //! mass from volume was good for: a bigger rock being heavier without
 //! anyone typing a number.
@@ -16,7 +16,7 @@
 //!
 //! The same ones the solver will weld into it: this entity's own collider,
 //! plus every descendant's, **stopping at any descendant that carries its
-//! own `RigidBody`**. That one is an independent body, and the shapes
+//! own `PhysicsBody`**. That one is an independent body, and the shapes
 //! beneath it are its, not ours. `kooch_physics::plugin::compound` applies
 //! the identical rule when it builds the compound — if these two ever
 //! disagree, the button reports a mass for a body the solver never builds.
@@ -131,7 +131,7 @@ fn collider_volume(collider: &ComponentDisplayInfo, scale: glam::Vec3) -> f32 {
 /// Total volume of the shapes that will be welded into `entity`'s body.
 ///
 /// `None` when there are none — which is what greys the button out. An
-/// author who has added a `RigidBody` and no `Collider` yet should be told
+/// author who has added a `PhysicsBody` and no `Collider` yet should be told
 /// what is missing, not handed a mass of zero.
 pub(super) fn collider_volume_for(entity: Entity, entities: &[EntityDisplayInfo]) -> Option<f32> {
     let find = |target: Entity| entities.iter().find(|e| e.entity == target);
@@ -159,7 +159,7 @@ pub(super) fn collider_volume_for(entity: Entity, entities: &[EntityDisplayInfo]
         let Some(info) = find(next) else { continue };
         // Its own body: an independent simulation. Not ours, and neither
         // is anything beneath it.
-        if component(info, "RigidBody").is_some() {
+        if component(info, "PhysicsBody").is_some() {
             continue;
         }
         add(info);
@@ -175,7 +175,7 @@ pub(super) fn mass_from_colliders(entity: Entity, entities: &[EntityDisplayInfo]
     let density = entities
         .iter()
         .find(|e| e.entity == entity)
-        .and_then(|info| component(info, "RigidBody"))
+        .and_then(|info| component(info, "PhysicsBody"))
         .and_then(|body| f32_field(body, "density"))
         .unwrap_or(1000.0);
     let volume = collider_volume_for(entity, entities)?;
@@ -220,9 +220,9 @@ mod tests {
         )
     }
 
-    fn rigid_body(density: f32) -> ComponentDisplayInfo {
+    fn physics_body(density: f32) -> ComponentDisplayInfo {
         component_with(
-            "RigidBody",
+            "PhysicsBody",
             vec![("density".into(), ReflectValue::F32(density))],
         )
     }
@@ -257,7 +257,11 @@ mod tests {
 
     #[test]
     fn a_sphere_is_measured_as_a_sphere() {
-        let entities = vec![entity(0, Vec::new(), vec![rigid_body(1000.0), sphere(0.5)])];
+        let entities = vec![entity(
+            0,
+            Vec::new(),
+            vec![physics_body(1000.0), sphere(0.5)],
+        )];
         let volume = collider_volume_for(entities[0].entity, &entities).expect("has a collider");
         assert!((volume - (4.0 / 3.0) * PI * 0.125).abs() < 1e-5, "{volume}");
     }
@@ -267,7 +271,7 @@ mod tests {
         let entities = vec![entity(
             0,
             Vec::new(),
-            vec![rigid_body(1000.0), cuboid(glam::Vec3::new(1.0, 2.0, 0.5))],
+            vec![physics_body(1000.0), cuboid(glam::Vec3::new(1.0, 2.0, 0.5))],
         )];
         let volume = collider_volume_for(entities[0].entity, &entities).expect("has a collider");
         assert!((volume - 8.0).abs() < 1e-5, "{volume}");
@@ -281,7 +285,7 @@ mod tests {
             0,
             Vec::new(),
             vec![
-                rigid_body(1000.0),
+                physics_body(1000.0),
                 cuboid(glam::Vec3::splat(0.5)),
                 global(glam::Vec3::splat(2.0)),
             ],
@@ -297,7 +301,7 @@ mod tests {
             entity(
                 0,
                 vec![child],
-                vec![rigid_body(1000.0), cuboid(glam::Vec3::splat(0.5))],
+                vec![physics_body(1000.0), cuboid(glam::Vec3::splat(0.5))],
             ),
             entity(1, Vec::new(), vec![cuboid(glam::Vec3::splat(0.5))]),
         ];
@@ -315,12 +319,12 @@ mod tests {
             entity(
                 0,
                 vec![child],
-                vec![rigid_body(1000.0), cuboid(glam::Vec3::splat(0.5))],
+                vec![physics_body(1000.0), cuboid(glam::Vec3::splat(0.5))],
             ),
             entity(
                 1,
                 vec![grandchild],
-                vec![rigid_body(1000.0), cuboid(glam::Vec3::splat(0.5))],
+                vec![physics_body(1000.0), cuboid(glam::Vec3::splat(0.5))],
             ),
             // Beneath the nested body, so it belongs to that one too.
             entity(2, Vec::new(), vec![cuboid(glam::Vec3::splat(0.5))]),
@@ -334,7 +338,7 @@ mod tests {
     fn a_body_with_no_collider_anywhere_has_no_volume() {
         let child = Entity::new(1, 0);
         let entities = vec![
-            entity(0, vec![child], vec![rigid_body(1000.0)]),
+            entity(0, vec![child], vec![physics_body(1000.0)]),
             entity(1, Vec::new(), Vec::new()),
         ];
         assert_eq!(collider_volume_for(entities[0].entity, &entities), None);
@@ -346,7 +350,7 @@ mod tests {
     fn a_collider_only_on_a_child_still_enables_the_button() {
         let child = Entity::new(1, 0);
         let entities = vec![
-            entity(0, vec![child], vec![rigid_body(1000.0)]),
+            entity(0, vec![child], vec![physics_body(1000.0)]),
             entity(1, Vec::new(), vec![sphere(0.5)]),
         ];
         assert!(collider_volume_for(entities[0].entity, &entities).is_some());
@@ -357,7 +361,7 @@ mod tests {
         let entities = vec![entity(
             0,
             Vec::new(),
-            vec![rigid_body(7850.0), cuboid(glam::Vec3::splat(0.5))],
+            vec![physics_body(7850.0), cuboid(glam::Vec3::splat(0.5))],
         )];
         let mass = mass_from_colliders(entities[0].entity, &entities).expect("has a collider");
         assert!(
@@ -372,7 +376,7 @@ mod tests {
         let a = Entity::new(0, 0);
         let b = Entity::new(1, 0);
         let entities = vec![
-            entity(0, vec![b], vec![rigid_body(1000.0), sphere(0.5)]),
+            entity(0, vec![b], vec![physics_body(1000.0), sphere(0.5)]),
             entity(1, vec![a], vec![sphere(0.5)]),
         ];
         // The assertion is that this returns at all.

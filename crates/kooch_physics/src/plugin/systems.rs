@@ -25,9 +25,9 @@ use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::transform::Transform;
 
-use crate::components::{Collider, RigidBody};
+use crate::components::{Collider, PhysicsBody};
 
-use super::world::{BodySpec, PhysicsBody, PhysicsWorld};
+use super::world::{BodySpec, PhysicsWorld, SolverBody};
 
 /// Fallback step when the app has no [`Time`] — 60 Hz.
 const FALLBACK_DT: f32 = 1.0 / 60.0;
@@ -42,7 +42,7 @@ struct Authored {
     /// Shapes contributed by descendants that have no body of their own.
     attachments: Vec<super::compound::Attachment>,
     /// The slot the entity currently claims, if it carries a
-    /// [`PhysicsBody`] already.
+    /// [`SolverBody`] already.
     claimed: Option<u32>,
     spec: BodySpec,
     position: Vec3,
@@ -58,9 +58,9 @@ struct Authored {
 /// Three passes, in order:
 ///
 /// 1. **Retire** — slots whose entity no longer claims them (despawned,
-///    lost its `RigidBody`, or came back from a stop without the runtime
+///    lost its `PhysicsBody`, or came back from a stop without the runtime
 ///    component) and slots whose spec no longer matches the Inspector.
-/// 2. **Create** — entities with a `RigidBody` and no live slot.
+/// 2. **Create** — entities with a `PhysicsBody` and no live slot.
 /// 3. **Push** — authored poses into the solver: every body while
 ///    authoring, kinematic bodies always.
 pub fn physics_sync_system(resources: &mut Resources) {
@@ -96,9 +96,9 @@ pub fn physics_sync_system(resources: &mut Resources) {
 /// Returns `None` when there is no component registry to read.
 fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
     let registry = resources.get::<ComponentRegistry>()?;
-    let slots = registry.get_cpu::<PhysicsBody>();
+    let slots = registry.get_cpu::<SolverBody>();
 
-    let bodies = registry.get_cpu::<RigidBody>();
+    let bodies = registry.get_cpu::<PhysicsBody>();
     let colliders = registry.get_cpu::<Collider>();
     let transforms = registry.get_cpu::<Transform>();
 
@@ -118,7 +118,7 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
                     let attachments = super::compound::attachments_for(resources, entity);
                     Authored {
                         entity,
-                        claimed: slots.and_then(|s| s.get(entity)).map(PhysicsBody::slot),
+                        claimed: slots.and_then(|s| s.get(entity)).map(SolverBody::slot),
                         spec: BodySpec::with_attachments(
                             body,
                             &collider,
@@ -143,13 +143,13 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
     Some(authored)
 }
 
-/// Entities carrying a [`PhysicsBody`] with nothing behind it — their
-/// `RigidBody` went away, or the slot they name belongs to someone else
+/// Entities carrying a [`SolverBody`] with nothing behind it — their
+/// `PhysicsBody` went away, or the slot they name belongs to someone else
 /// now. The component has to follow the body it addressed.
 fn find_orphans(resources: &Resources, world: &PhysicsWorld) -> Vec<Entity> {
     resources
         .get::<ComponentRegistry>()
-        .and_then(|registry| registry.get_cpu::<PhysicsBody>())
+        .and_then(|registry| registry.get_cpu::<SolverBody>())
         .map(|storage| {
             storage
                 .iter()
@@ -192,7 +192,7 @@ fn retire_stale_slots(world: &mut PhysicsWorld, authored: &[Authored]) {
 }
 
 /// Creates bodies for entities without a live slot, returning the
-/// entities that gained a [`PhysicsBody`] component.
+/// entities that gained a [`SolverBody`] component.
 fn create_missing_bodies(
     resources: &mut Resources,
     world: &mut PhysicsWorld,
@@ -220,13 +220,13 @@ fn create_missing_bodies(
         let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
             continue;
         };
-        let Some(storage) = registry.get_cpu_mut::<PhysicsBody>() else {
+        let Some(storage) = registry.get_cpu_mut::<SolverBody>() else {
             continue;
         };
         // Only a first insertion changes the archetype; re-pointing an
         // entity that already carried the component does not.
         if storage
-            .insert(entry.entity, PhysicsBody::new(slot))
+            .insert(entry.entity, SolverBody::new(slot))
             .is_none()
         {
             gained.push(entry.entity);
@@ -271,7 +271,7 @@ fn push_authored_poses(world: &mut PhysicsWorld, authored: &[Authored], playing:
 fn sync_archetypes(resources: &mut Resources, gained: &[Entity], orphans: &[Entity]) {
     if !orphans.is_empty() {
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-            && let Some(storage) = registry.get_cpu_mut::<PhysicsBody>()
+            && let Some(storage) = registry.get_cpu_mut::<SolverBody>()
         {
             for &entity in orphans {
                 storage.remove(entity);
@@ -287,13 +287,13 @@ fn sync_archetypes(resources: &mut Resources, gained: &[Entity], orphans: &[Enti
     };
     for &entity in gained {
         if let Some(current) = archetypes.entity_archetype(entity) {
-            let next = archetypes.archetype_after_add::<PhysicsBody>(current);
+            let next = archetypes.archetype_after_add::<SolverBody>(current);
             archetypes.register_entity(entity, next);
         }
     }
     for &entity in orphans {
         if let Some(current) = archetypes.entity_archetype(entity) {
-            let next = archetypes.archetype_after_remove::<PhysicsBody>(current);
+            let next = archetypes.archetype_after_remove::<SolverBody>(current);
             archetypes.register_entity(entity, next);
         }
     }

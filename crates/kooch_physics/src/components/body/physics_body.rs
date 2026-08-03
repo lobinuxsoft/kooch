@@ -1,4 +1,4 @@
-//! [`RigidBody`] — whether the solver moves an entity, and how much of it there is.
+//! [`PhysicsBody`] — whether the solver moves an entity, and how much of it there is.
 //!
 //! See the [components module docs](super::super) for why `kind` is a
 //! `u32` discriminant rather than an enum: reflection has no enums, so a
@@ -41,6 +41,24 @@ pub static CENTER_OF_MASS_WHEN: FieldCondition = FieldCondition {
     values: &[1],
 };
 
+/// Fields only a solver-driven body reads.
+///
+/// A static body has no mass, no damping and no relationship with
+/// gravity — the solver never integrates it. Shown anyway, they are six
+/// numbers that can be edited and change nothing, which is the kind of
+/// control that teaches an author to distrust the whole panel.
+///
+/// This is presentation only: the fields keep their values and keep
+/// round-tripping through a scene, so switching to Static and back
+/// returns exactly what was there. That is the reason this is a
+/// condition and not three separate components — the state "static body
+/// that used to be dynamic" stays expressible, and no combination of
+/// components can contradict itself.
+pub static DYNAMIC_ONLY: FieldCondition = FieldCondition {
+    field: "kind",
+    values: &[KIND_DYNAMIC as i64],
+};
+
 /// Marks an entity as participating in the physics simulation.
 ///
 /// Pairs with a [`Collider`]; an entity carrying only this gets a unit
@@ -76,12 +94,13 @@ pub static CENTER_OF_MASS_WHEN: FieldCondition = FieldCondition {
 /// A dynamic body of 1 kg at the density of water.
 #[derive(Debug, Clone, Copy, Reflect)]
 #[reflect(category = "Physics")]
-pub struct RigidBody {
+pub struct PhysicsBody {
     /// How the solver treats this body. One of the `KIND_*` constants.
     #[reflect(choices = KIND_CHOICES)]
     pub kind: u32,
     /// Mass in kilograms — the body's whole mass. Ignored by static and
     /// kinematic bodies.
+    #[reflect(shown_when = DYNAMIC_ONLY)]
     pub mass: f32,
     /// Kilograms per cubic metre, for the Inspector's **Calculate mass**
     /// button.
@@ -92,8 +111,10 @@ pub struct RigidBody {
     /// rather than asked for in a dialog so the number that produced a
     /// mass is visible next to it — 1000 is water, ~2700 aluminium, ~7850
     /// steel, ~600 dry pine.
+    #[reflect(shown_when = DYNAMIC_ONLY)]
     pub density: f32,
     /// Put the centre of mass somewhere other than the collider's centre.
+    #[reflect(shown_when = DYNAMIC_ONLY)]
     pub center_of_mass_enabled: bool,
     /// The centre of mass, in the entity's local space.
     ///
@@ -109,9 +130,11 @@ pub struct RigidBody {
     /// "this moves through air" and the wrong one for "this slides less on
     /// ice". Zero means a body keeps its motion forever, which is rapier's
     /// default and was the engine's only option until #623.
+    #[reflect(shown_when = DYNAMIC_ONLY)]
     pub linear_damping: f32,
     /// The same for spin. A thrown object that should stop tumbling wants
     /// this; a wheel that should keep turning does not.
+    #[reflect(shown_when = DYNAMIC_ONLY)]
     pub angular_damping: f32,
     /// How much the world's gravity pulls on this body.
     ///
@@ -122,10 +145,11 @@ pub struct RigidBody {
     /// Gravity is an *acceleration*, so this changes how fast the body
     /// falls and not how heavy it is — two bodies of different mass at the
     /// same scale still fall together.
+    #[reflect(shown_when = DYNAMIC_ONLY)]
     pub gravity_scale: f32,
 }
 
-impl Default for RigidBody {
+impl Default for PhysicsBody {
     fn default() -> Self {
         Self {
             kind: KIND_DYNAMIC,
@@ -140,9 +164,9 @@ impl Default for RigidBody {
     }
 }
 
-impl Component for RigidBody {}
+impl Component for PhysicsBody {}
 
-impl RigidBody {
+impl PhysicsBody {
     /// The backend body kind, defaulting to dynamic for a discriminant
     /// outside the known set — a scene authored by a newer editor stays
     /// loadable rather than failing.

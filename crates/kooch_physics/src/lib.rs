@@ -31,8 +31,6 @@ pub use backend::{
     BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, CollisionShape, JointDesc,
     JointHandle, JointKind, JointMotor, MotorModel, PhysicsBackend, RayHit,
 };
-pub use components::{Collider, Joint, RigidBody};
-pub use plugin::{
-    JointRegistry, PhysicsBody, PhysicsComponentsPlugin, PhysicsPlugin, PhysicsWorld,
-};
+pub use components::{Collider, Joint, PhysicsBody};
+pub use plugin::{JointRegistry, PhysicsComponentsPlugin, PhysicsPlugin, PhysicsWorld, SolverBody};
 pub use rapier_backend::RapierBackend;

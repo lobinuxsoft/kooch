@@ -2,7 +2,7 @@
 //!
 //! # What this shows, and what it does not
 //!
-//! The **authored** centre of mass: `RigidBody.center_of_mass`, when
+//! The **authored** centre of mass: `PhysicsBody.center_of_mass`, when
 //! `center_of_mass_enabled` is on. That is a component, so it mirrors from
 //! a remote project like any other and can be drawn here.
 //!
@@ -21,7 +21,7 @@ use glam::Vec3;
 
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_gizmos::{Gizmos, Visualizer};
-use kooch_physics::components::RigidBody;
+use kooch_physics::components::PhysicsBody;
 
 /// Amber, matching the Inspector's physics warnings — this is the same
 /// family of "the physics is not where you assume" information.
@@ -37,8 +37,8 @@ const ARM: f32 = 0.25;
 #[derive(Default)]
 pub(crate) struct CenterOfMassVisualizer;
 
-impl Visualizer<RigidBody> for CenterOfMassVisualizer {
-    fn draw(&self, body: &RigidBody, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
+impl Visualizer<PhysicsBody> for CenterOfMassVisualizer {
+    fn draw(&self, body: &PhysicsBody, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
         // Nothing authored means nothing to say: with the override off the
         // solver derives the point, and drawing a guess at it would be the
         // kind of gizmo that lies. See the module docs.
@@ -69,7 +69,7 @@ mod tests {
     use glam::{Mat4, Quat};
     use kooch_gizmos::{GizmoBatch, MeshBatch};
 
-    fn draw(body: &RigidBody, matrix: Mat4) -> Vec<(Vec3, Vec3)> {
+    fn draw(body: &PhysicsBody, matrix: Mat4) -> Vec<(Vec3, Vec3)> {
         let mut lines = GizmoBatch::default();
         let mut meshes = MeshBatch::default();
         let mut gizmos = Gizmos::new(&mut lines, &mut meshes);
@@ -77,8 +77,8 @@ mod tests {
         lines.lines.iter().map(|s| (s.start, s.end)).collect()
     }
 
-    fn enabled(center: Vec3) -> RigidBody {
-        RigidBody {
+    fn enabled(center: Vec3) -> PhysicsBody {
+        PhysicsBody {
             center_of_mass_enabled: true,
             center_of_mass: center,
             ..Default::default()
@@ -89,7 +89,7 @@ mod tests {
     /// and a marker drawn at a guess would be worse than none.
     #[test]
     fn nothing_is_drawn_without_an_authored_centre() {
-        assert!(draw(&RigidBody::default(), Mat4::IDENTITY).is_empty());
+        assert!(draw(&PhysicsBody::default(), Mat4::IDENTITY).is_empty());
     }
 
     #[test]

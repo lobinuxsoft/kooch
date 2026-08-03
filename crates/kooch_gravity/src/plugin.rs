@@ -75,6 +75,31 @@ pub fn gravity_at(resources: &Resources, point: Vec3) -> Vec3 {
         .sum()
 }
 
+/// Which way is up at a world point: away from the pull acting there.
+///
+/// Every consumer of [`gravity_at`] needs this same three lines —
+/// normalise, negate, and decide what "no field" means — so it lives
+/// here rather than in each of them. It had been written twice already
+/// (the camera's `up_mode = Gravity` and a game's movement plane) and the
+/// two copies had drifted to different thresholds for "close enough to
+/// zero", which is the whole failure mode of a duplicated decision.
+///
+/// # Where there is no field
+///
+/// Returns world up. `gravity_at` gives a zero vector where nothing
+/// reaches, and normalising that is a `NaN` that spreads to a camera
+/// pose or an impulse and shows up somewhere else entirely. Free space
+/// has no better answer, and an arbitrary-but-stable one keeps controls
+/// predictable instead of undefined.
+pub fn gravity_up(resources: &Resources, point: Vec3) -> Vec3 {
+    let pull = gravity_at(resources, point);
+    if pull.length_squared() < 1e-12 {
+        Vec3::Y
+    } else {
+        -pull.normalize()
+    }
+}
+
 impl Source {
     fn acceleration_at(&self, point: Vec3) -> Vec3 {
         match &self.kind {
@@ -222,7 +247,7 @@ pub fn apply_gravity_sources(resources: &mut Resources) {
     // nothing.
     let bodies = resources
         .get::<ComponentRegistry>()
-        .and_then(|registry| registry.get_cpu::<kooch_physics::components::RigidBody>());
+        .and_then(|registry| registry.get_cpu::<kooch_physics::components::PhysicsBody>());
 
     // Collected first: reading the pose borrows the world, and applying
     // the impulse needs it mutably.

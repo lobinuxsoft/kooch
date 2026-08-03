@@ -14,7 +14,7 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::EntityRef;
 use kooch_ecs::transform::Transform;
 use kooch_physics::components::{
-    Collider, JOINT_REVOLUTE, Joint, KIND_STATIC, RigidBody, SHAPE_CUBOID,
+    Collider, JOINT_REVOLUTE, Joint, KIND_STATIC, PhysicsBody, SHAPE_CUBOID,
 };
 
 /// How many *fixed steps* to run before reporting and quitting.
@@ -38,7 +38,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
     cast.falling = Some(body(
         resources,
         Vec3::new(0.0, 6.0, 0.0),
-        RigidBody {
+        PhysicsBody {
             mass: 3.0,
             ..Default::default()
         },
@@ -47,7 +47,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
     cast.big_sphere = Some(body(
         resources,
         Vec3::new(3.0, 6.0, 0.0),
-        RigidBody {
+        PhysicsBody {
             mass: 3.0,
             ..Default::default()
         },
@@ -62,7 +62,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
     let compound = body(
         resources,
         Vec3::new(-3.0, 6.0, 0.0),
-        RigidBody {
+        PhysicsBody {
             mass: 3.0,
             ..Default::default()
         },
@@ -78,7 +78,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
     let door = body(
         resources,
         Vec3::new(1.5, 4.0, 6.0),
-        RigidBody {
+        PhysicsBody {
             mass: 2.0,
             ..Default::default()
         },
@@ -107,7 +107,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
     let fuse = body(
         resources,
         Vec3::new(0.0, 7.0, -6.0),
-        RigidBody {
+        PhysicsBody {
             mass: 5.0,
             ..Default::default()
         },
@@ -136,7 +136,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
     cast.spinner = Some(body(
         resources,
         Vec3::new(0.0, 20.0, 0.0),
-        RigidBody {
+        PhysicsBody {
             mass: 1.0,
             angular_damping: 4.0,
             ..Default::default()
@@ -148,7 +148,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
     body(
         resources,
         Vec3::new(0.0, 3.0, 12.0),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -164,7 +164,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
     cast.trigger = Some(body(
         resources,
         Vec3::new(0.0, 8.0, 12.0),
-        RigidBody {
+        PhysicsBody {
             mass: 1.0,
             ..Default::default()
         },
@@ -175,7 +175,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
     body(
         resources,
         Vec3::new(0.0, -1.0, -12.0),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -192,7 +192,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
     body(
         resources,
         Vec3::new(0.0, 14.0, -12.0),
-        RigidBody {
+        PhysicsBody {
             mass: 20.0,
             ..Default::default()
         },
@@ -204,7 +204,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
     body(
         resources,
         Vec3::new(0.0, 0.0, 20.0),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -221,7 +221,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
     cast.ghost = Some(body(
         resources,
         Vec3::new(0.0, 5.0, 20.0),
-        RigidBody {
+        PhysicsBody {
             mass: 1.0,
             ..Default::default()
         },
@@ -249,7 +249,7 @@ fn sled(resources: &mut Resources, z: f32, friction: f32) -> Entity {
     body(
         resources,
         Vec3::new(0.0, -1.0, z),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -264,7 +264,7 @@ fn sled(resources: &mut Resources, z: f32, friction: f32) -> Entity {
     body(
         resources,
         Vec3::new(0.0, 0.5, z),
-        RigidBody {
+        PhysicsBody {
             mass: 1.0,
             ..Default::default()
         },
@@ -281,7 +281,7 @@ fn ground(resources: &mut Resources) -> Entity {
     body(
         resources,
         Vec3::new(0.0, -1.0, 0.0),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -298,7 +298,7 @@ fn static_body(resources: &mut Resources, position: Vec3) -> Entity {
     body(
         resources,
         position,
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -318,7 +318,7 @@ fn cuboid(half: f32) -> Collider {
 fn body(
     resources: &mut Resources,
     position: Vec3,
-    rigid_body: RigidBody,
+    rigid_body: PhysicsBody,
     collider: Collider,
 ) -> Entity {
     let entity = spawn(resources);

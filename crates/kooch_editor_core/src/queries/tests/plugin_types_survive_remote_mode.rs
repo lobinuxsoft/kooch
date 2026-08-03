@@ -23,6 +23,7 @@ fn world_with_plugin_type() -> Resources {
                 name: "speed".into(),
                 kind: FieldKind::F32,
             }],
+            defaults: Vec::new(),
             source: "move_component".into(),
         })
         .unwrap();

@@ -7,8 +7,8 @@ use super::*;
 /// keep drifting afterwards."
 ///
 /// `WorldSnapshot` knows nothing about Rapier. What makes this work is
-/// that `PhysicsBody` is unreflected: the restore wipes it, so the next
-/// sync finds an entity with a `RigidBody` and no body, retires the stale
+/// that `SolverBody` is unreflected: the restore wipes it, so the next
+/// sync finds an entity with a `PhysicsBody` and no body, retires the stale
 /// slot and builds a fresh one from the restored `Transform`. The ECS
 /// stays the single source of truth — option A in the issue.
 #[test]

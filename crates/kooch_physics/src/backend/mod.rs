@@ -61,7 +61,7 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// Adds another collision shape to an existing body.
     ///
     /// This is how a hierarchy becomes physics: a child entity carrying a
-    /// `Collider` but no `RigidBody` of its own contributes its shape to
+    /// `Collider` but no `PhysicsBody` of its own contributes its shape to
     /// the nearest ancestor that has one. The result is **one** body with
     /// several shapes, which is what Unity calls a compound collider and
     /// Unreal calls welding.

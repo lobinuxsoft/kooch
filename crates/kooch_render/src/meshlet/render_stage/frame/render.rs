@@ -147,12 +147,10 @@ impl MeshletRenderStage {
         // bounds-checks per-instance against pool_mesh_descriptors.
         // (`max_meshlets_per_mesh` was bound from `gpu_pool` above so
         // the borrow released before the &mut-self upload.)
-        // Approximate proj_scale_y by the absolute value of `view_proj.y_axis.y`.
-        // For an ortho-normal view (look_at_rh with up=Y) the camera basis
-        // contributes 1 to that component and the projection's `1 / tan(fovy/2)`
-        // is preserved exactly. Skewed cameras pay a small error that the
-        // 1-pixel target tolerance absorbs.
-        let proj_scale_y = view_proj.y_axis.y.abs();
+        // Orientation-independent: see `projection_scale_y`. Reading a
+        // single matrix element here used to disable the LOD selector
+        // outright at 90° of roll or looking straight down.
+        let proj_scale_y = crate::meshlet::cull::projection_scale_y(view_proj);
         let viewport_h_px = self.view.size.1 as f32;
         let lod_target = resources
             .get::<MeshletLodSettings>()

@@ -1,4 +1,4 @@
-//! Tests for [`RigidBody`](super::RigidBody) and [`Collider`](super::Collider).
+//! Tests for [`PhysicsBody`](super::PhysicsBody) and [`Collider`](super::Collider).
 
 use super::*;
 use glam::Vec3;
@@ -7,7 +7,7 @@ use crate::backend::{BodyKind, CollisionShape};
 
 #[test]
 fn defaults_are_a_one_kilo_dynamic_unit_sphere() {
-    let body = RigidBody::default();
+    let body = PhysicsBody::default();
     assert_eq!(body.body_kind(), BodyKind::Dynamic);
     assert_eq!(body.mass, 1.0);
     assert_eq!(
@@ -18,7 +18,7 @@ fn defaults_are_a_one_kilo_dynamic_unit_sphere() {
 
 #[test]
 fn unknown_discriminants_fall_back_instead_of_failing() {
-    let body = RigidBody {
+    let body = PhysicsBody {
         kind: 99,
         mass: 1.0,
         ..Default::default()

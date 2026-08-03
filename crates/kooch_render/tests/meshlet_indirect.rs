@@ -135,7 +135,8 @@ fn indirect_args_resets_between_dispatches() {
 
     let cam = Vec3::new(0.0, 0.0, 3.0);
     let visible_view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
-    let visible_proj = kooch_render::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let visible_proj =
+        kooch_render::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let visible_params = CullParams::new(visible_proj * visible_view, cam, gpu_mesh.meshlet_count);
 
     let occluded_view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 100.0), Vec3::Y);

@@ -107,6 +107,11 @@ pub(crate) fn draw_asset_browser_content(
     }
 
     egui::ScrollArea::vertical()
+        // Width comes from the panel, not from the longest file name.
+        // Left to shrink, the whole tree — rows, drop targets and all —
+        // ends wherever the text does, and the rest of the panel does
+        // nothing when clicked.
+        .auto_shrink([false, true])
         .id_salt("asset_browser_grid")
         .show(ui, |ui| {
             let mut ctx = RenderCtx {

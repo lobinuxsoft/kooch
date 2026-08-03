@@ -33,7 +33,7 @@ fn sphere_body(resources: &mut Resources, mass: f32, radius: f32) -> Entity {
     spawn_body(
         resources,
         Transform::default(),
-        RigidBody {
+        PhysicsBody {
             mass,
             ..Default::default()
         },
@@ -161,7 +161,7 @@ fn an_explicit_centre_of_mass_is_honoured() {
     let entity = spawn_body(
         &mut resources,
         Transform::default(),
-        RigidBody {
+        PhysicsBody {
             mass: 3.0,
             center_of_mass_enabled: true,
             center_of_mass: Vec3::new(0.0, -0.4, 0.0),
@@ -190,7 +190,7 @@ fn editing_the_density_does_not_rebuild_the_body() {
     let slot = slot_of(&resources, entity);
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<RigidBody>()
+        && let Some(storage) = registry.get_cpu_mut::<PhysicsBody>()
         && let Some(body) = storage.get_mut(entity)
     {
         body.density = 7850.0;
@@ -214,7 +214,7 @@ fn editing_the_centre_of_mass_reaches_the_solver() {
     physics_sync_system(&mut resources);
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<RigidBody>()
+        && let Some(storage) = registry.get_cpu_mut::<PhysicsBody>()
         && let Some(body) = storage.get_mut(entity)
     {
         body.center_of_mass_enabled = true;

@@ -68,7 +68,7 @@ fn scene() -> Vec<EntityDisplayInfo> {
                     "Transform",
                     vec![("position".into(), ReflectValue::Vec3(glam::Vec3::ZERO))],
                 ),
-                component("RigidBody", vec![("kind".into(), ReflectValue::U32(0))]),
+                component("PhysicsBody", vec![("kind".into(), ReflectValue::U32(0))]),
             ],
         ),
         named(
@@ -188,7 +188,7 @@ fn moving_the_selection_keeps_the_widget_ids() {
     // drawn at all. The test passed against the bug it was written for.
     let body = || {
         component(
-            "RigidBody",
+            "PhysicsBody",
             vec![
                 ("mass".into(), ReflectValue::F32(1.0)),
                 ("kind".into(), ReflectValue::U32(0)),

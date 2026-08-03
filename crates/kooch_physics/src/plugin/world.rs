@@ -1,4 +1,4 @@
-//! [`PhysicsWorld`] — the ECS↔backend body mapping, and the [`PhysicsBody`]
+//! [`PhysicsWorld`] — the ECS↔backend body mapping, and the [`SolverBody`]
 //! component that addresses it.
 //!
 //! # Why a slot index and not a `HashMap<Entity, BodyHandle>`
@@ -26,10 +26,10 @@ use kooch_ecs::component::Component;
 use kooch_ecs::entity::Entity;
 
 use crate::backend::{
-    BodyDesc, BodyHandle, ColliderInteraction, CollisionShape, Damping, PhysicsBackend,
+    BodyDesc, BodyHandle, ColliderInteraction, CollisionShape, Damping, PhysicsBackend, RayHit,
     SurfaceMaterial,
 };
-use crate::components::{Collider, RigidBody};
+use crate::components::{Collider, PhysicsBody};
 
 /// The physics body an entity owns, as a slot into [`PhysicsWorld`].
 ///
@@ -42,11 +42,11 @@ use crate::components::{Collider, RigidBody};
 ///
 /// [`WorldSnapshot`]: kooch_ecs::world_snapshot::WorldSnapshot
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PhysicsBody(u32);
+pub struct SolverBody(u32);
 
-impl Component for PhysicsBody {}
+impl Component for SolverBody {}
 
-impl PhysicsBody {
+impl SolverBody {
     /// Wraps a slot index.
     pub const fn new(slot: u32) -> Self {
         Self(slot)
@@ -97,7 +97,7 @@ pub struct BodySpec {
     ///
     /// In the spec for the same reason the shape is: rapier bakes both into
     /// the collider and the body at build time, so an Inspector edit has to
-    /// retire and rebuild. Unlike `RigidBody::density`, the simulation
+    /// retire and rebuild. Unlike `PhysicsBody::density`, the simulation
     /// genuinely reads these.
     material: SurfaceMaterial,
     interaction: ColliderInteraction,
@@ -107,7 +107,7 @@ pub struct BodySpec {
     /// The authored centre of mass, or `None` for the collider's own.
     ///
     /// In the spec because rapier bakes mass properties into the body at
-    /// build time, the same as shapes. `RigidBody::density` deliberately is
+    /// build time, the same as shapes. `PhysicsBody::density` deliberately is
     /// *not* here: nothing in the simulation reads it, so a density edit
     /// must not retire a body and drop its velocity mid-play.
     center_of_mass: Option<Vec3>,
@@ -120,13 +120,13 @@ impl BodySpec {
     /// that made colliders "work at some sizes and not others": the mesh
     /// grew with the gizmo and the collider stayed at its authored
     /// dimensions.
-    pub fn new(body: &RigidBody, collider: &Collider, scale: Vec3) -> Self {
+    pub fn new(body: &PhysicsBody, collider: &Collider, scale: Vec3) -> Self {
         Self::with_attachments(body, collider, scale, 0)
     }
 
     /// Same, for a body that inherits shapes from its descendants.
     pub fn with_attachments(
-        body: &RigidBody,
+        body: &PhysicsBody,
         collider: &Collider,
         scale: Vec3,
         attachments: u64,
@@ -178,7 +178,7 @@ impl BodySpec {
             ..Default::default()
         };
         BodyDesc {
-            kind: RigidBody {
+            kind: PhysicsBody {
                 kind: self.kind,
                 mass: self.mass,
                 ..Default::default()
@@ -224,7 +224,7 @@ struct Slot {
 
 /// The physics backend plus the mapping between its bodies and entities.
 ///
-/// Slots are never compacted, so a [`PhysicsBody`] stays valid for the
+/// Slots are never compacted, so a [`SolverBody`] stays valid for the
 /// life of its body. Freed slots go on a free list and are reused, which
 /// keeps the arrays dense without invalidating anyone's index.
 pub struct PhysicsWorld {
@@ -371,6 +371,86 @@ impl PhysicsWorld {
             .enumerate()
             .filter(|(_, s)| s.entity.is_valid())
             .map(|(index, s)| (index as u32, s.entity, s.spec, s.handle))
+    }
+}
+
+/// Acting on a body from gameplay, without meeting the solver.
+///
+/// Everything below takes the [`SolverBody`] a system already has from
+/// its query. Reaching the same effect through the parts underneath —
+/// `world.handle(body.slot())` for a [`BodyHandle`], then
+/// [`backend_mut`](PhysicsWorld::backend_mut) for the trait that owns the
+/// operation — means three concepts (`slot`, handle, backend) that a
+/// gameplay system has no reason to know exist.
+///
+/// The lower-level path stays public and unchanged: a solver-side pass
+/// works in handles because that is its currency, and this is not a wall
+/// around it.
+///
+/// Each returns `Option`, or is a no-op, when the body is not live. A
+/// slot outlives its body by design — [`SolverBody`] is not reflected,
+/// so pressing stop drops it while the world is rebuilt — and asking
+/// about a body that is gone is ordinary, not an error.
+impl PhysicsWorld {
+    /// Pushes a body, in newton-seconds.
+    ///
+    /// Always wakes it: a sleeping body is an optimisation the solver
+    /// chose, and an impulse that leaves it asleep is an impulse that did
+    /// nothing. Anything wanting the other behaviour is working at the
+    /// solver's level and can say so through [`backend_mut`].
+    ///
+    /// [`backend_mut`]: PhysicsWorld::backend_mut
+    pub fn apply_impulse(&mut self, body: SolverBody, impulse: Vec3) {
+        let Some(handle) = self.handle(body.slot()) else {
+            return;
+        };
+        self.backend_mut().apply_impulse(handle, impulse, true);
+    }
+
+    /// How fast a body is moving, in m/s.
+    pub fn linear_velocity(&self, body: SolverBody) -> Option<Vec3> {
+        self.backend().linear_velocity(self.handle(body.slot())?)
+    }
+
+    /// Sets a body's velocity outright.
+    ///
+    /// Prefer [`apply_impulse`](PhysicsWorld::apply_impulse) for anything
+    /// the simulation should argue with: assigning velocity overrides
+    /// whatever the solver worked out this step, so a slope, a bounce or
+    /// a collision resolved in the same frame is simply discarded.
+    pub fn set_linear_velocity(&mut self, body: SolverBody, velocity: Vec3) {
+        let Some(handle) = self.handle(body.slot()) else {
+            return;
+        };
+        self.backend_mut().set_linear_velocity(handle, velocity);
+    }
+
+    /// How fast a body is spinning, in rad/s.
+    pub fn angular_velocity(&self, body: SolverBody) -> Option<Vec3> {
+        self.backend().angular_velocity(self.handle(body.slot())?)
+    }
+
+    /// Where a body is, and how it is oriented, according to the solver.
+    ///
+    /// The authored `Transform` is what the scene says; this is what the
+    /// simulation currently believes, which for a dynamic body is the one
+    /// that moves.
+    pub fn transform(&self, body: SolverBody) -> Option<(Vec3, Quat)> {
+        self.backend().get_transform(self.handle(body.slot())?)
+    }
+
+    /// Whether the solver has parked this body.
+    pub fn is_sleeping(&self, body: SolverBody) -> Option<bool> {
+        self.backend().is_sleeping(self.handle(body.slot())?)
+    }
+
+    /// First thing a ray meets, or `None` for empty space.
+    ///
+    /// `direction` need not be normalised; `max_distance` is measured in
+    /// its lengths. Not tied to a body — it is here so that asking the
+    /// world a question does not require finding the backend first.
+    pub fn raycast(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<RayHit> {
+        self.backend().query_ray(origin, direction, max_distance)
     }
 }
 

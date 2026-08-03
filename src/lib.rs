@@ -59,22 +59,100 @@ pub use kooch_world;
 
 pub use scene_bootstrap::SceneBootstrapPlugin;
 
-/// Convenient re-exports for common usage.
+/// What a game needs, in one import.
 ///
 /// ```ignore
 /// use kooch::prelude::*;
 /// ```
+///
+/// # What belongs here
+///
+/// One rule: **a game names it**. Components you attach, what a system
+/// touches, what you register at startup. Engine machinery does not
+/// qualify — `ArchetypeRegistry`, `BodySpec`, `RenderGraph`, `BodyHandle`
+/// and friends stay reachable at their full paths.
+///
+/// The reason for a rule rather than a list is that both failure modes
+/// are real. Too narrow and a finished feature is indistinguishable from
+/// one that was never built: `Query`, `Transform` and `gravity_at` all
+/// existed for months and nothing outside the engine ever named them.
+/// Too wide and the prelude stops answering *"what am I supposed to
+/// use?"*, collides with names a game wants for itself — `Collider`,
+/// `Name`, `Transform` are exactly what a project calls its own types —
+/// and quietly promises API stability for internals.
+///
+/// ⚠️ A prelude entry makes something **findable**, not **used**. A
+/// capability nothing calls is still disconnected after it lands here;
+/// see `docs/CAPABILITIES.md`.
 pub mod prelude {
     pub use kooch_core::prelude::*;
-    pub use kooch_ecs::{EcsPlugin, Entity, EntityAllocator};
+
+    // The maths types every component is made of. Re-exported rather than
+    // left to the project, because the lock holds five versions of glam
+    // (0.29 through 0.33, pulled in by rapier, egui and others) and a
+    // project adding its own dependency can silently pick a different one
+    // than the engine it is talking to (#657).
+    pub use glam;
+    pub use glam::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
+
+    // What a game touches on day one. These were reachable all along at
+    // `kooch::kooch_ecs::…`, which is to say: only if you already knew
+    // they existed. See `docs/CAPABILITIES.md` — the prelude is the
+    // discovery surface, and anything missing from it reads, from
+    // outside, exactly like a feature that was never built.
+    pub use kooch_ecs::{
+        Children, Commands, Component, ComponentId, ComponentRegistry, ComponentStorage, EcsPlugin,
+        Entity, EntityAllocator, GlobalTransform, MeshRenderer, Name, OrthographicCamera, Parent,
+        PerspectiveCamera, Reflect, SceneManager, Transform,
+    };
+    // The rest of what a scene is made of: what lights it, what the sky
+    // is, and the override that pins an entity's level of detail.
+    pub use kooch_ecs::{DirectionalLight, LodForceLevel, PointLight, SkyRenderer, SpotLight};
+    // Iterating entities by the components they carry, instead of asking
+    // the registry for one storage at a time and joining by hand — which
+    // is what three engine crates still do, 37 times over.
+    pub use kooch_ecs::{Query, With, Without};
 
     #[cfg(feature = "input")]
     pub use kooch_input::{
         InputBackend, InputPlugin, KeyCode, MouseButton,
         backend::{GamepadAxis, GamepadButton, GamepadId},
     };
+    // `PhysicsWorld` is how a system pushes anything, and `SolverBody`
+    // is what addresses a body — both were reachable only by full path,
+    // which is why gameplay reached past them for `backend_mut()`.
     #[cfg(feature = "physics")]
-    pub use kooch_physics::{Collider, PhysicsPlugin, RigidBody};
+    pub use kooch_physics::{
+        Collider, Joint, PhysicsBody, PhysicsPlugin, PhysicsWorld, RayHit, SolverBody,
+    };
+
+    // `gravity_at` answers "which way is down here", and is the only
+    // honest way to ask it: a controller that works it out differently
+    // from the solver ends up disagreeing about where the floor is.
+    #[cfg(feature = "gravity")]
+    pub use kooch_gravity::{
+        AreaGravity, BoxGravity, GlobalGravity, GravityPlugin, PointGravity, gravity_at, gravity_up,
+    };
+
+    // The mode constants come along: without them `VirtualCamera` cannot
+    // be configured from code at all, and `UP_GRAVITY` is what makes a
+    // camera work while orbiting a planet.
+    #[cfg(feature = "camera")]
+    pub use kooch_camera::{
+        CameraPlugin, CameraTarget, FOLLOW_GLUED, FOLLOW_NONE, FOLLOW_SIMPLE, FOLLOW_THIRD_PERSON,
+        LOOK_AT_MIMIC, LOOK_AT_NONE, LOOK_AT_SIMPLE, UP_GRAVITY, UP_TARGET, UP_WORLD,
+        VirtualCamera,
+    };
+
+    // Playing a sound is gameplay; the mixer behind it is not.
+    #[cfg(feature = "audio")]
+    pub use kooch_audio::{AudioBackend, InstanceHandle, PlayParams, SoundHandle};
+
+    // Debug drawing from a game system — a ray you want to see, a radius
+    // you are tuning.
+    #[cfg(feature = "gizmos")]
+    pub use kooch_gizmos::Gizmos;
+
     #[cfg(feature = "dynamic")]
     pub use kooch_plugin_api::prelude as plugin_api;
     #[cfg(feature = "remote")]
@@ -83,6 +161,10 @@ pub mod prelude {
     pub use kooch_render::RenderPlugin;
     #[cfg(feature = "window")]
     pub use kooch_window::{WindowCloseRequested, WindowHandle, WindowPlugin, WindowResized};
+    // What the streaming system follows. The chunk machinery around it
+    // stays internal.
+    #[cfg(feature = "world")]
+    pub use kooch_world::StreamingFocus;
 
     #[cfg(feature = "remote")]
     pub use crate::RemoteHostPlugins;

@@ -17,8 +17,11 @@ fn component(name: &str, fields: Vec<(String, ReflectValue)>) -> ComponentDispla
     }
 }
 
-fn rigid_body(kind: u32) -> ComponentDisplayInfo {
-    component("RigidBody", vec![("kind".into(), ReflectValue::U32(kind))])
+fn physics_body(kind: u32) -> ComponentDisplayInfo {
+    component(
+        "PhysicsBody",
+        vec![("kind".into(), ReflectValue::U32(kind))],
+    )
 }
 
 fn collider() -> ComponentDisplayInfo {
@@ -55,12 +58,12 @@ fn a_dynamic_body_under_another_body_is_flagged() {
     let root = entity(
         0,
         None,
-        vec![rigid_body(kooch_physics::components::KIND_DYNAMIC)],
+        vec![physics_body(kooch_physics::components::KIND_DYNAMIC)],
     );
     let child = entity(
         1,
         Some(root.entity),
-        vec![rigid_body(kooch_physics::components::KIND_DYNAMIC)],
+        vec![physics_body(kooch_physics::components::KIND_DYNAMIC)],
     );
     let entities = vec![root, child];
 
@@ -77,7 +80,7 @@ fn a_child_with_only_a_collider_is_not_flagged() {
     let root = entity(
         0,
         None,
-        vec![rigid_body(kooch_physics::components::KIND_DYNAMIC)],
+        vec![physics_body(kooch_physics::components::KIND_DYNAMIC)],
     );
     let child = entity(1, Some(root.entity), vec![collider()]);
     let entities = vec![root, child];
@@ -96,9 +99,9 @@ fn a_non_dynamic_child_body_is_not_flagged() {
         let root = entity(
             0,
             None,
-            vec![rigid_body(kooch_physics::components::KIND_DYNAMIC)],
+            vec![physics_body(kooch_physics::components::KIND_DYNAMIC)],
         );
-        let child = entity(1, Some(root.entity), vec![rigid_body(kind)]);
+        let child = entity(1, Some(root.entity), vec![physics_body(kind)]);
         let entities = vec![root, child];
 
         assert!(
@@ -115,13 +118,13 @@ fn a_body_ancestor_is_found_through_a_plain_parent() {
     let root = entity(
         0,
         None,
-        vec![rigid_body(kooch_physics::components::KIND_DYNAMIC)],
+        vec![physics_body(kooch_physics::components::KIND_DYNAMIC)],
     );
     let middle = entity(1, Some(root.entity), Vec::new());
     let leaf = entity(
         2,
         Some(middle.entity),
-        vec![rigid_body(kooch_physics::components::KIND_DYNAMIC)],
+        vec![physics_body(kooch_physics::components::KIND_DYNAMIC)],
     );
     let entities = vec![root, middle, leaf];
 
@@ -138,7 +141,7 @@ fn an_unparented_dynamic_body_is_not_flagged() {
     let entities = vec![entity(
         0,
         None,
-        vec![rigid_body(kooch_physics::components::KIND_DYNAMIC)],
+        vec![physics_body(kooch_physics::components::KIND_DYNAMIC)],
     )];
     assert!(warnings_for(entities[0].entity, &entities).is_empty());
 }
@@ -271,7 +274,7 @@ fn a_parent_cycle_terminates() {
         entity(
             0,
             Some(b),
-            vec![rigid_body(kooch_physics::components::KIND_DYNAMIC)],
+            vec![physics_body(kooch_physics::components::KIND_DYNAMIC)],
         ),
         entity(1, Some(a), Vec::new()),
     ];

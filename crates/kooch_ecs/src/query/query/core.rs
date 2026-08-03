@@ -39,9 +39,13 @@ pub struct Query<'w, Q: WorldQuery, F: QueryFilter = ()> {
 impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
     /// Creates a new query from the given resources.
     ///
-    /// The `ComponentRegistry` and `ArchetypeRegistry` must be present
-    /// in resources. An [`AccessTracker`] is created automatically if not
-    /// present.
+    /// `ComponentRegistry`, `ArchetypeRegistry` and [`AccessTracker`] must
+    /// all be present. [`EcsPlugin`](crate::EcsPlugin) inserts the three,
+    /// so any app built the normal way already has them; a bare
+    /// `Resources` assembled by hand in a test does not.
+    ///
+    /// This used to claim the tracker was "created automatically if not
+    /// present". It never was — the line below is an `expect`.
     ///
     /// # Panics
     ///

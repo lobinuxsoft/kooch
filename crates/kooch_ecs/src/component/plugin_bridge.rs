@@ -100,6 +100,15 @@ where
     T: crate::reflect::Reflect + Default,
 {
     let probe = T::default();
+    // The probe is the type's own `Default`, so its values are the ones a
+    // freshly added component should hold. They used to be read for their
+    // metadata and then dropped, leaving the editor able to say a
+    // component has two `f32` but not that they are 20 and 8.
+    let defaults: Vec<(String, crate::reflect::ReflectValue)> = probe
+        .reflect_fields()
+        .iter()
+        .filter_map(|meta| Some((meta.name.to_owned(), probe.reflect_get(meta.name)?)))
+        .collect();
     let schema = ComponentSchema {
         type_name: std::any::type_name::<T>().to_owned(),
         fields: probe
@@ -110,6 +119,9 @@ where
                 kind: to_plugin_field_kind(meta.kind),
             })
             .collect(),
+        // Same encoding a scene file uses, so there is one serialised
+        // form for these values rather than two.
+        defaults: ron::to_string(&defaults).unwrap_or_default(),
     };
     engine.register_component(schema)
 }
@@ -126,6 +138,11 @@ pub(crate) fn to_dynamic_type(schema: &ComponentSchema, source: &str) -> Dynamic
                 kind: map_field_kind(f.kind),
             })
             .collect(),
+        // A plugin built against an older API sends nothing here, and a
+        // malformed payload is not worth refusing the whole type over:
+        // the component still appears, it just starts at its field kinds'
+        // zero values, which is what happened before this existed.
+        defaults: ron::from_str(&schema.defaults).unwrap_or_default(),
         source: source.to_owned(),
     }
 }
@@ -246,6 +263,7 @@ mod tests {
                 FieldSchema::new("current", PluginFieldKind::U32),
                 FieldSchema::new("regen", PluginFieldKind::F32),
             ],
+            defaults: r#"[("current", U32(100)), ("regen", F32(1.5))]"#.into(),
         };
 
         register_schema(&mut registry, &schema, "my_game").unwrap();
@@ -283,5 +301,61 @@ mod tests {
                 type_name: "shared::Name".into()
             }
         );
+    }
+
+    /// A component the editor never compiled has to arrive with the
+    /// values its author chose, not with the zeroes of its field kinds.
+    ///
+    /// This is the whole point of `defaults`: a `GroundMovement` that
+    /// accelerates at 0 toward a top speed of 0 is indistinguishable from
+    /// a broken component, and that is what adding one to a prefab
+    /// produced before this existed.
+    #[test]
+    fn a_declared_component_carries_the_values_its_default_chose() {
+        // What a plugin sends: its own `Default`, serialised the way a
+        // scene file writes the same values.
+        let defaults = vec![
+            (
+                "acceleration".to_owned(),
+                crate::reflect::ReflectValue::F32(20.0),
+            ),
+            (
+                "max_speed".to_owned(),
+                crate::reflect::ReflectValue::F32(8.0),
+            ),
+        ];
+        let schema = ComponentSchema {
+            type_name: "my_game::GroundMovement".into(),
+            fields: vec![
+                FieldSchema::new("acceleration", PluginFieldKind::F32),
+                FieldSchema::new("max_speed", PluginFieldKind::F32),
+            ],
+            defaults: ron::to_string(&defaults).expect("serialise defaults"),
+        };
+
+        // What the editor makes of it.
+        let ty = to_dynamic_type(&schema, "my_game");
+        assert_eq!(
+            ty.defaults, defaults,
+            "the values crossed the boundary as kinds without values"
+        );
+    }
+
+    /// A plugin built before `defaults` existed sends an empty string,
+    /// and a corrupt payload is not worth refusing a whole type over.
+    /// Either way the component still registers — it just starts empty,
+    /// which is exactly the old behaviour.
+    #[test]
+    fn a_plugin_without_usable_defaults_still_registers() {
+        for payload in ["", "not ron at all", "[(1, 2)]"] {
+            let schema = ComponentSchema {
+                type_name: "my_game::Old".into(),
+                fields: vec![FieldSchema::new("value", PluginFieldKind::F32)],
+                defaults: payload.into(),
+            };
+            let ty = to_dynamic_type(&schema, "my_game");
+            assert_eq!(ty.fields.len(), 1, "payload {payload:?} lost the fields");
+            assert!(ty.defaults.is_empty(), "payload {payload:?} decoded");
+        }
     }
 }

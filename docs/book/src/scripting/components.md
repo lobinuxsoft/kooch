@@ -94,8 +94,8 @@ pub struct Weapon {
     pub burst_count: u32,
 
     /// A reference the picker will only let you point at an entity
-    /// carrying a `RigidBody`.
-    #[reflect(requires = "RigidBody")]
+    /// carrying a `PhysicsBody`.
+    #[reflect(requires = "PhysicsBody")]
     pub anchored_to: Option<EntityRef>,
 }
 ```

@@ -186,6 +186,12 @@ pub struct RemoteInputBackend {
 
 #[derive(Default)]
 struct PadState {
+    /// Edges derived in `apply`, from the difference between two state
+    /// snapshots. Expired there too, for the same reason the key edges
+    /// are: the host ticks faster than the editor sends, so clearing on
+    /// `begin_frame` would drop a press before anything read it.
+    just_pressed: HashSet<GamepadButton>,
+    just_released: HashSet<GamepadButton>,
     buttons: HashSet<GamepadButton>,
     axes: HashMap<GamepadAxis, f32>,
 }
@@ -244,13 +250,17 @@ impl RemoteInputBackend {
             }
             let state = self.gamepads.entry(id).or_default();
             let incoming: HashSet<GamepadButton> = pad.buttons.iter().copied().collect();
+            state.just_pressed.clear();
+            state.just_released.clear();
             for &button in incoming.difference(&state.buttons) {
+                state.just_pressed.insert(button);
                 self.queued_events.push(InputEvent::GamepadButtonPressed {
                     gamepad: id,
                     button,
                 });
             }
             for &button in state.buttons.difference(&incoming) {
+                state.just_released.insert(button);
                 self.queued_events.push(InputEvent::GamepadButtonReleased {
                     gamepad: id,
                     button,
@@ -356,6 +366,18 @@ impl InputBackend for RemoteInputBackend {
         self.gamepads
             .get(&gamepad)
             .is_some_and(|state| state.buttons.contains(&button))
+    }
+
+    fn just_button_pressed(&self, gamepad: GamepadId, button: GamepadButton) -> bool {
+        self.gamepads
+            .get(&gamepad)
+            .is_some_and(|state| state.just_pressed.contains(&button))
+    }
+
+    fn just_button_released(&self, gamepad: GamepadId, button: GamepadButton) -> bool {
+        self.gamepads
+            .get(&gamepad)
+            .is_some_and(|state| state.just_released.contains(&button))
     }
 
     fn axis_value(&self, gamepad: GamepadId, axis: GamepadAxis) -> f32 {

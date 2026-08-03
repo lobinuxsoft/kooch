@@ -27,6 +27,7 @@ fn world() -> Resources {
                 name: "speed".into(),
                 kind: FieldKind::F32,
             }],
+            defaults: Vec::new(),
             source: "move_component".into(),
         })
         .unwrap();

@@ -19,7 +19,7 @@ fn anchor(resources: &mut Resources, position: Vec3) -> Entity {
     spawn_body(
         resources,
         Transform::from_position(position),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -37,7 +37,7 @@ fn part(resources: &mut Resources, position: Vec3) -> Entity {
     spawn_body(
         resources,
         Transform::from_position(position),
-        RigidBody::default(),
+        PhysicsBody::default(),
         Collider {
             shape: SHAPE_CUBOID,
             half_extents: Vec3::splat(0.25),
@@ -124,7 +124,7 @@ fn a_joint_waits_for_a_body_that_does_not_exist_yet() {
 
     // The partner arrives, as it would when its cell streams in.
     insert(&mut resources, b, Transform::from_position(Vec3::X));
-    insert(&mut resources, b, RigidBody::default());
+    insert(&mut resources, b, PhysicsBody::default());
     insert(&mut resources, b, Collider::default());
     physics_sync_system(&mut resources);
 
@@ -201,7 +201,7 @@ fn losing_a_body_removes_the_joint() {
     physics_sync_system(&mut resources);
     assert_eq!(joint_count(&resources), 1);
 
-    remove::<RigidBody>(&mut resources, b);
+    remove::<PhysicsBody>(&mut resources, b);
     physics_sync_system(&mut resources);
 
     assert_eq!(joint_count(&resources), 0, "the joint outlived its body");
@@ -498,7 +498,7 @@ fn a_joint_below_its_threshold_holds() {
     assert!(position(&resources, load).y > 8.0, "the load fell anyway");
 }
 
-/// Stopping drops every `PhysicsBody`, so the world is rebuilt from the
+/// Stopping drops every `SolverBody`, so the world is rebuilt from the
 /// restored ECS. The joints have to come back with it — including one that
 /// broke during the session, which is the whole reason the registry keys on
 /// body handles rather than on a flag it would have to clear by hand.
@@ -527,8 +527,8 @@ fn stopping_rebuilds_a_joint_that_broke_while_playing() {
     // What stop does: the runtime components go, and the next sync builds
     // the world again from what the ECS still holds.
     Playing::set(&mut resources, false);
-    remove::<PhysicsBody>(&mut resources, hook);
-    remove::<PhysicsBody>(&mut resources, load);
+    remove::<SolverBody>(&mut resources, hook);
+    remove::<SolverBody>(&mut resources, load);
     physics_sync_system(&mut resources);
 
     assert!(

@@ -36,6 +36,7 @@ fn world_with_plugin_type() -> Resources {
                 name: "current".into(),
                 kind: FieldKind::U32,
             }],
+            defaults: Vec::new(),
             source: "my_game".into(),
         })
         .unwrap();

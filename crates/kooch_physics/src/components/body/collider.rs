@@ -1,7 +1,7 @@
 //! [`Collider`] — the shape an entity presents to the solver, and how
 //! that surface behaves on contact.
 //!
-//! Same discriminant rule as [`RigidBody`](super::RigidBody): `shape` is
+//! Same discriminant rule as [`PhysicsBody`](super::PhysicsBody): `shape` is
 //! a `u32` with a choice set, because reflection cannot express an enum.
 
 use glam::Vec3;

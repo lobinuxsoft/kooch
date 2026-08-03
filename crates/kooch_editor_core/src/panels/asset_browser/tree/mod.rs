@@ -70,7 +70,9 @@ pub(crate) fn render_root(
         .show_header(ui, |ui| {
             // A selectable label (not a plain label) senses secondary
             // clicks, so the root's context menu actually opens.
-            let resp = ui.selectable_label(false, format!("{} {}", icons::FOLDER_OPEN, label));
+            let resp =
+                crate::widgets::SelectableRow::new(format!("{} {}", icons::FOLDER_OPEN, label))
+                    .show(ui);
             if ctx.writable {
                 let actions = &mut *ctx.actions;
                 let rename = &mut *ctx.rename;
