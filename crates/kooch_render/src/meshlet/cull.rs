@@ -114,10 +114,11 @@ impl CullParams {
     }
 
     /// Configures the continuous-LOD selector with a non-zero
-    /// projection factor. `proj_scale_y` is `1 / tan(fovy/2)` — for a
-    /// `Mat4` produced by [`crate::projection::perspective_rh_reverse_z`] you can read
-    /// it directly from `proj.y_axis.y`. `viewport_height_pixels` is
-    /// the destination framebuffer height in physical pixels.
+    /// projection factor. `proj_scale_y` is `1 / tan(fovy/2)`; get it
+    /// from [`projection_scale_y`], which recovers it from a combined
+    /// view-projection without depending on where the camera is looking.
+    /// `viewport_height_pixels` is the destination framebuffer height in
+    /// physical pixels.
     pub fn with_lod(
         mut self,
         viewport_height_pixels: f32,
@@ -128,6 +129,47 @@ impl CullParams {
         self.lod_error_to_pixel_factor = 0.5 * viewport_height_pixels * proj_scale_y;
         self
     }
+}
+
+/// Recovers the projection's vertical scale from a combined
+/// view-projection matrix.
+///
+/// This is `1 / tan(fovy / 2)` for a perspective projection: how many
+/// half-heights of clip space a unit of view-space Y becomes. It belongs
+/// to the *projection*, so it must not change when the camera turns.
+///
+/// # Why the norm of a row and not one of its elements
+///
+/// The row of `view_projection` that produces `clip.y` is the projection's
+/// `f` times row 1 of the view's rotation. A rotation's row is a **unit**
+/// vector, so the row's length is exactly `f` no matter how the camera is
+/// oriented — while any single component of it is `f` times a direction
+/// cosine.
+///
+/// Reading one component was the bug: it happens to equal `f` when the
+/// camera's up is the world's up, and decays to **zero** at 90° of roll or
+/// looking straight up or down. A factor of zero disables the LOD selector
+/// entirely (see `meshlet_cull/common.wgsl`), which keeps only root
+/// meshlets — a sphere collapses to a blob and a cube to a spike. It
+/// degrades continuously, so a moderate tilt silently lowered detail
+/// everywhere rather than failing visibly.
+///
+/// Found by orbiting a `PointGravity`, not by any test: every previous
+/// measurement was taken with a level camera.
+///
+/// Works for orthographic too, where the row's length is `2 / height`.
+/// A view matrix carrying scale would fold that in — views are rotation
+/// plus translation, so that does not arise.
+pub fn projection_scale_y(view_projection: Mat4) -> f32 {
+    // Row 1's xyz, read out of glam's column-major storage. The
+    // translation lives in `w` and is deliberately excluded: it shifts
+    // the image, it does not scale it.
+    Vec3::new(
+        view_projection.x_axis.y,
+        view_projection.y_axis.y,
+        view_projection.z_axis.y,
+    )
+    .length()
 }
 
 /// CPU mirror of the WGSL backface cone test. Returns `true` when the
@@ -385,5 +427,96 @@ mod tests {
             let len = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
             assert!((len - 1.0).abs() < 1e-3);
         }
+    }
+
+    /// The LOD factor belongs to the projection, so **no** camera
+    /// orientation may change it. The old code read
+    /// `view_proj.y_axis.y`, which is `f × cos(angle between the
+    /// camera's up and the world's)` — right for a level camera and
+    /// zero at 90° of roll or looking straight down. Zero switches the
+    /// LOD selector off, leaving only root meshlets: a sphere becomes a
+    /// blob.
+    ///
+    /// Every case here fails against that formula, including the two
+    /// that silently return a *plausible but wrong* number rather than
+    /// zero.
+    #[test]
+    fn the_lod_factor_survives_any_camera_orientation() {
+        use std::f32::consts::FRAC_PI_2;
+
+        let fovy = 60.0_f32.to_radians();
+        let expected = 1.0 / (fovy * 0.5).tan();
+        let proj = crate::projection::perspective_rh_reverse_z(fovy, 16.0 / 9.0, 0.1, 1000.0);
+        let eye = Vec3::new(3.0, 4.0, 5.0);
+
+        let cases: [(&str, Mat4); 6] = [
+            ("level", Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y)),
+            // Rolled 90°: the camera's up is horizontal, so the element
+            // the old code read is 0 and the selector shut down entirely.
+            (
+                "rolled 90°",
+                Mat4::from_rotation_z(FRAC_PI_2) * Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y),
+            ),
+            ("upside down", Mat4::look_at_rh(eye, Vec3::ZERO, -Vec3::Y)),
+            // Straight down — up ends up horizontal again. This is what
+            // orbiting a PointGravity walks through.
+            (
+                "looking straight down",
+                Mat4::look_at_rh(Vec3::new(0.0, 10.0, 0.0), Vec3::ZERO, Vec3::Z),
+            ),
+            (
+                "looking straight up",
+                Mat4::look_at_rh(Vec3::new(0.0, -10.0, 0.0), Vec3::ZERO, Vec3::Z),
+            ),
+            (
+                "arbitrary tilt",
+                Mat4::from_euler(glam::EulerRot::YXZ, 0.7, -0.9, 1.3)
+                    * Mat4::from_translation(-eye),
+            ),
+        ];
+
+        for (name, view) in cases {
+            let got = projection_scale_y(proj * view);
+            assert!(
+                (got - expected).abs() < 1e-3,
+                "{name}: projection scale drifted to {got}, expected {expected}"
+            );
+        }
+    }
+
+    /// Moving the camera must not change it either — the translation
+    /// lives in the row's `w`, which is excluded on purpose.
+    #[test]
+    fn the_lod_factor_survives_any_camera_position() {
+        let fovy = 75.0_f32.to_radians();
+        let expected = 1.0 / (fovy * 0.5).tan();
+        let proj = crate::projection::perspective_rh_reverse_z(fovy, 1.0, 0.1, 1000.0);
+
+        for eye in [
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, -50.0),
+            Vec3::new(1000.0, -2000.0, 3000.0),
+        ] {
+            let view = Mat4::from_translation(-eye);
+            let got = projection_scale_y(proj * view);
+            assert!(
+                (got - expected).abs() < 1e-3,
+                "at {eye:?}: got {got}, expected {expected}"
+            );
+        }
+    }
+
+    /// A narrower field of view concentrates more pixels on the same
+    /// object, so the same world-space error covers more of them — the
+    /// factor has to grow. Without this the test above would pass on a
+    /// function that returned a constant.
+    #[test]
+    fn a_narrower_field_of_view_raises_the_factor() {
+        let wide =
+            crate::projection::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 1000.0);
+        let narrow =
+            crate::projection::perspective_rh_reverse_z(30.0_f32.to_radians(), 1.0, 0.1, 1000.0);
+        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        assert!(projection_scale_y(narrow * view) > projection_scale_y(wide * view));
     }
 }
