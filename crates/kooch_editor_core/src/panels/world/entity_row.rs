@@ -5,7 +5,6 @@
 
 use std::collections::HashSet;
 
-use egui::NumExt as _;
 use kooch_ecs::component::ComponentId;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::ReflectValue;
@@ -14,37 +13,14 @@ use crate::actions::EditorAction;
 use crate::drag_drop::DraggedComponent;
 use crate::icons;
 use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
+use crate::widgets::SelectableRow;
 
 /// Height of one row in the hierarchy, in points.
 ///
-/// Virtualizing the list means egui is told how tall the rows are before
-/// any of them is drawn — it has to place a scrollbar for six hundred
-/// entities while laying out the twenty that fit on screen. So this is
-/// the **single** definition: the list asks it how much space to reserve
-/// and the row asks it how much to occupy. Two copies of this formula
-/// would drift by a pixel per row and the scrollbar would lie about
-/// where it is by the bottom of a long scene.
-///
-/// Rows are exactly one line because [`draw_entity_row`] truncates
-/// rather than wraps. A wrapped name would make its own row taller than
-/// this and desynchronize the whole list below it.
-///
-/// # Without the spacing between rows
-///
-/// `ScrollArea::show_rows` names its parameter `row_height_sans_spacing`
-/// and adds `item_spacing.y` itself. This used to include the spacing,
-/// so egui reserved a row's height *plus two* gaps while each row
-/// occupied its height plus one — four pixels of nothing per row.
-/// Invisible on ten rows, a finger's width of empty panel on forty, and
-/// growing with the panel because the number of visible rows does. That
-/// is what finally identified it (#708): the gap scaled with the height.
-///
-/// The two places that draw a row used to subtract the spacing back out.
-/// They agreed with each other and with nothing else.
-pub(super) fn row_height(ui: &egui::Ui) -> f32 {
-    let line = ui.text_style_height(&egui::TextStyle::Button);
-    (line + 2.0 * ui.spacing().button_padding.y).at_least(ui.spacing().interact_size.y)
-}
+/// Re-exported from [`crate::widgets`], where the reasoning lives: the
+/// virtualized list reserves this before drawing anything, so it has to
+/// be the same number the row occupies.
+pub(super) use crate::widgets::row_height;
 
 /// Walks up from `entity` through the parent chain looking for `ancestor`.
 /// Returns `true` if `entity` is a descendant of `ancestor` (cycle prevention).
@@ -100,61 +76,13 @@ pub(super) fn draw_entity_row(
     let being_dragged =
         egui::DragAndDrop::payload::<Entity>(ui.ctx()).is_some_and(|p| *p == info.entity);
 
-    // Custom selectable label with click + drag sensing (single widget
-    // avoids the drag overlay stealing click events from selection).
-    let button_padding = ui.spacing().button_padding;
-    let total_extra = button_padding + button_padding;
-    let wrap_width = ui.available_width() - total_extra.x;
-    let text: egui::WidgetText = indented_label.as_str().into();
-    // Truncate, never wrap. A wrapped name would be taller than
-    // [`row_height`] promised, and every row below it in a virtualized
-    // list would be drawn where the scrollbar says the previous one
-    // ended rather than where it actually did. Truncating is also what
-    // a hierarchy panel should do with a long name: the tree structure
-    // is what is being read, not the full string.
-    let galley = text.into_galley(
-        ui,
-        Some(egui::TextWrapMode::Truncate),
-        wrap_width,
-        egui::TextStyle::Button,
-    );
-    // Full width, not the width of the name. A row is a target — for a
-    // click, for a drop, for the highlight that says which entity is
-    // selected — and a target that stops where the text stops leaves
-    // most of the panel dead to the pointer.
-    let desired_size = egui::vec2(ui.available_width(), row_height(ui));
-    let (rect, resp) = ui.allocate_at_least(desired_size, egui::Sense::click_and_drag());
-
-    if ui.is_rect_visible(rect) {
-        // Left-aligned and vertically centred, stated rather than
-        // inherited from the layout: now that the row is as wide as the
-        // panel, asking the layout where to put the text would centre a
-        // short name in the middle of a wide row and lose the
-        // indentation that shows the hierarchy.
-        let inner = rect.shrink2(button_padding);
-        let text_pos = egui::pos2(inner.left(), inner.center().y - galley.size().y * 0.5);
-        let visuals = ui.style().interact_selectable(&resp, is_selected);
-        if is_selected || resp.hovered() || resp.highlighted() || resp.has_focus() {
-            let r = rect.expand(visuals.expansion);
-            ui.painter().rect(
-                r,
-                visuals.corner_radius,
-                visuals.bg_fill,
-                visuals.bg_stroke,
-                egui::StrokeKind::Inside,
-            );
-        }
-        let mut text_color = visuals.text_color();
-        if being_dragged {
-            text_color = egui::Color32::from_rgba_unmultiplied(
-                text_color.r(),
-                text_color.g(),
-                text_color.b(),
-                80,
-            );
-        }
-        ui.painter().galley(text_pos, galley, text_color);
-    }
+    // Click and drag on one response: two widgets would let the drag
+    // overlay steal the click that selects the row.
+    let resp = SelectableRow::new(indented_label.as_str())
+        .selected(is_selected)
+        .sense(egui::Sense::click_and_drag())
+        .dimmed(being_dragged)
+        .show(ui);
 
     // Single response handles both click and drag.
     resp.dnd_set_drag_payload(info.entity);
