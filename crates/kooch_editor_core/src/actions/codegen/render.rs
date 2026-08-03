@@ -141,12 +141,17 @@ fn render_modules(files: &[SourceFile]) -> String {
             // The container carries the directory; its children then only
             // have to name their own file.
             s.push_str(&format!("{pad}#[path = \"{dir}\"]\n"));
-            s.push_str(&format!("{pad}mod {} {{\n", sanitize(dir)));
+            s.push_str(&format!("{pad}pub mod {} {{\n", sanitize(dir)));
             open.push(dir);
         }
 
         let pad = indent(open.len());
-        let vis = if open.is_empty() { "mod" } else { "pub mod" };
+        // Public throughout, so `main.rs` can reach a project's own code.
+        // Private modules made the scripts visible only to the generated
+        // file itself, which meant a game could not, for instance, hand
+        // its action map to a plugin at startup — the code was there and
+        // unreachable from the one place that assembles the app.
+        let vis = "pub mod";
         s.push_str(&format!("{pad}#[path = \"{}\"]\n", f.file_name()));
         s.push_str(&format!("{pad}{vis} {};\n", sanitize(f.stem())));
     }

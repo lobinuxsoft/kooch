@@ -32,11 +32,13 @@
 mod action;
 mod binding;
 mod path;
+mod plugin;
 mod processor;
 mod state;
 
 pub use action::{Action, ActionId, ActionMap, ControlType};
 pub use binding::{Binding, BothHeld, Composite, Group, PartName, Role, Vector2Mode, groups};
 pub use path::{ControlPath, DeviceClass};
+pub use plugin::{ActionsPlugin, ActiveActionMap};
 pub use processor::{DEFAULT_DEADZONE_MAX, DEFAULT_DEADZONE_MIN, Processor};
 pub use state::{ActionState, ActionValue};

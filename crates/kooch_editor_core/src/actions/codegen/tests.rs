@@ -262,7 +262,7 @@ pub fn movement(resources: &mut Resources) {}
         let out = render_registrations(&files);
 
         assert!(
-            out.contains("#[path = \"components\"]\nmod components {\n"),
+            out.contains("#[path = \"components\"]\npub mod components {\n"),
             "container must carry the bare directory name, got:\n{out}"
         );
         assert!(
@@ -284,7 +284,7 @@ pub fn movement(resources: &mut Resources) {}
         );
         // A file directly under `src/` keeps its plain declaration.
         assert!(
-            out.contains("#[path = \"player.rs\"]\nmod player;\n"),
+            out.contains("#[path = \"player.rs\"]\npub mod player;\n"),
             "a root-level file should not be wrapped, got:\n{out}"
         );
     }
@@ -322,7 +322,7 @@ pub fn movement(resources: &mut Resources) {}
     fn a_folder_named_like_a_keyword_still_compiles() {
         let out = render_registrations(&[source("move/dash.rs", &["Dash"], &[])]);
         assert!(
-            out.contains("#[path = \"move\"]\nmod r#move {"),
+            out.contains("#[path = \"move\"]\npub mod r#move {"),
             "a keyword directory needs a raw identifier, got:\n{out}"
         );
         assert!(

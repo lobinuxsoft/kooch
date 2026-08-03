@@ -118,6 +118,14 @@ pub mod prelude {
         InputBackend, InputPlugin, KeyCode, MouseButton,
         backend::{GamepadAxis, GamepadButton, GamepadId},
     };
+    // Actions as data: what a game binds, and what it reads per frame.
+    // A game names an action once and holds its `ActionId`; nothing in
+    // gameplay mentions a key again.
+    #[cfg(feature = "input")]
+    pub use kooch_input::actions::{
+        Action, ActionId, ActionMap, ActionState, ActionsPlugin, ActiveActionMap, Binding,
+        Composite, ControlPath, ControlType, DeviceClass, PartName, Processor, Vector2Mode,
+    };
     // `PhysicsWorld` is how a system pushes anything, and `SolverBody`
     // is what addresses a body — both were reachable only by full path,
     // which is why gameplay reached past them for `backend_mut()`.
