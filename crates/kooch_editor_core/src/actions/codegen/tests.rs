@@ -2,7 +2,18 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::{detect, ensure_features, module_name};
+    use super::super::render::{colliding_names, module_path, render_registrations};
+    use super::super::{SourceFile, detect, ensure_features};
+
+    /// A discovered source file, for the render tests.
+    fn source(rel: &str, components: &[&str], systems: &[&str]) -> SourceFile {
+        SourceFile {
+            rel: rel.to_owned(),
+            module: module_path(rel),
+            components: components.iter().map(|s| (*s).to_owned()).collect(),
+            systems: systems.iter().map(|s| (*s).to_owned()).collect(),
+        }
+    }
 
     /// A manifest in its own directory, the way the rest of the repo does
     /// it — there is no `tempfile` in this workspace.
@@ -227,9 +238,148 @@ pub fn movement(resources: &mut Resources) {}
     }
 
     #[test]
-    fn module_name_flattens_nested_paths() {
-        assert_eq!(module_name("player_health.rs"), "player_health");
-        assert_eq!(module_name("enemies/ai.rs"), "enemies_ai");
+    fn a_folder_becomes_a_module_rather_than_a_prefix() {
+        assert_eq!(module_path("player_health.rs"), "player_health");
+        assert_eq!(module_path("enemies/ai.rs"), "enemies::ai");
+        assert_eq!(module_path("a/b/c.rs"), "a::b::c");
+    }
+
+    /// The layout the generated file has to produce, verified by
+    /// compiling it in a real project before it was ever generated.
+    ///
+    /// The `#[path]` on a container is the bare directory name: Rust
+    /// resolves it against the directory of `registrations.rs` and
+    /// *replaces* the path rather than appending to it, so neither `../`
+    /// nor a `registrations/` prefix belongs here. Children then resolve
+    /// against their container and only name their own file.
+    #[test]
+    fn folders_are_emitted_as_nested_modules() {
+        let files = vec![
+            source("components/movement.rs", &["GroundMovement"], &[]),
+            source("player.rs", &["PlayerController"], &[]),
+            source("systems/movement.rs", &[], &["apply_movement"]),
+        ];
+        let out = render_registrations(&files);
+
+        assert!(
+            out.contains("#[path = \"components\"]\nmod components {\n"),
+            "container must carry the bare directory name, got:\n{out}"
+        );
+        assert!(
+            out.contains("    #[path = \"movement.rs\"]\n    pub mod movement;\n"),
+            "a child names only its own file, and must be reachable from \
+             outside its container, got:\n{out}"
+        );
+        assert!(
+            !out.contains("components_movement"),
+            "the flattened name survived, got:\n{out}"
+        );
+        assert!(
+            out.contains("register_cpu_reflected::<components::movement::GroundMovement>()"),
+            "registrations must use the nested path, got:\n{out}"
+        );
+        assert!(
+            out.contains("run_if_playing(systems::movement::apply_movement)"),
+            "systems must use the nested path, got:\n{out}"
+        );
+        // A file directly under `src/` keeps its plain declaration.
+        assert!(
+            out.contains("#[path = \"player.rs\"]\nmod player;\n"),
+            "a root-level file should not be wrapped, got:\n{out}"
+        );
+    }
+
+    /// Every block that opens has to close, at any depth, or the
+    /// generated file is not even parseable.
+    #[test]
+    fn nested_folders_open_and_close_their_blocks() {
+        let files = vec![
+            source("a/b/deep.rs", &["Deep"], &[]),
+            source("a/shallow.rs", &["Shallow"], &[]),
+            source("z.rs", &["Z"], &[]),
+        ];
+        let out = render_registrations(&files);
+        let modules = out.split("/// Editor-managed").next().expect("header");
+        assert_eq!(
+            modules.matches('{').count(),
+            modules.matches('}').count(),
+            "unbalanced module blocks:\n{modules}"
+        );
+        assert!(
+            out.contains("register_cpu_reflected::<a::b::deep::Deep>()"),
+            "got:\n{out}"
+        );
+        // `a/b/` closes before `a/shallow.rs`, which stays inside `a`.
+        assert!(
+            out.contains("register_cpu_reflected::<a::shallow::Shallow>()"),
+            "got:\n{out}"
+        );
+    }
+
+    /// A directory can be called anything the filesystem allows; a module
+    /// cannot. The `#[path]` keeps the real name either way.
+    #[test]
+    fn a_folder_named_like_a_keyword_still_compiles() {
+        let out = render_registrations(&[source("move/dash.rs", &["Dash"], &[])]);
+        assert!(
+            out.contains("#[path = \"move\"]\nmod r#move {"),
+            "a keyword directory needs a raw identifier, got:\n{out}"
+        );
+        assert!(
+            out.contains("register_cpu_reflected::<r#move::dash::Dash>()"),
+            "got:\n{out}"
+        );
+        // `crate` cannot be a raw identifier at all.
+        assert_eq!(module_path("crate/thing.rs"), "crate_::thing");
+    }
+
+    /// `src/components.rs` beside `src/components/` would be one `mod`
+    /// declared twice. Nothing can express it, so it gets reported.
+    #[test]
+    fn a_file_and_a_folder_of_the_same_name_are_reported() {
+        let files = vec![
+            source("components.rs", &["A"], &[]),
+            source("components/movement.rs", &["B"], &[]),
+        ];
+        assert_eq!(colliding_names(&files), vec!["components".to_owned()]);
+        // The ordinary layout is not a collision.
+        let fine = vec![
+            source("components/movement.rs", &["A"], &[]),
+            source("systems/movement.rs", &[], &["s"]),
+        ];
+        assert!(colliding_names(&fine).is_empty());
+    }
+
+    /// The generated file used to open with
+    /// `#![allow(unused_imports, unused_variables, dead_code)]`. That is an
+    /// inner attribute on the `registrations` module, and every project
+    /// script is mounted inside it via `#[path]` — so it silenced those
+    /// three lints across the user's whole project, for good.
+    #[test]
+    fn the_generated_file_does_not_silence_lints_for_the_whole_project() {
+        let out =
+            render_registrations(&[source("components/movement.rs", &["GroundMovement"], &[])]);
+        assert!(
+            !out.contains("#!["),
+            "an inner attribute here applies to every script in the project, got:\n{out}"
+        );
+    }
+
+    /// …which is only safe if the generated code is itself warning-free.
+    /// With no components, `declare_components` never mentions its
+    /// parameter, and an unused parameter is exactly the warning the
+    /// blanket allow used to hide.
+    #[test]
+    fn a_project_with_no_components_still_uses_its_parameter() {
+        let out = render_registrations(&[source("systems/movement.rs", &[], &["apply_movement"])]);
+        assert!(
+            out.contains("let _ = engine;"),
+            "an unused parameter would warn in the user's project, got:\n{out}"
+        );
+        assert!(
+            !out.contains("use kooch::kooch_ecs::component::plugin_bridge::declare_component;"),
+            "the import would be unused too, got:\n{out}"
+        );
     }
 
     /// The migration rewrites only the exact arm the editor generated,
@@ -261,13 +411,7 @@ pub fn movement(resources: &mut Resources) {}
     /// of the gate.
     #[test]
     fn generated_plugin_wraps_systems_in_the_runtime_gate() {
-        use super::super::{SourceFile, render_registrations};
-        let files = vec![SourceFile {
-            rel: "movement.rs".to_owned(),
-            module: "movement".to_owned(),
-            components: vec![],
-            systems: vec!["move_system".to_owned()],
-        }];
+        let files = vec![source("movement.rs", &[], &["move_system"])];
         let out = render_registrations(&files);
         assert!(out.contains("pub run_systems: bool"));
         assert!(

@@ -5,6 +5,16 @@
 
 use kooch::prelude::*;
 
+// To use one of your own components here, name it through the generated
+// module tree, which mirrors your `src/` folders:
+//
+//     use crate::registrations::components::movement::GroundMovement;
+//
+// That path is absolute on purpose. Your scripts are mounted inside
+// `registrations`, so `super::` means something different depending on
+// how deep the file sits — the absolute path reads the same from
+// anywhere, and survives moving the file.
+
 /// The `{{name}}` system. A system is any `fn(&mut Resources)`.
 ///
 /// You do not register it by hand. Press Register Scripts and the editor
