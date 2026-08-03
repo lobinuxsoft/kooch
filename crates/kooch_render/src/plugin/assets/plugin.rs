@@ -31,11 +31,33 @@ use super::eager::eager_import_typed_assets;
 ///   first (primary), then `<project>/assets` (secondary). Both
 ///   get scanned at startup so the runtime can resolve every GUID
 ///   the scene references.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AssetPlugin {
     roots: Vec<PathBuf>,
     /// Whether to pull every typed asset into memory at build time.
     eager_import: bool,
+    /// Loaders contributed by crates this one does not depend on.
+    ///
+    /// The server is built here, and a plugin reaching into a resource
+    /// another plugin may not have inserted yet is an ordering bug — the
+    /// reason prefabs register through a free function called from this
+    /// build. That works because `kooch_render` depends on `kooch_ecs`.
+    ///
+    /// It does not work for `kooch_input`, and would not for audio, so
+    /// the alternative was to make the renderer depend on both. Whoever
+    /// assembles the app knows which asset types exist; the renderer does
+    /// not need to.
+    extra_loaders: Vec<std::sync::Arc<dyn Fn(&mut AssetServer) + Send + Sync>>,
+}
+
+impl std::fmt::Debug for AssetPlugin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AssetPlugin")
+            .field("roots", &self.roots)
+            .field("eager_import", &self.eager_import)
+            .field("extra_loaders", &self.extra_loaders.len())
+            .finish()
+    }
 }
 
 impl AssetPlugin {
@@ -45,6 +67,7 @@ impl AssetPlugin {
         Self {
             roots: vec![PathBuf::from("assets")],
             eager_import: true,
+            extra_loaders: Vec::new(),
         }
     }
 
@@ -79,6 +102,25 @@ impl AssetPlugin {
         self
     }
 
+    /// Adds a loader from a crate this one does not know about.
+    ///
+    /// ```ignore
+    /// AssetPlugin::new().with_loader(|server| {
+    ///     server.register_loader::<ActionMap, _>(InputMapLoader);
+    /// })
+    /// ```
+    ///
+    /// Runs while the server is being built, so the loader is in place
+    /// before the first scan — which is what a loader registered from a
+    /// `Startup` system would miss.
+    pub fn with_loader(
+        mut self,
+        register: impl Fn(&mut AssetServer) + Send + Sync + 'static,
+    ) -> Self {
+        self.extra_loaders.push(std::sync::Arc::new(register));
+        self
+    }
+
     fn primary_root(&self) -> &Path {
         self.roots
             .first()
@@ -110,6 +152,11 @@ impl Plugin for AssetPlugin {
         // bug waiting to happen. This is what gives a `.prefab` a guid, so a
         // component field can reference one.
         kooch_ecs::scene::prefab::register_loader(&mut server);
+        // Before the scan below, so a contributed type is loadable on the
+        // first pass rather than on the second.
+        for register in &self.extra_loaders {
+            register(&mut server);
+        }
 
         let mut database = AssetDatabase::new();
         for root in &self.roots {
@@ -203,4 +250,61 @@ fn init_material_pipeline_system(resources: &mut Resources) {
         target: "kooch_render::plugin::assets",
         "init_material_pipeline_system: MaterialPipeline inserted into Resources",
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A contributed loader has to be in place before the scan, not after.
+    ///
+    /// The alternative considered was registering from a `Startup`
+    /// system, which runs once the build is over — the type would be
+    /// loadable on the second pass and absent on the first, which reads
+    /// as "the asset sometimes works".
+    #[test]
+    fn a_contributed_loader_is_registered_while_the_server_is_built() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&calls);
+        let plugin = AssetPlugin::new()
+            .with_root(std::env::temp_dir().join("kooch_no_such_assets"))
+            .with_loader(move |_server| {
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+
+        let mut app = App::new();
+        plugin.build(&mut app);
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the contributed loader never ran, so its asset type would be \
+             unknown to the server"
+        );
+    }
+
+    /// Several crates contributing is the case this exists for — input
+    /// today, audio next — so more than one has to survive.
+    #[test]
+    fn every_contributed_loader_runs() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut plugin =
+            AssetPlugin::new().with_root(std::env::temp_dir().join("kooch_no_such_assets"));
+        for _ in 0..3 {
+            let seen = Arc::clone(&calls);
+            plugin = plugin.with_loader(move |_| {
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+
+        let mut app = App::new();
+        plugin.build(&mut app);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
 }

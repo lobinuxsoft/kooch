@@ -228,6 +228,17 @@ fn default_asset_plugin() -> kooch_render::plugin::AssetPlugin {
         .unwrap_or_else(|| PathBuf::from("assets"));
 
     let mut plugin = kooch_render::plugin::AssetPlugin::new().with_root(primary);
+    // The facade is the one crate that knows every asset type in the
+    // engine, so contributed loaders are registered from here rather than
+    // by making the renderer depend on the crates that own them.
+    #[cfg(feature = "input")]
+    {
+        plugin = plugin.with_loader(|server| {
+            server.register_loader::<kooch_input::actions::ActionMap, _>(
+                kooch_input::actions::InputMapLoader,
+            );
+        });
+    }
     if let Some(project) = project_root {
         let project_assets = project.join("assets");
         if project_assets.exists() {
