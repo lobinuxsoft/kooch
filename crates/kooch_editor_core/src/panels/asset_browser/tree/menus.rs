@@ -59,14 +59,18 @@ pub(super) fn folder_menu(
         start(CreateKind::Material);
         ui.close();
     }
-    ui.menu_button(format!("{} New Script / Scene", icons::PLUS), |ui| {
+    // Scripts are code and go under `src/`; a scene and an input map are
+    // assets and go under `assets/`. They were one menu called
+    // "New Script / Scene", which put three unrelated things behind one
+    // label and made the input map hard to find precisely because it
+    // belonged to none of them.
+    ui.menu_button(format!("{} New Script", icons::PLUS), |ui| {
         for (label, kind) in [
             (
                 "Component (Rust)",
                 CreateKind::File(NewFileKind::RustComponent),
             ),
             ("System (Rust)", CreateKind::File(NewFileKind::RustSystem)),
-            ("Scene", CreateKind::File(NewFileKind::Scene)),
         ] {
             if ui.button(label).clicked() {
                 start(kind);
@@ -74,6 +78,17 @@ pub(super) fn folder_menu(
             }
         }
     });
+    if ui.button(format!("{} New Scene", icons::GLOBE)).clicked() {
+        start(CreateKind::File(NewFileKind::Scene));
+        ui.close();
+    }
+    if ui
+        .button(format!("{} New Input Map", icons::SLIDERS))
+        .clicked()
+    {
+        start(CreateKind::File(NewFileKind::InputMap));
+        ui.close();
+    }
     // The synthetic root node has an empty name; it is not itself
     // renamable / deletable (that would target the crate root).
     if !node.name.is_empty() {

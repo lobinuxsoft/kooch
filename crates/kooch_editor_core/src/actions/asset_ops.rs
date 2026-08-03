@@ -47,6 +47,31 @@ fn create_file(resources: &Resources, folder: &Path, name: &str, kind: NewFileKi
     let (tmpl_file, fallback, ext) = match kind {
         NewFileKind::RustComponent => ("component.rs.tmpl", COMPONENT_TMPL, "rs"),
         NewFileKind::RustSystem => ("system.rs.tmpl", SYSTEM_TMPL, "rs"),
+        NewFileKind::InputMap => {
+            // A map with the two actions every game starts with, bound on
+            // both devices. An empty file would be honest and useless:
+            // the first thing anyone does is add exactly these, and a
+            // starting point is also documentation of the shape.
+            let file = unique_target(
+                folder,
+                OsStr::new(&format!(
+                    "{}.{}",
+                    to_pascal_case(name),
+                    kooch_input::actions::INPUT_MAP_EXTENSION
+                )),
+            );
+            let map = starter_input_map(&to_pascal_case(name));
+            match kooch_input::actions::to_ron(&map)
+                .map_err(|e| e.to_string())
+                .and_then(|text| std::fs::write(&file, text).map_err(|e| e.to_string()))
+            {
+                Ok(()) => tracing::info!(file = %file.display(), "input map created"),
+                Err(e) => {
+                    tracing::error!(file = %file.display(), error = %e, "failed to write input map")
+                }
+            }
+            return;
+        }
         NewFileKind::Scene => {
             let file = unique_target(
                 folder,
@@ -605,4 +630,50 @@ mod duplicate_tests {
             None
         );
     }
+}
+
+/// The map a new `.inputmap` starts with.
+///
+/// Not empty. Move and jump, on keyboard and pad, are what every game
+/// binds first — and a file that already shows a composite, its parts and
+/// two devices on one action teaches the shape better than a blank list
+/// plus documentation would.
+fn starter_input_map(name: &str) -> kooch_input::actions::ActionMap {
+    use kooch_input::actions::{
+        Action, ActionMap, Binding, Composite, ControlPath, ControlType, DEFAULT_DEADZONE_MAX,
+        DEFAULT_DEADZONE_MIN, PartName, Processor, Vector2Mode,
+    };
+    use kooch_input::ids::{GamepadAxis, GamepadButton, KeyCode};
+
+    ActionMap::new(name)
+        .add(
+            Action::new("move", ControlType::Vector2)
+                .bind_all([
+                    Binding::composite(Composite::Vector2 {
+                        mode: Vector2Mode::DigitalNormalized,
+                    }),
+                    Binding::part(PartName::Up, ControlPath::Key(KeyCode::KeyW)),
+                    Binding::part(PartName::Down, ControlPath::Key(KeyCode::KeyS)),
+                    Binding::part(PartName::Left, ControlPath::Key(KeyCode::KeyA)),
+                    Binding::part(PartName::Right, ControlPath::Key(KeyCode::KeyD)),
+                ])
+                .bind_all([
+                    // Radial, not per-axis: a per-axis deadzone leaves a
+                    // square hole a diagonal push slips through.
+                    Binding::composite(Composite::Vector2 {
+                        mode: Vector2Mode::Analog,
+                    })
+                    .with(Processor::StickDeadzone {
+                        min: DEFAULT_DEADZONE_MIN,
+                        max: DEFAULT_DEADZONE_MAX,
+                    }),
+                    Binding::part(PartName::Up, ControlPath::Axis(GamepadAxis::LeftStickY)),
+                    Binding::part(PartName::Right, ControlPath::Axis(GamepadAxis::LeftStickX)),
+                ]),
+        )
+        .add(
+            Action::new("jump", ControlType::Button)
+                .bind(Binding::to(ControlPath::Key(KeyCode::Space)))
+                .bind(Binding::to(ControlPath::Button(GamepadButton::South))),
+        )
 }

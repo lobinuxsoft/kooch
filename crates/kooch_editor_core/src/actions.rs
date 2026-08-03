@@ -312,6 +312,7 @@ pub(crate) enum NewFileKind {
     RustComponent,
     RustSystem,
     Scene,
+    InputMap,
 }
 
 impl EditorAction {

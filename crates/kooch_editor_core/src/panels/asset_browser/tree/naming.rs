@@ -131,5 +131,6 @@ pub(super) fn create_hint(kind: CreateKind) -> &'static str {
         CreateKind::File(NewFileKind::RustComponent) => "Component name (e.g. Health)…",
         CreateKind::File(NewFileKind::RustSystem) => "System name (e.g. Movement)…",
         CreateKind::File(NewFileKind::Scene) => "Scene name…",
+        CreateKind::File(NewFileKind::InputMap) => "Input map name (e.g. Gameplay)…",
     }
 }
