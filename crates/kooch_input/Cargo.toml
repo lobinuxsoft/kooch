@@ -14,9 +14,7 @@ gilrs.workspace = true
 glam.workspace = true
 tracing.workspace = true
 serde.workspace = true
+ron.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
-# The engine's own scene format, so a binding is tested through the
-# encoding it will actually be written in.
-ron.workspace = true

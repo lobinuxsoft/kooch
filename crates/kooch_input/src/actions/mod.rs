@@ -30,6 +30,7 @@
 //! typed enum), and identifying an action by a type.
 
 mod action;
+mod asset;
 mod binding;
 mod path;
 mod plugin;
@@ -37,6 +38,7 @@ mod processor;
 mod state;
 
 pub use action::{Action, ActionId, ActionMap, ControlType};
+pub use asset::{INPUT_MAP_EXTENSION, InputMapLoader, InputMapParseError, to_ron};
 pub use binding::{Binding, BothHeld, Composite, Group, PartName, Role, Vector2Mode, groups};
 pub use path::{ControlPath, DeviceClass};
 pub use plugin::{ActionsPlugin, ActiveActionMap};
