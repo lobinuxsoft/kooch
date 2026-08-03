@@ -47,23 +47,73 @@ impl Default for ActionMap {
 /// one pumps, and plugin order is system order within a stage.
 #[derive(Default)]
 pub struct ActionsPlugin {
-    /// The map to start under. A game hands its own; the editor's panel
-    /// will replace it wholesale when #58 lands.
-    pub map: ActionMap,
+    /// Where the bindings come from.
+    source: Source,
+}
+
+/// Where `ActionsPlugin` gets its map.
+#[derive(Default)]
+enum Source {
+    /// Declared in code. Fine for a test or a prototype, and a dead end
+    /// for anything a player should be able to rebind: nothing the editor
+    /// does can reach a value compiled into the binary.
+    Literal(ActionMap),
+    /// An `.inputmap` asset, by guid.
+    ///
+    /// A guid rather than a path, for the same reason every other asset
+    /// reference is one: renaming or moving the file keeps the binding,
+    /// because the identity lives in the `.meta` beside it rather than in
+    /// the name.
+    Asset(kooch_core::Guid),
+    #[default]
+    Empty,
 }
 
 impl ActionsPlugin {
+    /// A map declared in code.
     pub fn new(map: ActionMap) -> Self {
-        Self { map }
+        Self {
+            source: Source::Literal(map),
+        }
+    }
+
+    /// The map in the `.inputmap` asset with this guid.
+    ///
+    /// This is the one a shipped game wants: the bindings are data an
+    /// editor authored, not a literal recompiled into the binary.
+    pub fn from_asset(guid: kooch_core::Guid) -> Self {
+        Self {
+            source: Source::Asset(guid),
+        }
     }
 }
 
 impl Plugin for ActionsPlugin {
     fn build(&self, app: &mut App) {
-        let map = self.map.clone();
-        app.insert_resource(ActionState::for_map(&map))
-            .insert_resource(ActiveActionMap::new(map))
-            .add_system(Stage::Input, update_actions);
+        match &self.source {
+            Source::Literal(map) => {
+                let map = map.clone();
+                app.insert_resource(ActionState::for_map(&map))
+                    .insert_resource(ActiveActionMap::new(map));
+            }
+            Source::Asset(guid) => {
+                // Loaded in `Startup` rather than here: the asset server
+                // is built by the plugin that owns assets, and a plugin
+                // reaching for a resource another may not have inserted
+                // yet is the ordering bug this codebase has hit twice.
+                let guid = *guid;
+                app.insert_resource(ActiveActionMap::default())
+                    .insert_resource(ActionState::default())
+                    .add_system(Stage::Startup, move |resources: &mut Resources| {
+                        load_map_asset(resources, guid);
+                    });
+            }
+            Source::Empty => {
+                app.insert_resource(ActiveActionMap::default())
+                    .insert_resource(ActionState::default());
+            }
+        }
+        app.add_system(Stage::Input, update_actions);
     }
 
     fn name(&self) -> &str {
@@ -142,5 +192,34 @@ mod tests {
         let mut resources = Resources::new();
         resources.insert(ActiveActionMap::default());
         update_actions(&mut resources);
+    }
+}
+
+/// Pulls the map out of its asset and makes it the active one.
+fn load_map_asset(resources: &mut Resources, guid: kooch_core::Guid) {
+    let Some(mut server) = resources.remove::<kooch_core::asset_loader::AssetServer>() else {
+        tracing::error!(%guid, "no asset server, so the input map cannot be loaded");
+        return;
+    };
+    let loaded = server.load_by_guid::<ActionMap>(guid, resources);
+    resources.insert(server);
+
+    match loaded {
+        Ok(handle) => {
+            let Some(map) = resources
+                .get::<kooch_core::assets::Assets<ActionMap>>()
+                .and_then(|assets| assets.get(handle).cloned())
+            else {
+                tracing::error!(%guid, "input map loaded but not in storage");
+                return;
+            };
+            tracing::info!(%guid, actions = map.actions.len(), "input map active");
+            resources.insert(ActionState::for_map(&map));
+            resources.insert(ActiveActionMap::new(map));
+        }
+        // Named rather than silent: with no map every action resolves to
+        // nothing, so the game simply does not respond — which reads as
+        // broken input rather than as a missing file.
+        Err(e) => tracing::error!(%guid, error = %e, "input map could not be loaded"),
     }
 }

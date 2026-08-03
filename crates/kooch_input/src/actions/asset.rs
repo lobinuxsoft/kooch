@@ -68,6 +68,23 @@ pub fn to_ron(map: &ActionMap) -> Result<String, ron::Error> {
     ron::ser::to_string_pretty(map, ron::ser::PrettyConfig::default())
 }
 
+/// Writes `map` to `path` and gives it an asset identity.
+///
+/// The identity is the point, and it is the same lesson `prefab::save`
+/// records: `AssetDatabase`'s scan registers a file only when a `.meta`
+/// sits beside it and never invents one, so a map written without this is
+/// a file with no guid — the picker cannot list it and nothing can
+/// reference it. Creating the identity in the act that creates the asset
+/// is what stops that depending on who loads it first.
+pub fn save(map: &ActionMap, path: &std::path::Path) -> Result<kooch_core::Guid, String> {
+    let text = to_ron(map).map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    let meta =
+        kooch_core::asset_meta::read_or_create_typed(path, std::any::type_name::<ActionMap>())
+            .map_err(|e| e.to_string())?;
+    Ok(meta.guid)
+}
+
 #[derive(Debug)]
 pub enum InputMapParseError {
     Utf8(std::str::Utf8Error),

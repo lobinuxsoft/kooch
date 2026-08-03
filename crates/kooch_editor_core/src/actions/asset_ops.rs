@@ -69,11 +69,10 @@ fn create_file(resources: &Resources, folder: &Path, name: &str, kind: NewFileKi
                 )),
             );
             let map = starter_input_map(&to_pascal_case(name));
-            match kooch_input::actions::to_ron(&map)
-                .map_err(|e| e.to_string())
-                .and_then(|text| std::fs::write(&file, text).map_err(|e| e.to_string()))
-            {
-                Ok(()) => tracing::info!(file = %file.display(), "input map created"),
+            match kooch_input::actions::save(&map, &file) {
+                Ok(guid) => {
+                    tracing::info!(file = %file.display(), %guid, "input map created")
+                }
                 Err(e) => {
                     tracing::error!(file = %file.display(), error = %e, "failed to write input map")
                 }
@@ -844,22 +843,18 @@ fn unique_action_name(map: &kooch_input::actions::ActionMap, base: &str) -> Stri
 
 /// Writes the open map back to its file.
 fn save_input_map(resources: &mut Resources) {
-    let Some((path, text)) = resources
+    let Some((path, map)) = resources
         .get::<crate::state::OpenInputMap>()
-        .map(|open| (open.path.clone(), kooch_input::actions::to_ron(&open.map)))
+        .map(|open| (open.path.clone(), open.map.clone()))
     else {
         return;
     };
-    let text = match text {
-        Ok(text) => text,
-        Err(e) => {
-            tracing::error!(error = %e, "input map could not be serialised; nothing written");
-            return;
-        }
-    };
-    match std::fs::write(&path, text) {
-        Ok(()) => {
-            tracing::info!(file = %path.display(), "input map saved");
+    // Through `save` rather than a bare write: a map that reached disk
+    // without its `.meta` would be a file nothing can reference, and a
+    // map saved before the identity existed is exactly how that happens.
+    match kooch_input::actions::save(&map, &path) {
+        Ok(guid) => {
+            tracing::info!(file = %path.display(), %guid, "input map saved");
             if let Some(open) = resources.get_mut::<crate::state::OpenInputMap>() {
                 open.dirty = false;
             }
