@@ -29,10 +29,14 @@
 //! the binding alone), processors as parseable strings (here they are a
 //! typed enum), and identifying an action by a type.
 
+mod action;
 mod binding;
 mod path;
 mod processor;
+mod state;
 
+pub use action::{Action, ActionId, ActionMap, ControlType};
 pub use binding::{Binding, BothHeld, Composite, Group, PartName, Role, Vector2Mode, groups};
 pub use path::{ControlPath, DeviceClass};
 pub use processor::{DEFAULT_DEADZONE_MAX, DEFAULT_DEADZONE_MIN, Processor};
+pub use state::{ActionState, ActionValue};
