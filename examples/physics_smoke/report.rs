@@ -12,7 +12,7 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::transform::Transform;
 use kooch_physics::backend::DebugCategories;
 use kooch_physics::plugin::{
-    CollisionStarted, CollisionStopped, ContactForce, JointBroke, PhysicsBody, PhysicsWorld,
+    CollisionStarted, CollisionStopped, ContactForce, JointBroke, PhysicsWorld, SolverBody,
 };
 
 /// How many *fixed steps* to run before reporting and quitting.
@@ -62,9 +62,9 @@ pub(super) fn launch(resources: &mut Resources) {
 fn handle_of(resources: &Resources, entity: Entity) -> Option<kooch_physics::BodyHandle> {
     let slot = resources
         .get::<ComponentRegistry>()?
-        .get_cpu::<PhysicsBody>()?
+        .get_cpu::<SolverBody>()?
         .get(entity)
-        .map(PhysicsBody::slot)?;
+        .map(SolverBody::slot)?;
     resources.get::<PhysicsWorld>()?.handle(slot)
 }
 
@@ -249,9 +249,9 @@ fn mass_of(resources: &Resources, entity: Entity) -> Option<(f32, Vec3)> {
     let world = resources.get::<PhysicsWorld>()?;
     let slot = resources
         .get::<ComponentRegistry>()?
-        .get_cpu::<PhysicsBody>()?
+        .get_cpu::<SolverBody>()?
         .get(entity)
-        .map(PhysicsBody::slot)?;
+        .map(SolverBody::slot)?;
     let handle = world.handle(slot)?;
     Some((
         world.backend().mass(handle)?,

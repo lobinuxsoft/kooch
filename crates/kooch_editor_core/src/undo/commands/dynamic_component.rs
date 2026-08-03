@@ -252,6 +252,7 @@ mod tests {
                         kind: FieldKind::F32,
                     },
                 ],
+                defaults: Vec::new(),
                 source: "my_game".into(),
             })
             .unwrap();
@@ -394,6 +395,7 @@ mod tests {
                     name: "shield".into(),
                     kind: FieldKind::Bool,
                 }],
+                defaults: Vec::new(),
                 source: "my_game".into(),
             })
             .unwrap();

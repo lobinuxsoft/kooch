@@ -32,12 +32,20 @@ pub struct DynamicField {
 }
 
 /// A component type registered by name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Not `Eq`: the default values it carries include floats.
+#[derive(Debug, Clone, PartialEq)]
 pub struct DynamicType {
     /// Fully qualified type name — the identity.
     pub type_name: String,
     /// Its fields, in declaration order. Empty for a marker component.
     pub fields: Vec<DynamicField>,
+    /// What a fresh one holds, straight from the type's `Default`.
+    ///
+    /// The editor cannot call `Default` on a type it never compiled, so
+    /// this is the only way it can add the component to a prefab with the
+    /// values its author chose. Empty when the plugin predates the field.
+    pub defaults: Vec<(String, crate::reflect::ReflectValue)>,
     /// Who registered it, for diagnostics and for unregistering on
     /// unload.
     pub source: String,
@@ -136,6 +144,7 @@ mod tests {
                     kind: FieldKind::U32,
                 },
             ],
+            defaults: Vec::new(),
             source: source.into(),
         }
     }
@@ -200,6 +209,7 @@ mod tests {
             .register(DynamicType {
                 type_name: "mod::Extra".into(),
                 fields: Vec::new(),
+                defaults: Vec::new(),
                 source: "mod".into(),
             })
             .unwrap();
@@ -216,6 +226,7 @@ mod tests {
             .register(DynamicType {
                 type_name: "my_game::Player".into(),
                 fields: Vec::new(),
+                defaults: Vec::new(),
                 source: "game".into(),
             })
             .unwrap();

@@ -345,7 +345,7 @@ const MATERIAL_TYPE: &str = "kooch_render::material::asset::Material";
 /// A body: transform, rigid body, unit collider, and a mesh to see it by.
 fn body(spec: Spec<'_>) -> EntityDescription {
     use kooch_physics::components::{
-        Collider, KIND_DYNAMIC, KIND_STATIC, RigidBody, SHAPE_CUBOID, SHAPE_SPHERE,
+        Collider, KIND_DYNAMIC, KIND_STATIC, PhysicsBody, SHAPE_CUBOID, SHAPE_SPHERE,
     };
 
     let (kind_value, mass) = match spec.kind {
@@ -409,7 +409,7 @@ fn body(spec: Spec<'_>) -> EntityDescription {
                 ],
             },
             ComponentDescription {
-                type_name: type_name_of::<RigidBody>(),
+                type_name: type_name_of::<PhysicsBody>(),
                 fields: vec![
                     ("kind".to_owned(), ReflectValue::U32(kind_value)),
                     ("mass".to_owned(), ReflectValue::F32(mass)),

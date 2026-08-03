@@ -121,6 +121,26 @@ pub struct ComponentSchema {
     pub type_name: String,
     /// The component's fields. Empty is legal — a marker component.
     pub fields: Vec<FieldSchema>,
+    /// The values a fresh one holds, as the RON the engine writes into a
+    /// scene: `[("acceleration", F32(20.0)), ...]`. Empty for a marker.
+    ///
+    /// # Why a string and not typed values
+    ///
+    /// A field's *value* is a nineteen-variant enum carrying vectors,
+    /// quaternions, matrices and asset guids. Mirroring that across the
+    /// plugin boundary — the way [`FieldKind`] mirrors its own — would be
+    /// nineteen more things to keep in parity for no gain, since the
+    /// engine already has one serialised form for exactly these values
+    /// and writes it to every scene file.
+    ///
+    /// # Why it has to travel at all
+    ///
+    /// Only the plugin knows the type's `Default`. Without it the editor
+    /// knows a component has two `f32` and not that they are 20 and 8, so
+    /// adding it to a prefab either fails or silently produces zeroes —
+    /// and a body that accelerates at 0 toward a top speed of 0 reads as
+    /// a broken component, not as a missing default.
+    pub defaults: String,
 }
 
 impl ComponentSchema {
@@ -129,6 +149,7 @@ impl ComponentSchema {
         Self {
             type_name: type_name.into(),
             fields: Vec::new(),
+            defaults: String::new(),
         }
     }
 

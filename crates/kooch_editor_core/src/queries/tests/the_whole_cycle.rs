@@ -41,6 +41,7 @@ fn world() -> (Resources, kooch_ecs::Entity) {
                 name: "current".into(),
                 kind: FieldKind::U32,
             }],
+            defaults: Vec::new(),
             source: "my_game".into(),
         })
         .unwrap();
