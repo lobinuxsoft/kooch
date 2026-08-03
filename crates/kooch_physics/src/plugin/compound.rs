@@ -1,6 +1,6 @@
 //! Gathering a body's extra shapes from its descendants.
 //!
-//! A child entity carrying a [`Collider`] but no [`RigidBody`] of its own
+//! A child entity carrying a [`Collider`] but no [`PhysicsBody`] of its own
 //! contributes its shape to the nearest ancestor that has one. The result
 //! is one body with several shapes — Unity calls it a compound collider,
 //! Unreal calls it welding.
@@ -11,10 +11,10 @@
 //! child's pose, and no engine supports that. Unity tells you to put a
 //! single Rigidbody on the root; Unreal welds simulated children into the
 //! parent and its own tracker notes that bodies detach when both simulate;
-//! Godot has had "allow a RigidBody to follow a moving parent" open for
+//! Godot has had "allow a PhysicsBody to follow a moving parent" open for
 //! years. The way out is to stop having two bodies.
 //!
-//! A descendant that *does* carry its own [`RigidBody`] is left alone — it
+//! A descendant that *does* carry its own [`PhysicsBody`] is left alone — it
 //! is an independent body, and joining two bodies is what a
 //! [`Joint`](crate::components::Joint) is for. It also ends the walk:
 //! entities under it belong to that body, not to this one.
@@ -26,7 +26,7 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::{Children, GlobalTransform};
 
 use crate::backend::{ColliderInteraction, CollisionShape, SurfaceMaterial};
-use crate::components::{Collider, RigidBody};
+use crate::components::{Collider, PhysicsBody};
 
 use super::world::scaled_shape;
 
@@ -47,7 +47,7 @@ pub(super) struct Attachment {
 /// Collects the shapes a body inherits from its descendants.
 ///
 /// Walks children depth-first, stopping at any entity with its own
-/// [`RigidBody`]. Poses are expressed relative to `root` by composing
+/// [`PhysicsBody`]. Poses are expressed relative to `root` by composing
 /// through [`GlobalTransform`], so a child's own parent chain is honoured
 /// however deep it goes.
 pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attachment> {
@@ -61,7 +61,7 @@ pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attach
         return Vec::new();
     };
     let colliders = registry.get_cpu::<Collider>();
-    let bodies = registry.get_cpu::<RigidBody>();
+    let bodies = registry.get_cpu::<PhysicsBody>();
 
     // The root's world pose, inverted once: every descendant's local pose
     // is its world pose seen from here.
@@ -194,7 +194,7 @@ pub(super) fn digest(attachments: &[Attachment]) -> u64 {
 /// Only dynamic bodies are worth warning about. A static or kinematic
 /// child is author-driven anyway, so "the solver ignores your parent" is
 /// not news: nothing was going to move it but the author.
-fn warn_nested_body(entity: Entity, body: &RigidBody) {
+fn warn_nested_body(entity: Entity, body: &PhysicsBody) {
     use crate::backend::BodyKind;
 
     if body.body_kind() != BodyKind::Dynamic {
@@ -203,9 +203,9 @@ fn warn_nested_body(entity: Entity, body: &RigidBody) {
     tracing::warn!(
         target: "kooch_physics",
         entity = entity.index(),
-        "a dynamic RigidBody under another body does not follow its parent — \
+        "a dynamic PhysicsBody under another body does not follow its parent — \
          the solver owns its pose. For one body with several shapes, remove \
-         this RigidBody and keep the Collider; to link two bodies that both \
+         this PhysicsBody and keep the Collider; to link two bodies that both \
          simulate, add a Joint component naming them both",
     );
 }

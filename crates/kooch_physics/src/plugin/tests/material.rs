@@ -14,7 +14,7 @@ fn floor(resources: &mut Resources, friction: f32) -> Entity {
     spawn_body(
         resources,
         Transform::from_position(Vec3::new(0.0, -1.0, 0.0)),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -37,7 +37,7 @@ fn slide(friction: f32) -> f32 {
         // Exactly on the floor's surface, so the first step is a contact
         // rather than a drop.
         Transform::from_position(Vec3::new(0.0, 0.5, 0.0)),
-        RigidBody {
+        PhysicsBody {
             mass: 1.0,
             ..Default::default()
         },
@@ -109,7 +109,7 @@ fn more_restitution_bounces_higher() {
         spawn_body(
             &mut resources,
             Transform::from_position(Vec3::new(0.0, -1.0, 0.0)),
-            RigidBody {
+            PhysicsBody {
                 kind: KIND_STATIC,
                 mass: 0.0,
                 ..Default::default()
@@ -124,7 +124,7 @@ fn more_restitution_bounces_higher() {
         let ball = spawn_body(
             &mut resources,
             Transform::from_position(Vec3::new(0.0, 4.0, 0.0)),
-            RigidBody {
+            PhysicsBody {
                 mass: 1.0,
                 ..Default::default()
             },
@@ -172,7 +172,7 @@ fn angular_damping_stops_a_spin() {
         let top = spawn_body(
             &mut resources,
             Transform::default(),
-            RigidBody {
+            PhysicsBody {
                 mass: 1.0,
                 angular_damping,
                 ..Default::default()
@@ -221,7 +221,7 @@ fn editing_the_friction_rebuilds_the_body() {
     let cube = spawn_body(
         &mut resources,
         Transform::default(),
-        RigidBody::default(),
+        PhysicsBody::default(),
         Collider::default(),
     );
     physics_sync_system(&mut resources);
@@ -284,7 +284,7 @@ fn a_childs_friction_changes_the_bodys_shapes() {
     let parent = spawn_body(
         &mut resources,
         Transform::default(),
-        RigidBody::default(),
+        PhysicsBody::default(),
         Collider::default(),
     );
     let child = spawn_bare(&mut resources);

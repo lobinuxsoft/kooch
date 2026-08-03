@@ -11,7 +11,7 @@ fn a_rigid_body_gets_a_backend_body_and_a_slot() {
     physics_sync_system(&mut resources);
 
     assert_eq!(body_count(&resources), 1);
-    let slot = slot_of(&resources, entity).expect("entity gained no PhysicsBody");
+    let slot = slot_of(&resources, entity).expect("entity gained no SolverBody");
     assert_eq!(
         resources.get::<PhysicsWorld>().unwrap().entity(slot),
         Some(entity),
@@ -49,7 +49,7 @@ fn losing_the_rigid_body_releases_the_backend_body() {
     physics_sync_system(&mut resources);
     assert_eq!(body_count(&resources), 1);
 
-    remove::<RigidBody>(&mut resources, entity);
+    remove::<PhysicsBody>(&mut resources, entity);
     physics_sync_system(&mut resources);
 
     assert_eq!(body_count(&resources), 0, "the body leaked");
@@ -68,7 +68,7 @@ fn freed_slots_are_reused() {
     physics_sync_system(&mut resources);
     let slot = slot_of(&resources, first).unwrap();
 
-    remove::<RigidBody>(&mut resources, first);
+    remove::<PhysicsBody>(&mut resources, first);
     physics_sync_system(&mut resources);
 
     let second = falling_sphere(&mut resources, 10.0);
@@ -104,7 +104,7 @@ fn changing_the_authored_shape_rebuilds_the_body() {
     assert_ne!(before, after, "the solver kept the old shape");
     assert_eq!(
         resources.get::<PhysicsWorld>().unwrap().spec(slot).unwrap(),
-        BodySpec::new(&RigidBody::default(), &edited, Vec3::ONE)
+        BodySpec::new(&PhysicsBody::default(), &edited, Vec3::ONE)
     );
 }
 
@@ -123,7 +123,7 @@ fn a_scaled_cuboid_collider_grows_with_its_transform() {
             scale: Vec3::new(3.0, 1.0, 5.0),
             ..Transform::from_position(Vec3::ZERO)
         },
-        RigidBody::default(),
+        PhysicsBody::default(),
         Collider {
             shape: SHAPE_CUBOID,
             half_extents: Vec3::splat(0.5),
@@ -154,7 +154,7 @@ fn a_scaled_sphere_collider_takes_the_largest_axis() {
             scale: Vec3::new(1.0, 4.0, 2.0),
             ..Transform::from_position(Vec3::ZERO)
         },
-        RigidBody::default(),
+        PhysicsBody::default(),
         Collider::default(),
     );
     physics_sync_system(&mut resources);
@@ -180,7 +180,7 @@ fn a_scaled_capsule_grows_along_its_own_axis() {
             scale: Vec3::new(1.0, 3.0, 1.0),
             ..Transform::from_position(Vec3::ZERO)
         },
-        RigidBody::default(),
+        PhysicsBody::default(),
         Collider {
             shape: crate::components::SHAPE_CAPSULE,
             radius: 0.5,
@@ -255,7 +255,7 @@ fn a_scaled_body_lands_on_a_scaled_floor() {
             scale: Vec3::new(20.0, 1.0, 20.0),
             ..Transform::from_position(Vec3::ZERO)
         },
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -273,7 +273,7 @@ fn a_scaled_body_lands_on_a_scaled_floor() {
             scale: Vec3::splat(2.0),
             ..Transform::from_position(Vec3::new(0.0, 6.0, 0.0))
         },
-        RigidBody::default(),
+        PhysicsBody::default(),
         Collider::default(),
     );
     Playing::set(&mut resources, true);

@@ -3,7 +3,7 @@
 
 use super::*;
 
-/// Acceptance: "An entity with `RigidBody` + `Collider` falls under
+/// Acceptance: "An entity with `PhysicsBody` + `Collider` falls under
 /// gravity when Play is pressed."
 #[test]
 fn a_dynamic_body_falls_while_playing() {
@@ -67,7 +67,7 @@ fn a_static_body_stays_put_and_catches_what_falls() {
     let floor = spawn_body(
         &mut resources,
         Transform::from_position(Vec3::ZERO),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -100,7 +100,7 @@ fn a_kinematic_body_follows_its_transform_while_playing() {
     let entity = spawn_body(
         &mut resources,
         Transform::from_position(Vec3::ZERO),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_KINEMATIC,
             mass: 1.0,
             ..Default::default()
@@ -154,7 +154,7 @@ fn an_offset_shape_collides_where_it_is_drawn() {
         spawn_body(
             &mut resources,
             Transform::from_position(Vec3::new(0.0, -0.5, 0.0)),
-            RigidBody {
+            PhysicsBody {
                 kind: KIND_STATIC,
                 mass: 0.0,
                 ..Default::default()
@@ -168,7 +168,7 @@ fn an_offset_shape_collides_where_it_is_drawn() {
         let ball = spawn_body(
             &mut resources,
             Transform::from_position(Vec3::new(0.0, 6.0, 0.0)),
-            RigidBody::default(),
+            PhysicsBody::default(),
             Collider {
                 center,
                 ..Default::default()
@@ -204,7 +204,7 @@ fn an_offset_does_not_move_the_body() {
     let entity = spawn_body(
         &mut resources,
         Transform::from_position(Vec3::new(1.0, 5.0, -2.0)),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()

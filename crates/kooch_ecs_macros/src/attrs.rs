@@ -67,7 +67,7 @@ pub(crate) fn parse_field_asset_type(field: &syn::Field) -> Result<Option<String
 /// field: the short name of a component the target has to carry.
 ///
 /// The inspector filters its picker by it and refuses a drop that does not
-/// satisfy it. A `Joint` body without a `RigidBody` is not a body, and a
+/// satisfy it. A `Joint` body without a `PhysicsBody` is not a body, and a
 /// reference accepted but inert is indistinguishable from a broken one.
 pub(crate) fn parse_field_requires(field: &syn::Field) -> Result<Option<String>, TokenStream> {
     parse_field_string(field, "requires")

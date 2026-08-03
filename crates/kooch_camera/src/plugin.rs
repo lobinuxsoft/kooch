@@ -40,16 +40,12 @@ fn up_for(
 
 /// Up is away from the gravity acting where the target is.
 ///
-/// Returns world up where no field reaches — `gravity_at` gives a zero
-/// vector there, and a camera in free space has no better answer.
+/// Delegates rather than recomputing: a camera that decides "up"
+/// differently from the controller under it produces a horizon that
+/// disagrees with the floor, and nothing in either file looks wrong.
 #[cfg(feature = "gravity")]
 fn gravity_up(resources: &Resources, target_pos: Vec3) -> Vec3 {
-    let pull = kooch_gravity::gravity_at(resources, target_pos);
-    if pull.length_squared() < 1e-12 {
-        Vec3::Y
-    } else {
-        -pull.normalize()
-    }
+    kooch_gravity::gravity_up(resources, target_pos)
 }
 
 /// Without `kooch_gravity` there is no field to ask, so the mode is

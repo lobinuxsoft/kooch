@@ -43,7 +43,10 @@ struct TempDir {
 impl TempDir {
     fn new(name: &str) -> Self {
         let mut path = std::env::temp_dir();
-        path.push(format!("kooch_material_asset_{name}_{}", std::process::id(),));
+        path.push(format!(
+            "kooch_material_asset_{name}_{}",
+            std::process::id(),
+        ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create temp dir");
         Self { path }

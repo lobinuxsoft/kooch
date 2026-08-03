@@ -320,7 +320,8 @@ fn meshlet_bench_scaling_per_pass_timings() {
         let cam = Vec3::new(0.0, 0.0, 3.0);
         let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
         let aspect = BENCH_RT_WIDTH as f32 / BENCH_RT_HEIGHT as f32;
-        let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), aspect, 0.1, 100.0);
+        let proj =
+            kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), aspect, 0.1, 100.0);
         let view_proj = proj * view;
         let model = Mat4::IDENTITY;
         let cull_params = CullParams::new(view_proj, cam, gpu_mesh.meshlet_count);

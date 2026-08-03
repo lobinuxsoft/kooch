@@ -45,7 +45,7 @@ pub struct FieldMeta {
     /// build the picker dropdown. `""` for non-asset fields.
     pub asset_type: &'static str,
     /// For [`FieldKind::EntityRef`] fields, the short name of a component
-    /// the target must carry (e.g. `"RigidBody"`). `""` when anything
+    /// the target must carry (e.g. `"PhysicsBody"`). `""` when anything
     /// will do.
     ///
     /// The inspector filters its picker by this and refuses a drop that

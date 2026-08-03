@@ -550,7 +550,7 @@ fn remote_schema(resources: &Resources) -> Option<&[kooch_remote::protocol::Comp
 /// **In remote mode this comes from the project, not from the editor.** The
 /// project owns the components; asking the editor's own `ComponentRegistry`
 /// answers with whatever that binary happened to be compiled with and omits
-/// everything the project defines. That is why `RigidBody` was missing from
+/// everything the project defines. That is why `PhysicsBody` was missing from
 /// the menu until `kooch_editor_core` grew an `kooch_physics` dependency — a
 /// workaround that did nothing for project-defined components.
 
@@ -705,7 +705,7 @@ mod engine_owned_tests {
             "kooch_ecs::transform::Transform",
             "kooch_ecs::name::Name",
             "kooch_ecs::perspective_camera::PerspectiveCamera",
-            "kooch_physics::components::RigidBody",
+            "kooch_physics::components::PhysicsBody",
             "kooch_camera::virtual_camera::VirtualCamera",
         ] {
             assert!(!is_engine_owned(name), "{name} must remain addable");

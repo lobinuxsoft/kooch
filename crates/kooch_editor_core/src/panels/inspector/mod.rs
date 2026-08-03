@@ -340,7 +340,7 @@ fn draw_inspector_body(
                                 component: comp.component,
                             });
                         }
-                        if comp.short_name == "RigidBody" && !is_read_only {
+                        if comp.short_name == "PhysicsBody" && !is_read_only {
                             draw_calculate_mass(ui, entity, comp.component, entities, actions);
                         }
                         // Only on an instance, and only for a component
@@ -423,7 +423,7 @@ fn draw_inspector_body(
 
 /// Draws any physics warnings that apply to `entity`.
 ///
-/// The **Calculate mass** button on a `RigidBody` header.
+/// The **Calculate mass** button on a `PhysicsBody` header.
 ///
 /// Writes `density × collider volume` into `mass`, once. It emits an
 /// ordinary `SetField`, which means it is undoable like any other edit and
@@ -449,7 +449,7 @@ fn draw_calculate_mass(
         )),
         None => button.on_disabled_hover_text(
             "Needs a Collider on this entity or on one of its children. Descendants \
-             that carry their own RigidBody are separate bodies and do not count.",
+             that carry their own PhysicsBody are separate bodies and do not count.",
         ),
     };
     if button.clicked()

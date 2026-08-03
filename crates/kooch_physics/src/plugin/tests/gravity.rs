@@ -8,7 +8,7 @@ fn falls_to(gravity_scale: f32) -> f32 {
     let entity = spawn_body(
         &mut resources,
         Transform::from_position(Vec3::new(0.0, 100.0, 0.0)),
-        RigidBody {
+        PhysicsBody {
             mass: 1.0,
             gravity_scale,
             ..Default::default()
@@ -67,7 +67,7 @@ fn mass_does_not_change_how_fast_a_body_falls() {
         let entity = spawn_body(
             &mut resources,
             Transform::from_position(Vec3::new(0.0, 100.0, 0.0)),
-            RigidBody {
+            PhysicsBody {
                 mass,
                 gravity_scale: 1.0,
                 ..Default::default()
@@ -95,7 +95,7 @@ fn editing_the_scale_reaches_the_solver() {
     let entity = spawn_body(
         &mut resources,
         Transform::default(),
-        RigidBody::default(),
+        PhysicsBody::default(),
         Collider::default(),
     );
     physics_sync_system(&mut resources);
@@ -105,7 +105,7 @@ fn editing_the_scale_reaches_the_solver() {
         .spec(slot_of(&resources, entity).expect("no body"));
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<RigidBody>()
+        && let Some(storage) = registry.get_cpu_mut::<PhysicsBody>()
         && let Some(body) = storage.get_mut(entity)
     {
         body.gravity_scale = 0.0;

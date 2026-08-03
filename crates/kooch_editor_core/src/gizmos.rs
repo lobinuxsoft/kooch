@@ -93,7 +93,8 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // Where the author put the centre of mass. Only the authored one —
     // the solver's own is in the project's process, which is #634.
     registry
-        .register::<kooch_physics::components::RigidBody, center_of_mass::CenterOfMassVisualizer>();
+        .register::<kooch_physics::components::PhysicsBody, center_of_mass::CenterOfMassVisualizer>(
+        );
     // A gravity field has no mesh, no surface and no contact: every number
     // it carries is world geometry that nothing else draws, and a rotated
     // zone is indistinguishable from an unrotated one until something falls

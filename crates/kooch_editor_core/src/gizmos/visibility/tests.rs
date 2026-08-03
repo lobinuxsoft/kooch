@@ -44,7 +44,7 @@ fn hiding_one_component_leaves_its_category_alone() {
 
     assert!(!v.draws(COLLIDER, Some("Physics")));
     assert!(
-        v.draws("kooch_physics::components::RigidBody", Some("Physics")),
+        v.draws("kooch_physics::components::PhysicsBody", Some("Physics")),
         "hiding one component hid its whole category"
     );
     assert!(v.category_visible("Physics"));
@@ -125,7 +125,7 @@ fn grouping_sorts_categories_and_leaves_uncategorised_last() {
         ),
         (
             TypeId::of::<u64>(),
-            "kooch_physics::components::RigidBody".to_owned(),
+            "kooch_physics::components::PhysicsBody".to_owned(),
             Some("Physics".to_owned()),
         ),
     ]);
@@ -137,6 +137,6 @@ fn grouping_sorts_categories_and_leaves_uncategorised_last() {
     let physics = &groups[0].components;
     assert_eq!(
         physics.iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>(),
-        vec!["Collider", "RigidBody"]
+        vec!["Collider", "PhysicsBody"]
     );
 }

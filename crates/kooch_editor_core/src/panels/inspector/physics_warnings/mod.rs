@@ -47,9 +47,9 @@ impl PhysicsWarning {
     pub(super) fn message(self) -> &'static str {
         match self {
             Self::NestedDynamicBody => {
-                "This RigidBody is dynamic and sits under another body. The solver owns \
+                "This PhysicsBody is dynamic and sits under another body. The solver owns \
                  its pose, so it will NOT follow its parent — no engine supports that \
-                 configuration. For one body with several shapes, remove this RigidBody \
+                 configuration. For one body with several shapes, remove this PhysicsBody \
                  and keep the Collider; to link two bodies that both simulate, add a \
                  Joint component naming them both. See issues #612 and #560."
             }
@@ -162,7 +162,7 @@ fn has_collider(info: &EntityDisplayInfo) -> bool {
     has_component(info, "Collider")
 }
 
-/// Whether the entity carries a `RigidBody` whose kind is dynamic.
+/// Whether the entity carries a `PhysicsBody` whose kind is dynamic.
 ///
 /// Static and kinematic bodies are deliberately not warned about: they
 /// are author-driven anyway, so "the solver ignores your parent" is not
@@ -172,7 +172,7 @@ fn is_dynamic_body(info: &EntityDisplayInfo) -> bool {
 
     info.components
         .iter()
-        .filter(|component| component.short_name == "RigidBody")
+        .filter(|component| component.short_name == "PhysicsBody")
         .filter_map(|component| component.fields.values())
         .flatten()
         .any(|(name, value)| {
@@ -184,7 +184,7 @@ fn is_dynamic_body(info: &EntityDisplayInfo) -> bool {
         })
 }
 
-/// Walks up the parent chain looking for another `RigidBody`.
+/// Walks up the parent chain looking for another `PhysicsBody`.
 ///
 /// Bounded by the number of entities: a cycle in the hierarchy would
 /// otherwise hang the UI thread, and the Inspector is the wrong place to
@@ -198,7 +198,7 @@ fn has_body_ancestor(info: &EntityDisplayInfo, entities: &[EntityDisplayInfo]) -
         let Some(ancestor) = entities.iter().find(|e| e.entity == entity) else {
             return false;
         };
-        if has_component(ancestor, "RigidBody") {
+        if has_component(ancestor, "PhysicsBody") {
             return true;
         }
         current = ancestor.parent;

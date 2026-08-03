@@ -23,7 +23,7 @@ use crate::state::EntityDisplayInfo;
 /// `Some(new_value)` when the user picks a different target or clears it.
 ///
 /// `requires` is the short name of a component the target must carry, or
-/// empty when anything will do. A `Joint` body without a `RigidBody` is
+/// empty when anything will do. A `Joint` body without a `PhysicsBody` is
 /// not a body: accepting it would leave the joint silently inert, which is
 /// indistinguishable from the joint being broken.
 pub(crate) fn draw_entity_picker(
@@ -238,13 +238,13 @@ mod tests {
         let body = entity(
             2,
             vec![
-                component("RigidBody", Vec::new()),
+                component("PhysicsBody", Vec::new()),
                 component("Name", vec![]),
             ],
         );
 
-        assert!(!accepts(&plain, "RigidBody"));
-        assert!(accepts(&body, "RigidBody"));
+        assert!(!accepts(&plain, "PhysicsBody"));
+        assert!(accepts(&body, "PhysicsBody"));
     }
 
     /// A field with no requirement takes anything — most references have

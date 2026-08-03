@@ -11,7 +11,7 @@ mod world;
 pub use events::{CollisionStarted, CollisionStopped, ContactForce, JointBroke};
 pub use joints::JointRegistry;
 pub use systems::{physics_step_system, physics_sync_system, physics_writeback_system};
-pub use world::{BodySpec, PhysicsBody, PhysicsWorld};
+pub use world::{BodySpec, PhysicsWorld, SolverBody};
 
 use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
@@ -19,7 +19,7 @@ use kooch_core::run_state::run_if_playing;
 use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
 
-use crate::components::{Collider, Joint, RigidBody};
+use crate::components::{Collider, Joint, PhysicsBody};
 use crate::rapier_backend::RapierBackend;
 
 /// Adds rigid body physics to an app.
@@ -95,20 +95,20 @@ impl PhysicsPlugin {
 
 /// Registers the authored components and the runtime slot component.
 ///
-/// [`PhysicsBody`] goes in unreflected on purpose — see its docs.
+/// [`SolverBody`] goes in unreflected on purpose — see its docs.
 fn register_components(resources: &mut kooch_core::resource::Resources) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.register_cpu_reflected::<RigidBody>();
+        registry.register_cpu_reflected::<PhysicsBody>();
         registry.register_cpu_reflected::<Collider>();
         registry.register_cpu_reflected::<Joint>();
-        registry.register_cpu::<PhysicsBody>();
+        registry.register_cpu::<SolverBody>();
     }
 }
 
 /// The physics components, with no simulation behind them.
 ///
 /// For a host that has to *author* physics without running it: the editor
-/// needs [`RigidBody`] and [`Collider`] reflected so they appear in the
+/// needs [`PhysicsBody`] and [`Collider`] reflected so they appear in the
 /// add-component menu and the Inspector, but it must not stand up a
 /// second solver. In remote mode its ECS is a mirror of a project that
 /// owns the real physics world, and a local Rapier world full of mirrored

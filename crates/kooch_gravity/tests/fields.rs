@@ -19,7 +19,7 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::query::AccessTracker;
 use kooch_ecs::transform::Transform;
 use kooch_gravity::{AreaGravity, BoxGravity, GlobalGravity, PointGravity, plugin};
-use kooch_physics::components::{Collider, KIND_STATIC, RigidBody, SHAPE_CUBOID};
+use kooch_physics::components::{Collider, KIND_STATIC, PhysicsBody, SHAPE_CUBOID};
 use kooch_physics::plugin::{
     PhysicsWorld, physics_step_system, physics_sync_system, physics_writeback_system,
 };
@@ -38,9 +38,9 @@ fn world() -> Resources {
 
     let registry = r.get_mut::<ComponentRegistry>().unwrap();
     registry.register_cpu_reflected::<Transform>();
-    registry.register_cpu_reflected::<RigidBody>();
+    registry.register_cpu_reflected::<PhysicsBody>();
     registry.register_cpu_reflected::<Collider>();
-    registry.register_cpu::<kooch_physics::plugin::PhysicsBody>();
+    registry.register_cpu::<kooch_physics::plugin::SolverBody>();
     registry.register_cpu_reflected::<GlobalGravity>();
     registry.register_cpu_reflected::<PointGravity>();
     registry.register_cpu_reflected::<AreaGravity>();
@@ -81,7 +81,7 @@ fn insert<T: Component>(resources: &mut Resources, entity: Entity, value: T) {
 fn body_at(resources: &mut Resources, position: Vec3) -> Entity {
     let entity = spawn(resources);
     insert(resources, entity, Transform::from_position(position));
-    insert(resources, entity, RigidBody::default());
+    insert(resources, entity, PhysicsBody::default());
     insert(resources, entity, Collider::default());
     entity
 }
@@ -262,7 +262,7 @@ fn the_per_body_scale_still_applies_to_fields() {
         insert(
             &mut resources,
             body,
-            RigidBody {
+            PhysicsBody {
                 gravity_scale,
                 ..Default::default()
             },
@@ -446,7 +446,7 @@ fn a_settled_body_still_falls_asleep() {
     insert(
         &mut resources,
         floor,
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             ..Default::default()
         },
@@ -505,7 +505,7 @@ fn a_moved_source_wakes_what_it_pulls_on() {
     insert(
         &mut resources,
         floor,
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             ..Default::default()
         },

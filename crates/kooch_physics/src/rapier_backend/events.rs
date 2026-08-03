@@ -124,7 +124,7 @@ fn peak_force(pair: &ContactPair) -> f32 {
 /// Which rigid body owns a collider, if any.
 ///
 /// A sensor with no parent body is legal — a static trigger volume authored
-/// without a `RigidBody` — and produces `None` rather than an error.
+/// without a `PhysicsBody` — and produces `None` rather than an error.
 pub(super) fn parent_of(
     colliders: &ColliderSet,
     collider: RapierColliderHandle,

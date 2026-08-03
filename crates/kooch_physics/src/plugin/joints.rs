@@ -2,7 +2,7 @@
 //!
 //! # Why joints are not addressed by a slot component
 //!
-//! Bodies are: a [`PhysicsBody`] carries the slot, because both directions
+//! Bodies are: a [`SolverBody`] carries the slot, because both directions
 //! of the mapping are walked every frame — sync asks "does this entity have
 //! a body", writeback asks "which entity owns this body". A joint has no
 //! writeback. Nothing reads a joint back onto the ECS, so the reverse
@@ -17,12 +17,12 @@
 //! Not by comparing itself to the solver, but by remembering the two
 //! [`BodyHandle`]s it was built from. A body handle changes whenever its
 //! body is rebuilt — an Inspector edit, a scale change, and crucially a
-//! stop, which drops every [`PhysicsBody`] and rebuilds the world from the
+//! stop, which drops every [`SolverBody`] and rebuilds the world from the
 //! restored ECS. So "my bodies' handles moved" already means everything
 //! "the play session ended" would have to mean, and the joint set follows
 //! the body set without a second lifecycle to keep in step.
 //!
-//! [`PhysicsBody`]: super::world::PhysicsBody
+//! [`SolverBody`]: super::world::SolverBody
 
 use std::collections::{HashMap, HashSet};
 
@@ -36,7 +36,7 @@ use crate::components::Joint;
 
 use super::events::JointBroke;
 
-use super::world::{PhysicsBody, PhysicsWorld};
+use super::world::{PhysicsWorld, SolverBody};
 
 /// One authored joint, and what the solver made of it.
 struct JointSlot {
@@ -134,7 +134,7 @@ fn read_authored(resources: &Resources, world: &PhysicsWorld) -> Vec<Authored> {
     let Some(joints) = registry.get_cpu::<Joint>() else {
         return Vec::new();
     };
-    let slots = registry.get_cpu::<PhysicsBody>();
+    let slots = registry.get_cpu::<SolverBody>();
 
     // An unresolved reference yields no body, exactly like a missing one:
     // the target's scene is not open yet, so the joint waits rather than
@@ -226,7 +226,7 @@ fn build_missing_joints(world: &mut PhysicsWorld, authored: &[Authored]) {
 /// normal state under streaming, and a joint whose partner has not spawned
 /// yet has to wait rather than be dropped. It is still worth saying,
 /// because the other cause — an entity named in the Inspector that has no
-/// `RigidBody` — looks identical from here and is a genuine mistake.
+/// `PhysicsBody` — looks identical from here and is a genuine mistake.
 fn warn_unresolved(world: &mut PhysicsWorld, entry: &Authored) {
     if !world.joints_mut().warned.insert(entry.entity) {
         return;
@@ -235,7 +235,7 @@ fn warn_unresolved(world: &mut PhysicsWorld, entry: &Authored) {
         target: "kooch_physics",
         entity = entry.entity.index(),
         "a Joint is waiting for its bodies — both Body A and Body B have to name \
-         entities that carry a RigidBody. The joint holds nothing until they do",
+         entities that carry a PhysicsBody. The joint holds nothing until they do",
     );
 }
 

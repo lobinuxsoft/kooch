@@ -25,7 +25,7 @@ fn ground(resources: &mut Resources) -> Entity {
     spawn_body(
         resources,
         Transform::from_position(Vec3::new(0.0, -1.0, 0.0)),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -154,7 +154,7 @@ fn body_axes_are_drawn_at_the_centre_of_mass() {
     spawn_body(
         &mut resources,
         Transform::default(),
-        RigidBody {
+        PhysicsBody {
             mass: 1.0,
             center_of_mass_enabled: true,
             center_of_mass: offset,

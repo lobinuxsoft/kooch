@@ -38,7 +38,7 @@ The engine dependency carries feature flags, and each one buys something specifi
 ```toml
 kooch = { path = "…", features = [
     "editor",                 # the embedded editor, so `cargo run` opens it
-    "physics",                # rigid bodies — without it, RigidBody is inert
+    "physics",                # rigid bodies — without it, PhysicsBody is inert
     "gravity",                # gravity sources — without it, PointGravity pulls on nothing
     "remote",                 # `--remote`, so the standalone editor can drive this project
     "physics-debug-render",   # the solver's own account of itself, for the overlay

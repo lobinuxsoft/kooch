@@ -7,10 +7,10 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::{Children, GlobalTransform, Parent};
 use kooch_ecs::transform::Transform;
 
-use crate::components::{Collider, KIND_DYNAMIC, RigidBody, SHAPE_CUBOID, SHAPE_SPHERE};
+use crate::components::{Collider, KIND_DYNAMIC, PhysicsBody, SHAPE_CUBOID, SHAPE_SPHERE};
 use crate::plugin::compound::{attachments_for, digest};
 use crate::plugin::systems::physics_sync_system;
-use crate::plugin::world::{PhysicsBody, PhysicsWorld};
+use crate::plugin::world::{PhysicsWorld, SolverBody};
 
 use super::{insert, spawn_bare, spawn_body, world};
 
@@ -30,8 +30,8 @@ fn sphere(radius: f32) -> Collider {
     }
 }
 
-fn dynamic() -> RigidBody {
-    RigidBody {
+fn dynamic() -> PhysicsBody {
+    PhysicsBody {
         kind: KIND_DYNAMIC,
         mass: 1.0,
         ..Default::default()
@@ -94,9 +94,9 @@ fn a_child_collider_joins_the_parents_body() {
     physics_sync_system(&mut r);
     let slot = r
         .get::<ComponentRegistry>()
-        .and_then(|reg| reg.get_cpu::<PhysicsBody>())
+        .and_then(|reg| reg.get_cpu::<SolverBody>())
         .and_then(|s| s.get(parent))
-        .map(PhysicsBody::slot)
+        .map(SolverBody::slot)
         .expect("the parent got a body");
 
     let world_res = r.get::<PhysicsWorld>().expect("physics world");

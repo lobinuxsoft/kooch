@@ -71,7 +71,7 @@ fn ground(resources: &mut Resources, half_y: f32) -> Entity {
     spawn_body(
         resources,
         Transform::from_position(Vec3::new(0.0, -half_y, 0.0)),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -99,7 +99,7 @@ fn a_sensor_reports_the_right_entities() {
     let trigger = spawn_body(
         &mut resources,
         Transform::from_position(Vec3::new(0.0, 5.0, 0.0)),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -139,7 +139,7 @@ fn falling_through_a_sensor_reports_both_halves() {
     spawn_body(
         &mut resources,
         Transform::from_position(Vec3::new(0.0, 5.0, 0.0)),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -175,7 +175,7 @@ fn a_sensor_does_not_stop_anything() {
     spawn_body(
         &mut resources,
         Transform::from_position(Vec3::new(0.0, 3.0, 0.0)),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -232,7 +232,7 @@ fn only_a_hard_enough_impact_raises_a_force_event() {
         spawn_body(
             &mut resources,
             Transform::from_position(Vec3::new(0.0, -1.0, 0.0)),
-            RigidBody {
+            PhysicsBody {
                 kind: KIND_STATIC,
                 mass: 0.0,
                 ..Default::default()
@@ -248,7 +248,7 @@ fn only_a_hard_enough_impact_raises_a_force_event() {
         spawn_body(
             &mut resources,
             Transform::from_position(Vec3::new(0.0, drop_height, 0.0)),
-            RigidBody {
+            PhysicsBody {
                 mass: 20.0,
                 ..Default::default()
             },
@@ -278,7 +278,7 @@ fn a_force_event_carries_a_sane_total_and_peak() {
     spawn_body(
         &mut resources,
         Transform::from_position(Vec3::new(0.0, -1.0, 0.0)),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -294,7 +294,7 @@ fn a_force_event_carries_a_sane_total_and_peak() {
     spawn_body(
         &mut resources,
         Transform::from_position(Vec3::new(0.0, 12.0, 0.0)),
-        RigidBody {
+        PhysicsBody {
             mass: 20.0,
             ..Default::default()
         },
@@ -326,7 +326,7 @@ fn disjoint_collision_groups_pass_through() {
         spawn_body(
             &mut resources,
             Transform::from_position(Vec3::new(0.0, 0.0, 0.0)),
-            RigidBody {
+            PhysicsBody {
                 kind: KIND_STATIC,
                 mass: 0.0,
                 ..Default::default()
@@ -342,7 +342,7 @@ fn disjoint_collision_groups_pass_through() {
         let faller = spawn_body(
             &mut resources,
             Transform::from_position(Vec3::new(0.0, 4.0, 0.0)),
-            RigidBody::default(),
+            PhysicsBody::default(),
             Collider {
                 collision_memberships: groups.1,
                 collision_filter: groups.1,
@@ -377,7 +377,7 @@ fn matching_collision_groups_with_disjoint_solver_groups_detect_without_stopping
     spawn_body(
         &mut resources,
         Transform::from_position(Vec3::new(0.0, 0.0, 0.0)),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -397,7 +397,7 @@ fn matching_collision_groups_with_disjoint_solver_groups_detect_without_stopping
     let projectile = spawn_body(
         &mut resources,
         Transform::from_position(Vec3::new(0.0, 4.0, 0.0)),
-        RigidBody::default(),
+        PhysicsBody::default(),
         Collider {
             collision_memberships: u32::MAX,
             collision_filter: u32::MAX,
@@ -435,7 +435,7 @@ fn no_events_survive_a_stop() {
     spawn_body(
         &mut resources,
         Transform::from_position(Vec3::new(0.0, -1.0, 0.0)),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -478,7 +478,7 @@ fn a_broken_joint_raises_an_event() {
     let hook = spawn_body(
         &mut resources,
         Transform::from_position(Vec3::new(0.0, 10.0, 0.0)),
-        RigidBody {
+        PhysicsBody {
             kind: KIND_STATIC,
             mass: 0.0,
             ..Default::default()
@@ -488,7 +488,7 @@ fn a_broken_joint_raises_an_event() {
     let load = spawn_body(
         &mut resources,
         Transform::from_position(Vec3::new(0.0, 9.0, 0.0)),
-        RigidBody {
+        PhysicsBody {
             mass: 5.0,
             ..Default::default()
         },
