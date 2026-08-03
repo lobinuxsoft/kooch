@@ -30,6 +30,7 @@
 //! ```
 
 pub mod action_map;
+pub mod actions;
 pub mod backend;
 pub mod ids;
 pub mod mock_backend;
