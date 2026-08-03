@@ -28,6 +28,12 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         EditorAction::DeleteFolder { path } => delete_folder(resources, path),
         EditorAction::RevealInFileManager { path } => reveal(path),
         EditorAction::OpenInIde { file } => open_in_ide(resources, file),
+        EditorAction::OpenInputMap { path } => open_input_map(resources, path),
+        EditorAction::InputMapFocused => {
+            if let Some(open) = resources.get_mut::<crate::state::OpenInputMap>() {
+                open.focus_requested = false;
+            }
+        }
         EditorAction::CreateFile { folder, name, kind } => {
             create_file(resources, folder, name, *kind)
         }
@@ -676,4 +682,42 @@ fn starter_input_map(name: &str) -> kooch_input::actions::ActionMap {
                 .bind(Binding::to(ControlPath::Key(KeyCode::Space)))
                 .bind(Binding::to(ControlPath::Button(GamepadButton::South))),
         )
+}
+
+/// Reads an `.inputmap` and hands it to the panel.
+///
+/// Read here rather than through the asset server on purpose: the panel
+/// edits this copy, and a draw that re-read the loaded asset every frame
+/// would make the edited map and the loaded map two values of the same
+/// thing. Saving writes back and the server picks it up on reload.
+fn open_input_map(resources: &mut Resources, path: &std::path::Path) {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::error!(file = %path.display(), error = %e, "could not read input map");
+            return;
+        }
+    };
+    match ron::from_str::<kooch_input::actions::ActionMap>(&text) {
+        Ok(map) => {
+            tracing::info!(
+                file = %path.display(),
+                actions = map.actions.len(),
+                "input map opened",
+            );
+            resources.insert(crate::state::OpenInputMap {
+                path: path.to_path_buf(),
+                map,
+                focus_requested: true,
+            });
+        }
+        // Named rather than swallowed: a map that will not parse is a
+        // file someone has to fix, and an empty panel says nothing about
+        // which file or why.
+        Err(e) => tracing::error!(
+            file = %path.display(),
+            error = %e,
+            "input map could not be parsed",
+        ),
+    }
 }

@@ -61,6 +61,7 @@ pub(super) fn run_editor_ui(
     power_profile: kooch_core::power::PowerProfile,
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
     asset_detail: Option<&crate::panels::inspector::AssetDetail>,
+    open_input_map: Option<&crate::state::OpenInputMap>,
     engine_assets_root: Option<&std::path::Path>,
     project_assets_root: Option<&std::path::Path>,
     meshlet_debug_mode: &mut MeshletDebugMode,
@@ -137,6 +138,21 @@ pub(super) fn run_editor_ui(
                 selected.contains(&info.entity)
                     && info.components.iter().any(|c| c.short_name == "Transform")
             });
+            // Opening an asset has to show it. A panel that loaded the
+            // map behind a tab nobody switched to is indistinguishable
+            // from one that did nothing.
+            if open_input_map.is_some_and(|open| open.focus_requested) {
+                if !crate::state::dock_has_tab(
+                    &overlay.dock_state,
+                    &crate::state::EditorTab::InputMap,
+                ) {
+                    overlay
+                        .dock_state
+                        .add_window(vec![crate::state::EditorTab::InputMap]);
+                }
+                actions.push(EditorAction::InputMapFocused);
+            }
+
             let mut tab_viewer = EditorTabViewer {
                 pinned: &mut pinned_gizmos,
                 focused_tab: &mut overlay.focused_tab,
@@ -172,6 +188,7 @@ pub(super) fn run_editor_ui(
                 asset_catalog,
                 selected_asset: &mut selected_asset,
                 asset_detail,
+                open_input_map,
                 current_folder: &mut current_folder,
                 engine_assets_root,
                 project_assets_root,

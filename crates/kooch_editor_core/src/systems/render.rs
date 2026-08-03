@@ -285,6 +285,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // Resolve the Asset Browser's selection into a data snapshot before
     // the egui frame — the detail pane needs the asset's contents, and
     // resolving them requires mutable `Resources` (AssetServer load).
+    // Cloned out: the UI takes `&mut Resources` for other things, and
+    // holding a borrow of one resource rules out asking for another.
+    let open_input_map = resources.get::<crate::state::OpenInputMap>().cloned();
     let asset_detail = overlay
         .selected_asset
         .and_then(|guid| crate::systems::asset_detail::gather_asset_detail(guid, resources));
@@ -358,6 +361,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         power_profile,
         &asset_catalog,
         asset_detail.as_ref(),
+        open_input_map.as_ref(),
         engine_root_owned.as_deref(),
         project_crate_root.as_deref(),
         &mut meshlet_debug_mode,

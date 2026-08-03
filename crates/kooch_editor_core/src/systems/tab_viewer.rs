@@ -81,6 +81,8 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Data snapshot for the selected asset, resolved before the frame.
     /// `None` when nothing is selected or the snapshot is still pending.
     pub(crate) asset_detail: Option<&'a AssetDetail>,
+    /// The `.inputmap` open in the Input Map panel, if any.
+    pub(crate) open_input_map: Option<&'a crate::state::OpenInputMap>,
     /// Asset Browser folder selection — the drag-and-drop import target.
     pub(crate) current_folder: &'a mut Option<std::path::PathBuf>,
     /// Project / engine `assets/` roots, for the Asset Browser tree.
@@ -249,7 +251,9 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 let _ = crate::panels::input_map::draw_input_map_content(
                     ui,
                     crate::panels::input_map::InputMapView {
-                        map: None,
+                        map: self.open_input_map.map(|open| &open.map),
+                        // Live values arrive over the protocol from the
+                        // host, which is the only process that simulates.
                         live: &[],
                         awaiting: None,
                     },

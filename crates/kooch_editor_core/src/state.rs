@@ -40,6 +40,21 @@ pub(crate) enum EditorTab {
     Console,
 }
 
+/// The `.inputmap` currently open in the Input Map panel.
+///
+/// The parsed map rather than a guid: the panel edits it, and going back
+/// to the asset server for every frame's draw would mean the edited copy
+/// and the loaded one are two values of the same thing — the shape behind
+/// every prefab bug in #611.
+#[derive(Debug, Clone)]
+pub(crate) struct OpenInputMap {
+    pub path: std::path::PathBuf,
+    pub map: kooch_input::actions::ActionMap,
+    /// Set when the panel should be brought to the front. Cleared by the
+    /// dock once it has done so.
+    pub focus_requested: bool,
+}
+
 /// All tab variants, used for the Window menu.
 pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::World,

@@ -172,8 +172,22 @@ pub(super) fn render_leaf(
         ctx.nav.cursor = Some(leaf.path.clone());
     }
     if resp.double_clicked() {
-        ctx.actions.push(EditorAction::OpenInIde {
-            file: leaf.path.clone(),
+        // An asset the editor can edit opens in the editor; everything
+        // else goes to the IDE. Sending a `.inputmap` to a text editor
+        // was technically an answer and never the one anyone wanted.
+        let is_input_map = leaf
+            .path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case(kooch_input::actions::INPUT_MAP_EXTENSION));
+        ctx.actions.push(if is_input_map {
+            EditorAction::OpenInputMap {
+                path: leaf.path.clone(),
+            }
+        } else {
+            EditorAction::OpenInIde {
+                file: leaf.path.clone(),
+            }
         });
     }
 

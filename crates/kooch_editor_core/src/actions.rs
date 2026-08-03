@@ -302,6 +302,23 @@ pub(crate) enum EditorAction {
     /// Rescan the project's `src/` for components + systems and rewrite
     /// the editor-managed `src/registrations.rs` (regenerating `main.rs`
     /// if it is missing).
+    /// The dock has brought the Input Map panel forward; stop asking.
+    ///
+    /// A one-shot rather than the panel clearing the flag itself: the
+    /// draw borrows the resource immutably, and a frame that both reads
+    /// and writes the same state is where a "why does this flicker" bug
+    /// comes from.
+    InputMapFocused,
+    /// Load an `.inputmap` and show it in the Input Map panel.
+    ///
+    /// A dedicated panel rather than the Inspector. An input map is a
+    /// document — action maps, actions, bindings, a live column — and the
+    /// Inspector draws *component fields on the selected entity*. Putting
+    /// every asset type through one panel is how it stops being good at
+    /// any of them.
+    OpenInputMap {
+        path: std::path::PathBuf,
+    },
     RegisterScripts,
 }
 
@@ -385,7 +402,12 @@ impl EditorAction {
             // world, so editing one while a project builds is fine.
             | Self::EditPrefabField { .. }
             | Self::EditPrefabComponent { .. }
-            | Self::SavePrefabAsset(_) => false,
+            | Self::SavePrefabAsset(_)
+            // An input map is a file too. Editing bindings while a
+            // project builds is exactly the half of #58 that works
+            // without anything running.
+            | Self::OpenInputMap { .. }
+            | Self::InputMapFocused => false,
 
             // Editor preferences and things that act on files rather than
             // on the world. An asset edit is about a `.ron` on disk, and
