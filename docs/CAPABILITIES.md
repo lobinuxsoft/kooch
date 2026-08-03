@@ -54,12 +54,12 @@ usable.
 
 | Capability | Where | Status | Notes |
 |---|---|---|---|
-| `Query<(&A, &mut B), With<C>>` | `query/` | **orphan** → connected | Archetype matching, `With`/`Without`, `AccessTracker` for conflicting borrows. Used by tests and `scene/propagate.rs`; `kooch_camera`, `kooch_physics` and `kooch_gravity` hand-join storages 37 times instead. The example in its own doc comment is the movement system a game writes on day one. |
+| `Query<(&A, &mut B), With<C>>` | `query/` | connected (#726) | Archetype matching, `With`/`Without`, `AccessTracker` for conflicting borrows. Used by tests and `scene/propagate.rs`; `kooch_camera`, `kooch_physics` and `kooch_gravity` hand-join storages 37 times instead. The example in its own doc comment is the movement system a game writes on day one. |
 | `Commands` | `commands/` | connected | Deferred spawn / insert / despawn. |
-| `Transform`, `Name`, `MeshRenderer`, `PerspectiveCamera` | crate root | **invisible** | The components every scene has. |
-| `Component`, `ComponentRegistry`, `Reflect` | `component/`, `reflect/` | **invisible** | Needed to declare a component at all. |
-| `Children` / `Parent` / `GlobalTransform` | `hierarchy/` | **invisible** | |
-| `SceneManager` | `scene_manager/` | **invisible** | |
+| `Transform`, `Name`, `MeshRenderer`, `PerspectiveCamera` | crate root | connected (#726) | The components every scene has. |
+| `Component`, `ComponentRegistry`, `Reflect` | `component/`, `reflect/` | connected (#726) | Needed to declare a component at all. |
+| `Children` / `Parent` / `GlobalTransform` | `hierarchy/` | connected (#726) | |
+| `SceneManager` | `scene_manager/` | connected (#726) | |
 | `EntityGuid`, `PersistentIdAllocator` | `persistent_id.rs` | internal | |
 
 **What `Query` does not solve.** A system is `fn(&mut Resources)` — one
@@ -102,6 +102,17 @@ are disjoint. Kóoch has the query half and not the scheduler half.
 | Script codegen (module tree) | `actions/codegen/` | connected | Mirrors `src/` folders as a module tree. |
 | Play standalone (`handle_play`) | `play_state.rs` | **orphan** | Launches `cargo run -- --game` in its own process, saves the scene to a temp file, captures stdout into the Console — and only runs when *not* remote, while Open Project is always remote. #720. |
 | Register Scripts | `actions/asset_ops.rs` | connected but misplaced | Rescans the whole project, yet the button only exists in the context menu of a `.rs` file — so with no `.rs` left there is no way to regenerate. |
+
+## What is still disconnected
+
+Three, and they are the debt this file exists to stop growing. Everything
+else in the tables above reached something.
+
+| | Cost of leaving it | Where it goes |
+|---|---|---|
+| **`ActionMap`** | Input cannot be authored at all — every game hardcodes `KeyCode::KeyW`, and the editor has no panel because there is no data to show it. This is also the open half of the phase-0 verdict in #669. | #55 rewrites the action as data, #58 is the panel |
+| **`RenderGraph`** | 497 lines that *look* like the official way to add a pass, next to a renderer that does not use them. The next person to add a pass has to work out which one is real. | migrate the meshlet stage onto it, or delete it — #392 |
+| **Play standalone** | The only honest place to tune feel: remote Play costs a frame of latency. Reachable today only by leaving the editor and running `cargo run -- --game` with the env set by hand. | #720 |
 
 ## How to keep this honest
 
