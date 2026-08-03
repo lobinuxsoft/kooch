@@ -29,6 +29,8 @@ pub struct MockInputBackend {
 
 #[derive(Default)]
 struct GamepadState {
+    just_pressed_buttons: HashSet<GamepadButton>,
+    just_released_buttons: HashSet<GamepadButton>,
     pressed_buttons: HashSet<GamepadButton>,
     axes: HashMap<GamepadAxis, f32>,
 }
@@ -80,6 +82,7 @@ impl MockInputBackend {
     pub fn press_gamepad_button(&mut self, gamepad: GamepadId, button: GamepadButton) {
         let entry = self.gamepads.entry(gamepad).or_default();
         if entry.pressed_buttons.insert(button) {
+            entry.just_pressed_buttons.insert(button);
             self.queued_events
                 .push(InputEvent::GamepadButtonPressed { gamepad, button });
         }
@@ -88,6 +91,7 @@ impl MockInputBackend {
     pub fn release_gamepad_button(&mut self, gamepad: GamepadId, button: GamepadButton) {
         let entry = self.gamepads.entry(gamepad).or_default();
         if entry.pressed_buttons.remove(&button) {
+            entry.just_released_buttons.insert(button);
             self.queued_events
                 .push(InputEvent::GamepadButtonReleased { gamepad, button });
         }
@@ -109,6 +113,10 @@ impl InputBackend for MockInputBackend {
     fn begin_frame(&mut self) {
         self.just_pressed_keys.clear();
         self.just_released_keys.clear();
+        for pad in self.gamepads.values_mut() {
+            pad.just_pressed_buttons.clear();
+            pad.just_released_buttons.clear();
+        }
         self.mouse_delta = Vec2::ZERO;
     }
 
@@ -152,6 +160,18 @@ impl InputBackend for MockInputBackend {
         self.gamepads
             .get(&gamepad)
             .is_some_and(|state| state.pressed_buttons.contains(&button))
+    }
+
+    fn just_button_pressed(&self, gamepad: GamepadId, button: GamepadButton) -> bool {
+        self.gamepads
+            .get(&gamepad)
+            .is_some_and(|state| state.just_pressed_buttons.contains(&button))
+    }
+
+    fn just_button_released(&self, gamepad: GamepadId, button: GamepadButton) -> bool {
+        self.gamepads
+            .get(&gamepad)
+            .is_some_and(|state| state.just_released_buttons.contains(&button))
     }
 
     fn axis_value(&self, gamepad: GamepadId, axis: GamepadAxis) -> f32 {
@@ -347,5 +367,68 @@ mod tests {
         assert!(!map.is_pressed(TestAction::Jump, &backend));
         assert!(!map.just_pressed(TestAction::Jump, &backend));
         assert_eq!(map.axis_value(TestAction::Jump, &backend), 0.0);
+    }
+
+    /// A held button must read as pressed once, not every frame.
+    ///
+    /// Without this the keyboard and the gamepad disagree: `just_pressed`
+    /// existed for keys and not for buttons, so gameplay wanting "on
+    /// press" had to settle for "while held" on a pad. Written into a
+    /// per-frame jump intent that is an impulse every frame the button is
+    /// down — the jump that feels right on a keyboard fires the player
+    /// off the map on a controller (#57).
+    #[test]
+    fn a_held_button_reads_as_just_pressed_only_once() {
+        let pad = GamepadId(0);
+        let mut backend = MockInputBackend::new();
+        backend.add_gamepad(pad);
+
+        backend.begin_frame();
+        backend.press_gamepad_button(pad, GamepadButton::South);
+        assert!(backend.just_button_pressed(pad, GamepadButton::South));
+        assert!(backend.is_button_pressed(pad, GamepadButton::South));
+
+        backend.begin_frame();
+        assert!(
+            !backend.just_button_pressed(pad, GamepadButton::South),
+            "a held button fired twice — this is the jump that launches the player"
+        );
+        assert!(
+            backend.is_button_pressed(pad, GamepadButton::South),
+            "the button stopped reading as held"
+        );
+
+        backend.begin_frame();
+        backend.release_gamepad_button(pad, GamepadButton::South);
+        assert!(backend.just_button_released(pad, GamepadButton::South));
+        assert!(!backend.is_button_pressed(pad, GamepadButton::South));
+
+        backend.begin_frame();
+        assert!(!backend.just_button_released(pad, GamepadButton::South));
+    }
+
+    /// The keyboard and the gamepad have to answer the same question the
+    /// same way, or gameplay has to special-case which device it is on —
+    /// which is exactly what roll-a-ball's `jump_requested` had to do.
+    #[test]
+    fn a_button_behaves_like_a_key() {
+        let pad = GamepadId(0);
+        let mut backend = MockInputBackend::new();
+        backend.add_gamepad(pad);
+
+        backend.begin_frame();
+        backend.press_key(KeyCode::Space);
+        backend.press_gamepad_button(pad, GamepadButton::South);
+        assert_eq!(
+            backend.just_pressed(KeyCode::Space),
+            backend.just_button_pressed(pad, GamepadButton::South),
+        );
+
+        backend.begin_frame();
+        assert_eq!(
+            backend.just_pressed(KeyCode::Space),
+            backend.just_button_pressed(pad, GamepadButton::South),
+            "held: the key expired its edge and the button did not"
+        );
     }
 }

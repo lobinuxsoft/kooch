@@ -45,6 +45,10 @@ pub struct WinitGilrsBackend {
 #[derive(Default)]
 struct GamepadState {
     pressed_buttons: HashSet<GamepadButton>,
+    /// Buttons that went down this frame, cleared by `begin_frame` — the
+    /// same shape as `just_pressed_keys`.
+    just_pressed_buttons: HashSet<GamepadButton>,
+    just_released_buttons: HashSet<GamepadButton>,
     axes: HashMap<GamepadAxis, f32>,
 }
 
@@ -167,6 +171,7 @@ impl WinitGilrsBackend {
                     };
                     let entry = self.gamepads.entry(id).or_default();
                     if entry.pressed_buttons.insert(button) {
+                        entry.just_pressed_buttons.insert(button);
                         self.queued_events.push(InputEvent::GamepadButtonPressed {
                             gamepad: id,
                             button,
@@ -179,6 +184,7 @@ impl WinitGilrsBackend {
                     };
                     let entry = self.gamepads.entry(id).or_default();
                     if entry.pressed_buttons.remove(&button) {
+                        entry.just_released_buttons.insert(button);
                         self.queued_events.push(InputEvent::GamepadButtonReleased {
                             gamepad: id,
                             button,
@@ -206,6 +212,10 @@ impl WinitGilrsBackend {
 impl InputBackend for WinitGilrsBackend {
     fn begin_frame(&mut self) {
         self.just_pressed_keys.clear();
+        for pad in self.gamepads.values_mut() {
+            pad.just_pressed_buttons.clear();
+            pad.just_released_buttons.clear();
+        }
         self.just_released_keys.clear();
         self.mouse_delta = Vec2::ZERO;
     }
@@ -255,6 +265,18 @@ impl InputBackend for WinitGilrsBackend {
         self.gamepads
             .get(&gamepad)
             .is_some_and(|state| state.pressed_buttons.contains(&button))
+    }
+
+    fn just_button_pressed(&self, gamepad: GamepadId, button: GamepadButton) -> bool {
+        self.gamepads
+            .get(&gamepad)
+            .is_some_and(|state| state.just_pressed_buttons.contains(&button))
+    }
+
+    fn just_button_released(&self, gamepad: GamepadId, button: GamepadButton) -> bool {
+        self.gamepads
+            .get(&gamepad)
+            .is_some_and(|state| state.just_released_buttons.contains(&button))
     }
 
     fn axis_value(&self, gamepad: GamepadId, axis: GamepadAxis) -> f32 {

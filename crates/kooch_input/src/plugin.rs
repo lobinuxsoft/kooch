@@ -228,6 +228,12 @@ mod tests {
         fn is_button_pressed(&self, _gamepad: GamepadId, _button: GamepadButton) -> bool {
             false
         }
+        fn just_button_pressed(&self, _gamepad: GamepadId, _button: GamepadButton) -> bool {
+            false
+        }
+        fn just_button_released(&self, _gamepad: GamepadId, _button: GamepadButton) -> bool {
+            false
+        }
         fn axis_value(&self, _gamepad: GamepadId, _axis: GamepadAxis) -> f32 {
             0.0
         }
