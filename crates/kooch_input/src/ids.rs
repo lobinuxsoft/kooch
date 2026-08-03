@@ -55,6 +55,14 @@ macro_rules! mirrored {
         }
 
         impl $name {
+            /// Every variant, in declaration order.
+            ///
+            /// The editor's binding picker needs a list to offer, and a
+            /// hand-written one beside the enum is a second place to add a
+            /// variant to — which is the failure this macro exists to
+            /// prevent. Same list, same expansion.
+            pub const ALL: &'static [Self] = &[$(Self::$variant,)*];
+
             /// The upstream value this mirrors, or `None` for one this
             /// engine has no name for.
             ///
@@ -252,6 +260,41 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<KeyCode>(&json).unwrap(),
             KeyCode::KeyW
+        );
+    }
+}
+
+#[cfg(test)]
+mod all_tests {
+    use super::*;
+
+    /// `ALL` has to actually be all of them: a picker that offers a
+    /// subset is a control nobody can bind, with nothing to say so.
+    #[test]
+    fn every_list_covers_its_enum() {
+        // Round-tripping every entry proves the list and the conversions
+        // came from the same expansion.
+        for key in KeyCode::ALL {
+            assert_eq!(KeyCode::from_upstream(key.to_upstream()), Some(*key));
+        }
+        for button in GamepadButton::ALL {
+            assert_eq!(
+                GamepadButton::from_upstream(button.to_upstream()),
+                Some(*button)
+            );
+        }
+        for axis in GamepadAxis::ALL {
+            assert_eq!(GamepadAxis::from_upstream(axis.to_upstream()), Some(*axis));
+        }
+        for button in MouseButton::ALL {
+            assert_eq!(
+                MouseButton::from_upstream(button.to_upstream()),
+                Some(*button)
+            );
+        }
+        assert!(
+            KeyCode::ALL.len() > 100,
+            "the keyboard list looks truncated"
         );
     }
 }

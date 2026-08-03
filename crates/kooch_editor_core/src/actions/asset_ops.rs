@@ -711,6 +711,7 @@ fn open_input_map(resources: &mut Resources, path: &std::path::Path) {
                 path: path.to_path_buf(),
                 map,
                 focus_requested: true,
+                selected: None,
                 dirty: false,
             });
         }
@@ -740,11 +741,38 @@ fn edit_input_map(resources: &mut Resources, edit: &crate::panels::input_map::In
     };
     let map = &mut open.map;
     let changed = match edit {
+        Edit::Select(selection) => {
+            open.selected = Some(*selection);
+            false
+        }
+        Edit::RenameAction { action, name } => match map.actions.get_mut(*action) {
+            Some(target) if target.name != *name => {
+                target.name = name.clone();
+                true
+            }
+            _ => false,
+        },
+        Edit::SetControlType {
+            action,
+            control_type,
+        } => match map.actions.get_mut(*action) {
+            Some(target) if target.control_type != *control_type => {
+                target.control_type = *control_type;
+                true
+            }
+            _ => false,
+        },
         Edit::AddAction => {
             // Named for what it is until renamed. An empty name would
             // resolve to nothing and read as a broken action.
             let name = unique_action_name(map, "new_action");
             map.actions.push(Action::new(name, ControlType::Button));
+            // Selected on the way in, so the properties pane is already
+            // showing its name field. Otherwise a new action is a row
+            // somewhere in a list with no hint that it wants a name.
+            open.selected = Some(crate::panels::input_map::Selection::Action(
+                map.actions.len() - 1,
+            ));
             true
         }
         Edit::RemoveAction { action } => {
@@ -858,6 +886,7 @@ mod input_map_tests {
                     .bind(Binding::to(ControlPath::Key(KeyCode::Space))),
             ),
             focus_requested: false,
+            selected: None,
             dirty: false,
         }
     }
@@ -980,5 +1009,89 @@ mod input_map_tests {
         let open = resources.get::<OpenInputMap>().unwrap();
         assert_eq!(open.map.actions.len(), 1);
         assert!(!open.dirty, "a no-op edit marked the map unsaved");
+    }
+}
+
+#[cfg(test)]
+mod input_map_editing_tests {
+    use super::*;
+    use crate::panels::input_map::{InputMapAction as Edit, Selection};
+    use crate::state::OpenInputMap;
+    use kooch_input::actions::{Action, ActionMap, ControlType};
+
+    fn resources() -> Resources {
+        let mut r = Resources::new();
+        r.insert(OpenInputMap {
+            path: "unused.inputmap".into(),
+            map: ActionMap::new("gameplay")
+                .add(Action::new("jump", ControlType::Button))
+                .add(Action::new("move", ControlType::Vector2)),
+            focus_requested: false,
+            selected: None,
+            dirty: false,
+        });
+        r
+    }
+
+    /// The name is what gameplay resolves, so renaming is the edit that
+    /// matters most — and the one that used to be impossible.
+    #[test]
+    fn an_action_can_be_renamed() {
+        let mut r = resources();
+        edit_input_map(
+            &mut r,
+            &Edit::RenameAction {
+                action: 0,
+                name: "leap".into(),
+            },
+        );
+        let open = r.get::<OpenInputMap>().unwrap();
+        assert_eq!(open.map.resolve("leap").map(|id| id.index()), Some(0));
+        assert!(open.map.resolve("jump").is_none());
+        assert!(open.dirty);
+    }
+
+    /// Selecting is not an edit: it must not mark the file unsaved.
+    #[test]
+    fn selecting_does_not_dirty_the_document() {
+        let mut r = resources();
+        edit_input_map(&mut r, &Edit::Select(Selection::Action(1)));
+        let open = r.get::<OpenInputMap>().unwrap();
+        assert_eq!(open.selected, Some(Selection::Action(1)));
+        assert!(!open.dirty, "selecting a row claimed an unsaved change");
+    }
+
+    /// A new action arrives selected, so the properties pane is already
+    /// showing the name field rather than leaving a row to hunt for.
+    #[test]
+    fn a_new_action_is_selected_on_arrival() {
+        let mut r = resources();
+        edit_input_map(&mut r, &Edit::AddAction);
+        let open = r.get::<OpenInputMap>().unwrap();
+        assert_eq!(open.selected, Some(Selection::Action(2)));
+    }
+
+    /// Setting the same value is not a change — otherwise clicking the
+    /// type an action already has would mark the file unsaved.
+    #[test]
+    fn a_no_op_edit_leaves_the_document_clean() {
+        let mut r = resources();
+        edit_input_map(
+            &mut r,
+            &Edit::SetControlType {
+                action: 0,
+                control_type: ControlType::Button,
+            },
+        );
+        assert!(!r.get::<OpenInputMap>().unwrap().dirty);
+
+        edit_input_map(
+            &mut r,
+            &Edit::SetControlType {
+                action: 0,
+                control_type: ControlType::Axis,
+            },
+        );
+        assert!(r.get::<OpenInputMap>().unwrap().dirty);
     }
 }

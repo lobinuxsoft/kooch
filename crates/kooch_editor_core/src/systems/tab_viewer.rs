@@ -257,6 +257,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                         live: &[],
                         awaiting: None,
                         dirty: self.open_input_map.is_some_and(|open| open.dirty),
+                        selected: self.open_input_map.and_then(|open| open.selected),
                     },
                 );
                 for request in requested {

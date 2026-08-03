@@ -37,6 +37,8 @@ pub(crate) struct InputMapView<'a> {
     pub awaiting: Option<BindingAddress>,
     /// Whether the open map diverges from its file.
     pub dirty: bool,
+    /// What the properties pane at the bottom is editing.
+    pub selected: Option<Selection>,
 }
 
 /// What the host says an action is worth right now.
@@ -44,6 +46,18 @@ pub(crate) struct InputMapView<'a> {
 pub(crate) struct LiveAction {
     pub value: glam::Vec2,
     pub pressed: bool,
+}
+
+/// What the properties pane is editing.
+///
+/// Unity splits this into four views — action, binding, composite,
+/// composite part — chosen by what is selected in the tree. One enum
+/// covers the same ground here because the panel is one column rather
+/// than three.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Selection {
+    Action(usize),
+    Binding(BindingAddress),
 }
 
 /// Which binding a click was on — an action index and a binding index
@@ -67,6 +81,19 @@ pub(crate) struct BindingAddress {
 pub(crate) enum InputMapAction {
     /// Write the map back to its file.
     Save,
+    /// Select an action or a binding — what the properties pane edits.
+    Select(Selection),
+    /// Rename an action. The name is what gameplay resolves, so this is
+    /// the single most consequential edit in the panel.
+    RenameAction {
+        action: usize,
+        name: String,
+    },
+    /// Change what an action produces.
+    SetControlType {
+        action: usize,
+        control_type: ControlType,
+    },
     /// Start listening for an input to put on this binding.
     BeginRebind(BindingAddress),
     /// Stop listening without changing anything.
@@ -124,8 +151,14 @@ pub(crate) fn draw_input_map_content(
     }
     ui.separator();
 
+    // The tree, then what is selected in it. Unity puts the properties
+    // in a third column; one panel is narrower than a Unity window, so
+    // they go underneath — same relationship, less horizontal room.
+    let properties_height = 190.0;
+    let tree_height = (ui.available_height() - properties_height).max(80.0);
     egui::ScrollArea::vertical()
         .auto_shrink([false, true])
+        .max_height(tree_height)
         .id_salt("input_map_actions")
         .show(ui, |ui| {
             for (index, action) in map.actions.iter().enumerate() {
@@ -133,7 +166,199 @@ pub(crate) fn draw_input_map_content(
             }
         });
 
+    ui.separator();
+    draw_properties(ui, map, &view, &mut actions);
+
     actions
+}
+
+/// Edits whatever is selected. Empty when nothing is.
+fn draw_properties(
+    ui: &mut egui::Ui,
+    map: &ActionMap,
+    view: &InputMapView<'_>,
+    out: &mut Vec<InputMapAction>,
+) {
+    let Some(selected) = view.selected else {
+        ui.weak("Select an action or a binding to edit it.");
+        return;
+    };
+
+    match selected {
+        Selection::Action(index) => {
+            let Some(action) = map.actions.get(index) else {
+                return;
+            };
+            ui.label("Action");
+            ui.horizontal(|ui| {
+                ui.label("Name");
+                // Kept in egui's memory while being typed and committed
+                // on the way out: an edit per keystroke would push a
+                // rename through the document — and through `resolve` —
+                // for every intermediate spelling.
+                let id = ui.make_persistent_id(("input_action_name", index));
+                let mut name = ui
+                    .data(|d| d.get_temp::<String>(id))
+                    .unwrap_or_else(|| action.name.clone());
+                let response = ui.text_edit_singleline(&mut name);
+                if response.changed() {
+                    ui.data_mut(|d| d.insert_temp(id, name.clone()));
+                }
+                if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    let trimmed = name.trim();
+                    // An empty name resolves to nothing, and a duplicate
+                    // makes `resolve` a coin toss. Refusing here is
+                    // cheaper than a control that silently stops working.
+                    let taken = map
+                        .actions
+                        .iter()
+                        .enumerate()
+                        .any(|(other, a)| other != index && a.name == trimmed);
+                    if !trimmed.is_empty() && !taken && trimmed != action.name {
+                        out.push(InputMapAction::RenameAction {
+                            action: index,
+                            name: trimmed.to_owned(),
+                        });
+                    }
+                    ui.data_mut(|d| d.remove::<String>(id));
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Type");
+                for control_type in [ControlType::Button, ControlType::Axis, ControlType::Vector2] {
+                    if ui
+                        .selectable_label(
+                            action.control_type == control_type,
+                            control_type_label(control_type),
+                        )
+                        .clicked()
+                        && action.control_type != control_type
+                    {
+                        out.push(InputMapAction::SetControlType {
+                            action: index,
+                            control_type,
+                        });
+                    }
+                }
+            });
+        }
+        Selection::Binding(at) => {
+            let Some(binding) = map
+                .actions
+                .get(at.action)
+                .and_then(|a| a.bindings.get(at.binding))
+            else {
+                return;
+            };
+            match &binding.role {
+                Role::CompositeHead(composite) => {
+                    ui.label("Composite");
+                    ui.weak(format!("{composite:?}"));
+                    ui.weak("Its parts are the rows underneath.");
+                }
+                Role::Whole(path) | Role::Part { path, .. } => {
+                    ui.label(match binding.role {
+                        Role::Part { name, .. } => format!("Binding — {}", part_label(name)),
+                        _ => "Binding".to_owned(),
+                    });
+                    draw_control_picker(ui, at, *path, out);
+                }
+            }
+        }
+    }
+}
+
+/// Picks the control a binding reads.
+///
+/// Two dropdowns rather than Unity's control-path tree. Theirs has to
+/// parse `<Gamepad>/buttonSouth` out of a string and offer wildcards and
+/// usage tags; ours is a closed enum, so the device narrows the list and
+/// the list is exhaustive by construction — `ALL` comes from the same
+/// macro expansion as the variants.
+fn draw_control_picker(
+    ui: &mut egui::Ui,
+    at: BindingAddress,
+    current: ControlPath,
+    out: &mut Vec<InputMapAction>,
+) {
+    ui.horizontal(|ui| {
+        ui.label("Device");
+        for device in [
+            DeviceClass::Keyboard,
+            DeviceClass::Mouse,
+            DeviceClass::Gamepad,
+        ] {
+            if ui
+                .selectable_label(current.device() == device, format!("{device:?}"))
+                .clicked()
+                && current.device() != device
+            {
+                // Switching device rebinds to that device's first
+                // control. Leaving it unbound would be a binding that
+                // reads nothing, which looks identical to a broken one.
+                if let Some(path) = first_control(device) {
+                    out.push(InputMapAction::Rebind { at, path });
+                }
+            }
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Control");
+        egui::ComboBox::from_id_salt(("control_picker", at.action, at.binding))
+            .selected_text(control_label(current))
+            .show_ui(ui, |ui| {
+                for path in controls_of(current.device()) {
+                    if ui
+                        .selectable_label(path == current, control_label(path))
+                        .clicked()
+                        && path != current
+                    {
+                        out.push(InputMapAction::Rebind { at, path });
+                    }
+                }
+            });
+    });
+}
+
+/// Every control a device class offers, for the picker.
+fn controls_of(device: DeviceClass) -> Vec<ControlPath> {
+    match device {
+        DeviceClass::Keyboard => kooch_input::ids::KeyCode::ALL
+            .iter()
+            .map(|k| ControlPath::Key(*k))
+            .collect(),
+        DeviceClass::Mouse => kooch_input::ids::MouseButton::ALL
+            .iter()
+            .map(|b| ControlPath::Mouse(*b))
+            .collect(),
+        // Buttons and axes both, since a binding on a pad can be either
+        // and forcing that choice into a third dropdown would be a
+        // distinction the author does not think in.
+        DeviceClass::Gamepad => kooch_input::ids::GamepadButton::ALL
+            .iter()
+            .map(|b| ControlPath::Button(*b))
+            .chain(
+                kooch_input::ids::GamepadAxis::ALL
+                    .iter()
+                    .map(|a| ControlPath::Axis(*a)),
+            )
+            .collect(),
+    }
+}
+
+fn first_control(device: DeviceClass) -> Option<ControlPath> {
+    controls_of(device).into_iter().next()
+}
+
+/// A control without its device prefix, for a list already grouped by one.
+fn control_label(path: ControlPath) -> String {
+    match path {
+        ControlPath::Key(key) => format!("{key:?}"),
+        ControlPath::Mouse(button) => format!("{button:?}"),
+        ControlPath::Button(button) => format!("{button:?}"),
+        ControlPath::Axis(axis) => format!("{axis:?} (axis)"),
+    }
 }
 
 fn draw_action(
@@ -151,11 +376,16 @@ fn draw_action(
     state
         .show_header(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(format!(
+                let header = SelectableRow::new(format!(
                     "{} {}",
                     control_type_icon(action.control_type),
                     action.name
-                ));
+                ))
+                .selected(view.selected == Some(Selection::Action(index)))
+                .show(ui);
+                if header.clicked() {
+                    out.push(InputMapAction::Select(Selection::Action(index)));
+                }
                 ui.weak(control_type_label(action.control_type));
 
                 // The live half. Only meaningful while something plays,
@@ -179,7 +409,14 @@ fn draw_action(
                     action: index,
                     binding: binding_index,
                 };
-                draw_binding(ui, at, binding, view.awaiting == Some(at), out);
+                draw_binding(
+                    ui,
+                    at,
+                    binding,
+                    view.awaiting == Some(at),
+                    view.selected == Some(Selection::Binding(at)),
+                    out,
+                );
             }
             ui.horizontal(|ui| {
                 if ui
@@ -203,6 +440,7 @@ fn draw_binding(
     at: BindingAddress,
     binding: &Binding,
     awaiting: bool,
+    selected: bool,
     out: &mut Vec<InputMapAction>,
 ) {
     let label = match (&binding.role, awaiting) {
@@ -217,15 +455,15 @@ fn draw_binding(
     };
 
     ui.horizontal(|ui| {
-        let response = SelectableRow::new(label).selected(awaiting).show(ui);
-        // A composite head reads no control, so there is nothing to
-        // rebind on it — its parts carry the paths.
-        if response.clicked() && !matches!(binding.role, Role::CompositeHead(_)) {
-            out.push(if awaiting {
-                InputMapAction::CancelRebind
-            } else {
-                InputMapAction::BeginRebind(at)
-            });
+        let response = SelectableRow::new(label)
+            .selected(selected || awaiting)
+            .show(ui);
+        // A click selects; the properties pane below is where it is
+        // edited. Unity does the same, and the reason is that a click
+        // that immediately started listening for a key would make it
+        // impossible to look at a binding without arming it.
+        if response.clicked() {
+            out.push(InputMapAction::Select(Selection::Binding(at)));
         }
         response.context_menu(|ui| {
             if ui.button(format!("{} Remove", icons::TRASH)).clicked() {
@@ -348,6 +586,7 @@ mod tests {
                     live: &[],
                     awaiting: None,
                     dirty: false,
+                    selected: None,
                 },
             )
         });
@@ -367,6 +606,7 @@ mod tests {
                     live: &[],
                     awaiting: None,
                     dirty: false,
+                    selected: None,
                 },
             )
         });
@@ -389,6 +629,7 @@ mod tests {
                     live: &live,
                     awaiting: None,
                     dirty: false,
+                    selected: None,
                 },
             )
         });

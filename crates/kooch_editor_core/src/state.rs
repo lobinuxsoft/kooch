@@ -53,6 +53,13 @@ pub(crate) struct OpenInputMap {
     /// Set when the panel should be brought to the front. Cleared by the
     /// dock once it has done so.
     pub focus_requested: bool,
+    /// What the properties pane is editing.
+    ///
+    /// With the document rather than in the panel, so adding an action
+    /// can select it — Unity goes further and puts the new one straight
+    /// into rename, which is the difference between "there is a new
+    /// action somewhere" and "here it is, name it".
+    pub selected: Option<crate::panels::input_map::Selection>,
     /// Whether this diverges from what is on disk.
     ///
     /// Edits land here and nowhere else until saved — the same contract a
