@@ -103,6 +103,12 @@ pub mod prelude {
     pub use tracing;
     pub use tracing::{debug, error, info, warn};
 
+    // The type of every asset reference. A component that points at a
+    // mesh, a prefab or an action has a `Guid` field, so a game names it
+    // the first time it writes one — and had to reach for
+    // `kooch::kooch_core::Guid` to do it.
+    pub use kooch_core::Guid;
+
     // What a game touches on day one. These were reachable all along at
     // `kooch::kooch_ecs::…`, which is to say: only if you already knew
     // they existed. See `docs/CAPABILITIES.md` — the prelude is the
