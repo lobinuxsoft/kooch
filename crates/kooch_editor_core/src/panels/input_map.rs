@@ -31,6 +31,14 @@ pub(crate) struct InputMapView<'a> {
     pub dirty: bool,
     /// What the properties pane at the bottom is editing.
     pub selected: Option<Selection>,
+    /// Whether the open document is a single `.inputaction`.
+    ///
+    /// It is held as a map of one, so everything below draws the same
+    /// either way — what changes is that the map-level controls (add an
+    /// action, delete one, the priority) describe something the file does
+    /// not have, and offering them would let you save a `.inputaction`
+    /// with two actions in it.
+    pub single_action: bool,
 }
 
 /// What the host says an action is worth right now.
@@ -157,9 +165,11 @@ pub(crate) fn draw_input_map_content(
     // memory until it is pressed.
     ui.horizontal_wrapped(|ui| {
         ui.label(format!("{} {}", icons::GAME_CONTROLLER, map.name));
-        ui.weak(format!("priority {}", map.priority));
-        if ui.button(format!("{} Action", icons::PLUS)).clicked() {
-            actions.push(InputMapAction::AddAction);
+        if !view.single_action {
+            ui.weak(format!("priority {}", map.priority));
+            if ui.button(format!("{} Action", icons::PLUS)).clicked() {
+                actions.push(InputMapAction::AddAction);
+            }
         }
         // Same contract a prefab has; the marker makes it visible.
         if ui
@@ -749,9 +759,12 @@ fn draw_action(
                     out.push(InputMapAction::AddBinding { action: index });
                 }
                 draw_add_composite_menu(ui, index, action.control_type, out);
-                if ui
-                    .small_button(format!("{} Action", icons::TRASH))
-                    .clicked()
+                // A single-action file has nothing left once its action
+                // is gone, so removing it is not offered.
+                if !view.single_action
+                    && ui
+                        .small_button(format!("{} Action", icons::TRASH))
+                        .clicked()
                 {
                     out.push(InputMapAction::RemoveAction { action: index });
                 }
@@ -974,6 +987,7 @@ mod tests {
                             awaiting: None,
                             dirty: true,
                             selected: Some(selected),
+                            single_action: false,
                         },
                     )
                 });
@@ -1054,6 +1068,7 @@ mod tests {
                     awaiting: None,
                     dirty: false,
                     selected: None,
+                    single_action: false,
                 },
             )
         });
@@ -1073,6 +1088,7 @@ mod tests {
                     awaiting: None,
                     dirty: false,
                     selected: None,
+                    single_action: false,
                 },
             )
         });
@@ -1096,6 +1112,7 @@ mod tests {
                     awaiting: None,
                     dirty: false,
                     selected: None,
+                    single_action: false,
                 },
             )
         });

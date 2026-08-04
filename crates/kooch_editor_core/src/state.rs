@@ -42,6 +42,15 @@ pub(crate) enum EditorTab {
 
 /// The `.inputmap` currently open in the Input Map panel.
 ///
+/// Which kind of file the input panel has open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OpenInputKind {
+    /// A `.inputmap`: several actions that turn on and off together.
+    Map,
+    /// A `.inputaction`: one action, referenced by a component.
+    SingleAction,
+}
+
 /// The parsed map rather than a guid: the panel edits it, and going back
 /// to the asset server for every frame's draw would mean the edited copy
 /// and the loaded one are two values of the same thing — the shape behind
@@ -49,6 +58,15 @@ pub(crate) enum EditorTab {
 #[derive(Debug, Clone)]
 pub(crate) struct OpenInputMap {
     pub path: std::path::PathBuf,
+    /// What is being edited.
+    ///
+    /// A standalone action is held as a **map of one**, so the panel
+    /// draws bindings, composites and processors with the same code
+    /// either way. Unity does exactly this internally for its singleton
+    /// actions: *"we do create a map for them that contains just the
+    /// singleton action"*. Only the save path and the map-level controls
+    /// differ, which is what `kind` selects.
+    pub kind: OpenInputKind,
     pub map: kooch_input::actions::ActionMap,
     /// Set when the panel should be brought to the front. Cleared by the
     /// dock once it has done so.

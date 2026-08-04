@@ -83,6 +83,13 @@ pub(super) fn folder_menu(
         ui.close();
     }
     if ui
+        .button(format!("{} New Input Action", icons::GAME_CONTROLLER))
+        .clicked()
+    {
+        start(CreateKind::File(NewFileKind::InputAction));
+        ui.close();
+    }
+    if ui
         .button(format!("{} New Input Map", icons::SLIDERS))
         .clicked()
     {

@@ -55,6 +55,30 @@ fn create_file(resources: &Resources, folder: &Path, name: &str, kind: NewFileKi
     let (tmpl_file, fallback, ext) = match kind {
         NewFileKind::RustComponent => ("component.rs.tmpl", COMPONENT_TMPL, "rs"),
         NewFileKind::RustSystem => ("system.rs.tmpl", SYSTEM_TMPL, "rs"),
+        NewFileKind::InputAction => {
+            // Bound to nothing: an action is a name and a control type
+            // until someone says what triggers it, and guessing a key
+            // would collide with whatever already uses it.
+            let file = unique_target(
+                folder,
+                OsStr::new(&format!(
+                    "{}.{}",
+                    to_pascal_case(name),
+                    kooch_input::actions::INPUT_ACTION_EXTENSION
+                )),
+            );
+            let action = kooch_input::actions::Action::new(
+                to_snake_case(name),
+                kooch_input::actions::ControlType::Button,
+            );
+            match kooch_input::actions::save_action(&action, &file) {
+                Ok(guid) => tracing::info!(file = %file.display(), %guid, "input action created"),
+                Err(e) => {
+                    tracing::error!(file = %file.display(), error = %e, "failed to write action")
+                }
+            }
+            return;
+        }
         NewFileKind::InputMap => {
             // A map with the two actions every game starts with, bound on
             // both devices. An empty file would be honest and useless:
@@ -699,7 +723,25 @@ fn open_input_map(resources: &mut Resources, path: &std::path::Path) {
             return;
         }
     };
-    match ron::from_str::<kooch_input::actions::ActionMap>(&text) {
+    // A standalone action opens as a map of one, so the panel needs no
+    // second code path for it.
+    let single = path
+        .extension()
+        .is_some_and(|e| e == kooch_input::actions::INPUT_ACTION_EXTENSION);
+    let parsed = if single {
+        ron::from_str::<kooch_input::actions::Action>(&text).map(|mut action| {
+            action.ensure_id("");
+            let name = action.name.clone();
+            kooch_input::actions::ActionMap::new(name).add(action)
+        })
+    } else {
+        ron::from_str::<kooch_input::actions::ActionMap>(&text).map(|mut map| {
+            map.assign_missing_ids();
+            map
+        })
+    };
+
+    match parsed {
         Ok(map) => {
             tracing::info!(
                 file = %path.display(),
@@ -708,6 +750,10 @@ fn open_input_map(resources: &mut Resources, path: &std::path::Path) {
             );
             resources.insert(crate::state::OpenInputMap {
                 path: path.to_path_buf(),
+                kind: match single {
+                    true => crate::state::OpenInputKind::SingleAction,
+                    false => crate::state::OpenInputKind::Map,
+                },
                 map,
                 focus_requested: true,
                 selected: None,
@@ -945,16 +991,24 @@ fn unique_action_name(map: &kooch_input::actions::ActionMap, base: &str) -> Stri
 
 /// Writes the open map back to its file.
 fn save_input_map(resources: &mut Resources) {
-    let Some((path, map)) = resources
+    let Some((path, map, kind)) = resources
         .get::<crate::state::OpenInputMap>()
-        .map(|open| (open.path.clone(), open.map.clone()))
+        .map(|open| (open.path.clone(), open.map.clone(), open.kind))
     else {
         return;
     };
-    // Through `save` rather than a bare write: a map that reached disk
-    // without its `.meta` would be a file nothing can reference, and a
-    // map saved before the identity existed is exactly how that happens.
-    match kooch_input::actions::save(&map, &path) {
+    // A standalone action is unwrapped from the map of one it was opened
+    // into, so the file keeps the shape it had.
+    let written = match kind {
+        crate::state::OpenInputKind::SingleAction => match map.actions.first() {
+            Some(action) => kooch_input::actions::save_action(action, &path),
+            None => Err("the action was deleted; nothing to save".to_owned()),
+        },
+        // Through `save` rather than a bare write: a map that reached
+        // disk without its `.meta` is a file nothing can reference.
+        crate::state::OpenInputKind::Map => kooch_input::actions::save(&map, &path),
+    };
+    match written {
         Ok(guid) => {
             tracing::info!(file = %path.display(), %guid, "input map saved");
             if let Some(open) = resources.get_mut::<crate::state::OpenInputMap>() {
@@ -978,6 +1032,7 @@ mod input_map_tests {
     fn open(path: std::path::PathBuf) -> OpenInputMap {
         OpenInputMap {
             path,
+            kind: crate::state::OpenInputKind::Map,
             map: ActionMap::new("gameplay").add(
                 Action::new("jump", ControlType::Button)
                     .bind(Binding::to(ControlPath::Key(KeyCode::Space))),
@@ -1120,6 +1175,7 @@ mod input_map_editing_tests {
         let mut r = Resources::new();
         r.insert(OpenInputMap {
             path: "unused.inputmap".into(),
+            kind: crate::state::OpenInputKind::Map,
             map: ActionMap::new("gameplay")
                 .add(Action::new("jump", ControlType::Button))
                 .add(Action::new("move", ControlType::Vector2)),
@@ -1513,6 +1569,64 @@ mod input_map_editing_tests {
         let bindings = &r.get::<OpenInputMap>().unwrap().map.actions[1].bindings;
         assert_eq!(bindings.len(), 4, "removing a part took more than itself");
         assert!(matches!(bindings[0].role, Role::CompositeHead(_)));
+    }
+
+    /// 🔴 A `.inputaction` opens, edits and saves as itself.
+    ///
+    /// It is held as a map of one so the panel needs no second code
+    /// path — Unity does the same internally for singleton actions — but
+    /// the file has to keep its shape. Saving a map where an action
+    /// belongs would produce a file nothing can load.
+    #[test]
+    fn a_standalone_action_round_trips_through_the_panel() {
+        use kooch_input::actions::{Composite, VectorMode};
+
+        let dir = std::env::temp_dir().join("kooch_single_action_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("Jump.inputaction");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("inputaction.meta"));
+
+        let action = kooch_input::actions::Action::new("jump", ControlType::Button);
+        kooch_input::actions::save_action(&action, &path).expect("write");
+
+        let mut r = Resources::new();
+        open_input_map(&mut r, &path);
+
+        {
+            let open = r.get::<OpenInputMap>().expect("the action did not open");
+            assert_eq!(
+                open.kind,
+                crate::state::OpenInputKind::SingleAction,
+                "a .inputaction opened as a map"
+            );
+            assert_eq!(open.map.actions.len(), 1, "wrapped in more than one");
+        }
+
+        // Edited through the same panel actions a map uses.
+        edit_input_map(
+            &mut r,
+            &Edit::AddComposite {
+                action: 0,
+                composite: Composite::Vector2 {
+                    mode: VectorMode::Analog,
+                },
+            },
+        );
+        handle_asset_op(&EditorAction::SaveInputMap, &mut r);
+
+        // And it is still one action on disk, not a map.
+        let text = std::fs::read_to_string(&path).expect("read back");
+        let reloaded: kooch_input::actions::Action =
+            ron::from_str(&text).expect("a .inputaction must still parse as an action");
+        assert_eq!(reloaded.name, "jump");
+        assert!(
+            !reloaded.bindings.is_empty(),
+            "the composite added in the panel did not reach the file"
+        );
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("inputaction.meta"));
     }
 
     /// A composite's parameters are editable, and only on its head.

@@ -52,5 +52,8 @@ pub use handle::ActionHandle;
 pub use path::{ControlPath, DeviceClass};
 pub use plugin::{ActionsPlugin, ActiveActionMap, InputComponentsPlugin};
 pub use processor::{DEFAULT_DEADZONE_MAX, DEFAULT_DEADZONE_MIN, Processor};
-pub use single::{INPUT_ACTION_EXTENSION, InputAction, InputActionLoader};
+pub use single::{
+    INPUT_ACTION_EXTENSION, InputAction, InputActionLoader, save as save_action,
+    to_ron as action_to_ron,
+};
 pub use state::{ActionState, ActionValue, evaluate};

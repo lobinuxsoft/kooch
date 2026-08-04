@@ -258,6 +258,9 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                         awaiting: None,
                         dirty: self.open_input_map.is_some_and(|open| open.dirty),
                         selected: self.open_input_map.and_then(|open| open.selected),
+                        single_action: self.open_input_map.is_some_and(|open| {
+                            open.kind == crate::state::OpenInputKind::SingleAction
+                        }),
                     },
                 );
                 for request in requested {
