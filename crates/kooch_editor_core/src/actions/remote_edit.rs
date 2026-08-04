@@ -91,9 +91,9 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     // restarts. Done here rather than in `send`, which holds the world
     // immutably so it can borrow the session alongside it.
     if let Some(path) = saved_prefab.filter(|_| sent) {
-        crate::actions::handlers::register_saved_asset(resources, &path);
+        crate::actions::handlers::asset_saved(resources, &path);
         // The project wrote bytes this side's cache has never seen.
-        crate::actions::handlers::refresh_cached_prefab(resources, &path);
+        crate::actions::handlers::prefab_saved(resources, &path);
     }
     true
 }
@@ -344,7 +344,7 @@ enum Edit<'a> {
         dest: Option<std::path::PathBuf>,
     },
     /// Tell the project a prefab file changed.
-    ReloadPrefabOnHost(std::path::PathBuf),
+    ReloadAssetOnHost(std::path::PathBuf),
     /// Stamp a prefab file into the project's world, optionally placing it.
     InstantiatePrefab {
         path: std::path::PathBuf,
@@ -456,7 +456,7 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
                 writes,
             })
         }
-        EditorAction::ReloadPrefabOnHost(path) => Some(Edit::ReloadPrefabOnHost(path.clone())),
+        EditorAction::ReloadAssetOnHost(path) => Some(Edit::ReloadAssetOnHost(path.clone())),
         EditorAction::PropagatePrefab(prefab) => {
             let (writes, removals) = crate::actions::prefab_propagate::plan(resources, *prefab);
             Some(Edit::PropagatePrefab(writes, removals))
@@ -689,8 +689,8 @@ fn send(
                 )
                 .map_err(map_err)
         }
-        Edit::ReloadPrefabOnHost(path) => client
-            .reload_prefab(&path.to_string_lossy())
+        Edit::ReloadAssetOnHost(path) => client
+            .reload_asset(&path.to_string_lossy())
             .map_err(map_err),
         Edit::PropagatePrefab(writes, removals) => {
             for removal in &removals {

@@ -286,10 +286,10 @@ impl RemoteClient {
         })
     }
 
-    /// Tells the project a prefab file changed, so it stops using the
-    /// copy it read first.
-    pub fn reload_prefab(&self, path: &str) -> Result<(), ClientError> {
-        self.expect_ok(Method::ReloadPrefab {
+    /// Tells the project an asset file was written, so it stops using the
+    /// copy it read first — and learns about the file at all if it is new.
+    pub fn reload_asset(&self, path: &str) -> Result<(), ClientError> {
+        self.expect_ok(Method::ReloadAsset {
             path: path.to_owned(),
         })
     }

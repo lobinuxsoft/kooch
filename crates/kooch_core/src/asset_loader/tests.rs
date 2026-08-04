@@ -479,3 +479,64 @@ fn a_file_that_stopped_parsing_leaves_the_loaded_asset_alone() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn a_written_file_becomes_findable_by_guid_without_a_rescan() {
+    // The half of the problem a reload cannot solve: nothing has loaded a
+    // file that was just created, so there is nothing to refresh. What it
+    // needs is an entry in the database, and the tree scan only runs when
+    // the active project changes.
+    use crate::asset_loader::asset_written;
+
+    let mut resources = Resources::new();
+    resources.insert(Assets::<PlainText>::new());
+    resources.insert(AssetDatabase::new());
+    let mut server = AssetServer::new();
+    server.register_loader::<PlainText, _>(TextLoader);
+    resources.insert(server);
+
+    let path = temp_file_with("brand new", "txt");
+    let meta = asset_meta::read_or_create_typed(&path, "PlainText").unwrap();
+
+    let written = asset_written(&path, &mut resources);
+
+    assert_eq!(written.guid, Some(meta.guid));
+    assert_eq!(written.reloaded, 0, "nothing had loaded it yet");
+    assert_eq!(
+        resources.get::<AssetDatabase>().unwrap().guid_for(&path),
+        Some(meta.guid),
+    );
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(asset_meta::meta_path_for(&path));
+}
+
+#[test]
+fn a_written_file_refreshes_what_already_loaded_it() {
+    use crate::asset_loader::asset_written;
+
+    let mut resources = Resources::new();
+    resources.insert(Assets::<PlainText>::new());
+    resources.insert(AssetDatabase::new());
+    let mut server = AssetServer::new();
+    server.register_loader::<PlainText, _>(TextLoader);
+    let path = temp_file_with("before", "txt");
+    let handle = server.load::<PlainText>(&path, &mut resources).unwrap();
+    resources.insert(server);
+
+    std::fs::write(&path, b"after").unwrap();
+    assert_eq!(asset_written(&path, &mut resources).reloaded, 1);
+
+    assert_eq!(
+        resources
+            .get::<Assets<PlainText>>()
+            .unwrap()
+            .get(handle)
+            .unwrap()
+            .0,
+        "after",
+    );
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(asset_meta::meta_path_for(&path));
+}

@@ -163,7 +163,7 @@ pub(crate) enum EditorAction {
     PropagatePrefab(kooch_core::Guid),
     /// Tell the project a prefab file changed, so it stops instancing
     /// from the copy it read first.
-    ReloadPrefabOnHost(std::path::PathBuf),
+    ReloadAssetOnHost(std::path::PathBuf),
     /// Dismiss the "replace this prefab?" prompt without saving.
     CancelPrefabOverwrite,
     /// Stamp a prefab into the open scene.
@@ -403,7 +403,7 @@ impl EditorAction {
             // project builds would leave the modal permanently up.
             | Self::CancelPrefabOverwrite
             // Nothing to do locally; it exists to reach the project.
-            | Self::ReloadPrefabOnHost(_)
+            | Self::ReloadAssetOnHost(_)
             // Both write into the world, so they wait for one.
             | Self::PropagatePrefab(_)
             | Self::RevertToPrefab { .. }
@@ -567,7 +567,7 @@ pub(crate) fn apply_actions(
         .map(|pending| std::mem::take(&mut pending.0))
         .unwrap_or_default()
         .into_iter()
-        .map(EditorAction::ReloadPrefabOnHost)
+        .map(EditorAction::ReloadAssetOnHost)
         .collect();
     if !reloads.is_empty() {
         queued.splice(0..0, reloads);

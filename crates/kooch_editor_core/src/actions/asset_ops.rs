@@ -300,8 +300,14 @@ fn create_material(resources: &mut Resources, folder: &Path, name: &str) {
         Ok(()) => {
             tracing::info!(file = %file.display(), "material created");
             // Re-scan so eager import writes a `.meta` (fresh GUID) and
-            // registers it as a typed asset.
+            // registers it as a typed asset. Still the whole tree, because
+            // this is the one case with no `.meta` to register *from* —
+            // the scan is what creates it.
             force_rescan(resources);
+            // Now that it has an identity, tell the project: the rescan is
+            // this process only, and a material it has never heard of
+            // cannot be assigned to anything over there.
+            crate::actions::handlers::asset_saved(resources, &file);
         }
         Err(e) => tracing::error!(file = %file.display(), error = %e, "failed to write material"),
     }
@@ -402,7 +408,7 @@ fn duplicate_identity(resources: &mut Resources, source: &Path, dest: &Path) {
     // Registered now rather than at the next project change, for the same
     // reason a saved prefab is: the scan only runs when the active project
     // changes, so a file created mid-session is otherwise invisible.
-    crate::actions::handlers::register_saved_asset(resources, dest);
+    crate::actions::handlers::asset_saved(resources, dest);
 }
 
 fn delete_asset(resources: &mut Resources, path: &Path) {
@@ -985,6 +991,10 @@ fn save_input_map(resources: &mut Resources) {
     match written {
         Ok(guid) => {
             tracing::info!(file = %path.display(), %guid, "input map saved");
+            // The panel edits a copy; without this the bindings on disk and
+            // the ones the running project answers to stay different until
+            // it is relaunched.
+            crate::actions::handlers::asset_saved(resources, &path);
             if let Some(open) = resources.get_mut::<crate::state::OpenInputMap>() {
                 open.dirty = false;
             }

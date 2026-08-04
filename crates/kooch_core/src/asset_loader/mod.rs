@@ -31,11 +31,19 @@
 //! - Concrete loaders (glTF #129, image #131, RON scene): each lives with
 //!   its asset type's load issue.
 //! - Async / background loading: arrives when streaming demands it.
-//! - Hot-reload: file-watcher integration is its own feature.
+//!
+//! # Reloading
+//!
+//! [`asset_written`] is what a save calls, and
+//! [`AssetServer::reload_path`] is what it uses. There is deliberately no
+//! file watcher: the editor writes these files, so it already knows when
+//! they change — see [`written`] for why polling would be both slower and
+//! wrong here.
 
 mod error;
 mod server;
 mod trait_def;
+mod written;
 
 #[cfg(test)]
 mod tests;
@@ -43,3 +51,4 @@ mod tests;
 pub use error::{AssetError, AssetResult};
 pub use server::AssetServer;
 pub use trait_def::{AssetLoader, LoadContext};
+pub use written::{Written, asset_written};

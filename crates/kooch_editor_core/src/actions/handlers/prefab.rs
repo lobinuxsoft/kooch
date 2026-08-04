@@ -85,87 +85,51 @@ pub(crate) fn prefab_path(root: &Path, name: &str, dest: Option<&Path>) -> PathB
     folder.join(format!("{}.{PREFAB_EXTENSION}", sanitize_file_stem(name)))
 }
 
-/// Puts a just-written asset into the database so it exists *now*.
+/// What every write of an asset file goes through, whichever panel or
+/// action did the writing.
 ///
-/// The project's asset scan only runs when the active project changes, so
-/// a file created mid-session is invisible until the editor is restarted:
-/// its `.meta` gives it a guid, which is why it can be selected, but the
-/// catalog the Inspector looks it up in has never heard of it. The result
-/// was a prefab you could click and an Inspector that showed nothing.
+/// Three things have to happen and none of them are optional:
 ///
-/// Registering at the moment of creation is narrower than rescanning the
-/// tree — the one file that changed is the one thing the editor learns
-/// about, and it costs nothing per frame.
-pub(crate) fn register_saved_asset(resources: &mut Resources, path: &Path) {
-    let Ok(meta) = kooch_core::asset_meta::read_meta(path) else {
+/// 1. **The database learns the file exists.** The project's asset scan
+///    only runs when the active project changes, so a file created
+///    mid-session is invisible until the editor restarts: its `.meta`
+///    gives it a guid, which is why it can be selected, but the catalog
+///    the Inspector looks it up in has never heard of it. The result was
+///    an asset you could click and an Inspector that showed nothing.
+/// 2. **What is already loaded stops being the old bytes.** Overwritten
+///    in place, so the handles components are holding stay valid — see
+///    [`kooch_core::asset_loader::asset_written`].
+/// 3. **The project is told.** It has its own copy of both, in another
+///    process, and it did not write this file.
+///
+/// Doing the one file that changed, at the moment it changes, is narrower
+/// than rescanning the tree and costs nothing per frame.
+pub(crate) fn asset_saved(resources: &mut Resources, path: &Path) {
+    let written = kooch_core::asset_loader::asset_written(path, resources);
+    if written.guid.is_none() {
         tracing::warn!("no asset identity beside {}", path.display());
-        return;
-    };
-    let mtime = std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-    if let Some(database) = resources.get_mut::<kooch_core::asset_database::AssetDatabase>() {
-        database.register(
-            meta.guid,
-            kooch_core::asset_database::AssetEntry {
-                path: path.to_path_buf(),
-                mtime,
-                type_name: meta.asset_type,
-            },
-        );
     }
+    announce_to_host(resources, path);
 }
 
-/// Makes the cached document match the file that was just written.
+/// The part of saving a prefab that is *about* prefabs, after
+/// [`asset_saved`] has dealt with the file.
 ///
-/// # Why this is not automatic
+/// A prefab has instances, which no other asset does: the document in
+/// memory is now ahead of every entity stamped from it, and those have to
+/// catch up. Nothing here re-reads the file — that already happened.
 ///
-/// `Assets<SceneDocument>` is a cache keyed by guid, and `load_by_guid`
-/// returns what it already holds without looking at the file. Saving over
-/// a prefab — from an entity, over a name that already exists — writes
-/// bytes the cache has never seen, so the Inspector kept showing the copy
-/// from before the overwrite. Spawning it looked right, because the entity
-/// it was spawned from *was* right; the two disagreed and only the panel
-/// admitted it.
-///
-/// Re-reading rather than pushing the in-memory document in: the file is
-/// the thing that changed, and the remote path writes it from the other
-/// process, so this side has nothing to push.
-pub(crate) fn refresh_cached_prefab(resources: &mut Resources, path: &Path) {
+/// Queued rather than applied: this runs in the middle of handling an
+/// action, and the writes have to travel the same way an edit does.
+pub(crate) fn prefab_saved(resources: &mut Resources, path: &Path) {
     let Ok(meta) = kooch_core::asset_meta::read_meta(path) else {
         return;
     };
-    let reloaded = match SceneDocument::load(path) {
-        Ok(document) => document,
-        Err(e) => {
-            tracing::warn!("prefab saved but could not be re-read: {e}");
-            return;
-        }
-    };
-
-    let Some(mut server) = resources.remove::<kooch_core::asset_loader::AssetServer>() else {
-        return;
-    };
-    let handle = server
-        .load_by_guid::<SceneDocument>(meta.guid, resources)
-        .ok();
-    resources.insert(server);
-
-    if let Some(handle) = handle
-        && let Some(assets) = resources.get_mut::<kooch_core::assets::Assets<SceneDocument>>()
-        && let Some(slot) = assets.get_mut(handle)
-    {
-        *slot = reloaded;
-    }
     // The file and the cache agree again, so there is nothing outstanding.
     if let Some(dirty) = resources.get_mut::<crate::actions::DirtyPrefabs>() {
         dirty.clear(meta.guid);
     }
-    // Instances are now behind the document. Queued rather than applied
-    // here: this runs in the middle of handling an action, and the writes
-    // have to travel the same way an edit does.
     crate::actions::prefab_propagate::queue(resources, meta.guid);
-    announce_to_host(resources, path);
 }
 
 /// Queues the message that tells the project its cached copy is stale.
@@ -212,8 +176,8 @@ pub(super) fn handle_save_prefab(resources: &mut Resources, entity: Entity, dest
     // picker and cannot be spawned.
     match kooch_ecs::scene::prefab::save(&document, &path) {
         Ok(guid) => {
-            register_saved_asset(resources, &path);
-            refresh_cached_prefab(resources, &path);
+            asset_saved(resources, &path);
+            prefab_saved(resources, &path);
             tracing::info!("prefab saved to {} as {guid}", path.display());
         }
         Err(e) => tracing::error!("failed to save prefab: {e}"),
