@@ -89,13 +89,6 @@ pub(super) fn folder_menu(
         start(CreateKind::File(NewFileKind::InputAction));
         ui.close();
     }
-    if ui
-        .button(format!("{} New Input Map", icons::SLIDERS))
-        .clicked()
-    {
-        start(CreateKind::File(NewFileKind::InputMap));
-        ui.close();
-    }
     // The synthetic root node has an empty name; it is not itself
     // renamable / deletable (that would target the crate root).
     if !node.name.is_empty() {

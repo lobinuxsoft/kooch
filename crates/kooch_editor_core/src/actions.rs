@@ -337,7 +337,6 @@ pub(crate) enum NewFileKind {
     RustComponent,
     RustSystem,
     Scene,
-    InputMap,
     /// One action on its own — what a component points at.
     InputAction,
 }

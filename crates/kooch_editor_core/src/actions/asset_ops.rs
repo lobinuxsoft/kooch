@@ -79,30 +79,6 @@ fn create_file(resources: &Resources, folder: &Path, name: &str, kind: NewFileKi
             }
             return;
         }
-        NewFileKind::InputMap => {
-            // A map with the two actions every game starts with, bound on
-            // both devices. An empty file would be honest and useless:
-            // the first thing anyone does is add exactly these, and a
-            // starting point is also documentation of the shape.
-            let file = unique_target(
-                folder,
-                OsStr::new(&format!(
-                    "{}.{}",
-                    to_pascal_case(name),
-                    kooch_input::actions::INPUT_MAP_EXTENSION
-                )),
-            );
-            let map = starter_input_map(&to_pascal_case(name));
-            match kooch_input::actions::save(&map, &file) {
-                Ok(guid) => {
-                    tracing::info!(file = %file.display(), %guid, "input map created")
-                }
-                Err(e) => {
-                    tracing::error!(file = %file.display(), error = %e, "failed to write input map")
-                }
-            }
-            return;
-        }
         NewFileKind::Scene => {
             let file = unique_target(
                 folder,
@@ -999,15 +975,13 @@ fn save_input_map(resources: &mut Resources) {
     };
     // A standalone action is unwrapped from the map of one it was opened
     // into, so the file keeps the shape it had.
-    let written = match kind {
-        crate::state::OpenInputKind::SingleAction => match map.actions.first() {
-            Some(action) => kooch_input::actions::save_action(action, &path),
-            None => Err("the action was deleted; nothing to save".to_owned()),
-        },
-        // Through `save` rather than a bare write: a map that reached
-        // disk without its `.meta` is a file nothing can reference.
-        crate::state::OpenInputKind::Map => kooch_input::actions::save(&map, &path),
+    // Through `save_action` rather than a bare write: a file that reached
+    // disk without its `.meta` is one nothing can reference.
+    let written = match map.actions.first() {
+        Some(action) => kooch_input::actions::save_action(action, &path),
+        None => Err("the action was deleted; nothing to save".to_owned()),
     };
+    let _ = kind;
     match written {
         Ok(guid) => {
             tracing::info!(file = %path.display(), %guid, "input map saved");
@@ -1081,23 +1055,35 @@ mod input_map_tests {
     /// And saving is what writes, after which nothing is outstanding.
     #[test]
     fn saving_writes_the_file_and_clears_the_marker() {
-        let dir = std::env::temp_dir().join("kooch_inputmap_save_test");
+        let dir = std::env::temp_dir().join("kooch_inputaction_save_test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("Gameplay.inputmap");
-        std::fs::write(&path, "original contents").unwrap();
+        let path = dir.join("Jump.inputaction");
 
-        let mut resources = resources_with(open(path.clone()));
-        edit_input_map(&mut resources, &Edit::AddAction);
+        let action = kooch_input::actions::Action::new("jump", ControlType::Button);
+        kooch_input::actions::save_action(&action, &path).expect("write");
+
+        let mut resources = Resources::new();
+        open_input_map(&mut resources, &path);
+        edit_input_map(
+            &mut resources,
+            &Edit::RenameAction {
+                action: 0,
+                name: "leap".into(),
+            },
+        );
+        assert!(resources.get::<OpenInputMap>().unwrap().dirty);
         save_input_map(&mut resources);
 
         let written = std::fs::read_to_string(&path).unwrap();
         assert!(
-            written.contains("jump"),
-            "the saved file lost the map: {written}"
+            written.contains("leap"),
+            "the edit was not saved: {written}"
         );
-        assert!(written.contains("new_action"), "the edit was not saved");
-        assert!(!resources.get::<OpenInputMap>().unwrap().dirty);
+        assert!(
+            !resources.get::<OpenInputMap>().unwrap().dirty,
+            "the file was written and the document still claims an unsaved change"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1436,7 +1422,7 @@ mod input_map_editing_tests {
     #[test]
     fn processor_order_changes_the_value() {
         use kooch_input::actions::{
-            Action, ActionMap, ActionState, Binding, ControlPath, ControlType, Processor,
+            Action, Binding, ControlPath, ControlType, Processor, evaluate,
         };
         use kooch_input::ids::KeyCode;
         use kooch_input::mock_backend::MockInputBackend;
@@ -1451,12 +1437,10 @@ mod input_map_editing_tests {
         let value = |order: [Processor; 2]| {
             let mut binding = Binding::to(ControlPath::Key(KeyCode::Space));
             binding.processors = order.to_vec();
-            let map = ActionMap::new("m").add(Action::new("a", ControlType::Axis).bind(binding));
+            let action = Action::new("a", ControlType::Axis).bind(binding);
             let mut backend = MockInputBackend::new();
             backend.press_key(KeyCode::Space);
-            let mut state = ActionState::for_map(&map);
-            state.update(&map, &backend);
-            state.axis(map.resolve("a").unwrap())
+            evaluate(&action, &backend).axis()
         };
 
         assert_eq!(value([scale, clamp]), 2.0, "scale then clamp");

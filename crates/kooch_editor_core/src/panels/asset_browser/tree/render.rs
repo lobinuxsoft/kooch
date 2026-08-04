@@ -179,10 +179,7 @@ pub(super) fn render_leaf(
             .path
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| {
-                e.eq_ignore_ascii_case(kooch_input::actions::INPUT_MAP_EXTENSION)
-                    || e.eq_ignore_ascii_case(kooch_input::actions::INPUT_ACTION_EXTENSION)
-            });
+            .is_some_and(|e| e.eq_ignore_ascii_case(kooch_input::actions::INPUT_ACTION_EXTENSION));
         ctx.actions.push(if is_input_map {
             EditorAction::OpenInputMap {
                 path: leaf.path.clone(),

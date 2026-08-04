@@ -55,77 +55,6 @@ impl ActionValue {
     }
 }
 
-/// Every action's value this frame, and the previous frame's, so edges
-/// come from comparing rather than from remembering events.
-#[derive(Debug, Default, Clone)]
-pub struct ActionState {
-    current: Vec<ActionValue>,
-    previous: Vec<ActionValue>,
-}
-
-impl ActionState {
-    /// Sized for a map. Resizing on the fly would make the id of an
-    /// action depend on when it was first read.
-    pub fn for_map(map: &ActionMap) -> Self {
-        Self {
-            current: vec![ActionValue::default(); map.actions.len()],
-            previous: vec![ActionValue::default(); map.actions.len()],
-        }
-    }
-
-    /// Reads every action in `map` from `backend`.
-    ///
-    /// The whole frame's worth in one pass over contiguous arrays: no
-    /// lookup by name, no allocation, and the order is the map's order.
-    pub fn update(&mut self, map: &ActionMap, backend: &dyn InputBackend) {
-        if self.current.len() != map.actions.len() {
-            *self = Self::for_map(map);
-        }
-        std::mem::swap(&mut self.previous, &mut self.current);
-
-        let pad = backend.gamepads().first().copied();
-        for (index, action) in map.actions.iter().enumerate() {
-            self.current[index] = read_action(action, backend, pad);
-        }
-    }
-
-    pub fn value(&self, id: ActionId) -> ActionValue {
-        self.current.get(id.index()).copied().unwrap_or_default()
-    }
-
-    pub fn axis(&self, id: ActionId) -> f32 {
-        self.value(id).axis()
-    }
-
-    pub fn vector(&self, id: ActionId) -> Vec2 {
-        self.value(id).vector2()
-    }
-
-    /// All three components, for an action bound to a 3D composite.
-    pub fn vector3(&self, id: ActionId) -> Vec3 {
-        self.value(id).vector
-    }
-
-    pub fn pressed(&self, id: ActionId) -> bool {
-        self.value(id).pressed
-    }
-
-    /// True only on the frame it went down.
-    ///
-    /// Derived, not recorded — which is what makes it correct for a
-    /// keyboard and a gamepad alike, and across a remote link where the
-    /// two ends do not tick together.
-    pub fn just_pressed(&self, id: ActionId) -> bool {
-        let was = self.previous.get(id.index()).copied().unwrap_or_default();
-        self.pressed(id) && !was.pressed
-    }
-
-    pub fn just_released(&self, id: ActionId) -> bool {
-        let was = self.previous.get(id.index()).copied().unwrap_or_default();
-        !self.pressed(id) && was.pressed
-    }
-}
-
 /// Reads one action against a backend, with no map involved.
 ///
 /// A map is a way to group actions that turn on and off together; it is
@@ -296,6 +225,14 @@ mod tests {
     use crate::ids::{GamepadAxis, GamepadButton, KeyCode};
     use crate::mock_backend::MockInputBackend;
 
+    /// One action's value right now. `ActionState` used to hold a frame
+    /// of these; the edge it derived lives on `InputAction` now, so what
+    /// is left to test here is the evaluation itself.
+    fn value(map: &ActionMap, name: &str, backend: &MockInputBackend) -> ActionValue {
+        let id = map.resolve(name).expect("the map declares this action");
+        evaluate(map.action(id).expect("resolved id is in range"), backend)
+    }
+
     fn map() -> ActionMap {
         ActionMap::new("gameplay")
             .add(
@@ -329,62 +266,32 @@ mod tests {
     #[test]
     fn one_action_answers_for_keyboard_and_pad_alike() {
         let map = map();
-        let jump = map.resolve("jump").unwrap();
         let pad = GamepadId(0);
         let mut backend = MockInputBackend::new();
         backend.add_gamepad(pad);
-        let mut state = ActionState::for_map(&map);
 
         backend.press_key(KeyCode::Space);
-        state.update(&map, &backend);
-        assert!(state.pressed(jump) && state.just_pressed(jump));
+        assert!(value(&map, "jump", &backend).pressed);
 
         backend.release_key(KeyCode::Space);
         backend.press_gamepad_button(pad, GamepadButton::South);
-        state.update(&map, &backend);
         assert!(
-            state.pressed(jump),
+            value(&map, "jump", &backend).pressed,
             "the pad did not answer for the same action"
         );
-    }
-
-    /// Edges come from comparing frames, so a held input fires once — the
-    /// bug that launched the ball off the map, now impossible to write.
-    #[test]
-    fn a_held_action_is_pressed_once() {
-        let map = map();
-        let jump = map.resolve("jump").unwrap();
-        let mut backend = MockInputBackend::new();
-        let mut state = ActionState::for_map(&map);
-
-        backend.press_key(KeyCode::Space);
-        state.update(&map, &backend);
-        assert!(state.just_pressed(jump));
-
-        state.update(&map, &backend);
-        assert!(state.pressed(jump), "still held");
-        assert!(!state.just_pressed(jump), "a held action fired twice");
-
-        backend.release_key(KeyCode::Space);
-        state.update(&map, &backend);
-        assert!(state.just_released(jump));
     }
 
     /// WASD is one `Vector2`, capped, without the game adding anything.
     #[test]
     fn wasd_reads_as_one_capped_vector() {
         let map = map();
-        let mv = map.resolve("move").unwrap();
         let mut backend = MockInputBackend::new();
-        let mut state = ActionState::for_map(&map);
 
         backend.press_key(KeyCode::KeyW);
-        state.update(&map, &backend);
-        assert_eq!(state.vector(mv), Vec2::new(0.0, 1.0));
+        assert_eq!(value(&map, "move", &backend).vector2(), Vec2::new(0.0, 1.0));
 
         backend.press_key(KeyCode::KeyD);
-        state.update(&map, &backend);
-        let diagonal = state.vector(mv);
+        let diagonal = value(&map, "move", &backend).vector2();
         assert!(
             (diagonal.length() - 1.0).abs() < 1e-5,
             "diagonal travels {}× too fast",
@@ -397,22 +304,18 @@ mod tests {
     #[test]
     fn the_most_actuated_binding_wins_rather_than_summing() {
         let map = map();
-        let mv = map.resolve("move").unwrap();
         let pad = GamepadId(0);
         let mut backend = MockInputBackend::new();
         backend.add_gamepad(pad);
-        let mut state = ActionState::for_map(&map);
 
         // Keyboard pushes up (magnitude 1); the stick pushes right, but
         // only part way. Summing would give a diagonal of magnitude 1.17
         // that neither input asked for.
         backend.press_key(KeyCode::KeyW);
         backend.set_axis(pad, GamepadAxis::LeftStickX, 0.6);
-        state.update(&map, &backend);
 
-        let value = state.vector(mv);
         assert_eq!(
-            value,
+            value(&map, "move", &backend).vector2(),
             Vec2::new(0.0, 1.0),
             "expected the keyboard alone — a non-zero x means the two were summed"
         );
@@ -421,11 +324,10 @@ mod tests {
         // report and it takes over, with no trace of the key.
         backend.release_key(KeyCode::KeyW);
         backend.set_axis(pad, GamepadAxis::LeftStickX, 0.6);
-        state.update(&map, &backend);
-        let value = state.vector(mv);
+        let stick = value(&map, "move", &backend).vector2();
         assert!(
-            (value.x - 0.6).abs() < 1e-5 && value.y.abs() < 1e-5,
-            "expected the stick alone, got {value:?}"
+            (stick.x - 0.6).abs() < 1e-5 && stick.y.abs() < 1e-5,
+            "expected the stick alone, got {stick:?}"
         );
     }
 
@@ -438,17 +340,14 @@ mod tests {
     #[test]
     fn a_tie_goes_to_the_binding_listed_first() {
         let map = map();
-        let mv = map.resolve("move").unwrap();
         let pad = GamepadId(0);
         let mut backend = MockInputBackend::new();
         backend.add_gamepad(pad);
-        let mut state = ActionState::for_map(&map);
 
         backend.press_key(KeyCode::KeyW);
         backend.set_axis(pad, GamepadAxis::LeftStickX, 1.0);
-        state.update(&map, &backend);
         assert_eq!(
-            state.vector(mv),
+            value(&map, "move", &backend).vector2(),
             Vec2::new(0.0, 1.0),
             "the keyboard composite is listed first, so it wins the tie"
         );
@@ -459,16 +358,13 @@ mod tests {
     #[test]
     fn an_analog_composite_keeps_its_magnitude() {
         let map = map();
-        let mv = map.resolve("move").unwrap();
         let pad = GamepadId(0);
         let mut backend = MockInputBackend::new();
         backend.add_gamepad(pad);
-        let mut state = ActionState::for_map(&map);
 
         backend.set_axis(pad, GamepadAxis::LeftStickX, 0.5);
-        state.update(&map, &backend);
         assert!(
-            (state.vector(mv).x - 0.5).abs() < 1e-5,
+            (value(&map, "move", &backend).vector2().x - 0.5).abs() < 1e-5,
             "the stick was normalised"
         );
     }
@@ -483,10 +379,7 @@ mod composite_tests {
     use crate::mock_backend::MockInputBackend;
 
     fn read(action: Action, backend: &MockInputBackend) -> ActionValue {
-        let map = ActionMap::new("test").add(action);
-        let mut state = ActionState::for_map(&map);
-        state.update(&map, backend);
-        state.value(map.resolve("a").unwrap())
+        evaluate(&action, backend)
     }
 
     fn vector3(mode: VectorMode) -> Action {
