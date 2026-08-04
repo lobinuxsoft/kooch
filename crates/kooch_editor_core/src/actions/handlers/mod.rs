@@ -25,8 +25,7 @@ use crate::actions::EditorAction;
 // prefabs live.
 pub(crate) use prefab::PendingHostReloads;
 pub(crate) use prefab::{
-    entity_name, prefab_path, project_root as prefab_root, refresh_cached_prefab,
-    register_saved_asset,
+    asset_saved, entity_name, prefab_path, prefab_saved, project_root as prefab_root,
 };
 
 /// Dispatches a non-ECS, non-undo action to the appropriate handler.
@@ -49,7 +48,7 @@ pub(super) fn apply_non_ecs_action(
         // there is nothing left for this to do.
         EditorAction::CancelPrefabOverwrite => {}
         // Local mode has one cache and it was refreshed on save.
-        EditorAction::ReloadPrefabOnHost(_) => {}
+        EditorAction::ReloadAssetOnHost(_) => {}
         EditorAction::RevertToPrefab { entity, component } => {
             if let Some((root, overrides, writes)) =
                 crate::actions::prefab_propagate::plan_revert(resources, *entity, *component)
@@ -114,8 +113,12 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::SetIdeCommand { command } => {
             handle_set_ide_command(resources, command.clone());
         }
-        EditorAction::EditMaterial { guid, material } => {
-            handle_edit_material(resources, *guid, material);
+        EditorAction::EditMaterial {
+            guid,
+            material,
+            commit,
+        } => {
+            handle_edit_material(resources, *guid, material, *commit);
         }
         EditorAction::ImportAssets { files, dest } => handle_import_assets(resources, files, dest),
         // ECS actions and Undo/Redo handled by caller.

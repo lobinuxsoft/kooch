@@ -178,37 +178,41 @@ fn draw_material_editor(
 ) {
     let mut edited = mat.clone();
     let mut changed = false;
+    // Set on the frame a drag ends. That frame usually reports no change
+    // — the value stopped moving before the button came up — so it is a
+    // second signal rather than a kind of `changed`.
+    let mut released = false;
 
     egui::Grid::new(("material_editor", guid))
         .num_columns(2)
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
             ui.label("Base color");
-            changed |= ui
-                .color_edit_button_rgba_unmultiplied(&mut edited.base_color)
-                .changed();
+            let response = ui.color_edit_button_rgba_unmultiplied(&mut edited.base_color);
+            changed |= response.changed();
+            released |= response.drag_stopped();
             ui.end_row();
 
             ui.label("Metallic");
-            changed |= ui
-                .add(egui::Slider::new(&mut edited.metallic, 0.0..=1.0))
-                .changed();
+            let response = ui.add(egui::Slider::new(&mut edited.metallic, 0.0..=1.0));
+            changed |= response.changed();
+            released |= response.drag_stopped();
             ui.end_row();
 
             ui.label("Roughness");
-            changed |= ui
-                .add(egui::Slider::new(&mut edited.roughness, 0.0..=1.0))
-                .changed();
+            let response = ui.add(egui::Slider::new(&mut edited.roughness, 0.0..=1.0));
+            changed |= response.changed();
+            released |= response.drag_stopped();
             ui.end_row();
 
             ui.label("Emissive");
-            changed |= ui
-                .add(
-                    crate::numeric::drag(&mut edited.emissive)
-                        .speed(0.01)
-                        .range(0.0..=100.0),
-                )
-                .changed();
+            let response = ui.add(
+                crate::numeric::drag(&mut edited.emissive)
+                    .speed(0.01)
+                    .range(0.0..=100.0),
+            );
+            changed |= response.changed();
+            released |= response.drag_stopped();
             ui.end_row();
         });
 
@@ -218,12 +222,18 @@ fn draw_material_editor(
     changed |= texture_row(ui, "Normal", &mut edited.normal, catalog);
     changed |= texture_row(ui, "Metal/Rough", &mut edited.metal_roughness, catalog);
 
-    if changed {
-        actions.push(EditorAction::EditMaterial {
-            guid,
-            material: edited,
-        });
+    if !changed && !released {
+        return;
     }
+    // A change with nothing held down is already final: typing a number,
+    // picking a texture, clicking a swatch. Only a drag needs the wait,
+    // and `released` is what ends it.
+    let held = ui.input(|input| input.pointer.any_down());
+    actions.push(EditorAction::EditMaterial {
+        guid,
+        material: edited,
+        commit: released || !held,
+    });
 }
 
 /// One texture slot row backed by the shared typed asset picker. Returns

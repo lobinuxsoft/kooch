@@ -101,25 +101,44 @@ are disjoint. Kóoch has the query half and not the scheduler half.
 | `VirtualCamera`, `CameraBlend` | `plugin.rs` | connected | |
 | `CameraTarget` (tag + group) | `target.rs` | connected | Used by roll-a-ball, which lives in its own repo — measure "unused" against games too, not just this workspace. |
 
+## Assets — `kooch_core::asset_loader`
+
+| Capability | Where | Status | Notes |
+|---|---|---|---|
+| `AssetServer::load`, `load_by_guid` | `server.rs` | connected | Path and guid cache, `.meta` identity on first load. |
+| `AssetServer::reload_path` | `server.rs` | connected | Overwrites the slot existing handles point at, so a reload is visible to everything already holding one. Type-erased: the caller has a path, which is all a save handler or a wire message ever has. |
+| `asset_written` | `written.rs` | connected | The one thing a save calls — registers identity, then refreshes. Used by the editor's `asset_saved` and by the host's `ReloadAsset` handler, so both processes take the same path. |
+| `Method::ReloadAsset` | `kooch_remote/handlers.rs` | connected | Any asset, not just prefabs. Was `ReloadPrefab` + `forget::<SceneDocument>`. |
+| `AssetServer::forget` | `server.rs` | **orphan** | Drops a cache entry so the *next* load re-reads. Nothing calls it any more: it mints a new key, so everything already holding a handle keeps the old bytes — which is why `reload_path` exists. Kept as the honest primitive under it; delete if it stays unused. |
+| Asset tree scan | `systems/project_assets.rs` | connected, partial | Runs on project open/change only. A file created outside the editor mid-session is still invisible until reopen — the editor's own writes are covered by `asset_saved`. |
+| File watching | — | **absent, deliberately** | No `notify`, no polling. The editor writes these files, so it already knows; and this repo lives on NTFS through FUSE, where inotify is unreliable and mtime resolution is coarse enough to miss two saves in the same second. |
+
 ## Editor — `kooch_editor_core`
 
 | Capability | Where | Status | Notes |
 |---|---|---|---|
 | `SelectableRow`, `row_height` | `widgets.rs` | connected | Full-width list rows. Extracted after the asset browser spent months not having them. |
+| `asset_saved` | `actions/handlers/prefab.rs` | connected | Every write of an asset goes through it: prefab, material edit, material creation, input action, import, duplicate. Was two prefab-only helpers, which is why the other five did nothing. |
 | Script codegen (module tree) | `actions/codegen/` | connected | Mirrors `src/` folders as a module tree. |
 | Play standalone (`handle_play`) | `play_state.rs` | **orphan** | Launches `cargo run -- --game` in its own process, saves the scene to a temp file, captures stdout into the Console — and only runs when *not* remote, while Open Project is always remote. #720. |
 | Register Scripts | `actions/asset_ops.rs` | connected but misplaced | Rescans the whole project, yet the button only exists in the context menu of a `.rs` file — so with no `.rs` left there is no way to regenerate. |
 
 ## What is still disconnected
 
-Three, and they are the debt this file exists to stop growing. Everything
-else in the tables above reached something.
+The debt this file exists to stop growing. Everything else in the tables
+above reached something.
 
 | | Cost of leaving it | Where it goes |
 |---|---|---|
-| **`ActionMap`** | Input cannot be authored at all — every game hardcodes `KeyCode::KeyW`, and the editor has no panel because there is no data to show it. This is also the open half of the phase-0 verdict in #669. | #55 rewrites the action as data, #58 is the panel |
 | **`RenderGraph`** | 497 lines that *look* like the official way to add a pass, next to a renderer that does not use them. The next person to add a pass has to work out which one is real. | migrate the meshlet stage onto it, or delete it — #392 |
 | **Play standalone** | The only honest place to tune feel: remote Play costs a frame of latency. Reachable today only by leaving the editor and running `cargo run -- --game` with the env set by hand. | #720 |
+| **Interactive rebind** | The panel can bind through a picker, so this is polish rather than a hole — but `BeginRebind`/`CancelRebind` exist and nothing emits them, which reads as a feature. | emit them, or delete them |
+| **`MockInputBackend`** | Injecting input without hardware is what a cutscene, a tutorial and an automated gameplay test all need, and a game cannot reach it. | expose it through the prelude |
+| **`ActionMap::priority`** | Written, never read. The one thing lost when the map was deleted is bulk enable/disable, and its consumer is a pause menu that does not exist yet. | when a pause menu lands |
+
+**Resolved since the last pass:** `ActionMap` (the action is an asset now,
+#55/#58 closed) and asset staleness — a saved file used to reach only the
+editor, or only prefabs.
 
 ## How to keep this honest
 

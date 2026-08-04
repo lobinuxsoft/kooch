@@ -385,3 +385,158 @@ fn second_load_keeps_same_guid() {
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(&meta_path);
 }
+
+#[test]
+fn a_reload_is_visible_through_a_handle_taken_before_it() {
+    let mut server = AssetServer::new();
+    server.register_loader::<PlainText, _>(TextLoader);
+    let mut resources = Resources::new();
+    resources.insert(Assets::<PlainText>::new());
+    let path = temp_file_with("before", "txt");
+
+    // The handle a component would be holding.
+    let handle = server.load::<PlainText>(&path, &mut resources).unwrap();
+
+    std::fs::write(&path, b"after").unwrap();
+    assert_eq!(server.reload_path(&path, &mut resources).unwrap(), 1);
+
+    // The same handle, never re-fetched, now reads the new bytes. This is
+    // the whole point: nothing that stored a handle has to hear about the
+    // reload.
+    let seen = resources
+        .get::<Assets<PlainText>>()
+        .unwrap()
+        .get(handle)
+        .unwrap();
+    assert_eq!(seen.0, "after");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn loading_again_would_not_have_worked() {
+    // Pins the reason `reload_path` exists rather than a `forget` + `load`
+    // pair at each call site: that pair mints a new key, so the handle
+    // everything else is holding still resolves to the old bytes.
+    let mut server = AssetServer::new();
+    server.register_loader::<PlainText, _>(TextLoader);
+    let mut resources = Resources::new();
+    resources.insert(Assets::<PlainText>::new());
+    let path = temp_file_with("before", "txt");
+
+    let handle = server.load::<PlainText>(&path, &mut resources).unwrap();
+    std::fs::write(&path, b"after").unwrap();
+
+    server.forget::<PlainText>(&path);
+    let fresh = server.load::<PlainText>(&path, &mut resources).unwrap();
+
+    assert_ne!(fresh.key(), handle.key(), "the reload got a new slot");
+    let stale = resources
+        .get::<Assets<PlainText>>()
+        .unwrap()
+        .get(handle)
+        .unwrap();
+    assert_eq!(stale.0, "before", "the original handle never moved on");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn reloading_a_path_nothing_loaded_is_not_an_error() {
+    let mut server = AssetServer::new();
+    server.register_loader::<PlainText, _>(TextLoader);
+    let mut resources = Resources::new();
+    resources.insert(Assets::<PlainText>::new());
+    let path = temp_file_with("never loaded", "txt");
+
+    assert_eq!(server.reload_path(&path, &mut resources).unwrap(), 0);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_file_that_stopped_parsing_leaves_the_loaded_asset_alone() {
+    let mut server = AssetServer::new();
+    server.register_loader::<PlainText, _>(TextLoader);
+    let mut resources = Resources::new();
+    resources.insert(Assets::<PlainText>::new());
+    let path = temp_file_with("good", "txt");
+    let handle = server.load::<PlainText>(&path, &mut resources).unwrap();
+
+    // Half a save, a bad export, a file being written as we read it.
+    std::fs::write(&path, [0xff, 0xfe]).unwrap();
+    assert!(server.reload_path(&path, &mut resources).is_err());
+
+    let seen = resources
+        .get::<Assets<PlainText>>()
+        .unwrap()
+        .get(handle)
+        .unwrap();
+    assert_eq!(
+        seen.0, "good",
+        "a broken save must not blank what is loaded"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_written_file_becomes_findable_by_guid_without_a_rescan() {
+    // The half of the problem a reload cannot solve: nothing has loaded a
+    // file that was just created, so there is nothing to refresh. What it
+    // needs is an entry in the database, and the tree scan only runs when
+    // the active project changes.
+    use crate::asset_loader::asset_written;
+
+    let mut resources = Resources::new();
+    resources.insert(Assets::<PlainText>::new());
+    resources.insert(AssetDatabase::new());
+    let mut server = AssetServer::new();
+    server.register_loader::<PlainText, _>(TextLoader);
+    resources.insert(server);
+
+    let path = temp_file_with("brand new", "txt");
+    let meta = asset_meta::read_or_create_typed(&path, "PlainText").unwrap();
+
+    let written = asset_written(&path, &mut resources);
+
+    assert_eq!(written.guid, Some(meta.guid));
+    assert_eq!(written.reloaded, 0, "nothing had loaded it yet");
+    assert_eq!(
+        resources.get::<AssetDatabase>().unwrap().guid_for(&path),
+        Some(meta.guid),
+    );
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(asset_meta::meta_path_for(&path));
+}
+
+#[test]
+fn a_written_file_refreshes_what_already_loaded_it() {
+    use crate::asset_loader::asset_written;
+
+    let mut resources = Resources::new();
+    resources.insert(Assets::<PlainText>::new());
+    resources.insert(AssetDatabase::new());
+    let mut server = AssetServer::new();
+    server.register_loader::<PlainText, _>(TextLoader);
+    let path = temp_file_with("before", "txt");
+    let handle = server.load::<PlainText>(&path, &mut resources).unwrap();
+    resources.insert(server);
+
+    std::fs::write(&path, b"after").unwrap();
+    assert_eq!(asset_written(&path, &mut resources).reloaded, 1);
+
+    assert_eq!(
+        resources
+            .get::<Assets<PlainText>>()
+            .unwrap()
+            .get(handle)
+            .unwrap()
+            .0,
+        "after",
+    );
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(asset_meta::meta_path_for(&path));
+}

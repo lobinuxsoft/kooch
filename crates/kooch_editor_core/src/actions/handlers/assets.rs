@@ -17,7 +17,7 @@ pub(super) fn handle_import_assets(
         tracing::error!(dest = %dest.display(), error = %e, "import: cannot create destination");
         return;
     }
-    let mut copied = 0usize;
+    let mut copied = Vec::new();
     for src in files {
         let Some(name) = src.file_name() else {
             continue;
@@ -25,45 +25,52 @@ pub(super) fn handle_import_assets(
         let target = crate::actions::asset_ops::unique_target(dest, name);
         match std::fs::copy(src, &target) {
             Ok(_) => {
-                copied += 1;
                 tracing::info!(from = %src.display(), to = %target.display(), "asset imported");
+                copied.push(target);
             }
             Err(e) => {
                 tracing::error!(from = %src.display(), error = %e, "asset import failed");
             }
         }
     }
-    if copied > 0 {
-        crate::actions::asset_ops::force_rescan(resources);
+    if copied.is_empty() {
+        return;
+    }
+    // The rescan is what gives the new files a `.meta`, so it comes first
+    // and there is nothing to register from before it.
+    crate::actions::asset_ops::force_rescan(resources);
+    // The rescan is local to this process. Without this the project can be
+    // handed a guid for a file it has no entry for, which fails as an
+    // unknown asset rather than as anything that names the import.
+    for target in &copied {
+        crate::actions::handlers::asset_saved(resources, target);
     }
 }
 
-/// Applies a Material asset edit: updates `Assets<Material>` in place so
-/// the render sync uploads the new params live, then serialises the
-/// material back to its source `.ron` so the change survives a reload.
-pub(super) fn handle_edit_material(resources: &mut Resources, guid: Guid, material: &Material) {
-    // 1. Live update: resolve the GUID to a handle (loading if needed)
-    //    and overwrite the stored asset.
-    let Some(mut server) = resources.remove::<AssetServer>() else {
-        tracing::warn!("EditMaterial: AssetServer missing; edit dropped");
-        return;
-    };
-    let handle = server.load_by_guid::<Material>(guid, resources);
-    resources.insert(server);
-    match handle {
-        Ok(h) => {
-            if let Some(assets) = resources.get_mut::<Assets<Material>>()
-                && let Some(slot) = assets.get_mut(h)
-            {
-                *slot = material.clone();
-            }
-        }
-        Err(e) => {
-            tracing::warn!(guid = %guid, error = %e, "EditMaterial: failed to resolve material")
-        }
-    }
-
-    // 2. Persist to disk at the asset's registered path.
+/// Applies a Material asset edit.
+///
+/// Two speeds, because a slider produces one of these per frame:
+///
+/// - **Not committed** — overwrite the local `Assets<Material>` and stop.
+///   The viewport follows the drag and nothing touches the disk.
+/// - **Committed** — write the `.ron`, then let [`asset_saved`] refresh
+///   from it and tell the project.
+///
+/// The live update used to be unconditional, and the write with it. That
+/// worked in this window and nowhere else: the project runs in its own
+/// process with its own `Assets<Material>` and nothing told it, so
+/// editing a material while connected changed the Inspector and left the
+/// running game rendering the old one. Committing writes first and
+/// refreshes from disk, which keeps one direction of travel — the file is
+/// the material, and both processes read it the same way.
+///
+/// [`asset_saved`]: crate::actions::handlers::asset_saved
+pub(super) fn handle_edit_material(
+    resources: &mut Resources,
+    guid: Guid,
+    material: &Material,
+    commit: bool,
+) {
     let Some(path) = resources
         .get::<AssetDatabase>()
         .and_then(|db| db.entry(guid).map(|e| e.path.clone()))
@@ -71,13 +78,39 @@ pub(super) fn handle_edit_material(resources: &mut Resources, guid: Guid, materi
         tracing::warn!(guid = %guid, "EditMaterial: no path in AssetDatabase; not persisted");
         return;
     };
-    match ron::ser::to_string_pretty(material, ron::ser::PrettyConfig::default()) {
-        Ok(text) => match std::fs::write(&path, text) {
-            Ok(()) => tracing::info!(path = %path.display(), "material saved"),
-            Err(e) => {
-                tracing::error!(path = %path.display(), error = %e, "failed to write material")
-            }
-        },
-        Err(e) => tracing::error!(guid = %guid, error = %e, "failed to serialise material"),
+
+    if !commit {
+        preview_material(resources, guid, material);
+        return;
+    }
+
+    let text = match ron::ser::to_string_pretty(material, ron::ser::PrettyConfig::default()) {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::error!(guid = %guid, error = %e, "failed to serialise material");
+            return;
+        }
+    };
+    if let Err(e) = std::fs::write(&path, text) {
+        tracing::error!(path = %path.display(), error = %e, "failed to write material");
+        return;
+    }
+    crate::actions::handlers::asset_saved(resources, &path);
+    tracing::info!(path = %path.display(), "material saved");
+}
+
+/// Shows an in-flight edit without recording it: overwrites the slot the
+/// render sync already reads, and touches neither the disk nor the wire.
+fn preview_material(resources: &mut Resources, guid: Guid, material: &Material) {
+    let Some(mut server) = resources.remove::<AssetServer>() else {
+        return;
+    };
+    let handle = server.load_by_guid::<Material>(guid, resources);
+    resources.insert(server);
+    if let Ok(handle) = handle
+        && let Some(assets) = resources.get_mut::<Assets<Material>>()
+        && let Some(slot) = assets.get_mut(handle)
+    {
+        *slot = material.clone();
     }
 }

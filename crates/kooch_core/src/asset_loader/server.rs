@@ -233,6 +233,79 @@ impl AssetServer {
         self.cache.remove(&(TypeId::of::<T>(), path));
     }
 
+    /// Re-reads `path` from disk and overwrites the assets already loaded
+    /// from it, keeping their handles valid. Returns how many were
+    /// refreshed.
+    ///
+    /// # Why not `forget` + `load`
+    ///
+    /// [`Self::forget`] drops the cache entry so the *next* load re-reads
+    /// the file — but that load calls `Assets::insert`, which mints a new
+    /// key. Everything already holding a `Handle<T>` (a component field,
+    /// an `AssetRef`, a live instance) goes on resolving to the copy from
+    /// before the edit. The file would be re-read and nothing on screen
+    /// would change. Writing over the existing slot is what makes the
+    /// edit visible, and it is why this is a server method rather than
+    /// something each caller assembles.
+    ///
+    /// # Not knowing the type is the point
+    ///
+    /// The caller is a save handler or a message off the wire; all it has
+    /// is a path. The cache is keyed by `(TypeId, path)`, so every type
+    /// that ever loaded this file is found here and refreshed — a path
+    /// loaded under two types refreshes both.
+    ///
+    /// A path nothing ever loaded returns `Ok(0)`: not an error, just
+    /// nothing cached to update. Handles whose slot has since been
+    /// removed are dropped from the cache rather than reported.
+    ///
+    /// # Errors
+    ///
+    /// - [`AssetError::Io`] when the file cannot be read.
+    /// - [`AssetError::Loader`] when it no longer parses. The previous
+    ///   asset stays in place — a broken save does not blank what is
+    ///   loaded — and types refreshed before the failure keep their new
+    ///   contents.
+    pub fn reload_path(
+        &mut self,
+        path: impl AsRef<Path>,
+        resources: &mut Resources,
+    ) -> AssetResult<usize> {
+        let path = self.resolve_path(path.as_ref());
+        // Collected first: the loop borrows `self.loaders` and mutates the
+        // cache, neither of which can happen while iterating it.
+        let cached: Vec<(TypeId, slotmap::DefaultKey)> = self
+            .cache
+            .iter()
+            .filter(|((_, cached_path), _)| *cached_path == path)
+            .map(|((type_id, _), key)| (*type_id, *key))
+            .collect();
+        if cached.is_empty() {
+            return Ok(0);
+        }
+
+        // Read once even when several types share the file.
+        let bytes = std::fs::read(&path)?;
+        let mut reloaded = 0usize;
+        let mut stale = Vec::new();
+        for (type_id, key) in cached {
+            let Some(loader) = self.loaders.get(&type_id) else {
+                // The type was loaded by a build that had this loader and
+                // this one does not — nothing to refresh it with.
+                continue;
+            };
+            let mut ctx = LoadContext { path: &path };
+            match loader.reload_into(&bytes, &mut ctx, key, resources)? {
+                true => reloaded += 1,
+                false => stale.push(type_id),
+            }
+        }
+        for type_id in stale {
+            self.cache.remove(&(type_id, path.clone()));
+        }
+        Ok(reloaded)
+    }
+
     /// Guarantees that `path` has a `.meta` sidecar with a stable
     /// [`Guid`] and the recorded `asset_type` set to `type_name`, and
     /// that, if an `AssetDatabase` resource is present, the resulting

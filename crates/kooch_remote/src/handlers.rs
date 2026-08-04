@@ -106,8 +106,8 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
         },
-        Method::ReloadPrefab { path } => {
-            reload_prefab(resources, path);
+        Method::ReloadAsset { path } => {
+            reload_asset(resources, path);
             Response::ok(id, ResponseData::Ok)
         }
         Method::InstantiatePrefab { path } => match instantiate_prefab(resources, path) {
@@ -306,13 +306,25 @@ fn save_prefab(resources: &mut Resources, entity: EntityId, path: &str) -> Resul
         })
 }
 
-/// Drops the project's cached copy of a prefab so the next instancing
-/// re-reads it.
-fn reload_prefab(resources: &mut Resources, path: &str) {
-    if let Some(server) = resources.get_mut::<kooch_core::asset_loader::AssetServer>() {
-        server.forget::<SceneDocument>(path);
-    }
-    tracing::info!(target: "kooch_remote::prefab", %path, "prefab cache dropped");
+/// Brings the project's copy of an asset file back in line with the disk.
+///
+/// Overwrites what is loaded rather than dropping it: the project's world
+/// holds handles into `Assets<T>`, and forgetting a cache entry would
+/// leave every one of them pointing at the bytes from before the edit —
+/// the next load would allocate a new slot that nobody is looking at.
+///
+/// Registering the identity is the other half, and it is what makes a
+/// file the project has never seen usable: a lookup by guid can only find
+/// what the database knows about.
+fn reload_asset(resources: &mut Resources, path: &str) {
+    let written = kooch_core::asset_loader::asset_written(path.as_ref(), resources);
+    tracing::info!(
+        target: "kooch_remote::assets",
+        %path,
+        reloaded = written.reloaded,
+        registered = written.guid.is_some(),
+        "asset written by the editor",
+    );
 }
 
 /// Stamps a prefab file into the live world and hands back its root.
