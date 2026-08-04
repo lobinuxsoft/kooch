@@ -6,7 +6,36 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
-Last updated 2026-08-02, `development` at `a85b777`.
+Last updated 2026-08-04, `development` at `92ec553`.
+
+---
+
+## Next — the render graph, before four more passes land on top of it
+
+**#392 is next, and it is a decision before it is a feature.** `kooch_render::graph` is 497
+lines of DAG, cycle detection, topological sort and shared-encoder execution, and **nothing
+instantiates it**. The renderer that actually runs was built beside it. Its own module doc
+lists the follow-ups — *"migration of `SkyRenderPass` and the meshlet stage to graph nodes"* —
+and those never happened.
+
+The reason it is next rather than later: **#441 PBR, #476 CSM, #477 VSM, #450 GI and #250 sky
+materials are all passes waiting to be added.** Every one added beside the graph makes
+migrating it more expensive, and makes the next person likelier to add theirs beside it too.
+Deciding once, now, is the cheap moment.
+
+Either outcome is acceptable and leaving it is not:
+
+- **Migrate** — move `SkyRenderPass` and the meshlet stage onto it, and the four lighting
+  issues become graph nodes with declared inputs and outputs.
+- **Delete** — the renderer works without it, and an unused scheduler that looks authoritative
+  is worse than no scheduler.
+
+What decides it is whether the graph's resource lifetime tracking and automatic barriers earn
+their keep against a hand-ordered encoder, once shadows and GI need transient targets. That is
+a measurement, not a preference.
+
+⚠️ The issue body predates all of this — it says the graph *blocks* #117, which closed, and it
+does not mention that the code exists. Rewrite it before starting.
 
 ---
 
@@ -14,6 +43,8 @@ Last updated 2026-08-02, `development` at `a85b777`.
 
 | | |
 |---|---|
+| **#727** | **An input action became an asset.** A `.inputaction` holds one action with its own id; a component points at it by guid; `enabled` is per action. The map — `InputMapSource`, the `.inputmap` asset, `ActiveActionMap`, `ActionState`, the generic `ActionMap<A>` — is gone. #55 and #58 closed |
+| **#728** | **A saved asset reaches the running project.** Only prefabs ever told it; a material edit updated the editor and left the game rendering the old one. `forget` + `load` cannot do this — `insert` mints a new key and every live `Handle<T>` keeps the old bytes — so `reload_path` writes over the slot instead. No file watcher, on purpose |
 | **#711** | **`kooch_input` was connected to nothing.** No backend was ever constructed and `WindowEvent::KeyboardInput` only asked for a redraw. `just_pressed` was permanently false, and four green tests were pinning that |
 | **#713** | **A game can be played inside the editor.** The editor captures input and sends snapshots to the headless host over the protocol. Identifiers became this engine's own — `gilrs::GamepadId` has no public constructor, which is what blocked it |
 | **#718** | A camera follows a **`CameraTarget` tag**, not an entity reference. Several tagged entities *are* a group, so following one and framing four are one code path |
@@ -356,8 +387,10 @@ dataset was. Public corpora are frequently non-commercial — check before build
   marching-cubes-plus-Transvoxel on an octree, but feeding octree nodes through the meshlet
   pipeline is **an unproven hypothesis**. Nobody found doing it. Measure the cost of
   clusterising one dirty node before any design commits.
-- **Rendering backlog** — #476/#477 shadows, #450 GI, #485 clustered light culling, #484
-  HDR, #481 motion vectors and FSR. Unblocked, unscheduled.
+- **Rendering backlog** — #441 PBR, #476/#477 shadows, #450 GI, #250 sky materials, #485
+  clustered light culling, #484 HDR, #481 motion vectors and FSR. Technically unblocked, but
+  **sequenced behind #392 on purpose**: they are the passes whose arrival decides whether the
+  render graph is worth keeping, and adding them beside it forecloses the question.
 - **#558** — shippable builds must exclude the editor. Security, not size.
 
 ---
