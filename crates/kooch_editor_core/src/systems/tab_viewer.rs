@@ -81,6 +81,8 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Data snapshot for the selected asset, resolved before the frame.
     /// `None` when nothing is selected or the snapshot is still pending.
     pub(crate) asset_detail: Option<&'a AssetDetail>,
+    /// The `.inputmap` open in the Input Map panel, if any.
+    pub(crate) open_input_map: Option<&'a crate::state::OpenInputMap>,
     /// Asset Browser folder selection — the drag-and-drop import target.
     pub(crate) current_folder: &'a mut Option<std::path::PathBuf>,
     /// Project / engine `assets/` roots, for the Asset Browser tree.
@@ -242,6 +244,34 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.asset_detail,
             ),
             EditorTab::Archetypes => draw_archetypes_content(ui, self.archetypes),
+            // The map and the live values are not plumbed through yet —
+            // the panel already says what to do with no map open, which
+            // is the honest state until the asset handle reaches here.
+            EditorTab::InputMap => {
+                let requested = crate::panels::input_map::draw_input_map_content(
+                    ui,
+                    crate::panels::input_map::InputMapView {
+                        map: self.open_input_map.map(|open| &open.map),
+                        // Live values arrive over the protocol from the
+                        // host, which is the only process that simulates.
+                        live: &[],
+                        awaiting: None,
+                        dirty: self.open_input_map.is_some_and(|open| open.dirty),
+                        selected: self.open_input_map.and_then(|open| open.selected),
+                        single_action: self.open_input_map.is_some_and(|open| {
+                            open.kind == crate::state::OpenInputKind::SingleAction
+                        }),
+                    },
+                );
+                for request in requested {
+                    self.actions.push(match request {
+                        crate::panels::input_map::InputMapAction::Save => {
+                            crate::actions::EditorAction::SaveInputMap
+                        }
+                        edit => crate::actions::EditorAction::EditInputMap(edit),
+                    });
+                }
+            }
             EditorTab::Components => draw_components_content(ui, self.component_types),
             EditorTab::AssetBrowser => draw_asset_browser_content(
                 ui,

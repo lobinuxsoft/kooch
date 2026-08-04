@@ -309,3 +309,90 @@ fn for_each_works() {
     query.for_each(|h| sum += h.0);
     assert_eq!(sum, 30);
 }
+
+/// Two `&mut` of **different** components in one query is fine — the
+/// tracker counts borrows per component type, not per query.
+///
+/// Worth pinning because the natural assumption is the opposite, and
+/// acting on it produces two queries and a manual join where one query
+/// would do.
+#[test]
+fn one_query_can_hold_two_mutable_components() {
+    let mut resources = setup();
+    let e0 = spawn_entity(&mut resources, 0);
+    add_cpu_component(&mut resources, e0, Health(100));
+    add_cpu_component(&mut resources, e0, Name("Alice".into()));
+
+    {
+        let query = Query::<(&mut Health, &mut Name)>::new(&resources);
+        query.for_each(|(health, name)| {
+            health.0 += 1;
+            name.0 = "Bob".into();
+        });
+    }
+
+    let query = Query::<(&Health, &Name)>::new(&resources);
+    let (health, name) = query.iter().next().unwrap();
+    assert_eq!(health.0, 101);
+    assert_eq!(name.0, "Bob");
+}
+
+/// And the thing that actually conflicts: the **same** component held
+/// mutably twice, whether by two queries or one.
+#[test]
+#[should_panic(expected = "already borrowed")]
+fn the_same_component_cannot_be_held_mutably_twice() {
+    let mut resources = setup();
+    let e0 = spawn_entity(&mut resources, 0);
+    add_cpu_component(&mut resources, e0, Health(100));
+
+    let _first = Query::<&mut Health>::new(&resources);
+    let _second = Query::<&mut Health>::new(&resources);
+}
+
+/// Eight is the arity ceiling: `impl_world_query_tuple!` is instantiated
+/// up to `H` (`fetch.rs`). All eight may be `&mut` — the tracker counts
+/// per component type, so distinct types never conflict no matter how
+/// many. `Entity` and filters cost nothing here; `Entity` occupies a slot,
+/// `With`/`Without` live in the second parameter.
+#[test]
+fn eight_mutable_components_fit_in_one_query() {
+    #[derive(Debug)] struct C1(u32);
+    #[derive(Debug)] struct C2(u32);
+    #[derive(Debug)] struct C3(u32);
+    #[derive(Debug)] struct C4(u32);
+    #[derive(Debug)] struct C5(u32);
+    #[derive(Debug)] struct C6(u32);
+    #[derive(Debug)] struct C7(u32);
+    #[derive(Debug)] struct C8(u32);
+    impl Component for C1 {} impl Component for C2 {}
+    impl Component for C3 {} impl Component for C4 {}
+    impl Component for C5 {} impl Component for C6 {}
+    impl Component for C7 {} impl Component for C8 {}
+
+    let mut resources = setup();
+    let e0 = spawn_entity(&mut resources, 0);
+    add_cpu_component(&mut resources, e0, C1(1));
+    add_cpu_component(&mut resources, e0, C2(2));
+    add_cpu_component(&mut resources, e0, C3(3));
+    add_cpu_component(&mut resources, e0, C4(4));
+    add_cpu_component(&mut resources, e0, C5(5));
+    add_cpu_component(&mut resources, e0, C6(6));
+    add_cpu_component(&mut resources, e0, C7(7));
+    add_cpu_component(&mut resources, e0, C8(8));
+
+    {
+        let query = Query::<(
+            &mut C1, &mut C2, &mut C3, &mut C4,
+            &mut C5, &mut C6, &mut C7, &mut C8,
+        )>::new(&resources);
+        query.for_each(|(a, b, c, d, e, f, g, h)| {
+            a.0 += 10; b.0 += 10; c.0 += 10; d.0 += 10;
+            e.0 += 10; f.0 += 10; g.0 += 10; h.0 += 10;
+        });
+    }
+
+    let query = Query::<(&C1, &C8)>::new(&resources);
+    let (first, last) = query.iter().next().unwrap();
+    assert_eq!((first.0, last.0), (11, 18), "not every slot was written");
+}

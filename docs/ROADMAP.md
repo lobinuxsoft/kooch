@@ -215,13 +215,38 @@ crate, `feed_window_event`, the standalone Play path (#720), the dynamic type re
 prefab inspector never asked, and three in the IDE launcher. **None of them fails a build.**
 That is the argument for this epic, and it is no longer a hypothesis.
 
-### Next — the action becomes data, and the player becomes parts
+### Done — the action became data, and the player became parts
 
-**#55 — input actions as data.** `ActionMap<A>` is generic over a Rust *type*, which cannot be
-serialised, inspected or edited — so the editor can never author a binding. And
-`InputBinding::GamepadButton(GamepadId, …)` stores a runtime device id, so a gamepad binding
-cannot be written without the gamepad plugged in. This is the model **#58**'s binding panel
-draws, so it goes first.
+**#55 / #58 — closed.** `ActionMap<A>` was generic over a Rust *type*, which cannot be
+serialised, inspected or edited, so the editor could never author a binding; it is deleted.
+
+What replaced it is not a map. **An action is an asset** (`.inputaction`) with its own stable
+id, and a component points at one **by guid**, picked in the Inspector like a mesh. Nothing in
+gameplay names an action, so renaming one in the panel breaks nothing — the failure the
+name-keyed version had by construction. Each action is enabled on its own, which a map could
+not do, being all or nothing.
+
+The panel authors all of it: five composites ported from Unity (2D/3D vector, 1D axis, one and
+two modifiers), processors on a binding, on a composite head and on the action, reorderable
+because order is meaning. Editing a file is picked up without a restart.
+
+Three lessons went into the engine rather than into this document:
+
+- **Asset types register themselves at link time** (`register_asset!`). The loader and its
+  storage were two hand-written lists in two places, and `.inputmap` shipped with its loader in
+  both and its storage in neither. Nothing central lists an asset type now, so nothing central
+  can leave one out.
+- **The editor's component list is checked by a test.** A `*ComponentsPlugin` missing from
+  `EditorPlugin::build` made a component the menu offered and then refused; that was the fifth
+  time. The test scans the workspace for them.
+- **The editor says when the project library is older than its sources.** It loads the `.so`, it
+  does not build it, so a component written and not compiled was simply absent with nothing to
+  explain it.
+
+**What is left of the map idea:** bulk enable/disable. A pause menu wants to silence a *set* of
+actions at once, and per-action `enabled` makes that a loop. `ActionMap::priority` is still
+written and never read — when the pause exists, that is the consumer that should shape it,
+rather than guessing now.
 
 **Alongside it, in the game: decompose `PlayerController`.** Four fields that are three
 capabilities, together only because all three happened to belong to the player. It becomes a

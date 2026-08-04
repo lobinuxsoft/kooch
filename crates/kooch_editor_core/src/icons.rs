@@ -18,6 +18,15 @@
 //! `PLAY` and `STOP` are deliberately *not* Phosphor: they are the Unicode
 //! geometric shapes, drawn by the text font.
 
+/// Game-controller — an input map asset, and anything about bindings.
+///
+/// Verified twice, the way the note above asks: the codepoint comes from
+/// `egui-phosphor`'s `regular.rs`, and the glyph was confirmed present in
+/// the `Phosphor.ttf` this crate embeds — a valid codepoint missing from
+/// *this* font renders as a blank box, which is the same failure as a
+/// wrong one.
+pub const GAME_CONTROLLER: &str = "\u{e26e}";
+
 /// Arrows-out-cardinal — translate / move tool (4 cardinal arrows from center).
 pub const ARROWS_OUT_CARDINAL: &str = "\u{e0a4}";
 

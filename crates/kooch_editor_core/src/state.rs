@@ -36,7 +36,55 @@ pub(crate) enum EditorTab {
     Archetypes,
     Components,
     AssetBrowser,
+    InputMap,
     Console,
+}
+
+/// The `.inputmap` currently open in the Input Map panel.
+///
+/// Which kind of file the input panel has open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OpenInputKind {
+    /// A `.inputmap`: several actions that turn on and off together.
+    Map,
+    /// A `.inputaction`: one action, referenced by a component.
+    SingleAction,
+}
+
+/// The parsed map rather than a guid: the panel edits it, and going back
+/// to the asset server for every frame's draw would mean the edited copy
+/// and the loaded one are two values of the same thing — the shape behind
+/// every prefab bug in #611.
+#[derive(Debug, Clone)]
+pub(crate) struct OpenInputMap {
+    pub path: std::path::PathBuf,
+    /// What is being edited.
+    ///
+    /// A standalone action is held as a **map of one**, so the panel
+    /// draws bindings, composites and processors with the same code
+    /// either way. Unity does exactly this internally for its singleton
+    /// actions: *"we do create a map for them that contains just the
+    /// singleton action"*. Only the save path and the map-level controls
+    /// differ, which is what `kind` selects.
+    pub kind: OpenInputKind,
+    pub map: kooch_input::actions::ActionMap,
+    /// Set when the panel should be brought to the front. Cleared by the
+    /// dock once it has done so.
+    pub focus_requested: bool,
+    /// What the properties pane is editing.
+    ///
+    /// With the document rather than in the panel, so adding an action
+    /// can select it — Unity goes further and puts the new one straight
+    /// into rename, which is the difference between "there is a new
+    /// action somewhere" and "here it is, name it".
+    pub selected: Option<crate::panels::input_map::Selection>,
+    /// Whether this diverges from what is on disk.
+    ///
+    /// Edits land here and nowhere else until saved — the same contract a
+    /// prefab has (`DirtyPrefabs`). An editor that wrote the file on every
+    /// keystroke would make undo mean "read the file back", and a crash
+    /// mid-edit would leave a half-written binding on disk.
+    pub dirty: bool,
 }
 
 /// All tab variants, used for the Window menu.
@@ -48,6 +96,7 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::Components,
     EditorTab::Console,
     EditorTab::AssetBrowser,
+    EditorTab::InputMap,
 ];
 
 impl EditorTab {
@@ -60,6 +109,7 @@ impl EditorTab {
             Self::Archetypes => format!("{} Archetypes", crate::icons::TREE_STRUCTURE),
             Self::Components => format!("{} Components", crate::icons::LIST_BULLETS),
             Self::AssetBrowser => format!("{} Assets", crate::icons::FOLDER_OPEN),
+            Self::InputMap => format!("{} Input Map", crate::icons::SLIDERS),
             Self::Console => format!("{} Console", crate::icons::TERMINAL),
         }
     }

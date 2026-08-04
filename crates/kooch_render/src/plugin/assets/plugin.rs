@@ -31,11 +31,37 @@ use super::eager::eager_import_typed_assets;
 ///   first (primary), then `<project>/assets` (secondary). Both
 ///   get scanned at startup so the runtime can resolve every GUID
 ///   the scene references.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AssetPlugin {
     roots: Vec<PathBuf>,
     /// Whether to pull every typed asset into memory at build time.
     eager_import: bool,
+    /// Loaders contributed by crates this one does not depend on.
+    ///
+    /// The server is built here, and a plugin reaching into a resource
+    /// another plugin may not have inserted yet is an ordering bug — the
+    /// reason prefabs register through a free function called from this
+    /// build. That works because `kooch_render` depends on `kooch_ecs`.
+    ///
+    /// It does not work for `kooch_input`, and would not for audio, so
+    /// the alternative was to make the renderer depend on both. Whoever
+    /// assembles the app knows which asset types exist; the renderer does
+    /// not need to.
+    extra_loaders: Vec<std::sync::Arc<dyn Fn(&mut AssetServer) + Send + Sync>>,
+    /// The `Assets<T>` those loaders fill. Paired with `extra_loaders` by
+    /// `with_asset`, which is the only thing that pushes to either.
+    extra_storages: Vec<std::sync::Arc<dyn Fn(&mut App) + Send + Sync>>,
+}
+
+impl std::fmt::Debug for AssetPlugin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AssetPlugin")
+            .field("roots", &self.roots)
+            .field("eager_import", &self.eager_import)
+            .field("extra_loaders", &self.extra_loaders.len())
+            .field("extra_storages", &self.extra_storages.len())
+            .finish()
+    }
 }
 
 impl AssetPlugin {
@@ -45,6 +71,8 @@ impl AssetPlugin {
         Self {
             roots: vec![PathBuf::from("assets")],
             eager_import: true,
+            extra_loaders: Vec::new(),
+            extra_storages: Vec::new(),
         }
     }
 
@@ -79,6 +107,41 @@ impl AssetPlugin {
         self
     }
 
+    /// Adds an asset type from a crate this one does not know about:
+    /// its loader **and** the storage that loader fills.
+    ///
+    /// ```ignore
+    /// AssetPlugin::new().with_asset::<ActionMap, _>(InputMapLoader)
+    /// ```
+    ///
+    /// The loader is registered while the server is being built, so it is
+    /// in place before the first scan — which is what a loader registered
+    /// from a `Startup` system would miss.
+    ///
+    /// # Why both, and not a loader alone
+    ///
+    /// `load_by_guid` requires `Assets<T>` to already exist rather than
+    /// creating it, so a loader without its storage fails every load with
+    /// `Assets<T> resource missing`. That has now happened twice —
+    /// `SceneDocument` (see its note below) and `ActionMap` — because the
+    /// two were registered in two places and only one of them was a list
+    /// a contributor could add to. Taking the type parameter means the
+    /// storage cannot be forgotten: there is nowhere to forget it.
+    pub fn with_asset<T, L>(mut self, loader: L) -> Self
+    where
+        T: kooch_core::assets::Asset,
+        L: kooch_core::asset_loader::AssetLoader<T> + Clone + Send + Sync + 'static,
+    {
+        self.extra_loaders.push(std::sync::Arc::new(move |server| {
+            server.register_loader::<T, _>(loader.clone());
+        }));
+        self.extra_storages
+            .push(std::sync::Arc::new(|app: &mut App| {
+                app.insert_resource(Assets::<T>::new());
+            }));
+        self
+    }
+
     fn primary_root(&self) -> &Path {
         self.roots
             .first()
@@ -110,6 +173,18 @@ impl Plugin for AssetPlugin {
         // bug waiting to happen. This is what gives a `.prefab` a guid, so a
         // component field can reference one.
         kooch_ecs::scene::prefab::register_loader(&mut server);
+        // Every asset type linked into this binary, declared next to
+        // itself with `register_asset!`. Nothing lists them, so nothing
+        // can leave one out — the failure that shipped `.inputmap` with
+        // its loader in two places and its storage in neither.
+        for registration in kooch_core::asset_registry::registered_asset_types() {
+            (registration.register_loader)(&mut server);
+        }
+        // Before the scan below, so a contributed type is loadable on the
+        // first pass rather than on the second.
+        for register in &self.extra_loaders {
+            register(&mut server);
+        }
 
         let mut database = AssetDatabase::new();
         for root in &self.roots {
@@ -147,6 +222,15 @@ impl Plugin for AssetPlugin {
         // `MissingAssetStorage` and the Inspector sat on "Loading asset…"
         // forever.
         app.insert_resource(Assets::<kooch_ecs::scene::SceneDocument>::new());
+        // The storage half of every declared type, and of every
+        // `with_asset`. A loader without one fails every load with
+        // `Assets<T> resource missing`, so neither path can skip it.
+        for registration in kooch_core::asset_registry::registered_asset_types() {
+            (registration.install_storage)(app.resources_mut());
+        }
+        for install in &self.extra_storages {
+            install(app);
+        }
 
         // The `MaterialPipeline` needs a `wgpu::Device`, which is
         // not available at plugin-build time. Defer construction to
@@ -203,4 +287,84 @@ fn init_material_pipeline_system(resources: &mut Resources) {
         target: "kooch_render::plugin::assets",
         "init_material_pipeline_system: MaterialPipeline inserted into Resources",
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kooch_core::asset_loader::{AssetLoader, AssetResult, LoadContext};
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct Probe(String);
+
+    #[derive(Clone)]
+    struct ProbeLoader;
+    impl AssetLoader<Probe> for ProbeLoader {
+        fn extensions(&self) -> &[&'static str] {
+            &["probe"]
+        }
+        fn load(&self, bytes: &[u8], _ctx: &mut LoadContext<'_>) -> AssetResult<Probe> {
+            Ok(Probe(String::from_utf8_lossy(&bytes).into_owned()))
+        }
+    }
+
+    fn empty_plugin() -> AssetPlugin {
+        AssetPlugin::new().with_root(std::env::temp_dir().join("kooch_no_such_assets"))
+    }
+
+    /// 🔴 A contributed asset arrives with **both** halves: the loader
+    /// that reads it and the `Assets<T>` that loader fills.
+    ///
+    /// Splitting them is what broke a real run — `load_by_guid` requires
+    /// the storage to exist rather than creating it, so an `.inputmap`
+    /// with a registered loader failed every frame with `Assets<ActionMap>
+    /// resource missing`. Registering a loader alone is no longer
+    /// expressible, and this is what says so.
+    #[test]
+    fn a_contributed_asset_brings_its_loader_and_its_storage() {
+        let mut app = App::new();
+        empty_plugin()
+            .with_asset::<Probe, _>(ProbeLoader)
+            .build(&mut app);
+
+        let resources = app.resources_mut();
+        assert!(
+            resources
+                .get::<AssetServer>()
+                .is_some_and(|server| server.has_loader::<Probe>()),
+            "the contributed loader never reached the server"
+        );
+        assert!(
+            resources.get::<Assets<Probe>>().is_some(),
+            "the loader is registered with nowhere to put what it loads,              which fails every load with `Assets<T> resource missing`"
+        );
+    }
+
+    /// Several crates contributing is the case this exists for — input
+    /// today, audio next — so more than one has to survive.
+    #[test]
+    fn every_contributed_asset_survives() {
+        #[derive(Debug, Clone)]
+        struct Other(u8);
+        #[derive(Clone)]
+        struct OtherLoader;
+        impl AssetLoader<Other> for OtherLoader {
+            fn extensions(&self) -> &[&'static str] {
+                &["other"]
+            }
+            fn load(&self, _b: &[u8], _c: &mut LoadContext<'_>) -> AssetResult<Other> {
+                Ok(Other(0))
+            }
+        }
+
+        let mut app = App::new();
+        empty_plugin()
+            .with_asset::<Probe, _>(ProbeLoader)
+            .with_asset::<Other, _>(OtherLoader)
+            .build(&mut app);
+
+        let resources = app.resources_mut();
+        assert!(resources.get::<Assets<Probe>>().is_some());
+        assert!(resources.get::<Assets<Other>>().is_some());
+    }
 }

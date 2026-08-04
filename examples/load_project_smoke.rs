@@ -29,9 +29,7 @@ fn main() {
                 .next()
                 .unwrap_or(&schema.type_name)
                 .to_owned();
-            kooch::kooch_ecs::component::plugin_bridge::register_schema(
-                registry, schema, &source,
-            )
+            kooch::kooch_ecs::component::plugin_bridge::register_schema(registry, schema, &source)
         },
     ));
 

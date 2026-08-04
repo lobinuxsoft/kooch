@@ -12,7 +12,6 @@
 //! - [`backend`] — public trait + re-exported winit / gilrs types
 //! - [`winit_gilrs_backend`] — production backend
 //! - [`mock_backend`] — headless backend for tests + tooling
-//! - [`action_map`] — typed action ↔ binding registry
 //! - [`plugin`] — what connects all of the above to a running app
 //!
 //! # Reaching this from a game
@@ -29,7 +28,7 @@
 //! }
 //! ```
 
-pub mod action_map;
+pub mod actions;
 pub mod backend;
 pub mod ids;
 pub mod mock_backend;
@@ -37,7 +36,6 @@ pub mod plugin;
 pub mod remote_backend;
 pub mod winit_gilrs_backend;
 
-pub use action_map::{Action, ActionMap, InputBinding};
 pub use backend::{
     GamepadAxis, GamepadButton, GamepadId, InputBackend, InputEvent, KeyCode, MouseButton,
 };

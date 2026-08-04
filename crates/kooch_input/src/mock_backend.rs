@@ -185,14 +185,6 @@ impl InputBackend for MockInputBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action_map::{ActionMap, InputBinding};
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    enum TestAction {
-        Jump,
-        MoveForward,
-        Shoot,
-    }
 
     #[test]
     fn pressed_state_round_trips() {
@@ -283,90 +275,6 @@ mod tests {
         assert_eq!(backend.axis_value(id, GamepadAxis::LeftStickX), 1.0);
         backend.set_axis(id, GamepadAxis::LeftStickX, -3.0);
         assert_eq!(backend.axis_value(id, GamepadAxis::LeftStickX), -1.0);
-    }
-
-    #[test]
-    fn action_map_is_pressed_via_key() {
-        let mut map = ActionMap::<TestAction>::new();
-        map.bind(TestAction::Jump, InputBinding::Key(KeyCode::Space));
-
-        let mut backend = MockInputBackend::new();
-        assert!(!map.is_pressed(TestAction::Jump, &backend));
-        backend.press_key(KeyCode::Space);
-        assert!(map.is_pressed(TestAction::Jump, &backend));
-    }
-
-    #[test]
-    fn action_map_just_pressed_is_edge_triggered() {
-        let mut map = ActionMap::<TestAction>::new();
-        map.bind(TestAction::Jump, InputBinding::Key(KeyCode::Space));
-
-        let mut backend = MockInputBackend::new();
-        backend.press_key(KeyCode::Space);
-        assert!(map.just_pressed(TestAction::Jump, &backend));
-        backend.begin_frame();
-        assert!(!map.just_pressed(TestAction::Jump, &backend));
-        // Still held but no longer "just".
-        assert!(map.is_pressed(TestAction::Jump, &backend));
-    }
-
-    #[test]
-    fn action_map_combines_bindings() {
-        let mut map = ActionMap::<TestAction>::new();
-        map.bind(TestAction::Shoot, InputBinding::Key(KeyCode::ControlLeft));
-        map.bind(TestAction::Shoot, InputBinding::Mouse(MouseButton::Left));
-
-        let mut backend = MockInputBackend::new();
-        assert!(!map.is_pressed(TestAction::Shoot, &backend));
-        backend.press_mouse(MouseButton::Left);
-        assert!(map.is_pressed(TestAction::Shoot, &backend));
-        backend.release_mouse(MouseButton::Left);
-        backend.press_key(KeyCode::ControlLeft);
-        assert!(map.is_pressed(TestAction::Shoot, &backend));
-    }
-
-    #[test]
-    fn action_map_axis_value_picks_strongest() {
-        let mut map = ActionMap::<TestAction>::new();
-        map.bind(TestAction::MoveForward, InputBinding::Key(KeyCode::KeyW));
-        let id = unsafe { std::mem::zeroed::<GamepadId>() };
-        map.bind(
-            TestAction::MoveForward,
-            InputBinding::GamepadAxis {
-                gamepad: id,
-                axis: GamepadAxis::LeftStickY,
-                threshold: 0.0,
-            },
-        );
-
-        let mut backend = MockInputBackend::new();
-        backend.add_gamepad(id);
-
-        // Axis at 0.6 wins over 0 from key.
-        backend.set_axis(id, GamepadAxis::LeftStickY, 0.6);
-        assert!((map.axis_value(TestAction::MoveForward, &backend) - 0.6).abs() < 1e-6);
-
-        // Key pressed (1.0) wins over axis at 0.6.
-        backend.press_key(KeyCode::KeyW);
-        assert!((map.axis_value(TestAction::MoveForward, &backend) - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn action_map_unbind_removes_action() {
-        let mut map = ActionMap::<TestAction>::new();
-        map.bind(TestAction::Jump, InputBinding::Key(KeyCode::Space));
-        assert_eq!(map.bindings_for(TestAction::Jump).len(), 1);
-        map.unbind(TestAction::Jump);
-        assert!(map.bindings_for(TestAction::Jump).is_empty());
-    }
-
-    #[test]
-    fn unbound_action_returns_false_and_zero() {
-        let map = ActionMap::<TestAction>::new();
-        let backend = MockInputBackend::new();
-        assert!(!map.is_pressed(TestAction::Jump, &backend));
-        assert!(!map.just_pressed(TestAction::Jump, &backend));
-        assert_eq!(map.axis_value(TestAction::Jump, &backend), 0.0);
     }
 
     /// A held button must read as pressed once, not every frame.

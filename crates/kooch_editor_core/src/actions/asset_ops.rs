@@ -28,6 +28,14 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         EditorAction::DeleteFolder { path } => delete_folder(resources, path),
         EditorAction::RevealInFileManager { path } => reveal(path),
         EditorAction::OpenInIde { file } => open_in_ide(resources, file),
+        EditorAction::OpenInputMap { path } => open_input_map(resources, path),
+        EditorAction::EditInputMap(edit) => edit_input_map(resources, edit),
+        EditorAction::SaveInputMap => save_input_map(resources),
+        EditorAction::InputMapFocused => {
+            if let Some(open) = resources.get_mut::<crate::state::OpenInputMap>() {
+                open.focus_requested = false;
+            }
+        }
         EditorAction::CreateFile { folder, name, kind } => {
             create_file(resources, folder, name, *kind)
         }
@@ -47,6 +55,30 @@ fn create_file(resources: &Resources, folder: &Path, name: &str, kind: NewFileKi
     let (tmpl_file, fallback, ext) = match kind {
         NewFileKind::RustComponent => ("component.rs.tmpl", COMPONENT_TMPL, "rs"),
         NewFileKind::RustSystem => ("system.rs.tmpl", SYSTEM_TMPL, "rs"),
+        NewFileKind::InputAction => {
+            // Bound to nothing: an action is a name and a control type
+            // until someone says what triggers it, and guessing a key
+            // would collide with whatever already uses it.
+            let file = unique_target(
+                folder,
+                OsStr::new(&format!(
+                    "{}.{}",
+                    to_pascal_case(name),
+                    kooch_input::actions::INPUT_ACTION_EXTENSION
+                )),
+            );
+            let action = kooch_input::actions::Action::new(
+                to_snake_case(name),
+                kooch_input::actions::ControlType::Button,
+            );
+            match kooch_input::actions::save_action(&action, &file) {
+                Ok(guid) => tracing::info!(file = %file.display(), %guid, "input action created"),
+                Err(e) => {
+                    tracing::error!(file = %file.display(), error = %e, "failed to write action")
+                }
+            }
+            return;
+        }
         NewFileKind::Scene => {
             let file = unique_target(
                 folder,
@@ -604,5 +636,1094 @@ mod duplicate_tests {
             workspace_for(&resources, Path::new("/proj/assets/a.ron")),
             None
         );
+    }
+}
+
+/// The map a new `.inputmap` starts with.
+///
+/// Not empty. Move and jump, on keyboard and pad, are what every game
+/// binds first — and a file that already shows a composite, its parts and
+/// two devices on one action teaches the shape better than a blank list
+/// plus documentation would.
+fn starter_input_map(name: &str) -> kooch_input::actions::ActionMap {
+    use kooch_input::actions::{
+        Action, ActionMap, Binding, Composite, ControlPath, ControlType, DEFAULT_DEADZONE_MAX,
+        DEFAULT_DEADZONE_MIN, PartName, Processor, VectorMode,
+    };
+    use kooch_input::ids::{GamepadAxis, GamepadButton, KeyCode};
+
+    ActionMap::new(name)
+        .add(
+            Action::new("move", ControlType::Vector2)
+                .bind_all([
+                    Binding::composite(Composite::Vector2 {
+                        mode: VectorMode::DigitalNormalized,
+                    }),
+                    Binding::part(PartName::Up, ControlPath::Key(KeyCode::KeyW)),
+                    Binding::part(PartName::Down, ControlPath::Key(KeyCode::KeyS)),
+                    Binding::part(PartName::Left, ControlPath::Key(KeyCode::KeyA)),
+                    Binding::part(PartName::Right, ControlPath::Key(KeyCode::KeyD)),
+                ])
+                .bind_all([
+                    // Radial, not per-axis: a per-axis deadzone leaves a
+                    // square hole a diagonal push slips through.
+                    Binding::composite(Composite::Vector2 {
+                        mode: VectorMode::Analog,
+                    })
+                    .with(Processor::StickDeadzone {
+                        min: DEFAULT_DEADZONE_MIN,
+                        max: DEFAULT_DEADZONE_MAX,
+                    }),
+                    Binding::part(PartName::Up, ControlPath::Axis(GamepadAxis::LeftStickY)),
+                    Binding::part(PartName::Right, ControlPath::Axis(GamepadAxis::LeftStickX)),
+                ]),
+        )
+        .add(
+            Action::new("jump", ControlType::Button)
+                .bind(Binding::to(ControlPath::Key(KeyCode::Space)))
+                .bind(Binding::to(ControlPath::Button(GamepadButton::South))),
+        )
+}
+
+/// Reads an `.inputmap` and hands it to the panel.
+///
+/// Read here rather than through the asset server on purpose: the panel
+/// edits this copy, and a draw that re-read the loaded asset every frame
+/// would make the edited map and the loaded map two values of the same
+/// thing. Saving writes back and the server picks it up on reload.
+fn open_input_map(resources: &mut Resources, path: &std::path::Path) {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::error!(file = %path.display(), error = %e, "could not read input map");
+            return;
+        }
+    };
+    // A standalone action opens as a map of one, so the panel needs no
+    // second code path for it.
+    let single = path
+        .extension()
+        .is_some_and(|e| e == kooch_input::actions::INPUT_ACTION_EXTENSION);
+    let parsed = if single {
+        ron::from_str::<kooch_input::actions::Action>(&text).map(|mut action| {
+            action.ensure_id("");
+            let name = action.name.clone();
+            kooch_input::actions::ActionMap::new(name).add(action)
+        })
+    } else {
+        ron::from_str::<kooch_input::actions::ActionMap>(&text).map(|mut map| {
+            map.assign_missing_ids();
+            map
+        })
+    };
+
+    match parsed {
+        Ok(map) => {
+            tracing::info!(
+                file = %path.display(),
+                actions = map.actions.len(),
+                "input map opened",
+            );
+            resources.insert(crate::state::OpenInputMap {
+                path: path.to_path_buf(),
+                kind: match single {
+                    true => crate::state::OpenInputKind::SingleAction,
+                    false => crate::state::OpenInputKind::Map,
+                },
+                map,
+                focus_requested: true,
+                selected: None,
+                dirty: false,
+            });
+        }
+        // Named rather than swallowed: a map that will not parse is a
+        // file someone has to fix, and an empty panel says nothing about
+        // which file or why.
+        Err(e) => tracing::error!(
+            file = %path.display(),
+            error = %e,
+            "input map could not be parsed",
+        ),
+    }
+}
+
+/// The processor list a target points at, if it points at one.
+fn processors_of(
+    map: &mut kooch_input::actions::ActionMap,
+    to: crate::panels::input_map::ProcessorTarget,
+) -> Option<&mut Vec<kooch_input::actions::Processor>> {
+    use crate::panels::input_map::ProcessorTarget;
+    match to {
+        ProcessorTarget::Action(index) => map.actions.get_mut(index).map(|a| &mut a.processors),
+        ProcessorTarget::Binding(at) => map
+            .actions
+            .get_mut(at.action)
+            .and_then(|action| action.bindings.get_mut(at.binding))
+            .map(|binding| &mut binding.processors),
+    }
+}
+
+/// Applies one edit to the open map, in memory.
+///
+/// Nothing here writes a file. That is `SaveInputMap`, and the split is
+/// the same one a prefab has: the document is the thing being edited, the
+/// file is where it is eventually put.
+fn edit_input_map(resources: &mut Resources, edit: &crate::panels::input_map::InputMapAction) {
+    use crate::panels::input_map::InputMapAction as Edit;
+    use kooch_input::actions::{Action, Binding, ControlPath, ControlType, Role};
+    use kooch_input::ids::KeyCode;
+
+    let Some(open) = resources.get_mut::<crate::state::OpenInputMap>() else {
+        return;
+    };
+    let map = &mut open.map;
+    let changed = match edit {
+        Edit::Select(selection) => {
+            open.selected = Some(*selection);
+            false
+        }
+        Edit::RenameAction { action, name } => match map.actions.get_mut(*action) {
+            Some(target) if target.name != *name => {
+                target.name = name.clone();
+                true
+            }
+            _ => false,
+        },
+        Edit::SetControlType {
+            action,
+            control_type,
+        } => match map.actions.get_mut(*action) {
+            Some(target) if target.control_type != *control_type => {
+                target.control_type = *control_type;
+                true
+            }
+            _ => false,
+        },
+        Edit::AddAction => {
+            // Named for what it is until renamed. An empty name would
+            // resolve to nothing and read as a broken action.
+            let name = unique_action_name(map, "new_action");
+            map.actions.push(Action::new(name, ControlType::Button));
+            // Selected on the way in, so the properties pane is already
+            // showing its name field. Otherwise a new action is a row
+            // somewhere in a list with no hint that it wants a name.
+            open.selected = Some(crate::panels::input_map::Selection::Action(
+                map.actions.len() - 1,
+            ));
+            true
+        }
+        Edit::RemoveAction { action } => {
+            if *action < map.actions.len() {
+                map.actions.remove(*action);
+                true
+            } else {
+                false
+            }
+        }
+        Edit::AddBinding { action } => match map.actions.get_mut(*action) {
+            // Unbound rather than guessing: `Space` on every new binding
+            // would silently collide with whatever already uses it.
+            Some(target) => {
+                target
+                    .bindings
+                    .push(Binding::to(ControlPath::Key(KeyCode::Space)));
+                true
+            }
+            None => false,
+        },
+        // The head plus one unbound part per name it declares. Adding a
+        // bare head would put a composite in the list that reads as
+        // nothing and gives no clue which parts are missing.
+        Edit::AddComposite { action, composite } => match map.actions.get_mut(*action) {
+            Some(target) => {
+                use kooch_input::actions::PartName;
+                target.bindings.push(Binding::composite(*composite));
+                let head = target.bindings.len() - 1;
+                for name in PartName::of(*composite) {
+                    target
+                        .bindings
+                        .push(Binding::part(*name, ControlPath::Key(KeyCode::Space)));
+                }
+                // Selected so its Mode lands in the properties pane —
+                // the setting that decides whether a diagonal outruns a
+                // straight line, and the one nobody goes looking for.
+                open.selected = Some(crate::panels::input_map::Selection::Binding(
+                    crate::panels::input_map::BindingAddress {
+                        action: *action,
+                        binding: head,
+                    },
+                ));
+                true
+            }
+            None => false,
+        },
+        Edit::SetComposite { at, composite } => match map
+            .actions
+            .get_mut(at.action)
+            .and_then(|target| target.bindings.get_mut(at.binding))
+        {
+            // Only a head has parameters; aimed at a part this is a
+            // no-op rather than a binding turned into something else.
+            Some(binding) => match &mut binding.role {
+                Role::CompositeHead(current) if current != composite => {
+                    *current = *composite;
+                    true
+                }
+                _ => false,
+            },
+            None => false,
+        },
+        Edit::AddProcessor { to, processor } => match processors_of(map, *to) {
+            // Appended, so a new one runs last. Prepending would silently
+            // change what every existing processor sees.
+            Some(list) => {
+                list.push(*processor);
+                true
+            }
+            None => false,
+        },
+        Edit::SetProcessor {
+            to,
+            index,
+            processor,
+        } => match processors_of(map, *to).and_then(|list| list.get_mut(*index)) {
+            Some(current) if current != processor => {
+                *current = *processor;
+                true
+            }
+            _ => false,
+        },
+        Edit::RemoveProcessor { to, index } => match processors_of(map, *to) {
+            Some(list) if *index < list.len() => {
+                list.remove(*index);
+                true
+            }
+            _ => false,
+        },
+        Edit::MoveProcessor { to, index, delta } => match processors_of(map, *to) {
+            Some(list) => {
+                let target = *index as i32 + delta;
+                // Refused rather than saturated: a move off the end that
+                // silently stayed put would still mark the file unsaved.
+                if target < 0 || target as usize >= list.len() {
+                    false
+                } else {
+                    list.swap(*index, target as usize);
+                    true
+                }
+            }
+            None => false,
+        },
+        // A composite head takes its parts with it. Left behind they are
+        // rows `groups` skips — saved to the file, read by nothing.
+        Edit::RemoveBinding(at) => match map.actions.get_mut(at.action) {
+            Some(target) if at.binding < target.bindings.len() => {
+                let range = kooch_input::actions::group_range(&target.bindings, at.binding);
+                target.bindings.drain(range);
+                true
+            }
+            _ => false,
+        },
+        Edit::Rebind { at, path } => match map
+            .actions
+            .get_mut(at.action)
+            .and_then(|a| a.bindings.get_mut(at.binding))
+        {
+            Some(binding) => {
+                // Only what it reads changes. Processors and the part it
+                // plays in a composite are properties of the binding, not
+                // of the control behind it.
+                binding.role = match &binding.role {
+                    Role::Part { name, .. } => Role::Part {
+                        name: *name,
+                        path: *path,
+                    },
+                    _ => Role::Whole(*path),
+                };
+                true
+            }
+            None => false,
+        },
+        // Rebind prompts are panel state, not document edits, and Save
+        // is routed before it gets here.
+        Edit::BeginRebind(_) | Edit::CancelRebind | Edit::Save => false,
+    };
+
+    if changed {
+        open.dirty = true;
+    }
+}
+
+/// A name no other action in `map` already has.
+fn unique_action_name(map: &kooch_input::actions::ActionMap, base: &str) -> String {
+    if map.resolve(base).is_none() {
+        return base.to_owned();
+    }
+    (2..)
+        .map(|n| format!("{base}_{n}"))
+        .find(|name| map.resolve(name).is_none())
+        .unwrap_or_else(|| base.to_owned())
+}
+
+/// Writes the open map back to its file.
+fn save_input_map(resources: &mut Resources) {
+    let Some((path, map, kind)) = resources
+        .get::<crate::state::OpenInputMap>()
+        .map(|open| (open.path.clone(), open.map.clone(), open.kind))
+    else {
+        return;
+    };
+    // A standalone action is unwrapped from the map of one it was opened
+    // into, so the file keeps the shape it had.
+    // Through `save_action` rather than a bare write: a file that reached
+    // disk without its `.meta` is one nothing can reference.
+    let written = match map.actions.first() {
+        Some(action) => kooch_input::actions::save_action(action, &path),
+        None => Err("the action was deleted; nothing to save".to_owned()),
+    };
+    let _ = kind;
+    match written {
+        Ok(guid) => {
+            tracing::info!(file = %path.display(), %guid, "input map saved");
+            if let Some(open) = resources.get_mut::<crate::state::OpenInputMap>() {
+                open.dirty = false;
+            }
+        }
+        // Left dirty on purpose: the edits are still the only copy that
+        // has them, and clearing the flag would claim they are safe.
+        Err(e) => tracing::error!(file = %path.display(), error = %e, "failed to save input map"),
+    }
+}
+
+#[cfg(test)]
+mod input_map_tests {
+    use super::*;
+    use crate::panels::input_map::{BindingAddress, InputMapAction as Edit};
+    use crate::state::OpenInputMap;
+    use kooch_input::actions::{Action, ActionMap, Binding, ControlPath, ControlType};
+    use kooch_input::ids::{GamepadButton, KeyCode};
+
+    fn open(path: std::path::PathBuf) -> OpenInputMap {
+        OpenInputMap {
+            path,
+            kind: crate::state::OpenInputKind::Map,
+            map: ActionMap::new("gameplay").add(
+                Action::new("jump", ControlType::Button)
+                    .bind(Binding::to(ControlPath::Key(KeyCode::Space))),
+            ),
+            focus_requested: false,
+            selected: None,
+            dirty: false,
+        }
+    }
+
+    fn resources_with(open_map: OpenInputMap) -> Resources {
+        let mut resources = Resources::new();
+        resources.insert(open_map);
+        resources
+    }
+
+    /// The contract the prefab already has: an edit changes the document
+    /// and **not** the file.
+    #[test]
+    fn an_edit_does_not_touch_the_file() {
+        let dir = std::env::temp_dir().join("kooch_inputmap_edit_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Gameplay.inputmap");
+        std::fs::write(&path, "original contents").unwrap();
+
+        let mut resources = resources_with(open(path.clone()));
+        edit_input_map(&mut resources, &Edit::AddAction);
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "original contents",
+            "the edit reached the file before anyone asked it to"
+        );
+        let open = resources.get::<OpenInputMap>().unwrap();
+        assert_eq!(
+            open.map.actions.len(),
+            2,
+            "the edit did not reach the document"
+        );
+        assert!(open.dirty, "an edit left the map looking saved");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// And saving is what writes, after which nothing is outstanding.
+    #[test]
+    fn saving_writes_the_file_and_clears_the_marker() {
+        let dir = std::env::temp_dir().join("kooch_inputaction_save_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Jump.inputaction");
+
+        let action = kooch_input::actions::Action::new("jump", ControlType::Button);
+        kooch_input::actions::save_action(&action, &path).expect("write");
+
+        let mut resources = Resources::new();
+        open_input_map(&mut resources, &path);
+        edit_input_map(
+            &mut resources,
+            &Edit::RenameAction {
+                action: 0,
+                name: "leap".into(),
+            },
+        );
+        assert!(resources.get::<OpenInputMap>().unwrap().dirty);
+        save_input_map(&mut resources);
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains("leap"),
+            "the edit was not saved: {written}"
+        );
+        assert!(
+            !resources.get::<OpenInputMap>().unwrap().dirty,
+            "the file was written and the document still claims an unsaved change"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A rebind changes what a binding reads and nothing else — its
+    /// processors and its part in a composite belong to the binding, not
+    /// to the control behind it.
+    #[test]
+    fn a_rebind_replaces_only_the_control() {
+        let mut resources = resources_with(open("unused.inputmap".into()));
+        edit_input_map(
+            &mut resources,
+            &Edit::Rebind {
+                at: BindingAddress {
+                    action: 0,
+                    binding: 0,
+                },
+                path: ControlPath::Button(GamepadButton::South),
+            },
+        );
+        let open = resources.get::<OpenInputMap>().unwrap();
+        let binding = &open.map.actions[0].bindings[0];
+        assert_eq!(
+            binding.path(),
+            Some(ControlPath::Button(GamepadButton::South))
+        );
+        assert!(binding.processors.is_empty());
+    }
+
+    /// Two actions of one name make `resolve` a coin toss, so adding one
+    /// has to pick a name nobody is using.
+    #[test]
+    fn a_new_action_does_not_collide() {
+        let mut resources = resources_with(open("unused.inputmap".into()));
+        for _ in 0..3 {
+            edit_input_map(&mut resources, &Edit::AddAction);
+        }
+        let open = resources.get::<OpenInputMap>().unwrap();
+        assert!(
+            open.map.duplicate_names().is_empty(),
+            "adding actions produced duplicates: {:?}",
+            open.map.duplicate_names()
+        );
+    }
+
+    /// An index out of range is a stale click — the panel drew a list one
+    /// frame and the document changed. It must not panic the editor.
+    #[test]
+    fn an_edit_aimed_past_the_end_is_ignored() {
+        let mut resources = resources_with(open("unused.inputmap".into()));
+        for edit in [
+            Edit::RemoveAction { action: 99 },
+            Edit::AddBinding { action: 99 },
+            Edit::RemoveBinding(BindingAddress {
+                action: 0,
+                binding: 99,
+            }),
+        ] {
+            edit_input_map(&mut resources, &edit);
+        }
+        let open = resources.get::<OpenInputMap>().unwrap();
+        assert_eq!(open.map.actions.len(), 1);
+        assert!(!open.dirty, "a no-op edit marked the map unsaved");
+    }
+}
+
+#[cfg(test)]
+mod input_map_editing_tests {
+    use super::*;
+    use crate::panels::input_map::{BindingAddress, InputMapAction as Edit, Selection};
+    use crate::state::OpenInputMap;
+    use kooch_input::actions::{Action, ActionMap, ControlType};
+
+    fn resources() -> Resources {
+        let mut r = Resources::new();
+        r.insert(OpenInputMap {
+            path: "unused.inputmap".into(),
+            kind: crate::state::OpenInputKind::Map,
+            map: ActionMap::new("gameplay")
+                .add(Action::new("jump", ControlType::Button))
+                .add(Action::new("move", ControlType::Vector2)),
+            focus_requested: false,
+            selected: None,
+            dirty: false,
+        });
+        r
+    }
+
+    /// The name is what gameplay resolves, so renaming is the edit that
+    /// matters most — and the one that used to be impossible.
+    #[test]
+    fn an_action_can_be_renamed() {
+        let mut r = resources();
+        edit_input_map(
+            &mut r,
+            &Edit::RenameAction {
+                action: 0,
+                name: "leap".into(),
+            },
+        );
+        let open = r.get::<OpenInputMap>().unwrap();
+        assert_eq!(open.map.resolve("leap").map(|id| id.index()), Some(0));
+        assert!(open.map.resolve("jump").is_none());
+        assert!(open.dirty);
+    }
+
+    /// 🔴 Adding a composite creates its parts too.
+    ///
+    /// A bare head is a composite that reads as nothing with no clue
+    /// which parts are missing — the state the panel could not even
+    /// produce before, since there was no way to add one at all.
+    #[test]
+    fn a_composite_arrives_with_one_part_per_name() {
+        use kooch_input::actions::{Composite, PartName, Role, VectorMode};
+
+        for composite in Composite::ALL.iter().copied() {
+            let mut r = resources();
+            edit_input_map(
+                &mut r,
+                &Edit::AddComposite {
+                    action: 1,
+                    composite,
+                },
+            );
+            let open = r.get::<OpenInputMap>().unwrap();
+            let bindings = &open.map.actions[1].bindings;
+
+            assert!(
+                matches!(bindings.first().map(|b| &b.role), Some(Role::CompositeHead(c)) if *c == composite)
+            );
+            let parts: Vec<PartName> = bindings
+                .iter()
+                .filter_map(|b| match b.role {
+                    Role::Part { name, .. } => Some(name),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                parts,
+                PartName::of(composite).to_vec(),
+                "{composite:?} did not get the parts it declares"
+            );
+            assert!(open.dirty);
+        }
+
+        // And the head is selected, so its Mode is on screen — the
+        // setting that decides whether a diagonal outruns a straight line.
+        let mut r = resources();
+        edit_input_map(
+            &mut r,
+            &Edit::AddComposite {
+                action: 1,
+                composite: Composite::Vector2 {
+                    mode: VectorMode::DigitalNormalized,
+                },
+            },
+        );
+        let open = r.get::<OpenInputMap>().unwrap();
+        assert_eq!(
+            open.selected,
+            Some(Selection::Binding(BindingAddress {
+                action: 1,
+                binding: 0
+            }))
+        );
+    }
+
+    /// Processors are added, edited, reordered and removed — the whole
+    /// loop, since a list you can only add to is not editable.
+    #[test]
+    fn a_bindings_processors_can_be_edited() {
+        use kooch_input::actions::Processor;
+
+        let mut r = resources();
+        edit_input_map(&mut r, &Edit::AddBinding { action: 0 });
+        let at = BindingAddress {
+            action: 0,
+            binding: 0,
+        };
+        let scale = Processor::Scale { factor: 1.0 };
+        let clamp = Processor::Clamp {
+            min: -1.0,
+            max: 1.0,
+        };
+
+        edit_input_map(
+            &mut r,
+            &Edit::AddProcessor {
+                to: b(at),
+                processor: scale,
+            },
+        );
+        edit_input_map(
+            &mut r,
+            &Edit::AddProcessor {
+                to: b(at),
+                processor: clamp,
+            },
+        );
+        assert_eq!(processors(&r, at), vec![scale, clamp], "added out of order");
+
+        edit_input_map(
+            &mut r,
+            &Edit::SetProcessor {
+                to: b(at),
+                index: 0,
+                processor: Processor::Scale { factor: 2.5 },
+            },
+        );
+        assert_eq!(processors(&r, at)[0], Processor::Scale { factor: 2.5 });
+
+        edit_input_map(
+            &mut r,
+            &Edit::MoveProcessor {
+                to: b(at),
+                index: 0,
+                delta: 1,
+            },
+        );
+        assert_eq!(processors(&r, at)[0], clamp, "the move did not reorder");
+
+        edit_input_map(
+            &mut r,
+            &Edit::RemoveProcessor {
+                to: b(at),
+                index: 0,
+            },
+        );
+        assert_eq!(processors(&r, at).len(), 1);
+    }
+
+    /// 🔴 A composite head carries processors, and the panel has to
+    /// offer them.
+    ///
+    /// `read_action` applies the head's processors to the composite's
+    /// assembled value — which is where a stick deadzone belongs, on the
+    /// vector rather than per axis. The shipped starter map already has
+    /// one there, so it was visible, evaluated, and uneditable.
+    #[test]
+    fn a_composite_head_takes_processors_too() {
+        use kooch_input::actions::{Composite, Processor, Role, VectorMode};
+
+        let mut r = resources();
+        edit_input_map(
+            &mut r,
+            &Edit::AddComposite {
+                action: 1,
+                composite: Composite::Vector2 {
+                    mode: VectorMode::Analog,
+                },
+            },
+        );
+        let head = BindingAddress {
+            action: 1,
+            binding: 0,
+        };
+        let deadzone = Processor::StickDeadzone { min: 0.2, max: 0.9 };
+        edit_input_map(
+            &mut r,
+            &Edit::AddProcessor {
+                to: b(head),
+                processor: deadzone,
+            },
+        );
+
+        let bindings = &r.get::<OpenInputMap>().unwrap().map.actions[1].bindings;
+        assert!(matches!(bindings[0].role, Role::CompositeHead(_)));
+        assert_eq!(bindings[0].processors, vec![deadzone]);
+        assert!(
+            bindings[1].processors.is_empty(),
+            "the processor landed on a part instead of the head"
+        );
+    }
+
+    /// 🔴 And the head's menu is filtered by what the **composite**
+    /// produces, not by the action's type — a 2D composite assembles a
+    /// vector even when it sits under an action typed as a button.
+    #[test]
+    fn a_stick_deadzone_is_offered_on_a_2d_composite() {
+        use kooch_input::actions::{Composite, ControlType, Processor, VectorMode};
+
+        let composite = Composite::Vector2 {
+            mode: VectorMode::Analog,
+        };
+        let deadzone = Processor::StickDeadzone { min: 0.1, max: 0.9 };
+        assert!(
+            deadzone.applies_to(composite.control_type()),
+            "the one processor a stick composite exists for is not offered on it"
+        );
+        assert!(
+            !deadzone.applies_to(ControlType::Button),
+            "filtering by the action's type would hide it under a button action"
+        );
+    }
+
+    /// A move off either end is refused rather than clamped: a no-move
+    /// that still marked the file unsaved would be a lie.
+    #[test]
+    fn a_processor_cannot_be_moved_off_the_list() {
+        use kooch_input::actions::Processor;
+
+        let mut r = resources();
+        edit_input_map(&mut r, &Edit::AddBinding { action: 0 });
+        let at = BindingAddress {
+            action: 0,
+            binding: 0,
+        };
+        edit_input_map(
+            &mut r,
+            &Edit::AddProcessor {
+                to: b(at),
+                processor: Processor::Invert,
+            },
+        );
+
+        for delta in [-1, 1] {
+            r.get_mut::<OpenInputMap>().unwrap().dirty = false;
+            edit_input_map(
+                &mut r,
+                &Edit::MoveProcessor {
+                    to: b(at),
+                    index: 0,
+                    delta,
+                },
+            );
+            assert!(
+                !r.get::<OpenInputMap>().unwrap().dirty,
+                "moving by {delta} off the end claimed a change"
+            );
+        }
+    }
+
+    /// 🔴 Order is meaning. The menu offers a list, and a list that
+    /// evaluated as a set would make reordering a cosmetic no-op — so
+    /// this asserts against the evaluator, not against the Vec.
+    #[test]
+    fn processor_order_changes_the_value() {
+        use kooch_input::actions::{
+            Action, Binding, ControlPath, ControlType, Processor, evaluate,
+        };
+        use kooch_input::ids::KeyCode;
+        use kooch_input::mock_backend::MockInputBackend;
+
+        // A key reads 1.0. Scaled to 4, then clamped to 2 → 2.
+        // Clamped to 2 first, then scaled → 4.
+        let scale = Processor::Scale { factor: 4.0 };
+        let clamp = Processor::Clamp {
+            min: -2.0,
+            max: 2.0,
+        };
+        let value = |order: [Processor; 2]| {
+            let mut binding = Binding::to(ControlPath::Key(KeyCode::Space));
+            binding.processors = order.to_vec();
+            let action = Action::new("a", ControlType::Axis).bind(binding);
+            let mut backend = MockInputBackend::new();
+            backend.press_key(KeyCode::Space);
+            evaluate(&action, &backend).axis()
+        };
+
+        assert_eq!(value([scale, clamp]), 2.0, "scale then clamp");
+        assert_eq!(value([clamp, scale]), 4.0, "clamp then scale");
+    }
+
+    /// A 2D processor on a button is skipped by `apply`, so the menu
+    /// must not offer one — the same trap the composite menu avoids.
+    #[test]
+    fn the_processor_menu_only_offers_what_applies() {
+        use kooch_input::actions::{ControlType as CT, Processor};
+
+        let offered = |t: CT| Processor::ALL.iter().filter(|p| p.applies_to(t)).count();
+        assert!(offered(CT::Button) > 0);
+        assert!(
+            offered(CT::Vector2) > offered(CT::Button),
+            "a 2D action must be offered more than a button, not the same list"
+        );
+        assert!(
+            !Processor::StickDeadzone { min: 0.1, max: 0.9 }.applies_to(CT::Button),
+            "a stick deadzone on a button shapes nothing"
+        );
+    }
+
+    /// Shorthand for "the processors of this binding".
+    fn b(at: BindingAddress) -> crate::panels::input_map::ProcessorTarget {
+        crate::panels::input_map::ProcessorTarget::Binding(at)
+    }
+
+    fn processors(r: &Resources, at: BindingAddress) -> Vec<kooch_input::actions::Processor> {
+        r.get::<OpenInputMap>().unwrap().map.actions[at.action].bindings[at.binding]
+            .processors
+            .clone()
+    }
+
+    /// 🔴 Deleting a composite deletes its parts.
+    ///
+    /// Reported from the panel: the head went and the parts stayed. They
+    /// are invisible once orphaned — `groups` skips a part with no head
+    /// above it — so they survived in the file and were read by nothing.
+    #[test]
+    fn removing_a_composite_takes_its_parts_with_it() {
+        use kooch_input::actions::{Composite, Role, VectorMode};
+
+        let mut r = resources();
+        // A plain binding after the composite, to prove the delete stops
+        // at the parts rather than eating whatever follows.
+        edit_input_map(
+            &mut r,
+            &Edit::AddComposite {
+                action: 1,
+                composite: Composite::Vector2 {
+                    mode: VectorMode::DigitalNormalized,
+                },
+            },
+        );
+        edit_input_map(&mut r, &Edit::AddBinding { action: 1 });
+        assert_eq!(
+            r.get::<OpenInputMap>().unwrap().map.actions[1]
+                .bindings
+                .len(),
+            6
+        );
+
+        edit_input_map(
+            &mut r,
+            &Edit::RemoveBinding(BindingAddress {
+                action: 1,
+                binding: 0,
+            }),
+        );
+
+        let bindings = &r.get::<OpenInputMap>().unwrap().map.actions[1].bindings;
+        assert_eq!(
+            bindings.len(),
+            1,
+            "the composite left {} rows behind: {bindings:#?}",
+            bindings.len() - 1
+        );
+        assert!(
+            matches!(bindings[0].role, Role::Whole(_)),
+            "the delete ate the plain binding that followed"
+        );
+    }
+
+    /// A single part can still be removed on its own — a composite with a
+    /// direction missing is a valid thing to author on the way to another.
+    #[test]
+    fn removing_one_part_leaves_the_composite() {
+        use kooch_input::actions::{Composite, Role, VectorMode};
+
+        let mut r = resources();
+        edit_input_map(
+            &mut r,
+            &Edit::AddComposite {
+                action: 1,
+                composite: Composite::Vector2 {
+                    mode: VectorMode::Analog,
+                },
+            },
+        );
+        edit_input_map(
+            &mut r,
+            &Edit::RemoveBinding(BindingAddress {
+                action: 1,
+                binding: 2,
+            }),
+        );
+
+        let bindings = &r.get::<OpenInputMap>().unwrap().map.actions[1].bindings;
+        assert_eq!(bindings.len(), 4, "removing a part took more than itself");
+        assert!(matches!(bindings[0].role, Role::CompositeHead(_)));
+    }
+
+    /// 🔴 A `.inputaction` opens, edits and saves as itself.
+    ///
+    /// It is held as a map of one so the panel needs no second code
+    /// path — Unity does the same internally for singleton actions — but
+    /// the file has to keep its shape. Saving a map where an action
+    /// belongs would produce a file nothing can load.
+    #[test]
+    fn a_standalone_action_round_trips_through_the_panel() {
+        use kooch_input::actions::{Composite, VectorMode};
+
+        let dir = std::env::temp_dir().join("kooch_single_action_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("Jump.inputaction");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("inputaction.meta"));
+
+        let action = kooch_input::actions::Action::new("jump", ControlType::Button);
+        kooch_input::actions::save_action(&action, &path).expect("write");
+
+        let mut r = Resources::new();
+        open_input_map(&mut r, &path);
+
+        {
+            let open = r.get::<OpenInputMap>().expect("the action did not open");
+            assert_eq!(
+                open.kind,
+                crate::state::OpenInputKind::SingleAction,
+                "a .inputaction opened as a map"
+            );
+            assert_eq!(open.map.actions.len(), 1, "wrapped in more than one");
+        }
+
+        // Edited through the same panel actions a map uses.
+        edit_input_map(
+            &mut r,
+            &Edit::AddComposite {
+                action: 0,
+                composite: Composite::Vector2 {
+                    mode: VectorMode::Analog,
+                },
+            },
+        );
+        handle_asset_op(&EditorAction::SaveInputMap, &mut r);
+
+        // And it is still one action on disk, not a map.
+        let text = std::fs::read_to_string(&path).expect("read back");
+        let reloaded: kooch_input::actions::Action =
+            ron::from_str(&text).expect("a .inputaction must still parse as an action");
+        assert_eq!(reloaded.name, "jump");
+        assert!(
+            !reloaded.bindings.is_empty(),
+            "the composite added in the panel did not reach the file"
+        );
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("inputaction.meta"));
+    }
+
+    /// A composite's parameters are editable, and only on its head.
+    #[test]
+    fn a_composites_mode_can_be_changed() {
+        use kooch_input::actions::{Composite, Role, VectorMode};
+
+        let mut r = resources();
+        let digital = Composite::Vector2 {
+            mode: VectorMode::DigitalNormalized,
+        };
+        let analog = Composite::Vector2 {
+            mode: VectorMode::Analog,
+        };
+        edit_input_map(
+            &mut r,
+            &Edit::AddComposite {
+                action: 1,
+                composite: digital,
+            },
+        );
+
+        let head = BindingAddress {
+            action: 1,
+            binding: 0,
+        };
+        edit_input_map(
+            &mut r,
+            &Edit::SetComposite {
+                at: head,
+                composite: analog,
+            },
+        );
+        let open = r.get::<OpenInputMap>().unwrap();
+        assert!(
+            matches!(&open.map.actions[1].bindings[0].role, Role::CompositeHead(c) if *c == analog)
+        );
+
+        // Aimed at a part it is a no-op, not a part turned into a head.
+        let part = BindingAddress {
+            action: 1,
+            binding: 1,
+        };
+        let before = r.get::<OpenInputMap>().unwrap().map.clone();
+        edit_input_map(
+            &mut r,
+            &Edit::SetComposite {
+                at: part,
+                composite: digital,
+            },
+        );
+        assert_eq!(r.get::<OpenInputMap>().unwrap().map, before);
+    }
+
+    /// 🔴 Only composites that fit the action are offered. A 2D composite
+    /// under a Button action reads as nothing, with no error to say why.
+    #[test]
+    fn a_composite_declares_the_type_it_produces() {
+        use kooch_input::actions::{Composite, ControlType as CT};
+
+        let fits = |t: CT| {
+            Composite::ALL
+                .iter()
+                .filter(|c| c.control_type() == t)
+                .count()
+        };
+        assert!(fits(CT::Vector2) >= 1, "nothing to offer a 2D action");
+        assert!(fits(CT::Vector3) >= 1, "nothing to offer a 3D action");
+        assert!(fits(CT::Axis) >= 1, "nothing to offer an axis action");
+        assert!(fits(CT::Button) >= 1, "nothing to offer a button action");
+    }
+
+    /// Selecting is not an edit: it must not mark the file unsaved.
+    #[test]
+    fn selecting_does_not_dirty_the_document() {
+        let mut r = resources();
+        edit_input_map(&mut r, &Edit::Select(Selection::Action(1)));
+        let open = r.get::<OpenInputMap>().unwrap();
+        assert_eq!(open.selected, Some(Selection::Action(1)));
+        assert!(!open.dirty, "selecting a row claimed an unsaved change");
+    }
+
+    /// A new action arrives selected, so the properties pane is already
+    /// showing the name field rather than leaving a row to hunt for.
+    #[test]
+    fn a_new_action_is_selected_on_arrival() {
+        let mut r = resources();
+        edit_input_map(&mut r, &Edit::AddAction);
+        let open = r.get::<OpenInputMap>().unwrap();
+        assert_eq!(open.selected, Some(Selection::Action(2)));
+    }
+
+    /// Setting the same value is not a change — otherwise clicking the
+    /// type an action already has would mark the file unsaved.
+    #[test]
+    fn a_no_op_edit_leaves_the_document_clean() {
+        let mut r = resources();
+        edit_input_map(
+            &mut r,
+            &Edit::SetControlType {
+                action: 0,
+                control_type: ControlType::Button,
+            },
+        );
+        assert!(!r.get::<OpenInputMap>().unwrap().dirty);
+
+        edit_input_map(
+            &mut r,
+            &Edit::SetControlType {
+                action: 0,
+                control_type: ControlType::Axis,
+            },
+        );
+        assert!(r.get::<OpenInputMap>().unwrap().dirty);
     }
 }
