@@ -143,6 +143,12 @@ fn announce_to_host(resources: &mut Resources, path: &Path) {
         resources.insert(PendingHostReloads::default());
     }
     if let Some(pending) = resources.get_mut::<PendingHostReloads>() {
+        // Telling the project twice about the same file in one frame costs
+        // a synchronous round trip and re-reads the same bytes. The list
+        // is short enough that scanning it beats keeping a set beside it.
+        if pending.0.iter().any(|queued| queued == path) {
+            return;
+        }
         pending.0.push(path.to_path_buf());
     }
 }

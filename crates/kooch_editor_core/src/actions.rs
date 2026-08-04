@@ -221,13 +221,22 @@ pub(crate) enum EditorAction {
     CancelLaunch,
     SetPowerProfile(PowerProfile),
     /// Replace a `Material` asset's contents (PBR scalars + texture
-    /// references) and persist it to its `.ron` on disk. Emitted by the
-    /// Asset Browser's material editor. Applied to `Assets<Material>` so
-    /// the render sync picks it up live. Not undoable — an asset-level
-    /// edit, distinct from the ECS field undo stack.
+    /// references). Emitted by the Asset Browser's material editor.
+    /// Applied to `Assets<Material>` so the render sync picks it up live.
+    /// Not undoable — an asset-level edit, distinct from the ECS field
+    /// undo stack.
+    ///
+    /// `commit` separates *what the user is seeing* from *what is worth
+    /// writing down*. A slider reports a change every frame it is
+    /// dragged: persisting each one wrote the file, read it back and made
+    /// a round trip to the project — 29 times for one drag, measured. In
+    /// between, the live copy is enough; the file is written when the
+    /// drag ends.
     EditMaterial {
         guid: kooch_core::Guid,
         material: kooch_render::material::Material,
+        /// `false` while a drag is still in flight — update memory only.
+        commit: bool,
     },
     /// Copy external files into a project folder and re-scan the asset
     /// database so they register as project assets. Emitted by the Asset

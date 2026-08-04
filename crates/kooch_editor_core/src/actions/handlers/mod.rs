@@ -113,8 +113,12 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::SetIdeCommand { command } => {
             handle_set_ide_command(resources, command.clone());
         }
-        EditorAction::EditMaterial { guid, material } => {
-            handle_edit_material(resources, *guid, material);
+        EditorAction::EditMaterial {
+            guid,
+            material,
+            commit,
+        } => {
+            handle_edit_material(resources, *guid, material, *commit);
         }
         EditorAction::ImportAssets { files, dest } => handle_import_assets(resources, files, dest),
         // ECS actions and Undo/Redo handled by caller.

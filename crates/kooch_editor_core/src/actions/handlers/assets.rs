@@ -2,6 +2,8 @@
 
 use kooch_core::Guid;
 use kooch_core::asset_database::AssetDatabase;
+use kooch_core::asset_loader::AssetServer;
+use kooch_core::assets::Assets;
 use kooch_core::resource::Resources;
 use kooch_render::material::Material;
 
@@ -45,18 +47,30 @@ pub(super) fn handle_import_assets(
     }
 }
 
-/// Applies a Material asset edit: writes the material back to its source
-/// `.ron`, then lets the save path put it everywhere it has to go.
+/// Applies a Material asset edit.
 ///
-/// The live update used to be done here by hand, resolving the guid and
-/// overwriting the slot. It worked in this window and nowhere else — the
-/// project runs in its own process with its own `Assets<Material>`, and
-/// nothing told it. Editing a material while connected changed the
-/// Inspector and left the running game rendering the old one.
+/// Two speeds, because a slider produces one of these per frame:
 ///
-/// Writing first and refreshing from disk keeps one direction of travel:
-/// the file is the material, and both processes read it the same way.
-pub(super) fn handle_edit_material(resources: &mut Resources, guid: Guid, material: &Material) {
+/// - **Not committed** — overwrite the local `Assets<Material>` and stop.
+///   The viewport follows the drag and nothing touches the disk.
+/// - **Committed** — write the `.ron`, then let [`asset_saved`] refresh
+///   from it and tell the project.
+///
+/// The live update used to be unconditional, and the write with it. That
+/// worked in this window and nowhere else: the project runs in its own
+/// process with its own `Assets<Material>` and nothing told it, so
+/// editing a material while connected changed the Inspector and left the
+/// running game rendering the old one. Committing writes first and
+/// refreshes from disk, which keeps one direction of travel — the file is
+/// the material, and both processes read it the same way.
+///
+/// [`asset_saved`]: crate::actions::handlers::asset_saved
+pub(super) fn handle_edit_material(
+    resources: &mut Resources,
+    guid: Guid,
+    material: &Material,
+    commit: bool,
+) {
     let Some(path) = resources
         .get::<AssetDatabase>()
         .and_then(|db| db.entry(guid).map(|e| e.path.clone()))
@@ -64,6 +78,12 @@ pub(super) fn handle_edit_material(resources: &mut Resources, guid: Guid, materi
         tracing::warn!(guid = %guid, "EditMaterial: no path in AssetDatabase; not persisted");
         return;
     };
+
+    if !commit {
+        preview_material(resources, guid, material);
+        return;
+    }
+
     let text = match ron::ser::to_string_pretty(material, ron::ser::PrettyConfig::default()) {
         Ok(text) => text,
         Err(e) => {
@@ -77,4 +97,20 @@ pub(super) fn handle_edit_material(resources: &mut Resources, guid: Guid, materi
     }
     crate::actions::handlers::asset_saved(resources, &path);
     tracing::info!(path = %path.display(), "material saved");
+}
+
+/// Shows an in-flight edit without recording it: overwrites the slot the
+/// render sync already reads, and touches neither the disk nor the wire.
+fn preview_material(resources: &mut Resources, guid: Guid, material: &Material) {
+    let Some(mut server) = resources.remove::<AssetServer>() else {
+        return;
+    };
+    let handle = server.load_by_guid::<Material>(guid, resources);
+    resources.insert(server);
+    if let Ok(handle) = handle
+        && let Some(assets) = resources.get_mut::<Assets<Material>>()
+        && let Some(slot) = assets.get_mut(handle)
+    {
+        *slot = material.clone();
+    }
 }
