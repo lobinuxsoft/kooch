@@ -1,26 +1,18 @@
 //! Input Map panel — where bindings are configured.
 //!
-//! # What it draws, and what it does not evaluate
+//! Shows the map and what the **running host** says each action is worth;
+//! it never resolves the map itself. Evaluating for display while the
+//! host evaluates for play would put one value in two code paths — the
+//! shape behind all five prefab bugs in #611. Hence an empty live column
+//! when nothing is playing.
 //!
-//! The panel shows the map and **what the running host says each action
-//! is worth**. It does not resolve the map itself.
-//!
-//! That distinction is the whole design. If the editor evaluated actions
-//! for display while the host evaluated them for play, the same value
-//! would exist in two places computed by two code paths — the single
-//! shape behind all five prefab bugs in #611. So the live column is
-//! empty when nothing is playing, and that is correct rather than a gap:
-//! "what is this action worth" has no meaning with no simulation.
-//!
-//! # Rebinding
-//!
-//! Click a binding, press an input, it is stored. The editor grew its own
-//! input backend in #711 (`bootstrap.rs`), registered *after* the egui
-//! layer so a key typed into a focused text field stops there — which is
-//! exactly what a "press any key" prompt must not steal.
+//! Rebinding reads the editor's own input backend (#711,
+//! `bootstrap.rs`), registered after the egui layer so a key typed into a
+//! focused field stops there.
 
 use kooch_input::actions::{
-    Action, ActionMap, Binding, ControlPath, ControlType, DeviceClass, PartName, Role,
+    Action, ActionMap, Binding, BothHeld, Composite, ControlPath, ControlType, DeviceClass,
+    PartName, Processor, Role, VectorMode,
 };
 
 use crate::icons;
@@ -44,47 +36,49 @@ pub(crate) struct InputMapView<'a> {
 /// What the host says an action is worth right now.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct LiveAction {
-    pub value: glam::Vec2,
+    pub value: glam::Vec3,
     pub pressed: bool,
 }
 
-/// What the properties pane is editing.
-///
-/// Unity splits this into four views — action, binding, composite,
-/// composite part — chosen by what is selected in the tree. One enum
-/// covers the same ground here because the panel is one column rather
-/// than three.
+/// What the properties pane is editing. Unity splits this into four
+/// views; one enum covers the same ground in a single column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Selection {
     Action(usize),
     Binding(BindingAddress),
 }
 
-/// Which binding a click was on — an action index and a binding index
-/// inside it.
-///
-/// Positional rather than an id, because a binding has no identity of its
-/// own and does not need one: the list is the data, and an edit is
-/// applied to the same list the click came from, in the same frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Which binding a click was on. Positional rather than an id: a binding
+/// has no identity of its own, and the edit is applied to the same list
+/// the click came from, in the same frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct BindingAddress {
     pub action: usize,
     pub binding: usize,
 }
 
-/// What the user did, for the caller to apply.
+/// Whose processor list an edit is aimed at.
 ///
-/// The panel returns intent rather than mutating the map: the map may
-/// live behind an asset handle, an undo stack, or a socket, and a panel
-/// that writes through all three is a panel that knows about all three.
+/// Both lists exist and run at different moments: a binding's shape the
+/// **device** (a stick's deadzone), an action's shape the **meaning**,
+/// once, on whichever binding won.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum ProcessorTarget {
+    Binding(BindingAddress),
+    Action(usize),
+}
+
+/// What the user did, for the caller to apply. Intent rather than
+/// mutation: the map may live behind an asset handle, an undo stack or a
+/// socket, and a panel that writes through all three knows all three.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum InputMapAction {
     /// Write the map back to its file.
     Save,
     /// Select an action or a binding — what the properties pane edits.
     Select(Selection),
-    /// Rename an action. The name is what gameplay resolves, so this is
-    /// the single most consequential edit in the panel.
+    /// Rename an action — the name is what gameplay resolves, so this
+    /// is the most consequential edit here.
     RenameAction {
         action: usize,
         name: String,
@@ -107,6 +101,39 @@ pub(crate) enum InputMapAction {
     AddBinding {
         action: usize,
     },
+    /// Add a composite and one unbound part per name it declares.
+    AddComposite {
+        action: usize,
+        composite: Composite,
+    },
+    /// Change a composite's parameters — its mode, or which side wins.
+    SetComposite {
+        at: BindingAddress,
+        composite: Composite,
+    },
+    AddProcessor {
+        to: ProcessorTarget,
+        processor: Processor,
+    },
+    /// Replace one in place — how its parameters are edited.
+    SetProcessor {
+        to: ProcessorTarget,
+        index: usize,
+        processor: Processor,
+    },
+    RemoveProcessor {
+        to: ProcessorTarget,
+        index: usize,
+    },
+    /// Move one up (`-1`) or down (`+1`).
+    ///
+    /// Order is meaning, not presentation: a deadzone after a scale cuts
+    /// a different amount than one before it.
+    MoveProcessor {
+        to: ProcessorTarget,
+        index: usize,
+        delta: i32,
+    },
     AddAction,
     RemoveAction {
         action: usize,
@@ -126,15 +153,15 @@ pub(crate) fn draw_input_map_content(
         return actions;
     };
 
-    ui.horizontal(|ui| {
+    // Wrapped so `Save` stays reachable in a narrow tab: edits live in
+    // memory until it is pressed.
+    ui.horizontal_wrapped(|ui| {
         ui.label(format!("{} {}", icons::GAME_CONTROLLER, map.name));
         ui.weak(format!("priority {}", map.priority));
         if ui.button(format!("{} Action", icons::PLUS)).clicked() {
             actions.push(InputMapAction::AddAction);
         }
-        // Edits live in memory until this is pressed, the same contract a
-        // prefab has. The marker is what makes that visible rather than
-        // something you find out by closing the tab.
+        // Same contract a prefab has; the marker makes it visible.
         if ui
             .add_enabled(view.dirty, egui::Button::new("Save"))
             .on_hover_text("Write these bindings back to the file")
@@ -151,25 +178,78 @@ pub(crate) fn draw_input_map_content(
     }
     ui.separator();
 
-    // The tree, then what is selected in it. Unity puts the properties
-    // in a third column; one panel is narrower than a Unity window, so
-    // they go underneath — same relationship, less horizontal room.
-    let properties_height = 190.0;
-    let tree_height = (ui.available_height() - properties_height).max(80.0);
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, true])
-        .max_height(tree_height)
-        .id_salt("input_map_actions")
+    // Unity's third column. A column rather than a strip along the
+    // bottom: the strip's fixed height came off the tree whether or not
+    // anything was selected, and the tree is the part that grows.
+    //
+    // Before the central panel, because egui allocates edges first —
+    // reversed, the side panel gets only what the tree declined.
+    let (default_width, width_range) = properties_column(ui.available_width());
+    // `Panel::right` rather than `SidePanel`: egui 0.35 folded the four
+    // side/top/bottom builders into one `Panel`, so the old name does not
+    // resolve and `default_width`/`width_range` are now size-agnostic.
+    egui::Panel::right("input_map_properties")
+        .resizable(true)
+        .default_size(default_width)
+        .size_range(width_range)
         .show(ui, |ui| {
-            for (index, action) in map.actions.iter().enumerate() {
-                draw_action(ui, index, action, &view, &mut actions);
-            }
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .id_salt("input_map_properties")
+                .show(ui, |ui| {
+                    draw_properties(ui, map, &view, &mut actions);
+                });
         });
 
-    ui.separator();
-    draw_properties(ui, map, &view, &mut actions);
+    egui::CentralPanel::default().show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .id_salt("input_map_actions")
+            .show(ui, |ui| {
+                for (index, action) in map.actions.iter().enumerate() {
+                    draw_action(ui, index, action, &view, &mut actions);
+                }
+            });
+    });
 
     actions
+}
+
+/// Starting width of the properties column and the range a drag may take
+/// it to, for a tab of `tab_width`.
+///
+/// Fractions, never pixels: a 190px floor on a 260px tab left the tree
+/// 70px and pushed the properties off the right edge. A fixed minimum
+/// does not stop the window shrinking under it, it just stops fitting.
+/// The ceiling is half the tab, so the properties never outgrow the tree.
+fn properties_column(tab_width: f32) -> (f32, std::ops::RangeInclusive<f32>) {
+    (tab_width * 0.34, (tab_width * 0.25)..=(tab_width * 0.5))
+}
+
+/// A labelled control: side by side when there is room, stacked when
+/// there is not. `add` receives the width to take.
+///
+/// Squeezing a field into what is left of a narrow line is what clipped
+/// `Binding — left` to `g — left`. The threshold comes off the font, so
+/// it follows editor zoom.
+fn labeled_control<R>(
+    ui: &mut egui::Ui,
+    label: &str,
+    add: impl FnOnce(&mut egui::Ui, f32) -> R,
+) -> R {
+    let side_by_side = ui.text_style_height(&egui::TextStyle::Body) * 12.0;
+    if ui.available_width() >= side_by_side {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            let room = (ui.available_width() - ui.spacing().item_spacing.x).max(1.0);
+            add(ui, room)
+        })
+        .inner
+    } else {
+        ui.label(label);
+        let room = ui.available_width().max(1.0);
+        add(ui, room)
+    }
 }
 
 /// Edits whatever is selected. Empty when nothing is.
@@ -190,25 +270,21 @@ fn draw_properties(
                 return;
             };
             ui.label("Action");
-            ui.horizontal(|ui| {
-                ui.label("Name");
-                // Kept in egui's memory while being typed and committed
-                // on the way out: an edit per keystroke would push a
-                // rename through the document — and through `resolve` —
-                // for every intermediate spelling.
+            labeled_control(ui, "Name", |ui, room| {
+                // Held in egui's memory while typing: an edit per
+                // keystroke pushes every spelling through `resolve`.
                 let id = ui.make_persistent_id(("input_action_name", index));
                 let mut name = ui
                     .data(|d| d.get_temp::<String>(id))
                     .unwrap_or_else(|| action.name.clone());
-                let response = ui.text_edit_singleline(&mut name);
+                let response = ui.add(egui::TextEdit::singleline(&mut name).desired_width(room));
                 if response.changed() {
                     ui.data_mut(|d| d.insert_temp(id, name.clone()));
                 }
                 if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     let trimmed = name.trim();
-                    // An empty name resolves to nothing, and a duplicate
-                    // makes `resolve` a coin toss. Refusing here is
-                    // cheaper than a control that silently stops working.
+                    // Empty resolves to nothing, a duplicate makes
+                    // `resolve` a coin toss.
                     let taken = map
                         .actions
                         .iter()
@@ -223,9 +299,14 @@ fn draw_properties(
                     ui.data_mut(|d| d.remove::<String>(id));
                 }
             });
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label("Type");
-                for control_type in [ControlType::Button, ControlType::Axis, ControlType::Vector2] {
+                for control_type in [
+                    ControlType::Button,
+                    ControlType::Axis,
+                    ControlType::Vector2,
+                    ControlType::Vector3,
+                ] {
                     if ui
                         .selectable_label(
                             action.control_type == control_type,
@@ -241,6 +322,16 @@ fn draw_properties(
                     }
                 }
             });
+            ui.separator();
+            // Run once on whichever binding won, so a sensitivity or a
+            // normalize is written here instead of on each binding.
+            draw_processors(
+                ui,
+                ProcessorTarget::Action(index),
+                &action.processors,
+                action.control_type,
+                out,
+            );
         }
         Selection::Binding(at) => {
             let Some(binding) = map
@@ -252,9 +343,23 @@ fn draw_properties(
             };
             match &binding.role {
                 Role::CompositeHead(composite) => {
-                    ui.label("Composite");
-                    ui.weak(format!("{composite:?}"));
+                    ui.label(format!("{} Composite", composite.label()));
+                    draw_composite_parameters(ui, at, *composite, out);
                     ui.weak("Its parts are the rows underneath.");
+                    ui.separator();
+                    // A head carries processors like any other binding —
+                    // `read_action` applies them to the composite's
+                    // assembled value, which is the only place a stick
+                    // deadzone belongs: on the vector, not on each axis.
+                    // Filtered by what the composite produces rather than
+                    // by the action's type, since that is what arrives.
+                    draw_processors(
+                        ui,
+                        ProcessorTarget::Binding(at),
+                        &binding.processors,
+                        composite.control_type(),
+                        out,
+                    );
                 }
                 Role::Whole(path) | Role::Part { path, .. } => {
                     ui.label(match binding.role {
@@ -262,26 +367,245 @@ fn draw_properties(
                         _ => "Binding".to_owned(),
                     });
                     draw_control_picker(ui, at, *path, out);
+                    ui.separator();
+                    draw_processors(
+                        ui,
+                        ProcessorTarget::Binding(at),
+                        &binding.processors,
+                        map.actions[at.action].control_type,
+                        out,
+                    );
                 }
             }
         }
     }
 }
 
+/// The binding's processors, in the order they run.
+///
+/// Order is meaning: a deadzone before a scale cuts the raw value, after
+/// it cuts the scaled one. So they are a list you can reorder, not a set.
+fn draw_processors(
+    ui: &mut egui::Ui,
+    to: ProcessorTarget,
+    processors: &[Processor],
+    control_type: ControlType,
+    out: &mut Vec<InputMapAction>,
+) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Processors");
+        ui.menu_button(icons::PLUS, |ui| {
+            // Filtered like the composite menu: a 2D processor on a
+            // button is skipped by `apply`, so offering one is offering
+            // a row that shapes nothing.
+            for processor in Processor::ALL.iter().copied() {
+                if !processor.applies_to(control_type) {
+                    continue;
+                }
+                if ui.button(processor.label()).clicked() {
+                    out.push(InputMapAction::AddProcessor { to, processor });
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_hover_text("Shape the value between the control and the action");
+    });
+
+    if processors.is_empty() {
+        ui.weak("None — the control's value passes through.");
+        return;
+    }
+
+    let last = processors.len() - 1;
+    for (index, processor) in processors.iter().enumerate() {
+        ui.push_id(("processor", to, index), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(processor.label());
+                // Disabled at the ends rather than hidden, so the row
+                // does not change width as it moves.
+                if ui
+                    .add_enabled(index > 0, egui::Button::new("↑").small())
+                    .clicked()
+                {
+                    out.push(InputMapAction::MoveProcessor {
+                        to,
+                        index,
+                        delta: -1,
+                    });
+                }
+                if ui
+                    .add_enabled(index < last, egui::Button::new("↓").small())
+                    .clicked()
+                {
+                    out.push(InputMapAction::MoveProcessor {
+                        to,
+                        index,
+                        delta: 1,
+                    });
+                }
+                if ui.small_button(icons::TRASH).clicked() {
+                    out.push(InputMapAction::RemoveProcessor { to, index });
+                }
+            });
+            if let Some(edited) = draw_processor_parameters(ui, *processor) {
+                out.push(InputMapAction::SetProcessor {
+                    to,
+                    index,
+                    processor: edited,
+                });
+            }
+        });
+    }
+}
+
+/// The knobs one processor has. `None` when nothing was changed.
+fn draw_processor_parameters(ui: &mut egui::Ui, processor: Processor) -> Option<Processor> {
+    let mut edited = processor;
+    let changed = match &mut edited {
+        Processor::AxisDeadzone { min, max } | Processor::StickDeadzone { min, max } => {
+            drag(ui, "min", min, 0.0..=1.0) | drag(ui, "max", max, 0.0..=1.0)
+        }
+        Processor::Clamp { min, max } => {
+            drag(ui, "min", min, -10.0..=10.0) | drag(ui, "max", max, -10.0..=10.0)
+        }
+        Processor::Normalize { min, max, zero } => {
+            drag(ui, "min", min, -10.0..=10.0)
+                | drag(ui, "max", max, -10.0..=10.0)
+                | drag(ui, "zero", zero, -10.0..=10.0)
+        }
+        Processor::Scale { factor } => drag(ui, "factor", factor, -10.0..=10.0),
+        Processor::ScaleVector2 { x, y } => {
+            drag(ui, "x", x, -10.0..=10.0) | drag(ui, "y", y, -10.0..=10.0)
+        }
+        Processor::InvertVector2 { x, y } => {
+            let mut changed = false;
+            ui.horizontal_wrapped(|ui| {
+                changed |= ui.checkbox(x, "x").changed();
+                changed |= ui.checkbox(y, "y").changed();
+            });
+            changed
+        }
+        Processor::Invert | Processor::NormalizeVector2 => false,
+    };
+    changed.then_some(edited)
+}
+
+/// A labelled number. Dragged rather than typed, since every one of these
+/// is a feel setting found by moving it and watching.
+fn drag(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+) -> bool {
+    labeled_control(ui, label, |ui, room| {
+        ui.add_sized(
+            [room, ui.spacing().interact_size.y],
+            egui::DragValue::new(value).speed(0.01).range(range),
+        )
+        .changed()
+    })
+}
+
+/// Edits whatever knobs a composite has. Modifier composites have none.
+fn draw_composite_parameters(
+    ui: &mut egui::Ui,
+    at: BindingAddress,
+    composite: Composite,
+    out: &mut Vec<InputMapAction>,
+) {
+    match composite {
+        Composite::Vector2 { mode } | Composite::Vector3 { mode } => {
+            // The one setting people get wrong: buttons need capping or a
+            // diagonal outruns a straight line, and a stick must not be
+            // capped or it loses how far it is pushed.
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Mode");
+                for option in [
+                    VectorMode::DigitalNormalized,
+                    VectorMode::Digital,
+                    VectorMode::Analog,
+                ] {
+                    if ui
+                        .selectable_label(mode == option, vector_mode_label(option))
+                        .on_hover_text(vector_mode_hint(option))
+                        .clicked()
+                        && mode != option
+                    {
+                        out.push(InputMapAction::SetComposite {
+                            at,
+                            composite: match composite {
+                                Composite::Vector3 { .. } => Composite::Vector3 { mode: option },
+                                _ => Composite::Vector2 { mode: option },
+                            },
+                        });
+                    }
+                }
+            });
+        }
+        Composite::Axis1D { both_held } => {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Both held");
+                for option in [BothHeld::Neither, BothHeld::Positive, BothHeld::Negative] {
+                    if ui
+                        .selectable_label(both_held == option, both_held_label(option))
+                        .clicked()
+                        && both_held != option
+                    {
+                        out.push(InputMapAction::SetComposite {
+                            at,
+                            composite: Composite::Axis1D { both_held: option },
+                        });
+                    }
+                }
+            });
+        }
+        Composite::OneModifier | Composite::TwoModifiers => {
+            ui.weak("Fires only while its modifiers are held.");
+        }
+    }
+}
+
+fn vector_mode_label(mode: VectorMode) -> &'static str {
+    match mode {
+        VectorMode::DigitalNormalized => "digital normalized",
+        VectorMode::Digital => "digital",
+        VectorMode::Analog => "analog",
+    }
+}
+
+fn vector_mode_hint(mode: VectorMode) -> &'static str {
+    match mode {
+        VectorMode::DigitalNormalized => "Buttons, capped at length 1. What WASD needs",
+        VectorMode::Digital => "Buttons, uncapped — a diagonal is longer",
+        VectorMode::Analog => "Sticks, passed through as pushed",
+    }
+}
+
+fn both_held_label(both: BothHeld) -> &'static str {
+    match both {
+        BothHeld::Neither => "cancel",
+        BothHeld::Positive => "positive",
+        BothHeld::Negative => "negative",
+    }
+}
+
 /// Picks the control a binding reads.
 ///
-/// Two dropdowns rather than Unity's control-path tree. Theirs has to
-/// parse `<Gamepad>/buttonSouth` out of a string and offer wildcards and
-/// usage tags; ours is a closed enum, so the device narrows the list and
-/// the list is exhaustive by construction — `ALL` comes from the same
-/// macro expansion as the variants.
+/// Two dropdowns rather than Unity's control-path tree: ours is a closed
+/// enum, so the device narrows the list and `ALL` makes it exhaustive by
+/// construction. Theirs has to parse `<Gamepad>/buttonSouth` out of a
+/// string and offer wildcards on top.
 fn draw_control_picker(
     ui: &mut egui::Ui,
     at: BindingAddress,
     current: ControlPath,
     out: &mut Vec<InputMapAction>,
 ) {
-    ui.horizontal(|ui| {
+    // Wrapped: three device names plus a label do not fit a narrow
+    // column, and `horizontal` runs them off the edge.
+    ui.horizontal_wrapped(|ui| {
         ui.label("Device");
         for device in [
             DeviceClass::Keyboard,
@@ -293,9 +617,8 @@ fn draw_control_picker(
                 .clicked()
                 && current.device() != device
             {
-                // Switching device rebinds to that device's first
-                // control. Leaving it unbound would be a binding that
-                // reads nothing, which looks identical to a broken one.
+                // First control of that device: unbound reads nothing
+                // and looks broken.
                 if let Some(path) = first_control(device) {
                     out.push(InputMapAction::Rebind { at, path });
                 }
@@ -303,9 +626,9 @@ fn draw_control_picker(
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Control");
+    labeled_control(ui, "Control", |ui, room| {
         egui::ComboBox::from_id_salt(("control_picker", at.action, at.binding))
+            .width(room)
             .selected_text(control_label(current))
             .show_ui(ui, |ui| {
                 for path in controls_of(current.device()) {
@@ -370,7 +693,7 @@ fn draw_action(
 ) {
     let live = view.live.get(index).copied();
     let id = ui.make_persistent_id(("input_action", index));
-    let mut state =
+    let state =
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, index == 0);
 
     state
@@ -418,13 +741,14 @@ fn draw_action(
                     out,
                 );
             }
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui
                     .small_button(format!("{} Binding", icons::PLUS))
                     .clicked()
                 {
                     out.push(InputMapAction::AddBinding { action: index });
                 }
+                draw_add_composite_menu(ui, index, action.control_type, out);
                 if ui
                     .small_button(format!("{} Action", icons::TRASH))
                     .clicked()
@@ -433,6 +757,43 @@ fn draw_action(
                 }
             });
         });
+}
+
+/// The "+ Composite" menu, listing what fits `control_type`.
+///
+/// Filtered the way Unity filters its own, and for the same reason: a 2D
+/// composite under a Button action is a binding that reads as nothing,
+/// with no error to say why. Offering it is offering a trap.
+///
+/// Everything is offered when nothing fits, rather than an empty menu —
+/// a menu that opens onto nothing reads as broken, and the type is one
+/// click away in the properties pane.
+fn draw_add_composite_menu(
+    ui: &mut egui::Ui,
+    action: usize,
+    control_type: ControlType,
+    out: &mut Vec<InputMapAction>,
+) {
+    ui.menu_button(format!("{} Composite", icons::PLUS), |ui| {
+        let fits: Vec<Composite> = Composite::ALL
+            .iter()
+            .copied()
+            .filter(|c| c.control_type() == control_type)
+            .collect();
+        let offered = if fits.is_empty() {
+            Composite::ALL.to_vec()
+        } else {
+            fits
+        };
+        for composite in offered {
+            if ui.button(composite.label()).clicked() {
+                out.push(InputMapAction::AddComposite { action, composite });
+                ui.close();
+            }
+        }
+    })
+    .response
+    .on_hover_text("Several controls read as one value — WASD, or Ctrl+S");
 }
 
 fn draw_binding(
@@ -458,10 +819,8 @@ fn draw_binding(
         let response = SelectableRow::new(label)
             .selected(selected || awaiting)
             .show(ui);
-        // A click selects; the properties pane below is where it is
-        // edited. Unity does the same, and the reason is that a click
-        // that immediately started listening for a key would make it
-        // impossible to look at a binding without arming it.
+        // A click selects; the pane edits. Listening immediately would
+        // make it impossible to look at a binding without arming it.
         if response.clicked() {
             out.push(InputMapAction::Select(Selection::Binding(at)));
         }
@@ -474,10 +833,15 @@ fn draw_binding(
     });
 
     if !binding.processors.is_empty() {
-        ui.horizontal(|ui| {
+        // The one row drawn without `SelectableRow`, so the one that
+        // did not inherit its truncation.
+        ui.horizontal_wrapped(|ui| {
             ui.add_space(24.0);
             for processor in &binding.processors {
-                ui.weak(format!("{processor:?}"));
+                ui.add(
+                    egui::Label::new(egui::RichText::new(format!("{processor:?}")).weak())
+                        .truncate(),
+                );
             }
         });
     }
@@ -507,6 +871,11 @@ fn part_label(name: PartName) -> &'static str {
         PartName::Down => "down",
         PartName::Left => "left",
         PartName::Right => "right",
+        PartName::Forward => "forward",
+        PartName::Backward => "backward",
+        PartName::Modifier => "modifier",
+        PartName::Modifier2 => "modifier 2",
+        PartName::Value => "value",
     }
 }
 
@@ -515,6 +884,7 @@ fn control_type_label(control_type: ControlType) -> &'static str {
         ControlType::Button => "button",
         ControlType::Axis => "axis",
         ControlType::Vector2 => "vector2",
+        ControlType::Vector3 => "vector3",
     }
 }
 
@@ -522,30 +892,33 @@ fn control_type_icon(control_type: ControlType) -> &'static str {
     match control_type {
         ControlType::Button => icons::CUBE,
         ControlType::Axis => icons::SLIDERS,
-        ControlType::Vector2 => icons::ARROWS_CLOCKWISE,
+        ControlType::Vector2 | ControlType::Vector3 => icons::ARROWS_CLOCKWISE,
     }
 }
 
 /// Formats a live value the way the action's type reads it.
-fn format_value(control_type: ControlType, value: glam::Vec2) -> String {
+fn format_value(control_type: ControlType, value: glam::Vec3) -> String {
     match control_type {
         ControlType::Button => format!("{:.0}", value.x),
         ControlType::Axis => format!("{:+.2}", value.x),
         ControlType::Vector2 => format!("{:+.2}, {:+.2}", value.x, value.y),
+        ControlType::Vector3 => {
+            format!("{:+.2}, {:+.2}, {:+.2}", value.x, value.y, value.z)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kooch_input::actions::{Composite, Vector2Mode};
+    use kooch_input::actions::{Composite, VectorMode};
     use kooch_input::ids::{GamepadButton, KeyCode};
 
     fn map() -> ActionMap {
         ActionMap::new("gameplay")
             .add(Action::new("move", ControlType::Vector2).bind_all([
                 Binding::composite(Composite::Vector2 {
-                    mode: Vector2Mode::DigitalNormalized,
+                    mode: VectorMode::DigitalNormalized,
                 }),
                 Binding::part(PartName::Up, ControlPath::Key(KeyCode::KeyW)),
             ]))
@@ -557,13 +930,15 @@ mod tests {
     }
 
     fn with_ui<R>(body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+        with_ui_sized(egui::vec2(500.0, 700.0), body)
+    }
+
+    /// Draws at an exact size, for tests that care about width.
+    fn with_ui_sized<R>(size: egui::Vec2, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
         let ctx = egui::Context::default();
         let mut body = Some(body);
         let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(500.0, 700.0),
-            )),
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
             ..Default::default()
         };
         let mut out = None;
@@ -572,6 +947,98 @@ mod tests {
             egui::CentralPanel::default().show(ui, |ui| out = Some(body(ui)));
         });
         out.expect("central panel did not run")
+    }
+
+    /// Draws the arrangement the editor shows — nested panels, a
+    /// `ComboBox` in the narrow one. The empty case returns before
+    /// reaching any of it, so it proves nothing about the layout.
+    #[test]
+    fn it_draws_the_tree_and_the_properties_column_together() {
+        let map = map();
+        for selected in [
+            Selection::Action(0),
+            Selection::Binding(BindingAddress {
+                action: 1,
+                binding: 0,
+            }),
+        ] {
+            // Including widths too narrow for the device buttons on
+            // one line, which is what the wrapped layouts are for.
+            for width in [1600.0, 500.0, 260.0, 160.0] {
+                with_ui_sized(egui::vec2(width, 480.0), |ui| {
+                    draw_input_map_content(
+                        ui,
+                        InputMapView {
+                            map: Some(&map),
+                            live: &[],
+                            awaiting: None,
+                            dirty: true,
+                            selected: Some(selected),
+                        },
+                    )
+                });
+            }
+        }
+    }
+
+    /// 🔴 A labelled control never asks for more room than it has.
+    ///
+    /// The reported clipping: a `.max(60.0)` floor on the remaining
+    /// width overflowed the row, drawing `Binding — left` as `g — left`.
+    /// Same mistake as a fixed panel width, one widget down.
+    #[test]
+    fn a_labelled_control_never_exceeds_the_room_it_has() {
+        for width in [600.0, 300.0, 160.0, 90.0, 40.0] {
+            let (available, room) = with_ui_sized(egui::vec2(width, 200.0), |ui| {
+                let available = ui.available_width();
+                let mut room = f32::NAN;
+                labeled_control(ui, "Control", |_, r| room = r);
+                (available, room)
+            });
+            assert!(
+                room <= available + 0.5,
+                "at {width}px the control asked for {room} of {available} available",
+            );
+            assert!(room > 0.0, "at {width}px the control got no room at all");
+        }
+    }
+
+    /// 🔴 Narrow the tab and the properties narrow with it.
+    ///
+    /// `size_range(190.0..=420.0)` in pixels meant that on a 260px tab
+    /// the floor alone exceeded half of it: the tree got 70px and the
+    /// properties drew past the right edge. Asserted against the tab's
+    /// own width, which is what fails for pixels at every narrow size.
+    #[test]
+    fn the_properties_column_is_a_fraction_of_the_tab() {
+        for tab in [3840.0, 1600.0, 900.0, 500.0, 320.0, 240.0, 120.0] {
+            let (default_width, range) = properties_column(tab);
+            assert!(
+                *range.end() <= tab * 0.5 + f32::EPSILON,
+                "at {tab}px the column may grow to {}, more than half the tab",
+                range.end(),
+            );
+            assert!(
+                range.contains(&default_width),
+                "at {tab}px the starting width {default_width} is outside {range:?}",
+            );
+            assert!(
+                *range.start() > 0.0 && *range.start() < *range.end(),
+                "at {tab}px the range is degenerate: {range:?}",
+            );
+        }
+    }
+
+    /// The old constants, as the thing this must not become again.
+    #[test]
+    fn a_pixel_floor_would_swallow_a_narrow_tab() {
+        let narrow = 260.0_f32;
+        assert!(
+            190.0 > narrow * 0.5,
+            "the regression this guards is only meaningful if a 190px \
+             floor really does exceed half of a {narrow}px tab",
+        );
+        assert!(*properties_column(narrow).1.start() < narrow * 0.5);
     }
 
     /// With no map, the panel says how to make one rather than drawing an
@@ -593,8 +1060,7 @@ mod tests {
         assert!(actions.is_empty());
     }
 
-    /// Drawing must not depend on the game running — editing bindings is
-    /// the half that works with nothing playing.
+    /// Editing bindings is the half that works with nothing playing.
     #[test]
     fn it_draws_with_no_live_values() {
         let map = map();
@@ -618,7 +1084,7 @@ mod tests {
     fn fewer_live_values_than_actions_is_not_fatal() {
         let map = map();
         let live = [LiveAction {
-            value: glam::Vec2::new(1.0, 0.0),
+            value: glam::Vec3::new(1.0, 0.0, 0.0),
             pressed: true,
         }];
         with_ui(|ui| {
@@ -640,10 +1106,15 @@ mod tests {
     /// second number means.
     #[test]
     fn a_value_is_formatted_as_its_control_type() {
-        let v = glam::Vec2::new(1.0, 0.0);
+        let v = glam::Vec3::new(1.0, 0.0, -0.5);
         assert_eq!(format_value(ControlType::Button, v), "1");
         assert_eq!(format_value(ControlType::Axis, v), "+1.00");
         assert_eq!(format_value(ControlType::Vector2, v), "+1.00, +0.00");
+        assert_eq!(
+            format_value(ControlType::Vector3, v),
+            "+1.00, +0.00, -0.50",
+            "a 3D action must show the component only it has"
+        );
     }
 
     /// A control has to name its device, or `South` and `S` look alike in

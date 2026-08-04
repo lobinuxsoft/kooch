@@ -648,7 +648,7 @@ mod duplicate_tests {
 fn starter_input_map(name: &str) -> kooch_input::actions::ActionMap {
     use kooch_input::actions::{
         Action, ActionMap, Binding, Composite, ControlPath, ControlType, DEFAULT_DEADZONE_MAX,
-        DEFAULT_DEADZONE_MIN, PartName, Processor, Vector2Mode,
+        DEFAULT_DEADZONE_MIN, PartName, Processor, VectorMode,
     };
     use kooch_input::ids::{GamepadAxis, GamepadButton, KeyCode};
 
@@ -657,7 +657,7 @@ fn starter_input_map(name: &str) -> kooch_input::actions::ActionMap {
             Action::new("move", ControlType::Vector2)
                 .bind_all([
                     Binding::composite(Composite::Vector2 {
-                        mode: Vector2Mode::DigitalNormalized,
+                        mode: VectorMode::DigitalNormalized,
                     }),
                     Binding::part(PartName::Up, ControlPath::Key(KeyCode::KeyW)),
                     Binding::part(PartName::Down, ControlPath::Key(KeyCode::KeyS)),
@@ -668,7 +668,7 @@ fn starter_input_map(name: &str) -> kooch_input::actions::ActionMap {
                     // Radial, not per-axis: a per-axis deadzone leaves a
                     // square hole a diagonal push slips through.
                     Binding::composite(Composite::Vector2 {
-                        mode: Vector2Mode::Analog,
+                        mode: VectorMode::Analog,
                     })
                     .with(Processor::StickDeadzone {
                         min: DEFAULT_DEADZONE_MIN,
@@ -722,6 +722,22 @@ fn open_input_map(resources: &mut Resources, path: &std::path::Path) {
             error = %e,
             "input map could not be parsed",
         ),
+    }
+}
+
+/// The processor list a target points at, if it points at one.
+fn processors_of(
+    map: &mut kooch_input::actions::ActionMap,
+    to: crate::panels::input_map::ProcessorTarget,
+) -> Option<&mut Vec<kooch_input::actions::Processor>> {
+    use crate::panels::input_map::ProcessorTarget;
+    match to {
+        ProcessorTarget::Action(index) => map.actions.get_mut(index).map(|a| &mut a.processors),
+        ProcessorTarget::Binding(at) => map
+            .actions
+            .get_mut(at.action)
+            .and_then(|action| action.bindings.get_mut(at.binding))
+            .map(|binding| &mut binding.processors),
     }
 }
 
@@ -793,9 +809,95 @@ fn edit_input_map(resources: &mut Resources, edit: &crate::panels::input_map::In
             }
             None => false,
         },
+        // The head plus one unbound part per name it declares. Adding a
+        // bare head would put a composite in the list that reads as
+        // nothing and gives no clue which parts are missing.
+        Edit::AddComposite { action, composite } => match map.actions.get_mut(*action) {
+            Some(target) => {
+                use kooch_input::actions::PartName;
+                target.bindings.push(Binding::composite(*composite));
+                let head = target.bindings.len() - 1;
+                for name in PartName::of(*composite) {
+                    target
+                        .bindings
+                        .push(Binding::part(*name, ControlPath::Key(KeyCode::Space)));
+                }
+                // Selected so its Mode lands in the properties pane —
+                // the setting that decides whether a diagonal outruns a
+                // straight line, and the one nobody goes looking for.
+                open.selected = Some(crate::panels::input_map::Selection::Binding(
+                    crate::panels::input_map::BindingAddress {
+                        action: *action,
+                        binding: head,
+                    },
+                ));
+                true
+            }
+            None => false,
+        },
+        Edit::SetComposite { at, composite } => match map
+            .actions
+            .get_mut(at.action)
+            .and_then(|target| target.bindings.get_mut(at.binding))
+        {
+            // Only a head has parameters; aimed at a part this is a
+            // no-op rather than a binding turned into something else.
+            Some(binding) => match &mut binding.role {
+                Role::CompositeHead(current) if current != composite => {
+                    *current = *composite;
+                    true
+                }
+                _ => false,
+            },
+            None => false,
+        },
+        Edit::AddProcessor { to, processor } => match processors_of(map, *to) {
+            // Appended, so a new one runs last. Prepending would silently
+            // change what every existing processor sees.
+            Some(list) => {
+                list.push(*processor);
+                true
+            }
+            None => false,
+        },
+        Edit::SetProcessor {
+            to,
+            index,
+            processor,
+        } => match processors_of(map, *to).and_then(|list| list.get_mut(*index)) {
+            Some(current) if current != processor => {
+                *current = *processor;
+                true
+            }
+            _ => false,
+        },
+        Edit::RemoveProcessor { to, index } => match processors_of(map, *to) {
+            Some(list) if *index < list.len() => {
+                list.remove(*index);
+                true
+            }
+            _ => false,
+        },
+        Edit::MoveProcessor { to, index, delta } => match processors_of(map, *to) {
+            Some(list) => {
+                let target = *index as i32 + delta;
+                // Refused rather than saturated: a move off the end that
+                // silently stayed put would still mark the file unsaved.
+                if target < 0 || target as usize >= list.len() {
+                    false
+                } else {
+                    list.swap(*index, target as usize);
+                    true
+                }
+            }
+            None => false,
+        },
+        // A composite head takes its parts with it. Left behind they are
+        // rows `groups` skips — saved to the file, read by nothing.
         Edit::RemoveBinding(at) => match map.actions.get_mut(at.action) {
             Some(target) if at.binding < target.bindings.len() => {
-                target.bindings.remove(at.binding);
+                let range = kooch_input::actions::group_range(&target.bindings, at.binding);
+                target.bindings.drain(range);
                 true
             }
             _ => false,
@@ -1010,7 +1112,7 @@ mod input_map_tests {
 #[cfg(test)]
 mod input_map_editing_tests {
     use super::*;
-    use crate::panels::input_map::{InputMapAction as Edit, Selection};
+    use crate::panels::input_map::{BindingAddress, InputMapAction as Edit, Selection};
     use crate::state::OpenInputMap;
     use kooch_input::actions::{Action, ActionMap, ControlType};
 
@@ -1044,6 +1146,443 @@ mod input_map_editing_tests {
         assert_eq!(open.map.resolve("leap").map(|id| id.index()), Some(0));
         assert!(open.map.resolve("jump").is_none());
         assert!(open.dirty);
+    }
+
+    /// 🔴 Adding a composite creates its parts too.
+    ///
+    /// A bare head is a composite that reads as nothing with no clue
+    /// which parts are missing — the state the panel could not even
+    /// produce before, since there was no way to add one at all.
+    #[test]
+    fn a_composite_arrives_with_one_part_per_name() {
+        use kooch_input::actions::{Composite, PartName, Role, VectorMode};
+
+        for composite in Composite::ALL.iter().copied() {
+            let mut r = resources();
+            edit_input_map(
+                &mut r,
+                &Edit::AddComposite {
+                    action: 1,
+                    composite,
+                },
+            );
+            let open = r.get::<OpenInputMap>().unwrap();
+            let bindings = &open.map.actions[1].bindings;
+
+            assert!(
+                matches!(bindings.first().map(|b| &b.role), Some(Role::CompositeHead(c)) if *c == composite)
+            );
+            let parts: Vec<PartName> = bindings
+                .iter()
+                .filter_map(|b| match b.role {
+                    Role::Part { name, .. } => Some(name),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                parts,
+                PartName::of(composite).to_vec(),
+                "{composite:?} did not get the parts it declares"
+            );
+            assert!(open.dirty);
+        }
+
+        // And the head is selected, so its Mode is on screen — the
+        // setting that decides whether a diagonal outruns a straight line.
+        let mut r = resources();
+        edit_input_map(
+            &mut r,
+            &Edit::AddComposite {
+                action: 1,
+                composite: Composite::Vector2 {
+                    mode: VectorMode::DigitalNormalized,
+                },
+            },
+        );
+        let open = r.get::<OpenInputMap>().unwrap();
+        assert_eq!(
+            open.selected,
+            Some(Selection::Binding(BindingAddress {
+                action: 1,
+                binding: 0
+            }))
+        );
+    }
+
+    /// Processors are added, edited, reordered and removed — the whole
+    /// loop, since a list you can only add to is not editable.
+    #[test]
+    fn a_bindings_processors_can_be_edited() {
+        use kooch_input::actions::Processor;
+
+        let mut r = resources();
+        edit_input_map(&mut r, &Edit::AddBinding { action: 0 });
+        let at = BindingAddress {
+            action: 0,
+            binding: 0,
+        };
+        let scale = Processor::Scale { factor: 1.0 };
+        let clamp = Processor::Clamp {
+            min: -1.0,
+            max: 1.0,
+        };
+
+        edit_input_map(
+            &mut r,
+            &Edit::AddProcessor {
+                to: b(at),
+                processor: scale,
+            },
+        );
+        edit_input_map(
+            &mut r,
+            &Edit::AddProcessor {
+                to: b(at),
+                processor: clamp,
+            },
+        );
+        assert_eq!(processors(&r, at), vec![scale, clamp], "added out of order");
+
+        edit_input_map(
+            &mut r,
+            &Edit::SetProcessor {
+                to: b(at),
+                index: 0,
+                processor: Processor::Scale { factor: 2.5 },
+            },
+        );
+        assert_eq!(processors(&r, at)[0], Processor::Scale { factor: 2.5 });
+
+        edit_input_map(
+            &mut r,
+            &Edit::MoveProcessor {
+                to: b(at),
+                index: 0,
+                delta: 1,
+            },
+        );
+        assert_eq!(processors(&r, at)[0], clamp, "the move did not reorder");
+
+        edit_input_map(
+            &mut r,
+            &Edit::RemoveProcessor {
+                to: b(at),
+                index: 0,
+            },
+        );
+        assert_eq!(processors(&r, at).len(), 1);
+    }
+
+    /// 🔴 A composite head carries processors, and the panel has to
+    /// offer them.
+    ///
+    /// `read_action` applies the head's processors to the composite's
+    /// assembled value — which is where a stick deadzone belongs, on the
+    /// vector rather than per axis. The shipped starter map already has
+    /// one there, so it was visible, evaluated, and uneditable.
+    #[test]
+    fn a_composite_head_takes_processors_too() {
+        use kooch_input::actions::{Composite, Processor, Role, VectorMode};
+
+        let mut r = resources();
+        edit_input_map(
+            &mut r,
+            &Edit::AddComposite {
+                action: 1,
+                composite: Composite::Vector2 {
+                    mode: VectorMode::Analog,
+                },
+            },
+        );
+        let head = BindingAddress {
+            action: 1,
+            binding: 0,
+        };
+        let deadzone = Processor::StickDeadzone { min: 0.2, max: 0.9 };
+        edit_input_map(
+            &mut r,
+            &Edit::AddProcessor {
+                to: b(head),
+                processor: deadzone,
+            },
+        );
+
+        let bindings = &r.get::<OpenInputMap>().unwrap().map.actions[1].bindings;
+        assert!(matches!(bindings[0].role, Role::CompositeHead(_)));
+        assert_eq!(bindings[0].processors, vec![deadzone]);
+        assert!(
+            bindings[1].processors.is_empty(),
+            "the processor landed on a part instead of the head"
+        );
+    }
+
+    /// 🔴 And the head's menu is filtered by what the **composite**
+    /// produces, not by the action's type — a 2D composite assembles a
+    /// vector even when it sits under an action typed as a button.
+    #[test]
+    fn a_stick_deadzone_is_offered_on_a_2d_composite() {
+        use kooch_input::actions::{Composite, ControlType, Processor, VectorMode};
+
+        let composite = Composite::Vector2 {
+            mode: VectorMode::Analog,
+        };
+        let deadzone = Processor::StickDeadzone { min: 0.1, max: 0.9 };
+        assert!(
+            deadzone.applies_to(composite.control_type()),
+            "the one processor a stick composite exists for is not offered on it"
+        );
+        assert!(
+            !deadzone.applies_to(ControlType::Button),
+            "filtering by the action's type would hide it under a button action"
+        );
+    }
+
+    /// A move off either end is refused rather than clamped: a no-move
+    /// that still marked the file unsaved would be a lie.
+    #[test]
+    fn a_processor_cannot_be_moved_off_the_list() {
+        use kooch_input::actions::Processor;
+
+        let mut r = resources();
+        edit_input_map(&mut r, &Edit::AddBinding { action: 0 });
+        let at = BindingAddress {
+            action: 0,
+            binding: 0,
+        };
+        edit_input_map(
+            &mut r,
+            &Edit::AddProcessor {
+                to: b(at),
+                processor: Processor::Invert,
+            },
+        );
+
+        for delta in [-1, 1] {
+            r.get_mut::<OpenInputMap>().unwrap().dirty = false;
+            edit_input_map(
+                &mut r,
+                &Edit::MoveProcessor {
+                    to: b(at),
+                    index: 0,
+                    delta,
+                },
+            );
+            assert!(
+                !r.get::<OpenInputMap>().unwrap().dirty,
+                "moving by {delta} off the end claimed a change"
+            );
+        }
+    }
+
+    /// 🔴 Order is meaning. The menu offers a list, and a list that
+    /// evaluated as a set would make reordering a cosmetic no-op — so
+    /// this asserts against the evaluator, not against the Vec.
+    #[test]
+    fn processor_order_changes_the_value() {
+        use kooch_input::actions::{
+            Action, ActionMap, ActionState, Binding, ControlPath, ControlType, Processor,
+        };
+        use kooch_input::ids::KeyCode;
+        use kooch_input::mock_backend::MockInputBackend;
+
+        // A key reads 1.0. Scaled to 4, then clamped to 2 → 2.
+        // Clamped to 2 first, then scaled → 4.
+        let scale = Processor::Scale { factor: 4.0 };
+        let clamp = Processor::Clamp {
+            min: -2.0,
+            max: 2.0,
+        };
+        let value = |order: [Processor; 2]| {
+            let mut binding = Binding::to(ControlPath::Key(KeyCode::Space));
+            binding.processors = order.to_vec();
+            let map = ActionMap::new("m").add(Action::new("a", ControlType::Axis).bind(binding));
+            let mut backend = MockInputBackend::new();
+            backend.press_key(KeyCode::Space);
+            let mut state = ActionState::for_map(&map);
+            state.update(&map, &backend);
+            state.axis(map.resolve("a").unwrap())
+        };
+
+        assert_eq!(value([scale, clamp]), 2.0, "scale then clamp");
+        assert_eq!(value([clamp, scale]), 4.0, "clamp then scale");
+    }
+
+    /// A 2D processor on a button is skipped by `apply`, so the menu
+    /// must not offer one — the same trap the composite menu avoids.
+    #[test]
+    fn the_processor_menu_only_offers_what_applies() {
+        use kooch_input::actions::{ControlType as CT, Processor};
+
+        let offered = |t: CT| Processor::ALL.iter().filter(|p| p.applies_to(t)).count();
+        assert!(offered(CT::Button) > 0);
+        assert!(
+            offered(CT::Vector2) > offered(CT::Button),
+            "a 2D action must be offered more than a button, not the same list"
+        );
+        assert!(
+            !Processor::StickDeadzone { min: 0.1, max: 0.9 }.applies_to(CT::Button),
+            "a stick deadzone on a button shapes nothing"
+        );
+    }
+
+    /// Shorthand for "the processors of this binding".
+    fn b(at: BindingAddress) -> crate::panels::input_map::ProcessorTarget {
+        crate::panels::input_map::ProcessorTarget::Binding(at)
+    }
+
+    fn processors(r: &Resources, at: BindingAddress) -> Vec<kooch_input::actions::Processor> {
+        r.get::<OpenInputMap>().unwrap().map.actions[at.action].bindings[at.binding]
+            .processors
+            .clone()
+    }
+
+    /// 🔴 Deleting a composite deletes its parts.
+    ///
+    /// Reported from the panel: the head went and the parts stayed. They
+    /// are invisible once orphaned — `groups` skips a part with no head
+    /// above it — so they survived in the file and were read by nothing.
+    #[test]
+    fn removing_a_composite_takes_its_parts_with_it() {
+        use kooch_input::actions::{Composite, Role, VectorMode};
+
+        let mut r = resources();
+        // A plain binding after the composite, to prove the delete stops
+        // at the parts rather than eating whatever follows.
+        edit_input_map(
+            &mut r,
+            &Edit::AddComposite {
+                action: 1,
+                composite: Composite::Vector2 {
+                    mode: VectorMode::DigitalNormalized,
+                },
+            },
+        );
+        edit_input_map(&mut r, &Edit::AddBinding { action: 1 });
+        assert_eq!(
+            r.get::<OpenInputMap>().unwrap().map.actions[1]
+                .bindings
+                .len(),
+            6
+        );
+
+        edit_input_map(
+            &mut r,
+            &Edit::RemoveBinding(BindingAddress {
+                action: 1,
+                binding: 0,
+            }),
+        );
+
+        let bindings = &r.get::<OpenInputMap>().unwrap().map.actions[1].bindings;
+        assert_eq!(
+            bindings.len(),
+            1,
+            "the composite left {} rows behind: {bindings:#?}",
+            bindings.len() - 1
+        );
+        assert!(
+            matches!(bindings[0].role, Role::Whole(_)),
+            "the delete ate the plain binding that followed"
+        );
+    }
+
+    /// A single part can still be removed on its own — a composite with a
+    /// direction missing is a valid thing to author on the way to another.
+    #[test]
+    fn removing_one_part_leaves_the_composite() {
+        use kooch_input::actions::{Composite, Role, VectorMode};
+
+        let mut r = resources();
+        edit_input_map(
+            &mut r,
+            &Edit::AddComposite {
+                action: 1,
+                composite: Composite::Vector2 {
+                    mode: VectorMode::Analog,
+                },
+            },
+        );
+        edit_input_map(
+            &mut r,
+            &Edit::RemoveBinding(BindingAddress {
+                action: 1,
+                binding: 2,
+            }),
+        );
+
+        let bindings = &r.get::<OpenInputMap>().unwrap().map.actions[1].bindings;
+        assert_eq!(bindings.len(), 4, "removing a part took more than itself");
+        assert!(matches!(bindings[0].role, Role::CompositeHead(_)));
+    }
+
+    /// A composite's parameters are editable, and only on its head.
+    #[test]
+    fn a_composites_mode_can_be_changed() {
+        use kooch_input::actions::{Composite, Role, VectorMode};
+
+        let mut r = resources();
+        let digital = Composite::Vector2 {
+            mode: VectorMode::DigitalNormalized,
+        };
+        let analog = Composite::Vector2 {
+            mode: VectorMode::Analog,
+        };
+        edit_input_map(
+            &mut r,
+            &Edit::AddComposite {
+                action: 1,
+                composite: digital,
+            },
+        );
+
+        let head = BindingAddress {
+            action: 1,
+            binding: 0,
+        };
+        edit_input_map(
+            &mut r,
+            &Edit::SetComposite {
+                at: head,
+                composite: analog,
+            },
+        );
+        let open = r.get::<OpenInputMap>().unwrap();
+        assert!(
+            matches!(&open.map.actions[1].bindings[0].role, Role::CompositeHead(c) if *c == analog)
+        );
+
+        // Aimed at a part it is a no-op, not a part turned into a head.
+        let part = BindingAddress {
+            action: 1,
+            binding: 1,
+        };
+        let before = r.get::<OpenInputMap>().unwrap().map.clone();
+        edit_input_map(
+            &mut r,
+            &Edit::SetComposite {
+                at: part,
+                composite: digital,
+            },
+        );
+        assert_eq!(r.get::<OpenInputMap>().unwrap().map, before);
+    }
+
+    /// 🔴 Only composites that fit the action are offered. A 2D composite
+    /// under a Button action reads as nothing, with no error to say why.
+    #[test]
+    fn a_composite_declares_the_type_it_produces() {
+        use kooch_input::actions::{Composite, ControlType as CT};
+
+        let fits = |t: CT| {
+            Composite::ALL
+                .iter()
+                .filter(|c| c.control_type() == t)
+                .count()
+        };
+        assert!(fits(CT::Vector2) >= 1, "nothing to offer a 2D action");
+        assert!(fits(CT::Vector3) >= 1, "nothing to offer a 3D action");
+        assert!(fits(CT::Axis) >= 1, "nothing to offer an axis action");
+        assert!(fits(CT::Button) >= 1, "nothing to offer a button action");
     }
 
     /// Selecting is not an edit: it must not mark the file unsaved.
