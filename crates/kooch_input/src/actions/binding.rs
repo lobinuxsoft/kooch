@@ -43,6 +43,41 @@ pub enum PartName {
     Down,
     Left,
     Right,
+    /// +Z and −Z of a 3D vector.
+    Forward,
+    Backward,
+    /// The button that gates a modifier composite — ctrl in `Ctrl+S`.
+    Modifier,
+    /// The second gate of [`Composite::TwoModifiers`].
+    Modifier2,
+    /// What a modifier composite reads once its gates are held. Unity
+    /// calls this part `binding`; named for what it carries here, since
+    /// `Binding` is already the type every part is one of.
+    Value,
+}
+
+impl PartName {
+    /// The parts a composite expects, in the order an editor lists them.
+    ///
+    /// Drives both the "add composite" flow, which creates one unbound
+    /// part per name, and the panel, which shows what a composite is
+    /// still missing.
+    pub const fn of(composite: Composite) -> &'static [Self] {
+        match composite {
+            Composite::Axis1D { .. } => &[Self::Positive, Self::Negative],
+            Composite::Vector2 { .. } => &[Self::Up, Self::Down, Self::Left, Self::Right],
+            Composite::Vector3 { .. } => &[
+                Self::Up,
+                Self::Down,
+                Self::Left,
+                Self::Right,
+                Self::Forward,
+                Self::Backward,
+            ],
+            Composite::OneModifier => &[Self::Modifier, Self::Value],
+            Composite::TwoModifiers => &[Self::Modifier, Self::Modifier2, Self::Value],
+        }
+    }
 }
 
 /// How a composite turns its parts into one value.
@@ -59,7 +94,67 @@ pub enum Composite {
         both_held: BothHeld,
     },
     /// Four buttons, or two axes, into a vector.
-    Vector2 { mode: Vector2Mode },
+    Vector2 { mode: VectorMode },
+    /// Six buttons, or three axes, into a 3D vector. Unity's
+    /// `Vector3Composite` — the shape a flying or free-floating
+    /// controller wants, where up and down are inputs rather than gravity.
+    Vector3 { mode: VectorMode },
+    /// A control gated by a held button: [`PartName::Value`] passes
+    /// through only while [`PartName::Modifier`] is down.
+    ///
+    /// This is `Ctrl+S`. Without it every shortcut has to be spelled out
+    /// in gameplay code, which is exactly the branching an action map
+    /// exists to delete.
+    OneModifier,
+    /// The same, gated by two — `Ctrl+Shift+S`.
+    TwoModifiers,
+}
+
+impl Composite {
+    /// Every composite an editor can offer, in menu order.
+    pub const ALL: &'static [Self] = &[
+        Self::Vector2 {
+            mode: VectorMode::DigitalNormalized,
+        },
+        Self::Axis1D {
+            both_held: BothHeld::Neither,
+        },
+        Self::Vector3 {
+            mode: VectorMode::DigitalNormalized,
+        },
+        Self::OneModifier,
+        Self::TwoModifiers,
+    ];
+
+    /// What this produces, so an editor can offer only the composites
+    /// that fit the action being edited.
+    ///
+    /// Unity filters its "Add Composite" menu the same way, and the
+    /// reason is that the alternative — a Vector2 composite under a
+    /// Button action — is a binding that silently reads as nothing.
+    pub const fn control_type(self) -> super::action::ControlType {
+        use super::action::ControlType;
+        match self {
+            Self::Vector2 { .. } => ControlType::Vector2,
+            Self::Vector3 { .. } => ControlType::Vector3,
+            Self::Axis1D { .. } => ControlType::Axis,
+            // Whatever the gated part reads. Button is the honest
+            // default: `Ctrl+S` is a button, and an axis behind a
+            // modifier still passes its own magnitude through.
+            Self::OneModifier | Self::TwoModifiers => ControlType::Button,
+        }
+    }
+
+    /// Name for a menu entry.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Axis1D { .. } => "1D Axis",
+            Self::Vector2 { .. } => "2D Vector",
+            Self::Vector3 { .. } => "3D Vector",
+            Self::OneModifier => "One Modifier",
+            Self::TwoModifiers => "Two Modifiers",
+        }
+    }
 }
 
 /// Resolution when both sides of an axis are held at once.
@@ -72,11 +167,13 @@ pub enum BothHeld {
     Negative,
 }
 
-/// How a 2D composite reads its parts.
+/// How a vector composite reads its parts. Shared by 2D and 3D, as
+/// Unity's two separate `Mode` enums are the same three cases.
 ///
-/// Named after Unity's, because the distinction is real and hard-won.
+/// The variant names are serialised, not this type name, so renaming it
+/// from `Vector2Mode` does not invalidate any `.inputmap` on disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum Vector2Mode {
+pub enum VectorMode {
     /// Parts are buttons, and the result is capped at length 1 — so a
     /// diagonal does not travel 1.41× faster than a straight line. The
     /// default, and what WASD needs.
@@ -192,6 +289,27 @@ pub fn groups(bindings: &[Binding]) -> Vec<Group<'_>> {
     out
 }
 
+/// Which entries belong with the one at `index` — itself, plus the parts
+/// underneath when it is a composite head.
+///
+/// The same walk [`groups`] does, exposed so that removing a composite
+/// and evaluating one cannot disagree about where it ends. They did:
+/// deleting a head left its parts behind, and since `groups` skips a part
+/// with no head above it, they became rows that were saved to the file
+/// and read by nothing.
+pub fn group_range(bindings: &[Binding], index: usize) -> std::ops::Range<usize> {
+    if index >= bindings.len() {
+        return index..index;
+    }
+    let mut end = index + 1;
+    if matches!(bindings[index].role, Role::CompositeHead(_)) {
+        while end < bindings.len() && matches!(bindings[end].role, Role::Part { .. }) {
+            end += 1;
+        }
+    }
+    index..end
+}
+
 /// A binding, or a composite and its parts, as one thing to evaluate.
 #[derive(Debug)]
 pub enum Group<'a> {
@@ -214,7 +332,7 @@ mod tests {
     fn wasd() -> Vec<Binding> {
         vec![
             Binding::composite(Composite::Vector2 {
-                mode: Vector2Mode::DigitalNormalized,
+                mode: VectorMode::DigitalNormalized,
             }),
             Binding::part(PartName::Up, ControlPath::Key(KeyCode::KeyW)),
             Binding::part(PartName::Down, ControlPath::Key(KeyCode::KeyS)),
@@ -245,7 +363,7 @@ mod tests {
     fn a_second_composite_starts_a_new_group() {
         let mut bindings = wasd();
         bindings.push(Binding::composite(Composite::Vector2 {
-            mode: Vector2Mode::Analog,
+            mode: VectorMode::Analog,
         }));
         bindings.push(Binding::part(
             PartName::Up,
@@ -280,7 +398,7 @@ mod tests {
     /// that is what the editor will hand an author who changes nothing.
     #[test]
     fn the_defaults_are_the_ones_a_keyboard_wants() {
-        assert_eq!(Vector2Mode::default(), Vector2Mode::DigitalNormalized);
+        assert_eq!(VectorMode::default(), VectorMode::DigitalNormalized);
         assert_eq!(
             BothHeld::default(),
             BothHeld::Neither,

@@ -27,6 +27,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::binding::Binding;
+use super::processor::Processor;
 
 /// What an action produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -38,6 +39,48 @@ pub enum ControlType {
     Axis,
     /// Two — a stick, WASD, a d-pad.
     Vector2,
+    /// Three — a flying controller, where up is an input rather than
+    /// gravity.
+    Vector3,
+}
+
+/// The id a file written before [`Action::id`] existed deserialises to.
+///
+/// A real id is assigned by [`ActionMap::assign_missing_ids`] on load,
+/// derived from the name so that it is the same on every load of the
+/// same file. Random would mean a reference stored in a scene pointed at
+/// nothing until someone opened the map and saved it.
+fn unassigned_id() -> kooch_core::Guid {
+    kooch_core::Guid::from_bytes([0; 16])
+}
+
+/// Derives a stable id from the map and action names.
+///
+/// FNV-1a over both, twice with different offsets to fill 16 bytes. Not
+/// a cryptographic hash and does not need to be: it exists so a file
+/// without ids reads the same way twice, and every id it produces is
+/// replaced the first time the map is saved.
+fn derived_id(map: &str, action: &str) -> kooch_core::Guid {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let hash = |seed: u64| -> u64 {
+        let mut h = seed;
+        for byte in map
+            .bytes()
+            .chain(b"/".iter().copied())
+            .chain(action.bytes())
+        {
+            h ^= u64::from(byte);
+            h = h.wrapping_mul(PRIME);
+        }
+        h
+    };
+
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&hash(OFFSET).to_le_bytes());
+    bytes[8..].copy_from_slice(&hash(OFFSET ^ u64::MAX).to_le_bytes());
+    kooch_core::Guid::from_bytes(bytes)
 }
 
 /// A stable handle to an action inside its map.
@@ -58,12 +101,47 @@ impl ActionId {
 /// One thing the player can do, and everything that triggers it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Action {
-    /// What gameplay asks for. Unique within its map.
+    /// Stable identity, written to the file and never reused.
+    ///
+    /// **This is what a reference points at**, not the name. Unity
+    /// learned the same thing — `InputAction.id` exists so that
+    /// "renaming the action does not break references" — and the engine
+    /// learned it once already with assets, which is why a `.meta` holds
+    /// a guid instead of trusting a filename.
+    ///
+    /// Without it the identifier of an action is its name, so every
+    /// consumer has to spell that name out and a rename in the panel
+    /// becomes a control that silently stops answering.
+    ///
+    /// Derived from the name when a file predates the field, rather than
+    /// randomly: a random id would differ on every load until someone
+    /// saved, so a reference stored in a scene would point at nothing
+    /// until then. Derived, an old file is stable from the first load.
+    #[serde(default = "unassigned_id")]
+    pub id: kooch_core::Guid,
+    /// What gameplay asks for. Unique within its map, and free to change:
+    /// nothing refers to an action by it.
     pub name: String,
     /// What it produces, which decides how bindings are read.
     pub control_type: ControlType,
     /// Flat list; a composite is a head followed by its parts.
     pub bindings: Vec<Binding>,
+    /// Applied to the **final value**, after the winning binding is
+    /// chosen — so a normalize or a sensitivity is written once instead
+    /// of on every binding.
+    ///
+    /// This is deliberately not Unity's arrangement. There the action's
+    /// processors are applied to *each binding*, so a stick that already
+    /// carries a deadzone from its layout gets a second one — a known
+    /// source of "my stick feels wrong", questioned by a `////REVIEW` in
+    /// their own `InputBinding.cs`. Applied once to the result there is
+    /// nothing to double: a binding shapes the **device**, an action
+    /// shapes the **meaning**.
+    ///
+    /// `#[serde(default)]` so every `.inputmap` written before this
+    /// field existed still loads.
+    #[serde(default)]
+    pub processors: Vec<Processor>,
 }
 
 impl Action {
@@ -71,9 +149,22 @@ impl Action {
     /// produces.
     pub fn new(name: impl Into<String>, control_type: ControlType) -> Self {
         Self {
+            id: kooch_core::Guid::new_v4(),
             name: name.into(),
             control_type,
             bindings: Vec::new(),
+            processors: Vec::new(),
+        }
+    }
+
+    /// Gives this action an id derived from its name if it has none.
+    ///
+    /// `scope` is the map's name when it has one, so two maps can each
+    /// hold a `jump` without colliding. A standalone `.inputaction`
+    /// passes `""`.
+    pub fn ensure_id(&mut self, scope: &str) {
+        if self.id == unassigned_id() {
+            self.id = derived_id(scope, &self.name);
         }
     }
 
@@ -125,6 +216,30 @@ impl ActionMap {
         self
     }
 
+    /// Gives every action without an id one derived from its name.
+    ///
+    /// Called on load. A file written before ids existed gets the same
+    /// ones on every load, so a reference stored in a scene resolves
+    /// immediately rather than only after someone opens and saves the
+    /// map.
+    pub fn assign_missing_ids(&mut self) {
+        let map_name = self.name.clone();
+        for action in &mut self.actions {
+            action.ensure_id(&map_name);
+        }
+    }
+
+    /// The index of the action with this id.
+    ///
+    /// What a stored reference resolves through — by identity, so a
+    /// rename in the panel changes nothing here.
+    pub fn resolve_ref(&self, id: kooch_core::Guid) -> Option<ActionId> {
+        self.actions
+            .iter()
+            .position(|action| action.id == id)
+            .map(|index| ActionId(index as u32))
+    }
+
     /// The id for a name, or `None` if this map has no such action.
     ///
     /// Called once at startup. A game that calls it per frame is paying
@@ -166,7 +281,7 @@ impl ActionMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::binding::{Binding, Composite, PartName, Vector2Mode};
+    use crate::actions::binding::{Binding, Composite, PartName, VectorMode};
     use crate::actions::path::ControlPath;
     use crate::ids::{GamepadButton, KeyCode};
 
@@ -174,7 +289,7 @@ mod tests {
         ActionMap::new("gameplay")
             .add(Action::new("move", ControlType::Vector2).bind_all([
                 Binding::composite(Composite::Vector2 {
-                    mode: Vector2Mode::DigitalNormalized,
+                    mode: VectorMode::DigitalNormalized,
                 }),
                 Binding::part(PartName::Up, ControlPath::Key(KeyCode::KeyW)),
                 Binding::part(PartName::Down, ControlPath::Key(KeyCode::KeyS)),

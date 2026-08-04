@@ -75,6 +75,67 @@ pub enum Processor {
 }
 
 impl Processor {
+    /// One of each, with sensible defaults — what an editor's "add
+    /// processor" menu offers.
+    pub const ALL: &'static [Self] = &[
+        Self::StickDeadzone {
+            min: DEFAULT_DEADZONE_MIN,
+            max: DEFAULT_DEADZONE_MAX,
+        },
+        Self::AxisDeadzone {
+            min: DEFAULT_DEADZONE_MIN,
+            max: DEFAULT_DEADZONE_MAX,
+        },
+        Self::Invert,
+        Self::InvertVector2 { x: false, y: true },
+        Self::NormalizeVector2,
+        Self::Normalize {
+            min: 0.0,
+            max: 1.0,
+            zero: 0.0,
+        },
+        Self::Scale { factor: 1.0 },
+        Self::ScaleVector2 { x: 1.0, y: 1.0 },
+        Self::Clamp {
+            min: -1.0,
+            max: 1.0,
+        },
+    ];
+
+    /// Name for a menu entry.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::AxisDeadzone { .. } => "Axis Deadzone",
+            Self::StickDeadzone { .. } => "Stick Deadzone",
+            Self::Clamp { .. } => "Clamp",
+            Self::Invert => "Invert",
+            Self::InvertVector2 { .. } => "Invert Vector 2",
+            Self::Normalize { .. } => "Normalize",
+            Self::NormalizeVector2 => "Normalize Vector 2",
+            Self::Scale { .. } => "Scale",
+            Self::ScaleVector2 { .. } => "Scale Vector 2",
+        }
+    }
+
+    /// Whether this does anything to a value of `control_type`.
+    ///
+    /// The 2D processors are skipped by [`apply`](Self::apply), so on a
+    /// button or an axis they are a row that shapes nothing. Unity
+    /// filters its own menu by the expected value type for the same
+    /// reason: offering one is offering a setting that reads as broken.
+    pub const fn applies_to(self, control_type: super::action::ControlType) -> bool {
+        use super::action::ControlType;
+        match self {
+            Self::StickDeadzone { .. }
+            | Self::InvertVector2 { .. }
+            | Self::NormalizeVector2
+            | Self::ScaleVector2 { .. } => {
+                matches!(control_type, ControlType::Vector2 | ControlType::Vector3)
+            }
+            _ => true,
+        }
+    }
+
     /// Applies this step to a scalar. Vector-only processors pass through.
     pub fn apply(self, value: f32) -> f32 {
         match self {
@@ -109,6 +170,32 @@ impl Processor {
             }
             Processor::ScaleVector2 { x, y } => Vec2::new(value.x * x, value.y * y),
             other => Vec2::new(other.apply(value.x), other.apply(value.y)),
+        }
+    }
+
+    /// The same, in three dimensions.
+    ///
+    /// The 2D processors act on `xy` and leave `z` alone rather than
+    /// refusing to run: a stick deadzone applied to a 3D composite is
+    /// about the stick, and zeroing the third axis because the processor
+    /// predates it would make the binding read as broken.
+    pub fn apply_vec3(self, value: glam::Vec3) -> glam::Vec3 {
+        match self {
+            Processor::StickDeadzone { .. }
+            | Processor::InvertVector2 { .. }
+            | Processor::ScaleVector2 { .. } => self.apply_vec2(value.truncate()).extend(value.z),
+            Processor::NormalizeVector2 => {
+                if value.length_squared() > 1.0 {
+                    value.normalize()
+                } else {
+                    value
+                }
+            }
+            other => glam::Vec3::new(
+                other.apply(value.x),
+                other.apply(value.y),
+                other.apply(value.z),
+            ),
         }
     }
 }

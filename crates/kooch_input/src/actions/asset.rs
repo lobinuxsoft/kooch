@@ -43,8 +43,12 @@ impl AssetLoader<ActionMap> for InputMapLoader {
     fn load(&self, bytes: &[u8], _ctx: &mut LoadContext<'_>) -> AssetResult<ActionMap> {
         let text = std::str::from_utf8(bytes)
             .map_err(|e| AssetError::Loader(Box::new(InputMapParseError::Utf8(e))))?;
-        let map: ActionMap = ron::from_str(text)
+        let mut map: ActionMap = ron::from_str(text)
             .map_err(|e| AssetError::Loader(Box::new(InputMapParseError::Ron(e))))?;
+        // A file written before actions had ids gets them here, derived
+        // from its names, so a reference stored in a scene resolves on
+        // the first load rather than only after a save.
+        map.assign_missing_ids();
 
         // A duplicate name makes `resolve` a coin toss, and the failure
         // lands far from here — a control that works or does not
@@ -62,6 +66,13 @@ impl AssetLoader<ActionMap> for InputMapLoader {
         Ok(map)
     }
 }
+
+// Declared here, beside the loader, so any binary linking this crate can
+// load an `.inputmap` with nothing added to a list anywhere else. Both
+// the facade and the editor used to register this by hand, and neither
+// installed the storage — which failed every load with `Assets<ActionMap>
+// resource missing`, once per frame.
+kooch_core::register_asset!(ActionMap, InputMapLoader);
 
 /// Serialises a map for writing. The editor's save path.
 pub fn to_ron(map: &ActionMap) -> Result<String, ron::Error> {
@@ -121,7 +132,7 @@ impl std::error::Error for InputMapParseError {
 mod tests {
     use super::*;
     use crate::actions::action::{Action, ControlType};
-    use crate::actions::binding::{Binding, Composite, PartName, Vector2Mode};
+    use crate::actions::binding::{Binding, Composite, PartName, VectorMode};
     use crate::actions::path::ControlPath;
     use crate::actions::processor::Processor;
     use crate::ids::{GamepadAxis, GamepadButton, KeyCode};
@@ -130,7 +141,7 @@ mod tests {
         ActionMap::new("gameplay")
             .add(Action::new("move", ControlType::Vector2).bind_all([
                 Binding::composite(Composite::Vector2 {
-                    mode: Vector2Mode::DigitalNormalized,
+                    mode: VectorMode::DigitalNormalized,
                 }),
                 Binding::part(PartName::Up, ControlPath::Key(KeyCode::KeyW)),
                 Binding::part(PartName::Down, ControlPath::Key(KeyCode::KeyS)),
@@ -161,6 +172,179 @@ mod tests {
         let text = to_ron(&map).expect("serialise");
         let back = load(&text).expect("load");
         assert_eq!(back, map);
+    }
+
+    /// 🔴 The `.inputmap` type installs itself: no list anywhere names
+    /// it, and a binary that links this crate can load one.
+    ///
+    /// The shipped failure this pins: the loader was written out by hand
+    /// in the facade *and* in the editor's bootstrap, and the storage in
+    /// neither — so every load failed with `Assets<ActionMap> resource
+    /// missing`, once per frame. Both halves now come from one
+    /// declaration next to the loader.
+    #[test]
+    fn the_input_map_type_registers_itself() {
+        let found: Vec<&str> = kooch_core::asset_registry::registered_asset_types()
+            .map(|registration| (registration.type_name)())
+            .collect();
+        assert!(
+            found.contains(&std::any::type_name::<ActionMap>()),
+            "the .inputmap type is not in the link-time registry, so no \
+             binary can load one: {found:?}"
+        );
+    }
+
+    /// And it brings its storage, not just its loader — the half that
+    /// was missing.
+    #[test]
+    fn registering_installs_both_the_loader_and_the_storage() {
+        use kooch_core::asset_loader::AssetServer;
+        use kooch_core::resource::Resources;
+
+        let mut server = AssetServer::new();
+        let mut resources = Resources::new();
+        for registration in kooch_core::asset_registry::registered_asset_types() {
+            if (registration.type_name)() == std::any::type_name::<ActionMap>() {
+                (registration.register_loader)(&mut server);
+                (registration.install_storage)(&mut resources);
+            }
+        }
+
+        assert!(server.has_loader::<ActionMap>(), "no loader was installed");
+        assert!(
+            resources
+                .get::<kooch_core::assets::Assets<ActionMap>>()
+                .is_some(),
+            "the loader has nowhere to put what it loads"
+        );
+    }
+
+    /// Every composite the editor can create survives a save and a
+    /// load. A composite that cannot round-trip is one the panel offers
+    /// and the file silently loses.
+    #[test]
+    fn every_composite_survives_the_file() {
+        use crate::actions::binding::{Composite, PartName};
+
+        for composite in Composite::ALL.iter().copied() {
+            let mut action =
+                Action::new("a", composite.control_type()).bind(Binding::composite(composite));
+            for name in PartName::of(composite) {
+                action = action.bind(Binding::part(*name, ControlPath::Key(KeyCode::Space)));
+            }
+            let map = ActionMap::new("gameplay").add(action);
+
+            let text = to_ron(&map).expect("serialise");
+            let back = load(&text).unwrap_or_else(|e| panic!("{composite:?} does not load: {e}"));
+            assert_eq!(back, map, "{composite:?} changed on the way through disk");
+        }
+    }
+
+    /// 🔴 A file written before `Action::processors` existed still
+    /// loads. Every `.inputmap` on disk predates the field, so without
+    /// `#[serde(default)]` this release would refuse to open any of them.
+    #[test]
+    fn a_map_without_the_processors_field_still_loads() {
+        let text = r#"(
+            name: "gameplay",
+            priority: 0,
+            actions: [
+                (
+                    name: "jump",
+                    control_type: Button,
+                    bindings: [(role: Whole(Key(Space)), processors: [])],
+                ),
+            ],
+        )"#;
+
+        let map = load(text).expect("a map written before the field must still load");
+        assert_eq!(map.actions[0].name, "jump");
+        assert!(
+            map.actions[0].processors.is_empty(),
+            "a missing list must default to empty, not to something"
+        );
+    }
+
+    /// And the game's own shipped map, which is exactly such a file.
+    #[test]
+    fn the_shipped_roll_a_ball_map_still_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../roll-a-ball/assets/inputs/PlayerInputs.inputmap"
+        );
+        let Ok(text) = std::fs::read_to_string(path) else {
+            // The game is a sibling checkout, not a dependency: absent is
+            // not a failure, it just means this check did not run.
+            return;
+        };
+        let map = load(&text).expect("the shipped input map no longer loads");
+        assert!(map.resolve("move").is_some() && map.resolve("jump").is_some());
+    }
+
+    /// 🔴 A file written before actions had ids gets the **same** ids on
+    /// every load.
+    ///
+    /// Random ids would be worse than none: a reference stored in a
+    /// scene would point at nothing until someone opened the map and
+    /// saved it, and would break again on the next machine. Derived from
+    /// the names, an old file is referenceable from the first load.
+    #[test]
+    fn ids_derived_for_an_old_file_are_stable_across_loads() {
+        let text = r#"(
+            name: "gameplay",
+            priority: 0,
+            actions: [
+                (name: "move", control_type: Vector2, bindings: []),
+                (name: "jump", control_type: Button, bindings: []),
+            ],
+        )"#;
+
+        let first = load(text).expect("load");
+        let second = load(text).expect("load again");
+
+        assert_eq!(
+            first.actions[0].id, second.actions[0].id,
+            "the same file produced different ids, so a stored reference \
+             would break on the next load"
+        );
+        assert_ne!(
+            first.actions[0].id, first.actions[1].id,
+            "two actions share an id, so a reference is ambiguous"
+        );
+        assert_ne!(
+            first.actions[0].id,
+            kooch_core::Guid::from_bytes([0; 16]),
+            "the id was left unassigned"
+        );
+    }
+
+    /// And the game's own map, which is exactly such a file: every action
+    /// in it is referenceable right now, with no save first.
+    #[test]
+    fn the_shipped_map_is_referenceable_without_being_resaved() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../roll-a-ball/assets/inputs/PlayerInputs.inputmap"
+        );
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let map = load(&text).expect("the shipped map no longer loads");
+
+        for action in &map.actions {
+            assert_ne!(
+                action.id,
+                kooch_core::Guid::from_bytes([0; 16]),
+                "`{}` has no id, so nothing can point at it",
+                action.name
+            );
+            assert_eq!(
+                map.resolve_ref(action.id).map(|id| id.index()),
+                map.resolve(&action.name).map(|id| id.index()),
+                "`{}` resolves differently by id than by name",
+                action.name
+            );
+        }
     }
 
     /// Written by the editor, read by a human — the format has to be
