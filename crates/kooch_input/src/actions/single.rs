@@ -209,6 +209,56 @@ mod tests {
         );
     }
 
+    /// 🔴 The cache is what a game's own component reads through.
+    ///
+    /// A component appears once per entity, so a mechanic needing two
+    /// actions holds two guids in a component of its own — and then it
+    /// has no way to turn a guid into a value. This is that way, and it
+    /// takes no map, no `InputAction` and no asset server.
+    #[test]
+    fn a_guid_can_be_evaluated_without_a_component() {
+        use crate::mock_backend::MockInputBackend;
+
+        let guid = kooch_core::Guid::new_v4();
+        let mut loaded = LoadedActions::default();
+        loaded.set(guid, jump());
+
+        let mut backend = MockInputBackend::new();
+        backend.press_key(KeyCode::Space);
+
+        let value = loaded
+            .evaluate(Some(guid), &backend)
+            .expect("a loaded action must evaluate");
+        assert!(value.pressed, "the key did not reach the action");
+
+        assert!(
+            loaded.evaluate(None, &backend).is_none(),
+            "an unset reference must read as nothing, not as pressed"
+        );
+        assert!(
+            loaded
+                .evaluate(Some(kooch_core::Guid::new_v4()), &backend)
+                .is_none(),
+            "an unknown guid must read as nothing"
+        );
+    }
+
+    /// Loading twice keeps one entry: the cache is keyed by guid, and a
+    /// duplicate would make which copy answers depend on insertion order.
+    #[test]
+    fn reloading_an_action_replaces_it() {
+        let guid = kooch_core::Guid::new_v4();
+        let mut loaded = LoadedActions::default();
+        loaded.set(guid, jump());
+        loaded.set(
+            guid,
+            Action::new("renamed", crate::actions::action::ControlType::Button),
+        );
+
+        assert_eq!(loaded.by_guid.len(), 1);
+        assert_eq!(loaded.get(guid).map(|a| a.name.as_str()), Some("renamed"));
+    }
+
     /// 🔴 Disabled means silent, per action — the thing a map cannot do,
     /// and the reason for going without one.
     #[test]
@@ -257,6 +307,111 @@ mod tests {
     }
 }
 
+/// Every `.inputaction` this frame's components asked for, by guid.
+///
+/// Exists because a component can only appear **once per entity**, so a
+/// mechanic that reads two actions cannot hold two [`InputAction`]s — it
+/// holds two guids in a component of its own. Loading them is the part
+/// that needs the asset server, which is awkward from a game system and
+/// identical for everyone, so the engine keeps the result here and a game
+/// just looks up what it points at:
+///
+/// ```ignore
+/// let loaded = resources.get::<LoadedActions>()?;
+/// let value = loaded.evaluate(player.jump, backend)?;
+/// ```
+#[derive(Debug, Default)]
+pub struct LoadedActions {
+    by_guid: Vec<(kooch_core::Guid, Action)>,
+}
+
+impl LoadedActions {
+    /// The action with this guid, if it has been loaded.
+    pub fn get(&self, guid: kooch_core::Guid) -> Option<&Action> {
+        self.by_guid
+            .iter()
+            .find(|(candidate, _)| *candidate == guid)
+            .map(|(_, action)| action)
+    }
+
+    /// Reads whatever `reference` points at. `None` when it points at
+    /// nothing, or at an action that could not be loaded.
+    pub fn evaluate(
+        &self,
+        reference: Option<kooch_core::Guid>,
+        backend: &dyn crate::backend::InputBackend,
+    ) -> Option<ActionValue> {
+        let action = self.get(reference?)?;
+        Some(super::state::evaluate(action, backend))
+    }
+
+    fn set(&mut self, guid: kooch_core::Guid, action: Action) {
+        match self.by_guid.iter_mut().find(|(g, _)| *g == guid) {
+            Some(slot) => slot.1 = action,
+            None => self.by_guid.push((guid, action)),
+        }
+    }
+}
+
+/// Loads every `.inputaction` the project has into [`LoadedActions`].
+///
+/// All of them rather than the ones currently referenced, because a
+/// component the engine does not know about — a game's own `PlayerInput`
+/// holding two guids — is exactly the case this exists for, and the
+/// engine cannot ask it what it wants. A project has a handful of
+/// actions, and each is loaded once: `load_by_guid` returns the handle it
+/// already has.
+pub fn load_input_actions(resources: &mut kooch_core::resource::Resources) {
+    use kooch_core::assets::Assets;
+
+    let wanted: Vec<kooch_core::Guid> = {
+        let Some(database) = resources.get::<kooch_core::asset_database::AssetDatabase>() else {
+            return;
+        };
+        let known = resources
+            .get::<LoadedActions>()
+            .map(|loaded| loaded.by_guid.iter().map(|(g, _)| *g).collect::<Vec<_>>())
+            .unwrap_or_default();
+        database
+            .entries_of_type(std::any::type_name::<Action>())
+            .map(|(guid, _)| guid)
+            .filter(|guid| !known.contains(guid))
+            .collect()
+    };
+    if wanted.is_empty() {
+        return;
+    }
+
+    let Some(mut server) = resources.remove::<kooch_core::asset_loader::AssetServer>() else {
+        return;
+    };
+    let mut loaded = Vec::new();
+    for guid in wanted {
+        match server.load_by_guid::<Action>(guid, resources) {
+            Ok(handle) => loaded.push((guid, handle)),
+            Err(e) => tracing::error!(%guid, error = %e, "input action could not be loaded"),
+        }
+    }
+    resources.insert(server);
+
+    let values: Vec<(kooch_core::Guid, Action)> = {
+        let Some(assets) = resources.get::<Assets<Action>>() else {
+            return;
+        };
+        loaded
+            .into_iter()
+            .filter_map(|(guid, handle)| assets.get(handle).map(|a| (guid, a.clone())))
+            .collect()
+    };
+
+    let mut cache = resources.remove::<LoadedActions>().unwrap_or_default();
+    for (guid, action) in values {
+        tracing::debug!(%guid, action = %action.name, "input action loaded");
+        cache.set(guid, action);
+    }
+    resources.insert(cache);
+}
+
 /// Reads every enabled [`InputAction`] against the backend, once a frame.
 ///
 /// Runs in `Stage::Input`, after the backend is pumped and before
@@ -266,47 +421,12 @@ mod tests {
 /// every reader already treats it as silent. Zeroing would make
 /// re-enabling report a release nobody performed.
 pub fn read_input_actions(resources: &mut kooch_core::resource::Resources) {
-    use kooch_core::assets::{Assets, Handle};
     use kooch_ecs::Query;
-
-    // Which assets are wanted, gathered before anything is borrowed
-    // mutably: resolving a guid needs the server *and* the resources.
-    let wanted: Vec<kooch_core::Guid> = {
-        let query = Query::<&InputAction>::new(resources);
-        let mut guids = Vec::new();
-        query.for_each(|input| {
-            if let Some(guid) = input.action.filter(|_| input.enabled)
-                && !guids.contains(&guid)
-            {
-                guids.push(guid);
-            }
-        });
-        guids
-    };
-    if wanted.is_empty() {
-        return;
-    }
-
-    // Loaded once each, then looked up by guid. `load_by_guid` returns
-    // the same handle for a guid already in memory, so this is a lookup
-    // after the first frame rather than a re-read.
-    let mut handles: Vec<(kooch_core::Guid, Handle<Action>)> = Vec::new();
-    if let Some(mut server) = resources.remove::<kooch_core::asset_loader::AssetServer>() {
-        for guid in wanted {
-            match server.load_by_guid::<Action>(guid, resources) {
-                Ok(handle) => handles.push((guid, handle)),
-                // Named once per guid rather than per frame: the loop
-                // below simply leaves that action at its last value.
-                Err(e) => tracing::error!(%guid, error = %e, "input action could not be loaded"),
-            }
-        }
-        resources.insert(server);
-    }
 
     let Some(backend) = resources.remove::<Box<dyn crate::backend::InputBackend>>() else {
         return;
     };
-    let Some(assets) = resources.remove::<Assets<Action>>() else {
+    let Some(loaded) = resources.remove::<LoadedActions>() else {
         resources.insert(backend);
         return;
     };
@@ -318,17 +438,12 @@ pub fn read_input_actions(resources: &mut kooch_core::resource::Resources) {
             if !input.enabled {
                 return;
             }
-            let Some(action) = input
-                .action
-                .and_then(|guid| handles.iter().find(|(g, _)| *g == guid))
-                .and_then(|(_, handle)| assets.get(*handle))
-            else {
-                return;
-            };
-            input.value = super::state::evaluate(action, &*backend);
+            if let Some(value) = loaded.evaluate(input.action, &*backend) {
+                input.value = value;
+            }
         });
     }
 
-    resources.insert(assets);
+    resources.insert(loaded);
     resources.insert(backend);
 }

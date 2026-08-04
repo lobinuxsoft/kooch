@@ -216,8 +216,11 @@ impl Plugin for ActionsPlugin {
             }
         }
         app.add_system(Stage::Input, update_actions);
-        // Standalone actions, evaluated per component. Independent of
-        // the active map: an entity reading one needs no map at all.
+        // Standalone actions. Loaded before they are read, and both
+        // independent of the active map: an entity reading one needs no
+        // map at all.
+        app.insert_resource(super::single::LoadedActions::default());
+        app.add_system(Stage::PreUpdate, super::single::load_input_actions);
         app.add_system(Stage::Input, super::single::read_input_actions);
     }
 
