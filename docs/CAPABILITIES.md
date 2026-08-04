@@ -84,7 +84,14 @@ are disjoint. Kóoch has the query half and not the scheduler half.
 | Capability | Where | Status | Notes |
 |---|---|---|---|
 | `InputBackend`, `KeyCode`, gamepad ids | `backend.rs`, `ids.rs` | connected | Wired in #711/#713. Own serializable ids for 194 keys / 19 buttons / 8 axes. |
-| `ActionMap<A>`, `InputBinding` | `action_map.rs` | **orphan** | Appears in its own file, `lib.rs` and the mock. Gameplay reads the backend directly and hardcodes `KeyCode::KeyW`. Three reasons it stayed unused, all in #55: it is generic over *your* enum (so the editor cannot construct one, and every reader must know your type); `InputBinding::GamepadButton(GamepadId, …)` stores a **runtime** id, so a binding cannot be authored without the pad plugged in or serialized at all; and it is a `HashMap` per lookup, against the project's own DOD rule. |
+| `ActionMap<A>`, `InputBinding` | ~~`action_map.rs`~~ | **deleted** | Was generic over *your* enum, so the editor could not construct one and a binding could not be serialised at all — authoring in a panel was impossible by construction. Replaced and removed; #55 closed. |
+| `.inputaction` assets | `actions/single.rs` | connected | One `Action` per file, composites/processors included. Registers itself at link time. roll-a-ball reads two. |
+| `InputAction` component | `actions/single.rs` | connected | Points at an asset by guid, `enabled` per action. Read by `read_input_actions`. |
+| `LoadedActions` | `actions/single.rs` | connected | guid → action, reloaded when the file changes. What a game's own component reads through, since a component appears once per entity. |
+| Input Map panel | `kooch_editor_core/panels/input_map.rs` | connected | Creates and edits a `.inputaction`: bindings, five composites, processors, modes. |
+| Interactive rebind (`BeginRebind`) | `panels/input_map.rs` | **orphan** | The actions exist and nothing emits them: there is no "press any key". The control picker is the only way to bind. |
+| `ActionMap`, `priority` | `actions/action.rs` | **orphan** | Survives only as the shape the panel edits — a `.inputaction` opens as a map of one. `priority` is written and never read: stacking maps that consume what they handle was never built, and with per-action `enabled` the remaining gap is bulk enable/disable for a pause menu. |
+| `MockInputBackend` | `mock_backend.rs` | **orphan** to games | Injects keys and axes with no hardware — exactly what a cutscene, a tutorial or an automated test needs, and it is reachable only from the engine's own tests. |
 | Remote input over the wire | `remote_backend.rs` | connected | `Method::Extension("input.state")`; state, never events. |
 
 ## Camera — `kooch_camera`
