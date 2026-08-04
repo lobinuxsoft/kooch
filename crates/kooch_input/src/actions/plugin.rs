@@ -34,18 +34,51 @@ pub struct ActiveActionMap {
     /// What lets the sync system answer "is this already the map the
     /// component asks for" without re-reading the file to find out.
     pub source: Option<kooch_core::Guid>,
+    /// Bumped every time this is replaced.
+    ///
+    /// [`ActionMap::resolve`] is a string compare, so gameplay is meant
+    /// to hold an [`ActionId`](super::action::ActionId) rather than
+    /// re-look-up a name per frame. Holding one is only correct if there
+    /// is a way to know it went stale — an id is an **index into this
+    /// map**, so under a different map it silently points at another
+    /// action, or past the end.
+    ///
+    /// Compare this against what a cached id was resolved under, and
+    /// re-resolve when they differ. Cheaper than a string compare and,
+    /// unlike `source`, it also catches a map replaced by the same asset
+    /// reloaded.
+    pub generation: u32,
 }
 
 impl ActiveActionMap {
     pub fn new(map: ActionMap) -> Self {
-        Self { map, source: None }
+        Self {
+            map,
+            source: None,
+            generation: 0,
+        }
     }
 
     pub fn from_asset(map: ActionMap, guid: kooch_core::Guid) -> Self {
         Self {
             map,
             source: Some(guid),
+            generation: 0,
         }
+    }
+
+    /// Replaces what is active, moving the generation forward.
+    ///
+    /// The only way a map should be swapped: constructing a fresh value
+    /// and inserting it would reset the generation to zero, and a cached
+    /// id resolved under the *previous* generation zero would look
+    /// current while pointing into a different map.
+    pub fn replace(resources: &mut kooch_core::resource::Resources, next: Self) {
+        let generation = resources
+            .get::<Self>()
+            .map(|active| active.generation.wrapping_add(1))
+            .unwrap_or(0);
+        resources.insert(Self { generation, ..next });
     }
 }
 
@@ -133,6 +166,10 @@ impl Plugin for InputComponentsPlugin {
         app.add_system(Stage::Startup, |resources: &mut Resources| {
             if let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() {
                 registry.register_cpu_reflected::<super::component::InputMapSource>();
+                // The per-mechanic half: one action per component, each
+                // enabled on its own. Registered beside the map's source
+                // because both are things a scene authors.
+                registry.register_cpu_reflected::<super::single::InputAction>();
             }
         });
     }
@@ -179,6 +216,9 @@ impl Plugin for ActionsPlugin {
             }
         }
         app.add_system(Stage::Input, update_actions);
+        // Standalone actions, evaluated per component. Independent of
+        // the active map: an entity reading one needs no map at all.
+        app.add_system(Stage::Input, super::single::read_input_actions);
     }
 
     fn name(&self) -> &str {
@@ -209,7 +249,6 @@ fn update_actions(resources: &mut Resources) {
         .cloned()
         .unwrap_or_else(|| ActionState::for_map(&map));
     next.update(&map, backend);
-    drop(backend);
 
     if let Some(state) = resources.get_mut::<ActionState>() {
         *state = next;
@@ -241,13 +280,48 @@ mod tests {
         let backend: Box<dyn InputBackend> = Box::new(backend);
         resources.insert(backend);
         resources.insert(ActionState::for_map(&map));
-        resources.insert(ActiveActionMap::new(map));
+        ActiveActionMap::replace(&mut resources, ActiveActionMap::new(map));
 
         update_actions(&mut resources);
 
         let state = resources.get::<ActionState>().expect("state");
         assert!(state.pressed(jump), "the frame did not reach the action");
         assert!(state.just_pressed(jump));
+    }
+
+    /// 🔴 A failed load is remembered, so it is reported once.
+    ///
+    /// Reported from a real run: fourteen identical `input map could not
+    /// be loaded` lines, one per frame, burying the first — the only one
+    /// that says anything. It fails the same way every frame, so retrying
+    /// is a log flood rather than a recovery path.
+    #[test]
+    fn a_failed_load_is_remembered_once() {
+        let guid = kooch_core::Guid::new_v4();
+        let other = kooch_core::Guid::new_v4();
+        let mut failed = FailedMapLoads::default();
+
+        assert!(!failed.contains(guid), "nothing has failed yet");
+        failed.record(guid);
+        failed.record(guid);
+        assert!(failed.contains(guid));
+        assert_eq!(failed.guids.len(), 1, "the same guid was recorded twice");
+        assert!(
+            !failed.contains(other),
+            "one failure blocked an unrelated map"
+        );
+    }
+
+    /// And the load itself reports failure rather than pretending, which
+    /// is what the guard above is driven by. No asset server is the
+    /// cheapest way to fail for the same reason on every frame.
+    #[test]
+    fn a_load_without_a_server_reports_failure() {
+        let mut resources = Resources::new();
+        assert!(
+            !load_map_asset(&mut resources, kooch_core::Guid::new_v4()),
+            "a load with no server claimed to have succeeded"
+        );
     }
 
     /// Missing pieces must be a quiet no-op, not a panic: a headless host
@@ -261,10 +335,11 @@ mod tests {
 }
 
 /// Pulls the map out of its asset and makes it the active one.
-fn load_map_asset(resources: &mut Resources, guid: kooch_core::Guid) {
+/// Returns whether the map is now the active one.
+fn load_map_asset(resources: &mut Resources, guid: kooch_core::Guid) -> bool {
     let Some(mut server) = resources.remove::<kooch_core::asset_loader::AssetServer>() else {
         tracing::error!(%guid, "no asset server, so the input map cannot be loaded");
-        return;
+        return false;
     };
     let loaded = server.load_by_guid::<ActionMap>(guid, resources);
     resources.insert(server);
@@ -276,16 +351,20 @@ fn load_map_asset(resources: &mut Resources, guid: kooch_core::Guid) {
                 .and_then(|assets| assets.get(handle).cloned())
             else {
                 tracing::error!(%guid, "input map loaded but not in storage");
-                return;
+                return false;
             };
             tracing::info!(%guid, actions = map.actions.len(), "input map active");
             resources.insert(ActionState::for_map(&map));
-            resources.insert(ActiveActionMap::from_asset(map, guid));
+            ActiveActionMap::replace(resources, ActiveActionMap::from_asset(map, guid));
+            true
         }
         // Named rather than silent: with no map every action resolves to
         // nothing, so the game simply does not respond — which reads as
         // broken input rather than as a missing file.
-        Err(e) => tracing::error!(%guid, error = %e, "input map could not be loaded"),
+        Err(e) => {
+            tracing::error!(%guid, error = %e, "input map could not be loaded");
+            false
+        }
     }
 }
 
@@ -315,5 +394,47 @@ fn sync_map_from_scene(resources: &mut Resources) {
     {
         return;
     }
-    load_map_asset(resources, guid);
+    // A load that failed fails the same way next frame, so retrying it is
+    // one identical error line per frame — which buries the first one,
+    // the only one that says anything. Recorded before the attempt so a
+    // panic on the way in does not loop either.
+    if resources
+        .get::<FailedMapLoads>()
+        .is_some_and(|failed| failed.contains(guid))
+    {
+        return;
+    }
+    if !load_map_asset(resources, guid) {
+        match resources.get_mut::<FailedMapLoads>() {
+            Some(failed) => failed.record(guid),
+            None => {
+                let mut failed = FailedMapLoads::default();
+                failed.record(guid);
+                resources.insert(failed);
+            }
+        }
+    }
+}
+
+/// Maps that failed to load, so the error is reported once.
+///
+/// Cleared by nothing: a guid that failed will keep failing until
+/// something changes that requires a restart anyway — the asset was
+/// missing, or its type was not registered. Retrying is not a recovery
+/// path, it is a log flood.
+#[derive(Debug, Default)]
+pub struct FailedMapLoads {
+    guids: Vec<kooch_core::Guid>,
+}
+
+impl FailedMapLoads {
+    fn contains(&self, guid: kooch_core::Guid) -> bool {
+        self.guids.contains(&guid)
+    }
+
+    fn record(&mut self, guid: kooch_core::Guid) {
+        if !self.contains(guid) {
+            self.guids.push(guid);
+        }
+    }
 }
