@@ -1,5 +1,6 @@
-use super::error::AssetResult;
-use crate::assets::Asset;
+use super::error::{AssetError, AssetResult};
+use crate::assets::{Asset, Assets, Handle};
+use crate::resource::Resources;
 use std::any::{Any, TypeId, type_name};
 use std::marker::PhantomData;
 use std::path::Path;
@@ -42,6 +43,32 @@ pub(crate) trait UntypedLoader: Send + Sync {
     ) -> AssetResult<Box<dyn Any + Send + Sync>>;
     fn asset_type_name(&self) -> &'static str;
     fn asset_type_id(&self) -> TypeId;
+
+    /// Parses `bytes` and writes the result **over the slot `key` already
+    /// points at**, rather than storing it somewhere new.
+    ///
+    /// This is what makes a reload visible. Loading again would call
+    /// `Assets::insert`, which mints a fresh key — every `Handle<T>`
+    /// already held by a component, a field or an instance would keep
+    /// resolving to the copy from before the edit, and the reload would
+    /// change nothing anyone can see. Overwriting in place leaves the
+    /// key untouched, so every existing handle reads the new bytes
+    /// without knowing a reload happened.
+    ///
+    /// Only the typed adapter can do this: the slot lives in
+    /// `Assets<T>`, and `T` is exactly what the type-erased registry
+    /// threw away.
+    ///
+    /// Returns `false` when `key` no longer points at a live slot — the
+    /// asset was removed after it was cached. That is a stale cache
+    /// entry rather than a failure, and the caller drops it.
+    fn reload_into(
+        &self,
+        bytes: &[u8],
+        ctx: &mut LoadContext<'_>,
+        key: slotmap::DefaultKey,
+        resources: &mut Resources,
+    ) -> AssetResult<bool>;
 }
 
 /// Adapter that bridges a concrete `AssetLoader<T>` into the type-erased
@@ -79,5 +106,27 @@ where
 
     fn asset_type_id(&self) -> TypeId {
         TypeId::of::<T>()
+    }
+
+    fn reload_into(
+        &self,
+        bytes: &[u8],
+        ctx: &mut LoadContext<'_>,
+        key: slotmap::DefaultKey,
+        resources: &mut Resources,
+    ) -> AssetResult<bool> {
+        // Parsed before the storage is borrowed, so a file that no longer
+        // parses leaves the previous asset in place instead of blanking it.
+        let asset = self.inner.load(bytes, ctx)?;
+        let assets = resources
+            .get_mut::<Assets<T>>()
+            .ok_or_else(|| AssetError::MissingAssetStorage(type_name::<T>()))?;
+        match assets.get_mut(Handle::<T>::from_key(key)) {
+            Some(slot) => {
+                *slot = asset;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 }
