@@ -221,7 +221,7 @@ mod tests {
 
         let guid = kooch_core::Guid::new_v4();
         let mut loaded = LoadedActions::default();
-        loaded.set(guid, jump());
+        loaded.set(guid, jump(), std::time::SystemTime::UNIX_EPOCH);
 
         let mut backend = MockInputBackend::new();
         backend.press_key(KeyCode::Space);
@@ -249,14 +249,45 @@ mod tests {
     fn reloading_an_action_replaces_it() {
         let guid = kooch_core::Guid::new_v4();
         let mut loaded = LoadedActions::default();
-        loaded.set(guid, jump());
+        loaded.set(guid, jump(), std::time::SystemTime::UNIX_EPOCH);
         loaded.set(
             guid,
             Action::new("renamed", crate::actions::action::ControlType::Button),
+            std::time::SystemTime::UNIX_EPOCH,
         );
 
         assert_eq!(loaded.by_guid.len(), 1);
         assert_eq!(loaded.get(guid).map(|a| a.name.as_str()), Some("renamed"));
+    }
+
+    /// 🔴 An action edited on disk is picked up without a restart.
+    ///
+    /// Reported from use: saving a rebind in the panel changed nothing
+    /// until the remote process was killed and relaunched, which reads as
+    /// "assets need a recompile" when nothing needs compiling. The cache
+    /// skipped any guid it already held, so a file was read once per
+    /// process and never again.
+    #[test]
+    fn a_newer_file_is_considered_stale() {
+        let guid = kooch_core::Guid::new_v4();
+        let mut loaded = LoadedActions::default();
+
+        let read_at = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        loaded.set(guid, jump(), read_at);
+
+        assert!(
+            !loaded.is_stale(guid, read_at),
+            "an unchanged file was reloaded, which re-reads it every frame"
+        );
+        assert!(
+            loaded.is_stale(guid, read_at + std::time::Duration::from_secs(1)),
+            "a file saved after it was read was not picked up — the edit is \
+             invisible until the process restarts"
+        );
+        assert!(
+            loaded.is_stale(kooch_core::Guid::new_v4(), read_at),
+            "an action never read must count as stale, or it never loads"
+        );
     }
 
     /// 🔴 Disabled means silent, per action — the thing a map cannot do,
@@ -323,6 +354,13 @@ mod tests {
 #[derive(Debug, Default)]
 pub struct LoadedActions {
     by_guid: Vec<(kooch_core::Guid, Action)>,
+    /// When each was last read off disk, so an edit is noticed.
+    ///
+    /// Without this a `.inputaction` is read once per process: saving a
+    /// rebind in the panel changed nothing until the game was restarted,
+    /// and the only way to see an edit was to relaunch — which reads as
+    /// "assets need a recompile" when nothing needs compiling at all.
+    read_at: Vec<(kooch_core::Guid, std::time::SystemTime)>,
 }
 
 impl LoadedActions {
@@ -345,11 +383,42 @@ impl LoadedActions {
         Some(super::state::evaluate(action, backend))
     }
 
-    fn set(&mut self, guid: kooch_core::Guid, action: Action) {
+    fn set(&mut self, guid: kooch_core::Guid, action: Action, modified: std::time::SystemTime) {
         match self.by_guid.iter_mut().find(|(g, _)| *g == guid) {
             Some(slot) => slot.1 = action,
             None => self.by_guid.push((guid, action)),
         }
+        match self.read_at.iter_mut().find(|(g, _)| *g == guid) {
+            Some(slot) => slot.1 = modified,
+            None => self.read_at.push((guid, modified)),
+        }
+    }
+
+    /// Whether what is on disk is newer than what was read.
+    fn is_stale(&self, guid: kooch_core::Guid, on_disk: std::time::SystemTime) -> bool {
+        self.read_at
+            .iter()
+            .find(|(g, _)| *g == guid)
+            .is_none_or(|(_, read)| on_disk > *read)
+    }
+}
+
+/// Says once how many `.inputaction` assets the database knows about.
+fn report_once(registered: usize, already_loaded: usize) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static REPORTED: AtomicBool = AtomicBool::new(false);
+
+    if REPORTED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    if registered == 0 {
+        tracing::warn!(
+            "no .inputaction assets are registered, so every action reference \
+             reads as nothing — is there a .meta beside each one, and is the \
+             project's assets/ being scanned?"
+        );
+    } else {
+        tracing::info!(registered, already_loaded, "input actions found");
     }
 }
 
@@ -364,18 +433,40 @@ impl LoadedActions {
 pub fn load_input_actions(resources: &mut kooch_core::resource::Resources) {
     use kooch_core::assets::Assets;
 
-    let wanted: Vec<kooch_core::Guid> = {
+    let wanted: Vec<(kooch_core::Guid, std::path::PathBuf, std::time::SystemTime)> = {
         let Some(database) = resources.get::<kooch_core::asset_database::AssetDatabase>() else {
+            tracing::warn!("no asset database, so no input action can be found");
             return;
         };
         let known = resources
             .get::<LoadedActions>()
             .map(|loaded| loaded.by_guid.iter().map(|(g, _)| *g).collect::<Vec<_>>())
             .unwrap_or_default();
-        database
+        let all: Vec<(kooch_core::Guid, std::path::PathBuf, std::time::SystemTime)> = database
             .entries_of_type(std::any::type_name::<Action>())
-            .map(|(guid, _)| guid)
-            .filter(|guid| !known.contains(guid))
+            .map(|(guid, entry)| {
+                let path = entry.path.clone();
+                // The file's own mtime rather than the entry's: the entry
+                // records when the scan saw it, and the running game does
+                // not rescan — so an edit made while it plays would never
+                // show up.
+                let on_disk = entry
+                    .path
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                (guid, path, on_disk)
+            })
+            .collect();
+        // Said once, even when it is zero: "no actions registered" is the
+        // answer to "why does nothing respond", and a silent early return
+        // is what made that question unanswerable.
+        report_once(all.len(), known.len());
+        let stale = resources.get::<LoadedActions>();
+        all.into_iter()
+            .filter(|(guid, _, on_disk)| {
+                stale.is_none_or(|loaded| loaded.is_stale(*guid, *on_disk))
+            })
             .collect()
     };
     if wanted.is_empty() {
@@ -386,29 +477,41 @@ pub fn load_input_actions(resources: &mut kooch_core::resource::Resources) {
         return;
     };
     let mut loaded = Vec::new();
-    for guid in wanted {
+    for (guid, path, on_disk) in wanted {
+        // Forgotten first, or `load_by_guid` hands back the copy already
+        // in memory and a reload reloads nothing.
+        server.forget::<Action>(&path);
         match server.load_by_guid::<Action>(guid, resources) {
-            Ok(handle) => loaded.push((guid, handle)),
+            Ok(handle) => loaded.push((guid, handle, on_disk)),
             Err(e) => tracing::error!(%guid, error = %e, "input action could not be loaded"),
         }
     }
     resources.insert(server);
 
-    let values: Vec<(kooch_core::Guid, Action)> = {
+    let values: Vec<(kooch_core::Guid, Action, std::time::SystemTime)> = {
         let Some(assets) = resources.get::<Assets<Action>>() else {
             return;
         };
         loaded
             .into_iter()
-            .filter_map(|(guid, handle)| assets.get(handle).map(|a| (guid, a.clone())))
+            .filter_map(|(guid, handle, at)| assets.get(handle).map(|a| (guid, a.clone(), at)))
             .collect()
     };
 
     let mut cache = resources.remove::<LoadedActions>().unwrap_or_default();
-    for (guid, action) in values {
-        tracing::debug!(%guid, action = %action.name, "input action loaded");
-        cache.set(guid, action);
+    let names: Vec<String> = values.iter().map(|(_, a, _)| a.name.clone()).collect();
+    for (guid, action, at) in values {
+        cache.set(guid, action, at);
     }
+    // Once, on the frame they arrive. Silence here is indistinguishable
+    // from a component pointing at nothing, which is how a player that
+    // does not move looks from the outside.
+    tracing::info!(
+        loaded = names.len(),
+        actions = ?names,
+        total = cache.by_guid.len(),
+        "input actions available",
+    );
     resources.insert(cache);
 }
 

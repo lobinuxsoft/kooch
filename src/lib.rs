@@ -138,8 +138,8 @@ pub mod prelude {
     #[cfg(feature = "input")]
     pub use kooch_input::actions::{
         Action, ActionHandle, ActionId, ActionMap, ActionState, ActionsPlugin, ActiveActionMap,
-        Binding, Composite, ControlPath, ControlType, DeviceClass, InputComponentsPlugin,
-        InputMapSource, PartName, Processor, VectorMode,
+        Binding, Composite, ControlPath, ControlType, DeviceClass, InputAction,
+        InputComponentsPlugin, InputMapSource, LoadedActions, PartName, Processor, VectorMode,
     };
     // `PhysicsWorld` is how a system pushes anything, and `SolverBody`
     // is what addresses a body — both were reachable only by full path,
