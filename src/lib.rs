@@ -95,6 +95,14 @@ pub mod prelude {
     pub use glam;
     pub use glam::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
 
+    // Logging, for the same reason as glam: a game that wants to say
+    // something to the editor's Console had to add a `tracing` dependency
+    // of its own and match the engine's version. It is the engine's
+    // console — the crate that owns it should hand over the way to write
+    // to it.
+    pub use tracing;
+    pub use tracing::{debug, error, info, warn};
+
     // What a game touches on day one. These were reachable all along at
     // `kooch::kooch_ecs::…`, which is to say: only if you already knew
     // they existed. See `docs/CAPABILITIES.md` — the prelude is the
@@ -123,9 +131,9 @@ pub mod prelude {
     // gameplay mentions a key again.
     #[cfg(feature = "input")]
     pub use kooch_input::actions::{
-        Action, ActionId, ActionMap, ActionState, ActionsPlugin, ActiveActionMap, Binding,
-        Composite, ControlPath, ControlType, DeviceClass, InputComponentsPlugin, InputMapSource,
-        PartName, Processor, Vector2Mode,
+        Action, ActionHandle, ActionId, ActionMap, ActionState, ActionsPlugin, ActiveActionMap,
+        Binding, Composite, ControlPath, ControlType, DeviceClass, InputComponentsPlugin,
+        InputMapSource, PartName, Processor, VectorMode,
     };
     // `PhysicsWorld` is how a system pushes anything, and `SolverBody`
     // is what addresses a body — both were reachable only by full path,
@@ -228,18 +236,11 @@ fn default_asset_plugin() -> kooch_render::plugin::AssetPlugin {
         })
         .unwrap_or_else(|| PathBuf::from("assets"));
 
+    // No loader list here on purpose. Every asset type declares itself
+    // beside its own definition with `kooch_core::register_asset!`, and
+    // `AssetPlugin` installs whatever is linked in. A list in the facade
+    // meant the editor kept a second copy of it, and the two drifted.
     let mut plugin = kooch_render::plugin::AssetPlugin::new().with_root(primary);
-    // The facade is the one crate that knows every asset type in the
-    // engine, so contributed loaders are registered from here rather than
-    // by making the renderer depend on the crates that own them.
-    #[cfg(feature = "input")]
-    {
-        plugin = plugin.with_loader(|server| {
-            server.register_loader::<kooch_input::actions::ActionMap, _>(
-                kooch_input::actions::InputMapLoader,
-            );
-        });
-    }
     if let Some(project) = project_root {
         let project_assets = project.join("assets");
         if project_assets.exists() {

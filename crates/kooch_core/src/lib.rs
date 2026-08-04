@@ -47,6 +47,7 @@ pub mod app;
 pub mod asset_database;
 pub mod asset_loader;
 pub mod asset_meta;
+pub mod asset_registry;
 pub mod assets;
 pub mod buffer;
 pub mod compute;
@@ -70,6 +71,10 @@ pub mod schedule;
 pub mod stage;
 pub mod system;
 pub mod time;
+
+/// Re-exported so `register_asset!` resolves from any crate.
+#[doc(hidden)]
+pub use inventory;
 
 pub use aabb::Aabb;
 pub use guid::Guid;

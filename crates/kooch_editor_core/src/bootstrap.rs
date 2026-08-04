@@ -43,18 +43,7 @@ pub fn run_editor_with<P: Plugin + 'static>(project: P) {
     app.add_plugin(EcsPlugin);
     // Asset root resolved to an ABSOLUTE path — the cwd shifts when a
     // project is opened.
-    app.add_plugin(
-        AssetPlugin::new()
-            .with_root(engine_root().join("assets"))
-            // The editor assembles its own plugin set, so it contributes
-            // the same loaders the facade does — without this the asset
-            // browser lists a `.inputmap` it cannot open.
-            .with_loader(|server| {
-                server.register_loader::<kooch_input::actions::ActionMap, _>(
-                    kooch_input::actions::InputMapLoader,
-                );
-            }),
-    );
+    app.add_plugin(AssetPlugin::new().with_root(engine_root().join("assets")));
     app.add_plugin(WorldStreamingPlugin);
     app.add_plugin(EditorPlugin);
     // After EditorPlugin on purpose: both register a raw-event handler in
