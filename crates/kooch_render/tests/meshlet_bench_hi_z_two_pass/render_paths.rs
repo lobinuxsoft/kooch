@@ -10,6 +10,7 @@ pub(crate) fn render_single_pass(rig: &BenchRig) {
             label: Some("bench_single_pass_frame"),
         });
     rig.cull.dispatch_scene_pool_atomic(
+        &rig.cull_pipelines,
         &rig.device,
         &rig.queue,
         &mut enc,
@@ -63,6 +64,7 @@ pub(crate) fn render_two_pass(rig: &mut BenchRig, arena: &mut Vec<wgpu::BindGrou
             label: Some("bench_two_pass_frame"),
         });
     rig.cull.dispatch_scene_pool_atomic_hi_z(
+        &rig.cull_pipelines,
         &rig.device,
         &rig.queue,
         &mut enc,
@@ -90,6 +92,7 @@ pub(crate) fn render_two_pass(rig: &mut BenchRig, arena: &mut Vec<wgpu::BindGrou
     rig.hiz_curr
         .build_from_depth(&rig.device, &mut enc, &rig.depth_sample_view, arena);
     rig.cull.dispatch_cull_pass_b(
+        &rig.cull_pipelines,
         &rig.device,
         &rig.queue,
         &mut enc,

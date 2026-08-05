@@ -2,6 +2,7 @@ use crate::meshlet::cull::CullParams;
 use crate::meshlet::gpu_meshlet::GpuMeshletMesh;
 
 use super::super::MeshletCull;
+use super::super::pipelines::MeshletCullPipelines;
 use super::super::types::HiZTestParams;
 
 impl MeshletCull {
@@ -13,6 +14,7 @@ impl MeshletCull {
     /// encoder submission — bind groups borrow its descriptor buffer.
     pub fn dispatch(
         &self,
+        pipelines: &MeshletCullPipelines,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
@@ -29,14 +31,14 @@ impl MeshletCull {
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(params));
         encoder.clear_buffer(&self.visible_count, 0, None);
 
-        let cull_bg = self.build_cull_bg(device, mesh);
+        let cull_bg = self.build_cull_bg(pipelines, device, mesh);
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("meshlet_cull_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(&pipelines.pipeline);
             pass.set_bind_group(0, &cull_bg, &[]);
             let workgroups = mesh.meshlet_count.div_ceil(64);
             pass.dispatch_workgroups(workgroups.max(1), 1, 1);
@@ -50,6 +52,7 @@ impl MeshletCull {
     /// produced by [`crate::hi_z::HiZ::full_view`].
     pub fn dispatch_with_hi_z(
         &self,
+        pipelines: &MeshletCullPipelines,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
@@ -69,10 +72,10 @@ impl MeshletCull {
         queue.write_buffer(&self.hi_z_params_buffer, 0, bytemuck::bytes_of(hi_z_params));
         encoder.clear_buffer(&self.visible_count, 0, None);
 
-        let cull_bg = self.build_cull_bg(device, mesh);
+        let cull_bg = self.build_cull_bg(pipelines, device, mesh);
         let hi_z_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_hi_z_bg"),
-            layout: &self.hi_z_bgl,
+            layout: &pipelines.hi_z_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -90,7 +93,7 @@ impl MeshletCull {
                 label: Some("meshlet_cull_hi_z_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipeline_hi_z);
+            pass.set_pipeline(&pipelines.pipeline_hi_z);
             pass.set_bind_group(0, &cull_bg, &[]);
             pass.set_bind_group(1, &hi_z_bg, &[]);
             let workgroups = mesh.meshlet_count.div_ceil(64);

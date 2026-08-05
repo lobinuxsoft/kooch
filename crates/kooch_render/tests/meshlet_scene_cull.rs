@@ -16,8 +16,8 @@ mod common;
 use common::{build_cube_mesh, try_acquire_device};
 use glam::{Mat4, Vec3};
 use kooch_render::meshlet::{
-    CullParams, DEFAULT_MAX_TRIANGLES, MeshInstance, MeshletCull, MeshletScene, SceneCullParams,
-    build_default_meshlets, decode_scene_visible_id,
+    CullParams, DEFAULT_MAX_TRIANGLES, MeshInstance, MeshletCull, MeshletCullPipelines,
+    MeshletScene, SceneCullParams, build_default_meshlets, decode_scene_visible_id,
 };
 use std::collections::BTreeSet;
 
@@ -83,6 +83,7 @@ fn scene_cull_visits_each_instance_once_when_all_in_frustum() {
 
     let total_threads = instances.len() as u32 * meshlets_per_mesh;
     let cull = MeshletCull::new(&device, total_threads * 2, DEFAULT_MAX_TRIANGLES as u32);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.0, 0.5, 5.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 0.0), Vec3::Y);
@@ -94,6 +95,7 @@ fn scene_cull_visits_each_instance_once_when_all_in_frustum() {
         label: Some("scene_cull_all_visible_encoder"),
     });
     cull.dispatch_scene(
+        &cull_pipelines,
         &device,
         &queue,
         &mut encoder,
@@ -159,6 +161,7 @@ fn scene_cull_drops_off_screen_instances() {
 
     let total_threads = instances.len() as u32 * meshlets_per_mesh;
     let cull = MeshletCull::new(&device, total_threads * 2, DEFAULT_MAX_TRIANGLES as u32);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.0, 0.5, 5.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 0.0), Vec3::Y);
@@ -171,6 +174,7 @@ fn scene_cull_drops_off_screen_instances() {
         label: Some("scene_cull_off_screen_encoder"),
     });
     cull.dispatch_scene(
+        &cull_pipelines,
         &device,
         &queue,
         &mut encoder,
@@ -226,6 +230,7 @@ fn scene_cull_with_zero_instances_is_no_op() {
     let scene = MeshletScene::new(&device, 4);
 
     let cull = MeshletCull::new(&device, 256, DEFAULT_MAX_TRIANGLES as u32);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.0, 0.0, 5.0);
     let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
@@ -237,6 +242,7 @@ fn scene_cull_with_zero_instances_is_no_op() {
         label: Some("scene_cull_zero_instances_encoder"),
     });
     cull.dispatch_scene(
+        &cull_pipelines,
         &device,
         &queue,
         &mut encoder,

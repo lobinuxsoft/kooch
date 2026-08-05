@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::super::DEFAULT_MAX_TRIANGLES;
 use super::super::deferred::{DEFERRED_COLOR_FORMAT, MeshletDeferredShader};
-use super::super::dispatcher::MeshletCull;
+use super::super::dispatcher::{MeshletCull, MeshletCullPipelines};
 use super::super::gpu_meshlet::meshlet_bind_group_layout;
 use super::super::gpu_timers::MeshletGpuTimers;
 use super::super::scene::MeshletScene;
@@ -35,15 +35,19 @@ impl MeshletRenderStage {
 
         let meshlet_bgl = meshlet_bind_group_layout(device);
 
+        // Pipelines are shared by every view; only the buffers below
+        // are per view (#592).
+        let cull_pipelines = MeshletCullPipelines::new(device);
         let cull = MeshletCull::new(device, meshlet_capacity, DEFAULT_MAX_TRIANGLES as u32);
         let scene = MeshletScene::new(device, instance_capacity);
         let rasterizer = MeshletVisRasterizer::new(
             device,
             Some(wgpu::TextureFormat::Depth32Float),
-            cull.meshlet_bind_group_layout(),
+            cull_pipelines.meshlet_bind_group_layout(),
             None,
         );
-        let deferred = MeshletDeferredShader::new(device, cull.meshlet_bind_group_layout());
+        let deferred =
+            MeshletDeferredShader::new(device, cull_pipelines.meshlet_bind_group_layout());
 
         // Everything per view lives together — see `view_targets` for
         // why the boundary is drawn here rather than at the fields.
@@ -52,7 +56,7 @@ impl MeshletRenderStage {
             size,
             debug_caps,
             vbuf64,
-            cull.meshlet_bind_group_layout(),
+            cull_pipelines.meshlet_bind_group_layout(),
         );
 
         // Reject-reason overlay (#454.4). Same atomic gate as the
@@ -63,7 +67,8 @@ impl MeshletRenderStage {
         // empty space.
         let reject_overlay = if debug_caps.supports_texture_atomic() {
             Some(super::super::reject_overlay::MeshletRejectOverlay::new(
-                device, &cull,
+                device,
+                &cull_pipelines,
             ))
         } else {
             None
@@ -73,6 +78,7 @@ impl MeshletRenderStage {
             pipeline: MeshletPipeline::new(),
             scene,
             cull,
+            cull_pipelines,
             rasterizer,
             deferred,
             gpu_pool: None,

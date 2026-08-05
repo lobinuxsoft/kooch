@@ -122,6 +122,7 @@ impl MeshletRenderStage {
             let hiz_prev = self.view.hiz_prev.as_ref().expect("allocated above");
             let hiz_prev_view = hiz_prev.full_view();
             self.cull.dispatch_scene_pool_atomic_hi_z(
+                &self.cull_pipelines,
                 device,
                 queue,
                 &mut encoder,
@@ -188,6 +189,7 @@ impl MeshletRenderStage {
             let hiz_curr = self.view.hiz_curr.as_ref().expect("allocated above");
             let hiz_curr_view = hiz_curr.full_view();
             self.cull.dispatch_cull_pass_b(
+                &self.cull_pipelines,
                 device,
                 queue,
                 &mut encoder,

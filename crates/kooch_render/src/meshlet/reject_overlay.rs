@@ -13,7 +13,7 @@
 //!   screen size + the selected reason + line thickness, plus the
 //!   colour storage-texture target.
 //! - `group(1) … group(3)` reuse the layouts already exposed by
-//!   [`MeshletCull`] so the overlay sees the same pool / scene /
+//!   [`MeshletCullPipelines`] so the overlay sees the same pool / scene /
 //!   reject-reason buffers the cull pass writes through. Avoids
 //!   duplicating BGLs and keeps the dispatcher the single source of
 //!   truth for those handles.
@@ -36,7 +36,7 @@ use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 use super::deferred::DEFERRED_COLOR_FORMAT;
-use super::dispatcher::MeshletCull;
+use super::dispatcher::{MeshletCull, MeshletCullPipelines};
 use super::scene::MeshletScene;
 
 const SHADER_SOURCE: &str = include_str!("../../shaders/meshlet_reject_overlay.wgsl");
@@ -78,10 +78,10 @@ pub struct MeshletRejectOverlay {
 
 impl MeshletRejectOverlay {
     /// Builds the overlay pipeline. The pipeline_layout reuses the
-    /// pool / scene / debug BGLs exposed by [`MeshletCull`] so a
-    /// single `MeshletCull` handle drives both the cull writes and
+    /// pool / scene / debug BGLs exposed by [`MeshletCullPipelines`] so
+    /// a single layout source drives both the cull writes and
     /// the overlay reads.
-    pub fn new(device: &wgpu::Device, cull: &MeshletCull) -> Self {
+    pub fn new(device: &wgpu::Device, pipelines: &MeshletCullPipelines) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("meshlet_reject_overlay_shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
@@ -119,9 +119,9 @@ impl MeshletRejectOverlay {
             label: Some("meshlet_reject_overlay_pipeline_layout"),
             bind_group_layouts: &[
                 Some(&overlay_bgl),
-                Some(cull.pool_bind_group_layout()),
-                Some(cull.scene_bind_group_layout()),
-                Some(cull.debug_bind_group_layout()),
+                Some(pipelines.pool_bind_group_layout()),
+                Some(pipelines.scene_bind_group_layout()),
+                Some(pipelines.debug_bind_group_layout()),
             ],
             immediate_size: 0,
         });
@@ -164,6 +164,7 @@ impl MeshletRejectOverlay {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         color_view: &wgpu::TextureView,
+        pipelines: &MeshletCullPipelines,
         cull: &MeshletCull,
         scene: &MeshletScene,
         pool: &super::pool::GpuGlobalMeshPool,
@@ -201,7 +202,7 @@ impl MeshletRejectOverlay {
         });
         let pool_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_reject_overlay_pool_bg"),
-            layout: cull.pool_bind_group_layout(),
+            layout: pipelines.pool_bind_group_layout(),
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -215,7 +216,7 @@ impl MeshletRejectOverlay {
         });
         let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_reject_overlay_scene_bg"),
-            layout: cull.scene_bind_group_layout(),
+            layout: pipelines.scene_bind_group_layout(),
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -236,7 +237,7 @@ impl MeshletRejectOverlay {
         // pipeline.
         let debug_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_reject_overlay_debug_bg"),
-            layout: cull.debug_bind_group_layout(),
+            layout: pipelines.debug_bind_group_layout(),
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,

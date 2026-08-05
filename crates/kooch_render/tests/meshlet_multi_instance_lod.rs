@@ -20,8 +20,8 @@ use glam::{Mat4, Vec3};
 use kooch_render::mesh::{Mesh, MeshVertex};
 use kooch_render::meshlet::{
     CullParams, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES, GlobalMeshPool, LodConfig,
-    MeshInstance, MeshletCull, MeshletScene, SceneCullParams, build_meshlets_lod_chain,
-    decode_scene_visible_id,
+    MeshInstance, MeshletCull, MeshletCullPipelines, MeshletScene, SceneCullParams,
+    build_meshlets_lod_chain, decode_scene_visible_id,
 };
 use std::collections::BTreeSet;
 
@@ -148,6 +148,7 @@ fn three_instances_pick_distinct_lod_bands() {
 
     let total_threads = instances.len() as u32 * meshlets_per_mesh;
     let mut cull = MeshletCull::new(&device, total_threads * 2, DEFAULT_MAX_TRIANGLES as u32);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
     cull.ensure_group_capacity(&device, running_base.max(1));
 
     // Camera at origin looking down -Z with a 60 deg FOV. proj_scale_y
@@ -169,6 +170,7 @@ fn three_instances_pick_distinct_lod_bands() {
         label: Some("multi_inst_lod_cull"),
     });
     cull.dispatch_scene_pool_atomic(
+        &cull_pipelines,
         &device,
         &queue,
         &mut enc,

@@ -1,16 +1,18 @@
 use crate::meshlet::gpu_meshlet::GpuMeshletMesh;
 
 use super::super::MeshletCull;
+use super::super::pipelines::MeshletCullPipelines;
 
 impl MeshletCull {
     pub(super) fn build_cull_bg(
         &self,
+        pipelines: &MeshletCullPipelines,
         device: &wgpu::Device,
         mesh: &GpuMeshletMesh,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_bg_dispatch"),
-            layout: &self.cull_bgl,
+            layout: &pipelines.cull_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,

@@ -5,8 +5,8 @@ use kooch_render::material::{Material, MaterialPipeline};
 use kooch_render::mesh::Mesh;
 use kooch_render::meshlet::{
     CullParams, DEFAULT_MAX_TRIANGLES, DEFERRED_COLOR_FORMAT, GlobalMeshPool, MeshInstance,
-    MeshletCull, MeshletDeferredShader, MeshletScene, MeshletVisRasterizer, SceneCullParams,
-    VISIBILITY_BUFFER_FORMAT, build_default_meshlets, meshlet_bind_group_layout,
+    MeshletCull, MeshletCullPipelines, MeshletDeferredShader, MeshletScene, MeshletVisRasterizer,
+    SceneCullParams, VISIBILITY_BUFFER_FORMAT, build_default_meshlets, meshlet_bind_group_layout,
     pool_meshlet_bind_group,
 };
 
@@ -17,6 +17,7 @@ pub(crate) struct BenchRig {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     pub(crate) cull: MeshletCull,
+    pub(crate) cull_pipelines: MeshletCullPipelines,
     pub(crate) vbuf_raster: MeshletVisRasterizer,
     pub(crate) deferred: MeshletDeferredShader,
     pub(crate) meshlet_bg: wgpu::BindGroup,
@@ -49,15 +50,16 @@ pub(crate) fn build_rig() -> Option<BenchRig> {
     scene.upload_instances(&queue, &[instance]);
 
     let mut cull = MeshletCull::new(&device, 4096, DEFAULT_MAX_TRIANGLES as u32);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
     cull.ensure_group_capacity(&device, pool.group_capacity.max(1));
 
     let vbuf_raster = MeshletVisRasterizer::new(
         &device,
         Some(DEPTH_FORMAT),
-        cull.meshlet_bind_group_layout(),
+        cull_pipelines.meshlet_bind_group_layout(),
         None,
     );
-    let deferred = MeshletDeferredShader::new(&device, cull.meshlet_bind_group_layout());
+    let deferred = MeshletDeferredShader::new(&device, cull_pipelines.meshlet_bind_group_layout());
 
     let meshlet_bgl = meshlet_bind_group_layout(&device);
     let meshlet_bg = pool_meshlet_bind_group(&device, &meshlet_bgl, &gpu_pool);
@@ -174,6 +176,7 @@ pub(crate) fn build_rig() -> Option<BenchRig> {
         device,
         queue,
         cull,
+        cull_pipelines,
         vbuf_raster,
         deferred,
         meshlet_bg,

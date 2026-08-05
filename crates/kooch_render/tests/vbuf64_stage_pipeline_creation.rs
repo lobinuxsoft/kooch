@@ -90,7 +90,8 @@ fn vbuf64_stage_creates_without_uncaptured_errors() {
         4096,
         kooch_render::meshlet::DEFAULT_MAX_TRIANGLES as u32,
     );
-    let meshlet_bgl = cull.meshlet_bind_group_layout();
+    let cull_pipelines = kooch_render::meshlet::MeshletCullPipelines::new(&device);
+    let meshlet_bgl = cull_pipelines.meshlet_bind_group_layout();
 
     let stage = Vbuf64Stage::new(
         &device,

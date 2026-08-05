@@ -17,8 +17,9 @@ mod common;
 use common::{build_cube_mesh, try_acquire_device};
 use glam::{Mat4, Vec3};
 use kooch_render::meshlet::{
-    CullParams, DEFAULT_MAX_TRIANGLES, GlobalMeshPool, MeshInstance, MeshletCull, MeshletScene,
-    SceneCullParams, build_default_meshlets, decode_scene_visible_id,
+    CullParams, DEFAULT_MAX_TRIANGLES, GlobalMeshPool, MeshInstance, MeshletCull,
+    MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets,
+    decode_scene_visible_id,
 };
 use std::collections::BTreeSet;
 
@@ -70,6 +71,7 @@ fn atomic_pool_cull_drops_off_frustum_aabb() {
 
     let total_threads = instances.len() as u32 * meshlets_per_mesh;
     let mut cull = MeshletCull::new(&device, total_threads * 2, DEFAULT_MAX_TRIANGLES as u32);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
     cull.ensure_capacity(&device, total_threads);
     cull.ensure_group_capacity(&device, total_threads);
 
@@ -84,6 +86,7 @@ fn atomic_pool_cull_drops_off_frustum_aabb() {
         label: Some("atomic_pool_cull_aabb_encoder"),
     });
     cull.dispatch_scene_pool_atomic(
+        &cull_pipelines,
         &device,
         &queue,
         &mut encoder,

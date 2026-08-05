@@ -13,8 +13,8 @@ mod common;
 use common::{build_cube_mesh, try_acquire_device};
 use glam::{Mat4, Vec3};
 use kooch_render::meshlet::{
-    CullParams, DEFAULT_MAX_TRIANGLES, MeshletCull, MeshletDrawer, build_default_meshlets,
-    meshlet_bind_group, meshlet_bind_group_layout,
+    CullParams, DEFAULT_MAX_TRIANGLES, MeshletCull, MeshletCullPipelines, MeshletDrawer,
+    build_default_meshlets, meshlet_bind_group, meshlet_bind_group_layout,
 };
 
 const RT_WIDTH: u32 = 64;
@@ -46,11 +46,12 @@ fn meshlet_pipeline_renders_visible_cube_pixels() {
         gpu_mesh.meshlet_count.max(1) * 2,
         DEFAULT_MAX_TRIANGLES as u32,
     );
+    let cull_pipelines = MeshletCullPipelines::new(&device);
     let drawer = MeshletDrawer::new(
         &device,
         RT_FORMAT,
         Some(DEPTH_FORMAT),
-        cull.meshlet_bind_group_layout(),
+        cull_pipelines.meshlet_bind_group_layout(),
         None,
     );
     let meshlet_bgl = meshlet_bind_group_layout(&device);
@@ -112,7 +113,14 @@ fn meshlet_pipeline_renders_visible_cube_pixels() {
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("meshlet_render_encoder"),
     });
-    cull.dispatch(&device, &queue, &mut encoder, &gpu_mesh, &cull_params);
+    cull.dispatch(
+        &cull_pipelines,
+        &device,
+        &queue,
+        &mut encoder,
+        &gpu_mesh,
+        &cull_params,
+    );
     drawer.render(
         &device,
         &queue,
@@ -212,11 +220,12 @@ fn meshlet_pipeline_renders_nothing_when_camera_faces_away() {
         gpu_mesh.meshlet_count.max(1) * 2,
         DEFAULT_MAX_TRIANGLES as u32,
     );
+    let cull_pipelines = MeshletCullPipelines::new(&device);
     let drawer = MeshletDrawer::new(
         &device,
         RT_FORMAT,
         Some(DEPTH_FORMAT),
-        cull.meshlet_bind_group_layout(),
+        cull_pipelines.meshlet_bind_group_layout(),
         None,
     );
     let meshlet_bgl = meshlet_bind_group_layout(&device);
@@ -266,7 +275,14 @@ fn meshlet_pipeline_renders_nothing_when_camera_faces_away() {
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("meshlet_render_encoder_empty"),
     });
-    cull.dispatch(&device, &queue, &mut encoder, &gpu_mesh, &cull_params);
+    cull.dispatch(
+        &cull_pipelines,
+        &device,
+        &queue,
+        &mut encoder,
+        &gpu_mesh,
+        &cull_params,
+    );
     drawer.render(
         &device,
         &queue,

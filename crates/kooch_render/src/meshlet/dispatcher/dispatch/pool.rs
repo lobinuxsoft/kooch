@@ -3,6 +3,7 @@ use crate::meshlet::pool::GpuGlobalMeshPool;
 use crate::meshlet::scene::{MeshletScene, SceneCullParams};
 
 use super::super::MeshletCull;
+use super::super::pipelines::MeshletCullPipelines;
 
 impl MeshletCull {
     /// Multi-mesh scene cull (#446). One dispatch covers every
@@ -25,6 +26,7 @@ impl MeshletCull {
     #[allow(clippy::too_many_arguments)]
     pub fn dispatch_scene_pool(
         &self,
+        pipelines: &MeshletCullPipelines,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
@@ -60,7 +62,7 @@ impl MeshletCull {
         // the shader simply does not read from it.
         let cull_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_scene_pool_cull_bg"),
-            layout: &self.cull_bgl,
+            layout: &pipelines.cull_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -85,7 +87,7 @@ impl MeshletCull {
         // 5-entry layout).
         let pool_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_scene_pool_pool_bg"),
-            layout: &self.pool_bgl,
+            layout: &pipelines.pool_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -99,7 +101,7 @@ impl MeshletCull {
         });
         let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_scene_pool_scene_bg"),
-            layout: &self.scene_bgl,
+            layout: &pipelines.scene_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -117,7 +119,7 @@ impl MeshletCull {
                 label: Some("meshlet_cull_scene_pool_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipeline_scene_pool);
+            pass.set_pipeline(&pipelines.pipeline_scene_pool);
             pass.set_bind_group(0, &cull_bg, &[]);
             pass.set_bind_group(1, &pool_bg, &[]);
             pass.set_bind_group(2, &scene_bg, &[]);

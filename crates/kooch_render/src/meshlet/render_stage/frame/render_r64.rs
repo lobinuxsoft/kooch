@@ -48,6 +48,7 @@ impl MeshletRenderStage {
         // Stage 0 (Cull). render() already called `write_start`
         // which lands on stage 0; just close it after the dispatch.
         self.cull.dispatch_scene_pool_atomic(
+            &self.cull_pipelines,
             device,
             queue,
             &mut encoder,
@@ -137,6 +138,7 @@ impl MeshletRenderStage {
                 queue,
                 &mut encoder,
                 &self.view.color_view,
+                &self.cull_pipelines,
                 &self.cull,
                 &self.scene,
                 gpu_pool,

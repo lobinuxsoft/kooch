@@ -16,9 +16,9 @@ use glam::{Mat4, Vec3};
 use kooch_core::Guid;
 use kooch_render::material::{Material, MaterialPipeline};
 use kooch_render::meshlet::{
-    CullParams, DEFAULT_MAX_TRIANGLES, DEFERRED_COLOR_FORMAT, MeshletCull, MeshletDeferredShader,
-    MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT, build_default_meshlets, meshlet_bind_group,
-    meshlet_bind_group_layout,
+    CullParams, DEFAULT_MAX_TRIANGLES, DEFERRED_COLOR_FORMAT, MeshletCull, MeshletCullPipelines,
+    MeshletDeferredShader, MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT, build_default_meshlets,
+    meshlet_bind_group, meshlet_bind_group_layout,
 };
 
 const RT_WIDTH: u32 = 64;
@@ -42,13 +42,14 @@ fn vis_buffer_plus_deferred_paints_visible_cube_pixels() {
         gpu_mesh.meshlet_count.max(1) * 2,
         DEFAULT_MAX_TRIANGLES as u32,
     );
+    let cull_pipelines = MeshletCullPipelines::new(&device);
     let vbuf_raster = MeshletVisRasterizer::new(
         &device,
         Some(DEPTH_FORMAT),
-        cull.meshlet_bind_group_layout(),
+        cull_pipelines.meshlet_bind_group_layout(),
         None,
     );
-    let deferred = MeshletDeferredShader::new(&device, cull.meshlet_bind_group_layout());
+    let deferred = MeshletDeferredShader::new(&device, cull_pipelines.meshlet_bind_group_layout());
 
     let meshlet_bgl = meshlet_bind_group_layout(&device);
     let meshlet_bg = meshlet_bind_group(&device, &meshlet_bgl, &gpu_mesh);
@@ -112,7 +113,14 @@ fn vis_buffer_plus_deferred_paints_visible_cube_pixels() {
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("vbuf_deferred_encoder"),
     });
-    cull.dispatch(&device, &queue, &mut encoder, &gpu_mesh, &cull_params);
+    cull.dispatch(
+        &cull_pipelines,
+        &device,
+        &queue,
+        &mut encoder,
+        &gpu_mesh,
+        &cull_params,
+    );
     vbuf_raster.render(
         &device,
         &queue,

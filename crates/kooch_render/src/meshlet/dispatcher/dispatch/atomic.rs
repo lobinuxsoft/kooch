@@ -3,6 +3,7 @@ use crate::meshlet::pool::GpuGlobalMeshPool;
 use crate::meshlet::scene::{MeshletScene, SceneCullParams};
 
 use super::super::MeshletCull;
+use super::super::pipelines::MeshletCullPipelines;
 
 impl MeshletCull {
     /// 2-pass cull with group-atomic LOD descent (#465). Pass 1
@@ -18,6 +19,7 @@ impl MeshletCull {
     #[allow(clippy::too_many_arguments)]
     pub fn dispatch_scene_pool_atomic(
         &self,
+        pipelines: &MeshletCullPipelines,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
@@ -65,7 +67,7 @@ impl MeshletCull {
         // Bind groups shared by both passes.
         let cull_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_scene_pool_atomic_cull_bg"),
-            layout: &self.cull_bgl,
+            layout: &pipelines.cull_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -87,7 +89,7 @@ impl MeshletCull {
         });
         let pool_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_scene_pool_atomic_pool_bg"),
-            layout: &self.pool_bgl,
+            layout: &pipelines.pool_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -101,7 +103,7 @@ impl MeshletCull {
         });
         let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_scene_pool_atomic_scene_bg"),
-            layout: &self.scene_bgl,
+            layout: &pipelines.scene_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -115,7 +117,7 @@ impl MeshletCull {
         });
         let group_err_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_group_err_bg"),
-            layout: &self.group_err_bgl,
+            layout: &pipelines.group_err_bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.group_max_err.as_entire_binding(),
@@ -127,7 +129,7 @@ impl MeshletCull {
         // binding is a no-op there beyond the table write.
         let debug_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_debug_bg"),
-            layout: &self.debug_bgl,
+            layout: &pipelines.debug_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -147,7 +149,7 @@ impl MeshletCull {
                 label: Some("meshlet_lod_compute_group_max_err_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipeline_lod_compute_group_max_err);
+            pass.set_pipeline(&pipelines.pipeline_lod_compute_group_max_err);
             pass.set_bind_group(0, &cull_bg, &[]);
             pass.set_bind_group(1, &pool_bg, &[]);
             pass.set_bind_group(2, &scene_bg, &[]);
@@ -160,7 +162,7 @@ impl MeshletCull {
                 label: Some("meshlet_cull_scene_pool_atomic_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipeline_cull_scene_pool_atomic);
+            pass.set_pipeline(&pipelines.pipeline_cull_scene_pool_atomic);
             pass.set_bind_group(0, &cull_bg, &[]);
             pass.set_bind_group(1, &pool_bg, &[]);
             pass.set_bind_group(2, &scene_bg, &[]);

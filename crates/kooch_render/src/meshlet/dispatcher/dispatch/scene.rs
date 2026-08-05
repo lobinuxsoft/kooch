@@ -3,6 +3,7 @@ use crate::meshlet::gpu_meshlet::GpuMeshletMesh;
 use crate::meshlet::scene::{MeshletScene, SceneCullParams};
 
 use super::super::MeshletCull;
+use super::super::pipelines::MeshletCullPipelines;
 
 impl MeshletCull {
     /// Scene-wide cull against a SINGLE [`GpuMeshletMesh`]
@@ -20,6 +21,7 @@ impl MeshletCull {
     #[allow(clippy::too_many_arguments)]
     pub fn dispatch_scene(
         &self,
+        pipelines: &MeshletCullPipelines,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
@@ -44,10 +46,10 @@ impl MeshletCull {
         );
         encoder.clear_buffer(&self.visible_count, 0, None);
 
-        let cull_bg = self.build_cull_bg(device, mesh);
+        let cull_bg = self.build_cull_bg(pipelines, device, mesh);
         let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_scene_bg"),
-            layout: &self.scene_bgl,
+            layout: &pipelines.scene_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -65,7 +67,7 @@ impl MeshletCull {
                 label: Some("meshlet_cull_scene_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipeline_scene);
+            pass.set_pipeline(&pipelines.pipeline_scene);
             pass.set_bind_group(0, &cull_bg, &[]);
             pass.set_bind_group(2, &scene_bg, &[]);
             let workgroups = total_threads.div_ceil(64).max(1);

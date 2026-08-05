@@ -66,7 +66,7 @@ pub use cull::{
 };
 pub use debug::{MeshletDebugMode, MeshletLodSettings};
 pub use deferred::{DEFERRED_COLOR_FORMAT, MeshletDeferredShader};
-pub use dispatcher::{DrawIndirectArgs, HiZTestParams, MeshletCull};
+pub use dispatcher::{DrawIndirectArgs, HiZTestParams, MeshletCull, MeshletCullPipelines};
 pub use drawer::MeshletDrawer;
 pub use gpu_meshlet::{
     GpuMeshletMesh, binding, meshlet_bind_group, meshlet_bind_group_layout, pool_meshlet_bind_group,
