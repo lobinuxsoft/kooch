@@ -75,12 +75,13 @@ pub(crate) fn render_game_view(
     blit: &MeshletBlit,
     resources: &mut Resources,
 ) -> bool {
-    let Some((view_proj, cam_pos)) = gameplay_camera_matrices(resources, game.target.aspect())
-    else {
+    let Some(camera) = gameplay_camera(resources) else {
         game.has_camera = false;
         return false;
     };
     game.has_camera = true;
+    let aspect = game.target.aspect();
+    let (view_proj, cam_pos) = (camera.view_proj(aspect), camera.position());
 
     // Per view: dragging this panel's divider must not reallocate the
     // View panel's attachments.
@@ -114,7 +115,8 @@ pub(crate) fn render_game_view(
             game.target.view(),
             game.target.depth_view(),
             resources,
-            game.target.aspect(),
+            &camera,
+            aspect,
             active_sky,
             time_secs,
         )
@@ -141,34 +143,25 @@ pub(crate) fn render_game_view(
 }
 
 /// Highest-priority active camera that is not the editor's.
-fn gameplay_camera_matrices(
-    resources: &Resources,
-    aspect: f32,
-) -> Option<(glam::Mat4, glam::Vec3)> {
+fn gameplay_camera(resources: &Resources) -> Option<kooch_render::ViewCamera> {
     let query =
         Query::<(&PerspectiveCamera, &GlobalTransform), Without<EditorCamera>>::new(resources);
-    let mut best: Option<(i32, glam::Mat4, glam::Vec3)> = None;
+    let mut best: Option<(i32, kooch_render::ViewCamera)> = None;
     query.for_each(|(cam, gt)| {
         if !cam.active {
             return;
         }
-        if let Some((p, _, _)) = best
+        if let Some((p, _)) = best
             && cam.priority <= p
         {
             return;
         }
-        let world = gt.matrix;
-        let view = world.inverse();
-        let fov_y_rad = cam.fov.to_radians().max(1.0_f32.to_radians());
-        let proj = kooch_render::perspective_rh_reverse_z(
-            fov_y_rad,
-            aspect.max(0.01),
-            cam.near.max(0.001),
-            cam.far.max(cam.near + 0.001),
-        );
-        best = Some((cam.priority, proj * view, world.w_axis.truncate()));
+        best = Some((
+            cam.priority,
+            kooch_render::ViewCamera::from_components(cam, gt),
+        ));
     });
-    best.map(|(_, vp, p)| (vp, p))
+    best.map(|(_, camera)| camera)
 }
 
 #[cfg(test)]
@@ -257,7 +250,9 @@ mod tests {
         // View panel by design, which is exactly why picking "highest
         // priority" here would show the authoring camera.
         let r = world_with_both_cameras(1000, 0);
-        let (_, cam_pos) = gameplay_camera_matrices(&r, 1.0).expect("a gameplay camera exists");
+        let cam_pos = gameplay_camera(&r)
+            .expect("a gameplay camera exists")
+            .position();
         assert_eq!(cam_pos.x, -7.0, "picked the editor camera");
     }
 
@@ -267,7 +262,9 @@ mod tests {
         // authors a camera at 1000 for its own reasons must not make the
         // Game panel show the editor's view.
         let r = world_with_both_cameras(1000, 1000);
-        let (_, cam_pos) = gameplay_camera_matrices(&r, 1.0).expect("a gameplay camera exists");
+        let cam_pos = gameplay_camera(&r)
+            .expect("a gameplay camera exists")
+            .position();
         assert_eq!(cam_pos.x, -7.0);
     }
 
@@ -285,6 +282,6 @@ mod tests {
                 cam.active = false;
             }
         }
-        assert!(gameplay_camera_matrices(&r, 1.0).is_none());
+        assert!(gameplay_camera(&r).is_none());
     }
 }

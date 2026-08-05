@@ -26,6 +26,7 @@ pub mod projection;
 pub mod sky;
 pub mod texture;
 pub mod vbuf64;
+pub mod view_camera;
 
 /// Depth format shared by every renderer that writes into the editor's
 /// offscreen viewport target. `Depth32Float` is universally supported
@@ -43,9 +44,11 @@ pub use meshlet::{
 pub use perf::EngineVramTracker;
 pub use plugin::RenderPlugin;
 pub use projection::perspective_rh_reverse_z;
-pub use sky::{ActiveSky, SkyPassNode, SkyRenderPass};
+pub use sky::{ActiveSky, SkyRenderPass};
 pub use texture::{GpuTexture, Image, ImageFormat, ImageLoader};
 pub use vbuf64::{
     CLUSTER_ID_BITS, MAX_CLUSTER_ID, TRI_ID_BITS, TRI_ID_MASK, Vbuf64Support, pack_visibility,
     unpack_visibility,
 };
+
+pub use view_camera::ViewCamera;

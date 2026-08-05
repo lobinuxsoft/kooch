@@ -8,10 +8,8 @@
 //! ray-march pass reverts to its internal gradient (matching pre-SkyRenderer
 //! behavior).
 
-mod node;
 mod renderer;
 
-pub use node::SkyPassNode;
 pub use renderer::{ActiveSky, SkyRenderPass};
 
 /// Sky shader source (vertex + fragment, fullscreen triangle).

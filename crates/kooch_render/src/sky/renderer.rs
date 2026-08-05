@@ -236,9 +236,9 @@ impl SkyRenderPass {
     /// buffer — this is the FIRST pass of the frame when an active
     /// SkyRenderer exists.
     ///
-    /// Returns `true` when a pass was recorded, `false` when no active
-    /// camera was found (caller should fall back to the raymarch internal
-    /// clear / gradient).
+    /// Always records a pass — the caller decided there was a camera when
+    /// it built the [`ViewCamera`](crate::ViewCamera); the return value is
+    /// kept so existing call sites read unchanged.
     pub fn render(
         &mut self,
         queue: &wgpu::Queue,
@@ -246,13 +246,12 @@ impl SkyRenderPass {
         target: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         resources: &kooch_core::resource::Resources,
+        camera: &crate::ViewCamera,
         aspect: f32,
         sky: ActiveSky,
         time_secs: f32,
     ) -> bool {
-        if !self.update_camera(queue, resources, aspect) {
-            return false;
-        }
+        self.update_camera(queue, resources, camera, aspect);
         self.update_sky(queue, sky, time_secs);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -284,42 +283,24 @@ impl SkyRenderPass {
         true
     }
 
-    /// Picks the first active PerspectiveCamera by highest priority and
-    /// uploads its matrices. Mirrors `RayMarchRenderer::update_camera`.
+    /// Uploads the matrices of the camera **the caller is rendering
+    /// through**.
+    ///
+    /// It used to query the world for the highest-priority active camera,
+    /// which is the same question every view would have asked and got the
+    /// same answer to. With a second view on screen that meant orbiting
+    /// the editor camera swung the sky in the Game panel: the pass was
+    /// answering the world instead of its caller.
     fn update_camera(
         &mut self,
         queue: &wgpu::Queue,
         resources: &kooch_core::resource::Resources,
+        camera: &crate::ViewCamera,
         aspect: f32,
-    ) -> bool {
-        let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
-        let mut best: Option<(i32, PerspectiveCamera, Mat4)> = None;
-        query.for_each(|(cam, gt)| {
-            if !cam.active {
-                return;
-            }
-            let better = match &best {
-                Some((p, _, _)) => cam.priority > *p,
-                None => true,
-            };
-            if better {
-                best = Some((cam.priority, *cam, gt.matrix));
-            }
-        });
-        drop(query);
-
-        let Some((_, cam, world_matrix)) = best else {
-            return false;
-        };
-
-        let view = world_matrix.inverse();
-        let projection = crate::projection::perspective_rh_reverse_z(
-            cam.fov.to_radians(),
-            aspect.max(0.001),
-            cam.near.max(0.001),
-            cam.far.max(cam.near + 0.001),
-        );
-        let (_, _, translation) = world_matrix.to_scale_rotation_translation();
+    ) {
+        let view = camera.view();
+        let projection = camera.projection(aspect);
+        let translation = camera.position();
 
         // Plumb ActiveOrigin: same pattern as raymarch + mesh. The sky
         // is a backdrop infinity-cube — universe position only matters
@@ -344,7 +325,6 @@ impl SkyRenderPass {
             _pad0: 0.0,
         };
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniforms));
-        true
     }
 
     fn update_sky(&mut self, queue: &wgpu::Queue, sky: ActiveSky, time_secs: f32) {
