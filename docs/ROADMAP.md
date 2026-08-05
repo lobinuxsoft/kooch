@@ -6,6 +6,9 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
+**There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
+called Next is how a roadmap stops being read.
+
 Last updated 2026-08-05, `development` at `a6780ee`.
 
 ---
@@ -201,7 +204,7 @@ engine-wide, not render-only.
 
 ---
 
-## Next — performance and the files that hide it
+## Backlog — performance and the files that hide it
 
 Two sessions running, the thing that actually went wrong was not a missing feature. It was
 work done per frame that did not need doing, in files too big for anyone to notice. Both are
@@ -422,7 +425,7 @@ thing. It is also what lets #55 land without touching gameplay.
 
 ---
 
-## Next — editor, because multi-scene is half-reachable
+## Backlog — editor, because multi-scene is half-reachable
 
 1. **#619 — no way to create a scene.** There is no New Scene. Multi-scene cannot be
    exercised without files already on disk.
