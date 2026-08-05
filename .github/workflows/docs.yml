@@ -32,14 +32,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Pinned rather than `latest`: mdBook has broken theme overrides
-      # across minor versions before, and a docs build that fails on a
-      # day nobody touched the docs is the worst kind of red.
-      - name: Install mdBook and preprocessors
-        run: |
-          cargo install mdbook --version ^0.4 --locked
-          cargo install mdbook-mermaid --locked
-          cargo install mdbook-toc --locked
+      # Exact versions, and all three of them.
+      #
+      # The first attempt pinned mdBook to ^0.4 and left the
+      # preprocessors unpinned. A preprocessor talks to mdBook over a
+      # versioned JSON protocol, so the runner assembled a 0.4 mdBook
+      # against preprocessors built for 0.5 and got "Unable to parse the
+      # input" — a combination that exists on no developer's machine,
+      # which is exactly why a local build passing proved nothing.
+      # Pinning one of three is not pinning.
+      #
+      # Prebuilt binaries rather than `cargo install`: compiling all
+      # three from source took minutes per run, on every push that
+      # touched a paragraph.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.5.2,mdbook-mermaid@0.17.0,mdbook-toc@0.15.3
+
+      - name: Report the toolchain it actually got
+        run: mdbook --version && mdbook-mermaid --version && mdbook-toc --version
 
       - name: Build
         run: mdbook build docs/book
