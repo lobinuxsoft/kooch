@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::super::deferred::MeshletDeferredShader;
-use super::super::dispatcher::{MeshletCull, MeshletCullPipelines};
+use super::super::dispatcher::MeshletCullPipelines;
 use super::super::gpu_timers::MeshletGpuTimers;
 use super::super::pool::GpuGlobalMeshPool;
 use super::super::reject_overlay::MeshletRejectOverlay;
@@ -25,10 +25,6 @@ use crate::perf::EngineVramTracker;
 pub struct MeshletRenderStage {
     pub(super) pipeline: MeshletPipeline,
     pub(super) scene: MeshletScene,
-    /// This view's cull buffers. Moves inside the view collection
-    /// once a stage carries more than one (#592) — the split that
-    /// made that possible is the one below.
-    pub(super) cull: MeshletCull,
     /// Cull pipelines + bind group layouts, shared by every view.
     /// Nine compute pipelines per camera is what this avoids.
     pub(super) cull_pipelines: MeshletCullPipelines,
@@ -52,7 +48,7 @@ pub struct MeshletRenderStage {
     /// per view, everything outside it is shared, and #592 turns this
     /// into a collection. Keeping the boundary explicit now is what
     /// makes that a data change instead of a hunt through 1800 lines.
-    pub(super) view: super::view_targets::MeshletViewTargets,
+    pub(super) view: super::view_targets::MeshletView,
 
     /// Reject-reason overlay compute pipeline (#454.4). `Some` only
     /// when `MeshletDebugCaps::supports_texture_atomic` is true — the

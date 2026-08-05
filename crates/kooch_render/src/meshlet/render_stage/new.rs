@@ -38,7 +38,6 @@ impl MeshletRenderStage {
         // Pipelines are shared by every view; only the buffers below
         // are per view (#592).
         let cull_pipelines = MeshletCullPipelines::new(device);
-        let cull = MeshletCull::new(device, meshlet_capacity, DEFAULT_MAX_TRIANGLES as u32);
         let scene = MeshletScene::new(device, instance_capacity);
         let rasterizer = MeshletVisRasterizer::new(
             device,
@@ -51,12 +50,14 @@ impl MeshletRenderStage {
 
         // Everything per view lives together — see `view_targets` for
         // why the boundary is drawn here rather than at the fields.
-        let view = super::view_targets::MeshletViewTargets::new(
+        let view = super::view_targets::MeshletView::new(
             device,
             size,
             debug_caps,
             vbuf64,
             cull_pipelines.meshlet_bind_group_layout(),
+            meshlet_capacity,
+            DEFAULT_MAX_TRIANGLES as u32,
         );
 
         // Reject-reason overlay (#454.4). Same atomic gate as the
@@ -77,7 +78,6 @@ impl MeshletRenderStage {
         Self {
             pipeline: MeshletPipeline::new(),
             scene,
-            cull,
             cull_pipelines,
             rasterizer,
             deferred,
@@ -191,7 +191,7 @@ impl MeshletRenderStage {
     /// `culled_count` to verify the Hi-Z 2-pass cull behaviour
     /// (#445) frame-to-frame.
     pub fn cull(&self) -> &MeshletCull {
-        &self.cull
+        &self.view.cull
     }
 
     pub fn color_view(&self) -> &wgpu::TextureView {

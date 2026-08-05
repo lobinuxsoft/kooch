@@ -47,7 +47,7 @@ impl MeshletRenderStage {
 
         // Stage 0 (Cull). render() already called `write_start`
         // which lands on stage 0; just close it after the dispatch.
-        self.cull.dispatch_scene_pool_atomic(
+        self.view.cull.dispatch_scene_pool_atomic(
             &self.cull_pipelines,
             device,
             queue,
@@ -102,7 +102,7 @@ impl MeshletRenderStage {
             density_mode,
             meshlet_bg,
             material_pipeline.as_deref(),
-            &self.cull,
+            &self.view.cull,
             &self.scene,
             view_proj,
             debug_mode.as_u32(),
@@ -139,7 +139,7 @@ impl MeshletRenderStage {
                 &mut encoder,
                 &self.view.color_view,
                 &self.cull_pipelines,
-                &self.cull,
+                &self.view.cull,
                 &self.scene,
                 gpu_pool,
                 view_proj,
@@ -161,7 +161,7 @@ impl MeshletRenderStage {
             if let Some(idx) = slot {
                 self.stage_counters.write_copy(
                     &mut encoder,
-                    self.cull.stage_counters_buffer(),
+                    self.view.cull.stage_counters_buffer(),
                     idx,
                 );
             }

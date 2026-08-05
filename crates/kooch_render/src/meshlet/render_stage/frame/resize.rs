@@ -1,7 +1,7 @@
 //! [`MeshletRenderStage::resize`] — hand the view its new size.
 //!
 //! Everything that changes with the destination surface lives in
-//! [`MeshletViewTargets`](super::super::view_targets::MeshletViewTargets);
+//! [`MeshletView`](super::super::view_targets::MeshletView);
 //! the cull, rasterizer, deferred pass and mesh pool are shared and
 //! unaffected. What is left here is the part the stage owns: which frame
 //! slot retired pyramids park in, and the engine-wide VRAM tracker.

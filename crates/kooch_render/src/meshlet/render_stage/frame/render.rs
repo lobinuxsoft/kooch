@@ -180,7 +180,7 @@ impl MeshletRenderStage {
         let required_capacity = scene_params
             .instance_count
             .saturating_mul(scene_params.meshlets_per_mesh);
-        self.cull.ensure_capacity(device, required_capacity);
+        self.view.cull.ensure_capacity(device, required_capacity);
         // group_max_err sized to the per-instance prefix-sum total
         // (Σ over instances of mesh_descriptors[mesh_id].group_count),
         // not the pool's group_capacity. Per-mesh sizing collapsed
@@ -189,7 +189,8 @@ impl MeshletRenderStage {
         // verdict (#474). Same geometric-growth pattern as the
         // visible buffer.
         let required_group_capacity = self.pipeline.instance_group_capacity(&instances).max(1);
-        self.cull
+        self.view
+            .cull
             .ensure_group_capacity(device, required_group_capacity);
 
         // Build the meshlet + material bind groups. The `gpu_pool`

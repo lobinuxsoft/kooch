@@ -121,7 +121,7 @@ impl MeshletRenderStage {
             let gpu_pool = self.gpu_pool.as_ref().expect("checked by render() prelude");
             let hiz_prev = self.view.hiz_prev.as_ref().expect("allocated above");
             let hiz_prev_view = hiz_prev.full_view();
-            self.cull.dispatch_scene_pool_atomic_hi_z(
+            self.view.cull.dispatch_scene_pool_atomic_hi_z(
                 &self.cull_pipelines,
                 device,
                 queue,
@@ -143,7 +143,7 @@ impl MeshletRenderStage {
             &self.view.vbuf_view,
             &self.view.depth_view,
             meshlet_bg,
-            &self.cull,
+            &self.view.cull,
             &self.scene,
             view_proj,
             0,
@@ -188,7 +188,7 @@ impl MeshletRenderStage {
             let gpu_pool = self.gpu_pool.as_ref().expect("checked by render() prelude");
             let hiz_curr = self.view.hiz_curr.as_ref().expect("allocated above");
             let hiz_curr_view = hiz_curr.full_view();
-            self.cull.dispatch_cull_pass_b(
+            self.view.cull.dispatch_cull_pass_b(
                 &self.cull_pipelines,
                 device,
                 queue,
@@ -209,7 +209,7 @@ impl MeshletRenderStage {
             &self.view.vbuf_view,
             &self.view.depth_view,
             meshlet_bg,
-            &self.cull,
+            &self.view.cull,
             &self.scene,
             view_proj,
             0,
@@ -228,7 +228,7 @@ impl MeshletRenderStage {
             &self.view.color_view,
             meshlet_bg,
             material_bg,
-            &self.cull,
+            &self.view.cull,
             &self.scene,
             view_proj,
             self.view.size,
