@@ -13,7 +13,7 @@ use crate::meshlet::cull::CullParams;
 use crate::meshlet::debug::MeshletDebugMode;
 use crate::meshlet::scene::SceneCullParams;
 
-use super::super::{MeshletRenderStage, MeshletRenderStats};
+use super::super::{MeshletRenderStage, MeshletRenderStats, ViewId};
 
 impl MeshletRenderStage {
     /// Atomic R64 vbuf path. Same observable contract as the legacy
@@ -26,6 +26,7 @@ impl MeshletRenderStage {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn render_path_r64(
         &mut self,
+        view_id: ViewId,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         mut encoder: wgpu::CommandEncoder,
@@ -39,15 +40,14 @@ impl MeshletRenderStage {
         instance_count: u32,
     ) -> MeshletRenderStats {
         let gpu_pool = self.gpu_pool.as_ref().expect("checked by render() prelude");
-        let vbuf64 = self
-            .view
+        let vbuf64 = self.views[view_id]
             .vbuf64_stage
             .as_ref()
             .expect("path selected only when vbuf64_stage is Some");
 
         // Stage 0 (Cull). render() already called `write_start`
         // which lands on stage 0; just close it after the dispatch.
-        self.view.cull.dispatch_scene_pool_atomic(
+        self.views[view_id].cull.dispatch_scene_pool_atomic(
             &self.cull_pipelines,
             device,
             queue,
@@ -80,8 +80,7 @@ impl MeshletRenderStage {
             MeshletDebugMode::Overdraw => 2,
             _ => 0,
         };
-        let density_view = self
-            .view
+        let density_view = self.views[view_id]
             .triangle_density_view
             .as_ref()
             .expect("density texture must be allocated whenever vbuf64 path is active");
@@ -96,13 +95,13 @@ impl MeshletRenderStage {
             device,
             queue,
             &mut encoder,
-            &self.view.depth_view,
-            &self.view.color_view,
+            &self.views[view_id].depth_view,
+            &self.views[view_id].color_view,
             density_view,
             density_mode,
             meshlet_bg,
             material_pipeline.as_deref(),
-            &self.view.cull,
+            &self.views[view_id].cull,
             &self.scene,
             view_proj,
             debug_mode.as_u32(),
@@ -137,13 +136,13 @@ impl MeshletRenderStage {
                 device,
                 queue,
                 &mut encoder,
-                &self.view.color_view,
+                &self.views[view_id].color_view,
                 &self.cull_pipelines,
-                &self.view.cull,
+                &self.views[view_id].cull,
                 &self.scene,
                 gpu_pool,
                 view_proj,
-                self.view.size,
+                self.views[view_id].size,
                 reason,
                 /* line_thickness_px */ 2,
                 total_threads,
@@ -161,7 +160,7 @@ impl MeshletRenderStage {
             if let Some(idx) = slot {
                 self.stage_counters.write_copy(
                     &mut encoder,
-                    self.view.cull.stage_counters_buffer(),
+                    self.views[view_id].cull.stage_counters_buffer(),
                     idx,
                 );
             }

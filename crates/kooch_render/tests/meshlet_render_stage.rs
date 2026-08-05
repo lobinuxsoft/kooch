@@ -174,7 +174,7 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
     let view = Mat4::look_at_rh(cam_pos, Vec3::ZERO, Vec3::Y);
     let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
 
-    let stats = stage.render_with_assets(&device, &queue, &resources, proj * view, cam_pos);
+    let stats = stage.render_with_assets_primary(&device, &queue, &resources, proj * view, cam_pos);
     assert_eq!(
         stats.instances_uploaded, 2,
         "stage should ingest 2 ECS entities"
@@ -252,7 +252,7 @@ fn render_stage_with_no_entities_returns_zero_stats() {
     let view = Mat4::look_at_rh(cam_pos, Vec3::ZERO, Vec3::Y);
     let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
 
-    let stats = stage.render_with_assets(&device, &queue, &resources, proj * view, cam_pos);
+    let stats = stage.render_with_assets_primary(&device, &queue, &resources, proj * view, cam_pos);
     assert_eq!(stats.instances_uploaded, 0);
     assert_eq!(stats.cull_threads, 0);
 }

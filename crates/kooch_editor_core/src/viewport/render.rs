@@ -54,7 +54,7 @@ pub(crate) fn render_viewport(
             .sync_assets_to_gpu(gpu.device(), gpu.queue(), resources);
         let (view_proj, cam_pos) = active_camera_matrices(resources, target.aspect())
             .unwrap_or((glam::Mat4::IDENTITY, glam::Vec3::ZERO));
-        let stats = meshlet.stage.render_with_assets(
+        let stats = meshlet.stage.render_with_assets_primary(
             gpu.device(),
             gpu.queue(),
             resources,

@@ -173,7 +173,7 @@ fn three_distinct_meshes_render_in_single_cull_dispatch() {
     let view = Mat4::look_at_rh(cam_pos, Vec3::ZERO, Vec3::Y);
     let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
 
-    let stats = stage.render_with_assets(&device, &queue, &resources, proj * view, cam_pos);
+    let stats = stage.render_with_assets_primary(&device, &queue, &resources, proj * view, cam_pos);
     assert_eq!(
         stats.instances_uploaded, 3,
         "stage must ingest all 3 entities (one per registered mesh)",

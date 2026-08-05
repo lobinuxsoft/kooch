@@ -79,7 +79,7 @@ pub use material_pass::{
 };
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshDescriptor, MeshHandle};
 pub use reject_overlay::{MeshletRejectOverlay, RejectReason};
-pub use render_stage::{MeshletRenderStage, MeshletRenderStageConfig, MeshletRenderStats};
+pub use render_stage::{MeshletRenderStage, MeshletRenderStageConfig, MeshletRenderStats, ViewId};
 pub use scene::{
     MeshInstance, MeshletScene, SceneCullParams, decode_scene_visible_id, encode_scene_visible_id,
 };

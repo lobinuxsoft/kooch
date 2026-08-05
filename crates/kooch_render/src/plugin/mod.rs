@@ -271,8 +271,13 @@ fn render_passes(
     // must complete first on the queue.
     let (view_proj, cam_pos) = active_camera_matrices(resources, aspect)
         .unwrap_or((glam::Mat4::IDENTITY, glam::Vec3::ZERO));
-    let stats =
-        meshlet_stage.render_with_assets(gpu.device(), gpu.queue(), resources, view_proj, cam_pos);
+    let stats = meshlet_stage.render_with_assets_primary(
+        gpu.device(),
+        gpu.queue(),
+        resources,
+        view_proj,
+        cam_pos,
+    );
 
     // The one measurement a game could not otherwise have: the editor
     // reads these stats, and until now a windowed game threw them away.

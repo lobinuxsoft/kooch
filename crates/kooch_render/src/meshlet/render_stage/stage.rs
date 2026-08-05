@@ -1,5 +1,12 @@
 use std::sync::Arc;
 
+slotmap::new_key_type! {
+    /// Handle to one view inside a [`MeshletRenderStage`]. Returned by
+    /// `create_view`; stale ids read as `None` rather than as another
+    /// view.
+    pub struct ViewId;
+}
+
 use super::super::deferred::MeshletDeferredShader;
 use super::super::dispatcher::MeshletCullPipelines;
 use super::super::gpu_timers::MeshletGpuTimers;
@@ -42,13 +49,20 @@ pub struct MeshletRenderStage {
 
     pub(super) meshlet_bgl: wgpu::BindGroupLayout,
 
-    /// This stage's single view.
+    /// This stage's views. A frame is a *list* of them (#592): the
+    /// game surface, the editor viewport, a camera rendering into a
+    /// texture, and later one per shadow cascade and per Virtual Shadow
+    /// Map page. What multiplies is the view — the geometry pool above
+    /// stays singular.
     ///
-    /// A field rather than the fields themselves: everything in it is
-    /// per view, everything outside it is shared, and #592 turns this
-    /// into a collection. Keeping the boundary explicit now is what
-    /// makes that a data change instead of a hunt through 1800 lines.
-    pub(super) view: super::view_targets::MeshletView,
+    /// A generational key rather than a `Vec` index: closing an editor
+    /// panel leaves whoever held its id holding a stale one, and a bare
+    /// index would silently start addressing a different view.
+    pub(super) views: slotmap::SlotMap<ViewId, super::view_targets::MeshletView>,
+    /// The view the single-view accessors (`color_view`, `size`, …)
+    /// read. Every stage has at least one; callers that own more than
+    /// one address them by [`ViewId`] instead.
+    pub(super) primary: ViewId,
 
     /// Reject-reason overlay compute pipeline (#454.4). `Some` only
     /// when `MeshletDebugCaps::supports_texture_atomic` is true — the

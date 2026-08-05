@@ -12,7 +12,7 @@ impl MeshletRenderStage {
     /// Recreates the view's attachments at `new_size` if it differs from
     /// the current size.
     pub fn resize(&mut self, device: &wgpu::Device, new_size: (u32, u32)) {
-        if new_size == self.view.size {
+        if new_size == self.views[self.primary].size {
             return;
         }
 
@@ -21,9 +21,8 @@ impl MeshletRenderStage {
         // the slot that is two frames old, by which point the GPU is
         // done with them. Mesa radv invalidates bind groups dropped
         // while still in flight.
-        let pyramid_delta = self
-            .view
-            .resize(device, new_size, self.frame_bind_groups_index);
+        let pyramid_delta =
+            self.views[self.primary].resize(device, new_size, self.frame_bind_groups_index);
 
         if let Some(tracker) = &self.vram_tracker {
             // A resize can free more than it allocates — shrinking the
