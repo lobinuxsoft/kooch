@@ -51,6 +51,7 @@ pub(super) struct ViewportUi<'a> {
     pub(super) game_texture_id: egui::TextureId,
     pub(super) game_request: &'a mut Option<(u32, u32)>,
     pub(super) game_has_camera: bool,
+    pub(super) game_focused: &'a mut bool,
 }
 
 /// Runs the egui UI for one frame. Produces the tessellation input and the
@@ -101,6 +102,7 @@ pub(super) fn run_editor_ui(
         game_texture_id,
         game_request,
         game_has_camera,
+        game_focused,
     } = viewport;
 
     // `run_ui` rather than `run`: egui 0.35 hands the closure a root `Ui`
@@ -190,6 +192,7 @@ pub(super) fn run_editor_ui(
                 game_texture_id,
                 game_request,
                 game_has_camera,
+                game_focused,
                 viewport_input: input,
                 editor_camera_controller: controller,
                 rotation_euler_cache: &mut overlay.rotation_euler_cache,

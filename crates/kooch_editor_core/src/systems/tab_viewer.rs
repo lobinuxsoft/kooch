@@ -60,6 +60,10 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) game_request: &'a mut Option<(u32, u32)>,
     /// Whether the last frame found a gameplay camera to render.
     pub(crate) game_has_camera: bool,
+    /// Set while drawing when Game is the focused tab. Drives whether
+    /// the project receives input — a key pressed with the World panel
+    /// selected is an editor shortcut, not a jump.
+    pub(crate) game_focused: &'a mut bool,
     pub(crate) viewport_input: &'a mut Option<ViewportInputDelta>,
     pub(crate) editor_camera_controller: &'a EditorCameraController,
     pub(crate) rotation_euler_cache: &'a mut HashMap<EulerCacheKey, Vec3>,
@@ -211,12 +215,21 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.last_clicked_index,
                 self.scenes,
             ),
-            EditorTab::Game => draw_game_content(
-                ui,
-                self.game_texture_id,
-                self.game_request,
-                self.game_has_camera,
-            ),
+            EditorTab::Game => {
+                *self.game_focused = focused;
+                draw_game_content(
+                    ui,
+                    self.game_texture_id,
+                    self.game_request,
+                    self.game_has_camera,
+                    self.perf_stats,
+                    self.meshlet_stats,
+                    self.meshlet_debug_mode,
+                    self.meshlet_debug_caps,
+                    self.meshlet_lod_settings,
+                    self.hud_visibility,
+                )
+            }
             EditorTab::View => draw_view_content(
                 ui,
                 focused,
@@ -228,15 +241,9 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.rotation_display_mode,
                 self.snap_settings,
                 self.selection_has_transform,
-                self.meshlet_debug_mode,
-                self.meshlet_debug_caps,
-                self.meshlet_lod_settings,
-                self.meshlet_stats,
-                self.perf_stats,
                 self.gizmo_visibility,
                 self.gizmo_groups,
                 self.physics_debug,
-                self.hud_visibility,
                 self.actions,
             ),
             EditorTab::Console => {

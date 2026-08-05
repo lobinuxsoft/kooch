@@ -189,13 +189,35 @@ pub(super) fn clear_to_black(
     });
 }
 
+/// The View panel's camera: the editor's own, always.
+///
+/// It used to be "highest priority active camera", which worked only
+/// because the editor camera ships at priority 1000 and because Play
+/// switched it off so a gameplay camera could win. Both of those were
+/// load-bearing accidents. The editor camera *belongs* to this panel —
+/// the gameplay camera has the Game panel now (#592) — so the panel asks
+/// for it by identity and Play no longer moves anybody's view.
+///
+/// Falls back to the highest-priority camera when there is no editor
+/// camera at all, which is the pre-project state: better a frame from
+/// some camera than a black panel with no explanation.
 fn active_camera_matrices(resources: &Resources, aspect: f32) -> Option<(glam::Mat4, glam::Vec3)> {
+    use crate::editor_camera::markers::EditorCamera;
     use kooch_ecs::perspective_camera::PerspectiveCamera;
+    use kooch_ecs::query::filter::With;
 
-    // Pick the highest-priority active camera. The editor camera ships
-    // with `priority = EDITOR_CAMERA_PRIORITY (1000)` so it outranks
-    // user-spawned `PerspectiveCamera` defaults whenever both are
-    // active simultaneously.
+    let editor =
+        Query::<(&PerspectiveCamera, &GlobalTransform), With<EditorCamera>>::new(resources);
+    let mut editor_cam: Option<(glam::Mat4, glam::Vec3)> = None;
+    editor.for_each(|(cam, gt)| {
+        if editor_cam.is_none() {
+            editor_cam = Some(camera_matrices(cam, gt, aspect));
+        }
+    });
+    if editor_cam.is_some() {
+        return editor_cam;
+    }
+
     let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
     let mut best: Option<(i32, glam::Mat4, glam::Vec3)> = None;
     query.for_each(|(cam, gt)| {
@@ -207,17 +229,25 @@ fn active_camera_matrices(resources: &Resources, aspect: f32) -> Option<(glam::M
         {
             return;
         }
-        let world = gt.matrix;
-        let view = world.inverse();
-        let fov_y_rad = cam.fov.to_radians().max(1.0_f32.to_radians());
-        let proj = kooch_render::perspective_rh_reverse_z(
-            fov_y_rad,
-            aspect.max(0.01),
-            cam.near.max(0.001),
-            cam.far.max(cam.near + 0.001),
-        );
-        let cam_pos = world.w_axis.truncate();
-        best = Some((cam.priority, proj * view, cam_pos));
+        let (vp, pos) = camera_matrices(cam, gt, aspect);
+        best = Some((cam.priority, vp, pos));
     });
     best.map(|(_, vp, p)| (vp, p))
+}
+
+fn camera_matrices(
+    cam: &kooch_ecs::perspective_camera::PerspectiveCamera,
+    gt: &GlobalTransform,
+    aspect: f32,
+) -> (glam::Mat4, glam::Vec3) {
+    let world = gt.matrix;
+    let view = world.inverse();
+    let fov_y_rad = cam.fov.to_radians().max(1.0_f32.to_radians());
+    let proj = kooch_render::perspective_rh_reverse_z(
+        fov_y_rad,
+        aspect.max(0.01),
+        cam.near.max(0.001),
+        cam.far.max(cam.near + 0.001),
+    );
+    (proj * view, world.w_axis.truncate())
 }

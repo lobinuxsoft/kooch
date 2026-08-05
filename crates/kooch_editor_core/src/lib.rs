@@ -163,11 +163,7 @@ impl Plugin for EditorPlugin {
             editor_camera::register_ephemeral_markers_system,
         );
         app.add_system(Stage::Startup, editor_camera::spawn_editor_camera_system);
-        // Hand the viewport over to the gameplay camera in play mode.
-        app.add_system(
-            Stage::PreRender,
-            editor_camera::sync_editor_camera_active_system,
-        );
+
         // #463 perf HUD — sample wall-clock delta between successive
         // editor render invocations and update FPS instant/avg.
         // Runs in PreRender so the timestamp it captures matches the

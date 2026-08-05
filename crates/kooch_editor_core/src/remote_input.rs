@@ -72,31 +72,61 @@ pub(crate) fn send_input_to_host(resources: &mut Resources) {
 
 /// Whether this frame's input belongs to the game rather than the editor.
 ///
-/// Two conditions, and the second is the one worth explaining.
+/// Three conditions.
 ///
 /// **Only while playing.** A key pressed while authoring is an editor
 /// shortcut; sending it to a paused host would be noise at best.
+///
+/// **Only while the Game panel is the focused tab.** Before the panel
+/// existed, playing meant the whole editor was the game, so every key
+/// was the game's. Now the two are on screen at once, and a key pressed
+/// with World or the Inspector selected is meant for them. This is the
+/// same rule every engine with a Game panel uses: the panel has to be
+/// clicked before it hears anything.
 ///
 /// **Not while egui wants the keyboard.** Typing a name into the
 /// Inspector must not also drive the player forward. `wants_keyboard_input`
 /// is true exactly when a text field has focus, which is a better rule
 /// than tracking viewport focus by hand: it is what egui itself uses to
-/// decide the keystroke was consumed, so the two cannot disagree.
+/// decide the keystroke was consumed, so the two cannot disagree. Kept
+/// alongside the focus check rather than replaced by it — a text field
+/// can be focused inside a panel docked over the Game one, and then both
+/// answers are needed.
 fn should_send(resources: &Resources) -> bool {
     let playing = resources
         .get::<RemoteState>()
         .is_some_and(|state| state.playing);
-    if !playing {
-        return false;
-    }
-    !resources
+    let game_focused = resources
+        .get::<crate::viewport::GameView>()
+        .is_some_and(|game| game.focused);
+    let egui_wants_keyboard = resources
         .get::<EditorOverlay>()
-        .is_some_and(|overlay| overlay.ctx.egui_wants_keyboard_input())
+        .is_some_and(|overlay| overlay.ctx.egui_wants_keyboard_input());
+    input_belongs_to_the_game(playing, game_focused, egui_wants_keyboard)
+}
+
+/// The rule itself, separated from where the answers come from so it can
+/// be read — and tested — without a GPU, a dock and a live session.
+fn input_belongs_to_the_game(playing: bool, game_focused: bool, egui_wants_keyboard: bool) -> bool {
+    playing && game_focused && !egui_wants_keyboard
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_reaches_the_game_only_when_its_panel_is_focused() {
+        assert!(input_belongs_to_the_game(true, true, false));
+        // Playing, but the user clicked World to rename an entity: the
+        // key is the editor's.
+        assert!(!input_belongs_to_the_game(true, false, false));
+        // Focused but not playing — an editor shortcut.
+        assert!(!input_belongs_to_the_game(false, true, false));
+        // Focused, playing, and typing into a text field docked over it.
+        // Both checks are needed; neither implies the other.
+        assert!(!input_belongs_to_the_game(true, true, true));
+    }
     use kooch_input::{KeyCode, MockInputBackend};
 
     #[test]
@@ -115,17 +145,22 @@ mod tests {
         assert!(!should_send(&resources));
     }
 
+    /// Playing is no longer enough on its own.
+    ///
+    /// This test used to assert the opposite, and was right until the
+    /// Game panel existed: back then playing meant the whole editor was
+    /// the game. Now the game has a panel, and a key only reaches it
+    /// once that panel is the one you clicked. Without a `GameView` in
+    /// resources — which is every headless test — nothing is focused, so
+    /// nothing is sent.
     #[test]
-    fn playing_with_no_focused_text_field_sends() {
+    fn playing_alone_does_not_send_without_the_game_panel_focused() {
         let mut resources = Resources::new();
         let mut state = RemoteState::new();
         state.playing = true;
         resources.insert(state);
 
-        assert!(
-            should_send(&resources),
-            "no overlay means no text field has focus"
-        );
+        assert!(!should_send(&resources));
     }
 
     /// The idle gate must not swallow the snapshot that releases a key.

@@ -478,3 +478,128 @@ fn metric_with_tooltip(ui: &mut egui::Ui, label: &str, value: &str, tooltip: &st
         .on_hover_text(tooltip);
     ui.end_row();
 }
+
+/// Width of the perf sidebar overlay anchored to the right edge of
+/// the panel. 260 px fits the widest "n/a (TIMESTAMP_QUERY
+/// unavailable)" GPU-frame-time row without wrapping while leaving
+/// room to read the actual image behind it.
+pub(crate) const PERF_SIDEBAR_WIDTH: f32 = 260.0;
+const TOOLBAR_BUTTON_SIZE: f32 = 28.0;
+const TOOLBAR_PADDING: f32 = 6.0;
+const TOOLBAR_OFFSET: egui::Vec2 = egui::vec2(8.0, 8.0);
+
+/// Draws the vertical perf sidebar anchored to the right edge of a
+/// panel, with its always-visible toggle chevron.
+///
+/// Lives beside the Game panel rather than the View: every number in it
+/// — frame time, cull dispatch, pool meshlets, remote snapshot — is the
+/// cost of drawing the game, and the View shows an authoring camera that
+/// nobody ships.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_perf_sidebar(
+    ui: &mut egui::Ui,
+    panel_origin: egui::Pos2,
+    available: egui::Vec2,
+    perf_stats: crate::perf::EditorPerfStats,
+    meshlet_stats: kooch_render::meshlet::MeshletRenderStats,
+    meshlet_debug_mode: &mut kooch_render::meshlet::MeshletDebugMode,
+    meshlet_debug_caps: kooch_render::meshlet::MeshletDebugCaps,
+    meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
+    hud_visibility: &mut crate::perf::HudVisibility,
+) {
+    // State lives in `HudVisibility` rather than in egui memory: the
+    // systems that pay for these metrics run in `PreRender` and cannot
+    // read egui's memory, so a flag kept only there meant nothing could
+    // ask whether anyone was looking (#703).
+    let mut sidebar_visible = hud_visibility.sidebar;
+
+    let panel_top_right =
+        panel_origin + egui::vec2(available.x - TOOLBAR_OFFSET.x, TOOLBAR_OFFSET.y);
+
+    // Toggle chevron — left-pointing when expanded (click to
+    // collapse to the right), right-pointing when collapsed (click
+    // to expand back). Always rendered so the user has a way back
+    // even after hiding the panel.
+    let toggle_size = egui::vec2(TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+    let toggle_pos = panel_top_right - egui::vec2(toggle_size.x, 0.0);
+    let toggle_rect = egui::Rect::from_min_size(toggle_pos, toggle_size);
+    let mut toggle_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(toggle_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    egui::Frame::new()
+        .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
+        .corner_radius(egui::CornerRadius::same(6))
+        .show(&mut toggle_ui, |ui| {
+            let glyph = if sidebar_visible {
+                "\u{27e9}"
+            } else {
+                "\u{27e8}"
+            };
+            let button = egui::Button::new(egui::RichText::new(glyph).size(16.0))
+                .min_size(toggle_size)
+                .fill(egui::Color32::TRANSPARENT)
+                .stroke(egui::Stroke::NONE);
+            let resp = ui.add(button).on_hover_text(if sidebar_visible {
+                "Hide performance sidebar"
+            } else {
+                "Show performance sidebar"
+            });
+            if resp.clicked() {
+                sidebar_visible = !sidebar_visible;
+            }
+        });
+
+    if sidebar_visible {
+        // Panel sits below the toggle chevron, anchored to the
+        // right edge. max_rect height is bounded by the viewport
+        // so the inner ScrollArea can clip when sections overflow;
+        // auto_shrink in `draw_performance_content` keeps the
+        // Frame tight around the actually-visible content so
+        // collapsing every section doesn't leave a giant black
+        // box on the viewport.
+        let panel_top = toggle_pos.y + toggle_size.y + 4.0;
+        let panel_max_height =
+            (available.y - 2.0 * TOOLBAR_OFFSET.y - toggle_size.y - 4.0).max(0.0);
+        let sidebar_max_rect = egui::Rect::from_min_size(
+            egui::pos2(panel_top_right.x - PERF_SIDEBAR_WIDTH, panel_top),
+            egui::vec2(PERF_SIDEBAR_WIDTH, panel_max_height),
+        );
+        let mut sidebar_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(sidebar_max_rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        egui::Frame::new()
+            .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
+            .corner_radius(egui::CornerRadius::same(6))
+            .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
+            .show(&mut sidebar_ui, |ui| {
+                ui.set_max_width(PERF_SIDEBAR_WIDTH - TOOLBAR_PADDING * 2.0);
+                draw_performance_content(
+                    ui,
+                    perf_stats,
+                    meshlet_stats,
+                    meshlet_debug_mode,
+                    meshlet_debug_caps,
+                    meshlet_lod_settings,
+                    hud_visibility,
+                );
+            });
+    }
+
+    // Written after drawing, so it records what was actually on screen
+    // this frame rather than what was asked for. A collapsed sidebar
+    // leaves `system_section` at whatever it last was, which is correct:
+    // an invisible section is not an open one, and `wants_system_metrics`
+    // requires both.
+    hud_visibility.sidebar = sidebar_visible;
+
+    // Written after drawing, so it records what was actually on screen
+    // this frame rather than what was asked for. A collapsed sidebar
+    // leaves `system_section` at whatever it last was, which is correct:
+    // an invisible section is not an open one, and `wants_system_metrics`
+    // requires both.
+    hud_visibility.sidebar = sidebar_visible;
+}

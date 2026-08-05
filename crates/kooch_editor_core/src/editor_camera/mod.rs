@@ -31,8 +31,6 @@ use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 use kooch_world::focus::StreamingFocus;
 
-use crate::play_state::PlayState;
-
 pub use controller::EditorCameraController;
 pub use markers::{EditorCamera, EditorOnly};
 
@@ -124,47 +122,6 @@ fn editor_camera_exists(resources: &Resources) -> bool {
     archetypes
         .iter_matching(&[])
         .any(|arch| arch.components().contains(&editor_camera_tid))
-}
-
-/// PreRender system: keeps the editor camera's `active` flag in sync
-/// with [`PlayState`].
-///
-/// In edit mode the editor camera owns the viewport (priority 1000
-/// outranks gameplay cameras). In play mode it goes inactive so the
-/// renderer falls back to the highest-priority *active* camera in the
-/// scene, which is the user's gameplay camera — mirrored from the
-/// remote project like any other entity.
-///
-/// Idempotent: only writes when the flag actually changes, so it is
-/// cheap to run every frame.
-pub fn sync_editor_camera_active_system(resources: &mut Resources) {
-    // Two ways to be playing: a launched game process, or the connected
-    // project running its systems in place. Either way the scene's own
-    // camera should be the one framing the shot.
-    let is_playing = resources
-        .get::<PlayState>()
-        .is_some_and(|ps| ps.is_playing())
-        || resources
-            .get::<crate::remote_session::RemoteState>()
-            .is_some_and(|s| s.playing);
-    let want_active = !is_playing;
-
-    let Some(entity) = find_editor_camera_entity(resources) else {
-        return;
-    };
-
-    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
-        return;
-    };
-    let Some(storage) = registry.get_cpu_mut::<PerspectiveCamera>() else {
-        return;
-    };
-    let Some(cam) = storage.get_mut(entity) else {
-        return;
-    };
-    if cam.active != want_active {
-        cam.active = want_active;
-    }
 }
 
 fn find_editor_camera_entity(resources: &Resources) -> Option<kooch_ecs::Entity> {

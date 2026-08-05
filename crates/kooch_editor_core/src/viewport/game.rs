@@ -44,6 +44,14 @@ pub(crate) struct GameView {
     /// panel's placeholder text, so an empty Game panel says *why* it is
     /// empty instead of showing black.
     pub has_camera: bool,
+    /// Whether the Game panel is the focused tab.
+    ///
+    /// Input only reaches the project while this is true. Written by the
+    /// UI, read by `remote_input` in an earlier stage of the next frame —
+    /// one frame stale, which is the same frame of latency remote Play
+    /// already costs and is invisible at the scale of "did I click the
+    /// panel before pressing a key".
+    pub focused: bool,
 }
 
 impl GameView {
@@ -58,6 +66,7 @@ impl GameView {
             target: ViewportTarget::new(device, egui_renderer, format, size),
             view_id: stage.create_view(device, size),
             has_camera: false,
+            focused: false,
         }
     }
 }
