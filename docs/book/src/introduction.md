@@ -31,16 +31,22 @@ APIs break freely.
 
 What works today:
 
-- A 36-crate Rust workspace, edition 2024.
-- GPU-driven meshlet rendering with a LOD chain, plus glTF mesh loading.
+- An 18-crate Rust workspace plus a facade, edition 2024.
+- GPU-driven meshlet rendering with a LOD chain, plus glTF mesh loading. A frame is a list of
+  views, so the editor's viewport and the game's camera render from one stage.
+- **Cook-Torrance lighting** driven by the light components — see
+  [Lighting](./architecture/lighting.md). New as of #441; before it, the renderer painted the
+  world-space normal as colour and a scene with lights looked exactly like one without.
 - Rigid-body physics on rapier3d: colliders, joints, collision events, sensors, materials,
   and custom gravity fields that sum.
 - Procedural sky and volumetric clouds.
 - Scene serialisation (`.scene`, RON) driven by reflection, with more than one scene
   loadable at once.
+- Input as data: an action is an asset, with composites and processors, editable in a panel.
 - An editor: viewport, hierarchy, Inspector, Console, asset browser, drag-and-drop, dockable
-  layout, undo/redo, project Hub, and Play/Stop that snapshots and restores the authored
-  world.
+  layout, undo/redo, project Hub, a Game panel beside the View panel, and Play/Stop that
+  snapshots and restores the authored world. Hovering a field shows its doc comment, units
+  included.
 - A project's own components and systems, written in Rust, loaded into the editor as a
   `dylib`.
 
@@ -52,8 +58,12 @@ What does not work yet, stated plainly:
   ([#158](https://github.com/lobinuxsoft/kooch/issues/158)).
 - **Reflection is shallow.** No `Vec<T>`, no `HashMap`, no user enums in components
   ([#649](https://github.com/lobinuxsoft/kooch/issues/649)).
-- **`glam` is not re-exported**, so a project has to add it itself and match the version
-  ([#657](https://github.com/lobinuxsoft/kooch/issues/657)).
+- **No shadows.** Lit with no shadows is where the renderer is: better than a normal painted
+  as colour, and it cannot tell you where anything is touching
+  ([#476](https://github.com/lobinuxsoft/kooch/issues/476)).
+- **No global illumination**, which is why punctual light defaults are larger than physics
+  says they should be ([#450](https://github.com/lobinuxsoft/kooch/issues/450)). The
+  [Lighting](./architecture/lighting.md) page explains the trade rather than hiding it.
 
 ## Stack
 
@@ -72,7 +82,11 @@ What does not work yet, stated plainly:
 
 ## License
 
-Proprietary — All Rights Reserved.
+**All Rights Reserved.** Copyright (C) 2025-2026 Matías Galarza ("Lobinux", lobinuxsoft).
+
+The repository is public so the work can be read and so the project can use branch protection
+and Pages. That is not a licence to use it: see
+[`LICENSE.md`](https://github.com/lobinuxsoft/kooch/blob/main/LICENSE.md).
 
 ## How to read this book
 

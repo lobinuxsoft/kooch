@@ -18,6 +18,7 @@
 
 - [Crate Graph](./architecture/crate-graph.md)
 - [Render Pipeline](./architecture/render-pipeline.md)
+- [Lighting — Inti](./architecture/lighting.md)
 - [Frame Pacing](./architecture/frame-pacing.md)
 - [Retired](./architecture/retired/index.md)
   - [BVH-Driven Ray Marching](./architecture/retired/bvh-raymarch.md)
