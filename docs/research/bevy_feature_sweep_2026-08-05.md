@@ -169,11 +169,45 @@ things that matter as much as what was on the original list:
 | **Morph targets batched** — ~2× | 0.19 | Storage-buffer path |
 | **0.17 render: 2.2 ms → 1.3 ms** on a 1300-instance scene | 0.17 | The BVH-culling work paid off on small scenes too, not only on the 115-billion-triangle one |
 
+## How 0.16's headline features stand in 0.19
+
+Reading where a feature *appeared* is not reading where it *is*. Checked
+per feature across 0.17, 0.18 and 0.19:
+
+| 0.16 feature | Where it stands in 0.19 |
+|---|---|
+| **GPU-driven rendering** | Still moving: *"we moved even more work to the GPU and optimized the renderer in a number of areas"* |
+| **Occlusion culling** | Absorbed. 0.17's **BVH culling** made rendering cost *"nearly independent of scene geometry"*; occlusion became a consequence rather than a separate pass |
+| **Atmospheric scattering** | 0.17 added raymarching for *"accurate views from above the atmosphere"*; 0.18 made it **light the scene**. Untouched in 0.19 |
+| **Faster transform propagation** | Kept going: 0.19 uses *"buffered channels to make parallel concurrent workers propagate dirty bits"*. The 11× of 0.16 was the start |
+| **ECS relationships** | 0.19 added **self-referential relationships** (`allow_self_referential`) |
+| **Improved spawn API** | Became **BSN** in 0.19 — `bsn!` and `bsn_list!` |
+| **Unified error handling** | 🔴 Reached the GPU in 0.19 — below |
+| **Decals** | No further changes, but they are now part of **GPU clustering** |
+| **`no_std`** | Not our path |
+
+### 🔴 Two that both earlier passes missed
+
+**Typed GPU errors (0.19).** *"GPU errors previously had no recovery path… Bevy now surfaces these as typed errors and lets you decide what to do with each one."*
+
+Ours is one handler that logs and continues, with a comment admitting it:
+
+```rust
+// Log uncaptured device errors (recovery deferred to post-v0.1).
+device.on_uncaptured_error(|error| tracing::error!("wgpu device error: {error}"));
+```
+
+Validation failure, out of memory and device lost are the same log line, and the frame carries on with a half-created resource. **At planetary scale, running out of VRAM is an expected event rather than a defect** — a streamer that cannot be told an allocation failed cannot evict and retry. That makes this a prerequisite for streaming, not polish.
+
+**`HierarchyPropagatePlugin` (0.17).** Propagating a component down a hierarchy as a first-class pattern, for *"large hierarchies of game objects"* where *"coordinating the state of the entire tree can be frustrating"*. We propagate transforms and nothing else; anything else that has to flow down a tree gets written by hand each time.
+
+**GPU clustering covers lights, light probes *and* decals** — not only lights, as recorded earlier in this file.
+
 **Method note for the next sweep:** ask about *tooling*, *editor* and
 *throughput* explicitly, or the summariser will answer only the question
 asked and the gap will be invisible.
 
-## Sources
+
 
 - Release notes: [0.14](https://bevy.org/news/bevy-0-14/) · [0.15](https://bevy.org/news/bevy-0-15/) · [0.16](https://bevy.org/news/bevy-0-16/) · [0.17](https://bevy.org/news/bevy-0-17/) · [0.18](https://bevy.org/news/bevy-0-18/) · [0.19](https://bevy.org/news/bevy-0-19/)
 - [Meshlet BVH Culling — PR #19318](https://github.com/bevyengine/bevy/pull/19318)
