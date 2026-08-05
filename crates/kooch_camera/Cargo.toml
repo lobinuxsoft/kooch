@@ -1,0 +1,22 @@
+[package]
+name = "kooch_camera"
+description = "Authorable virtual cameras — follow, look-at, up alignment and damping as data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core.workspace = true
+kooch_ecs.workspace = true
+# Optional: only the `Align to gravity` up mode needs it, and a project
+# with no gravity should not link the solver to move a camera.
+kooch_gravity = { workspace = true, optional = true }
+glam.workspace = true
+tracing.workspace = true
+
+[features]
+# Lets `VirtualCamera::up_mode` consult the gravity field. Without it that
+# mode falls back to world up.
+gravity = ["dep:kooch_gravity"]

@@ -1,6 +1,6 @@
 # All Rights Reserved
 
-Copyright (C) 2025 Lobby (lobinuxsoft)
+Copyright (C) 2025-2026 Matías Galarza ("Lobinux", lobinuxsoft)
 
 All rights reserved.
 

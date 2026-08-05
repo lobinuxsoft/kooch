@@ -1,0 +1,48 @@
+//! Font and style configuration for the editor UI.
+
+use std::sync::Arc;
+
+pub(crate) fn configure_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    fonts.font_data.insert(
+        "firacode".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/fonts/FiraCode-Regular.ttf"
+        ))),
+    );
+
+    fonts.font_data.insert(
+        "phosphor".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/fonts/Phosphor.ttf"
+        ))),
+    );
+
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        family.insert(0, "firacode".to_owned());
+        family.push("phosphor".to_owned());
+    }
+
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+        family.insert(0, "firacode".to_owned());
+        family.push("phosphor".to_owned());
+    }
+
+    ctx.set_fonts(fonts);
+}
+
+pub(crate) fn configure_style(ctx: &egui::Context) {
+    let mut style = (*ctx.global_style()).clone();
+    style.visuals.window_corner_radius = egui::CornerRadius::same(6);
+    style.visuals.menu_corner_radius = egui::CornerRadius::same(4);
+    style.spacing.item_spacing = egui::vec2(6.0, 4.0);
+    // Disable text selection on labels globally. egui 0.34 defaults to
+    // selectable labels + multi-widget text selection, which in an editor
+    // (a) has no functional purpose and (b) leaks state across widgets
+    // after a DnD interaction ends with the pointer still registering
+    // as held. See #209 bug report.
+    style.interaction.selectable_labels = false;
+    style.interaction.multi_widget_text_select = false;
+    ctx.set_global_style(style);
+}

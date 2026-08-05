@@ -1,0 +1,46 @@
+[package]
+name = "kooch_editor_core"
+description = "Embedded editor overlay (debug visualization, inspector)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core = { workspace = true, features = ["dynamic"] }
+kooch_ecs = { workspace = true, features = ["dynamic"] }
+kooch_render.workspace = true
+kooch_gizmos.workspace = true
+kooch_gizmos_handles.workspace = true
+# `debug-render` pulls in rapier's world walk, which the viewport overlay
+# turns into lines. The editor is the only crate that should ask for it —
+# a game build never enables it, so it never compiles it (#558).
+kooch_physics = { workspace = true, features = ["debug-render"] }
+# Authored here, applied in the project's process. The editor needs the
+# components to mirror and the gizmos to draw a field that has no mesh.
+kooch_camera.workspace = true
+kooch_gravity.workspace = true
+kooch_window.workspace = true
+kooch_world.workspace = true
+kooch_remote.workspace = true
+kooch_input.workspace = true
+egui.workspace = true
+egui-winit.workspace = true
+egui-wgpu.workspace = true
+glam.workspace = true
+egui_dock.workspace = true
+exmex.workspace = true
+winit.workspace = true
+wgpu.workspace = true
+tracing.workspace = true
+rfd.workspace = true
+dirs.workspace = true
+serde.workspace = true
+ron.workspace = true
+sysinfo.workspace = true
+
+[dev-dependencies]
+# egui reports unstable widget ids through `log`, and the id-stability
+# test reads those complaints rather than reimplementing the check.
+log = "0.4"

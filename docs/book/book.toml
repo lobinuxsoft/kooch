@@ -1,0 +1,34 @@
+[book]
+authors = ["Matías Galarza (lobinuxsoft)"]
+language = "en"
+src = "src"
+title = "Kóoch"
+description = "GPU-driven game engine in Rust — Nanite-style meshlet rendering, CPU ECS, and an editor."
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/lobinuxsoft/kooch"
+edit-url-template = "https://github.com/lobinuxsoft/kooch/edit/development/docs/book/{path}"
+additional-js = ["mermaid.min.js", "mermaid-init.js", "theme/diagram-zoom.js"]
+additional-css = ["theme/custom.css"]
+
+[output.html.search]
+enable = true
+limit-results = 30
+use-boolean-and = true
+boost-title = 2
+
+[output.html.fold]
+enable = true
+level = 1
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[preprocessor.toc]
+command = "mdbook-toc"
+renderer = ["html"]
+
+[rust]
+edition = "2024"

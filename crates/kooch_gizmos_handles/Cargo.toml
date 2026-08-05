@@ -1,0 +1,12 @@
+[package]
+name = "kooch_gizmos_handles"
+description = "Interactive editor handles (translate / rotate / scale) for kooch."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_gizmos.workspace = true
+glam.workspace = true

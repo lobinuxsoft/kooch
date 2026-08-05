@@ -1,0 +1,30 @@
+[package]
+name = "kooch_world"
+description = "Hierarchical coordinates and world streaming for large worlds"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core.workspace = true
+kooch_ecs.workspace = true
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# The voxel storage tests validate their WGSL and run compute passes.
+naga = { version = "29", features = ["wgsl-in"] }
+pollster.workspace = true
+
+[features]
+default = []
+# Scale the chunk-local sparse voxel root grid from 16³ → 32³ (cells
+# 4096 → 32768). Bumps `ATLAS_TILES_Y` 1 → 2 so `MAX_SUBGRIDS_PER_ATLAS`
+# lands at 2048, leaving 25% headroom over the 5% sparsity estimate
+# (1638 active subgrids per chunk). Closes AC4 of #136 — see #347 for
+# the budget rationale.
+large-root-grid = []

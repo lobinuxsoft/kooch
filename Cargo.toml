@@ -1,0 +1,246 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kooch_core",
+    "crates/kooch_ecs",
+    "crates/kooch_plugin_api",
+    "crates/kooch_window",
+    "crates/kooch_input",
+    "crates/kooch_lighting",
+    "crates/kooch_render",
+    "crates/kooch_gizmos",
+    "crates/kooch_gizmos_handles",
+    "crates/kooch_physics",
+    "crates/kooch_camera",
+    "crates/kooch_gravity",
+    "crates/kooch_world",
+    "crates/kooch_audio",
+    "crates/kooch_ecs_macros",
+    "crates/kooch_remote",
+    "crates/kooch_editor_core",
+    "crates/kooch_editor",
+    "examples/example_plugin",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "LicenseRef-Proprietary"
+repository = "https://github.com/lobinuxsoft/kooch"
+authors = ["lobinuxsoft"]
+
+[workspace.dependencies]
+# GPU
+wgpu = "29"
+# Windowing
+winit = { version = "0.30", features = ["serde"] }
+# Math
+glam = { version = "0.33", features = ["bytemuck", "serde"] }
+# Utils
+bytemuck = { version = "1.21", features = ["derive"] }
+encase = { version = "0.10", features = ["glam"] }
+pollster = "0.4"
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# Window handle
+raw-window-handle = "0.6"
+# Audio
+kira = "0.9"
+# Input
+gilrs = { version = "0.11", features = ["serde-serialize"] }
+# Scripting — `sync` feature makes Engine + AST + Dynamic Send + Sync,
+# required so ScriptingBackend impls can live in the engine's Resource set
+# Editor UI
+egui = "0.35"
+# `clipboard` is not optional in practice: without it `Clipboard::set_text`
+# compiles to an empty function, so Copy does nothing and says nothing —
+# `handle_platform_output` hands it the text and it is dropped on the floor.
+# It carries `smithay-clipboard`, which is what talks to a Wayland
+# compositor; `arboard` alone only reaches X11.
+#
+# `wayland` and `x11` name winit's backends. Left off, the editor depends
+# on some other crate happening to turn them on.
+egui-winit = { version = "0.35", default-features = false, features = [
+    "clipboard",
+    "links",
+    "wayland",
+    "x11",
+] }
+egui-wgpu = "0.35"
+egui_dock = { version = "0.20", features = ["serde"] }
+# Arithmetic in numeric fields: `9/2` instead of 4.5. MIT/Apache, and its
+# two deps (regex, smallvec) were already in the tree.
+exmex = "0.21"
+# Serialization
+serde = { version = "1", features = ["derive"] }
+ron = "0.8"
+# glTF mesh loading
+gltf = { version = "1.4", default-features = false, features = ["import", "utils", "names"] }
+# Base64 — RFC 4648 standard / URL-safe alphabet decoder. Used to
+# decode `data:application/octet-stream;base64,...` buffer URIs that
+# Blender's glTF Embedded export emits. Marshallow/data-encoding were
+# alternatives; `base64` is the de-facto Rust crate (used by reqwest,
+# ring, the `gltf` crate's own `import` feature, etc.).
+base64 = "0.22"
+# Image decoding — PNG + JPEG only for PR-1; HDR/EXR/KTX2 follow up when
+# IBL / compressed pipelines arrive
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Meshlet generation — Arseny Kapoulkine's meshoptimizer Rust bindings.
+# Industry standard, used by Bevy 0.16 virtual_geometry, UE5 Nanite-pipeline,
+# every meshlet-based renderer.
+meshopt = "0.6"
+# Physics — CPU rigid body solver. dimforge maintained, DOD internal,
+# industry-grade. wgrapier3d (GPU) is the future migration path — Dimforge
+# has WGSL broad-phase + constraint solvers running, and 2026 targets GPU
+# physics via rust-gpu sharing types with rapier. That path needs the
+# engine and rapier on the same glam, which is why glam is pinned to
+# whatever glamx (rapier's math layer) uses.
+rapier3d = { version = "0.34", features = ["simd-stable"] }
+# File dialogs
+rfd = "0.15"
+# Directories
+dirs = "6"
+# Asset GUID — Unity-style 128-bit identity persisted in `<asset>.meta`
+# sidecars. v4 (random) feature for first-import generation; serde for
+# scene serialization round-trip.
+uuid = { version = "1", features = ["v4", "serde"] }
+# Asset metadata sidecar format. Editable by humans (Unity ships YAML;
+# we ship TOML — same readable spirit, native Rust ecosystem).
+toml = "0.8"
+# Dynamic plugins
+libloading = "0.8"
+# System metrics (CPU%, RAM RSS) for the editor performance HUD.
+# Cross-platform (Linux/Windows/macOS), used by Bevy's
+# SystemInformationDiagnosticsPlugin internally. Default features
+# pull in everything; we trim to just `system` (no networks/disks/
+# components) — keeps the dep light and binary small.
+sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+# Remote editor protocol — blocking HTTP server on a dedicated thread.
+# `interprocess` gives one API over Unix domain sockets and Windows
+# named pipes. Synchronous, matching the engine's own loop, and it keeps
+# the editor protocol off any TCP port — see kooch_remote::server for why
+# that is a security property and not a preference (#647).
+interprocess = "2.4"
+serde_json = "1"
+
+# Internal crates
+kooch_core = { path = "crates/kooch_core" }
+kooch_ecs = { path = "crates/kooch_ecs" }
+kooch_ecs_macros = { path = "crates/kooch_ecs_macros" }
+kooch_window = { path = "crates/kooch_window" }
+kooch_input = { path = "crates/kooch_input" }
+kooch_lighting = { path = "crates/kooch_lighting" }
+kooch_render = { path = "crates/kooch_render" }
+kooch_gizmos = { path = "crates/kooch_gizmos" }
+kooch_gizmos_handles = { path = "crates/kooch_gizmos_handles" }
+kooch_physics = { path = "crates/kooch_physics" }
+kooch_camera = { path = "crates/kooch_camera" }
+kooch_gravity = { path = "crates/kooch_gravity" }
+kooch_world = { path = "crates/kooch_world" }
+kooch_audio = { path = "crates/kooch_audio" }
+kooch_remote = { path = "crates/kooch_remote" }
+kooch_editor_core = { path = "crates/kooch_editor_core" }
+kooch_editor = { path = "crates/kooch_editor" }
+kooch_plugin_api = { path = "crates/kooch_plugin_api" }
+
+[package]
+name = "kooch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Always present
+kooch_core.workspace = true
+kooch_ecs.workspace = true
+
+# Optional (controlled by features)
+kooch_window = { workspace = true, optional = true }
+kooch_render = { workspace = true, optional = true }
+kooch_gizmos = { workspace = true, optional = true }
+kooch_input = { workspace = true, optional = true }
+kooch_audio = { workspace = true, optional = true }
+kooch_lighting = { workspace = true, optional = true }
+kooch_physics = { workspace = true, optional = true }
+kooch_camera = { workspace = true, optional = true }
+kooch_gravity = { workspace = true, optional = true }
+kooch_world = { workspace = true, optional = true }
+kooch_remote = { workspace = true, optional = true }
+kooch_editor_core = { workspace = true, optional = true }
+kooch_plugin_api = { workspace = true, optional = true }
+
+# External (used by examples)
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true
+tracing.workspace = true
+
+[features]
+default = ["window", "render", "gizmos", "world", "input"]
+window = ["dep:kooch_window"]
+render = ["dep:kooch_render", "window"]
+gizmos = ["dep:kooch_gizmos", "render"]
+input = ["dep:kooch_input", "window"]
+audio = ["dep:kooch_audio"]
+lighting = ["dep:kooch_lighting"]
+physics = ["dep:kooch_physics"]
+# Rapier's world walk, which the editor turns into a viewport overlay and
+# the physics_smoke example prints counts from. Never enabled by a game
+# build — see #558.
+physics-debug-render = ["physics", "kooch_physics/debug-render"]
+camera = ["dep:kooch_camera"]
+gravity = ["dep:kooch_gravity", "physics", "kooch_camera?/gravity"]
+world = ["dep:kooch_world"]
+# Remote editor server: lets a project expose its ECS over HTTP so the
+# standalone editor can drive it. Pulled in by projects that run in
+# `--remote` mode; independent of the embedded `editor`.
+remote = ["dep:kooch_remote"]
+editor = ["dep:kooch_editor_core"]
+dynamic = ["kooch_core/dynamic", "kooch_ecs/dynamic", "dep:kooch_plugin_api"]
+
+[[example]]
+name = "load_project_smoke"
+path = "examples/load_project_smoke.rs"
+required-features = ["editor", "dynamic"]
+
+[[example]]
+name = "make_project"
+path = "examples/make_project.rs"
+required-features = ["editor"]
+
+[[example]]
+name = "make_playground"
+path = "examples/make_playground.rs"
+required-features = ["editor", "physics"]
+
+[[example]]
+name = "make_dense_scene"
+path = "examples/make_dense_scene.rs"
+required-features = ["editor", "physics"]
+
+# Measures the meshlet pool, which needs no editor and no solver — the
+# pool is CPU-side geometry.
+[[example]]
+name = "measure_mesh_pool"
+path = "examples/measure_mesh_pool.rs"
+
+[[example]]
+name = "physics_smoke"
+path = "examples/physics_smoke/main.rs"
+required-features = ["physics", "physics-debug-render"]
+
+[[example]]
+name = "window"
+path = "examples/window.rs"
+required-features = ["window"]
+
+[[example]]
+name = "compute_vector_add"
+path = "examples/compute_vector_add.rs"
+
+[[example]]
+name = "dynamic_plugin"
+path = "examples/dynamic_plugin.rs"
+required-features = ["dynamic"]

@@ -1,0 +1,67 @@
+# Builds the mdBook in docs/book and publishes it to GitHub Pages.
+#
+# The rendered HTML is gitignored on purpose — a generated artifact in
+# the tree is one more thing to forget to regenerate, and the diff of a
+# search index tells nobody anything. This workflow is what makes the
+# book exist somewhere other than a developer's laptop.
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/book/**'
+      - '.github/workflows/docs.yml'
+  # So the book can be republished without a docs commit.
+  workflow_dispatch:
+
+# One in flight at a time. A queued run would publish an older tree
+# after a newer one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned rather than `latest`: mdBook has broken theme overrides
+      # across minor versions before, and a docs build that fails on a
+      # day nobody touched the docs is the worst kind of red.
+      - name: Install mdBook and preprocessors
+        run: |
+          cargo install mdbook --version ^0.4 --locked
+          cargo install mdbook-mermaid --locked
+          cargo install mdbook-toc --locked
+
+      - name: Build
+        run: mdbook build docs/book
+
+      # BEFORE the upload, not after. An upload step handed a missing
+      # or empty directory warns and goes green, which publishes an
+      # empty site and reports success — the failure mode is a docs
+      # build that looks fine and serves nothing.
+      - name: Fail if the build produced nothing
+        run: test -s docs/book/book/index.html
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/book/book
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,18 @@
+[package]
+name = "kooch_gravity"
+description = "Multi-gravity system (Mario Galaxy style)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core.workspace = true
+kooch_ecs.workspace = true
+# The fields are summed here and handed to the solver as impulses.
+kooch_physics.workspace = true
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+tracing.workspace = true

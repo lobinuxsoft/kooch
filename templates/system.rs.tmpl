@@ -1,0 +1,30 @@
+//! {{name}} system.
+//!
+//! Generated from `templates/system.rs.tmpl`. Edit that file to change
+//! the scaffold for every new system.
+
+use kooch::prelude::*;
+
+// To use one of your own components here, name it through the generated
+// module tree, which mirrors your `src/` folders:
+//
+//     use crate::registrations::components::movement::GroundMovement;
+//
+// That path is absolute on purpose. Your scripts are mounted inside
+// `registrations`, so `super::` means something different depending on
+// how deep the file sits — the absolute path reads the same from
+// anywhere, and survives moving the file.
+
+/// The `{{name}}` system. A system is any `fn(&mut Resources)`.
+///
+/// You do not register it by hand. Press Register Scripts and the editor
+/// regenerates `src/registrations.rs`, adding it to `Stage::Update`
+/// behind the `Playing` gate — so it runs when you press Play, not while
+/// you are authoring.
+///
+/// To run in a different stage, register it yourself in your own plugin:
+/// `registrations.rs` is overwritten without warning.
+pub fn {{name}}(resources: &mut Resources) {
+    let _ = resources;
+    // Read/write resources and component storages here.
+}

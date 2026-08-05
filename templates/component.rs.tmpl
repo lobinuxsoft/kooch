@@ -1,0 +1,22 @@
+//! {{name}} component.
+//!
+//! Generated from `templates/component.rs.tmpl`. Edit that file to change
+//! the scaffold for every new component.
+
+use kooch::kooch_ecs::Reflect;
+use kooch::kooch_ecs::component::Component;
+
+/// A `{{Name}}` component. Attach it to entities; its public fields show
+/// up in the editor Inspector automatically.
+///
+/// You do not register it by hand. Press Register Scripts and the editor
+/// regenerates `src/registrations.rs` with both halves: the ECS
+/// registration (for scene save/load and the Inspector) and the schema a
+/// standalone editor reads from this project's dylib.
+#[derive(Default, Reflect)]
+pub struct {{Name}} {
+    // Add fields here, e.g.:
+    // pub value: f32,
+}
+
+impl Component for {{Name}} {}

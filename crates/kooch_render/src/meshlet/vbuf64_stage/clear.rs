@@ -1,0 +1,127 @@
+//! Compute clear of the atomic R64 visibility buffer (#493).
+//!
+//! `wgpu::CommandEncoder::clear_texture` is not always available on the
+//! same adapters that expose `TEXTURE_INT64_ATOMIC`, so we own a tiny
+//! compute shader that writes 0u64 to every pixel. Cost is negligible
+//! against the cull / raster passes (8×8 workgroups, one atomicMax-free
+//! `textureStore` per pixel).
+
+use bytemuck::{Pod, Zeroable};
+use wgpu::util::DeviceExt;
+
+const SHADER_SOURCE: &str = include_str!("../../../shaders/meshlet_clear_vbuf64.wgsl");
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
+struct ClearUbo {
+    size: [u32; 2],
+    _pad: [u32; 2],
+}
+
+pub(super) struct Vbuf64Clear {
+    pipeline: wgpu::ComputePipeline,
+    bgl: wgpu::BindGroupLayout,
+    uniform_buffer: wgpu::Buffer,
+}
+
+impl Vbuf64Clear {
+    pub(super) fn new(device: &wgpu::Device) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("meshlet_vbuf64_clear_shader"),
+            source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
+        });
+
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("meshlet_vbuf64_clear_ubo"),
+            contents: bytemuck::bytes_of(&ClearUbo::default()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("meshlet_vbuf64_clear_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::Atomic,
+                        format: super::VBUF64_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: std::num::NonZeroU64::new(16),
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("meshlet_vbuf64_clear_pipeline_layout"),
+            bind_group_layouts: &[Some(&bgl)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("meshlet_vbuf64_clear_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("cs_clear_vbuf64"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        Self {
+            pipeline,
+            bgl,
+            uniform_buffer,
+        }
+    }
+
+    pub(super) fn dispatch(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        vbuf64_view: &wgpu::TextureView,
+        size: (u32, u32),
+    ) {
+        queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&ClearUbo {
+                size: [size.0, size.1],
+                _pad: [0; 2],
+            }),
+        );
+
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("meshlet_vbuf64_clear_bg"),
+            layout: &self.bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(vbuf64_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("meshlet_vbuf64_clear_pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &bg, &[]);
+        pass.dispatch_workgroups(size.0.div_ceil(8), size.1.div_ceil(8), 1);
+    }
+}

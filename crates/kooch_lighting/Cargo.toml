@@ -1,0 +1,19 @@
+[package]
+name = "kooch_lighting"
+description = "Lighting system: point, spot, directional, area lights, and volumetrics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core.workspace = true
+kooch_ecs.workspace = true
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+naga = { version = "29", features = ["wgsl-in"] }

@@ -1,0 +1,571 @@
+# Roadmap
+
+What is next and why, ordered by what blocks what. Issue bodies hold the detail; this is the
+map.
+
+Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
+disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
+
+**There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
+called Next is how a roadmap stops being read.
+
+Last updated 2026-08-05, `feat/inti-lights-that-light` at `926baf3`.
+
+---
+
+## Next — #476, sun shadows, now that there is a sun
+
+**#441 is done: Inti shades.** `kooch_lighting` grew from nine lines and an `init()` that logged
+into the extraction, the GPU light record, and the shading model both render paths now call. The
+acceptance criterion is a test: *a scene with a light and a scene without it cannot render the
+same*, plus a sphere whose lit pole and unlit pole differ by more than 5× in linear luminance.
+
+Lit-with-no-shadows is the state the engine is in, and it is an honest one — it already looks
+far better than a normal painted as colour. What it cannot do is tell you where anything is
+touching, which is the next issue and the one after it.
+
+### The graphics order
+
+| | Issue | Why here |
+|---|---|---|
+| ✅ | **#441 — lights that light** | Done. Cook-Torrance driven by the light components, both paths |
+| 1 | **#476 — CSM** | Sun shadows. Four issues declared a dependency on #441; this is the first of them off the blocks |
+| 2 | **#735 — contact shadows** | Cascades are correct at range and worst at contact — the few centimetres where an object meets the ground is where a shadow detaches or swims, and that is what makes things look like they float over a scene. **Screen-space, so it costs the same at any world scale** |
+| 3 | **#250 / #248 — atmosphere** | Correct from orbit *and* the atmosphere tinting sunlight, which is Bevy's 0.16→0.18 arc |
+| 4 | **#254 — post + auto exposure** | Inti ships a fixed EV100 9.7 and an ACES approximation as placeholders, and they are already the reason a 10 000 lux sun does not clip to white. Auto exposure stops being cosmetic at planetary scale: sunlit surface to night side spans orders of magnitude. Take Bevy 0.18's **fullscreen materials** with the first effect, not after the fourth |
+| — | **#734 — light textures** | Cookies and gobos. Cheap, and a cloud layer's shadow can be one instead of a second march |
+
+**The lighting system is called Inti** — the Inca sun god, as Bevy called their raytracer Solari.
+It names the system, not the crate: `kooch_lighting` keeps its name, because renaming a crate
+breaks every serialised `type_name` in silence.
+
+### What #441 left behind, deliberately
+
+- 🔴 **The shader loops over every light, for every pixel.** Honest for tens, wrong for
+  thousands. `extract_lights` warns past 256 and never clips — clipping a scene's lights in
+  silence is worse than rendering it slowly. **Clustering is the fix**; Bevy moved theirs to the
+  GPU and measured ~20× on `many_lights`. A universe has stars, lit windows and ship lights.
+- **No shadows, no environment map.** Ambient is a hemisphere lerp on world up, which stops
+  meaning anything on the far side of a planet. The replacement is a probe (#450), not a
+  smarter up vector.
+- **Exposure and tonemapping are fixed constants** in the shading model, waiting for #254.
+- **No texture sampling on the R32 compute fallback.** A compute shader has no implicit
+  derivatives, and the analytical ones exist to feed `textureSampleGrad`, which is a
+  fragment-stage call. Maps land on the R64 path only.
+- **`PointLight` has no radius**, so there is no sphere-light `a_prime` to get wrong — the trap
+  Bevy fell into and fixed in 0.18 (bevy#22372) is recorded in the shader against the day it
+  grows one.
+
+### 🔴 The constraint #476 inherits: there is no seventh bind group
+
+`TARGET_MAX_BIND_GROUPS` is 6 and the two-pass shading pipeline now uses all six — groups 0..4
+are the vbuf/camera/screen, the meshlet pool, the materials, the scene buffers and the
+per-material textures, and #441 put Inti on group 5.
+
+**Shadow maps go inside Inti's group, not in a new one.** A shadow map without its light is not
+a thing any shader wants, so they belong next to each other anyway. Raising the target to 8
+would work on this hardware and quietly drop the baseline the engine claims to support: Vulkan
+only guarantees 4.
+
+### 🔴 One thing #441 uncovered, still true
+
+`GpuContext` picks a deliberately **non-sRGB** surface format, with the comment *"most renderers
+handle gamma correction in the shader"* — and until Inti, **no shader did**. Inti applies the
+sRGB transfer function at the end of its tonemap. **The sky pass does not**, so if the sky and
+the geometry now disagree on brightness, that is the sky's half of a decision taken years ago
+and never finished. Worth an issue when #250 rewrites it anyway.
+
+### roll-a-ball is the instrument, not a competing priority
+
+**#669 is how the graphics work gets verified.** A sphere on a plane with one directional light
+is the smallest thing that can show a BRDF being right or wrong; the shadow staying attached
+while the ball rolls is how CSM gets judged; whether the ball looks *on* the plane rather than
+above it is what contact shadows are for, and that one is judged by eye.
+
+None of it needs new gameplay. It needs the scene that exists, plus a light — which now does
+something.
+
+**The phase after graphics is collectibles**, chosen for what it forces rather than for what it
+adds: pick up an object → a sensor fires → an **event** is emitted → a score system reads it → a
+**HUD** shows it → a **sound** plays. That chain reaches four orphans at once — `Events<T>` (295
+lines, no game has ever used them), `MockInputBackend`, `ActionMap` bulk enable/disable, and
+audio, which has no `AudioSource` to author. Built before the renderer shades, nobody could
+judge whether any of it looks right.
+
+---
+
+## The scale work, which the goal makes unavoidable
+
+**Everything is judged against universes**: planetary and galactic draw distance, detail only up
+close, far away merely *distinguishable*.
+
+🔴 **Our visible-meshlet id packs as `(instance_id << 16) | meshlet_id`** — a hard ceiling of
+**65 536 instances**. A single vegetated chunk exhausts it. Bevy removed its comparable 2²⁴
+cluster limit in 0.17 and now renders 115 billion triangles in 3.5 ms.
+
+1. **Widen the id packing.** Nothing else on this list means much until scenes can exceed 65 k
+   instances.
+2. **BVH culling over clusters** ([bevy#19318](https://github.com/bevyengine/bevy/pull/19318)) —
+   render cost becomes nearly independent of scene geometry.
+3. **Visibility Ranges / HLODs** — per-mesh appear and disappear distances. The honest answer to
+   "far away only has to be distinguishable".
+
+Neither has an issue yet.
+
+**Adjacent, and now filed:** **#732** (temporal upscaling) opens with the prerequisite nobody can
+skip — **we have no motion vectors, no jitter, no temporal history**, verified by grep. That is
+one piece of work with three consumers: upscaling, TAA and motion blur. `dlss_wgpu` is a
+standalone crate usable without Bevy, but **FSR comes first**, because it is the path that runs
+on the developer's own handheld and an untested fallback is a broken one.
+
+---
+
+## Two gaps with no issue, found by inventory rather than by use
+
+Both block the goal, and neither will announce itself until it does.
+
+- **No task pool.** Loose `thread::spawn` in `frame_pacing`, `runner` and the editor's remote
+  session; no pool, no cancellation, no priorities. Streaming a planet means loading off the
+  frame, and there is no mechanism for it.
+- **No app state machine.** Menu, loading, playing, paused. Its absence is also why
+  `ActionMap`'s bulk enable/disable has no consumer.
+
+Cheap and adjacent: **an infinite grid** — shader-drawn ground plane with distance fade, no
+geometry, correct at any scale; the viewport has no ground reference at all. And **no colour
+type**, which is a silent hazard: wrong-space blending looks almost right until it is wrong
+everywhere at once.
+
+### Filed from the Bevy sweep
+
+| | |
+|---|---|
+| **#731** | Volumetric clouds as a **spherical shell** per planet. Bevy's fog volumes are AABBs, which compose with chunks and not with a planet. Shares the ray-sphere maths with #248 |
+| **#732** | Temporal upscaling on both vendors — motion vectors first |
+| **#733** | Spike: hot-patch a project's Rust without reopening, via Dioxus' `subsecond`. Aims at a friction that is already documented: the editor loads the project `.so` and does not build it |
+| **#734** | Light textures — cookies and gobos |
+| **#735** | Contact shadows |
+| **#736** | One settings framework. We have three shapes today — `EditorConfig`, the dock layout, and nothing for a game |
+
+**#248 grew three things** it did not have: the LUT-per-planet scale problem (a solar system needs
+one parameter set per planet, and a galaxy needs a policy), [bevy#20766](https://github.com/bevyengine/bevy/pull/20766)
+as the reference for the spherical raymarch, and 🔴 **0.18's generalised scattering media — the
+part that makes non-Earth planets possible, and which has to be in `.atmosphere_material` from
+day one** rather than retrofitted around a shader written for Earth's three-term model.
+
+**#453 grew the reason skinned meshes vanish**: they are culled against the **bind pose**, so a
+reaching animation leaves the volume and the character is culled while still on screen. Reads
+as a streaming bug for a long time. The GPU skinning pre-pass is where the animated bounds are
+free.
+
+### Three more, cheap, that make whole classes of bug unrepresentable
+
+- **Required components.** Bevy deprecated bundles in 0.15 for this: a component declares what
+  it needs, and inserting it inserts them. We have no such mechanism — `AddComponentCommand`
+  inserts exactly one type. So adding a `MeshRenderer` to an entity without a `Transform`
+  produces an entity the renderer's query never matches: **authorable and inert**, the same
+  family as the lights in #441 and the nine capabilities #726 catalogued. This does not make the
+  bug easier to find; it makes it impossible to author.
+
+- **Easing and curves as a shared type.** They already exist — `kooch_camera::blend::{eased,
+  ease_in}` and `virtual_camera::ease` — **locked inside the camera crate, addressed by `u32`**.
+  Scene animation (#715), the animation graph (#717), UI transitions (#96) and any tween will
+  each write their own unless this moves out. Bevy's `EaseFunction` is 39+ variants implementing
+  `Curve<f32>` with sampling, clamping, composition and reparametrisation — the shape to copy,
+  not the code.
+
+- **A colour type.** See above: sRGB is touched in the texture loader and the GPU context and
+  nowhere else.
+
+See `docs/research/bevy_module_gap_2026-08-05.md` and
+`docs/research/bevy_feature_sweep_2026-08-05.md`.
+
+### Already ours, for the record
+
+**Commands** are complete — `spawn`, `spawn_batch`, `entity`, `despawn`, `insert`,
+`insert_reflected`, `apply`, with `EntityBuilder` and `EntityCommands`. `spawn_batch` is
+specifically what Bevy recommends for mass spawning, which is what streaming a planet is. There
+is nothing to port. **Bundles** should not be ported at all: they are the deprecated half of
+that pair.
+
+---
+
+## The render graph — decided, not yet executed
+
+**#392 resolved: delete it.** Not because a scheduler is wrong, but because the right scheduler
+is the ECS one. Bevy — the engine that made render graphs the default pattern — **replaced
+theirs with ECS schedules in 0.19**, because their graph ran as an exclusive, single-threaded
+system. Passes are systems there now.
+
+Half the replacement is already written here: `kooch_core::schedule::gpu_batch` batches GPU
+systems into one shared encoder, and the `PreRender` / `Render` / `GpuSync` / `Gpu` stages
+exist. What is missing is **`before` / `after` ordering between systems inside a stage** —
+engine-wide, not render-only.
+
+`sky/node.rs`, the graph's orphan adapter, is already gone.
+
+---
+
+## Done recently
+
+| | |
+|---|---|
+| **#592 — a frame is a list of views** (PR #730) | `MeshletRenderStage` holds a `SlotMap<ViewId, MeshletView>`; the editor grew a **Game panel** rendering the gameplay camera beside View. Cull buffers, Hi-Z state and `group_max_err` moved per view — sharing them was [bevy#15182](https://github.com/bevyengine/bevy/issues/15182) waiting to happen. Play no longer switches the editor camera off, `input_focus` decides who owns input in one place, and `ViewCamera` replaced four copies of "walk the world for the highest-priority camera" |
+| **#727** | **An input action became an asset.** A `.inputaction` holds one action with its own id; a component points at it by guid; `enabled` is per action. The map — `InputMapSource`, the `.inputmap` asset, `ActiveActionMap`, `ActionState`, the generic `ActionMap<A>` — is gone. #55 and #58 closed |
+| **#728** | **A saved asset reaches the running project.** Only prefabs ever told it; a material edit updated the editor and left the game rendering the old one. `forget` + `load` cannot do this — `insert` mints a new key and every live `Handle<T>` keeps the old bytes — so `reload_path` writes over the slot instead. No file watcher, on purpose |
+| **#711** | **`kooch_input` was connected to nothing.** No backend was ever constructed and `WindowEvent::KeyboardInput` only asked for a redraw. `just_pressed` was permanently false, and four green tests were pinning that |
+| **#713** | **A game can be played inside the editor.** The editor captures input and sends snapshots to the headless host over the protocol. Identifiers became this engine's own — `gilrs::GamepadId` has no public constructor, which is what blocked it |
+| **#718** | A camera follows a **`CameraTarget` tag**, not an entity reference. Several tagged entities *are* a group, so following one and framing four are one code path |
+| **#723** | A project's component had no fields in the prefab inspector — three sources answer "what fields does this type have" and that panel asked the only one it was not in |
+| **#724** | "Open in IDE" opens the project root, in the IDE this machine has. Four bugs, each exposed by the previous fix |
+| **#669 phase 0** | **Done.** A ball rolls under WASD and a stick, camera-relative; a raycast gates the jump; a virtual camera follows. Verdict in the issue |
+| **#605** | The custom ECS stays. `bevy_ecs` evaluated on measurements and declined |
+| **#607** | Stable entity references — a component can point at an entity and survive a save |
+| **#609** | More than one scene loaded at once |
+| **#612** | Parented physics — compound colliders, gizmo parent-space conversion, Inspector warnings |
+| **#560** | Joints — one `Joint` component, all eight rapier kinds, motors, limits, breaking |
+| **#618** | Mass control — `mass` means kilograms, shapes are massless, explicit centre of mass |
+| **#563** | Physics debug render — the solver's own account of itself, in the viewport |
+| **#623** | Collider material — friction, restitution, combine rules and damping, all authorable |
+| **#611** | **Prefabs, both phases.** A prefab is a scene file; an instance in a scene is a *reference* to it plus what the user changed. #676, #677, #678, #679 |
+| **#661** | The keyboard belongs to the focused panel, not to World |
+| **#561** | Collision events, sensors and groups — the solver can finally report back |
+| **#630** | Event delivery — `Events<T>` had never been rotated by the editor's runner |
+| **#635** | A Console tab, and structured project logs to put in it |
+| **#624** | Custom gravity — per-body scale, and four source components that sum |
+| **#640** | `BoxGravity` — a cube planet, each face along its own normal |
+| **#642** | Gravity no longer keeps every body awake (0.137 → 0.042 ms/step, 300 bodies) |
+| **#643** | The Console stopped redoing the whole log every frame (0.206 ms → 0.029 µs) |
+| **#120** | Closed unbuilt: `stabby` + C ABI replaced by plain Rust `dylib`, no translation layer |
+| **PR #651/#652** | The project's code loads into the editor as a `dylib` — its components appear in Add Component and render in the Inspector. Old projects migrate on open. Reload itself is still missing (#648) |
+| **PR #653** | The monoliths, split. One file over 600 lines left, and it is named below |
+| **PR #654** | The editor protocol left TCP for a local socket — closes the browser vector and the orphan-on-a-fixed-port confusion (#647) |
+| **#655** | A `Joint` can be authored. Bodies are named with `Option<EntityRef>`, the Inspector has an entity picker and a World-panel drop target, and the three error paths that turned one failure into a frozen session stopped lying |
+| **PR #660/#662** | The Console copies to the system clipboard, and filters by severity with one toggle per level instead of a minimum-level dropdown |
+| **PR #664** | egui 0.35. Widget ids stabilised (see #641 below), numeric fields evaluate arithmetic — `9/2` is 4.5 — the name field keeps its caret, and a remotely spawned entity carries `Name` and `Transform` like a locally spawned one |
+| **#656 / PR #667** | The editor and its project stopped burning two cores to show a still image. 200% → 3% CPU, 51.8 → 31.5 W. Four causes, one of them a bare `loop {}` in the headless runner that predated the issue |
+
+---
+
+## Backlog — performance and the files that hide it
+
+Two sessions running, the thing that actually went wrong was not a missing feature. It was
+work done per frame that did not need doing, in files too big for anyone to notice. Both are
+the same problem seen from two sides, so they are one push.
+
+### 1. Per-frame work that should not exist
+
+Ordered by measured or estimated cost. **Measure first, then fix** — the last two wins came
+from a number, and the two guesses before them were wrong.
+
+0. **#656 — DONE.** Two cores, idle, to display a still image: **200% → 3% CPU, 51.8 → 31.5 W**
+   on the same host. It was four things, not one. The windowed loop asked for the next redraw
+   unconditionally and now derives `ControlFlow` from a `FrameRequest` each frame fills in,
+   with the editor taking its answer from egui's `repaint_delay`. The *project* was never in
+   that loop at all — `RemoteHostPlugins` has no window on purpose, so it ran under
+   `default_runner`, a bare `loop {}` with no vsync; that was the 100% core, and it predated
+   the issue. The Console and egui were feeding each other: egui's "changed id between passes"
+   is itself a log line, so it landed in the Console, scrolled it, and produced the next one.
+   And most window events change nothing drawn — 966 `AxisMotion` and 212 `Moved` against 486
+   `CursorMoved` over five seconds of ordinary mouse movement.
+
+   **It broke every "every N frames" clock, as predicted.** An idle editor draws about four
+   frames a second, so the remote pull's thirty-frame cadence went from half a second to seven
+   and a half. It is a `Duration` now, and **any new cadence must be too**.
+
+1. **#645 / #691 — the remote pull. Measured, mostly fixed, one term left.** It was 32 ms a
+   frame: 424.6 KB of JSON for 610 entities, 13.7 ms of it parsing, plus 7.5 ms rebuilding the
+   mirror. Diffing server-side (#694) took the payload to **0.1 KB** and decode to 0.02 ms;
+   skipping the mirror when the delta is empty (#695) took its 7.5 ms to **0.00**. Binary
+   encoding was **cancelled, not deferred** — it would optimise 0.02 ms.
+
+   What is left is `transport`: **4.4 ms**, waiting for the project to reach its next
+   `Stage::First`. The HUD tooltip predicted this exactly — *"if this dominates, the fix is to
+   stop doing it on the main thread"* — and it now dominates. That is #691 step 3.
+
+   ⚠️ **`DenseScene` has no colliders.** With physics every entity changes every frame and the
+   delta becomes the whole world again. **The diff solved authoring, not Play**, and nothing
+   here has been measured with a solver running.
+2. **#641 — egui `changed id between passes`. Mostly closed by PR #664, and the remainder is
+   not ours.** The Console was the whole of the volume: widgets took automatic ids, handed out
+   by order of creation, and `draw_message` emits a variable number of them — so one row
+   renamed every row below it, and each of egui's complaints is itself a log line that shifts
+   the rows again. Rows are now keyed on the log line. Measured: hundreds per session to zero
+   in that panel.
+
+   Two things to know before anyone reopens this. The check is `#[cfg(debug_assertions)]` and
+   the red rectangles are drawn by that same function, so **none of it reaches a shippable
+   build** — verified by running the editor in release. And the block that survived carries
+   byte-identical ids across three builds, immune to every change: that is
+   [egui #8343](https://github.com/emilk/egui/issues/8343), open upstream, where
+   `with_layout(right_to_left)` inside `horizontal` warns spuriously. `menu_bar.rs` does
+   exactly that. **This is no longer a performance item.**
+3. **#666 — ⭐ THE NEXT ONE. The gather builds the whole world to draw twenty rows.**
+   `Gather · entities` is **4.33 ms of a 13.5 ms frame** on 610 entities, and 96% of the gather
+   stage. It is also the part nobody can make cheaper by closing a panel: collapsing every
+   panel takes the UI pass from 9.2 ms to 3.1 ms and leaves gather untouched.
+
+   The original framing — skip panels whose tab is not visible — cannot fix it: **the World
+   panel is always visible**, so the entity walk runs in full, and the four sub-stages that
+   visibility gating would remove total 0.1 ms.
+
+   The cost is the shape of what is built. One `EntityDisplayInfo` per entity, each carrying a
+   `Vec<ComponentDisplayInfo>`, each of those allocating a `String` for a short name that is
+   `&'static str` at its source: **2440 String allocations a frame** to draw twenty rows. #695
+   removed the reflected *values* from this path and got 0.9 ms of 5.26 — which is the proof
+   the values were never the cost.
+
+   A row needs a name, a depth, a child count, a component count and a scene. The full
+   descriptor is read by the Inspector, for the selection. The gather is producing a structure
+   shaped for the panel that shows one entity and handing it to the panel that shows six
+   hundred.
+4. **`asset_browser/tree.rs::render_root` rebuilds the whole folder tree every frame, twice**
+   (Project and Engine roots), cloning a `PathBuf` per node. ~12 assets today, so invisible;
+   the same shape as the Console bug that was not.
+5. **Panels with unbounded lists are not virtualised. DONE** — the Console (#643) and now the
+   hierarchy (#695): `ScrollArea::show_rows` draws the twenty rows that fit instead of all 610.
+   UI pass 9.23 → 4.79 ms. What it demands is that a row's height be known before the rows
+   above it are drawn, so `entity_row::row_height` is the single definition both the list and
+   the row read, and **rows truncate rather than wrap** — a wrapped name would be taller than
+   the list promised and every row below it would land in the wrong place.
+6. **`kooch_gravity::plugin` walks and allocates its source list twice per frame** — once in
+   `reconcile_world_gravity`, once in `apply_gravity_sources`. Small, but it is per frame.
+7. **#569 — per-stage counters in the perf HUD. DONE (#695), and it should have been first.**
+   The HUD's **CPU frame** section reports gather / UI / input / viewport / present / actions,
+   what no stage claims, and the gizmo batch that runs outside the measured span; gather splits
+   again into intern / entities / archetypes / types / assets. `Unaccounted` reads **0.01 ms**,
+   so the split describes the frame rather than approximating it.
+
+   Two things to know before reading it. **`cpu_frame_ms` does not include the remote pull** —
+   `remote_sync_system` runs in `Stage::PreUpdate`, outside the measured span, so subtracting
+   the pull from it subtracts something that was never inside. And **with vsync on the HUD does
+   not move when real work is removed**: `KOOCH_PRESENT_MODE=novsync` exists so the frame can
+   be measured at all. Vsync stays the default; an uncapped editor burns a GPU drawing frames
+   nobody sees.
+
+**The rule this session earned:** egui redraws everything every frame, so whatever a panel
+does in its `draw` it does sixty times a second for as long as it is visible. The user's
+report was *"it depends on how many panels are open"*, and that was exactly right.
+
+**The rule the next session earned, which supersedes the order of this list:** four hypotheses
+were raised about this frame in one day. The cull sizing (#689) was arithmetically damning —
+815× of wasted threads, verified — and costs **0.076 ms**. Vsync was refuted outright. The
+panels were real, and were found by asking the user to collapse them. The reflected values were
+predicted at ~4 ms and delivered 0.9. **One hit in four by analysis; four in four by
+measurement.** Item 7 was listed last and was the one that should have been done first.
+Instrument, then argue.
+
+### 2. The monolithic files — done, with one exception
+
+Thirty files were over 400 lines. PR #653 split them. What is left over 600 is a single file,
+and it was skipped on purpose:
+
+| Lines | File | Why it is still there |
+|---|---|---|
+| 1148 | `kooch_editor_core/src/actions/remote_edit.rs` | Skipped as demolition-bound. **That premise is dead** — the remote stays (#647), so this file has to be split like the rest |
+
+Twenty-five files sit between 400 and 600. That band is no longer an automatic split: the
+threshold moved to 600, above which a file is *examined* for whether it went monolithic or is
+carrying something that does not belong to it. Size alone is not the verdict. See `MEMORY.md`,
+"Cómo se parte un archivo monolítico".
+
+The full list, any time: `find crates src examples -name '*.rs' | xargs wc -l | sort -rn |
+awk '$1 > 600'`.
+
+### The audit that changed what "next" means — #669
+
+**#669 — Roll a Ball, a first-user pass over the whole engine.** We have been testing the
+engine as its authors; this tests it as its first user, in a project, against the public API
+only. Each phase ends in a verdict about the engine rather than a feature for the game.
+
+Reading the tree to plan it turned up how much of the presentation layer does not exist:
+
+| Subsystem | State |
+|---|---|
+| Physics, gravity, meshlet path, materials | **strong** |
+| Input, scripting | present, unproven from a project |
+| **Lights** | **authorable and inert** — see below |
+| Audio | kira backend, no `AudioSource` to author (#63) |
+| Shadows (#476/#477), post (#254), particles (#97), runtime UI (#280/#96) | **missing** |
+
+**`DirectionalLight`, `PointLight` and `SpotLight` exist in `kooch_ecs` and nothing reads
+them.** `kooch_lighting/src/lib.rs` is nine lines; `kooch_render` never mentions them; #441 is
+open. They are the exact shape of the gotcha in `MEMORY.md` — *a missing feature does not fail
+the build: the component is authored, mirrored, draws a gizmo, and does nothing.* A user who
+places a light and sees no change is the first bug #669 will find.
+
+**#668 — how systems get to run in parallel**, given that users write their own. Blocked on a
+scene that needs it: a hosting project currently does **0.17 ms** of work per frame, so there
+is nothing to parallelise. #669's terrain phase produces that scene.
+
+### #669 phase 0 is done, and what it found
+
+A ball that rolls, a jump gated on a downward ray, and a virtual camera following it — built in
+a project, against the public API only. **#671 phase 1 was proven for the first time**: the rig
+had been written since 31 July and had never been seen to move a camera.
+
+The finding that matters is not any single bug. It is that **neither Play showed a working
+game, and each failed differently**: remote Play could not receive a key (#710, now closed by
+#713), and the direct game lost the camera's target on load (#712). As the engine's authors,
+both halves had green tests. Only using it from outside put them in the same room.
+
+Seven separate cases turned up of **complete code with no reachable call site** — the input
+crate, `feed_window_event`, the standalone Play path (#720), the dynamic type registry the
+prefab inspector never asked, and three in the IDE launcher. **None of them fails a build.**
+That is the argument for this epic, and it is no longer a hypothesis.
+
+### Done — the action became data, and the player became parts
+
+**#55 / #58 — closed.** `ActionMap<A>` was generic over a Rust *type*, which cannot be
+serialised, inspected or edited, so the editor could never author a binding; it is deleted.
+
+What replaced it is not a map. **An action is an asset** (`.inputaction`) with its own stable
+id, and a component points at one **by guid**, picked in the Inspector like a mesh. Nothing in
+gameplay names an action, so renaming one in the panel breaks nothing — the failure the
+name-keyed version had by construction. Each action is enabled on its own, which a map could
+not do, being all or nothing.
+
+The panel authors all of it: five composites ported from Unity (2D/3D vector, 1D axis, one and
+two modifiers), processors on a binding, on a composite head and on the action, reorderable
+because order is meaning. Editing a file is picked up without a restart.
+
+Three lessons went into the engine rather than into this document:
+
+- **Asset types register themselves at link time** (`register_asset!`). The loader and its
+  storage were two hand-written lists in two places, and `.inputmap` shipped with its loader in
+  both and its storage in neither. Nothing central lists an asset type now, so nothing central
+  can leave one out.
+- **The editor's component list is checked by a test.** A `*ComponentsPlugin` missing from
+  `EditorPlugin::build` made a component the menu offered and then refused; that was the fifth
+  time. The test scans the workspace for them.
+- **The editor says when the project library is older than its sources.** It loads the `.so`, it
+  does not build it, so a component written and not compiled was simply absent with nothing to
+  explain it.
+
+**What is left of the map idea:** bulk enable/disable. A pause menu wants to silence a *set* of
+actions at once, and per-action `enabled` makes that a loop. `ActionMap::priority` is still
+written and never read — when the pause exists, that is the consumer that should shape it,
+rather than guessing now.
+
+**Alongside it, in the game: decompose `PlayerController`.** Four fields that are three
+capabilities, together only because all three happened to belong to the player. It becomes a
+`Player` tag, `GroundMovement` and `Jump` for how *this* body behaves, and an **intent**
+written by whoever is driving.
+
+Separating the intent from the input is what makes the systems reusable: a system that reads
+keys serves only the player, while one that reads an intent serves an AI writing the same
+thing. It is also what lets #55 land without touching gameplay.
+
+> Working mode from 2026-08-02: **the engine's author writes this code.** Guidance, review and
+> diagnosis rather than patches.
+
+### Then, the features that were next before this
+
+**#562** (scene queries), **#567** (PD/PID controllers), **#639** (split `RigidBody` into
+`RigidBody`/`KinematicBody`/`StaticBody` — a scene-format migration).
+
+> The standing rule: implement what Rapier offers, warn for what it does not. See `MEMORY.md`.
+
+---
+
+## Backlog — editor, because multi-scene is half-reachable
+
+1. **#619 — no way to create a scene.** There is no New Scene. Multi-scene cannot be
+   exercised without files already on disk.
+2. **#613 — additive scenes over the wire.** The protocol assumes one scene, so additive
+   loading is disabled while a project is open. The only place a merged feature is
+   knowingly incomplete.
+3. **#591** context menus, **#592** a Game panel separate from View.
+
+---
+
+## Prefabs — done, and what it taught
+
+**#611** shipped in four PRs. Both questions it flagged got answered: a document instanced
+as a unit needs exactly one root and says so rather than picking one, and identity is
+remapped per instance so two copies never claim to be the same entity.
+
+What is worth carrying forward is the reversal. Phase B first stored an instance's entities
+in full *and* a link, on the argument that a scene should open with its prefab missing and
+that nothing should depend on load order. Both true, and outweighed:
+
+> **Every prefab bug found while building it was the same bug.** A value held in two places
+> drifts.
+
+The Inspector showed a prefab from before it was overwritten. A component removed from an
+instance came back on the next save. A second scene never saw a change. The project kept
+instancing from the copy it read first. Four fixes, one class, still producing new ones.
+
+A scene now stores the reference and the overrides; the values exist once. The load-order
+dependency came back and is accepted, because an unresolvable prefab spawns
+`missing prefab [guid]` — a broken reference is something the scene *shows*, where a stale
+copy looks exactly like a correct one.
+
+**The rule this leaves:** when a design keeps producing bugs that each need their own fix,
+count how many are the same shape before writing the fifth.
+
+### The one limit left
+
+A child entity **added** to a prefab appears when a scene loads, but a running editor does
+not grow one mid-session — placing it means positioning relative to whatever the instance
+became. Worth its own issue if it ever hurts.
+
+---
+
+
+## Animation — decided, not started
+
+Three layers people routinely merge, and merging them is how one cannot change without breaking
+the others:
+
+| Layer | Issue |
+|---|---|
+| Deformation — bones to vertices, on the GPU | **#453** |
+| Pose source — clips, sampling, blending | **#92** |
+| Control — which pose plays and how it mixes | **#717** |
+
+**#717 is the one that governs.** One Playables-style graph under skeletal animation, scene
+animation and a timeline, where **a timeline is a node** and so is a state machine, so they nest
+in each other. Unity does not get this far: Timeline and Animator are both Playables but
+nesting one in the other shows the seam. Here nodes are flat arrays with `u32` indices, so
+nesting is writing a number — and **the authored asset is just the arrays' initial state**,
+which means authoring and runtime composition are the same operation.
+
+**#715 — scene animation.** Any reflected field on any entity: *if you can see it in the
+Inspector, you can animate it*. Three kinds of track, and the middle one is the interesting
+one — **whether a component is present is sampled state, not a fired event**, so scrubbing
+backwards undoes it. Unity cannot do that, because adding a component there runs `Awake`.
+
+**#716 — target identity by hashed name path**, shared by both. Stable across reloads and
+re-instantiation precisely because it derives from nothing assigned at runtime.
+
+**#92 — adopt, do not write.** `ozz-animation-rs` is a deterministic Rust rewrite of ozz, data
+-oriented, engine-agnostic. It brings sampling, blending and the skeleton; the graph is ours.
+
+**Motion matching is a later feature, gated on data rather than effort.** Published work uses
+4.6 h (LAFAN) to 44 h (100STYLE) of capture. With a handful of clips it produces a *worse*
+result than a blend tree, and the failure mode is concluding the technique is bad when the
+dataset was. Public corpora are frequently non-commercial — check before building on one.
+
+## Larger, not yet started
+
+- **#566 — world cells.** Scenes become streamable content; entities transit between cells.
+  Scene and cell are orthogonal axes. This is the piece planet-scale actually needs.
+- **#614 — terrain LOD.** Research, with an honest verdict: dual contouring beats
+  marching-cubes-plus-Transvoxel on an octree, but feeding octree nodes through the meshlet
+  pipeline is **an unproven hypothesis**. Nobody found doing it. Measure the cost of
+  clusterising one dirty node before any design commits.
+- **Rendering backlog** — #441 PBR, #476/#477 shadows, #450 GI, #250 sky materials, #485
+  clustered light culling, #484 HDR, #481 motion vectors and FSR. Technically unblocked, but
+  **sequenced behind #392 on purpose**: they are the passes whose arrival decides whether the
+  render graph is worth keeping, and adding them beside it forecloses the question.
+- **#558** — shippable builds must exclude the editor. Security, not size.
+
+---
+
+## Deliberately not scheduled
+
+- **Adopting Bevy wholesale.** Would save roughly two thirds of the codebase and cost the
+  parts that are the point: the GPU-driven meshlet renderer, planet-scale streaming, and the
+  editor — none of which Bevy provides. Settled in #605.
+- **Making a dynamic body follow its parent.** No engine supports it; Godot has failed to
+  for years. The supported answers are compound colliders (#615, done) and joints (#560).
