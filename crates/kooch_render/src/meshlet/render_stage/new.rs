@@ -88,6 +88,7 @@ impl MeshletRenderStage {
             meshlet_bgl,
             views,
             primary,
+            config,
             reject_overlay,
             stage_counters: super::super::stage_counters::MeshletStageCounters::new(device),
             instance_capacity,
@@ -256,19 +257,14 @@ impl MeshletRenderStage {
     /// That is the whole reason the split exists — `measure_mesh_pool`
     /// puts the pool at 6.33 MiB for four assets, and duplicating it
     /// per camera would buy nothing.
-    pub fn create_view(
-        &mut self,
-        device: &wgpu::Device,
-        size: (u32, u32),
-        config: &MeshletRenderStageConfig,
-    ) -> ViewId {
+    pub fn create_view(&mut self, device: &wgpu::Device, size: (u32, u32)) -> ViewId {
         self.views.insert(super::view_targets::MeshletView::new(
             device,
             size,
-            config.debug_caps,
-            config.vbuf64,
+            self.config.debug_caps,
+            self.config.vbuf64,
             self.cull_pipelines.meshlet_bind_group_layout(),
-            config.meshlet_capacity,
+            self.config.meshlet_capacity,
             DEFAULT_MAX_TRIANGLES as u32,
         ))
     }

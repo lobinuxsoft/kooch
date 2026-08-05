@@ -18,6 +18,7 @@ use crate::editor_camera::input::ViewportInputDelta;
 use crate::panels::archetypes::draw_archetypes_content;
 use crate::panels::asset_browser::draw_asset_browser_content;
 use crate::panels::components::draw_components_content;
+use crate::panels::game::draw_game_content;
 use crate::panels::inspector::AssetDetail;
 use crate::panels::inspector::draw_inspector_content;
 use crate::panels::view::draw_view_content;
@@ -53,6 +54,12 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) last_clicked_index: &'a mut Option<usize>,
     pub(crate) viewport_texture_id: egui::TextureId,
     pub(crate) viewport_request: &'a mut Option<(u32, u32)>,
+    /// Game panel's offscreen texture — a second view of the same
+    /// stage, through the gameplay camera (#592).
+    pub(crate) game_texture_id: egui::TextureId,
+    pub(crate) game_request: &'a mut Option<(u32, u32)>,
+    /// Whether the last frame found a gameplay camera to render.
+    pub(crate) game_has_camera: bool,
     pub(crate) viewport_input: &'a mut Option<ViewportInputDelta>,
     pub(crate) editor_camera_controller: &'a EditorCameraController,
     pub(crate) rotation_euler_cache: &'a mut HashMap<EulerCacheKey, Vec3>,
@@ -203,6 +210,12 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.active_archetype_count,
                 self.last_clicked_index,
                 self.scenes,
+            ),
+            EditorTab::Game => draw_game_content(
+                ui,
+                self.game_texture_id,
+                self.game_request,
+                self.game_has_camera,
             ),
             EditorTab::View => draw_view_content(
                 ui,

@@ -45,6 +45,12 @@ pub(super) struct ViewportUi<'a> {
     pub(super) input: &'a mut Option<ViewportInputDelta>,
     pub(super) controller: &'a EditorCameraController,
     pub(super) handle_mode: kooch_gizmos_handles::HandleMode,
+    /// The Game panel's texture + size request. A separate view of the
+    /// same stage (#592), so it carries its own size — the two panels
+    /// are docked independently and rarely agree on one.
+    pub(super) game_texture_id: egui::TextureId,
+    pub(super) game_request: &'a mut Option<(u32, u32)>,
+    pub(super) game_has_camera: bool,
 }
 
 /// Runs the egui UI for one frame. Produces the tessellation input and the
@@ -92,6 +98,9 @@ pub(super) fn run_editor_ui(
         input,
         controller,
         handle_mode,
+        game_texture_id,
+        game_request,
+        game_has_camera,
     } = viewport;
 
     // `run_ui` rather than `run`: egui 0.35 hands the closure a root `Ui`
@@ -178,6 +187,9 @@ pub(super) fn run_editor_ui(
                 last_clicked_index: &mut last_clicked_index,
                 viewport_texture_id: texture_id,
                 viewport_request: request,
+                game_texture_id,
+                game_request,
+                game_has_camera,
                 viewport_input: input,
                 editor_camera_controller: controller,
                 rotation_euler_cache: &mut overlay.rotation_euler_cache,

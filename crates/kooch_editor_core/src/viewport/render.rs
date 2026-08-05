@@ -159,7 +159,7 @@ pub(crate) fn render_viewport(
     gpu.queue().submit(Some(encoder.finish()));
 }
 
-fn clear_to_black(
+pub(super) fn clear_to_black(
     encoder: &mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
     depth: &wgpu::TextureView,

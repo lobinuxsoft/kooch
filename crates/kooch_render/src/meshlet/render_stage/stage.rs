@@ -17,6 +17,7 @@ use super::super::stage_counters::MeshletStageCounters;
 use super::super::system::MeshletPipeline;
 use super::super::vbuf64_stage::Vbuf64Stage;
 use super::super::vis_buffer::MeshletVisRasterizer;
+use super::config::MeshletRenderStageConfig;
 use crate::hi_z::HiZ;
 use crate::perf::EngineVramTracker;
 
@@ -63,6 +64,10 @@ pub struct MeshletRenderStage {
     /// read. Every stage has at least one; callers that own more than
     /// one address them by [`ViewId`] instead.
     pub(super) primary: ViewId,
+    /// What this stage was built with, so a view added later gets the
+    /// same capability gates rather than whatever the caller happened
+    /// to reconstruct.
+    pub(super) config: MeshletRenderStageConfig,
 
     /// Reject-reason overlay compute pipeline (#454.4). `Some` only
     /// when `MeshletDebugCaps::supports_texture_atomic` is true — the

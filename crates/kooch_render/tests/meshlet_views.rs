@@ -44,14 +44,7 @@ fn a_second_view_gets_its_own_cull_buffers() {
         return;
     };
     let mut stage = test_stage(&device);
-    let config = MeshletRenderStageConfig {
-        size: (64, 64),
-        instance_capacity: 4,
-        meshlet_capacity: 64,
-        ..Default::default()
-    };
-
-    let second = stage.create_view(&device, (32, 32), &config);
+    let second = stage.create_view(&device, (32, 32));
     assert_eq!(stage.view_count(), 2);
     assert_ne!(second, stage.primary_view());
 
@@ -78,14 +71,7 @@ fn a_view_keeps_its_own_size() {
         return;
     };
     let mut stage = test_stage(&device);
-    let config = MeshletRenderStageConfig {
-        size: (64, 64),
-        instance_capacity: 4,
-        meshlet_capacity: 64,
-        ..Default::default()
-    };
-
-    let second = stage.create_view(&device, (32, 16), &config);
+    let second = stage.create_view(&device, (32, 16));
     assert_eq!(stage.view_size(stage.primary_view()), Some((64, 64)));
     assert_eq!(stage.view_size(second), Some((32, 16)));
 }
@@ -97,14 +83,7 @@ fn a_destroyed_view_stops_resolving() {
         return;
     };
     let mut stage = test_stage(&device);
-    let config = MeshletRenderStageConfig {
-        size: (64, 64),
-        instance_capacity: 4,
-        meshlet_capacity: 64,
-        ..Default::default()
-    };
-
-    let second = stage.create_view(&device, (32, 32), &config);
+    let second = stage.create_view(&device, (32, 32));
     assert!(stage.destroy_view(second));
     assert_eq!(stage.view_count(), 1);
 
@@ -115,7 +94,7 @@ fn a_destroyed_view_stops_resolving() {
     assert_eq!(stage.view_size(second), None);
     assert!(stage.view_cull(second).is_none());
 
-    let third = stage.create_view(&device, (8, 8), &config);
+    let third = stage.create_view(&device, (8, 8));
     assert_ne!(third, second);
     assert!(!stage.has_view(second));
 }

@@ -27,7 +27,7 @@ use crate::systems::pacing::{editor_pace, shortest_repaint_delay};
 use crate::systems::present::present_editor_frame;
 use crate::undo::UndoStack;
 use crate::viewport::render::MeshletPathInputs;
-use crate::viewport::{ViewportTarget, render_viewport};
+use crate::viewport::{GameView, ViewportTarget, render_game_view, render_viewport};
 
 use self::frame_display::FrameDisplayData;
 use self::ui::{ToolbarInfo, ViewportUi, run_editor_ui};
@@ -141,6 +141,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut overlay = resources
         .remove::<EditorOverlay>()
         .expect("EditorOverlay not found");
+    let mut game_view = resources.remove::<GameView>();
     let mut viewport = resources
         .remove::<ViewportTarget>()
         .expect("ViewportTarget not found");
@@ -212,6 +213,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // Apply the previous frame's size request before the UI runs so the
     // texture id stays stable through the entire egui pass.
     viewport.resize_if_needed(gpu.device(), &mut overlay.renderer);
+    if let Some(game) = game_view.as_mut() {
+        game.target
+            .resize_if_needed(gpu.device(), &mut overlay.renderer);
+    }
 
     let toolbar = ToolbarInfo {
         can_undo: undo_stack.can_undo(),
@@ -238,6 +243,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     };
 
     let mut viewport_request: Option<(u32, u32)> = None;
+    let mut game_request: Option<(u32, u32)> = None;
     let mut viewport_input: Option<ViewportInputDelta> = None;
     let controller_snapshot = resources
         .get::<EditorCameraController>()
@@ -351,6 +357,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         ViewportUi {
             texture_id: viewport.texture_id(),
             request: &mut viewport_request,
+            game_texture_id: game_view
+                .as_ref()
+                .map(|g| g.target.texture_id())
+                .unwrap_or(egui::TextureId::default()),
+            game_request: &mut game_request,
+            game_has_camera: game_view.as_ref().map(|g| g.has_camera).unwrap_or(false),
             input: &mut viewport_input,
             controller: &controller_snapshot,
             handle_mode: resources
@@ -416,6 +428,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     if let Some(size) = viewport_request {
         viewport.request_size(size);
     }
+    if let (Some(size), Some(game)) = (game_request, game_view.as_mut()) {
+        game.target.request_size(size);
+    }
 
     // Apply viewport input to the editor camera before the same frame's
     // render pass so the new pose is visible immediately. Focus-on-
@@ -468,6 +483,26 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     stages.input_ms = crate::perf::ms_since(input_start);
 
     let viewport_start = std::time::Instant::now();
+
+    // The Game panel renders first: a second view of the same stage,
+    // through the gameplay camera. Before the View panel's pass rather
+    // than after, so the two submits stay in a fixed order and a frame
+    // capture always reads the same way.
+    //
+    // Skipped entirely when no project is loaded — there is no scene to
+    // look at, and the panel says so rather than showing black.
+    if project_loaded
+        && let (Some(game), Some(stage), Some(blit)) = (
+            game_view.as_mut(),
+            meshlet_stage.as_mut(),
+            meshlet_blit.as_ref(),
+        )
+    {
+        render_game_view(&gpu, &mut sky_pass, game, stage, blit, resources);
+    } else if let Some(game) = game_view.as_mut() {
+        game.has_camera = false;
+    }
+
     {
         // The meshlet stage + blit are constructed at startup and live
         // for the whole editor session; if either is missing, another
@@ -514,6 +549,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     resources.insert(gpu);
     resources.insert(overlay);
     resources.insert(viewport);
+    if let Some(game) = game_view {
+        resources.insert(game);
+    }
     resources.insert(sky_pass);
     resources.insert(gizmo_renderer);
     resources.insert(gizmo_batch);
