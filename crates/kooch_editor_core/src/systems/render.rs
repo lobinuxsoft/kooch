@@ -491,7 +491,16 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     //
     // Skipped entirely when no project is loaded — there is no scene to
     // look at, and the panel says so rather than showing black.
+    //
+    // Also skipped when the panel is not on screen. `game_request` is
+    // set by `draw_game_content`, so it is `Some` this frame iff the tab
+    // was actually drawn: Game ships as a sibling tab of View, so the
+    // common case is that only one of them is visible, and rendering
+    // both would pay two culls a frame for a panel nobody is looking at.
+    // The UI runs before this point in the frame, so the flag is already
+    // current.
     if project_loaded
+        && game_request.is_some()
         && let (Some(game), Some(stage), Some(blit)) = (
             game_view.as_mut(),
             meshlet_stage.as_mut(),
