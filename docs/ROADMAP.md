@@ -43,6 +43,24 @@ breaks every serialised `type_name` in silence.
 ⚠️ The sweep **reinforced** this order rather than changing it: #476, #734, #735 and #450 now
 all state a dependency on #441. Four issues wait on the one that makes a light do anything.
 
+### roll-a-ball is the instrument, not a competing priority
+
+**#669 is how the graphics work gets verified.** #441's acceptance criterion — *a scene with a
+light and a scene without it must not render the same* — needs a scene, and that is this one. A
+sphere on a plane with one directional light is the smallest thing that can show a BRDF being
+right or wrong; the shadow staying attached while the ball rolls is how CSM gets judged; whether
+the ball looks *on* the plane rather than above it is what contact shadows are for, and that one
+is judged by eye.
+
+None of it needs new gameplay. It needs the scene that exists, plus a light.
+
+**The phase after graphics is collectibles**, chosen for what it forces rather than for what it
+adds: pick up an object → a sensor fires → an **event** is emitted → a score system reads it → a
+**HUD** shows it → a **sound** plays. That chain reaches four orphans at once — `Events<T>` (295
+lines, no game has ever used them), `MockInputBackend`, `ActionMap` bulk enable/disable, and
+audio, which has no `AudioSource` to author. Built before the renderer shades, nobody could
+judge whether any of it looks right.
+
 ⚠️ **Read Bevy 0.18's Fresnel and over-glossy material fixes before writing the BRDF.** Getting
 it right the first time is free; finding it later means re-tuning every material in the project.
 
