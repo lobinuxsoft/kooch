@@ -36,6 +36,7 @@ impl MeshletDeferredShader {
         material_bg: &wgpu::BindGroup,
         cull: &MeshletCull,
         scene: &MeshletScene,
+        lights_bg: &wgpu::BindGroup,
         view_proj: glam::Mat4,
         screen_size: (u32, u32),
         debug_mode: u32,
@@ -110,6 +111,7 @@ impl MeshletDeferredShader {
         pass.set_bind_group(1, meshlet_bg, &[]);
         pass.set_bind_group(2, material_bg, &[]);
         pass.set_bind_group(3, &scene_bg, &[]);
+        pass.set_bind_group(4, lights_bg, &[]);
         pass.dispatch_workgroups(screen_size.0.div_ceil(8), screen_size.1.div_ceil(8), 1);
     }
 }

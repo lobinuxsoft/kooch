@@ -100,6 +100,23 @@ pub(super) fn text_to_show(focused: bool, buffer: Option<String>, snapshot: &str
     }
 }
 
+/// The field's doc comment, for the Inspector tooltip (#737).
+///
+/// `""` when the field has no doc comment, or when the component has no
+/// static reflection at all — a component parked from a project `.so`
+/// reaches the Inspector without `FieldMeta`, so its fields show a
+/// tooltip only once the schema carries the string too.
+///
+/// The alternative was a `#[reflect(tooltip = "...")]` attribute. A
+/// second place to write the explanation is a second place for it to go
+/// stale, and the stale one is always the one the user reads.
+pub(super) fn doc_for(field_metas: Option<&'static [FieldMeta]>, name: &str) -> &'static str {
+    field_metas
+        .and_then(|metas| metas.iter().find(|m| m.name == name))
+        .map(|m| m.doc)
+        .unwrap_or("")
+}
+
 /// Whether a field's [`FieldCondition`] is met by the component's current
 /// values.
 ///
@@ -201,7 +218,13 @@ pub(super) fn draw_reflected_fields(
                 // One scope per cell, not one around the row: a scope
                 // advances the grid's cursor, so wrapping both would put
                 // the label and its editor in the same column.
-                ui.push_id(("label", name), |ui| ui.label(name));
+                ui.push_id(("label", name), |ui| {
+                    let label = ui.label(name);
+                    let doc = doc_for(field_metas, name);
+                    if !doc.is_empty() {
+                        label.on_hover_text(doc);
+                    }
+                });
                 ui.push_id(name, |ui| {
                     let field = FieldContext {
                         name,
@@ -250,7 +273,13 @@ pub(super) fn draw_readonly_fields(
                 if !field_is_shown(field_metas, name, fields) {
                     continue;
                 }
-                ui.push_id(("label", name), |ui| ui.label(name));
+                ui.push_id(("label", name), |ui| {
+                    let label = ui.label(name);
+                    let doc = doc_for(field_metas, name);
+                    if !doc.is_empty() {
+                        label.on_hover_text(doc);
+                    }
+                });
                 ui.push_id(name, |ui| {
                     let choices = choices_for(field_metas, name);
                     let bits = bits_for(field_metas, name);

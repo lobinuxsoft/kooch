@@ -76,8 +76,26 @@ are disjoint. Kóoch has the query half and not the scheduler half.
 |---|---|---|---|
 | `RenderGraph`, `RenderNode`, `FnNode`, `NodeId` | `graph/` (497 lines) | **orphan** | DAG + cycle detection + topological sort (Kahn) + shared-encoder execution. PR-1 of #392. Its own module doc lists the follow-ups: *"migration of `SkyRenderPass` and the meshlet stage to graph nodes (separate PRs)"*. Those never happened, and the real renderer was built beside it. **Decide: migrate or delete.** Keeping an unused scheduler that looks authoritative is worse than either. |
 | Meshlet pipeline, Hi-Z, deferred, visibility buffer | `meshlet/`, `hi_z/` | connected | The renderer that actually runs. |
+| `surface_reconstruct.wgsl` | `shaders/` | connected (#441) | Barycentric world position / normal / uv / tangent, shared by both shading paths. Was the R64 path's alone; the R32 fallback averaged vertex normals and had no world position, which only stopped being invisible when a point light needed a distance. |
+| `MeshletDebugMode::Normals` | `meshlet/debug.rs` | connected (#441) | The old shading model, demoted to a dropdown entry. The discriminant is pinned by a test because two WGSL files compare against a literal `11u`. |
 | `MaterialPool`, `ImageLoader` | | internal | |
 | Frame metrics (`KOOCH_FRAME_METRICS`) | | connected | Env var, silent by default. |
+
+## Lighting — `kooch_lighting` (Inti)
+
+Until #441 this crate was **nine lines**: a doc comment promising point, spot, directional and
+area lights, volumetrics and bloom, plus an `init()` that logged. Nothing in the engine called
+it. The three light components existed, the editor drew their gizmos, the Inspector edited
+them, the remote protocol mirrored them — and no render crate read one.
+
+| Capability | Where | Status | Notes |
+|---|---|---|---|
+| `GpuLight` | `gpu_light.rs` | connected (#441) | 64 B `repr(C)` record. Direction from the transform, never a field. Spot cone pre-packed as the MAD the shader evaluates. AoS on purpose — every invocation reads all of one light; SoA is what *culling* will want, and that is a different buffer. |
+| `extract_lights` | `extract.rs` | connected (#441) | The ECS walk, pure and GPU-free. Warns past 256 lights and never clips. |
+| `GpuLights` | `buffer.rs` | connected (#441) | Buffer residency, geometric growth, one bind group for both shading paths. |
+| `AmbientLight`, `Exposure` | `frame.rs` | connected (#441) | `Resources` entries with defaults. **Neither is reachable from the editor** — no Inspector, no panel, no menu. A `Resource` with no UI is the next `invisible` in the making. |
+| `inti_pbr_shader(group)` | `lib.rs` | connected (#441) | The shading model as WGSL, bind-group index substituted textually. Concatenated by both paths so the BRDF cannot fork. |
+| Volumetrics, bloom, area lights | — | **not built** | The crate's original doc comment promised all three. It now promises what it has. |
 
 ## Input — `kooch_input`
 

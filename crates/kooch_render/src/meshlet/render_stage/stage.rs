@@ -39,6 +39,16 @@ pub struct MeshletRenderStage {
     pub(super) rasterizer: MeshletVisRasterizer,
     pub(super) deferred: MeshletDeferredShader,
 
+    /// Inti's GPU residency: the frame constants + the light storage
+    /// buffer, refreshed once per `render` call.
+    ///
+    /// Shared across views rather than per view, because which lights
+    /// exist does not depend on where a camera is. The one per-view
+    /// value it carries — the camera position — is safe here only
+    /// because each view records *and submits* its own encoder; see
+    /// [`kooch_lighting::GpuLights`] for the ordering argument.
+    pub(super) lights: kooch_lighting::GpuLights,
+
     /// GPU mirror of [`MeshletPipeline::pool`]. Lazy-rebuilt by
     /// [`Self::render_with_assets`] when [`Self::pool_dirty`] is set,
     /// which happens whenever [`Self::ensure_gpu_mesh`] introduces a

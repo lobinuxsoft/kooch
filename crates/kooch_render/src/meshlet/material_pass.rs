@@ -21,24 +21,46 @@
 pub const RESOLVE_MATERIAL_DEPTH_SHADER: &str =
     include_str!("../../shaders/resolve_material_depth.wgsl");
 
-/// Attribute-reconstruction helpers (barycentrics, analytical uv
-/// derivatives, `resolve_vertex_output`) shared by the per-material
-/// shading passes. WGSL has no `#include`, so this is prepended in Rust
-/// to each material shader — see [`compose_material_shader`].
+/// Geometry bindings + barycentric attribute reconstruction, shared by
+/// BOTH shading paths (the R64 two-pass fragment route and the R32
+/// compute deferred). Prepended in Rust; WGSL has no `#include`.
+pub const SURFACE_RECONSTRUCT_SHADER: &str = include_str!("../../shaders/surface_reconstruct.wgsl");
+
+/// The R64 path's visibility-buffer read: the 64-bit storage binding,
+/// the frame uniforms, and `resolve_vertex_output`. Pairs with
+/// [`SURFACE_RECONSTRUCT_SHADER`], which owns everything downstream of
+/// the read — see [`compose_material_shader`].
 pub const VISIBILITY_BUFFER_RESOLVE_SHADER: &str =
     include_str!("../../shaders/visibility_buffer_resolve.wgsl");
 
-/// Default per-material shading body (normal-debug × albedo, tangent-space
-/// normal mapping). Concatenate with [`VISIBILITY_BUFFER_RESOLVE_SHADER`]
-/// via [`compose_material_shader`] before creating the module. Entry
+/// Default per-material shading body: sampled albedo + tangent-space
+/// normal mapping + metal/roughness, shaded by Inti. Compose it with
+/// [`compose_material_shader`] before creating the module. Entry
 /// points: `vs_fullscreen`, `fs_material`.
 pub const MATERIAL_PBR_DEFAULT_BODY: &str = include_str!("../../shaders/material_pbr_default.wgsl");
 
-/// Composes a complete material shader by prepending the shared
-/// visibility-buffer resolve helpers to a material-specific body. This
-/// stands in for the `#import` a WGSL preprocessor would provide.
+/// Bind group Inti's frame UBO + light storage occupy on this path.
+/// Groups 0..4 are the vbuf/camera/screen, the meshlet pool, the
+/// material storage, the scene buffers and the per-material textures —
+/// 5 is the first free index.
+pub const MATERIAL_PASS_INTI_GROUP: u32 = 5;
+
+/// Composes a complete material shader: the visibility-buffer resolve
+/// helpers, then the Inti shading model, then the material-specific
+/// body. This stands in for the `#import` a WGSL preprocessor would
+/// provide.
+///
+/// Order matters — WGSL resolves top to bottom, so anything the body
+/// calls has to be declared above it.
 pub fn compose_material_shader(material_body: &str) -> String {
-    format!("{VISIBILITY_BUFFER_RESOLVE_SHADER}\n{material_body}")
+    let inti = kooch_lighting::inti_pbr_shader(MATERIAL_PASS_INTI_GROUP);
+    [
+        VISIBILITY_BUFFER_RESOLVE_SHADER,
+        SURFACE_RECONSTRUCT_SHADER,
+        &inti,
+        material_body,
+    ]
+    .join("\n")
 }
 
 /// Depth format the material-depth target uses. 16-bit unorm gives an
@@ -67,12 +89,13 @@ mod tests {
         validate(RESOLVE_MATERIAL_DEPTH_SHADER, "resolve_material_depth.wgsl");
     }
 
+    /// Neither chunk validates alone — each references names the other
+    /// declares, which is the point of concatenating them. The composed
+    /// shader below is what actually has to parse.
     #[test]
-    fn visibility_buffer_resolve_parses_and_validates() {
-        validate(
-            VISIBILITY_BUFFER_RESOLVE_SHADER,
-            "visibility_buffer_resolve.wgsl",
-        );
+    fn the_two_resolve_chunks_are_halves_of_one_shader() {
+        assert!(VISIBILITY_BUFFER_RESOLVE_SHADER.contains("resolve_surface("));
+        assert!(SURFACE_RECONSTRUCT_SHADER.contains("fn resolve_surface("));
     }
 
     #[test]

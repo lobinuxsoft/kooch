@@ -98,6 +98,13 @@ pub struct FieldSchema {
     pub name: String,
     /// What the field holds.
     pub kind: FieldKind,
+    /// The field's doc comment, shown as an Inspector tooltip (#737).
+    /// Empty when the field has none.
+    ///
+    /// Travels the boundary because a project's own components are
+    /// exactly the ones whose meaning the engine cannot guess. A
+    /// `GroundMovement.acceleration` is in units only its author knows.
+    pub doc: String,
 }
 
 impl FieldSchema {
@@ -106,7 +113,14 @@ impl FieldSchema {
         Self {
             name: name.into(),
             kind,
+            doc: String::new(),
         }
+    }
+
+    /// Attaches the field's doc comment, shown as an Inspector tooltip.
+    pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
+        self.doc = doc.into();
+        self
     }
 }
 

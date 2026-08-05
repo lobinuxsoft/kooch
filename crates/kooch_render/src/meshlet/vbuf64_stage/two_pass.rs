@@ -127,6 +127,10 @@ impl MaterialTwoPass {
         });
 
         let texture_bgl = MaterialTexturePool::bind_group_layout(device);
+        // Group 5 — Inti's per-frame constants + light storage. The
+        // layout is an associated function because the pipeline has to
+        // be built long before any lights exist.
+        let lights_bgl = kooch_lighting::GpuLights::bind_group_layout(device);
 
         let resolve_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("resolve_material_depth_layout"),
@@ -172,6 +176,7 @@ impl MaterialTwoPass {
                 Some(&materials_bgl),
                 Some(&scene_bgl),
                 Some(&texture_bgl),
+                Some(&lights_bgl),
             ],
             immediate_size: 0,
         });
@@ -254,8 +259,10 @@ impl MaterialTwoPass {
         cull: &MeshletCull,
         scene: &MeshletScene,
         material_pipeline: &MaterialPipeline,
+        lights_bg: &wgpu::BindGroup,
         view_proj: glam::Mat4,
         screen_size: (u32, u32),
+        debug_mode: u32,
     ) {
         queue.write_buffer(
             &self.camera_buffer,
@@ -276,7 +283,7 @@ impl MaterialTwoPass {
                 bytes_of(&ScreenUbo {
                     size: [screen_size.0, screen_size.1],
                     material_id: slot,
-                    debug_mode: 0,
+                    debug_mode,
                 }),
             );
         }
@@ -406,6 +413,7 @@ impl MaterialTwoPass {
             pass.set_bind_group(2, &materials_bg, &[]);
             pass.set_bind_group(3, &scene_bg, &[]);
             pass.set_bind_group(4, &texture_bg, &[]);
+            pass.set_bind_group(5, lights_bg, &[]);
             pass.draw(0..3, 0..1);
         }
     }

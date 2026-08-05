@@ -9,50 +9,81 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-05, `development` at `a6780ee`.
+Last updated 2026-08-05, `feat/inti-lights-that-light` at `926baf3`.
 
 ---
 
-## Next — #441, because the engine does not look like an engine
+## Next — #476, sun shadows, now that there is a sun
 
-**The renderer does not read a single light.** `kooch_lighting/src/lib.rs` is nine lines.
-`DirectionalLight`, `PointLight` and `SpotLight` are read by `kooch_ecs`, which defines them,
-and by the editor, which draws their gizmos — and by nothing that renders. The deferred shader
-computes `rgb = (normal * 0.5 + 0.5) * base_color`: the world normal painted as colour. A debug
-view shipped as the shading model.
+**#441 is done: Inti shades.** `kooch_lighting` grew from nine lines and an `init()` that logged
+into the extraction, the GPU light record, and the shading model both render paths now call. The
+acceptance criterion is a test: *a scene with a light and a scene without it cannot render the
+same*, plus a sphere whose lit pole and unlit pole differ by more than 5× in linear luminance.
 
-Place a light, see the gizmo, see it in the Inspector, see it mirrored to the host, see nothing
-change on screen. That is the failure mode `MEMORY.md` already records: *a missing feature does
-not fail the build*.
+Lit-with-no-shadows is the state the engine is in, and it is an honest one — it already looks
+far better than a normal painted as colour. What it cannot do is tell you where anything is
+touching, which is the next issue and the one after it.
 
 ### The graphics order
 
 | | Issue | Why here |
 |---|---|---|
-| 1 | **#441 — lights that light** | Nothing to shadow until this exists. Largest visual return per unit of work in the whole backlog |
-| 2 | **#476 — CSM** | Sun shadows. Lit-without-shadows is an honest intermediate state and already looks far better than today |
-| 3 | **#735 — contact shadows** | Cascades are correct at range and worst at contact — the few centimetres where an object meets the ground is where a shadow detaches or swims, and that is what makes things look like they float over a scene. **Screen-space, so it costs the same at any world scale** |
-| 4 | **#250 / #248 — atmosphere** | Correct from orbit *and* the atmosphere tinting sunlight, which is Bevy's 0.16→0.18 arc |
-| 5 | **#254 — post + auto exposure** | Auto exposure stops being cosmetic at planetary scale: sunlit surface to night side spans orders of magnitude. Take Bevy 0.18's **fullscreen materials** with the first effect, not after the fourth |
+| ✅ | **#441 — lights that light** | Done. Cook-Torrance driven by the light components, both paths |
+| 1 | **#476 — CSM** | Sun shadows. Four issues declared a dependency on #441; this is the first of them off the blocks |
+| 2 | **#735 — contact shadows** | Cascades are correct at range and worst at contact — the few centimetres where an object meets the ground is where a shadow detaches or swims, and that is what makes things look like they float over a scene. **Screen-space, so it costs the same at any world scale** |
+| 3 | **#250 / #248 — atmosphere** | Correct from orbit *and* the atmosphere tinting sunlight, which is Bevy's 0.16→0.18 arc |
+| 4 | **#254 — post + auto exposure** | Inti ships a fixed EV100 9.7 and an ACES approximation as placeholders, and they are already the reason a 10 000 lux sun does not clip to white. Auto exposure stops being cosmetic at planetary scale: sunlit surface to night side spans orders of magnitude. Take Bevy 0.18's **fullscreen materials** with the first effect, not after the fourth |
 | — | **#734 — light textures** | Cookies and gobos. Cheap, and a cloud layer's shadow can be one instead of a second march |
 
 **The lighting system is called Inti** — the Inca sun god, as Bevy called their raytracer Solari.
 It names the system, not the crate: `kooch_lighting` keeps its name, because renaming a crate
 breaks every serialised `type_name` in silence.
 
-⚠️ The sweep **reinforced** this order rather than changing it: #476, #734, #735 and #450 now
-all state a dependency on #441. Four issues wait on the one that makes a light do anything.
+### What #441 left behind, deliberately
+
+- 🔴 **The shader loops over every light, for every pixel.** Honest for tens, wrong for
+  thousands. `extract_lights` warns past 256 and never clips — clipping a scene's lights in
+  silence is worse than rendering it slowly. **Clustering is the fix**; Bevy moved theirs to the
+  GPU and measured ~20× on `many_lights`. A universe has stars, lit windows and ship lights.
+- **No shadows, no environment map.** Ambient is a hemisphere lerp on world up, which stops
+  meaning anything on the far side of a planet. The replacement is a probe (#450), not a
+  smarter up vector.
+- **Exposure and tonemapping are fixed constants** in the shading model, waiting for #254.
+- **No texture sampling on the R32 compute fallback.** A compute shader has no implicit
+  derivatives, and the analytical ones exist to feed `textureSampleGrad`, which is a
+  fragment-stage call. Maps land on the R64 path only.
+- **`PointLight` has no radius**, so there is no sphere-light `a_prime` to get wrong — the trap
+  Bevy fell into and fixed in 0.18 (bevy#22372) is recorded in the shader against the day it
+  grows one.
+
+### 🔴 The constraint #476 inherits: there is no seventh bind group
+
+`TARGET_MAX_BIND_GROUPS` is 6 and the two-pass shading pipeline now uses all six — groups 0..4
+are the vbuf/camera/screen, the meshlet pool, the materials, the scene buffers and the
+per-material textures, and #441 put Inti on group 5.
+
+**Shadow maps go inside Inti's group, not in a new one.** A shadow map without its light is not
+a thing any shader wants, so they belong next to each other anyway. Raising the target to 8
+would work on this hardware and quietly drop the baseline the engine claims to support: Vulkan
+only guarantees 4.
+
+### 🔴 One thing #441 uncovered, still true
+
+`GpuContext` picks a deliberately **non-sRGB** surface format, with the comment *"most renderers
+handle gamma correction in the shader"* — and until Inti, **no shader did**. Inti applies the
+sRGB transfer function at the end of its tonemap. **The sky pass does not**, so if the sky and
+the geometry now disagree on brightness, that is the sky's half of a decision taken years ago
+and never finished. Worth an issue when #250 rewrites it anyway.
 
 ### roll-a-ball is the instrument, not a competing priority
 
-**#669 is how the graphics work gets verified.** #441's acceptance criterion — *a scene with a
-light and a scene without it must not render the same* — needs a scene, and that is this one. A
-sphere on a plane with one directional light is the smallest thing that can show a BRDF being
-right or wrong; the shadow staying attached while the ball rolls is how CSM gets judged; whether
-the ball looks *on* the plane rather than above it is what contact shadows are for, and that one
-is judged by eye.
+**#669 is how the graphics work gets verified.** A sphere on a plane with one directional light
+is the smallest thing that can show a BRDF being right or wrong; the shadow staying attached
+while the ball rolls is how CSM gets judged; whether the ball looks *on* the plane rather than
+above it is what contact shadows are for, and that one is judged by eye.
 
-None of it needs new gameplay. It needs the scene that exists, plus a light.
+None of it needs new gameplay. It needs the scene that exists, plus a light — which now does
+something.
 
 **The phase after graphics is collectibles**, chosen for what it forces rather than for what it
 adds: pick up an object → a sensor fires → an **event** is emitted → a score system reads it → a
@@ -60,13 +91,6 @@ adds: pick up an object → a sensor fires → an **event** is emitted → a sco
 lines, no game has ever used them), `MockInputBackend`, `ActionMap` bulk enable/disable, and
 audio, which has no `AudioSource` to author. Built before the renderer shades, nobody could
 judge whether any of it looks right.
-
-⚠️ **Read Bevy 0.18's Fresnel and over-glossy material fixes before writing the BRDF.** Getting
-it right the first time is free; finding it later means re-tuning every material in the project.
-
-⚠️ **#441 loops over every light, and the shader must not be written as if that were
-permanent.** Bevy moved light clustering to the GPU and measured ~20× on `many_lights`. A
-universe has stars, lit windows and ship lights.
 
 ---
 

@@ -10,6 +10,9 @@ authors.workspace = true
 [dependencies]
 kooch_core.workspace = true
 kooch_ecs.workspace = true
+# Inti — the shading model and its GPU light records. A renderer
+# without one paints normals.
+kooch_lighting.workspace = true
 wgpu.workspace = true
 glam.workspace = true
 bytemuck.workspace = true

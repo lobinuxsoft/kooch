@@ -1,9 +1,11 @@
 //! Meshlet pipeline debug visualization modes (#451).
 //!
 //! The deferred shader branches on a single `u32` uniform pulled from
-//! [`MeshletDebugMode`]. `Off` (the default) is the production normal
-//! debug × material path; every other variant overrides the colour
-//! output to expose a specific stage of the cull → vbuf → shade chain.
+//! [`MeshletDebugMode`]. `Off` (the default) is the production path —
+//! since #441 that means Inti's Cook-Torrance shading, not the
+//! world-space normal painted as colour that used to ship as the
+//! shading model. Every other variant overrides the colour output to
+//! expose a specific stage of the cull → vbuf → shade chain.
 //!
 //! Mode values are stable: the GPU shader pattern-matches on the raw
 //! `u32` and exhaustive shader coverage relies on the discriminants
@@ -17,7 +19,9 @@ use super::caps::MeshletDebugCaps;
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum MeshletDebugMode {
-    /// Production path — normal-debug shading × material base colour.
+    /// Production path — Cook-Torrance shading driven by the scene's
+    /// lights (#441). Before that landed, this was the normal-debug
+    /// view, which is now [`Self::Normals`].
     #[default]
     Off = 0,
     /// `hash3(meshlet_id) → RGB`. Exposes the cluster boundaries.
@@ -59,6 +63,14 @@ pub enum MeshletDebugMode {
     /// that disagree with the object's macro AABB — a common artifact
     /// of stale build-time bounds after a mesh edit.
     FrustumRejected = 10,
+    /// World-space normal painted as colour, modulated by albedo.
+    ///
+    /// This was the engine's *shading model* until #441 — a debug view
+    /// shipped as the production path, which is why a scene with lights
+    /// and a scene without them rendered identically. It is a genuinely
+    /// useful view of the geometry, so it survives here; it just stops
+    /// being what you get by default.
+    Normals = 11,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -115,6 +127,7 @@ impl MeshletDebugMode {
             // through `cs_cull_scene_pool_atomic_hi_z`, which still
             // needs its own reject_reasons wiring (separate follow-up).
             Self::HiZRejected,
+            Self::Normals,
         ]
     }
 
@@ -190,6 +203,7 @@ impl MeshletDebugMode {
             Self::OnlyLod0 => "Only LOD 0",
             Self::OnlyRoots => "Only Roots",
             Self::FrustumRejected => "Frustum Rejected",
+            Self::Normals => "Normals",
         }
     }
 }
@@ -202,6 +216,23 @@ mod tests {
     fn off_is_zero() {
         assert_eq!(MeshletDebugMode::Off.as_u32(), 0);
         assert_eq!(MeshletDebugMode::default(), MeshletDebugMode::Off);
+    }
+
+    /// Both shading shaders compare against a literal `11u`
+    /// (`DEBUG_MODE_NORMALS`). WGSL cannot import a Rust constant, so
+    /// this test is the only thing holding the two ends together —
+    /// renumber the variant and the dropdown silently selects lit
+    /// shading while claiming to show normals.
+    #[test]
+    fn normals_discriminant_matches_the_shaders() {
+        assert_eq!(MeshletDebugMode::Normals.as_u32(), 11);
+    }
+
+    #[test]
+    fn normals_is_selectable_on_every_device() {
+        // It reads no atomic texture — it is the old production path.
+        assert!(!MeshletDebugMode::Normals.needs_texture_atomic());
+        assert!(MeshletDebugMode::all_implemented().contains(&MeshletDebugMode::Normals));
     }
 
     #[test]

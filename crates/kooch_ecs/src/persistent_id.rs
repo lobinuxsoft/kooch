@@ -94,6 +94,9 @@ impl Reflect for PersistentId {
     fn reflect_fields(&self) -> &'static [FieldMeta] {
         static FIELDS: &[FieldMeta] = &[FieldMeta {
             name: "id",
+            doc: "Stable identity that survives saving, loading and reordering.\n\nAssigned once \
+by the engine. Two entities with the same id are one entity as far as \
+every reference in the project is concerned.",
             type_name: "u64",
             kind: FieldKind::U64,
             choices: &[],

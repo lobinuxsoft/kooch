@@ -42,7 +42,11 @@ fn parent_child(
     super::add_to_archetype(resources, parent, std::any::TypeId::of::<Children>());
 }
 
-fn named(resources: &mut kooch_core::resource::Resources, entity: crate::entity::Entity, name: &str) {
+fn named(
+    resources: &mut kooch_core::resource::Resources,
+    entity: crate::entity::Entity,
+    name: &str,
+) {
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry.register_cpu_reflected::<crate::name::Name>();
     registry.insert_default_reflected(&std::any::TypeId::of::<crate::name::Name>(), entity);

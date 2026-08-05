@@ -167,6 +167,7 @@ impl Vbuf64Stage {
         density_mode: u32,
         meshlet_bg: &wgpu::BindGroup,
         material_pipeline: Option<&crate::material::MaterialPipeline>,
+        lights_bg: &wgpu::BindGroup,
         cull: &MeshletCull,
         scene: &MeshletScene,
         view_proj: glam::Mat4,
@@ -226,8 +227,10 @@ impl Vbuf64Stage {
                 cull,
                 scene,
                 pipeline,
+                lights_bg,
                 view_proj,
                 self.size,
+                debug_mode,
             );
         }
     }

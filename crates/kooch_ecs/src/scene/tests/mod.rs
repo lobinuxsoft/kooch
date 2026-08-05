@@ -34,6 +34,7 @@ impl Reflect for Health {
                 shown_when: None,
                 asset_type: "",
                 requires: "",
+                doc: "",
             },
             FieldMeta {
                 name: "max_hp",
@@ -44,6 +45,7 @@ impl Reflect for Health {
                 shown_when: None,
                 asset_type: "",
                 requires: "",
+                doc: "",
             },
         ];
         FIELDS
