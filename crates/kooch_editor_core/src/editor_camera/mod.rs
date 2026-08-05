@@ -31,8 +31,6 @@ use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 use kooch_world::focus::StreamingFocus;
 
-use crate::play_state::PlayState;
-
 pub use controller::EditorCameraController;
 pub use markers::{EditorCamera, EditorOnly};
 
@@ -126,58 +124,29 @@ fn editor_camera_exists(resources: &Resources) -> bool {
         .any(|arch| arch.components().contains(&editor_camera_tid))
 }
 
-/// PreRender system: keeps the editor camera's `active` flag in sync
-/// with [`PlayState`].
+/// The editor camera's entity, or `None` if it has not been spawned.
 ///
-/// In edit mode the editor camera owns the viewport (priority 1000
-/// outranks gameplay cameras). In play mode it goes inactive so the
-/// renderer falls back to the highest-priority *active* camera in the
-/// scene, which is the user's gameplay camera — mirrored from the
-/// remote project like any other entity.
+/// 🔴 Keeps looking past an archetype that carries the marker but holds
+/// no entities. The previous version returned from inside the `if`, so
+/// the first matching archetype decided the answer — and an archetype
+/// the camera has *left* still lists the marker. Gaining or losing any
+/// component migrates the entity and leaves that empty shell behind, at
+/// which point every caller was told the editor camera did not exist:
+/// 2650 viewport deltas produced, none applied, the camera frozen at its
+/// spawn pose until something happened to reorder the archetypes.
 ///
-/// Idempotent: only writes when the flag actually changes, so it is
-/// cheap to run every frame.
-pub fn sync_editor_camera_active_system(resources: &mut Resources) {
-    // Two ways to be playing: a launched game process, or the connected
-    // project running its systems in place. Either way the scene's own
-    // camera should be the one framing the shot.
-    let is_playing = resources
-        .get::<PlayState>()
-        .is_some_and(|ps| ps.is_playing())
-        || resources
-            .get::<crate::remote_session::RemoteState>()
-            .is_some_and(|s| s.playing);
-    let want_active = !is_playing;
-
-    let Some(entity) = find_editor_camera_entity(resources) else {
-        return;
-    };
-
-    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
-        return;
-    };
-    let Some(storage) = registry.get_cpu_mut::<PerspectiveCamera>() else {
-        return;
-    };
-    let Some(cam) = storage.get_mut(entity) else {
-        return;
-    };
-    if cam.active != want_active {
-        cam.active = want_active;
-    }
-}
-
-fn find_editor_camera_entity(resources: &Resources) -> Option<kooch_ecs::Entity> {
+/// One implementation, here with the marker it looks for. There used to
+/// be a second identical copy in `input::apply`, which is how a bug like
+/// this survives a reading.
+pub(crate) fn find_editor_camera_entity(resources: &Resources) -> Option<kooch_ecs::Entity> {
     use kooch_ecs::archetype_registry::ArchetypeRegistry;
 
     let archetypes = resources.get::<ArchetypeRegistry>()?;
     let editor_camera_tid = TypeId::of::<EditorCamera>();
-    for arch in archetypes.iter_matching(&[]) {
-        if arch.components().contains(&editor_camera_tid) {
-            return arch.entities().first().copied();
-        }
-    }
-    None
+    archetypes
+        .iter_matching(&[])
+        .filter(|arch| arch.components().contains(&editor_camera_tid))
+        .find_map(|arch| arch.entities().first().copied())
 }
 
 /// Computes the initial world `Transform` from the controller's defaults.
@@ -226,5 +195,65 @@ mod tests {
     fn editor_camera_priority_is_above_default() {
         // PerspectiveCamera default priority is 0; editor must override.
         assert!(EDITOR_CAMERA_PRIORITY > 0);
+    }
+}
+
+#[cfg(test)]
+mod find_tests {
+    use super::*;
+    use kooch_ecs::allocator::EntityAllocator;
+    use kooch_ecs::archetype_registry::ArchetypeRegistry;
+    use kooch_ecs::perspective_camera::PerspectiveCamera;
+    use kooch_ecs::transform::Transform;
+
+    /// An archetype the camera has *left* still lists the marker.
+    ///
+    /// This is what froze the editor camera: the lookup returned from
+    /// inside the loop, so the first archetype carrying `EditorCamera`
+    /// decided the answer even when it held no entities. Adding or
+    /// removing any component on the camera produces exactly this shape.
+    #[test]
+    fn an_empty_archetype_with_the_marker_does_not_hide_the_camera() {
+        let mut resources = Resources::new();
+        let mut alloc = EntityAllocator::new();
+        let camera = alloc.spawn();
+        resources.insert(alloc);
+
+        let mut archetypes = ArchetypeRegistry::new();
+
+        // The shell left behind: carries the marker, holds nobody.
+        let abandoned: std::collections::BTreeSet<_> = [
+            TypeId::of::<EditorCamera>(),
+            TypeId::of::<PerspectiveCamera>(),
+        ]
+        .into_iter()
+        .collect();
+        archetypes.get_or_create(abandoned);
+
+        // Where the camera actually lives now.
+        let current: std::collections::BTreeSet<_> = [
+            TypeId::of::<EditorCamera>(),
+            TypeId::of::<PerspectiveCamera>(),
+            TypeId::of::<Transform>(),
+        ]
+        .into_iter()
+        .collect();
+        let current_id = archetypes.get_or_create(current);
+        archetypes.register_entity(camera, current_id);
+        resources.insert(archetypes);
+
+        assert_eq!(
+            find_editor_camera_entity(&resources),
+            Some(camera),
+            "the lookup stopped at the empty archetype and reported no camera",
+        );
+    }
+
+    #[test]
+    fn no_camera_at_all_is_none() {
+        let mut resources = Resources::new();
+        resources.insert(EntityAllocator::new());
+        resources.insert(ArchetypeRegistry::new());
+        assert_eq!(find_editor_camera_entity(&resources), None);
     }
 }

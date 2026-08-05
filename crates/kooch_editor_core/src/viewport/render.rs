@@ -52,9 +52,11 @@ pub(crate) fn render_viewport(
         meshlet
             .stage
             .sync_assets_to_gpu(gpu.device(), gpu.queue(), resources);
-        let (view_proj, cam_pos) = active_camera_matrices(resources, target.aspect())
+        let camera = view_camera(resources);
+        let (view_proj, cam_pos) = camera
+            .map(|c| (c.view_proj(target.aspect()), c.position()))
             .unwrap_or((glam::Mat4::IDENTITY, glam::Vec3::ZERO));
-        let stats = meshlet.stage.render_with_assets(
+        let stats = meshlet.stage.render_with_assets_primary(
             gpu.device(),
             gpu.queue(),
             resources,
@@ -80,7 +82,9 @@ pub(crate) fn render_viewport(
 
     // Pass 1: Sky (when available).
     let sky_drawn = if project_loaded {
-        if let Some(active_sky) = SkyRenderPass::active_sky(resources) {
+        if let (Some(active_sky), Some(camera)) =
+            (SkyRenderPass::active_sky(resources), view_camera(resources))
+        {
             let time_secs = resources
                 .get::<Time>()
                 .map(|t| t.elapsed_secs())
@@ -91,6 +95,7 @@ pub(crate) fn render_viewport(
                 target.view(),
                 target.depth_view(),
                 resources,
+                &camera,
                 target.aspect(),
                 active_sky,
                 time_secs,
@@ -159,7 +164,7 @@ pub(crate) fn render_viewport(
     gpu.queue().submit(Some(encoder.finish()));
 }
 
-fn clear_to_black(
+pub(super) fn clear_to_black(
     encoder: &mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
     depth: &wgpu::TextureView,
@@ -189,35 +194,50 @@ fn clear_to_black(
     });
 }
 
-fn active_camera_matrices(resources: &Resources, aspect: f32) -> Option<(glam::Mat4, glam::Vec3)> {
+/// The View panel's camera: the editor's own, always.
+///
+/// It used to be "highest priority active camera", which worked only
+/// because the editor camera ships at priority 1000 and because Play
+/// switched it off so a gameplay camera could win. Both of those were
+/// load-bearing accidents. The editor camera *belongs* to this panel —
+/// the gameplay camera has the Game panel now (#592) — so the panel asks
+/// for it by identity and Play no longer moves anybody's view.
+///
+/// Falls back to the highest-priority camera when there is no editor
+/// camera at all, which is the pre-project state: better a frame from
+/// some camera than a black panel with no explanation.
+fn view_camera(resources: &Resources) -> Option<kooch_render::ViewCamera> {
+    use crate::editor_camera::markers::EditorCamera;
     use kooch_ecs::perspective_camera::PerspectiveCamera;
+    use kooch_ecs::query::filter::With;
 
-    // Pick the highest-priority active camera. The editor camera ships
-    // with `priority = EDITOR_CAMERA_PRIORITY (1000)` so it outranks
-    // user-spawned `PerspectiveCamera` defaults whenever both are
-    // active simultaneously.
+    let editor =
+        Query::<(&PerspectiveCamera, &GlobalTransform), With<EditorCamera>>::new(resources);
+    let mut editor_cam: Option<kooch_render::ViewCamera> = None;
+    editor.for_each(|(cam, gt)| {
+        if editor_cam.is_none() {
+            editor_cam = Some(kooch_render::ViewCamera::from_components(cam, gt));
+        }
+    });
+    if editor_cam.is_some() {
+        return editor_cam;
+    }
+
     let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
-    let mut best: Option<(i32, glam::Mat4, glam::Vec3)> = None;
+    let mut best: Option<(i32, kooch_render::ViewCamera)> = None;
     query.for_each(|(cam, gt)| {
         if !cam.active {
             return;
         }
-        if let Some((p, _, _)) = best
+        if let Some((p, _)) = best
             && cam.priority <= p
         {
             return;
         }
-        let world = gt.matrix;
-        let view = world.inverse();
-        let fov_y_rad = cam.fov.to_radians().max(1.0_f32.to_radians());
-        let proj = kooch_render::perspective_rh_reverse_z(
-            fov_y_rad,
-            aspect.max(0.01),
-            cam.near.max(0.001),
-            cam.far.max(cam.near + 0.001),
-        );
-        let cam_pos = world.w_axis.truncate();
-        best = Some((cam.priority, proj * view, cam_pos));
+        best = Some((
+            cam.priority,
+            kooch_render::ViewCamera::from_components(cam, gt),
+        ));
     });
-    best.map(|(_, vp, p)| (vp, p))
+    best.map(|(_, camera)| camera)
 }

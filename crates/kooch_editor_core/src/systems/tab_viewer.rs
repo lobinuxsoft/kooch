@@ -18,6 +18,7 @@ use crate::editor_camera::input::ViewportInputDelta;
 use crate::panels::archetypes::draw_archetypes_content;
 use crate::panels::asset_browser::draw_asset_browser_content;
 use crate::panels::components::draw_components_content;
+use crate::panels::game::draw_game_content;
 use crate::panels::inspector::AssetDetail;
 use crate::panels::inspector::draw_inspector_content;
 use crate::panels::view::draw_view_content;
@@ -53,6 +54,18 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) last_clicked_index: &'a mut Option<usize>,
     pub(crate) viewport_texture_id: egui::TextureId,
     pub(crate) viewport_request: &'a mut Option<(u32, u32)>,
+    /// Game panel's offscreen texture — a second view of the same
+    /// stage, through the gameplay camera (#592).
+    pub(crate) game_texture_id: egui::TextureId,
+    pub(crate) game_request: &'a mut Option<(u32, u32)>,
+    /// Whether the last frame found a gameplay camera to render.
+    pub(crate) game_has_camera: bool,
+    /// Set while drawing when Game is the focused tab. Drives whether
+    /// the project receives input — a key pressed with the World panel
+    /// selected is an editor shortcut, not a jump.
+    /// This frame's input owner, resolved once (see [`crate::input_focus`])
+    /// and read by every consumer instead of each re-deriving it.
+    pub(crate) input_owner: &'a mut crate::input_focus::InputOwner,
     pub(crate) viewport_input: &'a mut Option<ViewportInputDelta>,
     pub(crate) editor_camera_controller: &'a EditorCameraController,
     pub(crate) rotation_euler_cache: &'a mut HashMap<EulerCacheKey, Vec3>,
@@ -171,6 +184,14 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             *self.focused_tab = Some(*tab);
         }
         let focused = *self.focused_tab == Some(*tab);
+        // Resolved here because this is where panel focus is known, and
+        // resolved once: consumers ask `belongs_to`, they do not rebuild
+        // the rule.
+        // `text_edit_focused`, NOT `egui_wants_keyboard_input`: the
+        // latter is `memory.focused().is_some()` despite its name, so any
+        // focused button would silently take the keyboard from the View.
+        *self.input_owner =
+            crate::input_focus::resolve(*self.focused_tab, ui.ctx().text_edit_focused());
 
         // A cursor left lit on a panel that no longer owns the keyboard is
         // a highlight that means nothing: it says "the arrows go here" when
@@ -204,9 +225,21 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.last_clicked_index,
                 self.scenes,
             ),
+            EditorTab::Game => draw_game_content(
+                ui,
+                self.game_texture_id,
+                self.game_request,
+                self.game_has_camera,
+                self.perf_stats,
+                self.meshlet_stats,
+                self.meshlet_debug_mode,
+                self.meshlet_debug_caps,
+                self.meshlet_lod_settings,
+                self.hud_visibility,
+            ),
             EditorTab::View => draw_view_content(
                 ui,
-                focused,
+                *self.input_owner == crate::input_focus::InputOwner::ViewCamera,
                 self.viewport_texture_id,
                 self.viewport_request,
                 self.viewport_input,
@@ -215,15 +248,9 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.rotation_display_mode,
                 self.snap_settings,
                 self.selection_has_transform,
-                self.meshlet_debug_mode,
-                self.meshlet_debug_caps,
-                self.meshlet_lod_settings,
-                self.meshlet_stats,
-                self.perf_stats,
                 self.gizmo_visibility,
                 self.gizmo_groups,
                 self.physics_debug,
-                self.hud_visibility,
                 self.actions,
             ),
             EditorTab::Console => {

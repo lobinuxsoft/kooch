@@ -21,7 +21,7 @@ use crate::meshlet::debug::{MeshletDebugMode, MeshletLodSettings};
 use crate::meshlet::gpu_meshlet::pool_meshlet_bind_group;
 use crate::meshlet::scene::SceneCullParams;
 
-use super::super::{MeshletRenderStage, MeshletRenderStats};
+use super::super::{MeshletRenderStage, MeshletRenderStats, ViewId};
 
 impl MeshletRenderStage {
     /// Records + submits one frame of the meshlet pipeline driven by
@@ -32,6 +32,7 @@ impl MeshletRenderStage {
     /// registered mesh yet or the ECS query yielded no instances.
     pub fn render_with_assets(
         &mut self,
+        view_id: ViewId,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         resources: &Resources,
@@ -51,7 +52,20 @@ impl MeshletRenderStage {
                 "rebuilt GpuGlobalMeshPool",
             );
         }
-        self.render(device, queue, resources, view_proj, cam_pos)
+        self.render(view_id, device, queue, resources, view_proj, cam_pos)
+    }
+
+    /// Same as [`Self::render_with_assets`], for this stage's primary
+    /// view. Kept because most callers own exactly one.
+    pub fn render_with_assets_primary(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        resources: &Resources,
+        view_proj: Mat4,
+        cam_pos: Vec3,
+    ) -> MeshletRenderStats {
+        self.render_with_assets(self.primary, device, queue, resources, view_proj, cam_pos)
     }
 
     /// Records + submits one frame against the current `gpu_pool`.
@@ -95,6 +109,7 @@ impl MeshletRenderStage {
     /// upstream filter makes one redundant.
     pub fn render(
         &mut self,
+        view_id: ViewId,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         resources: &Resources,
@@ -151,7 +166,7 @@ impl MeshletRenderStage {
         // single matrix element here used to disable the LOD selector
         // outright at 90° of roll or looking straight down.
         let proj_scale_y = crate::meshlet::cull::projection_scale_y(view_proj);
-        let viewport_h_px = self.view.size.1 as f32;
+        let viewport_h_px = self.views[view_id].size.1 as f32;
         let lod_target = resources
             .get::<MeshletLodSettings>()
             .copied()
@@ -180,7 +195,9 @@ impl MeshletRenderStage {
         let required_capacity = scene_params
             .instance_count
             .saturating_mul(scene_params.meshlets_per_mesh);
-        self.cull.ensure_capacity(device, required_capacity);
+        self.views[view_id]
+            .cull
+            .ensure_capacity(device, required_capacity);
         // group_max_err sized to the per-instance prefix-sum total
         // (Σ over instances of mesh_descriptors[mesh_id].group_count),
         // not the pool's group_capacity. Per-mesh sizing collapsed
@@ -189,7 +206,8 @@ impl MeshletRenderStage {
         // verdict (#474). Same geometric-growth pattern as the
         // visible buffer.
         let required_group_capacity = self.pipeline.instance_group_capacity(&instances).max(1);
-        self.cull
+        self.views[view_id]
+            .cull
             .ensure_group_capacity(device, required_group_capacity);
 
         // Build the meshlet + material bind groups. The `gpu_pool`
@@ -241,8 +259,9 @@ impl MeshletRenderStage {
         // ── Path switch ─────────────────────────────────────────────
         // Atomic R64 vbuf path (#493) when the device supports it;
         // otherwise the legacy R32 + Hi-Z 2-pass orchestrator.
-        if self.view.vbuf64_stage.is_some() {
+        if self.views[view_id].vbuf64_stage.is_some() {
             return self.render_path_r64(
+                view_id,
                 device,
                 queue,
                 encoder,
@@ -258,6 +277,7 @@ impl MeshletRenderStage {
         }
 
         self.render_path_hi_z_two_pass(
+            view_id,
             device,
             queue,
             encoder,

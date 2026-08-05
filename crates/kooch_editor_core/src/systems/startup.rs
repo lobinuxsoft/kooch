@@ -87,6 +87,17 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     meshlet_stage.set_vram_tracker(vram_tracker.clone());
     let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
 
+    // The Game panel's view. A second view of this stage rather than a
+    // second stage: it shares the mesh pool, the scene instances and the
+    // cull pipelines, and owns only what depends on where its camera is.
+    let game_view = crate::viewport::GameView::new(
+        gpu.device(),
+        &mut renderer,
+        gpu.format(),
+        INITIAL_VIEWPORT_SIZE,
+        &mut meshlet_stage,
+    );
+
     let overlay = EditorOverlay {
         focused_tab: None,
         asset_nav: Default::default(),
@@ -123,6 +134,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     resources.insert(GizmoBatch::default());
     resources.insert(MeshBatch::default());
     resources.insert(viewport);
+    resources.insert(game_view);
     resources.insert(meshlet_stage);
     resources.insert(meshlet_blit);
     resources.insert(vram_tracker);

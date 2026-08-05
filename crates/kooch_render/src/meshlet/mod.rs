@@ -66,7 +66,7 @@ pub use cull::{
 };
 pub use debug::{MeshletDebugMode, MeshletLodSettings};
 pub use deferred::{DEFERRED_COLOR_FORMAT, MeshletDeferredShader};
-pub use dispatcher::{DrawIndirectArgs, HiZTestParams, MeshletCull};
+pub use dispatcher::{DrawIndirectArgs, HiZTestParams, MeshletCull, MeshletCullPipelines};
 pub use drawer::MeshletDrawer;
 pub use gpu_meshlet::{
     GpuMeshletMesh, binding, meshlet_bind_group, meshlet_bind_group_layout, pool_meshlet_bind_group,
@@ -79,7 +79,7 @@ pub use material_pass::{
 };
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshDescriptor, MeshHandle};
 pub use reject_overlay::{MeshletRejectOverlay, RejectReason};
-pub use render_stage::{MeshletRenderStage, MeshletRenderStageConfig, MeshletRenderStats};
+pub use render_stage::{MeshletRenderStage, MeshletRenderStageConfig, MeshletRenderStats, ViewId};
 pub use scene::{
     MeshInstance, MeshletScene, SceneCullParams, decode_scene_visible_id, encode_scene_visible_id,
 };

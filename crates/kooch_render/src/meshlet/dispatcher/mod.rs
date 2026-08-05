@@ -1,11 +1,20 @@
 //! Per-frame meshlet culling dispatcher.
 //!
-//! Owns the compute pipelines, per-frame [`CullParams`] / [`HiZTestParams`]
-//! UBOs, the visible-meshlet output buffer, and the atomic counter
-//! that doubles as the indirect-draw `instance_count` source. One
-//! [`MeshletCull`] is shared across frames; [`MeshletCull::dispatch`]
-//! or [`MeshletCull::dispatch_with_hi_z`] is called once per frame
-//! inside the render encoder, after camera matrices are known.
+//! Split in two along one question — *does its content depend on where
+//! the camera is?*
+//!
+//! - [`MeshletCullPipelines`] — compute pipelines and bind group
+//!   layouts. **No**, so one instance serves every view.
+//! - [`MeshletCull`] — the per-frame [`CullParams`] / [`HiZTestParams`]
+//!   UBOs, the visible-meshlet output buffer and the atomic counter
+//!   that doubles as the indirect-draw `instance_count` source.
+//!   **Yes**, so each view owns a set.
+//!
+//! One [`MeshletCull`] is reused across frames *for its view*;
+//! [`MeshletCull::dispatch`] or [`MeshletCull::dispatch_with_hi_z`] is
+//! called once per frame per view inside the render encoder, after that
+//! view's camera matrices are known, taking the shared pipelines as its
+//! first argument.
 //!
 //! # Pipeline (frustum + cone variant)
 //!
@@ -36,59 +45,25 @@
 
 mod dispatch;
 mod init;
+mod pipelines;
 mod types;
 
+pub use pipelines::MeshletCullPipelines;
 pub use types::{DrawIndirectArgs, HiZTestParams};
 
-/// Owns one frame's worth of cull state. The output buffers (`visible_*`,
-/// `indirect_args`) are sized at construction; recreate the dispatcher if
-/// scene meshlet count grows past `capacity`.
+/// One **view's** cull state: every buffer the cull pass writes.
+///
+/// Split from [`MeshletCullPipelines`] for #592. The test applied to
+/// each field was "does its content depend on where the camera is?" —
+/// everything here answered yes, so a second view needs its own set.
+/// Sharing them is the shape of [bevyengine/bevy#15182]: two viewports
+/// overlapping, each overwriting the other's survivor list mid-frame.
+///
+/// The output buffers (`visible_*`, `indirect_args`) are sized at
+/// construction; call [`Self::ensure_capacity`] when the scene grows.
+///
+/// [bevyengine/bevy#15182]: https://github.com/bevyengine/bevy/issues/15182
 pub struct MeshletCull {
-    pub(super) pipeline: wgpu::ComputePipeline,
-    pub(super) pipeline_hi_z: wgpu::ComputePipeline,
-    pub(super) pipeline_scene: wgpu::ComputePipeline,
-    pub(super) pipeline_scene_pool: wgpu::ComputePipeline,
-    pub(super) pipeline_lod_compute_group_max_err: wgpu::ComputePipeline,
-    pub(super) pipeline_cull_scene_pool_atomic: wgpu::ComputePipeline,
-    /// Pass-1 (`cs_lod_compute_group_max_err`) recompiled against the
-    /// extended cull layout the Hi-Z 2-pass entry uses (#445). Same
-    /// shader entry point — only the pipeline_layout changes so
-    /// `culled_meshlets` / `culled_count` and `hi_z_*` slots are
-    /// declared even though pass 1 doesn't touch them.
-    pub(super) pipeline_lod_compute_group_max_err_hi_z: wgpu::ComputePipeline,
-    /// Pass A of the 2-pass Hi-Z cull (#445). Mirror of
-    /// `cs_cull_scene_pool_atomic` plus a Hi-Z occlusion test against
-    /// the previous frame's pyramid; rejects land in `culled_meshlets`
-    /// for pass B to retest.
-    pub(super) pipeline_cull_scene_pool_atomic_hi_z: wgpu::ComputePipeline,
-    /// Pass B (#445). Drains `culled_meshlets[0..culled_count]`,
-    /// re-tests each entry against this frame's freshly-built
-    /// pyramid, and appends survivors to `visible_meshlets`. Same
-    /// pipeline_layout as pass A so the orchestrator reuses the
-    /// extended cull / scene-with-hi-z bind groups (with the pyramid
-    /// view swapped from `hiz_prev` to `hiz_curr`).
-    pub(super) pipeline_cull_pass_b: wgpu::ComputePipeline,
-    pub(super) cull_bgl: wgpu::BindGroupLayout,
-    /// Cull BGL used by the Hi-Z 2-pass path. Identical to `cull_bgl`
-    /// for bindings 0-3 plus two read_write storage slots at 4-5 for
-    /// `culled_meshlets` + `culled_count`. Existing entry points keep
-    /// using `cull_bgl` so their dispatches stay binary-compatible.
-    pub(super) extended_cull_bgl: wgpu::BindGroupLayout,
-    pub(super) hi_z_bgl: wgpu::BindGroupLayout,
-    pub(super) scene_bgl: wgpu::BindGroupLayout,
-    /// Scene BGL used by the Hi-Z 2-pass path. Identical to `scene_bgl`
-    /// for bindings 0-1 plus a uniform `HiZParams` at 2 and the multi-
-    /// mip pyramid texture at 3.
-    pub(super) scene_with_hi_z_bgl: wgpu::BindGroupLayout,
-    pub(super) meshlet_bgl: wgpu::BindGroupLayout,
-    pub(super) pool_bgl: wgpu::BindGroupLayout,
-    pub(super) group_err_bgl: wgpu::BindGroupLayout,
-    /// Single-binding BGL for the per-thread `reject_reasons` buffer
-    /// (#454.4). Bound at group(4) of the scene-pool atomic cull
-    /// pipeline layout; the reject-overlay raster pass reuses it
-    /// to read the same buffer back at draw time.
-    pub(super) debug_bgl: wgpu::BindGroupLayout,
-
     pub(super) params_buffer: wgpu::Buffer,
     pub(super) hi_z_params_buffer: wgpu::Buffer,
     pub(super) scene_params_buffer: wgpu::Buffer,
@@ -293,70 +268,6 @@ impl MeshletCull {
     /// under-iterate the reject_reasons array.
     pub fn scene_params_buffer(&self) -> &wgpu::Buffer {
         &self.scene_params_buffer
-    }
-
-    /// Bind group layout for the per-thread `reject_reasons` buffer
-    /// (group(4) of the scene-pool atomic cull pipeline). Re-exported
-    /// so the reject-overlay raster pass can build a bind group
-    /// against the same handle the cull pipeline writes through.
-    pub fn debug_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.debug_bgl
-    }
-
-    /// Bind group layout for the Hi-Z 2-pass entry's group(0) — the
-    /// 4-binding `cull_bgl` plus `culled_meshlets` (4) and
-    /// `culled_count` (5).
-    pub fn extended_cull_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.extended_cull_bgl
-    }
-
-    /// Bind group layout for the Hi-Z 2-pass entry's group(2) — the
-    /// 2-binding `scene_bgl` plus the `HiZParams` UBO at 2 and the
-    /// pyramid texture at 3.
-    pub fn scene_with_hi_z_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.scene_with_hi_z_bgl
-    }
-
-    /// Bind group layout describing the cull shader's group(0).
-    /// Re-exported so future passes can extend it.
-    pub fn cull_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.cull_bgl
-    }
-
-    /// Bind group layout describing the meshlet pool's group(1) — the
-    /// rasterizer reuses the exact same handle so the cull and draw
-    /// passes agree on storage-buffer slot numbering.
-    pub fn meshlet_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.meshlet_bgl
-    }
-
-    /// Bind group layout for the Hi-Z test (group 1 of `cs_cull_hi_z`).
-    pub fn hi_z_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.hi_z_bgl
-    }
-
-    /// Bind group layout for the scene-wide cull (group 2 of
-    /// `cs_cull_scene`): instance storage + `SceneCullParams` UBO.
-    pub fn scene_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.scene_bgl
-    }
-
-    /// Bind group layout for the cull-only subset of the multi-mesh
-    /// pool (group 1 of `cs_cull_scene_pool`): mesh_descriptors at
-    /// binding 0 + meshlets at binding 1. The cull pass omits the
-    /// vertex / meshlet_vertex / meshlet_triangle bindings exposed
-    /// by [`crate::meshlet::pool::GpuGlobalMeshPool::bind_group_layout`]
-    /// to stay under the wgpu compute-stage storage-buffer limit;
-    /// the rasterizer + deferred shaders use the full layout.
-    pub fn pool_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.pool_bgl
-    }
-
-    /// Bind group layout for the 2-pass cull's per-group err buffer
-    /// (group 3 of `cs_lod_compute_group_max_err` /
-    /// `cs_cull_scene_pool_atomic`).
-    pub fn group_err_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.group_err_bgl
     }
 }
 

@@ -14,7 +14,8 @@ use common::try_acquire_device;
 use glam::{Mat4, Vec3};
 use kooch_render::mesh::{Aabb, MeshVertex};
 use kooch_render::meshlet::{
-    CullParams, DEFAULT_MAX_TRIANGLES, MeshletCull, MeshletDescriptor, MeshletMesh,
+    CullParams, DEFAULT_MAX_TRIANGLES, MeshletCull, MeshletCullPipelines, MeshletDescriptor,
+    MeshletMesh,
 };
 
 fn synthetic_meshlet_facing(normal: Vec3) -> MeshletMesh {
@@ -99,6 +100,7 @@ fn meshlet_facing_camera_passes_cone_cull() {
     let gpu_mesh = mesh.upload(&device);
 
     let cull = MeshletCull::new(&device, 4, DEFAULT_MAX_TRIANGLES as u32);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.5, 0.5, 5.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.5, 0.5, 0.0), Vec3::Y);
@@ -108,7 +110,14 @@ fn meshlet_facing_camera_passes_cone_cull() {
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("backface_test_front_encoder"),
     });
-    cull.dispatch(&device, &queue, &mut encoder, &gpu_mesh, &params);
+    cull.dispatch(
+        &cull_pipelines,
+        &device,
+        &queue,
+        &mut encoder,
+        &gpu_mesh,
+        &params,
+    );
     queue.submit(std::iter::once(encoder.finish()));
 
     let visible = read_visible_count(&device, &queue, &cull);
@@ -129,6 +138,7 @@ fn meshlet_facing_away_is_culled_by_cone() {
     let gpu_mesh = mesh.upload(&device);
 
     let cull = MeshletCull::new(&device, 4, DEFAULT_MAX_TRIANGLES as u32);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.5, 0.5, -5.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.5, 0.5, 0.0), Vec3::Y);
@@ -138,7 +148,14 @@ fn meshlet_facing_away_is_culled_by_cone() {
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("backface_test_back_encoder"),
     });
-    cull.dispatch(&device, &queue, &mut encoder, &gpu_mesh, &params);
+    cull.dispatch(
+        &cull_pipelines,
+        &device,
+        &queue,
+        &mut encoder,
+        &gpu_mesh,
+        &params,
+    );
     queue.submit(std::iter::once(encoder.finish()));
 
     let visible = read_visible_count(&device, &queue, &cull);
@@ -163,6 +180,7 @@ fn cone_cutoff_one_disables_cull_even_when_camera_aligned() {
     let gpu_mesh = mesh.upload(&device);
 
     let cull = MeshletCull::new(&device, 4, DEFAULT_MAX_TRIANGLES as u32);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.5, 0.5, -5.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.5, 0.5, 0.0), Vec3::Y);
@@ -172,7 +190,14 @@ fn cone_cutoff_one_disables_cull_even_when_camera_aligned() {
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("backface_test_sentinel_encoder"),
     });
-    cull.dispatch(&device, &queue, &mut encoder, &gpu_mesh, &params);
+    cull.dispatch(
+        &cull_pipelines,
+        &device,
+        &queue,
+        &mut encoder,
+        &gpu_mesh,
+        &params,
+    );
     queue.submit(std::iter::once(encoder.finish()));
 
     let visible = read_visible_count(&device, &queue, &cull);

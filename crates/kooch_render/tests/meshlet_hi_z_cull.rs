@@ -20,7 +20,8 @@ use glam::{Mat4, Vec3};
 use kooch_render::HiZ;
 use kooch_render::mesh::{Aabb, MeshVertex};
 use kooch_render::meshlet::{
-    CullParams, DEFAULT_MAX_TRIANGLES, HiZTestParams, MeshletCull, MeshletDescriptor, MeshletMesh,
+    CullParams, DEFAULT_MAX_TRIANGLES, HiZTestParams, MeshletCull, MeshletCullPipelines,
+    MeshletDescriptor, MeshletMesh,
 };
 
 const HI_Z_DIM: u32 = 32;
@@ -126,6 +127,7 @@ fn run_cull_with_hi_z(
 ) -> u32 {
     let gpu_mesh = mesh.upload(device);
     let cull = MeshletCull::new(device, 4, DEFAULT_MAX_TRIANGLES as u32);
+    let cull_pipelines = MeshletCullPipelines::new(device);
 
     // Build Hi-Z from a synthetic uniform R32Float source.
     let src_tex = upload_uniform_r32(device, queue, occluder_depth);
@@ -141,6 +143,7 @@ fn run_cull_with_hi_z(
     let cull_params = CullParams::new(Mat4::IDENTITY, cam, 1);
     let hi_z_params = HiZTestParams::new(Mat4::IDENTITY, HI_Z_DIM, HI_Z_DIM, hi_z.mip_count());
     cull.dispatch_with_hi_z(
+        &cull_pipelines,
         device,
         queue,
         &mut encoder,

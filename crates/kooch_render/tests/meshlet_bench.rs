@@ -17,9 +17,9 @@ use glam::{Mat4, Vec3};
 use kooch_core::Guid;
 use kooch_render::material::{Material, MaterialPipeline};
 use kooch_render::meshlet::{
-    CullParams, DEFAULT_MAX_TRIANGLES, DEFERRED_COLOR_FORMAT, MeshletCull, MeshletDeferredShader,
-    MeshletGpuTimers, MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT, build_default_meshlets,
-    meshlet_bind_group, meshlet_bind_group_layout,
+    CullParams, DEFAULT_MAX_TRIANGLES, DEFERRED_COLOR_FORMAT, MeshletCull, MeshletCullPipelines,
+    MeshletDeferredShader, MeshletGpuTimers, MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT,
+    build_default_meshlets, meshlet_bind_group, meshlet_bind_group_layout,
 };
 
 const RT_SIZE: u32 = 256;
@@ -54,13 +54,14 @@ fn meshlet_bench_sphere_renders_under_target_frame_time() {
         gpu_mesh.meshlet_count.max(1) * 2,
         DEFAULT_MAX_TRIANGLES as u32,
     );
+    let cull_pipelines = MeshletCullPipelines::new(&device);
     let vbuf_raster = MeshletVisRasterizer::new(
         &device,
         Some(DEPTH_FORMAT),
-        cull.meshlet_bind_group_layout(),
+        cull_pipelines.meshlet_bind_group_layout(),
         None,
     );
-    let deferred = MeshletDeferredShader::new(&device, cull.meshlet_bind_group_layout());
+    let deferred = MeshletDeferredShader::new(&device, cull_pipelines.meshlet_bind_group_layout());
 
     let meshlet_bgl = meshlet_bind_group_layout(&device);
     let meshlet_bg = meshlet_bind_group(&device, &meshlet_bgl, &gpu_mesh);
@@ -132,7 +133,14 @@ fn meshlet_bench_sphere_renders_under_target_frame_time() {
     let mut warmup = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("bench_warmup"),
     });
-    cull.dispatch(&device, &queue, &mut warmup, &gpu_mesh, &cull_params);
+    cull.dispatch(
+        &cull_pipelines,
+        &device,
+        &queue,
+        &mut warmup,
+        &gpu_mesh,
+        &cull_params,
+    );
     vbuf_raster.render(
         &device,
         &queue,
@@ -171,7 +179,14 @@ fn meshlet_bench_sphere_renders_under_target_frame_time() {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("bench_frame"),
         });
-        cull.dispatch(&device, &queue, &mut enc, &gpu_mesh, &cull_params);
+        cull.dispatch(
+            &cull_pipelines,
+            &device,
+            &queue,
+            &mut enc,
+            &gpu_mesh,
+            &cull_params,
+        );
         vbuf_raster.render(
             &device,
             &queue,
@@ -296,13 +311,15 @@ fn meshlet_bench_scaling_per_pass_timings() {
             gpu_mesh.meshlet_count.max(1) * 2,
             DEFAULT_MAX_TRIANGLES as u32,
         );
+        let cull_pipelines = MeshletCullPipelines::new(&device);
         let vbuf_raster = MeshletVisRasterizer::new(
             &device,
             Some(DEPTH_FORMAT),
-            cull.meshlet_bind_group_layout(),
+            cull_pipelines.meshlet_bind_group_layout(),
             None,
         );
-        let deferred = MeshletDeferredShader::new(&device, cull.meshlet_bind_group_layout());
+        let deferred =
+            MeshletDeferredShader::new(&device, cull_pipelines.meshlet_bind_group_layout());
 
         let meshlet_bgl = meshlet_bind_group_layout(&device);
         let meshlet_bg = meshlet_bind_group(&device, &meshlet_bgl, &gpu_mesh);
@@ -340,6 +357,7 @@ fn meshlet_bench_scaling_per_pass_timings() {
             &device,
             &queue,
             &cull,
+            &cull_pipelines,
             &vbuf_raster,
             &deferred,
             &meshlet_bg,
@@ -364,6 +382,7 @@ fn meshlet_bench_scaling_per_pass_timings() {
                 &device,
                 &queue,
                 &cull,
+                &cull_pipelines,
                 &vbuf_raster,
                 &deferred,
                 &meshlet_bg,
@@ -482,6 +501,7 @@ fn bench_run_frame(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     cull: &MeshletCull,
+    cull_pipelines: &MeshletCullPipelines,
     vbuf_raster: &MeshletVisRasterizer,
     deferred: &MeshletDeferredShader,
     meshlet_bg: &wgpu::BindGroup,
@@ -507,7 +527,14 @@ fn bench_run_frame(
     if timer_slot.is_some() {
         timers.write_stage_start(&mut enc, BENCH_STAGE_CULL);
     }
-    cull.dispatch(device, queue, &mut enc, gpu_mesh, cull_params);
+    cull.dispatch(
+        cull_pipelines,
+        device,
+        queue,
+        &mut enc,
+        gpu_mesh,
+        cull_params,
+    );
     if timer_slot.is_some() {
         timers.write_stage_end(&mut enc, BENCH_STAGE_CULL);
         timers.write_stage_start(&mut enc, BENCH_STAGE_VBUF);

@@ -6,7 +6,9 @@ mod common;
 
 use common::{build_cube_mesh, read_u32, try_acquire_device};
 use glam::{Mat4, Vec3};
-use kooch_render::meshlet::{CullParams, DrawIndirectArgs, MeshletCull, build_default_meshlets};
+use kooch_render::meshlet::{
+    CullParams, DrawIndirectArgs, MeshletCull, MeshletCullPipelines, build_default_meshlets,
+};
 
 fn read_indirect_args(
     device: &wgpu::Device,
@@ -55,6 +57,7 @@ fn indirect_args_instance_count_matches_visible_meshlets_when_all_in_frustum() {
     let gpu_mesh = meshlet_mesh.upload(&device);
 
     let cull = MeshletCull::new(&device, gpu_mesh.meshlet_count.max(1) * 2, 124);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.0, 0.0, 3.0);
     let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
@@ -64,7 +67,14 @@ fn indirect_args_instance_count_matches_visible_meshlets_when_all_in_frustum() {
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("meshlet_cull_test_encoder"),
     });
-    cull.dispatch(&device, &queue, &mut encoder, &gpu_mesh, &params);
+    cull.dispatch(
+        &cull_pipelines,
+        &device,
+        &queue,
+        &mut encoder,
+        &gpu_mesh,
+        &params,
+    );
     queue.submit(std::iter::once(encoder.finish()));
 
     let visible_count = read_u32(&device, &queue, cull.visible_count_buffer(), 0);
@@ -101,6 +111,7 @@ fn indirect_args_instance_count_is_zero_when_camera_faces_away() {
     let gpu_mesh = meshlet_mesh.upload(&device);
 
     let cull = MeshletCull::new(&device, gpu_mesh.meshlet_count.max(1) * 2, 124);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.0, 0.0, 3.0);
     let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 100.0), Vec3::Y);
@@ -110,7 +121,14 @@ fn indirect_args_instance_count_is_zero_when_camera_faces_away() {
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("meshlet_cull_test_encoder"),
     });
-    cull.dispatch(&device, &queue, &mut encoder, &gpu_mesh, &params);
+    cull.dispatch(
+        &cull_pipelines,
+        &device,
+        &queue,
+        &mut encoder,
+        &gpu_mesh,
+        &params,
+    );
     queue.submit(std::iter::once(encoder.finish()));
 
     let args = read_indirect_args(&device, &queue, cull.indirect_args_buffer());
@@ -132,6 +150,7 @@ fn indirect_args_resets_between_dispatches() {
     let gpu_mesh = meshlet_mesh.upload(&device);
 
     let cull = MeshletCull::new(&device, gpu_mesh.meshlet_count.max(1) * 2, 124);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.0, 0.0, 3.0);
     let visible_view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
@@ -146,14 +165,28 @@ fn indirect_args_resets_between_dispatches() {
     let mut encoder_a = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("meshlet_cull_frame_a"),
     });
-    cull.dispatch(&device, &queue, &mut encoder_a, &gpu_mesh, &visible_params);
+    cull.dispatch(
+        &cull_pipelines,
+        &device,
+        &queue,
+        &mut encoder_a,
+        &gpu_mesh,
+        &visible_params,
+    );
     queue.submit(std::iter::once(encoder_a.finish()));
     let args_a = read_indirect_args(&device, &queue, cull.indirect_args_buffer());
 
     let mut encoder_b = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("meshlet_cull_frame_b"),
     });
-    cull.dispatch(&device, &queue, &mut encoder_b, &gpu_mesh, &occluded_params);
+    cull.dispatch(
+        &cull_pipelines,
+        &device,
+        &queue,
+        &mut encoder_b,
+        &gpu_mesh,
+        &occluded_params,
+    );
     queue.submit(std::iter::once(encoder_b.finish()));
     let args_b = read_indirect_args(&device, &queue, cull.indirect_args_buffer());
 

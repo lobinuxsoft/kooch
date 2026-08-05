@@ -269,10 +269,17 @@ fn render_passes(
     // + deferred) before we record the surface-targeted encoder. Order
     // matters: blit reads the stage's color view, so the stage's submit
     // must complete first on the queue.
-    let (view_proj, cam_pos) = active_camera_matrices(resources, aspect)
+    let camera = active_camera(resources);
+    let (view_proj, cam_pos) = camera
+        .map(|c| (c.view_proj(aspect), c.position()))
         .unwrap_or((glam::Mat4::IDENTITY, glam::Vec3::ZERO));
-    let stats =
-        meshlet_stage.render_with_assets(gpu.device(), gpu.queue(), resources, view_proj, cam_pos);
+    let stats = meshlet_stage.render_with_assets_primary(
+        gpu.device(),
+        gpu.queue(),
+        resources,
+        view_proj,
+        cam_pos,
+    );
 
     // The one measurement a game could not otherwise have: the editor
     // reads these stats, and until now a windowed game threw them away.
@@ -288,7 +295,9 @@ fn render_passes(
             label: Some("game_render_encoder"),
         });
 
-    let sky_drawn = if let Some(active_sky) = SkyRenderPass::active_sky(resources) {
+    let sky_drawn = if let (Some(active_sky), Some(camera)) =
+        (SkyRenderPass::active_sky(resources), camera.as_ref())
+    {
         let time_secs = resources
             .get::<Time>()
             .map(|t| t.elapsed_secs())
@@ -299,6 +308,7 @@ fn render_passes(
             &view,
             depth_view,
             resources,
+            camera,
             aspect,
             active_sky,
             time_secs,
@@ -328,34 +338,24 @@ fn render_passes(
     frame.present();
 }
 
-fn active_camera_matrices(resources: &Resources, aspect: f32) -> Option<(glam::Mat4, glam::Vec3)> {
+fn active_camera(resources: &Resources) -> Option<crate::ViewCamera> {
     // Highest-priority active `PerspectiveCamera` wins. Game runtime
     // ties the same way the editor does: priority is the contract,
     // not iteration order.
     let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
-    let mut best: Option<(i32, glam::Mat4, glam::Vec3)> = None;
+    let mut best: Option<(i32, crate::ViewCamera)> = None;
     query.for_each(|(cam, gt)| {
         if !cam.active {
             return;
         }
-        if let Some((p, _, _)) = best
+        if let Some((p, _)) = best
             && cam.priority <= p
         {
             return;
         }
-        let world = gt.matrix;
-        let view = world.inverse();
-        let fov_y_rad = cam.fov.to_radians().max(1.0_f32.to_radians());
-        let proj = crate::projection::perspective_rh_reverse_z(
-            fov_y_rad,
-            aspect.max(0.01),
-            cam.near.max(0.001),
-            cam.far.max(cam.near + 0.001),
-        );
-        let cam_pos = world.w_axis.truncate();
-        best = Some((cam.priority, proj * view, cam_pos));
+        best = Some((cam.priority, crate::ViewCamera::from_components(cam, gt)));
     });
-    best.map(|(_, vp, p)| (vp, p))
+    best.map(|(_, camera)| camera)
 }
 
 fn clear_with_gradient(

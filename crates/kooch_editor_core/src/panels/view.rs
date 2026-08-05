@@ -13,17 +13,11 @@
 //! existing W / E / R keyboard pipeline applies the change with no
 //! extra wiring.
 
-use kooch_gizmos_handles::{HandleMode, SnapSettings};
-use kooch_render::meshlet::{
-    MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
-};
-
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
 use crate::icons;
-use crate::panels::performance::draw_performance_content;
-use crate::perf::EditorPerfStats;
 use crate::state::RotationDisplayMode;
+use kooch_gizmos_handles::{HandleMode, SnapSettings};
 
 const TOOLBAR_BUTTON_SIZE: f32 = 28.0;
 const TOOLBAR_PADDING: f32 = 6.0;
@@ -42,15 +36,9 @@ pub(crate) fn draw_view_content(
     rotation_mode: &mut RotationDisplayMode,
     snap_settings: &mut SnapSettings,
     selection_has_transform: bool,
-    meshlet_debug_mode: &mut MeshletDebugMode,
-    meshlet_debug_caps: MeshletDebugCaps,
-    meshlet_lod_settings: &mut MeshletLodSettings,
-    meshlet_stats: MeshletRenderStats,
-    perf_stats: EditorPerfStats,
     gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
     gizmo_groups: &[crate::gizmos::GizmoGroup],
     physics_debug: &mut kooch_physics::backend::DebugCategories,
-    hud_visibility: &mut crate::perf::HudVisibility,
     actions: &mut Vec<crate::actions::EditorAction>,
 ) {
     let available = ui.available_size();
@@ -250,100 +238,9 @@ pub(crate) fn draw_view_content(
             });
     }
 
-    // Vertical perf sidebar anchored to the right edge of the
-    // viewport. The toggle chevron sits at the very top-right
-    // corner (always visible); the panel itself only renders when
-    // toggled on.
-    //
-    // State lives in `HudVisibility` rather than in egui memory: the
-    // systems that pay for these metrics run in `PreRender` and cannot
-    // read egui's memory, so a flag kept only there meant nothing could
-    // ask whether anyone was looking (#703).
-    let mut sidebar_visible = hud_visibility.sidebar;
-
-    let panel_top_right =
-        panel_origin + egui::vec2(available.x - TOOLBAR_OFFSET.x, TOOLBAR_OFFSET.y);
-
-    // Toggle chevron — left-pointing when expanded (click to
-    // collapse to the right), right-pointing when collapsed (click
-    // to expand back). Always rendered so the user has a way back
-    // even after hiding the panel.
-    let toggle_size = egui::vec2(TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-    let toggle_pos = panel_top_right - egui::vec2(toggle_size.x, 0.0);
-    let toggle_rect = egui::Rect::from_min_size(toggle_pos, toggle_size);
-    let mut toggle_ui = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(toggle_rect)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    egui::Frame::new()
-        .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
-        .corner_radius(egui::CornerRadius::same(6))
-        .show(&mut toggle_ui, |ui| {
-            let glyph = if sidebar_visible {
-                "\u{27e9}"
-            } else {
-                "\u{27e8}"
-            };
-            let button = egui::Button::new(egui::RichText::new(glyph).size(16.0))
-                .min_size(toggle_size)
-                .fill(egui::Color32::TRANSPARENT)
-                .stroke(egui::Stroke::NONE);
-            let resp = ui.add(button).on_hover_text(if sidebar_visible {
-                "Hide performance sidebar"
-            } else {
-                "Show performance sidebar"
-            });
-            if resp.clicked() {
-                sidebar_visible = !sidebar_visible;
-            }
-        });
-
-    if sidebar_visible {
-        // Panel sits below the toggle chevron, anchored to the
-        // right edge. max_rect height is bounded by the viewport
-        // so the inner ScrollArea can clip when sections overflow;
-        // auto_shrink in `draw_performance_content` keeps the
-        // Frame tight around the actually-visible content so
-        // collapsing every section doesn't leave a giant black
-        // box on the viewport.
-        let panel_top = toggle_pos.y + toggle_size.y + 4.0;
-        let panel_max_height =
-            (available.y - 2.0 * TOOLBAR_OFFSET.y - toggle_size.y - 4.0).max(0.0);
-        let sidebar_max_rect = egui::Rect::from_min_size(
-            egui::pos2(panel_top_right.x - PERF_SIDEBAR_WIDTH, panel_top),
-            egui::vec2(PERF_SIDEBAR_WIDTH, panel_max_height),
-        );
-        let mut sidebar_ui = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(sidebar_max_rect)
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-        );
-        egui::Frame::new()
-            .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
-            .corner_radius(egui::CornerRadius::same(6))
-            .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
-            .show(&mut sidebar_ui, |ui| {
-                ui.set_max_width(PERF_SIDEBAR_WIDTH - TOOLBAR_PADDING * 2.0);
-                draw_performance_content(
-                    ui,
-                    perf_stats,
-                    meshlet_stats,
-                    meshlet_debug_mode,
-                    meshlet_debug_caps,
-                    meshlet_lod_settings,
-                    hud_visibility,
-                );
-            });
-    }
-
-    // Written after drawing, so it records what was actually on screen
-    // this frame rather than what was asked for. A collapsed sidebar
-    // leaves `system_section` at whatever it last was, which is correct:
-    // an invisible section is not an open one, and `wants_system_metrics`
-    // requires both.
-    hud_visibility.sidebar = sidebar_visible;
-
+    // The perf sidebar used to live here. It moved to the Game panel:
+    // the numbers describe what it costs to draw the game, and reading
+    // them beside the game is the point (#592).
     *input = Some(delta);
 }
 
@@ -351,7 +248,6 @@ pub(crate) fn draw_view_content(
 /// the viewport. 260 px fits the widest "n/a (TIMESTAMP_QUERY
 /// unavailable)" GPU-frame-time row without wrapping while leaving
 /// room to read the actual viewport.
-const PERF_SIDEBAR_WIDTH: f32 = 260.0;
 
 /// Renders one toolbar button. Highlights when `active`. Returns
 /// `true` the frame the button is clicked.

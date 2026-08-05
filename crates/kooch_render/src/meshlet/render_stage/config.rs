@@ -4,6 +4,11 @@ use crate::vbuf64::Vbuf64Support;
 /// Construction parameters for [`MeshletRenderStage`]. All sizes are
 /// upper bounds — the actual per-frame instance count comes from the
 /// ECS query.
+///
+/// The stage keeps a copy so `create_view` can build additional views
+/// with the same capabilities. Two views of one stage disagreeing about
+/// whether the atomic path exists would be a bug with no honest cause.
+#[derive(Debug, Clone, Copy)]
 pub struct MeshletRenderStageConfig {
     /// Output color / depth / vbuf resolution. Must be > 0 in both axes.
     pub size: (u32, u32),

@@ -70,33 +70,26 @@ pub(crate) fn send_input_to_host(resources: &mut Resources) {
     });
 }
 
-/// Whether this frame's input belongs to the game rather than the editor.
+/// Whether this frame's input belongs to the game.
 ///
-/// Two conditions, and the second is the one worth explaining.
+/// One question, asked of [`crate::input_focus`] rather than answered
+/// here. This function used to rebuild the rule from play state, panel
+/// focus and egui's opinion, which is how it drifted out of step with
+/// the editor camera's copy of the same rule.
 ///
-/// **Only while playing.** A key pressed while authoring is an editor
-/// shortcut; sending it to a paused host would be noise at best.
-///
-/// **Not while egui wants the keyboard.** Typing a name into the
-/// Inspector must not also drive the player forward. `wants_keyboard_input`
-/// is true exactly when a text field has focus, which is a better rule
-/// than tracking viewport focus by hand: it is what egui itself uses to
-/// decide the keystroke was consumed, so the two cannot disagree.
+/// Note what is *not* here any more: play state. A game running while
+/// the World panel is selected is the same game — where you are looking
+/// is what decides, and that decision lives in one place.
 fn should_send(resources: &Resources) -> bool {
-    let playing = resources
-        .get::<RemoteState>()
-        .is_some_and(|state| state.playing);
-    if !playing {
-        return false;
-    }
-    !resources
-        .get::<EditorOverlay>()
-        .is_some_and(|overlay| overlay.ctx.egui_wants_keyboard_input())
+    resources
+        .get::<crate::input_focus::InputFocus>()
+        .is_some_and(|focus| focus.belongs_to(crate::input_focus::InputOwner::Game))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use kooch_input::{KeyCode, MockInputBackend};
 
     #[test]
@@ -115,17 +108,22 @@ mod tests {
         assert!(!should_send(&resources));
     }
 
+    /// Playing is no longer enough on its own.
+    ///
+    /// This test used to assert the opposite, and was right until the
+    /// Game panel existed: back then playing meant the whole editor was
+    /// the game. Now the game has a panel, and a key only reaches it
+    /// once that panel is the one you clicked. Without a `GameView` in
+    /// resources — which is every headless test — nothing is focused, so
+    /// nothing is sent.
     #[test]
-    fn playing_with_no_focused_text_field_sends() {
+    fn playing_alone_does_not_send_without_the_game_panel_focused() {
         let mut resources = Resources::new();
         let mut state = RemoteState::new();
         state.playing = true;
         resources.insert(state);
 
-        assert!(
-            should_send(&resources),
-            "no overlay means no text field has focus"
-        );
+        assert!(!should_send(&resources));
     }
 
     /// The idle gate must not swallow the snapshot that releases a key.

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::super::DEFAULT_MAX_TRIANGLES;
 use super::super::deferred::{DEFERRED_COLOR_FORMAT, MeshletDeferredShader};
-use super::super::dispatcher::MeshletCull;
+use super::super::dispatcher::{MeshletCull, MeshletCullPipelines};
 use super::super::gpu_meshlet::meshlet_bind_group_layout;
 use super::super::gpu_timers::MeshletGpuTimers;
 use super::super::scene::MeshletScene;
@@ -12,6 +12,7 @@ use super::super::vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
 use super::config::MeshletRenderStageConfig;
 use super::helpers::{create_2d_attachment, depth_sample_view, render_target_byte_estimate};
 use super::stage::MeshletRenderStage;
+use super::stage::ViewId;
 use crate::hi_z::HiZ;
 use crate::perf::EngineVramTracker;
 
@@ -35,25 +36,31 @@ impl MeshletRenderStage {
 
         let meshlet_bgl = meshlet_bind_group_layout(device);
 
-        let cull = MeshletCull::new(device, meshlet_capacity, DEFAULT_MAX_TRIANGLES as u32);
+        // Pipelines are shared by every view; only the buffers below
+        // are per view (#592).
+        let cull_pipelines = MeshletCullPipelines::new(device);
         let scene = MeshletScene::new(device, instance_capacity);
         let rasterizer = MeshletVisRasterizer::new(
             device,
             Some(wgpu::TextureFormat::Depth32Float),
-            cull.meshlet_bind_group_layout(),
+            cull_pipelines.meshlet_bind_group_layout(),
             None,
         );
-        let deferred = MeshletDeferredShader::new(device, cull.meshlet_bind_group_layout());
+        let deferred =
+            MeshletDeferredShader::new(device, cull_pipelines.meshlet_bind_group_layout());
 
         // Everything per view lives together — see `view_targets` for
         // why the boundary is drawn here rather than at the fields.
-        let view = super::view_targets::MeshletViewTargets::new(
+        let mut views = slotmap::SlotMap::with_key();
+        let primary = views.insert(super::view_targets::MeshletView::new(
             device,
             size,
             debug_caps,
             vbuf64,
-            cull.meshlet_bind_group_layout(),
-        );
+            cull_pipelines.meshlet_bind_group_layout(),
+            meshlet_capacity,
+            DEFAULT_MAX_TRIANGLES as u32,
+        ));
 
         // Reject-reason overlay (#454.4). Same atomic gate as the
         // density texture above — both ride the
@@ -63,7 +70,8 @@ impl MeshletRenderStage {
         // empty space.
         let reject_overlay = if debug_caps.supports_texture_atomic() {
             Some(super::super::reject_overlay::MeshletRejectOverlay::new(
-                device, &cull,
+                device,
+                &cull_pipelines,
             ))
         } else {
             None
@@ -72,13 +80,15 @@ impl MeshletRenderStage {
         Self {
             pipeline: MeshletPipeline::new(),
             scene,
-            cull,
+            cull_pipelines,
             rasterizer,
             deferred,
             gpu_pool: None,
             pool_dirty: false,
             meshlet_bgl,
-            view,
+            views,
+            primary,
+            config,
             reject_overlay,
             stage_counters: super::super::stage_counters::MeshletStageCounters::new(device),
             instance_capacity,
@@ -100,20 +110,21 @@ impl MeshletRenderStage {
     /// allocated yet.
     #[allow(dead_code)]
     pub(super) fn swap_hi_z_pyramids(&mut self) {
-        std::mem::swap(&mut self.view.hiz_prev, &mut self.view.hiz_curr);
+        let view = &mut self.views[self.primary];
+        std::mem::swap(&mut view.hiz_prev, &mut view.hiz_curr);
     }
 
     /// Read-only access to the pyramid pass A samples this frame.
     /// `None` until the SPD orchestrator (#486) allocates them.
     pub fn hi_z_prev(&self) -> Option<&HiZ> {
-        self.view.hiz_prev.as_ref()
+        self.views[self.primary].hiz_prev.as_ref()
     }
 
     /// Read-only access to the pyramid pass B samples (= the one
     /// rebuilt from this frame's depth between cull A and cull B).
     /// `None` until the SPD orchestrator (#486) allocates them.
     pub fn hi_z_curr(&self) -> Option<&HiZ> {
-        self.view.hiz_curr.as_ref()
+        self.views[self.primary].hiz_curr.as_ref()
     }
 
     /// Wires a shared engine VRAM tracker (#463.5). Called once at
@@ -129,15 +140,13 @@ impl MeshletRenderStage {
         // (`None` until the SPD orchestrator #486 turns them on);
         // the pyramid allocation will bump the tracker on its own
         // when it runs.
-        let attachment_bytes = render_target_byte_estimate(self.view.size);
-        let pyramid_bytes = self
-            .view
+        let attachment_bytes = render_target_byte_estimate(self.views[self.primary].size);
+        let pyramid_bytes = self.views[self.primary]
             .hiz_prev
             .as_ref()
             .map(|p| p.byte_size())
             .unwrap_or(0)
-            + self
-                .view
+            + self.views[self.primary]
                 .hiz_curr
                 .as_ref()
                 .map(|p| p.byte_size())
@@ -185,15 +194,15 @@ impl MeshletRenderStage {
     /// `culled_count` to verify the Hi-Z 2-pass cull behaviour
     /// (#445) frame-to-frame.
     pub fn cull(&self) -> &MeshletCull {
-        &self.cull
+        &self.views[self.primary].cull
     }
 
     pub fn color_view(&self) -> &wgpu::TextureView {
-        &self.view.color_view
+        &self.views[self.primary].color_view
     }
 
     pub fn vbuf_view(&self) -> &wgpu::TextureView {
-        &self.view.vbuf_view
+        &self.views[self.primary].vbuf_view
     }
 
     /// Per-pixel triangle-density accumulator (#454). `Some` only when
@@ -202,35 +211,107 @@ impl MeshletRenderStage {
     /// TriangleDensity / Overdraw heatmaps and by the reject-overlay
     /// raster pass for the rejection-mode views.
     pub fn triangle_density_view(&self) -> Option<&wgpu::TextureView> {
-        self.view.triangle_density_view.as_ref()
+        self.views[self.primary].triangle_density_view.as_ref()
     }
 
     /// Backing texture for [`Self::triangle_density_view`]. Exposed so
     /// the per-frame orchestrator can clear it (`COPY_DST` / compute
     /// reset) before the raster passes that accumulate into it.
     pub fn triangle_density_texture(&self) -> Option<&wgpu::Texture> {
-        self.view.triangle_density_texture.as_ref()
+        self.views[self.primary].triangle_density_texture.as_ref()
     }
 
     /// Underlying color texture (Rgba8Unorm). Exposed so callers can
     /// copy it out for readback or composite it onto another target.
     pub fn color_texture(&self) -> &wgpu::Texture {
-        &self.view.color_texture
+        &self.views[self.primary].color_texture
     }
 
     pub fn vbuf_texture(&self) -> &wgpu::Texture {
-        &self.view.vbuf_texture
+        &self.views[self.primary].vbuf_texture
     }
 
     pub fn depth_texture(&self) -> &wgpu::Texture {
-        &self.view.depth_texture
+        &self.views[self.primary].depth_texture
     }
 
     pub fn size(&self) -> (u32, u32) {
-        self.view.size
+        self.views[self.primary].size
     }
 
     pub fn instance_capacity(&self) -> u32 {
         self.instance_capacity
+    }
+
+    /// This stage's primary view — the one the single-view accessors
+    /// read.
+    pub fn primary_view(&self) -> ViewId {
+        self.primary
+    }
+
+    /// Adds a view at `size` and returns its handle.
+    ///
+    /// Cheap relative to a second stage: the caller keeps sharing this
+    /// stage's mesh pool, scene instances and cull pipelines, and pays
+    /// only for the attachments and cull buffers the new camera needs.
+    /// That is the whole reason the split exists — `measure_mesh_pool`
+    /// puts the pool at 6.33 MiB for four assets, and duplicating it
+    /// per camera would buy nothing.
+    pub fn create_view(&mut self, device: &wgpu::Device, size: (u32, u32)) -> ViewId {
+        self.views.insert(super::view_targets::MeshletView::new(
+            device,
+            size,
+            self.config.debug_caps,
+            self.config.vbuf64,
+            self.cull_pipelines.meshlet_bind_group_layout(),
+            self.config.meshlet_capacity,
+            DEFAULT_MAX_TRIANGLES as u32,
+        ))
+    }
+
+    /// Drops a view and its attachments.
+    ///
+    /// Refuses to drop the primary — a stage with no view cannot
+    /// render, and every single-view accessor would have to start
+    /// returning `Option`. Returns whether anything was removed, so a
+    /// double close is a `false` rather than a panic.
+    pub fn destroy_view(&mut self, id: ViewId) -> bool {
+        if id == self.primary {
+            tracing::warn!(
+                target: "kooch_render::meshlet::render",
+                "refusing to destroy the primary view",
+            );
+            return false;
+        }
+        self.views.remove(id).is_some()
+    }
+
+    /// Number of live views, primary included.
+    pub fn view_count(&self) -> usize {
+        self.views.len()
+    }
+
+    /// Whether `id` still addresses a live view. A generational key, so
+    /// this stays false once the view is destroyed rather than
+    /// silently resolving to whichever view took its slot.
+    pub fn has_view(&self, id: ViewId) -> bool {
+        self.views.contains_key(id)
+    }
+
+    /// Colour target of `id`, or `None` if the handle is stale.
+    pub fn view_color_view(&self, id: ViewId) -> Option<&wgpu::TextureView> {
+        self.views.get(id).map(|v| &v.color_view)
+    }
+
+    /// Size of `id`, or `None` if the handle is stale.
+    pub fn view_size(&self, id: ViewId) -> Option<(u32, u32)> {
+        self.views.get(id).map(|v| v.size)
+    }
+
+    /// Cull buffers of `id`, or `None` if the handle is stale. Each
+    /// view owns a set — sharing them is what makes two overlapping
+    /// viewports cull each other's geometry away.
+    pub fn view_cull(&self, id: ViewId) -> Option<&MeshletCull> {
+        self.views.get(id).map(|v| &v.cull)
     }
 }

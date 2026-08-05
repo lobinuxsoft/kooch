@@ -32,6 +32,9 @@ pub(crate) type SharedWinitState = Arc<Mutex<egui_winit::State>>;
 pub(crate) enum EditorTab {
     World,
     View,
+    /// The scene through the gameplay camera, beside View rather than
+    /// instead of it (#592).
+    Game,
     Inspector,
     Archetypes,
     Components,
@@ -91,6 +94,7 @@ pub(crate) struct OpenInputMap {
 pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::World,
     EditorTab::View,
+    EditorTab::Game,
     EditorTab::Inspector,
     EditorTab::Archetypes,
     EditorTab::Components,
@@ -105,6 +109,7 @@ impl EditorTab {
         match self {
             Self::World => format!("{} World", crate::icons::GLOBE),
             Self::View => format!("{} View", crate::icons::EYE),
+            Self::Game => format!("{} Game", crate::icons::GAME_CONTROLLER),
             Self::Inspector => format!("{} Inspector", crate::icons::SLIDERS),
             Self::Archetypes => format!("{} Archetypes", crate::icons::TREE_STRUCTURE),
             Self::Components => format!("{} Components", crate::icons::LIST_BULLETS),
@@ -121,12 +126,20 @@ impl std::fmt::Display for EditorTab {
     }
 }
 
-/// Creates the default 3-panel dock layout: World | View | Inspector.
+/// Creates the default 3-panel dock layout: World | View + Game |
+/// Inspector.
 /// Per-frame performance metrics are not a dock tab — the View panel
 /// renders them as a vertical overlay anchored to its right edge, so
 /// they are always visible alongside what the artist is looking at.
+///
+/// Game sits as a *sibling tab* of View rather than a split: the two
+/// answer the same question from different cameras, so the common
+/// gesture is flipping between them, not watching both. Unity, Unreal
+/// and Godot all default this way, and anyone who wants them side by
+/// side drags the tab out. View is listed first, so it is the one
+/// showing when the editor opens.
 pub(crate) fn default_dock_state() -> DockState<EditorTab> {
-    let mut state = DockState::new(vec![EditorTab::View]);
+    let mut state = DockState::new(vec![EditorTab::View, EditorTab::Game]);
 
     let surface = state.main_surface_mut();
     surface.split_left(NodeIndex::root(), 0.2, vec![EditorTab::World]);

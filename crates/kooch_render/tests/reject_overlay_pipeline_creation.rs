@@ -15,8 +15,8 @@
 use glam::{Mat4, Vec3};
 use kooch_render::mesh::{Mesh, MeshVertex};
 use kooch_render::meshlet::{
-    DEFAULT_MAX_TRIANGLES, GlobalMeshPool, MeshInstance, MeshletCull, MeshletRejectOverlay,
-    MeshletScene, RejectReason, build_default_meshlets,
+    DEFAULT_MAX_TRIANGLES, GlobalMeshPool, MeshInstance, MeshletCull, MeshletCullPipelines,
+    MeshletRejectOverlay, MeshletScene, RejectReason, build_default_meshlets,
 };
 use std::sync::{Arc, Mutex};
 
@@ -106,7 +106,8 @@ fn reject_overlay_creates_without_uncaptured_errors() {
     }));
 
     let cull = MeshletCull::new(&device, 4096, DEFAULT_MAX_TRIANGLES as u32);
-    let overlay = MeshletRejectOverlay::new(&device, &cull);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
+    let overlay = MeshletRejectOverlay::new(&device, &cull_pipelines);
 
     // Dispatch a real frame so debug_bg / pool_bg / scene_bg are
     // constructed against the same BGLs the cull pipeline owns. A
@@ -152,6 +153,7 @@ fn reject_overlay_creates_without_uncaptured_errors() {
         &queue,
         &mut encoder,
         &color_view,
+        &cull_pipelines,
         &cull,
         &scene,
         &gpu_pool,

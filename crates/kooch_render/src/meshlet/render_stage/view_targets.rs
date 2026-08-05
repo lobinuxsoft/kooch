@@ -33,14 +33,20 @@
 use crate::hi_z::HiZ;
 use crate::meshlet::caps::MeshletDebugCaps;
 use crate::meshlet::deferred::DEFERRED_COLOR_FORMAT;
+use crate::meshlet::dispatcher::MeshletCull;
 use crate::meshlet::vbuf64_stage::Vbuf64Stage;
 use crate::meshlet::vis_buffer::VISIBILITY_BUFFER_FORMAT;
 use crate::vbuf64::Vbuf64Support;
 
 use super::helpers::{create_2d_attachment, depth_sample_view};
 
-/// The attachments and occlusion state backing one view.
-pub(crate) struct MeshletViewTargets {
+/// The attachments, occlusion state and cull buffers backing one view.
+pub(crate) struct MeshletView {
+    /// This view's cull output. The pipelines that write it are shared
+    /// by every view and live on the stage; what lands in these buffers
+    /// depends on this view's camera, so they belong here.
+    pub(crate) cull: MeshletCull,
+
     pub(crate) vbuf_texture: wgpu::Texture,
     pub(crate) vbuf_view: wgpu::TextureView,
 
@@ -77,7 +83,7 @@ pub(crate) struct MeshletViewTargets {
     pub(crate) hiz_prev: Option<HiZ>,
     pub(crate) hiz_curr: Option<HiZ>,
     /// `false` until `clear_to_far` has run on a freshly created
-    /// `hiz_prev`. Reset by [`MeshletViewTargets::resize`], since both
+    /// `hiz_prev`. Reset by [`MeshletView::resize`], since both
     /// pyramids are recreated and need re-init before pass A samples a
     /// "nothing occluded" pyramid.
     pub(crate) hi_z_initialized: bool,
@@ -90,7 +96,7 @@ pub(crate) struct MeshletViewTargets {
     pub(crate) size: (u32, u32),
 }
 
-impl MeshletViewTargets {
+impl MeshletView {
     /// Allocates one view's attachments at `size`.
     pub(crate) fn new(
         device: &wgpu::Device,
@@ -98,11 +104,10 @@ impl MeshletViewTargets {
         debug_caps: MeshletDebugCaps,
         vbuf64: Vbuf64Support,
         meshlet_bgl: &wgpu::BindGroupLayout,
+        meshlet_capacity: u32,
+        max_triangles_per_meshlet: u32,
     ) -> Self {
-        assert!(
-            size.0 > 0 && size.1 > 0,
-            "MeshletViewTargets size must be > 0"
-        );
+        assert!(size.0 > 0 && size.1 > 0, "MeshletView size must be > 0");
 
         let (vbuf_texture, vbuf_view) = create_2d_attachment(
             device,
@@ -151,6 +156,7 @@ impl MeshletViewTargets {
         };
 
         Self {
+            cull: MeshletCull::new(device, meshlet_capacity, max_triangles_per_meshlet),
             vbuf_texture,
             vbuf_view,
             depth_texture,
@@ -211,7 +217,7 @@ impl MeshletViewTargets {
     ) -> i64 {
         assert!(
             new_size.0 > 0 && new_size.1 > 0,
-            "MeshletViewTargets::resize requires non-zero dimensions"
+            "MeshletView::resize requires non-zero dimensions"
         );
 
         let (vbuf_texture, vbuf_view) = create_2d_attachment(

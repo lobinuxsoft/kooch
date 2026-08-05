@@ -22,6 +22,7 @@ pub(crate) mod drag_drop;
 pub mod editor_camera;
 pub(crate) mod gizmos;
 pub mod icons;
+pub mod input_focus;
 pub mod launch_screen;
 pub(crate) mod layout;
 pub(crate) mod menu_bar;
@@ -100,6 +101,7 @@ impl Plugin for EditorPlugin {
             kooch_core::frame_pacing::FramePace::Wait,
         ));
         app.insert_resource(PlayState::new());
+        app.insert_resource(input_focus::InputFocus::default());
         // Remote mode starts inert: no session means the editor drives
         // its own ECS exactly as before. "Open Remote" fills it in.
         app.insert_resource(remote_session::RemoteState::new());
@@ -163,11 +165,7 @@ impl Plugin for EditorPlugin {
             editor_camera::register_ephemeral_markers_system,
         );
         app.add_system(Stage::Startup, editor_camera::spawn_editor_camera_system);
-        // Hand the viewport over to the gameplay camera in play mode.
-        app.add_system(
-            Stage::PreRender,
-            editor_camera::sync_editor_camera_active_system,
-        );
+
         // #463 perf HUD — sample wall-clock delta between successive
         // editor render invocations and update FPS instant/avg.
         // Runs in PreRender so the timestamp it captures matches the
