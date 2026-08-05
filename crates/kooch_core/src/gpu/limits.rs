@@ -17,6 +17,18 @@ pub(super) const TARGET_MAX_STORAGE_TEXTURES_PER_STAGE: u32 = 16;
 /// wgpu's default `max_bind_groups` is 4 (group indices 0..3), so the
 /// BGL creation rejects without raising it. RDNA 2+ desktop /
 /// handheld + DX12 + Metal all advertise ≥ 8.
+///
+/// 🔴 **This budget is now fully spent.** The two-pass material shading
+/// pipeline (#440) uses groups 0..4 and #441 put Inti's lights on
+/// group 5 — six, exactly the target. There is no seventh group to
+/// hand out.
+///
+/// That is a constraint on the shadow work, not a number to raise on
+/// reflex: **shadow maps belong in Inti's group**, next to the lights
+/// that cast them, because a shadow map without its light is not a
+/// thing any shader wants. Raising the target to 8 would work on this
+/// hardware and quietly drop the baseline the engine claims to
+/// support — Vulkan only guarantees 4.
 pub(super) const TARGET_MAX_BIND_GROUPS: u32 = 6;
 /// The scene-pool atomic cull pipeline already binds 8 storage
 /// buffers (params + visible IDs + count + 2 pool descriptors +
