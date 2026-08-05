@@ -76,8 +76,35 @@ geometry, correct at any scale; the viewport has no ground reference at all. And
 type**, which is a silent hazard: wrong-space blending looks almost right until it is wrong
 everywhere at once.
 
+### Three more, cheap, that make whole classes of bug unrepresentable
+
+- **Required components.** Bevy deprecated bundles in 0.15 for this: a component declares what
+  it needs, and inserting it inserts them. We have no such mechanism — `AddComponentCommand`
+  inserts exactly one type. So adding a `MeshRenderer` to an entity without a `Transform`
+  produces an entity the renderer's query never matches: **authorable and inert**, the same
+  family as the lights in #441 and the nine capabilities #726 catalogued. This does not make the
+  bug easier to find; it makes it impossible to author.
+
+- **Easing and curves as a shared type.** They already exist — `kooch_camera::blend::{eased,
+  ease_in}` and `virtual_camera::ease` — **locked inside the camera crate, addressed by `u32`**.
+  Scene animation (#715), the animation graph (#717), UI transitions (#96) and any tween will
+  each write their own unless this moves out. Bevy's `EaseFunction` is 39+ variants implementing
+  `Curve<f32>` with sampling, clamping, composition and reparametrisation — the shape to copy,
+  not the code.
+
+- **A colour type.** See above: sRGB is touched in the texture loader and the GPU context and
+  nowhere else.
+
 See `docs/research/bevy_module_gap_2026-08-05.md` and
 `docs/research/bevy_feature_sweep_2026-08-05.md`.
+
+### Already ours, for the record
+
+**Commands** are complete — `spawn`, `spawn_batch`, `entity`, `despawn`, `insert`,
+`insert_reflected`, `apply`, with `EntityBuilder` and `EntityCommands`. `spawn_batch` is
+specifically what Bevy recommends for mass spawning, which is what streaming a planet is. There
+is nothing to port. **Bundles** should not be ported at all: they are the deprecated half of
+that pair.
 
 ---
 
