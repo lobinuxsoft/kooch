@@ -93,40 +93,15 @@ pub(crate) fn send_input_to_host(resources: &mut Resources) {
 /// can be focused inside a panel docked over the Game one, and then both
 /// answers are needed.
 fn should_send(resources: &Resources) -> bool {
-    let playing = resources
-        .get::<RemoteState>()
-        .is_some_and(|state| state.playing);
-    let game_focused = resources
-        .get::<crate::viewport::GameView>()
-        .is_some_and(|game| game.focused);
-    let egui_wants_keyboard = resources
-        .get::<EditorOverlay>()
-        .is_some_and(|overlay| overlay.ctx.egui_wants_keyboard_input());
-    input_belongs_to_the_game(playing, game_focused, egui_wants_keyboard)
-}
-
-/// The rule itself, separated from where the answers come from so it can
-/// be read — and tested — without a GPU, a dock and a live session.
-fn input_belongs_to_the_game(playing: bool, game_focused: bool, egui_wants_keyboard: bool) -> bool {
-    playing && game_focused && !egui_wants_keyboard
+    resources
+        .get::<crate::input_focus::InputFocus>()
+        .is_some_and(|focus| focus.belongs_to(crate::input_focus::InputOwner::Game))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn input_reaches_the_game_only_when_its_panel_is_focused() {
-        assert!(input_belongs_to_the_game(true, true, false));
-        // Playing, but the user clicked World to rename an entity: the
-        // key is the editor's.
-        assert!(!input_belongs_to_the_game(true, false, false));
-        // Focused but not playing — an editor shortcut.
-        assert!(!input_belongs_to_the_game(false, true, false));
-        // Focused, playing, and typing into a text field docked over it.
-        // Both checks are needed; neither implies the other.
-        assert!(!input_belongs_to_the_game(true, true, true));
-    }
     use kooch_input::{KeyCode, MockInputBackend};
 
     #[test]

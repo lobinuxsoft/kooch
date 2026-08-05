@@ -244,7 +244,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 
     let mut viewport_request: Option<(u32, u32)> = None;
     let mut game_request: Option<(u32, u32)> = None;
-    let mut game_focused = false;
+    let mut input_owner = crate::input_focus::InputOwner::default();
     let mut viewport_input: Option<ViewportInputDelta> = None;
     let controller_snapshot = resources
         .get::<EditorCameraController>()
@@ -364,7 +364,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .unwrap_or(egui::TextureId::default()),
             game_request: &mut game_request,
             game_has_camera: game_view.as_ref().map(|g| g.has_camera).unwrap_or(false),
-            game_focused: &mut game_focused,
+            input_owner: &mut input_owner,
             input: &mut viewport_input,
             controller: &controller_snapshot,
             handle_mode: resources
@@ -433,8 +433,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     if let (Some(size), Some(game)) = (game_request, game_view.as_mut()) {
         game.target.request_size(size);
     }
-    if let Some(game) = game_view.as_mut() {
-        game.focused = game_focused;
+    // Published for the consumers that run in other stages — the remote
+    // input sender reads it in PreUpdate next frame.
+    if let Some(focus) = resources.get_mut::<crate::input_focus::InputFocus>() {
+        focus.set_owner(input_owner);
     }
 
     // Apply viewport input to the editor camera before the same frame's
