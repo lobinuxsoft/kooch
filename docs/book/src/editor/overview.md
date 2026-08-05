@@ -51,12 +51,14 @@ and opened.
 
 | Panel | What it is for |
 |---|---|
-| **View** | The 3D viewport. Selection, transform gizmos, the physics debug overlay. |
+| **View** | The 3D viewport. Selection, transform gizmos, the physics debug overlay, and the meshlet debug-view dropdown. Owns the editor camera. |
+| **Game** | What the game's own camera sees — no gizmos, no selection outlines. A sibling tab of View, and only rendered while its tab is visible. Play does not switch you here or take the editor camera away; the two views coexist because a frame is a list of views. |
 | **World** | The entity hierarchy of every loaded scene. Selecting here selects in View. |
-| **Inspector** | The selected entity's components and their fields. Where authoring happens. |
+| **Inspector** | The selected entity's components and their fields. Where authoring happens. **Hover a field name** and its doc comment appears as a tooltip — units included, which is how you find out that a directional light's intensity is in lux and a point light's is in lumens. |
 | **Components** | Every component type the engine and your project registered. |
 | **Archetypes** | Which combinations of components actually exist, and how many entities are in each. A debugging view of how the ECS stored your scene. |
 | **Asset Browser** | The project's assets and the engine's, as two roots. |
+| **Input Map** | Edits a `.inputaction` asset: bindings, the five composites, processors. An action is an asset, not an entry in a map — see [Writing a System](../scripting/systems.md). |
 | **Console** | Structured logs from the editor *and* the launched project, filterable. Text is selectable and copyable. |
 | **Performance** | Frame timings, and per-stage counters where they exist. |
 
@@ -103,5 +105,9 @@ Honest list, so nothing below is mistaken for a bug in your setup:
   ([#648](https://github.com/lobinuxsoft/kooch/issues/648)).
 - **No New Scene.** Scenes have to exist on disk already
   ([#619](https://github.com/lobinuxsoft/kooch/issues/619)).
-- **The editor redraws while idle**, pinning a core with nothing happening
-  ([#656](https://github.com/lobinuxsoft/kooch/issues/656)).
+- **Exposure and ambient light have no panel.** Both are engine `Resources` with sane
+  defaults and no way to change them from the editor, so a scene that reads too bright or too
+  flat cannot be corrected without editing code. See
+  [Lighting](../architecture/lighting.md).
+- **Reconnecting discards unsaved changes silently.** Relaunching the host reloads the scene
+  from disk; anything not saved is gone, and nothing warns first.

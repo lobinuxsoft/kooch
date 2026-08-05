@@ -46,10 +46,15 @@ Each field's Rust type maps to a `FieldKind`, and the kind decides the widget:
 | `Entity`, `Option<Entity>` | Same widget, but see "Pointing at another entity" below |
 | A struct that also derives `Reflect` | Nested, drawn inline |
 
-> **`glam` is not re-exported yet.** `Vec3`, `Quat` and `Mat4` are `glam` types, and a project
-> reaches them only by adding `glam = "0.33"` to its own `Cargo.toml` — the same version the
-> engine pins, or the types will not match. Tracked in
-> [#657](https://github.com/lobinuxsoft/kooch/issues/657).
+> **The maths types come from the prelude.** `Vec3`, `Quat` and `Mat4` are `glam` types, and
+> `kooch::prelude` re-exports them so a project never declares its own `glam` dependency —
+> which is the point, since a `Quat` from a different version is a different type and the
+> compiler error would name two types spelled identically.
+
+> **Hover a field name in the Inspector** to see its doc comment. The derive harvests `///`
+> straight off the field, so documenting a component for the next reader also documents it for
+> whoever is authoring the scene — there is no second place to write it and no second place
+> for it to go stale.
 
 Anything outside that list — `Vec<T>`, `HashMap<K, V>`, your own enums — is **not supported
 yet**. Recursive reflection for nested types and collections is

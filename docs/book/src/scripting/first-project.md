@@ -43,22 +43,17 @@ see [Writing a Component](./components.md) for the attributes that change how it
 
 ## 3. Write a system
 
-This one touches `Transform`, whose fields are `glam` types — and **`glam` is not re-exported
-by the engine yet** ([#657](https://github.com/lobinuxsoft/kooch/issues/657)). So first
-add it to your `Cargo.toml`, matching the engine's version exactly:
+This one touches `Transform`, whose fields are `glam` types. The prelude re-exports them, so
+there is nothing to add to `Cargo.toml`:
 
-```toml
-glam = "0.33"
-```
-
-> The version has to match. A `Quat` from a different `glam` is a *different type*, and the
-> compiler error will name two types spelled identically. Until #657 lands, check the engine's
-> workspace `Cargo.toml` rather than taking the latest.
+> `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat3` and `Mat4` come through `kooch::prelude`, and the
+> whole `glam` crate is reachable as `kooch::glam`. Adding your own `glam` dependency is the
+> one thing to avoid: a `Quat` from a different version is a *different type*, and the
+> compiler error names two types spelled identically.
 
 New System, named `spin`, then open `src/spin.rs`:
 
 ```rust
-use glam::Quat;
 use kooch::kooch_ecs::Query;
 use kooch::kooch_ecs::transform::Transform;
 use kooch::prelude::*;

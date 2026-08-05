@@ -1,175 +1,223 @@
 # Render Pipeline
 
-Kóoch has **one rendering model with two orchestration callsites**:
+Kóoch renders through a **GPU-driven meshlet pipeline**, Nanite-style: the
+CPU uploads a flat array of instances and dispatches, and every decision
+about *what to draw* — frustum, backface, occlusion, level of detail — is
+taken on the GPU by a compute shader reading that array.
 
-1. **Editor offscreen** — `kooch_editor_core::viewport::render::render_viewport`
-   draws into a `ViewportTarget` texture which the egui `View` panel then
-   shows as an `egui::Image`. Lets the editor compose the engine's render
-   output with its own overlay UI.
-2. **Play surface** — `kooch_render::plugin::RenderPlugin` (the
-   `Stage::Render` system) draws into the swapchain surface directly. Used
-   by the play-mode binary launched via `cargo run --manifest-path` from
-   the editor's Play action, or run standalone.
+The CPU never walks a scene graph deciding what is visible. That is the
+whole point, and it is what "GPU-driven" means here.
 
-Both callsites use **the same renderers** (`RayMarchRenderer`,
-`MeshPassRenderer`, `SkyRenderPass`) as `Resources`. Only the target
-differs.
+> This page describes what the code does today. Where something is
+> missing the page says so and links the issue.
 
-## Frame structure
+## A frame is a list of views
 
-Three passes share one command encoder per frame. Each pass decides what
-to do based on what's in the ECS — no pass is mandatory.
+`MeshletRenderStage` owns one geometry pool and a `SlotMap<ViewId,
+MeshletView>`. Each view has its own render targets, its own cull state
+and its own camera; the pool, the instance buffer and the pipelines are
+shared.
+
+That split is deliberate and was not always true. Cull state is per view
+**by definition** — what survives a frustum test depends on where the
+camera is — and sharing it across views produces an over-cull that only
+appears once a second view exists, or once shadow cascades do, where it
+reads as "the shadows are wrong" rather than as a shared-state bug.
+
+Two views run today: the editor's **View** panel and its **Game** panel.
+Shadow cascades and virtual-shadow-map pages will be views too.
+
+Each view records **and submits** its own command encoder. Several
+per-frame buffers are shared across views on exactly that basis: a write
+followed by a submit is ordered on the queue, so view B's camera cannot
+reach view A's pass.
+
+## The frame, pass by pass
+
+Which path runs depends on one capability: 64-bit texture atomics. The
+device either has `TEXTURE_INT64_ATOMIC` + `SHADER_INT64` +
+`SHADER_INT64_ATOMIC_MIN_MAX` or it does not.
 
 ```mermaid
 flowchart TD
-    START([Frame begins]) --> ENC[Create command encoder]
+    START([Frame begins]) --> EXTRACT[CPU: walk the ECS<br/>MeshRenderer + GlobalTransform → instances<br/>lights → Inti's GPU buffer]
+    EXTRACT --> UPLOAD[Upload instances, grow buffers to fit]
+    UPLOAD --> R64{64-bit texture<br/>atomics?}
 
-    ENC --> SKY{Active<br/>SkyRenderer<br/>entity?}
-    SKY -- yes --> SKYDRAW[Sky pass:<br/>clear color + depth<br/>gradient + clouds<br/>frag_depth = 1.0]
-    SKY -- no --> SDF
-    SKYDRAW --> SDF
+    R64 -- yes --> A0[Cull: one thread per instance-meshlet<br/>frustum · backface cone · LOD chain descent]
+    A0 --> A1[Clear the R64 visibility buffer]
+    A1 --> A2["Raster: draw_indirect the survivors<br/>fragment does atomicMax(depth &lt;&lt; 32 | ids)"]
+    A2 --> A3[Resolve material id into a depth target]
+    A3 --> A4[Shade: one fullscreen pass per material,<br/>depth-tested Equal → Inti]
 
-    SDF{Visible SDFs<br/>+ active<br/>PerspectiveCamera?}
-    SDF -- yes, sky drew --> SDFLOAD[Raymarch pass:<br/>LoadOp::Load<br/>preserve sky]
-    SDF -- yes, no sky --> SDFCLEAR[Raymarch pass:<br/>LoadOp::Clear<br/>internal gradient]
-    SDF -- no, sky drew --> MESH
-    SDF -- no, no sky --> BLACK[clear_to_black<br/>clear depth to 1.0]
+    R64 -- no --> B0[Cull A against last frame's Hi-Z]
+    B0 --> B1[Raster A into the R32 visibility buffer]
+    B1 --> B2[Build the Hi-Z pyramid: SPD]
+    B2 --> B3[Cull B: what pass A occluded]
+    B3 --> B4[Raster B]
+    B4 --> B5[Shade: one compute dispatch → Inti]
 
-    SDFLOAD --> MESH
-    SDFCLEAR --> MESH
-    BLACK --> MESH
+    A4 --> BLIT[Blit the stage's colour over the sky]
+    B5 --> BLIT
+    BLIT --> PRESENT([Present])
 
-    MESH{Visible<br/>MeshRenderer<br/>entities?}
-    MESH -- yes --> MESHDRAW[Mesh pass:<br/>depth-test vs SDF buffer<br/>paint on top]
-    MESH -- no --> SUBMIT
-    MESHDRAW --> SUBMIT
-
-    SUBMIT[Submit encoder] --> PRESENT[Present frame<br/>surface only]
-
-    style SKYDRAW fill:#1e3a5f,stroke:#4d8fbe,color:#fff
-    style SDFLOAD fill:#5f3a1e,stroke:#be8f4d,color:#fff
-    style SDFCLEAR fill:#5f3a1e,stroke:#be8f4d,color:#fff
-    style BLACK fill:#3a1e1e,stroke:#be4d4d,color:#fff
-    style MESHDRAW fill:#1e5f3a,stroke:#4dbe8f,color:#fff
+    style A2 fill:#1e5f3a,stroke:#4dbe8f,color:#fff
+    style A4 fill:#5f3a1e,stroke:#be8f4d,color:#fff
+    style B5 fill:#5f3a1e,stroke:#be8f4d,color:#fff
+    style EXTRACT fill:#1e3a5f,stroke:#4d8fbe,color:#fff
 ```
 
-In words: sky paints first if active. Raymarch composites on top using
-`Load` if the sky drew, `Clear` otherwise. If neither sky nor SDFs render,
-the frame still clears to black so the mesh pass has a valid depth buffer.
-Mesh always draws last, depth-tested.
+### Cull
 
-## Pass details
+One compute thread per (instance × meshlet). Each thread tests its own
+meshlet and, if it survives, appends its `(instance_id, meshlet_id)` to a
+`visible_meshlets` buffer with an atomic bump. The draw that follows is
+`draw_indirect` off a count the GPU wrote — the CPU never learns how many
+meshlets survived, and does not need to.
 
-### Pass 1 — Sky
+Tests, in order: **frustum** against the meshlet's AABB, **backface** via
+its normal cone, and **LOD chain descent** — a meshlet is drawn when its
+own screen-projected error falls under the target and its parent's does
+not.
 
-`crates/kooch_render/src/sky/renderer.rs`
+> 🔴 The LOD selector read the projection scale from a single matrix
+> element for a long time. That element is `f × (camera up · world up)`,
+> so it is correct for a level camera, smaller for a tilted one, and
+> **zero at 90° of roll or looking straight down** — which switched the
+> selector off entirely. It now takes the norm of the row that produces
+> `clip.y`. Any non-level view had been losing detail since continuous
+> LOD shipped, degrading smoothly enough to read as "that is how the
+> model looks".
 
-Runs only when an ECS entity has an active `SkyRenderer` component. The
-shader is a fullscreen triangle with:
+### Visibility buffer
 
-- Procedural vertical gradient (top + bottom colors).
-- Volumetric clouds: 3D value noise + FBM (4 octaves), Beer–Lambert
-  transmittance, Henyey–Greenstein phase function, 3-step in-scattering
-  toward the sun, hash jitter.
-- Sun disk at the end (`pow(cos_sun, 256) * 4`), naturally attenuated by
-  the cloud transmittance multiplier.
+Instead of shading during rasterisation, the raster pass writes only
+*which triangle covered this pixel*. Shading happens afterwards, once per
+pixel, for the triangle that won.
 
-Writes `frag_depth = 1.0` so any subsequent pass with `LessEqual` depth
-test can still draw. Defaults: 32 primary steps × 500 units, 3 light steps,
-transmittance early-out at < 0.05.
+**R64 path.** The fragment shader does one
+`textureAtomicMax((depth << 32) | ids)` into an `R64Uint` storage
+texture. Depth in the high bits means the atomic max resolves depth and
+identity in a single operation — no depth buffer, no z-fighting between
+coplanar meshlets, no ordering.
 
-Without an active `SkyRenderer`, this pass is skipped entirely.
+**R32 path.** Without 64-bit atomics the same idea runs in two passes
+against a Hi-Z pyramid built with single-pass-downsample: pass A draws
+what was visible last frame, the pyramid is rebuilt from that depth, and
+pass B recovers whatever pass A wrongly occluded. Metal has no
+`atomic_uint64`, so this path is not legacy — it is the Apple path.
 
-### Pass 2 — Ray-march (SDFs)
+### Shading
 
-`crates/kooch_render/src/raymarch/renderer.rs`
+Both paths reconstruct the surface the same way, through
+`surface_reconstruct.wgsl`: perspective-correct barycentrics from the
+triangle's three world-space positions, giving world position, normal,
+uv, tangent and **analytical uv derivatives** — the automatic ones are
+wrong here, because neighbouring fragments in a 2×2 quad may come from
+different triangles.
 
-Sphere-traces visible SDF primitives (`SdfSphere`, `SdfBox`, `SdfCapsule`,
-`SdfCylinder`, `SdfTorus`, `SdfPlane`) with optional `SdfBlend`
-modifiers. Uses the highest-priority active `(PerspectiveCamera,
-GlobalTransform)` pair. `OrthographicCamera` is currently ignored by the
-ray-march path.
+Only the visibility-buffer *read* differs between the paths. That was not
+true until #441: the R32 path averaged the triangle's three vertex
+normals and never computed a world position at all, which was invisible
+while shading was a function of the normal alone and would have lit the
+centroid of every triangle the moment a point light needed a distance.
 
-Compositing rules (settled in PR #237):
+- **R64** shades with one fullscreen fragment pass *per material*,
+  depth-testing `Equal` against a target holding each pixel's material
+  id. The depth test is the per-material cull, in hardware, with
+  early-Z. Each pass binds its own textures.
+- **R32** shades with one compute dispatch. **No texture sampling**: a
+  compute shader has no implicit derivatives, and `textureSampleGrad` is
+  a fragment-stage call. Scalars only.
 
-| Sky drew first? | Color load | Depth load |
-|-----------------|-----------|-----------|
-| Yes | `Load` | `Load` |
-| No  | `Clear(BLACK)` | `Clear(1.0)` |
+Then [Inti](./lighting.md) — Cook-Torrance driven by the scene's lights.
 
-Depth comparison: `LessEqual` (so the sky's `frag_depth = 1.0` does not
-block raymarch hits at the far plane — the alternative `Less` failed
-`1.0 < 1.0` and produced a black viewport). The mesh pipeline below uses
-plain `Less` since meshes are never exactly at the far plane.
+### Sky and composite
 
-If no SDF is visible **and** no sky drew, the renderer issues a
-`clear_to_black` instead so depth is correctly cleared for the mesh pass.
+The sky is a fullscreen pass: procedural gradient plus volumetric clouds
+(3D value noise FBM, Beer–Lambert transmittance, Henyey–Greenstein
+phase, in-scattering toward the sun). It draws first, and the meshlet
+stage's colour is blitted over it — `alpha = 0` is the background
+sentinel, so pixels no meshlet covered keep the sky.
 
-Step count default `256` (was `128` until PR #227 — bumped as quick fix
-for #221 gaps until Segment Tracing lands per #224).
+> ⚠️ `GpuContext` deliberately selects a **non-sRGB** surface format, on
+> the reasoning that "most renderers handle gamma correction in the
+> shader". Inti does. **The sky pass does not.** If the two disagree on
+> brightness, that is the sky's half of a decision taken long ago and
+> never finished.
 
-### Pass 3 — Mesh
+## Debug views
 
-`crates/kooch_render/src/mesh/renderer.rs`
+`MeshletDebugMode` is a `Resource` the editor sets per frame; the shaders
+branch on a single `u32`. `Off` is the production path.
 
-Rasterized pass for entities with `MeshRenderer + GlobalTransform`. Loads
-glTF meshes lazily, caches them in a `HashMap<String, MeshGpu>` owned by
-`MeshPassRenderer`. One indexed draw per visible entity, all sharing the
-same camera UBO with dynamic offsets per draw (256-byte aligned, see
-PR #235).
+| Mode | Shows |
+|---|---|
+| `MeshletIds` / `InstanceIds` | Cluster boundaries; per-entity coverage |
+| `TriangleDensity` | Triangles drawn per pixel — calibrates `target_error_pixels`. Anything brighter than green is sub-pixel triangle territory |
+| `Overdraw` | Visibility-buffer atomic writes per pixel |
+| `FrustumRejected` / `BackfaceRejected` / `HiZRejected` | What each cull stage discarded |
+| `CullPassthrough` | Everything that survived every stage |
+| `OnlyLod0` / `OnlyRoots` | The two extremes of the LOD chain, in isolation |
+| `Normals` | The world-space normal as colour |
 
-Depth-tests against the buffer left by the SDF pass, so meshes correctly
-occlude / are occluded by SDF surfaces.
+`Normals` deserves a note: until #441 it *was* the shading model. The
+renderer computed `normal * 0.5 + 0.5` and multiplied by albedo, which is
+why a scene with lights and a scene without them rendered identically.
+It survives as a debug view because it is a genuinely useful look at the
+geometry — it just stopped being what you get by default.
 
-Material: vertex normals only for now (PR #129 MVP). PBR is #130.
+The atomic-counter modes need `TEXTURE_ATOMIC`; the editor's dropdown
+hides what the adapter cannot run rather than offering a mode that
+silently falls back.
 
-## Depth target
+## Limits worth knowing
 
-A single `Depth32Float` texture (`VIEWPORT_DEPTH_FORMAT` constant in
-`kooch_render::lib`) is shared by all three passes within a frame. Two
-copies exist at any given time:
+- 🔴 **65 536 instances.** The visibility buffer packs
+  `(instance_id << 16) | meshlet_id`. A chunk of vegetation exhausts
+  this. Bevy removed their equivalent limit in 0.17 with BVH culling.
+- 🔴 **Six bind groups, six used.** The two-pass shading pipeline uses
+  every group `TARGET_MAX_BIND_GROUPS` allows. Shadow maps have to go
+  *inside* Inti's group — which is where they belong anyway, since a
+  shadow map without its light is not a thing any shader wants. Raising
+  the target to 8 would work on desktop and drop a baseline Vulkan only
+  guarantees at 4.
+- **Skinned meshes cull against their bind pose**
+  ([#453](https://github.com/lobinuxsoft/kooch/issues/453)), so an
+  animation that reaches outside the rest volume culls a character who
+  is on screen.
+- **No motion vectors**, which blocks temporal upscaling, TAA and motion
+  blur at once ([#732](https://github.com/lobinuxsoft/kooch/issues/732)).
 
-- Editor: `ViewportTarget` owns both color + depth, recreated on resize.
-- Play: `RenderPlugin::GameDepth` owns surface-sized depth, recreated on
-  swapchain resize.
+## Not in the pipeline yet
 
-Both use the same constant for format, so a future format change is one
-line in `lib.rs`. `LessEqual` for the sky pipeline, `Less` for the mesh
-pipeline, both clear to `1.0` when starting clean.
+- **Shadows** — cascades ([#476](https://github.com/lobinuxsoft/kooch/issues/476)),
+  contact shadows ([#735](https://github.com/lobinuxsoft/kooch/issues/735)),
+  VSM ([#477](https://github.com/lobinuxsoft/kooch/issues/477)).
+- **Global illumination** ([#450](https://github.com/lobinuxsoft/kooch/issues/450)) —
+  surfel + voxel, not raytraced. Its absence is why punctual light
+  defaults are larger than physics says they should be; see
+  [Lighting](./lighting.md).
+- **Atmosphere** ([#250](https://github.com/lobinuxsoft/kooch/issues/250),
+  [#248](https://github.com/lobinuxsoft/kooch/issues/248)) — correct from
+  orbit, and tinting the sunlight.
+- **Post-processing and auto exposure**
+  ([#254](https://github.com/lobinuxsoft/kooch/issues/254)). Inti ships a
+  fixed exposure and an ACES approximation as placeholders.
+- **Light clustering.** The shader loops over every light for every
+  pixel: honest for tens, wrong for thousands.
 
-## Camera selection
+## Why there is no render graph
 
-All three renderers query `(PerspectiveCamera, GlobalTransform)` and pick
-the highest-priority entity where `active = true`. The editor owns an
-`EditorCamera` entity (with `EditorOnly` ephemeral marker, filtered out
-of scene serialization) that wins via priority while the editor is in
-edit mode. In play mode, the editor camera does not exist, so the scene's
-own camera is selected.
+There *was* one — `kooch_render::graph`, 497 lines, cycle detection and
+topological sort — and **nothing ever instantiated it**. The real
+renderer was built beside it.
 
-> **Note:** Scenes without an active non-ephemeral `PerspectiveCamera`
-> render black in play mode. Behavior is correct given the ephemerality
-> model — see the [Decisions Log](../reference/decisions-log.md) entry on
-> EditorCamera.
-
-## What is NOT in the pipeline yet
-
-Listed because their absence shapes current code and will be filled in
-upcoming PRs (see project memory for the roadmap):
-
-- **G-Buffer / deferred lighting** (#132). Today everything is forward.
-- **PBR materials** (#130). Today: normal-colored mesh, no albedo/roughness/metallic.
-- **Texture loading** (#131). MeshRenderer references mesh paths, no texture sampling yet.
-- **Post-process stack** (#254 v1: AgX tone map + bloom + SMAA + CAS + vignette). Today: linear color straight to surface.
-- **Shadow maps**. No directional / point / spot shadows.
-- **Hardware ray tracing**. wgpu 29 ships `EXPERIMENTAL_RAY_QUERY` but pipelines are blocked upstream (`#8560`); see `docs/research/wgpu-capabilities.md`.
-
-## Why not a render graph?
-
-A render-graph abstraction (Bevy `RenderGraph`, Frostbite-style) is the
-right answer when there are 5+ passes with non-trivial inter-dependencies.
-Today there are 3. The cost of building / maintaining a graph DSL exceeds
-the benefit. The same orchestrator code lives in two places and that's
-acceptable.
-
-When a fourth pass (post-process composite, G-Buffer write, shadow map
-fill) is added the calculus changes. Re-evaluate then.
+The decision not to revive it is not laziness. Bevy 0.19 **deleted their
+`RenderGraph`** and replaced it with ECS schedules, because the graph ran
+as an exclusive system and was single-threaded — the engine that made
+the pattern canonical retired it. Kóoch already has the replacement half
+written: `kooch_core`'s scheduler batches GPU systems into a shared
+encoder. What it needs is `before` / `after` ordering, not a second
+scheduler that looks official and is not
+([#392](https://github.com/lobinuxsoft/kooch/issues/392)).

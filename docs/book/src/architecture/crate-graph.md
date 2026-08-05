@@ -21,8 +21,8 @@ or not anyone updates this page.
 | **L0 · foundation** | `kooch_plugin_api`, `kooch_ecs_macros` | No internal deps. Type vocabulary + proc-macros. |
 | **L1 · core** | `kooch_core` | `App`, `Plugin`, `Schedule`, `Resources`, `GpuContext`. |
 | **L2 · primitives** | `kooch_ecs`, `kooch_window`, `kooch_input`, `kooch_audio` | ECS, windowing, input, audio. Depend on `kooch_core` only. |
-| **L3 · domain** | `kooch_render`, `kooch_physics`, `kooch_camera`, `kooch_lighting`, `kooch_world`, `kooch_remote` | Built on the ECS. GPU work, simulation, scene organisation, remote protocol. |
-| **L4 · built on domain** | `kooch_gizmos`, `kooch_gravity` | Gizmos need the renderer; gravity needs the solver. |
+| **L3 · domain** | `kooch_physics`, `kooch_camera`, `kooch_lighting`, `kooch_world`, `kooch_remote` | Built on the ECS. Simulation, lighting data, scene organisation, remote protocol. |
+| **L4 · built on domain** | `kooch_render`, `kooch_gizmos`, `kooch_gravity` | The renderer needs Inti's shading model; gizmos need the renderer; gravity needs the solver. |
 | **L5 · gizmo interaction** | `kooch_gizmos_handles` | Draggable handles on top of gizmo drawing. |
 | **L6 · editor** | `kooch_editor_core` | Editor logic as a library. Depends on 11 internal crates — the widest surface in the workspace. |
 | **L7 · binary + facade** | `kooch_editor`, `kooch` | The editor `main()`, and the facade user projects depend on. |
@@ -37,8 +37,8 @@ flowchart TD
     L7["L7 · binary + facade<br/>kooch_editor · kooch"]
     L6["L6 · editor<br/>kooch_editor_core"]
     L5["L5 · gizmo interaction<br/>kooch_gizmos_handles"]
-    L4["L4 · built on domain<br/>kooch_gizmos · kooch_gravity"]
-    L3["L3 · domain<br/>kooch_render · kooch_physics · kooch_camera<br/>kooch_lighting · kooch_world · kooch_remote"]
+    L4["L4 · built on domain<br/>kooch_render · kooch_gizmos · kooch_gravity"]
+    L3["L3 · domain<br/>kooch_physics · kooch_camera<br/>kooch_lighting · kooch_world · kooch_remote"]
     L2["L2 · primitives<br/>kooch_ecs · kooch_window · kooch_input · kooch_audio"]
     L1["L1 · core<br/>kooch_core"]
     L0["L0 · foundation<br/>kooch_plugin_api · kooch_ecs_macros"]
@@ -73,7 +73,7 @@ are omitted).
 | `kooch_lighting` | `kooch_core`, `kooch_ecs` |
 | `kooch_world` | `kooch_core`, `kooch_ecs` |
 | `kooch_remote` | `kooch_core`, `kooch_ecs` |
-| `kooch_render` | `kooch_core`, `kooch_ecs` |
+| `kooch_render` | `kooch_core`, `kooch_ecs`, `kooch_lighting` |
 | `kooch_physics` | `kooch_core`, `kooch_ecs` |
 | `kooch_gizmos` | `kooch_core`, `kooch_ecs`, `kooch_render` |
 | `kooch_gravity` | `kooch_core`, `kooch_ecs`, `kooch_physics` |
@@ -117,10 +117,10 @@ Crates built directly on the ECS.
 
 | Crate | Role |
 |-------|------|
-| `kooch_render` | The GPU work: meshlet pipeline (cull, visibility buffer, deferred, Hi-Z), `MeshPassRenderer`, `SkyRenderPass`, `RenderPlugin`, materials. |
+| `kooch_render` | The GPU work: meshlet pipeline (cull, visibility buffer, two-pass material shading, Hi-Z), `SkyRenderPass`, `RenderPlugin`, materials, glTF loading. Moved up a layer when it started reading `kooch_lighting` — a renderer without a shading model paints normals. |
 | `kooch_physics` | Physics simulation. Rapier is the backend, behind `kooch_physics`'s own types. |
 | `kooch_camera` | Camera components and `VirtualCamera` (follow / look-at with damping). |
-| `kooch_lighting` | Light components (DirectionalLight, PointLight, SpotLight). Currently authored but not consumed by the renderer. |
+| `kooch_lighting` | **Inti** — the shading model, the GPU light record, extraction, exposure and ambient. The light *components* live in `kooch_ecs` beside every other component; what lives here is everything that turns them into pixels. See [Lighting](./lighting.md). |
 | `kooch_world` | Scene/world organisation, chunk streaming and activation. |
 | `kooch_remote` | The local-socket protocol that lets the standalone editor drive a running project's ECS. |
 
@@ -128,6 +128,7 @@ Crates built directly on the ECS.
 
 | Crate | Role |
 |-------|------|
+| `kooch_render` | See above. Sits here rather than in L3 because it depends on `kooch_lighting`. |
 | `kooch_gizmos` | Immediate-mode gizmo drawing. Needs `kooch_render` to submit geometry. |
 | `kooch_gravity` | Multi-gravity system (Mario Galaxy-style fields). Needs `kooch_physics` to apply forces. |
 
