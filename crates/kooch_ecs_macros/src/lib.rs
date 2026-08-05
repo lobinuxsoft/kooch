@@ -50,7 +50,8 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
 use crate::attrs::{
     parse_category_attr, parse_field_asset_type, parse_field_bits, parse_field_choices,
-    parse_field_requires, parse_field_shown_when, parse_field_skip, parse_inspector_attr,
+    parse_field_doc, parse_field_requires, parse_field_shown_when, parse_field_skip,
+    parse_inspector_attr,
 };
 use crate::type_mapping::type_mapping;
 use crate::unit_struct::unit_struct_impl;
@@ -109,6 +110,11 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         let field_name = field.ident.as_ref().unwrap();
         let field_name_str = field_name.to_string();
         let ty = &field.ty;
+        // #737 — the field's own doc comment becomes its Inspector
+        // tooltip. Harvested once here and used by every FieldMeta
+        // branch below, so a field cannot gain a tooltip on one code
+        // path and lose it on another.
+        let field_doc = parse_field_doc(field);
 
         // `#[reflect(skip)]` opts the field out of the inspector +
         // get/set paths entirely. Used for handle-style fields that
@@ -142,6 +148,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     shown_when: ::core::option::Option::None,
                     asset_type: #asset_type,
                     requires: "",
+                    doc: #field_doc,
                 }
             });
             get_arms.push(quote! {
@@ -208,6 +215,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     shown_when: #shown_when_expr,
                     asset_type: "",
                     requires: #requires,
+                    doc: #field_doc,
                 }
             });
 
@@ -268,6 +276,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     shown_when: #shown_when_expr,
                     asset_type: "",
                     requires: "",
+                    doc: #field_doc,
                 }
             });
 
@@ -386,6 +395,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 shown_when: #shown_when_expr,
                 asset_type: "",
                 requires: "",
+                doc: #field_doc,
             }
         });
 

@@ -251,6 +251,8 @@ impl Reflect for PrefabInstance {
         static FIELDS: &[FieldMeta] = &[
             FieldMeta {
                 name: "source",
+                doc: "The prefab this instance came from.\n\nSaving the prefab propagates its \
+changes here, except where an override says otherwise.",
                 type_name: "Option<Guid>",
                 kind: FieldKind::AssetRef,
                 choices: &[],
@@ -261,6 +263,9 @@ impl Reflect for PrefabInstance {
             },
             FieldMeta {
                 name: "overrides",
+                doc: "Fields this instance changed away from its prefab, as RON.\n\nWritten by \
+the editor when you edit an instance. An override survives the prefab \
+being saved — that is what makes it an override.",
                 type_name: "String",
                 kind: FieldKind::String,
                 choices: &[],
@@ -498,7 +503,11 @@ mod tests {
     #[test]
     fn a_realistic_address_survives_the_encoding() {
         let mut instance = PrefabInstance::default();
-        let real = address(3, "kooch_render::mesh_renderer::MeshRenderer", "cast_shadows");
+        let real = address(
+            3,
+            "kooch_render::mesh_renderer::MeshRenderer",
+            "cast_shadows",
+        );
         instance.mark(real.clone(), None);
         assert_eq!(instance.addresses(), vec![real]);
     }

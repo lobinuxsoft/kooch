@@ -19,8 +19,32 @@ use crate::Reflect;
 /// - `scale`: uniform `(1, 1, 1)`
 #[derive(Debug, Clone, Copy, Reflect)]
 pub struct Transform {
+    /// Position relative to the parent, in world units.
+    ///
+    /// Relative to the *parent*, not the world — an entity with a parent
+    /// at `(10, 0, 0)` and a position of `(1, 0, 0)` sits at `(11, 0, 0)`.
+    /// The resolved world position lives on `GlobalTransform`, which the
+    /// engine recomputes every frame.
     pub position: Vec3,
+    /// Rotation relative to the parent.
+    ///
+    /// Shown in the Inspector as Euler angles in degrees because nobody
+    /// authors a quaternion by hand; stored as a quaternion because Euler
+    /// angles gimbal-lock and do not interpolate. Typing 360 and typing 0
+    /// therefore give the same rotation, and the field may read back
+    /// differently from what was typed.
+    ///
+    /// An entity's **forward is its local -Z** — that is the direction a
+    /// camera looks and a light points.
     pub rotation: Quat,
+    /// Scale relative to the parent, per axis.
+    ///
+    /// `1` is unscaled. Non-uniform scale (different values per axis)
+    /// distorts child rotations and skews normals; uniform scale is the
+    /// safe case.
+    ///
+    /// A light's `range` scales with the largest component of this, so
+    /// scaling a light entity really does change how far it reaches.
     pub scale: Vec3,
 }
 

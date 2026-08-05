@@ -19,6 +19,8 @@ impl Reflect for Children {
     fn reflect_fields(&self) -> &'static [FieldMeta] {
         static FIELDS: &[FieldMeta] = &[FieldMeta {
             name: "entities",
+            doc: "The entities parented to this one.\n\nMaintained by the engine — reparent through the hierarchy, never by \
+editing this list.",
             type_name: "Vec<Entity>",
             kind: FieldKind::String,
             choices: &[],

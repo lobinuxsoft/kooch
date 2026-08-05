@@ -117,6 +117,7 @@ where
             .map(|meta| kooch_plugin_api::component::FieldSchema {
                 name: meta.name.to_owned(),
                 kind: to_plugin_field_kind(meta.kind),
+                doc: meta.doc.to_owned(),
             })
             .collect(),
         // Same encoding a scene file uses, so there is one serialised

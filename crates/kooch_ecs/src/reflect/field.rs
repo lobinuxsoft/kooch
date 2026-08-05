@@ -57,6 +57,26 @@ pub struct FieldMeta {
     /// live in a crate this one cannot name, and the editor already keys
     /// its display on short names.
     pub requires: &'static str,
+    /// The field's doc comment, shown as a tooltip in the Inspector.
+    /// `""` when the field has none.
+    ///
+    /// # Why the derive harvests this (#737)
+    ///
+    /// A field in the Inspector is a name and a number. `intensity` on a
+    /// `PointLight` is in **lumens**; `intensity` on a `DirectionalLight`
+    /// is in **lux** — different units, different magnitudes, presented
+    /// identically. Both components already say so in a doc comment,
+    /// sitting in the source where nobody authoring a scene will read it.
+    ///
+    /// Harvested rather than a separate `#[reflect(tooltip = "...")]`
+    /// attribute, deliberately: a second place to write the explanation
+    /// is a second place for it to go stale, and the one that drifts is
+    /// always the one the user reads.
+    ///
+    /// Lines are joined with `\n` and the leading space Rust puts after
+    /// `///` is stripped, so the tooltip reads as prose rather than as
+    /// source.
+    pub doc: &'static str,
 }
 
 /// A labelled value in a [`FieldMeta::choices`] set.

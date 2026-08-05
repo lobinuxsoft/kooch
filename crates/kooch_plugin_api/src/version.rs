@@ -14,7 +14,7 @@
 ///
 /// Increment on any breaking change to [`Engine`](crate::Engine),
 /// [`KoochPlugin`](crate::KoochPlugin), or the schema types.
-pub const API_VERSION: u32 = 3;
+pub const API_VERSION: u32 = 4;
 
 /// The compiler that built this crate, as `rustc -V -v` reported it.
 ///

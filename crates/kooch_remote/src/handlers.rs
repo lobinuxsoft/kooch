@@ -260,6 +260,7 @@ fn get_schema(id: u64, resources: &Resources) -> Response {
                         type_name: m.type_name.to_owned(),
                         choices: m.choices.iter().map(|c| c.label.to_owned()).collect(),
                         asset_type: m.asset_type.to_owned(),
+                        doc: m.doc.to_owned(),
                     })
                     .collect()
             });

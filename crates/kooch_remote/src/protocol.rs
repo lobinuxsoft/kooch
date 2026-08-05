@@ -72,6 +72,15 @@ pub struct FieldSchema {
     /// Canonical asset type this field references, empty if it is not an
     /// asset reference.
     pub asset_type: String,
+    /// The field's doc comment, shown as an Inspector tooltip (#737).
+    /// Empty when the field has none.
+    ///
+    /// 🔴 This is the path that matters. Open Project always opens
+    /// remote, so the editor inspects the world over the wire — a
+    /// tooltip that only travels the in-process path is one the user
+    /// never sees.
+    #[serde(default)]
+    pub doc: String,
 }
 
 /// Schema for one registered component type.
