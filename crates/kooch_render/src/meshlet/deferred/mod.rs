@@ -22,7 +22,34 @@ use std::num::NonZeroU64;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-const SHADER_SOURCE: &str = include_str!("../../../shaders/meshlet_deferred.wgsl");
+/// This path's own half of the shader: the R32Uint visibility read and
+/// the two compute entry points.
+const DEFERRED_BODY: &str = include_str!("../../../shaders/meshlet_deferred.wgsl");
+
+/// Bind group Inti occupies here. Groups 0..3 are the shading bindings,
+/// the meshlet pool, the material storage and the scene buffers — 4 is
+/// the first free index. Differs from the two-pass path's group 5
+/// because that path also binds per-material textures; the WGSL is the
+/// same text with a different number substituted in.
+pub const DEFERRED_INTI_GROUP: u32 = 4;
+
+/// The complete compute shader: shared barycentric reconstruction, the
+/// Inti shading model, then this path's entry points.
+///
+/// The reconstruction chunk is the same text the R64 fragment path
+/// composes. Before #441 this path averaged the triangle's three vertex
+/// normals and never computed a world position — fine for shading that
+/// only read the normal, wrong the moment a point light needs a
+/// distance. Sharing the chunk is what stops the fallback from quietly
+/// drifting away from the path everyone actually looks at.
+fn shader_source() -> String {
+    [
+        crate::meshlet::SURFACE_RECONSTRUCT_SHADER,
+        &kooch_lighting::inti_pbr_shader(DEFERRED_INTI_GROUP),
+        DEFERRED_BODY,
+    ]
+    .join("\n")
+}
 
 /// Output color format the deferred shader writes through a storage
 /// texture binding. Rgba8Unorm matches the forward path so tests can
@@ -70,7 +97,7 @@ impl MeshletDeferredShader {
     pub fn new(device: &wgpu::Device, meshlet_bgl: &wgpu::BindGroupLayout) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("meshlet_deferred_shader"),
-            source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
+            source: wgpu::ShaderSource::Wgsl(shader_source().into()),
         });
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -151,6 +178,7 @@ impl MeshletDeferredShader {
             bind_group_layouts: &[Some(&shading_bgl), Some(meshlet_bgl), Some(&material_bgl)],
             immediate_size: 0,
         });
+        let lights_bgl = kooch_lighting::GpuLights::bind_group_layout(device);
         let pipeline_layout_scene =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("meshlet_deferred_pipeline_layout_scene"),
@@ -159,6 +187,7 @@ impl MeshletDeferredShader {
                     Some(meshlet_bgl),
                     Some(&material_bgl),
                     Some(&scene_bgl),
+                    Some(&lights_bgl),
                 ],
                 immediate_size: 0,
             });
@@ -301,15 +330,15 @@ mod tests {
 
     #[test]
     fn deferred_shader_parses_and_validates() {
-        let module = naga::front::wgsl::parse_str(SHADER_SOURCE)
-            .expect("meshlet_deferred.wgsl should parse");
+        let module = naga::front::wgsl::parse_str(&shader_source())
+            .expect("composed meshlet_deferred shader should parse");
         let mut validator = naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
         );
         validator
             .validate(&module)
-            .expect("meshlet_deferred.wgsl should validate");
+            .expect("composed meshlet_deferred shader should validate");
     }
 
     #[test]

@@ -83,6 +83,7 @@ impl MeshletRenderStage {
             cull_pipelines,
             rasterizer,
             deferred,
+            lights: kooch_lighting::GpuLights::new(device),
             gpu_pool: None,
             pool_dirty: false,
             meshlet_bgl,

@@ -158,6 +158,11 @@ impl MeshletRenderStage {
         self.instance_capacity = self.scene.capacity();
 
         self.scene.upload_instances(queue, &instances);
+        // Inti's per-frame walk. Ahead of the encoder for the same
+        // reason `ensure_capacity` is: growing the light buffer
+        // replaces it, and a replaced buffer must not be one an
+        // already-recorded pass references.
+        self.lights.update(device, queue, resources, cam_pos);
         // Worst-case meshlet stride covers every mesh; the pool path
         // bounds-checks per-instance against pool_mesh_descriptors.
         // (`max_meshlets_per_mesh` was bound from `gpu_pool` above so

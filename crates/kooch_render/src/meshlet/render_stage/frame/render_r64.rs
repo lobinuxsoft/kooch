@@ -101,6 +101,7 @@ impl MeshletRenderStage {
             density_mode,
             meshlet_bg,
             material_pipeline.as_deref(),
+            self.lights.bind_group(),
             &self.views[view_id].cull,
             &self.scene,
             view_proj,

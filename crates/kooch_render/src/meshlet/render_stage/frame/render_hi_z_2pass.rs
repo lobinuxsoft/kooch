@@ -254,6 +254,7 @@ impl MeshletRenderStage {
             material_bg,
             &self.views[view_id].cull,
             &self.scene,
+            self.lights.bind_group(),
             view_proj,
             self.views[view_id].size,
             debug_mode,
