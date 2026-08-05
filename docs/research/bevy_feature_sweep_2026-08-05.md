@@ -152,6 +152,27 @@ To be applied next, not assumed:
 - **#342 (impostor cubemap baking):** overlaps with Visibility Ranges. Decide which answers "far away is only distinguishable".
 - **#392:** unchanged, and confirmed by 0.19 deleting theirs.
 
+## What the first pass missed, and why
+
+The first sweep read summaries filtered by the questions asked — rendering,
+meshlets, large worlds, precision. Anything outside those words did not
+come back. Asking about editor tooling and entity throughput turned up
+things that matter as much as what was on the original list:
+
+| Missed | Where | Why it matters |
+|---|---|---|
+| 🔴 **GPU light clustering — ~20× on `many_lights`** | 0.18/0.19 | **Contradicts what #441 says.** That issue currently declares clustered culling out of scope and loops over every light. A universe has stars, city windows and ship lights; the naive loop is a demo path |
+| **Infinite grid, now first-party** | 0.19, `bevy_dev_tools::infinite_grid` | Was the third-party `bevy_infinite_grid` (MIT/Apache-2.0), now shipped. A shader-drawn ground plane with distance fade: no geometry, works at any scale, gives the viewport a sense of orientation and relative size. Directly what the editor needs |
+| **Entity lifecycle rework** — command spawning ~2×, despawn 20–30% | [PR #19451](https://github.com/bevyengine/bevy/pull/19451) | Removes flushing, supports manual spawn/despawn |
+| **`spawn_batch` over parallel commands** | guidance | Batch collection beats parallel dispatch for mass spawning. Streaming a planet is mass spawning |
+| **Archetype edges cache transitions** | core ECS | Caches the target archetype for an add/remove so it is not searched again. Relevant to us: the editor-camera freeze this session was an archetype-migration bug |
+| **Morph targets batched** — ~2× | 0.19 | Storage-buffer path |
+| **0.17 render: 2.2 ms → 1.3 ms** on a 1300-instance scene | 0.17 | The BVH-culling work paid off on small scenes too, not only on the 115-billion-triangle one |
+
+**Method note for the next sweep:** ask about *tooling*, *editor* and
+*throughput* explicitly, or the summariser will answer only the question
+asked and the gap will be invisible.
+
 ## Sources
 
 - Release notes: [0.14](https://bevy.org/news/bevy-0-14/) · [0.15](https://bevy.org/news/bevy-0-15/) · [0.16](https://bevy.org/news/bevy-0-16/) · [0.17](https://bevy.org/news/bevy-0-17/) · [0.18](https://bevy.org/news/bevy-0-18/) · [0.19](https://bevy.org/news/bevy-0-19/)
