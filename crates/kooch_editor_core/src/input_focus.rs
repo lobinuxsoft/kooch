@@ -23,11 +23,19 @@
 //! you have the World panel selected are the same game, and the
 //! difference is only where you are looking.
 //!
-//! One exception, and it is egui's own: a focused text field takes the
-//! keyboard from everyone. Typing an entity's name must not also drive
-//! the player forward. `wants_keyboard_input` is the same question egui
-//! asks itself to decide the keystroke was consumed, so the two cannot
-//! drift apart.
+//! One exception: a focused **text field** takes the keyboard from
+//! everyone. Typing an entity's name must not also drive the player
+//! forward.
+//!
+//! 🔴 The obvious API for that is a trap. `Context::egui_wants_keyboard_input`
+//! is documented as *"egui is currently listening on text input (e.g.
+//! typing text in a TextEdit)"* and is implemented as
+//! `memory.focused().is_some()` — **any** focused widget, including a
+//! button reached with Tab or a combo box that was clicked once. Using it
+//! meant the View had no keyboard from editor startup until the first
+//! click on Play, because something innocuous held focus the whole time.
+//! `Context::text_edit_focused` is the question actually being asked, and
+//! it is right there in the same impl block.
 
 use crate::state::EditorTab;
 
@@ -78,8 +86,8 @@ impl InputFocus {
 /// Separate from the resource so it can be read and tested without a
 /// dock, an egui context or a GPU — and so the rule is one expression
 /// rather than a trail of early returns across three modules.
-pub fn resolve(focused_tab: Option<EditorTab>, egui_wants_keyboard: bool) -> InputOwner {
-    if egui_wants_keyboard {
+pub fn resolve(focused_tab: Option<EditorTab>, text_edit_focused: bool) -> InputOwner {
+    if text_edit_focused {
         return InputOwner::None;
     }
     match focused_tab {
@@ -126,6 +134,22 @@ mod tests {
     fn a_focused_text_field_takes_the_keyboard_from_everyone() {
         assert_eq!(resolve(Some(EditorTab::View), true), InputOwner::None);
         assert_eq!(resolve(Some(EditorTab::Game), true), InputOwner::None);
+    }
+
+    /// The parameter is `text_edit_focused`, not "some widget has focus".
+    ///
+    /// Reading it the loose way is what broke the View: the editor opens
+    /// with a widget focused, so the camera had no keyboard until the
+    /// first Play click moved that focus. The name here is the guard —
+    /// a caller passing `egui_wants_keyboard_input` is passing the wrong
+    /// question, and the name says so at the call site.
+    #[test]
+    fn only_a_text_field_takes_it_not_any_focused_widget() {
+        assert_eq!(
+            resolve(Some(EditorTab::View), false),
+            InputOwner::ViewCamera,
+            "a focused button is not someone typing",
+        );
     }
 
     #[test]

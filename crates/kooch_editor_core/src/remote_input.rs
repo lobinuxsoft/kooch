@@ -70,28 +70,16 @@ pub(crate) fn send_input_to_host(resources: &mut Resources) {
     });
 }
 
-/// Whether this frame's input belongs to the game rather than the editor.
+/// Whether this frame's input belongs to the game.
 ///
-/// Three conditions.
+/// One question, asked of [`crate::input_focus`] rather than answered
+/// here. This function used to rebuild the rule from play state, panel
+/// focus and egui's opinion, which is how it drifted out of step with
+/// the editor camera's copy of the same rule.
 ///
-/// **Only while playing.** A key pressed while authoring is an editor
-/// shortcut; sending it to a paused host would be noise at best.
-///
-/// **Only while the Game panel is the focused tab.** Before the panel
-/// existed, playing meant the whole editor was the game, so every key
-/// was the game's. Now the two are on screen at once, and a key pressed
-/// with World or the Inspector selected is meant for them. This is the
-/// same rule every engine with a Game panel uses: the panel has to be
-/// clicked before it hears anything.
-///
-/// **Not while egui wants the keyboard.** Typing a name into the
-/// Inspector must not also drive the player forward. `wants_keyboard_input`
-/// is true exactly when a text field has focus, which is a better rule
-/// than tracking viewport focus by hand: it is what egui itself uses to
-/// decide the keystroke was consumed, so the two cannot disagree. Kept
-/// alongside the focus check rather than replaced by it — a text field
-/// can be focused inside a panel docked over the Game one, and then both
-/// answers are needed.
+/// Note what is *not* here any more: play state. A game running while
+/// the World panel is selected is the same game — where you are looking
+/// is what decides, and that decision lives in one place.
 fn should_send(resources: &Resources) -> bool {
     resources
         .get::<crate::input_focus::InputFocus>()

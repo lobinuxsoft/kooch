@@ -187,8 +187,11 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
         // Resolved here because this is where panel focus is known, and
         // resolved once: consumers ask `belongs_to`, they do not rebuild
         // the rule.
+        // `text_edit_focused`, NOT `egui_wants_keyboard_input`: the
+        // latter is `memory.focused().is_some()` despite its name, so any
+        // focused button would silently take the keyboard from the View.
         *self.input_owner =
-            crate::input_focus::resolve(*self.focused_tab, ui.ctx().egui_wants_keyboard_input());
+            crate::input_focus::resolve(*self.focused_tab, ui.ctx().text_edit_focused());
 
         // A cursor left lit on a panel that no longer owns the keyboard is
         // a highlight that means nothing: it says "the arrows go here" when
