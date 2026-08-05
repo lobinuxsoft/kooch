@@ -1,7 +1,13 @@
 # What to take from Bevy — sweep of 0.14 → 0.19
 
-Read on 2026-08-05: the release notes for 0.14, 0.15, 0.16, 0.17, 0.18 and
-0.19, plus the virtual-geometry write-ups and the BVH-culling PR.
+Read on 2026-08-05: the release notes for 0.12 through 0.19, plus the
+virtual-geometry write-ups, the BVH-culling PR and the `bevy_ecs` docs.
+
+**Take the newest form of each feature, not the one it shipped as.**
+Virtual geometry landed in 0.14 and is a different system by 0.17;
+atmosphere landed in 0.16 and lights the scene by 0.18. The version
+column below says where a thing *appeared*; what to port is where it
+stands now.
 
 **Everything here is evaluated against one goal: universes.** Draw
 distances and techniques have to survive planetary and galactic scale.
@@ -59,6 +65,62 @@ that will stop a planet, and it is ours, not inherited.
 | **GPU timestamps in the profiler trace** | 0.16 | We have GPU timers already; theirs land in the trace beside CPU work. |
 | **Fullscreen material trait** | 0.18 | Post-processing without ceremony. |
 | **glTF extension handlers** | 0.18 | Custom data through the importer instead of beside it. |
+
+## From 0.12 / 0.13 — the older ones still worth having
+
+| What | Version | Note |
+|---|---|---|
+| **Automatic batching & instancing** | 0.12 | Up to 3× in their benchmarks. Draw commands merge when they can. |
+| **Asset preprocessing (Asset V2)** | 0.12 | Meta files, multiple sources, recursive dependency tracking. We have `.meta` and a database; theirs also *preprocesses*, which is what #578 wants for baked meshlets. |
+| **Deferred rendering** | 0.12 | Ours already is. |
+| **Light transmission** (glass, water, foliage) | 0.12 | Foliage is the planetary case, not the glass. |
+| **Lightmaps** | 0.13 | Precomputed GI for static geometry — the cheap far-field answer where surfels are too expensive. |
+| **Irradiance volumes** | 0.13 | Voxel-sampled ambient. Rides the voxel chunks we already have; overlaps #450. |
+| **Reflection probes with AABBs** | 0.13 | Multiple environment maps per region — per-biome, per-planet. |
+| **Render assets unload from RAM after GPU upload** | 0.13 | Straight VRAM/RAM win at scale, no visual cost. |
+| **Dynamic queries** | 0.13 | Runtime-defined filtering. Note their stated use case: *scripting and modding* — the consumer is third-party, not an engine scripting language. |
+
+## Their ECS versus ours
+
+`bevy_ecs` is usable on its own — *"it was created specifically for Bevy's
+needs, but it can easily be used as a standalone crate"* — so the
+question is fair rather than academic.
+
+**What theirs has that ours does not:**
+
+| | Why it matters here |
+|---|---|
+| **Change detection** | The one that matters at planetary scale. 0.16 got *11× faster transform propagation* out of dirty-bit skipping for static hierarchies. A planet is almost entirely static hierarchy. |
+| **Explicit system ordering** (`before` / `after`, sets) | Exactly what #392 needs; our `add_system(stage, f)` orders by insertion. |
+| **Parallel execution** | Our scheduler runs systems sequentially. |
+| **Observers and hooks** | Push-based reaction to component lifecycle. Not scripting — plain ECS. |
+| **Relationships** | Bidirectional entity links the ECS maintains. Compare `feedback_camera_target_tag`: we chose tags precisely to avoid dangling references, and relationships are the other answer. |
+| **Sparse-set storage** | For components on few entities, or toggled often. |
+
+**What ours has that theirs does not:**
+
+| | |
+|---|---|
+| **GPU-resident components** | `ComponentRegistry` holds CPU *and* GPU storages. Bevy's render world is a separate `World` it extracts into every frame. Ours is the hybrid the engine is built on. |
+| **Dynamic components from a `.so`** | `DynamicTypeRegistry` — a project's components, compiled in its own dylib, appear in the editor's menus and Inspector. Bevy has no editor to need this. |
+| **Reflection wired to an editor that exists** | |
+
+**Verdict: do not migrate. Port the three pieces that hurt.**
+
+Migrating means rewriting every crate against a foreign `World`, losing
+GPU-resident components and the dynamic registry — the two things that
+make the editor and the hybrid design work. The cost is the engine; the
+benefit is features we can port individually.
+
+In order of what actually blocks us:
+
+1. **System ordering** — needed by #392 regardless, and cheap.
+2. **Change detection + dirty-bit transform propagation** — their 11× is
+   on ordinary scenes. On a planet, where nearly everything is static and
+   nearly nothing moves per frame, re-propagating everything is the
+   difference between a planet and a demo.
+3. **Observers** — only once something needs to react immediately rather
+   than next stage. No consumer yet; do not build it early.
 
 ## Already ours, or ahead
 
