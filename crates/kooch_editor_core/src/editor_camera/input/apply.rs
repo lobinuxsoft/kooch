@@ -16,6 +16,7 @@ use kooch_ecs::hierarchy::{GlobalTransform, transform_propagation_system};
 use kooch_ecs::transform::Transform;
 
 use crate::editor_camera::controller::EditorCameraController;
+use crate::editor_camera::find_editor_camera_entity;
 use crate::editor_camera::fly::fly_velocity;
 use crate::editor_camera::markers::EditorCamera;
 use crate::editor_camera::orbit::{apply_yaw_pitch, camera_position, fly_look_pivot_camera};
@@ -144,17 +145,6 @@ pub fn entity_world_position(resources: &Resources, entity: Entity) -> Option<Ve
     let gt = storage.get(entity)?;
     let (_, _, translation) = gt.matrix.to_scale_rotation_translation();
     Some(translation)
-}
-
-fn find_editor_camera_entity(resources: &Resources) -> Option<Entity> {
-    let archetypes = resources.get::<ArchetypeRegistry>()?;
-    let editor_camera_tid = TypeId::of::<EditorCamera>();
-    for arch in archetypes.iter_matching(&[]) {
-        if arch.components().contains(&editor_camera_tid) {
-            return arch.entities().first().copied();
-        }
-    }
-    None
 }
 
 fn read_transform(resources: &Resources, entity: Entity) -> Option<(Vec3, Quat)> {
