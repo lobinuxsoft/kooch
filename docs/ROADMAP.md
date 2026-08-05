@@ -6,36 +6,94 @@ map.
 Companion to [`MEMORY.md`](MEMORY.md), which records decisions already made. If the two
 disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 
-Last updated 2026-08-04, `development` at `92ec553`.
+Last updated 2026-08-05, `development` at `a6780ee`.
 
 ---
 
-## Next — the render graph, before four more passes land on top of it
+## Next — #441, because the engine does not look like an engine
 
-**#392 is next, and it is a decision before it is a feature.** `kooch_render::graph` is 497
-lines of DAG, cycle detection, topological sort and shared-encoder execution, and **nothing
-instantiates it**. The renderer that actually runs was built beside it. Its own module doc
-lists the follow-ups — *"migration of `SkyRenderPass` and the meshlet stage to graph nodes"* —
-and those never happened.
+**The renderer does not read a single light.** `kooch_lighting/src/lib.rs` is nine lines.
+`DirectionalLight`, `PointLight` and `SpotLight` are read by `kooch_ecs`, which defines them,
+and by the editor, which draws their gizmos — and by nothing that renders. The deferred shader
+computes `rgb = (normal * 0.5 + 0.5) * base_color`: the world normal painted as colour. A debug
+view shipped as the shading model.
 
-The reason it is next rather than later: **#441 PBR, #476 CSM, #477 VSM, #450 GI and #250 sky
-materials are all passes waiting to be added.** Every one added beside the graph makes
-migrating it more expensive, and makes the next person likelier to add theirs beside it too.
-Deciding once, now, is the cheap moment.
+Place a light, see the gizmo, see it in the Inspector, see it mirrored to the host, see nothing
+change on screen. That is the failure mode `MEMORY.md` already records: *a missing feature does
+not fail the build*.
 
-Either outcome is acceptable and leaving it is not:
+### The graphics order
 
-- **Migrate** — move `SkyRenderPass` and the meshlet stage onto it, and the four lighting
-  issues become graph nodes with declared inputs and outputs.
-- **Delete** — the renderer works without it, and an unused scheduler that looks authoritative
-  is worse than no scheduler.
+| | Issue | Why here |
+|---|---|---|
+| 1 | **#441 — lights that light** | Nothing to shadow until this exists. Largest visual return per unit of work in the whole backlog |
+| 2 | **#476 — CSM** | Sun shadows. Lit-without-shadows is an honest intermediate state and already looks far better than today |
+| 3 | **Contact shadows** *(new, from Bevy 0.19)* | Short screen-space ray; grounds objects. Cheap, and independent of #477 |
+| 4 | **#250 / #248 — atmosphere** | Correct from orbit *and* the atmosphere tinting sunlight, which is Bevy's 0.16→0.18 arc |
+| 5 | **#254 — post + auto exposure** | Auto exposure stops being cosmetic at planetary scale: sunlit surface to night side spans orders of magnitude |
 
-What decides it is whether the graph's resource lifetime tracking and automatic barriers earn
-their keep against a hand-ordered encoder, once shadows and GI need transient targets. That is
-a measurement, not a preference.
+⚠️ **Read Bevy 0.18's Fresnel and over-glossy material fixes before writing the BRDF.** Getting
+it right the first time is free; finding it later means re-tuning every material in the project.
 
-⚠️ The issue body predates all of this — it says the graph *blocks* #117, which closed, and it
-does not mention that the code exists. Rewrite it before starting.
+⚠️ **#441 loops over every light, and the shader must not be written as if that were
+permanent.** Bevy moved light clustering to the GPU and measured ~20× on `many_lights`. A
+universe has stars, lit windows and ship lights.
+
+---
+
+## The scale work, which the goal makes unavoidable
+
+**Everything is judged against universes**: planetary and galactic draw distance, detail only up
+close, far away merely *distinguishable*.
+
+🔴 **Our visible-meshlet id packs as `(instance_id << 16) | meshlet_id`** — a hard ceiling of
+**65 536 instances**. A single vegetated chunk exhausts it. Bevy removed its comparable 2²⁴
+cluster limit in 0.17 and now renders 115 billion triangles in 3.5 ms.
+
+1. **Widen the id packing.** Nothing else on this list means much until scenes can exceed 65 k
+   instances.
+2. **BVH culling over clusters** ([bevy#19318](https://github.com/bevyengine/bevy/pull/19318)) —
+   render cost becomes nearly independent of scene geometry.
+3. **Visibility Ranges / HLODs** — per-mesh appear and disappear distances. The honest answer to
+   "far away only has to be distinguishable".
+
+Neither has an issue yet.
+
+---
+
+## Two gaps with no issue, found by inventory rather than by use
+
+Both block the goal, and neither will announce itself until it does.
+
+- **No task pool.** Loose `thread::spawn` in `frame_pacing`, `runner` and the editor's remote
+  session; no pool, no cancellation, no priorities. Streaming a planet means loading off the
+  frame, and there is no mechanism for it.
+- **No app state machine.** Menu, loading, playing, paused. Its absence is also why
+  `ActionMap`'s bulk enable/disable has no consumer.
+
+Cheap and adjacent: **an infinite grid** — shader-drawn ground plane with distance fade, no
+geometry, correct at any scale; the viewport has no ground reference at all. And **no colour
+type**, which is a silent hazard: wrong-space blending looks almost right until it is wrong
+everywhere at once.
+
+See `docs/research/bevy_module_gap_2026-08-05.md` and
+`docs/research/bevy_feature_sweep_2026-08-05.md`.
+
+---
+
+## The render graph — decided, not yet executed
+
+**#392 resolved: delete it.** Not because a scheduler is wrong, but because the right scheduler
+is the ECS one. Bevy — the engine that made render graphs the default pattern — **replaced
+theirs with ECS schedules in 0.19**, because their graph ran as an exclusive, single-threaded
+system. Passes are systems there now.
+
+Half the replacement is already written here: `kooch_core::schedule::gpu_batch` batches GPU
+systems into one shared encoder, and the `PreRender` / `Render` / `GpuSync` / `Gpu` stages
+exist. What is missing is **`before` / `after` ordering between systems inside a stage** —
+engine-wide, not render-only.
+
+`sky/node.rs`, the graph's orphan adapter, is already gone.
 
 ---
 
@@ -43,6 +101,7 @@ does not mention that the code exists. Rewrite it before starting.
 
 | | |
 |---|---|
+| **#592 — a frame is a list of views** (PR #730) | `MeshletRenderStage` holds a `SlotMap<ViewId, MeshletView>`; the editor grew a **Game panel** rendering the gameplay camera beside View. Cull buffers, Hi-Z state and `group_max_err` moved per view — sharing them was [bevy#15182](https://github.com/bevyengine/bevy/issues/15182) waiting to happen. Play no longer switches the editor camera off, `input_focus` decides who owns input in one place, and `ViewCamera` replaced four copies of "walk the world for the highest-priority camera" |
 | **#727** | **An input action became an asset.** A `.inputaction` holds one action with its own id; a component points at it by guid; `enabled` is per action. The map — `InputMapSource`, the `.inputmap` asset, `ActiveActionMap`, `ActionState`, the generic `ActionMap<A>` — is gone. #55 and #58 closed |
 | **#728** | **A saved asset reaches the running project.** Only prefabs ever told it; a material edit updated the editor and left the game rendering the old one. `forget` + `load` cannot do this — `insert` mints a new key and every live `Handle<T>` keeps the old bytes — so `reload_path` writes over the slot instead. No file watcher, on purpose |
 | **#711** | **`kooch_input` was connected to nothing.** No backend was ever constructed and `WindowEvent::KeyboardInput` only asked for a redraw. `just_pressed` was permanently false, and four green tests were pinning that |
