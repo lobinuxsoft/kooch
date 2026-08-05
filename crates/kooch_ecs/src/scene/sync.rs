@@ -533,7 +533,11 @@ fn rebuild_children(spawned: &[crate::entity::Entity], resources: &mut Resources
 }
 
 /// Records which scene an entity was authored in.
-fn tag_with_scene(resources: &mut Resources, entity: crate::entity::Entity, scene: kooch_core::Guid) {
+fn tag_with_scene(
+    resources: &mut Resources,
+    entity: crate::entity::Entity,
+    scene: kooch_core::Guid,
+) {
     use crate::scene_member::SceneMember;
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {

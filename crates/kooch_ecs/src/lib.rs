@@ -25,6 +25,7 @@ pub mod dynamic_components;
 pub mod entity;
 pub mod ephemeral;
 pub mod hierarchy;
+pub mod light_consts;
 pub mod lod_force_level;
 pub mod mesh_renderer;
 pub mod name;

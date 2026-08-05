@@ -119,7 +119,20 @@ impl GpuLights {
         camera_position: Vec3,
     ) {
         let lights = extract_lights(resources);
-        self.light_count = lights.len() as u32;
+        let count = lights.len() as u32;
+        // Logged on change, never per frame. "I placed a light and
+        // nothing happened" and "the light never reached the GPU" look
+        // identical from the chair, and this is the one line that
+        // separates them — at the cost of nothing in a steady scene.
+        if count != self.light_count {
+            tracing::debug!(
+                target: "kooch_lighting::buffer",
+                from = self.light_count,
+                to = count,
+                "light count changed",
+            );
+        }
+        self.light_count = count;
         self.ensure_capacity(device, self.light_count);
         if !lights.is_empty() {
             queue.write_buffer(&self.light_buffer, 0, cast_slice(&lights));

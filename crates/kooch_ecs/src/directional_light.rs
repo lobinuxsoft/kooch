@@ -22,13 +22,32 @@ use crate::Reflect;
 #[derive(Debug, Clone, Copy, Reflect)]
 #[reflect(category = "Rendering")]
 pub struct DirectionalLight {
-    /// Whether this light is active.
+    /// Whether this light contributes to the scene.
+    ///
+    /// Unchecking it is not the same as deleting the entity: the light
+    /// keeps its rotation and gizmo, and costs nothing.
     pub active: bool,
-    /// Light color (linear RGB).
+    /// Colour, as linear RGB.
+    ///
+    /// Linear, not sRGB — this is the colour the light physically emits,
+    /// not a colour picked on a screen.
     pub color: Vec3,
-    /// Illuminance in lux.
+    /// Illuminance, in LUX — the light landing on a surface facing it
+    /// square-on.
+    ///
+    /// Not the same unit as a PointLight's intensity, which is in
+    /// lumens, and not comparable to it by eye either. Named values:
+    /// an office is 320, an overcast day 1 000, ambient daylight 10 000
+    /// (the default), direct sunlight 100 000. See `light_consts::lux`.
+    ///
+    /// A directional light has no position and no falloff — it stands in
+    /// for something so far away that its rays arrive parallel, so the
+    /// only thing that matters is which way the entity is pointing.
     pub intensity: f32,
     /// Whether this light casts shadows.
+    ///
+    /// ⚠️ Not implemented yet — shadows land with #476 (cascades). The
+    /// field is stored and saved; today nothing reads it.
     pub cast_shadows: bool,
 }
 
@@ -37,7 +56,7 @@ impl Default for DirectionalLight {
         Self {
             active: true,
             color: Vec3::ONE,
-            intensity: 10_000.0,
+            intensity: crate::light_consts::lux::AMBIENT_DAYLIGHT,
             cast_shadows: true,
         }
     }
@@ -55,7 +74,7 @@ mod tests {
         let l = DirectionalLight::default();
         assert!(l.active);
         assert_eq!(l.color, Vec3::ONE);
-        assert_eq!(l.intensity, 10_000.0);
+        assert_eq!(l.intensity, crate::light_consts::lux::AMBIENT_DAYLIGHT);
         assert!(l.cast_shadows);
     }
 

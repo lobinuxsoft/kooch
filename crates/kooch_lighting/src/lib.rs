@@ -12,7 +12,9 @@
 //!   conversion from a light component plus its transform.
 //! - [`extract_lights`] — the ECS walk, pure and GPU-free.
 //! - [`GpuLights`] — buffer residency and the bind group.
-//! - [`AmbientLight`] / [`Exposure`] — the per-frame constants.
+//! - [`AmbientLight`] / [`Exposure`] / [`PhysicalCamera`] — the
+//!   per-frame constants, and the camera settings that make exposure a
+//!   control a person can use.
 //! - [`inti_pbr_shader`] — the WGSL every shading path concatenates.
 //!
 //! The shading model lives in `shaders/inti_pbr.wgsl` next to the Rust
@@ -34,7 +36,7 @@ mod gpu_light;
 
 pub use buffer::GpuLights;
 pub use extract::extract_lights;
-pub use frame::{AmbientLight, Exposure, IntiFrame};
+pub use frame::{AmbientLight, Exposure, IntiFrame, PhysicalCamera};
 pub use gpu_light::{
     GpuLight, LIGHT_KIND_DIRECTIONAL, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, spot_cone_mad,
 };

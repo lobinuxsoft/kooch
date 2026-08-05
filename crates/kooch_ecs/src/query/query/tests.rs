@@ -357,18 +357,30 @@ fn the_same_component_cannot_be_held_mutably_twice() {
 /// `With`/`Without` live in the second parameter.
 #[test]
 fn eight_mutable_components_fit_in_one_query() {
-    #[derive(Debug)] struct C1(u32);
-    #[derive(Debug)] struct C2(u32);
-    #[derive(Debug)] struct C3(u32);
-    #[derive(Debug)] struct C4(u32);
-    #[derive(Debug)] struct C5(u32);
-    #[derive(Debug)] struct C6(u32);
-    #[derive(Debug)] struct C7(u32);
-    #[derive(Debug)] struct C8(u32);
-    impl Component for C1 {} impl Component for C2 {}
-    impl Component for C3 {} impl Component for C4 {}
-    impl Component for C5 {} impl Component for C6 {}
-    impl Component for C7 {} impl Component for C8 {}
+    #[derive(Debug)]
+    struct C1(u32);
+    #[derive(Debug)]
+    struct C2(u32);
+    #[derive(Debug)]
+    struct C3(u32);
+    #[derive(Debug)]
+    struct C4(u32);
+    #[derive(Debug)]
+    struct C5(u32);
+    #[derive(Debug)]
+    struct C6(u32);
+    #[derive(Debug)]
+    struct C7(u32);
+    #[derive(Debug)]
+    struct C8(u32);
+    impl Component for C1 {}
+    impl Component for C2 {}
+    impl Component for C3 {}
+    impl Component for C4 {}
+    impl Component for C5 {}
+    impl Component for C6 {}
+    impl Component for C7 {}
+    impl Component for C8 {}
 
     let mut resources = setup();
     let e0 = spawn_entity(&mut resources, 0);
@@ -383,12 +395,24 @@ fn eight_mutable_components_fit_in_one_query() {
 
     {
         let query = Query::<(
-            &mut C1, &mut C2, &mut C3, &mut C4,
-            &mut C5, &mut C6, &mut C7, &mut C8,
+            &mut C1,
+            &mut C2,
+            &mut C3,
+            &mut C4,
+            &mut C5,
+            &mut C6,
+            &mut C7,
+            &mut C8,
         )>::new(&resources);
         query.for_each(|(a, b, c, d, e, f, g, h)| {
-            a.0 += 10; b.0 += 10; c.0 += 10; d.0 += 10;
-            e.0 += 10; f.0 += 10; g.0 += 10; h.0 += 10;
+            a.0 += 10;
+            b.0 += 10;
+            c.0 += 10;
+            d.0 += 10;
+            e.0 += 10;
+            f.0 += 10;
+            g.0 += 10;
+            h.0 += 10;
         });
     }
 
