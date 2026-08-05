@@ -235,7 +235,6 @@ fn inti_ambient(
     n: vec3<f32>,
     diffuse_color: vec3<f32>,
     f0: vec3<f32>,
-    n_dot_v: f32,
     f_ab: vec2<f32>,
 ) -> vec3<f32> {
     let t = n.y * 0.5 + 0.5;
@@ -245,8 +244,13 @@ fn inti_ambient(
     // prefiltered radiance is uniform, so this is the correct answer
     // for this environment rather than a fudge.
     let specular = f0 * f_ab.x + f_ab.y;
-    let fresnel_weight = inti_fresnel(f0, n_dot_v);
-    return sky * ((1.0 - fresnel_weight) * diffuse_color + specular);
+    // The diffuse layer receives what the specular layer did not
+    // reflect — weighted by the SAME term, which is the whole point.
+    // Weighting it by a Schlick evaluated at N·V instead (the obvious
+    // thing, and what this did first) mixes two approximations of one
+    // quantity, so the two halves stop summing to one and the ambient
+    // term quietly stops conserving energy.
+    return sky * (diffuse_color * (vec3<f32>(1.0) - specular) + specular);
 }
 
 // The whole model, for one surface point.
@@ -306,7 +310,7 @@ fn inti_shade(
         radiance += (diffuse + specular) * s.irradiance * n_dot_l;
     }
 
-    radiance += inti_ambient(n, diffuse_color, f0, n_dot_v, f_ab);
+    radiance += inti_ambient(n, diffuse_color, f0, f_ab);
     return radiance;
 }
 

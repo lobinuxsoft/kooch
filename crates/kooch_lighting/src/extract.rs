@@ -49,16 +49,18 @@ pub fn extract_lights(resources: &Resources) -> Vec<GpuLight> {
         }
     });
 
-    if out.len() > LINEAR_LOOP_BUDGET {
-        tracing::warn!(
-            target: "kooch_lighting::extract",
-            lights = out.len(),
-            budget = LINEAR_LOOP_BUDGET,
-            "Inti shades every light for every pixel; past this count that loop is the frame. \
-             Clustering is the fix and is not implemented yet.",
-        );
-    }
     out
+}
+
+/// `Some(count)` when `lights` is past the budget the shader's linear
+/// loop can carry honestly, `None` otherwise.
+///
+/// Separate from the walk because the walk runs once **per view per
+/// frame** — warning inside it would emit sixty lines a second per open
+/// panel, and the advice would be the thing making the log unreadable.
+/// [`crate::GpuLights::update`] warns on the transition instead.
+pub(crate) fn over_linear_budget(lights: usize) -> Option<usize> {
+    (lights > LINEAR_LOOP_BUDGET).then_some(LINEAR_LOOP_BUDGET)
 }
 
 // Tests live in `tests/extraction.rs`: exercising the walk needs a

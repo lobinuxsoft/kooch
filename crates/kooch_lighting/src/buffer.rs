@@ -6,7 +6,7 @@ use glam::Vec3;
 use kooch_core::resource::Resources;
 use wgpu::util::DeviceExt;
 
-use crate::extract::extract_lights;
+use crate::extract::{extract_lights, over_linear_budget};
 use crate::frame::{AmbientLight, Exposure, IntiFrame};
 use crate::gpu_light::GpuLight;
 
@@ -131,6 +131,20 @@ impl GpuLights {
                 to = count,
                 "light count changed",
             );
+            // On the transition only. The advice is worth one line when
+            // a scene crosses the threshold and worth nothing at sixty
+            // lines a second afterwards.
+            if let Some(budget) = over_linear_budget(lights.len())
+                && over_linear_budget(self.light_count as usize).is_none()
+            {
+                tracing::warn!(
+                    target: "kooch_lighting::buffer",
+                    lights = lights.len(),
+                    budget,
+                    "Inti shades every light for every pixel; past this count that loop is \
+                     the frame. Clustering is the fix and is not implemented yet.",
+                );
+            }
         }
         self.light_count = count;
         self.ensure_capacity(device, self.light_count);

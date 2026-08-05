@@ -266,13 +266,13 @@ pub(crate) fn parse_field_doc(field: &syn::Field) -> String {
         }) = &attr.meta
             && let Lit::Str(lit_str) = &expr_lit.lit
         {
-            lines.push(
-                lit_str
-                    .value()
-                    .strip_prefix(' ')
-                    .unwrap_or(&lit_str.value())
-                    .to_owned(),
-            );
+            let mut line = lit_str.value();
+            // `/// text` reaches here as `" text"`. Left in, every line
+            // of every tooltip would be indented by one space.
+            if line.starts_with(' ') {
+                line.remove(0);
+            }
+            lines.push(line);
         }
     }
     // Trailing blank lines come from a doc comment ending in `///`,

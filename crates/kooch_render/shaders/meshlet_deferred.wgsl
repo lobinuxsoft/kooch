@@ -124,8 +124,7 @@ fn cs_shade(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Force alpha = 1 for any pixel covered by a meshlet — the
         // alpha = 0 sentinel is reserved for the background-pass-through
         // path the blit composes.
-        color = vec4<f32>(n * 0.5 + 0.5, 1.0) * vec4<f32>(m.base_color.rgb, 1.0);
-        color.a = 1.0;
+        color = vec4<f32>((n * 0.5 + 0.5) * m.base_color.rgb, 1.0);
     }
 
     textureStore(color_out, vec2<i32>(i32(pixel.x), i32(pixel.y)), color);
