@@ -28,9 +28,17 @@ not fail the build*.
 |---|---|---|
 | 1 | **#441 — lights that light** | Nothing to shadow until this exists. Largest visual return per unit of work in the whole backlog |
 | 2 | **#476 — CSM** | Sun shadows. Lit-without-shadows is an honest intermediate state and already looks far better than today |
-| 3 | **Contact shadows** *(new, from Bevy 0.19)* | Short screen-space ray; grounds objects. Cheap, and independent of #477 |
+| 3 | **#735 — contact shadows** | Cascades are correct at range and worst at contact — the few centimetres where an object meets the ground is where a shadow detaches or swims, and that is what makes things look like they float over a scene. **Screen-space, so it costs the same at any world scale** |
 | 4 | **#250 / #248 — atmosphere** | Correct from orbit *and* the atmosphere tinting sunlight, which is Bevy's 0.16→0.18 arc |
-| 5 | **#254 — post + auto exposure** | Auto exposure stops being cosmetic at planetary scale: sunlit surface to night side spans orders of magnitude |
+| 5 | **#254 — post + auto exposure** | Auto exposure stops being cosmetic at planetary scale: sunlit surface to night side spans orders of magnitude. Take Bevy 0.18's **fullscreen materials** with the first effect, not after the fourth |
+| — | **#734 — light textures** | Cookies and gobos. Cheap, and a cloud layer's shadow can be one instead of a second march |
+
+**The lighting system is called Inti** — the Inca sun god, as Bevy called their raytracer Solari.
+It names the system, not the crate: `kooch_lighting` keeps its name, because renaming a crate
+breaks every serialised `type_name` in silence.
+
+⚠️ The sweep **reinforced** this order rather than changing it: #476, #734, #735 and #450 now
+all state a dependency on #441. Four issues wait on the one that makes a light do anything.
 
 ⚠️ **Read Bevy 0.18's Fresnel and over-glossy material fixes before writing the BRDF.** Getting
 it right the first time is free; finding it later means re-tuning every material in the project.
@@ -59,6 +67,12 @@ cluster limit in 0.17 and now renders 115 billion triangles in 3.5 ms.
 
 Neither has an issue yet.
 
+**Adjacent, and now filed:** **#732** (temporal upscaling) opens with the prerequisite nobody can
+skip — **we have no motion vectors, no jitter, no temporal history**, verified by grep. That is
+one piece of work with three consumers: upscaling, TAA and motion blur. `dlss_wgpu` is a
+standalone crate usable without Bevy, but **FSR comes first**, because it is the path that runs
+on the developer's own handheld and an untested fallback is a broken one.
+
 ---
 
 ## Two gaps with no issue, found by inventory rather than by use
@@ -75,6 +89,28 @@ Cheap and adjacent: **an infinite grid** — shader-drawn ground plane with dist
 geometry, correct at any scale; the viewport has no ground reference at all. And **no colour
 type**, which is a silent hazard: wrong-space blending looks almost right until it is wrong
 everywhere at once.
+
+### Filed from the Bevy sweep
+
+| | |
+|---|---|
+| **#731** | Volumetric clouds as a **spherical shell** per planet. Bevy's fog volumes are AABBs, which compose with chunks and not with a planet. Shares the ray-sphere maths with #248 |
+| **#732** | Temporal upscaling on both vendors — motion vectors first |
+| **#733** | Spike: hot-patch a project's Rust without reopening, via Dioxus' `subsecond`. Aims at a friction that is already documented: the editor loads the project `.so` and does not build it |
+| **#734** | Light textures — cookies and gobos |
+| **#735** | Contact shadows |
+| **#736** | One settings framework. We have three shapes today — `EditorConfig`, the dock layout, and nothing for a game |
+
+**#248 grew three things** it did not have: the LUT-per-planet scale problem (a solar system needs
+one parameter set per planet, and a galaxy needs a policy), [bevy#20766](https://github.com/bevyengine/bevy/pull/20766)
+as the reference for the spherical raymarch, and 🔴 **0.18's generalised scattering media — the
+part that makes non-Earth planets possible, and which has to be in `.atmosphere_material` from
+day one** rather than retrofitted around a shader written for Earth's three-term model.
+
+**#453 grew the reason skinned meshes vanish**: they are culled against the **bind pose**, so a
+reaching animation leaves the volume and the character is culled while still on screen. Reads
+as a streaming bug for a long time. The GPU skinning pre-pass is where the animated bounds are
+free.
 
 ### Three more, cheap, that make whole classes of bug unrepresentable
 
