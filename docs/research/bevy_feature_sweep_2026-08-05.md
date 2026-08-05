@@ -1,4 +1,4 @@
-# What to take from Bevy — sweep of 0.14 → 0.19
+# What to take from Bevy — sweep of 0.12 → 0.19
 
 Read on 2026-08-05: the release notes for 0.12 through 0.19, plus the
 virtual-geometry write-ups, the BVH-culling PR and the `bevy_ecs` docs.
