@@ -114,3 +114,61 @@ fn preview_material(resources: &mut Resources, guid: Guid, material: &Material) 
         *slot = material.clone();
     }
 }
+
+/// Writes one field of any reflected asset (#744).
+///
+/// The generic counterpart to [`handle_edit_material`], and the same
+/// two-speed shape:
+///
+/// - **Live** — set the field on the in-memory asset. The viewport
+///   follows the drag and nothing touches the disk.
+/// - **Committed** — write the file, then let [`asset_saved`] refresh
+///   from it and tell the running project.
+///
+/// Committing writes the file *first* and refreshes from it, keeping one
+/// direction of travel: the file is the asset, and both processes read
+/// it the same way. Skipping that is how editing a material used to
+/// change the Inspector and leave the running game rendering the old one.
+///
+/// [`asset_saved`]: crate::actions::handlers::asset_saved
+pub(super) fn handle_edit_asset_field(
+    resources: &mut Resources,
+    guid: Guid,
+    field: &str,
+    value: kooch_ecs::reflect::ReflectValue,
+    commit: bool,
+) {
+    let Some((path, type_name)) = resources.get::<AssetDatabase>().and_then(|db| {
+        let entry = db.entry(guid)?;
+        Some((entry.path.clone(), entry.type_name.clone()?))
+    }) else {
+        tracing::warn!(guid = %guid, "EditAssetField: no path or type in AssetDatabase");
+        return;
+    };
+
+    let Some(registration) = kooch_ecs::reflect::reflected_asset(&type_name) else {
+        // The Inspector only offers these widgets for a registered type,
+        // so reaching here means the registry and the panel disagree —
+        // worth a line rather than a silent no-op.
+        tracing::warn!(%type_name, "EditAssetField: type is not a reflected asset");
+        return;
+    };
+
+    if !(registration.write)(resources, guid, field, value) {
+        tracing::warn!(%type_name, field, "EditAssetField: the asset refused the value");
+        return;
+    }
+    if !commit {
+        return;
+    }
+
+    let Some(text) = (registration.to_ron)(resources, guid) else {
+        tracing::error!(%type_name, "EditAssetField: failed to serialise; not persisted");
+        return;
+    };
+    if let Err(e) = std::fs::write(&path, text) {
+        tracing::error!(path = %path.display(), error = %e, "failed to write asset");
+        return;
+    }
+    super::asset_saved(resources, &path);
+}

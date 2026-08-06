@@ -23,6 +23,7 @@ pub mod meshlet;
 pub mod perf;
 pub mod plugin;
 pub mod projection;
+pub mod settings;
 pub mod sky;
 pub mod texture;
 pub mod vbuf64;

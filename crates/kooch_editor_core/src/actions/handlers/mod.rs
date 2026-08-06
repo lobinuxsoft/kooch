@@ -120,6 +120,14 @@ pub(super) fn apply_non_ecs_action(
         } => {
             handle_edit_material(resources, *guid, material, *commit);
         }
+        EditorAction::EditAssetField {
+            guid,
+            field,
+            value,
+            commit,
+        } => {
+            handle_edit_asset_field(resources, *guid, field, value.clone(), *commit);
+        }
         EditorAction::ImportAssets { files, dest } => handle_import_assets(resources, files, dest),
         // ECS actions and Undo/Redo handled by caller.
         _ => {}
@@ -128,7 +136,7 @@ pub(super) fn apply_non_ecs_action(
 
 /// Copies each source file into `dest`, then forces a project asset
 /// re-scan so the new files register (and get `.meta` sidecars) and
-use assets::{handle_edit_material, handle_import_assets};
+use assets::{handle_edit_asset_field, handle_edit_material, handle_import_assets};
 use play::{handle_play, handle_stop};
 use project::{
     handle_clean_project, handle_close_project, handle_create_project, handle_launch_project,

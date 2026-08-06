@@ -41,7 +41,20 @@ pub(crate) enum AssetDetail {
     /// what is on disk. The two differ exactly while there are unsaved
     /// changes, which is what the Save button is for.
     Prefab(Box<PrefabDetail>),
-    /// A typed asset with no dedicated detail view yet.
+    /// Any asset registered with `register_reflected_asset!`, drawn
+    /// through the same grid components use (#744).
+    ///
+    /// The hand-written variants above still win where they exist: they
+    /// do more than field editing — texture pickers, import stats, a
+    /// prefab's entity tree. This is what turns "no import settings"
+    /// into "editable" for every type that never gets a bespoke view,
+    /// which is every type nobody remembers to add one for.
+    Reflected {
+        type_name: String,
+        fields: Vec<(String, kooch_ecs::reflect::ReflectValue)>,
+        field_metas: Option<&'static [kooch_ecs::reflect::FieldMeta]>,
+    },
+    /// A typed asset with neither a dedicated view nor reflection.
     Unknown { type_name: String },
 }
 
@@ -157,6 +170,21 @@ pub(crate) fn draw_asset_inspector(
             ),
             Some(AssetDetail::Mesh(info)) => draw_mesh_import(ui, info),
             Some(AssetDetail::Image(info)) => draw_image_import(ui, info),
+            Some(AssetDetail::Reflected {
+                type_name,
+                fields,
+                field_metas,
+            }) => draw_reflected_asset(
+                ui,
+                entry.guid,
+                type_name,
+                fields,
+                *field_metas,
+                euler_cache,
+                catalog,
+                entities,
+                actions,
+            ),
             Some(AssetDetail::Unknown { type_name }) => {
                 ui.weak(format!("No import settings for {type_name}."));
             }
@@ -310,3 +338,73 @@ fn kv(ui: &mut egui::Ui, key: &str, value: &str) {
     ui.label(value);
     ui.end_row();
 }
+
+/// Any reflected asset, drawn with the component grid (#744).
+///
+/// # The synthetic entity and component id
+///
+/// `draw_reflected_fields` takes both, and an asset has neither. Its own
+/// documentation already provides for this — *"a caller with no entity
+/// passes a synthetic one"* — and the prefab inspector does the same.
+/// Both are derived from the guid so two assets never share egui state
+/// or a euler-cache entry, and the generation is one no live entity
+/// carries.
+#[allow(clippy::too_many_arguments)]
+fn draw_reflected_asset(
+    ui: &mut egui::Ui,
+    guid: Guid,
+    type_name: &str,
+    fields: &[(String, kooch_ecs::reflect::ReflectValue)],
+    field_metas: Option<&'static [kooch_ecs::reflect::FieldMeta]>,
+    euler_cache: &mut std::collections::HashMap<super::EulerCacheKey, glam::Vec3>,
+    catalog: &[AssetCatalogEntry],
+    entities: &[crate::state::EntityDisplayInfo],
+    actions: &mut Vec<EditorAction>,
+) {
+    let short = type_name.rsplit("::").next().unwrap_or(type_name);
+    ui.label(short);
+    ui.separator();
+
+    if fields.is_empty() {
+        ui.weak("(no fields)");
+        return;
+    }
+
+    let bits = guid.as_uuid().as_u128();
+    let synthetic_entity = kooch_ecs::entity::Entity::new(bits as u32, ASSET_PSEUDO_GENERATION);
+    let synthetic_component = kooch_ecs::component::ComponentId((bits >> 64) as u32);
+
+    let edits = super::single::draw_reflected_fields(
+        ui,
+        synthetic_entity,
+        None,
+        synthetic_component,
+        fields,
+        field_metas,
+        euler_cache,
+        // An asset has no world transform to display a rotation against.
+        super::RotationContext::local_only(),
+        catalog,
+        entities,
+    );
+
+    // One write per gesture, not per frame. A slider reports a change
+    // every frame it is dragged; persisting each one writes the file,
+    // reads it back and round-trips to the running project — 29 times
+    // for one drag, measured in #728. While the pointer is down the
+    // in-memory copy is enough and the viewport follows it.
+    let commit = !ui.ctx().input(|i| i.pointer.any_down());
+    for (field, value) in edits {
+        actions.push(EditorAction::EditAssetField {
+            guid,
+            field,
+            value,
+            commit,
+        });
+    }
+}
+
+/// Generation no live entity carries, and distinct from the prefab
+/// inspector\'s. Keeps asset and prefab euler-cache entries apart when
+/// their synthetic indices happen to collide.
+const ASSET_PSEUDO_GENERATION: u32 = u32::MAX - 1;

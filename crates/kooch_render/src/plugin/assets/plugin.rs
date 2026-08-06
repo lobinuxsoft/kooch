@@ -187,13 +187,18 @@ impl Plugin for AssetPlugin {
         }
 
         let mut database = AssetDatabase::new();
+        // Derived from the loaders just registered above, so a file
+        // written by hand is adopted on the first scan rather than being
+        // invisible until something loads it.
+        let known = server.known_extensions();
         for root in &self.roots {
-            match database.scan_directory(root) {
+            match database.scan_directory_adopting(root, &known) {
                 Ok(report) => {
                     tracing::info!(
                         target: "kooch_render::plugin::assets",
                         root = %root.display(),
                         registered = report.registered,
+                        adopted = report.adopted,
                         orphans = report.orphans,
                         duplicates = report.duplicates,
                         "asset database scan complete",
@@ -239,6 +244,11 @@ impl Plugin for AssetPlugin {
         // from inside the editor render path if startup ordering
         // ever leaves us without a context.
         app.add_system(Stage::Startup, init_material_pipeline_system);
+        // Publishes the project's RenderSettings into the Resources the
+        // shading model reads (#744). Per frame, because the asset is
+        // reloaded in place when saved and there is no change signal to
+        // subscribe to; it returns early unless a value actually moved.
+        app.add_system(Stage::Update, crate::settings::apply_render_settings_system);
 
         let roots = self.roots.clone();
 

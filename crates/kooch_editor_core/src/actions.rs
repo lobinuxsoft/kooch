@@ -238,6 +238,21 @@ pub(crate) enum EditorAction {
         /// `false` while a drag is still in flight — update memory only.
         commit: bool,
     },
+    /// Writes one field of a reflected asset (#744).
+    ///
+    /// The generic counterpart to `EditMaterial`: any type registered
+    /// with `register_reflected_asset!` is edited through this, so a new
+    /// asset type needs no new action and no new handler.
+    ///
+    /// `commit` carries the same meaning it does there — `false` while a
+    /// drag is in flight, so the file is written once per gesture rather
+    /// than once per frame.
+    EditAssetField {
+        guid: kooch_core::Guid,
+        field: String,
+        value: kooch_ecs::reflect::ReflectValue,
+        commit: bool,
+    },
     /// Copy external files into a project folder and re-scan the asset
     /// database so they register as project assets. Emitted by the Asset
     /// Browser's drag-and-drop import. `dest` must be inside the project.
@@ -435,6 +450,7 @@ impl EditorAction {
             Self::SetPowerProfile(_)
             | Self::SetIdeCommand { .. }
             | Self::EditMaterial { .. }
+            | Self::EditAssetField { .. }
             | Self::ImportAssets { .. }
             | Self::CreateFolder { .. }
             | Self::CreateMaterial { .. }

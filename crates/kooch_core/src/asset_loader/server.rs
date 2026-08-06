@@ -80,6 +80,24 @@ impl AssetServer {
         self.loaders.contains_key(&TypeId::of::<T>())
     }
 
+    /// Every `(extension, asset type name)` pair any registered loader
+    /// claims.
+    ///
+    /// What the asset database uses to decide whether a file it has
+    /// never seen is an asset. Derived from the loaders rather than
+    /// listed anywhere: a list would be a second place to add an asset
+    /// type, and the day someone forgot it the type would load fine and
+    /// be invisible in the editor.
+    pub fn known_extensions(&self) -> Vec<(&'static str, &'static str)> {
+        self.loaders
+            .values()
+            .flat_map(|loader| {
+                let type_name = loader.asset_type_name();
+                loader.extensions().iter().map(move |ext| (*ext, type_name))
+            })
+            .collect()
+    }
+
     /// Returns the extensions claimed by `T`'s loader, or `&[]` if none.
     pub fn extensions_for<T: Asset>(&self) -> &[&'static str] {
         self.loaders
