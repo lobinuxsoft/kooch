@@ -22,6 +22,7 @@
 
 pub mod event;
 pub mod handle;
+pub mod icon;
 pub mod runner;
 pub mod title_metrics;
 mod winit_app;

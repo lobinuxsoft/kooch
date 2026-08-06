@@ -195,6 +195,7 @@ impl ApplicationHandler<WakeUp> for WinitApp {
 
         let attrs = WindowAttributes::default()
             .with_title(&config.title)
+            .with_window_icon(crate::icon::window_icon())
             .with_inner_size(winit::dpi::LogicalSize::new(config.width, config.height));
 
         let window = event_loop
