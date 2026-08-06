@@ -239,6 +239,11 @@ impl Plugin for AssetPlugin {
         // from inside the editor render path if startup ordering
         // ever leaves us without a context.
         app.add_system(Stage::Startup, init_material_pipeline_system);
+        // Publishes the project's RenderSettings into the Resources the
+        // shading model reads (#744). Per frame, because the asset is
+        // reloaded in place when saved and there is no change signal to
+        // subscribe to; it returns early unless a value actually moved.
+        app.add_system(Stage::Update, crate::settings::apply_render_settings_system);
 
         let roots = self.roots.clone();
 

@@ -261,3 +261,70 @@ mod tests {
         assert!(doc("ambient_intensity").contains("LUX"));
     }
 }
+
+/// Finds the project's settings asset, loads it, and publishes the
+/// values the shading model reads.
+///
+/// Runs every frame, and that is deliberate rather than lazy: the asset
+/// is reloaded in place when it is saved (#728), so the only way to
+/// notice an edit without polling would be a change signal the asset
+/// system does not have. The cost is a hash lookup and, when something
+/// actually differs, two `Resources` inserts.
+///
+/// **A project with no settings asset is the normal case**, not an
+/// error: the engine's defaults already apply, and this returns without
+/// touching anything.
+///
+/// Discovery is by type rather than by path — one `.rendersettings` per
+/// project, found wherever the author put it. Two of them is ambiguous
+/// and warned about once, taking the first in scan order so the scene
+/// still renders.
+pub fn apply_render_settings_system(resources: &mut Resources) {
+    let Some(guid) = find_settings_guid(resources) else {
+        return;
+    };
+    let Some(handle) =
+        kooch_ecs::reflect::asset_registry::load_handle::<RenderSettings>(resources, guid)
+    else {
+        return;
+    };
+    let Some(settings) = resources
+        .get::<kooch_core::assets::Assets<RenderSettings>>()
+        .and_then(|assets| assets.get(handle))
+        .copied()
+    else {
+        return;
+    };
+
+    // Only write when something changed. Inserting unconditionally would
+    // be correct and would also mean every frame reports the resource as
+    // freshly set, which any future change detection would believe.
+    let exposure = Exposure::from_physical(settings.camera());
+    let ambient = settings.ambient();
+    let stale = resources.get::<Exposure>() != Some(&exposure)
+        || resources.get::<AmbientLight>() != Some(&ambient);
+    if stale {
+        settings.apply(resources);
+        tracing::debug!(
+            target: "kooch_render::settings",
+            ev100 = exposure.ev100,
+            "render settings applied",
+        );
+    }
+}
+
+/// The guid of the project's settings asset, if it has one.
+fn find_settings_guid(resources: &Resources) -> Option<kooch_core::Guid> {
+    let db = resources.get::<kooch_core::asset_database::AssetDatabase>()?;
+    let type_name = std::any::type_name::<RenderSettings>();
+    let mut found = db.entries_of_type(type_name);
+    let first = found.next()?;
+    if found.next().is_some() {
+        tracing::warn!(
+            target: "kooch_render::settings",
+            "more than one .rendersettings in the project; using the first found. \
+             Settings are per project, so the others do nothing.",
+        );
+    }
+    Some(first.0)
+}
