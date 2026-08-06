@@ -18,8 +18,10 @@
 //! looks from somewhere else. `MeshletCull` is buffers rather than
 //! textures, so that part is cheap to have one of per cascade.
 
+mod atlas;
 mod cascades;
 
+pub use atlas::{AtlasRegion, DEFAULT_CASCADE_SIZE, SHADOW_DEPTH_FORMAT, ShadowAtlas};
 pub use cascades::{
     CASCADE_BLEND_FRACTION, CASCADE_COUNT, Cascade, build_cascades, frustum_corners,
     orthographic_rh_reverse_z, split_distances,
