@@ -53,6 +53,13 @@ pub struct ReflectedAssetRegistration {
     /// Writes one field back. `false` when the asset is not loaded or
     /// the field does not exist or rejected the value.
     pub write: fn(&mut Resources, Guid, &str, ReflectValue) -> bool,
+    /// Serialises the loaded asset to the RON its file holds.
+    ///
+    /// Needed because a field edit updates the in-memory copy and the
+    /// file is what both processes read. Without it the editor would
+    /// show the change and the running game would not — the failure
+    /// #728 was opened for.
+    pub to_ron: fn(&mut Resources, Guid) -> Option<String>,
 }
 
 kooch_core::inventory::collect!(ReflectedAssetRegistration);
@@ -103,6 +110,17 @@ pub fn read_reflected<T: Asset + Reflect>(
     )
 }
 
+/// Serialises a loaded asset. Used by the macro.
+#[doc(hidden)]
+pub fn to_ron_reflected<T: Asset + serde::Serialize>(
+    resources: &mut Resources,
+    guid: Guid,
+) -> Option<String> {
+    let handle = load_handle::<T>(resources, guid)?;
+    let asset = resources.get::<Assets<T>>()?.get(handle)?;
+    ron::ser::to_string_pretty(asset, ron::ser::PrettyConfig::default()).ok()
+}
+
 /// Writes one field of a loaded asset. Used by the macro.
 #[doc(hidden)]
 pub fn write_reflected<T: Asset + Reflect>(
@@ -128,6 +146,9 @@ pub fn write_reflected<T: Asset + Reflect>(
 /// Does everything [`kooch_core::register_asset!`] does, and adds the
 /// editor bridge. Use this instead of `register_asset!` for any asset
 /// whose fields a person should be able to change.
+///
+/// The type must be `Serialize` as well as `Reflect`: an edit updates
+/// memory, and the file is what the running game reads.
 ///
 /// ```ignore
 /// #[derive(Reflect, Serialize, Deserialize)]
@@ -156,6 +177,9 @@ macro_rules! register_reflected_asset {
                     $crate::reflect::asset_registry::write_reflected::<$ty>(
                         resources, guid, field, value,
                     )
+                },
+                to_ron: |resources, guid| {
+                    $crate::reflect::asset_registry::to_ron_reflected::<$ty>(resources, guid)
                 },
             }
         }
