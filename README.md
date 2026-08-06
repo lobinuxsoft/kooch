@@ -1,18 +1,29 @@
-# Kóoch
+<p align="center">
+  <img src="docs/brand/rendered/logo-256.png" alt="Kóoch" width="180">
+</p>
 
-A GPU-driven game engine written in Rust, with meshlet-based rendering and an editor.
+<h1 align="center">Kóoch</h1>
+
+<p align="center">
+  A GPU-driven game engine written in Rust, with meshlet-based rendering and an editor.
+</p>
 
 Named after the creator deity of the Tehuelche (Aonikenk) people of Patagonia,
-who existed alone in darkness and wept the sea into being.
+who existed alone in darkness and wept the sea into being. The mark is that
+teardrop, tessellated into cluster-coloured meshlets — which is the engine's
+own visibility-buffer debug view. See [`docs/brand/`](docs/brand/README.md).
 
 ## Documentation
 
-The book lives in [`docs/book/`](docs/book/src/SUMMARY.md). Build it with
-[`mdbook`](https://github.com/rust-lang/mdBook) and the `mdbook-mermaid` /
-`mdbook-toc` preprocessors:
+📖 **<https://lobinuxsoft.github.io/kooch/>** — published from `main` on every
+change to the book.
+
+Sources live in [`docs/book/`](docs/book/src/SUMMARY.md). To build locally,
+pin the versions CI uses — mdBook and its preprocessors talk over a versioned
+protocol and a mismatch fails with an unhelpful parse error:
 
 ```bash
-cargo install mdbook mdbook-mermaid mdbook-toc
+cargo install mdbook@0.5.2 mdbook-mermaid@0.17.0 mdbook-toc@0.15.3
 mdbook serve docs/book/
 ```
 
@@ -32,6 +43,7 @@ it did and why it was replaced.
 ## Features
 
 - **GPU-driven meshlet rendering**: cluster culling, visibility buffer, deferred shading, two-pass Hi-Z occlusion
+- **Physically-based lighting**: Cook-Torrance driven by the light components, in real photometric units (lux and lumens), with camera exposure. No shadows yet
 - **CPU ECS**: archetype storage, reflection, hierarchy, scene and prefab serialisation
 - **Physics**: rigid bodies and colliders via Rapier
 - **Multi-Gravity System**: Mario Galaxy-style gravity fields
