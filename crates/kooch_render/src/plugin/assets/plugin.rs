@@ -187,13 +187,18 @@ impl Plugin for AssetPlugin {
         }
 
         let mut database = AssetDatabase::new();
+        // Derived from the loaders just registered above, so a file
+        // written by hand is adopted on the first scan rather than being
+        // invisible until something loads it.
+        let known = server.known_extensions();
         for root in &self.roots {
-            match database.scan_directory(root) {
+            match database.scan_directory_adopting(root, &known) {
                 Ok(report) => {
                     tracing::info!(
                         target: "kooch_render::plugin::assets",
                         root = %root.display(),
                         registered = report.registered,
+                        adopted = report.adopted,
                         orphans = report.orphans,
                         duplicates = report.duplicates,
                         "asset database scan complete",

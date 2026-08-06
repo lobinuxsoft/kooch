@@ -140,8 +140,30 @@ impl AssetDatabase {
     /// registered). Existing entries with matching `(path, guid)`
     /// count as duplicates and are skipped.
     pub fn scan_directory(&mut self, root: &Path) -> Result<ScanReport, AssetDatabaseError> {
+        self.scan_directory_adopting(root, &[])
+    }
+
+    /// Scans, and **adopts** files with no `.meta` whose extension a
+    /// registered loader claims.
+    ///
+    /// `known` comes from [`AssetServer::known_extensions`], so the set
+    /// of adoptable types is whatever the binary can actually load —
+    /// never a list anyone maintains.
+    ///
+    /// Without this, a file written by hand or by a script is invisible
+    /// to the editor forever: the browser shows what the database
+    /// registered, the database registers what has a `.meta`, and the
+    /// `.meta` is written when something loads the file. Nothing breaks
+    /// that circle from outside.
+    ///
+    /// [`AssetServer::known_extensions`]: crate::asset_loader::AssetServer::known_extensions
+    pub fn scan_directory_adopting(
+        &mut self,
+        root: &Path,
+        known: &[(&'static str, &'static str)],
+    ) -> Result<ScanReport, AssetDatabaseError> {
         let mut report = ScanReport::default();
-        scan_recursive(root, self, &mut report)?;
+        scan_recursive(root, self, &mut report, known)?;
         Ok(report)
     }
 }
