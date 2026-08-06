@@ -36,7 +36,10 @@ mod gpu_light;
 
 pub use buffer::GpuLights;
 pub use extract::extract_lights;
-pub use frame::{AmbientLight, Exposure, IntiFrame, PhysicalCamera};
+pub use frame::{
+    AmbientLight, DEFAULT_LIGHT_SIZE_WORLD, Exposure, FRAME_CASCADE_COUNT, GpuCascade, IntiFrame,
+    PhysicalCamera,
+};
 pub use gpu_light::{
     GpuLight, LIGHT_KIND_DIRECTIONAL, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, spot_cone_mad,
 };

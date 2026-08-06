@@ -172,7 +172,26 @@ impl PhysicalCamera {
     }
 }
 
-/// Mirror of `IntiFrame` in `inti_pbr.wgsl`. 48 bytes.
+/// One cascade, as the shader reads it. Mirrors `IntiCascade` in
+/// `inti_pbr.wgsl`: 96 bytes, and the stride has to stay a multiple of
+/// 16 or the array indexes into the middle of the previous entry.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Pod, Zeroable)]
+pub struct GpuCascade {
+    pub view_proj: [[f32; 4]; 4],
+    /// xy scale, zw bias — maps this cascade's `[0,1]` uv into the atlas.
+    pub uv_scale_bias: [f32; 4],
+    pub far_depth: f32,
+    pub texel_world_size: f32,
+    pub _pad0: f32,
+    pub _pad1: f32,
+}
+
+/// How many cascades the frame carries. Fixed because the count is baked
+/// into the atlas layout — changing it is a texture change.
+pub const FRAME_CASCADE_COUNT: usize = 4;
+
+/// Mirror of `IntiFrame` in `inti_pbr.wgsl`. 464 bytes.
 ///
 /// `camera_position` rides here rather than in the shared camera UBO
 /// because that UBO is pinned at 64 B by two bind-group layouts, and
@@ -189,6 +208,26 @@ pub struct IntiFrame {
     pub exposure: f32,
     pub camera_position: [f32; 3],
     pub ambient_intensity: f32,
+    /// Unit vector down the view axis. Only the cascades use it, and
+    /// they need the axis rather than the radial direction: a radial
+    /// distance makes every cascade boundary a sphere, which crosses in
+    /// the corners of the screen before the centre.
+    pub camera_forward: [f32; 3],
+    pub _pad_forward: f32,
+    pub cascades: [GpuCascade; FRAME_CASCADE_COUNT],
+    /// 0 when nothing casts, or the atlas has not been rendered. The
+    /// dummy atlas bound in that case reads as fully lit anyway; the
+    /// flag skips the sampling.
+    pub shadows_enabled: u32,
+    /// Fraction of a split distance over which one cascade fades into
+    /// the next.
+    pub cascade_blend: f32,
+    /// Half-width of the light in world units, for the penumbra
+    /// estimate. The sun is not a point, and that is the only thing
+    /// separating a contact-hardening shadow from a uniformly blurred
+    /// one.
+    pub light_size_world: f32,
+    pub _pad_frame: f32,
 }
 
 impl IntiFrame {
@@ -205,9 +244,38 @@ impl IntiFrame {
             exposure: exposure.multiplier(),
             camera_position: camera_position.to_array(),
             ambient_intensity: ambient.intensity,
+            camera_forward: Vec3::NEG_Z.to_array(),
+            _pad_forward: 0.0,
+            cascades: [GpuCascade::default(); FRAME_CASCADE_COUNT],
+            shadows_enabled: 0,
+            cascade_blend: 0.1,
+            light_size_world: DEFAULT_LIGHT_SIZE_WORLD,
+            _pad_frame: 0.0,
         }
     }
+
+    /// Attaches the shadow cascades and turns sampling on.
+    pub fn with_shadows(
+        mut self,
+        camera_forward: Vec3,
+        cascades: [GpuCascade; FRAME_CASCADE_COUNT],
+        blend: f32,
+    ) -> Self {
+        self.camera_forward = camera_forward.normalize_or(Vec3::NEG_Z).to_array();
+        self.cascades = cascades;
+        self.shadows_enabled = 1;
+        self.cascade_blend = blend;
+        self
+    }
 }
+
+/// Half-width of the sun, in world units, for the penumbra estimate.
+///
+/// The real sun subtends about half a degree, which at a hundred metres
+/// is a source roughly a metre across. Larger than the truth here on
+/// purpose: a physically exact sun gives edges so sharp that PCSS is
+/// indistinguishable from PCF, and every film and game widens it.
+pub const DEFAULT_LIGHT_SIZE_WORLD: f32 = 2.0;
 
 #[cfg(test)]
 mod tests {
@@ -215,7 +283,37 @@ mod tests {
 
     #[test]
     fn frame_size_matches_shader() {
-        assert_eq!(std::mem::size_of::<IntiFrame>(), 48);
+        // 64 of header, four 96-byte cascades, 16 of tail.
+        assert_eq!(std::mem::size_of::<IntiFrame>(), 464);
+    }
+
+    /// std140/std430 require an array's element stride to be a multiple
+    /// of 16. At 92 or 100 bytes every cascade after the first would be
+    /// read from the middle of the previous one, and the symptom is
+    /// shadows in the wrong place rather than a validation error.
+    #[test]
+    fn cascade_stride_is_sixteen_byte_aligned() {
+        assert_eq!(std::mem::size_of::<GpuCascade>(), 96);
+        assert_eq!(std::mem::size_of::<GpuCascade>() % 16, 0);
+    }
+
+    #[test]
+    fn shadows_are_off_until_cascades_are_attached() {
+        let frame = IntiFrame::new(
+            &AmbientLight::default(),
+            &Exposure::default(),
+            Vec3::ZERO,
+            0,
+        );
+        assert_eq!(frame.shadows_enabled, 0);
+        let lit = frame.with_shadows(Vec3::NEG_Z, [GpuCascade::default(); 4], 0.1);
+        assert_eq!(lit.shadows_enabled, 1);
+    }
+
+    #[test]
+    fn a_degenerate_forward_falls_back_rather_than_producing_nan() {
+        let frame = IntiFrame::default().with_shadows(Vec3::ZERO, [GpuCascade::default(); 4], 0.1);
+        assert!(Vec3::from(frame.camera_forward).is_finite());
     }
 
     #[test]

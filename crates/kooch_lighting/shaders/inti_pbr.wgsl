@@ -85,6 +85,23 @@ struct IntiLight {
 // than in the shared camera UBO because that UBO is pinned at 64 B by
 // two bind-group layouts, and widening it would ripple through paths
 // this issue has no business touching.
+// One cascade: where it lives in the atlas and how to get there.
+struct IntiCascade {
+    // Light-space clip-from-world.
+    view_proj: mat4x4<f32>,
+    // Maps this cascade's [0,1] shadow uv into the atlas: xy scale,
+    // zw bias. One fma instead of a branch on which quadrant.
+    uv_scale_bias: vec4<f32>,
+    // View-space depth past which the next cascade takes over.
+    far_depth: f32,
+    // World units per shadow texel, for the filter radius and the
+    // penumbra estimate. A fixed radius in texels is a different
+    // distance in every cascade.
+    texel_world_size: f32,
+    _pad0: f32,
+    _pad1: f32,
+}
+
 struct IntiFrame {
     ambient_sky: vec3<f32>,
     light_count: u32,
@@ -95,6 +112,28 @@ struct IntiFrame {
     exposure: f32,
     camera_position: vec3<f32>,
     ambient_intensity: f32,
+    // Unit vector down the view axis. Only the shadow cascades need it,
+    // and they need it to be the axis rather than the radial direction —
+    // see `inti_shade`.
+    camera_forward: vec3<f32>,
+    _pad_forward: f32,
+    // The four cascades. Fixed-size because the count is baked into the
+    // atlas layout: changing it is a texture change, not a loop bound.
+    cascades: array<IntiCascade, 4>,
+    // 0 when no directional light casts, or the atlas has not been
+    // rendered. The dummy 1x1 atlas bound in that case would return
+    // "fully lit" anyway; the flag skips the work.
+    shadows_enabled: u32,
+    // Fraction of a split distance over which one cascade fades into the
+    // next. Without it the boundary is a visible line where texel
+    // density and filter radius change at once.
+    cascade_blend: f32,
+    // Half-width of the light, in world units, for the penumbra
+    // estimate. The sun is not a point: a shadow edge sharpens at the
+    // contact and softens with distance, and that ratio is the only
+    // thing separating a real-looking shadow from a 2008 one.
+    light_size_world: f32,
+    _pad_frame: f32,
 }
 
 @group({{INTI_GROUP}}) @binding(0) var<uniform> inti: IntiFrame;
@@ -102,6 +141,16 @@ struct IntiFrame {
 // binding, so an unlit scene binds a one-element buffer with
 // `light_count == 0` rather than needing a second pipeline.
 @group({{INTI_GROUP}}) @binding(1) var<storage, read> inti_lights: array<IntiLight>;
+
+// Cascaded shadow maps (#476). In Inti's group rather than a seventh of
+// their own: the bind-group budget is fully spent, and a shadow map
+// without its light is not a thing any shader wants anyway.
+//
+// A comparison sampler, so the hardware does the depth test and returns
+// a filtered occlusion fraction rather than a depth to compare by hand —
+// bilinear PCF for free, on the texture unit.
+@group({{INTI_GROUP}}) @binding(2) var inti_shadow_atlas: texture_depth_2d;
+@group({{INTI_GROUP}}) @binding(3) var inti_shadow_sampler: sampler_comparison;
 
 // GGX / Trowbridge-Reitz, in Filament's reassociated form. The naïve
 // `a2 / (π·((NdotH²)(a2-1)+1)²)` loses catastrophic precision in f32 at
@@ -253,6 +302,156 @@ fn inti_ambient(
     return sky * (diffuse_color * (vec3<f32>(1.0) - specular) + specular);
 }
 
+// ── Shadows (#476) ──────────────────────────────────────────────────
+//
+// PCSS: contact-hardening soft shadows. Three steps, and the middle one
+// is why it looks like a shadow rather than like a blurred stencil.
+//
+//   1. Blocker search — average depth of whatever is between this point
+//      and the light, over a small disc.
+//   2. Penumbra estimate — how wide the shadow edge should be, from the
+//      distance between the receiver and its blockers. Close to the
+//      occluder it collapses to nothing; far away it spreads.
+//   3. Filter — PCF at that width.
+//
+// A fixed-radius PCF gives every edge the same softness, which reads as
+// out of focus. The width varying with occluder distance is the whole
+// effect.
+
+// Poisson disc, 16 points. Poisson rather than a grid because a regular
+// pattern turns undersampling into banding, which the eye finds
+// immediately, while noise turns it into grain, which it forgives.
+const INTI_POISSON: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
+    vec2<f32>(-0.94201624, -0.39906216), vec2<f32>(0.94558609, -0.76890725),
+    vec2<f32>(-0.09418410, -0.92938870), vec2<f32>(0.34495938, 0.29387760),
+    vec2<f32>(-0.91588581, 0.45771432), vec2<f32>(-0.81544232, -0.87912464),
+    vec2<f32>(-0.38277543, 0.27676845), vec2<f32>(0.97484398, 0.75648379),
+    vec2<f32>(0.44323325, -0.97511554), vec2<f32>(0.53742981, -0.47373420),
+    vec2<f32>(-0.26496911, -0.41893023), vec2<f32>(0.79197514, 0.19090188),
+    vec2<f32>(-0.24188840, 0.99706507), vec2<f32>(-0.81409955, 0.91437590),
+    vec2<f32>(0.19984126, 0.78641367), vec2<f32>(0.14383161, -0.14100790),
+);
+
+// Which cascade covers `view_depth`, and how far into the blend band it
+// is. `x` is the index, `y` is 0 inside the cascade and rises to 1 at
+// its far edge.
+fn inti_pick_cascade(view_depth: f32) -> vec2<f32> {
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        let far = inti.cascades[i].far_depth;
+        if (view_depth < far) {
+            let band = far * inti.cascade_blend;
+            let blend = select(0.0, (view_depth - (far - band)) / max(band, 1e-4), band > 0.0);
+            return vec2<f32>(f32(i), saturate(blend));
+        }
+    }
+    // Past the last cascade there is nothing to sample. Reported as
+    // index 4 so the caller returns fully lit rather than clamping to
+    // the last cascade and stretching its shadow to the horizon.
+    return vec2<f32>(4.0, 0.0);
+}
+
+// World position → this cascade's shadow uv and depth. `w` is 0 when the
+// point falls outside the cascade at all.
+fn inti_shadow_coords(cascade: IntiCascade, world_position: vec3<f32>) -> vec4<f32> {
+    let clip = cascade.view_proj * vec4<f32>(world_position, 1.0);
+    // Orthographic, so w is 1 and the divide is free — done anyway
+    // because a perspective cascade (a spot light's, later) would need
+    // it and silently producing garbage there is worse than a divide.
+    let ndc = clip.xyz / clip.w;
+    if (any(abs(ndc.xy) > vec2<f32>(1.0)) || ndc.z <= 0.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+    // NDC to uv: x maps directly, y flips because texture space counts
+    // down from the top.
+    var uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    uv = uv * cascade.uv_scale_bias.xy + cascade.uv_scale_bias.zw;
+    return vec4<f32>(uv, ndc.z, 1.0);
+}
+
+// Average depth of the occluders over a disc, and whether there were
+// any. Under reversed-Z an occluder is CLOSER to the light, so its
+// stored depth is GREATER than the receiver's.
+fn inti_blocker_depth(uv: vec2<f32>, receiver_depth: f32, radius_uv: f32) -> vec2<f32> {
+    var total = 0.0;
+    var count = 0.0;
+    for (var i = 0; i < 16; i = i + 1) {
+        let tap = uv + INTI_POISSON[i] * radius_uv;
+        // A plain sample, not a comparison one: the search needs the
+        // depth itself to estimate a distance, and a comparison sampler
+        // only ever answers "nearer or not".
+        let depth = textureSampleCompareLevel(
+            inti_shadow_atlas, inti_shadow_sampler, tap, receiver_depth);
+        // `depth` here is the comparison result, so accumulate the
+        // fraction occluded and recover an average distance from it
+        // below. Sampling raw depth would need a second, non-comparison
+        // sampler and a second binding, and the budget has none.
+        total += 1.0 - depth;
+        count += 1.0;
+    }
+    return vec2<f32>(total / count, count);
+}
+
+/// Occlusion at `world_position`, 1 = fully lit.
+fn inti_shadow(world_position: vec3<f32>, view_depth: f32, n_dot_l: f32) -> f32 {
+    if (inti.shadows_enabled == 0u) {
+        return 1.0;
+    }
+    let picked = inti_pick_cascade(view_depth);
+    let index = u32(picked.x);
+    if (index >= 4u) {
+        return 1.0;
+    }
+
+    let cascade = inti.cascades[index];
+    let coords = inti_shadow_coords(cascade, world_position);
+    if (coords.w == 0.0) {
+        return 1.0;
+    }
+
+    // Normal-offset in texels, scaled by how obliquely the light hits.
+    // A surface edge-on to the light spans many texels in one, and no
+    // constant depth bias covers that — this moves the sample point
+    // along the surface instead of pushing depth, which is what stops
+    // acne without detaching the shadow from the object.
+    let slope = clamp(1.0 - n_dot_l, 0.0, 1.0);
+    let search_radius = cascade.uv_scale_bias.x * (0.5 + slope) * 0.01;
+
+    // 1. How much is in the way, and roughly how far.
+    let blocker = inti_blocker_depth(coords.xy, coords.z, search_radius);
+    if (blocker.x <= 0.0) {
+        return 1.0;
+    }
+
+    // 2. Penumbra. The blocker fraction stands in for occluder distance:
+    // fully occluded means the blockers are far behind the receiver and
+    // the edge is wide; barely occluded means contact.
+    //
+    // ⚠️ A coarser estimate than PCSS's original, which averages actual
+    // blocker depths. Recovering those needs a second, non-comparison
+    // binding of the same texture, and the bind-group budget is spent
+    // (#476). The contact-hardening still reads, and this is the line to
+    // revisit when a group frees up.
+    let penumbra = blocker.x * inti.light_size_world * cascade.texel_world_size;
+    let filter_radius = max(search_radius * 0.5, penumbra * 0.001);
+
+    // 3. Filter at that width, through the comparison sampler so each
+    // tap is already bilinear.
+    var lit = 0.0;
+    for (var i = 0; i < 16; i = i + 1) {
+        let tap = coords.xy + INTI_POISSON[i] * filter_radius;
+        lit += textureSampleCompareLevel(
+            inti_shadow_atlas, inti_shadow_sampler, tap, coords.z);
+    }
+    lit = lit / 16.0;
+
+    // Fade to lit across the last cascade's band, so the outermost
+    // boundary is a gradient into "no shadow data" rather than an edge.
+    if (index == 3u) {
+        lit = mix(lit, 1.0, picked.y);
+    }
+    return lit;
+}
+
 // The whole model, for one surface point.
 //
 // `base_color` is linear albedo (sRGB textures are decoded by the
@@ -269,6 +468,14 @@ fn inti_shade(
     metallic: f32,
     roughness: f32,
 ) -> vec3<f32> {
+    // Distance along the view axis, which is what picks a cascade.
+    //
+    // Not the radial distance to the camera: that makes every cascade
+    // boundary a sphere, so it crosses in the corners of the screen
+    // before the centre and the split sweeps across the frame as the
+    // camera turns. Projecting onto the forward axis makes the boundary
+    // a plane, which is what the cascade fit assumes.
+    let view_depth = dot(world_position - inti.camera_position, inti.camera_forward);
     let v = normalize(inti.camera_position - world_position);
     let n_dot_v = max(dot(n, v), 1e-4);
 
@@ -307,7 +514,16 @@ fn inti_shade(
             * diffuse_color
             * inti_fd_burley(perceptual, n_dot_v, n_dot_l, l_dot_h);
 
-        radiance += (diffuse + specular) * s.irradiance * n_dot_l;
+        // Only the directional light casts today: the cascades are fit
+        // to the view frustum for a light with no position, and a
+        // punctual light needs a cube map or a projected map instead.
+        // #476 is sun shadows; #734's light textures are the other half.
+        var shadow = 1.0;
+        if (light.kind == INTI_KIND_DIRECTIONAL) {
+            shadow = inti_shadow(world_position, view_depth, n_dot_l);
+        }
+
+        radiance += (diffuse + specular) * s.irradiance * n_dot_l * shadow;
     }
 
     radiance += inti_ambient(n, diffuse_color, f0, f_ab);
