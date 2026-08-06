@@ -1,0 +1,263 @@
+//! `RenderSettings` — what the **author** decided the project looks like
+//! (#744).
+//!
+//! Exposure and ambient light are decisions someone makes once for a
+//! project and keeps. Until this, they were `Resources` with defaults
+//! and no way to change them: #441 built the control and left it out of
+//! reach, which is the engine's recurring failure committed knowingly.
+//!
+//! # Author settings, not player settings
+//!
+//! This ships with the game and belongs in version control. What the
+//! **player** picks — resolution, volume, key bindings — is #736, lives
+//! under `~/.config/` and is not committed. Every engine keeps the two
+//! apart, and merged they would put an artist's exposure and a player's
+//! volume slider in the same file when exactly one of them belongs in a
+//! commit.
+//!
+//! # Why an asset
+//!
+//! Because the machinery exists. A RON loader that registers itself,
+//! reflection so the Inspector edits it, the save-and-refresh path from
+//! #728, and the asset browser as its home. The alternative is a bespoke
+//! settings panel, and the evidence that bespoke panels do not get built
+//! is that this setting had none for as long as it existed.
+//!
+//! # Why the fields are flat
+//!
+//! `PhysicalCamera` and `AmbientLight` are structs, and nesting them
+//! would need `FieldKind::Nested`. Flat fields with doc comments give
+//! the generic editor something to draw and give each value a tooltip
+//! that states its unit — which is the entire reason someone opens this
+//! asset.
+
+use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
+use kooch_core::resource::Resources;
+use kooch_ecs::Reflect;
+use kooch_lighting::{AmbientLight, Exposure, PhysicalCamera};
+use serde::{Deserialize, Serialize};
+
+/// Extension a settings file carries.
+pub const RENDER_SETTINGS_EXTENSION: &str = "rendersettings";
+
+/// How a project looks, as the author set it.
+///
+/// Absent, the defaults below apply and the project renders exactly as
+/// it would with no file at all. Missing configuration is not an error:
+/// a new project must not need a file it never asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Reflect, Serialize, Deserialize)]
+#[reflect(category = "Rendering")]
+pub struct RenderSettings {
+    /// Aperture, as an f-stop. **Lower is brighter**: f/1.4 gathers four
+    /// times the light of f/2.8.
+    ///
+    /// Exposure is expressed as a camera because EV100 is a correct
+    /// number and an unusable control. f/16 in bright sun, f/1.0 indoors.
+    #[serde(default = "default_aperture")]
+    pub aperture_f_stops: f32,
+    /// Shutter time in SECONDS. Longer is brighter. 1/125 is 0.008.
+    #[serde(default = "default_shutter")]
+    pub shutter_speed_s: f32,
+    /// Film speed. Higher is brighter — and in a real camera noisier,
+    /// though here it is brightness only.
+    #[serde(default = "default_iso")]
+    pub sensitivity_iso: f32,
+
+    /// Ambient light arriving from world up, as linear RGB.
+    ///
+    /// Stands in for a sky the renderer cannot sample yet. Without it a
+    /// metal facing away from every light renders pure black — correct
+    /// for the model, and indistinguishable from a bug.
+    #[serde(default = "default_sky")]
+    pub ambient_sky_color: glam::Vec3,
+    /// Ambient light arriving from world down, as linear RGB. Bounce
+    /// off the ground, not sky.
+    #[serde(default = "default_ground")]
+    pub ambient_ground_color: glam::Vec3,
+    /// Ambient illuminance in LUX, on the same scale as a directional
+    /// light. An office is 320; a directional light defaults to 10 000.
+    ///
+    /// Raise it and shadowed surfaces lift; raise it far and the scene
+    /// flattens, because ambient arrives from everywhere and therefore
+    /// describes no direction.
+    #[serde(default = "default_ambient_intensity")]
+    pub ambient_intensity: f32,
+}
+
+fn default_aperture() -> f32 {
+    PhysicalCamera::default().aperture_f_stops
+}
+fn default_shutter() -> f32 {
+    PhysicalCamera::default().shutter_speed_s
+}
+fn default_iso() -> f32 {
+    PhysicalCamera::default().sensitivity_iso
+}
+fn default_sky() -> glam::Vec3 {
+    AmbientLight::default().sky_color
+}
+fn default_ground() -> glam::Vec3 {
+    AmbientLight::default().ground_color
+}
+fn default_ambient_intensity() -> f32 {
+    AmbientLight::default().intensity
+}
+
+impl Default for RenderSettings {
+    /// The same values the engine uses with no settings asset at all —
+    /// deliberately, so adding the file changes nothing until someone
+    /// edits it.
+    fn default() -> Self {
+        let camera = PhysicalCamera::default();
+        let ambient = AmbientLight::default();
+        Self {
+            aperture_f_stops: camera.aperture_f_stops,
+            shutter_speed_s: camera.shutter_speed_s,
+            sensitivity_iso: camera.sensitivity_iso,
+            ambient_sky_color: ambient.sky_color,
+            ambient_ground_color: ambient.ground_color,
+            ambient_intensity: ambient.intensity,
+        }
+    }
+}
+
+impl RenderSettings {
+    pub fn camera(&self) -> PhysicalCamera {
+        PhysicalCamera {
+            aperture_f_stops: self.aperture_f_stops,
+            shutter_speed_s: self.shutter_speed_s,
+            sensitivity_iso: self.sensitivity_iso,
+        }
+    }
+
+    pub fn ambient(&self) -> AmbientLight {
+        AmbientLight {
+            sky_color: self.ambient_sky_color,
+            ground_color: self.ambient_ground_color,
+            intensity: self.ambient_intensity,
+        }
+    }
+
+    /// Publishes into the `Resources` the shading model already reads.
+    ///
+    /// The indirection is the point: `inti_pbr.wgsl` and `GpuLights`
+    /// never learn what an asset is, so a game that sets `Exposure`
+    /// directly keeps working and a headless test needs no file.
+    pub fn apply(&self, resources: &mut Resources) {
+        resources.insert(Exposure::from_physical(self.camera()));
+        resources.insert(self.ambient());
+    }
+}
+
+/// Reads a `.rendersettings` file.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RenderSettingsLoader;
+
+impl AssetLoader<RenderSettings> for RenderSettingsLoader {
+    fn extensions(&self) -> &[&'static str] {
+        &[RENDER_SETTINGS_EXTENSION]
+    }
+
+    fn load(&self, bytes: &[u8], _ctx: &mut LoadContext<'_>) -> AssetResult<RenderSettings> {
+        let text = std::str::from_utf8(bytes).map_err(|e| AssetError::Loader(Box::new(e)))?;
+        // Every field has a serde default, so a file with one line in it
+        // is valid and everything else stays at the engine's value. A
+        // settings file should never fail to load because it is old.
+        ron::from_str(text).map_err(|e| AssetError::Loader(Box::new(e)))
+    }
+}
+
+kooch_ecs::register_reflected_asset!(RenderSettings, RenderSettingsLoader);
+
+/// Serialises settings for writing.
+pub fn to_ron(settings: &RenderSettings) -> Result<String, ron::Error> {
+    ron::ser::to_string_pretty(settings, ron::ser::PrettyConfig::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_match_what_the_engine_does_without_a_file() {
+        let settings = RenderSettings::default();
+        assert_eq!(settings.camera(), PhysicalCamera::default());
+        assert_eq!(settings.ambient(), AmbientLight::default());
+    }
+
+    /// A settings file written by an older engine, or by hand with one
+    /// line in it, must load. Failing shut on an unknown or absent field
+    /// would make the asset a liability rather than a convenience.
+    #[test]
+    fn a_partial_file_fills_the_rest_from_defaults() {
+        let loader = RenderSettingsLoader;
+        let path = std::path::Path::new("project.rendersettings");
+        let mut ctx = LoadContext { path };
+        let parsed = loader
+            .load(b"(aperture_f_stops: 1.4)", &mut ctx)
+            .expect("a one-field file should load");
+        assert_eq!(parsed.aperture_f_stops, 1.4);
+        assert_eq!(
+            parsed.sensitivity_iso,
+            RenderSettings::default().sensitivity_iso
+        );
+    }
+
+    #[test]
+    fn an_empty_file_is_entirely_defaults() {
+        let loader = RenderSettingsLoader;
+        let path = std::path::Path::new("project.rendersettings");
+        let mut ctx = LoadContext { path };
+        let parsed = loader
+            .load(b"()", &mut ctx)
+            .expect("an empty record should load");
+        assert_eq!(parsed, RenderSettings::default());
+    }
+
+    #[test]
+    fn round_trips_through_ron() {
+        let mut settings = RenderSettings::default();
+        settings.aperture_f_stops = 2.0;
+        settings.ambient_intensity = 42.0;
+        let text = to_ron(&settings).expect("serialises");
+        let back: RenderSettings = ron::from_str(&text).expect("deserialises");
+        assert_eq!(back, settings);
+    }
+
+    #[test]
+    fn nonsense_is_refused_rather_than_defaulted() {
+        let loader = RenderSettingsLoader;
+        let path = std::path::Path::new("project.rendersettings");
+        let mut ctx = LoadContext { path };
+        assert!(loader.load(b"this is not ron", &mut ctx).is_err());
+    }
+
+    /// Every field carries a tooltip, because the whole reason to open
+    /// this asset is not knowing what the numbers mean.
+    #[test]
+    fn every_field_explains_itself() {
+        let settings = RenderSettings::default();
+        let missing: Vec<_> = settings
+            .reflect_fields()
+            .iter()
+            .filter(|m| m.doc.trim().is_empty())
+            .map(|m| m.name)
+            .collect();
+        assert!(missing.is_empty(), "fields with no tooltip: {missing:?}");
+    }
+
+    #[test]
+    fn the_unit_of_each_number_is_stated() {
+        let settings = RenderSettings::default();
+        let doc = |name: &str| {
+            settings
+                .reflect_fields()
+                .iter()
+                .find(|m| m.name == name)
+                .map(|m| m.doc)
+                .unwrap_or("")
+        };
+        assert!(doc("shutter_speed_s").contains("SECONDS"));
+        assert!(doc("ambient_intensity").contains("LUX"));
+    }
+}

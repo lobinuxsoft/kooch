@@ -15,6 +15,7 @@
 //! - [`TypedReflectAccessor`] — concrete accessor that does the downcast internally.
 
 mod accessor;
+pub mod asset_registry;
 mod entity_ref;
 mod error;
 mod field;
@@ -22,6 +23,7 @@ mod trait_def;
 mod value;
 
 pub(crate) use accessor::{ReflectAccessor, TypedReflectAccessor};
+pub use asset_registry::{ReflectedAssetRegistration, reflected_asset, reflected_asset_types};
 pub use entity_ref::EntityRef;
 pub use error::ReflectError;
 pub use field::{FieldChoice, FieldCondition, FieldKind, FieldMeta, InspectorVisibility};
