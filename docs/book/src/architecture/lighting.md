@@ -75,15 +75,30 @@ Two decisions worth stating because they diverge from something:
 
 ### Ambient
 
-A hemisphere lerp between a sky colour and a ground colour. It is a
-placeholder for image-based lighting ([#450](https://github.com/lobinuxsoft/kooch/issues/450))
-and it is not cosmetic: with no ambient term, a metal facing away from
-every light renders pure black — correct for the model, and
-indistinguishable from a bug to whoever is looking at it.
+A hemisphere lerp between a sky colour and a ground colour, authored in
+the project's settings asset. It is not cosmetic: with no ambient term a
+metal facing away from every light renders pure black — correct for the
+model, and indistinguishable from a bug to whoever is looking at it.
 
-⚠️ It lerps on **world up**, which stops meaning anything on the far side
-of a planet. A known limit of the placeholder. The replacement is a
-probe, not a smarter up vector.
+**It is a placeholder for a value the scene should compute, not author.**
+Ambient light is the sky, and the sky is about to become something the
+engine simulates: atmospheric scattering
+([#250](https://github.com/lobinuxsoft/kooch/issues/250),
+[#248](https://github.com/lobinuxsoft/kooch/issues/248)) already has to
+know what colour the air is in every direction, and Bevy's 0.18
+atmosphere lights the scene rather than only being drawn behind it. Once
+that exists, `ambient_sky_color` stops being two colours someone picked
+and becomes the atmosphere sampled — different at noon, at sunset, at
+altitude and in orbit, without anyone touching a field.
+
+The authored values stay useful for a scene with no atmosphere: an
+interior, a space station, a stylised game that wants flat fill. They
+just stop being the default answer.
+
+⚠️ Today it lerps on **world up**, which stops meaning anything on the far
+side of a planet. A known limit of the placeholder, and one the
+atmosphere fixes on its way past: a per-planet atmosphere knows which way
+up is, because up is what it is a sphere around.
 
 ## Units, and why the defaults are not physical
 
