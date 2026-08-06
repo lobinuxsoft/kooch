@@ -20,9 +20,11 @@
 
 mod atlas;
 mod cascades;
+mod raster;
 
 pub use atlas::{AtlasRegion, DEFAULT_CASCADE_SIZE, SHADOW_DEPTH_FORMAT, ShadowAtlas};
 pub use cascades::{
     CASCADE_BLEND_FRACTION, CASCADE_COUNT, Cascade, build_cascades, frustum_corners,
     orthographic_rh_reverse_z, split_distances,
 };
+pub use raster::ShadowRasterizer;
