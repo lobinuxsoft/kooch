@@ -9,47 +9,33 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-06, `development` at `788f12f`; `feat/csm-sun-shadows` at `78c387f`.
+Last updated 2026-08-06, `development` at `788f12f`; `feat/csm-sun-shadows` at `32d2ac5`.
 
 ---
 
-## Next — finish #476: wire the shadow pass in
+## Next — #735, contact shadows
 
-`feat/csm-sun-shadows` has **four commits and no PR**. Everything below
-compiles and is tested; **nothing constructs a `ShadowAtlas`**, so the
-scene renders exactly as it did before the branch. That is a half-built
-feature on a branch, not a disconnected one — but it becomes the second
-if it sits.
+**#476 is done: the sun casts.** The pieces that sat on the branch
+untested-in-anger — cascade placement, the atlas, the depth pass, the
+PCSS filter — are now built by `MeshletRenderStage` on the first frame
+that finds a `DirectionalLight` with `cast_shadows`, and released again
+when nothing wants one. `tests/csm_shadows.rs` is the acceptance:
+**a cube over a floor darkens the floor beneath it, and does not darken
+the floor beside it.**
 
-### What is done
+The second half of that sentence is the one worth keeping. Every
+reversed-Z mistake in this feature — an inverted sampler, a clear to 1.0,
+a positive bias — darkens *everything*, and a test that only checks "the
+shadow is dark" passes on all of them.
 
-| Piece | State |
-|---|---|
-| Cascade placement | Splits, sphere fit, texel snapping. **Both anti-shimmer properties, each with a test** |
-| Shadow atlas | One texture, four quadrants, one cull per cascade |
-| `shadow_depth.wgsl` + pass | Depth-only, **no fragment shader**, four passes with viewport + scissor |
-| PCSS sampling | Blocker search, penumbra, filter. In Inti's bind group at 2 and 3 |
-| `IntiFrame` | Carries the four cascades, 464 B, stride pinned by a test |
+### What the author controls
 
-### What is left — one sitting
-
-1. `MeshletRenderStage` builds a `ShadowAtlas` and a `ShadowRasterizer`.
-2. Per frame: extract the first shadow-casting `DirectionalLight`, build
-   the cascades from the camera, run the pass, fill `IntiFrame.cascades`,
-   call `bind_shadow_atlas`.
-3. `DirectionalLight::cast_shadows` starts being read. It is authored and
-   serialised and **nothing consumes it** — its own doc comment says so.
-4. Smoke: a cube on a plane. **Does the shadow shimmer when the camera
-   moves?** No test answers that, and it is what the sphere fit and the
-   texel snap exist for.
-
-### The three reversed-Z decisions, because each inverts silently
-
-- Sampler `CompareFunction::Greater`. `Less` inverts every shadow.
-- Atlas clears to **0.0** — the far plane. Clearing to 1 puts the scene
-  in shadow the first frame a cascade draws nothing.
-- Depth bias is **negative**. Positive gives acne, which reads as "needs
-  more shadow resolution" and costs a day.
+`.rendersettings` grew three fields, so the atlas is not a constant
+someone has to recompile to change: `shadows_enabled`,
+`shadow_distance` (metres — the cascades are fitted to whatever range
+they are given, so raising it blurs the shadows near the camera rather
+than adding distant ones), and `shadow_cascade_texels` (the atlas is
+twice this per axis: 2048 costs 64 MiB, 1024 costs 16).
 
 ### Known limits, stated rather than discovered
 
@@ -59,19 +45,35 @@ if it sits.
 - **The penumbra estimate is coarser than PCSS's original.** Real blocker
   depths need a second, non-comparison binding of the same texture, and
   there is no bind group left. Contact-hardening still reads.
-- **Only the directional light casts.** Punctual shadows need a cube map
-  or a projected map, which is #734's half.
+- **Only the directional light casts**, and only the first one. Punctual
+  shadows need a cube map or a projected map, which is #734's half.
+- **The pass runs per view.** Two open panels are eight cascade culls and
+  eight depth passes a frame — correct, because a cascade is fitted to
+  one camera, and worth a cache the day it shows up in a measurement.
+- **Still unanswered by any test: does the shadow shimmer when the camera
+  moves?** That is what the sphere fit and the texel snap exist for, and
+  it takes an eye in the editor.
 
-### After it
+### The three reversed-Z decisions, because each inverts silently
 
-**#735 contact shadows** — cascades are worst exactly at contact, which
-is where an object stops looking like it is standing on the floor.
-Screen-space, so it costs the same at any world scale.
+- Sampler `CompareFunction::Greater`. `Less` inverts every shadow.
+- Atlas clears to **0.0** — the far plane. Clearing to 1 puts the scene
+  in shadow the first frame a cascade draws nothing.
+- Depth bias is **negative**. Positive gives acne, which reads as "needs
+  more shadow resolution" and costs a day.
+
+### Next, and why it is contact shadows
+
+Cascades are worst exactly at contact — the few centimetres where an
+object meets the ground is where a shadow detaches or swims, and that is
+what makes things look like they float. Screen-space, so it costs the
+same at any world scale.
 
 Then **#743**, the debug views the owner actually asked for: one light at
 a time, greyscale, **with its shadow**. It answers *why is this dark* —
 no light reaching it, or a shadow reaching it — which look identical in a
-final frame and have different fixes. Blocked until shadows exist.
+final frame and have different fixes. It was blocked on #476 and is not
+any more.
 
 Then #250/#248 atmosphere, and #254 post + auto exposure.
 
