@@ -453,3 +453,47 @@ fn the_shadow_of_a_many_meshlet_mesh_has_no_holes() {
         lit_samples.len(),
     );
 }
+
+/// 🔴 The caster is off screen, and its shadow is not.
+///
+/// The owner's own diagnosis: shadows break "when the object is not in
+/// view and at some distance". That is when any point standing in for a
+/// directional light's viewpoint is furthest from the geometry, so a
+/// cull that measures from one starts rejecting meshlets that face the
+/// sun — and the shadow comes out with bites in its edge. Nothing above
+/// catches it, because every other test here keeps the caster in frame.
+#[test]
+fn a_caster_outside_the_camera_frustum_still_casts_a_whole_shadow() {
+    let Some(mut base) = sphere_rig() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    // Look at the ground beside the sphere, low enough that the sphere
+    // itself is above the frustum.
+    base.camera = ViewCamera::looking_at(Vec3::new(0.0, 1.2, 9.0), Vec3::new(3.0, -1.0, 0.0));
+    add_sun(&mut base.resources, true);
+    let pixels = render(&mut base);
+    let camera = base.camera;
+
+    let centre = CUBE_CENTRE + Vec3::new(4.0, 0.0, 0.0);
+    let direction = SUN.normalize();
+    let open_floor = luminance(&pixels, &camera, Vec3::new(-5.0, 0.0, 2.0));
+
+    let mut lit = Vec::new();
+    for i in 0..5 {
+        for j in 0..5 {
+            let origin = centre + Vec3::new((i as f32 - 2.0) * 0.1, 0.0, (j as f32 - 2.0) * 0.1);
+            let ground = origin + direction * (origin.y / direction.y).abs();
+            let l = luminance(&pixels, &camera, ground);
+            if l > open_floor * 0.75 {
+                lit.push(l);
+            }
+        }
+    }
+    assert!(
+        lit.is_empty(),
+        "{} of 25 points inside the shadow are lit with the caster off \
+         screen. Open floor reads {open_floor:.4}",
+        lit.len(),
+    );
+}

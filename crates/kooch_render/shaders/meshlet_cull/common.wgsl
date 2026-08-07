@@ -124,6 +124,24 @@ fn sphere_outside_frustum(center: vec3<f32>, radius: f32) -> bool {
 }
 
 fn camera_in_cone(apex: vec3<f32>, axis: vec3<f32>, cutoff: f32) -> bool {
+    // 🔴 Never for an orthographic view — a shadow cascade.
+    //
+    // The whole test is "form the vector from the viewpoint to the
+    // meshlet and compare it against the average normal", and a
+    // directional light has no viewpoint. Any point stood in for one is
+    // an approximation that gets worse the further the meshlet is from
+    // it, and it fails in the direction that matters: meshlets facing
+    // the sun get rejected, write no depth, and the shadow comes out
+    // with bites taken out of its edge. It shows up most when the caster
+    // is off screen, because that is when the stand-in point is
+    // furthest from the geometry.
+    //
+    // Bevy 0.19 does not cone-cull meshlets in ANY view — there is no
+    // occurrence of "cone" in `meshlet_cull_shared.wgsl`. Keeping it for
+    // the camera, where the viewpoint is real, and dropping it here.
+    if (params.lod_orthographic == 1u) {
+        return false;
+    }
     // meshopt sets cone_cutoff to 1.0 when the meshlet's normals are
     // too divergent for a meaningful cone. Treat that as a no-cull
     // sentinel — the test would otherwise reject everything.
