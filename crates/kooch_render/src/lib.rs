@@ -36,9 +36,7 @@ pub mod view_camera;
 /// and gives enough precision without stencil (which we don't use).
 pub const VIEWPORT_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-pub use contact_shadow::{
-    ContactShadowSettings, ContactShadowUbo, contact_shadow_shader, depth_to_linear,
-};
+pub use contact_shadow::{ContactShadowSettings, ContactShadowUbo, contact_shadow_shader};
 pub use graph::{FnNode, FrameInfo, GraphError, NodeId, RenderContext, RenderGraph, RenderNode};
 pub use hi_z::HiZ;
 pub use material::{MaterialParams, MaterialPool};

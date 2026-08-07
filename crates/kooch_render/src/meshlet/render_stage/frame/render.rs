@@ -294,7 +294,6 @@ impl MeshletRenderStage {
         let contact = crate::contact_shadow::ContactShadowUbo::new(
             view_proj,
             camera.near,
-            camera.far,
             &resources
                 .get::<crate::contact_shadow::ContactShadowSettings>()
                 .copied()
