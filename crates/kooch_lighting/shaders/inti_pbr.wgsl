@@ -520,6 +520,53 @@ fn inti_shadow(
     return lit;
 }
 
+// One colour per cascade, for the debug view. Distinct hues rather
+// than a ramp: the question this answers is "which cascade covers
+// this", and neighbouring cascades have to be told apart at a glance.
+const INTI_CASCADE_COLOURS: array<vec3<f32>, 4> = array<vec3<f32>, 4>(
+    vec3<f32>(1.0, 0.35, 0.35),
+    vec3<f32>(0.35, 1.0, 0.35),
+    vec3<f32>(0.40, 0.55, 1.0),
+    vec3<f32>(1.0, 0.90, 0.35),
+);
+
+/// What the shadow system sees at this point, as colour.
+///
+/// Answers the three questions that look identical in a shaded frame:
+/// **which cascade** covers this fragment, **whether it is inside** that
+/// cascade's volume at all, and **whether the map recorded an occluder**
+/// over it. A missing shadow is one of "the cascade does not reach
+/// here", "the occluder was culled from the map" and "the sampling is
+/// wrong", and those have different fixes.
+///
+/// - magenta — no atlas: nothing casts
+/// - black — inside no cascade volume, so nothing can be in shadow
+/// - dark grey — past the last cascade
+/// - cascade hue, dim — in the cascade, nothing recorded above it
+/// - cascade hue, bright — an occluder is recorded over this point
+fn inti_shadow_debug(world_position: vec3<f32>, view_depth: f32) -> vec3<f32> {
+    if (inti.shadows_enabled == 0u) {
+        return vec3<f32>(1.0, 0.0, 1.0);
+    }
+    let picked = inti_pick_cascade(view_depth);
+    let index = u32(picked.x);
+    if (index >= 4u) {
+        return vec3<f32>(0.15);
+    }
+    let cascade = inti.cascades[index];
+    let coords = inti_shadow_coords(cascade, world_position);
+    if (coords.w == 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let stored = textureSampleLevel(
+        inti_shadow_atlas, inti_shadow_point_sampler, coords.xy, 0u);
+    // Reversed-Z: an occluder sits nearer the light and is stored
+    // greater. No bias here on purpose — this view is meant to show
+    // what is in the map, including the acne the shading pass hides.
+    let recorded = select(0.30, 1.0, stored > coords.z);
+    return INTI_CASCADE_COLOURS[index] * recorded;
+}
+
 // The whole model, for one surface point.
 //
 // `base_color` is linear albedo (sRGB textures are decoded by the

@@ -67,6 +67,8 @@ struct MaterialParams {
 // `MeshletDebugMode::Normals`. Pinned to the Rust enum by a test in
 // `debug.rs`; WGSL cannot import a Rust constant.
 const DEBUG_MODE_NORMALS: u32 = 11u;
+// `MeshletDebugMode::ShadowCascades`, pinned by the same test.
+const DEBUG_MODE_SHADOW_CASCADES: u32 = 12u;
 
 // PCG-style hash → vec3 rgb in [0.2, 1.0]. The 0.2 floor keeps any
 // id from collapsing to black (which the alpha=0 background uses).
@@ -173,6 +175,10 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
 
             if (screen.debug_mode == DEBUG_MODE_NORMALS) {
                 rgb = n * 0.5 + 0.5;
+            } else if (screen.debug_mode == DEBUG_MODE_SHADOW_CASCADES) {
+                let vd = dot(
+                    surf.world_position - inti.camera_position, inti.camera_forward);
+                rgb = inti_shadow_debug(surf.world_position, vd);
             } else {
                 let m = materials[surf.material_id];
                 // No texture sampling on this path: a compute shader
