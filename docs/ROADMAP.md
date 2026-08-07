@@ -39,28 +39,40 @@ twice this per axis: 2048 costs 64 MiB, 1024 costs 16).
 
 ### Known limits, stated rather than discovered
 
-- **Alpha-cut geometry does not cut.** No fragment shader means foliage
-  casts the shadow of its quad. Needs a second pipeline with a
-  discarding fragment, for the materials that want it.
-- **The penumbra estimate is coarser than PCSS's original.** Real blocker
-  depths need a second, non-comparison binding of the same texture, and
-  there is no bind group left. Contact-hardening still reads.
-- **Only the directional light casts**, and only the first one. Punctual
-  shadows need a cube map or a projected map, which is #734's half.
+- **Alpha-cut geometry does not cut.** No fragment shader in the depth
+  pass means foliage casts the shadow of its quad.
+- **Only the directional light casts**, and only the first one. #734.
 - **The pass runs per view.** Two open panels are eight cascade culls and
-  eight depth passes a frame — correct, because a cascade is fitted to
-  one camera, and worth a cache the day it shows up in a measurement.
-- **Still unanswered by any test: does the shadow shimmer when the camera
-  moves?** That is what the sphere fit and the texel snap exist for, and
-  it takes an eye in the editor.
+  eight depth passes a frame.
+- **No temporal filter.** Bevy's third option (Jimenez '14) rotates its
+  taps by per-frame noise and needs TAA to resolve it — #732, and motion
+  vectors do not exist yet. Castano '13 is what they ship by default and
+  what runs here.
+- **`unclipped_depth` is not emulated.** Where the adapter lacks
+  `DEPTH_CLIP_CONTROL` the near plane falls back to a cascade-width
+  margin, which costs depth precision. Bevy emulates it in the fragment
+  shader instead.
+- **No test pins the scaled-instance LOD.** The property is a survivor
+  count out of the cascade culls and `ShadowPass` does not expose them.
 
-### The three reversed-Z decisions, because each inverts silently
+### What the port cost, and the pattern in it
 
-- Sampler `CompareFunction::Greater`. `Less` inverts every shadow.
-- Atlas clears to **0.0** — the far plane. Clearing to 1 puts the scene
-  in shadow the first frame a cascade draws nothing.
-- Depth bias is **negative**. Positive gives acne, which reads as "needs
-  more shadow resolution" and costs a day.
+Nine fixes after the pass was wired, and **every one was a place where
+Bevy 0.19 does something this engine had not needed before shadows
+existed** — an orthographic view. The LOD selector divided by a distance;
+the splits anchored at the camera's near plane; the cull cone-tested from
+a viewpoint a directional light does not have; the simplification error
+ignored instance scale; the slices touched instead of overlapping.
+
+The recurring shape: a mechanism ported in half. The cascade blend went
+in without the slice overlap it needs, and produced an artifact neither
+half has alone.
+
+🔴 **And the diagnosis pattern, which cost the most:** three times a
+cause was named from a screenshot and three times it was wrong. What
+worked was the `Shadow cascades` debug view, which separates "the map is
+incomplete" from "the sampling loses it" — two failures that look
+identical in a shaded frame and live in different files.
 
 ### Next, and why it is contact shadows
 
