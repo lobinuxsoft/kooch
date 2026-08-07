@@ -121,6 +121,7 @@ fn add_directional(resources: &mut Resources, direction: Vec3, intensity: f32) {
             color: Vec3::ONE,
             intensity,
             cast_shadows: false,
+            contact_shadows: false,
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_quat(rotation),

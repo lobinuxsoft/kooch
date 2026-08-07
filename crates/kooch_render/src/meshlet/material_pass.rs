@@ -45,18 +45,30 @@ pub const MATERIAL_PBR_DEFAULT_BODY: &str = include_str!("../../shaders/material
 /// 5 is the first free index.
 pub const MATERIAL_PASS_INTI_GROUP: u32 = 5;
 
+/// Group-0 bindings the contact-shadow march takes on this path (#735).
+/// The vbuf, camera and screen uniforms hold 0/1/2; these are the next
+/// free, and they sit in group 0 because the depth buffer is per view.
+pub const MATERIAL_PASS_CONTACT_UBO_BINDING: u32 = 3;
+pub const MATERIAL_PASS_CONTACT_DEPTH_BINDING: u32 = 4;
+
 /// Composes a complete material shader: the visibility-buffer resolve
-/// helpers, then the Inti shading model, then the material-specific
-/// body. This stands in for the `#import` a WGSL preprocessor would
-/// provide.
+/// helpers, the contact-shadow march, then the Inti shading model, then
+/// the material-specific body. This stands in for the `#import` a WGSL
+/// preprocessor would provide.
 ///
 /// Order matters — WGSL resolves top to bottom, so anything the body
-/// calls has to be declared above it.
+/// calls has to be declared above it. The march goes ahead of the
+/// shading model for exactly that reason: `inti_shade` calls it.
 pub fn compose_material_shader(material_body: &str) -> String {
+    let contact = crate::contact_shadow::contact_shadow_shader(
+        MATERIAL_PASS_CONTACT_UBO_BINDING,
+        MATERIAL_PASS_CONTACT_DEPTH_BINDING,
+    );
     let inti = kooch_lighting::inti_pbr_shader(MATERIAL_PASS_INTI_GROUP);
     [
         VISIBILITY_BUFFER_RESOLVE_SHADER,
         SURFACE_RECONSTRUCT_SHADER,
+        &contact,
         &inti,
         material_body,
     ]
@@ -79,9 +91,12 @@ mod tests {
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
         );
+        // `emit_to_string` rather than `{e}`: the Display impl of a
+        // validation error is the headline only ("entry point invalid"),
+        // and the line it happened on is in the span.
         validator
             .validate(&module)
-            .unwrap_or_else(|e| panic!("{what} should validate: {e}"));
+            .unwrap_or_else(|e| panic!("{what} should validate:\n{}", e.emit_to_string(source)));
     }
 
     #[test]

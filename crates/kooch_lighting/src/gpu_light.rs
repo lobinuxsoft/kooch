@@ -59,11 +59,30 @@ pub struct GpuLight {
     /// per light per fragment. See [`spot_cone_mad`].
     pub spot_scale: f32,
     pub spot_offset: f32,
+    /// Per-light opt-ins, one bit each. See [`GpuLight::FLAG_CONTACT_SHADOWS`].
+    pub flags: u32,
     pub _pad0: f32,
-    pub _pad1: f32,
 }
 
 impl GpuLight {
+    /// This light marches the depth buffer for contact shadows (#735).
+    ///
+    /// Opt-in per light rather than global because the march is the one
+    /// shadow cost that scales with *light count* rather than with
+    /// geometry: fifty lights in a room would be fifty screen-space
+    /// marches on every pixel they touch. Mirrors
+    /// `INTI_LIGHT_CONTACT_SHADOWS` in `inti_pbr.wgsl`.
+    pub const FLAG_CONTACT_SHADOWS: u32 = 1;
+
+    /// `FLAG_CONTACT_SHADOWS` when `enabled`, nothing otherwise.
+    fn flags(enabled: bool) -> u32 {
+        if enabled {
+            Self::FLAG_CONTACT_SHADOWS
+        } else {
+            0
+        }
+    }
+
     /// Directional: direction comes from the transform, never from a
     /// field. A light that ignores its own rotation is a second source
     /// of truth, and the gizmo already draws the arrow from this one.
@@ -77,8 +96,8 @@ impl GpuLight {
             kind: LIGHT_KIND_DIRECTIONAL,
             spot_scale: 0.0,
             spot_offset: 0.0,
+            flags: Self::flags(light.contact_shadows),
             _pad0: 0.0,
-            _pad1: 0.0,
         }
     }
 
@@ -92,8 +111,8 @@ impl GpuLight {
             kind: LIGHT_KIND_POINT,
             spot_scale: 0.0,
             spot_offset: 0.0,
+            flags: Self::flags(light.contact_shadows),
             _pad0: 0.0,
-            _pad1: 0.0,
         }
     }
 
@@ -108,8 +127,8 @@ impl GpuLight {
             kind: LIGHT_KIND_SPOT,
             spot_scale: scale,
             spot_offset: offset,
+            flags: Self::flags(light.contact_shadows),
             _pad0: 0.0,
-            _pad1: 0.0,
         }
     }
 }

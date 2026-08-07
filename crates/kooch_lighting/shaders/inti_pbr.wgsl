@@ -77,9 +77,18 @@ struct IntiLight {
     // `cos_inner = cos_outer + 1 / scale`.
     spot_scale: f32,
     spot_offset: f32,
+    // Per-light opt-ins, one bit each. Took the first of the two pad
+    // words rather than growing the record: a scene with fifty lights
+    // should not pay fifty screen-space marches per pixel, and the
+    // switch that prevents it costs nothing it was not already
+    // reserving.
+    flags: u32,
     _pad0: f32,
-    _pad1: f32,
 }
+
+// Bit 0 of `IntiLight.flags` — this light marches for contact shadows.
+// Mirrors `GpuLight::FLAG_CONTACT_SHADOWS`.
+const INTI_LIGHT_CONTACT_SHADOWS: u32 = 1u;
 
 // Per-frame lighting constants. `camera_position` lives here rather
 // than in the shared camera UBO because that UBO is pinned at 64 B by
@@ -672,6 +681,7 @@ fn inti_shade(
     base_color: vec3<f32>,
     metallic: f32,
     roughness: f32,
+    frag_coord: vec2<f32>,
 ) -> vec3<f32> {
     // Distance along the view axis, which is what picks a cascade.
     //
@@ -726,6 +736,16 @@ fn inti_shade(
         var shadow = 1.0;
         if (light.kind == INTI_KIND_DIRECTIONAL) {
             shadow = inti_shadow(world_position, n, s.to_light, view_depth, n_dot_l);
+        }
+
+        // Contact shadows (#735) — the last few centimetres the cascades
+        // cannot resolve, for any light kind, because a screen-space
+        // march needs no shadow map and so has no reason to be the sun's
+        // privilege. Skipped where the cascade already shadows this
+        // point: multiplying two occlusions of the same occluder darkens
+        // twice, and a march that finds nothing cannot brighten it back.
+        if ((light.flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u && shadow > 0.0) {
+            shadow *= inti_contact_shadow(world_position, s.to_light, frag_coord);
         }
 
         radiance += (diffuse + specular) * s.irradiance * n_dot_l * shadow;

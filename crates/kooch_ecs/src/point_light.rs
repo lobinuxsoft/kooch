@@ -20,6 +20,7 @@ use crate::Reflect;
 /// - `intensity`: [`lumens::ROOM_LIGHT_NO_GI`](crate::light_consts::lumens::ROOM_LIGHT_NO_GI)
 /// - `range`: 10.0
 /// - `cast_shadows`: true
+/// - `contact_shadows`: false
 #[derive(Debug, Clone, Copy, Reflect)]
 #[reflect(category = "Rendering")]
 pub struct PointLight {
@@ -54,9 +55,21 @@ pub struct PointLight {
     pub range: f32,
     /// Whether this light casts shadows.
     ///
-    /// ⚠️ Not implemented yet — shadows land with #476 / #477. The field
-    /// is stored and saved; today nothing reads it.
+    /// ⚠️ Not implemented yet — punctual shadows need a cube map (point)
+    /// or a projected map (spot); #476 shipped the sun's cascades only.
+    /// The field is stored and saved; today nothing reads it.
     pub cast_shadows: bool,
+    /// Whether this light marches the depth buffer for contact shadows.
+    ///
+    /// Off by default, unlike [`DirectionalLight`](crate::DirectionalLight):
+    /// the march costs per light per pixel, and a scene has one sun but
+    /// can have fifty lamps. Turn it on for the few whose contact with
+    /// the floor the viewer actually looks at.
+    ///
+    /// ⚠️ This is the ONLY shadow a punctual light casts today, so it
+    /// grounds an object without the light being occluded by anything
+    /// else in the room.
+    pub contact_shadows: bool,
 }
 
 impl Default for PointLight {
@@ -67,6 +80,7 @@ impl Default for PointLight {
             intensity: crate::light_consts::lumens::ROOM_LIGHT_NO_GI,
             range: 10.0,
             cast_shadows: true,
+            contact_shadows: false,
         }
     }
 }
@@ -89,6 +103,7 @@ mod tests {
         assert_eq!(l.intensity, crate::light_consts::lumens::ROOM_LIGHT_NO_GI);
         assert_eq!(l.range, 10.0);
         assert!(l.cast_shadows);
+        assert!(!l.contact_shadows);
     }
 
     #[test]
@@ -98,7 +113,14 @@ mod tests {
         let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
         assert_eq!(
             names,
-            &["active", "color", "intensity", "range", "cast_shadows"]
+            &[
+                "active",
+                "color",
+                "intensity",
+                "range",
+                "cast_shadows",
+                "contact_shadows"
+            ]
         );
     }
 }

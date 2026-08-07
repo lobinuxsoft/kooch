@@ -162,6 +162,7 @@ impl Vbuf64Stage {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
+        depth_sample_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
         density_view: &wgpu::TextureView,
         density_mode: u32,
@@ -171,6 +172,7 @@ impl Vbuf64Stage {
         cull: &MeshletCull,
         scene: &MeshletScene,
         view_proj: glam::Mat4,
+        contact: &crate::contact_shadow::ContactShadowUbo,
         debug_mode: u32,
         clear_depth: bool,
     ) {
@@ -222,6 +224,7 @@ impl Vbuf64Stage {
                 encoder,
                 &self.vbuf_view,
                 &self.material_depth_view,
+                depth_sample_view,
                 color_view,
                 meshlet_bg,
                 cull,
@@ -229,6 +232,7 @@ impl Vbuf64Stage {
                 pipeline,
                 lights_bg,
                 view_proj,
+                contact,
                 self.size,
                 debug_mode,
             );

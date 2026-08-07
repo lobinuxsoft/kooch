@@ -37,6 +37,7 @@ use kooch_ecs::Reflect;
 use kooch_lighting::{AmbientLight, Exposure, PhysicalCamera};
 use serde::{Deserialize, Serialize};
 
+use crate::contact_shadow::ContactShadowSettings;
 use crate::shadow::ShadowSettings;
 
 /// Extension a settings file carries.
@@ -119,6 +120,28 @@ pub struct RenderSettings {
     /// Unity ships 10.05 and Godot 10.
     #[serde(default = "default_first_cascade")]
     pub shadow_first_cascade_distance: f32,
+
+    /// Steps a contact-shadow ray takes. **Zero turns contact shadows
+    /// off** for the whole project, whatever the individual lights say.
+    ///
+    /// Contact shadows are the few centimetres the cascades cannot
+    /// resolve — where an object meets the floor. Cost is per light that
+    /// opted in, per pixel it touches.
+    #[serde(default = "default_contact_steps")]
+    pub contact_shadow_steps: u32,
+    /// How far a contact-shadow ray travels, in METRES. Longer grounds
+    /// objects that hover further from what they stand on, and costs the
+    /// same — the steps just spread wider.
+    #[serde(default = "default_contact_length")]
+    pub contact_shadow_length: f32,
+    /// Thickness the march assumes every surface has, in METRES.
+    ///
+    /// The depth buffer records a surface, not a solid, so the march has
+    /// to be told how deep to treat one. Too small and contact shadows
+    /// detach from thin geometry; too large and a railing shadows
+    /// everything behind it.
+    #[serde(default = "default_contact_thickness")]
+    pub contact_shadow_thickness: f32,
 }
 
 fn default_aperture() -> f32 {
@@ -154,6 +177,15 @@ fn default_sun_softness() -> f32 {
 fn default_first_cascade() -> f32 {
     ShadowSettings::default().first_cascade_distance
 }
+fn default_contact_steps() -> u32 {
+    ContactShadowSettings::default().linear_steps
+}
+fn default_contact_length() -> f32 {
+    ContactShadowSettings::default().length
+}
+fn default_contact_thickness() -> f32 {
+    ContactShadowSettings::default().thickness
+}
 
 impl Default for RenderSettings {
     /// The same values the engine uses with no settings asset at all —
@@ -163,6 +195,7 @@ impl Default for RenderSettings {
         let camera = PhysicalCamera::default();
         let ambient = AmbientLight::default();
         let shadows = ShadowSettings::default();
+        let contact = ContactShadowSettings::default();
         Self {
             aperture_f_stops: camera.aperture_f_stops,
             shutter_speed_s: camera.shutter_speed_s,
@@ -175,6 +208,9 @@ impl Default for RenderSettings {
             shadow_cascade_texels: shadows.cascade_texels,
             sun_softness: shadows.sun_softness,
             shadow_first_cascade_distance: shadows.first_cascade_distance,
+            contact_shadow_steps: contact.linear_steps,
+            contact_shadow_length: contact.length,
+            contact_shadow_thickness: contact.thickness,
         }
     }
 }
@@ -206,6 +242,14 @@ impl RenderSettings {
         }
     }
 
+    pub fn contact_shadows(&self) -> ContactShadowSettings {
+        ContactShadowSettings {
+            linear_steps: self.contact_shadow_steps,
+            length: self.contact_shadow_length,
+            thickness: self.contact_shadow_thickness,
+        }
+    }
+
     /// Publishes into the `Resources` the shading model already reads.
     ///
     /// The indirection is the point: `inti_pbr.wgsl` and `GpuLights`
@@ -215,6 +259,7 @@ impl RenderSettings {
         resources.insert(Exposure::from_physical(self.camera()));
         resources.insert(self.ambient());
         resources.insert(self.shadows());
+        resources.insert(self.contact_shadows());
     }
 }
 
@@ -371,9 +416,11 @@ pub fn apply_render_settings_system(resources: &mut Resources) {
     let exposure = Exposure::from_physical(settings.camera());
     let ambient = settings.ambient();
     let shadows = settings.shadows();
+    let contact = settings.contact_shadows();
     let stale = resources.get::<Exposure>() != Some(&exposure)
         || resources.get::<AmbientLight>() != Some(&ambient)
-        || resources.get::<ShadowSettings>() != Some(&shadows);
+        || resources.get::<ShadowSettings>() != Some(&shadows)
+        || resources.get::<ContactShadowSettings>() != Some(&contact);
     if stale {
         settings.apply(resources);
         tracing::debug!(

@@ -36,6 +36,7 @@ impl MeshletRenderStage {
         scene_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
         material_bg: &wgpu::BindGroup,
+        contact: &crate::contact_shadow::ContactShadowUbo,
         timer_slot: Option<usize>,
         instance_count: u32,
     ) -> MeshletRenderStats {
@@ -249,6 +250,7 @@ impl MeshletRenderStage {
             queue,
             &mut encoder,
             &self.views[view_id].vbuf_view,
+            &self.views[view_id].depth_sample_view,
             &self.views[view_id].color_view,
             meshlet_bg,
             material_bg,
@@ -256,6 +258,7 @@ impl MeshletRenderStage {
             &self.scene,
             self.lights.bind_group(),
             view_proj,
+            contact,
             self.views[view_id].size,
             debug_mode,
         );

@@ -93,7 +93,8 @@ fn fs_material(in: FsInput) -> @location(0) vec4<f32> {
     let metallic = mat.metallic_roughness_emissive_pad.x * mr.b;
     let roughness = mat.metallic_roughness_emissive_pad.y * mr.g;
 
-    var radiance = inti_shade(surf.world_position, world_n, base, metallic, roughness);
+    var radiance = inti_shade(
+        surf.world_position, world_n, base, metallic, roughness, in.position.xy);
     // Emissive is radiance the surface produces rather than reflects, so
     // it joins before tonemapping and ignores every light in the scene.
     radiance += base * mat.metallic_roughness_emissive_pad.z;

@@ -64,6 +64,32 @@ pub fn inti_pbr_shader(group: u32) -> String {
     INTI_PBR_TEMPLATE.replace(GROUP_PLACEHOLDER, &group.to_string())
 }
 
+/// What `inti_shade` calls for contact shadows (#735), when the composer
+/// has nothing to march.
+///
+/// The march itself needs the scene depth buffer, which is a **per-view**
+/// resource and so belongs in the consumer's own group rather than in
+/// Inti's — that group is shared across views, and a per-view resource
+/// living in it is what made shadows vanish once the light buffer grew.
+/// So the shading model states the contract and `kooch_render` supplies
+/// the implementation; this stub is what a path with no depth to sample
+/// concatenates instead.
+///
+/// Naming a function the model calls but does not define is not a
+/// weakness of the arrangement, it is the point: a path that forgets to
+/// supply one of the two fails to compile rather than quietly shading
+/// differently from its sibling.
+pub const INTI_CONTACT_SHADOW_STUB: &str = "\
+// No depth buffer to march — every light reports fully unoccluded.
+fn inti_contact_shadow(
+    world_position: vec3<f32>,
+    to_light: vec3<f32>,
+    frag_coord: vec2<f32>,
+) -> f32 {
+    return 1.0;
+}
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,10 +122,25 @@ mod tests {
         assert!(INTI_PBR_TEMPLATE.contains(GROUP_PLACEHOLDER));
     }
 
+    /// The model calls `inti_contact_shadow` and never defines it, so
+    /// alone it is half a shader. That is deliberate — see
+    /// [`INTI_CONTACT_SHADOW_STUB`] — and this pins that the missing
+    /// half is exactly the one named, rather than something else having
+    /// gone missing.
+    #[test]
+    fn the_model_needs_a_contact_shadow_implementation_concatenated() {
+        assert!(inti_pbr_shader(0).contains("inti_contact_shadow("));
+        assert!(INTI_CONTACT_SHADOW_STUB.contains("fn inti_contact_shadow("));
+    }
+
     #[test]
     fn shading_model_parses_and_validates() {
-        let module =
-            naga::front::wgsl::parse_str(&inti_pbr_shader(0)).expect("inti_pbr.wgsl should parse");
+        let module = naga::front::wgsl::parse_str(&format!(
+            "{}\n{}",
+            INTI_CONTACT_SHADOW_STUB,
+            inti_pbr_shader(0)
+        ))
+        .expect("inti_pbr.wgsl should parse");
         let mut validator = naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
