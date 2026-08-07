@@ -171,8 +171,8 @@ impl ShadowAtlas {
             uv_scale_bias: self.regions[i].uv_scale_bias(atlas),
             far_depth: cascades[i].far_depth,
             texel_world_size: cascades[i].texel_world_size,
+            depth_extent: cascades[i].depth_extent,
             _pad0: 0.0,
-            _pad1: 0.0,
         })
     }
 

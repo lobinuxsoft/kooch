@@ -183,8 +183,13 @@ pub struct GpuCascade {
     pub uv_scale_bias: [f32; 4],
     pub far_depth: f32,
     pub texel_world_size: f32,
+    /// World units the `[0,1]` depth range spans, so the shader can turn
+    /// a difference between two stored depths into metres. PCSS's
+    /// penumbra is proportional to that distance, and a ratio with no
+    /// scale is only usable through a constant that is wrong in three
+    /// cascades out of four.
+    pub depth_extent: f32,
     pub _pad0: f32,
-    pub _pad1: f32,
 }
 
 /// How many cascades the frame carries. Fixed because the count is baked
@@ -222,11 +227,14 @@ pub struct IntiFrame {
     /// Fraction of a split distance over which one cascade fades into
     /// the next.
     pub cascade_blend: f32,
-    /// Half-width of the light in world units, for the penumbra
-    /// estimate. The sun is not a point, and that is the only thing
-    /// separating a contact-hardening shadow from a uniformly blurred
-    /// one.
-    pub light_size_world: f32,
+    /// Tangent of the sun's angular RADIUS — how much wider a shadow
+    /// gets per metre between blocker and receiver.
+    ///
+    /// An angle rather than a width, because that is what a light
+    /// infinitely far away has. A width in world units would have to
+    /// mean a width *at some distance*, and no code path was ever going
+    /// to agree on which.
+    pub sun_softness: f32,
     pub _pad_frame: f32,
 }
 
@@ -249,7 +257,7 @@ impl IntiFrame {
             cascades: [GpuCascade::default(); FRAME_CASCADE_COUNT],
             shadows_enabled: 0,
             cascade_blend: 0.1,
-            light_size_world: DEFAULT_LIGHT_SIZE_WORLD,
+            sun_softness: DEFAULT_SUN_SOFTNESS,
             _pad_frame: 0.0,
         }
     }
@@ -257,7 +265,7 @@ impl IntiFrame {
     /// Attaches the shadows from [`FrameShadows`], if the frame has any.
     pub fn with_optional_shadows(self, shadows: Option<FrameShadows>) -> Self {
         match shadows {
-            Some(s) => self.with_shadows(s.camera_forward, s.cascades, s.blend),
+            Some(s) => self.with_shadows(s.camera_forward, s.cascades, s.blend, s.sun_softness),
             None => self,
         }
     }
@@ -268,11 +276,13 @@ impl IntiFrame {
         camera_forward: Vec3,
         cascades: [GpuCascade; FRAME_CASCADE_COUNT],
         blend: f32,
+        sun_softness: f32,
     ) -> Self {
         self.camera_forward = camera_forward.normalize_or(Vec3::NEG_Z).to_array();
         self.cascades = cascades;
         self.shadows_enabled = 1;
         self.cascade_blend = blend;
+        self.sun_softness = sun_softness.max(0.0);
         self
     }
 }
@@ -292,15 +302,19 @@ pub struct FrameShadows {
     pub cascades: [GpuCascade; FRAME_CASCADE_COUNT],
     /// Fraction of a split distance the cascades cross-fade over.
     pub blend: f32,
+    /// Tangent of the sun's angular radius. See [`IntiFrame::sun_softness`].
+    pub sun_softness: f32,
 }
 
-/// Half-width of the sun, in world units, for the penumbra estimate.
+/// Tangent of the sun's angular radius, by default.
 ///
-/// The real sun subtends about half a degree, which at a hundred metres
-/// is a source roughly a metre across. Larger than the truth here on
-/// purpose: a physically exact sun gives edges so sharp that PCSS is
-/// indistinguishable from PCF, and every film and game widens it.
-pub const DEFAULT_LIGHT_SIZE_WORLD: f32 = 2.0;
+/// The real sun subtends about half a degree, so the honest value is
+/// 0.0047 — and at that width PCSS is indistinguishable from PCF and
+/// costs eight extra taps to prove it. 0.03 is roughly a three-degree
+/// sun: about seven centimetres of penumbra per metre of gap, which is
+/// what makes a shadow read as attached at its base and soft where it
+/// is not. Every film and game widens it, for this reason.
+pub const DEFAULT_SUN_SOFTNESS: f32 = 0.03;
 
 #[cfg(test)]
 mod tests {
@@ -331,13 +345,14 @@ mod tests {
             0,
         );
         assert_eq!(frame.shadows_enabled, 0);
-        let lit = frame.with_shadows(Vec3::NEG_Z, [GpuCascade::default(); 4], 0.1);
+        let lit = frame.with_shadows(Vec3::NEG_Z, [GpuCascade::default(); 4], 0.1, 0.03);
         assert_eq!(lit.shadows_enabled, 1);
     }
 
     #[test]
     fn a_degenerate_forward_falls_back_rather_than_producing_nan() {
-        let frame = IntiFrame::default().with_shadows(Vec3::ZERO, [GpuCascade::default(); 4], 0.1);
+        let frame =
+            IntiFrame::default().with_shadows(Vec3::ZERO, [GpuCascade::default(); 4], 0.1, 0.03);
         assert!(Vec3::from(frame.camera_forward).is_finite());
     }
 

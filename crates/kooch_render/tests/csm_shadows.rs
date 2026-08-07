@@ -70,6 +70,7 @@ fn rig() -> Option<Rig> {
         cascade_texels: 1024,
         max_distance: 60.0,
         enabled: true,
+        ..Default::default()
     });
     // Ambient down but not off. Off would make anything in shadow black,
     // and "darker than lit" would then pass for a shadow that swallowed
@@ -299,5 +300,64 @@ fn the_project_can_turn_shadows_off() {
     assert!(
         luminance(&off, &camera, shadow_centre()) > luminance(&on, &camera, shadow_centre()),
         "shadows stayed on with ShadowSettings::enabled = false",
+    );
+}
+
+/// How many pixels along a horizontal line through the shadow are
+/// neither clearly lit nor clearly shadowed — the width of the edge.
+fn edge_width(pixels: &[u8], camera: &ViewCamera, centre: Vec3) -> usize {
+    let (_, y) = project(camera, centre);
+    let lit = luminance_at(pixels, SIZE, SIZE - 20, y, 1);
+    let dark = luminance(pixels, camera, centre);
+    let low = dark + (lit - dark) * 0.25;
+    let high = dark + (lit - dark) * 0.75;
+    (0..SIZE)
+        .filter(|&x| {
+            let l = luminance_at(pixels, SIZE, x, y, 0);
+            l > low && l < high
+        })
+        .count()
+}
+
+/// 🔴 The penumbra term used to be multiplied by a magic 0.001 and lost
+/// every `max()` against the fixed search radius, so PCSS was a PCF with
+/// eight wasted taps. This is the test that says the estimate reaches
+/// the filter: a wider sun has to blur the edge more.
+#[test]
+fn a_wider_sun_softens_the_shadow_edge() {
+    let Some(mut sharp) = rig() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    sharp.resources.insert(ShadowSettings {
+        sun_softness: 0.0,
+        ..*sharp
+            .resources
+            .get::<ShadowSettings>()
+            .expect("rig sets one")
+    });
+    add_sun(&mut sharp.resources, true);
+    let hard = render(&mut sharp);
+
+    let mut soft_rig = rig().expect("device acquired once already");
+    soft_rig.resources.insert(ShadowSettings {
+        sun_softness: 0.25,
+        ..*soft_rig
+            .resources
+            .get::<ShadowSettings>()
+            .expect("rig sets one")
+    });
+    add_sun(&mut soft_rig.resources, true);
+    let soft = render(&mut soft_rig);
+
+    let camera = sharp.camera;
+    let hard_edge = edge_width(&hard, &camera, shadow_centre());
+    let soft_edge = edge_width(&soft, &camera, shadow_centre());
+
+    assert!(
+        soft_edge > hard_edge,
+        "edge was {hard_edge} px at softness 0 and {soft_edge} px at 0.25 — \
+         the penumbra estimate is not reaching the filter, which is what \
+         the magic 0.001 used to prevent",
     );
 }

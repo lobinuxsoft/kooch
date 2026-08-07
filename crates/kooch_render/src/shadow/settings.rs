@@ -33,6 +33,9 @@ pub struct ShadowSettings {
     /// the sixty-four megabytes are not spent by a project that does not
     /// want shadows.
     pub enabled: bool,
+    /// Tangent of the sun's angular radius: how much wider a shadow gets
+    /// per metre between the blocker and the surface it lands on.
+    pub sun_softness: f32,
 }
 
 impl Default for ShadowSettings {
@@ -41,6 +44,7 @@ impl Default for ShadowSettings {
             max_distance: DEFAULT_SHADOW_DISTANCE,
             cascade_texels: DEFAULT_CASCADE_TEXELS,
             enabled: true,
+            sun_softness: kooch_lighting::DEFAULT_SUN_SOFTNESS,
         }
     }
 }

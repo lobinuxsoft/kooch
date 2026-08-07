@@ -36,6 +36,8 @@ pub struct GpuLights {
     layout: wgpu::BindGroupLayout,
     /// Comparison sampler for the shadow atlas.
     shadow_sampler: wgpu::Sampler,
+    /// Plain sampler on the same texture, for the blocker search.
+    shadow_point_sampler: wgpu::Sampler,
     /// 1×1 depth texture bound when there is no shadow atlas.
     ///
     /// A binding cannot be left empty, and a second pipeline for
@@ -114,6 +116,28 @@ impl GpuLights {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
+                // A second, non-comparison sampler on the same texture,
+                // for PCSS's blocker search — which needs the depth
+                // itself, where a comparison sampler only ever answers
+                // "nearer or not".
+                //
+                // 🔴 This was written off as impossible: "there is no
+                // bind group left". The exhausted budget is on *groups*,
+                // and this is a fourth binding inside a group that
+                // already exists. Bevy does exactly this
+                // (`directional_shadow_textures_linear_sampler`), which
+                // is what made the claim worth re-checking.
+                //
+                // Non-filtering because the sample type is `Depth`, and
+                // wgpu will not pair that with a filtering sampler. The
+                // search averages eight taps, so bilinear on each of
+                // them buys very little.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
             ],
         })
     }
@@ -141,6 +165,16 @@ impl GpuLights {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
+        let shadow_point_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("inti_shadow_point_sampler"),
+            // Nearest on both, because the layout declares this
+            // non-filtering and wgpu checks that the sampler agrees.
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
         let dummy_shadow = create_dummy_shadow(device);
         let bind_group = create_bind_group(
             device,
@@ -149,6 +183,7 @@ impl GpuLights {
             &light_buffer,
             &dummy_shadow,
             &shadow_sampler,
+            &shadow_point_sampler,
         );
         Self {
             frame_buffer,
@@ -156,6 +191,7 @@ impl GpuLights {
             bind_group,
             layout,
             shadow_sampler,
+            shadow_point_sampler,
             dummy_shadow,
             shadow_atlas: None,
             capacity: INITIAL_CAPACITY,
@@ -189,6 +225,7 @@ impl GpuLights {
             &self.light_buffer,
             self.shadow_atlas.as_ref().unwrap_or(&self.dummy_shadow),
             &self.shadow_sampler,
+            &self.shadow_point_sampler,
         );
     }
 
@@ -325,6 +362,7 @@ fn create_bind_group(
     lights: &wgpu::Buffer,
     shadow_atlas: &wgpu::TextureView,
     shadow_sampler: &wgpu::Sampler,
+    shadow_point_sampler: &wgpu::Sampler,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("inti_lights_bg"),
@@ -345,6 +383,10 @@ fn create_bind_group(
             wgpu::BindGroupEntry {
                 binding: 3,
                 resource: wgpu::BindingResource::Sampler(shadow_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(shadow_point_sampler),
             },
         ],
     })

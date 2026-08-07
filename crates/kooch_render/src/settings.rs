@@ -101,6 +101,15 @@ pub struct RenderSettings {
     /// each axis: 2048 costs 64 MiB, 1024 costs 16.
     #[serde(default = "default_cascade_texels")]
     pub shadow_cascade_texels: u32,
+    /// How soft shadow edges get with distance: the TANGENT of the sun's
+    /// angular radius, so 0.03 widens a shadow by three centimetres per
+    /// metre of gap between the object and what its shadow lands on.
+    ///
+    /// The honest value for our sun is 0.005, and at that width a soft
+    /// shadow is indistinguishable from a hard one. Raise it for an
+    /// overcast look; drop it to zero for a hard edge.
+    #[serde(default = "default_sun_softness")]
+    pub sun_softness: f32,
 }
 
 fn default_aperture() -> f32 {
@@ -130,6 +139,9 @@ fn default_shadow_distance() -> f32 {
 fn default_cascade_texels() -> u32 {
     ShadowSettings::default().cascade_texels
 }
+fn default_sun_softness() -> f32 {
+    ShadowSettings::default().sun_softness
+}
 
 impl Default for RenderSettings {
     /// The same values the engine uses with no settings asset at all —
@@ -149,6 +161,7 @@ impl Default for RenderSettings {
             shadows_enabled: shadows.enabled,
             shadow_distance: shadows.max_distance,
             shadow_cascade_texels: shadows.cascade_texels,
+            sun_softness: shadows.sun_softness,
         }
     }
 }
@@ -175,6 +188,7 @@ impl RenderSettings {
             max_distance: self.shadow_distance,
             cascade_texels: self.shadow_cascade_texels,
             enabled: self.shadows_enabled,
+            sun_softness: self.sun_softness,
         }
     }
 

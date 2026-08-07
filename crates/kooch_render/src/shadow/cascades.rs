@@ -61,6 +61,14 @@ pub struct Cascade {
     /// a bias in texels is a different distance in each cascade — and
     /// PCSS's penumbra estimate.
     pub texel_world_size: f32,
+    /// World units the `[0,1]` depth range spans.
+    ///
+    /// The shading pass needs it to turn a difference between two
+    /// stored depths back into a distance in metres, which is what
+    /// PCSS's penumbra is proportional to. Without it the shader has a
+    /// ratio and no scale, and the only way to use one is a magic
+    /// constant that is wrong in three of the four cascades.
+    pub depth_extent: f32,
 }
 
 /// Practical split scheme: the distances at which one cascade hands over
@@ -156,6 +164,7 @@ pub fn build_cascades(
         view_proj: Mat4::IDENTITY,
         far_depth: 0.0,
         texel_world_size: 0.0,
+        depth_extent: 0.0,
     }; CASCADE_COUNT];
 
     let mut slice_near = near;
@@ -208,13 +217,15 @@ pub fn build_cascades(
         // Reversed-Z, like every other projection in the engine, so the
         // shadow pass compares `Greater` the way the main passes do and
         // nobody has to hold two conventions at once.
+        let depth_extent = extent + radius * 2.0;
         let projection =
-            orthographic_rh_reverse_z(-radius, radius, -radius, radius, 0.0, extent + radius * 2.0);
+            orthographic_rh_reverse_z(-radius, radius, -radius, radius, 0.0, depth_extent);
 
         *cascade = Cascade {
             view_proj: projection * snap * light_view,
             far_depth: slice_far,
             texel_world_size,
+            depth_extent,
         };
         slice_near = slice_far;
     }

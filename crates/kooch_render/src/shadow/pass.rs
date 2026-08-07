@@ -80,6 +80,7 @@ impl ShadowPass {
         aspect: f32,
         sun_direction: Vec3,
         max_distance: f32,
+        sun_softness: f32,
         meshlet_capacity: u32,
         group_capacity: u32,
     ) -> PreparedShadows {
@@ -102,6 +103,7 @@ impl ShadowPass {
                 camera_forward: camera.forward(),
                 cascades: self.atlas.gpu_cascades(&cascades),
                 blend: CASCADE_BLEND_FRACTION,
+                sun_softness,
             },
             cascades,
         }
