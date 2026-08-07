@@ -21,7 +21,7 @@
 
 use crate::meshlet::MeshletCull;
 
-use super::cascades::CASCADE_COUNT;
+use super::cascades::{CASCADE_COUNT, Cascade};
 
 /// Depth format for the atlas.
 ///
@@ -141,6 +141,39 @@ impl ShadowAtlas {
     pub fn cull_mut(&mut self, cascade: usize) -> &mut MeshletCull {
         let index = cascade.min(CASCADE_COUNT - 1);
         &mut self.culls[index]
+    }
+
+    /// Grows every cascade's survivor lists to fit the scene.
+    ///
+    /// All four, unconditionally: a cascade that culls nothing this
+    /// frame still dispatches one thread per instance-meshlet pair, and
+    /// sizing only the ones that drew last frame is how the 257th
+    /// instance panics in the cascade nobody was looking at.
+    pub fn ensure_capacity(&mut self, device: &wgpu::Device, meshlets: u32, groups: u32) {
+        for cull in &mut self.culls {
+            cull.ensure_capacity(device, meshlets);
+            cull.ensure_group_capacity(device, groups);
+        }
+    }
+
+    /// Packs placed cascades into the records the shading model reads.
+    ///
+    /// The atlas does this rather than `cascades.rs` because the uv
+    /// transform is the atlas's own layout — a cascade knows where it
+    /// is in the world and nothing about which quadrant it landed in.
+    pub fn gpu_cascades(
+        &self,
+        cascades: &[Cascade; CASCADE_COUNT],
+    ) -> [kooch_lighting::GpuCascade; kooch_lighting::FRAME_CASCADE_COUNT] {
+        let atlas = self.atlas_size();
+        std::array::from_fn(|i| kooch_lighting::GpuCascade {
+            view_proj: cascades[i].view_proj.to_cols_array_2d(),
+            uv_scale_bias: self.regions[i].uv_scale_bias(atlas),
+            far_depth: cascades[i].far_depth,
+            texel_world_size: cascades[i].texel_world_size,
+            _pad0: 0.0,
+            _pad1: 0.0,
+        })
     }
 
     /// Bytes the atlas occupies, for the VRAM tracker.

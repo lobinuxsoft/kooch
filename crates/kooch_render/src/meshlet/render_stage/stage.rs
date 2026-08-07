@@ -49,6 +49,25 @@ pub struct MeshletRenderStage {
     /// [`kooch_lighting::GpuLights`] for the ordering argument.
     pub(super) lights: kooch_lighting::GpuLights,
 
+    /// The sun's shadow atlas and depth pipeline (#476).
+    ///
+    /// `None` until a frame finds a directional light that casts, and
+    /// allocated once when one does: the atlas is 64 MiB at the default
+    /// resolution, and a headless test, an unlit scene or a project that
+    /// turned shadows off must not pay it. Dropped again when the
+    /// author disables shadows or changes the cascade resolution — the
+    /// texture size is baked in at allocation.
+    ///
+    /// Shared across views for the same reason the lights are: which
+    /// geometry occludes the sun does not depend on where a camera is.
+    /// The cascade *placement* does, and it is per frame rather than
+    /// stored — each view rebuilds it from its own camera before
+    /// recording, and each view submits its own encoder.
+    pub(super) shadows: Option<crate::shadow::ShadowPass>,
+    /// Cascade resolution `shadows` was allocated at, so a settings
+    /// change is noticed rather than silently ignored.
+    pub(super) shadow_texels: u32,
+
     /// GPU mirror of [`MeshletPipeline::pool`]. Lazy-rebuilt by
     /// [`Self::render_with_assets`] when [`Self::pool_dirty`] is set,
     /// which happens whenever [`Self::ensure_gpu_mesh`] introduces a

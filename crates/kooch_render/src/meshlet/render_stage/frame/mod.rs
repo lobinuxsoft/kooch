@@ -17,6 +17,7 @@ mod render;
 mod render_hi_z_2pass;
 mod render_r64;
 mod resize;
+mod shadows;
 
 #[cfg(test)]
 mod tests;

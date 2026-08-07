@@ -84,6 +84,10 @@ impl MeshletRenderStage {
             rasterizer,
             deferred,
             lights: kooch_lighting::GpuLights::new(device),
+            // Allocated on the first frame that finds a sun; see the
+            // field's doc for why not here.
+            shadows: None,
+            shadow_texels: 0,
             gpu_pool: None,
             pool_dirty: false,
             meshlet_bgl,
