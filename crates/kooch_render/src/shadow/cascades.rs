@@ -286,7 +286,20 @@ pub fn build_cascades(
             // the projection is.
             light_eye: world_from_light.transform_point3(centre_light) - direction * depth_extent,
         };
-        slice_near = slice_far;
+        // 🔴 The next slice starts INSIDE this one.
+        //
+        // The shading pass blends the two cascades across the last
+        // `CASCADE_BLEND_FRACTION` of this split, and it can only do
+        // that if the next cascade's volume actually covers that band.
+        // Chaining slices end to end leaves it not covering it: a point
+        // inside the band projects outside the next cascade, the sample
+        // returns "no shadow data here", and the blend mixes a real
+        // shadow with fully lit — a pale stripe straight across every
+        // shadow that crosses a split.
+        //
+        // Bevy blends from `(1 - overlap_proportion) * far_bound` and
+        // builds the slices to match; this is the second half of that.
+        slice_near = slice_far * (1.0 - CASCADE_BLEND_FRACTION);
     }
     cascades
 }
@@ -367,6 +380,42 @@ mod tests {
             assert!(
                 (w[1] / w[0] - ratio).abs() < 1e-3,
                 "ratios differ across the chain: {splits:?}",
+            );
+        }
+    }
+
+    /// 🔴 Consecutive cascades must OVERLAP, not merely touch.
+    ///
+    /// The shading pass blends the two across the last
+    /// `CASCADE_BLEND_FRACTION` of a split. If the next cascade's volume
+    /// starts exactly where this one ends, every point in that band is
+    /// outside it, the sample comes back "fully lit", and the blend
+    /// paints a pale stripe across every shadow crossing the boundary.
+    #[test]
+    fn each_cascade_starts_inside_the_previous_one() {
+        let cascades = build_cascades(
+            camera(0.0, 0.0, Vec3::ZERO),
+            Vec3::new(0.3, -1.0, 0.2),
+            0.1,
+            100.0,
+            10.0,
+            2048,
+            0.0,
+        );
+        // The volume is a square of side `texel_world_size * size`
+        // centred on the slice, so a cascade reaching back over the
+        // blend band shows up as its width covering more than its own
+        // split range.
+        for i in 1..CASCADE_COUNT {
+            let previous_far = cascades[i - 1].far_depth;
+            let this_far = cascades[i].far_depth;
+            let band = previous_far * CASCADE_BLEND_FRACTION;
+            let covered = cascades[i].texel_world_size * 2048.0;
+            assert!(
+                covered >= this_far - (previous_far - band),
+                "cascade {i} spans {covered} world units but has to reach \
+                 back {} to cover the blend band",
+                this_far - (previous_far - band),
             );
         }
     }

@@ -505,9 +505,12 @@ fn inti_sample_cascade(
     // bias to go with them. The normal term scales with how obliquely
     // the light hits, because that is when one texel covers the most
     // surface.
-    let slope = clamp(1.0 - n_dot_l * n_dot_l, 0.0, 1.0);
+    // No slope term. Bevy scales the normal offset by the cascade's
+    // texel size and nothing else, and the extra factor was mine: it
+    // doubles the offset on grazing surfaces, which is exactly where a
+    // shadow detaching from its object is most visible.
     let offset_position = world_position
-        + normal * (cascade.texel_world_size * INTI_NORMAL_BIAS * (1.0 + slope))
+        + normal * (cascade.texel_world_size * INTI_NORMAL_BIAS)
         + to_light * INTI_DEPTH_BIAS;
 
     let coords = inti_shadow_coords(cascade, offset_position);
