@@ -123,6 +123,25 @@ fn sphere_outside_frustum(center: vec3<f32>, radius: f32) -> bool {
     return false;
 }
 
+// Largest axis scale of an instance's transform.
+//
+// 🔴 A meshlet's simplification error is measured in the mesh's OWN
+// space. Scale the instance up and the same error covers more world,
+// and more of the shadow map with it — so the selector has to scale it
+// too or a large object is judged by a small object's budget, keeps a
+// LOD coarser than it should, and self-shadows against a silhouette
+// that no longer matches the one being shaded. Blotches on the object,
+// only on the ones somebody scaled.
+//
+// Bevy applies exactly this in `lod_error_is_imperceptible`
+// (`simplification_error * world_scale`).
+fn instance_world_scale(transform: mat4x4<f32>) -> f32 {
+    return max(
+        length(transform[0].xyz),
+        max(length(transform[1].xyz), length(transform[2].xyz)),
+    );
+}
+
 fn camera_in_cone(apex: vec3<f32>, axis: vec3<f32>, cutoff: f32) -> bool {
     // 🔴 Never for an orthographic view — a shadow cascade.
     //

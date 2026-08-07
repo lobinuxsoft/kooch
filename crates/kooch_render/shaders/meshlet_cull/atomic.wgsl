@@ -122,7 +122,8 @@ fn aabb_outside_frustum_local(
     return false;
 }
 
-fn lod_pixel_error_world_pool(lod_error: f32, world_center: vec3<f32>) -> f32 {
+
+fn lod_pixel_error_world_pool(lod_error: f32, world_center: vec3<f32>, world_scale: f32) -> f32 {
     // 🔴 Orthographic views do not shrink error with distance.
     //
     // Under perspective the same simplification error covers fewer
@@ -137,12 +138,13 @@ fn lod_pixel_error_world_pool(lod_error: f32, world_center: vec3<f32>) -> f32 {
     // the surface comes apart. It reads as "some meshlets do not cast a
     // shadow", which is how it was reported. Bevy 0.19 branches on the
     // same condition in `lod_error_is_imperceptible`.
+    let world_error = lod_error * world_scale;
     if (params.lod_orthographic == 1u) {
-        return lod_error * params.lod_error_to_pixel_factor;
+        return world_error * params.lod_error_to_pixel_factor;
     }
     let to_cam = world_center - params.camera_position;
     let dist = max(length(to_cam), 0.0001);
-    return lod_error * params.lod_error_to_pixel_factor / dist;
+    return world_error * params.lod_error_to_pixel_factor / dist;
 }
 
 @compute @workgroup_size(64, 1, 1)
@@ -177,7 +179,11 @@ fn cs_lod_compute_group_max_err(@builtin(global_invocation_id) gid: vec3<u32>) {
     let world_parent_center =
         (inst.transform * vec4<f32>(parent.bounds_center, 1.0)).xyz;
     let parent_err_px =
-        lod_pixel_error_world_pool(parent.lod_error, world_parent_center);
+        lod_pixel_error_world_pool(
+            parent.lod_error,
+            world_parent_center,
+            instance_world_scale(inst.transform),
+        );
 
     // bitcast preserves ordering for non-negative IEEE-754 floats.
     let parent_err_bits = bitcast<u32>(max(parent_err_px, 0.0));
