@@ -91,11 +91,34 @@ impl ViewCamera {
     }
 
     /// Reverse-Z perspective for a target of this aspect ratio.
+    ///
+    /// **No far plane.** `far` survives on the struct because the things
+    /// that still need a bounded frustum read it — the cascade fit
+    /// below, the editor's camera-frustum gizmo — but nothing the camera
+    /// renders is clipped by it any more. See
+    /// [`perspective_infinite_rh_reverse_z`](crate::projection::perspective_infinite_rh_reverse_z)
+    /// for why: with it, `ndc.z` **is** `near / distance`, which is what
+    /// every screen-space technique that reads depth needs and what
+    /// Bevy's depth helpers assume.
     pub fn projection(&self, aspect: f32) -> Mat4 {
-        self.projection_to(aspect, self.far)
+        crate::projection::perspective_infinite_rh_reverse_z(
+            self.fov_y_rad,
+            aspect.max(0.01),
+            self.near,
+        )
     }
 
-    /// The same projection, cut short at `far`.
+    /// `near`, as a shader recovers it from [`Self::projection`].
+    pub fn projection_near(&self) -> f32 {
+        self.near
+    }
+
+    /// A **bounded** reverse-Z projection, cut short at `far`.
+    ///
+    /// The one job that still wants a far plane: a cascade is fitted to
+    /// a slice of the view frustum, and a slice of an unbounded frustum
+    /// is unbounded. Bevy does the same — its cascades fit against
+    /// explicit split distances, not against the camera's projection.
     ///
     /// Shadow cascades are placed against a frustum that stops at the
     /// shadow distance rather than at the camera's far plane, which on a

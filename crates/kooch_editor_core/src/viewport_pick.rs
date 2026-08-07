@@ -79,7 +79,6 @@ pub(crate) fn resolve(resources: &Resources, point: DropPoint) -> Option<Vec3> {
         transform.matrix,
         camera.fov.to_radians(),
         camera.near,
-        camera.far,
     )?;
 
     if let Some(hit) = ray.hits_horizontal_plane(0.0) {

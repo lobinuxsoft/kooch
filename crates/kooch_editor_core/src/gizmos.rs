@@ -425,7 +425,6 @@ fn build_world_ray(resources: &Resources, delta: ViewportInputDelta) -> Option<R
         gt.matrix,
         camera.fov.to_radians(),
         camera.near,
-        camera.far,
     )?;
     Some(Ray::new(ray.origin, ray.direction))
 }

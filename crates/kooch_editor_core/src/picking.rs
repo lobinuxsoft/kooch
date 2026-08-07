@@ -49,7 +49,6 @@ pub(crate) fn entity_at(
         transform.matrix,
         camera.fov.to_radians(),
         camera.near,
-        camera.far,
     )?;
 
     // Collected before resolving any asset: loading a mesh takes

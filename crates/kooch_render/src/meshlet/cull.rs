@@ -312,6 +312,24 @@ pub fn sphere_outside_frustum(planes: &[[f32; 4]; 6], center: Vec3, radius: f32)
 
 #[cfg(test)]
 mod tests {
+    /// With no far plane the `ndc.z >= 0` row degenerates to a
+    /// zero-length normal, and the extractor has to answer "cull
+    /// nothing" rather than divide by it. The shader already walks
+    /// five planes, so this one is skipped work rather than a wrong
+    /// test — but a NaN here would cull the whole scene.
+    #[test]
+    fn the_vanished_far_plane_culls_nothing_instead_of_producing_nan() {
+        let proj =
+            crate::projection::perspective_infinite_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1);
+        let planes = super::extract_frustum_planes(proj);
+        assert_eq!(
+            planes[4],
+            [0.0, 0.0, 0.0, 0.0],
+            "the far plane should degenerate rather than carry a normal",
+        );
+        assert!(planes.iter().flatten().all(|c| c.is_finite()));
+    }
+
     #[allow(unused_imports)]
     use super::super::asset::MeshletDescriptor;
     use super::*;
