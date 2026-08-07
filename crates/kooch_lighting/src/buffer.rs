@@ -7,7 +7,7 @@ use kooch_core::resource::Resources;
 use wgpu::util::DeviceExt;
 
 use crate::extract::{extract_lights, over_linear_budget};
-use crate::frame::{AmbientLight, Exposure, IntiFrame};
+use crate::frame::{AmbientLight, Exposure, FrameShadows, IntiFrame};
 use crate::gpu_light::GpuLight;
 
 /// Lights a fresh buffer holds before it has to grow. Sixteen covers an
@@ -44,6 +44,14 @@ pub struct GpuLights {
     /// `shadows_enabled` flag ever failed to stop the sampling, the
     /// answer would be "fully lit" rather than "everything is dark".
     dummy_shadow: wgpu::TextureView,
+    /// The atlas currently bound, or `None` while the dummy is.
+    ///
+    /// Kept rather than derived because the bind group is rebuilt from
+    /// scratch whenever the light buffer grows, and rebuilding it
+    /// against the dummy would drop the atlas the moment a scene
+    /// crossed a capacity boundary — shadows disappearing when the
+    /// seventeenth light is placed, with nothing in the log.
+    shadow_atlas: Option<wgpu::TextureView>,
     capacity: u32,
     light_count: u32,
 }
@@ -149,6 +157,7 @@ impl GpuLights {
             layout,
             shadow_sampler,
             dummy_shadow,
+            shadow_atlas: None,
             capacity: INITIAL_CAPACITY,
             light_count: 0,
         }
@@ -157,14 +166,28 @@ impl GpuLights {
     /// Points the shadow binding at a real atlas.
     ///
     /// Call once the atlas exists; until then the dummy is bound and
-    /// `shadows_enabled` is 0.
+    /// `shadows_enabled` is 0. Idempotent — the atlas is allocated once
+    /// and this runs per frame, so re-binding the same view has to cost
+    /// nothing.
     pub fn bind_shadow_atlas(&mut self, device: &wgpu::Device, atlas: &wgpu::TextureView) {
+        if self.shadow_atlas.as_ref().is_some_and(|v| v == atlas) {
+            return;
+        }
+        self.shadow_atlas = Some(atlas.clone());
+        self.rebuild_bind_group(device);
+    }
+
+    /// Rebuilds the bind group against whatever shadow view is current.
+    ///
+    /// One place, so growth and atlas binding cannot disagree about
+    /// which texture is bound.
+    fn rebuild_bind_group(&mut self, device: &wgpu::Device) {
         self.bind_group = create_bind_group(
             device,
             &self.layout,
             &self.frame_buffer,
             &self.light_buffer,
-            atlas,
+            self.shadow_atlas.as_ref().unwrap_or(&self.dummy_shadow),
             &self.shadow_sampler,
         );
     }
@@ -186,12 +209,17 @@ impl GpuLights {
     /// Call **before** creating the frame's encoder: growing the
     /// storage buffer replaces it, and a replaced buffer must not be
     /// one a recorded pass already references.
+    ///
+    /// `shadows` is `None` when nothing casts — no sun, or the atlas
+    /// has not been built. The dummy atlas stays bound and the shader
+    /// skips the sampling entirely.
     pub fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         resources: &Resources,
         camera_position: Vec3,
+        shadows: Option<FrameShadows>,
     ) {
         let lights = extract_lights(resources);
         let count = lights.len() as u32;
@@ -232,12 +260,10 @@ impl GpuLights {
         queue.write_buffer(
             &self.frame_buffer,
             0,
-            bytemuck::bytes_of(&IntiFrame::new(
-                &ambient,
-                &exposure,
-                camera_position,
-                self.light_count,
-            )),
+            bytemuck::bytes_of(
+                &IntiFrame::new(&ambient, &exposure, camera_position, self.light_count)
+                    .with_optional_shadows(shadows),
+            ),
         );
     }
 
@@ -250,15 +276,8 @@ impl GpuLights {
         }
         let capacity = needed.next_power_of_two().max(INITIAL_CAPACITY);
         self.light_buffer = create_light_buffer(device, capacity);
-        self.bind_group = create_bind_group(
-            device,
-            &self.layout,
-            &self.frame_buffer,
-            &self.light_buffer,
-            &self.dummy_shadow,
-            &self.shadow_sampler,
-        );
         self.capacity = capacity;
+        self.rebuild_bind_group(device);
         tracing::debug!(
             target: "kooch_lighting::buffer",
             capacity,

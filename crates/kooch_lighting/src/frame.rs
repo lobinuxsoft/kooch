@@ -254,6 +254,14 @@ impl IntiFrame {
         }
     }
 
+    /// Attaches the shadows from [`FrameShadows`], if the frame has any.
+    pub fn with_optional_shadows(self, shadows: Option<FrameShadows>) -> Self {
+        match shadows {
+            Some(s) => self.with_shadows(s.camera_forward, s.cascades, s.blend),
+            None => self,
+        }
+    }
+
     /// Attaches the shadow cascades and turns sampling on.
     pub fn with_shadows(
         mut self,
@@ -267,6 +275,23 @@ impl IntiFrame {
         self.cascade_blend = blend;
         self
     }
+}
+
+/// Everything the frame needs to sample shadows, as one value.
+///
+/// The producer is `kooch_render` — placing cascades needs the meshlet
+/// pipeline's atlas, and this crate sits below it. Grouped rather than
+/// passed as three parameters because they are only ever correct
+/// together: cascades from one camera with the forward axis of another
+/// puts every cascade boundary in the wrong place, and three loose
+/// arguments is how that happens.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct FrameShadows {
+    /// Unit vector down the view axis, for the cascade selector.
+    pub camera_forward: Vec3,
+    pub cascades: [GpuCascade; FRAME_CASCADE_COUNT],
+    /// Fraction of a split distance the cascades cross-fade over.
+    pub blend: f32,
 }
 
 /// Half-width of the sun, in world units, for the penumbra estimate.
