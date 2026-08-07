@@ -408,10 +408,15 @@ fn inti_world_to_atlas_uv(cascade: IntiCascade) -> f32 {
 // Average stored depth of whatever is between this point and the light,
 // and whether there was anything. Under reversed-Z an occluder is
 // CLOSER to the light and therefore stored GREATER than the receiver.
-fn inti_blocker_depth(uv: vec2<f32>, receiver_depth: f32, radius_uv: f32) -> vec2<f32> {
+fn inti_blocker_depth(
+    uv: vec2<f32>,
+    receiver_depth: f32,
+    radius_uv: f32,
+    bounds: vec4<f32>,
+) -> vec2<f32> {
     var sum = vec2<f32>(0.0);
     for (var i = 0; i < 8; i = i + 1) {
-        let tap = uv + INTI_BLOCKER_TAPS[i] * radius_uv;
+        let tap = clamp(uv + INTI_BLOCKER_TAPS[i] * radius_uv, bounds.xy, bounds.zw);
         // A plain sample, not a comparison one — see the binding. The
         // level is an INTEGER on a depth texture; 0.0 is
         // `InvalidSampleLevelExactType` out of naga, which reads like a
@@ -446,11 +451,18 @@ fn inti_blocker_depth(uv: vec2<f32>, receiver_depth: f32, radius_uv: f32) -> vec
 // because Castano's size is hard-wired; scaling the offsets keeps the
 // Gaussian weighting, which is the part that stops the banding.
 //
-// ⚠️ Taps near a quadrant edge can reach into the neighbouring cascade.
-// The kernel is a couple of texels wide against a 2048-texel quadrant,
-// so it is a boundary artifact rather than a wrong-distance shadow; a
-// border of unwritten texels per quadrant is the fix if it ever shows.
-fn inti_sample_castano(uv: vec2<f32>, depth: f32, scale: f32) -> f32 {
+// `bounds` is the quadrant this cascade occupies, as `xy` = min uv and
+// `zw` = max. Every tap is clamped into it.
+//
+// 🔴 Without that clamp a tap near a quadrant edge reads the NEIGHBOURING
+// cascade — depth from a different volume entirely, so it answers a
+// question about a different part of the world. The sampler's
+// clamp-to-edge cannot help: the atlas edge is four quadrants away. It
+// stays quiet until the kernel widens, which is exactly what PCSS does
+// where the penumbra is largest, so it would have surfaced as "soft
+// shadows are wrong near cascade boundaries" and looked like a blend
+// bug.
+fn inti_sample_castano(uv: vec2<f32>, depth: f32, scale: f32, bounds: vec4<f32>) -> f32 {
     let map_size = vec2<f32>(textureDimensions(inti_shadow_atlas));
     let inv_map_size = 1.0 / map_size;
 
@@ -483,7 +495,7 @@ fn inti_sample_castano(uv: vec2<f32>, depth: f32, scale: f32) -> f32 {
     var sum = 0.0;
     for (var j = 0; j < 3; j = j + 1) {
         for (var i = 0; i < 3; i = i + 1) {
-            let tap = base_uv + vec2<f32>(us[i], vs[j]) * step;
+            let tap = clamp(base_uv + vec2<f32>(us[i], vs[j]) * step, bounds.xy, bounds.zw);
             sum += uw[i] * vw[j] * textureSampleCompareLevel(
                 inti_shadow_atlas, inti_shadow_sampler, tap, depth);
         }
@@ -519,12 +531,19 @@ fn inti_sample_cascade(
     }
 
     let to_uv = inti_world_to_atlas_uv(cascade);
+    // This cascade's quadrant, inset by half a texel so a bilinear tap
+    // on the boundary cannot fetch its neighbour either.
+    let half_texel = 0.5 / f32(textureDimensions(inti_shadow_atlas).x);
+    let bounds = vec4<f32>(
+        cascade.uv_scale_bias.zw + half_texel,
+        cascade.uv_scale_bias.zw + cascade.uv_scale_bias.xy - half_texel,
+    );
 
     // 1. Blocker search, over a disc as wide as the softest penumbra the
     // sun could produce across this cascade's depth range.
     let search_world = max(
         inti.sun_softness * cascade.depth_extent, cascade.texel_world_size * 2.0);
-    let blocker = inti_blocker_depth(coords.xy, coords.z, search_world * to_uv);
+    let blocker = inti_blocker_depth(coords.xy, coords.z, search_world * to_uv, bounds);
     if (blocker.y == 0.0) {
         return 1.0;
     }
@@ -546,7 +565,7 @@ fn inti_sample_cascade(
     // stops hiding the shadow map's own aliasing and the edge steps.
     let scale = max(penumbra_world / max(cascade.texel_world_size, 1e-6), 1.0);
 
-    return inti_sample_castano(coords.xy, coords.z, scale);
+    return inti_sample_castano(coords.xy, coords.z, scale, bounds);
 }
 
 /// Occlusion at `world_position`, 1 = fully lit.
