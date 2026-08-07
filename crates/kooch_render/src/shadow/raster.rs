@@ -29,17 +29,20 @@ const SHADER_SOURCE: &str = include_str!("../../shaders/shadow_depth.wgsl");
 /// and there are four cascades.
 const SHADOW_LOD_RELAXATION: f32 = 4.0;
 
-/// Constant and slope-scaled depth bias, in hardware.
+/// No rasteriser depth bias.
 ///
-/// 🔴 **Negative because depth is reversed.** Pushing a recorded
-/// occluder *away* from the light means a SMALLER value under
-/// reversed-Z. Flip the sign and the bias pulls occluders toward the
-/// light instead, which presents as shadow acne — so it reads as "the
-/// shadow map needs more resolution" rather than as a sign error, and
-/// people spend a day on the wrong thing.
+/// 🔴 The bias moved into the shading pass, in world space, where Bevy
+/// 0.19 keeps both of theirs (`shadow_depth_bias` along the direction to
+/// the light, `shadow_normal_bias` along the surface normal). Bevy sets
+/// no `DepthBiasState` on its shadow pipeline at all.
+///
+/// Running both is how a shadow ends up detached from its object *and*
+/// still showing acne elsewhere: each bias is tuned against artifacts
+/// the other is already half-hiding, so neither ends up at a value that
+/// is right on its own.
 const DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
-    constant: -2,
-    slope_scale: -2.0,
+    constant: 0,
+    slope_scale: 0.0,
     clamp: 0.0,
 };
 
@@ -146,15 +149,8 @@ impl ShadowRasterizer {
                 // Reversed-Z, like every other depth test in the engine.
                 depth_compare: Some(wgpu::CompareFunction::Greater),
                 stencil: wgpu::StencilState::default(),
-                // Constant and slope-scaled bias in hardware. Cheaper
-                // and more accurate than offsetting in the shader, which
-                // would also have to run a fragment stage to do it.
-                //
-                // Negative because depth is reversed: pushing a recorded
-                // occluder *away* from the light means a smaller value
-                // here, and the sign flipping with the convention is a
-                // bug that presents as shadow acne rather than as a sign
-                // error.
+                // None: the bias lives in the shading pass, in world
+                // space, the way Bevy 0.19 does it. See `DEPTH_BIAS`.
                 bias: DEPTH_BIAS,
             }),
             multisample: wgpu::MultisampleState::default(),
@@ -349,22 +345,13 @@ mod tests {
             .expect("shadow_depth.wgsl should validate");
     }
 
-    /// Reversed-Z runs through the whole engine, and the bias is the
-    /// easiest place to get it backwards. A positive bias here pulls
-    /// occluders toward the light and produces acne — which reads as a
-    /// resolution problem and costs a day.
+    /// There is exactly one place biasing shadow depth, and it is the
+    /// shading pass. Two of them cannot both be tuned: each is set
+    /// against artifacts the other is already half-hiding.
     #[test]
-    fn the_depth_bias_is_signed_for_reversed_z() {
-        assert!(
-            super::DEPTH_BIAS.constant < 0,
-            "constant bias must be negative under reversed-Z, is {}",
-            super::DEPTH_BIAS.constant,
-        );
-        assert!(
-            super::DEPTH_BIAS.slope_scale < 0.0,
-            "slope-scaled bias must be negative under reversed-Z, is {}",
-            super::DEPTH_BIAS.slope_scale,
-        );
+    fn the_rasteriser_applies_no_depth_bias_of_its_own() {
+        assert_eq!(super::DEPTH_BIAS.constant, 0);
+        assert_eq!(super::DEPTH_BIAS.slope_scale, 0.0);
     }
 
     /// A shadow is a silhouette and loses detail a lit surface keeps, so

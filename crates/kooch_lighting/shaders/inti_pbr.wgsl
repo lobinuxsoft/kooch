@@ -326,29 +326,8 @@ fn inti_ambient(
 // out of focus. The width varying with occluder distance is the whole
 // effect.
 
-// How far along its own normal a surface's sample point is pushed, in
-// shadow texels.
-//
-// The number is Bevy's `shadow_normal_bias` default, and it is a default
-// rather than a derivation: the right offset depends on how obliquely
-// the light hits, which is what the slope term multiplies it by. Too
-// small leaves acne on grazing surfaces; too large detaches the shadow
-// from thin geometry, which is the more visible failure.
-const INTI_NORMAL_BIAS: f32 = 1.8;
 
-// Poisson disc, 16 points. Poisson rather than a grid because a regular
-// pattern turns undersampling into banding, which the eye finds
-// immediately, while noise turns it into grain, which it forgives.
-const INTI_POISSON: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
-    vec2<f32>(-0.94201624, -0.39906216), vec2<f32>(0.94558609, -0.76890725),
-    vec2<f32>(-0.09418410, -0.92938870), vec2<f32>(0.34495938, 0.29387760),
-    vec2<f32>(-0.91588581, 0.45771432), vec2<f32>(-0.81544232, -0.87912464),
-    vec2<f32>(-0.38277543, 0.27676845), vec2<f32>(0.97484398, 0.75648379),
-    vec2<f32>(0.44323325, -0.97511554), vec2<f32>(0.53742981, -0.47373420),
-    vec2<f32>(-0.26496911, -0.41893023), vec2<f32>(0.79197514, 0.19090188),
-    vec2<f32>(-0.24188840, 0.99706507), vec2<f32>(-0.81409955, 0.91437590),
-    vec2<f32>(0.19984126, 0.78641367), vec2<f32>(0.14383161, -0.14100790),
-);
+
 
 // Which cascade covers `view_depth`, and how far into the blend band it
 // is. `x` is the index, `y` is 0 inside the cascade and rises to 1 at
@@ -386,16 +365,32 @@ fn inti_shadow_coords(cascade: IntiCascade, world_position: vec3<f32>) -> vec4<f
     return vec4<f32>(uv, ndc.z, 1.0);
 }
 
-// Eight points on a disc, the layout D3D uses for its own PCF taps.
-// Eight rather than the sixteen the filter uses: the blocker search only
-// has to answer "roughly how far away is whatever is in the way", and
-// the answer is averaged.
+// The eight D3D MSAA sample positions, for the blocker search. Chosen
+// for a distribution that is not too regular; Bevy uses the same set.
 const INTI_BLOCKER_TAPS: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
-    vec2<f32>(-0.7071, 0.7071), vec2<f32>(-0.0000, -0.8750),
-    vec2<f32>(0.5303, 0.5303), vec2<f32>(-0.6250, -0.0000),
-    vec2<f32>(0.3536, -0.3536), vec2<f32>(-0.0000, 0.3750),
-    vec2<f32>(-0.1768, -0.1768), vec2<f32>(0.0000, -0.0000),
+    vec2<f32>(0.125, -0.375), vec2<f32>(-0.125, 0.375),
+    vec2<f32>(0.625, 0.125), vec2<f32>(-0.375, -0.625),
+    vec2<f32>(-0.625, 0.625), vec2<f32>(-0.875, -0.125),
+    vec2<f32>(0.375, 0.875), vec2<f32>(0.875, -0.875),
 );
+
+/// Depth pushed along the direction to the light, in world units.
+///
+/// Bevy 0.19's `shadow_depth_bias` default, and it does this in world
+/// space rather than through the rasteriser's depth bias — which is why
+/// the shadow pipeline here no longer sets one. Two biases doing the
+/// same job is how a shadow ends up detached from its object while
+/// still showing acne somewhere else.
+const INTI_DEPTH_BIAS: f32 = 0.02;
+
+/// How far along its own normal a surface's sample point is pushed, in
+/// shadow texels. Bevy 0.19's `shadow_normal_bias` default.
+///
+/// A surface edge-on to the light covers many world units inside one
+/// shadow texel, and no constant depth bias covers that. Moving along
+/// the surface instead of pushing depth is what stops acne without
+/// detaching the shadow.
+const INTI_NORMAL_BIAS: f32 = 1.8;
 
 // World units → atlas uv, for this cascade.
 //
@@ -403,26 +398,22 @@ const INTI_BLOCKER_TAPS: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
 // of the atlas and spans `texel_world_size × atlas_size ×
 // uv_scale_bias.x` world units, so the ratio is the same expression in
 // every quadrant. Same relation Bevy uses (`1 / (texel_size ×
-// shadow_map_size)`), which is worth noticing — it means a distance in
-// metres is the one honest unit to express a filter radius in, and
-// texels are not.
+// shadow_map_size)`) — a distance in metres is the one honest unit for
+// a filter radius, and texels are not.
 fn inti_world_to_atlas_uv(cascade: IntiCascade) -> f32 {
     let atlas = f32(textureDimensions(inti_shadow_atlas).x);
     return 1.0 / max(cascade.texel_world_size * atlas, 1e-6);
 }
 
 // Average stored depth of whatever is between this point and the light,
-// and whether there was anything. `x` is the depth, `y` is 0 when the
-// point is unoccluded.
-//
-// Under reversed-Z an occluder is CLOSER to the light and therefore
-// stored GREATER than the receiver.
+// and whether there was anything. Under reversed-Z an occluder is
+// CLOSER to the light and therefore stored GREATER than the receiver.
 fn inti_blocker_depth(uv: vec2<f32>, receiver_depth: f32, radius_uv: f32) -> vec2<f32> {
     var sum = vec2<f32>(0.0);
     for (var i = 0; i < 8; i = i + 1) {
         let tap = uv + INTI_BLOCKER_TAPS[i] * radius_uv;
-        // A plain sample, not a comparison one — see the binding.
-        // The level is an INTEGER on a depth texture; passing 0.0 is
+        // A plain sample, not a comparison one — see the binding. The
+        // level is an INTEGER on a depth texture; 0.0 is
         // `InvalidSampleLevelExactType` out of naga, which reads like a
         // sampler problem and is a literal one.
         let depth = textureSampleLevel(
@@ -435,10 +426,78 @@ fn inti_blocker_depth(uv: vec2<f32>, receiver_depth: f32, radius_uv: f32) -> vec
     return vec2<f32>(sum.x / sum.y, 1.0);
 }
 
+// Castano '13 — the filter Bevy ships as its default, ported from
+// `shadow_sampling.wgsl`.
+//
+// Nine hardware comparison taps, each already bilinear, weighted so the
+// pair covers a 5×5 Gaussian. The weights and the sub-texel `s`/`t`
+// terms are what make the result smooth: the kernel is positioned
+// against the texel grid rather than around the sample point, so the
+// filter does not swim as the surface moves within a texel.
+//
+// 🔴 This replaces sixteen Poisson taps at a variable radius, which is
+// what a shadow edge with visible steps and a ringed halo looks like.
+// Poisson turns undersampling into noise, and noise is only the better
+// trade when a temporal pass resolves it — Bevy's own comment says its
+// non-temporal PCSS is "rather noisy", and there is no TAA here yet
+// (#732).
+//
+// `scale` widens the kernel for PCSS. Bevy switches filters instead
+// because Castano's size is hard-wired; scaling the offsets keeps the
+// Gaussian weighting, which is the part that stops the banding.
+//
+// ⚠️ Taps near a quadrant edge can reach into the neighbouring cascade.
+// The kernel is a couple of texels wide against a 2048-texel quadrant,
+// so it is a boundary artifact rather than a wrong-distance shadow; a
+// border of unwritten texels per quadrant is the fix if it ever shows.
+fn inti_sample_castano(uv: vec2<f32>, depth: f32, scale: f32) -> f32 {
+    let map_size = vec2<f32>(textureDimensions(inti_shadow_atlas));
+    let inv_map_size = 1.0 / map_size;
+
+    let texel_uv = uv * map_size;
+    var base_uv = floor(texel_uv + 0.5);
+    let s = texel_uv.x + 0.5 - base_uv.x;
+    let t = texel_uv.y + 0.5 - base_uv.y;
+    base_uv = (base_uv - 0.5) * inv_map_size;
+
+    let uw0 = 4.0 - 3.0 * s;
+    let uw1 = 7.0;
+    let uw2 = 1.0 + 3.0 * s;
+    let u0 = (3.0 - 2.0 * s) / uw0 - 2.0;
+    let u1 = (3.0 + s) / uw1;
+    let u2 = s / uw2 + 2.0;
+
+    let vw0 = 4.0 - 3.0 * t;
+    let vw1 = 7.0;
+    let vw2 = 1.0 + 3.0 * t;
+    let v0 = (3.0 - 2.0 * t) / vw0 - 2.0;
+    let v1 = (3.0 + t) / vw1;
+    let v2 = t / vw2 + 2.0;
+
+    let step = inv_map_size * scale;
+    let us = array<f32, 3>(u0, u1, u2);
+    let vs = array<f32, 3>(v0, v1, v2);
+    let uw = array<f32, 3>(uw0, uw1, uw2);
+    let vw = array<f32, 3>(vw0, vw1, vw2);
+
+    var sum = 0.0;
+    for (var j = 0; j < 3; j = j + 1) {
+        for (var i = 0; i < 3; i = i + 1) {
+            let tap = base_uv + vec2<f32>(us[i], vs[j]) * step;
+            sum += uw[i] * vw[j] * textureSampleCompareLevel(
+                inti_shadow_atlas, inti_shadow_sampler, tap, depth);
+        }
+    }
+    return sum * (1.0 / 144.0);
+}
+
 /// Occlusion at `world_position`, 1 = fully lit.
+///
+/// `to_light` is the unit vector toward the light, for the depth bias.
 fn inti_shadow(
     world_position: vec3<f32>,
     normal: vec3<f32>,
+    to_light: vec3<f32>,
     view_depth: f32,
     n_dot_l: f32,
 ) -> f32 {
@@ -453,17 +512,14 @@ fn inti_shadow(
 
     let cascade = inti.cascades[index];
 
-    // Normal offset, in world units scaled to this cascade's texel.
-    //
-    // A surface edge-on to the light covers many world units inside one
-    // shadow texel, and no constant depth bias covers that. Moving the
-    // sample point ALONG THE SURFACE instead of pushing depth is what
-    // stops acne without detaching the shadow from its object — the
-    // hardware bias alone buys one at the cost of the other. Bevy does
-    // the same thing and calls it `shadow_normal_bias`.
+    // Both of Bevy's offsets, in world space, and no rasteriser depth
+    // bias to go with them. The normal term scales with how obliquely
+    // the light hits, because that is when one texel covers the most
+    // surface.
     let slope = clamp(1.0 - n_dot_l * n_dot_l, 0.0, 1.0);
-    let offset_position =
-        world_position + normal * (cascade.texel_world_size * INTI_NORMAL_BIAS * (1.0 + slope));
+    let offset_position = world_position
+        + normal * (cascade.texel_world_size * INTI_NORMAL_BIAS * (1.0 + slope))
+        + to_light * INTI_DEPTH_BIAS;
 
     let coords = inti_shadow_coords(cascade, offset_position);
     if (coords.w == 0.0) {
@@ -473,9 +529,7 @@ fn inti_shadow(
     let to_uv = inti_world_to_atlas_uv(cascade);
 
     // 1. Blocker search, over a disc as wide as the softest penumbra the
-    // sun could produce at this cascade's depth range. Searching wider
-    // finds blockers whose penumbra could never reach here; searching
-    // narrower misses the ones whose penumbra does.
+    // sun could produce across this cascade's depth range.
     let search_world = max(
         inti.sun_softness * cascade.depth_extent, cascade.texel_world_size * 2.0);
     let blocker = inti_blocker_depth(coords.xy, coords.z, search_world * to_uv);
@@ -483,34 +537,24 @@ fn inti_shadow(
         return 1.0;
     }
 
-    // 2. Penumbra. Reversed-Z, so the blocker is stored greater and the
-    // difference is positive; scaling by the cascade's depth extent
-    // turns it into the gap in metres.
+    // 2. Penumbra. Reversed-Z, so the blocker is stored greater;
+    // scaling by the cascade's depth extent turns the difference into
+    // the gap in metres.
     //
     // ⚠️ Deliberately NOT Bevy's `(z_blocker - depth) * light_size /
     // depth`. That divide is the perspective form, and a directional
-    // cascade is orthographic — under it, `depth` is just distance from
-    // the light's near plane, so dividing by it makes the blur depend on
-    // how far the receiver is from the sun rather than from its blocker,
-    // and it runs away entirely as depth approaches the far plane. The
-    // ratio below is what the perspective form is approximating.
-    let gap_world = (blocker.x - coords.z) * cascade.depth_extent;
-    // At least one texel, or the filter stops hiding the shadow map's
-    // own aliasing and the contact edge crawls.
-    let filter_world = max(gap_world * inti.sun_softness, cascade.texel_world_size);
+    // cascade is orthographic — under it `depth` is distance from the
+    // light's near plane, so dividing by it makes the blur depend on how
+    // far the receiver is from the sun rather than from its blocker, and
+    // it runs away as depth approaches the far plane.
+    let gap_world = max((blocker.x - coords.z) * cascade.depth_extent, 0.0);
+    let penumbra_world = gap_world * inti.sun_softness;
+    // The kernel is one texel wide at scale 1, so this is the penumbra
+    // measured in kernel widths, floored at 1: below that the filter
+    // stops hiding the shadow map's own aliasing and the edge steps.
+    let scale = max(penumbra_world / max(cascade.texel_world_size, 1e-6), 1.0);
 
-    // 3. Filter at that width. Sixteen Poisson taps, unrotated: the
-    // rotation Bevy applies turns undersampling into noise, which is the
-    // right trade only when a temporal pass resolves it, and there is
-    // none here yet (#732).
-    let filter_uv = filter_world * to_uv;
-    var lit = 0.0;
-    for (var i = 0; i < 16; i = i + 1) {
-        let tap = coords.xy + INTI_POISSON[i] * filter_uv;
-        lit += textureSampleCompareLevel(
-            inti_shadow_atlas, inti_shadow_sampler, tap, coords.z);
-    }
-    lit = lit / 16.0;
+    var lit = inti_sample_castano(coords.xy, coords.z, scale);
 
     // Fade to lit across the last cascade's band, so the outermost
     // boundary is a gradient into "no shadow data" rather than an edge.
@@ -635,7 +679,7 @@ fn inti_shade(
         // #476 is sun shadows; #734's light textures are the other half.
         var shadow = 1.0;
         if (light.kind == INTI_KIND_DIRECTIONAL) {
-            shadow = inti_shadow(world_position, n, view_depth, n_dot_l);
+            shadow = inti_shadow(world_position, n, s.to_light, view_depth, n_dot_l);
         }
 
         radiance += (diffuse + specular) * s.irradiance * n_dot_l * shadow;
