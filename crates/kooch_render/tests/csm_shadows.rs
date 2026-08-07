@@ -17,7 +17,7 @@
 
 mod common;
 
-use common::{build_cube_mesh, luminance_at, read_rgba8, try_acquire_device};
+use common::{build_cube_mesh, build_sphere_mesh, luminance_at, read_rgba8, try_acquire_device};
 use glam::{Mat4, Quat, Vec3};
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
@@ -31,7 +31,10 @@ use kooch_ecs::mesh_renderer::MeshRenderer;
 use kooch_ecs::query::AccessTracker;
 use kooch_render::ViewCamera;
 use kooch_render::material::{Material, MaterialPipeline};
-use kooch_render::meshlet::{MeshletRenderStage, MeshletRenderStageConfig, build_default_meshlets};
+use kooch_render::meshlet::{
+    LodConfig, MeshletRenderStage, MeshletRenderStageConfig, build_default_meshlets,
+    build_meshlets_lod_chain,
+};
 use kooch_render::shadow::ShadowSettings;
 
 const SIZE: u32 = 256;
@@ -50,6 +53,7 @@ struct Rig {
     resources: Resources,
     stage: MeshletRenderStage,
     camera: ViewCamera,
+    material: Guid,
 }
 
 /// A cube floating over a wide flat floor, one sun, and a camera that
@@ -127,6 +131,7 @@ fn rig() -> Option<Rig> {
         resources,
         stage,
         camera: ViewCamera::looking_at(Vec3::new(0.0, 4.0, 9.0), Vec3::new(0.0, 0.5, 0.0)),
+        material: material_guid,
     })
 }
 
@@ -359,5 +364,92 @@ fn a_wider_sun_softens_the_shadow_edge() {
         "edge was {hard_edge} px at softness 0 and {soft_edge} px at 0.25 — \
          the penumbra estimate is not reaching the filter, which is what \
          the magic 0.001 used to prevent",
+    );
+}
+
+/// A sphere over the same floor. Its mesh clusters into several
+/// meshlets, where the cube is one — which is the difference that
+/// matters here: a per-meshlet cull bug is invisible on geometry that
+/// has only one.
+fn sphere_rig() -> Option<Rig> {
+    let mut rig = rig()?;
+    // The LOD-chain builder, not the single-level one: the selector
+    // this exercises only decides anything when there is a chain to
+    // choose from, and `build_default_meshlets` produces meshlets that
+    // are all roots.
+    let sphere = build_meshlets_lod_chain(
+        &build_sphere_mesh(96, 96),
+        64,
+        124,
+        0.5,
+        LodConfig::default(),
+    )
+    .expect("build meshlets");
+    let guid = Guid::new_v4();
+    rig.stage.ensure_gpu_mesh(&rig.device, guid, &sphere);
+
+    // Replace the cube caster: same place, same size, many meshlets.
+    let mut commands = Commands::new();
+    commands
+        .spawn(&mut rig.resources)
+        .insert(MeshRenderer {
+            mesh: Some(guid),
+            material: Some(rig.material),
+            visible: true,
+            ..Default::default()
+        })
+        .insert(GlobalTransform {
+            matrix: Mat4::from_translation(CUBE_CENTRE + Vec3::new(4.0, 0.0, 0.0)),
+        });
+    commands.apply(&mut rig.resources);
+    Some(rig)
+}
+
+/// 🔴 A shadow has to be solid, not perforated.
+///
+/// The shadow pass culls from the light, and the cull measures its
+/// backface cone test from a point. That point used to be the world
+/// origin — so whichever meshlets faced away from the origin, rather
+/// than away from the sun, wrote no depth and left holes. On a
+/// single-meshlet cube there is nothing to perforate; this samples
+/// across a sphere's shadow, where there is.
+#[test]
+fn the_shadow_of_a_many_meshlet_mesh_has_no_holes() {
+    let Some(mut base) = sphere_rig() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    add_sun(&mut base.resources, true);
+    let pixels = render(&mut base);
+    let camera = base.camera;
+
+    let centre = CUBE_CENTRE + Vec3::new(4.0, 0.0, 0.0);
+    let direction = SUN.normalize();
+    let shadow_at = |dx: f32, dz: f32| {
+        let origin = centre + Vec3::new(dx, 0.0, dz);
+        origin + direction * (origin.y / direction.y).abs()
+    };
+    let open_floor = luminance(&pixels, &camera, Vec3::new(-5.0, 0.0, 2.0));
+
+    // A grid inside the sphere's own radius, so every sample is under
+    // solid geometry rather than near the penumbra.
+    let mut lit_samples = Vec::new();
+    for i in 0..5 {
+        for j in 0..5 {
+            let dx = (i as f32 - 2.0) * 0.12;
+            let dz = (j as f32 - 2.0) * 0.12;
+            let l = luminance(&pixels, &camera, shadow_at(dx, dz));
+            if l > open_floor * 0.75 {
+                lit_samples.push(((dx, dz), l));
+            }
+        }
+    }
+
+    assert!(
+        lit_samples.is_empty(),
+        "{} of 25 points inside the shadow are lit — the shadow has holes \
+         in it, which is a per-meshlet cull rejecting casters. Open floor \
+         reads {open_floor:.4}; the lit samples are {lit_samples:?}",
+        lit_samples.len(),
     );
 }

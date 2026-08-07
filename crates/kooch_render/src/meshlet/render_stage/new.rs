@@ -186,6 +186,15 @@ impl MeshletRenderStage {
         self.gpu_timers.last_frame_ms()
     }
 
+    /// The shadow atlas this stage drew into, if it has one.
+    ///
+    /// For tests and for a future debug view (#743): the atlas answers
+    /// "did the pass record this occluder" directly, where the shaded
+    /// frame answers it through the whole sampling path.
+    pub fn shadow_atlas_texture(&self) -> Option<&wgpu::Texture> {
+        self.shadows.as_ref().map(|s| s.atlas_texture())
+    }
+
     pub fn pipeline(&self) -> &MeshletPipeline {
         &self.pipeline
     }

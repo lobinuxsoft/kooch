@@ -48,7 +48,7 @@ use glam::{Mat4, Vec3, Vec4};
 ///   models at viewport edges (#488 documented this for the Hi-Z
 ///   path; the R64 path inherits the fix here).
 ///
-/// Layout is 192 bytes — multiple of 16 to keep std140-friendly
+/// Layout is 208 bytes — multiple of 16 to keep std140-friendly
 /// alignment for the host-side `bytemuck::cast_slice` upload.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -72,6 +72,23 @@ pub struct CullParams {
     /// rendering pays nothing — the cull-shader writes are gated to
     /// a single uniform compare and the SSBO stays untouched.
     pub debug_active: u32,
+    /// `1` when the view is orthographic, which changes the LOD test
+    /// rather than tuning it.
+    ///
+    /// 🔴 Under perspective, a simplification error shrinks on screen
+    /// with distance, so the selector divides by it. Under an
+    /// orthographic projection it does not shrink at all: the screen
+    /// error is the world error over the volume's world height, full
+    /// stop. Dividing by a distance there makes the test vary across a
+    /// shadow cascade for no physical reason, so neighbouring meshlets
+    /// in one LOD group land on opposite sides of the threshold and the
+    /// surface comes apart — which reads as "some meshlets do not cast".
+    ///
+    /// Bevy 0.19 branches on exactly this in `lod_error_is_imperceptible`
+    /// (`if projection[3][3] == 1.0`), and this engine had no such
+    /// branch because until shadows there was no orthographic view.
+    pub lod_orthographic: u32,
+    pub _pad_lod: [u32; 3],
     pub view_proj: [[f32; 4]; 4],
 }
 
@@ -91,6 +108,8 @@ impl CullParams {
             lod_error_to_pixel_factor: 0.0,
             debug_mode: 0,
             debug_active: 0,
+            lod_orthographic: 0,
+            _pad_lod: [0; 3],
             view_proj: view_projection.to_cols_array_2d(),
         }
     }
@@ -127,6 +146,29 @@ impl CullParams {
     ) -> Self {
         self.lod_target_error_pixels = lod_target_error_pixels;
         self.lod_error_to_pixel_factor = 0.5 * viewport_height_pixels * proj_scale_y;
+        self.lod_orthographic = 0;
+        self
+    }
+
+    /// The LOD selector for an orthographic view — a shadow cascade.
+    ///
+    /// `world_height` is how much world the volume spans vertically, and
+    /// it is the whole of the relationship: an orthographic projection
+    /// magnifies everything equally, so a simplification error covers
+    /// `error / world_height` of the target no matter where it sits.
+    /// There is no distance term to include, which is why this is a
+    /// separate constructor rather than a different number fed to
+    /// [`Self::with_lod`] — the shape of the test changes, not its
+    /// tuning.
+    pub fn with_orthographic_lod(
+        mut self,
+        world_height: f32,
+        target_height_texels: f32,
+        lod_target_error_pixels: f32,
+    ) -> Self {
+        self.lod_target_error_pixels = lod_target_error_pixels;
+        self.lod_error_to_pixel_factor = target_height_texels / world_height.max(1e-6);
+        self.lod_orthographic = 1;
         self
     }
 }
@@ -279,8 +321,8 @@ mod tests {
     fn cull_params_layout_is_pod() {
         // 6 planes (4 floats each) = 96 B, camera_position + meshlet_count = 16,
         // (lod_target, lod_factor, debug_mode, debug_active) = 16,
-        // view_proj mat4 = 64. Total: 192 B.
-        assert_eq!(std::mem::size_of::<CullParams>(), 192);
+        // (lod_orthographic + 3 pad) = 16, view_proj mat4 = 64. Total: 208 B.
+        assert_eq!(std::mem::size_of::<CullParams>(), 208);
     }
 
     #[test]

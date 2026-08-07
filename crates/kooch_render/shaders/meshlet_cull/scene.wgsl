@@ -41,6 +41,23 @@ struct SceneCullParams {
 // where `scale_y = 1 / tan(fovy/2)`. The CPU side rolls
 // `0.5 * viewport_h * scale_y` into `lod_error_to_pixel_factor`.
 fn lod_pixel_error(lod_error: f32, world_center: vec3<f32>) -> f32 {
+    // 🔴 Orthographic views do not shrink error with distance.
+    //
+    // Under perspective the same simplification error covers fewer
+    // pixels the further away it is, which is what the divide by `dist`
+    // encodes. An orthographic projection magnifies everything equally:
+    // the screen error is the world error over the volume's world
+    // height, and there is no distance in the relationship at all.
+    //
+    // Dividing by one anyway makes the test vary across a shadow
+    // cascade for no physical reason, so two neighbouring meshlets in
+    // the same LOD group fall on opposite sides of the threshold and
+    // the surface comes apart. It reads as "some meshlets do not cast a
+    // shadow", which is how it was reported. Bevy 0.19 branches on the
+    // same condition in `lod_error_is_imperceptible`.
+    if (params.lod_orthographic == 1u) {
+        return lod_error * params.lod_error_to_pixel_factor;
+    }
     let to_cam = world_center - params.camera_position;
     let dist = max(length(to_cam), 0.0001);
     return lod_error * params.lod_error_to_pixel_factor / dist;

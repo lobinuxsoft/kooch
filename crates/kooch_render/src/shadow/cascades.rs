@@ -61,6 +61,20 @@ pub struct Cascade {
     /// a bias in texels is a different distance in each cascade — and
     /// PCSS's penumbra estimate.
     pub texel_world_size: f32,
+    /// Where the light looks from, for this cascade.
+    ///
+    /// An orthographic projection has no eye, and the cull pass needs
+    /// one anyway: its backface cone test and its LOD selector both
+    /// measure from a point. Passing the origin instead — which is what
+    /// "the light is infinitely far away, so there is no position" leads
+    /// to — makes both of them measure from a place the light is not,
+    /// and the backface test then rejects whichever meshlets happen to
+    /// face away from the world origin. Those meshlets stop writing
+    /// depth, and the result is a shadow with holes in it.
+    ///
+    /// Far enough back that it is a good stand-in for a direction, close
+    /// enough that the LOD selector still sees a sane distance.
+    pub light_eye: Vec3,
     /// World units the `[0,1]` depth range spans.
     ///
     /// The shading pass needs it to turn a difference between two
@@ -165,6 +179,7 @@ pub fn build_cascades(
         far_depth: 0.0,
         texel_world_size: 0.0,
         depth_extent: 0.0,
+        light_eye: Vec3::ZERO,
     }; CASCADE_COUNT];
 
     let mut slice_near = near;
@@ -226,6 +241,7 @@ pub fn build_cascades(
             far_depth: slice_far,
             texel_world_size,
             depth_extent,
+            light_eye: eye,
         };
         slice_near = slice_far;
     }

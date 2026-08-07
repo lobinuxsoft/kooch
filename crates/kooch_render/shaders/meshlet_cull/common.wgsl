@@ -46,6 +46,17 @@ struct CullParams {
     // raster pass flips it on while the user holds a reject-mode
     // dropdown selection.
     debug_active: u32,
+    // 1 when the view is orthographic — a shadow cascade. Changes the
+    // LOD test rather than tuning it: an orthographic projection
+    // magnifies everything equally, so there is no distance term.
+    lod_orthographic: u32,
+    // Three scalars, NOT `vec3<u32>`: a vec3 aligns to 16, which would
+    // push `view_proj` to the next boundary and inflate the struct to
+    // 224 bytes against the host's 208. wgpu reports that as
+    // "min_binding_size" and it reads like a binding problem.
+    _pad_lod0: u32,
+    _pad_lod1: u32,
+    _pad_lod2: u32,
     // Clip-from-world matrix used by the AABB-vs-frustum test in
     // `atomic.wgsl` (#454.4 follow-up A). The atomic R64 path now
     // matches the Hi-Z 2-pass entry's #488 fix: derive frustum

@@ -240,17 +240,25 @@ impl ShadowRasterizer {
         // wait for each other.
         for (i, cascade) in cascades.iter().enumerate() {
             let cull = atlas.cull(i);
-            // The light is orthographic and infinitely far away, so
-            // there is no camera position for the LOD selector to
-            // measure against. The cascade's own texel size is the
-            // honest scale: a cascade covering more world per texel
-            // wants coarser geometry, which is exactly the relationship
-            // the selector encodes.
+            // 🔴 The light's eye, not the origin.
+            //
+            // The projection is orthographic and has no eye, which is
+            // why this used to pass `Vec3::ZERO` — and the cull pass
+            // measures from a point twice regardless. Its backface cone
+            // test then rejected every meshlet whose normals face away
+            // from the world origin rather than away from the sun, so
+            // those meshlets wrote no depth and the shadow came out with
+            // pieces missing. It reads as "some meshlets cannot cast",
+            // which is exactly what it was.
             let params =
-                CullParams::new(cascade.view_proj, glam::Vec3::ZERO, max_meshlets_per_mesh)
-                    .with_lod(
+                CullParams::new(cascade.view_proj, cascade.light_eye, max_meshlets_per_mesh)
+                    // The cascade's world height, which under an
+                    // orthographic projection is the entire relationship
+                    // between a simplification error and how much of the
+                    // shadow map it covers.
+                    .with_orthographic_lod(
+                        atlas.cascade_size() as f32 * cascade.texel_world_size,
                         atlas.cascade_size() as f32,
-                        1.0,
                         (lod_target * SHADOW_LOD_RELAXATION).max(0.01),
                     );
             cull.dispatch_scene_pool_atomic(

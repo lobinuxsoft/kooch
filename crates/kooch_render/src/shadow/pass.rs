@@ -64,6 +64,16 @@ impl ShadowPass {
         self.atlas.view()
     }
 
+    /// The atlas texture itself, for reading back.
+    ///
+    /// Exists so a test can look at what the pass actually drew. "The
+    /// shadow is wrong" splits into "the map is wrong" and "the
+    /// sampling is wrong", and those have nothing in common but the
+    /// symptom.
+    pub fn atlas_texture(&self) -> &wgpu::Texture {
+        self.atlas.texture()
+    }
+
     pub fn atlas_bytes(&self) -> u64 {
         self.atlas.byte_size()
     }
