@@ -666,6 +666,41 @@ fn inti_shadow_debug(world_position: vec3<f32>, view_depth: f32) -> vec3<f32> {
     return INTI_CASCADE_COLOURS[index] * recorded;
 }
 
+/// The contact-shadow march, as colour, for the first light that opted
+/// in (#735).
+///
+/// **One light, because the march is per light**: summing several would
+/// average away the thing being looked at. The first opted-in light is
+/// the sun in every scene that has one, which is the light whose
+/// contact shadow anybody is inspecting.
+///
+/// The colours are `inti_contact_shadow_debug`'s and the reasoning is
+/// there. Magenta here means *no light in the scene marches at all* —
+/// which is a different answer from "it marched and found nothing", and
+/// they look identical in a shaded frame.
+fn inti_contact_shadow_debug_view(
+    world_position: vec3<f32>,
+    n: vec3<f32>,
+    frag_coord: vec2<f32>,
+) -> vec3<f32> {
+    for (var i = 0u; i < inti.light_count; i = i + 1u) {
+        let light = inti_lights[i];
+        if ((light.flags & INTI_LIGHT_CONTACT_SHADOWS) == 0u) {
+            continue;
+        }
+        let s = inti_sample_light(light, world_position);
+        // Same gate the shading loop applies: a surface facing away
+        // from the light is not marched, and painting it as "no hit"
+        // would read as a failure of the march rather than as geometry.
+        if (dot(n, s.to_light) <= 0.0) {
+            return vec3<f32>(0.04);
+        }
+        return inti_contact_shadow_debug(
+            inti_contact_shadow_probe(world_position, s.to_light, frag_coord));
+    }
+    return vec3<f32>(1.0, 0.0, 1.0);
+}
+
 // The whole model, for one surface point.
 //
 // `base_color` is linear albedo (sRGB textures are decoded by the

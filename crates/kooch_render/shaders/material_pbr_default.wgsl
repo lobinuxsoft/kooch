@@ -32,6 +32,8 @@ struct MaterialParams {
 const DEBUG_MODE_NORMALS: u32 = 11u;
 // `MeshletDebugMode::ShadowCascades`, pinned by the same test.
 const DEBUG_MODE_SHADOW_CASCADES: u32 = 12u;
+// `MeshletDebugMode::ContactShadows`, pinned by the same test.
+const DEBUG_MODE_CONTACT_SHADOWS: u32 = 13u;
 
 struct FsInput {
     // @invariant: the Equal depth test against the material-depth target
@@ -83,6 +85,10 @@ fn fs_material(in: FsInput) -> @location(0) vec4<f32> {
     if (screen.debug_mode == DEBUG_MODE_SHADOW_CASCADES) {
         let vd = dot(surf.world_position - inti.camera_position, inti.camera_forward);
         return vec4<f32>(inti_shadow_debug(surf.world_position, vd), 1.0);
+    }
+    if (screen.debug_mode == DEBUG_MODE_CONTACT_SHADOWS) {
+        return vec4<f32>(
+            inti_contact_shadow_debug_view(surf.world_position, world_n, in.position.xy), 1.0);
     }
 
     // glTF packing: green is roughness, blue is metallic. The 1×1

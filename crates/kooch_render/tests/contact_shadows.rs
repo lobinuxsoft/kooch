@@ -30,7 +30,8 @@ use kooch_ecs::query::AccessTracker;
 use kooch_render::ViewCamera;
 use kooch_render::material::{Material, MaterialPipeline};
 use kooch_render::meshlet::{
-    MeshletDebugCaps, MeshletRenderStage, MeshletRenderStageConfig, build_default_meshlets,
+    MeshletDebugCaps, MeshletDebugMode, MeshletRenderStage, MeshletRenderStageConfig,
+    build_default_meshlets,
 };
 use kooch_render::shadow::ShadowSettings;
 use kooch_render::vbuf64::Vbuf64Support;
@@ -394,5 +395,48 @@ fn the_fragment_path_leaves_open_floor_alone() {
         (marched - lit).abs() < lit * 0.1,
         "open floor went from {lit:.4} to {marched:.4} (linear) on the \
          R64 path when the march was enabled",
+    );
+}
+
+/// The debug view has to be *wired*, not merely selectable — a mode that
+/// silently falls through to lit shading looks plausible and answers
+/// nothing. Open floor must read as "marched, found nothing" and the
+/// floor the cube stands on must not.
+#[test]
+fn the_debug_view_separates_a_hit_from_open_floor() {
+    let Some(mut rig) = rig(Path::ComputeDeferred) else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    add_sun(&mut rig.resources, true);
+    rig.resources.insert(MeshletDebugMode::ContactShadows);
+    let pixels = render(&mut rig);
+    let camera = rig.camera;
+
+    let (ox, oy) = project(&camera, OPEN_FLOOR);
+    let (cx, cy) = project(&camera, CONTACT_POINT);
+    let rgb = |x: u32, y: u32| {
+        let i = ((y * SIZE + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    let open = rgb(ox, oy);
+    let contact = rgb(cx, cy);
+
+    // Deliberately NOT asserting which colour open floor takes. At this
+    // render size a 0.3 m ray is under two pixels long there, so the
+    // honest answer is blue — "nothing to march" — and a test that
+    // demanded grey would be pinning the author's guess rather than the
+    // view's answer. What has to hold is that the view answers at all.
+    let magenta = [255, 0, 255];
+    assert_ne!(
+        open, magenta,
+        "open floor is magenta, which means no light in the scene opted \
+         into the march — the flag is not reaching the shader",
+    );
+    assert_ne!(
+        contact, open,
+        "the floor beside the cube reads the same as open floor \
+         ({contact:?}) — the view is painting one colour everywhere, \
+         which is what a mode falling through to lit shading looks like",
     );
 }

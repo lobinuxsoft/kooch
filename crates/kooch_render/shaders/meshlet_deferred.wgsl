@@ -69,6 +69,8 @@ struct MaterialParams {
 const DEBUG_MODE_NORMALS: u32 = 11u;
 // `MeshletDebugMode::ShadowCascades`, pinned by the same test.
 const DEBUG_MODE_SHADOW_CASCADES: u32 = 12u;
+// `MeshletDebugMode::ContactShadows`, pinned by the same test.
+const DEBUG_MODE_CONTACT_SHADOWS: u32 = 13u;
 
 // PCG-style hash → vec3 rgb in [0.2, 1.0]. The 0.2 floor keeps any
 // id from collapsing to black (which the alpha=0 background uses).
@@ -179,6 +181,9 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let vd = dot(
                     surf.world_position - inti.camera_position, inti.camera_forward);
                 rgb = inti_shadow_debug(surf.world_position, vd);
+            } else if (screen.debug_mode == DEBUG_MODE_CONTACT_SHADOWS) {
+                rgb = inti_contact_shadow_debug_view(
+                    surf.world_position, n, vec2<f32>(pixel) + vec2<f32>(0.5));
             } else {
                 let m = materials[surf.material_id];
                 // No texture sampling on this path: a compute shader

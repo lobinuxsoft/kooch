@@ -80,13 +80,34 @@ pub fn inti_pbr_shader(group: u32) -> String {
 /// supply one of the two fails to compile rather than quietly shading
 /// differently from its sibling.
 pub const INTI_CONTACT_SHADOW_STUB: &str = "\
-// No depth buffer to march — every light reports fully unoccluded.
+// No depth buffer to march — every light reports fully unoccluded, and
+// the debug view says so rather than colouring a march that never ran.
+struct ContactShadowProbe {
+    shadow: f32,
+    hit: bool,
+    step: u32,
+    steps: u32,
+    ray_px: f32,
+}
+
 fn inti_contact_shadow(
     world_position: vec3<f32>,
     to_light: vec3<f32>,
     frag_coord: vec2<f32>,
 ) -> f32 {
     return 1.0;
+}
+
+fn inti_contact_shadow_probe(
+    world_position: vec3<f32>,
+    to_light: vec3<f32>,
+    frag_coord: vec2<f32>,
+) -> ContactShadowProbe {
+    return ContactShadowProbe(1.0, false, 0u, 0u, 0.0);
+}
+
+fn inti_contact_shadow_debug(probe: ContactShadowProbe) -> vec3<f32> {
+    return vec3<f32>(0.0);
 }
 ";
 
