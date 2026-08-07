@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-07, `development` at `25b3ec7` — **#476 merged in #749**.
+Last updated 2026-08-07, `development` at `85f680a` — **#476 merged in #749**.
 
 ---
 
@@ -30,6 +30,43 @@ resolve already reconstructs — see `surface_reconstruct.wgsl`. Read what
 Bevy 0.19 does first: it landed there in the same release, and this
 session is the evidence for why guessing at an orthographic-adjacent
 technique costs more than reading it.
+
+### The plan, already verified against the code
+
+Bevy 0.19 keeps the parameters in `contact_shadows.rs` and the march in
+`render/pbr_functions.wgsl:298` (`calculate_contact_shadow`), over a
+generic `bevy_pbr::raymarch` module. Their defaults: **16 linear steps,
+0.1 thickness, 0.3 length** — the last two in world units. `thickness`
+exists because a depth buffer is 2.5D: it assumes every fragment is a
+box that deep. A hit returns a **fade**, not a boolean.
+
+The march needs the depth buffer in the shading pass, which is not bound
+today — Bevy's component simply `#[require(DepthPrepass)]`. It goes in
+**group 0**, alongside the vbuf, camera and screen UBO, which are per
+view exactly as the depth is. Not in Inti's group: that one is shared
+across views, and putting a per-view resource there is what made shadows
+vanish when the light buffer grew.
+
+Three things checked rather than assumed:
+
+| | |
+|---|---|
+| The scene depth is **not** an attachment during shading | `two_pass.rs:397` binds `material_depth_view` |
+| The texture can be sampled | `view_targets.rs:126` — `RENDER_ATTACHMENT \| TEXTURE_BINDING` |
+| A view for sampling exists | `depth_sample_view`, `aspect: DepthOnly` |
+
+The Hi-Z 2-pass path already samples it (`render_hi_z_2pass.rs:115`), so
+the pattern is proven in this codebase and not merely allowed by wgpu.
+No read-only depth attachment, no depth copy.
+
+Steps: `binding: 3` on `frame_bgl` (`two_pass.rs:89` uses 0/1/2) →
+`depth_sample_view` into the bind group → `textureLoad` in the fragment,
+**no sampler**, because a screen-space march wants the exact texel → the
+march itself.
+
+🔴 **Both shading paths.** The R32 deferred path shades in a separate
+compute shader with its own group 0. Landing this on R64 only is how
+half of #476 went: two paths diverging with no compiler between them.
 
 ### Behind it
 
