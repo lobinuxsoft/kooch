@@ -37,6 +37,8 @@ use kooch_ecs::Reflect;
 use kooch_lighting::{AmbientLight, Exposure, PhysicalCamera};
 use serde::{Deserialize, Serialize};
 
+use crate::shadow::ShadowSettings;
+
 /// Extension a settings file carries.
 pub const RENDER_SETTINGS_EXTENSION: &str = "rendersettings";
 
@@ -82,6 +84,23 @@ pub struct RenderSettings {
     /// describes no direction.
     #[serde(default = "default_ambient_intensity")]
     pub ambient_intensity: f32,
+
+    /// Whether the sun casts shadows. Off frees the atlas entirely —
+    /// 64 MiB at the default resolution.
+    #[serde(default = "default_shadows_enabled")]
+    pub shadows_enabled: bool,
+    /// How far from the camera shadows are drawn, in METRES.
+    ///
+    /// Raising this does not add shadows in the distance so much as move
+    /// texels there: the four cascades are fitted to whatever range they
+    /// are given, so a larger distance blurs the shadows near the
+    /// camera, which are the ones being looked at.
+    #[serde(default = "default_shadow_distance")]
+    pub shadow_distance: f32,
+    /// Side of one shadow cascade in TEXELS. The atlas is twice this on
+    /// each axis: 2048 costs 64 MiB, 1024 costs 16.
+    #[serde(default = "default_cascade_texels")]
+    pub shadow_cascade_texels: u32,
 }
 
 fn default_aperture() -> f32 {
@@ -102,6 +121,15 @@ fn default_ground() -> glam::Vec3 {
 fn default_ambient_intensity() -> f32 {
     AmbientLight::default().intensity
 }
+fn default_shadows_enabled() -> bool {
+    ShadowSettings::default().enabled
+}
+fn default_shadow_distance() -> f32 {
+    ShadowSettings::default().max_distance
+}
+fn default_cascade_texels() -> u32 {
+    ShadowSettings::default().cascade_texels
+}
 
 impl Default for RenderSettings {
     /// The same values the engine uses with no settings asset at all —
@@ -110,6 +138,7 @@ impl Default for RenderSettings {
     fn default() -> Self {
         let camera = PhysicalCamera::default();
         let ambient = AmbientLight::default();
+        let shadows = ShadowSettings::default();
         Self {
             aperture_f_stops: camera.aperture_f_stops,
             shutter_speed_s: camera.shutter_speed_s,
@@ -117,6 +146,9 @@ impl Default for RenderSettings {
             ambient_sky_color: ambient.sky_color,
             ambient_ground_color: ambient.ground_color,
             ambient_intensity: ambient.intensity,
+            shadows_enabled: shadows.enabled,
+            shadow_distance: shadows.max_distance,
+            shadow_cascade_texels: shadows.cascade_texels,
         }
     }
 }
@@ -138,6 +170,14 @@ impl RenderSettings {
         }
     }
 
+    pub fn shadows(&self) -> ShadowSettings {
+        ShadowSettings {
+            max_distance: self.shadow_distance,
+            cascade_texels: self.shadow_cascade_texels,
+            enabled: self.shadows_enabled,
+        }
+    }
+
     /// Publishes into the `Resources` the shading model already reads.
     ///
     /// The indirection is the point: `inti_pbr.wgsl` and `GpuLights`
@@ -146,6 +186,7 @@ impl RenderSettings {
     pub fn apply(&self, resources: &mut Resources) {
         resources.insert(Exposure::from_physical(self.camera()));
         resources.insert(self.ambient());
+        resources.insert(self.shadows());
     }
 }
 
@@ -301,8 +342,10 @@ pub fn apply_render_settings_system(resources: &mut Resources) {
     // freshly set, which any future change detection would believe.
     let exposure = Exposure::from_physical(settings.camera());
     let ambient = settings.ambient();
+    let shadows = settings.shadows();
     let stale = resources.get::<Exposure>() != Some(&exposure)
-        || resources.get::<AmbientLight>() != Some(&ambient);
+        || resources.get::<AmbientLight>() != Some(&ambient)
+        || resources.get::<ShadowSettings>() != Some(&shadows);
     if stale {
         settings.apply(resources);
         tracing::debug!(
