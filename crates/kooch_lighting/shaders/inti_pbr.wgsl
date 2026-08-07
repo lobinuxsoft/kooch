@@ -491,25 +491,14 @@ fn inti_sample_castano(uv: vec2<f32>, depth: f32, scale: f32) -> f32 {
     return sum * (1.0 / 144.0);
 }
 
-/// Occlusion at `world_position`, 1 = fully lit.
-///
-/// `to_light` is the unit vector toward the light, for the depth bias.
-fn inti_shadow(
+/// Occlusion from one cascade, 1 = fully lit.
+fn inti_sample_cascade(
+    index: u32,
     world_position: vec3<f32>,
     normal: vec3<f32>,
     to_light: vec3<f32>,
-    view_depth: f32,
     n_dot_l: f32,
 ) -> f32 {
-    if (inti.shadows_enabled == 0u) {
-        return 1.0;
-    }
-    let picked = inti_pick_cascade(view_depth);
-    let index = u32(picked.x);
-    if (index >= 4u) {
-        return 1.0;
-    }
-
     let cascade = inti.cascades[index];
 
     // Both of Bevy's offsets, in world space, and no rasteriser depth
@@ -554,14 +543,49 @@ fn inti_shadow(
     // stops hiding the shadow map's own aliasing and the edge steps.
     let scale = max(penumbra_world / max(cascade.texel_world_size, 1e-6), 1.0);
 
-    var lit = inti_sample_castano(coords.xy, coords.z, scale);
+    return inti_sample_castano(coords.xy, coords.z, scale);
+}
 
-    // Fade to lit across the last cascade's band, so the outermost
-    // boundary is a gradient into "no shadow data" rather than an edge.
-    if (index == 3u) {
-        lit = mix(lit, 1.0, picked.y);
+/// Occlusion at `world_position`, 1 = fully lit.
+///
+/// `to_light` is the unit vector toward the light, for the depth bias.
+///
+/// # Why two cascades near a boundary
+///
+/// Texel density and filter width both change at a split, so a hard
+/// handover is a visible line across the ground wherever one runs. Bevy
+/// samples the next cascade too across an overlap band and mixes — twice
+/// the cost, in a band, and it is the difference between cascades you
+/// cannot see and cascades you can point at.
+fn inti_shadow(
+    world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_light: vec3<f32>,
+    view_depth: f32,
+    n_dot_l: f32,
+) -> f32 {
+    if (inti.shadows_enabled == 0u) {
+        return 1.0;
     }
-    return lit;
+    let picked = inti_pick_cascade(view_depth);
+    let index = u32(picked.x);
+    if (index >= 4u) {
+        return 1.0;
+    }
+
+    var lit = inti_sample_cascade(index, world_position, normal, to_light, n_dot_l);
+    if (picked.y <= 0.0) {
+        return lit;
+    }
+
+    // Inside the overlap band. The last cascade has no successor, so it
+    // fades to lit instead — a gradient into "no shadow data" rather
+    // than an edge at the end of the world.
+    if (index == 3u) {
+        return mix(lit, 1.0, picked.y);
+    }
+    let next = inti_sample_cascade(index + 1u, world_position, normal, to_light, n_dot_l);
+    return mix(lit, next, picked.y);
 }
 
 // One colour per cascade, for the debug view. Distinct hues rather

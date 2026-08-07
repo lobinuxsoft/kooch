@@ -15,15 +15,21 @@ use super::atlas::ShadowAtlas;
 use super::cascades::{CASCADE_BLEND_FRACTION, CASCADE_COUNT, Cascade, build_cascades};
 use super::raster::ShadowRasterizer;
 
-/// How far behind a cascade's sphere the light's eye sits, in radii.
+/// How far past a cascade's own nearest point the light's near plane
+/// sits, as a fraction of the cascade's width.
 ///
 /// This is what makes an occluder *outside* the view frustum cast into
 /// it: a wall behind the camera shadows the floor in front of it only if
-/// the light's near plane is behind the wall. Larger is safer and
-/// spreads the same depth buffer over more distance, so it trades a
-/// missing shadow for a less precise one — and a missing shadow is the
-/// one people report.
-const DEPTH_EXTENT_SCALE: f32 = 4.0;
+/// the light's near plane is behind the wall. Every metre of it is
+/// precision the depth comparison does not get, so it trades a missing
+/// shadow for a less precise one — and a missing shadow is the one
+/// people report.
+///
+/// One cascade width, where the previous fit spent four times the
+/// bounding sphere's radius. Bevy needs none of it because their shadow
+/// pass renders with `unclipped_depth`, which is the real fix and needs
+/// `DEPTH_CLIP_CONTROL` from the device.
+const NEAR_EXTENSION_SCALE: f32 = 1.0;
 
 /// The atlas, the pipeline, and the ordering between them.
 pub struct ShadowPass {
@@ -107,7 +113,7 @@ impl ShadowPass {
             far,
             first_cascade_distance.clamp(camera.near + 1e-3, far),
             self.atlas.cascade_size(),
-            DEPTH_EXTENT_SCALE,
+            NEAR_EXTENSION_SCALE,
         );
 
         PreparedShadows {

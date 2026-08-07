@@ -34,10 +34,14 @@ use glam::{Mat4, Vec3, Vec4Swizzles};
 /// bound.
 pub const CASCADE_COUNT: usize = 4;
 
-/// Blend band between neighbouring cascades, as a fraction of the split
-/// distance. Without it the boundary is a visible line where filter
-/// radius and texel density change at once.
-pub const CASCADE_BLEND_FRACTION: f32 = 0.1;
+/// Overlap band between neighbouring cascades, as a fraction of the
+/// split distance.
+///
+/// Texel density and filter width both change at a split, so a hard
+/// handover is a line drawn across the ground. The shading pass samples
+/// both cascades inside the band and mixes; Bevy calls the same number
+/// `overlap_proportion` and ships 0.2.
+pub const CASCADE_BLEND_FRACTION: f32 = 0.2;
 
 /// One cascade's placement.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -135,34 +139,41 @@ pub fn frustum_corners(inverse_view_proj: Mat4) -> [Vec3; 8] {
     corners
 }
 
-/// The sphere containing `corners`, centred on their centroid.
-///
-/// Not the minimal bounding sphere — the centroid is not the optimal
-/// centre — and deliberately so: the centroid is a **continuous**
-/// function of the corners, and an exact minimal-sphere algorithm is
-/// not. Welzl's picks a different support set as the camera turns, the
-/// centre jumps, and the snapping below cannot hide a discontinuity.
-/// A slightly larger sphere that moves smoothly beats a tight one that
-/// pops.
-fn bounding_sphere(corners: &[Vec3; 8]) -> (Vec3, f32) {
-    let centre = corners.iter().copied().sum::<Vec3>() / 8.0;
-    let radius = corners
-        .iter()
-        .map(|c| (*c - centre).length())
-        .fold(0.0f32, f32::max);
-    (centre, radius)
-}
-
 /// Builds the cascades for one directional light and one camera.
 ///
-/// `light_direction` points **where the light shines**, matching the
-/// component (the entity's -Z). `shadow_map_size` is one cascade's side
-/// in texels, not the atlas's.
+/// Ported from Bevy 0.19's `calculate_cascade`. `light_direction` points
+/// **where the light shines**, matching the component (the entity's -Z).
+/// `shadow_map_size` is one cascade's side in texels, not the atlas's.
 ///
-/// `depth_extent_scale` pushes the light's near plane back beyond the
-/// sphere so occluders outside the view frustum still cast into it — a
-/// wall behind the camera shadows the floor in front of it, and without
-/// this its shadow simply is not there.
+/// # Why the slice's own diameter, and not a bounding sphere
+///
+/// The volume has to be the same size from every camera angle or the
+/// world-units-per-texel ratio changes as you turn and every shadow
+/// resamples. A bounding sphere gives that, and it gives away
+/// resolution: a sphere around the centroid of a frustum slice is
+/// noticeably larger than the slice.
+///
+/// The **longer of the slice's two diagonals** — corner to opposite
+/// corner through the body, and across the far plane — is just as
+/// invariant, because those are distances between fixed corners of a
+/// rigid shape, and it is the smallest square that always contains the
+/// slice. `ceil` on top: an integer diameter over a power-of-two texture
+/// makes the texel size an exact power of two, which is what lets the
+/// snap below be exact in floating point rather than approximately
+/// exact.
+///
+/// # Why the depth range hugs the slice
+///
+/// The near plane sits at the slice's own nearest point to the light
+/// plus `near_extension`, rather than a multiple of the volume's size.
+/// Every metre of unused depth range is precision the comparison does
+/// not get, and it is why the bias had to be as large as it was.
+///
+/// `near_extension` is what still catches occluders outside the view
+/// frustum — a wall behind the camera shadowing the floor in front of
+/// it. Bevy avoids needing it by rendering the shadow pass with
+/// `unclipped_depth`; the same trick applies here the day this pipeline
+/// asks for `DEPTH_CLIP_CONTROL`.
 #[allow(clippy::too_many_arguments)]
 pub fn build_cascades(
     camera_view_proj: Mat4,
@@ -171,13 +182,23 @@ pub fn build_cascades(
     far: f32,
     first_cascade_distance: f32,
     shadow_map_size: u32,
-    depth_extent_scale: f32,
+    near_extension_scale: f32,
 ) -> [Cascade; CASCADE_COUNT] {
     let splits = split_distances(first_cascade_distance, far);
     let inverse = camera_view_proj.inverse();
     let whole = frustum_corners(inverse);
     let size = shadow_map_size.max(1) as f32;
     let direction = light_direction.normalize_or(Vec3::NEG_Y);
+
+    // A pure rotation with -Z down the light. Built once: the light does
+    // not move between cascades, and only the centre does.
+    let up = if direction.y.abs() > 0.99 {
+        Vec3::Z
+    } else {
+        Vec3::Y
+    };
+    let world_from_light = Mat4::look_to_rh(Vec3::ZERO, direction, up).inverse();
+    let light_from_world = world_from_light.transpose();
 
     let mut cascades = [Cascade {
         view_proj: Mat4::IDENTITY,
@@ -204,49 +225,66 @@ pub fn build_cascades(
             slice[corner + 4] = n.lerp(f, t_far);
         }
 
-        let (centre, radius) = bounding_sphere(&slice);
-        // A degenerate camera collapses the slice to a point. A zero
-        // radius would divide by zero building the projection.
-        let radius = radius.max(1e-3);
-        let texel_world_size = (radius * 2.0) / size;
+        // Measured on the world-space corners, not the light-space ones.
+        // The lengths are the same in exact arithmetic and are not in
+        // f32, and this is the value the whole cascade's stability rests
+        // on.
+        let body_diagonal = (slice[0] - slice[7]).length();
+        let far_diagonal = (slice[4] - slice[7]).length();
+        let diameter = body_diagonal.max(far_diagonal).max(1e-3).ceil();
+        let texel_world_size = diameter / size;
 
-        // Look at the sphere from far enough back that everything in
-        // front of it still casts.
-        let extent = radius * depth_extent_scale.max(1.0);
-        let eye = centre - direction * extent;
-        // Any up vector works except one parallel to the light.
-        let up = if direction.y.abs() > 0.99 {
-            Vec3::Z
-        } else {
-            Vec3::Y
-        };
-        let light_view = Mat4::look_at_rh(eye, centre, up);
+        let mut min = Vec3::splat(f32::MAX);
+        let mut max = Vec3::splat(f32::MIN);
+        for corner in slice {
+            let light_space = light_from_world.transform_point3(corner);
+            min = min.min(light_space);
+            max = max.max(light_space);
+        }
 
-        // Snap in light space, where the texel grid is axis-aligned.
-        // Rounding in world space would be rounding against the wrong
-        // grid and would not stabilise anything.
-        let centre_light = (light_view * centre.extend(1.0)).xyz();
-        let snapped = Vec3::new(
-            (centre_light.x / texel_world_size).round() * texel_world_size,
-            (centre_light.y / texel_world_size).round() * texel_world_size,
-            centre_light.z,
+        // Snap the centre to the texel grid, in light space, where that
+        // grid is axis-aligned. Rounding in world space would be
+        // rounding against the wrong grid and would stabilise nothing.
+        //
+        // 🔴 max.z, not the centre: in a right-handed light space the
+        // largest z is the point NEAREST the light, and that is where
+        // the near plane belongs.
+        let near_extension = diameter * near_extension_scale.max(0.0);
+        let centre_light = Vec3::new(
+            (0.5 * (min.x + max.x) / texel_world_size).floor() * texel_world_size,
+            (0.5 * (min.y + max.y) / texel_world_size).floor() * texel_world_size,
+            max.z + near_extension,
         );
-        let offset = snapped - centre_light;
-        let snap = Mat4::from_translation(offset);
+        let depth_extent = (max.z - min.z + near_extension).max(1e-3);
 
-        // Reversed-Z, like every other projection in the engine, so the
-        // shadow pass compares `Greater` the way the main passes do and
-        // nobody has to hold two conventions at once.
-        let depth_extent = extent + radius * 2.0;
-        let projection =
-            orthographic_rh_reverse_z(-radius, radius, -radius, radius, 0.0, depth_extent);
+        // Form clip-from-world directly rather than inverting a
+        // world-from-cascade. The inverse of a matrix built from a
+        // rotation and a translation is exactly expressible, and asking
+        // the general inverse for it is asking for a different answer
+        // every frame in the low bits — which is a shimmer no snapping
+        // can undo.
+        let light_from_world_centred = Mat4::from_translation(-centre_light) * light_from_world;
+
+        // Right-handed orthographic, reversed-Z, centred on the near
+        // plane: z runs from 0 at the near plane to -depth_extent at the
+        // far one, and maps to 1 and 0.
+        let r = 1.0 / depth_extent;
+        let clip_from_light = Mat4::from_cols(
+            glam::Vec4::new(2.0 / diameter, 0.0, 0.0, 0.0),
+            glam::Vec4::new(0.0, 2.0 / diameter, 0.0, 0.0),
+            glam::Vec4::new(0.0, 0.0, r, 0.0),
+            glam::Vec4::new(0.0, 0.0, 1.0, 1.0),
+        );
 
         *cascade = Cascade {
-            view_proj: projection * snap * light_view,
+            view_proj: clip_from_light * light_from_world_centred,
             far_depth: slice_far,
             texel_world_size,
             depth_extent,
-            light_eye: eye,
+            // Far enough back to stand in for a direction in the cull's
+            // backface cone test, which measures from a point whatever
+            // the projection is.
+            light_eye: world_from_light.transform_point3(centre_light) - direction * depth_extent,
         };
         slice_near = slice_far;
     }
