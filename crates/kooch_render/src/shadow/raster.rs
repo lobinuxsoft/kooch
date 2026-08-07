@@ -20,14 +20,22 @@ use super::cascades::{CASCADE_COUNT, Cascade};
 
 const SHADER_SOURCE: &str = include_str!("../../shaders/shadow_depth.wgsl");
 
-/// How much coarser a shadow's level of detail is than the camera's.
+/// A shadow gets the same geometric budget as the camera.
 ///
-/// A shadow is a silhouette projected onto other geometry: it loses the
-/// detail that a surface facing the camera keeps, and nobody has ever
-/// noticed a shadow drawn from a slightly simpler mesh. Four times the
-/// screen-space error budget roughly halves the triangles per cascade,
-/// and there are four cascades.
-const SHADOW_LOD_RELAXATION: f32 = 4.0;
+/// 🔴 This was 4×, on the reasoning that a shadow is a silhouette and
+/// "nobody has ever noticed a shadow drawn from a slightly simpler
+/// mesh". The owner noticed immediately, and the reasoning is wrong on
+/// its own terms: a silhouette is the ONLY thing a shadow is, so
+/// simplification error goes straight into the outline where nothing
+/// hides it. On a lit surface the same error is a shading gradient.
+///
+/// Bevy 0.19 tests `norm_error * viewport_height < 1.0` for every view,
+/// shadow cascades included — no relaxation term exists in their
+/// selector. The budget is already measured in the cascade's own texels,
+/// so a cascade covering more world already asks for less detail; that
+/// relationship was doing the job this constant was invented to do, and
+/// then it was applied twice.
+const SHADOW_LOD_RELAXATION: f32 = 1.0;
 
 /// No rasteriser depth bias.
 ///
@@ -55,6 +63,9 @@ struct CascadeUbo {
 /// The depth-only pipeline and the per-cascade uniforms.
 pub struct ShadowRasterizer {
     pipeline: wgpu::RenderPipeline,
+    /// Whether the pipeline clamps depth instead of clipping it. When it
+    /// does, a cascade needs no near-plane margin at all.
+    unclipped_depth: bool,
     cascade_bgl: wgpu::BindGroupLayout,
     visible_bgl: wgpu::BindGroupLayout,
     instances_bgl: wgpu::BindGroupLayout,
@@ -67,6 +78,15 @@ pub struct ShadowRasterizer {
 
 impl ShadowRasterizer {
     pub fn new(device: &wgpu::Device, meshlet_bgl: &wgpu::BindGroupLayout) -> Self {
+        // Clamp depth rather than clip it, so an occluder nearer the
+        // light than the cascade's near plane is still recorded at the
+        // near plane instead of vanishing. That is what lets the depth
+        // range hug the slice — see `build_cascades`. Optional: the
+        // fallback is a near-plane margin, which costs precision rather
+        // than correctness.
+        let unclipped_depth = device
+            .features()
+            .contains(wgpu::Features::DEPTH_CLIP_CONTROL);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shadow_depth_shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
@@ -141,6 +161,7 @@ impl ShadowRasterizer {
                 // slope-scaled bias, and the bias is where the fix
                 // belongs.
                 cull_mode: Some(wgpu::Face::Back),
+                unclipped_depth,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -169,12 +190,23 @@ impl ShadowRasterizer {
 
         Self {
             pipeline,
+            unclipped_depth,
             cascade_bgl,
             visible_bgl,
             instances_bgl,
             cascade_buffer,
             cascade_stride,
         }
+    }
+
+    /// How far past its own nearest point a cascade's near plane has to
+    /// sit, as a fraction of the cascade's width.
+    ///
+    /// Zero when the pipeline clamps depth: an occluder in front of the
+    /// near plane is recorded at it rather than clipped away, so there
+    /// is nothing to make room for.
+    pub fn near_extension_scale(&self) -> f32 {
+        if self.unclipped_depth { 0.0 } else { 1.0 }
     }
 
     /// Culls and draws every cascade into the atlas.
@@ -354,11 +386,13 @@ mod tests {
         assert_eq!(super::DEPTH_BIAS.slope_scale, 0.0);
     }
 
-    /// A shadow is a silhouette and loses detail a lit surface keeps, so
-    /// its geometry budget is looser than the camera's — never tighter,
-    /// which would spend triangles nobody can see.
+    /// A silhouette is all a shadow is, so simplification error lands
+    /// in the outline where nothing hides it. Bevy applies no relaxation
+    /// to shadow views either — the budget is already in the cascade's
+    /// own texels, which is the term that makes a distant cascade ask
+    /// for less detail.
     #[test]
-    fn shadows_use_a_looser_lod_budget_than_the_camera() {
-        assert!(super::SHADOW_LOD_RELAXATION > 1.0);
+    fn a_shadow_gets_the_same_geometric_budget_as_the_camera() {
+        assert_eq!(super::SHADOW_LOD_RELAXATION, 1.0);
     }
 }
