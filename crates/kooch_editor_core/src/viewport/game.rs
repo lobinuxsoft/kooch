@@ -81,7 +81,6 @@ pub(crate) fn render_game_view(
     };
     game.has_camera = true;
     let aspect = game.target.aspect();
-    let (view_proj, cam_pos) = (camera.view_proj(aspect), camera.position());
 
     // Per view: dragging this panel's divider must not reallocate the
     // View panel's attachments.
@@ -94,8 +93,8 @@ pub(crate) fn render_game_view(
         gpu.device(),
         gpu.queue(),
         resources,
-        view_proj,
-        cam_pos,
+        &camera,
+        aspect,
     );
 
     let mut encoder = gpu

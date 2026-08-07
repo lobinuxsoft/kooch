@@ -120,7 +120,7 @@ impl GpuLight {
 /// make every `dot` against it zero, which for a directional light is
 /// indistinguishable from night; pointing straight down at least
 /// renders something an author can see is wrong.
-fn forward(world: Mat4) -> Vec3 {
+pub(crate) fn forward(world: Mat4) -> Vec3 {
     let f = world.transform_vector3(Vec3::NEG_Z);
     f.normalize_or(Vec3::NEG_Y)
 }

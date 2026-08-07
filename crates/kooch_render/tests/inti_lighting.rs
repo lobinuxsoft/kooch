@@ -18,7 +18,7 @@
 
 mod common;
 
-use common::{build_sphere_mesh, try_acquire_device};
+use common::{build_sphere_mesh, read_rgba8, try_acquire_device};
 use glam::{Mat4, Quat, Vec3};
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
@@ -44,8 +44,7 @@ struct Rig {
     queue: wgpu::Queue,
     resources: Resources,
     stage: MeshletRenderStage,
-    view_proj: Mat4,
-    cam_pos: Vec3,
+    camera: kooch_render::ViewCamera,
 }
 
 fn rig() -> Option<Rig> {
@@ -98,17 +97,12 @@ fn rig() -> Option<Rig> {
         });
     commands.apply(&mut resources);
 
-    let cam_pos = Vec3::new(0.0, 0.0, 3.0);
-    let view = Mat4::look_at_rh(cam_pos, Vec3::ZERO, Vec3::Y);
-    let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
-
     Some(Rig {
         device,
         queue,
         resources,
         stage,
-        view_proj: proj * view,
-        cam_pos,
+        camera: kooch_render::ViewCamera::looking_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO),
     })
 }
 
@@ -135,13 +129,8 @@ fn add_directional(resources: &mut Resources, direction: Vec3, intensity: f32) {
 }
 
 fn render(rig: &mut Rig) -> Vec<u8> {
-    rig.stage.render_with_assets_primary(
-        &rig.device,
-        &rig.queue,
-        &rig.resources,
-        rig.view_proj,
-        rig.cam_pos,
-    );
+    rig.stage
+        .render_with_assets_primary(&rig.device, &rig.queue, &rig.resources, &rig.camera, 1.0);
     read_rgba8(&rig.device, &rig.queue, rig.stage.color_texture())
 }
 
@@ -155,37 +144,10 @@ fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
     ]
 }
 
-/// sRGB electrical value → linear.
-///
-/// Comparisons happen in linear because that is where the shading
-/// happened. In 8-bit sRGB the transfer function plus ACES compress a
-/// genuine 2× difference in irradiance down to about 1.1× in the byte,
-/// which makes a working BRDF look like a broken one.
-fn srgb_to_linear(v: u8) -> f32 {
-    let c = v as f32 / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
-}
-
 /// Mean linear luminance over a small box, so one stray pixel on a
 /// silhouette cannot decide a test.
 fn brightness(pixels: &[u8], cx: u32, cy: u32) -> f32 {
-    let half = 3;
-    let mut total = 0.0;
-    let mut count = 0.0;
-    for y in (cy - half)..=(cy + half) {
-        for x in (cx - half)..=(cx + half) {
-            let p = pixel(pixels, x, y);
-            total += 0.2126 * srgb_to_linear(p[0])
-                + 0.7152 * srgb_to_linear(p[1])
-                + 0.0722 * srgb_to_linear(p[2]);
-            count += 1.0;
-        }
-    }
-    total / count
+    common::luminance_at(pixels, SIZE, cx, cy, 3)
 }
 
 /// Distance from the centre to the sphere's silhouette, measured on the
@@ -369,60 +331,4 @@ fn the_normals_debug_view_differs_from_lit_shading() {
         "MeshletDebugMode::Normals rendered the same as Off, so either \
          the dropdown does nothing or Off is still the debug view",
     );
-}
-
-/// Reads a 2-D Rgba8Unorm texture back into a tightly packed buffer.
-fn read_rgba8(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> Vec<u8> {
-    let size = texture.size();
-    let (w, h) = (size.width, size.height);
-    let unpadded = w * 4;
-    let padded = unpadded.div_ceil(256) * 256;
-
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("inti_readback"),
-        size: (padded * h) as u64,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("inti_readback_encoder"),
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &staging,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded),
-                rows_per_image: Some(h),
-            },
-        },
-        wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        },
-    );
-    queue.submit(std::iter::once(encoder.finish()));
-
-    let slice = staging.slice(..);
-    slice.map_async(wgpu::MapMode::Read, |_| {});
-    let _ = device.poll(wgpu::PollType::Wait {
-        submission_index: None,
-        timeout: None,
-    });
-    let data = slice.get_mapped_range();
-    let mut out = Vec::with_capacity((unpadded * h) as usize);
-    for row in 0..h {
-        let start = (row * padded) as usize;
-        out.extend_from_slice(&data[start..start + unpadded as usize]);
-    }
-    drop(data);
-    staging.unmap();
-    out
 }

@@ -52,6 +52,33 @@ pub fn extract_lights(resources: &Resources) -> Vec<GpuLight> {
     out
 }
 
+/// The direction of the one directional light that casts shadows, if
+/// the scene has one.
+///
+/// Points **where the light shines** — the entity's -Z, the same vector
+/// the shading model reads — so a caller can hand it straight to
+/// `build_cascades`.
+///
+/// # Why the first and not all of them
+///
+/// The atlas holds four cascades of one light. A second sun would need
+/// a second atlas, and there is no bind group left to put it in. Taking
+/// the first in walk order is a limitation stated rather than a choice:
+/// a scene with two shadow-casting suns gets shadows from one of them,
+/// which is visibly wrong and therefore reportable, as opposed to
+/// getting none, which reads as the feature being broken.
+pub fn shadow_casting_sun(resources: &Resources) -> Option<glam::Vec3> {
+    let mut found = None;
+    Query::<(&DirectionalLight, &GlobalTransform)>::new(resources).for_each(
+        |(light, transform)| {
+            if found.is_none() && light.active && light.cast_shadows {
+                found = Some(crate::gpu_light::forward(transform.matrix));
+            }
+        },
+    );
+    found
+}
+
 /// `Some(count)` when `lights` is past the budget the shader's linear
 /// loop can carry honestly, `None` otherwise.
 ///

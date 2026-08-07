@@ -84,6 +84,10 @@ impl MeshletRenderStage {
             rasterizer,
             deferred,
             lights: kooch_lighting::GpuLights::new(device),
+            // Allocated on the first frame that finds a sun; see the
+            // field's doc for why not here.
+            shadows: None,
+            shadow_texels: 0,
             gpu_pool: None,
             pool_dirty: false,
             meshlet_bgl,
@@ -180,6 +184,15 @@ impl MeshletRenderStage {
     /// readback hasn't completed yet.
     pub fn gpu_frame_ms(&self) -> Option<f32> {
         self.gpu_timers.last_frame_ms()
+    }
+
+    /// The shadow atlas this stage drew into, if it has one.
+    ///
+    /// For tests and for a future debug view (#743): the atlas answers
+    /// "did the pass record this occluder" directly, where the shaded
+    /// frame answers it through the whole sampling path.
+    pub fn shadow_atlas_texture(&self) -> Option<&wgpu::Texture> {
+        self.shadows.as_ref().map(|s| s.atlas_texture())
     }
 
     pub fn pipeline(&self) -> &MeshletPipeline {

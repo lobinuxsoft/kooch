@@ -52,16 +52,13 @@ pub(crate) fn render_viewport(
         meshlet
             .stage
             .sync_assets_to_gpu(gpu.device(), gpu.queue(), resources);
-        let camera = view_camera(resources);
-        let (view_proj, cam_pos) = camera
-            .map(|c| (c.view_proj(target.aspect()), c.position()))
-            .unwrap_or((glam::Mat4::IDENTITY, glam::Vec3::ZERO));
+        let camera = view_camera(resources).unwrap_or_default();
         let stats = meshlet.stage.render_with_assets_primary(
             gpu.device(),
             gpu.queue(),
             resources,
-            view_proj,
-            cam_pos,
+            &camera,
+            target.aspect(),
         );
         // Republish per-frame so the editor's debug-stats overlay (#451)
         // can read it next tick. Stats from a frame the meshlet stage

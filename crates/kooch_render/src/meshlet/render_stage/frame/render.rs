@@ -12,14 +12,13 @@
 //! Both extracted methods own their submits + readbacks and return
 //! the [`MeshletRenderStats`] for the frame.
 
-use glam::{Mat4, Vec3};
-
 use kooch_core::resource::Resources;
 
 use crate::meshlet::cull::CullParams;
 use crate::meshlet::debug::{MeshletDebugMode, MeshletLodSettings};
 use crate::meshlet::gpu_meshlet::pool_meshlet_bind_group;
 use crate::meshlet::scene::SceneCullParams;
+use crate::view_camera::ViewCamera;
 
 use super::super::{MeshletRenderStage, MeshletRenderStats, ViewId};
 
@@ -36,8 +35,8 @@ impl MeshletRenderStage {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         resources: &Resources,
-        view_proj: Mat4,
-        cam_pos: Vec3,
+        camera: &ViewCamera,
+        aspect: f32,
     ) -> MeshletRenderStats {
         if self.pool_dirty || self.gpu_pool.is_none() {
             if self.pipeline.registered_count() == 0 {
@@ -52,7 +51,7 @@ impl MeshletRenderStage {
                 "rebuilt GpuGlobalMeshPool",
             );
         }
-        self.render(view_id, device, queue, resources, view_proj, cam_pos)
+        self.render(view_id, device, queue, resources, camera, aspect)
     }
 
     /// Same as [`Self::render_with_assets`], for this stage's primary
@@ -62,10 +61,10 @@ impl MeshletRenderStage {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         resources: &Resources,
-        view_proj: Mat4,
-        cam_pos: Vec3,
+        camera: &ViewCamera,
+        aspect: f32,
     ) -> MeshletRenderStats {
-        self.render_with_assets(self.primary, device, queue, resources, view_proj, cam_pos)
+        self.render_with_assets(self.primary, device, queue, resources, camera, aspect)
     }
 
     /// Records + submits one frame against the current `gpu_pool`.
@@ -113,9 +112,15 @@ impl MeshletRenderStage {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         resources: &Resources,
-        view_proj: Mat4,
-        cam_pos: Vec3,
+        camera: &ViewCamera,
+        aspect: f32,
     ) -> MeshletRenderStats {
+        // The lens rather than the matrix, because the shadow cascades
+        // need the near and far planes to place themselves and a
+        // `Mat4` has already thrown them away (#476).
+        let view_proj = camera.view_proj(aspect);
+        let cam_pos = camera.position();
+
         // ── Prelude: shared between both GPU paths ─────────────────
         // Extract the per-frame `max_meshlets_per_mesh` immediately so
         // the `&self.gpu_pool` borrow is released before any `&mut
@@ -158,11 +163,43 @@ impl MeshletRenderStage {
         self.instance_capacity = self.scene.capacity();
 
         self.scene.upload_instances(queue, &instances);
+
+        let scene_params = SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
+        // Worst case for every cull this frame, the view's and the four
+        // cascades': one thread per instance-meshlet pair.
+        let required_capacity = scene_params
+            .instance_count
+            .saturating_mul(scene_params.meshlets_per_mesh);
+        // group_max_err sized to the per-instance prefix-sum total
+        // (Σ over instances of mesh_descriptors[mesh_id].group_count),
+        // not the pool's group_capacity. Per-mesh sizing collapsed
+        // every instance of the same mesh into one slot range and
+        // forced multi-instance LOD descent to the closest one's
+        // verdict (#474).
+        let required_group_capacity = self.pipeline.instance_group_capacity(&instances).max(1);
+
+        // The sun's cascades (#476). Ahead of the encoder because it can
+        // allocate the atlas and grow four culls, and `None` when
+        // nothing casts.
+        let shadows = self.prepare_shadows(
+            device,
+            resources,
+            camera,
+            aspect,
+            required_capacity,
+            required_group_capacity,
+        );
         // Inti's per-frame walk. Ahead of the encoder for the same
         // reason `ensure_capacity` is: growing the light buffer
         // replaces it, and a replaced buffer must not be one an
         // already-recorded pass references.
-        self.lights.update(device, queue, resources, cam_pos);
+        self.lights.update(
+            device,
+            queue,
+            resources,
+            cam_pos,
+            shadows.as_ref().map(|s| s.frame),
+        );
         // Worst-case meshlet stride covers every mesh; the pool path
         // bounds-checks per-instance against pool_mesh_descriptors.
         // (`max_meshlets_per_mesh` was bound from `gpu_pool` above so
@@ -192,25 +229,13 @@ impl MeshletRenderStage {
             .with_lod(viewport_h_px, proj_scale_y, lod_target)
             .with_debug_mode(debug_mode)
             .with_debug_active(debug_active);
-        let scene_params = SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
 
         // Grow visible_meshlets if the scene now needs more slots
         // than the dispatcher was sized for. Geometric growth absorbs
         // future jumps without per-frame reallocation.
-        let required_capacity = scene_params
-            .instance_count
-            .saturating_mul(scene_params.meshlets_per_mesh);
         self.views[view_id]
             .cull
             .ensure_capacity(device, required_capacity);
-        // group_max_err sized to the per-instance prefix-sum total
-        // (Σ over instances of mesh_descriptors[mesh_id].group_count),
-        // not the pool's group_capacity. Per-mesh sizing collapsed
-        // every instance of the same mesh into one slot range and
-        // forced multi-instance LOD descent to the closest one's
-        // verdict (#474). Same geometric-growth pattern as the
-        // visible buffer.
-        let required_group_capacity = self.pipeline.instance_group_capacity(&instances).max(1);
         self.views[view_id]
             .cull
             .ensure_group_capacity(device, required_group_capacity);
@@ -260,6 +285,23 @@ impl MeshletRenderStage {
         }
 
         let instance_count = instances.len() as u32;
+
+        // First in the encoder: every shading pass below samples the
+        // atlas this fills. Inside the timer, because a shadow pass that
+        // costs four culls and four rasters is part of the frame whether
+        // or not the HUD says so.
+        if let Some(prepared) = shadows.as_ref() {
+            self.record_shadows(
+                device,
+                queue,
+                &mut encoder,
+                prepared,
+                &meshlet_bg,
+                instance_count,
+                max_meshlets_per_mesh,
+                lod_target,
+            );
+        }
 
         // ── Path switch ─────────────────────────────────────────────
         // Atomic R64 vbuf path (#493) when the device supports it;

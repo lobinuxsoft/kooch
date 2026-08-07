@@ -270,15 +270,15 @@ fn render_passes(
     // matters: blit reads the stage's color view, so the stage's submit
     // must complete first on the queue.
     let camera = active_camera(resources);
-    let (view_proj, cam_pos) = camera
-        .map(|c| (c.view_proj(aspect), c.position()))
-        .unwrap_or((glam::Mat4::IDENTITY, glam::Vec3::ZERO));
+    // The sky draws only when the scene really has a camera; the meshlet
+    // stage falls back to a default lens rather than to an identity
+    // matrix, which is not a projection.
     let stats = meshlet_stage.render_with_assets_primary(
         gpu.device(),
         gpu.queue(),
         resources,
-        view_proj,
-        cam_pos,
+        &camera.unwrap_or_default(),
+        aspect,
     );
 
     // The one measurement a game could not otherwise have: the editor

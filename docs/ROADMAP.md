@@ -9,88 +9,96 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-05, `feat/inti-lights-that-light` at `926baf3`.
+Last updated 2026-08-06, `development` at `788f12f`; `feat/csm-sun-shadows` at `32d2ac5`.
 
 ---
 
-## Next — #476, sun shadows, now that there is a sun
+## Next — #735, contact shadows
 
-**#441 is done: Inti shades.** `kooch_lighting` grew from nine lines and an `init()` that logged
-into the extraction, the GPU light record, and the shading model both render paths now call. The
-acceptance criterion is a test: *a scene with a light and a scene without it cannot render the
-same*, plus a sphere whose lit pole and unlit pole differ by more than 5× in linear luminance.
+**#476 is done: the sun casts.** The pieces that sat on the branch
+untested-in-anger — cascade placement, the atlas, the depth pass, the
+PCSS filter — are now built by `MeshletRenderStage` on the first frame
+that finds a `DirectionalLight` with `cast_shadows`, and released again
+when nothing wants one. `tests/csm_shadows.rs` is the acceptance:
+**a cube over a floor darkens the floor beneath it, and does not darken
+the floor beside it.**
 
-Lit-with-no-shadows is the state the engine is in, and it is an honest one — it already looks
-far better than a normal painted as colour. What it cannot do is tell you where anything is
-touching, which is the next issue and the one after it.
+The second half of that sentence is the one worth keeping. Every
+reversed-Z mistake in this feature — an inverted sampler, a clear to 1.0,
+a positive bias — darkens *everything*, and a test that only checks "the
+shadow is dark" passes on all of them.
 
-### The graphics order
+### What the author controls
 
-| | Issue | Why here |
-|---|---|---|
-| ✅ | **#441 — lights that light** | Done. Cook-Torrance driven by the light components, both paths |
-| 1 | **#476 — CSM** | Sun shadows. Four issues declared a dependency on #441; this is the first of them off the blocks |
-| 2 | **#735 — contact shadows** | Cascades are correct at range and worst at contact — the few centimetres where an object meets the ground is where a shadow detaches or swims, and that is what makes things look like they float over a scene. **Screen-space, so it costs the same at any world scale** |
-| 3 | **#250 / #248 — atmosphere** | Correct from orbit *and* the atmosphere tinting sunlight, which is Bevy's 0.16→0.18 arc |
-| 4 | **#254 — post + auto exposure** | Inti ships a fixed EV100 9.7 and an ACES approximation as placeholders, and they are already the reason a 10 000 lux sun does not clip to white. Auto exposure stops being cosmetic at planetary scale: sunlit surface to night side spans orders of magnitude. Take Bevy 0.18's **fullscreen materials** with the first effect, not after the fourth |
-| — | **#734 — light textures** | Cookies and gobos. Cheap, and a cloud layer's shadow can be one instead of a second march |
+`.rendersettings` grew three fields, so the atlas is not a constant
+someone has to recompile to change: `shadows_enabled`,
+`shadow_distance` (metres — the cascades are fitted to whatever range
+they are given, so raising it blurs the shadows near the camera rather
+than adding distant ones), and `shadow_cascade_texels` (the atlas is
+twice this per axis: 2048 costs 64 MiB, 1024 costs 16).
 
-**The lighting system is called Inti** — the Inca sun god, as Bevy called their raytracer Solari.
-It names the system, not the crate: `kooch_lighting` keeps its name, because renaming a crate
-breaks every serialised `type_name` in silence.
+### Known limits, stated rather than discovered
 
-### What #441 left behind, deliberately
+- **Alpha-cut geometry does not cut.** No fragment shader in the depth
+  pass means foliage casts the shadow of its quad.
+- **Only the directional light casts**, and only the first one. #734.
+- **The pass runs per view.** Two open panels are eight cascade culls and
+  eight depth passes a frame.
+- **No temporal filter.** Bevy's third option (Jimenez '14) rotates its
+  taps by per-frame noise and needs TAA to resolve it — #732, and motion
+  vectors do not exist yet. Castano '13 is what they ship by default and
+  what runs here.
+- **`unclipped_depth` is not emulated.** Where the adapter lacks
+  `DEPTH_CLIP_CONTROL` the near plane falls back to a cascade-width
+  margin, which costs depth precision. Bevy emulates it in the fragment
+  shader instead.
+- **No test pins the scaled-instance LOD.** The property is a survivor
+  count out of the cascade culls and `ShadowPass` does not expose them.
 
-- 🔴 **The shader loops over every light, for every pixel.** Honest for tens, wrong for
-  thousands. `extract_lights` warns past 256 and never clips — clipping a scene's lights in
-  silence is worse than rendering it slowly. **Clustering is the fix**; Bevy moved theirs to the
-  GPU and measured ~20× on `many_lights`. A universe has stars, lit windows and ship lights.
-- **No shadows, no environment map.** Ambient is a hemisphere lerp on world up, which stops
-  meaning anything on the far side of a planet. The replacement is a probe (#450), not a
-  smarter up vector.
-- **Exposure and tonemapping are fixed constants** in the shading model, waiting for #254.
-- **No texture sampling on the R32 compute fallback.** A compute shader has no implicit
-  derivatives, and the analytical ones exist to feed `textureSampleGrad`, which is a
-  fragment-stage call. Maps land on the R64 path only.
-- **`PointLight` has no radius**, so there is no sphere-light `a_prime` to get wrong — the trap
-  Bevy fell into and fixed in 0.18 (bevy#22372) is recorded in the shader against the day it
-  grows one.
+### What the port cost, and the pattern in it
 
-### 🔴 The constraint #476 inherits: there is no seventh bind group
+Nine fixes after the pass was wired, and **every one was a place where
+Bevy 0.19 does something this engine had not needed before shadows
+existed** — an orthographic view. The LOD selector divided by a distance;
+the splits anchored at the camera's near plane; the cull cone-tested from
+a viewpoint a directional light does not have; the simplification error
+ignored instance scale; the slices touched instead of overlapping.
 
-`TARGET_MAX_BIND_GROUPS` is 6 and the two-pass shading pipeline now uses all six — groups 0..4
-are the vbuf/camera/screen, the meshlet pool, the materials, the scene buffers and the
-per-material textures, and #441 put Inti on group 5.
+The recurring shape: a mechanism ported in half. The cascade blend went
+in without the slice overlap it needs, and produced an artifact neither
+half has alone.
 
-**Shadow maps go inside Inti's group, not in a new one.** A shadow map without its light is not
-a thing any shader wants, so they belong next to each other anyway. Raising the target to 8
-would work on this hardware and quietly drop the baseline the engine claims to support: Vulkan
-only guarantees 4.
+🔴 **And the diagnosis pattern, which cost the most:** three times a
+cause was named from a screenshot and three times it was wrong. What
+worked was the `Shadow cascades` debug view, which separates "the map is
+incomplete" from "the sampling loses it" — two failures that look
+identical in a shaded frame and live in different files.
 
-### 🔴 One thing #441 uncovered, still true
+### Next, and why it is contact shadows
 
-`GpuContext` picks a deliberately **non-sRGB** surface format, with the comment *"most renderers
-handle gamma correction in the shader"* — and until Inti, **no shader did**. Inti applies the
-sRGB transfer function at the end of its tonemap. **The sky pass does not**, so if the sky and
-the geometry now disagree on brightness, that is the sky's half of a decision taken years ago
-and never finished. Worth an issue when #250 rewrites it anyway.
+Cascades are worst exactly at contact — the few centimetres where an
+object meets the ground is where a shadow detaches or swims, and that is
+what makes things look like they float. Screen-space, so it costs the
+same at any world scale.
 
-### roll-a-ball is the instrument, not a competing priority
+Then **#743**, the debug views the owner actually asked for: one light at
+a time, greyscale, **with its shadow**. It answers *why is this dark* —
+no light reaching it, or a shadow reaching it — which look identical in a
+final frame and have different fixes. It was blocked on #476 and is not
+any more.
 
-**#669 is how the graphics work gets verified.** A sphere on a plane with one directional light
-is the smallest thing that can show a BRDF being right or wrong; the shadow staying attached
-while the ball rolls is how CSM gets judged; whether the ball looks *on* the plane rather than
-above it is what contact shadows are for, and that one is judged by eye.
+Then #250/#248 atmosphere, and #254 post + auto exposure.
 
-None of it needs new gameplay. It needs the scene that exists, plus a light — which now does
-something.
+## Also open, from the same stretch
 
-**The phase after graphics is collectibles**, chosen for what it forces rather than for what it
-adds: pick up an object → a sensor fires → an **event** is emitted → a score system reads it → a
-**HUD** shows it → a **sound** plays. That chain reaches four orphans at once — `Events<T>` (295
-lines, no game has ever used them), `MockInputBackend`, `ActionMap` bulk enable/disable, and
-audio, which has no `AudioSource` to author. Built before the renderer shades, nobody could
-judge whether any of it looks right.
+- **#745** — 🔴 the colour picker edits sRGB and writes into linear
+  fields. **Every authored colour is ~2.3× too bright**, in every light
+  and every material, and has been for as long as both existed. Invisible
+  until #441 made colour mean something. Cheap to fix.
+- **#746** — an eyedropper, deliberately blocked on #745: a pixel is sRGB
+  post-tonemap, and an eyedropper *feels* authoritative.
+- **#736** — user settings, now scoped against #744: what the player
+  picks, under `~/.config/`, not committed.
 
 ---
 

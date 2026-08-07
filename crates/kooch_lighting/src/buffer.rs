@@ -7,7 +7,7 @@ use kooch_core::resource::Resources;
 use wgpu::util::DeviceExt;
 
 use crate::extract::{extract_lights, over_linear_budget};
-use crate::frame::{AmbientLight, Exposure, IntiFrame};
+use crate::frame::{AmbientLight, Exposure, FrameShadows, IntiFrame};
 use crate::gpu_light::GpuLight;
 
 /// Lights a fresh buffer holds before it has to grow. Sixteen covers an
@@ -34,6 +34,26 @@ pub struct GpuLights {
     light_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     layout: wgpu::BindGroupLayout,
+    /// Comparison sampler for the shadow atlas.
+    shadow_sampler: wgpu::Sampler,
+    /// Plain sampler on the same texture, for the blocker search.
+    shadow_point_sampler: wgpu::Sampler,
+    /// 1×1 depth texture bound when there is no shadow atlas.
+    ///
+    /// A binding cannot be left empty, and a second pipeline for
+    /// "no shadows" would be a whole code path exercised only in the
+    /// case nobody looks at. Cleared to the far plane, so if the
+    /// `shadows_enabled` flag ever failed to stop the sampling, the
+    /// answer would be "fully lit" rather than "everything is dark".
+    dummy_shadow: wgpu::TextureView,
+    /// The atlas currently bound, or `None` while the dummy is.
+    ///
+    /// Kept rather than derived because the bind group is rebuilt from
+    /// scratch whenever the light buffer grows, and rebuilding it
+    /// against the dummy would drop the atlas the moment a scene
+    /// crossed a capacity boundary — shadows disappearing when the
+    /// seventeenth light is placed, with nothing in the log.
+    shadow_atlas: Option<wgpu::TextureView>,
     capacity: u32,
     light_count: u32,
 }
@@ -71,6 +91,53 @@ impl GpuLights {
                     },
                     count: None,
                 },
+                // The shadow atlas lives in Inti's group rather than one
+                // of its own: the bind-group budget is spent, and a
+                // shadow map without its light is not a thing any shader
+                // wants. See `TARGET_MAX_BIND_GROUPS`.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // A comparison sampler, so the depth test happens on the
+                // texture unit and each tap comes back bilinearly
+                // filtered. Sampling depth and comparing by hand would
+                // be sixteen manual comparisons per fragment and no
+                // filtering.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                // A second, non-comparison sampler on the same texture,
+                // for PCSS's blocker search — which needs the depth
+                // itself, where a comparison sampler only ever answers
+                // "nearer or not".
+                //
+                // 🔴 This was written off as impossible: "there is no
+                // bind group left". The exhausted budget is on *groups*,
+                // and this is a fourth binding inside a group that
+                // already exists. Bevy does exactly this
+                // (`directional_shadow_textures_linear_sampler`), which
+                // is what made the claim worth re-checking.
+                //
+                // Non-filtering because the sample type is `Depth`, and
+                // wgpu will not pair that with a filtering sampler. The
+                // search averages eight taps, so bilinear on each of
+                // them buys very little.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
             ],
         })
     }
@@ -83,15 +150,83 @@ impl GpuLights {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let light_buffer = create_light_buffer(device, INITIAL_CAPACITY);
-        let bind_group = create_bind_group(device, &layout, &frame_buffer, &light_buffer);
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("inti_shadow_sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            // Reversed-Z: an occluder is nearer the light and therefore
+            // GREATER. The comparison has to match, or every shadow
+            // inverts and the lit side goes dark.
+            compare: Some(wgpu::CompareFunction::Greater),
+            // Clamped: a tap that falls off a cascade should read as the
+            // edge rather than wrapping into the neighbouring quadrant,
+            // which would be a shadow from the wrong distance.
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+        let shadow_point_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("inti_shadow_point_sampler"),
+            // Nearest on both, because the layout declares this
+            // non-filtering and wgpu checks that the sampler agrees.
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+        let dummy_shadow = create_dummy_shadow(device);
+        let bind_group = create_bind_group(
+            device,
+            &layout,
+            &frame_buffer,
+            &light_buffer,
+            &dummy_shadow,
+            &shadow_sampler,
+            &shadow_point_sampler,
+        );
         Self {
             frame_buffer,
             light_buffer,
             bind_group,
             layout,
+            shadow_sampler,
+            shadow_point_sampler,
+            dummy_shadow,
+            shadow_atlas: None,
             capacity: INITIAL_CAPACITY,
             light_count: 0,
         }
+    }
+
+    /// Points the shadow binding at a real atlas.
+    ///
+    /// Call once the atlas exists; until then the dummy is bound and
+    /// `shadows_enabled` is 0. Idempotent — the atlas is allocated once
+    /// and this runs per frame, so re-binding the same view has to cost
+    /// nothing.
+    pub fn bind_shadow_atlas(&mut self, device: &wgpu::Device, atlas: &wgpu::TextureView) {
+        if self.shadow_atlas.as_ref().is_some_and(|v| v == atlas) {
+            return;
+        }
+        self.shadow_atlas = Some(atlas.clone());
+        self.rebuild_bind_group(device);
+    }
+
+    /// Rebuilds the bind group against whatever shadow view is current.
+    ///
+    /// One place, so growth and atlas binding cannot disagree about
+    /// which texture is bound.
+    fn rebuild_bind_group(&mut self, device: &wgpu::Device) {
+        self.bind_group = create_bind_group(
+            device,
+            &self.layout,
+            &self.frame_buffer,
+            &self.light_buffer,
+            self.shadow_atlas.as_ref().unwrap_or(&self.dummy_shadow),
+            &self.shadow_sampler,
+            &self.shadow_point_sampler,
+        );
     }
 
     pub fn bind_group(&self) -> &wgpu::BindGroup {
@@ -111,12 +246,17 @@ impl GpuLights {
     /// Call **before** creating the frame's encoder: growing the
     /// storage buffer replaces it, and a replaced buffer must not be
     /// one a recorded pass already references.
+    ///
+    /// `shadows` is `None` when nothing casts — no sun, or the atlas
+    /// has not been built. The dummy atlas stays bound and the shader
+    /// skips the sampling entirely.
     pub fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         resources: &Resources,
         camera_position: Vec3,
+        shadows: Option<FrameShadows>,
     ) {
         let lights = extract_lights(resources);
         let count = lights.len() as u32;
@@ -157,12 +297,10 @@ impl GpuLights {
         queue.write_buffer(
             &self.frame_buffer,
             0,
-            bytemuck::bytes_of(&IntiFrame::new(
-                &ambient,
-                &exposure,
-                camera_position,
-                self.light_count,
-            )),
+            bytemuck::bytes_of(
+                &IntiFrame::new(&ambient, &exposure, camera_position, self.light_count)
+                    .with_optional_shadows(shadows),
+            ),
         );
     }
 
@@ -175,9 +313,8 @@ impl GpuLights {
         }
         let capacity = needed.next_power_of_two().max(INITIAL_CAPACITY);
         self.light_buffer = create_light_buffer(device, capacity);
-        self.bind_group =
-            create_bind_group(device, &self.layout, &self.frame_buffer, &self.light_buffer);
         self.capacity = capacity;
+        self.rebuild_bind_group(device);
         tracing::debug!(
             target: "kooch_lighting::buffer",
             capacity,
@@ -199,11 +336,33 @@ fn create_light_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
     })
 }
 
+/// A 1×1 depth texture for the frames with no atlas.
+fn create_dummy_shadow(device: &wgpu::Device) -> wgpu::TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("inti_dummy_shadow"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 fn create_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     frame: &wgpu::Buffer,
     lights: &wgpu::Buffer,
+    shadow_atlas: &wgpu::TextureView,
+    shadow_sampler: &wgpu::Sampler,
+    shadow_point_sampler: &wgpu::Sampler,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("inti_lights_bg"),
@@ -216,6 +375,18 @@ fn create_bind_group(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: lights.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(shadow_atlas),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(shadow_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(shadow_point_sampler),
             },
         ],
     })

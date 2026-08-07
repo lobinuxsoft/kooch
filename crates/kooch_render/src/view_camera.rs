@@ -34,6 +34,25 @@ pub struct ViewCamera {
     pub far: f32,
 }
 
+impl Default for ViewCamera {
+    /// A plausible lens at the origin, looking down -Z.
+    ///
+    /// What a view renders through when the scene has no camera at all —
+    /// the frame after a project opens, or a game that has not spawned
+    /// one. The alternative callers used was an identity matrix, which
+    /// is not a projection: it makes clip space the unit cube in view
+    /// space, so the near plane is behind the eye and the shadow
+    /// cascades that read the near and far planes get 1 and -1.
+    fn default() -> Self {
+        Self {
+            world_matrix: Mat4::IDENTITY,
+            fov_y_rad: std::f32::consts::FRAC_PI_3,
+            near: 0.1,
+            far: 1000.0,
+        }
+    }
+}
+
 impl ViewCamera {
     /// Reads one from the components an entity carries, clamping the lens
     /// to values a projection matrix survives.
@@ -46,6 +65,26 @@ impl ViewCamera {
         }
     }
 
+    /// A camera at `eye` pointed at `target`, with the default lens.
+    ///
+    /// Stores the same camera-to-world an entity would carry, so a
+    /// caller that has a place to look from rather than a transform does
+    /// not have to remember which way round the inverse goes. Falls back
+    /// to a Z up vector when the view direction is vertical, where a Y
+    /// up is degenerate and `look_at_rh` returns NaN.
+    pub fn looking_at(eye: Vec3, target: Vec3) -> Self {
+        let direction = (target - eye).normalize_or(Vec3::NEG_Z);
+        let up = if direction.y.abs() > 0.99 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        Self {
+            world_matrix: Mat4::look_at_rh(eye, target, up).inverse(),
+            ..Default::default()
+        }
+    }
+
     /// World-to-camera.
     pub fn view(&self) -> Mat4 {
         self.world_matrix.inverse()
@@ -53,12 +92,31 @@ impl ViewCamera {
 
     /// Reverse-Z perspective for a target of this aspect ratio.
     pub fn projection(&self, aspect: f32) -> Mat4 {
+        self.projection_to(aspect, self.far)
+    }
+
+    /// The same projection, cut short at `far`.
+    ///
+    /// Shadow cascades are placed against a frustum that stops at the
+    /// shadow distance rather than at the camera's far plane, which on a
+    /// planet is kilometres away. Fitting four cascades to *that* puts
+    /// the near one hundreds of metres deep and every shadow in the
+    /// scene turns to mush — the split scheme is doing exactly what it
+    /// was asked, against the wrong range.
+    pub fn projection_to(&self, aspect: f32, far: f32) -> Mat4 {
         crate::projection::perspective_rh_reverse_z(
             self.fov_y_rad,
             aspect.max(0.01),
             self.near,
-            self.far,
+            far.max(self.near + 1e-3),
         )
+    }
+
+    /// Unit vector down the view axis, in world space.
+    pub fn forward(&self) -> Vec3 {
+        self.world_matrix
+            .transform_vector3(Vec3::NEG_Z)
+            .normalize_or(Vec3::NEG_Z)
     }
 
     pub fn view_proj(&self, aspect: f32) -> Mat4 {

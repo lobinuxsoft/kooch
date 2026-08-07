@@ -35,8 +35,11 @@ mod frame;
 mod gpu_light;
 
 pub use buffer::GpuLights;
-pub use extract::extract_lights;
-pub use frame::{AmbientLight, Exposure, IntiFrame, PhysicalCamera};
+pub use extract::{extract_lights, shadow_casting_sun};
+pub use frame::{
+    AmbientLight, DEFAULT_SUN_SOFTNESS, Exposure, FRAME_CASCADE_COUNT, FrameShadows, GpuCascade,
+    IntiFrame, PhysicalCamera,
+};
 pub use gpu_light::{
     GpuLight, LIGHT_KIND_DIRECTIONAL, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, spot_cone_mad,
 };
@@ -75,6 +78,14 @@ mod tests {
         );
         assert!(src.contains("@group(5) @binding(0)"));
         assert!(src.contains("@group(5) @binding(1)"));
+        // The shadow bindings substitute too. The fourth is the one
+        // worth pinning: it was written off as impossible on a
+        // bind-group budget that is spent on *groups*, not on bindings
+        // inside one, and if it silently disappears the blocker search
+        // has nothing to sample and PCSS quietly becomes PCF again.
+        assert!(src.contains("@group(5) @binding(2)"));
+        assert!(src.contains("@group(5) @binding(3)"));
+        assert!(src.contains("@group(5) @binding(4)"));
     }
 
     #[test]

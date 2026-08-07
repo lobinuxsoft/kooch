@@ -71,6 +71,21 @@ pub enum MeshletDebugMode {
     /// useful view of the geometry, so it survives here; it just stops
     /// being what you get by default.
     Normals = 11,
+    /// What the shadow system sees, as colour (#476).
+    ///
+    /// A missing shadow is one of three things that look identical in a
+    /// shaded frame — the cascade does not reach here, the occluder was
+    /// culled out of the map, or the sampling is wrong — and they have
+    /// different fixes. This separates them: hue is the cascade, bright
+    /// means an occluder is recorded over the point, black means the
+    /// point is inside no cascade volume at all, and magenta means
+    /// nothing casts.
+    ///
+    /// It is also the view that makes cascade placement visible: the
+    /// bands are the split distances, and a project whose shadow
+    /// distance is far larger than its scene sees one colour everywhere
+    /// near the camera and the rest wasted.
+    ShadowCascades = 12,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -128,6 +143,7 @@ impl MeshletDebugMode {
             // needs its own reject_reasons wiring (separate follow-up).
             Self::HiZRejected,
             Self::Normals,
+            Self::ShadowCascades,
         ]
     }
 
@@ -204,6 +220,7 @@ impl MeshletDebugMode {
             Self::OnlyRoots => "Only Roots",
             Self::FrustumRejected => "Frustum Rejected",
             Self::Normals => "Normals",
+            Self::ShadowCascades => "Shadow cascades",
         }
     }
 }
@@ -226,6 +243,9 @@ mod tests {
     #[test]
     fn normals_discriminant_matches_the_shaders() {
         assert_eq!(MeshletDebugMode::Normals.as_u32(), 11);
+        // Pinned because the literal lives in three WGSL files that no
+        // compiler checks against this enum.
+        assert_eq!(MeshletDebugMode::ShadowCascades.as_u32(), 12);
     }
 
     #[test]

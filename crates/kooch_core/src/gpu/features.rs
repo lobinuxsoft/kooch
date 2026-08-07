@@ -49,6 +49,18 @@ pub(super) fn optional_features(adapter: &Adapter) -> wgpu::Features {
     if adapter.features().contains(wgpu::Features::PIPELINE_CACHE) {
         features |= wgpu::Features::PIPELINE_CACHE;
     }
+    // #476 — the shadow pass wants `unclipped_depth` so a cascade's
+    // depth range can hug the slice it covers. Without it the near plane
+    // has to sit a cascade width further back to catch occluders outside
+    // the view frustum, and that whole margin is precision the depth
+    // comparison never gets. Bevy renders their shadow pass with it and
+    // emulates it in the fragment shader where it is missing.
+    if adapter
+        .features()
+        .contains(wgpu::Features::DEPTH_CLIP_CONTROL)
+    {
+        features |= wgpu::Features::DEPTH_CLIP_CONTROL;
+    }
     if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
         && adapter
             .features()
