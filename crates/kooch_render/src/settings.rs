@@ -110,6 +110,15 @@ pub struct RenderSettings {
     /// overcast look; drop it to zero for a hard edge.
     #[serde(default = "default_sun_softness")]
     pub sun_softness: f32,
+    /// Where the first shadow cascade ends, in METRES. The other three
+    /// follow logarithmically out to `shadow_distance`.
+    ///
+    /// **This is the one number that decides shadow sharpness near the
+    /// camera.** Lower it and the near cascade covers less ground with
+    /// the same texels; raise it and everything close gets coarser.
+    /// Unity ships 10.05 and Godot 10.
+    #[serde(default = "default_first_cascade")]
+    pub shadow_first_cascade_distance: f32,
 }
 
 fn default_aperture() -> f32 {
@@ -142,6 +151,9 @@ fn default_cascade_texels() -> u32 {
 fn default_sun_softness() -> f32 {
     ShadowSettings::default().sun_softness
 }
+fn default_first_cascade() -> f32 {
+    ShadowSettings::default().first_cascade_distance
+}
 
 impl Default for RenderSettings {
     /// The same values the engine uses with no settings asset at all —
@@ -162,6 +174,7 @@ impl Default for RenderSettings {
             shadow_distance: shadows.max_distance,
             shadow_cascade_texels: shadows.cascade_texels,
             sun_softness: shadows.sun_softness,
+            shadow_first_cascade_distance: shadows.first_cascade_distance,
         }
     }
 }
@@ -189,6 +202,7 @@ impl RenderSettings {
             cascade_texels: self.shadow_cascade_texels,
             enabled: self.shadows_enabled,
             sun_softness: self.sun_softness,
+            first_cascade_distance: self.shadow_first_cascade_distance,
         }
     }
 

@@ -94,6 +94,7 @@ impl MeshletRenderStage {
             aspect,
             sun,
             settings.max_distance,
+            settings.first_cascade_distance,
             settings.sun_softness,
             meshlet_capacity,
             group_capacity,

@@ -12,7 +12,17 @@
 /// whatever range they are given, so raising this does not add shadows
 /// in the distance — it moves the near cascade's texels outward and
 /// blurs the shadows that are actually being looked at.
-pub const DEFAULT_SHADOW_DISTANCE: f32 = 200.0;
+pub const DEFAULT_SHADOW_DISTANCE: f32 = 100.0;
+
+/// Where the first cascade ends, in metres.
+///
+/// The split scheme is logarithmic from here, so this is the single
+/// number that decides how much resolution the shadows near the camera
+/// get. Unity ships 10.05, Godot 10, and Bevy takes both as its
+/// reference — ten metres around the camera is what a scene at human
+/// scale wants, and anchoring at the camera's near plane instead spends
+/// the first cascade on the first few centimetres.
+pub const DEFAULT_FIRST_CASCADE_DISTANCE: f32 = 10.0;
 
 /// Side of one cascade in texels, when the author has not said.
 ///
@@ -36,6 +46,9 @@ pub struct ShadowSettings {
     /// Tangent of the sun's angular radius: how much wider a shadow gets
     /// per metre between the blocker and the surface it lands on.
     pub sun_softness: f32,
+    /// Where the first cascade ends, in metres. The rest follow
+    /// logarithmically out to `max_distance`.
+    pub first_cascade_distance: f32,
 }
 
 impl Default for ShadowSettings {
@@ -45,6 +58,7 @@ impl Default for ShadowSettings {
             cascade_texels: DEFAULT_CASCADE_TEXELS,
             enabled: true,
             sun_softness: kooch_lighting::DEFAULT_SUN_SOFTNESS,
+            first_cascade_distance: DEFAULT_FIRST_CASCADE_DISTANCE,
         }
     }
 }
@@ -75,8 +89,12 @@ mod tests {
         assert!(settings.clamped_texels() * 2 <= 8192);
     }
 
+    /// Unity 150, Unreal 200, Godot 100, Bevy 100. A scene, not a
+    /// planet — and the number that decides how much of the atlas is
+    /// spent on ground the player is nowhere near.
     #[test]
     fn the_default_covers_a_scene_rather_than_a_planet() {
-        assert_eq!(ShadowSettings::default().max_distance, 200.0);
+        assert_eq!(ShadowSettings::default().max_distance, 100.0);
+        assert_eq!(ShadowSettings::default().first_cascade_distance, 10.0);
     }
 }

@@ -39,15 +39,6 @@ pub const CASCADE_COUNT: usize = 4;
 /// radius and texel density change at once.
 pub const CASCADE_BLEND_FRACTION: f32 = 0.1;
 
-/// Mix between a logarithmic and a uniform split distribution.
-///
-/// Logarithmic is theoretically right — it equalises texel density in
-/// screen space — and it puts absurdly little distance in the first
-/// cascade. Uniform wastes the near field, which is where shadows are
-/// looked at. 0.85 is the practical split (Engel), biased toward the
-/// logarithmic end.
-const SPLIT_LAMBDA: f32 = 0.85;
-
 /// One cascade's placement.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Cascade {
@@ -85,23 +76,35 @@ pub struct Cascade {
     pub depth_extent: f32,
 }
 
-/// Practical split scheme: the distances at which one cascade hands over
-/// to the next.
+/// Where each cascade hands over to the next.
 ///
-/// Returns `CASCADE_COUNT` far distances; the near of cascade `i` is the
-/// far of `i - 1`, and the near of the first is the camera's.
-pub fn split_distances(near: f32, far: f32) -> [f32; CASCADE_COUNT] {
-    let near = near.max(1e-3);
-    let far = far.max(near + 1e-3);
-    let ratio = far / near;
-    let mut out = [0.0; CASCADE_COUNT];
-    for (i, slot) in out.iter_mut().enumerate() {
-        let t = (i + 1) as f32 / CASCADE_COUNT as f32;
-        let logarithmic = near * ratio.powf(t);
-        let uniform = near + (far - near) * t;
-        *slot = SPLIT_LAMBDA * logarithmic + (1.0 - SPLIT_LAMBDA) * uniform;
-    }
-    out
+/// Purely logarithmic from `first_bound` to `far`, which is Bevy 0.19's
+/// `calculate_cascade_bounds` and, by their own comment, what Unity,
+/// Unreal and Godot arrive at too.
+///
+/// # Why the first bound is a distance, not the camera's near plane
+///
+/// 🔴 This used to interpolate between a logarithmic and a uniform
+/// distribution starting at the camera's **near plane**, and a near
+/// plane is 0.1 m. A logarithmic scheme anchored there spends the first
+/// cascade on the first few centimetres of a scene, so the cascade that
+/// should be carrying everything the player is looking at gets a sliver
+/// of the range and the rest lands in cascades with metre-wide texels.
+/// The symptom is needing far more shadow-map resolution than the scene
+/// deserves.
+///
+/// Anchoring at an authored distance decouples the split scheme from
+/// the lens. Unity ships 10.05, Godot 10, and this ships 10 — a first
+/// cascade covering the ten metres around the camera, whatever the near
+/// plane happens to be.
+pub fn split_distances(first_bound: f32, far: f32) -> [f32; CASCADE_COUNT] {
+    let first = first_bound.max(1e-3);
+    let far = far.max(first + 1e-3);
+    // Each cascade covers the same *ratio* of distance as the last, so
+    // a texel subtends roughly the same screen angle in all four. That
+    // is the whole argument for a logarithmic split.
+    let base = (far / first).powf(1.0 / (CASCADE_COUNT - 1) as f32);
+    std::array::from_fn(|i| first * base.powi(i as i32))
 }
 
 /// The eight world-space corners of the frustum described by
@@ -160,15 +163,17 @@ fn bounding_sphere(corners: &[Vec3; 8]) -> (Vec3, f32) {
 /// sphere so occluders outside the view frustum still cast into it — a
 /// wall behind the camera shadows the floor in front of it, and without
 /// this its shadow simply is not there.
+#[allow(clippy::too_many_arguments)]
 pub fn build_cascades(
     camera_view_proj: Mat4,
     light_direction: Vec3,
     near: f32,
     far: f32,
+    first_cascade_distance: f32,
     shadow_map_size: u32,
     depth_extent_scale: f32,
 ) -> [Cascade; CASCADE_COUNT] {
-    let splits = split_distances(near, far);
+    let splits = split_distances(first_cascade_distance, far);
     let inverse = camera_view_proj.inverse();
     let whole = frustum_corners(inverse);
     let size = shadow_map_size.max(1) as f32;
@@ -287,7 +292,7 @@ mod tests {
 
     #[test]
     fn splits_cover_the_range_and_increase() {
-        let splits = split_distances(0.1, 1000.0);
+        let splits = split_distances(10.0, 1000.0);
         assert!(
             splits.windows(2).all(|w| w[0] < w[1]),
             "splits must increase: {splits:?}",
@@ -299,16 +304,33 @@ mod tests {
         );
     }
 
-    /// The near cascade should be a small slice, not a quarter of the
-    /// range — that is the whole point of a logarithmic bias.
+    /// The first cascade covers exactly what it was asked to, rather
+    /// than a share of the range derived from the lens. That is the
+    /// difference between a scheme an author can reason about and one
+    /// that changes when someone edits the camera's near plane.
     #[test]
-    fn the_first_cascade_is_much_smaller_than_a_uniform_quarter() {
-        let splits = split_distances(0.1, 1000.0);
+    fn the_first_cascade_ends_where_it_was_told_to() {
+        let splits = split_distances(10.0, 1000.0);
         assert!(
-            splits[0] < 250.0 / 4.0,
-            "first split at {}, a uniform scheme would put it at 250",
-            splits[0],
+            (splits[0] - 10.0).abs() < 1e-3,
+            "first split at {}",
+            splits[0]
         );
+    }
+
+    /// Each cascade covers the same ratio of distance as the last, which
+    /// is what makes a texel subtend roughly one screen angle in all
+    /// four rather than four different ones.
+    #[test]
+    fn every_cascade_covers_the_same_ratio_as_the_last() {
+        let splits = split_distances(10.0, 1000.0);
+        let ratio = splits[1] / splits[0];
+        for w in splits.windows(2) {
+            assert!(
+                (w[1] / w[0] - ratio).abs() < 1e-3,
+                "ratios differ across the chain: {splits:?}",
+            );
+        }
     }
 
     /// 🔴 Property one. Rotating the camera in place must not change how
@@ -321,7 +343,7 @@ mod tests {
         let mut sizes = Vec::new();
         for yaw_deg in [0.0f32, 17.0, 45.0, 90.0, 133.0, 180.0, 271.0] {
             let c = camera(0.0, yaw_deg.to_radians(), at);
-            let cascades = build_cascades(c, light, 0.1, 500.0, 2048, 4.0);
+            let cascades = build_cascades(c, light, 0.1, 500.0, 10.0, 2048, 4.0);
             sizes.push(cascades[0].texel_world_size);
         }
         let min = sizes.iter().copied().fold(f32::INFINITY, f32::min);
@@ -340,7 +362,7 @@ mod tests {
         let mut sizes = Vec::new();
         for pitch_deg in [-80.0f32, -40.0, 0.0, 40.0, 80.0] {
             let c = camera(pitch_deg.to_radians(), 0.0, Vec3::ZERO);
-            sizes.push(build_cascades(c, light, 0.1, 500.0, 2048, 4.0)[1].texel_world_size);
+            sizes.push(build_cascades(c, light, 0.1, 500.0, 10.0, 2048, 4.0)[1].texel_world_size);
         }
         let min = sizes.iter().copied().fold(f32::INFINITY, f32::min);
         let max = sizes.iter().copied().fold(0.0f32, f32::max);
@@ -356,12 +378,12 @@ mod tests {
     fn sub_texel_camera_movement_does_not_move_the_projection() {
         let light = Vec3::new(0.0, -1.0, -0.35);
         let base = camera(0.0, 0.0, Vec3::ZERO);
-        let cascades = build_cascades(base, light, 0.1, 500.0, 2048, 4.0);
+        let cascades = build_cascades(base, light, 0.1, 500.0, 10.0, 2048, 4.0);
         let texel = cascades[0].texel_world_size;
 
         // A hundredth of a texel: far below the quantisation step.
         let nudged = camera(0.0, 0.0, Vec3::new(texel * 0.01, 0.0, 0.0));
-        let moved = build_cascades(nudged, light, 0.1, 500.0, 2048, 4.0);
+        let moved = build_cascades(nudged, light, 0.1, 500.0, 10.0, 2048, 4.0);
 
         let a = cascades[0].view_proj.to_cols_array();
         let b = moved[0].view_proj.to_cols_array();
@@ -383,13 +405,13 @@ mod tests {
     fn large_camera_movement_does_move_the_projection() {
         let light = Vec3::new(0.0, -1.0, -0.35);
         let base = camera(0.0, 0.0, Vec3::ZERO);
-        let cascades = build_cascades(base, light, 0.1, 500.0, 2048, 4.0);
+        let cascades = build_cascades(base, light, 0.1, 500.0, 10.0, 2048, 4.0);
         let far = camera(
             0.0,
             0.0,
             Vec3::new(cascades[0].texel_world_size * 500.0, 0.0, 0.0),
         );
-        let moved = build_cascades(far, light, 0.1, 500.0, 2048, 4.0);
+        let moved = build_cascades(far, light, 0.1, 500.0, 10.0, 2048, 4.0);
         assert_ne!(cascades[0].view_proj, moved[0].view_proj);
     }
 
@@ -400,6 +422,7 @@ mod tests {
             Vec3::NEG_Y,
             0.1,
             500.0,
+            10.0,
             2048,
             4.0,
         );
@@ -422,6 +445,7 @@ mod tests {
             Vec3::NEG_Y,
             0.1,
             500.0,
+            10.0,
             2048,
             4.0,
         );
@@ -440,6 +464,7 @@ mod tests {
             Vec3::ZERO,
             0.1,
             500.0,
+            10.0,
             2048,
             4.0,
         );

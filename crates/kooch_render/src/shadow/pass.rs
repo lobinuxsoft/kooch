@@ -90,6 +90,7 @@ impl ShadowPass {
         aspect: f32,
         sun_direction: Vec3,
         max_distance: f32,
+        first_cascade_distance: f32,
         sun_softness: f32,
         meshlet_capacity: u32,
         group_capacity: u32,
@@ -104,6 +105,7 @@ impl ShadowPass {
             sun_direction,
             camera.near,
             far,
+            first_cascade_distance.clamp(camera.near + 1e-3, far),
             self.atlas.cascade_size(),
             DEPTH_EXTENT_SCALE,
         );
