@@ -196,12 +196,19 @@ pub fn build_cube_mesh() -> Mesh {
 
     // Six faces, four unique vertices each — duplicated so per-face
     // normals are not blended. 24 vertices total.
+    //
+    // 🔴 Every corner order below is counter-clockwise **seen from
+    // outside**, which is what `front_face: Ccw` plus back-face culling
+    // needs. Three of these used to wind the other way (-Z, +Y and -X):
+    // the cull tests that were the only callers count meshlets and never
+    // noticed, and the first test to look at the pixels saw a cube with
+    // three missing faces and a floor whose top surface did not exist.
     let face_indices: [[usize; 4]; 6] = [
-        [0, 1, 2, 3], // -Z
-        [4, 5, 6, 7], // +Z (note: needs CCW reversal below)
+        [3, 2, 1, 0], // -Z
+        [4, 5, 6, 7], // +Z
         [0, 1, 5, 4], // -Y
-        [3, 2, 6, 7], // +Y
-        [0, 3, 7, 4], // -X
+        [7, 6, 2, 3], // +Y
+        [4, 7, 3, 0], // -X
         [1, 2, 6, 5], // +X
     ];
 
@@ -294,4 +301,96 @@ pub fn read_u32(
     let mut buf = [0u8; 4];
     buf.copy_from_slice(&bytes);
     u32::from_le_bytes(buf)
+}
+
+/// Reads a 2-D `Rgba8Unorm` texture back into a tightly packed buffer.
+pub fn read_rgba8(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> Vec<u8> {
+    let size = texture.size();
+    let (w, h) = (size.width, size.height);
+    let unpadded = w * 4;
+    let padded = unpadded.div_ceil(256) * 256;
+
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("rgba8_readback"),
+        size: (padded * h) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("rgba8_readback_encoder"),
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &staging,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded),
+                rows_per_image: Some(h),
+            },
+        },
+        wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit(std::iter::once(encoder.finish()));
+
+    let slice = staging.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    let _ = device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
+    let data = slice.get_mapped_range();
+    let mut out = Vec::with_capacity((unpadded * h) as usize);
+    for row in 0..h {
+        let start = (row * padded) as usize;
+        out.extend_from_slice(&data[start..start + unpadded as usize]);
+    }
+    drop(data);
+    staging.unmap();
+    out
+}
+
+/// sRGB electrical value → linear.
+///
+/// Comparisons belong in linear because that is where the shading
+/// happened. In 8-bit sRGB the transfer function plus ACES compress a
+/// genuine 2× difference in irradiance down to about 1.1× in the byte,
+/// which makes a working BRDF look like a broken one.
+pub fn srgb_to_linear(v: u8) -> f32 {
+    let c = v as f32 / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Mean linear luminance over a `(2·half + 1)²` box centred on
+/// `(cx, cy)`, so one stray pixel on an edge cannot decide a test.
+///
+/// The box is clamped to the image, which matters at a silhouette: a
+/// sample that runs off the edge would otherwise index another row.
+pub fn luminance_at(pixels: &[u8], width: u32, cx: u32, cy: u32, half: u32) -> f32 {
+    let height = pixels.len() as u32 / (width * 4);
+    let mut total = 0.0;
+    let mut count = 0.0;
+    for y in cy.saturating_sub(half)..=(cy + half).min(height - 1) {
+        for x in cx.saturating_sub(half)..=(cx + half).min(width - 1) {
+            let idx = ((y * width + x) * 4) as usize;
+            total += 0.2126 * srgb_to_linear(pixels[idx])
+                + 0.7152 * srgb_to_linear(pixels[idx + 1])
+                + 0.0722 * srgb_to_linear(pixels[idx + 2]);
+            count += 1.0;
+        }
+    }
+    total / count
 }
