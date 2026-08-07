@@ -9,11 +9,44 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-06, `development` at `788f12f`; `feat/csm-sun-shadows` at `32d2ac5`.
+Last updated 2026-08-07, `development` at `25b3ec7` — **#476 merged in #749**.
 
 ---
 
 ## Next — #735, contact shadows
+
+Cascades are correct at range and **worst exactly at contact**. The few
+centimetres where an object meets the ground is where a shadow detaches
+or swims, and that is what makes things look like they float over a
+scene rather than stand on it — the artifact #476 spent nine fixes
+fighting with biases and penumbra widths, and the one neither can win.
+
+Screen-space, so it **costs the same at any world scale**, which is the
+property that makes it valid at planetary distances where a shadow map
+is not.
+
+⚠️ It needs the depth buffer and a normal, both of which the deferred
+resolve already reconstructs — see `surface_reconstruct.wgsl`. Read what
+Bevy 0.19 does first: it landed there in the same release, and this
+session is the evidence for why guessing at an orthographic-adjacent
+technique costs more than reading it.
+
+### Behind it
+
+**#743** — the light debug views, one light at a time in greyscale with
+its shadow. Half of it shipped with #476 as `MeshletDebugMode::ShadowCascades`.
+Then **#248 / #250** atmosphere (`priority:high`), then **#254** post +
+auto exposure (`priority:high` — the blown-out white floor in every
+screenshot from this session is that issue).
+
+🔴 **#477 (VSM) will walk into the same set of problems #476 just fixed.**
+Every one of its nine was an orthographic view doing what a perspective
+one does not; a virtual shadow map is more orthographic views, not fewer.
+Read the section below before starting it.
+
+---
+
+## Done — #476, the sun casts
 
 **#476 is done: the sun casts.** The pieces that sat on the branch
 untested-in-anger — cascade placement, the atlas, the depth pass, the
