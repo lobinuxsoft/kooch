@@ -59,7 +59,16 @@ const REQUIRED: [&str; 3] = ["Cargo.toml", "crates", "src"];
 /// whatever the engine repo grows next, and the first symptom of getting
 /// it wrong is every new project carrying a few hundred megabytes of
 /// somebody's `target/`.
-const COPY: [&str; 4] = ["Cargo.toml", "Cargo.lock", "crates", "src"];
+///
+/// 🔴 The failure mode of an allowlist is the opposite one — omitting
+/// something the build needs — and it costs a full compile to find.
+/// `templates/` was missed exactly that way: `kooch_editor_core` reaches
+/// it with `include_str!("../../../../templates/…")`, so the crate
+/// compiles inside the engine repo and not inside a vendored copy.
+/// `every_directory_the_source_reaches_for_is_vendored` scans for that
+/// pattern so the next one is a test failure instead of a ten-minute
+/// build.
+const COPY: [&str; 5] = ["Cargo.toml", "Cargo.lock", "crates", "src", "templates"];
 
 /// Engine assets a *game* needs at runtime. The engine's `assets/` is
 /// 13 MB, and 12.7 MB of that is two demo glTFs that no shipped game
@@ -531,6 +540,96 @@ mod tests {
             None,
             "a root that is not engine source must not be offered as one",
         );
+    }
+
+    /// 🔴 Scans the real engine tree for `include_str!` / `include_bytes!`
+    /// paths that climb out of their crate, and asserts every top-level
+    /// directory they land in is vendored.
+    ///
+    /// This is the test that would have caught `templates/` without
+    /// spending a full project build to find out. An allowlist cannot
+    /// know what the repo adds next; this makes the repo say so.
+    #[test]
+    fn every_directory_the_source_reaches_for_is_vendored() {
+        // <repo>/crates/kooch_editor_core → <repo>
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("crate lives two levels under the repo root")
+            .to_path_buf();
+
+        let mut missing: Vec<String> = Vec::new();
+        let mut stack = vec![repo.join("crates"), repo.join("src")];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if entry.file_name() != "target" {
+                        stack.push(path);
+                    }
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "rs") {
+                    continue;
+                }
+                let Ok(text) = fs::read_to_string(&path) else {
+                    continue;
+                };
+                for referenced in escaping_include_roots(&text) {
+                    let exists = repo.join(&referenced).exists();
+                    let vendored = COPY.contains(&referenced.as_str())
+                        || COPY_ASSETS.iter().any(|a| a.starts_with(&referenced));
+                    if exists && !vendored {
+                        missing.push(format!("{referenced} (from {})", path.display()));
+                    }
+                }
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "source includes files from engine-root directories that are NOT vendored, \
+             so a vendored copy will not compile:\n  {}",
+            missing.join("\n  "),
+        );
+    }
+
+    /// Top-level directory names that `include_*!("../../../x/y")` paths
+    /// resolve into, for includes that leave their own crate.
+    fn escaping_include_roots(source: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        // 🔴 `match_indices` yields (index, the MATCHED pattern) — not
+        // the remainder. Reading the second field as "the rest of the
+        // file" parses the needle against itself, finds nothing, and
+        // leaves a test that passes whatever COPY contains. It did
+        // exactly that until an A/B against a removed entry caught it.
+        for (idx, _) in source
+            .match_indices("include_str!(\"")
+            .chain(source.match_indices("include_bytes!(\""))
+        {
+            let rest = &source[idx..];
+            let Some(open) = rest.find('"') else { continue };
+            let Some(len) = rest[open + 1..].find('"') else {
+                continue;
+            };
+            let literal = &rest[open + 1..open + 1 + len];
+            // Only the ones that climb past the crate root: `src/x` is
+            // three levels down from the repo, so three or more `../`
+            // land at the top.
+            if literal.matches("../").count() < 3 {
+                continue;
+            }
+            if let Some(tail) = literal.rsplit("../").next()
+                && let Some(root) = tail.split('/').next()
+                && !root.is_empty()
+            {
+                found.push(root.to_owned());
+            }
+        }
+        found
     }
 
     /// Failing here is cheap; failing at `cargo build` in a project

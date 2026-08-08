@@ -200,7 +200,17 @@ name = "{crate_name}"
 version = "0.1.0"
 edition = "2024"
 
+# 🔴 `exclude` is load-bearing, not tidiness. The vendored engine
+# (#754) carries its own `[workspace]`, and a workspace root nested
+# inside another is an error cargo refuses to build at all:
+#
+#   error: multiple workspace roots found in the same workspace
+#
+# Excluding it leaves the `path = "engine"` dependency working — a path
+# dep may point at the root of a different workspace — while keeping
+# cargo from trying to adopt its members as this project's.
 [workspace]
+exclude = ["engine"]
 
 # Two artefacts from one crate. The `dylib` is what the standalone editor
 # loads to learn this project's component types without compiling them;

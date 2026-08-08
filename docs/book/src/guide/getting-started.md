@@ -25,8 +25,18 @@ Creating a project copies the engine's source into `<project>/engine/`,
 and the generated `Cargo.toml` refers to it by a **relative** path:
 
 ```toml
+[workspace]
+exclude = ["engine"]
+
+[dependencies]
 kooch = { path = "engine", features = [...] }
 ```
+
+⚠️ **`exclude` is load-bearing.** The vendored engine carries its own
+`[workspace]`, and a workspace root nested inside another is something
+cargo refuses outright — `multiple workspace roots found in the same
+workspace`. Excluding it keeps the path dependency working, because a
+path dep may point at the root of a different workspace.
 
 **Do not commit it — it is gitignored.** The editor puts it there and
 replaces it when it goes stale, so it is build output in the same
