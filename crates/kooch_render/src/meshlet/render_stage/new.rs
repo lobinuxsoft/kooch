@@ -102,6 +102,7 @@ impl MeshletRenderStage {
             // [`Self::enable_gpu_timers`] at startup once the queue
             // and adapter are available.
             gpu_timers: MeshletGpuTimers::new_disabled_for_default(),
+            frames_recorded: 0,
             vram_tracker: None,
             frame_bind_groups: [Vec::new(), Vec::new(), Vec::new()],
             frame_bind_groups_index: 0,

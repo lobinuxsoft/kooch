@@ -286,6 +286,21 @@ impl MeshletRenderStage {
 
         let instance_count = instances.len() as u32;
 
+        // Contact shadows (#735). Built here rather than in each path
+        // because both need it and only this function still holds the
+        // camera's lens: `near` and `far` are what turn a stored depth
+        // back into metres, and a `Mat4` has thrown them away.
+        self.frames_recorded = self.frames_recorded.wrapping_add(1);
+        let contact = crate::contact_shadow::ContactShadowUbo::new(
+            view_proj,
+            camera.near,
+            &resources
+                .get::<crate::contact_shadow::ContactShadowSettings>()
+                .copied()
+                .unwrap_or_default(),
+            self.frames_recorded,
+        );
+
         // First in the encoder: every shading pass below samples the
         // atlas this fills. Inside the timer, because a shadow pass that
         // costs four culls and four rasters is part of the frame whether
@@ -318,6 +333,7 @@ impl MeshletRenderStage {
                 &cull_params,
                 &scene_params,
                 &meshlet_bg,
+                &contact,
                 timer_slot,
                 instance_count,
             );
@@ -335,6 +351,7 @@ impl MeshletRenderStage {
             &scene_params,
             &meshlet_bg,
             &material_bg,
+            &contact,
             timer_slot,
             instance_count,
         )

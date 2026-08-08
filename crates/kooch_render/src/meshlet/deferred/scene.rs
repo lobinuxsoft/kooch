@@ -8,7 +8,10 @@ use bytemuck::bytes_of;
 use crate::meshlet::dispatcher::MeshletCull;
 use crate::meshlet::scene::MeshletScene;
 
-use super::{CameraUbo, MeshletDeferredShader, ScreenUbo};
+use super::{
+    CameraUbo, DEFERRED_CONTACT_DEPTH_BINDING, DEFERRED_CONTACT_UBO_BINDING, MeshletDeferredShader,
+    ScreenUbo,
+};
 
 impl MeshletDeferredShader {
     /// Records `cs_shade_scene` for the entire output. Walks every
@@ -31,6 +34,7 @@ impl MeshletDeferredShader {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         vbuf_view: &wgpu::TextureView,
+        depth_sample_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
         meshlet_bg: &wgpu::BindGroup,
         material_bg: &wgpu::BindGroup,
@@ -38,6 +42,7 @@ impl MeshletDeferredShader {
         scene: &MeshletScene,
         lights_bg: &wgpu::BindGroup,
         view_proj: glam::Mat4,
+        contact: &crate::contact_shadow::ContactShadowUbo,
         screen_size: (u32, u32),
         debug_mode: u32,
     ) {
@@ -60,6 +65,7 @@ impl MeshletDeferredShader {
                 debug_mode,
             }),
         );
+        queue.write_buffer(&self.contact_buffer, 0, bytes_of(contact));
 
         let shading_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_deferred_scene_shading_bg"),
@@ -84,6 +90,14 @@ impl MeshletDeferredShader {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: DEFERRED_CONTACT_UBO_BINDING,
+                    resource: self.contact_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: DEFERRED_CONTACT_DEPTH_BINDING,
+                    resource: wgpu::BindingResource::TextureView(depth_sample_view),
                 },
             ],
         });

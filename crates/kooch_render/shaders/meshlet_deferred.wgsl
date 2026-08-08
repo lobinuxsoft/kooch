@@ -69,6 +69,8 @@ struct MaterialParams {
 const DEBUG_MODE_NORMALS: u32 = 11u;
 // `MeshletDebugMode::ShadowCascades`, pinned by the same test.
 const DEBUG_MODE_SHADOW_CASCADES: u32 = 12u;
+// `MeshletDebugMode::ContactShadows`, pinned by the same test.
+const DEBUG_MODE_CONTACT_SHADOWS: u32 = 13u;
 
 // PCG-style hash → vec3 rgb in [0.2, 1.0]. The 0.2 floor keeps any
 // id from collapsing to black (which the alpha=0 background uses).
@@ -178,7 +180,10 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
             } else if (screen.debug_mode == DEBUG_MODE_SHADOW_CASCADES) {
                 let vd = dot(
                     surf.world_position - inti.camera_position, inti.camera_forward);
-                rgb = inti_shadow_debug(surf.world_position, vd);
+                rgb = inti_shadow_debug(surf.world_position, n, vd);
+            } else if (screen.debug_mode == DEBUG_MODE_CONTACT_SHADOWS) {
+                rgb = inti_contact_shadow_debug_view(
+                    surf.world_position, n, vec2<f32>(pixel) + vec2<f32>(0.5));
             } else {
                 let m = materials[surf.material_id];
                 // No texture sampling on this path: a compute shader
@@ -192,6 +197,10 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
                     m.base_color.rgb,
                     m.metallic_roughness_emissive_pad.x,
                     m.metallic_roughness_emissive_pad.y,
+                    // Pixel centre — the contact-shadow jitter wants the
+                    // same coordinate the fragment path passes, so the
+                    // two paths dither identically.
+                    vec2<f32>(pixel) + vec2<f32>(0.5),
                 );
                 radiance += m.base_color.rgb * m.metallic_roughness_emissive_pad.z;
                 rgb = inti_tonemap(radiance);

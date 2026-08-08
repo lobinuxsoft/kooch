@@ -146,6 +146,9 @@ fn add_sun(resources: &mut Resources, cast_shadows: bool) {
             color: Vec3::ONE,
             intensity: 20_000.0,
             cast_shadows,
+            // The march needs a rendered depth buffer; these tests
+            // exercise the cascade path with none.
+            contact_shadows: false,
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_quat(rotation),

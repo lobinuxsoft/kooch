@@ -171,6 +171,38 @@ The atomic-counter modes need `TEXTURE_ATOMIC`; the editor's dropdown
 hides what the adapter cannot run rather than offering a mode that
 silently falls back.
 
+## Depth: reversed-Z, and no far plane
+
+The camera's projection is `perspective_infinite_rh_reverse_z`. Near maps
+to `ndc.z = 1`; infinity approaches `0` without reaching it. Depth
+attachments clear to `0.0` and compare `Greater`.
+
+The property worth knowing, because half the renderer leans on it:
+
+```text
+ndc.z == near / distance
+```
+
+Exactly. Any shader recovers metres from the depth buffer with one
+divide and no extra uniform — which is why the contact-shadow march can
+take `thickness` and `length` in world units and have them mean the same
+thing in every scene. With a finite far plane it takes two coefficients
+plumbed to every consumer, and the first one that forgets ships a
+parameter documented in metres that does not measure metres.
+
+Two things follow, and both are load-bearing:
+
+- **The far plane is gone from culling too.** That row of the projection
+  degenerates to a zero-length normal; `extract_frustum_planes` returns
+  `[0,0,0,0]` for it and the cull shader walks five planes.
+- **Unprojecting uses the NEAR plane.** `ndc.z = 0` is infinity now and
+  unprojects to `w = 0`. Anything that builds a ray from a cursor takes
+  `ndc.z = 1` — same ray through the eye, always finite.
+
+The bounded `perspective_rh_reverse_z` survives for shadow cascades: a
+slice of an unbounded frustum is unbounded. Rationale and the full list
+of what this touched: [ADR 0002](../../../decisions/0002_infinite_reverse_z.md).
+
 ## Limits worth knowing
 
 - 🔴 **65 536 instances.** The visibility buffer packs
@@ -188,6 +220,9 @@ silently falls back.
   is on screen.
 - **No motion vectors**, which blocks temporal upscaling, TAA and motion
   blur at once ([#732](https://github.com/lobinuxsoft/kooch/issues/732)).
+  It is also what leaves the contact-shadow seam visible: the march
+  answers hit-or-miss per pixel and only averaging softens that, which
+  is what Bevy's TAA does for them.
 
 ## Not in the pipeline yet
 

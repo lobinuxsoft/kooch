@@ -17,12 +17,13 @@
 
 use bytemuck::bytes_of;
 
+use crate::contact_shadow::ContactShadowUbo;
 use crate::material::MaterialPipeline;
 use crate::meshlet::dispatcher::MeshletCull;
 use crate::meshlet::scene::MeshletScene;
 use crate::meshlet::{
-    MATERIAL_DEPTH_FORMAT, MATERIAL_PBR_DEFAULT_BODY, RESOLVE_MATERIAL_DEPTH_SHADER,
-    compose_material_shader,
+    MATERIAL_DEPTH_FORMAT, MATERIAL_PASS_CONTACT_DEPTH_BINDING, MATERIAL_PASS_CONTACT_UBO_BINDING,
+    MATERIAL_PBR_DEFAULT_BODY, RESOLVE_MATERIAL_DEPTH_SHADER, compose_material_shader,
 };
 
 use super::{CameraUbo, DEFERRED_COLOR_FORMAT, ScreenUbo, VBUF64_FORMAT};
@@ -43,6 +44,8 @@ pub(super) struct MaterialTwoPass {
     /// single buffer feeds every per-material pass in one submit.
     screen_buffer: wgpu::Buffer,
     screen_stride: u64,
+    /// The contact-shadow march's per-view uniform (#735).
+    contact_buffer: wgpu::Buffer,
 }
 
 impl MaterialTwoPass {
@@ -108,6 +111,36 @@ impl MaterialTwoPass {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: true,
                         min_binding_size: std::num::NonZeroU64::new(16),
+                    },
+                    count: None,
+                },
+                // Contact shadows (#735). Both here rather than in
+                // Inti's group: the depth buffer is per view and that
+                // group is shared across views.
+                wgpu::BindGroupLayoutEntry {
+                    binding: MATERIAL_PASS_CONTACT_UBO_BINDING,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
+                            ContactShadowUbo,
+                        >()
+                            as u64),
+                    },
+                    count: None,
+                },
+                // The scene depth, sampled. It is not an attachment
+                // during shading — that is the material-depth target —
+                // so it is free to be read, and the Hi-Z builder
+                // already reads the same view.
+                wgpu::BindGroupLayoutEntry {
+                    binding: MATERIAL_PASS_CONTACT_DEPTH_BINDING,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
                     count: None,
                 },
@@ -230,6 +263,13 @@ impl MaterialTwoPass {
             mapped_at_creation: false,
         });
 
+        let contact_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("material_two_pass_contact_shadow_ubo"),
+            size: std::mem::size_of::<ContactShadowUbo>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             resolve_pipeline,
             resolve_bgl,
@@ -240,6 +280,7 @@ impl MaterialTwoPass {
             camera_buffer,
             screen_buffer,
             screen_stride,
+            contact_buffer,
         }
     }
 
@@ -254,6 +295,7 @@ impl MaterialTwoPass {
         encoder: &mut wgpu::CommandEncoder,
         vbuf_view: &wgpu::TextureView,
         material_depth_view: &wgpu::TextureView,
+        depth_sample_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
         meshlet_bg: &wgpu::BindGroup,
         cull: &MeshletCull,
@@ -261,6 +303,7 @@ impl MaterialTwoPass {
         material_pipeline: &MaterialPipeline,
         lights_bg: &wgpu::BindGroup,
         view_proj: glam::Mat4,
+        contact: &ContactShadowUbo,
         screen_size: (u32, u32),
         debug_mode: u32,
     ) {
@@ -271,6 +314,7 @@ impl MaterialTwoPass {
                 view_proj: view_proj.to_cols_array_2d(),
             }),
         );
+        queue.write_buffer(&self.contact_buffer, 0, bytes_of(contact));
         let slots = material_pipeline.shading_slots();
         debug_assert!(
             slots.end <= MAX_SHADING_SLOTS,
@@ -348,6 +392,14 @@ impl MaterialTwoPass {
                         offset: 0,
                         size: std::num::NonZeroU64::new(std::mem::size_of::<ScreenUbo>() as u64),
                     }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: MATERIAL_PASS_CONTACT_UBO_BINDING,
+                    resource: self.contact_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: MATERIAL_PASS_CONTACT_DEPTH_BINDING,
+                    resource: wgpu::BindingResource::TextureView(depth_sample_view),
                 },
             ],
         });

@@ -36,6 +36,7 @@ impl MeshletRenderStage {
         cull_params: &CullParams,
         scene_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
+        contact: &crate::contact_shadow::ContactShadowUbo,
         timer_slot: Option<usize>,
         instance_count: u32,
     ) -> MeshletRenderStats {
@@ -96,6 +97,7 @@ impl MeshletRenderStage {
             queue,
             &mut encoder,
             &self.views[view_id].depth_view,
+            &self.views[view_id].depth_sample_view,
             &self.views[view_id].color_view,
             density_view,
             density_mode,
@@ -105,6 +107,7 @@ impl MeshletRenderStage {
             &self.views[view_id].cull,
             &self.scene,
             view_proj,
+            contact,
             debug_mode.as_u32(),
             /* clear_depth */ true,
         );

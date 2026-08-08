@@ -46,9 +46,21 @@ pub struct DirectionalLight {
     pub intensity: f32,
     /// Whether this light casts shadows.
     ///
-    /// ⚠️ Not implemented yet — shadows land with #476 (cascades). The
-    /// field is stored and saved; today nothing reads it.
+    /// Cascaded shadow maps (#476). Only the first active directional
+    /// light in the scene casts today — #734 is the other half.
     pub cast_shadows: bool,
+    /// Whether this light marches the depth buffer for contact shadows.
+    ///
+    /// Cascades are correct at range and worst at contact: the few
+    /// centimetres where an object meets the ground is where its shadow
+    /// detaches, and is what makes objects look like they float. A short
+    /// screen-space ray fixes that band and nothing else.
+    ///
+    /// On by default here and off on point and spot lights, because a
+    /// scene has one sun and can have fifty lamps: the cost is per light
+    /// per pixel, so it is the lamps that need the opt-in and the sun
+    /// that needs to be seen.
+    pub contact_shadows: bool,
 }
 
 impl Default for DirectionalLight {
@@ -58,6 +70,7 @@ impl Default for DirectionalLight {
             color: Vec3::ONE,
             intensity: crate::light_consts::lux::AMBIENT_DAYLIGHT,
             cast_shadows: true,
+            contact_shadows: true,
         }
     }
 }
@@ -76,6 +89,7 @@ mod tests {
         assert_eq!(l.color, Vec3::ONE);
         assert_eq!(l.intensity, crate::light_consts::lux::AMBIENT_DAYLIGHT);
         assert!(l.cast_shadows);
+        assert!(l.contact_shadows);
     }
 
     #[test]
@@ -83,6 +97,15 @@ mod tests {
         let l = DirectionalLight::default();
         let fields = l.reflect_fields();
         let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
-        assert_eq!(names, &["active", "color", "intensity", "cast_shadows"]);
+        assert_eq!(
+            names,
+            &[
+                "active",
+                "color",
+                "intensity",
+                "cast_shadows",
+                "contact_shadows"
+            ]
+        );
     }
 }

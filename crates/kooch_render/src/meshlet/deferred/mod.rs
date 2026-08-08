@@ -33,6 +33,14 @@ const DEFERRED_BODY: &str = include_str!("../../../shaders/meshlet_deferred.wgsl
 /// same text with a different number substituted in.
 pub const DEFERRED_INTI_GROUP: u32 = 4;
 
+/// Group-0 bindings the contact-shadow march takes on this path (#735).
+/// 0..4 are the camera, model and screen uniforms, the visibility buffer
+/// and the colour target; these are the next free. Group 0 because the
+/// depth buffer is per view, exactly as on the R64 path — the two paths
+/// differ in the *numbers*, and in nothing else.
+pub const DEFERRED_CONTACT_UBO_BINDING: u32 = 5;
+pub const DEFERRED_CONTACT_DEPTH_BINDING: u32 = 6;
+
 /// The complete compute shader: shared barycentric reconstruction, the
 /// Inti shading model, then this path's entry points.
 ///
@@ -45,6 +53,10 @@ pub const DEFERRED_INTI_GROUP: u32 = 4;
 fn shader_source() -> String {
     [
         crate::meshlet::SURFACE_RECONSTRUCT_SHADER,
+        &crate::contact_shadow::contact_shadow_shader(
+            DEFERRED_CONTACT_UBO_BINDING,
+            DEFERRED_CONTACT_DEPTH_BINDING,
+        ),
         &kooch_lighting::inti_pbr_shader(DEFERRED_INTI_GROUP),
         DEFERRED_BODY,
     ]
@@ -88,6 +100,8 @@ pub struct MeshletDeferredShader {
     pub(super) camera_buffer: wgpu::Buffer,
     pub(super) model_buffer: wgpu::Buffer,
     pub(super) screen_buffer: wgpu::Buffer,
+    /// The contact-shadow march's per-view uniform (#735).
+    pub(super) contact_buffer: wgpu::Buffer,
 }
 
 impl MeshletDeferredShader {
@@ -116,6 +130,12 @@ impl MeshletDeferredShader {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
+        let contact_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("meshlet_deferred_contact_shadow_ubo"),
+            contents: bytemuck::bytes_of(&crate::contact_shadow::ContactShadowUbo::default()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         let shading_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("meshlet_deferred_shading_bgl"),
             entries: &[
@@ -139,6 +159,20 @@ impl MeshletDeferredShader {
                         access: wgpu::StorageTextureAccess::WriteOnly,
                         format: DEFERRED_COLOR_FORMAT,
                         view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                ubo_entry(
+                    DEFERRED_CONTACT_UBO_BINDING,
+                    std::mem::size_of::<crate::contact_shadow::ContactShadowUbo>() as u64,
+                ),
+                wgpu::BindGroupLayoutEntry {
+                    binding: DEFERRED_CONTACT_DEPTH_BINDING,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
                     count: None,
                 },
@@ -216,6 +250,7 @@ impl MeshletDeferredShader {
             camera_buffer,
             model_buffer,
             screen_buffer,
+            contact_buffer,
         }
     }
 
@@ -238,6 +273,7 @@ impl MeshletDeferredShader {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         vbuf_view: &wgpu::TextureView,
+        depth_sample_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
         meshlet_bg: &wgpu::BindGroup,
         material_bg: &wgpu::BindGroup,
@@ -295,6 +331,14 @@ impl MeshletDeferredShader {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: DEFERRED_CONTACT_UBO_BINDING,
+                    resource: self.contact_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: DEFERRED_CONTACT_DEPTH_BINDING,
+                    resource: wgpu::BindingResource::TextureView(depth_sample_view),
                 },
             ],
         });

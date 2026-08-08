@@ -9,77 +9,109 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-07, `development` at `85f680a` — **#476 merged in #749**.
+Last updated 2026-08-08, `development` at `ff37ad9` — **#735 done in PR #752**, which also took the camera's far plane (ADR 0002).
 
 ---
 
-## Next — #735, contact shadows
+## Next — #743, the light debug views
 
-Cascades are correct at range and **worst exactly at contact**. The few
-centimetres where an object meets the ground is where a shadow detaches
-or swims, and that is what makes things look like they float over a
-scene rather than stand on it — the artifact #476 spent nine fixes
-fighting with biases and penumbra widths, and the one neither can win.
+One light at a time, in greyscale, with its shadow. Half of it shipped
+with #476 as `MeshletDebugMode::ShadowCascades`. It answers the question
+*why is this dark?* — "no light reaches it" and "something shadows it"
+look identical in a shaded frame and have different fixes, which is the
+lesson #476 paid for three times.
 
-Screen-space, so it **costs the same at any world scale**, which is the
-property that makes it valid at planetary distances where a shadow map
-is not.
-
-⚠️ It needs the depth buffer and a normal, both of which the deferred
-resolve already reconstructs — see `surface_reconstruct.wgsl`. Read what
-Bevy 0.19 does first: it landed there in the same release, and this
-session is the evidence for why guessing at an orthographic-adjacent
-technique costs more than reading it.
-
-### The plan, already verified against the code
-
-Bevy 0.19 keeps the parameters in `contact_shadows.rs` and the march in
-`render/pbr_functions.wgsl:298` (`calculate_contact_shadow`), over a
-generic `bevy_pbr::raymarch` module. Their defaults: **16 linear steps,
-0.1 thickness, 0.3 length** — the last two in world units. `thickness`
-exists because a depth buffer is 2.5D: it assumes every fragment is a
-box that deep. A hit returns a **fade**, not a boolean.
-
-The march needs the depth buffer in the shading pass, which is not bound
-today — Bevy's component simply `#[require(DepthPrepass)]`. It goes in
-**group 0**, alongside the vbuf, camera and screen UBO, which are per
-view exactly as the depth is. Not in Inti's group: that one is shared
-across views, and putting a per-view resource there is what made shadows
-vanish when the light buffer grew.
-
-Three things checked rather than assumed:
-
-| | |
-|---|---|
-| The scene depth is **not** an attachment during shading | `two_pass.rs:397` binds `material_depth_view` |
-| The texture can be sampled | `view_targets.rs:126` — `RENDER_ATTACHMENT \| TEXTURE_BINDING` |
-| A view for sampling exists | `depth_sample_view`, `aspect: DepthOnly` |
-
-The Hi-Z 2-pass path already samples it (`render_hi_z_2pass.rs:115`), so
-the pattern is proven in this codebase and not merely allowed by wgpu.
-No read-only depth attachment, no depth copy.
-
-Steps: `binding: 3` on `frame_bgl` (`two_pass.rs:89` uses 0/1/2) →
-`depth_sample_view` into the bind group → `textureLoad` in the fragment,
-**no sampler**, because a screen-space march wants the exact texel → the
-march itself.
-
-🔴 **Both shading paths.** The R32 deferred path shades in a separate
-compute shader with its own group 0. Landing this on R64 only is how
-half of #476 went: two paths diverging with no compiler between them.
-
-### Behind it
-
-**#743** — the light debug views, one light at a time in greyscale with
-its shadow. Half of it shipped with #476 as `MeshletDebugMode::ShadowCascades`.
 Then **#248 / #250** atmosphere (`priority:high`), then **#254** post +
 auto exposure (`priority:high` — the blown-out white floor in every
-screenshot from this session is that issue).
+screenshot of the last two sessions is that issue, and it is now also
+what makes a contact shadow hard to see on a lit floor).
 
 🔴 **#477 (VSM) will walk into the same set of problems #476 just fixed.**
 Every one of its nine was an orthographic view doing what a perspective
 one does not; a virtual shadow map is more orthographic views, not fewer.
 Read the section below before starting it.
+
+---
+
+## Done — #735, contact shadows
+
+A short ray marched through the depth buffer, from each shaded point
+toward each light that opted in. Ported from Bevy 0.19
+(`contact_shadows.rs` + `calculate_contact_shadow`, over their
+`bevy_pbr::raymarch`, itself Tomasz Stachowiak's `raymarch.hlsl`), with
+their defaults kept: **16 linear steps, 0.1 m thickness, 0.3 m length**.
+
+**What it does that the cascades cannot.** A cascade is correct at range
+and worst exactly at contact — the few centimetres where an object meets
+the ground is where its shadow detaches or swims, whatever the bias. The
+march fixes that band and nothing else, so the two compose. And being
+screen-space it **costs the same at any world scale**, which is rare in
+this backlog.
+
+### 🔴 The one thing that was NOT a straight port
+
+Bevy's march reads depth as `1.0 / ndc_z`. That identity holds **only
+for a reversed-Z projection with an infinite far plane**, and
+`perspective_rh_reverse_z` takes a finite one. Ported literally it would
+have scaled every depth by a factor that varies with the far plane —
+i.e. a `thickness` parameter meaning something different in every scene,
+which is exactly the kind of wrong that looks like "needs tuning".
+
+`contact_shadow::depth_to_linear` inverts the real projection instead:
+`linear_z = x / (y − ndc_z)` with `r = far/(near−far)`, `x = r·near`,
+`y = 1+r`. A test round-trips points through the actual matrix, and a
+second one pins that as `far → ∞` it collapses back onto Bevy's form.
+
+### Where it lives
+
+| | |
+|---|---|
+| The march | `kooch_render/shaders/contact_shadow.wgsl`, bindings templated |
+| Its uniform + settings | `kooch_render/src/contact_shadow.rs` |
+| The call | `inti_shade`, per light, skipped where a cascade already shadows |
+| Per-light opt-in | `GpuLight.flags` bit 0, from `*Light::contact_shadows` |
+| Author settings | `RenderSettings.contact_shadow_*`; **zero steps is the off switch** |
+
+`inti_pbr.wgsl` **calls a function it does not define**, and that is the
+mechanism rather than an oversight: a shading path that forgets to
+concatenate the march fails to compile instead of quietly rendering
+without it. `INTI_CONTACT_SHADOW_STUB` is what a path with no depth to
+sample supplies.
+
+Both bindings sit in **group 0**, not Inti's — the depth buffer is per
+view and that group is shared across views, which is what made shadows
+vanish once the light buffer grew.
+
+### Defaults, and why they differ per light kind
+
+On for `DirectionalLight`, off for `PointLight` and `SpotLight`. A scene
+has one sun and can have fifty lamps, and the cost is per light per
+pixel: it is the lamps that need the opt-in and the sun that needs to be
+seen. ⚠️ On a punctual light this is currently the **only** shadow it
+casts.
+
+### 🔴 The test that caught the two paths diverging
+
+`try_acquire_device` asks for `Features::empty()`, so the shared test
+device **cannot** take the R64 path — every render in `contact_shadows.rs`
+would have gone through the R32 compute deferred and the fragment path
+would have shipped untested. The file acquires a second device with the
+int64-atomic bundle and asserts the same property on both. That is the
+#476 failure mode caught before it happened rather than after.
+
+The march itself was wrong on the first run — a `select` in the frustum
+clip was inverted, and the test failed with the two renders **bit
+identical**. It is a test that fails when the feature is absent, which
+is not true of every test this repo has written.
+
+### Known limits
+
+- **Screen-space**: an occluder off-screen or behind the camera does not
+  exist. The ray is clipped to the frustum and reports no hit, so the
+  shadow fades at the screen edge rather than popping.
+- **No temporal filter.** The jitter is per frame, and without TAA
+  (#732 — motion vectors do not exist) a still frame keeps its dither.
+- The blown-out floor (#254) makes the effect harder to see than it is.
 
 ---
 

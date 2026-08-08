@@ -124,6 +124,12 @@ pub struct MeshletRenderStage {
     /// debug-active mode is selected.
     pub(super) stage_counters: MeshletStageCounters,
 
+    /// Frames this stage has recorded, for anything that wants a
+    /// temporally varying value. Today that is the contact-shadow
+    /// jitter (#735): without it the dither pattern is frozen into the
+    /// image and reads as a texture rather than as noise.
+    pub(super) frames_recorded: u32,
+
     /// Cross-module engine VRAM counter (#463.5). Optional —
     /// `None` means the editor / game has not registered a tracker
     /// and the stage skips bookkeeping. Wired via

@@ -74,9 +74,9 @@ pub use gpu_meshlet::{
 pub use gpu_timers::MeshletGpuTimers;
 pub use loader::MeshletMeshLoader;
 pub use material_pass::{
-    MATERIAL_DEPTH_FORMAT, MATERIAL_PASS_INTI_GROUP, MATERIAL_PBR_DEFAULT_BODY,
-    RESOLVE_MATERIAL_DEPTH_SHADER, SURFACE_RECONSTRUCT_SHADER, VISIBILITY_BUFFER_RESOLVE_SHADER,
-    compose_material_shader,
+    MATERIAL_DEPTH_FORMAT, MATERIAL_PASS_CONTACT_DEPTH_BINDING, MATERIAL_PASS_CONTACT_UBO_BINDING,
+    MATERIAL_PASS_INTI_GROUP, MATERIAL_PBR_DEFAULT_BODY, RESOLVE_MATERIAL_DEPTH_SHADER,
+    SURFACE_RECONSTRUCT_SHADER, VISIBILITY_BUFFER_RESOLVE_SHADER, compose_material_shader,
 };
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshDescriptor, MeshHandle};
 pub use reject_overlay::{MeshletRejectOverlay, RejectReason};

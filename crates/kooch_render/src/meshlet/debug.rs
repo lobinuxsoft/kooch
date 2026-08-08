@@ -86,6 +86,18 @@ pub enum MeshletDebugMode {
     /// distance is far larger than its scene sees one colour everywhere
     /// near the camera and the rest wasted.
     ShadowCascades = 12,
+    /// What the contact-shadow march saw, as colour (#735).
+    ///
+    /// Speckle on a floor is one of three things that look identical in
+    /// a shaded frame: the surface occluding itself on the march's very
+    /// first sample, a real occluder found further along, or a ray too
+    /// short in screen space to have marched at all. Red, green and blue
+    /// respectively — see `inti_contact_shadow_debug`.
+    ///
+    /// It shows the **first light that opted in**, because the march is
+    /// per light and averaging several would hide the one being looked
+    /// at. Magenta means no light in the scene marches.
+    ContactShadows = 13,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -144,6 +156,7 @@ impl MeshletDebugMode {
             Self::HiZRejected,
             Self::Normals,
             Self::ShadowCascades,
+            Self::ContactShadows,
         ]
     }
 
@@ -221,6 +234,7 @@ impl MeshletDebugMode {
             Self::FrustumRejected => "Frustum Rejected",
             Self::Normals => "Normals",
             Self::ShadowCascades => "Shadow cascades",
+            Self::ContactShadows => "Contact shadows",
         }
     }
 }
@@ -246,6 +260,7 @@ mod tests {
         // Pinned because the literal lives in three WGSL files that no
         // compiler checks against this enum.
         assert_eq!(MeshletDebugMode::ShadowCascades.as_u32(), 12);
+        assert_eq!(MeshletDebugMode::ContactShadows.as_u32(), 13);
     }
 
     #[test]
