@@ -73,6 +73,12 @@ pub fn shared_engine_dir(version: &str) -> Option<PathBuf> {
     // writing into somebody's real ~/.local/share.
     let base = match std::env::var_os("KOOCH_ENGINE_HOME") {
         Some(dir) => Some(PathBuf::from(dir)),
+        // 🔴 A test must never reach the real data directory. One did,
+        // and left a 12 KB fixture at ~/.local/share/kooch/0.1.0/engine
+        // — which `is_engine_source` accepts, so the editor would have
+        // reported it up to date and never materialised the real engine.
+        // Every project on the machine would have pointed at a stub.
+        None if cfg!(test) => None,
         None => dirs::data_dir().map(|d| d.join("kooch")),
     };
     base.map(|b| b.join(version).join(VENDOR_DIR))

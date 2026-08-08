@@ -296,3 +296,30 @@ fn a_directory_that_is_not_the_engine_is_refused_before_writing() {
     ));
     assert!(!project.join(VENDOR_DIR).exists(), "wrote before checking");
 }
+
+/// 🔴 A test that writes into the developer's real `~/.local/share` is
+/// not a test, it is a side effect — and this one is worse than untidy:
+/// `is_engine_source` accepts what it leaves behind, so the editor
+/// reports the engine up to date and never materialises the real one.
+///
+/// Without the override, `shared_engine_dir` refuses to answer under
+/// `cfg(test)` rather than handing back a real path.
+#[test]
+fn tests_cannot_reach_the_real_data_directory() {
+    // SAFETY: single-threaded by `--test-threads=1` in the suite that
+    // needs it; nothing else reads the environment here.
+    unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
+    assert_eq!(
+        shared_engine_dir("0.1.0"),
+        None,
+        "a test just resolved the real shared engine directory",
+    );
+
+    let home = tmp("override");
+    unsafe { std::env::set_var("KOOCH_ENGINE_HOME", &home) };
+    assert_eq!(
+        shared_engine_dir("0.1.0"),
+        Some(home.join("0.1.0").join(VENDOR_DIR)),
+    );
+    unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
+}
