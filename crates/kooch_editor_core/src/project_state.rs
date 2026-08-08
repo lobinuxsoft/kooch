@@ -292,7 +292,7 @@ impl ProjectState {
         match crate::engine_vendor::ensure_current(
             root_path,
             &manifest.engine_version,
-            self.engine_root.as_deref(),
+            crate::engine_vendor::vendor_source(self.engine_root.as_deref()).as_deref(),
         ) {
             Ok(crate::engine_vendor::VendorState::UpToDate) => {}
             Ok(state) => {

@@ -408,7 +408,12 @@ pub fn create_project(
     let engine_path = if developing_the_engine {
         engine_root.display().to_string()
     } else {
-        crate::engine_vendor::vendor_engine(&project_root, engine_root)
+        // Where the source is depends on how this editor was installed;
+        // `vendor_source` knows the three layouts. Falls back to the
+        // engine root it was handed, which is what the tests exercise.
+        let source = crate::engine_vendor::vendor_source(Some(engine_root))
+            .unwrap_or_else(|| engine_root.to_path_buf());
+        crate::engine_vendor::vendor_engine(&project_root, &source)
             .map_err(|e| ProjectError::Io(std::io::Error::other(e.to_string())))?;
         crate::engine_vendor::VENDOR_DIR.to_owned()
     };

@@ -61,6 +61,31 @@ alters a component's fields leaves it alone, so a plugin built against
 the old copy would link, pass the check, and read every shared structure
 at the wrong layout. Now it says so instead.
 
+### Packaging the editor
+
+```sh
+cargo build --release -p kooch_editor
+cargo run --release --features editor --example package_editor -- dist/
+```
+
+```text
+dist/
+  kooch_editor      the binary
+  engine/           7.7 MB — what gets vendored into projects
+  assets/           what the editor itself renders with
+```
+
+`engine_vendor::vendor_source` looks for the source in three places, in
+order: `KOOCH_ENGINE_SOURCE` (an override, and what CI uses), `engine/`
+next to the executable (the layout above), and finally the engine root —
+which only resolves when running from the engine's own tree.
+
+⚠️ **This packages for the platform it runs on.** An editor for Windows
+means running it on Windows. Bevy's release workflow reaches the same
+conclusion — a matrix of native runners, no cross-compilation — and the
+reason is the same here: `metis` is vendored C, which makes
+cross-compiling more than a target flag.
+
 ### Developing the engine itself
 
 When the editor runs out of the engine's own `target/`, project creation

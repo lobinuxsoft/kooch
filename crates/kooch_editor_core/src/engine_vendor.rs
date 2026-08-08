@@ -96,6 +96,50 @@ pub fn is_engine_source(root: &Path) -> bool {
     REQUIRED.iter().all(|entry| root.join(entry).exists())
 }
 
+/// Where this editor's copy of the engine source lives, or `None` when
+/// it has none to give.
+///
+/// Resolution order, and each entry is there for a case that happens:
+///
+/// 1. **`KOOCH_ENGINE_SOURCE`** — an explicit override. What CI uses,
+///    and the escape hatch when the layout below is not what someone
+///    built.
+/// 2. **`<dir of the executable>/engine/`** — the install layout. This
+///    is the whole of #754 phase 2: a compiled editor ships the source
+///    beside itself, so it can hand a project a working engine without
+///    a clone anywhere on the machine.
+/// 3. **The engine root** — running from the engine's own tree, i.e.
+///    developing the engine.
+///
+/// Returns `None` rather than guessing. A wrong directory here produces
+/// a project that fails to build with an error naming a missing crate,
+/// which says nothing about vendoring.
+pub fn vendor_source(engine_root: Option<&Path>) -> Option<PathBuf> {
+    if let Ok(explicit) = std::env::var("KOOCH_ENGINE_SOURCE") {
+        let path = PathBuf::from(explicit);
+        if is_engine_source(&path) {
+            return Some(path);
+        }
+        tracing::warn!(
+            path = %path.display(),
+            "KOOCH_ENGINE_SOURCE is set but does not look like engine source; ignoring",
+        );
+    }
+
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let beside = dir.join(VENDOR_DIR);
+        if is_engine_source(&beside) {
+            return Some(beside);
+        }
+    }
+
+    engine_root
+        .filter(|root| is_engine_source(root))
+        .map(Path::to_path_buf)
+}
+
 /// `true` when the editor is running out of the engine's own build
 /// directory — i.e. someone is developing the engine, not using it.
 ///
@@ -440,6 +484,52 @@ mod tests {
                 .join("engine/crates/kooch_core/src/lib.rs")
                 .is_file(),
             "opening with no engine source deleted the project's copy",
+        );
+    }
+
+    /// The override exists so CI can vendor without an editor install
+    /// laid out the usual way. A value that is not engine source is
+    /// ignored rather than obeyed: obeying it produces a project that
+    /// fails to build on a missing crate, which names nothing useful.
+    #[test]
+    fn an_explicit_source_wins_and_a_wrong_one_is_ignored() {
+        let dir = tmp("explicit");
+        let engine = dir.join("elsewhere");
+        fake_engine(&engine);
+        let junk = dir.join("junk");
+        fs::create_dir_all(&junk).unwrap();
+
+        // SAFETY: single-threaded test process; no other thread reads
+        // the environment while this runs.
+        unsafe { std::env::set_var("KOOCH_ENGINE_SOURCE", &engine) };
+        assert_eq!(vendor_source(None).as_deref(), Some(engine.as_path()));
+
+        unsafe { std::env::set_var("KOOCH_ENGINE_SOURCE", &junk) };
+        assert_eq!(
+            vendor_source(None),
+            None,
+            "a KOOCH_ENGINE_SOURCE that is not engine source should be ignored",
+        );
+
+        unsafe { std::env::remove_var("KOOCH_ENGINE_SOURCE") };
+    }
+
+    /// Developing the engine: no install layout, no override, and the
+    /// engine root it was handed is the source.
+    #[test]
+    fn the_engine_root_is_the_last_resort() {
+        let dir = tmp("fallback");
+        let engine = dir.join("engine_src");
+        fake_engine(&engine);
+
+        assert_eq!(
+            vendor_source(Some(&engine)).as_deref(),
+            Some(engine.as_path()),
+        );
+        assert_eq!(
+            vendor_source(Some(&dir.join("nothing_here"))),
+            None,
+            "a root that is not engine source must not be offered as one",
         );
     }
 
