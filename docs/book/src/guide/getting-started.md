@@ -47,6 +47,20 @@ source — it just used to reach outside its own directory to find it.
 Rust compiled into the game, so the toolchain is not optional the way it
 is in an engine whose gameplay is a script.
 
+### Why the plugin refuses to load after an engine change
+
+The editor loads the project's `.so` to learn its component types, and
+before calling anything it compares a `BuildStamp`: the plugin API
+version, the compiler identity, and **the engine version**. A mismatch
+is a refusal with a message naming which of the three failed, because
+the fixes differ.
+
+The engine version is in there because of vendoring. The API version
+only moves when the plugin *interface* changes; an engine release that
+alters a component's fields leaves it alone, so a plugin built against
+the old copy would link, pass the check, and read every shared structure
+at the wrong layout. Now it says so instead.
+
 ### Developing the engine itself
 
 When the editor runs out of the engine's own `target/`, project creation

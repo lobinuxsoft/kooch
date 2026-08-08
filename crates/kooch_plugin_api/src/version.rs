@@ -14,7 +14,22 @@
 ///
 /// Increment on any breaking change to [`Engine`](crate::Engine),
 /// [`KoochPlugin`](crate::KoochPlugin), or the schema types.
-pub const API_VERSION: u32 = 4;
+pub const API_VERSION: u32 = 5;
+
+/// The engine's version, which this crate shares through
+/// `version.workspace = true`.
+///
+/// 🔴 Separate from [`API_VERSION`] on purpose. That one is bumped by
+/// hand when the plugin *interface* changes; this one moves with every
+/// engine release, including the ones that change a component's fields
+/// without touching a single signature in this crate. A plugin built
+/// against those still links, still passes the API check, and hands over
+/// structures whose layout the host reads differently.
+///
+/// It matters more since the engine is vendored into projects (#754):
+/// the editor's engine and a project's copy are now two directories that
+/// can drift apart.
+pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The compiler that built this crate, as `rustc -V -v` reported it.
 ///
@@ -33,6 +48,12 @@ pub struct BuildStamp {
     pub api_version: u32,
     /// Hash of [`RUSTC_IDENT`] at build time.
     pub rustc_hash: u64,
+    /// Hash of [`ENGINE_VERSION`] at build time.
+    ///
+    /// A hash and not the string for the same reason as `rustc_hash`:
+    /// this struct crosses the boundary *before* compatibility is known,
+    /// so it has to be fixed-size and `#[repr(C)]`.
+    pub engine_hash: u64,
 }
 
 impl BuildStamp {
@@ -41,13 +62,16 @@ impl BuildStamp {
         Self {
             api_version: API_VERSION,
             rustc_hash: fnv1a(RUSTC_IDENT.as_bytes()),
+            engine_hash: fnv1a(ENGINE_VERSION.as_bytes()),
         }
     }
 
     /// Whether a plugin carrying this stamp may be loaded here.
     pub const fn is_compatible_with_current(&self) -> bool {
         let current = Self::current();
-        self.api_version == current.api_version && self.rustc_hash == current.rustc_hash
+        self.api_version == current.api_version
+            && self.rustc_hash == current.rustc_hash
+            && self.engine_hash == current.engine_hash
     }
 
     /// Why it is incompatible, or `None` if it is fine.
@@ -67,6 +91,11 @@ impl BuildStamp {
         if self.rustc_hash != current.rustc_hash {
             return Some(Incompatibility::Compiler);
         }
+        if self.engine_hash != current.engine_hash {
+            return Some(Incompatibility::EngineVersion {
+                engine: ENGINE_VERSION,
+            });
+        }
         None
     }
 }
@@ -83,6 +112,13 @@ pub enum Incompatibility {
     },
     /// Built by a different compiler.
     Compiler,
+    /// Built against a different engine version, with the same API and
+    /// compiler — so it links, and the layouts underneath may not match.
+    EngineVersion {
+        /// What this engine is. The plugin's is unrecoverable: the stamp
+        /// carries a hash so it can stay fixed-size.
+        engine: &'static str,
+    },
 }
 
 impl std::fmt::Display for Incompatibility {
@@ -97,6 +133,13 @@ impl std::fmt::Display for Incompatibility {
                 f,
                 "plugin was built by a different compiler than the engine — a Rust trait object \
                  cannot safely cross that boundary; rebuild both with the same toolchain"
+            ),
+            Self::EngineVersion { engine } => write!(
+                f,
+                "plugin was built against a different engine version; this one is {engine}. The \
+                 API matches, so it would load and read every shared structure at whatever \
+                 layout it was compiled with — rebuild the project against the engine the \
+                 editor vendored"
             ),
         }
     }
@@ -120,6 +163,55 @@ const fn fnv1a(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    /// 🔴 The case this variant exists for, and the one that used to be
+    /// silent: same API, same compiler, different engine. The plugin
+    /// links and reads every shared structure at whatever layout it was
+    /// compiled with.
+    ///
+    /// It stopped being hypothetical when the engine started being
+    /// vendored into projects (#754) — the editor's copy and a project's
+    /// copy are two directories that can drift.
+    #[test]
+    fn a_plugin_from_another_engine_version_is_refused() {
+        let stale = super::BuildStamp {
+            engine_hash: super::BuildStamp::current().engine_hash ^ 1,
+            ..super::BuildStamp::current()
+        };
+
+        assert!(!stale.is_compatible_with_current());
+        assert!(matches!(
+            stale.incompatibility(),
+            Some(super::Incompatibility::EngineVersion { .. }),
+        ));
+    }
+
+    /// The three checks answer three different questions, and the
+    /// loader reports which one failed because they have different
+    /// fixes: bump the API, change toolchain, rebuild the project.
+    #[test]
+    fn each_half_of_the_stamp_is_reported_separately() {
+        let current = super::BuildStamp::current();
+        let with = |f: fn(&mut super::BuildStamp)| {
+            let mut s = current;
+            f(&mut s);
+            s.incompatibility()
+        };
+
+        assert!(matches!(
+            with(|s| s.api_version += 1),
+            Some(super::Incompatibility::ApiVersion { .. }),
+        ));
+        assert!(matches!(
+            with(|s| s.rustc_hash ^= 1),
+            Some(super::Incompatibility::Compiler),
+        ));
+        assert!(matches!(
+            with(|s| s.engine_hash ^= 1),
+            Some(super::Incompatibility::EngineVersion { .. }),
+        ));
+        assert!(current.incompatibility().is_none());
+    }
+
     use super::*;
 
     #[test]
