@@ -19,6 +19,37 @@ there:
 The rest of this page is the handful of things that are easy to trip over and do not belong
 to any one of those.
 
+## A project carries its own engine
+
+Creating a project copies the engine's source into `<project>/engine/`,
+and the generated `Cargo.toml` refers to it by a **relative** path:
+
+```toml
+kooch = { path = "engine", features = [...] }
+```
+
+Commit that directory. It is ~8 MB of text, and it is what makes the
+project build on any machine, at the engine revision it was authored
+against, with nothing installed beside it. `engine/target` is
+gitignored; the source is not.
+
+**It costs no build time.** A project always compiled the engine from
+source — it just used to reach outside its own directory to find it.
+
+⚠️ **Rust is still required** to build a project. Gameplay is native
+Rust compiled into the game, so the toolchain is not optional the way it
+is in an engine whose gameplay is a script.
+
+### Developing the engine itself
+
+When the editor runs out of the engine's own `target/`, project creation
+skips the copy and points the manifest at the live clone instead —
+otherwise every change to the engine would need a re-vendor before the
+game could see it. The check is where the *executable* is, not where the
+source is ([`engine_vendor::running_from_engine_build`]).
+
+[`engine_vendor::running_from_engine_build`]: https://github.com/lobinuxsoft/kooch/blob/development/crates/kooch_editor_core/src/engine_vendor.rs
+
 ## Loading a scene
 
 The boot scene is resolved in this order:

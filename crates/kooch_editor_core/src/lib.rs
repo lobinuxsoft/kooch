@@ -20,6 +20,7 @@ pub(crate) mod actions;
 pub mod bootstrap;
 pub(crate) mod drag_drop;
 pub mod editor_camera;
+pub mod engine_vendor;
 pub(crate) mod gizmos;
 pub mod icons;
 pub mod input_focus;

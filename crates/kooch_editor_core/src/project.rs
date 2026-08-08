@@ -184,10 +184,16 @@ pub fn sanitize_crate_name(name: &str) -> String {
 }
 
 /// Generates a `Cargo.toml` for a project crate.
-fn generate_cargo_toml(name: &str, engine_root: &Path) -> String {
+///
+/// `engine_path` is what goes in the `path` dependency. Normally it is
+/// the relative [`engine_vendor::VENDOR_DIR`] — the engine copied into
+/// the project — which is what makes the manifest identical on every
+/// machine (#754). Developing the engine itself passes an absolute path
+/// to the live clone instead; see [`create_project`].
+fn generate_cargo_toml(name: &str, engine_path: &str) -> String {
     let crate_name = sanitize_crate_name(name);
     // Cargo.toml requires forward slashes even on Windows.
-    let engine_path = engine_root.display().to_string().replace('\\', "/");
+    let engine_path = engine_path.replace('\\', "/");
     format!(
         r#"[package]
 name = "{crate_name}"
@@ -356,6 +362,12 @@ const PROJECT_GITIGNORE: &str = "\
 # Rust build output. Gigabytes, and every byte of it regenerable.
 /target
 
+# NOT ignored: engine/ — the vendored engine source (#754). It is ~8 MB
+# of text and committing it is the entire point: the project builds on
+# any machine, at the engine revision it was authored against, without
+# anything installed beside it.
+/engine/target
+
 # rustfmt leftovers.
 **/*.rs.bk
 
@@ -381,8 +393,28 @@ pub fn create_project(
     manifest.main_scene = Some(DEFAULT_SCENE_REL_PATH.to_owned());
     manifest.save(&project_root)?;
 
+    // 🔴 The engine goes INSIDE the project (#754). Before this the
+    // manifest carried an absolute path to whatever clone created the
+    // project, so the project did not build on a second machine — and a
+    // compiled editor, which has no clone next to it at all, could not
+    // produce a buildable project.
+    //
+    // Developing the engine is the exception and has to stay working:
+    // when the editor is running out of the engine's own source tree,
+    // copying it would freeze the project against a snapshot and break
+    // the daily loop of changing engine and game together. There the
+    // manifest keeps pointing at the live clone.
+    let developing_the_engine = crate::engine_vendor::running_from_engine_build(engine_root);
+    let engine_path = if developing_the_engine {
+        engine_root.display().to_string()
+    } else {
+        crate::engine_vendor::vendor_engine(&project_root, engine_root)
+            .map_err(|e| ProjectError::Io(std::io::Error::other(e.to_string())))?;
+        crate::engine_vendor::VENDOR_DIR.to_owned()
+    };
+
     // Generate Cargo.toml.
-    let cargo_toml = generate_cargo_toml(name, engine_root);
+    let cargo_toml = generate_cargo_toml(name, &engine_path);
     fs::write(project_root.join("Cargo.toml"), cargo_toml).map_err(ProjectError::Io)?;
 
     // Generate src/main.rs scaffold + its editor-managed registrations.
@@ -536,5 +568,61 @@ mod gitignore_tests {
                 "{needed} is required to build or open the project; ignoring it breaks a clone",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod vendoring_tests {
+    use super::*;
+
+    /// A minimal directory that passes `is_engine_source`.
+    fn fake_engine(root: &Path) {
+        fs::create_dir_all(root.join("crates/kooch_ecs/src")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("Cargo.toml"), "[workspace]").unwrap();
+        fs::write(root.join("src/lib.rs"), "// facade").unwrap();
+        fs::write(root.join("crates/kooch_ecs/src/lib.rs"), "// ecs").unwrap();
+    }
+
+    /// 🔴 The whole of #754 phase 1, as one assertion.
+    ///
+    /// The generated manifest must not contain a path from the machine
+    /// that generated it. Before this, it carried the absolute path of
+    /// whatever engine clone happened to be around, so the project built
+    /// on exactly one computer.
+    #[test]
+    fn a_generated_project_carries_its_engine_and_no_machine_path() {
+        let tmp = std::env::temp_dir().join("kooch_project_vendor_test");
+        let _ = fs::remove_dir_all(&tmp);
+        let engine = tmp.join("some/deep/install/kooch");
+        fs::create_dir_all(&engine).unwrap();
+        fake_engine(&engine);
+        let parent = tmp.join("workspace");
+        fs::create_dir_all(&parent).unwrap();
+
+        let project = create_project("my game", &parent, &engine).expect("creates");
+
+        let manifest = fs::read_to_string(project.join("Cargo.toml")).unwrap();
+        assert!(
+            manifest.contains(r#"path = "engine""#),
+            "manifest should point at the vendored copy:\n{manifest}",
+        );
+        assert!(
+            !manifest.contains(&engine.display().to_string()),
+            "the creating machine's engine path leaked into the manifest:\n{manifest}",
+        );
+        assert!(
+            project.join("engine/crates/kooch_ecs/src/lib.rs").is_file(),
+            "the engine was referenced but not copied — the project cannot build",
+        );
+
+        // The build output of the vendored copy is ignored; the source
+        // is not. Committing it is what makes the project reproducible.
+        let ignore = fs::read_to_string(project.join(".gitignore")).unwrap();
+        assert!(ignore.contains("/engine/target"));
+        assert!(
+            !ignore.lines().any(|l| l.trim() == "/engine"),
+            "the vendored engine is gitignored, which defeats vendoring it",
+        );
     }
 }
