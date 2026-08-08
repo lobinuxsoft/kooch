@@ -119,6 +119,18 @@ fn contact_shadow_march(
         (ndc_to_uv(rm.ray_end_cs.xy) - ndc_to_uv(rm.ray_start_cs.xy)) * depth_size);
     var probe = ContactShadowProbe(1.0, rm_result.hit, rm_result.hit_t, rm.linear_steps, ray_px);
     if (rm_result.hit) {
+        // Bevy's remap, kept. Softening it was tried and reverted: a
+        // `smoothstep` over the whole range removes the plateau but
+        // takes the shadow's strength with it (30% of the floor's
+        // luminance down to 8%, caught by
+        // `a_cube_standing_on_a_floor_darkens_the_floor_it_touches`),
+        // and it does not close the seam it was aimed at.
+        //
+        // 🔴 The seam next to a cascade is between **hit and no hit** —
+        // one pixel finds an occluder and returns ~0, its neighbour
+        // finds none and returns 1 — so no curve applied to the hit can
+        // smooth it. Only averaging can, spatially or temporally, and
+        // that is #732.
         probe.shadow = clamp((rm_result.hit_penetration_frac - 0.5) / (1.0 - 0.5), 0.0, 1.0);
     }
     return probe;
