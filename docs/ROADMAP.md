@@ -9,27 +9,89 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-08, `development` at `ff37ad9` — **#735 done in PR #752**, which also took the camera's far plane (ADR 0002).
+Last updated 2026-08-08, `development` at `30ec24f` — **#754 done in PR #757**. Graphics paused until a game can be built from the editor (#758).
 
 ---
 
-## Next — #743, the light debug views
+## Next — a game you can actually run: #758, the build panel
 
-One light at a time, in greyscale, with its shadow. Half of it shipped
-with #476 as `MeshletDebugMode::ShadowCascades`. It answers the question
-*why is this dark?* — "no light reaches it" and "something shadows it"
-look identical in a shaded frame and have different fixes, which is the
-lesson #476 paid for three times.
+**The graphics work is paused on purpose.** Not because it stopped
+mattering, but because nothing here has ever produced a game: you can
+play in the Game panel and you can compile by hand, and there is no
+"make the build". Until that exists, no shipped artefact has ever been
+run, and every graphics feature is being judged in an editor viewport
+rather than in the thing people would install.
 
-Then **#248 / #250** atmosphere (`priority:high`), then **#254** post +
-auto exposure (`priority:high` — the blown-out white floor in every
-screenshot of the last two sessions is that issue, and it is now also
-what makes a contact shadow hard to see on a lit floor).
+### The order, and what each one unblocks
 
-🔴 **#477 (VSM) will walk into the same set of problems #476 just fixed.**
+| | | Why here |
+|---|---|---|
+| **#758** | build panel — presets per target platform | The point. Godot's model: named presets stored with the project, platform options declared dynamically. The preset is a reflected asset, so the Inspector edits it with no UI code (#744) |
+| **#759** | `.rendersettings` cannot be created from the browser | Same wiring as #758 needs for `.buildpreset`: one enum, one handler, one menu. Doing it twice means touching three files twice |
+| **#537** | cargo features per build target | What a preset selects. A build panel with no feature control ships the editor inside the game |
+| **#558** | the shippable build is the game only | The assertion #758 has to satisfy |
+| **#755** | per-platform installers, Rust toolchain | Only blocking for **cross**-compiling. A native build works with what a dev already has |
+
+### Behind that, and only then, the graphics queue resumes
+
+**#743** light debug views (one light at a time, greyscale, with its
+shadow) → **#248 / #250** atmosphere → **#254** post + auto exposure.
+
+⚠️ #254 earned its place the hard way: the blown-out white floor in
+every screenshot of the last two sessions is that issue, and it is what
+made contact shadows hard to judge while building them.
+
+🔴 **#477 (VSM) will walk into the same set of problems #476 fixed.**
 Every one of its nine was an orthographic view doing what a perspective
-one does not; a virtual shadow map is more orthographic views, not fewer.
-Read the section below before starting it.
+one does not; a virtual shadow map is more orthographic views, not
+fewer.
+
+### Cross-compilation: measured, not assumed
+
+Toward `x86_64-pc-windows-gnu`, on the author's machine:
+
+| | |
+|---|---|
+| `kooch_core` | 🟢 green in 11 s |
+| `metis-sys` | 🟢 green **with** `CFLAGS_x86_64_pc_windows_gnu="-std=gnu17"` — mingw-gcc defaults to C23, where `false` is a keyword, and GKlib declares an enum by that name |
+| `meshopt` | 🔴 needs `mingw64-gcc-c++` installed |
+| macOS | ❌ impossible without a Mac; Apple's SDK is not redistributable |
+
+The build panel has to pass that `CFLAGS` and detect a missing toolchain
+**before** compiling. Bevy's answer to the same problem is a matrix of
+native runners rather than cross-compiling — which is #753, and the
+other half of this.
+
+---
+
+## Done — #754, the engine lives once per machine
+
+A compiled editor can now create projects that build. The generated
+manifest used to carry an absolute path to the engine clone of whichever
+machine created it.
+
+- **One engine per version**, in `~/.local/share/kooch/<version>/engine`.
+  Nothing inside the project; two versions coexist so a project pinned to
+  an older engine keeps building.
+- **The licence is mandatory by construction.** The facade does
+  `include_str!("../LICENSE.md")`, so it is inside every executable that
+  links the engine — not a file anyone has to remember to copy.
+- **No test code leaves the repo.** 237 modules moved out of source
+  files; the vendor filter reads `#[cfg(test)] mod X;` declarations
+  rather than guessing at filenames, because three of the engine's test
+  files are called `measure.rs` and `id_stability.rs`.
+- `examples/package_editor` produces a distributable editor, verified as
+  a 123 MB AppImage that creates buildable projects.
+
+🔴 **Why the source is on disk at all**: Rust has no stable ABI, a
+precompiled `rlib` links only against the exact compiler and dependency
+versions that built it, and cargo does not model binary dependencies. No
+Rust engine ships binaries. The source is protected by licence, the way
+Unreal protects theirs. See [ADR 0002](decisions/0002_infinite_reverse_z.md)
+for the other decision this stretch produced.
+
+⚠️ **Rust remains required** on the editor's machine. Gameplay is native
+Rust compiled into the game; no packaging fixes that.
 
 ---
 
