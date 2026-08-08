@@ -362,11 +362,11 @@ const PROJECT_GITIGNORE: &str = "\
 # Rust build output. Gigabytes, and every byte of it regenerable.
 /target
 
-# NOT ignored: engine/ — the vendored engine source (#754). It is ~8 MB
-# of text and committing it is the entire point: the project builds on
-# any machine, at the engine revision it was authored against, without
-# anything installed beside it.
-/engine/target
+# The vendored engine (#754). The EDITOR puts it here and replaces it
+# when it goes stale, so it is build output rather than source — same
+# category as /target. A fresh clone gets it back when the editor opens
+# the project.
+/engine
 
 # rustfmt leftovers.
 **/*.rs.bk
@@ -616,13 +616,12 @@ mod vendoring_tests {
             "the engine was referenced but not copied — the project cannot build",
         );
 
-        // The build output of the vendored copy is ignored; the source
-        // is not. Committing it is what makes the project reproducible.
+        // The editor owns the vendored engine and re-materialises it on
+        // open, so it is build output and stays out of the game's repo.
         let ignore = fs::read_to_string(project.join(".gitignore")).unwrap();
-        assert!(ignore.contains("/engine/target"));
         assert!(
-            !ignore.lines().any(|l| l.trim() == "/engine"),
-            "the vendored engine is gitignored, which defeats vendoring it",
+            ignore.lines().any(|l| l.trim() == "/engine"),
+            "the vendored engine should be gitignored — the editor puts it back",
         );
     }
 }

@@ -11,6 +11,20 @@
 //! source and the manifest says `path = "engine"` — the same line on
 //! every machine.
 //!
+//! # It is build output, not source
+//!
+//! The **editor** puts it there and the editor replaces it when it goes
+//! stale, so a project's `engine/` is regenerated rather than authored —
+//! the same category as `target/`, and gitignored for the same reason.
+//! [`ensure_current`] is what makes that true: opening a project with a
+//! missing or outdated copy re-materialises it before anything tries to
+//! build.
+//!
+//! ⚠️ The consequence, worth knowing rather than discovering: a clone of
+//! a game repo does **not** build without the editor materialising the
+//! engine first, and a project compiles against the editor's version
+//! rather than the one it was authored against.
+//!
 //! # Why source and not a binary
 //!
 //! Godot ships its engine as a precompiled library the project loads,
@@ -137,6 +151,71 @@ pub fn vendor_engine(project_root: &Path, source: &Path) -> Result<PathBuf, Vend
     }
 
     Ok(dest)
+}
+
+/// The engine version this editor would vendor.
+pub fn editor_engine_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// What [`ensure_current`] had to do, for the caller to log.
+#[derive(Debug, PartialEq, Eq)]
+pub enum VendorState {
+    /// Present and at this editor's version.
+    UpToDate,
+    /// Was not there at all — a fresh clone of a game repo, where the
+    /// engine is gitignored.
+    Materialised,
+    /// Was there at an older version and has been replaced.
+    Replaced { was: String },
+    /// The editor has no engine source to vendor from, so whatever the
+    /// project already has stays. Not an error: a project with a good
+    /// copy still builds.
+    NoSourceAvailable,
+}
+
+/// Makes `<project_root>/engine/` exist and match this editor.
+///
+/// Called when a project opens. A missing copy is the normal case for a
+/// freshly cloned game repo; an outdated one is the normal case after
+/// the editor updates. Both end with the project building against the
+/// engine the editor ships, which is the point of the editor owning
+/// this directory.
+///
+/// `project_engine_version` is the manifest's `engine_version` — the
+/// version the copy on disk was written at. It is the only record of
+/// that: the copied source carries no version the editor can trust to
+/// have stayed in sync.
+pub fn ensure_current(
+    project_root: &Path,
+    project_engine_version: &str,
+    source: Option<&Path>,
+) -> Result<VendorState, VendorError> {
+    let dest = project_root.join(VENDOR_DIR);
+    let present = is_engine_source(&dest);
+    let current = present && project_engine_version == editor_engine_version();
+    if current {
+        return Ok(VendorState::UpToDate);
+    }
+
+    let Some(source) = source.filter(|s| is_engine_source(s)) else {
+        return Ok(VendorState::NoSourceAvailable);
+    };
+
+    if present {
+        // Replaced wholesale rather than merged. A crate deleted from
+        // the engine would otherwise survive in every project that ever
+        // vendored it, and be compiled by the workspace glob.
+        fs::remove_dir_all(&dest).map_err(VendorError::Io)?;
+    }
+    vendor_engine(project_root, source)?;
+
+    Ok(match present {
+        true => VendorState::Replaced {
+            was: project_engine_version.to_owned(),
+        },
+        false => VendorState::Materialised,
+    })
 }
 
 /// Recursive copy, skipping build output.
@@ -268,6 +347,99 @@ mod tests {
             !running_from_engine_build(&installed),
             "the test binary does not live under this fixture's target/, \
              so this must read as an installed editor",
+        );
+    }
+
+    /// The case a gitignored engine creates on every fresh clone of a
+    /// game repo. If this does not work, "clone and open" is broken for
+    /// everyone but the author.
+    #[test]
+    fn a_missing_engine_is_materialised_on_open() {
+        let dir = tmp("materialise");
+        let (engine, project) = (dir.join("editor_src"), dir.join("proj"));
+        fake_engine(&engine);
+        fs::create_dir_all(&project).unwrap();
+
+        let state = ensure_current(&project, "0.0.0", Some(&engine)).unwrap();
+
+        assert_eq!(state, VendorState::Materialised);
+        assert!(
+            project
+                .join("engine/crates/kooch_core/src/lib.rs")
+                .is_file()
+        );
+    }
+
+    /// The case an editor update creates. The manifest's version is the
+    /// only record of what the copy on disk is, so the comparison is
+    /// against that and not against anything inside the copy.
+    #[test]
+    fn an_outdated_engine_is_replaced_wholesale() {
+        let dir = tmp("replace");
+        let (engine, project) = (dir.join("editor_src"), dir.join("proj"));
+        fake_engine(&engine);
+        fs::create_dir_all(project.join("engine/crates/gone/src")).unwrap();
+        fs::write(project.join("engine/Cargo.toml"), "[workspace]").unwrap();
+        fs::create_dir_all(project.join("engine/src")).unwrap();
+        fs::write(project.join("engine/src/lib.rs"), "// old").unwrap();
+        fs::write(project.join("engine/crates/gone/src/lib.rs"), "// removed").unwrap();
+
+        let state = ensure_current(&project, "0.0.1", Some(&engine)).unwrap();
+
+        assert_eq!(
+            state,
+            VendorState::Replaced {
+                was: "0.0.1".to_owned()
+            }
+        );
+        // 🔴 Replaced, not merged. A crate deleted from the engine that
+        // survived here would still be compiled by the workspace glob,
+        // and the error would name a crate nobody has touched in months.
+        assert!(
+            !project.join("engine/crates/gone").exists(),
+            "a crate removed from the engine survived the update",
+        );
+    }
+
+    /// Re-copying 8 MB on every open would make opening a project feel
+    /// broken, and would stomp an engine someone is deliberately
+    /// hacking on inside their project.
+    #[test]
+    fn a_current_engine_is_left_alone() {
+        let dir = tmp("uptodate");
+        let (engine, project) = (dir.join("editor_src"), dir.join("proj"));
+        fake_engine(&engine);
+        fs::create_dir_all(&project).unwrap();
+        ensure_current(&project, "0.0.0", Some(&engine)).unwrap();
+
+        let marker = project.join("engine/src/local_edit.rs");
+        fs::write(&marker, "// mine").unwrap();
+
+        let state = ensure_current(&project, editor_engine_version(), Some(&engine)).unwrap();
+
+        assert_eq!(state, VendorState::UpToDate);
+        assert!(marker.is_file(), "an up-to-date engine was re-copied");
+    }
+
+    /// An editor with no source to vendor from must not delete what the
+    /// project already has. Opening a project should never leave it less
+    /// buildable than it was.
+    #[test]
+    fn without_source_the_projects_own_copy_survives() {
+        let dir = tmp("nosource");
+        let (engine, project) = (dir.join("editor_src"), dir.join("proj"));
+        fake_engine(&engine);
+        fs::create_dir_all(&project).unwrap();
+        ensure_current(&project, "0.0.0", Some(&engine)).unwrap();
+
+        let state = ensure_current(&project, "0.0.1", None).unwrap();
+
+        assert_eq!(state, VendorState::NoSourceAvailable);
+        assert!(
+            project
+                .join("engine/crates/kooch_core/src/lib.rs")
+                .is_file(),
+            "opening with no engine source deleted the project's copy",
         );
     }
 

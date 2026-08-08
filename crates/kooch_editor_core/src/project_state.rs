@@ -284,6 +284,32 @@ impl ProjectState {
         if let Err(e) = crate::project::ensure_default_scene(root_path) {
             tracing::warn!("failed to ensure default scene: {e}");
         }
+        // 🔴 The engine lives in the project and the EDITOR owns it
+        // (#754). It is gitignored, so a freshly cloned game repo has
+        // none, and an editor that has updated leaves an old one behind.
+        // Either way it is re-materialised here, before anything asks
+        // cargo to build against it.
+        match crate::engine_vendor::ensure_current(
+            root_path,
+            &manifest.engine_version,
+            self.engine_root.as_deref(),
+        ) {
+            Ok(crate::engine_vendor::VendorState::UpToDate) => {}
+            Ok(state) => {
+                tracing::info!(?state, "vendored engine refreshed");
+                // The manifest is the only record of which version the
+                // copy on disk is, so it has to move with it.
+                manifest.engine_version = crate::engine_vendor::editor_engine_version().to_owned();
+                if let Err(e) = manifest.save(root_path) {
+                    tracing::warn!("failed to record the engine version: {e}");
+                }
+            }
+            // Never fails an open: a project whose copy is good still
+            // builds, and one whose copy is bad says so at build time
+            // with cargo's own error.
+            Err(e) => tracing::warn!("could not refresh the vendored engine: {e}"),
+        }
+
         if manifest.main_scene.is_none() {
             manifest.main_scene = Some(crate::project::DEFAULT_SCENE_REL_PATH.to_owned());
             if let Err(e) = manifest.save(root_path) {

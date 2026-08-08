@@ -28,10 +28,17 @@ and the generated `Cargo.toml` refers to it by a **relative** path:
 kooch = { path = "engine", features = [...] }
 ```
 
-Commit that directory. It is ~8 MB of text, and it is what makes the
-project build on any machine, at the engine revision it was authored
-against, with nothing installed beside it. `engine/target` is
-gitignored; the source is not.
+**Do not commit it — it is gitignored.** The editor puts it there and
+replaces it when it goes stale, so it is build output in the same
+category as `target/`. Opening a project re-materialises it: missing (a
+fresh clone of a game repo) or older than the editor (after an update),
+either way you get the editor's engine before anything builds. The
+manifest's `engine_version` is the record of which one is on disk.
+
+⚠️ Two consequences worth knowing rather than discovering. A clone of a
+game repo does **not** build until an editor has opened it, so CI needs
+the editor or an explicit vendor step. And a project compiles against
+the **editor's** engine version, not the one it was authored against.
 
 **It costs no build time.** A project always compiled the engine from
 source — it just used to reach outside its own directory to find it.
