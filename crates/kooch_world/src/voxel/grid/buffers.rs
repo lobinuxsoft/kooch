@@ -11,10 +11,7 @@ use super::{DISPATCH_INDIRECT_ARGS_SIZE, POOL_TEXTURE_FORMAT};
 /// `EMPTY_ROOT_SENTINEL` (`0xFFFFFFFF`). Same layout for every LOD —
 /// `ROOT_CELLS × u32` — so a fresh grid reads as fully empty across
 /// the cascade until classify + populate run.
-pub(super) fn make_root_indices_buffer(
-    device: &wgpu::Device,
-    lod_idx: u32,
-) -> wgpu::Buffer {
+pub(super) fn make_root_indices_buffer(device: &wgpu::Device, lod_idx: u32) -> wgpu::Buffer {
     let label = format!("kooch_world::voxel::root_indices_lod{lod_idx}");
     let size = (ROOT_CELLS as u64) * 4;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -31,7 +28,10 @@ pub(super) fn make_root_indices_buffer(
         // write-combining in wgpu 29, so we copy from a small staging
         // vector — `ROOT_CELLS × 4 = 16 KiB`, trivially cheap.
         let init = vec![0xFFu8; size as usize];
-        buffer.slice(..).get_mapped_range_mut().copy_from_slice(&init);
+        buffer
+            .slice(..)
+            .get_mapped_range_mut()
+            .copy_from_slice(&init);
     }
     buffer.unmap();
     buffer
@@ -127,10 +127,7 @@ pub(super) fn make_counters_buffer(device: &wgpu::Device, lod_idx: u32) -> wgpu:
     })
 }
 
-pub(super) fn make_needs_indices_buffer(
-    device: &wgpu::Device,
-    lod_idx: u32,
-) -> wgpu::Buffer {
+pub(super) fn make_needs_indices_buffer(device: &wgpu::Device, lod_idx: u32) -> wgpu::Buffer {
     // Worst case per LOD: every root cell needs allocation →
     // ROOT_CELLS × 4 B = 16 KiB. Same shape across LODs since the root
     // grid resolution does not depend on LOD.
@@ -145,10 +142,7 @@ pub(super) fn make_needs_indices_buffer(
     })
 }
 
-pub(super) fn make_needs_count_buffer(
-    device: &wgpu::Device,
-    lod_idx: u32,
-) -> wgpu::Buffer {
+pub(super) fn make_needs_count_buffer(device: &wgpu::Device, lod_idx: u32) -> wgpu::Buffer {
     let label = format!("kooch_world::voxel::needs_count_lod{lod_idx}");
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(&label),

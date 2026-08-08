@@ -54,8 +54,8 @@
 use glam::Vec3;
 
 use super::{
-    CASCADE_COUNT, ChunkLodPass, ClassifyPass, DEFAULT_LOD_DISTANCE_THRESHOLDS,
-    DEFAULT_MARGIN, DownsamplePass, MetricsPass, PopulatePass, SparseGrid,
+    CASCADE_COUNT, ChunkLodPass, ClassifyPass, DEFAULT_LOD_DISTANCE_THRESHOLDS, DEFAULT_MARGIN,
+    DownsamplePass, MetricsPass, PopulatePass, SparseGrid,
 };
 
 /// Compose all five cascade passes into one orchestrator. One
@@ -108,15 +108,15 @@ impl SparseLodPass {
         margin: f32,
     ) {
         // Pass 1: chunk_lod — write the per-chunk LOD bitmask.
-        self.chunk_lod.record(device, queue, encoder, grid, active_origin, thresholds);
+        self.chunk_lod
+            .record(device, queue, encoder, grid, active_origin, thresholds);
 
         // Pass 2: classify at LOD 0 — every chunk has bit 0 set in
         // the mask (cascade invariant), so this is the only producer
         // run. LODs 1..3 inherit the marked cell set via the
         // downsample chain.
-        self.classify.record(
-            device, queue, encoder, grid, sampler_bg, 0, margin,
-        );
+        self.classify
+            .record(device, queue, encoder, grid, sampler_bg, 0, margin);
 
         // Pass 3: populate-finalize at LOD 0 — derive
         // `[needs_count_lod0, 1, 1]` into populate_indirect_args[0].
@@ -124,16 +124,16 @@ impl SparseLodPass {
 
         // Pass 4: populate at LOD 0 — fill atlas[0] via indirect
         // dispatch.
-        self.populate.record_populate(
-            device, queue, encoder, grid, sampler_bg, 0,
-        );
+        self.populate
+            .record_populate(device, queue, encoder, grid, sampler_bg, 0);
 
         // Passes 5..=7: downsample[0→1, 1→2, 2→3] — box-filter
         // cascade fills LODs 1..3 from LOD 0's populated tiles. Each
         // cascade reuses populate_indirect_args[lod_src] (already
         // [needs_count_src, 1, 1]) — no extra finalize needed.
         for cascade_idx in 0..(CASCADE_COUNT as u32) {
-            self.downsample.record_cascade(device, encoder, grid, cascade_idx);
+            self.downsample
+                .record_cascade(device, encoder, grid, cascade_idx);
         }
 
         // Pass 8: metrics — telemetry sink. Reads each LOD's freelist
@@ -157,8 +157,14 @@ impl SparseLodPass {
         active_origin: Vec3,
     ) {
         self.record(
-            device, queue, encoder, grid, sampler_bg,
-            active_origin, DEFAULT_LOD_DISTANCE_THRESHOLDS, DEFAULT_MARGIN,
+            device,
+            queue,
+            encoder,
+            grid,
+            sampler_bg,
+            active_origin,
+            DEFAULT_LOD_DISTANCE_THRESHOLDS,
+            DEFAULT_MARGIN,
         );
     }
 

@@ -184,10 +184,16 @@ pub fn sanitize_crate_name(name: &str) -> String {
 }
 
 /// Generates a `Cargo.toml` for a project crate.
-fn generate_cargo_toml(name: &str, engine_root: &Path) -> String {
+///
+/// `engine_path` is what goes in the `path` dependency. Normally it is
+/// the relative [`engine_vendor::VENDOR_DIR`] — the engine copied into
+/// the project — which is what makes the manifest identical on every
+/// machine (#754). Developing the engine itself passes an absolute path
+/// to the live clone instead; see [`create_project`].
+fn generate_cargo_toml(name: &str, engine_path: &str) -> String {
     let crate_name = sanitize_crate_name(name);
     // Cargo.toml requires forward slashes even on Windows.
-    let engine_path = engine_root.display().to_string().replace('\\', "/");
+    let engine_path = engine_path.replace('\\', "/");
     format!(
         r#"[package]
 name = "{crate_name}"
@@ -228,6 +234,58 @@ kooch = {{ path = "{engine_path}", features = ["editor", "physics", "gravity", "
 kooch_ecs = {{ path = "{engine_path}/crates/kooch_ecs" }}
 "#,
     )
+}
+
+/// Rewrites the manifest's engine dependency to point at `engine_dir`.
+///
+/// The path is absolute and `$HOME` differs per user, so a project that
+/// moved between machines names a directory that is not there. That
+/// line belongs to the editor — it owns the directory it names — so it
+/// is corrected on open rather than left for cargo to fail on.
+///
+/// A no-op when it already matches, so opening a project does not
+/// rewrite its manifest for nothing.
+pub fn point_manifest_at_engine(
+    project_root: &Path,
+    engine_dir: &Path,
+) -> Result<bool, ProjectError> {
+    let path = project_root.join("Cargo.toml");
+    let text = fs::read_to_string(&path).map_err(ProjectError::Io)?;
+    let engine = engine_dir.display().to_string().replace('\\', "/");
+
+    let mut changed = false;
+    let out: Vec<String> = text
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let rewritten = if trimmed.starts_with("kooch = {") {
+                rewrite_path_value(line, &engine)
+            } else if trimmed.starts_with("kooch_ecs = {") {
+                rewrite_path_value(line, &format!("{engine}/crates/kooch_ecs"))
+            } else {
+                None
+            };
+            match rewritten {
+                Some(new) if new != line => {
+                    changed = true;
+                    new
+                }
+                _ => line.to_owned(),
+            }
+        })
+        .collect();
+
+    if changed {
+        fs::write(&path, out.join("\n") + "\n").map_err(ProjectError::Io)?;
+    }
+    Ok(changed)
+}
+
+/// Replaces the `path = "…"` value inside one dependency line.
+fn rewrite_path_value(line: &str, value: &str) -> Option<String> {
+    let key = line.find("path = \"")? + "path = \"".len();
+    let end = key + line[key..].find('"')?;
+    Some(format!("{}{value}{}", &line[..key], &line[end..]))
 }
 
 /// Generates `src/lib.rs` — the project as a library the editor loads.
@@ -356,6 +414,7 @@ const PROJECT_GITIGNORE: &str = "\
 # Rust build output. Gigabytes, and every byte of it regenerable.
 /target
 
+
 # rustfmt leftovers.
 **/*.rs.bk
 
@@ -381,8 +440,37 @@ pub fn create_project(
     manifest.main_scene = Some(DEFAULT_SCENE_REL_PATH.to_owned());
     manifest.save(&project_root)?;
 
+    // 🔴 The engine goes INSIDE the project (#754). Before this the
+    // manifest carried an absolute path to whatever clone created the
+    // project, so the project did not build on a second machine — and a
+    // compiled editor, which has no clone next to it at all, could not
+    // produce a buildable project.
+    //
+    // Developing the engine is the exception and has to stay working:
+    // when the editor is running out of the engine's own source tree,
+    // copying it would freeze the project against a snapshot and break
+    // the daily loop of changing engine and game together. There the
+    // manifest keeps pointing at the live clone.
+    // 🔴 The engine is materialised ONCE per version on this machine and
+    // shared by every project (#754) — not copied in here. Developing
+    // the engine is the exception: the manifest points at the live clone
+    // so a change to the engine reaches the game without a re-copy.
+    let engine_path = if crate::engine_vendor::running_from_engine_build(engine_root) {
+        engine_root.display().to_string()
+    } else {
+        let source = crate::engine_vendor::vendor_source(Some(engine_root));
+        let version = crate::engine_vendor::editor_engine_version();
+        match crate::engine_vendor::ensure_current(version, source.as_deref()) {
+            Ok((_, Some(dir))) => dir.display().to_string(),
+            // No engine to materialise: fall back to the root we were
+            // handed. A manifest naming something is more useful than
+            // one naming nothing, and the editor rewrites it on open.
+            _ => engine_root.display().to_string(),
+        }
+    };
+
     // Generate Cargo.toml.
-    let cargo_toml = generate_cargo_toml(name, engine_root);
+    let cargo_toml = generate_cargo_toml(name, &engine_path);
     fs::write(project_root.join("Cargo.toml"), cargo_toml).map_err(ProjectError::Io)?;
 
     // Generate src/main.rs scaffold + its editor-managed registrations.
@@ -510,31 +598,7 @@ impl fmt::Display for ProjectError {
 impl std::error::Error for ProjectError {}
 
 #[cfg(test)]
-mod gitignore_tests {
-    use super::{PROJECT_GITIGNORE, PROJECT_MANIFEST_FILE};
+mod gitignore_tests;
 
-    /// The reason the file exists: a debug build of a project linking this
-    /// engine is gigabytes.
-    #[test]
-    fn build_output_is_ignored() {
-        assert!(PROJECT_GITIGNORE.lines().any(|line| line == "/target"));
-    }
-
-    /// Ignoring either of these breaks `git clone && cargo run`, which is
-    /// the one thing a project's repository has to do.
-    #[test]
-    fn nothing_a_fresh_clone_needs_is_ignored() {
-        for needed in [
-            "Cargo.lock",
-            "registrations.rs",
-            PROJECT_MANIFEST_FILE,
-            "scenes",
-            "assets",
-        ] {
-            assert!(
-                !PROJECT_GITIGNORE.contains(needed),
-                "{needed} is required to build or open the project; ignoring it breaks a clone",
-            );
-        }
-    }
-}
+#[cfg(test)]
+mod vendoring_tests;

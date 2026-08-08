@@ -284,6 +284,37 @@ impl ProjectState {
         if let Err(e) = crate::project::ensure_default_scene(root_path) {
             tracing::warn!("failed to ensure default scene: {e}");
         }
+        // 🔴 The engine lives ONCE on the machine, in
+        // ~/.local/share/kooch/<version>/engine, and every project's
+        // manifest points at it (#754). Materialised here because this
+        // is the first moment anything knows which version the project
+        // wants — and because a machine that has never seen this
+        // version has nothing yet.
+        let source = crate::engine_vendor::vendor_source(self.engine_root.as_deref());
+        match crate::engine_vendor::ensure_current(&manifest.engine_version, source.as_deref()) {
+            Ok((state, Some(engine_dir))) => {
+                if state != crate::engine_vendor::VendorState::UpToDate {
+                    tracing::info!(?state, path = %engine_dir.display(), "engine materialised");
+                }
+                // The manifest carries an absolute path and `$HOME`
+                // differs per user, so a project moved between machines
+                // points somewhere that does not exist. The editor owns
+                // that line — it owns the directory it names — so it
+                // rewrites it rather than letting cargo fail on it.
+                if let Err(e) = crate::project::point_manifest_at_engine(root_path, &engine_dir) {
+                    tracing::warn!("could not point the project at the engine: {e}");
+                }
+            }
+            // Never fails an open: a project already pointing at a good
+            // engine still builds, and one that is not says so at build
+            // time with cargo's own error.
+            Ok((_, None)) => tracing::warn!(
+                "no engine source available to materialise; the project keeps whatever \
+                 its manifest points at",
+            ),
+            Err(e) => tracing::warn!("could not materialise the engine: {e}"),
+        }
+
         if manifest.main_scene.is_none() {
             manifest.main_scene = Some(crate::project::DEFAULT_SCENE_REL_PATH.to_owned());
             if let Err(e) = manifest.save(root_path) {

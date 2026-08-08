@@ -112,7 +112,9 @@ impl Metrics {
                 timeout: Some(std::time::Duration::from_secs(30)),
             })
             .expect("device poll");
-        rx.recv().expect("metrics readback channel").expect("map_async ok");
+        rx.recv()
+            .expect("metrics readback channel")
+            .expect("map_async ok");
 
         let view = slice.get_mapped_range();
         let raw: MetricsRaw = *bytemuck::from_bytes::<MetricsRaw>(&view);
@@ -154,10 +156,8 @@ impl MetricsPass {
             label: Some("kooch_world::voxel::metrics::shader"),
             source: wgpu::ShaderSource::Wgsl(METRICS_WGSL.into()),
         });
-        let constants: &[(&str, f64)] = &[(
-            "METRICS_MAX_SUBGRIDS",
-            LOD_LEVELS[0].max_subgrids as f64,
-        )];
+        let constants: &[(&str, f64)] =
+            &[("METRICS_MAX_SUBGRIDS", LOD_LEVELS[0].max_subgrids as f64)];
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("kooch_world::voxel::metrics::pipeline"),
             layout: Some(&layout),
@@ -240,10 +240,22 @@ const RW_STORAGE: wgpu::BindGroupLayoutEntry = wgpu::BindGroupLayoutEntry {
 };
 
 const BGL_ENTRIES: [wgpu::BindGroupLayoutEntry; 5] = [
-    wgpu::BindGroupLayoutEntry { binding: 0, ..READ_STORAGE },
-    wgpu::BindGroupLayoutEntry { binding: 1, ..READ_STORAGE },
-    wgpu::BindGroupLayoutEntry { binding: 2, ..READ_STORAGE },
-    wgpu::BindGroupLayoutEntry { binding: 3, ..READ_STORAGE },
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        ..READ_STORAGE
+    },
+    wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        ..READ_STORAGE
+    },
+    wgpu::BindGroupLayoutEntry {
+        binding: 2,
+        ..READ_STORAGE
+    },
+    wgpu::BindGroupLayoutEntry {
+        binding: 3,
+        ..READ_STORAGE
+    },
     RW_STORAGE,
 ];
 

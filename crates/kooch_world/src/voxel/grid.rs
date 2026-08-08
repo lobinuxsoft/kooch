@@ -110,14 +110,14 @@ impl SparseGrid {
         for (idx, lod) in LOD_LEVELS.iter().enumerate() {
             assert!(
                 max_subgrids > 0 && max_subgrids <= lod.max_subgrids,
-                "max_subgrids must be in 1..={}, got {max_subgrids}", lod.max_subgrids,
+                "max_subgrids must be in 1..={}, got {max_subgrids}",
+                lod.max_subgrids,
             );
             let _ = idx;
         }
 
-        let root_indices_buffers = std::array::from_fn(|i| {
-            buffers::make_root_indices_buffer(device, i as u32)
-        });
+        let root_indices_buffers =
+            std::array::from_fn(|i| buffers::make_root_indices_buffer(device, i as u32));
         let pool_pairs: [_; LOD_COUNT as usize] = std::array::from_fn(|i| {
             buffers::make_subgrid_pool_texture(device, &LOD_LEVELS[i], i as u32)
         });
@@ -133,21 +133,16 @@ impl SparseGrid {
         let subgrid_pool_views = views.map(|o| o.expect("view initialised above"));
         let subgrid_pool_sampler = buffers::make_subgrid_pool_sampler(device);
 
-        let free_list_buffers = std::array::from_fn(|i| {
-            buffers::make_free_list_buffer(device, max_subgrids, i as u32)
-        });
-        let counters_buffers = std::array::from_fn(|i| {
-            buffers::make_counters_buffer(device, i as u32)
-        });
-        let needs_indices_buffers = std::array::from_fn(|i| {
-            buffers::make_needs_indices_buffer(device, i as u32)
-        });
-        let needs_count_buffers = std::array::from_fn(|i| {
-            buffers::make_needs_count_buffer(device, i as u32)
-        });
-        let populate_indirect_args_buffers = std::array::from_fn(|i| {
-            buffers::make_populate_indirect_args_buffer(device, i as u32)
-        });
+        let free_list_buffers =
+            std::array::from_fn(|i| buffers::make_free_list_buffer(device, max_subgrids, i as u32));
+        let counters_buffers =
+            std::array::from_fn(|i| buffers::make_counters_buffer(device, i as u32));
+        let needs_indices_buffers =
+            std::array::from_fn(|i| buffers::make_needs_indices_buffer(device, i as u32));
+        let needs_count_buffers =
+            std::array::from_fn(|i| buffers::make_needs_count_buffer(device, i as u32));
+        let populate_indirect_args_buffers =
+            std::array::from_fn(|i| buffers::make_populate_indirect_args_buffer(device, i as u32));
         let downsample_indirect_args_buffers = std::array::from_fn(|i| {
             buffers::make_downsample_indirect_args_buffer(device, i as u32)
         });
@@ -256,10 +251,7 @@ impl SparseGrid {
     /// `(0→1, 1→2, 2→3)`. Indexed by the *source* LOD: cascade 0 maps
     /// LOD 0 → LOD 1, cascade 1 maps LOD 1 → LOD 2, cascade 2 maps
     /// LOD 2 → LOD 3.
-    pub fn downsample_indirect_args_buffer(
-        &self,
-        cascade_idx: u32,
-    ) -> &wgpu::Buffer {
+    pub fn downsample_indirect_args_buffer(&self, cascade_idx: u32) -> &wgpu::Buffer {
         &self.downsample_indirect_args_buffers[cascade_idx as usize]
     }
 

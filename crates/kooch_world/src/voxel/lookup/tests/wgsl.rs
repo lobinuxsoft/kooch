@@ -5,8 +5,8 @@
 
 use super::super::{
     LOOKUP_BODY_WGSL, LOOKUP_DEFAULT_GROUP, LOOKUP_DEFAULT_MASK_BINDING,
-    LOOKUP_DEFAULT_POOL_BINDINGS, LOOKUP_DEFAULT_ROOT_BINDING,
-    LOOKUP_DEFAULT_SAMPLER_BINDING, LOOKUP_DEFAULT_UNIFORM_BINDING, lookup_wgsl,
+    LOOKUP_DEFAULT_POOL_BINDINGS, LOOKUP_DEFAULT_ROOT_BINDING, LOOKUP_DEFAULT_SAMPLER_BINDING,
+    LOOKUP_DEFAULT_UNIFORM_BINDING, lookup_wgsl,
 };
 use super::harness::PROBE_HARNESS_WGSL;
 use crate::voxel::{ATLAS_TILES_X, ATLAS_TILES_Y, ATLAS_TILES_Z, LOD_COUNT, ROOT_DIM};
@@ -25,8 +25,8 @@ fn lookup_body_with_default_layout_parses_and_validates() {
         ),
         PROBE_HARNESS_WGSL,
     );
-    let module = naga::front::wgsl::parse_str(&combined)
-        .expect("default lookup layout should parse");
+    let module =
+        naga::front::wgsl::parse_str(&combined).expect("default lookup layout should parse");
     let mut validator = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
@@ -48,8 +48,8 @@ fn shim_main() {
 }
 "#;
     let combined = format!("{}{}", lookup_wgsl(0, 8, [9, 10, 11, 12], 13, 14, 15), shim);
-    let module = naga::front::wgsl::parse_str(&combined)
-        .expect("alternative lookup layout should parse");
+    let module =
+        naga::front::wgsl::parse_str(&combined).expect("alternative lookup layout should parse");
     let mut validator = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
@@ -64,15 +64,9 @@ fn lookup_wgsl_constants_match_host() {
     // `LOOKUP_LOD_COUNT` and the sentinels stay baked into the raw
     // body — they are LOD-architectural invariants, not chunk
     // geometry.
-    assert!(
-        LOOKUP_BODY_WGSL.contains(&format!("LOOKUP_LOD_COUNT: u32 = {LOD_COUNT}u")),
-    );
-    assert!(
-        LOOKUP_BODY_WGSL.contains("LOOKUP_EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFFu"),
-    );
-    assert!(
-        LOOKUP_BODY_WGSL.contains("LOOKUP_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu"),
-    );
+    assert!(LOOKUP_BODY_WGSL.contains(&format!("LOOKUP_LOD_COUNT: u32 = {LOD_COUNT}u")),);
+    assert!(LOOKUP_BODY_WGSL.contains("LOOKUP_EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFFu"),);
+    assert!(LOOKUP_BODY_WGSL.contains("LOOKUP_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu"),);
 
     // `LOOKUP_ROOT_DIM` and the atlas tile counts ride the feature
     // flag — they are prepended by `lookup_wgsl(..)` rather than

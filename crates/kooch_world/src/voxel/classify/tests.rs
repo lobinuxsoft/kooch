@@ -9,8 +9,8 @@
 
 use super::{CLASSIFY_WGSL, ClassifyPass, DEFAULT_MARGIN};
 use crate::voxel::{
-    ANALYTIC_SPHERE_WGSL, AnalyticSphereSampler, LOD_COUNT, ROOT_CELLS, ROOT_DIM,
-    SdfSampler, SparseGrid, test_device,
+    ANALYTIC_SPHERE_WGSL, AnalyticSphereSampler, LOD_COUNT, ROOT_CELLS, ROOT_DIM, SdfSampler,
+    SparseGrid, test_device,
 };
 use glam::Vec3;
 use kooch_core::Aabb;
@@ -75,11 +75,18 @@ fn run_classify_at_lod(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("test::classify_encoder"),
     });
-    pass.record(device, queue, &mut encoder, &grid, &sampler_bg, lod_idx, margin);
+    pass.record(
+        device,
+        queue,
+        &mut encoder,
+        &grid,
+        &sampler_bg,
+        lod_idx,
+        margin,
+    );
     queue.submit(std::iter::once(encoder.finish()));
 
-    let count_bytes =
-        test_device::readback(device, queue, grid.needs_count_buffer(lod_idx));
+    let count_bytes = test_device::readback(device, queue, grid.needs_count_buffer(lod_idx));
     let count = u32::from_le_bytes([
         count_bytes[0],
         count_bytes[1],
@@ -87,8 +94,7 @@ fn run_classify_at_lod(
         count_bytes[3],
     ]);
 
-    let indices_bytes =
-        test_device::readback(device, queue, grid.needs_indices_buffer(lod_idx));
+    let indices_bytes = test_device::readback(device, queue, grid.needs_indices_buffer(lod_idx));
     let mut indices: Vec<u32> = indices_bytes
         .chunks_exact(4)
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
@@ -101,8 +107,7 @@ fn run_classify_at_lod(
 #[test]
 fn classify_concat_parses_and_validates() {
     let combined = format!("{ANALYTIC_SPHERE_WGSL}{CLASSIFY_WGSL}");
-    let module = naga::front::wgsl::parse_str(&combined)
-        .expect("classify concat should parse");
+    let module = naga::front::wgsl::parse_str(&combined).expect("classify concat should parse");
     let mut validator = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
@@ -150,8 +155,7 @@ fn sphere_marks_surface_cells() {
     let radius = 16.0;
     let sampler = AnalyticSphereSampler::new(&device, center, radius);
 
-    let (count, gpu_indices) =
-        run_classify_at_lod(&device, &queue, &sampler, DEFAULT_MARGIN, 0);
+    let (count, gpu_indices) = run_classify_at_lod(&device, &queue, &sampler, DEFAULT_MARGIN, 0);
     let cpu_marks = cpu_classify(&sampler, test_bounds(), DEFAULT_MARGIN);
 
     assert!(!cpu_marks.is_empty());
@@ -191,14 +195,19 @@ fn classify_skips_when_lod_not_in_mask() {
     });
     for lod_idx in 0..LOD_COUNT {
         pass.record(
-            &device, &queue, &mut encoder, &grid, &sampler_bg, lod_idx, DEFAULT_MARGIN,
+            &device,
+            &queue,
+            &mut encoder,
+            &grid,
+            &sampler_bg,
+            lod_idx,
+            DEFAULT_MARGIN,
         );
     }
     queue.submit(std::iter::once(encoder.finish()));
 
     for lod_idx in 0..LOD_COUNT {
-        let count_bytes =
-            test_device::readback(&device, &queue, grid.needs_count_buffer(lod_idx));
+        let count_bytes = test_device::readback(&device, &queue, grid.needs_count_buffer(lod_idx));
         let count = u32::from_le_bytes([
             count_bytes[0],
             count_bytes[1],

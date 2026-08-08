@@ -25,8 +25,7 @@
 use super::{FINALIZE_WGSL, POPULATE_WGSL, POPULATE_WORKGROUP_SIZE, PopulatePass};
 use crate::voxel::{
     ALLOC_FAILED_SENTINEL, ANALYTIC_SPHERE_WGSL, AnalyticSphereSampler, ClassifyPass,
-    DEFAULT_MARGIN, LOD_COUNT, SPARSE_FREELIST_WGSL, SdfSampler, SparseGrid,
-    test_device,
+    DEFAULT_MARGIN, LOD_COUNT, SPARSE_FREELIST_WGSL, SdfSampler, SparseGrid, test_device,
 };
 
 /// Sphere radius the populate / lookup tests probe. With the
@@ -97,7 +96,13 @@ fn run_classify_then_populate(
         label: Some("test::populate_encoder"),
     });
     classify.record(
-        device, queue, &mut encoder, &grid, &classify_sampler_bg, 0, DEFAULT_MARGIN,
+        device,
+        queue,
+        &mut encoder,
+        &grid,
+        &classify_sampler_bg,
+        0,
+        DEFAULT_MARGIN,
     );
     populate.record(device, queue, &mut encoder, &grid, &populate_sampler_bg, 0);
     queue.submit(std::iter::once(encoder.finish()));
@@ -142,10 +147,8 @@ fn run_classify_then_populate(
 
 #[test]
 fn populate_concat_parses_and_validates() {
-    let combined =
-        format!("{SPARSE_FREELIST_WGSL}{ANALYTIC_SPHERE_WGSL}{POPULATE_WGSL}");
-    let module = naga::front::wgsl::parse_str(&combined)
-        .expect("populate concat should parse");
+    let combined = format!("{SPARSE_FREELIST_WGSL}{ANALYTIC_SPHERE_WGSL}{POPULATE_WGSL}");
+    let module = naga::front::wgsl::parse_str(&combined).expect("populate concat should parse");
     let mut validator = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
@@ -157,8 +160,8 @@ fn populate_concat_parses_and_validates() {
 
 #[test]
 fn populate_finalize_with_override_validates() {
-    let module = naga::front::wgsl::parse_str(FINALIZE_WGSL)
-        .expect("populate finalize should parse");
+    let module =
+        naga::front::wgsl::parse_str(FINALIZE_WGSL).expect("populate finalize should parse");
     let mut validator = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
@@ -174,11 +177,9 @@ fn populate_wgsl_constants_match_host() {
     // `@workgroup_size`. Root dim was promoted to an `override` for
     // the `large-root-grid` feature; the WGSL default reflects the
     // no-feature build.
-    assert!(
-        POPULATE_WGSL.contains(&format!(
-            "POPULATE_WORKGROUP_SIZE: u32 = {POPULATE_WORKGROUP_SIZE}u",
-        )),
-    );
+    assert!(POPULATE_WGSL.contains(&format!(
+        "POPULATE_WORKGROUP_SIZE: u32 = {POPULATE_WORKGROUP_SIZE}u",
+    )),);
     assert!(
         POPULATE_WGSL.contains("override POPULATE_ROOT_DIM: u32 = 16u"),
         "POPULATE_ROOT_DIM must remain an override defaulting to 16u",
@@ -200,9 +201,8 @@ fn populate_allocates_subgrid_per_marked_cell() {
     };
     let max_subgrids = 1024u32;
     let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
-    let (_grid, out) = run_classify_then_populate(
-        &device, &queue, &sampler, test_bounds(), max_subgrids,
-    );
+    let (_grid, out) =
+        run_classify_then_populate(&device, &queue, &sampler, test_bounds(), max_subgrids);
 
     assert!(out.needs_count > 0);
     assert!(out.needs_count <= max_subgrids);
@@ -230,9 +230,8 @@ fn populate_decrements_free_top_by_marked_count() {
     };
     let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let max_subgrids = 1024u32;
-    let (_grid, out) = run_classify_then_populate(
-        &device, &queue, &sampler, test_bounds(), max_subgrids,
-    );
+    let (_grid, out) =
+        run_classify_then_populate(&device, &queue, &sampler, test_bounds(), max_subgrids);
 
     assert!(out.needs_count > 0);
     assert!(out.needs_count <= max_subgrids);
@@ -248,9 +247,8 @@ fn populate_handles_pool_exhaustion() {
     };
     let max_subgrids = 4u32;
     let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
-    let (_grid, out) = run_classify_then_populate(
-        &device, &queue, &sampler, test_bounds(), max_subgrids,
-    );
+    let (_grid, out) =
+        run_classify_then_populate(&device, &queue, &sampler, test_bounds(), max_subgrids);
 
     assert!(out.needs_count > max_subgrids);
 
@@ -276,9 +274,7 @@ fn populate_idempotent_with_classify() {
         return;
     };
     let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
-    let (grid, first) = run_classify_then_populate(
-        &device, &queue, &sampler, test_bounds(), 1024,
-    );
+    let (grid, first) = run_classify_then_populate(&device, &queue, &sampler, test_bounds(), 1024);
 
     assert!(first.needs_count > 0);
     assert_eq!(first.counters.1, 0);
@@ -297,7 +293,13 @@ fn populate_idempotent_with_classify() {
         label: Some("test::idempotent_classify_encoder"),
     });
     classify.record(
-        &device, &queue, &mut encoder, &grid, &sampler_bg, 0, DEFAULT_MARGIN,
+        &device,
+        &queue,
+        &mut encoder,
+        &grid,
+        &sampler_bg,
+        0,
+        DEFAULT_MARGIN,
     );
     queue.submit(std::iter::once(encoder.finish()));
 

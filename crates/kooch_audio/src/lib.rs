@@ -24,8 +24,6 @@ pub mod backend;
 pub mod kira_backend;
 pub mod mock_backend;
 
-pub use backend::{
-    AudioBackend, AudioError, InstanceHandle, PlayParams, SoundHandle,
-};
+pub use backend::{AudioBackend, AudioError, InstanceHandle, PlayParams, SoundHandle};
 pub use kira_backend::KiraBackend;
 pub use mock_backend::MockAudioBackend;

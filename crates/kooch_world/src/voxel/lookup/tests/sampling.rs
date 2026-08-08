@@ -6,8 +6,8 @@ use super::harness::{
     cell_min_world, run_lookup_probes, run_lookup_probes_with_target, test_bounds,
 };
 use crate::voxel::{
-    ALLOC_FAILED_SENTINEL, AnalyticSphereSampler, LOD_LEVELS, ROOT_CELLS, ROOT_DIM,
-    SUBGRID_DIM, SUBGRID_VOXELS, test_device,
+    ALLOC_FAILED_SENTINEL, AnalyticSphereSampler, LOD_LEVELS, ROOT_CELLS, ROOT_DIM, SUBGRID_DIM,
+    SUBGRID_VOXELS, test_device,
 };
 use glam::Vec3;
 
@@ -47,9 +47,7 @@ fn lookup_at_voxel_corners_returns_pool_values() {
     // Probe at one position (origin of bounds); we will read
     // root_indices to pick allocated cells, then re-run with the
     // crafted positions.
-    let bootstrap = run_lookup_probes(
-        &device, &queue, &sampler, bounds, 1024, &[Vec3::splat(0.0)],
-    );
+    let bootstrap = run_lookup_probes(&device, &queue, &sampler, bounds, 1024, &[Vec3::splat(0.0)]);
 
     // Pick up to 10 allocated cells deterministically (lowest cell
     // indices first → reproducible across runs).
@@ -79,16 +77,13 @@ fn lookup_at_voxel_corners_returns_pool_values() {
             let vz = voxel_linear / (SUBGRID_DIM * SUBGRID_DIM);
             let vy = (voxel_linear / SUBGRID_DIM) % SUBGRID_DIM;
             let vx = voxel_linear % SUBGRID_DIM;
-            let voxel_offset =
-                Vec3::new(vx as f32, vy as f32, vz as f32) / (SUBGRID_DIM as f32);
+            let voxel_offset = Vec3::new(vx as f32, vy as f32, vz as f32) / (SUBGRID_DIM as f32);
             probe_positions.push(cell_min + voxel_offset * cell_size);
             probe_meta.push((cell_idx as usize, voxel_linear));
         }
     }
 
-    let run = run_lookup_probes(
-        &device, &queue, &sampler, bounds, 1024, &probe_positions,
-    );
+    let run = run_lookup_probes(&device, &queue, &sampler, bounds, 1024, &probe_positions);
     // Post-S6 the pool is `r16float` so we no longer compare against a
     // host readback of the texel; instead probe the analytic CPU
     // sampler at the same world position. At voxel-corner positions
@@ -118,9 +113,7 @@ fn lookup_trilinear_midpoint_matches_corner_average() {
     let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let bounds = test_bounds();
     // Bootstrap run: discover allocated cells.
-    let bootstrap = run_lookup_probes(
-        &device, &queue, &sampler, bounds, 1024, &[Vec3::splat(0.0)],
-    );
+    let bootstrap = run_lookup_probes(&device, &queue, &sampler, bounds, 1024, &[Vec3::splat(0.0)]);
     let cell_idx = (0..ROOT_CELLS)
         .find(|&idx| bootstrap.root_indices[idx as usize] < 1024)
         .expect("expected at least one allocated cell");
@@ -138,7 +131,11 @@ fn lookup_trilinear_midpoint_matches_corner_average() {
     let v100_world = cell_min + Vec3::new(1.0, 0.0, 0.0) * voxel_size;
 
     let run = run_lookup_probes(
-        &device, &queue, &sampler, bounds, 1024,
+        &device,
+        &queue,
+        &sampler,
+        bounds,
+        1024,
         &[v000_world, v100_world, midpoint],
     );
     let s000 = run.results[0];
@@ -169,12 +166,9 @@ fn lookup_in_empty_cell_returns_far_sentinel() {
     let run = run_lookup_probes(&device, &queue, &sampler, bounds, 256, &[probe]);
 
     // Sanity: the cell containing `probe` is actually empty.
-    let cell = ((probe - bounds.min)
-        / ((bounds.max - bounds.min) / ROOT_DIM as f32))
-        .floor();
-    let cell_idx = (cell.x as u32)
-        + (cell.y as u32) * ROOT_DIM
-        + (cell.z as u32) * ROOT_DIM * ROOT_DIM;
+    let cell = ((probe - bounds.min) / ((bounds.max - bounds.min) / ROOT_DIM as f32)).floor();
+    let cell_idx =
+        (cell.x as u32) + (cell.y as u32) * ROOT_DIM + (cell.z as u32) * ROOT_DIM * ROOT_DIM;
     assert_eq!(
         run.root_indices[cell_idx as usize], 0xFFFFFFFFu32,
         "test scene mis-tuned: probe cell should be empty",
@@ -195,9 +189,7 @@ fn lookup_out_of_bounds_returns_far_sentinel() {
     let bounds = test_bounds();
     let below = bounds.min - Vec3::splat(1.0);
     let above = bounds.max + Vec3::splat(1.0);
-    let run = run_lookup_probes(
-        &device, &queue, &sampler, bounds, 256, &[below, above],
-    );
+    let run = run_lookup_probes(&device, &queue, &sampler, bounds, 256, &[below, above]);
     let cell_size = (bounds.max - bounds.min) / ROOT_DIM as f32;
     let expected = cell_size.x.max(cell_size.y).max(cell_size.z) * 2.0;
     assert_eq!(run.results[0], expected, "below bounds_min must return far");
@@ -231,10 +223,22 @@ fn lookup_with_target_voxel_size_selects_correct_lod() {
     let voxel_pitch_lod2 = voxel_pitch_lod0 * LOD_LEVELS[2].voxel_size_factor;
 
     let run_lod0 = run_lookup_probes_with_target(
-        &device, &queue, &sampler, bounds, 1024, &[probe], voxel_pitch_lod0,
+        &device,
+        &queue,
+        &sampler,
+        bounds,
+        1024,
+        &[probe],
+        voxel_pitch_lod0,
     );
     let run_lod2 = run_lookup_probes_with_target(
-        &device, &queue, &sampler, bounds, 1024, &[probe], voxel_pitch_lod2,
+        &device,
+        &queue,
+        &sampler,
+        bounds,
+        1024,
+        &[probe],
+        voxel_pitch_lod2,
     );
 
     let cpu = sampler.sample_cpu(probe);
@@ -243,7 +247,8 @@ fn lookup_with_target_voxel_size_selects_correct_lod() {
     assert!(
         (run_lod0.results[0] - cpu).abs() < tol_lod0,
         "LOD 0 lookup {} vs CPU {} (tol {tol_lod0})",
-        run_lod0.results[0], cpu,
+        run_lod0.results[0],
+        cpu,
     );
     // LOD 2 is box-filtered 4× — tolerance scales with the LOD's
     // voxel pitch (the discretisation error of a smooth SDF over a
@@ -252,7 +257,8 @@ fn lookup_with_target_voxel_size_selects_correct_lod() {
     assert!(
         (run_lod2.results[0] - cpu).abs() < tol_lod2,
         "LOD 2 lookup {} vs CPU {} (tol {tol_lod2})",
-        run_lod2.results[0], cpu,
+        run_lod2.results[0],
+        cpu,
     );
     // Distinct LODs may yield slightly different values; both must
     // have the same sign — the surface side is LOD-invariant.
@@ -261,7 +267,8 @@ fn lookup_with_target_voxel_size_selects_correct_lod() {
             || run_lod0.results[0].abs() < tol_lod0
             || run_lod2.results[0].abs() < tol_lod2,
         "LOD 0 ({}) and LOD 2 ({}) must agree on surface side away from zero",
-        run_lod0.results[0], run_lod2.results[0],
+        run_lod0.results[0],
+        run_lod2.results[0],
     );
 }
 
@@ -276,9 +283,7 @@ fn lookup_in_alloc_failed_cell_returns_far_sentinel() {
     // ALLOC_FAILED_SENTINEL and probe its centre.
     let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let bounds = test_bounds();
-    let bootstrap = run_lookup_probes(
-        &device, &queue, &sampler, bounds, 4, &[Vec3::splat(0.0)],
-    );
+    let bootstrap = run_lookup_probes(&device, &queue, &sampler, bounds, 4, &[Vec3::splat(0.0)]);
     let failed_cell = (0..ROOT_CELLS)
         .find(|&idx| bootstrap.root_indices[idx as usize] == ALLOC_FAILED_SENTINEL)
         .expect("expected at least one ALLOC_FAILED cell with capacity 4");
@@ -286,9 +291,8 @@ fn lookup_in_alloc_failed_cell_returns_far_sentinel() {
     let cz = failed_cell / (ROOT_DIM * ROOT_DIM);
     let cy = (failed_cell / ROOT_DIM) % ROOT_DIM;
     let cx = failed_cell % ROOT_DIM;
-    let probe = bounds.min
-        + Vec3::new(cx as f32, cy as f32, cz as f32) * cell_size
-        + cell_size * 0.5;
+    let probe =
+        bounds.min + Vec3::new(cx as f32, cy as f32, cz as f32) * cell_size + cell_size * 0.5;
 
     let run = run_lookup_probes(&device, &queue, &sampler, bounds, 4, &[probe]);
     let expected = cell_size.x.max(cell_size.y).max(cell_size.z) * 2.0;

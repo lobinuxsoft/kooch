@@ -19,6 +19,99 @@ there:
 The rest of this page is the handful of things that are easy to trip over and do not belong
 to any one of those.
 
+## One engine per machine, shared by every project
+
+The editor materialises the engine once per version in
+
+```text
+~/.local/share/kooch/<version>/engine
+```
+
+and every project's `Cargo.toml` points at it:
+
+```toml
+kooch = { path = "/home/you/.local/share/kooch/0.1.0/engine", features = [...] }
+```
+
+**Nothing is copied into the project.** Two projects on the same engine
+version share one directory; two versions coexist, so a project pinned
+to an older engine keeps building after the editor updates.
+
+⚠️ That path is absolute and `$HOME` differs per user, so a project that
+changes machines names a directory that is not there. **The editor owns
+that line** — it owns the directory it names — and rewrites it when a
+project opens. Nothing to do by hand.
+
+`KOOCH_ENGINE_HOME` overrides the base, for CI and for portable installs
+that must not write to the user's data directory.
+
+**It costs no build time.** A project always compiled the engine from
+source; this only changes where the source is.
+
+⚠️ **Rust is still required** to build a project. Gameplay is native Rust
+compiled into the game, so the toolchain is not optional the way it is in
+an engine whose gameplay is a script.
+
+### Why the source is on disk at all
+
+Because Rust has no stable ABI. A precompiled `rlib` links only against
+the exact compiler and the exact dependency versions that built it, and
+cargo does not model binary dependencies — which is why no Rust engine
+ships binaries, Bevy included. The only route to "binary, no source" is
+an `extern "C"` API in the shape of Godot's GDExtension, and it costs the
+typed ECS.
+
+So the engine's source is protected the way Unreal protects theirs: **by
+licence, not by hiding it.**
+
+### The licence is not optional
+
+`LICENSE.md` is vendored with the engine, and the facade compiles it in:
+
+```rust
+pub const LICENSE: &str = include_str!("../LICENSE.md");
+```
+
+A game links the engine as an `rlib`, so **that text is inside every
+shipped executable**. It is not a file someone has to remember to copy;
+removing it means not building.
+
+### Packaging the editor
+
+```sh
+cargo build --release -p kooch_editor
+cargo run --release --features editor --example package_editor -- dist/
+```
+
+```text
+dist/
+  kooch_editor      the binary
+  engine/           7.7 MB — the source it materialises for projects
+  assets/           what the editor itself renders with
+```
+
+`engine_vendor::vendor_source` looks in three places, in order:
+`KOOCH_ENGINE_SOURCE`, `engine/` next to the executable, and the engine
+root — which only resolves when running from the engine's own tree.
+
+⚠️ `package_editor` **refuses a binary older than the source**. It once
+shipped an editor built before this feature existed, and the AppImage
+made from it wrote its own mount point into a project — a directory that
+stops existing when the app closes.
+
+⚠️ **It packages for the platform it runs on.** An editor for Windows
+means running it on Windows, the same conclusion Bevy's release workflow
+reaches: `metis` is vendored C, which makes cross-compiling more than a
+target flag.
+
+### Developing the engine itself
+
+When the editor runs out of the engine's own `target/`, project creation
+points the manifest at the live clone and materialises nothing —
+otherwise every engine change would need a re-materialise before the game
+could see it. The check is where the *executable* is, not where the
+source is.
+
 ## Loading a scene
 
 The boot scene is resolved in this order:

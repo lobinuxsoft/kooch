@@ -21,6 +21,20 @@
 //!
 //! Default features: `window`, `render`.
 
+/// The engine's licence, verbatim.
+///
+/// 🔴 **Compiled into every binary that links the engine**, which is
+/// what makes it non-optional: a game links Kóoch as an `rlib`, so this
+/// string is inside the shipped executable whether or not anyone
+/// remembered to copy a file next to it. Removing it means not using
+/// the engine.
+///
+/// The engine's source is protected by this licence rather than by
+/// being hidden — Rust has no stable ABI, so a project compiles the
+/// engine from source (see #754). Unreal distributes their C++ the same
+/// way, on the same basis.
+pub const LICENSE: &str = include_str!("../LICENSE.md");
+
 mod scene_bootstrap;
 
 // Always present
@@ -514,3 +528,6 @@ fn debug_categories_from(
         body_axes: flag("body_axes"),
     }
 }
+
+#[cfg(test)]
+mod licence_tests;

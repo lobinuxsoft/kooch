@@ -151,7 +151,10 @@ impl LookupBindings {
         // Use the smallest axis's voxel pitch as the scalar
         // `cell_size_base`. The three components are stored in case a
         // future API surface needs the per-axis pitch directly.
-        let scalar = voxel_pitch_lod0.x.min(voxel_pitch_lod0.y).min(voxel_pitch_lod0.z);
+        let scalar = voxel_pitch_lod0
+            .x
+            .min(voxel_pitch_lod0.y)
+            .min(voxel_pitch_lod0.z);
         let host = LookupUniformHost {
             bounds_min: [bounds.min.x, bounds.min.y, bounds.min.z, 0.0],
             bounds_max: [bounds.max.x, bounds.max.y, bounds.max.z, 0.0],
@@ -170,9 +173,8 @@ impl LookupBindings {
         sampler_binding: u32,
         mask_binding: u32,
     ) -> [wgpu::BindGroupLayoutEntry; 8] {
-        let visibility = wgpu::ShaderStages::COMPUTE
-            | wgpu::ShaderStages::FRAGMENT
-            | wgpu::ShaderStages::VERTEX;
+        let visibility =
+            wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX;
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility,
