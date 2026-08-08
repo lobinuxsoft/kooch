@@ -729,8 +729,9 @@ fn inti_contact_shadow_debug_view(
         if (dot(n, s.to_light) <= 0.0) {
             return vec3<f32>(0.04);
         }
+        let to_camera = normalize(inti.camera_position - world_position);
         return inti_contact_shadow_debug(
-            inti_contact_shadow_probe(world_position, n, s.to_light, frag_coord));
+            inti_contact_shadow_probe(world_position, n, to_camera, s.to_light, frag_coord));
     }
     return vec3<f32>(1.0, 0.0, 1.0);
 }
@@ -814,7 +815,7 @@ fn inti_shade(
         // point: multiplying two occlusions of the same occluder darkens
         // twice, and a march that finds nothing cannot brighten it back.
         if ((light.flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u && shadow > 0.0) {
-            shadow *= inti_contact_shadow(world_position, n, s.to_light, frag_coord);
+            shadow *= inti_contact_shadow(world_position, n, v, s.to_light, frag_coord);
         }
 
         radiance += (diffuse + specular) * s.irradiance * n_dot_l * shadow;

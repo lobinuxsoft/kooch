@@ -85,13 +85,15 @@ pub const INTI_CONTACT_SHADOW_STUB: &str = "\
 struct ContactShadowProbe {
     shadow: f32,
     hit: bool,
-    step: u32,
+    hit_t: f32,
     steps: u32,
     ray_px: f32,
 }
 
 fn inti_contact_shadow(
     world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_camera: vec3<f32>,
     to_light: vec3<f32>,
     frag_coord: vec2<f32>,
 ) -> f32 {
@@ -100,10 +102,12 @@ fn inti_contact_shadow(
 
 fn inti_contact_shadow_probe(
     world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_camera: vec3<f32>,
     to_light: vec3<f32>,
     frag_coord: vec2<f32>,
 ) -> ContactShadowProbe {
-    return ContactShadowProbe(1.0, false, 0u, 0u, 0.0);
+    return ContactShadowProbe(1.0, false, 0.0, 0u, 0.0);
 }
 
 fn inti_contact_shadow_debug(probe: ContactShadowProbe) -> vec3<f32> {
