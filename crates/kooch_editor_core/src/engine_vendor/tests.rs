@@ -323,3 +323,54 @@ fn tests_cannot_reach_the_real_data_directory() {
     );
     unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
 }
+
+/// 🔴 An editor may only materialise the engine it ships. Asked for a
+/// version it does not have, it must NOT write its own source into a
+/// directory named after the other one — that puts an engine on disk
+/// under a name that is not its own, and everything downstream trusts
+/// the name.
+#[test]
+fn an_editor_never_materialises_a_version_it_does_not_have() {
+    let dir = tmp("wrong_version");
+    let (engine, home) = (dir.join("editor_src"), dir.join("home"));
+    fake_engine(&engine);
+    // SAFETY: single-threaded suite; see the module's other env tests.
+    unsafe { std::env::set_var("KOOCH_ENGINE_HOME", &home) };
+
+    let (state, path) = ensure_current("0.0.1-from-another-editor", Some(&engine)).unwrap();
+
+    assert_eq!(state, VendorState::Materialised);
+    let path = path.expect("something was materialised");
+    assert!(
+        path.to_string_lossy().contains(editor_engine_version()),
+        "materialised into {}, which is not this editor's version",
+        path.display(),
+    );
+    assert!(
+        !home.join("0.0.1-from-another-editor").exists(),
+        "wrote this editor's engine under another version's name",
+    );
+
+    unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
+}
+
+/// The other half: a version the machine DOES have is honoured, so a
+/// project pinned to an older engine keeps building after the editor
+/// updates.
+#[test]
+fn a_version_already_on_the_machine_is_honoured() {
+    let dir = tmp("honour_existing");
+    let (engine, home) = (dir.join("editor_src"), dir.join("home"));
+    fake_engine(&engine);
+    let older = home.join("0.0.9").join(VENDOR_DIR);
+    fs::create_dir_all(older.parent().unwrap()).unwrap();
+    fake_engine(&older);
+    unsafe { std::env::set_var("KOOCH_ENGINE_HOME", &home) };
+
+    let (state, path) = ensure_current("0.0.9", Some(&engine)).unwrap();
+
+    assert_eq!(state, VendorState::UpToDate);
+    assert_eq!(path.as_deref(), Some(older.as_path()));
+
+    unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
+}

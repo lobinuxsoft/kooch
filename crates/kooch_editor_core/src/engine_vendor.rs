@@ -292,10 +292,24 @@ pub enum VendorState {
 /// Never deletes an existing copy. Two versions coexist; the old one
 /// stays for the projects still pinned to it.
 pub fn ensure_current(
-    version: &str,
+    wanted: &str,
     source: Option<&Path>,
 ) -> Result<(VendorState, Option<PathBuf>), VendorError> {
-    let Some(dest) = shared_engine_dir(version) else {
+    // 🔴 The version a project asks for and the version this editor can
+    // supply are different questions, and conflating them writes a lie
+    // to disk: materialising THIS editor's source into a directory named
+    // after the project's version. The `.so` would then load against an
+    // engine that is not what its directory claims, and the BuildStamp
+    // would only catch it later, from somewhere else.
+    //
+    // So: honour the project's version when that engine is already on
+    // the machine, and otherwise give it the only one available — this
+    // editor's — under its own honest name. The caller records the
+    // change in the manifest.
+    if let Some(existing) = shared_engine_dir(wanted).filter(|d| is_engine_source(d)) {
+        return Ok((VendorState::UpToDate, Some(existing)));
+    }
+    let Some(dest) = shared_engine_dir(editor_engine_version()) else {
         return Ok((VendorState::NoSourceAvailable, None));
     };
     ensure_current_in(&dest, source)
