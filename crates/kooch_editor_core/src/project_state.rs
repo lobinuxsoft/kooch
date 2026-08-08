@@ -284,30 +284,35 @@ impl ProjectState {
         if let Err(e) = crate::project::ensure_default_scene(root_path) {
             tracing::warn!("failed to ensure default scene: {e}");
         }
-        // 🔴 The engine lives in the project and the EDITOR owns it
-        // (#754). It is gitignored, so a freshly cloned game repo has
-        // none, and an editor that has updated leaves an old one behind.
-        // Either way it is re-materialised here, before anything asks
-        // cargo to build against it.
-        match crate::engine_vendor::ensure_current(
-            root_path,
-            &manifest.engine_version,
-            crate::engine_vendor::vendor_source(self.engine_root.as_deref()).as_deref(),
-        ) {
-            Ok(crate::engine_vendor::VendorState::UpToDate) => {}
-            Ok(state) => {
-                tracing::info!(?state, "vendored engine refreshed");
-                // The manifest is the only record of which version the
-                // copy on disk is, so it has to move with it.
-                manifest.engine_version = crate::engine_vendor::editor_engine_version().to_owned();
-                if let Err(e) = manifest.save(root_path) {
-                    tracing::warn!("failed to record the engine version: {e}");
+        // 🔴 The engine lives ONCE on the machine, in
+        // ~/.local/share/kooch/<version>/engine, and every project's
+        // manifest points at it (#754). Materialised here because this
+        // is the first moment anything knows which version the project
+        // wants — and because a machine that has never seen this
+        // version has nothing yet.
+        let source = crate::engine_vendor::vendor_source(self.engine_root.as_deref());
+        match crate::engine_vendor::ensure_current(&manifest.engine_version, source.as_deref()) {
+            Ok((state, Some(engine_dir))) => {
+                if state != crate::engine_vendor::VendorState::UpToDate {
+                    tracing::info!(?state, path = %engine_dir.display(), "engine materialised");
+                }
+                // The manifest carries an absolute path and `$HOME`
+                // differs per user, so a project moved between machines
+                // points somewhere that does not exist. The editor owns
+                // that line — it owns the directory it names — so it
+                // rewrites it rather than letting cargo fail on it.
+                if let Err(e) = crate::project::point_manifest_at_engine(root_path, &engine_dir) {
+                    tracing::warn!("could not point the project at the engine: {e}");
                 }
             }
-            // Never fails an open: a project whose copy is good still
-            // builds, and one whose copy is bad says so at build time
-            // with cargo's own error.
-            Err(e) => tracing::warn!("could not refresh the vendored engine: {e}"),
+            // Never fails an open: a project already pointing at a good
+            // engine still builds, and one that is not says so at build
+            // time with cargo's own error.
+            Ok((_, None)) => tracing::warn!(
+                "no engine source available to materialise; the project keeps whatever \
+                 its manifest points at",
+            ),
+            Err(e) => tracing::warn!("could not materialise the engine: {e}"),
         }
 
         if manifest.main_scene.is_none() {

@@ -61,6 +61,24 @@ fn main() {
         std::process::exit(1);
     };
 
+    // 🔴 Refuse a binary older than the source it claims to be.
+    //
+    // This shipped an editor built before the vendoring code existed,
+    // and the AppImage made from it wrote a path to its own mount point
+    // into a project — a directory that stops existing when the app
+    // closes. Nothing said anything: the package was produced, ran, and
+    // created a broken project.
+    //
+    // Same check the editor already makes against a project's `.so`.
+    if let Some(newer) = source_newer_than(&binary, &engine_root) {
+        eprintln!(
+            "the editor binary is older than the engine source:\n               binary: {}\n  newer: {}\n\n             rebuild before packaging:\n  cargo build --release -p kooch_editor",
+            binary.display(),
+            newer.display(),
+        );
+        std::process::exit(1);
+    }
+
     std::fs::create_dir_all(&dest).expect("create output dir");
     std::fs::copy(&binary, dest.join(editor_file_name())).expect("copy editor binary");
 
@@ -77,6 +95,33 @@ fn main() {
 
     println!("packaged editor into {}", dest.display());
     println!("  engine source: {}", dest.join("engine").display());
+}
+
+/// A source file under `crates/` newer than `binary`, if any.
+fn source_newer_than(binary: &Path, engine_root: &Path) -> Option<PathBuf> {
+    let built = std::fs::metadata(binary).ok()?.modified().ok()?;
+    let mut stack = vec![engine_root.join("crates")];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if entry.file_name() != "target" {
+                    stack.push(path);
+                }
+                continue;
+            }
+            let is_source = path
+                .extension()
+                .is_some_and(|e| e == "rs" || e == "wgsl" || e == "toml");
+            if !is_source {
+                continue;
+            }
+            if entry.metadata().ok().and_then(|m| m.modified().ok()) > Some(built) {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
 
 fn editor_file_name() -> &'static str {

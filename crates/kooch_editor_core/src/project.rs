@@ -200,17 +200,7 @@ name = "{crate_name}"
 version = "0.1.0"
 edition = "2024"
 
-# 🔴 `exclude` is load-bearing, not tidiness. The vendored engine
-# (#754) carries its own `[workspace]`, and a workspace root nested
-# inside another is an error cargo refuses to build at all:
-#
-#   error: multiple workspace roots found in the same workspace
-#
-# Excluding it leaves the `path = "engine"` dependency working — a path
-# dep may point at the root of a different workspace — while keeping
-# cargo from trying to adopt its members as this project's.
 [workspace]
-exclude = ["engine"]
 
 # Two artefacts from one crate. The `dylib` is what the standalone editor
 # loads to learn this project's component types without compiling them;
@@ -244,6 +234,58 @@ kooch = {{ path = "{engine_path}", features = ["editor", "physics", "gravity", "
 kooch_ecs = {{ path = "{engine_path}/crates/kooch_ecs" }}
 "#,
     )
+}
+
+/// Rewrites the manifest's engine dependency to point at `engine_dir`.
+///
+/// The path is absolute and `$HOME` differs per user, so a project that
+/// moved between machines names a directory that is not there. That
+/// line belongs to the editor — it owns the directory it names — so it
+/// is corrected on open rather than left for cargo to fail on.
+///
+/// A no-op when it already matches, so opening a project does not
+/// rewrite its manifest for nothing.
+pub fn point_manifest_at_engine(
+    project_root: &Path,
+    engine_dir: &Path,
+) -> Result<bool, ProjectError> {
+    let path = project_root.join("Cargo.toml");
+    let text = fs::read_to_string(&path).map_err(ProjectError::Io)?;
+    let engine = engine_dir.display().to_string().replace('\\', "/");
+
+    let mut changed = false;
+    let out: Vec<String> = text
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let rewritten = if trimmed.starts_with("kooch = {") {
+                rewrite_path_value(line, &engine)
+            } else if trimmed.starts_with("kooch_ecs = {") {
+                rewrite_path_value(line, &format!("{engine}/crates/kooch_ecs"))
+            } else {
+                None
+            };
+            match rewritten {
+                Some(new) if new != line => {
+                    changed = true;
+                    new
+                }
+                _ => line.to_owned(),
+            }
+        })
+        .collect();
+
+    if changed {
+        fs::write(&path, out.join("\n") + "\n").map_err(ProjectError::Io)?;
+    }
+    Ok(changed)
+}
+
+/// Replaces the `path = "…"` value inside one dependency line.
+fn rewrite_path_value(line: &str, value: &str) -> Option<String> {
+    let key = line.find("path = \"")? + "path = \"".len();
+    let end = key + line[key..].find('"')?;
+    Some(format!("{}{value}{}", &line[..key], &line[end..]))
 }
 
 /// Generates `src/lib.rs` — the project as a library the editor loads.
@@ -372,11 +414,6 @@ const PROJECT_GITIGNORE: &str = "\
 # Rust build output. Gigabytes, and every byte of it regenerable.
 /target
 
-# The vendored engine (#754). The EDITOR puts it here and replaces it
-# when it goes stale, so it is build output rather than source — same
-# category as /target. A fresh clone gets it back when the editor opens
-# the project.
-/engine
 
 # rustfmt leftovers.
 **/*.rs.bk
@@ -414,18 +451,22 @@ pub fn create_project(
     // copying it would freeze the project against a snapshot and break
     // the daily loop of changing engine and game together. There the
     // manifest keeps pointing at the live clone.
-    let developing_the_engine = crate::engine_vendor::running_from_engine_build(engine_root);
-    let engine_path = if developing_the_engine {
+    // 🔴 The engine is materialised ONCE per version on this machine and
+    // shared by every project (#754) — not copied in here. Developing
+    // the engine is the exception: the manifest points at the live clone
+    // so a change to the engine reaches the game without a re-copy.
+    let engine_path = if crate::engine_vendor::running_from_engine_build(engine_root) {
         engine_root.display().to_string()
     } else {
-        // Where the source is depends on how this editor was installed;
-        // `vendor_source` knows the three layouts. Falls back to the
-        // engine root it was handed, which is what the tests exercise.
-        let source = crate::engine_vendor::vendor_source(Some(engine_root))
-            .unwrap_or_else(|| engine_root.to_path_buf());
-        crate::engine_vendor::vendor_engine(&project_root, &source)
-            .map_err(|e| ProjectError::Io(std::io::Error::other(e.to_string())))?;
-        crate::engine_vendor::VENDOR_DIR.to_owned()
+        let source = crate::engine_vendor::vendor_source(Some(engine_root));
+        let version = crate::engine_vendor::editor_engine_version();
+        match crate::engine_vendor::ensure_current(version, source.as_deref()) {
+            Ok((_, Some(dir))) => dir.display().to_string(),
+            // No engine to materialise: fall back to the root we were
+            // handed. A manifest naming something is more useful than
+            // one naming nothing, and the editor rewrites it on open.
+            _ => engine_root.display().to_string(),
+        }
     };
 
     // Generate Cargo.toml.
@@ -597,17 +638,17 @@ mod vendoring_tests {
         fs::write(root.join("Cargo.toml"), "[workspace]").unwrap();
         fs::write(root.join("src/lib.rs"), "// facade").unwrap();
         fs::write(root.join("crates/kooch_ecs/src/lib.rs"), "// ecs").unwrap();
+        fs::write(root.join("LICENSE.md"), "# All Rights Reserved").unwrap();
     }
 
-    /// 🔴 The whole of #754 phase 1, as one assertion.
+    /// 🔴 The whole of #754, as one assertion.
     ///
-    /// The generated manifest must not contain a path from the machine
-    /// that generated it. Before this, it carried the absolute path of
-    /// whatever engine clone happened to be around, so the project built
-    /// on exactly one computer.
+    /// The manifest must not carry a path that exists only on the
+    /// machine that generated it, and the engine must **not** be copied
+    /// into the project — one per machine, shared by every project.
     #[test]
-    fn a_generated_project_carries_its_engine_and_no_machine_path() {
-        let tmp = std::env::temp_dir().join("kooch_project_vendor_test");
+    fn a_generated_project_points_at_the_shared_engine_and_contains_none() {
+        let tmp = std::env::temp_dir().join("kooch_project_shared_test");
         let _ = fs::remove_dir_all(&tmp);
         let engine = tmp.join("some/deep/install/kooch");
         fs::create_dir_all(&engine).unwrap();
@@ -615,28 +656,75 @@ mod vendoring_tests {
         let parent = tmp.join("workspace");
         fs::create_dir_all(&parent).unwrap();
 
-        let project = create_project("my game", &parent, &engine).expect("creates");
+        // SAFETY: single-threaded test; nothing else reads the
+        // environment concurrently. Keeps this out of the real
+        // ~/.local/share.
+        let home = tmp.join("engine_home");
+        unsafe { std::env::set_var("KOOCH_ENGINE_HOME", &home) };
 
+        let project = create_project("my game", &parent, &engine).expect("creates");
         let manifest = fs::read_to_string(project.join("Cargo.toml")).unwrap();
+
         assert!(
-            manifest.contains(r#"path = "engine""#),
-            "manifest should point at the vendored copy:\n{manifest}",
+            !project.join("engine").exists(),
+            "the engine was copied into the project; it is meant to be shared",
         );
         assert!(
             !manifest.contains(&engine.display().to_string()),
             "the creating machine's engine path leaked into the manifest:\n{manifest}",
         );
         assert!(
-            project.join("engine/crates/kooch_ecs/src/lib.rs").is_file(),
-            "the engine was referenced but not copied — the project cannot build",
+            manifest.contains(&home.display().to_string()),
+            "the manifest should point at the shared engine:\n{manifest}",
+        );
+        assert!(
+            home.join(format!(
+                "{}/engine/crates/kooch_ecs/src/lib.rs",
+                crate::engine_vendor::editor_engine_version()
+            ))
+            .is_file(),
+            "the shared engine was referenced but never materialised",
         );
 
-        // The editor owns the vendored engine and re-materialises it on
-        // open, so it is build output and stays out of the game's repo.
-        let ignore = fs::read_to_string(project.join(".gitignore")).unwrap();
+        unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
+    }
+
+    /// `$HOME` differs per user, so a project that changed machines
+    /// names a directory that is not there. The editor owns that line
+    /// and corrects it on open rather than letting cargo fail on it.
+    #[test]
+    fn opening_a_project_repoints_a_stale_engine_path() {
+        let tmp = std::env::temp_dir().join("kooch_repoint_test");
+        let _ = fs::remove_dir_all(&tmp);
+        let project = tmp.join("proj");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("Cargo.toml"),
+            "[package]\nname = \"g\"\n\n[dependencies]\n\
+             kooch = { path = \"/home/someone-else/.local/share/kooch/0.1.0/engine\", \
+             features = [\"editor\"] }\n\
+             kooch_ecs = { path = \"/home/someone-else/.local/share/kooch/0.1.0/engine/crates/kooch_ecs\" }\n",
+        )
+        .unwrap();
+
+        let here = tmp.join("mine/0.1.0/engine");
+        let changed = point_manifest_at_engine(&project, &here).expect("rewrites");
+
+        assert!(changed);
+        let manifest = fs::read_to_string(project.join("Cargo.toml")).unwrap();
+        assert!(!manifest.contains("someone-else"), "{manifest}");
         assert!(
-            ignore.lines().any(|l| l.trim() == "/engine"),
-            "the vendored engine should be gitignored — the editor puts it back",
+            manifest.contains(&format!("path = \"{}\"", here.display())),
+            "{manifest}"
         );
+        assert!(
+            manifest.contains(&format!("{}/crates/kooch_ecs", here.display())),
+            "the second dependency was left pointing at the old machine:\n{manifest}",
+        );
+        // Features and everything else on the line survive.
+        assert!(manifest.contains("features = [\"editor\"]"), "{manifest}");
+
+        // Idempotent: opening again must not rewrite for nothing.
+        assert!(!point_manifest_at_engine(&project, &here).expect("second pass"));
     }
 }

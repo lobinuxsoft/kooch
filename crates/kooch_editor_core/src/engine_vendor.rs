@@ -7,23 +7,33 @@
 //! between two clones, let alone to someone holding only a compiled
 //! editor.
 //!
-//! So the project carries the engine. `<project>/engine/` holds the
-//! source and the manifest says `path = "engine"` — the same line on
-//! every machine.
+//! So the editor materialises the engine **once per version**, in
+//! `~/.local/share/kooch/<version>/engine`, and every project's manifest
+//! points at that. One copy on the machine, none inside any project.
 //!
-//! # It is build output, not source
+//! # Why not a copy per project
 //!
-//! The **editor** puts it there and the editor replaces it when it goes
-//! stale, so a project's `engine/` is regenerated rather than authored —
-//! the same category as `target/`, and gitignored for the same reason.
-//! [`ensure_current`] is what makes that true: opening a project with a
-//! missing or outdated copy re-materialises it before anything tries to
-//! build.
+//! It was, for one afternoon, and seeing it settled the question: 675
+//! files of engine source inside a game's own directory is not what any
+//! engine does, and duplicating them per project compounds it. The
+//! editor owns this directory the way cargo owns `target/`.
 //!
-//! ⚠️ The consequence, worth knowing rather than discovering: a clone of
-//! a game repo does **not** build without the editor materialising the
-//! engine first, and a project compiles against the editor's version
-//! rather than the one it was authored against.
+//! # Why the source is on disk at all
+//!
+//! Because Rust has no stable ABI. A precompiled `rlib` only links
+//! against the exact compiler and the exact dependency versions that
+//! built it, and cargo does not model binary dependencies at all — which
+//! is why no Rust engine ships binaries, Bevy included. The only route
+//! to "binary, no source" is an `extern "C"` API in the shape of
+//! GDExtension, and that costs the typed ECS.
+//!
+//! So the engine's source is protected the way Unreal protects theirs:
+//! **by licence, not by hiding it**. The repo is public and ARR already.
+//!
+//! ⚠️ The manifest ends up holding an absolute path, and `$HOME` differs
+//! per user. [`ensure_current`] rewrites that line when it does not
+//! match this machine — the editor owns it, the same way it owns the
+//! directory it points at.
 //!
 //! # Why source and not a binary
 //!
@@ -44,8 +54,29 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Directory a vendored engine occupies inside a project.
+/// Directory name the materialised engine occupies, under the
+/// per-version directory.
 pub const VENDOR_DIR: &str = "engine";
+
+/// Where this machine keeps the engine for `version`.
+///
+/// One directory per version rather than one overall: two projects
+/// pinned to different engine versions have to coexist, and blowing one
+/// away when the other opens would make switching projects a rebuild.
+///
+/// `None` only when the platform has no data directory, which is the
+/// case a caller has to handle rather than unwrap.
+pub fn shared_engine_dir(version: &str) -> Option<PathBuf> {
+    // `KOOCH_ENGINE_HOME` overrides the base. It exists for CI and for
+    // a portable install that must not write to the user's data
+    // directory — and it is what lets this be tested without a test
+    // writing into somebody's real ~/.local/share.
+    let base = match std::env::var_os("KOOCH_ENGINE_HOME") {
+        Some(dir) => Some(PathBuf::from(dir)),
+        None => dirs::data_dir().map(|d| d.join("kooch")),
+    };
+    base.map(|b| b.join(version).join(VENDOR_DIR))
+}
 
 /// What the engine's own root has to contain for a copy of it to be
 /// buildable. Checked before writing anything, so a bad engine root
@@ -68,7 +99,18 @@ const REQUIRED: [&str; 3] = ["Cargo.toml", "crates", "src"];
 /// `every_directory_the_source_reaches_for_is_vendored` scans for that
 /// pattern so the next one is a test failure instead of a ten-minute
 /// build.
-const COPY: [&str; 5] = ["Cargo.toml", "Cargo.lock", "crates", "src", "templates"];
+const COPY: [&str; 6] = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates",
+    "src",
+    "templates",
+    // 🔴 Mandatory. The facade does `include_str!("../LICENSE.md")`, so
+    // a materialised engine without it does not compile at all — which
+    // is the point: the licence cannot be dropped from a build by
+    // leaving a file behind.
+    "LICENSE.md",
+];
 
 /// Engine assets a *game* needs at runtime. The engine's `assets/` is
 /// 13 MB, and 12.7 MB of that is two demo glTFs that no shipped game
@@ -181,12 +223,23 @@ pub fn running_from_engine_build(engine_root: &Path) -> bool {
 /// root, because the alternative is a project whose `cargo build` fails
 /// on a missing crate and gives no hint that the copy was the problem.
 pub fn vendor_engine(project_root: &Path, source: &Path) -> Result<PathBuf, VendorError> {
+    // Checked before the directory is created, not after: a refused
+    // vendor must leave nothing behind, or the next run finds a stub
+    // and the failure changes shape.
     if !is_engine_source(source) {
         return Err(VendorError::NotAnEngineRoot(source.to_path_buf()));
     }
     let dest = project_root.join(VENDOR_DIR);
     fs::create_dir_all(&dest).map_err(VendorError::Io)?;
+    copy_engine_into(&dest, source)?;
+    Ok(dest)
+}
 
+/// Copies the engine's source into `dest`, which must already exist.
+fn copy_engine_into(dest: &Path, source: &Path) -> Result<(), VendorError> {
+    if !is_engine_source(source) {
+        return Err(VendorError::NotAnEngineRoot(source.to_path_buf()));
+    }
     for entry in COPY {
         let from = source.join(entry);
         if from.is_dir() {
@@ -195,15 +248,13 @@ pub fn vendor_engine(project_root: &Path, source: &Path) -> Result<PathBuf, Vend
             fs::copy(&from, dest.join(entry)).map_err(VendorError::Io)?;
         }
     }
-
     for entry in COPY_ASSETS {
         let from = source.join("assets").join(entry);
         if from.is_dir() {
             copy_dir(&from, &dest.join("assets").join(entry))?;
         }
     }
-
-    Ok(dest)
+    Ok(())
 }
 
 /// The engine version this editor would vendor.
@@ -214,61 +265,64 @@ pub fn editor_engine_version() -> &'static str {
 /// What [`ensure_current`] had to do, for the caller to log.
 #[derive(Debug, PartialEq, Eq)]
 pub enum VendorState {
-    /// Present and at this editor's version.
+    /// Already materialised for this version.
     UpToDate,
-    /// Was not there at all — a fresh clone of a game repo, where the
-    /// engine is gitignored.
+    /// Was not on this machine yet — a first run, or a first project
+    /// after the editor updated.
     Materialised,
-    /// Was there at an older version and has been replaced.
-    Replaced { was: String },
-    /// The editor has no engine source to vendor from, so whatever the
-    /// project already has stays. Not an error: a project with a good
-    /// copy still builds.
+    /// No engine source to materialise from, and none already there.
+    /// Not an error on its own: a project pointing at a good copy still
+    /// builds.
     NoSourceAvailable,
 }
 
-/// Makes `<project_root>/engine/` exist and match this editor.
+/// Makes this machine's copy of the engine exist, and says where it is.
 ///
-/// Called when a project opens. A missing copy is the normal case for a
-/// freshly cloned game repo; an outdated one is the normal case after
-/// the editor updates. Both end with the project building against the
-/// engine the editor ships, which is the point of the editor owning
-/// this directory.
+/// One directory per engine version, shared by every project. Called
+/// when a project opens and when one is created: the first is the case
+/// of a machine that has never seen this version, the second of a
+/// project that does not exist yet.
 ///
-/// `project_engine_version` is the manifest's `engine_version` — the
-/// version the copy on disk was written at. It is the only record of
-/// that: the copied source carries no version the editor can trust to
-/// have stayed in sync.
+/// Never deletes an existing copy. Two versions coexist; the old one
+/// stays for the projects still pinned to it.
 pub fn ensure_current(
-    project_root: &Path,
-    project_engine_version: &str,
+    version: &str,
     source: Option<&Path>,
-) -> Result<VendorState, VendorError> {
-    let dest = project_root.join(VENDOR_DIR);
-    let present = is_engine_source(&dest);
-    let current = present && project_engine_version == editor_engine_version();
-    if current {
-        return Ok(VendorState::UpToDate);
+) -> Result<(VendorState, Option<PathBuf>), VendorError> {
+    let Some(dest) = shared_engine_dir(version) else {
+        return Ok((VendorState::NoSourceAvailable, None));
+    };
+    ensure_current_in(&dest, source)
+}
+
+/// [`ensure_current`] against an explicit directory.
+pub fn ensure_current_in(
+    dest: &Path,
+    source: Option<&Path>,
+) -> Result<(VendorState, Option<PathBuf>), VendorError> {
+    let dest = dest.to_path_buf();
+    if is_engine_source(&dest) {
+        return Ok((VendorState::UpToDate, Some(dest)));
     }
 
     let Some(source) = source.filter(|s| is_engine_source(s)) else {
-        return Ok(VendorState::NoSourceAvailable);
+        return Ok((VendorState::NoSourceAvailable, None));
     };
 
-    if present {
-        // Replaced wholesale rather than merged. A crate deleted from
-        // the engine would otherwise survive in every project that ever
-        // vendored it, and be compiled by the workspace glob.
-        fs::remove_dir_all(&dest).map_err(VendorError::Io)?;
+    // A half-written directory from an interrupted copy would pass
+    // `is_engine_source` on the next run and never be repaired, so the
+    // copy lands beside its destination and is moved into place at the
+    // end. `rename` within one filesystem is atomic.
+    let staging = dest.with_extension("partial");
+    let _ = fs::remove_dir_all(&staging);
+    if let Some(parent) = staging.parent() {
+        fs::create_dir_all(parent).map_err(VendorError::Io)?;
     }
-    vendor_engine(project_root, source)?;
+    fs::create_dir_all(&staging).map_err(VendorError::Io)?;
+    copy_engine_into(&staging, source)?;
+    fs::rename(&staging, &dest).map_err(VendorError::Io)?;
 
-    Ok(match present {
-        true => VendorState::Replaced {
-            was: project_engine_version.to_owned(),
-        },
-        false => VendorState::Materialised,
-    })
+    Ok((VendorState::Materialised, Some(dest)))
 }
 
 /// Recursive copy, skipping build output.
@@ -403,233 +457,123 @@ mod tests {
         );
     }
 
-    /// The case a gitignored engine creates on every fresh clone of a
-    /// game repo. If this does not work, "clone and open" is broken for
-    /// everyone but the author.
+    /// First run on a machine, or first project after an editor
+    /// update: nothing is there and it has to appear.
     #[test]
-    fn a_missing_engine_is_materialised_on_open() {
+    fn a_missing_engine_is_materialised() {
         let dir = tmp("materialise");
-        let (engine, project) = (dir.join("editor_src"), dir.join("proj"));
+        let (engine, home) = (dir.join("editor_src"), dir.join("home"));
         fake_engine(&engine);
-        fs::create_dir_all(&project).unwrap();
 
-        let state = ensure_current(&project, "0.0.0", Some(&engine)).unwrap();
+        let (state, path) = ensure_current_in(&home.join("0.1.0/engine"), Some(&engine)).unwrap();
 
         assert_eq!(state, VendorState::Materialised);
-        assert!(
-            project
-                .join("engine/crates/kooch_core/src/lib.rs")
-                .is_file()
-        );
+        let path = path.expect("a materialised engine has a path");
+        assert!(path.join("crates/kooch_core/src/lib.rs").is_file());
     }
 
-    /// The case an editor update creates. The manifest's version is the
-    /// only record of what the copy on disk is, so the comparison is
-    /// against that and not against anything inside the copy.
+    /// 🔴 Two versions coexist. A project pinned to an older engine has
+    /// to keep building after the editor updates, so materialising a
+    /// new one must not disturb the old.
     #[test]
-    fn an_outdated_engine_is_replaced_wholesale() {
-        let dir = tmp("replace");
-        let (engine, project) = (dir.join("editor_src"), dir.join("proj"));
+    fn versions_live_side_by_side() {
+        let dir = tmp("versions");
+        let (engine, home) = (dir.join("editor_src"), dir.join("home"));
         fake_engine(&engine);
-        fs::create_dir_all(project.join("engine/crates/gone/src")).unwrap();
-        fs::write(project.join("engine/Cargo.toml"), "[workspace]").unwrap();
-        fs::create_dir_all(project.join("engine/src")).unwrap();
-        fs::write(project.join("engine/src/lib.rs"), "// old").unwrap();
-        fs::write(project.join("engine/crates/gone/src/lib.rs"), "// removed").unwrap();
 
-        let state = ensure_current(&project, "0.0.1", Some(&engine)).unwrap();
+        ensure_current_in(&home.join("0.1.0/engine"), Some(&engine)).unwrap();
+        ensure_current_in(&home.join("0.2.0/engine"), Some(&engine)).unwrap();
 
-        assert_eq!(
-            state,
-            VendorState::Replaced {
-                was: "0.0.1".to_owned()
-            }
-        );
-        // 🔴 Replaced, not merged. A crate deleted from the engine that
-        // survived here would still be compiled by the workspace glob,
-        // and the error would name a crate nobody has touched in months.
-        assert!(
-            !project.join("engine/crates/gone").exists(),
-            "a crate removed from the engine survived the update",
-        );
+        assert!(home.join("0.1.0/engine/Cargo.toml").is_file());
+        assert!(home.join("0.2.0/engine/Cargo.toml").is_file());
     }
 
-    /// Re-copying 8 MB on every open would make opening a project feel
+    /// Re-copying on every open would make opening a project feel
     /// broken, and would stomp an engine someone is deliberately
-    /// hacking on inside their project.
+    /// hacking on.
     #[test]
-    fn a_current_engine_is_left_alone() {
+    fn an_existing_engine_is_left_alone() {
         let dir = tmp("uptodate");
-        let (engine, project) = (dir.join("editor_src"), dir.join("proj"));
+        let (engine, home) = (dir.join("editor_src"), dir.join("home"));
         fake_engine(&engine);
-        fs::create_dir_all(&project).unwrap();
-        ensure_current(&project, "0.0.0", Some(&engine)).unwrap();
+        let dest = home.join("0.1.0/engine");
+        ensure_current_in(&dest, Some(&engine)).unwrap();
 
-        let marker = project.join("engine/src/local_edit.rs");
+        let marker = dest.join("src/local_edit.rs");
         fs::write(&marker, "// mine").unwrap();
 
-        let state = ensure_current(&project, editor_engine_version(), Some(&engine)).unwrap();
+        let (state, _) = ensure_current_in(&dest, Some(&engine)).unwrap();
 
         assert_eq!(state, VendorState::UpToDate);
-        assert!(marker.is_file(), "an up-to-date engine was re-copied");
+        assert!(marker.is_file(), "an existing engine was re-copied");
     }
 
-    /// An editor with no source to vendor from must not delete what the
-    /// project already has. Opening a project should never leave it less
-    /// buildable than it was.
+    /// 🔴 An interrupted copy must not leave a half-written directory
+    /// that passes for an engine — it would never be repaired, and
+    /// every project on the machine would fail to build against it.
+    /// The copy stages beside the destination and is renamed in.
     #[test]
-    fn without_source_the_projects_own_copy_survives() {
-        let dir = tmp("nosource");
-        let (engine, project) = (dir.join("editor_src"), dir.join("proj"));
+    fn a_materialised_engine_appears_atomically() {
+        let dir = tmp("atomic");
+        let (engine, home) = (dir.join("editor_src"), dir.join("home"));
         fake_engine(&engine);
-        fs::create_dir_all(&project).unwrap();
-        ensure_current(&project, "0.0.0", Some(&engine)).unwrap();
+        let dest = home.join("0.1.0/engine");
 
-        let state = ensure_current(&project, "0.0.1", None).unwrap();
+        // A leftover from a previous interrupted run.
+        let staging = dest.with_extension("partial");
+        fs::create_dir_all(staging.join("crates")).unwrap();
+        fs::write(staging.join("junk"), "half a copy").unwrap();
+
+        ensure_current_in(&dest, Some(&engine)).unwrap();
+
+        assert!(is_engine_source(&dest));
+        assert!(!staging.exists(), "the staging directory survived");
+        assert!(
+            !dest.join("junk").exists(),
+            "the interrupted copy leaked in"
+        );
+    }
+
+    /// No source and nothing there: say so rather than inventing a
+    /// path a manifest would then point at.
+    #[test]
+    fn without_source_there_is_no_engine_and_no_path() {
+        let dir = tmp("nosource");
+        let home = dir.join("home");
+
+        let (state, path) = ensure_current_in(&home.join("0.1.0/engine"), None).unwrap();
 
         assert_eq!(state, VendorState::NoSourceAvailable);
-        assert!(
-            project
-                .join("engine/crates/kooch_core/src/lib.rs")
-                .is_file(),
-            "opening with no engine source deleted the project's copy",
-        );
+        assert_eq!(path, None);
     }
 
-    /// The override exists so CI can vendor without an editor install
-    /// laid out the usual way. A value that is not engine source is
-    /// ignored rather than obeyed: obeying it produces a project that
-    /// fails to build on a missing crate, which names nothing useful.
+    /// 🔴 The licence is not optional and not a courtesy copy: the
+    /// facade compiles it in with `include_str!`, so a materialised
+    /// engine missing it fails to build. This asserts the vendor
+    /// carries it, and the scanning test above independently asserts
+    /// that anything the source `include_str!`s is vendored — two
+    /// different reasons for the same file to be there.
     #[test]
-    fn an_explicit_source_wins_and_a_wrong_one_is_ignored() {
-        let dir = tmp("explicit");
-        let engine = dir.join("elsewhere");
+    fn the_licence_travels_with_the_engine() {
+        let dir = tmp("licence");
+        let (engine, project) = (dir.join("engine_src"), dir.join("proj"));
         fake_engine(&engine);
-        let junk = dir.join("junk");
-        fs::create_dir_all(&junk).unwrap();
+        fs::write(engine.join("LICENSE.md"), "# All Rights Reserved").unwrap();
+        fs::create_dir_all(&project).unwrap();
 
-        // SAFETY: single-threaded test process; no other thread reads
-        // the environment while this runs.
-        unsafe { std::env::set_var("KOOCH_ENGINE_SOURCE", &engine) };
-        assert_eq!(vendor_source(None).as_deref(), Some(engine.as_path()));
+        let dest = vendor_engine(&project, &engine).expect("vendors");
 
-        unsafe { std::env::set_var("KOOCH_ENGINE_SOURCE", &junk) };
-        assert_eq!(
-            vendor_source(None),
-            None,
-            "a KOOCH_ENGINE_SOURCE that is not engine source should be ignored",
-        );
-
-        unsafe { std::env::remove_var("KOOCH_ENGINE_SOURCE") };
-    }
-
-    /// Developing the engine: no install layout, no override, and the
-    /// engine root it was handed is the source.
-    #[test]
-    fn the_engine_root_is_the_last_resort() {
-        let dir = tmp("fallback");
-        let engine = dir.join("engine_src");
-        fake_engine(&engine);
-
-        assert_eq!(
-            vendor_source(Some(&engine)).as_deref(),
-            Some(engine.as_path()),
-        );
-        assert_eq!(
-            vendor_source(Some(&dir.join("nothing_here"))),
-            None,
-            "a root that is not engine source must not be offered as one",
-        );
-    }
-
-    /// 🔴 Scans the real engine tree for `include_str!` / `include_bytes!`
-    /// paths that climb out of their crate, and asserts every top-level
-    /// directory they land in is vendored.
-    ///
-    /// This is the test that would have caught `templates/` without
-    /// spending a full project build to find out. An allowlist cannot
-    /// know what the repo adds next; this makes the repo say so.
-    #[test]
-    fn every_directory_the_source_reaches_for_is_vendored() {
-        // <repo>/crates/kooch_editor_core → <repo>
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(2)
-            .expect("crate lives two levels under the repo root")
-            .to_path_buf();
-
-        let mut missing: Vec<String> = Vec::new();
-        let mut stack = vec![repo.join("crates"), repo.join("src")];
-        while let Some(dir) = stack.pop() {
-            let Ok(entries) = fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if entry.file_name() != "target" {
-                        stack.push(path);
-                    }
-                    continue;
-                }
-                if path.extension().is_none_or(|e| e != "rs") {
-                    continue;
-                }
-                let Ok(text) = fs::read_to_string(&path) else {
-                    continue;
-                };
-                for referenced in escaping_include_roots(&text) {
-                    let exists = repo.join(&referenced).exists();
-                    let vendored = COPY.contains(&referenced.as_str())
-                        || COPY_ASSETS.iter().any(|a| a.starts_with(&referenced));
-                    if exists && !vendored {
-                        missing.push(format!("{referenced} (from {})", path.display()));
-                    }
-                }
-            }
-        }
-
+        let licence = dest.join("LICENSE.md");
         assert!(
-            missing.is_empty(),
-            "source includes files from engine-root directories that are NOT vendored, \
-             so a vendored copy will not compile:\n  {}",
-            missing.join("\n  "),
+            licence.is_file(),
+            "the engine was vendored without its licence"
         );
-    }
-
-    /// Top-level directory names that `include_*!("../../../x/y")` paths
-    /// resolve into, for includes that leave their own crate.
-    fn escaping_include_roots(source: &str) -> Vec<String> {
-        let mut found = Vec::new();
-        // 🔴 `match_indices` yields (index, the MATCHED pattern) — not
-        // the remainder. Reading the second field as "the rest of the
-        // file" parses the needle against itself, finds nothing, and
-        // leaves a test that passes whatever COPY contains. It did
-        // exactly that until an A/B against a removed entry caught it.
-        for (idx, _) in source
-            .match_indices("include_str!(\"")
-            .chain(source.match_indices("include_bytes!(\""))
-        {
-            let rest = &source[idx..];
-            let Some(open) = rest.find('"') else { continue };
-            let Some(len) = rest[open + 1..].find('"') else {
-                continue;
-            };
-            let literal = &rest[open + 1..open + 1 + len];
-            // Only the ones that climb past the crate root: `src/x` is
-            // three levels down from the repo, so three or more `../`
-            // land at the top.
-            if literal.matches("../").count() < 3 {
-                continue;
-            }
-            if let Some(tail) = literal.rsplit("../").next()
-                && let Some(root) = tail.split('/').next()
-                && !root.is_empty()
-            {
-                found.push(root.to_owned());
-            }
-        }
-        found
+        assert!(
+            fs::read_to_string(&licence)
+                .unwrap()
+                .contains("All Rights Reserved"),
+            "the vendored licence is not the licence",
+        );
     }
 
     /// Failing here is cheap; failing at `cargo build` in a project

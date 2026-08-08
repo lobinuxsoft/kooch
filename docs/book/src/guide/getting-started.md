@@ -19,57 +19,62 @@ there:
 The rest of this page is the handful of things that are easy to trip over and do not belong
 to any one of those.
 
-## A project carries its own engine
+## One engine per machine, shared by every project
 
-Creating a project copies the engine's source into `<project>/engine/`,
-and the generated `Cargo.toml` refers to it by a **relative** path:
+The editor materialises the engine once per version in
 
-```toml
-[workspace]
-exclude = ["engine"]
-
-[dependencies]
-kooch = { path = "engine", features = [...] }
+```text
+~/.local/share/kooch/<version>/engine
 ```
 
-⚠️ **`exclude` is load-bearing.** The vendored engine carries its own
-`[workspace]`, and a workspace root nested inside another is something
-cargo refuses outright — `multiple workspace roots found in the same
-workspace`. Excluding it keeps the path dependency working, because a
-path dep may point at the root of a different workspace.
+and every project's `Cargo.toml` points at it:
 
-**Do not commit it — it is gitignored.** The editor puts it there and
-replaces it when it goes stale, so it is build output in the same
-category as `target/`. Opening a project re-materialises it: missing (a
-fresh clone of a game repo) or older than the editor (after an update),
-either way you get the editor's engine before anything builds. The
-manifest's `engine_version` is the record of which one is on disk.
+```toml
+kooch = { path = "/home/you/.local/share/kooch/0.1.0/engine", features = [...] }
+```
 
-⚠️ Two consequences worth knowing rather than discovering. A clone of a
-game repo does **not** build until an editor has opened it, so CI needs
-the editor or an explicit vendor step. And a project compiles against
-the **editor's** engine version, not the one it was authored against.
+**Nothing is copied into the project.** Two projects on the same engine
+version share one directory; two versions coexist, so a project pinned
+to an older engine keeps building after the editor updates.
+
+⚠️ That path is absolute and `$HOME` differs per user, so a project that
+changes machines names a directory that is not there. **The editor owns
+that line** — it owns the directory it names — and rewrites it when a
+project opens. Nothing to do by hand.
+
+`KOOCH_ENGINE_HOME` overrides the base, for CI and for portable installs
+that must not write to the user's data directory.
 
 **It costs no build time.** A project always compiled the engine from
-source — it just used to reach outside its own directory to find it.
+source; this only changes where the source is.
 
-⚠️ **Rust is still required** to build a project. Gameplay is native
-Rust compiled into the game, so the toolchain is not optional the way it
-is in an engine whose gameplay is a script.
+⚠️ **Rust is still required** to build a project. Gameplay is native Rust
+compiled into the game, so the toolchain is not optional the way it is in
+an engine whose gameplay is a script.
 
-### Why the plugin refuses to load after an engine change
+### Why the source is on disk at all
 
-The editor loads the project's `.so` to learn its component types, and
-before calling anything it compares a `BuildStamp`: the plugin API
-version, the compiler identity, and **the engine version**. A mismatch
-is a refusal with a message naming which of the three failed, because
-the fixes differ.
+Because Rust has no stable ABI. A precompiled `rlib` links only against
+the exact compiler and the exact dependency versions that built it, and
+cargo does not model binary dependencies — which is why no Rust engine
+ships binaries, Bevy included. The only route to "binary, no source" is
+an `extern "C"` API in the shape of Godot's GDExtension, and it costs the
+typed ECS.
 
-The engine version is in there because of vendoring. The API version
-only moves when the plugin *interface* changes; an engine release that
-alters a component's fields leaves it alone, so a plugin built against
-the old copy would link, pass the check, and read every shared structure
-at the wrong layout. Now it says so instead.
+So the engine's source is protected the way Unreal protects theirs: **by
+licence, not by hiding it.**
+
+### The licence is not optional
+
+`LICENSE.md` is vendored with the engine, and the facade compiles it in:
+
+```rust
+pub const LICENSE: &str = include_str!("../LICENSE.md");
+```
+
+A game links the engine as an `rlib`, so **that text is inside every
+shipped executable**. It is not a file someone has to remember to copy;
+removing it means not building.
 
 ### Packaging the editor
 
@@ -81,30 +86,31 @@ cargo run --release --features editor --example package_editor -- dist/
 ```text
 dist/
   kooch_editor      the binary
-  engine/           7.7 MB — what gets vendored into projects
+  engine/           7.7 MB — the source it materialises for projects
   assets/           what the editor itself renders with
 ```
 
-`engine_vendor::vendor_source` looks for the source in three places, in
-order: `KOOCH_ENGINE_SOURCE` (an override, and what CI uses), `engine/`
-next to the executable (the layout above), and finally the engine root —
-which only resolves when running from the engine's own tree.
+`engine_vendor::vendor_source` looks in three places, in order:
+`KOOCH_ENGINE_SOURCE`, `engine/` next to the executable, and the engine
+root — which only resolves when running from the engine's own tree.
 
-⚠️ **This packages for the platform it runs on.** An editor for Windows
-means running it on Windows. Bevy's release workflow reaches the same
-conclusion — a matrix of native runners, no cross-compilation — and the
-reason is the same here: `metis` is vendored C, which makes
-cross-compiling more than a target flag.
+⚠️ `package_editor` **refuses a binary older than the source**. It once
+shipped an editor built before this feature existed, and the AppImage
+made from it wrote its own mount point into a project — a directory that
+stops existing when the app closes.
+
+⚠️ **It packages for the platform it runs on.** An editor for Windows
+means running it on Windows, the same conclusion Bevy's release workflow
+reaches: `metis` is vendored C, which makes cross-compiling more than a
+target flag.
 
 ### Developing the engine itself
 
 When the editor runs out of the engine's own `target/`, project creation
-skips the copy and points the manifest at the live clone instead —
-otherwise every change to the engine would need a re-vendor before the
-game could see it. The check is where the *executable* is, not where the
-source is ([`engine_vendor::running_from_engine_build`]).
-
-[`engine_vendor::running_from_engine_build`]: https://github.com/lobinuxsoft/kooch/blob/development/crates/kooch_editor_core/src/engine_vendor.rs
+points the manifest at the live clone and materialises nothing —
+otherwise every engine change would need a re-materialise before the game
+could see it. The check is where the *executable* is, not where the
+source is.
 
 ## Loading a scene
 
