@@ -76,22 +76,16 @@ pub mod sampler;
 
 pub use chunk_lod::{CHUNK_LOD_WGSL, ChunkLodPass, DEFAULT_LOD_DISTANCE_THRESHOLDS};
 pub use classify::{CLASSIFY_WGSL, CLASSIFY_WORKGROUP_SIZE, ClassifyPass, DEFAULT_MARGIN};
-pub use downsample::{
-    CASCADE_COUNT, DOWNSAMPLE_WGSL, DOWNSAMPLE_WORKGROUP_SIZE, DownsamplePass,
-};
-pub use grid::{
-    DISPATCH_INDIRECT_ARGS_SIZE, METRICS_BUFFER_SIZE, POOL_TEXTURE_FORMAT, SparseGrid,
-};
+pub use downsample::{CASCADE_COUNT, DOWNSAMPLE_WGSL, DOWNSAMPLE_WORKGROUP_SIZE, DownsamplePass};
+pub use grid::{DISPATCH_INDIRECT_ARGS_SIZE, METRICS_BUFFER_SIZE, POOL_TEXTURE_FORMAT, SparseGrid};
 pub use lod::{
-    LOD_COUNT, LOD_LEVELS, LOD_VOXEL_SIZE_FACTORS, LodConfig, lod_for_voxel_size,
-    lod_voxel_size,
+    LOD_COUNT, LOD_LEVELS, LOD_VOXEL_SIZE_FACTORS, LodConfig, lod_for_voxel_size, lod_voxel_size,
 };
 pub use lod_pass::SparseLodPass;
 pub use lookup::{
     LOOKUP_BODY_WGSL, LOOKUP_DEFAULT_GROUP, LOOKUP_DEFAULT_MASK_BINDING,
-    LOOKUP_DEFAULT_POOL_BINDINGS, LOOKUP_DEFAULT_ROOT_BINDING,
-    LOOKUP_DEFAULT_SAMPLER_BINDING, LOOKUP_DEFAULT_UNIFORM_BINDING, LookupBindings,
-    lookup_wgsl,
+    LOOKUP_DEFAULT_POOL_BINDINGS, LOOKUP_DEFAULT_ROOT_BINDING, LOOKUP_DEFAULT_SAMPLER_BINDING,
+    LOOKUP_DEFAULT_UNIFORM_BINDING, LookupBindings, lookup_wgsl,
 };
 pub use metrics::{METRICS_WGSL, Metrics, MetricsPass};
 pub use populate::{POPULATE_WGSL, POPULATE_WORKGROUP_SIZE, PopulatePass};
@@ -101,8 +95,7 @@ pub use sampler::{ANALYTIC_SPHERE_WGSL, AnalyticSphereSampler, SdfSampler};
 /// push helpers shared by the allocate (#S4) and free (#S7) compute
 /// shaders. Consumer pipelines concat this string ahead of their own
 /// shader source.
-pub const SPARSE_FREELIST_WGSL: &str =
-    include_str!("../../shaders/sparse_freelist.wgsl");
+pub const SPARSE_FREELIST_WGSL: &str = include_str!("../../shaders/sparse_freelist.wgsl");
 
 /// Size in bytes of the `SparseCounters` struct (mirrors the WGSL
 /// layout in `sparse_freelist.wgsl`). Four `u32`s: `free_top`,
@@ -228,9 +221,7 @@ pub(crate) mod test_device {
                         .ok()?;
                     let required = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
                     if !adapter.features().contains(required) {
-                        eprintln!(
-                            "skipping sparse GPU test: adapter missing {required:?}",
-                        );
+                        eprintln!("skipping sparse GPU test: adapter missing {required:?}",);
                         return None;
                     }
                     let (device, queue) = adapter
@@ -252,11 +243,7 @@ pub(crate) mod test_device {
 
     /// Synchronous full-buffer readback helper for tests. `src` must
     /// have `COPY_SRC` usage (every `SparseGrid` buffer does).
-    pub fn readback(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        src: &wgpu::Buffer,
-    ) -> Vec<u8> {
+    pub fn readback(device: &wgpu::Device, queue: &wgpu::Queue, src: &wgpu::Buffer) -> Vec<u8> {
         let size = src.size();
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("kooch_world::voxel::test_device::readback_staging"),

@@ -23,9 +23,9 @@ pub mod voxel;
 pub use activation::{activate_chunks, activation_system};
 pub use chunk::{BASE_CHUNK_SIZE_METERS, ChunkData, ChunkId, ChunkState, MAX_LOD_LEVEL};
 // since PR #115 PR-1; consumers can keep importing it through `kooch_world`.
-pub use kooch_core::Aabb;
 pub use focus::StreamingFocus;
 pub use focus_cache::{DirtyFocusLod, FocusCacheState, FocusPosition};
+pub use kooch_core::Aabb;
 pub use lod::{LodRing, LodRingConfig};
 pub use manager::{ChunkEvictionListener, ChunkManager};
 pub use plugin::{

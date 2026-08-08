@@ -1516,6 +1516,26 @@ va en el tipo — no en un valor que ya significaba otra cosa.
 - **state-of-art production-ready desde commit 1, NO MVP** (`feedback_correct_implementation_day_one`).
 - Cada subtask = 1 commit (`git add` específico, NO `-A` tras fmt).
 - El user maneja el fin de sesión; el smoke visual lo maneja el user (el agente arranca la app y diagnostica).
+- 🔴🔴 **PROHIBIDO el código de test dentro de un archivo de código** (regla del user, 2026-08-08).
+  Nada de `#[cfg(test)] mod tests { … }` inline. Va **siempre** en su propio archivo:
+
+  ```rust
+  // foo.rs
+  #[cfg(test)]
+  mod tests;        // → foo/tests.rs   (o tests.rs al lado, si el padre es mod.rs/lib.rs)
+  ```
+
+  **Por qué**: el engine se materializa dentro de la máquina del usuario (#754), y **el código
+  vendorizado tiene que estar completamente libre de código de test**. Con los tests en archivos
+  aparte es cuestión de no copiarlos; con bloques inline habría que reescribir los archivos.
+  `#[cfg(test)]` elimina el `mod` antes de que Rust resuelva el módulo, así que el engine compila
+  perfecto sin ninguno de esos archivos — verificado, no supuesto.
+
+  Lo hace cumplir `engine_vendor::the_vendored_engine_contains_no_test_code`, que vendoriza el
+  **árbol real** y falla si sobrevive cualquier `#[test]`. El filtro **lee las declaraciones
+  `#[cfg(test)] mod X;`** en vez de adivinar por nombre de archivo: tres de los archivos de test
+  del engine se llaman `measure.rs` e `id_stability.rs`, y un filtro por nombre los shippeó.
+
 - 🔴 **La documentación entra en el MISMO PR que la feature** (regla del user, 2026-08-08).
   Una tarea no está terminada hasta que la doc dice lo que el código hace. **Antes de dar un PR
   por cerrado**, revisar y actualizar lo que aplique:

@@ -100,7 +100,8 @@ impl Handle for PlaneHandle {
 
     fn drag(&self, drag: DragInfo, frame: HandleFrame) -> TransformDelta {
         let (_, axis_a, axis_b, normal) = self.corners(frame);
-        let start = ray_vs_plane(drag.start_ray, frame.origin, normal).map(|t| drag.start_ray.at(t));
+        let start =
+            ray_vs_plane(drag.start_ray, frame.origin, normal).map(|t| drag.start_ray.at(t));
         let last = ray_vs_plane(drag.last_ray, frame.origin, normal).map(|t| drag.last_ray.at(t));
         let current =
             ray_vs_plane(drag.current_ray, frame.origin, normal).map(|t| drag.current_ray.at(t));

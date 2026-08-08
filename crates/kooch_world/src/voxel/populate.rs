@@ -62,8 +62,7 @@ pub const POPULATE_WGSL: &str = include_str!("../../shaders/sparse_populate.wgsl
 /// WGSL source of the finalize pass — shared with the (now-retired)
 /// classify-finalize. Owned here because populate is the only
 /// consumer left in the cascade.
-pub(crate) const FINALIZE_WGSL: &str =
-    include_str!("../../shaders/sparse_classify_finalize.wgsl");
+pub(crate) const FINALIZE_WGSL: &str = include_str!("../../shaders/sparse_classify_finalize.wgsl");
 
 /// Workgroup size matching the `@workgroup_size(256)` annotation in
 /// `sparse_populate.wgsl`. Constant across LODs (over-provisioned at
@@ -120,8 +119,7 @@ impl PopulatePass {
             bind_group_layouts: &[Some(&populate_bgl), Some(&sampler_bgl)],
             immediate_size: 0,
         });
-        let populate_src =
-            format!("{SPARSE_FREELIST_WGSL}{sampler_wgsl}{POPULATE_WGSL}");
+        let populate_src = format!("{SPARSE_FREELIST_WGSL}{sampler_wgsl}{POPULATE_WGSL}");
         let populate_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("kooch_world::voxel::populate::populate_shader"),
             source: wgpu::ShaderSource::Wgsl(populate_src.into()),
@@ -255,10 +253,7 @@ impl PopulatePass {
             pass.set_pipeline(&self.populate_pipelines[lod_idx as usize]);
             pass.set_bind_group(0, &populate_bg, &[]);
             pass.set_bind_group(1, sampler_bg, &[]);
-            pass.dispatch_workgroups_indirect(
-                grid.populate_indirect_args_buffer(lod_idx),
-                0,
-            );
+            pass.dispatch_workgroups_indirect(grid.populate_indirect_args_buffer(lod_idx), 0);
         }
     }
 
@@ -308,10 +303,7 @@ impl PopulatePass {
         pass.set_pipeline(&self.populate_pipelines[lod_idx as usize]);
         pass.set_bind_group(0, &populate_bg, &[]);
         pass.set_bind_group(1, sampler_bg, &[]);
-        pass.dispatch_workgroups_indirect(
-            grid.populate_indirect_args_buffer(lod_idx),
-            0,
-        );
+        pass.dispatch_workgroups_indirect(grid.populate_indirect_args_buffer(lod_idx), 0);
     }
 
     fn create_populate_bg(
@@ -341,9 +333,7 @@ impl PopulatePass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
-                    resource: wgpu::BindingResource::TextureView(
-                        grid.subgrid_pool_view(lod_idx),
-                    ),
+                    resource: wgpu::BindingResource::TextureView(grid.subgrid_pool_view(lod_idx)),
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
@@ -378,7 +368,9 @@ impl PopulatePass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: grid.populate_indirect_args_buffer(lod_idx).as_entire_binding(),
+                    resource: grid
+                        .populate_indirect_args_buffer(lod_idx)
+                        .as_entire_binding(),
                 },
             ],
         })

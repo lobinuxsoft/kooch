@@ -15,8 +15,8 @@
 use super::{METRICS_WGSL, Metrics, MetricsPass};
 use crate::voxel::{
     AnalyticSphereSampler, CASCADE_COUNT, ClassifyPass, DEFAULT_LOD_DISTANCE_THRESHOLDS,
-    DEFAULT_MARGIN, DownsamplePass, LOD_COUNT, LOD_LEVELS, METRICS_BUFFER_SIZE,
-    PopulatePass, SdfSampler, SparseGrid, test_device, test_device::readback,
+    DEFAULT_MARGIN, DownsamplePass, LOD_COUNT, LOD_LEVELS, METRICS_BUFFER_SIZE, PopulatePass,
+    SdfSampler, SparseGrid, test_device, test_device::readback,
 };
 use glam::Vec3;
 use kooch_core::Aabb;
@@ -30,8 +30,8 @@ const TEST_SPHERE_RADIUS: f32 = 8.0;
 
 #[test]
 fn metrics_wgsl_parses_and_validates() {
-    let module = naga::front::wgsl::parse_str(METRICS_WGSL)
-        .expect("sparse_metrics.wgsl should parse");
+    let module =
+        naga::front::wgsl::parse_str(METRICS_WGSL).expect("sparse_metrics.wgsl should parse");
     let mut validator = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
@@ -53,10 +53,7 @@ fn metrics_vram_bytes_matches_lod_table() {
     let expected: u64 = LOD_LEVELS
         .iter()
         .map(|lod| {
-            (lod.atlas_dim_x as u64)
-                * (lod.atlas_dim_y as u64)
-                * (lod.atlas_dim_z as u64)
-                * 2
+            (lod.atlas_dim_x as u64) * (lod.atlas_dim_y as u64) * (lod.atlas_dim_z as u64) * 2
         })
         .sum();
     assert_eq!(Metrics::vram_bytes_from_lod_table(), expected);
@@ -117,12 +114,16 @@ fn run_cascade_and_read_metrics(
         label: Some("test::metrics::encoder"),
     });
     classify.record(
-        device, queue, &mut encoder, &grid, &sampler_bg, 0, DEFAULT_MARGIN,
+        device,
+        queue,
+        &mut encoder,
+        &grid,
+        &sampler_bg,
+        0,
+        DEFAULT_MARGIN,
     );
     populate.record_finalize(device, &mut encoder, &grid, 0);
-    populate.record_populate(
-        device, queue, &mut encoder, &grid, &sampler_bg, 0,
-    );
+    populate.record_populate(device, queue, &mut encoder, &grid, &sampler_bg, 0);
     for cascade_idx in 0..(CASCADE_COUNT as u32) {
         downsample.record_cascade(device, &mut encoder, &grid, cascade_idx);
     }
@@ -156,25 +157,21 @@ fn metrics_post_cascade_matches_canonical_invariants() {
         "test setup: sphere should mark at least one root cell at LOD 0",
     );
     assert_eq!(
-        metrics.active_subgrids[0],
-        needs_count,
+        metrics.active_subgrids[0], needs_count,
         "LOD 0: one freelist pop per marked cell",
     );
     for lod in 1..LOD_COUNT as usize {
         assert_eq!(
-            metrics.active_subgrids[lod],
-            0,
+            metrics.active_subgrids[lod], 0,
             "LOD {lod}: downsample copies idx, never pops higher-LOD freelist",
         );
     }
     assert_eq!(
-        metrics.alloc_count_total,
-        needs_count,
+        metrics.alloc_count_total, needs_count,
         "alloc_count_total must equal LOD 0 pops (no pops at higher LODs)",
     );
     assert_eq!(
-        metrics.free_count_total,
-        0,
+        metrics.free_count_total, 0,
         "canonical cascade never frees — push counter must stay 0",
     );
     assert_eq!(

@@ -5,9 +5,9 @@
 
 use super::*;
 use crate::voxel::{
-    ALLOC_FAILED_SENTINEL, ATLAS_DIM_X, ATLAS_DIM_Y, ATLAS_DIM_Z, EMPTY_ROOT_SENTINEL,
-    LOD_COUNT, LOD_LEVELS, MAX_SUBGRIDS_DEFAULT, MAX_SUBGRIDS_PER_ATLAS, ROOT_CELLS,
-    ROOT_DIM, SUBGRID_DIM, SUBGRID_TILE_DIM, SUBGRID_VOXELS, test_device,
+    ALLOC_FAILED_SENTINEL, ATLAS_DIM_X, ATLAS_DIM_Y, ATLAS_DIM_Z, EMPTY_ROOT_SENTINEL, LOD_COUNT,
+    LOD_LEVELS, MAX_SUBGRIDS_DEFAULT, MAX_SUBGRIDS_PER_ATLAS, ROOT_CELLS, ROOT_DIM, SUBGRID_DIM,
+    SUBGRID_TILE_DIM, SUBGRID_VOXELS, test_device,
 };
 use glam::Vec3;
 
@@ -83,9 +83,7 @@ fn atlas_constants_consistent() {
     // LOD 0 still shares the module-level constants from S6.
     assert_eq!(
         MAX_SUBGRIDS_PER_ATLAS,
-        super::super::ATLAS_TILES_X
-            * super::super::ATLAS_TILES_Y
-            * super::super::ATLAS_TILES_Z,
+        super::super::ATLAS_TILES_X * super::super::ATLAS_TILES_Y * super::super::ATLAS_TILES_Z,
     );
     assert_eq!(ATLAS_DIM_X, super::super::ATLAS_TILES_X * SUBGRID_TILE_DIM);
     assert_eq!(ATLAS_DIM_Y, super::super::ATLAS_TILES_Y * SUBGRID_TILE_DIM);
@@ -99,10 +97,7 @@ fn atlas_constants_consistent() {
     let total: u64 = LOD_LEVELS
         .iter()
         .map(|lod| {
-            (lod.atlas_dim_x as u64)
-                * (lod.atlas_dim_y as u64)
-                * (lod.atlas_dim_z as u64)
-                * 2
+            (lod.atlas_dim_x as u64) * (lod.atlas_dim_y as u64) * (lod.atlas_dim_z as u64) * 2
         })
         .sum();
     let cap_bytes: u64 = if cfg!(feature = "large-root-grid") {
@@ -124,8 +119,7 @@ fn root_indices_initialized_to_empty_sentinel_per_lod() {
     };
     let grid = SparseGrid::new(&device, &queue, unit_bounds(), 16);
     for lod_idx in 0..LOD_COUNT {
-        let bytes =
-            test_device::readback(&device, &queue, grid.root_indices_buffer(lod_idx));
+        let bytes = test_device::readback(&device, &queue, grid.root_indices_buffer(lod_idx));
         assert_eq!(
             bytes.len(),
             (ROOT_CELLS as usize) * 4,
@@ -164,9 +158,7 @@ fn rejects_zero_max_subgrids() {
 #[should_panic(expected = "max_subgrids must be in")]
 fn rejects_oversized_max_subgrids() {
     let Some((device, queue)) = test_device::try_acquire() else {
-        panic!(
-            "max_subgrids must be in 1..={MAX_SUBGRIDS_PER_ATLAS}, got 9999 (skipped — no GPU)",
-        );
+        panic!("max_subgrids must be in 1..={MAX_SUBGRIDS_PER_ATLAS}, got 9999 (skipped — no GPU)",);
     };
     let _ = SparseGrid::new(&device, &queue, unit_bounds(), MAX_SUBGRIDS_PER_ATLAS + 1);
 }

@@ -7,16 +7,16 @@
 //! `@group(2)` does not collide.
 
 use crate::voxel::{
-    AnalyticSphereSampler, CASCADE_COUNT, ClassifyPass, DEFAULT_MARGIN, DownsamplePass,
-    LOD_COUNT, PopulatePass, ROOT_DIM, SdfSampler, SparseGrid, test_device,
+    AnalyticSphereSampler, CASCADE_COUNT, ClassifyPass, DEFAULT_MARGIN, DownsamplePass, LOD_COUNT,
+    PopulatePass, ROOT_DIM, SdfSampler, SparseGrid, test_device,
 };
 use glam::Vec3;
 use kooch_core::Aabb;
 
 use super::super::{
     LOOKUP_DEFAULT_GROUP, LOOKUP_DEFAULT_MASK_BINDING, LOOKUP_DEFAULT_POOL_BINDINGS,
-    LOOKUP_DEFAULT_ROOT_BINDING, LOOKUP_DEFAULT_SAMPLER_BINDING,
-    LOOKUP_DEFAULT_UNIFORM_BINDING, LookupBindings, lookup_wgsl,
+    LOOKUP_DEFAULT_ROOT_BINDING, LOOKUP_DEFAULT_SAMPLER_BINDING, LOOKUP_DEFAULT_UNIFORM_BINDING,
+    LookupBindings, lookup_wgsl,
 };
 
 pub(super) const TEST_BOUNDS_MIN: Vec3 = Vec3::ZERO;
@@ -88,7 +88,13 @@ pub(super) fn run_lookup_probes(
     let cell_size = extent / (ROOT_DIM as f32);
     let voxel_pitch = cell_size.x.min(cell_size.y).min(cell_size.z) / 16.0;
     run_lookup_probes_with_target(
-        device, queue, sampler, bounds, max_subgrids, probe_positions, voxel_pitch,
+        device,
+        queue,
+        sampler,
+        bounds,
+        max_subgrids,
+        probe_positions,
+        voxel_pitch,
     )
 }
 
@@ -172,11 +178,7 @@ pub(super) fn run_lookup_probes_with_target(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    queue.write_buffer(
-        &probe_uniform_buffer,
-        0,
-        bytemuck::bytes_of(&probe_uniform),
-    );
+    queue.write_buffer(&probe_uniform_buffer, 0, bytemuck::bytes_of(&probe_uniform));
 
     // Bind group 0 — probe-local resources.
     let probe_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -302,12 +304,16 @@ pub(super) fn run_lookup_probes_with_target(
     // LOD 0 only (`base_lod = 0` invariant); the downsample chain
     // fills LODs 1..3 via the box-filter cascade.
     classify.record(
-        device, queue, &mut encoder, &grid, &sampler_bg, 0, DEFAULT_MARGIN,
+        device,
+        queue,
+        &mut encoder,
+        &grid,
+        &sampler_bg,
+        0,
+        DEFAULT_MARGIN,
     );
     populate.record_finalize(device, &mut encoder, &grid, 0);
-    populate.record_populate(
-        device, queue, &mut encoder, &grid, &sampler_bg, 0,
-    );
+    populate.record_populate(device, queue, &mut encoder, &grid, &sampler_bg, 0);
     for cascade_idx in 0..(CASCADE_COUNT as u32) {
         downsample.record_cascade(device, &mut encoder, &grid, cascade_idx);
     }

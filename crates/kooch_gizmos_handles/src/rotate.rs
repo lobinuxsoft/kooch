@@ -73,12 +73,11 @@ impl Handle for RotateHandle {
 
     fn drag(&self, drag: DragInfo, frame: HandleFrame) -> TransformDelta {
         let axis = frame.world_axis(self.axis);
-        let start_hit = ray_vs_plane(drag.start_ray, frame.origin, axis)
-            .map(|t| drag.start_ray.at(t));
-        let last_hit = ray_vs_plane(drag.last_ray, frame.origin, axis)
-            .map(|t| drag.last_ray.at(t));
-        let curr_hit = ray_vs_plane(drag.current_ray, frame.origin, axis)
-            .map(|t| drag.current_ray.at(t));
+        let start_hit =
+            ray_vs_plane(drag.start_ray, frame.origin, axis).map(|t| drag.start_ray.at(t));
+        let last_hit = ray_vs_plane(drag.last_ray, frame.origin, axis).map(|t| drag.last_ray.at(t));
+        let curr_hit =
+            ray_vs_plane(drag.current_ray, frame.origin, axis).map(|t| drag.current_ray.at(t));
         let (start_hit, last_hit, curr_hit) = match (start_hit, last_hit, curr_hit) {
             (Some(s), Some(l), Some(c)) => (s, l, c),
             _ => return TransformDelta::Rotation(Quat::IDENTITY),

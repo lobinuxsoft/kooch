@@ -112,16 +112,8 @@ fn higher_lod_rings_load_coarser_grid_chunks() {
     activate_chunks(&[(DVec3::ZERO, 0)], &mut m, &cfg);
     m.process_queues(usize::MAX, 0);
 
-    let lod0_count = m
-        .active
-        .keys()
-        .filter(|id| id.level == 0)
-        .count();
-    let lod2_count = m
-        .active
-        .keys()
-        .filter(|id| id.level == 2)
-        .count();
+    let lod0_count = m.active.keys().filter(|id| id.level == 0).count();
+    let lod2_count = m.active.keys().filter(|id| id.level == 2).count();
     assert!(lod0_count > 0, "expected at least one LOD 0 chunk");
     assert!(lod2_count > 0, "expected at least one LOD 2 chunk");
 }
@@ -198,12 +190,7 @@ fn cached_chunk_boundary_cross_triggers_work() {
     let mut cache = FocusCacheState::default();
     let cfg = one_ring(0, 100.0);
 
-    activate_chunks_cached(
-        &[(entity(1), DVec3::ZERO, 0)],
-        &mut cache,
-        &mut m,
-        &cfg,
-    );
+    activate_chunks_cached(&[(entity(1), DVec3::ZERO, 0)], &mut cache, &mut m, &cfg);
     m.process_queues(usize::MAX, 0);
     let loaded_initial = m.loaded_count();
 
@@ -245,12 +232,7 @@ fn cached_purges_dropped_focus() {
     assert_eq!(cache.tracked_count(), 2);
 
     // Tick again with only entity 1 — entity 2 is purged.
-    activate_chunks_cached(
-        &[(entity(1), DVec3::ZERO, 0)],
-        &mut cache,
-        &mut m,
-        &cfg,
-    );
+    activate_chunks_cached(&[(entity(1), DVec3::ZERO, 0)], &mut cache, &mut m, &cfg);
     assert_eq!(cache.tracked_count(), 1);
 }
 
