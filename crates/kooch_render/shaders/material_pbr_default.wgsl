@@ -84,7 +84,7 @@ fn fs_material(in: FsInput) -> @location(0) vec4<f32> {
     }
     if (screen.debug_mode == DEBUG_MODE_SHADOW_CASCADES) {
         let vd = dot(surf.world_position - inti.camera_position, inti.camera_forward);
-        return vec4<f32>(inti_shadow_debug(surf.world_position, vd), 1.0);
+        return vec4<f32>(inti_shadow_debug(surf.world_position, world_n, vd), 1.0);
     }
     if (screen.debug_mode == DEBUG_MODE_CONTACT_SHADOWS) {
         return vec4<f32>(

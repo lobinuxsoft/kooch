@@ -25,18 +25,59 @@ struct ContactShadowProbe {
     ray_px: f32,
 }
 
+/// Half the world-space size of one depth texel at `distance`.
+///
+/// 🔴 The number the march has to clear before its first sample means
+/// anything. Bevy never needs it: their march is compiled only behind
+/// `#ifdef DEPTH_PREPASS` (`pbr_functions.wgsl:299`), so the ray's
+/// origin and the depth buffer came out of the same rasteriser with the
+/// same matrix and agree to the bit inside the origin's own texel. This
+/// engine reconstructs the origin from the **visibility buffer** by
+/// barycentrics instead — a different arithmetic path to the same point
+/// — and inside that texel the comparison is decided by the last bit.
+/// Which way it falls depends on the jitter, so it lands as salt and
+/// pepper rather than as a shape.
+///
+/// A texel's world size grows linearly with distance, which is why this
+/// is computed rather than authored: a fixed offset is a crater up close
+/// and nothing at range.
+fn contact_shadow_texel_world_size(view_distance: f32) -> f32 {
+    // `view_proj[1][1]` carries `1 / tan(fov_y / 2)` and nothing else on
+    // the Y axis, so the frustum's vertical extent at `view_distance` is
+    // `2 * view_distance / m11` and one texel is that over the height.
+    let m11 = max(1e-6, abs(contact_shadow.view_proj[1][1]));
+    let size = vec2<f32>(textureDimensions(depth_prepass_texture));
+    return view_distance / (m11 * max(1.0, size.y));
+}
+
 /// Bevy 0.19, `pbr_functions.wgsl:298`. Their `#ifdef BLUE_NOISE_TEXTURE`
 /// branch is resolved to the `interleaved_gradient_noise` side, which is
 /// what a view without a blue-noise texture takes.
+///
+/// The one addition is `normal`, and what it is for is above.
 fn calculate_contact_shadow(
-    world_position: vec3<f32>,
+    world_position_in: vec3<f32>,
+    normal: vec3<f32>,
     frag_coord: vec2<f32>,
     light_dir: vec3<f32>,
     contact_shadow_steps: u32,
 ) -> ContactShadowProbe {
     let noise = interleaved_gradient_noise(frag_coord, contact_shadow.frame);
-
     let depth_size = vec2<f32>(textureDimensions(depth_prepass_texture));
+
+    // Lift the ray off the surface by one texel's worth of world, along
+    // the normal. Along the normal rather than along the ray because the
+    // gap that matters is to the *surface*, and a ray grazing it would
+    // need an unbounded push to clear the same gap.
+    //
+    // The distance comes straight back out of `ndc.z`, which is the
+    // whole point of the projection having no far plane: `near / ndc.z`
+    // is metres, with no second uniform and no second code path.
+    let origin_ndc = position_world_to_ndc(world_position_in);
+    let view_distance = perspective_camera_near() / max(1e-6, origin_ndc.z);
+    let world_position =
+        world_position_in + normal * contact_shadow_texel_world_size(view_distance);
+
     var rm = depth_ray_march_new_from_depth(depth_size);
     depth_ray_march_from_cs(&rm, position_world_to_ndc(world_position));
     depth_ray_march_to_ws(&rm, world_position + light_dir * contact_shadow.ray_length);
@@ -66,14 +107,16 @@ fn calculate_contact_shadow(
 /// edge rather than popping.
 fn inti_contact_shadow(
     world_position: vec3<f32>,
+    normal: vec3<f32>,
     to_light: vec3<f32>,
     frag_coord: vec2<f32>,
 ) -> f32 {
-    return inti_contact_shadow_probe(world_position, to_light, frag_coord).shadow;
+    return inti_contact_shadow_probe(world_position, normal, to_light, frag_coord).shadow;
 }
 
 fn inti_contact_shadow_probe(
     world_position: vec3<f32>,
+    normal: vec3<f32>,
     to_light: vec3<f32>,
     frag_coord: vec2<f32>,
 ) -> ContactShadowProbe {
@@ -81,7 +124,7 @@ fn inti_contact_shadow_probe(
         return ContactShadowProbe(1.0, false, 0.0, 0u, 0.0);
     }
     return calculate_contact_shadow(
-        world_position, frag_coord, to_light, contact_shadow.linear_steps);
+        world_position, normal, frag_coord, to_light, contact_shadow.linear_steps);
 }
 
 /// What the march saw at this point, as colour.
