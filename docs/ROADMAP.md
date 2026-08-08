@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-07, `development` at `ff37ad9` — **#735 done**, #476 merged in #749.
+Last updated 2026-08-08, `development` at `ff37ad9` — **#735 done in PR #752**, which also took the camera's far plane (ADR 0002).
 
 ---
 

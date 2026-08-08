@@ -1516,6 +1516,19 @@ va en el tipo — no en un valor que ya significaba otra cosa.
 - **state-of-art production-ready desde commit 1, NO MVP** (`feedback_correct_implementation_day_one`).
 - Cada subtask = 1 commit (`git add` específico, NO `-A` tras fmt).
 - El user maneja el fin de sesión; el smoke visual lo maneja el user (el agente arranca la app y diagnostica).
+- 🔴 **La documentación entra en el MISMO PR que la feature** (regla del user, 2026-08-08).
+  Una tarea no está terminada hasta que la doc dice lo que el código hace. **Antes de dar un PR
+  por cerrado**, revisar y actualizar lo que aplique:
+  - `docs/ROADMAP.md` — el "Next" se mueve y lo hecho baja a `Done`.
+  - `docs/book/src/architecture/*.md` — si cambió cómo funciona algo, no sólo qué hay.
+  - `docs/decisions/NNNN_*.md` — **ADR nuevo** si la decisión es difícil de revertir o si el
+    próximo que la lea sin el contexto la va a deshacer.
+  - `docs/CAPABILITIES.md` — si algo pasó a existir, a ser alcanzable, o quedó huérfano.
+  - Este archivo, si cambió una regla o una decisión sticky.
+
+  **Por qué**: `render-pipeline.md` documentó durante meses dos renderers que no existían y
+  cero meshlets. La doc no se desactualiza de a poco — se desactualiza en el PR que nadie
+  documentó, y a partir de ahí miente.
 
 ## Docs de referencia in-repo
 
@@ -1523,6 +1536,9 @@ va en el tipo — no en un valor que ya significaba otra cosa.
   *decisiones*; el roadmap manda en *orden*.
 
 - `docs/decisions/0001_mesh_format.md` — mesh format ADR (glTF + OBJ).
+- `docs/decisions/0002_infinite_reverse_z.md` — la cámara no tiene plano far. Léelo antes de
+  tocar cualquier cosa que lea el depth buffer: `ndc.z == near / distancia` es exacto, y media
+  docena de técnicas futuras dependen de eso.
 - `docs/research/stack_decisions_2026-05-02.md` — stack choices + rationale.
 - `docs/research/implementation_checklist_2026-05-02.md` — phased roadmap con exit gates.
 - `docs/research/editor-three-system-architecture.md`, `sdf-csg-composition.md`, `wgpu-capabilities.md`.

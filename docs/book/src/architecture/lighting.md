@@ -194,11 +194,99 @@ than Unity's single full `spotAngle`. `gizmos/lights.rs` chose that
 convention when it drew the cone and wrote down that the lighting work
 would either honour it or draw a cone half the width it lights.
 
+## Shadows
+
+Two techniques, and they compose rather than compete because each is
+worst where the other is best.
+
+### Cascades, for the scene (#476)
+
+Four cascades fitted to slices of the view frustum, rendered into one
+atlas, sampled with **Castaño '13** — nine bilinear taps — under a PCSS
+penumbra that widens with the gap between blocker and receiver
+(`sun_softness` is the tangent of the sun's angular radius, not a width).
+
+Only the **first active directional light** casts. A punctual light needs
+a cube map or a projected map, and neither exists yet.
+
+The cascade fit is the one thing in the renderer that still asks for a
+**bounded** projection — a slice of an unbounded frustum is unbounded.
+See [ADR 0002](../../../decisions/0002_infinite_reverse_z.md).
+
+### Contact shadows, for the last few centimetres (#735)
+
+A cascade is correct at range and worst exactly at contact: at the texel
+density it can afford, the few centimetres where an object meets the
+ground is where its shadow detaches or swims, and that is what makes
+things look like they float over a scene rather than stand in it.
+
+A short ray marched through the **depth buffer**, from the shaded point
+towards each light that opted in. Screen-space, so it **costs the same at
+any world scale** — a ray a few pixels long is a few pixels long whether
+the object is a crate or a moon.
+
+The march is `bevy_raymarch.wgsl`: Bevy 0.19's `bevy_pbr::raymarch`
+**copied**, licence header intact. Diff it against upstream rather than
+reasoning about it. What is this engine's lives in `contact_shadow.wgsl`
+(bindings, the four view helpers the port imports) and
+`contact_shadow_apply.wgsl` (the call, the debug probe, the lift below) —
+the line between the two is a file boundary, not a judgement call.
+
+🔴 **The one thing that could not be copied.** Bevy's march is compiled
+only behind `#ifdef DEPTH_PREPASS`, so their ray's origin and their depth
+buffer came out of the same rasteriser with the same matrix and agree to
+the bit inside the origin's own texel. This engine reconstructs the
+origin from the **visibility buffer** by barycentrics — a second
+arithmetic path to the same point — and inside that texel the comparison
+is decided by the last bit, with the jitter picking which way. It renders
+as salt and pepper across every lit surface.
+
+The fix is a **lift**: the ray starts one depth texel off the surface
+along the normal, divided by `n·v`. Both factors are derived, not
+authored — the texel's world size from `view_proj[1][1]` and the buffer
+height, the distance from `near / ndc.z`. The `n·v` term is the
+slope-scaled depth bias every shadow map uses: a depth texel is a
+*screen* quantity, so it spans more surface the more oblique the surface
+is, and the error inside it grows in the same proportion. Clamped at four
+texels, because `n·v → 0` at a silhouette and an unbounded lift would
+throw the ray clear of the object.
+
+Per light, opt-in (`DirectionalLight::contact_shadows` on by default,
+punctual lights off): the cost scales with **light count**, and a scene
+has one sun and can have fifty lamps. The whole feature turns off with
+`contact_shadow_steps = 0`.
+
+⚠️ Screen-space means an occluder off-screen or behind the camera does
+not exist; the ray is clipped to the frustum and reports no hit, so the
+shadow fades at the screen edge rather than popping.
+
+⚠️ **The seam is real and is not a bug.** Next to a nine-tap penumbra, a
+contact shadow is one ray with a hard hit/miss answer, so the boundary
+between pixels that find an occluder and pixels that do not is a
+discontinuity in *coverage*. No curve applied to the hit smooths it —
+softening Bevy's remap was tried, cost the shadow 30% of its strength for
+nothing, and was reverted. Only averaging fixes it, spatially or
+temporally, and temporally is #732. Bevy has the same seam and leaves it
+to their TAA.
+
+### Seeing what the shadow system did
+
+Two debug views, because "no light reaches this" and "something shadows
+this" look identical in a shaded frame and have different fixes.
+
+- **Shadow cascades** — Bevy's flat per-cascade hue, dimmed by
+  `inti_sample_cascade`, *the same call the shading pass makes*. Magenta:
+  nothing casts. Black: inside no cascade volume.
+- **Contact shadows** — red: the march hit on its first step, which is
+  the surface occluding itself. Green: a real occluder. Blue: the ray was
+  under two pixels long. Grey: marched and found nothing.
+
 ## What Inti does not do yet
 
-- **No shadows.** Lit-with-no-shadows is an honest intermediate state and
-  already looks far better than a normal painted as colour, but nothing
-  tells you where anything is touching.
+- **No punctual shadows.** Point and spot lights carry `cast_shadows`
+  and nothing reads it; a contact shadow is currently the only shadow
+  they cast, which grounds an object without occluding it from anything
+  else in the room.
 - **No clustering.** The shader loops over every light for every pixel.
   `extract_lights` warns past 256 and never clips — silently dropping a
   scene's lights is worse than rendering it slowly. Bevy moved theirs to
