@@ -1,7 +1,7 @@
 //! #761 — a materialised engine has to say *which* source it came from,
 //! not merely that it looks like an engine.
 
-use super::stamp::{EngineStamp, STAMP_FILE};
+use super::stamp::{Check, EngineStamp, STAMP_FILE};
 use super::*;
 
 /// Same fixture shape as the sibling suite: enough to pass
@@ -228,6 +228,92 @@ fn moving_a_file_changes_the_stamp() {
         EngineStamp::of_tree(&before).unwrap(),
         EngineStamp::of_tree(&after).unwrap(),
     );
+}
+
+/// 🔴 The blind spot the stamp comparison has by construction: deleting
+/// a file from a copy does not change what the copy *claims* to be, so
+/// nothing else on this path can see it.
+#[test]
+fn a_missing_file_is_found_by_checking_the_tree() {
+    let dir = tmp("damaged");
+    let (engine, home) = (dir.join("engine_src"), dir.join("home"));
+    fake_engine(&engine);
+    let dest = home.join("0.1.0/engine");
+    ensure_current_in(&dest, Some(&engine)).unwrap();
+    assert_eq!(EngineStamp::check(&dest).unwrap(), Check::Match);
+
+    fs::remove_file(dest.join("crates/kooch_core/src/lib.rs")).unwrap();
+
+    assert!(
+        matches!(EngineStamp::check(&dest).unwrap(), Check::Differs { .. }),
+        "a deleted source file left the engine reporting itself intact",
+    );
+    // And the cheap check still says up to date, which is exactly why
+    // the expensive one exists.
+    assert_eq!(
+        EngineStamp::read(&dest),
+        Some(EngineStamp::of_source(&engine).unwrap()),
+    );
+}
+
+/// The other half: finding the damage is only useful if something acts
+/// on it. `KOOCH_VERIFY_ENGINE` turns the check on and a mismatch
+/// re-copies, which is the repair.
+#[test]
+fn verifying_repairs_a_damaged_engine() {
+    let dir = tmp("repairs");
+    let (engine, home) = (dir.join("engine_src"), dir.join("home"));
+    fake_engine(&engine);
+    let dest = home.join("0.1.0/engine");
+    ensure_current_in(&dest, Some(&engine)).unwrap();
+    let gone = dest.join("crates/kooch_core/src/lib.rs");
+    fs::remove_file(&gone).unwrap();
+
+    // Off by default — it reads the whole tree on a path that runs every
+    // time a project opens.
+    let (state, _) = ensure_current_in(&dest, Some(&engine)).unwrap();
+    assert_eq!(state, VendorState::UpToDate);
+    assert!(
+        !gone.exists(),
+        "the damage was repaired without being asked"
+    );
+
+    // SAFETY: single-threaded suite; see the sibling module's env tests.
+    unsafe { std::env::set_var("KOOCH_VERIFY_ENGINE", "1") };
+    let (state, _) = ensure_current_in(&dest, Some(&engine)).unwrap();
+    unsafe { std::env::remove_var("KOOCH_VERIFY_ENGINE") };
+
+    assert_eq!(state, VendorState::Replaced);
+    assert!(gone.is_file(), "the missing file was not restored");
+}
+
+/// A truncated file is the disk-full case, and the one a size-blind
+/// check would wave through.
+#[test]
+fn a_truncated_file_is_found_by_checking_the_tree() {
+    let dir = tmp("truncated");
+    let (engine, home) = (dir.join("engine_src"), dir.join("home"));
+    fake_engine(&engine);
+    let dest = home.join("0.1.0/engine");
+    ensure_current_in(&dest, Some(&engine)).unwrap();
+
+    fs::write(dest.join("src/lib.rs"), "").unwrap();
+
+    assert!(matches!(
+        EngineStamp::check(&dest).unwrap(),
+        Check::Differs { .. }
+    ));
+}
+
+/// Nothing recorded is not damage — it is the stale case, which the
+/// cheap comparison already replaces.
+#[test]
+fn a_tree_with_no_stamp_reports_no_stamp() {
+    let dir = tmp("check_unstamped");
+    let engine = dir.join("engine_src");
+    fake_engine(&engine);
+
+    assert_eq!(EngineStamp::check(&engine).unwrap(), Check::NoStamp);
 }
 
 /// Recomputing on every open would read 8 MB each time a project is

@@ -108,9 +108,8 @@ const REQUIRED: [&str; 3] = ["Cargo.toml", "crates", "src"];
 /// `templates/` was missed exactly that way: `kooch_editor_core` reaches
 /// it with `include_str!("../../../../templates/…")`, so the crate
 /// compiles inside the engine repo and not inside a vendored copy.
-/// `every_directory_the_source_reaches_for_is_vendored` scans for that
-/// pattern so the next one is a test failure instead of a ten-minute
-/// build.
+/// `reach_tests::vendored_includes_all_resolve` scans for that pattern so
+/// the next one is a test failure instead of a ten-minute build.
 const COPY: [&str; 6] = [
     "Cargo.toml",
     "Cargo.lock",
@@ -342,7 +341,7 @@ pub fn ensure_current_in(
     // — which is how a new install went on compiling projects against
     // stale source in silence (#761).
     let stamp = EngineStamp::of_source(source)?;
-    if present && EngineStamp::read(&dest).as_ref() == Some(&stamp) {
+    if present && EngineStamp::read(&dest).as_ref() == Some(&stamp) && !damaged(&dest) {
         return Ok((VendorState::UpToDate, Some(dest)));
     }
 
@@ -354,6 +353,49 @@ pub fn ensure_current_in(
         },
         Some(dest),
     ))
+}
+
+/// Whether `dest` no longer holds what its own stamp says, so it should
+/// be replaced even though the source has not changed.
+///
+/// **Off unless `KOOCH_VERIFY_ENGINE` is set**, because it reads the
+/// whole 8 MB tree and this runs every time a project opens. The stamp
+/// comparison above catches a stale engine; it cannot catch a damaged
+/// one, since deleting a file from a copy does not alter what the copy
+/// claims to be.
+///
+/// Reports rather than returns detail: the only decision downstream is
+/// whether to re-copy, and everything worth reading — which hash, which
+/// directory — belongs in a log rather than in a bool's type.
+fn damaged(dest: &Path) -> bool {
+    if std::env::var_os("KOOCH_VERIFY_ENGINE").is_none() {
+        return false;
+    }
+    match EngineStamp::check(dest) {
+        Ok(stamp::Check::Match) => false,
+        Ok(stamp::Check::Differs { recorded, actual }) => {
+            tracing::warn!(
+                path = %dest.display(),
+                recorded = format!("{recorded:016x}"),
+                actual = format!("{actual:016x}"),
+                "the vendored engine is not what it records — re-materialising",
+            );
+            true
+        }
+        // Unstamped is not damage: the stamp comparison above already
+        // treats it as stale and is about to replace the directory.
+        Ok(stamp::Check::NoStamp) => false,
+        // A tree that cannot be read is a tree that cannot be trusted,
+        // and re-copying is the repair.
+        Err(e) => {
+            tracing::warn!(
+                path = %dest.display(),
+                error = %e,
+                "the vendored engine could not be verified",
+            );
+            true
+        }
+    }
 }
 
 /// Puts `source` at `dest`, replacing whatever was there, leaving one
@@ -410,3 +452,6 @@ mod tests;
 
 #[cfg(test)]
 mod stamp_tests;
+
+#[cfg(test)]
+mod reach_tests;

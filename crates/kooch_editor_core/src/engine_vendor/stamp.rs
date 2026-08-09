@@ -120,9 +120,51 @@ impl EngineStamp {
         fs::write(Self::path_in(dir), text).map_err(VendorError::Io)
     }
 
+    /// Whether `dir` still holds the tree its own stamp claims.
+    ///
+    /// Answers a different question from the one
+    /// [`ensure_current`](super::ensure_current) asks. That one compares a
+    /// *source* against a destination's stamp — "is this editor's engine
+    /// the one on disk". This re-reads the destination and compares it
+    /// against itself: a file deleted, truncated or edited after the copy
+    /// changes nothing about the stamp, so nothing else would ever notice.
+    ///
+    /// ⚠️ **Reads the whole tree** — 8 MB. Never on the open path; it is
+    /// behind `KOOCH_VERIFY_ENGINE`, and repairing is what a mismatch is
+    /// good for.
+    pub fn check(dir: &Path) -> Result<Check, VendorError> {
+        let Some(recorded) = Self::read(dir) else {
+            return Ok(Check::NoStamp);
+        };
+        let actual = Self::of_tree(dir)?;
+        Ok(match actual.tree_hash == recorded.tree_hash {
+            true => Check::Match,
+            false => Check::Differs {
+                recorded: recorded.tree_hash,
+                actual: actual.tree_hash,
+            },
+        })
+    }
+
     fn path_in(dir: &Path) -> PathBuf {
         dir.join(STAMP_FILE)
     }
+}
+
+/// What [`EngineStamp::check`] found.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Check {
+    /// The tree is what its stamp says.
+    Match,
+    /// It is not: something was removed, truncated or edited.
+    Differs {
+        /// What the stamp records.
+        recorded: u64,
+        /// What the tree hashes to now.
+        actual: u64,
+    },
+    /// Nothing to check against.
+    NoStamp,
 }
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;

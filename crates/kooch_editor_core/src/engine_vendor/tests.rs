@@ -255,9 +255,9 @@ fn the_vendored_engine_contains_no_test_code() {
 /// 🔴 The licence is not optional and not a courtesy copy: the
 /// facade compiles it in with `include_str!`, so a materialised
 /// engine missing it fails to build. This asserts the vendor
-/// carries it, and the scanning test above independently asserts
-/// that anything the source `include_str!`s is vendored — two
-/// different reasons for the same file to be there.
+/// carries it by name, and `reach_tests` independently asserts that
+/// anything the source `include_str!`s is vendored — two different
+/// reasons for the same file to be there.
 #[test]
 fn the_licence_travels_with_the_engine() {
     let dir = tmp("licence");
