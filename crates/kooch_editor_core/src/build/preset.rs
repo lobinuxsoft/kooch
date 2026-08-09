@@ -57,8 +57,9 @@ pub struct BuildPreset {
 
     /// Name of the produced executable, without an extension.
     ///
-    /// Empty uses the crate's own name. Windows gets `.exe` added
-    /// whatever this says.
+    /// Empty uses the crate's own name. The extension is added for you
+    /// and follows the target: `.exe` on Windows, the architecture on
+    /// Linux (`.x86_64`, `.aarch64`) the way Unity and Godot name theirs.
     #[serde(default)]
     pub executable_name: String,
 
@@ -146,16 +147,39 @@ impl BuildPreset {
             .collect()
     }
 
-    /// The executable's file name for `target`, extension included.
+    /// The executable's file name for this preset's target, extension
+    /// included.
+    ///
+    /// # Why Linux gets an extension at all
+    ///
+    /// It does not need one — an ELF is executable because of its mode
+    /// and its header, not its name. `.x86_64` is the convention Unity
+    /// and Godot use in their Linux exports, and it earns its place the
+    /// moment a folder holds more than one platform: `game.exe` beside a
+    /// bare `game` is ambiguous about which is which, and about whether
+    /// the second one is a script.
+    ///
+    /// ⚠️ Never `.sh`. That is a text script the shell interprets; this
+    /// is a compiled binary, and the extension would make some file
+    /// managers offer to open it in an editor.
     pub fn binary_name(&self, crate_name: &str) -> String {
         let stem = match self.executable_name.trim() {
             "" => crate_name,
             name => name,
         };
-        match self.target_triple.contains("windows") {
-            true => format!("{stem}.exe"),
-            false => stem.to_owned(),
+        let triple = self.target_triple.trim();
+        if triple.contains("windows") {
+            return format!("{stem}.exe");
         }
+        // Read off the triple rather than assumed: a build for
+        // `aarch64-unknown-linux-gnu` is not an `x86_64` one, and a name
+        // that says otherwise is worse than no name at all. An empty
+        // triple means this machine, so its own architecture answers.
+        let arch = match triple.split('-').next().unwrap_or_default() {
+            "" => std::env::consts::ARCH,
+            arch => arch,
+        };
+        format!("{stem}.{arch}")
     }
 
     /// Whether this preset builds for the machine running the editor.

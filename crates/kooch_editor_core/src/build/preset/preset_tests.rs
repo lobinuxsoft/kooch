@@ -28,18 +28,42 @@ fn no_features_is_an_empty_list() {
     assert!(BuildPreset::default().feature_list().is_empty());
 }
 
-/// A Windows build needs the suffix whatever the name field says, and a
-/// Linux one must not get it.
+/// Windows gets `.exe`; Linux gets its architecture, the way Unity and
+/// Godot name their exports. A folder holding both is unambiguous.
 #[test]
-fn windows_gets_an_exe_suffix() {
+fn each_platform_gets_its_extension() {
     let windows = BuildPreset {
         target_triple: "x86_64-pc-windows-gnu".to_owned(),
         ..Default::default()
     };
-    let linux = BuildPreset::default();
+    let linux = BuildPreset {
+        target_triple: "x86_64-unknown-linux-gnu".to_owned(),
+        ..Default::default()
+    };
 
     assert_eq!(windows.binary_name("demo"), "demo.exe");
-    assert_eq!(linux.binary_name("demo"), "demo");
+    assert_eq!(linux.binary_name("demo"), "demo.x86_64");
+}
+
+/// 🔴 Read off the triple, not assumed. A build for ARM named
+/// `.x86_64` is a name that lies about what it runs on.
+#[test]
+fn the_architecture_comes_from_the_triple() {
+    let arm = BuildPreset {
+        target_triple: "aarch64-unknown-linux-gnu".to_owned(),
+        ..Default::default()
+    };
+
+    assert_eq!(arm.binary_name("demo"), "demo.aarch64");
+}
+
+/// An empty triple means this machine, so its own architecture answers.
+#[test]
+fn a_host_build_uses_this_machines_arch() {
+    assert_eq!(
+        BuildPreset::default().binary_name("demo"),
+        format!("demo.{}", std::env::consts::ARCH),
+    );
 }
 
 #[test]
@@ -49,7 +73,10 @@ fn an_explicit_name_wins_over_the_crate() {
         ..Default::default()
     };
 
-    assert_eq!(preset.binary_name("demo"), "My Game");
+    assert_eq!(
+        preset.binary_name("demo"),
+        format!("My Game.{}", std::env::consts::ARCH),
+    );
 }
 
 #[test]

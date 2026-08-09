@@ -109,7 +109,10 @@ fn a_package_holds_the_game_its_scenes_and_a_pack() {
     let out = run(&dir, &BuildPreset::default()).unwrap();
 
     assert!(out.binary.is_file());
-    assert_eq!(out.binary.file_name().unwrap(), "demo");
+    assert_eq!(
+        out.binary.file_name().unwrap().to_string_lossy(),
+        format!("demo.{}", std::env::consts::ARCH),
+    );
     assert!(out.dir.join(PACK_FILE).is_file());
     assert_eq!(out.scenes, 1);
     // 🔴 Inside the pack, not beside it. A scene is the structure of the
