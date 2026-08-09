@@ -41,11 +41,13 @@
 //! wrong here.
 
 mod error;
+mod packs;
 mod server;
 mod trait_def;
 mod written;
 
 #[cfg(test)]
+mod pack_tests;
 mod tests;
 
 pub use error::{AssetError, AssetResult};
