@@ -146,6 +146,85 @@ fn the_built_binary_is_where_cargo_puts_it() {
     );
 }
 
+/// A preset with a glibc floor goes through zigbuild, and the version
+/// rides on the target rather than being passed separately — that is the
+/// only spelling zigbuild reads.
+#[test]
+fn a_glibc_floor_goes_through_zigbuild() {
+    let preset = BuildPreset {
+        target_triple: "x86_64-unknown-linux-gnu".to_owned(),
+        min_glibc: "2.28".to_owned(),
+        ..Default::default()
+    };
+
+    let args = args(&preset);
+    assert_eq!(args[0], "zigbuild");
+    let at = args.iter().position(|a| a == "--target").unwrap();
+    assert_eq!(args[at + 1], "x86_64-unknown-linux-gnu.2.28");
+}
+
+/// 🔴 Without a `--target` zigbuild has nothing to attach the version to
+/// and the floor is silently ignored — a build that looks like it worked
+/// and still will not start on the handheld. So a host preset gains one.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_floor_gives_a_host_build_a_target() {
+    let preset = BuildPreset {
+        min_glibc: "2.28".to_owned(),
+        ..Default::default()
+    };
+
+    let args = args(&preset);
+    let at = args.iter().position(|a| a == "--target").unwrap();
+    assert!(args[at + 1].ends_with(".2.28"), "{}", args[at + 1]);
+    // And cargo puts anything with a target under its own folder, so the
+    // packager has to look there rather than in `target/release`.
+    let built = built_binary(&preset, Path::new("/proj"), "demo");
+    let built = built.to_string_lossy();
+    assert!(
+        built.starts_with("/proj/target/") && built.ends_with("/release/demo"),
+        "{built}",
+    );
+    assert_ne!(built, "/proj/target/release/demo");
+}
+
+/// The floor is a glibc version, so it means nothing for a target that
+/// does not have one — and passing `x86_64-pc-windows-gnu.2.28` fails.
+#[test]
+fn a_floor_is_ignored_off_linux() {
+    let preset = BuildPreset {
+        target_triple: "x86_64-pc-windows-gnu".to_owned(),
+        min_glibc: "2.28".to_owned(),
+        ..Default::default()
+    };
+
+    let args = args(&preset);
+    assert_eq!(args[0], "build");
+    let at = args.iter().position(|a| a == "--target").unwrap();
+    assert_eq!(args[at + 1], "x86_64-pc-windows-gnu");
+}
+
+/// 🔴 The link fails on symbols of the *build machine's* libasound, which
+/// is not the library the game loads. Only when a floor was asked for, and
+/// appended so a project's own flags survive.
+#[test]
+fn a_floor_allows_undefined_host_symbols() {
+    let flags = |preset: &BuildPreset| -> Option<String> {
+        cargo_command(preset, Path::new("/proj"), "demo")
+            .get_envs()
+            .find(|(k, _)| *k == "RUSTFLAGS")
+            .and_then(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+    };
+
+    let floored = BuildPreset {
+        target_triple: "x86_64-unknown-linux-gnu".to_owned(),
+        min_glibc: "2.28".to_owned(),
+        ..Default::default()
+    };
+    assert!(flags(&floored).unwrap().contains("--allow-shlib-undefined"));
+    assert!(flags(&BuildPreset::default()).is_none());
+}
+
 /// The manifest is named explicitly: cargo run from the editor's own
 /// working directory would otherwise build the editor's workspace.
 #[test]

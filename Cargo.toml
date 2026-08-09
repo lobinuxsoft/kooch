@@ -219,6 +219,11 @@ path = "examples/package_editor.rs"
 required-features = ["editor"]
 
 [[example]]
+name = "package_appimage"
+path = "examples/package_appimage.rs"
+required-features = ["editor"]
+
+[[example]]
 name = "load_project_smoke"
 path = "examples/load_project_smoke.rs"
 required-features = ["editor", "dynamic"]

@@ -211,9 +211,15 @@ impl Drop for BuildJob {
 /// enable (#558), and asking for it by accident is the one way to put the
 /// editor back into a release.
 pub fn cargo_command(preset: &BuildPreset, project_root: &Path, crate_name: &str) -> Command {
+    let floor = preset.glibc_floor();
     let mut command = Command::new("cargo");
+    // `zigbuild` is a cargo subcommand, so everything after it is the
+    // ordinary `build` invocation — only the linker changes.
     command
-        .arg("build")
+        .arg(match floor {
+            Some(_) => "zigbuild",
+            None => "build",
+        })
         .arg("--manifest-path")
         .arg(project_root.join("Cargo.toml"))
         .arg("--bin")
@@ -221,8 +227,16 @@ pub fn cargo_command(preset: &BuildPreset, project_root: &Path, crate_name: &str
     if preset.release {
         command.arg("--release");
     }
-    if !preset.target_triple.trim().is_empty() {
-        command.arg("--target").arg(preset.target_triple.trim());
+    if let Some(triple) = build_triple(preset) {
+        // `x86_64-unknown-linux-gnu.2.28` — zigbuild's own spelling for
+        // "this target, against that glibc".
+        command.arg("--target").arg(match floor {
+            Some(floor) => format!("{triple}.{floor}"),
+            None => triple,
+        });
+    }
+    if floor.is_some() {
+        allow_shlib_undefined(&mut command);
     }
     let features = preset.feature_list();
     if !features.is_empty() {
@@ -238,11 +252,64 @@ pub fn cargo_command(preset: &BuildPreset, project_root: &Path, crate_name: &str
     command
 }
 
+/// The triple cargo is told to build for, or `None` for "this machine,
+/// however cargo spells it".
+///
+/// 🔴 A glibc floor forces one even when the preset asked for the host.
+/// `cargo zigbuild` has nothing to attach the version to without an
+/// explicit `--target`, and without it the floor is silently ignored —
+/// a build that looks like it worked and still will not start on the
+/// handheld.
+fn build_triple(preset: &BuildPreset) -> Option<String> {
+    let triple = preset.target_triple.trim();
+    if !triple.is_empty() {
+        return Some(triple.to_owned());
+    }
+    preset.glibc_floor().and_then(|_| host_triple())
+}
+
+/// What `rustc` calls this machine.
+///
+/// Asked rather than assembled from `std::env::consts`: those give
+/// `x86_64` and `linux` with no vendor and no ABI, and the triple has to
+/// match a directory cargo will create exactly.
+fn host_triple() -> Option<String> {
+    let out = Command::new("rustc").arg("-vV").output().ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .map(|t| t.trim().to_owned())
+}
+
+/// Lets the link go through with symbols the *host's* shared libraries
+/// need and the target's glibc does not have.
+///
+/// 🔴 Measured, not guessed. Linking a game against a 2.28 sysroot fails
+/// on `pthread_join@GLIBC_2.34 referenced by /usr/lib64/libasound.so` —
+/// symbols of the **build machine's** ALSA, which is not the one the game
+/// loads. At runtime the target's `ld.so` resolves them against the
+/// target's own libc, where they exist. The check is asking a question
+/// about the wrong machine.
+///
+/// It stays narrow: only when a floor was asked for, and appended so a
+/// project's own `RUSTFLAGS` survive instead of being replaced.
+fn allow_shlib_undefined(command: &mut Command) {
+    const FLAG: &str = "-C link-arg=-Wl,--allow-shlib-undefined";
+    let flags = match std::env::var("RUSTFLAGS") {
+        Ok(existing) if !existing.trim().is_empty() => format!("{existing} {FLAG}"),
+        _ => FLAG.to_owned(),
+    };
+    command.env("RUSTFLAGS", flags);
+}
+
 /// Where cargo leaves the executable for this preset.
 pub fn built_binary(preset: &BuildPreset, project_root: &Path, crate_name: &str) -> PathBuf {
     let mut path = project_root.join("target");
-    if !preset.is_host() {
-        path = path.join(preset.target_triple.trim());
+    // 🔴 `build_triple`, not the preset's field: a host build with a
+    // glibc floor is still given a `--target`, and cargo puts anything
+    // with one in `target/<triple>/` rather than `target/`.
+    if let Some(triple) = build_triple(preset) {
+        path = path.join(triple);
     }
     // The name cargo writes, which is the crate's — the preset's own
     // name is what the *copy* is called.
@@ -284,6 +351,11 @@ fn unmigrated_main(project_root: &Path) -> Option<String> {
 /// — that surfaces from cargo, and guessing at it would mean refusing
 /// builds that would have worked.
 fn missing_toolchain(preset: &BuildPreset) -> Option<String> {
+    if preset.glibc_floor().is_some()
+        && let Some(problem) = missing_zig()
+    {
+        return Some(problem);
+    }
     if preset.is_host() {
         return None;
     }
@@ -302,6 +374,50 @@ fn missing_toolchain(preset: &BuildPreset) -> Option<String> {
     Some(format!(
         "the target {triple} is not installed — run:\n  rustup target add {triple}",
     ))
+}
+
+/// What a glibc floor needs and this machine has not got.
+///
+/// Both pieces are checked separately because they are installed
+/// separately and the fix differs: `cargo-zigbuild` is a cargo
+/// subcommand, `zig` is the compiler it drives.
+fn missing_zig() -> Option<String> {
+    let mut missing = Vec::new();
+    if !on_path("cargo-zigbuild", "--version") {
+        missing.push(
+            "cargo-zigbuild — the cargo subcommand:\n  cargo install cargo-zigbuild".to_owned(),
+        );
+    }
+    // ⚠️ `zig version`, not `zig --version` — zig treats the flag as an
+    // unknown command and exits 1, which would report it as missing on a
+    // machine that has it.
+    if !on_path("zig", "version") {
+        // ⚠️ Deliberately not `dnf`/`apt`: an immutable distribution has
+        // no such thing, and the tarball needs no root anywhere.
+        missing.push(
+            "zig — the linker it drives. It is one tarball, no root needed:\n  \
+             https://ziglang.org/download/ — unpack it and put the folder on PATH"
+                .to_owned(),
+        );
+    }
+    if missing.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "this preset asks for a glibc floor, which needs:\n\n{}\n\nOr clear \
+         `min_glibc` to link against this machine's glibc — the build will \
+         then only run on systems at least as new as this one.",
+        missing.join("\n\n"),
+    ))
+}
+
+fn on_path(program: &str, version_arg: &str) -> bool {
+    Command::new(program)
+        .arg(version_arg)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// Forwards a pipe into the shared buffer.

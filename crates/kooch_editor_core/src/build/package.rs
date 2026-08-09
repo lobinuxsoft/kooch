@@ -2,10 +2,14 @@
 //!
 //! ```text
 //! dist/
-//!   mygame              the executable
-//!   scenes/             default.scene, and the rest
-//!   assets.kpack        everything the scenes reference, encrypted
+//!   mygame.x86_64       the executable, named for its target
+//!   assets.kpack        the scenes and everything they reference
 //! ```
+//!
+//! Two files, because the scenes are in the pack as well — see below.
+//! With `pack_assets` off they land beside the executable instead, at the
+//! paths they have in the project (`assets/scenes/default.scene`), which
+//! is the layout the runtime reads either way.
 //!
 //! Takes an executable that is already built. Invoking cargo is a
 //! separate concern with its own failures — a missing toolchain, ten

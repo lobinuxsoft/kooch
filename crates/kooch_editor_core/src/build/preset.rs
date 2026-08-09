@@ -97,6 +97,25 @@ pub struct BuildPreset {
     /// yes, and says so.
     #[serde(default)]
     pub runnable: bool,
+
+    /// Oldest glibc the build has to run on, e.g. `2.28`.
+    ///
+    /// Empty links against this machine's, which is the bug it exists to
+    /// fix: glibc is forward compatible and not backward, so a game built
+    /// on an up-to-date desktop **refuses to start** on a Steam Deck or a
+    /// handheld running an older one — with a message about a missing
+    /// symbol version, which says nothing about what to do.
+    ///
+    /// Set, the build goes through `cargo zigbuild`, which links against
+    /// that version's symbols instead. `2.28` covers everything from
+    /// Debian 10 and RHEL 8 onward and is what Godot's own Linux exports
+    /// target; `2.31` is Ubuntu 20.04.
+    ///
+    /// ⚠️ Needs `zig` and `cargo-zigbuild` — both install without root,
+    /// and the build says so before compiling rather than after. Ignored
+    /// for targets that are not `*-linux-gnu`.
+    #[serde(default)]
+    pub min_glibc: String,
 }
 
 fn default_output_dir() -> String {
@@ -119,6 +138,7 @@ impl Default for BuildPreset {
             features: String::new(),
             pack_assets: true,
             runnable: true,
+            min_glibc: String::new(),
         }
     }
 }
@@ -185,6 +205,24 @@ impl BuildPreset {
     /// Whether this preset builds for the machine running the editor.
     pub fn is_host(&self) -> bool {
         self.target_triple.trim().is_empty()
+    }
+
+    /// The glibc version this build must not go above, if one was asked
+    /// for and the target is one it means anything for.
+    ///
+    /// An empty triple is this machine, and this machine runs Linux
+    /// whenever the editor was compiled for it — so the floor applies
+    /// there too, which is the common case: someone building for their
+    /// own desktop and copying the result to a handheld.
+    pub fn glibc_floor(&self) -> Option<&str> {
+        let floor = self.min_glibc.trim();
+        let triple = self.target_triple.trim();
+        let gnu_linux =
+            triple.contains("linux-gnu") || (triple.is_empty() && cfg!(target_os = "linux"));
+        match !floor.is_empty() && gnu_linux {
+            true => Some(floor),
+            false => None,
+        }
     }
 }
 

@@ -80,8 +80,16 @@ fn draw_presets(
 ) {
     for (guid, name, preset) in &panel.presets {
         let chosen = Some(*guid) == *selected;
+        // The floor earns a place in the label because it is the
+        // difference between a build that runs on the handheld and one
+        // that stops at a missing symbol version — and nothing else in
+        // the row hints at it.
+        let floor = match preset.glibc_floor() {
+            Some(floor) => format!(", glibc {floor}+"),
+            None => String::new(),
+        };
         let label = format!(
-            "{} {name}  ({}, {})",
+            "{} {name}  ({}, {}{floor})",
             match preset.runnable {
                 true => icons::PACKAGE,
                 false => icons::FOLDER,
