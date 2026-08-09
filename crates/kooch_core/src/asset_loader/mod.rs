@@ -62,6 +62,7 @@ pub use error::{AssetError, AssetResult};
 // `AssetPlugin`, the facade — need not take the dependency themselves.
 pub use kooch_pack::{PackKey, SHARES_ENV, SplitKey, key_from_shares, shares_for_build};
 pub use pack_scan::{PackScan, scan_packs};
+pub use packs::read_game_file;
 pub use server::AssetServer;
 pub use trait_def::{AssetLoader, LoadContext};
 pub use written::{Written, asset_written};

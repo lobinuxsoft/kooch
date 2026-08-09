@@ -241,7 +241,7 @@ pub mod prelude {
 /// the historical `assets/` working-directory default.
 #[cfg(feature = "render")]
 fn default_asset_plugin() -> kooch_render::plugin::AssetPlugin {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     let engine_root = std::env::var_os("KOOCH_ENGINE_ROOT").map(PathBuf::from);
     let project_root = std::env::var_os("KOOCH_PROJECT_ROOT").map(PathBuf::from);
@@ -272,7 +272,13 @@ fn default_asset_plugin() -> kooch_render::plugin::AssetPlugin {
     let mut plugin = kooch_render::plugin::AssetPlugin::new().with_root(primary);
     if let Some((pack, key)) = shipped {
         tracing::info!(target: "kooch::shipped", path = %pack.display(), "reading assets from the shipped pack");
-        plugin = plugin.with_pack(pack, key);
+        // 🔴 Mounted over the game folder, not over `assets/`. The pack
+        // holds `assets/…` *and* `scenes/…`, because a scene is the
+        // structure of the whole game and shipping it in plain RON beside
+        // an encrypted pack protects the textures and publishes the
+        // design. One mount covers both.
+        let root = pack.parent().map(Path::to_path_buf).unwrap_or_default();
+        plugin = plugin.with_pack_over(root, pack, key);
     }
     if let Some(project) = project_root {
         let project_assets = project.join("assets");

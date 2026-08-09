@@ -54,7 +54,7 @@ pub struct AssetPlugin {
     /// A `.kpack` to read assets out of instead of the filesystem, and
     /// the key that opens it (#758). `None` in the editor and in any
     /// `cargo run`.
-    pack: Option<(PathBuf, kooch_core::asset_loader::PackKey)>,
+    pack: Option<(PathBuf, PathBuf, kooch_core::asset_loader::PackKey)>,
 }
 
 impl std::fmt::Debug for AssetPlugin {
@@ -152,12 +152,13 @@ impl AssetPlugin {
     /// What a shipped game does. The pack is mounted over the primary
     /// root, so an asset's path is the same string it would have on
     /// disk and nothing downstream learns that packs exist.
-    pub fn with_pack(
+    pub fn with_pack_over(
         mut self,
+        root: impl Into<PathBuf>,
         pack: impl Into<PathBuf>,
         key: kooch_core::asset_loader::PackKey,
     ) -> Self {
-        self.pack = Some((pack.into(), key));
+        self.pack = Some((root.into(), pack.into(), key));
         self
     }
 
@@ -209,8 +210,8 @@ impl Plugin for AssetPlugin {
         // directory to scan, and the pack's index is what stands in for
         // one.
         let mut packed = None;
-        if let Some((path, key)) = &self.pack {
-            match server.mount_pack(self.primary_root().to_path_buf(), path, key) {
+        if let Some((root, path, key)) = &self.pack {
+            match server.mount_pack(root.clone(), path, key) {
                 Ok(entries) => packed = Some(entries),
                 // 🔴 Loud, and not fatal. A game whose pack will not open
                 // has nothing to draw, and the reason — wrong key, damaged

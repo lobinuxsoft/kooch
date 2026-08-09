@@ -168,8 +168,14 @@ impl SceneManager {
     /// camera, gizmos…) survive, because [`sync_scene_to_ecs`] honours
     /// [`EphemeralComponents`](crate::ephemeral::EphemeralComponents).
     pub fn load(&mut self, path: &Path, resources: &mut Resources) -> Result<(), SceneError> {
-        let doc = SceneDocument::load(path)?;
-        let needs_id = Self::lacks_stored_id(path)?;
+        // 🔴 Through the pack-aware reader, and read once. A packaged
+        // game has no `scenes/` directory: its scenes are inside the
+        // pack, and reading the disk here is how a shipped game starts
+        // empty (#758).
+        let bytes = kooch_core::asset_loader::read_game_file(resources, path)?;
+        let text = String::from_utf8_lossy(&bytes);
+        let doc = SceneDocument::parse(&text)?;
+        let needs_id = Self::lacks_stored_id(&text);
         sync_scene_to_ecs(&doc, resources)?;
 
         self.scenes.clear();
@@ -198,8 +204,14 @@ impl SceneManager {
         path: &Path,
         resources: &mut Resources,
     ) -> Result<Guid, SceneError> {
-        let doc = SceneDocument::load(path)?;
-        let needs_id = Self::lacks_stored_id(path)?;
+        // 🔴 Through the pack-aware reader, and read once. A packaged
+        // game has no `scenes/` directory: its scenes are inside the
+        // pack, and reading the disk here is how a shipped game starts
+        // empty (#758).
+        let bytes = kooch_core::asset_loader::read_game_file(resources, path)?;
+        let text = String::from_utf8_lossy(&bytes);
+        let doc = SceneDocument::parse(&text)?;
+        let needs_id = Self::lacks_stored_id(&text);
 
         if self.scene(doc.id).is_some() {
             return Err(SceneError::Io(std::io::Error::new(
@@ -245,7 +257,7 @@ impl SceneManager {
     /// Parsed rather than searched for `"id:"`: entity names are free text,
     /// so a scene holding an entity called `grid:floor` would answer yes to
     /// a substring check and never persist the id it was just given.
-    fn lacks_stored_id(path: &Path) -> Result<bool, SceneError> {
+    fn lacks_stored_id(text: &str) -> bool {
         /// Reads the identity field and ignores everything else.
         #[derive(serde::Deserialize)]
         struct IdProbe {
@@ -253,10 +265,9 @@ impl SceneManager {
             id: Option<Guid>,
         }
 
-        let data = std::fs::read_to_string(path)?;
         // An unparseable file is not this function's problem — the real
         // load is about to report it properly.
-        Ok(ron::from_str::<IdProbe>(&data).is_ok_and(|probe| probe.id.is_none()))
+        ron::from_str::<IdProbe>(text).is_ok_and(|probe| probe.id.is_none())
     }
 
     // -- Saving ----------------------------------------------------------

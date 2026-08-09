@@ -5,6 +5,23 @@ use super::*;
 
 use kooch_pack::Pack;
 
+/// The extensions a loader claims, as the real allowlist would hand
+/// them over. The fixtures use these, so the tests exercise the filter
+/// rather than bypassing it.
+fn known() -> Vec<String> {
+    [
+        "glb",
+        "ron",
+        "prefab",
+        "rendersettings",
+        "buildpreset",
+        "scene",
+    ]
+    .iter()
+    .map(|e| (*e).to_owned())
+    .collect()
+}
+
 fn tmp(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("kooch_pkg_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
@@ -48,6 +65,7 @@ fn run(dir: &Path, preset: &BuildPreset) -> Result<Package, PackageError> {
     let exe = binary(dir);
     assemble(
         preset,
+        &known(),
         &proj,
         Some(&eng),
         &exe,
@@ -63,9 +81,15 @@ fn a_package_holds_the_game_its_scenes_and_a_pack() {
 
     assert!(out.binary.is_file());
     assert_eq!(out.binary.file_name().unwrap(), "demo");
-    assert!(out.dir.join("scenes/default.scene").is_file());
     assert!(out.dir.join(PACK_FILE).is_file());
     assert_eq!(out.scenes, 1);
+    // 🔴 Inside the pack, not beside it. A scene is the structure of the
+    // whole game, and leaving it in plain RON next to an encrypted pack
+    // protects the textures and publishes the design.
+    assert!(
+        !out.dir.join("scenes/default.scene").exists(),
+        "the scene shipped in the clear",
+    );
 }
 
 /// 🔴 The merge. In the editor a project has two asset roots; a shipped
@@ -82,6 +106,7 @@ fn both_asset_trees_land_in_one_pack() {
 
     let out = assemble(
         &BuildPreset::default(),
+        &known(),
         &proj,
         Some(&eng),
         &exe,
@@ -92,11 +117,14 @@ fn both_asset_trees_land_in_one_pack() {
 
     let mut pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
     assert_eq!(
-        pack.read("materials/default.ron").unwrap(),
+        pack.read("assets/materials/default.ron").unwrap(),
         b"engine material"
     );
-    assert_eq!(pack.read("meshes/primitives/cube.glb").unwrap(), b"cube");
-    assert_eq!(pack.read("props/rock.glb").unwrap(), b"rock mesh");
+    assert_eq!(
+        pack.read("assets/meshes/primitives/cube.glb").unwrap(),
+        b"cube"
+    );
+    assert_eq!(pack.read("assets/props/rock.glb").unwrap(), b"rock mesh");
 }
 
 /// ⚠️ A scene references assets by GUID and the GUID lives in the
@@ -112,6 +140,7 @@ fn meta_sidecars_travel() {
 
     let out = assemble(
         &BuildPreset::default(),
+        &known(),
         &proj,
         Some(&eng),
         &binary(&dir),
@@ -139,6 +168,7 @@ fn engine_demos_stay_behind() {
 
     let out = assemble(
         &BuildPreset::default(),
+        &known(),
         &proj,
         Some(&eng),
         &binary(&dir),
@@ -148,7 +178,10 @@ fn engine_demos_stay_behind() {
     .unwrap();
 
     let pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
-    assert!(!pack.contains("meshes/demo.glb"), "a demo model shipped");
+    assert!(
+        !pack.contains("assets/meshes/demo.glb"),
+        "a demo model shipped"
+    );
 }
 
 /// The project is the author and wins — refusing the build would mean a
@@ -165,6 +198,7 @@ fn a_project_asset_shadows_the_engines() {
 
     let out = assemble(
         &BuildPreset::default(),
+        &known(),
         &proj,
         Some(&eng),
         &binary(&dir),
@@ -173,9 +207,9 @@ fn a_project_asset_shadows_the_engines() {
     )
     .unwrap();
 
-    assert_eq!(out.shadowed, vec!["materials/default.ron"]);
+    assert_eq!(out.shadowed, vec!["assets/materials/default.ron"]);
     let mut pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
-    assert_eq!(pack.read("materials/default.ron").unwrap(), b"mine");
+    assert_eq!(pack.read("assets/materials/default.ron").unwrap(), b"mine");
 }
 
 /// 🔴 The output path comes from a text field in a preset, and packaging
@@ -205,7 +239,15 @@ fn packaging_refuses_to_delete_a_project() {
             output_dir: target.to_owned(),
             ..Default::default()
         };
-        let result = assemble(&preset, &proj, None, &exe, "demo", &PackKey::generate());
+        let result = assemble(
+            &preset,
+            &known(),
+            &proj,
+            None,
+            &exe,
+            "demo",
+            &PackKey::generate(),
+        );
         assert!(
             matches!(result, Err(PackageError::UnsafeOutput(_))),
             "packaging into {target:?} was allowed",
@@ -274,6 +316,7 @@ fn a_missing_binary_is_named() {
 
     let result = assemble(
         &BuildPreset::default(),
+        &known(),
         &proj,
         None,
         &dir.join("never_built"),
@@ -294,6 +337,7 @@ fn packaging_works_without_an_engine_root() {
 
     let out = assemble(
         &BuildPreset::default(),
+        &known(),
         &proj,
         None,
         &binary(&dir),
@@ -303,7 +347,7 @@ fn packaging_works_without_an_engine_root() {
     .unwrap();
 
     let pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
-    assert!(pack.contains("props/rock.glb"));
+    assert!(pack.contains("assets/props/rock.glb"));
 }
 
 /// The one that matters on unix: a game copied without its executable
@@ -341,6 +385,7 @@ fn build_presets_do_not_ship() {
 
     let out = assemble(
         &BuildPreset::default(),
+        &known(),
         &proj,
         Some(&eng),
         &binary(&dir),
@@ -356,7 +401,7 @@ fn build_presets_do_not_ship() {
         "a build preset shipped inside the game: {shipped:?}",
     );
     // And the game's own content still did.
-    assert!(shipped.iter().any(|name| *name == "props/rock.glb"));
+    assert!(shipped.contains(&"assets/props/rock.glb"));
 }
 
 /// ⚠️ The sidecar goes with what it describes. Left behind it would be an
@@ -372,6 +417,7 @@ fn an_authoring_sidecar_does_not_ship_either() {
 
     let out = assemble(
         &BuildPreset::default(),
+        &known(),
         &proj,
         None,
         &binary(&dir),
@@ -402,6 +448,7 @@ fn render_settings_still_ship() {
 
     let out = assemble(
         &BuildPreset::default(),
+        &known(),
         &proj,
         None,
         &binary(&dir),
@@ -412,7 +459,7 @@ fn render_settings_still_ship() {
 
     let pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
     assert!(
-        pack.contains("project.rendersettings"),
+        pack.contains("assets/project.rendersettings"),
         "the project's look did not ship",
     );
 }

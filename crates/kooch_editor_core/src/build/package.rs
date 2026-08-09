@@ -95,8 +95,12 @@ impl From<std::io::Error> for PackageError {
 pub const PACK_FILE: &str = "assets.kpack";
 
 /// Assembles `preset`'s output folder from an already-built `binary`.
+///
+/// `known` is every extension some registered loader claims — the
+/// allowlist, derived rather than maintained.
 pub fn assemble(
     preset: &BuildPreset,
+    known: &[String],
     project_root: &Path,
     engine_root: Option<&Path>,
     binary: &Path,
@@ -116,17 +120,26 @@ pub fn assemble(
     std::fs::copy(binary, &dest_binary)?;
     keep_executable(binary, &dest_binary);
 
-    let scenes = copy_tree(&project_root.join("scenes"), &dir.join("scenes"))?;
+    // 🔴 Scenes go in the pack too. A scene is the structure of the
+    // whole game — every entity, every component, every value, including
+    // the names of components its author wrote — and leaving it in plain
+    // RON beside an encrypted pack protects the textures and publishes
+    // the design.
+    let (mut files, shadowed) = collect_assets(project_root, engine_root, known);
+    let mut scenes = Vec::new();
+    walk(&project_root.join("scenes"), "scenes", &mut scenes);
 
-    let (files, shadowed) = collect_assets(project_root, engine_root);
     let pack = match preset.pack_assets {
-        true => Some(write_pack(&dir.join(PACK_FILE), &files, key)?),
+        true => {
+            files.extend(scenes.iter().cloned());
+            files.sort_by(|a, b| a.0.cmp(&b.0));
+            Some(write_pack(&dir.join(PACK_FILE), &files, key)?)
+        }
         false => {
             // Loose, for working out why a build behaves differently from
             // the editor: the files are right there to look at.
-            let dest = dir.join("assets");
-            for (name, source) in &files {
-                let to = dest.join(name);
+            for (name, source) in files.iter().chain(&scenes) {
+                let to = dir.join(name);
                 if let Some(parent) = to.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
@@ -140,8 +153,10 @@ pub fn assemble(
         dir,
         binary: dest_binary,
         pack,
-        assets: files.len(),
-        scenes,
+        // `files` grew by the scenes when packing, so the asset count is
+        // taken from what is not one.
+        assets: files.len() - scenes.len() * usize::from(preset.pack_assets),
+        scenes: scenes.len(),
         shadowed,
     })
 }
@@ -210,6 +225,7 @@ fn prepare(dir: &Path, project_root: &Path) -> Result<(), PackageError> {
 fn collect_assets(
     project_root: &Path,
     engine_root: Option<&Path>,
+    known: &[String],
 ) -> (Vec<(String, PathBuf)>, Vec<String>) {
     let mut files: Vec<(String, PathBuf)> = Vec::new();
     let mut shadowed = Vec::new();
@@ -217,13 +233,13 @@ fn collect_assets(
     if let Some(engine) = engine_root {
         for entry in crate::engine_vendor::COPY_ASSETS {
             let from = engine.join("assets").join(entry);
-            walk(&from, entry, &mut files);
+            walk(&from, &format!("assets/{entry}"), &mut files);
         }
     }
     let engine_count = files.len();
 
     let mut project = Vec::new();
-    walk(&project_root.join("assets"), "", &mut project);
+    walk(&project_root.join("assets"), "assets", &mut project);
 
     // The project is the author and wins. Refusing the build instead
     // would mean a name nobody chose — the engine's — could stop a game
@@ -236,6 +252,12 @@ fn collect_assets(
             files.push((name, path));
         }
     }
+    // 🔴 The allowlist, and it is derived rather than maintained: a file
+    // no registered loader claims is not an asset, so a `.blend` exported
+    // beside its `.glb` does not ship — 80 MB of source handed to whoever
+    // opens the pack. Adding an asset type teaches this by itself,
+    // because the list comes from the loaders.
+    files.retain(|(name, _)| travels(name, known));
     files.sort_by(|a, b| a.0.cmp(&b.0));
     (files, shadowed)
 }
@@ -251,6 +273,30 @@ fn collect_assets(
 /// shadow distance are what the project *looks* like, and the renderer
 /// reads them at startup.
 const AUTHORING_ONLY: [&str; 1] = [super::preset::BUILD_PRESET_EXTENSION];
+
+/// Whether a file travels into the build.
+///
+/// 🔴 An allowlist, and derived: a file no registered loader claims is
+/// not an asset. A `.blend` exported beside its `.glb` — which is what
+/// everyone does — is source, not content, and shipping it hands 80 MB
+/// and the editable original to whoever opens the pack.
+///
+/// Derived rather than a list somebody maintains, because a list is a
+/// second place to add an asset type and the day it is forgotten the
+/// type stops shipping with no error. `known_extensions()` comes from
+/// the loaders themselves.
+///
+/// `.meta` always travels: it is not an asset, it is how one is found.
+fn travels(name: &str, known: &[String]) -> bool {
+    let stem = name.strip_suffix(".meta").unwrap_or(name);
+    if authoring_only(stem) {
+        return false;
+    }
+    let lower = stem.to_ascii_lowercase();
+    known
+        .iter()
+        .any(|ext| lower.ends_with(&format!(".{}", ext.to_ascii_lowercase())))
+}
 
 /// Whether `name` is authoring configuration rather than game content.
 ///
@@ -321,21 +367,6 @@ fn keep_executable(from: &Path, to: &Path) {
 
 #[cfg(not(unix))]
 fn keep_executable(_from: &Path, _to: &Path) {}
-
-/// Copies a directory, returning how many files landed. Missing is zero,
-/// not an error: a project without `scenes/` is unusual, not broken.
-fn copy_tree(from: &Path, to: &Path) -> Result<usize, PackageError> {
-    let mut files = Vec::new();
-    walk(from, "", &mut files);
-    for (name, source) in &files {
-        let dest = to.join(name);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::copy(source, &dest)?;
-    }
-    Ok(files.len())
-}
 
 #[cfg(test)]
 mod package_tests;

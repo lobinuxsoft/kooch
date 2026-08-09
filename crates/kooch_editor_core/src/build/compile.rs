@@ -47,6 +47,10 @@ pub struct BuildJob {
     engine_root: Option<PathBuf>,
     crate_name: String,
     key: PackKey,
+    /// Extensions a registered loader claims — the packaging allowlist,
+    /// captured at start because the job outlives the frame that had the
+    /// asset server.
+    known: Vec<String>,
 }
 
 impl BuildJob {
@@ -57,6 +61,7 @@ impl BuildJob {
         engine_root: Option<&Path>,
         crate_name: &str,
         key: PackKey,
+        known: Vec<String>,
     ) -> Result<Self, String> {
         if let Some(problem) = missing_toolchain(preset) {
             return Err(problem);
@@ -90,6 +95,7 @@ impl BuildJob {
             engine_root: engine_root.map(Path::to_path_buf),
             crate_name: crate_name.to_owned(),
             key,
+            known,
         })
     }
 
@@ -138,6 +144,7 @@ impl BuildJob {
         let binary = built_binary(&self.preset, &self.project_root, &self.crate_name);
         let result = super::assemble(
             &self.preset,
+            &self.known,
             &self.project_root,
             self.engine_root.as_deref(),
             &binary,

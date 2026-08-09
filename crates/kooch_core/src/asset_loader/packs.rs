@@ -135,3 +135,27 @@ impl Packs {
         }
     }
 }
+
+/// Reads a file that belongs to the game: from a mounted pack, or from
+/// the disk (#758).
+///
+/// 🔴 The function anything reading game content should call. The asset
+/// server goes through packs already, but a scene is loaded by path
+/// rather than through a loader, and the boot scene is read before any
+/// of this exists — so without a shared entry point every such reader is
+/// a separate chance to reach for a file a packaged game does not have.
+///
+/// Takes `Resources` rather than a server because the callers that need
+/// it — the scene manager, the bootstrap — have the first and not the
+/// second.
+pub fn read_game_file(
+    resources: &mut crate::resource::Resources,
+    path: &Path,
+) -> std::io::Result<Vec<u8>> {
+    if let Some(server) = resources.get_mut::<super::AssetServer>()
+        && let Some(bytes) = server.read_packed(path)
+    {
+        return Ok(bytes);
+    }
+    std::fs::read(path)
+}

@@ -600,8 +600,27 @@ fn start_build(resources: &mut Resources, guid: kooch_core::Guid) {
         }
     };
     let crate_name = crate::cargo_args::crate_name(&root.join("Cargo.toml"));
+    // The allowlist, taken from the loaders this binary has linked in.
+    // Captured now because the job outlives this frame.
+    let known: Vec<String> = resources
+        .get::<kooch_core::asset_loader::AssetServer>()
+        .map(|server| {
+            server
+                .known_extensions()
+                .iter()
+                .map(|(ext, _)| (*ext).to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
 
-    match crate::build::BuildJob::start(&preset, &root, engine_root.as_deref(), &crate_name, key) {
+    match crate::build::BuildJob::start(
+        &preset,
+        &root,
+        engine_root.as_deref(),
+        &crate_name,
+        key,
+        known,
+    ) {
         Ok(job) => {
             tracing::info!(target = %preset.target_triple, "build started");
             if let Some(state) = resources.get_mut::<crate::build::BuildState>() {

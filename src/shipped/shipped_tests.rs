@@ -1,6 +1,7 @@
 //! #758 — how a shipped game recognises itself.
 
 use super::*;
+use kooch_core::asset_loader::shares_for_build;
 
 /// 🔴 The round trip the whole scheme rests on: the packaging step
 /// writes this string and the game reads it back. Two files, one format
