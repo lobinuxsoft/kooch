@@ -160,6 +160,8 @@ branch on a single `u32`. `Off` is the production path.
 | `CullPassthrough` | Everything that survived every stage |
 | `OnlyLod0` / `OnlyRoots` | The two extremes of the LOD chain, in isolation |
 | `Normals` | The world-space normal as colour |
+| `ShadowCascades` / `ContactShadows` | What each shadow mechanism saw — see [Inti](./lighting.md) |
+| `SingleLight` | The selected light, alone, in grey, with its shadow |
 
 `Normals` deserves a note: until #441 it *was* the shading model. The
 renderer computed `normal * 0.5 + 0.5` and multiplied by albedo, which is
@@ -170,6 +172,13 @@ geometry — it just stopped being what you get by default.
 The atomic-counter modes need `TEXTURE_ATOMIC`; the editor's dropdown
 hides what the adapter cannot run rather than offering a mode that
 silently falls back.
+
+The Inti-side views — `Normals`, `ShadowCascades`, `ContactShadows`,
+`SingleLight` — are **not compiled into the shader a game runs**. They
+live in `inti_debug.wgsl`, which only the editor's second pipeline
+concatenates; production takes `INTI_DEBUG_STUB` instead and the call
+sites fold to `if (false)`. The reasoning, and why an untaken branch is
+not free, is in [Inti](./lighting.md#the-debug-views-are-not-in-the-shader-your-game-runs).
 
 ## Depth: reversed-Z, and no far plane
 
