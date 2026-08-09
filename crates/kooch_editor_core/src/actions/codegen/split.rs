@@ -76,6 +76,46 @@ pub(crate) fn split_authoring(project_root: &Path, crate_name: &str) {
 
     migrate_main(project_root, &crate_name);
     migrate_lib(project_root);
+    migrate_scenes(project_root);
+}
+
+/// Moves a project's `scenes/` under `assets/` (#758).
+///
+/// 🔴 Everything a game needs at runtime lives in one tree now, so
+/// packaging walks one place and "where does this go" has one answer.
+/// A project made before this keeps its scenes where the editor no
+/// longer looks — and the self-healing default-scene path would write a
+/// fresh empty one over the gap, which reads as a project that lost its
+/// work.
+///
+/// Moved rather than copied, and only when the destination is free: two
+/// copies of a scene is worse than one in the wrong place, because the
+/// editor would edit one and the build would ship the other.
+fn migrate_scenes(project_root: &Path) {
+    let (from, to) = (
+        project_root.join("scenes"),
+        project_root.join(kooch_core::scene_paths::SCENES_DIR),
+    );
+    if !from.is_dir() || to.exists() {
+        return;
+    }
+    if let Some(parent) = to.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::rename(&from, &to) {
+        Ok(()) => tracing::info!(
+            from = %from.display(),
+            to = %to.display(),
+            "scenes moved under assets/ — everything a game needs is one tree now",
+        ),
+        // Not fatal: the project still opens, and its scenes are still
+        // where they were. Saying so beats a silent half-move.
+        Err(e) => tracing::error!(
+            from = %from.display(),
+            error = %e,
+            "could not move scenes under assets/ — move the folder by hand",
+        ),
+    }
 }
 
 /// The manifest with a `[features]` block, a gated authoring binary, and

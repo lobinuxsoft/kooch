@@ -36,7 +36,10 @@ fn write(path: &Path, bytes: &[u8]) {
 
 /// A project with a scene, two assets and their sidecars.
 fn project(root: &Path) {
-    write(&root.join("scenes/default.scene"), b"(entities: [])");
+    write(
+        &root.join(kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH),
+        b"(entities: [])",
+    );
     write(&root.join("assets/props/rock.glb"), b"rock mesh");
     write(&root.join("assets/props/rock.glb.meta"), b"(guid: \"r\")");
 }
@@ -87,7 +90,9 @@ fn a_package_holds_the_game_its_scenes_and_a_pack() {
     // whole game, and leaving it in plain RON next to an encrypted pack
     // protects the textures and publishes the design.
     assert!(
-        !out.dir.join("scenes/default.scene").exists(),
+        !out.dir
+            .join(kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH)
+            .exists(),
         "the scene shipped in the clear",
     );
 }
@@ -255,7 +260,10 @@ fn packaging_refuses_to_delete_a_project() {
     }
     // And nothing was taken with it.
     assert!(proj.join("assets/props/rock.glb").is_file());
-    assert!(proj.join("scenes/default.scene").is_file());
+    assert!(
+        proj.join(kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH)
+            .is_file()
+    );
 }
 
 /// A previous build's leftovers must not ship inside the next one.

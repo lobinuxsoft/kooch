@@ -169,7 +169,9 @@ impl EditorConfig {
 /// The scripting crate that loaded those files is gone. So the directory
 /// was created, never read, and suggested a place to put code the engine
 /// would never look at.
-const PROJECT_DIRS: &[&str] = &["scenes", "assets", "src"];
+// `assets/scenes` rather than a top-level `scenes`: everything a game
+// needs at runtime is one tree (#758).
+const PROJECT_DIRS: &[&str] = &["assets/scenes", "assets", "src"];
 
 /// Sanitizes a project name into a valid Rust crate name.
 ///

@@ -125,20 +125,22 @@ pub fn assemble(
     // the names of components its author wrote — and leaving it in plain
     // RON beside an encrypted pack protects the textures and publishes
     // the design.
-    let (mut files, shadowed) = collect_assets(project_root, engine_root, known);
-    let mut scenes = Vec::new();
-    walk(&project_root.join("scenes"), "scenes", &mut scenes);
+    let (files, shadowed) = collect_assets(project_root, engine_root, known);
+    let scene_count = files
+        .iter()
+        .filter(|(name, _)| {
+            std::path::Path::new(name)
+                .extension()
+                .is_some_and(|e| e == kooch_core::scene_paths::SCENE_EXTENSION)
+        })
+        .count();
 
     let pack = match preset.pack_assets {
-        true => {
-            files.extend(scenes.iter().cloned());
-            files.sort_by(|a, b| a.0.cmp(&b.0));
-            Some(write_pack(&dir.join(PACK_FILE), &files, key)?)
-        }
+        true => Some(write_pack(&dir.join(PACK_FILE), &files, key)?),
         false => {
             // Loose, for working out why a build behaves differently from
             // the editor: the files are right there to look at.
-            for (name, source) in files.iter().chain(&scenes) {
+            for (name, source) in &files {
                 let to = dir.join(name);
                 if let Some(parent) = to.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -153,10 +155,8 @@ pub fn assemble(
         dir,
         binary: dest_binary,
         pack,
-        // `files` grew by the scenes when packing, so the asset count is
-        // taken from what is not one.
-        assets: files.len() - scenes.len() * usize::from(preset.pack_assets),
-        scenes: scenes.len(),
+        assets: files.len() - scene_count,
+        scenes: scene_count,
         shadowed,
     })
 }
@@ -293,8 +293,12 @@ fn travels(name: &str, known: &[String]) -> bool {
         return false;
     }
     let lower = stem.to_ascii_lowercase();
+    // What a loader claims, plus what the runtime reads by path — a
+    // scene has no loader and a game without one starts empty.
     known
         .iter()
+        .map(String::as_str)
+        .chain(kooch_core::scene_paths::READ_BY_PATH)
         .any(|ext| lower.ends_with(&format!(".{}", ext.to_ascii_lowercase())))
 }
 
