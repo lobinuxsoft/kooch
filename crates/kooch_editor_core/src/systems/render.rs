@@ -338,6 +338,37 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<crate::actions::PendingPrefabOverwrite>()
         .cloned();
 
+    // The Build panel's view of things. Assembled here rather than in
+    // the panel because the panel draws and does not read resources —
+    // and because the job has to be polled whether or not its tab is
+    // even visible (#758).
+    let build_panel = {
+        // Two statements, not one: polling takes `resources` mutably and
+        // so does loading the presets, and the first borrow has to end
+        // before the second begins.
+        let (status, log) = match resources.get_mut::<crate::build::BuildState>() {
+            Some(state) => {
+                state.poll();
+                (
+                    state
+                        .job
+                        .as_ref()
+                        .map(crate::build::BuildJob::status)
+                        .cloned(),
+                    state.log.clone(),
+                )
+            }
+            None => (None, Vec::new()),
+        };
+        let presets = crate::panels::build::presets_in(resources, &asset_catalog);
+        crate::panels::build::BuildPanel {
+            presets,
+            status,
+            log,
+            project: project_loaded,
+        }
+    };
+
     // #691 — everything above was assembling what the UI is about to
     // read: the hierarchy, the inspector's view of it, the asset
     // catalog. It walks the world, so it grows with the scene.
@@ -394,6 +425,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut console,
         &connect_output,
         prefab_overwrite.as_ref(),
+        &build_panel,
     );
     stages.ui_ms = crate::perf::ms_since(ui_start);
     let input_start = std::time::Instant::now();

@@ -110,5 +110,28 @@ impl std::fmt::Debug for SplitKey {
     }
 }
 
+/// Name of the environment variable a build carries its shares in.
+///
+/// 🔴 Both ends of one string: the editor sets it when it invokes cargo
+/// and the game reads it with `option_env!`. Two copies of a separator
+/// is a bug that surfaces as a game with no assets, so the format lives
+/// in one place and both sides call into it.
+pub const SHARES_ENV: &str = "KOOCH_PACK_SHARES";
+
+/// Formats a key's shares for [`SHARES_ENV`].
+pub fn shares_for_build(key: &PackKey) -> String {
+    SplitKey::split(key).to_hex().join(",")
+}
+
+/// Reassembles a key from what [`shares_for_build`] produced.
+///
+/// `None` for anything malformed — a build carrying a key that will not
+/// parse must say so rather than fall back to a filesystem a shipped
+/// game does not have.
+pub fn key_from_shares(value: &str) -> Option<PackKey> {
+    let shares: Vec<String> = value.split(',').map(|s| s.trim().to_owned()).collect();
+    Some(SplitKey::parse(&shares)?.assemble())
+}
+
 #[cfg(test)]
 mod split_tests;

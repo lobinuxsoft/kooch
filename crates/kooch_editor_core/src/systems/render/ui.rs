@@ -84,6 +84,7 @@ pub(super) fn run_editor_ui(
     console: &mut crate::panels::console::ConsoleState,
     connect_output: &[String],
     prefab_overwrite: Option<&PendingPrefabOverwrite>,
+    build: &crate::panels::build::BuildPanel,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut pinned_gizmos = std::mem::take(&mut overlay.pinned_gizmos);
@@ -165,6 +166,8 @@ pub(super) fn run_editor_ui(
             }
 
             let mut tab_viewer = EditorTabViewer {
+                build,
+                build_selection: &mut overlay.build_selection,
                 pinned: &mut pinned_gizmos,
                 focused_tab: &mut overlay.focused_tab,
                 accent: ui.visuals().selection.bg_fill,

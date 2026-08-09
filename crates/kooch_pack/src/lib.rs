@@ -58,7 +58,7 @@ mod write;
 
 pub use key::PackKey;
 pub use read::Pack;
-pub use split::{SHARES, SplitKey};
+pub use split::{SHARES, SHARES_ENV, SplitKey, key_from_shares, shares_for_build};
 pub use write::PackWriter;
 
 /// 🔴 There is no magic constant.

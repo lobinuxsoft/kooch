@@ -54,7 +54,7 @@ mod tests;
 pub use error::{AssetError, AssetResult};
 // Re-exported so crates that configure a pack — the renderer's
 // `AssetPlugin`, the facade — need not take the dependency themselves.
-pub use kooch_pack::{PackKey, SplitKey};
+pub use kooch_pack::{PackKey, SHARES_ENV, SplitKey, key_from_shares, shares_for_build};
 pub use pack_scan::{PackScan, scan_packs};
 pub use server::AssetServer;
 pub use trait_def::{AssetLoader, LoadContext};

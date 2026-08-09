@@ -31,7 +31,7 @@
 
 use std::path::PathBuf;
 
-use kooch_core::asset_loader::{PackKey, SplitKey};
+use kooch_core::asset_loader::PackKey;
 
 /// Name the packaging step gives the pack, beside the executable.
 pub const PACK_FILE: &str = "assets.kpack";
@@ -44,14 +44,16 @@ pub fn embedded_key() -> Option<PackKey> {
     parse_shares(option_env!("KOOCH_PACK_SHARES")?)
 }
 
-/// Reassembles a key from the comma-separated shares a build carries.
+/// Reassembles a key from the shares a build carries.
 ///
 /// Split out of [`embedded_key`] so it can be tested: `option_env!`
-/// resolves when *this* crate compiles, so a test cannot set it.
+/// resolves when *this* crate compiles, so a test cannot set it. The
+/// format itself lives in `kooch_pack` — the editor writes that string
+/// and this reads it, and one of them owning the format is how they stay
+/// in step.
 fn parse_shares(shares: &str) -> Option<PackKey> {
-    let shares: Vec<String> = shares.split(',').map(|s| s.trim().to_owned()).collect();
-    match SplitKey::parse(&shares) {
-        Some(split) => Some(split.assemble()),
+    match kooch_core::asset_loader::key_from_shares(shares) {
+        Some(key) => Some(key),
         // Built with a key that will not parse: say so rather than
         // falling back to the filesystem, where a shipped game has
         // nothing. The alternative is a black window and no reason.
@@ -63,15 +65,6 @@ fn parse_shares(shares: &str) -> Option<PackKey> {
             None
         }
     }
-}
-
-/// Formats a key's shares for `KOOCH_PACK_SHARES`.
-///
-/// The packaging step's half of the contract, kept here so the two ends
-/// of one string live in one file. Two copies of a separator is a bug
-/// that shows up as a game with no assets.
-pub fn shares_for_build(key: &PackKey) -> String {
-    SplitKey::split(key).to_hex().join(",")
 }
 
 #[cfg(test)]

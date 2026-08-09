@@ -114,6 +114,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         snap_settings: kooch_gizmos_handles::SnapSettings::default(),
         gizmo_drag_start: None,
         selected_asset: None,
+        build_selection: None,
         current_folder: None,
     };
 

@@ -353,6 +353,12 @@ pub(crate) enum EditorAction {
     OpenInputMap {
         path: std::path::PathBuf,
     },
+    /// Build and package the project with one of its presets (#758).
+    ///
+    /// Carries the preset's guid rather than the preset: the panel has a
+    /// handle, and what it points at may have been edited in the
+    /// Inspector since — the handler reads the current one.
+    BuildProject(kooch_core::Guid),
     RegisterScripts,
 }
 
@@ -426,7 +432,12 @@ impl EditorAction {
 
             // Session and project lifecycle: these are how a user gets
             // *out* of a stuck build, so they must keep working.
-            Self::OpenProject(_)
+            //
+            // Building belongs here rather than above: it reads the
+            // project from disk and never touches the ECS, so it works
+            // while a project is still compiling and its world is empty.
+            Self::BuildProject(_)
+            | Self::OpenProject(_)
             | Self::RebuildRemote
             | Self::CreateProject { .. }
             | Self::CloseProject
