@@ -47,8 +47,14 @@ mod server;
 mod trait_def;
 mod written;
 
+// 🔴 Both gated, separately. `#[cfg(test)]` applies to the item that
+// follows it and nothing else, so inserting a module between the
+// attribute and `mod tests;` left the second one unconditional — it
+// compiled here, where the file exists, and broke the vendored engine,
+// where test files deliberately do not travel.
 #[cfg(test)]
 mod pack_tests;
+#[cfg(test)]
 mod tests;
 
 pub use error::{AssetError, AssetResult};
