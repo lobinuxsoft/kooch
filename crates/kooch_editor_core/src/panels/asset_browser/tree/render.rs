@@ -112,11 +112,21 @@ pub(super) fn render_folder(
             }
             let writable = ctx.writable;
             let has_settings = ctx.has_settings;
+            let role = super::model::FolderRole::of(&node.path, ctx.project_root);
             let actions = &mut *ctx.actions;
             let rename = &mut *ctx.rename;
             let pending = &mut *ctx.pending;
             resp.context_menu(|ui| {
-                folder_menu(ui, node, writable, actions, rename, pending, has_settings)
+                folder_menu(
+                    ui,
+                    node,
+                    writable,
+                    actions,
+                    rename,
+                    pending,
+                    has_settings,
+                    role,
+                )
             });
         })
         .body(|ui| render_children(ui, node, ctx, root));
