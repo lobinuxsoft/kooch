@@ -422,6 +422,23 @@ impl AssetServer {
     pub fn has_packs(&self) -> bool {
         !self.packs.is_empty()
     }
+
+    /// Every path the mounted packs hold, as the engine names them.
+    ///
+    /// What [`scan_packs`](super::scan_packs) walks: a packaged game has
+    /// no directory to scan, so the pack's index is the directory.
+    pub fn packed_paths(&self) -> Vec<PathBuf> {
+        self.packs.paths()
+    }
+
+    /// Reads `path` out of a mounted pack, or `None` when no pack holds
+    /// it.
+    ///
+    /// Never falls back to the disk, unlike loading: the caller is asking
+    /// what the *pack* contains.
+    pub fn read_packed(&mut self, path: &Path) -> Option<Vec<u8>> {
+        self.packs.read_packed(path)
+    }
 }
 
 impl Default for AssetServer {

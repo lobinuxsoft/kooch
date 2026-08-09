@@ -36,6 +36,7 @@
 pub const LICENSE: &str = include_str!("../LICENSE.md");
 
 mod scene_bootstrap;
+pub mod shipped;
 
 // Always present
 pub use kooch_core;
@@ -245,14 +246,22 @@ fn default_asset_plugin() -> kooch_render::plugin::AssetPlugin {
     let engine_root = std::env::var_os("KOOCH_ENGINE_ROOT").map(PathBuf::from);
     let project_root = std::env::var_os("KOOCH_PROJECT_ROOT").map(PathBuf::from);
 
+    // 🔴 A shipped game's assets live in a pack, so `<exe>/assets` is
+    // the right root even though no such directory exists — the
+    // `.exists()` filter below would reject it and fall through to the
+    // working directory, which for a double-clicked game is the user's
+    // home. Same failure the boot scene had.
+    let shipped = crate::shipped::shipped_pack();
+    let beside_exe = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.join("assets")));
+
     let primary = engine_root
         .as_ref()
         .map(|p| p.join("assets"))
-        .or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|e| e.parent().map(|p| p.join("assets")))
-                .filter(|p| p.exists())
+        .or_else(|| match shipped.is_some() {
+            true => beside_exe.clone(),
+            false => beside_exe.clone().filter(|p| p.exists()),
         })
         .unwrap_or_else(|| PathBuf::from("assets"));
 
@@ -261,6 +270,10 @@ fn default_asset_plugin() -> kooch_render::plugin::AssetPlugin {
     // `AssetPlugin` installs whatever is linked in. A list in the facade
     // meant the editor kept a second copy of it, and the two drifted.
     let mut plugin = kooch_render::plugin::AssetPlugin::new().with_root(primary);
+    if let Some((pack, key)) = shipped {
+        tracing::info!(target: "kooch::shipped", path = %pack.display(), "reading assets from the shipped pack");
+        plugin = plugin.with_pack(pack, key);
+    }
     if let Some(project) = project_root {
         let project_assets = project.join("assets");
         if project_assets.exists() {

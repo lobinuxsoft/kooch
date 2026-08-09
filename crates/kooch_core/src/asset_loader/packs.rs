@@ -51,6 +51,16 @@ impl MountedPack {
         self.pack.entries().len()
     }
 
+    /// Every entry, as the absolute path the rest of the engine names it
+    /// by — the mounted root plus the entry's own name.
+    pub(super) fn paths(&self) -> Vec<PathBuf> {
+        self.pack
+            .entries()
+            .iter()
+            .map(|entry| self.root.join(&entry.name))
+            .collect()
+    }
+
     /// The bytes for `path`, or `None` when this pack does not hold it.
     ///
     /// 🔴 `None` for "not in this pack" and `Some(Err)` for "in this pack
@@ -79,6 +89,19 @@ impl Packs {
 
     pub(super) fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Every path every mounted pack holds.
+    pub(super) fn paths(&self) -> Vec<PathBuf> {
+        self.0.iter().flat_map(MountedPack::paths).collect()
+    }
+
+    /// Reads `path` out of a pack, ignoring the disk and reporting a
+    /// damaged entry as absent — the caller is asking what the packs
+    /// hold, and a sidecar that will not decrypt is one this game cannot
+    /// use either way.
+    pub(super) fn read_packed(&mut self, path: &Path) -> Option<Vec<u8>> {
+        self.read(path)?.ok()
     }
 
     /// Reads `path` out of the first pack that holds it.
