@@ -39,6 +39,36 @@ fn generated_keys_differ() {
     assert_ne!(PackKey::generate(), PackKey::generate());
 }
 
+/// 🔴 One key, two jobs is how a public value ends up related to a
+/// secret one: the tag sits in the clear at byte 0 of every pack, and the
+/// data key encrypts. Domain separation is what keeps the first from
+/// saying anything about the second.
+#[test]
+fn the_tag_and_the_data_key_differ() {
+    let key = PackKey::generate();
+
+    assert_ne!(&key.data_key()[..8], &key.tag()[..]);
+    assert_ne!(key.data_key(), *key.bytes_for_split());
+}
+
+/// Derivation has to be a function of the key, or a pack written today
+/// does not open tomorrow.
+#[test]
+fn derivation_is_deterministic() {
+    let key = PackKey::generate();
+    let same = PackKey::parse(&key.to_hex()).unwrap();
+
+    assert_eq!(key.tag(), same.tag());
+    assert_eq!(key.data_key(), same.data_key());
+}
+
+/// And a function of *that* key: two projects must not share a tag, or
+/// the tag identifies the engine rather than the pack.
+#[test]
+fn another_key_gives_another_tag() {
+    assert_ne!(PackKey::generate().tag(), PackKey::generate().tag());
+}
+
 /// 🔴 A key that reaches a log reaches wherever logs go — a bug report, a
 /// screenshot of a terminal, CI output kept for a year. The derive would
 /// have put it in every `{:?}` of every struct holding one.

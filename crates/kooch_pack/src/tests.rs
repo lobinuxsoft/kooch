@@ -105,14 +105,46 @@ fn no_name_is_readable_in_the_raw_bytes() {
     assert!(!haystack.contains("spoilers"));
 }
 
+/// Too short to hold a header is the one case still distinguishable
+/// without the key, because it needs no key to see.
 #[test]
-fn something_else_entirely_is_not_a_pack() {
+fn something_too_short_is_not_a_pack() {
     let key = PackKey::generate();
-    assert!(matches!(
-        open(b"just a text file, honestly", &key),
-        Err(PackError::NotAPack),
-    ));
+    assert!(matches!(open(b"short", &key), Err(PackError::NotAPack)));
     assert!(matches!(open(b"", &key), Err(PackError::NotAPack)));
+}
+
+/// 🔴 The tag is derived, so a long enough file that is not a pack is
+/// indistinguishable from a pack under the wrong key — deliberately.
+/// Telling those apart is exactly what a magic string does, and what was
+/// removed.
+#[test]
+fn a_long_file_that_is_not_a_pack_looks_like_a_wrong_key() {
+    let key = PackKey::generate();
+    // Carrying a version this build knows, so the check that answers is
+    // the tag and not the one before it.
+    let mut noise = vec![7u8; 512];
+    noise[8..10].copy_from_slice(&crate::FORMAT_VERSION.to_le_bytes());
+
+    assert!(matches!(open(&noise, &key), Err(PackError::Corrupt)));
+    // And the same file under its own pack's key would have opened —
+    // which is the point: nothing but the key separates the two.
+    assert!(matches!(
+        open(&pack(&key, &[("a.txt", b"x")]), &PackKey::generate()),
+        Err(PackError::Corrupt),
+    ));
+}
+
+/// And nothing in a pack says what wrote it.
+#[test]
+fn a_pack_announces_nothing() {
+    let key = PackKey::generate();
+    let bytes = pack(&key, &[("a.txt", b"x")]);
+
+    let haystack = String::from_utf8_lossy(&bytes);
+    for sign in ["KOOCH", "kooch", "kpack", "pack"] {
+        assert!(!haystack.contains(sign), "the file announces {sign}");
+    }
 }
 
 /// A pack from a newer editor is refused by name rather than parsed as

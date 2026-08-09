@@ -14,7 +14,7 @@ use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 
 use crate::write::HEADER_LEN;
-use crate::{Entry, FORMAT_VERSION, MAGIC, NONCE_LEN, PackError, PackKey};
+use crate::{Entry, FORMAT_VERSION, NONCE_LEN, PackError, PackKey};
 
 /// An open `.kpack`.
 ///
@@ -42,19 +42,25 @@ impl<R: Read + Seek> Pack<R> {
         source
             .read_exact(&mut header)
             .map_err(|_| PackError::NotAPack)?;
-        if header[..8] != MAGIC {
-            return Err(PackError::NotAPack);
-        }
+        // Version first, and in the clear, so a pack from a newer
+        // editor says so instead of looking like a wrong key.
         let version = u16::from_le_bytes([header[8], header[9]]);
         if version != FORMAT_VERSION {
             return Err(PackError::Version(version));
+        }
+        // 🔴 Derived, not a magic string — so the file announces nothing
+        // to someone without the key. The cost is that a wrong key and
+        // a file that was never a pack are now the same error, which is
+        // precisely the distinction being removed.
+        if header[..8] != key.tag() {
+            return Err(PackError::Corrupt);
         }
         let count = u32::from_le_bytes(header[10..14].try_into().expect("4 bytes")) as usize;
         let index_offset = u64::from_le_bytes(header[14..22].try_into().expect("8 bytes"));
         let index_len = u64::from_le_bytes(header[22..30].try_into().expect("8 bytes"));
         let index_nonce: [u8; NONCE_LEN] = header[30..42].try_into().expect("12 bytes");
 
-        let cipher = Aes256Gcm::new(key.bytes().into());
+        let cipher = Aes256Gcm::new(&key.data_key().into());
         source.seek(SeekFrom::Start(index_offset))?;
         let mut sealed = vec![0u8; index_len as usize];
         source

@@ -21,6 +21,16 @@
 // from the source: `aead::OsRng` is gone in 0.11, and the docs still
 // describe the old shape.
 use aes_gcm::aead::Generate;
+use hkdf::Hkdf;
+use sha2::Sha256;
+use zeroize::{Zeroize, ZeroizeOnDrop};
+
+/// Domain separators. One master key must never do two jobs: the tag is
+/// public, sitting at byte 0 of every pack, and a construction that let
+/// it be derived from the same key that encrypts would be handing out a
+/// sample of the cipher's output for free.
+const TAG_INFO: &[u8] = b"kooch.pack.tag.v1";
+const DATA_INFO: &[u8] = b"kooch.pack.data.v1";
 
 /// A 256-bit key, as text that can be pasted and stored.
 ///
@@ -28,7 +38,10 @@ use aes_gcm::aead::Generate;
 /// base64 so it is unambiguous to read aloud, retype, and diff — a key
 /// that gets mangled in transit produces `PackError::Corrupt`, which
 /// says nothing about a stray character.
-#[derive(Clone, PartialEq, Eq)]
+/// 🔴 `ZeroizeOnDrop`: the bytes are wiped when this goes away. A key
+/// left in freed memory is a key in a core dump, in a crash report, and
+/// in whatever the allocator hands out next.
+#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct PackKey([u8; 32]);
 
 impl PackKey {
@@ -57,8 +70,47 @@ impl PackKey {
         self.0.iter().map(|b| format!("{b:02x}")).collect()
     }
 
-    pub(crate) fn bytes(&self) -> &[u8; 32] {
+    /// Wraps raw bytes. Crate-internal: a key arrives generated or
+    /// parsed, and a third way in is a third way to get it wrong.
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// The master bytes, for splitting them apart.
+    pub(crate) fn bytes_for_split(&self) -> &[u8; 32] {
         &self.0
+    }
+
+    /// The subkey the cipher actually uses.
+    ///
+    /// Never the master itself: it also has to produce the tag, and one
+    /// key doing two jobs is how a public value ends up related to a
+    /// secret one.
+    pub(crate) fn data_key(&self) -> [u8; 32] {
+        self.derive(DATA_INFO)
+    }
+
+    /// The eight bytes a pack starts with.
+    ///
+    /// 🔴 Derived, not a magic string. `KOOCHPK` at byte 0 is a sign
+    /// saying what the file is and which tool to write; derived, the file
+    /// is bytes to anyone without the key, and still verifiable by anyone
+    /// with it.
+    ///
+    /// The cost is honest and worth naming: "this is not a pack" and
+    /// "wrong key" stop being distinguishable, because telling them apart
+    /// is exactly the thing being removed.
+    pub(crate) fn tag(&self) -> [u8; 8] {
+        let full = self.derive(TAG_INFO);
+        full[..8].try_into().expect("8 bytes")
+    }
+
+    fn derive(&self, info: &[u8]) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        Hkdf::<Sha256>::new(None, &self.0)
+            .expand(info, &mut out)
+            .expect("32 bytes is a valid HKDF output length");
+        out
     }
 }
 

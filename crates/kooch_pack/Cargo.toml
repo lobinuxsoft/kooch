@@ -16,4 +16,7 @@ zstd.workspace = true
 # `rand_core` is what exposes `OsRng` for per-entry nonces; the default
 # features already carry `aes` and `alloc`.
 aes-gcm = { workspace = true, features = ["rand_core"] }
+hkdf.workspace = true
+sha2.workspace = true
+zeroize.workspace = true
 tracing.workspace = true

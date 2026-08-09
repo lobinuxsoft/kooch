@@ -11,7 +11,7 @@ use std::path::Path;
 use aes_gcm::aead::{Aead, Generate};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 
-use crate::{Entry, FORMAT_VERSION, MAGIC, NONCE_LEN, PackError, PackKey, ZSTD_LEVEL};
+use crate::{Entry, FORMAT_VERSION, NONCE_LEN, PackError, PackKey, ZSTD_LEVEL};
 
 /// Extensions whose contents are already compressed. Running zstd over
 /// them costs time to make the result very slightly larger.
@@ -27,6 +27,7 @@ const ALREADY_COMPRESSED: [&str; 9] = [
 pub struct PackWriter<W: Write + Seek> {
     out: W,
     cipher: Aes256Gcm,
+    tag: [u8; 8],
     entries: Vec<Entry>,
     names: BTreeSet<String>,
     offset: u64,
@@ -39,7 +40,10 @@ impl<W: Write + Seek> PackWriter<W> {
         // space is reserved and filled in by `finish`.
         out.write_all(&[0u8; HEADER_LEN])?;
         Ok(Self {
-            cipher: Aes256Gcm::new(key.bytes().into()),
+            // The subkey, never the master: the master also derives the
+            // tag, which sits in the clear at byte 0.
+            cipher: Aes256Gcm::new(&key.data_key().into()),
+            tag: key.tag(),
             out,
             entries: Vec::new(),
             names: BTreeSet::new(),
@@ -132,7 +136,7 @@ impl<W: Write + Seek> PackWriter<W> {
         self.out.write_all(&index)?;
 
         self.out.seek(SeekFrom::Start(0))?;
-        self.out.write_all(&MAGIC)?;
+        self.out.write_all(&self.tag)?;
         self.out.write_all(&FORMAT_VERSION.to_le_bytes())?;
         self.out
             .write_all(&(self.entries.len() as u32).to_le_bytes())?;

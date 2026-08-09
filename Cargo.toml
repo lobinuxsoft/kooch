@@ -35,6 +35,13 @@ authors = ["lobinuxsoft"]
 # AES-GCM is authenticated, so a tampered pack fails loudly.
 zstd = "0.13"
 aes-gcm = "0.11"
+# Subkey derivation, so one master key never does two jobs, and the
+# file tag can be derived rather than announced.
+hkdf = "0.13"
+sha2 = "0.11"
+# Wipes key material on drop. A key that outlives its use is a key in a
+# core dump.
+zeroize = { version = "1.9", features = ["derive"] }
 # GPU
 wgpu = "29"
 # Windowing
