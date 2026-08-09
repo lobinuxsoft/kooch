@@ -38,7 +38,24 @@ target. Every number here is taken on the device, at 10 W.
 
 ---
 
-## Next — make it fit: #769, then #771
+## Next — the graphics queue, with the budget as the gate
+
+The order is the graphics work again, arranged so nothing expensive gets
+written before it is known what it has to fit in.
+
+| | | Why here |
+|---|---|---|
+| **#743** | light debug views — one light, greyscale, with its shadow | An editor tool. It is not in a shipped game's frame, so it costs the budget nothing |
+| **#254** | post + auto exposure | The blown-out white floor in every screenshot of three sessions. Cheap, and it makes everything after it judgeable |
+| **#769** | divide the budget, on the device, at 10 W | The gate. Below is why it sits *here* and not later |
+| **#248 / #250** | atmosphere | 🔴 Another volumetric raymarch. Writing it before the budget is known means writing it twice |
+
+🔴 **Why #769 sits before the atmosphere and not after it.** #248 is a
+second raymarch in a frame that already does not close, beside a sky
+costing up to 8 192 hash evaluations per pixel (#771). Landing it first
+means optimising two marches instead of one, with the atmosphere already
+written on the expensive technique. The measurement is what says how much
+room it has.
 
 ### #769 — where the frame actually goes
 
@@ -79,14 +96,30 @@ direction is Guerrilla's *Nubis*, which #731 already cites.
 half of that technique, and it needs motion vectors — **which do not
 exist** (#732).
 
-### Then the graphics queue, re-ordered by the budget
+### The scale ceiling — filed, and deliberately not scheduled yet
 
-**#743** light debug views → **#248 / #250** atmosphere → **#254** post +
-auto exposure.
+The Bevy sweep put these two above everything else on its take list, and
+they existed only inside a research document for four days. That is how
+#737 was lost, so they are issues now.
 
-⚠️ #254 earned its place the hard way: the blown-out white floor in
-every screenshot of two sessions is that issue, and it is what made
-contact shadows hard to judge while building them.
+| | | |
+|---|---|---|
+| **#773** | the visible id is `(instance << 16) \| meshlet` | 🔴 65 536 instances, guarded by a `debug_assert!` that **release compiles out** — instance 65 537 aliases onto another one, silently. The packing is written six times, and a shader left on the old shift decodes garbage rather than failing to compile |
+| **#774** | meshlet BVH culling (Bevy 0.17, PR #19318) | Render cost becomes nearly independent of scene geometry — 115 billion triangles in 3.5 ms on a 4070. Needs #773 first: culling cheaply is pointless while the id cannot name what it culled |
+
+**Why not next**: this is the ceiling that stops a *planet*, not the one
+costing milliseconds this week. Roll A Ball does not have 65 000
+instances of anything. ⚠️ And #774 is the item most likely to behave
+differently on a handheld than in Bevy's benchmark — a BVH walk is
+pointer chasing, and an iGPU's scarcity is bandwidth. Measure the walk on
+the device before committing to a layout.
+
+Reading #774 may also **retire** work rather than add it: Bevy shipped
+two-phase occlusion culling in 0.16 and absorbed it into BVH culling in
+0.17, so our parked Hi-Z two-pass (#486 / #445) may want to be a phase of
+it rather than a neighbour.
+
+### Further out
 
 🔴 **#477 (VSM) will walk into the same set of problems #476 fixed.**
 Every one of its nine was an orthographic view doing what a perspective
