@@ -187,10 +187,19 @@ fn import_destination(
     current_folder: Option<&Path>,
     project_root: Option<&Path>,
 ) -> Option<PathBuf> {
-    let project_root = project_root?;
+    // 🔴 Always inside `assets/`, and the selected folder only when it
+    // already is. A dropped texture used to land in whatever folder was
+    // selected — or in the **project root** when none was, beside
+    // `Cargo.toml`, where nothing registers it, no build carries it, and
+    // the Asset Browser still lists it as though it were an asset.
+    //
+    // The same rule the "New …" menu enforces (#765), applied to the
+    // other way a file enters a project. A rule that holds for one
+    // entrance and not the other is not a rule.
+    let assets = project_root?.join("assets");
     match current_folder {
-        Some(dir) if dir.starts_with(project_root) => Some(dir.to_path_buf()),
-        _ => Some(project_root.to_path_buf()),
+        Some(dir) if dir.starts_with(&assets) => Some(dir.to_path_buf()),
+        _ => Some(assets),
     }
 }
 

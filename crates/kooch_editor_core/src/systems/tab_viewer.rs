@@ -91,6 +91,13 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Asset Browser selection (owned by the overlay). Row clicks mutate
     /// it; the render system reads it to pre-resolve `asset_detail`.
     pub(crate) selected_asset: &'a mut Option<kooch_core::Guid>,
+    /// What the Build panel draws: the presets, the running job's status
+    /// and cargo's output (#758).
+    pub(crate) build: &'a crate::panels::build::BuildPanel,
+    /// Which preset the Build panel has selected. Separate from
+    /// `selected_asset`: choosing a preset shows it in the Inspector, but
+    /// selecting something else there must not change what Build builds.
+    pub(crate) build_selection: &'a mut Option<kooch_core::Guid>,
     /// Data snapshot for the selected asset, resolved before the frame.
     /// `None` when nothing is selected or the snapshot is still pending.
     pub(crate) asset_detail: Option<&'a AssetDetail>,
@@ -300,6 +307,13 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 }
             }
             EditorTab::Components => draw_components_content(ui, self.component_types),
+            EditorTab::Build => crate::panels::build::draw_build_content(
+                ui,
+                self.build,
+                self.build_selection,
+                self.selected_asset,
+                self.actions,
+            ),
             EditorTab::AssetBrowser => draw_asset_browser_content(
                 ui,
                 focused,

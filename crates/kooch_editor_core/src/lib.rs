@@ -18,6 +18,7 @@
 
 pub(crate) mod actions;
 pub mod bootstrap;
+pub mod build;
 pub(crate) mod cargo_args;
 pub(crate) mod drag_drop;
 pub mod editor_camera;
@@ -103,6 +104,8 @@ impl Plugin for EditorPlugin {
             kooch_core::frame_pacing::FramePace::Wait,
         ));
         app.insert_resource(PlayState::new());
+        // Idle until someone presses Build (#758).
+        app.insert_resource(build::BuildState::default());
         app.insert_resource(input_focus::InputFocus::default());
         // Remote mode starts inert: no session means the editor drives
         // its own ECS exactly as before. "Open Remote" fills it in.

@@ -68,7 +68,25 @@ pub const PROJECT_MANIFEST_FILE: &str = "project.kooch";
 /// Also the path the runtime falls back to relative to the working
 /// directory when no `--scene` was passed; see the cwd caveat on
 /// `SceneBootstrapPlugin`.
-pub const DEFAULT_SCENE_REL_PATH: &str = "scenes/default.scene";
+pub const DEFAULT_SCENE_REL_PATH: &str = "assets/scenes/default.scene";
+
+/// Directory, under a project, that scenes live in.
+///
+/// 🔴 Under `assets/`, since #758. Everything a game needs at runtime is
+/// in one tree, so packaging walks one place and "where does this file
+/// go" has one answer. Projects made before this are moved when they
+/// open.
+pub const SCENES_DIR: &str = "assets/scenes";
+
+/// Extensions the runtime reads **by path**, without going through a
+/// loader.
+///
+/// 🔴 The packaging allowlist is derived from registered loaders, and a
+/// scene has none: it is loaded by path, by name, before the asset system
+/// is in play. Without this the scenes would be filtered out of a build
+/// and the game would start empty — which is the failure the derived
+/// allowlist otherwise prevents, arriving from the other side.
+pub const READ_BY_PATH: [&str; 1] = [SCENE_EXTENSION];
 
 #[cfg(test)]
 mod tests;

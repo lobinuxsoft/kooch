@@ -166,3 +166,137 @@ fn the_scan_reads_a_literal_on_the_next_line() {
         vec!["../shaders/a.wgsl"],
     );
 }
+
+/// 🔴 Every `mod X;` in the vendored engine must resolve to a file that
+/// travelled.
+///
+/// The failure this exists for, and it shipped: `#[cfg(test)]` applies to
+/// the item that follows it and nothing else, so
+///
+/// ```ignore
+/// #[cfg(test)]
+/// mod pack_tests;
+/// mod tests;        // ← no longer gated
+/// ```
+///
+/// compiles perfectly in this repo, where `tests.rs` exists, and breaks
+/// the vendored copy, where test files deliberately do not. The first
+/// symptom was a project failing to build with `file not found for module
+/// tests` — ten minutes into someone's first build, naming a file they
+/// have never heard of.
+///
+/// `vendored_includes_all_resolve` does not catch it: that scans
+/// `include_str!`, and this is a `mod`.
+#[test]
+fn vendored_modules_all_resolve() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("crate lives two levels under the repo root")
+        .to_path_buf();
+    let dir = std::env::temp_dir().join("kooch_vendor_mods");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    let dest = vendor_engine(&dir, &repo).expect("vendors the real engine");
+    let mut missing = Vec::new();
+    let mut files = Vec::new();
+    collect_rs(&dest, &mut files);
+    for file in &files {
+        for name in ungated_modules(&fs::read_to_string(file).unwrap_or_default()) {
+            let owner = file.parent().unwrap_or(&dest);
+            let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            // `mod x;` in `foo.rs` resolves to `foo/x.rs`; in `mod.rs` or
+            // `lib.rs` it resolves beside the file.
+            let beside = matches!(stem, "mod" | "lib" | "main");
+            let base = match beside {
+                true => owner.to_path_buf(),
+                false => owner.join(stem),
+            };
+            if !base.join(format!("{name}.rs")).exists()
+                && !base.join(&name).join("mod.rs").exists()
+            {
+                missing.push(format!("{}: mod {name};", file.display()));
+            }
+        }
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        missing.is_empty(),
+        "the vendored engine declares modules whose files did not travel — a \
+         project built against it fails with `file not found for module`:\n  {}\n\n\
+         Gate each test module with its own `#[cfg(test)]`.",
+        missing.join("\n  "),
+    );
+}
+
+/// Every `.rs` under `dir`.
+fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rs(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// Module names declared *without* a `#[cfg(test)]` in front of them.
+///
+/// ⚠️ Skips raw-string bodies. The editor generates a project's `lib.rs`
+/// from a `r##"…"##` literal that contains `pub mod registrations;` —
+/// real Rust, and not a module *this* crate declares. The first run of
+/// this test reported it, which is the difference between a scanner and
+/// a compiler.
+fn ungated_modules(text: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut gated = false;
+    let mut in_raw = false;
+    for line in text.lines() {
+        let line = line.trim();
+        // Good enough for this repo's literals, which open and close on
+        // their own lines. A parser would be the alternative, and the
+        // failure mode of getting it wrong here is a noisy test, not a
+        // shipped bug.
+        if line.contains("r#\"") || line.contains("r##\"") {
+            in_raw = true;
+            continue;
+        }
+        if in_raw {
+            if line == "\"#" || line == "\"##" {
+                in_raw = false;
+            }
+            continue;
+        }
+        if line == "#[cfg(test)]" {
+            gated = true;
+            continue;
+        }
+        if let Some(name) = declared_module(line)
+            && !gated
+        {
+            names.push(name);
+        }
+        if !line.starts_with('#') && !line.is_empty() {
+            gated = false;
+        }
+    }
+    names
+}
+
+/// The name in `mod X;` / `pub mod X;`, if the line is one.
+fn declared_module(line: &str) -> Option<String> {
+    let rest = line
+        .strip_prefix("pub(crate) ")
+        .or_else(|| line.strip_prefix("pub(super) "))
+        .or_else(|| line.strip_prefix("pub "))
+        .unwrap_or(line);
+    rest.strip_prefix("mod ")?
+        .strip_suffix(';')
+        .map(str::to_owned)
+}

@@ -33,6 +33,9 @@ pub struct AssetServer {
     cache: HashMap<(TypeId, PathBuf), slotmap::DefaultKey>,
     /// Directory paths are resolved relative to. `None` keeps paths raw.
     asset_root: Option<PathBuf>,
+    /// Packs to read through before touching the disk (#758). Empty in
+    /// the editor and in any `cargo run`, so development is unaffected.
+    packs: super::packs::Packs,
 }
 
 impl AssetServer {
@@ -42,6 +45,7 @@ impl AssetServer {
             loaders: HashMap::new(),
             cache: HashMap::new(),
             asset_root: None,
+            packs: super::packs::Packs::default(),
         }
     }
 
@@ -172,7 +176,7 @@ impl AssetServer {
             });
         }
 
-        let bytes = std::fs::read(&path)?;
+        let bytes = self.packs.read_or_disk(&path)?;
         let mut ctx = LoadContext { path: &path };
         let boxed = loader.load_boxed(&bytes, &mut ctx)?;
 
@@ -303,7 +307,7 @@ impl AssetServer {
         }
 
         // Read once even when several types share the file.
-        let bytes = std::fs::read(&path)?;
+        let bytes = self.packs.read_or_disk(&path)?;
         let mut reloaded = 0usize;
         let mut stale = Vec::new();
         for (type_id, key) in cached {
@@ -386,6 +390,54 @@ impl AssetServer {
         } else {
             path.to_path_buf()
         }
+    }
+
+    /// Mounts a `.kpack` over `root`, so assets under that directory come
+    /// out of the pack instead of the filesystem (#758).
+    ///
+    /// Returns how many entries it holds. Called by a shipped game at
+    /// startup, and by the editor when it verifies a build; nothing
+    /// mounts one during ordinary development, where the disk is what
+    /// makes editing an asset show up without a repack.
+    pub fn mount_pack(
+        &mut self,
+        root: impl Into<PathBuf>,
+        pack: &Path,
+        key: &kooch_pack::PackKey,
+    ) -> Result<usize, kooch_pack::PackError> {
+        let mounted = super::packs::MountedPack::open(root.into(), pack, key)?;
+        let entries = mounted.len();
+        self.packs.push(mounted);
+        tracing::info!(
+            target: "kooch_core::assets",
+            path = %pack.display(),
+            entries,
+            "asset pack mounted",
+        );
+        Ok(entries)
+    }
+
+    /// Whether anything is mounted — i.e. whether this is a packaged game
+    /// rather than a project being edited.
+    pub fn has_packs(&self) -> bool {
+        !self.packs.is_empty()
+    }
+
+    /// Every path the mounted packs hold, as the engine names them.
+    ///
+    /// What [`scan_packs`](super::scan_packs) walks: a packaged game has
+    /// no directory to scan, so the pack's index is the directory.
+    pub fn packed_paths(&self) -> Vec<PathBuf> {
+        self.packs.paths()
+    }
+
+    /// Reads `path` out of a mounted pack, or `None` when no pack holds
+    /// it.
+    ///
+    /// Never falls back to the disk, unlike loading: the caller is asking
+    /// what the *pack* contains.
+    pub fn read_packed(&mut self, path: &Path) -> Option<Vec<u8>> {
+        self.packs.read_packed(path)
     }
 }
 

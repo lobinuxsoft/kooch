@@ -263,10 +263,21 @@ impl SceneDocument {
     }
 
     /// Loads a scene from a RON file at `path`.
+    ///
+    /// Reads the disk directly. A game whose scenes live in a pack goes
+    /// through [`SceneManager::load`](crate::SceneManager::load), which
+    /// asks the pack first — this stays for the editor, tests, and
+    /// anything holding a path it knows is a file.
     pub fn load(path: &Path) -> Result<Self, SceneError> {
-        let data = std::fs::read_to_string(path)?;
-        let doc: Self = ron::from_str(&data)?;
-        Ok(doc)
+        Self::parse(&std::fs::read_to_string(path)?)
+    }
+
+    /// Parses a scene from RON text.
+    ///
+    /// Split out so the bytes can come from a pack: a packaged game has
+    /// no `scenes/` directory to read (#758).
+    pub fn parse(text: &str) -> Result<Self, SceneError> {
+        Ok(ron::from_str(text)?)
     }
 
     /// Snapshots the current ECS state into a `SceneDocument`.

@@ -8,6 +8,8 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# Reading a shipped game's assets out of a `.kpack` (#758).
+kooch_pack.workspace = true
 inventory = "0.3"
 wgpu.workspace = true
 bytemuck.workspace = true

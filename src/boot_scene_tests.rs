@@ -59,7 +59,7 @@ fn the_answer_is_always_absolute() {
 fn a_packaged_layout_is_found_from_anywhere() {
     let dist = std::env::temp_dir().join("kooch_boot_dist");
     let _ = std::fs::remove_dir_all(&dist);
-    std::fs::create_dir_all(dist.join("scenes")).unwrap();
+    std::fs::create_dir_all(dist.join(kooch_core::scene_paths::SCENES_DIR)).unwrap();
     std::fs::write(dist.join(DEFAULT_SCENE_REL_PATH), "()").unwrap();
 
     // What `beside_exe` computes, with the exe's directory standing in
@@ -69,7 +69,10 @@ fn a_packaged_layout_is_found_from_anywhere() {
         candidate.exists(),
         "the layout a packaged game ships is not what is looked for",
     );
-    assert_eq!(candidate.parent(), Some(dist.join("scenes").as_path()));
+    assert_eq!(
+        candidate.parent(),
+        Some(dist.join(kooch_core::scene_paths::SCENES_DIR).as_path()),
+    );
     assert!(!candidate.starts_with(std::env::current_dir().unwrap()));
 
     let _ = std::fs::remove_dir_all(&dist);
@@ -78,10 +81,14 @@ fn a_packaged_layout_is_found_from_anywhere() {
 /// The relative path is shared with the editor, which writes the scene
 /// there when it creates a project. Two constants would drift, and the
 /// symptom is a game that ships a scene nothing looks for.
+///
+/// 🔴 Under `assets/` since #758: everything a game needs at runtime is
+/// one tree, so packaging walks one place.
 #[test]
 fn the_layout_is_one_constant() {
     assert_eq!(
         Path::new(DEFAULT_SCENE_REL_PATH).parent().unwrap(),
-        Path::new("scenes")
+        Path::new(kooch_core::scene_paths::SCENES_DIR),
     );
+    assert!(DEFAULT_SCENE_REL_PATH.starts_with("assets/"));
 }

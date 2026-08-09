@@ -169,7 +169,9 @@ impl EditorConfig {
 /// The scripting crate that loaded those files is gone. So the directory
 /// was created, never read, and suggested a place to put code the engine
 /// would never look at.
-const PROJECT_DIRS: &[&str] = &["scenes", "assets", "src"];
+// `assets/scenes` rather than a top-level `scenes`: everything a game
+// needs at runtime is one tree (#758).
+const PROJECT_DIRS: &[&str] = &["assets/scenes", "assets", "src"];
 
 /// Sanitizes a project name into a valid Rust crate name.
 ///
@@ -488,6 +490,12 @@ const PROJECT_GITIGNORE: &str = "\
 # Rust build output. Gigabytes, and every byte of it regenerable.
 /target
 
+# 🔴 Editor-owned local state, and it holds this project's asset pack
+# key. A repository that carries one has published it, and history keeps
+# it published after the file is deleted. Keep a copy somewhere else:
+# without it nobody can open the packs you already shipped.
+/.kooch
+
 
 # rustfmt leftovers.
 **/*.rs.bk
@@ -580,10 +588,15 @@ pub fn create_project(
 ///
 /// Returns the absolute path to the scene file.
 pub fn ensure_default_scene(project_root: &Path) -> Result<PathBuf, ProjectError> {
-    let scenes_dir = project_root.join("scenes");
-    fs::create_dir_all(&scenes_dir).map_err(ProjectError::Io)?;
-
+    // 🔴 Derived from the scene's own path, not spelled again. This said
+    // `scenes` while the path below said `assets/scenes/default.scene`,
+    // so it created one directory and wrote into another that did not
+    // exist — "failed to ensure default scene: No such file or
+    // directory", on every open, from a project that was fine.
     let path = project_root.join(DEFAULT_SCENE_REL_PATH);
+    if let Some(scenes_dir) = path.parent() {
+        fs::create_dir_all(scenes_dir).map_err(ProjectError::Io)?;
+    }
     if path.exists() {
         return Ok(path);
     }

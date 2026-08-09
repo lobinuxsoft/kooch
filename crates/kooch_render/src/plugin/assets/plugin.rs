@@ -51,6 +51,10 @@ pub struct AssetPlugin {
     /// The `Assets<T>` those loaders fill. Paired with `extra_loaders` by
     /// `with_asset`, which is the only thing that pushes to either.
     extra_storages: Vec<std::sync::Arc<dyn Fn(&mut App) + Send + Sync>>,
+    /// A `.kpack` to read assets out of instead of the filesystem, and
+    /// the key that opens it (#758). `None` in the editor and in any
+    /// `cargo run`.
+    pack: Option<(PathBuf, PathBuf, kooch_core::asset_loader::PackKey)>,
 }
 
 impl std::fmt::Debug for AssetPlugin {
@@ -73,6 +77,7 @@ impl AssetPlugin {
             eager_import: true,
             extra_loaders: Vec::new(),
             extra_storages: Vec::new(),
+            pack: None,
         }
     }
 
@@ -142,6 +147,21 @@ impl AssetPlugin {
         self
     }
 
+    /// Reads assets out of `pack` rather than the filesystem.
+    ///
+    /// What a shipped game does. The pack is mounted over the primary
+    /// root, so an asset's path is the same string it would have on
+    /// disk and nothing downstream learns that packs exist.
+    pub fn with_pack_over(
+        mut self,
+        root: impl Into<PathBuf>,
+        pack: impl Into<PathBuf>,
+        key: kooch_core::asset_loader::PackKey,
+    ) -> Self {
+        self.pack = Some((root.into(), pack.into(), key));
+        self
+    }
+
     fn primary_root(&self) -> &Path {
         self.roots
             .first()
@@ -186,7 +206,30 @@ impl Plugin for AssetPlugin {
             register(&mut server);
         }
 
+        // Mounted before the database is built: a packaged game has no
+        // directory to scan, and the pack's index is what stands in for
+        // one.
+        let mut packed = None;
+        if let Some((root, path, key)) = &self.pack {
+            match server.mount_pack(root.clone(), path, key) {
+                Ok(entries) => packed = Some(entries),
+                // 🔴 Loud, and not fatal. A game whose pack will not open
+                // has nothing to draw, and the reason — wrong key, damaged
+                // file — is the only useful thing anyone can be told. It
+                // still boots, so the window and the log exist to say so.
+                Err(e) => tracing::error!(
+                    target: "kooch_render::plugin::assets",
+                    path = %path.display(),
+                    error = %e,
+                    "the asset pack could not be opened — this game has no assets",
+                ),
+            }
+        }
+
         let mut database = AssetDatabase::new();
+        if packed.is_some() {
+            kooch_core::asset_loader::scan_packs(&mut server, &mut database);
+        }
         // Derived from the loaders just registered above, so a file
         // written by hand is adopted on the first scan rather than being
         // invisible until something loads it.

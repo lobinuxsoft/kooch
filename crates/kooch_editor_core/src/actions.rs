@@ -353,6 +353,18 @@ pub(crate) enum EditorAction {
     OpenInputMap {
         path: std::path::PathBuf,
     },
+    /// Build and package the project with one of its presets (#758).
+    ///
+    /// Carries the preset's guid rather than the preset: the panel has a
+    /// handle, and what it points at may have been edited in the
+    /// Inspector since — the handler reads the current one.
+    BuildProject(kooch_core::Guid),
+    /// Stop the running build.
+    ///
+    /// cargo is killed rather than asked: it has no "stop when
+    /// convenient", and a build still compiling after the button said it
+    /// stopped is worse than an interrupted one.
+    CancelBuild,
     RegisterScripts,
 }
 
@@ -365,6 +377,11 @@ pub(crate) enum NewFileKind {
     Scene,
     /// One action on its own — what a component points at.
     InputAction,
+    /// One way of building this project: target, output, packed (#758).
+    ///
+    /// **Several per project**, unlike settings — "Windows release" and
+    /// "Linux debug" are two presets, not one with a switch.
+    BuildPreset,
     /// How the project looks: exposure, ambient, shadows (#744).
     ///
     /// **One per project.** The menu hides this once the project has
@@ -421,7 +438,13 @@ impl EditorAction {
 
             // Session and project lifecycle: these are how a user gets
             // *out* of a stuck build, so they must keep working.
-            Self::OpenProject(_)
+            //
+            // Building belongs here rather than above: it reads the
+            // project from disk and never touches the ECS, so it works
+            // while a project is still compiling and its world is empty.
+            Self::BuildProject(_)
+            | Self::CancelBuild
+            | Self::OpenProject(_)
             | Self::RebuildRemote
             | Self::CreateProject { .. }
             | Self::CloseProject

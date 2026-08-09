@@ -93,6 +93,12 @@ pub(super) fn render_registrations(files: &[SourceFile]) -> String {
     s.push_str("/// Describes project components to an editor that loads this library.\n");
     s.push_str("///\n");
     s.push_str("/// Called from `lib.rs` when the editor loads the project's dylib.\n");
+    // 🔴 Behind the `editor` feature, like the export in `lib.rs`. It
+    // names `kooch::kooch_plugin_api` and `component::plugin_bridge`,
+    // both of which live behind `dynamic` — which a game build does not
+    // enable (#558). Gating `lib.rs` and not this meant a game build
+    // failed to compile on a file the editor itself had written.
+    s.push_str("#[cfg(feature = \"editor\")]\n");
     s.push_str("pub fn declare_components(engine: &mut dyn kooch::kooch_plugin_api::Engine) {\n");
     if !has_components {
         // No components to describe. Binding the parameter keeps a project

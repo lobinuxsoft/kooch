@@ -219,3 +219,62 @@ fn a_fresh_project_is_untouched() {
 
     assert_eq!(manifest(&dir), before);
 }
+
+/// 🔴 A project made before #758 keeps its scenes where the editor no
+/// longer looks — and the self-healing default-scene path would write a
+/// fresh empty one over the gap, which reads as a project that lost its
+/// work.
+#[test]
+fn scenes_move_under_assets() {
+    let dir = tmp("scenes");
+    old_project(&dir, "demo");
+    std::fs::create_dir_all(dir.join("scenes")).unwrap();
+    std::fs::write(dir.join("scenes/level.scene"), b"(entities: [])").unwrap();
+
+    split_authoring(&dir, "demo");
+
+    assert!(!dir.join("scenes").exists(), "the old folder survived");
+    assert_eq!(
+        std::fs::read(dir.join("assets/scenes/level.scene")).unwrap(),
+        b"(entities: [])",
+    );
+}
+
+/// Moved, not copied — and only when the destination is free. Two copies
+/// of a scene is worse than one in the wrong place: the editor would edit
+/// one and the build would ship the other.
+#[test]
+fn an_existing_destination_is_not_overwritten() {
+    let dir = tmp("scenes_clash");
+    old_project(&dir, "demo");
+    std::fs::create_dir_all(dir.join("scenes")).unwrap();
+    std::fs::write(dir.join("scenes/level.scene"), b"old").unwrap();
+    std::fs::create_dir_all(dir.join("assets/scenes")).unwrap();
+    std::fs::write(dir.join("assets/scenes/level.scene"), b"new").unwrap();
+
+    split_authoring(&dir, "demo");
+
+    assert_eq!(
+        std::fs::read(dir.join("assets/scenes/level.scene")).unwrap(),
+        b"new"
+    );
+    assert!(
+        dir.join("scenes/level.scene").is_file(),
+        "the old copy was lost"
+    );
+}
+
+/// A project already in the new shape must not be touched.
+#[test]
+fn migrating_scenes_twice_is_a_no_op() {
+    let dir = tmp("scenes_idempotent");
+    old_project(&dir, "demo");
+    std::fs::create_dir_all(dir.join("scenes")).unwrap();
+    std::fs::write(dir.join("scenes/a.scene"), b"x").unwrap();
+
+    split_authoring(&dir, "demo");
+    split_authoring(&dir, "demo");
+
+    assert!(dir.join("assets/scenes/a.scene").is_file());
+    assert!(!dir.join("scenes").exists());
+}

@@ -483,3 +483,59 @@ fn wiring_does_not_re_add_a_module_that_moved_to_the_library() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 🔴 Everything the generated `registrations.rs` reaches for outside the
+/// game's own feature set must be gated.
+///
+/// `declare_components` names `kooch::kooch_plugin_api` and
+/// `component::plugin_bridge`, and both live behind `dynamic` — which a
+/// game build does not enable (#558). `lib.rs` was gated and this was
+/// not, so a game build failed to compile **on a file the editor had
+/// written itself**, with an error naming a module the author never
+/// mentioned.
+#[test]
+fn the_plugin_api_is_behind_the_editor_feature() {
+    let files = vec![SourceFile {
+        rel: "player.rs".to_owned(),
+        module: "player".to_owned(),
+        components: vec!["Player".to_owned()],
+        systems: Vec::new(),
+    }];
+
+    let generated = super::super::render::render_registrations(&files);
+
+    for reaching in ["kooch_plugin_api", "plugin_bridge"] {
+        let at = generated
+            .find(reaching)
+            .unwrap_or_else(|| panic!("{reaching} is not in the generated file at all"));
+        let before = &generated[..at];
+        assert!(
+            before.contains("#[cfg(feature = \"editor\")]"),
+            "`{reaching}` is reached for with no `editor` gate before it — \
+             a game build will not compile",
+        );
+    }
+}
+
+/// And the half a game *does* need stays ungated: registering components
+/// and systems is what a game does at startup.
+#[test]
+fn the_game_half_is_not_gated() {
+    let files = vec![SourceFile {
+        rel: "player.rs".to_owned(),
+        module: "player".to_owned(),
+        components: vec!["Player".to_owned()],
+        systems: Vec::new(),
+    }];
+
+    let generated = super::super::render::render_registrations(&files);
+    let at = generated
+        .find("impl Plugin for ProjectRegistrations")
+        .or_else(|| generated.find("ProjectRegistrations"))
+        .expect("the registrations plugin is generated");
+
+    assert!(
+        !generated[..at].ends_with("#[cfg(feature = \"editor\")]\n"),
+        "the part a game needs was gated behind the editor",
+    );
+}

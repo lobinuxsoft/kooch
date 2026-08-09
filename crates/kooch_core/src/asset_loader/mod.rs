@@ -41,14 +41,28 @@
 //! wrong here.
 
 mod error;
+mod pack_scan;
+mod packs;
 mod server;
 mod trait_def;
 mod written;
 
+// 🔴 Both gated, separately. `#[cfg(test)]` applies to the item that
+// follows it and nothing else, so inserting a module between the
+// attribute and `mod tests;` left the second one unconditional — it
+// compiled here, where the file exists, and broke the vendored engine,
+// where test files deliberately do not travel.
+#[cfg(test)]
+mod pack_tests;
 #[cfg(test)]
 mod tests;
 
 pub use error::{AssetError, AssetResult};
+// Re-exported so crates that configure a pack — the renderer's
+// `AssetPlugin`, the facade — need not take the dependency themselves.
+pub use kooch_pack::{PackKey, SHARES_ENV, SplitKey, key_from_shares, shares_for_build};
+pub use pack_scan::{PackScan, scan_packs};
+pub use packs::read_game_file;
 pub use server::AssetServer;
 pub use trait_def::{AssetLoader, LoadContext};
 pub use written::{Written, asset_written};

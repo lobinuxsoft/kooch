@@ -115,6 +115,17 @@ pub(super) fn folder_menu(
         start(CreateKind::File(NewFileKind::InputAction));
         ui.close();
     }
+    // Several per project, unlike settings: "Windows release" and
+    // "Linux debug" are two presets rather than one with a switch, which
+    // is the whole reason Godot's export presets are a list.
+    if entry(
+        ui,
+        format!("{} New Build Preset", icons::PACKAGE),
+        FolderRole::Assets,
+    ) {
+        start(CreateKind::File(NewFileKind::BuildPreset));
+        ui.close();
+    }
     // Settings are per project, and the renderer finds them by type: a
     // second file is read by nothing and warns where nobody looks. Shown
     // disabled rather than hidden, so a project that already has one says

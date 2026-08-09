@@ -91,7 +91,19 @@ pub(crate) fn default_scene_path() -> PathBuf {
     let cwd = std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join(DEFAULT_SCENE_REL_PATH);
-    beside_exe().filter(|p| p.exists()).unwrap_or(cwd)
+    // 🔴 `.exists()` asks the **disk**, and a packaged game's scene is
+    // inside the pack — so the check that was meant to pick the shipped
+    // layout rejected it and fell back to the working directory, which
+    // for a double-clicked game is the user's home.
+    //
+    // The same mistake as the asset root in `default_asset_plugin`, made
+    // twice: a shipped game's files are not on disk, so "does it exist"
+    // is the wrong question. A pack beside the executable is what says
+    // this is a packaged game, and then the layout is the package's.
+    let packaged = crate::shipped::shipped_pack().is_some();
+    beside_exe()
+        .filter(|p| packaged || p.exists())
+        .unwrap_or(cwd)
 }
 
 /// [`DEFAULT_SCENE_REL_PATH`] beside the running executable.

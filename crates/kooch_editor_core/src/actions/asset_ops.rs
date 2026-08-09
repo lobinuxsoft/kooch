@@ -40,6 +40,15 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
             create_file(resources, folder, name, *kind)
         }
         EditorAction::RegisterScripts => super::codegen::register_scripts(resources),
+        EditorAction::BuildProject(preset) => start_build(resources, *preset),
+        EditorAction::CancelBuild => {
+            if let Some(state) = resources.get_mut::<crate::build::BuildState>()
+                && let Some(job) = state.job.as_mut()
+            {
+                job.cancel();
+                tracing::info!("build cancelled");
+            }
+        }
         _ => return false,
     }
     true
@@ -76,6 +85,18 @@ fn create_file(resources: &mut Resources, folder: &Path, name: &str, kind: NewFi
                 Err(e) => {
                     tracing::error!(file = %file.display(), error = %e, "failed to write action")
                 }
+            }
+            return;
+        }
+        NewFileKind::BuildPreset => {
+            let file = unique_target(
+                folder,
+                OsStr::new(&format!("{name}.{}", crate::build::BUILD_PRESET_EXTENSION)),
+            );
+            let preset = crate::build::BuildPreset::default();
+            match crate::build::preset::to_ron(&preset) {
+                Ok(text) => write_asset(resources, &file, &text, "build preset"),
+                Err(e) => tracing::error!(error = %e, "failed to serialise build preset"),
             }
             return;
         }
@@ -530,6 +551,88 @@ fn meta_path(p: &Path) -> PathBuf {
     let mut s = p.as_os_str().to_os_string();
     s.push(".meta");
     PathBuf::from(s)
+}
+
+/// Starts a build from the preset `guid` names (#758).
+///
+/// Reads the preset from the asset server rather than taking a copy: it
+/// is edited in the Inspector, which writes the file, and building with
+/// a stale copy is a build whose settings are not the ones on screen.
+fn start_build(resources: &mut Resources, guid: kooch_core::Guid) {
+    if resources
+        .get::<crate::build::BuildState>()
+        .is_some_and(crate::build::BuildState::busy)
+    {
+        tracing::warn!("a build is already running");
+        return;
+    }
+
+    let Some(state) = resources.get::<crate::project_state::ProjectState>() else {
+        return;
+    };
+    let Some(project) = state.active_project.as_ref() else {
+        tracing::warn!("no project open to build");
+        return;
+    };
+    let (root, engine_root) = (project.root_path.clone(), state.engine_root.clone());
+
+    let Some(handle) = kooch_ecs::reflect::asset_registry::load_handle::<crate::build::BuildPreset>(
+        resources, guid,
+    ) else {
+        tracing::error!(%guid, "that build preset could not be loaded");
+        return;
+    };
+    let Some(preset) = resources
+        .get::<kooch_core::assets::Assets<crate::build::BuildPreset>>()
+        .and_then(|assets| assets.get(handle))
+        .cloned()
+    else {
+        return;
+    };
+
+    // Generated on first use and kept: the editor has to be able to open
+    // the pack it shipped yesterday.
+    let key = match crate::build::project_key(&root) {
+        Ok(key) => key,
+        Err(e) => {
+            tracing::error!(error = %e, "could not read this project's pack key");
+            return;
+        }
+    };
+    let crate_name = crate::cargo_args::crate_name(&root.join("Cargo.toml"));
+    // The allowlist, taken from the loaders this binary has linked in.
+    // Captured now because the job outlives this frame.
+    let known: Vec<String> = resources
+        .get::<kooch_core::asset_loader::AssetServer>()
+        .map(|server| {
+            server
+                .known_extensions()
+                .iter()
+                .map(|(ext, _)| (*ext).to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    match crate::build::BuildJob::start(
+        &preset,
+        &root,
+        engine_root.as_deref(),
+        &crate_name,
+        key,
+        known,
+    ) {
+        Ok(job) => {
+            tracing::info!(target = %preset.target_triple, "build started");
+            if let Some(state) = resources.get_mut::<crate::build::BuildState>() {
+                state.log.clear();
+                state.job = Some(job);
+            }
+        }
+        // The one that matters: a missing target names the `rustup`
+        // command that fixes it, rather than failing ten minutes in with
+        // a linker error.
+        Err(why) => tracing::error!("{why}"),
+    }
 }
 
 #[cfg(test)]

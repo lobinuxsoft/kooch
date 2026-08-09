@@ -16,6 +16,7 @@ members = [
     "crates/kooch_world",
     "crates/kooch_audio",
     "crates/kooch_ecs_macros",
+    "crates/kooch_pack",
     "crates/kooch_remote",
     "crates/kooch_editor_core",
     "crates/kooch_editor",
@@ -30,6 +31,17 @@ repository = "https://github.com/lobinuxsoft/kooch"
 authors = ["lobinuxsoft"]
 
 [workspace.dependencies]
+# Asset packs (#758): zstd wins ratio and decompression speed at once;
+# AES-GCM is authenticated, so a tampered pack fails loudly.
+zstd = "0.13"
+aes-gcm = "0.11"
+# Subkey derivation, so one master key never does two jobs, and the
+# file tag can be derived rather than announced.
+hkdf = "0.13"
+sha2 = "0.11"
+# Wipes key material on drop. A key that outlives its use is a key in a
+# core dump.
+zeroize = { version = "1.9", features = ["derive"] }
 # GPU
 wgpu = "29"
 # Windowing
@@ -128,6 +140,7 @@ serde_json = "1"
 kooch_core = { path = "crates/kooch_core" }
 kooch_ecs = { path = "crates/kooch_ecs" }
 kooch_ecs_macros = { path = "crates/kooch_ecs_macros" }
+kooch_pack = { path = "crates/kooch_pack" }
 kooch_window = { path = "crates/kooch_window" }
 kooch_input = { path = "crates/kooch_input" }
 kooch_lighting = { path = "crates/kooch_lighting" }

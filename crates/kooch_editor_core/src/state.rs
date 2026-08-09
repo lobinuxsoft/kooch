@@ -41,6 +41,8 @@ pub(crate) enum EditorTab {
     AssetBrowser,
     InputMap,
     Console,
+    /// Making a shipped game out of the project (#758).
+    Build,
 }
 
 /// The `.inputmap` currently open in the Input Map panel.
@@ -101,6 +103,7 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::Console,
     EditorTab::AssetBrowser,
     EditorTab::InputMap,
+    EditorTab::Build,
 ];
 
 impl EditorTab {
@@ -116,6 +119,7 @@ impl EditorTab {
             Self::AssetBrowser => format!("{} Assets", crate::icons::FOLDER_OPEN),
             Self::InputMap => format!("{} Input Map", crate::icons::SLIDERS),
             Self::Console => format!("{} Console", crate::icons::TERMINAL),
+            Self::Build => format!("{} Build", crate::icons::PACKAGE),
         }
     }
 }
@@ -246,6 +250,8 @@ pub struct EditorOverlay {
     /// so the render system can resolve the asset's data snapshot before
     /// the egui frame runs.
     pub(crate) selected_asset: Option<kooch_core::Guid>,
+    /// Which build preset the Build panel has selected (#758).
+    pub(crate) build_selection: Option<kooch_core::Guid>,
     /// Folder selected in the Asset Browser tree — the destination for
     /// drag-and-drop imports. `None` falls back to the project assets
     /// root. Only project folders are valid targets (engine is read-only).
