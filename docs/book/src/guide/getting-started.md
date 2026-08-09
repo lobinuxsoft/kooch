@@ -71,6 +71,19 @@ A version this editor does **not** ship is never touched: that directory
 is what a pinned project builds against, and differing from the source in
 hand is the reason it exists rather than a reason to overwrite it.
 
+### Checking a copy that went wrong
+
+The comparison above catches a *stale* engine, not a *damaged* one:
+deleting a file from a copy does not change what the copy claims to be.
+
+```sh
+KOOCH_VERIFY_ENGINE=1 kooch_editor
+```
+
+re-reads the whole tree, compares it against its own stamp, and re-copies
+when they differ. Off by default because it reads 8 MB every time a
+project opens.
+
 ⚠️ **Rust is still required** to build a project. Gameplay is native Rust
 compiled into the game, so the toolchain is not optional the way it is in
 an engine whose gameplay is a script.
