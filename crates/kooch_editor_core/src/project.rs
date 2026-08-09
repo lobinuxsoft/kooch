@@ -488,6 +488,12 @@ const PROJECT_GITIGNORE: &str = "\
 # Rust build output. Gigabytes, and every byte of it regenerable.
 /target
 
+# 🔴 Editor-owned local state, and it holds this project's asset pack
+# key. A repository that carries one has published it, and history keeps
+# it published after the file is deleted. Keep a copy somewhere else:
+# without it nobody can open the packs you already shipped.
+/.kooch
+
 
 # rustfmt leftovers.
 **/*.rs.bk

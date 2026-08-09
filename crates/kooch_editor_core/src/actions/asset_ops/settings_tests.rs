@@ -111,3 +111,36 @@ fn listing(dir: &Path) -> Vec<String> {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect()
 }
+
+/// #758 — the same wiring, so a `.buildpreset` is creatable too. Several
+/// per project, unlike settings.
+#[test]
+fn a_new_build_preset_parses() {
+    let dir = tmp("preset");
+    let mut resources = Resources::new();
+
+    create_file(
+        &mut resources,
+        &dir,
+        "Windows release",
+        NewFileKind::BuildPreset,
+    );
+    create_file(
+        &mut resources,
+        &dir,
+        "Windows release",
+        NewFileKind::BuildPreset,
+    );
+
+    let ext = crate::build::BUILD_PRESET_EXTENSION;
+    let file = dir.join(format!("Windows release.{ext}"));
+    assert!(file.is_file(), "no preset was written: {:?}", listing(&dir));
+    assert!(
+        dir.join(format!("Windows release_1.{ext}")).is_file(),
+        "a second preset overwrote the first — presets are a list",
+    );
+
+    let parsed: crate::build::BuildPreset =
+        ron::from_str(&std::fs::read_to_string(&file).unwrap()).expect("the loader parses it");
+    assert_eq!(parsed, crate::build::BuildPreset::default());
+}

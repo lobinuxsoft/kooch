@@ -79,6 +79,18 @@ fn create_file(resources: &mut Resources, folder: &Path, name: &str, kind: NewFi
             }
             return;
         }
+        NewFileKind::BuildPreset => {
+            let file = unique_target(
+                folder,
+                OsStr::new(&format!("{name}.{}", crate::build::BUILD_PRESET_EXTENSION)),
+            );
+            let preset = crate::build::BuildPreset::default();
+            match crate::build::preset::to_ron(&preset) {
+                Ok(text) => write_asset(resources, &file, &text, "build preset"),
+                Err(e) => tracing::error!(error = %e, "failed to serialise build preset"),
+            }
+            return;
+        }
         NewFileKind::RenderSettings => {
             // Through the same save-and-register path a material takes,
             // not a bare write: `apply_render_settings_system` finds this

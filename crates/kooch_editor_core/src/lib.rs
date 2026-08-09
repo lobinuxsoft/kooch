@@ -18,6 +18,7 @@
 
 pub(crate) mod actions;
 pub mod bootstrap;
+pub mod build;
 pub(crate) mod cargo_args;
 pub(crate) mod drag_drop;
 pub mod editor_camera;
