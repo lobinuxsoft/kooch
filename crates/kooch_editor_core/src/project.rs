@@ -588,10 +588,15 @@ pub fn create_project(
 ///
 /// Returns the absolute path to the scene file.
 pub fn ensure_default_scene(project_root: &Path) -> Result<PathBuf, ProjectError> {
-    let scenes_dir = project_root.join("scenes");
-    fs::create_dir_all(&scenes_dir).map_err(ProjectError::Io)?;
-
+    // 🔴 Derived from the scene's own path, not spelled again. This said
+    // `scenes` while the path below said `assets/scenes/default.scene`,
+    // so it created one directory and wrote into another that did not
+    // exist — "failed to ensure default scene: No such file or
+    // directory", on every open, from a project that was fine.
     let path = project_root.join(DEFAULT_SCENE_REL_PATH);
+    if let Some(scenes_dir) = path.parent() {
+        fs::create_dir_all(scenes_dir).map_err(ProjectError::Io)?;
+    }
     if path.exists() {
         return Ok(path);
     }

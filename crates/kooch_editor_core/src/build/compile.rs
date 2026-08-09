@@ -125,9 +125,13 @@ impl BuildJob {
                 self.child = None;
                 if !exit.success() {
                     // cargo's own words are in the log; this is the line
-                    // that says which step failed.
-                    self.status =
-                        BuildStatus::Failed(format!("cargo exited with {exit} — see the log"));
+                    // that says which step failed — plus the cause, when
+                    // it is one this editor already knows about.
+                    let mut why = format!("cargo exited with {exit} — see the log");
+                    if let Some(hint) = unmigrated_main(&self.project_root) {
+                        why.push_str(&hint);
+                    }
+                    self.status = BuildStatus::Failed(why);
                     return;
                 }
                 self.status = BuildStatus::Packaging;
@@ -247,6 +251,31 @@ pub fn built_binary(preset: &BuildPreset, project_root: &Path, crate_name: &str)
         false => crate_name.to_owned(),
     };
     path.join(preset.profile_dir()).join(produced)
+}
+
+/// The likely cause when a build fails and `main.rs` still starts the
+/// editor.
+///
+/// 🔴 The migration deliberately leaves an edited `main.rs` alone (#558)
+/// — deleting someone's gameplay setup would be worse than doing
+/// nothing — and warns when the project opens. But that warning is a
+/// hundred lines above the error, in a different panel, at a different
+/// time. Someone pressing Build sees a compiler error naming
+/// `kooch_editor_core`, which they never wrote.
+///
+/// So the failure says it too, where it is being read.
+fn unmigrated_main(project_root: &Path) -> Option<String> {
+    let main = std::fs::read_to_string(project_root.join("src/main.rs")).ok()?;
+    if !main.contains("run_editor_with") {
+        return None;
+    }
+    Some(
+        "\n\nsrc/main.rs still starts the editor, and a game build has no editor \
+         in it — that is what the unresolved `kooch_editor_core` / `kooch_remote` \
+         above are. Replace main.rs with the plain `App::new()` form; what it \
+         used to do is already in src/editor.rs (#558)."
+            .to_owned(),
+    )
 }
 
 /// A reason this build cannot start, or `None`.

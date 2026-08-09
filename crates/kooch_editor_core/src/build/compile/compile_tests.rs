@@ -176,3 +176,41 @@ fn a_missing_target_is_refused_with_the_fix() {
 fn a_host_build_needs_no_target_check() {
     assert!(missing_toolchain(&BuildPreset::default()).is_none());
 }
+
+/// 🔴 The migration leaves an edited `main.rs` alone and warns when the
+/// project opens — a hundred lines above the error, in a different panel,
+/// at a different time. Someone pressing Build sees a compiler error
+/// naming `kooch_editor_core`, which they never wrote. So the failure
+/// says it too, where it is being read.
+#[test]
+fn a_failed_build_explains_an_unmigrated_main() {
+    let dir = std::env::temp_dir().join("kooch_unmigrated");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.rs"),
+        "fn main() { kooch::kooch_editor_core::run_editor_with(x); }",
+    )
+    .unwrap();
+
+    let hint = unmigrated_main(&dir).expect("the cause is recognised");
+    assert!(
+        hint.contains("src/editor.rs"),
+        "the hint does not say where it went"
+    );
+    assert!(hint.contains("main.rs"));
+}
+
+/// A project already game-first gets no hint, so the message does not
+/// blame a file that is fine.
+#[test]
+fn a_migrated_main_is_not_blamed() {
+    let dir = std::env::temp_dir().join("kooch_migrated");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/main.rs"), "fn main() { App::new().run(); }").unwrap();
+
+    assert!(unmigrated_main(&dir).is_none());
+    // And a project with no main.rs at all is not a crash.
+    assert!(unmigrated_main(std::path::Path::new("/nonexistent")).is_none());
+}

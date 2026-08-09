@@ -184,13 +184,38 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
 /// Its output, not a summary of it: when a build fails the only useful
 /// question is what the compiler said, and paraphrasing loses the line
 /// number.
+///
+/// 🔴 Selectable, and with a button that copies the lot. An error nobody
+/// can get out of the window is an error nobody can paste into a search,
+/// a bug report or a message — which is most of what someone does with a
+/// compiler error. egui labels are not selectable by default, so this was
+/// a log you could read and not use.
 fn draw_log(ui: &mut egui::Ui, log: &[String]) {
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(
+                !log.is_empty(),
+                egui::Button::new(format!("{} Copy log", icons::COPY)),
+            )
+            .clicked()
+        {
+            ui.ctx().copy_text(log.join("\n"));
+        }
+        ui.weak(format!("{} lines", log.len()));
+    });
     egui::ScrollArea::vertical()
         .stick_to_bottom(true)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for line in log {
-                ui.label(egui::RichText::new(line).monospace());
+                ui.add(
+                    egui::Label::new(egui::RichText::new(line).monospace())
+                        .selectable(true)
+                        // Compiler output is pre-wrapped and its columns
+                        // line up: rewrapping it turns a caret under a
+                        // token into a caret under nothing.
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                );
             }
         });
 }
