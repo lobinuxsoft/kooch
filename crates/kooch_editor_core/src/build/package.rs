@@ -222,42 +222,75 @@ fn prepare(dir: &Path, project_root: &Path) -> Result<(), PackageError> {
 /// Engine first, then the project — so a project file of the same name
 /// replaces the engine's rather than colliding, and the replacement is
 /// reported.
+///
+/// # 🔴 The engine's assets are filtered by what the game references
+///
+/// The first version copied a fixed list — `materials` and
+/// `meshes/primitives` — borrowed from the *vendoring* allowlist. That
+/// list answers "what source does a project need to build", which is a
+/// different question from "what does this game draw", and it guessed
+/// wrong: a scene using the engine's `suzanne.glb` shipped without it and
+/// rendered nothing, with no error, because a missing GUID is silent.
+///
+/// So the engine's tree is walked whole and then cut down to the GUIDs
+/// the project's own scenes and prefabs actually name. That is smaller
+/// than the curated list would ever be — the engine's 13 MB of assets are
+/// mostly demos — and it cannot be wrong about a mesh somebody used.
 fn collect_assets(
     project_root: &Path,
     engine_root: Option<&Path>,
     known: &[String],
 ) -> (Vec<(String, PathBuf)>, Vec<String>) {
-    let mut files: Vec<(String, PathBuf)> = Vec::new();
-    let mut shadowed = Vec::new();
-
+    // The engine's tree, cut down to what this project's documents name.
+    let mut files = Vec::new();
     if let Some(engine) = engine_root {
-        for entry in crate::engine_vendor::COPY_ASSETS {
-            let from = engine.join("assets").join(entry);
-            walk(&from, &format!("assets/{entry}"), &mut files);
-        }
+        walk(&engine.join("assets"), "assets", &mut files);
+        files.retain(|(name, _)| travels(name, known));
+        let wanted = referenced_guids(project_root);
+        let by_name: std::collections::HashMap<&str, PathBuf> = files
+            .iter()
+            .map(|(name, path)| (name.as_str(), path.clone()))
+            .collect();
+        // A sidecar is judged by the asset it describes, not by its own
+        // absence of a guid.
+        let keep: Vec<bool> = files
+            .iter()
+            .map(|(name, path)| {
+                let asset = name.strip_suffix(".meta").unwrap_or(name);
+                let described = by_name.get(asset).unwrap_or(path);
+                guid_of(described).is_some_and(|guid| wanted.contains(&guid))
+            })
+            .collect();
+        let mut keep = keep.into_iter();
+        files.retain(|_| keep.next().unwrap_or(false));
     }
-    let engine_count = files.len();
+    let engine_names: std::collections::HashSet<String> =
+        files.iter().map(|(name, _)| name.clone()).collect();
 
     let mut project = Vec::new();
     walk(&project_root.join("assets"), "assets", &mut project);
+    project.retain(|(name, _)| travels(name, known));
 
     // The project is the author and wins. Refusing the build instead
     // would mean a name nobody chose — the engine's — could stop a game
     // from being made.
+    let mut shadowed = Vec::new();
     for (name, path) in project {
-        if let Some(slot) = files[..engine_count].iter().position(|(n, _)| *n == name) {
-            shadowed.push(name.clone());
-            files[slot] = (name, path);
-        } else {
-            files.push((name, path));
+        if engine_names.contains(&name) {
+            // Reported once per asset, not once per file: a `.meta`
+            // shadowing its own asset's `.meta` is the same event said
+            // twice.
+            if !name.ends_with(".meta") {
+                shadowed.push(name.clone());
+            }
+            if let Some(slot) = files.iter_mut().find(|(n, _)| *n == name) {
+                slot.1 = path;
+                continue;
+            }
         }
+        files.push((name, path));
     }
-    // 🔴 The allowlist, and it is derived rather than maintained: a file
-    // no registered loader claims is not an asset, so a `.blend` exported
-    // beside its `.glb` does not ship — 80 MB of source handed to whoever
-    // opens the pack. Adding an asset type teaches this by itself,
-    // because the list comes from the loaders.
-    files.retain(|(name, _)| travels(name, known));
+
     files.sort_by(|a, b| a.0.cmp(&b.0));
     (files, shadowed)
 }
@@ -273,6 +306,70 @@ fn collect_assets(
 /// shadow distance are what the project *looks* like, and the renderer
 /// reads them at startup.
 const AUTHORING_ONLY: [&str; 1] = [super::preset::BUILD_PRESET_EXTENSION];
+
+/// Every guid the project's scenes and prefabs name.
+///
+/// Read out of the files as text rather than through the scene loader:
+/// packaging must not need a live ECS, and a guid is a guid wherever it
+/// appears — a nested prefab reference counts the same as a mesh field.
+fn referenced_guids(project_root: &Path) -> std::collections::HashSet<String> {
+    let mut found = std::collections::HashSet::new();
+    let mut documents = Vec::new();
+    walk(&project_root.join("assets"), "", &mut documents);
+    for (name, path) in &documents {
+        let is_document = [
+            kooch_core::scene_paths::SCENE_EXTENSION,
+            kooch_core::scene_paths::PREFAB_EXTENSION,
+        ]
+        .iter()
+        .any(|ext| name.ends_with(&format!(".{ext}")));
+        if !is_document {
+            continue;
+        }
+        if let Ok(text) = std::fs::read_to_string(path) {
+            found.extend(guids_in(&text));
+        }
+    }
+    found
+}
+
+/// A guid as bytes only, so two spellings of one id compare equal.
+///
+/// 🔴 `Guid::to_string()` writes no hyphens and a scene file writes them,
+/// so comparing the two as they come found nothing — every engine asset
+/// looked unreferenced and none of them shipped. The first symptom was a
+/// game whose Suzanne was missing, which is also what the curated list
+/// this replaced used to do.
+fn normalise_guid(guid: &str) -> String {
+    guid.chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Every `"xxxxxxxx-xxxx-…"` in `text`.
+///
+/// A shape match rather than a parse: the document format is RON and the
+/// guids sit inside `AssetRef(guid: Some("…"))`, but reaching for them
+/// through the type would mean deserialising a scene here — and a scene
+/// that fails to deserialise must not stop a build from packaging the
+/// rest.
+fn guids_in(text: &str) -> Vec<String> {
+    text.split('"')
+        .filter(|candidate| {
+            candidate.len() == 36
+                && candidate.split('-').map(str::len).eq([8, 4, 4, 4, 12])
+                && candidate.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+        })
+        .map(normalise_guid)
+        .collect()
+}
+
+/// The guid recorded beside `path`, if it has a sidecar.
+fn guid_of(path: &Path) -> Option<String> {
+    let meta = kooch_core::asset_meta::read_meta(path).ok()?;
+    Some(normalise_guid(&meta.guid.to_string()))
+}
 
 /// Whether a file travels into the build.
 ///

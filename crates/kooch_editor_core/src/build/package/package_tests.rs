@@ -34,25 +34,51 @@ fn write(path: &Path, bytes: &[u8]) {
     std::fs::write(path, bytes).unwrap();
 }
 
-/// A project with a scene, two assets and their sidecars.
+/// Guids the fixtures use, so a scene can name an engine asset the way a
+/// real one does.
+const ENGINE_MATERIAL: &str = "11111111-0000-4000-8000-000000000001";
+const ENGINE_CUBE: &str = "22222222-0000-4000-8000-000000000002";
+
+/// A project with a scene, an asset and its sidecar.
+///
+/// The scene names the engine assets it draws — which is what decides
+/// whether they travel, since a curated list guessed wrong once already.
 fn project(root: &Path) {
     write(
         &root.join(kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH),
-        b"(entities: [])",
+        format!(
+            r#"(entities: [(components: [(fields: [
+                ("material", AssetRef(guid: Some("{ENGINE_MATERIAL}"))),
+                ("mesh", AssetRef(guid: Some("{ENGINE_CUBE}"))),
+            ])])])"#
+        )
+        .as_bytes(),
     );
     write(&root.join("assets/props/rock.glb"), b"rock mesh");
-    write(&root.join("assets/props/rock.glb.meta"), b"(guid: \"r\")");
+    write(&root.join("assets/props/rock.glb.meta"), b"guid = \"r\"\n");
 }
 
-/// An engine root with the two directories a game actually needs.
+/// An engine root: two assets a scene names, and a demo nothing does.
 fn engine(root: &Path) {
     write(
         &root.join("assets/materials/default.ron"),
         b"engine material",
     );
+    write(
+        &root.join("assets/materials/default.ron.meta"),
+        format!("guid = \"{ENGINE_MATERIAL}\"\n").as_bytes(),
+    );
     write(&root.join("assets/meshes/primitives/cube.glb"), b"cube");
-    // A demo the vendor list deliberately leaves behind.
+    write(
+        &root.join("assets/meshes/primitives/cube.glb.meta"),
+        format!("guid = \"{ENGINE_CUBE}\"\n").as_bytes(),
+    );
+    // A demo no scene names. 12 of the engine's 13 MB are these.
     write(&root.join("assets/meshes/demo.glb"), b"12 MB of demo");
+    write(
+        &root.join("assets/meshes/demo.glb.meta"),
+        b"guid = \"99999999-0000-4000-8000-000000000009\"\n",
+    );
 }
 
 fn binary(dir: &Path) -> PathBuf {
@@ -200,6 +226,10 @@ fn a_project_asset_shadows_the_engines() {
     project(&proj);
     engine(&eng);
     write(&proj.join("assets/materials/default.ron"), b"mine");
+    write(
+        &proj.join("assets/materials/default.ron.meta"),
+        format!("guid = \"{ENGINE_MATERIAL}\"\n").as_bytes(),
+    );
 
     let out = assemble(
         &BuildPreset::default(),
@@ -469,5 +499,88 @@ fn render_settings_still_ship() {
     assert!(
         pack.contains("assets/project.rendersettings"),
         "the project's look did not ship",
+    );
+}
+
+/// 🔴 The bug this replaced a curated list to fix: a scene using the
+/// engine's `suzanne.glb` shipped without it and rendered nothing. The
+/// old filter copied `materials` and `meshes/primitives` — a list
+/// borrowed from *vendoring*, which answers "what source does a project
+/// need to build", not "what does this game draw".
+#[test]
+fn an_engine_asset_the_scene_uses_ships() {
+    let dir = tmp("suzanne");
+    let key = PackKey::generate();
+    let (proj, eng) = (dir.join("proj"), dir.join("engine"));
+    project(&proj);
+    engine(&eng);
+    // Outside `meshes/primitives`, which is exactly where the old list
+    // stopped looking.
+    write(&eng.join("assets/meshes/suzanne.glb"), b"suzanne");
+    write(
+        &eng.join("assets/meshes/suzanne.glb.meta"),
+        b"guid = \"0b1ec7a0-0000-4000-8000-000000000001\"\n",
+    );
+    // A scene that names it, the way a real one does.
+    write(
+        &proj.join(kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH),
+        br#"(entities: [(components: [(fields: [("mesh", AssetRef(
+            guid: Some("0b1ec7a0-0000-4000-8000-000000000001"),
+        ))])])])"#,
+    );
+
+    let out = assemble(
+        &BuildPreset::default(),
+        &known(),
+        &proj,
+        Some(&eng),
+        &binary(&dir),
+        "demo",
+        &key,
+    )
+    .unwrap();
+
+    let mut pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    assert_eq!(
+        pack.read("assets/meshes/suzanne.glb").unwrap(),
+        b"suzanne",
+        "the mesh the scene draws did not ship",
+    );
+}
+
+/// And the other half: 12 of the engine's 13 MB are demo models no game
+/// loads, so what nothing names stays behind.
+#[test]
+fn an_engine_asset_nothing_uses_stays_behind() {
+    let dir = tmp("unused");
+    let key = PackKey::generate();
+    let (proj, eng) = (dir.join("proj"), dir.join("engine"));
+    project(&proj);
+    engine(&eng);
+    write(&eng.join("assets/meshes/demo.glb"), b"12 MB of demo");
+    write(
+        &eng.join("assets/meshes/demo.glb.meta"),
+        b"guid = \"deadbeef-0000-4000-8000-000000000001\"\n",
+    );
+    write(
+        &proj.join(kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH),
+        b"(entities: [])",
+    );
+
+    let out = assemble(
+        &BuildPreset::default(),
+        &known(),
+        &proj,
+        Some(&eng),
+        &binary(&dir),
+        "demo",
+        &key,
+    )
+    .unwrap();
+
+    let pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    assert!(
+        !pack.contains("assets/meshes/demo.glb"),
+        "a demo model shipped"
     );
 }
