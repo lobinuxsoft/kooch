@@ -9,42 +9,96 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-08, `development` at `30ec24f` — **#754 done in PR #757**. Graphics paused until a game can be built from the editor (#758).
+Last updated 2026-08-09, `development` at `1f7c31c` — **#758 shipped, and a game built from the editor runs on the OneXFly** (PRs #765, #770). The build question is closed. The order is now set by a performance budget.
 
 ---
 
-## Next — a game you can actually run: #758, the build panel
+## The constraint everything is now measured against
 
-**The graphics work is paused on purpose.** Not because it stopped
-mattering, but because nothing here has ever produced a game: you can
-play in the Game panel and you can compile by hand, and there is no
-"make the build". Until that exists, no shipped artefact has ever been
-run, and every graphics feature is being judged in an editor viewport
-rather than in the thing people would install.
+**72 FPS at 10 W TDP on the OneXFly F1 Pro.** The bar a game made with
+this engine has to clear. It does not clear it today.
 
-### The order, and what each one unblocks
+That is **13.9 ms per frame**, on a gfx1150 iGPU, on a third of the power
+the part will draw if you let it.
 
-| | | Why here |
-|---|---|---|
-| **#758** | build panel — presets per target platform | The point. Godot's model: named presets stored with the project, platform options declared dynamically. The preset is a reflected asset, so the Inspector edits it with no UI code (#744) |
-| **#759** | `.rendersettings` cannot be created from the browser | Same wiring as #758 needs for `.buildpreset`: one enum, one handler, one menu. Doing it twice means touching three files twice |
-| **#537** | cargo features per build target | What a preset selects. A build panel with no feature control ships the editor inside the game |
-| **#558** | the shippable build is the game only | The assertion #758 has to satisfy |
-| **#755** | per-platform installers, Rust toolchain | Only blocking for **cross**-compiling. A native build works with what a dev already has |
+| | |
+|---|---|
+| Whole frame | **13.9 ms** |
+| A pass taking 2 ms | **14 % of the budget** |
+| A pass taking 5 ms | **36 %, and nothing else has moved yet** |
 
-### Behind that, and only then, the graphics queue resumes
+This is not a section of the roadmap. It is the number every graphics
+issue below now has to answer to, and it changes which of them are worth
+doing. A feature that cannot fit in what is left of 13.9 ms is not a
+feature this engine has.
 
-**#743** light debug views (one light at a time, greyscale, with its
-shadow) → **#248 / #250** atmosphere → **#254** post + auto exposure.
+⚠️ **At 10 W the GPU clocks well below its desktop behaviour.** A
+measurement taken plugged in and unthrottled says nothing about this
+target. Every number here is taken on the device, at 10 W.
+
+---
+
+## Next — make it fit: #769, then #771
+
+### #769 — where the frame actually goes
+
+The budget has to be *divided* and nobody knows the split. One pass can
+be obviously wasteful and fixing it can still leave the frame nowhere
+near 13.9 ms.
+
+What comes out is a table — pass, milliseconds, share of 13.9 ms — and
+that table sets the order of every performance issue after it. Measured
+on the device at 10 W: frametime *and its distribution* (an average hides
+a stall, and a stall is what a 72 FPS target fails on), GPU timestamps
+per pass, CPU vs GPU bound, the resolution actually in use, the adapter
+actually selected, and the clocks while it runs.
+
+🔴 Guessing has a bad record here. Three hypotheses about a rendering
+problem failed in a row in the shadow work, and one `eprintln!` of both
+sides ended it. This issue closes when there are numbers.
+
+### #771 — the sky, which does not need a profiler to justify opening
+
+Counted from `sky_main.wgsl` rather than measured: up to **8 192 hash
+evaluations per sky pixel** — 32 primary steps, each firing a 3-step
+light march, each sample evaluating two 4-octave FBMs of 8 hashes each.
+
+🔴 **And it is paid on pixels that end up hidden.** The sky pass clears
+colour *and* depth, so it runs before the geometry: every pixel looking
+up marches the whole slab, and then the ground draws over it. The
+fragment shader also writes `frag_depth`, which disables early-Z — so
+reordering the pass buys nothing until that goes too.
+
+The constants are already tuned to the edge of visible banding (48 → 32
+steps, 4 → 3 light steps, 800 → 500 length). **There is nothing left to
+take.** The cost is structural: procedural FBM per sample, where
+everything else in the industry does a filtered 3D texture fetch. The
+direction is Guerrilla's *Nubis*, which #731 already cites.
+
+⚠️ Reduced-resolution rendering with temporal reprojection is the other
+half of that technique, and it needs motion vectors — **which do not
+exist** (#732).
+
+### Then the graphics queue, re-ordered by the budget
+
+**#743** light debug views → **#248 / #250** atmosphere → **#254** post +
+auto exposure.
 
 ⚠️ #254 earned its place the hard way: the blown-out white floor in
-every screenshot of the last two sessions is that issue, and it is what
-made contact shadows hard to judge while building them.
+every screenshot of two sessions is that issue, and it is what made
+contact shadows hard to judge while building them.
 
 🔴 **#477 (VSM) will walk into the same set of problems #476 fixed.**
 Every one of its nine was an orthographic view doing what a perspective
 one does not; a virtual shadow map is more orthographic views, not
-fewer.
+fewer. **And it has to fit the budget**, which is a question nobody has
+asked of it yet.
+
+### Still open from the build work
+
+**#767** choose the game's first scene — `main_scene` is in
+`project.kooch`, the editor writes it, and the runtime never reads it.
+**#766** input repeats in Play. **#763** shorter names.
 
 ### Cross-compilation: measured, not assumed
 
@@ -63,6 +117,40 @@ native runners rather than cross-compiling — which is #753, and the
 other half of this.
 
 ---
+
+## Done — #758, and a game that runs on a machine that is not this one
+
+The thing that paused the graphics work: nothing here had ever produced a
+game. It has now.
+
+- **Build panel with presets per target** (#758). A `.buildpreset` is a
+  reflected asset, so the Inspector edits it with no UI code (#744). The
+  build can be cancelled.
+- **Encrypted asset packs.** zstd + AES-256-GCM with the index sealed
+  too, so the file does not reveal the *names* of what is in it. Scenes
+  go in the pack — a scene is the structure of the whole game, and
+  leaving it in plain text beside an encrypted pack protects the textures
+  and publishes the design.
+- **Only what the game reaches travels.** Packaging walks the scenes and
+  prefabs for GUIDs; source does not travel, and neither does the preset.
+- **The shipped build is the game only** (#558), asserted by the
+  packaging tests rather than trusted.
+- **The editor ships as one `.AppImage`** that materialises its own
+  engine for projects.
+- 🔴 **`min_glibc`** — a game built here refused to start on the OneXFly:
+  glibc is forward compatible and not backward, 2.43 against 2.42. Now
+  routed through `cargo-zigbuild`, which needs no root — which matters on
+  an immutable distribution. See [Shipping a Game](book/src/guide/shipping.md).
+
+Two things that took longer than they should have, both worth
+remembering. The engine's own materials failed to resolve in the packaged
+game because GUIDs were compared in two different spellings — three
+guesses lost, one `eprintln!` of both sides won. And `.exists()` was used
+twice, in two files, to decide a packaged game's layout: a packaged
+game's files are not on disk.
+
+⚠️ It runs, and it runs badly. That is the constraint at the top of this
+file, and #769 is where it goes next.
 
 ## Done — #754, the engine lives once per machine
 
@@ -419,6 +507,12 @@ engine-wide, not render-only.
 ---
 
 ## Backlog — performance and the files that hide it
+
+⚠️ **This section predates the 13.9 ms budget and is host-side.** Every
+number in it was taken on the author's desktop, measuring the *editor*.
+That work stands, and none of it answers the target at the top of this
+file — a handheld at 10 W is a different machine with a different
+bottleneck. Re-measure before reusing any figure here.
 
 Two sessions running, the thing that actually went wrong was not a missing feature. It was
 work done per frame that did not need doing, in files too big for anyone to notice. Both are
