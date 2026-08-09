@@ -1,5 +1,20 @@
 use super::*;
 
+/// 🔴 `KEY_ENV` is the **process's** environment, and cargo runs tests on
+/// several threads. Two of these set it; every other one calls
+/// `project_key`, which reads it — so without a lock, a test that expects
+/// a key on disk intermittently gets the one a sibling had just exported
+/// and finds nothing written. Every test here takes it, including the
+/// ones that never touch the variable, because they are the ones that
+/// lose the race.
+static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The lock, surviving a sibling's panic: a poisoned mutex would turn one
+/// failure into every failure and hide which test broke.
+fn alone() -> std::sync::MutexGuard<'static, ()> {
+    ENV.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn tmp(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("kooch_projkey_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
@@ -12,6 +27,7 @@ fn tmp(name: &str) -> PathBuf {
 /// release would be holding a file nobody can read.
 #[test]
 fn the_key_is_generated_once_and_kept() {
+    let _alone = alone();
     let dir = tmp("stable");
     assert!(!has_key(&dir));
 
@@ -25,6 +41,7 @@ fn the_key_is_generated_once_and_kept() {
 /// Breaking one project must say nothing about the next.
 #[test]
 fn two_projects_get_two_keys() {
+    let _alone = alone();
     let (a, b) = (tmp("proj_a"), tmp("proj_b"));
 
     assert_ne!(project_key(&a).unwrap(), project_key(&b).unwrap());
@@ -35,6 +52,7 @@ fn two_projects_get_two_keys() {
 /// published after the file is deleted.
 #[test]
 fn the_key_lands_where_git_ignores_it() {
+    let _alone = alone();
     let dir = tmp("location");
     project_key(&dir).unwrap();
 
@@ -46,9 +64,11 @@ fn the_key_lands_where_git_ignores_it() {
 /// written to the checkout.
 #[test]
 fn the_environment_wins_and_writes_nothing() {
+    let _alone = alone();
     let dir = tmp("env");
     let wanted = kooch_pack::PackKey::generate();
-    // SAFETY: single-threaded suite; the sibling env tests do the same.
+    // SAFETY: `alone()` is held, so no sibling test is reading the
+    // environment while this one changes it.
     unsafe { std::env::set_var(KEY_ENV, wanted.to_hex()) };
 
     let got = project_key(&dir).unwrap();
@@ -62,6 +82,7 @@ fn the_environment_wins_and_writes_nothing() {
 /// error has to name the variable, not the parse.
 #[test]
 fn a_malformed_environment_key_names_the_variable() {
+    let _alone = alone();
     let dir = tmp("badenv");
     unsafe { std::env::set_var(KEY_ENV, "not a key") };
 
@@ -79,6 +100,7 @@ fn a_malformed_environment_key_names_the_variable() {
 /// an error about hex.
 #[test]
 fn a_corrupt_key_file_is_replaced() {
+    let _alone = alone();
     let dir = tmp("corrupt");
     std::fs::create_dir_all(dir.join(LOCAL_DIR)).unwrap();
     std::fs::write(key_path(&dir), "this is not a key").unwrap();
@@ -97,6 +119,7 @@ fn a_corrupt_key_file_is_replaced() {
 fn the_key_file_is_owner_only() {
     use std::os::unix::fs::PermissionsExt;
 
+    let _alone = alone();
     let dir = tmp("perms");
     project_key(&dir).unwrap();
 

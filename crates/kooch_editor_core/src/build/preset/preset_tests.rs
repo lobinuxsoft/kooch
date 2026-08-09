@@ -115,6 +115,35 @@ fn the_default_is_a_shippable_build() {
     assert!(preset.is_host());
 }
 
+/// A glibc floor only means something where there is a glibc, and
+/// `x86_64-pc-windows-gnu.2.28` is a target that does not exist.
+#[test]
+fn a_floor_only_applies_to_gnu_linux() {
+    let floored = |triple: &str| {
+        BuildPreset {
+            target_triple: triple.to_owned(),
+            min_glibc: "2.28".to_owned(),
+            ..Default::default()
+        }
+        .glibc_floor()
+        .map(str::to_owned)
+    };
+
+    assert_eq!(floored("x86_64-unknown-linux-gnu"), Some("2.28".to_owned()));
+    assert_eq!(floored("x86_64-pc-windows-gnu"), None);
+    assert_eq!(floored("x86_64-unknown-linux-musl"), None);
+    // And no floor asked for is no floor, whatever the target.
+    assert_eq!(
+        BuildPreset {
+            target_triple: "x86_64-unknown-linux-gnu".to_owned(),
+            min_glibc: "   ".to_owned(),
+            ..Default::default()
+        }
+        .glibc_floor(),
+        None,
+    );
+}
+
 #[test]
 fn a_preset_round_trips_through_ron() {
     let preset = BuildPreset {
@@ -125,6 +154,7 @@ fn a_preset_round_trips_through_ron() {
         features: "cheats".to_owned(),
         pack_assets: false,
         runnable: true,
+        min_glibc: "2.28".to_owned(),
     };
 
     let text = to_ron(&preset).unwrap();
