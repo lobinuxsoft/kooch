@@ -250,6 +250,19 @@ pub struct IntiFrame {
 /// the light count reads the same way; this one is the deliberate value.
 pub const NO_DEBUG_LIGHT: u32 = u32::MAX;
 
+/// Which light `MeshletDebugMode::SingleLight` isolates (#743).
+///
+/// A [`Resource`](kooch_core::resource::Resources) the editor writes
+/// from the World panel's selection, rather than a control of its own:
+/// "one light at a time" is what selecting a light already means, and a
+/// second list of lights to pick from is a second thing to keep in step
+/// with the scene.
+///
+/// `None` — or an entity that is not an active light — renders magenta.
+/// The two are the same answer to the viewer and neither is a failure.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct DebugLight(pub Option<kooch_ecs::entity::Entity>);
+
 impl IntiFrame {
     pub fn new(
         ambient: &AmbientLight,

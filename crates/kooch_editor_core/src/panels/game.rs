@@ -17,6 +17,7 @@ pub(crate) fn draw_game_content(
     meshlet_stats: kooch_render::meshlet::MeshletRenderStats,
     meshlet_debug_mode: &mut kooch_render::meshlet::MeshletDebugMode,
     meshlet_debug_caps: kooch_render::meshlet::MeshletDebugCaps,
+    single_light_note: Option<&str>,
     meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
     hud_visibility: &mut crate::perf::HudVisibility,
 ) {
@@ -62,6 +63,7 @@ pub(crate) fn draw_game_content(
             meshlet_debug_caps,
             meshlet_lod_settings,
             hud_visibility,
+            single_light_note,
         );
     }
 }

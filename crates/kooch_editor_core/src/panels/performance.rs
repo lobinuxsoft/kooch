@@ -37,6 +37,7 @@ pub(crate) fn draw_performance_content(
     meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
     hud_visibility: &mut crate::perf::HudVisibility,
+    single_light_note: Option<&str>,
 ) {
     // auto_shrink=[true, true] lets the ScrollArea report only the
     // height its content actually needs, so the surrounding Frame
@@ -54,6 +55,7 @@ pub(crate) fn draw_performance_content(
                     meshlet_debug_mode,
                     meshlet_debug_caps,
                     meshlet_lod_settings,
+                    single_light_note,
                 );
             });
 
@@ -398,6 +400,7 @@ fn debug_controls(
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
+    single_light_note: Option<&str>,
 ) {
     ui.horizontal(|ui| {
         ui.label("Debug:");
@@ -411,6 +414,28 @@ fn debug_controls(
             .response
             .on_hover_text("Meshlet pipeline visualization mode. Off = production shading.");
     });
+    // What the isolated light actually casts (#743). A point light with
+    // no shadow renders exactly like one whose shadow broke, and the
+    // view has nothing to draw that would tell them apart — so the
+    // limitation is written down instead of left to be inferred.
+    if *meshlet_debug_mode == MeshletDebugMode::SingleLight {
+        match single_light_note {
+            Some(note) => {
+                ui.label(egui::RichText::new(note).small().weak())
+                    .on_hover_text(
+                        "Only directional lights have a shadow map today. Contact shadows are \
+                         per light and off by default on point and spot.",
+                    );
+            }
+            None => {
+                ui.label(
+                    egui::RichText::new("Select a light in the World panel")
+                        .small()
+                        .weak(),
+                );
+            }
+        }
+    }
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("LOD ≤").small())
             .on_hover_text("Pixel-error threshold for the continuous-LOD selector.");
@@ -506,6 +531,7 @@ pub(crate) fn draw_perf_sidebar(
     meshlet_debug_caps: kooch_render::meshlet::MeshletDebugCaps,
     meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
     hud_visibility: &mut crate::perf::HudVisibility,
+    single_light_note: Option<&str>,
 ) {
     // State lives in `HudVisibility` rather than in egui memory: the
     // systems that pay for these metrics run in `PreRender` and cannot
@@ -585,6 +611,7 @@ pub(crate) fn draw_perf_sidebar(
                     meshlet_debug_caps,
                     meshlet_lod_settings,
                     hud_visibility,
+                    single_light_note,
                 );
             });
     }
