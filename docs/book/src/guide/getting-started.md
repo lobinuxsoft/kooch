@@ -48,6 +48,42 @@ that must not write to the user's data directory.
 **It costs no build time.** A project always compiled the engine from
 source; this only changes where the source is.
 
+### When that directory is replaced
+
+Every materialised engine records which source tree it came from, in a
+`.kooch-engine-stamp` beside it — the version, plus a digest of every
+file. An editor compares its own source against that stamp and replaces
+the directory when they differ, leaving one copy behind, never two.
+
+🔴 **Without it, a new editor never updated the engine.** The directory
+is named after the engine version, that version is `0.1.0` for every
+development build, and the old check only asked whether `Cargo.toml`,
+`crates` and `src` existed — which is true of every copy of the engine
+ever made. So a freshly installed editor found the directory, called it
+current, and every project on the machine went on compiling against
+weeks-old source with nothing said.
+
+⚠️ **The build right after a replacement is a full rebuild**, since every
+engine source file is now newer than the project's `target/`. The editor
+logs it for that reason.
+
+A version this editor does **not** ship is never touched: that directory
+is what a pinned project builds against, and differing from the source in
+hand is the reason it exists rather than a reason to overwrite it.
+
+### Checking a copy that went wrong
+
+The comparison above catches a *stale* engine, not a *damaged* one:
+deleting a file from a copy does not change what the copy claims to be.
+
+```sh
+KOOCH_VERIFY_ENGINE=1 kooch_editor
+```
+
+re-reads the whole tree, compares it against its own stamp, and re-copies
+when they differ. Off by default because it reads 8 MB every time a
+project opens.
+
 ⚠️ **Rust is still required** to build a project. Gameplay is native Rust
 compiled into the game, so the toolchain is not optional the way it is in
 an engine whose gameplay is a script.
@@ -87,6 +123,8 @@ cargo run --release --features editor --example package_editor -- dist/
 dist/
   kooch_editor      the binary
   engine/           7.7 MB — the source it materialises for projects
+    .kooch-engine-stamp   which tree this is, so an install can tell
+                          whether it is newer than what is on the machine
   assets/           what the editor itself renders with
 ```
 

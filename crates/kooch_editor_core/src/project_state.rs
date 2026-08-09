@@ -293,8 +293,24 @@ impl ProjectState {
         let source = crate::engine_vendor::vendor_source(self.engine_root.as_deref());
         match crate::engine_vendor::ensure_current(&manifest.engine_version, source.as_deref()) {
             Ok((state, Some(engine_dir))) => {
-                if state != crate::engine_vendor::VendorState::UpToDate {
-                    tracing::info!(?state, path = %engine_dir.display(), "engine materialised");
+                use crate::engine_vendor::VendorState;
+                match state {
+                    VendorState::UpToDate => {}
+                    // 🔴 Said plainly because the next build is a full
+                    // one: every engine source file is newer than the
+                    // project's `target/`, so cargo rebuilds all of it.
+                    // Minutes of silence with no explanation is how this
+                    // reads otherwise (#761).
+                    VendorState::Replaced => tracing::info!(
+                        path = %engine_dir.display(),
+                        "the engine was replaced with the one this editor ships — \
+                         the next build of this project is a full rebuild",
+                    ),
+                    _ => tracing::info!(
+                        ?state,
+                        path = %engine_dir.display(),
+                        "engine materialised",
+                    ),
                 }
                 // The manifest carries an absolute path and `$HOME`
                 // differs per user, so a project moved between machines
