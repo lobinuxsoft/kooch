@@ -156,11 +156,35 @@ The boot scene is resolved in this order:
 
 1. `SceneBootstrapPlugin::with_scene(path)`, if your `main.rs` sets one explicitly.
 2. `--scene <path>` on the command line — absolute, or relative to the working directory.
-3. `scenes/default.scene`, relative to the working directory.
+3. `scenes/default.scene` **beside the executable**.
+4. The same, relative to the working directory.
 
 So `cargo run` from the project root just works: the default path resolves because
 the working directory is the project. A different level is
 `cargo run -- --scene scenes/Level1.scene`.
+
+### 🔴 Why the executable comes first
+
+A shipped game is opened by double-clicking it, and that leaves the working directory
+wherever the desktop felt like — your home, or `/`. Resolved against the cwd alone, a
+released game starts with **an empty scene and no error**: the file was not missing from the
+package, it was never looked for in the package.
+
+So a packaged game keeps its content beside the binary:
+
+```text
+dist/
+  mygame              the executable
+  scenes/             default.scene, and the rest
+  assets/             everything the scenes reference, by GUID (.meta included)
+```
+
+The cwd stays as the fallback because that is what a plain `cargo run` inside a project
+relies on — there the executable lives in `target/debug/` and has no `scenes/` beside it.
+
+⚠️ **The `.meta` sidecars are not optional.** A scene references its assets by GUID, and the
+GUID lives in the `.meta` next to each file. A copy that filters by extension and leaves them
+behind produces a game that loads its scene and renders nothing.
 
 ## Component registration runs before the scene loads
 

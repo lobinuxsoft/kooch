@@ -57,6 +57,63 @@ pub(crate) enum CreateKind {
     File(NewFileKind),
 }
 
+/// What a folder holds, as far as anything that reads the project is
+/// concerned.
+///
+/// 🔴 The editor scans exactly two trees, and a file outside them is
+/// invisible to the thing that would use it: `<project>/assets` is what
+/// `scan_project_assets_system` registers, and `<project>/src` is what
+/// `register_scripts` reads. A material written into `src/` gets no
+/// GUID and cannot be assigned to anything; a component written into
+/// `assets/` is not compiled. Neither says so — the file is simply
+/// there, doing nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FolderRole {
+    /// Under `<project>/assets`.
+    Assets,
+    /// Under `<project>/src`.
+    Source,
+    /// Somewhere else in the project: `scenes/`, the root, `docs/`…
+    Other,
+}
+
+impl FolderRole {
+    /// Which of the project's two scanned trees `path` sits in.
+    pub(crate) fn of(path: &Path, project_root: Option<&Path>) -> Self {
+        let Some(root) = project_root else {
+            return Self::Other;
+        };
+        if path.starts_with(root.join("assets")) {
+            Self::Assets
+        } else if path.starts_with(root.join("src")) {
+            Self::Source
+        } else {
+            Self::Other
+        }
+    }
+
+    /// Why a creation is refused here, or `None` when it is allowed.
+    ///
+    /// The message names the folder that would work, because "disabled"
+    /// on its own is a dead end.
+    pub(crate) fn refusal(self, wanted: Self) -> Option<&'static str> {
+        if self == wanted {
+            return None;
+        }
+        Some(match wanted {
+            Self::Assets => {
+                "Assets are only registered under `assets/` — created here, this file \
+                 would get no GUID and nothing could reference it."
+            }
+            Self::Source => {
+                "Scripts are only compiled under `src/` — created here, this file \
+                 would never be built."
+            }
+            Self::Other => "",
+        })
+    }
+}
+
 impl FolderNode {
     fn new(name: String, path: PathBuf) -> Self {
         Self {

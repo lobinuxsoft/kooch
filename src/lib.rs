@@ -531,3 +531,6 @@ fn debug_categories_from(
 
 #[cfg(test)]
 mod licence_tests;
+
+#[cfg(test)]
+mod boot_scene_tests;

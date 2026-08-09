@@ -122,6 +122,7 @@ pub(crate) fn draw_asset_browser_content(
                 writable: true,
                 nav,
                 has_settings: has_render_settings(catalog, project_root),
+                project_root,
             };
             // Cleared here and refilled as rows are drawn, so the list the
             // keyboard reads next frame is exactly what is on screen now.

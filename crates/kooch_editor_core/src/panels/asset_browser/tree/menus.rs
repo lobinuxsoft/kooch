@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::actions::{EditorAction, NewFileKind};
 use crate::icons;
 
-use super::model::{CreateKind, FileLeaf, FolderNode, PendingCreate, RenameState};
+use super::model::{CreateKind, FileLeaf, FolderNode, FolderRole, PendingCreate, RenameState};
 
 pub(super) fn folder_menu(
     ui: &mut egui::Ui,
@@ -16,6 +16,7 @@ pub(super) fn folder_menu(
     rename: &mut Option<RenameState>,
     pending: &mut Option<PendingCreate>,
     has_settings: bool,
+    role: FolderRole,
 ) {
     // Offered on folders too, and on read-only ones: opening the crate
     // that owns a folder is how you get at the code behind it, which is
@@ -53,10 +54,29 @@ pub(super) fn folder_menu(
         start(CreateKind::Folder);
         ui.close();
     }
-    if ui
-        .button(format!("{} New Material", icons::FADERS))
-        .clicked()
-    {
+
+    // 🔴 Every entry below is disabled outside the tree that would
+    // register it. The editor scans `assets/` for assets and `src/` for
+    // scripts, so a file created anywhere else is a file nothing reads —
+    // no error, no GUID, no compile, just a file. Disabled with the
+    // reason beats offering an action whose result is silence.
+    let mut entry = |ui: &mut egui::Ui, label: String, wants: FolderRole| {
+        let refusal = role.refusal(wants);
+        let resp = ui.add_enabled(refusal.is_none(), egui::Button::new(label));
+        match refusal {
+            Some(why) => {
+                resp.on_disabled_hover_text(why);
+                false
+            }
+            None => resp.clicked(),
+        }
+    };
+
+    if entry(
+        ui,
+        format!("{} New Material", icons::FADERS),
+        FolderRole::Assets,
+    ) {
         start(CreateKind::Material);
         ui.close();
     }
@@ -73,20 +93,25 @@ pub(super) fn folder_menu(
             ),
             ("System (Rust)", CreateKind::File(NewFileKind::RustSystem)),
         ] {
-            if ui.button(label).clicked() {
+            if entry(ui, label.to_owned(), FolderRole::Source) {
                 start(kind);
                 ui.close();
             }
         }
     });
-    if ui.button(format!("{} New Scene", icons::GLOBE)).clicked() {
+    if entry(
+        ui,
+        format!("{} New Scene", icons::GLOBE),
+        FolderRole::Assets,
+    ) {
         start(CreateKind::File(NewFileKind::Scene));
         ui.close();
     }
-    if ui
-        .button(format!("{} New Input Action", icons::GAME_CONTROLLER))
-        .clicked()
-    {
+    if entry(
+        ui,
+        format!("{} New Input Action", icons::GAME_CONTROLLER),
+        FolderRole::Assets,
+    ) {
         start(CreateKind::File(NewFileKind::InputAction));
         ui.close();
     }
@@ -95,12 +120,16 @@ pub(super) fn folder_menu(
     // disabled rather than hidden, so a project that already has one says
     // so instead of leaving someone hunting for a menu entry that was
     // there yesterday.
+    let allowed = role.refusal(FolderRole::Assets).is_none() && !has_settings;
     let settings = ui.add_enabled(
-        !has_settings,
+        allowed,
         egui::Button::new(format!("{} New Render Settings", icons::FADERS)),
     );
-    if has_settings {
-        settings.on_hover_text("This project already has one — settings are per project.");
+    if !allowed {
+        settings.on_disabled_hover_text(
+            role.refusal(FolderRole::Assets)
+                .unwrap_or("This project already has one — settings are per project."),
+        );
     } else if settings.clicked() {
         start(CreateKind::File(NewFileKind::RenderSettings));
         ui.close();

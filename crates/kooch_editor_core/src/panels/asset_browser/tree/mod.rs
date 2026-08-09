@@ -60,6 +60,10 @@ pub(crate) struct RenderCtx<'a> {
     /// `Resources` from a context menu is how a draw ends up owning a
     /// lookup that belongs to the frame.
     pub has_settings: bool,
+    /// The open project's root, for deciding whether a folder is one the
+    /// editor scans. `None` when no project is open, which makes every
+    /// folder [`FolderRole::Other`].
+    pub project_root: Option<&'a Path>,
 }
 
 /// Renders one source root as a top-level collapsible node. `root_path`
@@ -85,10 +89,23 @@ pub(crate) fn render_root(
                 let rename = &mut *ctx.rename;
                 let pending = &mut *ctx.pending;
                 let has_settings = ctx.has_settings;
+                let role = model::FolderRole::of(&root.path, ctx.project_root);
                 resp.context_menu(|ui| {
-                    folder_menu(ui, &root, true, actions, rename, pending, has_settings)
+                    folder_menu(
+                        ui,
+                        &root,
+                        true,
+                        actions,
+                        rename,
+                        pending,
+                        has_settings,
+                        role,
+                    )
                 });
             }
         })
         .body(|ui| render_children(ui, &root, ctx, root_path));
 }
+
+#[cfg(test)]
+mod role_tests;
