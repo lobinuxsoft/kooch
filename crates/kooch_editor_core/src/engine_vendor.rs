@@ -127,7 +127,7 @@ const COPY: [&str; 6] = [
 /// 13 MB, and 12.7 MB of that is two demo glTFs that no shipped game
 /// loads — so this takes the two directories that are actually
 /// referenced and leaves the samples behind.
-const COPY_ASSETS: [&str; 2] = ["materials", "meshes/primitives"];
+pub(crate) const COPY_ASSETS: [&str; 2] = ["materials", "meshes/primitives"];
 
 #[derive(Debug)]
 pub enum VendorError {
