@@ -51,8 +51,14 @@
 //! directory to find it. The `target/` of an existing project is
 //! gigabytes for exactly that reason.
 
+mod copy;
+pub mod stamp;
+
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use copy::copy_engine_into;
+use stamp::EngineStamp;
 
 /// Directory name the materialised engine occupies, under the
 /// per-version directory.
@@ -238,29 +244,11 @@ pub fn vendor_engine(project_root: &Path, source: &Path) -> Result<PathBuf, Vend
     let dest = project_root.join(VENDOR_DIR);
     fs::create_dir_all(&dest).map_err(VendorError::Io)?;
     copy_engine_into(&dest, source)?;
+    // The copy says which tree it came from. `package_editor` calls this
+    // to lay out a distributable editor, so this is where the stamp an
+    // installed editor later propagates is first written (#761).
+    EngineStamp::of_source(source)?.write(&dest)?;
     Ok(dest)
-}
-
-/// Copies the engine's source into `dest`, which must already exist.
-fn copy_engine_into(dest: &Path, source: &Path) -> Result<(), VendorError> {
-    if !is_engine_source(source) {
-        return Err(VendorError::NotAnEngineRoot(source.to_path_buf()));
-    }
-    for entry in COPY {
-        let from = source.join(entry);
-        if from.is_dir() {
-            copy_dir(&from, &dest.join(entry))?;
-        } else if from.is_file() {
-            fs::copy(&from, dest.join(entry)).map_err(VendorError::Io)?;
-        }
-    }
-    for entry in COPY_ASSETS {
-        let from = source.join("assets").join(entry);
-        if from.is_dir() {
-            copy_dir(&from, &dest.join("assets").join(entry))?;
-        }
-    }
-    Ok(())
 }
 
 /// The engine version this editor would vendor.
@@ -271,11 +259,19 @@ pub fn editor_engine_version() -> &'static str {
 /// What [`ensure_current`] had to do, for the caller to log.
 #[derive(Debug, PartialEq, Eq)]
 pub enum VendorState {
-    /// Already materialised for this version.
+    /// Already materialised, from this exact source.
     UpToDate,
     /// Was not on this machine yet — a first run, or a first project
     /// after the editor updated.
     Materialised,
+    /// Was there, from a different source tree, and has been replaced
+    /// (#761).
+    ///
+    /// Distinct from [`Materialised`](Self::Materialised) because it is
+    /// the interesting one to read in a log: it is the moment a project
+    /// stops building against the engine it built against yesterday, and
+    /// the first rebuild after it is a full one.
+    Replaced,
     /// No engine source to materialise from, and none already there.
     /// Not an error on its own: a project pointing at a good copy still
     /// builds.
@@ -289,8 +285,9 @@ pub enum VendorState {
 /// of a machine that has never seen this version, the second of a
 /// project that does not exist yet.
 ///
-/// Never deletes an existing copy. Two versions coexist; the old one
-/// stays for the projects still pinned to it.
+/// Never deletes another *version*. Two versions coexist; the old one
+/// stays for the projects still pinned to it. A directory holding a
+/// stale copy of *this* version is replaced — see [`ensure_current_in`].
 pub fn ensure_current(
     wanted: &str,
     source: Option<&Path>,
@@ -306,7 +303,15 @@ pub fn ensure_current(
     // the machine, and otherwise give it the only one available — this
     // editor's — under its own honest name. The caller records the
     // change in the manifest.
-    if let Some(existing) = shared_engine_dir(wanted).filter(|d| is_engine_source(d)) {
+    //
+    // 🔴 The stamp check below applies only to THIS editor's directory.
+    // A version the machine already has and this editor does not ship is
+    // left exactly as it is: the source in hand is not what that
+    // directory is supposed to hold, so "it differs" is not a reason to
+    // overwrite it — it is the reason it exists (#761).
+    if wanted != editor_engine_version()
+        && let Some(existing) = shared_engine_dir(wanted).filter(|d| is_engine_source(d))
+    {
         return Ok((VendorState::UpToDate, Some(existing)));
     }
     let Some(dest) = shared_engine_dir(editor_engine_version()) else {
@@ -321,147 +326,87 @@ pub fn ensure_current_in(
     source: Option<&Path>,
 ) -> Result<(VendorState, Option<PathBuf>), VendorError> {
     let dest = dest.to_path_buf();
-    if is_engine_source(&dest) {
+    let present = is_engine_source(&dest);
+
+    let Some(source) = source.filter(|s| is_engine_source(s)) else {
+        // Nothing to materialise from, and nothing to compare against.
+        // What is already there is all there is, and it builds.
+        return Ok(match present {
+            true => (VendorState::UpToDate, Some(dest)),
+            false => (VendorState::NoSourceAvailable, None),
+        });
+    };
+
+    // 🔴 Identity, not shape. `is_engine_source` is true of every copy of
+    // the engine ever made, including one from an editor three weeks old
+    // — which is how a new install went on compiling projects against
+    // stale source in silence (#761).
+    let stamp = EngineStamp::of_source(source)?;
+    if present && EngineStamp::read(&dest).as_ref() == Some(&stamp) {
         return Ok((VendorState::UpToDate, Some(dest)));
     }
 
-    let Some(source) = source.filter(|s| is_engine_source(s)) else {
-        return Ok((VendorState::NoSourceAvailable, None));
-    };
+    materialise(&dest, source, &stamp)?;
+    Ok((
+        match present {
+            true => VendorState::Replaced,
+            false => VendorState::Materialised,
+        },
+        Some(dest),
+    ))
+}
 
-    // A half-written directory from an interrupted copy would pass
-    // `is_engine_source` on the next run and never be repaired, so the
-    // copy lands beside its destination and is moved into place at the
-    // end. `rename` within one filesystem is atomic.
+/// Puts `source` at `dest`, replacing whatever was there, leaving one
+/// copy behind and never a half-written one.
+///
+/// # The order, and why it is that order
+///
+/// A half-written directory from an interrupted copy would pass
+/// [`is_engine_source`] on the next run and never be repaired, so the
+/// copy lands beside its destination and is renamed in — atomic within
+/// one filesystem.
+///
+/// The old copy is moved aside *before* the new one takes its place
+/// rather than deleted: `rename` onto a non-empty directory fails, and
+/// deleting first would leave the machine with no engine at all if the
+/// copy then failed. It is removed once the new one is in place, so a
+/// replacement does not leave two trees on disk — the whole point being
+/// that the same source is not stored twice.
+fn materialise(dest: &Path, source: &Path, stamp: &EngineStamp) -> Result<(), VendorError> {
     let staging = dest.with_extension("partial");
+    let stale = dest.with_extension("stale");
+    // Leftovers from a run that died mid-swap. Both renames below fail if
+    // their target exists, so this is repair, not tidying.
     let _ = fs::remove_dir_all(&staging);
+    let _ = fs::remove_dir_all(&stale);
     if let Some(parent) = staging.parent() {
         fs::create_dir_all(parent).map_err(VendorError::Io)?;
     }
     fs::create_dir_all(&staging).map_err(VendorError::Io)?;
     copy_engine_into(&staging, source)?;
-    fs::rename(&staging, &dest).map_err(VendorError::Io)?;
+    stamp.write(&staging)?;
 
-    Ok((VendorState::Materialised, Some(dest)))
-}
-
-/// `true` for a path that is test code rather than engine code.
-///
-/// The engine's tests live in their own files — `#[cfg(test)] mod X;`
-/// beside the module, never a block inside it — so keeping them out of
-/// a project is a matter of not copying files rather than of stripping
-/// code out of them. `#[cfg(test)]` removes the `mod` before Rust
-/// resolves it, so the engine compiles with none of these present.
-/// Verified, not assumed: see the module docs.
-///
-/// `cfg_test_mods` carries the names the enclosing directory's own
-/// sources declared under `#[cfg(test)]`. 🔴 Reading the declaration
-/// rather than matching a filename is the difference between a rule and
-/// a convention: three of the engine's test files are called
-/// `measure.rs` and `id_stability.rs`, and a name-based filter shipped
-/// all three.
-fn is_test_code(path: &Path, cfg_test_mods: &[String]) -> bool {
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if path.is_dir() {
-        return name == "tests" || name == "benches" || cfg_test_mods.iter().any(|m| m == name);
+    let had_old = dest.exists();
+    if had_old {
+        fs::rename(dest, &stale).map_err(VendorError::Io)?;
     }
-    let stem = name.strip_suffix(".rs").unwrap_or("");
-    name == "tests.rs" || name.ends_with("_tests.rs") || cfg_test_mods.iter().any(|m| m == stem)
-}
-
-/// Module names this directory's own `.rs` files declare under
-/// `#[cfg(test)]`, i.e. the files that exist only for tests.
-fn cfg_test_modules(dir: &Path) -> Vec<String> {
-    let mut names = Vec::new();
-
-    // 🔴 For `foo/`, the declarations live in `foo.rs` — one level UP,
-    // not inside. Rust puts a module's submodules in a directory named
-    // after it while the `mod` lines stay in the file. Missing this
-    // shipped `sys_metrics/measure.rs`, which is nothing but a
-    // `#[cfg(test)]` benchmark.
-    let sibling = dir.with_extension("rs");
-    if let Ok(text) = fs::read_to_string(&sibling) {
-        names.extend(cfg_test_mods_in(&text));
+    if let Err(e) = fs::rename(&staging, dest) {
+        // Put back what was working. Failing with the old engine still in
+        // place is a bad update; failing with no engine at all is a
+        // machine that cannot build anything.
+        if had_old {
+            let _ = fs::rename(&stale, dest);
+        }
+        return Err(VendorError::Io(e));
     }
-
-    let Ok(entries) = fs::read_dir(dir) else {
-        return names;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_none_or(|e| e != "rs") {
-            continue;
-        }
-        if let Ok(text) = fs::read_to_string(&path) {
-            names.extend(cfg_test_mods_in(&text));
-        }
-    }
-    names
-}
-
-/// Module names one source file declares under `#[cfg(test)]`.
-fn cfg_test_mods_in(text: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut gated = false;
-    for line in text.lines() {
-        let line = line.trim();
-        if line == "#[cfg(test)]" {
-            gated = true;
-            continue;
-        }
-        if gated && let Some(name) = declared_module(line) {
-            names.push(name);
-        }
-        // Attributes between the gate and the item keep the gate;
-        // anything else ends it.
-        if !line.starts_with('#') && !line.is_empty() {
-            gated = false;
-        }
-    }
-    names
-}
-
-/// The name in `mod X;` / `pub(crate) mod X;`, if the line is one.
-fn declared_module(line: &str) -> Option<String> {
-    let rest = line
-        .strip_prefix("pub(crate) ")
-        .or_else(|| line.strip_prefix("pub "))
-        .unwrap_or(line);
-    rest.strip_prefix("mod ")?
-        .strip_suffix(';')
-        .map(str::to_owned)
-}
-
-/// Recursive copy, skipping build output.
-///
-/// `target/` is skipped at every level and not only the top: a workspace
-/// member that was ever built standalone has one of its own, and a
-/// single missed check is the difference between 8 MB and gigabytes.
-fn copy_dir(from: &Path, to: &Path) -> Result<(), VendorError> {
-    fs::create_dir_all(to).map_err(VendorError::Io)?;
-    let test_mods = cfg_test_modules(from);
-    for entry in fs::read_dir(from).map_err(VendorError::Io)? {
-        let entry = entry.map_err(VendorError::Io)?;
-        let name = entry.file_name();
-        if name == "target" || name == ".git" {
-            continue;
-        }
-        let src = entry.path();
-        // 🔴 No test code leaves this repo. A project's copy of the
-        // engine is for building a game, and the tests are the engine's
-        // own business.
-        if is_test_code(&src, &test_mods) {
-            continue;
-        }
-        let dst = to.join(&name);
-        if src.is_dir() {
-            copy_dir(&src, &dst)?;
-        } else {
-            fs::copy(&src, &dst).map_err(VendorError::Io)?;
-        }
+    if had_old {
+        let _ = fs::remove_dir_all(&stale);
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod stamp_tests;

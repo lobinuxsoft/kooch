@@ -1,3 +1,4 @@
+use super::copy::is_test_code;
 use super::*;
 
 /// Builds a directory that passes for an engine root, with a
