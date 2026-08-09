@@ -118,6 +118,18 @@ fn draw_presets(
     {
         actions.push(EditorAction::BuildProject(guid));
     }
+
+    // Only while there is something to stop. A permanently visible
+    // Cancel that does nothing most of the time is a button people learn
+    // to ignore.
+    if building
+        && ui
+            .button(format!("{} Cancel", icons::TRASH))
+            .on_hover_text("Stops cargo. Nothing is packaged, so no half-built game is written.")
+            .clicked()
+    {
+        actions.push(EditorAction::CancelBuild);
+    }
 }
 
 fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
@@ -160,6 +172,9 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
             }
             response
         }
+        // Not red: nothing went wrong, someone pressed a button, and an
+        // error where a deliberate act happened reads as a bug.
+        Some(BuildStatus::Cancelled) => ui.weak("Cancelled."),
         Some(BuildStatus::Failed(why)) => ui.colored_label(egui::Color32::LIGHT_RED, why),
     };
 }

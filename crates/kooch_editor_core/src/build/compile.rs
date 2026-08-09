@@ -30,6 +30,11 @@ pub enum BuildStatus {
     /// Everything worked.
     Done(Package),
     Failed(String),
+    /// Stopped on purpose.
+    ///
+    /// Separate from `Failed` because it is not one: nothing went wrong,
+    /// and a red error where someone pressed a button reads as a bug.
+    Cancelled,
 }
 
 /// A build in progress.
@@ -156,6 +161,24 @@ impl BuildJob {
             )),
             Err(e) => BuildStatus::Failed(e.to_string()),
         };
+    }
+
+    /// Stops the build.
+    ///
+    /// ⚠️ cargo is killed, not asked. It has no "stop when convenient",
+    /// and a build that keeps compiling after the button says it stopped
+    /// is worse than an interrupted one — cargo recovers from a kill by
+    /// redoing whatever crate it was on.
+    ///
+    /// Nothing is packaged, so a half-built executable never reaches the
+    /// output folder: `assemble` only runs when cargo exits clean.
+    pub fn cancel(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        self.child = None;
+        self.status = BuildStatus::Cancelled;
     }
 }
 

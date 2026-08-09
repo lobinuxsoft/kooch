@@ -240,10 +240,34 @@ fn collect_assets(
     (files, shadowed)
 }
 
+/// Files that live under `assets/` and are not the game's.
+///
+/// 🔴 A `.buildpreset` describes how to *make* the game — output folder,
+/// target triple, cargo features. The game itself never reads one, and
+/// shipping it hands anyone who opens the pack a description of how it is
+/// built.
+///
+/// `.rendersettings` is the opposite and stays: exposure, ambient and
+/// shadow distance are what the project *looks* like, and the renderer
+/// reads them at startup.
+const AUTHORING_ONLY: [&str; 1] = [super::preset::BUILD_PRESET_EXTENSION];
+
+/// Whether `name` is authoring configuration rather than game content.
+///
+/// Sidecars go with whatever they describe: a `.buildpreset.meta` left
+/// behind would be an orphan the pack scan counts and nothing resolves.
+fn authoring_only(name: &str) -> bool {
+    let name = name.strip_suffix(".meta").unwrap_or(name);
+    AUTHORING_ONLY
+        .iter()
+        .any(|ext| name.ends_with(&format!(".{ext}")))
+}
+
 /// Collects every file under `dir` as `prefix`-relative names.
 ///
 /// ⚠️ Everything, `.meta` included: a scene references assets by GUID and
-/// the GUID lives in the sidecar.
+/// the GUID lives in the sidecar. Everything except authoring-only files
+/// — see [`authoring_only`].
 fn walk(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -251,6 +275,9 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) {
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
+        if authoring_only(&name) {
+            continue;
+        }
         let joined = match prefix.is_empty() {
             true => name,
             false => format!("{prefix}/{name}"),

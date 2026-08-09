@@ -359,6 +359,12 @@ pub(crate) enum EditorAction {
     /// handle, and what it points at may have been edited in the
     /// Inspector since — the handler reads the current one.
     BuildProject(kooch_core::Guid),
+    /// Stop the running build.
+    ///
+    /// cargo is killed rather than asked: it has no "stop when
+    /// convenient", and a build still compiling after the button said it
+    /// stopped is worse than an interrupted one.
+    CancelBuild,
     RegisterScripts,
 }
 
@@ -437,6 +443,7 @@ impl EditorAction {
             // project from disk and never touches the ECS, so it works
             // while a project is still compiling and its world is empty.
             Self::BuildProject(_)
+            | Self::CancelBuild
             | Self::OpenProject(_)
             | Self::RebuildRemote
             | Self::CreateProject { .. }

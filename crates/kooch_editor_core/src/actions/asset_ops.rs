@@ -41,6 +41,14 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         }
         EditorAction::RegisterScripts => super::codegen::register_scripts(resources),
         EditorAction::BuildProject(preset) => start_build(resources, *preset),
+        EditorAction::CancelBuild => {
+            if let Some(state) = resources.get_mut::<crate::build::BuildState>()
+                && let Some(job) = state.job.as_mut()
+            {
+                job.cancel();
+                tracing::info!("build cancelled");
+            }
+        }
         _ => return false,
     }
     true

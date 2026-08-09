@@ -319,3 +319,100 @@ fn the_binary_stays_executable() {
     let mode = std::fs::metadata(&out.binary).unwrap().permissions().mode();
     assert!(mode & 0o111 != 0, "the shipped game is not executable");
 }
+
+/// 🔴 A `.buildpreset` describes how to *make* the game. The game never
+/// reads one, and shipping it hands anyone who opens the pack a
+/// description of how it is built — output folder, target, features.
+#[test]
+fn build_presets_do_not_ship() {
+    let dir = tmp("nopreset");
+    let key = PackKey::generate();
+    let (proj, eng) = (dir.join("proj"), dir.join("engine"));
+    project(&proj);
+    engine(&eng);
+    write(
+        &proj.join("assets/LinuxBuild.buildpreset"),
+        b"(output_dir: \"build\")",
+    );
+    write(
+        &proj.join("assets/LinuxBuild.buildpreset.meta"),
+        b"guid = \"x\"",
+    );
+
+    let out = assemble(
+        &BuildPreset::default(),
+        &proj,
+        Some(&eng),
+        &binary(&dir),
+        "demo",
+        &key,
+    )
+    .unwrap();
+
+    let pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    let shipped: Vec<&str> = pack.entries().iter().map(|e| e.name.as_str()).collect();
+    assert!(
+        !shipped.iter().any(|name| name.contains("buildpreset")),
+        "a build preset shipped inside the game: {shipped:?}",
+    );
+    // And the game's own content still did.
+    assert!(shipped.iter().any(|name| *name == "props/rock.glb"));
+}
+
+/// ⚠️ The sidecar goes with what it describes. Left behind it would be an
+/// orphan the pack scan counts and nothing resolves.
+#[test]
+fn an_authoring_sidecar_does_not_ship_either() {
+    let dir = tmp("nopresetmeta");
+    let key = PackKey::generate();
+    let proj = dir.join("proj");
+    project(&proj);
+    write(&proj.join("assets/A.buildpreset"), b"()");
+    write(&proj.join("assets/A.buildpreset.meta"), b"guid = \"x\"");
+
+    let out = assemble(
+        &BuildPreset::default(),
+        &proj,
+        None,
+        &binary(&dir),
+        "demo",
+        &key,
+    )
+    .unwrap();
+
+    let pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    assert!(
+        !pack
+            .entries()
+            .iter()
+            .any(|e| e.name.contains("buildpreset"))
+    );
+}
+
+/// 🔴 The opposite case, and the one it would be easy to break by
+/// widening the filter: `.rendersettings` is what the project *looks*
+/// like and the renderer reads it at startup.
+#[test]
+fn render_settings_still_ship() {
+    let dir = tmp("settingsship");
+    let key = PackKey::generate();
+    let proj = dir.join("proj");
+    project(&proj);
+    write(&proj.join("assets/project.rendersettings"), b"()");
+
+    let out = assemble(
+        &BuildPreset::default(),
+        &proj,
+        None,
+        &binary(&dir),
+        "demo",
+        &key,
+    )
+    .unwrap();
+
+    let pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    assert!(
+        pack.contains("project.rendersettings"),
+        "the project's look did not ship",
+    );
+}
