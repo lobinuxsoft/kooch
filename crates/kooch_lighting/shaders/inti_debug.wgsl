@@ -31,9 +31,26 @@
 const INTI_DEBUG_NORMALS: u32 = 11u;
 const INTI_DEBUG_SHADOW_CASCADES: u32 = 12u;
 const INTI_DEBUG_CONTACT_SHADOWS: u32 = 13u;
+const INTI_DEBUG_SINGLE_LIGHT: u32 = 14u;
 // Lowest discriminant handled here. Modes below it are resolved by the
 // shading path itself before the surface is even reconstructed.
 const INTI_DEBUG_FIRST: u32 = INTI_DEBUG_NORMALS;
+
+// Rec. 709 luma weights, applied to LINEAR radiance — which is what
+// makes the grey mean "how much light landed here" rather than "how
+// bright the pixel ended up".
+const INTI_LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
+
+// The stand-in material the single-light view shades with: a plain
+// dielectric, mid-rough.
+//
+// Roughness is kept rather than zeroed because the width of a highlight
+// is information about the LIGHT — a small source and a broad one differ
+// there and nowhere else. Metallic is forced off because a metal takes
+// its F0 from its albedo, and the albedo is exactly what this view
+// removes; a metal shaded with white albedo is not that metal with the
+// colour turned off, it is a mirror.
+const INTI_DEBUG_ROUGHNESS: f32 = 0.5;
 
 // Bevy's cascade colours, and their derivation: hue swept around the
 // wheel by cascade index (`shadows.wgsl:265`). Ported rather than
@@ -152,6 +169,56 @@ fn inti_contact_shadow_debug_view(
     return vec3<f32>(1.0, 0.0, 1.0);
 }
 
+/// One light, alone, in grey, with whatever shadow it actually casts
+/// (#743).
+///
+/// # What is removed, and why each one
+///
+/// - **Every other light.** The question is *why is this dark*, and with
+///   two lights in the sum a surface lit by the wrong one still looks
+///   lit.
+/// - **The material's colour.** A dark albedo and no light reaching the
+///   surface produce the same pixel. Shading a neutral white dielectric
+///   makes the image a picture of the light instead of a picture of the
+///   paint. See `INTI_DEBUG_ROUGHNESS` for what is deliberately kept.
+/// - **Ambient.** It belongs to no light, and including it would mean a
+///   point in full shadow never renders black — which is precisely the
+///   reading this view exists to make unambiguous.
+///
+/// # What is kept
+///
+/// The shadow, by calling `inti_light_contribution` — the same function
+/// the shading pass sums per light, with its cascade sampling, its bias
+/// and its contact-shadow march. A debug view that recomputes the maths
+/// its own way can disagree with the frame, and then it is one more
+/// thing to debug rather than the thing that ends the argument.
+///
+/// ⚠️ Only a directional light casts a cascade shadow today, and contact
+/// shadows are opt-in and off by default on point and spot. So a punctual
+/// light usually renders here with no shadow at all — that is the truth
+/// about the engine, not a failure of the view, and the editor says so
+/// in words next to the selector rather than leaving it to be guessed.
+///
+/// Magenta means no light is selected, or the selected entity is not a
+/// light in this frame's buffer.
+fn inti_single_light_debug(
+    world_position: vec3<f32>,
+    n: vec3<f32>,
+    frag_coord: vec2<f32>,
+) -> vec3<f32> {
+    if (inti.debug_light >= inti.light_count) {
+        return vec3<f32>(1.0, 0.0, 1.0);
+    }
+    let surf = inti_surface(
+        world_position, n, vec3<f32>(1.0), 0.0, INTI_DEBUG_ROUGHNESS);
+    let radiance = inti_light_contribution(
+        surf, inti_lights[inti.debug_light], frag_coord);
+    // Tonemapped, not raw: the view answers a question about a frame the
+    // viewer is looking at, and reading it in a different response curve
+    // than that frame reintroduces the ambiguity it exists to remove.
+    return inti_tonemap(vec3<f32>(dot(radiance, INTI_LUMA)));
+}
+
 /// `true` when `mode` is one of the views this file draws.
 ///
 /// 🔴 The production build concatenates `INTI_DEBUG_STUB` instead, where
@@ -180,6 +247,9 @@ fn inti_debug_view(
     }
     if (mode == INTI_DEBUG_CONTACT_SHADOWS) {
         return inti_contact_shadow_debug_view(world_position, n, frag_coord);
+    }
+    if (mode == INTI_DEBUG_SINGLE_LIGHT) {
+        return inti_single_light_debug(world_position, n, frag_coord);
     }
     // A mode the shader does not know. Black rather than a guess: an
     // unimplemented view that renders *something* is one somebody

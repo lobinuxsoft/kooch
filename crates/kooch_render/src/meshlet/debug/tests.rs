@@ -6,18 +6,50 @@ fn off_is_zero() {
     assert_eq!(MeshletDebugMode::default(), MeshletDebugMode::Off);
 }
 
-/// Both shading shaders compare against a literal `11u`
-/// (`DEBUG_MODE_NORMALS`). WGSL cannot import a Rust constant, so
-/// this test is the only thing holding the two ends together —
-/// renumber the variant and the dropdown silently selects lit
-/// shading while claiming to show normals.
+/// WGSL cannot import a Rust constant, so `inti_debug.wgsl` declares
+/// the discriminants itself and this test is the only thing holding the
+/// two ends together — renumber a variant and the dropdown silently
+/// selects a different view from the one it names.
+///
+/// It reads the shader text rather than restating the numbers: a copy of
+/// the literals here would go stale in exactly the same way as the copy
+/// in the shader, and agree with nothing.
 #[test]
-fn normals_discriminant_matches_the_shaders() {
-    assert_eq!(MeshletDebugMode::Normals.as_u32(), 11);
-    // Pinned because the literal lives in three WGSL files that no
-    // compiler checks against this enum.
-    assert_eq!(MeshletDebugMode::ShadowCascades.as_u32(), 12);
-    assert_eq!(MeshletDebugMode::ContactShadows.as_u32(), 13);
+fn discriminants_match_the_shader() {
+    let source = kooch_lighting::inti_debug_shader();
+    for (mode, name) in [
+        (MeshletDebugMode::Normals, "INTI_DEBUG_NORMALS"),
+        (
+            MeshletDebugMode::ShadowCascades,
+            "INTI_DEBUG_SHADOW_CASCADES",
+        ),
+        (
+            MeshletDebugMode::ContactShadows,
+            "INTI_DEBUG_CONTACT_SHADOWS",
+        ),
+        (MeshletDebugMode::SingleLight, "INTI_DEBUG_SINGLE_LIGHT"),
+    ] {
+        let declaration = format!("const {name}: u32 = {}u;", mode.as_u32());
+        assert!(
+            source.contains(&declaration),
+            "inti_debug.wgsl should declare `{declaration}` for {mode:?}",
+        );
+    }
+}
+
+/// The shader dispatches on `mode >= INTI_DEBUG_FIRST`, so a mode below
+/// that boundary never reaches `inti_debug_view` no matter what the
+/// dropdown says.
+#[test]
+fn every_inti_view_is_above_the_dispatch_floor() {
+    let floor = MeshletDebugMode::Normals.as_u32();
+    for mode in [
+        MeshletDebugMode::ShadowCascades,
+        MeshletDebugMode::ContactShadows,
+        MeshletDebugMode::SingleLight,
+    ] {
+        assert!(mode.as_u32() >= floor, "{mode:?} is below INTI_DEBUG_FIRST");
+    }
 }
 
 #[test]
@@ -134,4 +166,8 @@ fn discriminants_are_stable() {
     assert_eq!(MeshletDebugMode::OnlyLod0.as_u32(), 8);
     assert_eq!(MeshletDebugMode::OnlyRoots.as_u32(), 9);
     assert_eq!(MeshletDebugMode::FrustumRejected.as_u32(), 10);
+    assert_eq!(MeshletDebugMode::Normals.as_u32(), 11);
+    assert_eq!(MeshletDebugMode::ShadowCascades.as_u32(), 12);
+    assert_eq!(MeshletDebugMode::ContactShadows.as_u32(), 13);
+    assert_eq!(MeshletDebugMode::SingleLight.as_u32(), 14);
 }

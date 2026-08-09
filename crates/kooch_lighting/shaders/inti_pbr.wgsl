@@ -145,7 +145,12 @@ struct IntiFrame {
     // per metre of gap between blocker and receiver. An angle, not a
     // width, because that is what a light infinitely far away has.
     sun_softness: f32,
-    _pad_frame: f32,
+    // Which light the single-light debug view isolates (#743). Anything
+    // `>= light_count` means none. It rides in what was this struct's
+    // tail padding: the view costs no binding and no byte, which is the
+    // only way it was going to fit — Inti's group is full and there is
+    // no seventh.
+    debug_light: u32,
 }
 
 @group({{INTI_GROUP}}) @binding(0) var<uniform> inti: IntiFrame;
