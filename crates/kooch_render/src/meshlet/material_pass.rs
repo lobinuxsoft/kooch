@@ -53,23 +53,35 @@ pub const MATERIAL_PASS_CONTACT_DEPTH_BINDING: u32 = 4;
 
 /// Composes a complete material shader: the visibility-buffer resolve
 /// helpers, the contact-shadow march, then the Inti shading model, then
-/// the material-specific body. This stands in for the `#import` a WGSL
+/// the debug views (or the stub that removes them), then the
+/// material-specific body. This stands in for the `#import` a WGSL
 /// preprocessor would provide.
 ///
 /// Order matters — WGSL resolves top to bottom, so anything the body
 /// calls has to be declared above it. The march goes ahead of the
-/// shading model for exactly that reason: `inti_shade` calls it.
-pub fn compose_material_shader(material_body: &str) -> String {
+/// shading model for exactly that reason: `inti_shade` calls it. The
+/// debug views go after it, because they call *it*.
+///
+/// `debug` builds the editor's variant. With it false the result
+/// contains no debug view at all — see [`kooch_lighting::INTI_DEBUG_STUB`]
+/// for why that is a performance decision and not tidiness (#743).
+pub fn compose_material_shader(material_body: &str, debug: bool) -> String {
     let contact = crate::contact_shadow::contact_shadow_shader(
         MATERIAL_PASS_CONTACT_UBO_BINDING,
         MATERIAL_PASS_CONTACT_DEPTH_BINDING,
     );
     let inti = kooch_lighting::inti_pbr_shader(MATERIAL_PASS_INTI_GROUP);
+    let debug_views = if debug {
+        kooch_lighting::inti_debug_shader()
+    } else {
+        kooch_lighting::INTI_DEBUG_STUB
+    };
     [
         VISIBILITY_BUFFER_RESOLVE_SHADER,
         SURFACE_RECONSTRUCT_SHADER,
         &contact,
         &inti,
+        debug_views,
         material_body,
     ]
     .join("\n")

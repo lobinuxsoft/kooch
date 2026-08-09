@@ -619,128 +619,119 @@ fn inti_shadow(
     return mix(lit, next, picked.y);
 }
 
-// Bevy's cascade colours, and their derivation: hue swept around the
-// wheel by cascade index (`shadows.wgsl:265`). Ported rather than
-// picked so a capture from this engine and one from Bevy read the same.
-// `FRAC_PI_3` and `PI_2` are theirs too, from `bevy_render::maths`.
-// Bevy divides the hue by `MAX_CASCADES_PER_LIGHT + 1` so the last
-// cascade does not wrap onto the first one's colour.
-const FRAME_CASCADE_COUNT_PLUS_ONE: u32 = 5u;
-const INTI_FRAC_PI_3: f32 = 1.04719755;
-const INTI_PI_2: f32 = 6.28318531;
-
-// `bevy_render::color_operations::hsv_to_rgb`, transcribed.
-// H ∈ [0, 2π), S ∈ [0, 1], V ∈ [0, 1].
-fn inti_hsv_to_rgb(hsv: vec3<f32>) -> vec3<f32> {
-    let n = vec3<f32>(5.0, 3.0, 1.0);
-    let k = (n + hsv.x / INTI_FRAC_PI_3) % 6.0;
-    return hsv.z - hsv.z * hsv.y * max(vec3<f32>(0.0), min(k, min(4.0 - k, vec3<f32>(1.0))));
-}
-
-/// What the shadow system sees at this point, as colour.
-///
-/// # Bevy's colour, and one thing on top
-///
-/// The hue is `cascade_debug_visualization`'s, computed the same way, so
-/// "which cascade covers this" reads identically to a Bevy capture.
-///
-/// What Bevy does not answer, and #476 needed twice, is **whether the
-/// map has an occluder over this point**: "the cascade does not reach
-/// here", "the occluder was culled out of the map" and "the sampling is
-/// wrong" are three different bugs that look like one missing shadow.
-/// So the hue is dimmed where this point is shadowed.
-///
-/// 🔴 Dimmed by `inti_sample_cascade` — **the same call the shading pass
-/// makes**, bias, filter and all. The previous version sampled the atlas
-/// raw and deliberately without bias, to show the acne the shading
-/// hides; what it actually showed was a screenful of moiré with the
-/// cascade boundaries drowned underneath. A debug view whose own noise
-/// hides its answer is not a debug view.
-///
-/// - magenta — no atlas: nothing casts
-/// - black — inside no cascade volume, so nothing can be in shadow
-/// - dark grey — past the last cascade
-/// - cascade hue, bright — lit
-/// - cascade hue, dim — shadowed, as the shading pass sees it
-fn inti_shadow_debug(world_position: vec3<f32>, n: vec3<f32>, view_depth: f32) -> vec3<f32> {
-    if (inti.shadows_enabled == 0u) {
-        return vec3<f32>(1.0, 0.0, 1.0);
-    }
-    let picked = inti_pick_cascade(view_depth);
-    let index = u32(picked.x);
-    if (index >= 4u) {
-        return vec3<f32>(0.15);
-    }
-    let cascade = inti.cascades[index];
-    if (inti_shadow_coords(cascade, world_position).w == 0.0) {
-        return vec3<f32>(0.0);
-    }
-
-    let hue = f32(index) / f32(FRAME_CASCADE_COUNT_PLUS_ONE) * INTI_PI_2;
-    let colour = inti_hsv_to_rgb(vec3<f32>(hue, 1.0, 1.0));
-
-    // The first directional light, which is the only one that casts
-    // (#734 is the other half). Without one there is nothing to sample
-    // against and the atlas check above already answered.
-    for (var i = 0u; i < inti.light_count; i = i + 1u) {
-        let light = inti_lights[i];
-        if (light.kind != INTI_KIND_DIRECTIONAL) {
-            continue;
-        }
-        let s = inti_sample_light(light, world_position);
-        let n_dot_l = dot(n, s.to_light);
-        if (n_dot_l <= 0.0) {
-            // Facing away from the sun. Not shadowed — unlit, which is
-            // a different answer and has a different fix.
-            return colour * 0.12;
-        }
-        let lit = inti_sample_cascade(index, world_position, n, s.to_light, n_dot_l);
-        return colour * mix(0.30, 1.0, lit);
-    }
-    return colour * 0.65;
-}
-
-/// The contact-shadow march, as colour, for the first light that opted
-/// in (#735).
-///
-/// **One light, because the march is per light**: summing several would
-/// average away the thing being looked at. The first opted-in light is
-/// the sun in every scene that has one, which is the light whose
-/// contact shadow anybody is inspecting.
-///
-/// The colours are `inti_contact_shadow_debug`'s and the reasoning is
-/// there. Magenta here means *no light in the scene marches at all* —
-/// which is a different answer from "it marched and found nothing", and
-/// they look identical in a shaded frame.
-fn inti_contact_shadow_debug_view(
+// Everything about a shaded point that does not depend on which light
+// is being summed. Built once per pixel, read once per light.
+//
+// It is a struct rather than eleven parameters because the debug views
+// need to run the same per-light maths for a single light, and the only
+// way to guarantee a view shows what the frame does is for both to call
+// the same function. WGSL inlines it; nothing is copied per light.
+struct IntiSurface {
     world_position: vec3<f32>,
     n: vec3<f32>,
-    frag_coord: vec2<f32>,
-) -> vec3<f32> {
-    for (var i = 0u; i < inti.light_count; i = i + 1u) {
-        let light = inti_lights[i];
-        if ((light.flags & INTI_LIGHT_CONTACT_SHADOWS) == 0u) {
-            continue;
-        }
-        let s = inti_sample_light(light, world_position);
-        // Same gate the shading loop applies: a surface facing away
-        // from the light is not marched, and painting it as "no hit"
-        // would read as a failure of the march rather than as geometry.
-        if (dot(n, s.to_light) <= 0.0) {
-            return vec3<f32>(0.04);
-        }
-        let to_camera = normalize(inti.camera_position - world_position);
-        return inti_contact_shadow_debug(
-            inti_contact_shadow_probe(world_position, n, to_camera, s.to_light, frag_coord));
-    }
-    return vec3<f32>(1.0, 0.0, 1.0);
+    // Towards the camera.
+    v: vec3<f32>,
+    n_dot_v: f32,
+    diffuse_color: vec3<f32>,
+    f0: vec3<f32>,
+    perceptual: f32,
+    // Linear roughness, `perceptual²`.
+    a: f32,
+    f_ab: vec2<f32>,
+    // Distance along the view axis, which is what picks a cascade.
+    //
+    // Not the radial distance to the camera: that makes every cascade
+    // boundary a sphere, so it crosses in the corners of the screen
+    // before the centre and the split sweeps across the frame as the
+    // camera turns. Projecting onto the forward axis makes the boundary
+    // a plane, which is what the cascade fit assumes.
+    view_depth: f32,
 }
 
-// The whole model, for one surface point.
-//
 // `base_color` is linear albedo (sRGB textures are decoded by the
 // sampler; `Material::base_color` is documented linear). `metallic`
 // and `roughness` are the usual perceptual [0,1] scalars.
+fn inti_surface(
+    world_position: vec3<f32>,
+    n: vec3<f32>,
+    base_color: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+) -> IntiSurface {
+    let v = normalize(inti.camera_position - world_position);
+    let n_dot_v = max(dot(n, v), 1e-4);
+    let perceptual = clamp(roughness, INTI_MIN_PERCEPTUAL_ROUGHNESS, 1.0);
+
+    var surf: IntiSurface;
+    surf.world_position = world_position;
+    surf.n = n;
+    surf.v = v;
+    surf.n_dot_v = n_dot_v;
+    // Metals have no diffuse and take F0 from their albedo;
+    // dielectrics reflect a flat 4% and keep all of theirs.
+    surf.diffuse_color = base_color * (1.0 - metallic);
+    surf.f0 = mix(vec3<f32>(0.04), base_color, metallic);
+    surf.perceptual = perceptual;
+    surf.a = perceptual * perceptual;
+    surf.f_ab = inti_f_ab(perceptual, n_dot_v);
+    surf.view_depth = dot(world_position - inti.camera_position, inti.camera_forward);
+    return surf;
+}
+
+// What one light adds to one surface point, shadows included. Zero when
+// the surface faces away from it.
+fn inti_light_contribution(
+    surf: IntiSurface,
+    light: IntiLight,
+    frag_coord: vec2<f32>,
+) -> vec3<f32> {
+    let s = inti_sample_light(light, surf.world_position);
+    let n_dot_l = dot(surf.n, s.to_light);
+    if (n_dot_l <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+
+    let h = normalize(s.to_light + surf.v);
+    let n_dot_h = saturate(dot(surf.n, h));
+    let l_dot_h = saturate(dot(s.to_light, h));
+
+    let d = inti_d_ggx(surf.a, n_dot_h);
+    let vis = inti_v_smith_correlated(surf.a, surf.n_dot_v, n_dot_l);
+    let f = inti_fresnel(surf.f0, l_dot_h);
+    let specular = inti_specular_multiscatter(d * vis * f, surf.f0, surf.f_ab);
+
+    // Energy the specular layer reflected is energy the diffuse
+    // layer underneath never receives. Bevy's forward path skips
+    // this weighting; their path tracer does not, and it is the
+    // path tracer that is right.
+    let diffuse = (vec3<f32>(1.0) - f)
+        * surf.diffuse_color
+        * inti_fd_burley(surf.perceptual, surf.n_dot_v, n_dot_l, l_dot_h);
+
+    // Only the directional light casts today: the cascades are fit
+    // to the view frustum for a light with no position, and a
+    // punctual light needs a cube map or a projected map instead.
+    // #476 is sun shadows; #734's light textures are the other half.
+    var shadow = 1.0;
+    if (light.kind == INTI_KIND_DIRECTIONAL) {
+        shadow = inti_shadow(surf.world_position, surf.n, s.to_light, surf.view_depth, n_dot_l);
+    }
+
+    // Contact shadows (#735) — the last few centimetres the cascades
+    // cannot resolve, for any light kind, because a screen-space
+    // march needs no shadow map and so has no reason to be the sun's
+    // privilege. Skipped where the cascade already shadows this
+    // point: multiplying two occlusions of the same occluder darkens
+    // twice, and a march that finds nothing cannot brighten it back.
+    if ((light.flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u && shadow > 0.0) {
+        shadow *= inti_contact_shadow(
+            surf.world_position, surf.n, surf.v, s.to_light, frag_coord);
+    }
+
+    return (diffuse + specular) * s.irradiance * n_dot_l * shadow;
+}
+
+// The whole model, for one surface point.
 //
 // Returns linear HDR radiance. Exposure and the transfer function are
 // applied by `inti_tonemap` separately, so a shadow pass or a debug
@@ -753,75 +744,14 @@ fn inti_shade(
     roughness: f32,
     frag_coord: vec2<f32>,
 ) -> vec3<f32> {
-    // Distance along the view axis, which is what picks a cascade.
-    //
-    // Not the radial distance to the camera: that makes every cascade
-    // boundary a sphere, so it crosses in the corners of the screen
-    // before the centre and the split sweeps across the frame as the
-    // camera turns. Projecting onto the forward axis makes the boundary
-    // a plane, which is what the cascade fit assumes.
-    let view_depth = dot(world_position - inti.camera_position, inti.camera_forward);
-    let v = normalize(inti.camera_position - world_position);
-    let n_dot_v = max(dot(n, v), 1e-4);
-
-    // Metals have no diffuse and take F0 from their albedo;
-    // dielectrics reflect a flat 4% and keep all of theirs.
-    let diffuse_color = base_color * (1.0 - metallic);
-    let f0 = mix(vec3<f32>(0.04), base_color, metallic);
-
-    let perceptual = clamp(roughness, INTI_MIN_PERCEPTUAL_ROUGHNESS, 1.0);
-    let a = perceptual * perceptual;
-    let f_ab = inti_f_ab(perceptual, n_dot_v);
+    let surf = inti_surface(world_position, n, base_color, metallic, roughness);
 
     var radiance = vec3<f32>(0.0);
     for (var i = 0u; i < inti.light_count; i = i + 1u) {
-        let light = inti_lights[i];
-        let s = inti_sample_light(light, world_position);
-        let n_dot_l = dot(n, s.to_light);
-        if (n_dot_l <= 0.0) {
-            continue;
-        }
-
-        let h = normalize(s.to_light + v);
-        let n_dot_h = saturate(dot(n, h));
-        let l_dot_h = saturate(dot(s.to_light, h));
-
-        let d = inti_d_ggx(a, n_dot_h);
-        let vis = inti_v_smith_correlated(a, n_dot_v, n_dot_l);
-        let f = inti_fresnel(f0, l_dot_h);
-        let specular = inti_specular_multiscatter(d * vis * f, f0, f_ab);
-
-        // Energy the specular layer reflected is energy the diffuse
-        // layer underneath never receives. Bevy's forward path skips
-        // this weighting; their path tracer does not, and it is the
-        // path tracer that is right.
-        let diffuse = (vec3<f32>(1.0) - f)
-            * diffuse_color
-            * inti_fd_burley(perceptual, n_dot_v, n_dot_l, l_dot_h);
-
-        // Only the directional light casts today: the cascades are fit
-        // to the view frustum for a light with no position, and a
-        // punctual light needs a cube map or a projected map instead.
-        // #476 is sun shadows; #734's light textures are the other half.
-        var shadow = 1.0;
-        if (light.kind == INTI_KIND_DIRECTIONAL) {
-            shadow = inti_shadow(world_position, n, s.to_light, view_depth, n_dot_l);
-        }
-
-        // Contact shadows (#735) — the last few centimetres the cascades
-        // cannot resolve, for any light kind, because a screen-space
-        // march needs no shadow map and so has no reason to be the sun's
-        // privilege. Skipped where the cascade already shadows this
-        // point: multiplying two occlusions of the same occluder darkens
-        // twice, and a march that finds nothing cannot brighten it back.
-        if ((light.flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u && shadow > 0.0) {
-            shadow *= inti_contact_shadow(world_position, n, v, s.to_light, frag_coord);
-        }
-
-        radiance += (diffuse + specular) * s.irradiance * n_dot_l * shadow;
+        radiance += inti_light_contribution(surf, inti_lights[i], frag_coord);
     }
 
-    radiance += inti_ambient(n, diffuse_color, f0, f_ab);
+    radiance += inti_ambient(n, surf.diffuse_color, surf.f0, surf.f_ab);
     return radiance;
 }
 

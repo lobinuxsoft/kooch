@@ -32,10 +32,81 @@ use super::{CameraUbo, DEFERRED_COLOR_FORMAT, ScreenUbo, VBUF64_FORMAT};
 /// Matches `MaterialPipeline::DEFAULT_CAPACITY`.
 const MAX_SHADING_SLOTS: u32 = 256;
 
+/// Pass 2's pipeline, in one of its two variants.
+///
+/// `debug` decides whether the shader carries the debug views at all —
+/// not whether it takes a branch. The production variant is compiled
+/// from source that does not contain them (#743).
+fn build_shading_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    debug: bool,
+) -> wgpu::RenderPipeline {
+    let src = compose_material_shader(MATERIAL_PBR_DEFAULT_BODY, debug);
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(if debug {
+            "material_pbr_default_shader_debug"
+        } else {
+            "material_pbr_default_shader"
+        }),
+        source: wgpu::ShaderSource::Wgsl(src.into()),
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("material_two_pass_shading_pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: Some("vs_fullscreen"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs_material"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: DEFERRED_COLOR_FORMAT,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: MATERIAL_DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Equal),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 pub(super) struct MaterialTwoPass {
     resolve_pipeline: wgpu::RenderPipeline,
     resolve_bgl: wgpu::BindGroupLayout,
     shading_pipeline: wgpu::RenderPipeline,
+    /// The same pipeline with the debug views concatenated in (#743).
+    ///
+    /// Built the first time somebody selects one, because a shipped game
+    /// never does: it neither compiles this nor carries a byte of it in
+    /// the pipeline it does run. The editor pays one compile, once, on
+    /// the frame the dropdown changes.
+    ///
+    /// A `OnceLock` rather than an `Option` so the whole render chain
+    /// stays on `&self`. Threading `&mut` up to the frame orchestrator
+    /// for a field written once, if ever, would be a large change to
+    /// call signatures in exchange for nothing; the steady-state cost
+    /// here is one atomic load per frame.
+    shading_pipeline_debug: std::sync::OnceLock<wgpu::RenderPipeline>,
+    /// Kept so the debug pipeline can be built later against the exact
+    /// layout the production one uses.
+    shading_layout: wgpu::PipelineLayout,
     frame_bgl: wgpu::BindGroupLayout,
     materials_bgl: wgpu::BindGroupLayout,
     scene_bgl: wgpu::BindGroupLayout,
@@ -56,12 +127,6 @@ impl MaterialTwoPass {
             label: Some("resolve_material_depth_shader"),
             source: wgpu::ShaderSource::Wgsl(RESOLVE_MATERIAL_DEPTH_SHADER.into()),
         });
-        let material_src = compose_material_shader(MATERIAL_PBR_DEFAULT_BODY);
-        let material_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("material_pbr_default_shader"),
-            source: wgpu::ShaderSource::Wgsl(material_src.into()),
-        });
-
         let vbuf_read = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -213,40 +278,7 @@ impl MaterialTwoPass {
             ],
             immediate_size: 0,
         });
-        let shading_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("material_two_pass_shading_pipeline"),
-            layout: Some(&shading_layout),
-            vertex: wgpu::VertexState {
-                module: &material_shader,
-                entry_point: Some("vs_fullscreen"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &material_shader,
-                entry_point: Some("fs_material"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: DEFERRED_COLOR_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: MATERIAL_DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Equal),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let shading_pipeline = build_shading_pipeline(device, &shading_layout, false);
 
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let screen_stride = align.max(std::mem::size_of::<ScreenUbo>() as u64);
@@ -274,6 +306,8 @@ impl MaterialTwoPass {
             resolve_pipeline,
             resolve_bgl,
             shading_pipeline,
+            shading_pipeline_debug: std::sync::OnceLock::new(),
+            shading_layout,
             frame_bgl,
             materials_bgl,
             scene_bgl,
@@ -287,6 +321,16 @@ impl MaterialTwoPass {
     /// Runs pass 1 (material-depth resolve) then one pass 2 draw per
     /// shading slot. Replaces `Vbuf64Deferred::shade_scene` for production
     /// (`Off`) rendering on the R64 path.
+    /// The pipeline this frame draws with, compiling the debug variant
+    /// the first time one is asked for.
+    fn pipeline_for(&self, device: &wgpu::Device, debug_mode: u32) -> &wgpu::RenderPipeline {
+        if debug_mode == 0 {
+            return &self.shading_pipeline;
+        }
+        self.shading_pipeline_debug
+            .get_or_init(|| build_shading_pipeline(device, &self.shading_layout, true))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn shade(
         &self,
@@ -307,6 +351,8 @@ impl MaterialTwoPass {
         screen_size: (u32, u32),
         debug_mode: u32,
     ) {
+        let shading_pipeline = self.pipeline_for(device, debug_mode);
+
         queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -458,7 +504,7 @@ impl MaterialTwoPass {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.shading_pipeline);
+            pass.set_pipeline(shading_pipeline);
             let offset = (slot as u64 * self.screen_stride) as u32;
             pass.set_bind_group(0, &frame_bg, &[offset]);
             pass.set_bind_group(1, meshlet_bg, &[]);

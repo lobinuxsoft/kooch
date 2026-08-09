@@ -50,6 +50,9 @@ const INTI_PBR_TEMPLATE: &str = include_str!("../shaders/inti_pbr.wgsl");
 /// Placeholder the template carries where the bind-group index goes.
 const GROUP_PLACEHOLDER: &str = "{{INTI_GROUP}}";
 
+/// The debug views. Concatenated only by a pipeline that can show them.
+const INTI_DEBUG_SOURCE: &str = include_str!("../shaders/inti_debug.wgsl");
+
 /// The shading model as WGSL, bound at `group`.
 ///
 /// WGSL has no `#include` and no way to parameterise `@group`, so the
@@ -63,6 +66,53 @@ const GROUP_PLACEHOLDER: &str = "{{INTI_GROUP}}";
 pub fn inti_pbr_shader(group: u32) -> String {
     INTI_PBR_TEMPLATE.replace(GROUP_PLACEHOLDER, &group.to_string())
 }
+
+/// The debug views as WGSL, to concatenate **after**
+/// [`inti_pbr_shader`]. Everything in it reads bindings and helpers that
+/// file declares, so it has no group of its own to substitute.
+///
+/// Pair it with a pipeline the editor builds on demand. A shipped game
+/// concatenates [`INTI_DEBUG_STUB`] instead and never compiles a line of
+/// this.
+pub fn inti_debug_shader() -> &'static str {
+    INTI_DEBUG_SOURCE
+}
+
+/// What a production pipeline concatenates where the debug views would
+/// go (#743).
+///
+/// # Why this is not just three untaken `if`s
+///
+/// A branch nothing takes is still code the shader carries. Register
+/// allocation is worst-case across the whole entry point, so a cascade
+/// sample and a screen-space raymarch parked in a dead branch still
+/// raise the VGPR count — and VGPR count is what caps how many waves
+/// stay in flight, which is the whole of an integrated GPU's ability to
+/// hide memory latency. On the 10 W handheld budget this engine is held
+/// to, that is not a rounding error.
+///
+/// So the game's shader does not contain them. `inti_debug_is_view`
+/// returning a literal `false` is what removes the call sites: they fold
+/// to `if (false)` before register allocation. The stub exists so both
+/// pipelines compile against the same source, which is the only way the
+/// two cannot drift.
+pub const INTI_DEBUG_STUB: &str = "\
+// No debug views in this pipeline. Both functions are dead weight the
+// compiler folds away; they exist so the shading paths have one call
+// site rather than a `#ifdef` this language does not have.
+fn inti_debug_is_view(mode: u32) -> bool {
+    return false;
+}
+
+fn inti_debug_view(
+    mode: u32,
+    world_position: vec3<f32>,
+    n: vec3<f32>,
+    frag_coord: vec2<f32>,
+) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+";
 
 /// What `inti_shade` calls for contact shadows (#735), when the composer
 /// has nothing to march.
