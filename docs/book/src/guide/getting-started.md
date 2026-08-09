@@ -30,7 +30,7 @@ The editor materialises the engine once per version in
 and every project's `Cargo.toml` points at it:
 
 ```toml
-kooch = { path = "/home/you/.local/share/kooch/0.1.0/engine", features = [...] }
+kooch = { path = "/home/you/.local/share/kooch/0.1.0/engine" }
 ```
 
 **Nothing is copied into the project.** Two projects on the same engine
@@ -158,9 +158,9 @@ The boot scene is resolved in this order:
 2. `--scene <path>` on the command line — absolute, or relative to the working directory.
 3. `scenes/default.scene`, relative to the working directory.
 
-So `cargo run -- --game` from the project root just works: the default path resolves because
+So `cargo run` from the project root just works: the default path resolves because
 the working directory is the project. A different level is
-`cargo run -- --game --scene scenes/Level1.scene`.
+`cargo run -- --scene scenes/Level1.scene`.
 
 ## Component registration runs before the scene loads
 
@@ -181,10 +181,10 @@ without one and you get the clear-to-black fallback.
 This is deliberate, not a bug. Injecting the editor camera as a temporary play camera —
 what Unity and Unreal do — is a possible future change, not current behaviour.
 
-## Running without the editor
+## Running the game
 
 ```bash
-cargo run -- --game
+cargo run
 ```
 
 `DefaultPlugins` is the group that makes this a game rather than a collection of crates:

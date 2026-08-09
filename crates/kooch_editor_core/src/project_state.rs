@@ -120,9 +120,13 @@ impl LauncherProcess {
 
         let binary_path = project_root.join("target").join("debug").join(binary_name);
 
-        let mut child = Command::new("cargo")
-            .args(["build", "--manifest-path"])
-            .arg(&manifest_path)
+        let mut cmd = Command::new("cargo");
+        cmd.args(["build", "--manifest-path"]).arg(&manifest_path);
+        // Authoring, not a game build: this produces the `dylib` the
+        // editor loads to list the project's components, and that is
+        // compiled out of a game (#558).
+        crate::cargo_args::authoring(&mut cmd);
+        let mut child = cmd
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

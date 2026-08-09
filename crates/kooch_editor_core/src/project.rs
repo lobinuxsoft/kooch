@@ -190,6 +190,17 @@ pub fn sanitize_crate_name(name: &str) -> String {
 /// the project — which is what makes the manifest identical on every
 /// machine (#754). Developing the engine itself passes an absolute path
 /// to the live clone instead; see [`create_project`].
+/// [`generate_cargo_toml`] for tests that assert on the shape of the
+/// manifest the editor writes.
+///
+/// Exists so the pieces the editor later *depends on* — the feature
+/// names, the authoring binary — are checked against the real generator
+/// rather than a copy of it in a test.
+#[cfg(test)]
+pub(crate) fn generate_cargo_toml_for_test(name: &str, engine_path: &str) -> String {
+    generate_cargo_toml(name, engine_path)
+}
+
 fn generate_cargo_toml(name: &str, engine_path: &str) -> String {
     let crate_name = sanitize_crate_name(name);
     // Cargo.toml requires forward slashes even on Windows.
@@ -202,34 +213,55 @@ edition = "2024"
 
 [workspace]
 
+# 🔴 A shipped game must not contain the editor (#558).
+#
+# `editor` is opt-in and the authoring binary below asks for it with
+# `required-features`, so `cargo build --release` produces the game and
+# cargo never puts the editor in its dependency graph at all. The
+# guarantee belongs to the build, not to a `cfg` somebody has to get
+# right — and `cargo tree` will show you.
+#
+# `physics` gives you rigid bodies: without it a `PhysicsBody` is an inert
+# component and nothing ever falls. `gravity` is the same story one level
+# up — a `PointGravity` is authorable, draws its gizmo, and pulls on
+# nothing. `camera` is the third: a `VirtualCamera` that moves no camera.
+[features]
+default = ["game"]
+game = ["kooch/physics", "kooch/gravity", "kooch/camera", "kooch/audio"]
+# `dynamic` is what lets the standalone editor load this project's
+# component types without compiling them; `remote` is how it drives them
+# over a local socket; `physics-debug-render` compiles the solver walk the
+# editor's overlay draws (#634). A game needs none of the three.
+editor = [
+    "game",
+    "kooch/editor",
+    "kooch/remote",
+    "kooch/dynamic",
+    "kooch/physics-debug-render",
+]
+
 # Two artefacts from one crate. The `dylib` is what the standalone editor
 # loads to learn this project's component types without compiling them;
-# the `rlib` beside it is what the binary below links, so the game is an
+# the `rlib` beside it is what the binaries below link, so the game is an
 # ordinary statically linked executable.
 [lib]
 crate-type = ["rlib", "dylib"]
 
+# The game. No flags, no modes: double-clicking this plays.
 [[bin]]
 name = "{crate_name}"
 path = "src/main.rs"
 
+# Authoring — the embedded editor and the remote host. A separate target
+# so a game build does not produce it, and `required-features` so a game
+# build cannot.
+[[bin]]
+name = "{crate_name}_editor"
+path = "src/editor.rs"
+required-features = ["editor"]
+
 [dependencies]
-# `editor` pulls in the embedded editor so `cargo run` opens the editor
-# with this project's components; `cargo run -- --game` runs the game;
-# `physics-debug-render` lets the host answer the editor's physics overlay
-# — without it the solver walk is not compiled and the overlay draws
-# nothing (#634).
-# `dynamic` is what makes this project loadable by the standalone editor:
-# without it `kooch::kooch_plugin_api` is compiled out and the
-# generated `lib.rs` does not build at all.
-# `remote` lets `cargo run -- --remote` expose the ECS to the standalone
-# editor over a local socket; `physics` gives you rigid bodies — without it a
-# `PhysicsBody` is an inert component and nothing ever falls. `gravity` is
-# the same story one level up: without it a `PointGravity` is authorable,
-# mirrors to the editor, draws its gizmo, and pulls on nothing. `camera` is
-# the third instance of that pattern: without it a `VirtualCamera` is authorable
-# and moves no camera.
-kooch = {{ path = "{engine_path}", features = ["editor", "physics", "gravity", "camera", "audio", "remote", "physics-debug-render", "dynamic"] }}
+kooch = {{ path = "{engine_path}" }}
 # Direct dep needed until `Reflect` proc-macro resolves through the facade.
 kooch_ecs = {{ path = "{engine_path}/crates/kooch_ecs" }}
 "#,
@@ -310,21 +342,34 @@ pub(crate) fn generate_lib_rs(name: &str) -> String {
 // Editor-managed module: declares your components + systems.
 pub mod registrations;
 
-/// Declares this project's component types to the editor.
-#[derive(Default)]
-pub struct ProjectPlugin;
+// Everything below exists so the standalone editor can list your
+// components without compiling them, and it is compiled out of a game
+// build along with the rest of the authoring surface (#558) — a game
+// loads no plugins, and `kooch::kooch_plugin_api` is not in its
+// dependency graph to name.
+#[cfg(feature = "editor")]
+mod plugin {{
+    use super::registrations;
 
-impl kooch::kooch_plugin_api::KoochPlugin for ProjectPlugin {{
-    fn name(&self) -> &str {{
-        "{crate_name}"
+    /// Declares this project's component types to the editor.
+    #[derive(Default)]
+    pub struct ProjectPlugin;
+
+    impl kooch::kooch_plugin_api::KoochPlugin for ProjectPlugin {{
+        fn name(&self) -> &str {{
+            "{crate_name}"
+        }}
+
+        fn build(&mut self, engine: &mut dyn kooch::kooch_plugin_api::Engine) {{
+            registrations::declare_components(engine);
+        }}
     }}
 
-    fn build(&mut self, engine: &mut dyn kooch::kooch_plugin_api::Engine) {{
-        registrations::declare_components(engine);
-    }}
+    kooch::kooch_plugin_api::export_plugin!(ProjectPlugin);
 }}
 
-kooch::kooch_plugin_api::export_plugin!(ProjectPlugin);
+#[cfg(feature = "editor")]
+pub use plugin::ProjectPlugin;
 "##
     )
 }
@@ -338,7 +383,13 @@ kooch::kooch_plugin_api::export_plugin!(ProjectPlugin);
 /// with `crate::actions::codegen`.
 pub(crate) fn generate_main_rs(name: &str) -> String {
     let crate_name = sanitize_crate_name(name);
-    r##"use kooch::prelude::*;
+    r##"//! Your game.
+//!
+//! No flags and no modes: this is what a player runs, and it is the whole
+//! of what a shipped build contains. Authoring lives in `src/editor.rs`,
+//! behind the `editor` feature, so this binary cannot link it (#558).
+
+use kooch::prelude::*;
 
 // The project's own library — the same code the editor loads as a dylib.
 // `registrations` is editor-managed: regenerated whenever you create or
@@ -346,25 +397,48 @@ pub(crate) fn generate_main_rs(name: &str) -> String {
 use PROJECT_CRATE::registrations;
 
 fn main() {
-    // `cargo run`            → the editor, with your components (authoring).
-    // `cargo run -- --game`  → the game (what the editor's Play button runs).
-    // `cargo run -- --remote`→ headless authoring host: your components +
-    //                          the remote server, driven by the standalone
-    //                          editor over a local socket. Gameplay starts
-    //                          paused; the
-    //                          editor's Play button starts it without a
-    //                          rebuild, in the editor's own viewport.
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins);
+    app.add_plugin(registrations::ProjectRegistrations { run_systems: true });
+    app.run();
+}
+"##
+    .replace("PROJECT_CRATE", &crate_name)
+}
+
+/// Generates `src/editor.rs` — authoring, in a target a game build does
+/// not produce.
+///
+/// Split out of `main.rs` for #558. The old scaffold made the editor the
+/// fall-through case of an argument match, so a shipped binary opened by
+/// double-click started the *editor*; and the manifest asked for the
+/// editor feature unconditionally, so the artefact carried the whole
+/// authoring UI whether or not it could be reached.
+///
+/// A `cfg` would have expressed the intent. A separate target with
+/// `required-features` enforces it: the game's build does not have
+/// `kooch_editor_core` in its dependency graph at all.
+pub(crate) fn generate_editor_rs(name: &str) -> String {
+    let crate_name = sanitize_crate_name(name);
+    r##"//! Authoring: the editor, and the host the standalone editor drives.
+//!
+//! Built only with `--features editor` (see `Cargo.toml`), so nothing
+//! here can reach a shipped game.
+
+use kooch::prelude::*;
+
+use PROJECT_CRATE::registrations;
+
+fn main() {
+    // `cargo run --features editor --bin PROJECT_CRATE_editor`
+    //     → the editor, with your components.
+    // `… -- --remote`
+    //     → headless authoring host: your components + the remote server,
+    //       driven by the standalone editor over a local socket. Gameplay
+    //       starts paused; the editor's Play button starts it without a
+    //       rebuild, in the editor's own viewport.
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--game") {
-        // Game runtime: components + gameplay systems.
-        let mut app = App::new();
-        app.add_plugins(DefaultPlugins);
-        app.add_plugin(registrations::ProjectRegistrations { run_systems: true });
-        app.run();
-    } else if args.iter().any(|a| a == "--remote") {
-        // Remote authoring host: components register (so the editor's
-        // Inspector sees them) and systems register paused — the editor
-        // toggles `Playing` over the wire to run them in place.
+    if args.iter().any(|a| a == "--remote") {
         // Headless on purpose: the editor draws this world in its own
         // viewport, so a window here would show the same scene twice.
         let mut app = App::new();
@@ -373,8 +447,8 @@ fn main() {
         app.add_plugin(kooch::kooch_remote::RemotePlugin::new());
         app.run();
     } else {
-        // Editor embedded in the project: register components (for the
-        // Inspector) but do NOT run gameplay systems.
+        // Components register (so the Inspector sees them); gameplay
+        // systems do not run until Play.
         kooch::kooch_editor_core::run_editor_with(registrations::ProjectRegistrations {
             run_systems: false,
         });
@@ -476,6 +550,8 @@ pub fn create_project(
     // Generate src/main.rs scaffold + its editor-managed registrations.
     let main_rs = generate_main_rs(name);
     fs::write(project_root.join("src").join("main.rs"), main_rs).map_err(ProjectError::Io)?;
+    let editor_rs = generate_editor_rs(name);
+    fs::write(project_root.join("src").join("editor.rs"), editor_rs).map_err(ProjectError::Io)?;
     let lib_rs = generate_lib_rs(name);
     fs::write(project_root.join("src").join("lib.rs"), lib_rs).map_err(ProjectError::Io)?;
     fs::write(

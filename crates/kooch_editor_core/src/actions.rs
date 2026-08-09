@@ -38,7 +38,9 @@ use self::handlers::apply_non_ecs_action;
 mod prefab_overrides;
 pub(crate) mod prefab_propagate;
 
-pub(crate) use self::codegen::{initial_registrations, migrate_to_library, register_scripts};
+pub(crate) use self::codegen::{
+    initial_registrations, migrate_to_library, register_scripts, split_authoring,
+};
 
 pub(crate) enum EditorAction {
     /// Spawn an entity with Name + Transform + optional extra components.
@@ -363,6 +365,12 @@ pub(crate) enum NewFileKind {
     Scene,
     /// One action on its own — what a component points at.
     InputAction,
+    /// How the project looks: exposure, ambient, shadows (#744).
+    ///
+    /// **One per project.** The menu hides this once the project has
+    /// one — a second file is read by nothing and produces a warning
+    /// nobody sees.
+    RenderSettings,
 }
 
 impl EditorAction {

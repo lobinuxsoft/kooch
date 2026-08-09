@@ -68,9 +68,10 @@ impl PlayState {
             .arg("--manifest-path")
             .arg(manifest_path)
             .arg("--")
-            // `--game` selects the project's game build (no embedded
-            // editor) so Play tests the actual game, not a nested editor.
-            .arg("--game")
+            // No mode flag any more: the project's default binary IS the
+            // game (#558). Play therefore runs the same artefact a player
+            // would, which is the point — it used to run a build that also
+            // contained the editor and merely declined to open it.
             .arg("--scene")
             .arg(scene_path)
             .stdout(Stdio::piped())

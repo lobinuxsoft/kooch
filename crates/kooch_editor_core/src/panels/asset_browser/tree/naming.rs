@@ -132,5 +132,6 @@ pub(super) fn create_hint(kind: CreateKind) -> &'static str {
         CreateKind::File(NewFileKind::RustSystem) => "System name (e.g. Movement)…",
         CreateKind::File(NewFileKind::Scene) => "Scene name…",
         CreateKind::File(NewFileKind::InputAction) => "Action name (e.g. Jump)…",
+        CreateKind::File(NewFileKind::RenderSettings) => "Settings name (e.g. project)…",
     }
 }
