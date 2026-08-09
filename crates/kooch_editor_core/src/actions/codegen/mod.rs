@@ -18,6 +18,9 @@ use crate::project::generate_main_rs;
 use crate::project_state::ProjectState;
 
 mod render;
+mod split;
+
+pub(crate) use split::split_authoring;
 
 /// What `src/registrations.rs` looks like before a project has a single
 /// script of its own.

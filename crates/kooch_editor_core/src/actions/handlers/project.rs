@@ -61,6 +61,11 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
             if let Some(root) = ps.active_project.as_ref().map(|p| p.root_path.clone()) {
                 let crate_name = crate::project::sanitize_crate_name(&title);
                 crate::actions::migrate_to_library(&root, &crate_name);
+                // Then split authoring out of the game build (#558).
+                // After the library migration, not before: this adds a
+                // second `[[bin]]`, and the one above is what stops cargo
+                // inferring the first from `src/main.rs`.
+                crate::actions::split_authoring(&root, &crate_name);
 
                 // Then load it, if it has been built. Writing lib.rs does
                 // not produce a .so — that needs a compile — so the first

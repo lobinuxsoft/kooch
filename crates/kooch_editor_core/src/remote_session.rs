@@ -165,9 +165,16 @@ impl RemoteSession {
         let socket = unique_socket_name();
 
         let mut cmd = Command::new("cargo");
-        cmd.arg("run")
-            .arg("--manifest-path")
-            .arg(manifest_path)
+        cmd.arg("run").arg("--manifest-path").arg(manifest_path);
+        // The remote server lives behind the project's `editor` feature,
+        // in a binary a game build does not produce (#558). Named
+        // explicitly because the default `--bin` is the game, and the
+        // game does not answer a socket.
+        crate::cargo_args::authoring(&mut cmd);
+        cmd.arg("--bin")
+            .arg(crate::cargo_args::editor_bin(
+                &crate::cargo_args::crate_name(manifest_path),
+            ))
             .arg("--")
             .arg("--remote")
             .stdout(Stdio::piped())

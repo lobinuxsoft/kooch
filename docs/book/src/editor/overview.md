@@ -90,9 +90,10 @@ are registered either way and skipped per frame, so Play can flip them on live r
 recompiling.
 
 > **Known rough edge.** A locally-opened project's Play button still has an older path that
-> shells out to `cargo run -- --game`, which builds the project and opens a second window —
+> shells out to `cargo run`, which builds the project and opens a second window —
 > minutes of nothing, and no snapshot. Tracked in
-> [#633](https://github.com/lobinuxsoft/kooch/issues/633).
+> [#633](https://github.com/lobinuxsoft/kooch/issues/633). It does now run the *game*
+> binary, which is what a player would get (#558).
 
 ## What the editor does not do yet
 
