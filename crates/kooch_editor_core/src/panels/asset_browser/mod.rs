@@ -121,6 +121,7 @@ pub(crate) fn draw_asset_browser_content(
                 pending: &mut pending,
                 writable: true,
                 nav,
+                has_settings: has_render_settings(catalog, project_root),
             };
             // Cleared here and refilled as rows are drawn, so the list the
             // keyboard reads next frame is exactly what is on screen now.
@@ -222,6 +223,22 @@ fn draw_drop_banner(ui: &mut egui::Ui, project_root: Option<&Path>, dest: Option
     }
 }
 
+/// Whether the project already holds a `.rendersettings`.
+///
+/// By type and not by extension, because that is how the renderer finds
+/// it (`apply_render_settings_system`) — an entry the catalog does not
+/// type is one the renderer will not read either, and the menu has to
+/// agree with what actually takes effect.
+///
+/// Scoped to the project: the engine ships assets too, and one of those
+/// must not stop a project from authoring its own.
+fn has_render_settings(catalog: &[AssetCatalogEntry], project_root: Option<&Path>) -> bool {
+    let wanted = std::any::type_name::<kooch_render::settings::RenderSettings>();
+    catalog.iter().any(|entry| {
+        entry.type_name == wanted && project_root.is_some_and(|root| entry.path.starts_with(root))
+    })
+}
+
 /// Catalog entries whose path lives under `root`.
 fn entries_under<'a>(catalog: &'a [AssetCatalogEntry], root: &Path) -> Vec<&'a AssetCatalogEntry> {
     catalog
@@ -307,3 +324,6 @@ fn asset_guid_at(path: &Path) -> Option<Guid> {
         .ok()
         .map(|meta| meta.guid)
 }
+
+#[cfg(test)]
+mod settings_tests;

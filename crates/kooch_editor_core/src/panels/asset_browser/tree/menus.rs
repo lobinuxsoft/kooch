@@ -15,6 +15,7 @@ pub(super) fn folder_menu(
     actions: &mut Vec<EditorAction>,
     rename: &mut Option<RenameState>,
     pending: &mut Option<PendingCreate>,
+    has_settings: bool,
 ) {
     // Offered on folders too, and on read-only ones: opening the crate
     // that owns a folder is how you get at the code behind it, which is
@@ -87,6 +88,21 @@ pub(super) fn folder_menu(
         .clicked()
     {
         start(CreateKind::File(NewFileKind::InputAction));
+        ui.close();
+    }
+    // Settings are per project, and the renderer finds them by type: a
+    // second file is read by nothing and warns where nobody looks. Shown
+    // disabled rather than hidden, so a project that already has one says
+    // so instead of leaving someone hunting for a menu entry that was
+    // there yesterday.
+    let settings = ui.add_enabled(
+        !has_settings,
+        egui::Button::new(format!("{} New Render Settings", icons::FADERS)),
+    );
+    if has_settings {
+        settings.on_hover_text("This project already has one — settings are per project.");
+    } else if settings.clicked() {
+        start(CreateKind::File(NewFileKind::RenderSettings));
         ui.close();
     }
     // The synthetic root node has an empty name; it is not itself

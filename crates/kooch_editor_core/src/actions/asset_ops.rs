@@ -51,7 +51,7 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
 const COMPONENT_TMPL: &str = include_str!("../../../../templates/component.rs.tmpl");
 const SYSTEM_TMPL: &str = include_str!("../../../../templates/system.rs.tmpl");
 
-fn create_file(resources: &Resources, folder: &Path, name: &str, kind: NewFileKind) {
+fn create_file(resources: &mut Resources, folder: &Path, name: &str, kind: NewFileKind) {
     let (tmpl_file, fallback, ext) = match kind {
         NewFileKind::RustComponent => ("component.rs.tmpl", COMPONENT_TMPL, "rs"),
         NewFileKind::RustSystem => ("system.rs.tmpl", SYSTEM_TMPL, "rs"),
@@ -76,6 +76,25 @@ fn create_file(resources: &Resources, folder: &Path, name: &str, kind: NewFileKi
                 Err(e) => {
                     tracing::error!(file = %file.display(), error = %e, "failed to write action")
                 }
+            }
+            return;
+        }
+        NewFileKind::RenderSettings => {
+            // Through the same save-and-register path a material takes,
+            // not a bare write: `apply_render_settings_system` finds this
+            // by *type*, so a file with no `.meta` is a file the renderer
+            // never reads — authored, saved, and inert (#759).
+            let file = unique_target(
+                folder,
+                OsStr::new(&format!(
+                    "{name}.{}",
+                    kooch_render::settings::RENDER_SETTINGS_EXTENSION
+                )),
+            );
+            let settings = kooch_render::settings::RenderSettings::default();
+            match kooch_render::settings::to_ron(&settings) {
+                Ok(text) => write_asset(resources, &file, &text, "render settings"),
+                Err(e) => tracing::error!(error = %e, "failed to serialise render settings"),
             }
             return;
         }
@@ -296,20 +315,32 @@ fn create_material(resources: &mut Resources, folder: &Path, name: &str) {
                 return;
             }
         };
-    match std::fs::write(&file, text) {
+    write_asset(resources, &file, &text, "material");
+}
+
+/// Writes a new asset file and gives it an identity.
+///
+/// The two steps after the write are what separate an asset from a file
+/// that merely exists, and both are easy to leave out — which is how a
+/// capability gets built and stays unreachable, the pattern #744 was:
+///
+/// - **Re-scan**, so eager import writes a `.meta` with a fresh GUID and
+///   registers it as a typed asset. The whole tree, because this is the
+///   one case with no `.meta` to register *from* — the scan is what
+///   creates it.
+/// - **Tell the project**, because the re-scan is this process only, and
+///   an asset the running project never heard of cannot be assigned to
+///   anything over there.
+fn write_asset(resources: &mut Resources, file: &Path, text: &str, what: &str) {
+    match std::fs::write(file, text) {
         Ok(()) => {
-            tracing::info!(file = %file.display(), "material created");
-            // Re-scan so eager import writes a `.meta` (fresh GUID) and
-            // registers it as a typed asset. Still the whole tree, because
-            // this is the one case with no `.meta` to register *from* —
-            // the scan is what creates it.
+            tracing::info!(file = %file.display(), "{what} created");
             force_rescan(resources);
-            // Now that it has an identity, tell the project: the rescan is
-            // this process only, and a material it has never heard of
-            // cannot be assigned to anything over there.
-            crate::actions::handlers::asset_saved(resources, &file);
+            crate::actions::handlers::asset_saved(resources, file);
         }
-        Err(e) => tracing::error!(file = %file.display(), error = %e, "failed to write material"),
+        Err(e) => {
+            tracing::error!(file = %file.display(), error = %e, "failed to write {what}")
+        }
     }
 }
 
@@ -506,6 +537,9 @@ mod tests;
 
 #[cfg(test)]
 mod duplicate_tests;
+
+#[cfg(test)]
+mod settings_tests;
 
 /// The map a new `.inputmap` starts with.
 ///

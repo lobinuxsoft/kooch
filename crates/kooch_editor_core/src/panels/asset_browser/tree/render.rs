@@ -111,10 +111,13 @@ pub(super) fn render_folder(
                 }
             }
             let writable = ctx.writable;
+            let has_settings = ctx.has_settings;
             let actions = &mut *ctx.actions;
             let rename = &mut *ctx.rename;
             let pending = &mut *ctx.pending;
-            resp.context_menu(|ui| folder_menu(ui, node, writable, actions, rename, pending));
+            resp.context_menu(|ui| {
+                folder_menu(ui, node, writable, actions, rename, pending, has_settings)
+            });
         })
         .body(|ui| render_children(ui, node, ctx, root));
 }
