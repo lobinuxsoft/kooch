@@ -28,6 +28,10 @@ fn discriminants_match_the_shader() {
             "INTI_DEBUG_CONTACT_SHADOWS",
         ),
         (MeshletDebugMode::SingleLight, "INTI_DEBUG_SINGLE_LIGHT"),
+        (
+            MeshletDebugMode::SpotShadowMap,
+            "INTI_DEBUG_SPOT_SHADOW_MAP",
+        ),
     ] {
         let declaration = format!("const {name}: u32 = {}u;", mode.as_u32());
         assert!(
@@ -47,6 +51,7 @@ fn every_inti_view_is_above_the_dispatch_floor() {
         MeshletDebugMode::ShadowCascades,
         MeshletDebugMode::ContactShadows,
         MeshletDebugMode::SingleLight,
+        MeshletDebugMode::SpotShadowMap,
     ] {
         assert!(mode.as_u32() >= floor, "{mode:?} is below INTI_DEBUG_FIRST");
     }
@@ -170,4 +175,5 @@ fn discriminants_are_stable() {
     assert_eq!(MeshletDebugMode::ShadowCascades.as_u32(), 12);
     assert_eq!(MeshletDebugMode::ContactShadows.as_u32(), 13);
     assert_eq!(MeshletDebugMode::SingleLight.as_u32(), 14);
+    assert_eq!(MeshletDebugMode::SpotShadowMap.as_u32(), 15);
 }

@@ -32,6 +32,7 @@ const INTI_DEBUG_NORMALS: u32 = 11u;
 const INTI_DEBUG_SHADOW_CASCADES: u32 = 12u;
 const INTI_DEBUG_CONTACT_SHADOWS: u32 = 13u;
 const INTI_DEBUG_SINGLE_LIGHT: u32 = 14u;
+const INTI_DEBUG_SPOT_SHADOW_MAP: u32 = 15u;
 // Lowest discriminant handled here. Modes below it are resolved by the
 // shading path itself before the surface is even reconstructed.
 const INTI_DEBUG_FIRST: u32 = INTI_DEBUG_NORMALS;
@@ -219,6 +220,52 @@ fn inti_single_light_debug(
     return inti_tonemap(vec3<f32>(dot(radiance, INTI_LUMA)));
 }
 
+/// What a spot light's shadow map holds, and through what projection
+/// (#777).
+///
+/// Built because three causes of "the shadow does not match the mesh"
+/// look identical in a shaded frame and live in three different files.
+/// This view answers all three at once:
+///
+/// - **magenta** — no spot casts, so there is nothing to look at.
+/// - **dark blue** — this point is outside the spot's frustum. Expected
+///   everywhere the cone does not reach; suspicious if it covers ground
+///   the light visibly lights.
+/// - **red** — inside the frustum, and the map is empty at that texel.
+///   The raster pass drew nothing there, so no matter how good the
+///   sampling is there is no occluder to find.
+/// - **gradient** — red is u, green is v, blue is the stored depth. This
+///   is the answer to the question the frame cannot give: **rotate the
+///   light.** If the gradient turns with it, the record the shader reads
+///   is the one the pass wrote and the fault is elsewhere. If it does
+///   not, the matrix being sampled is not the matrix being rasterised.
+fn inti_spot_shadow_map_debug(world_position: vec3<f32>) -> vec3<f32> {
+    for (var i = 0u; i < inti.light_count; i = i + 1u) {
+        let light = inti_lights[i];
+        if (light.kind != INTI_KIND_SPOT || light.shadow_slot == INTI_NO_SHADOW_SLOT) {
+            continue;
+        }
+        if (light.shadow_slot >= inti.spot_shadow_count) {
+            // The light says it has a map and the frame says there are
+            // fewer than that. A different bug from every colour below,
+            // and one nothing on screen would otherwise show.
+            return vec3<f32>(1.0, 0.5, 0.0);
+        }
+        let cascade = inti.spot_shadows[light.shadow_slot];
+        let coords = inti_shadow_coords(cascade, world_position);
+        if (coords.w == 0.0) {
+            return vec3<f32>(0.0, 0.0, 0.25);
+        }
+        let stored = textureSampleLevel(
+            inti_shadow_atlas, inti_shadow_point_sampler, coords.xy, cascade.layer, 0u);
+        if (stored <= 0.0) {
+            return vec3<f32>(1.0, 0.0, 0.0);
+        }
+        return vec3<f32>(coords.x, coords.y, stored);
+    }
+    return vec3<f32>(1.0, 0.0, 1.0);
+}
+
 /// `true` when `mode` is one of the views this file draws.
 ///
 /// 🔴 The production build concatenates `INTI_DEBUG_STUB` instead, where
@@ -250,6 +297,9 @@ fn inti_debug_view(
     }
     if (mode == INTI_DEBUG_SINGLE_LIGHT) {
         return inti_single_light_debug(world_position, n, frag_coord);
+    }
+    if (mode == INTI_DEBUG_SPOT_SHADOW_MAP) {
+        return inti_spot_shadow_map_debug(world_position);
     }
     // A mode the shader does not know. Black rather than a guess: an
     // unimplemented view that renders *something* is one somebody

@@ -117,6 +117,24 @@ pub enum MeshletDebugMode {
     /// the selector — a limitation somebody has to guess at is worse
     /// than one written down.
     SingleLight = 14,
+    /// What the spot lights' shadow maps actually contain, and through
+    /// which projection they are read (#777).
+    ///
+    /// Three things look identical in a shaded frame and live in three
+    /// different files: the map is empty because the raster drew
+    /// nothing; the map has content but was rasterised through a
+    /// different matrix than the one being sampled; the map and the
+    /// matrix are right and the layer index is wrong.
+    ///
+    /// - magenta — no spot light in the scene casts
+    /// - dark blue — outside this spot's frustum, so nothing to read
+    /// - **red** — inside the frustum and the map is EMPTY there: the
+    ///   raster pass did not draw
+    /// - red/green gradient — the sampled uv, with blue carrying the
+    ///   stored depth. Rotate the light: if the gradient does not turn
+    ///   with it, the record reaching the shader is not the one the
+    ///   pass thinks it wrote
+    SpotShadowMap = 15,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -177,6 +195,7 @@ impl MeshletDebugMode {
             Self::ShadowCascades,
             Self::ContactShadows,
             Self::SingleLight,
+            Self::SpotShadowMap,
         ]
     }
 
@@ -256,6 +275,7 @@ impl MeshletDebugMode {
             Self::ShadowCascades => "Shadow cascades",
             Self::ContactShadows => "Contact shadows",
             Self::SingleLight => "Single light",
+            Self::SpotShadowMap => "Spot shadow map",
         }
     }
 }
