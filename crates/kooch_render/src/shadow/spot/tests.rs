@@ -148,3 +148,45 @@ fn a_wider_cone_has_bigger_texels() {
     let wide = spot_shadow(&source(Vec3::ZERO, Vec3::NEG_Z, 1.0), 4, 2048).texel_world_size;
     assert!(wide > narrow, "{wide} should exceed {narrow}");
 }
+
+/// 🔴 The smoke's second finding: rotating the light moved the lit pool
+/// and did NOT move the shadow.
+///
+/// Two lights at the same place pointing different ways must not share a
+/// shadow matrix. If this passes, the fitting is right and the fault is
+/// downstream — the cull, the raster or the sampling. If it fails, it is
+/// here. Those are different files and looking at the frame cannot tell
+/// them apart.
+#[test]
+fn rotating_the_light_moves_its_shadow() {
+    let position = Vec3::new(0.0, 9.0, 0.0);
+    let down = spot_shadow(&source(position, Vec3::NEG_Y, 0.78), 4, 2048);
+    let tilted = spot_shadow(
+        &source(position, Vec3::new(0.0, -1.0, -1.0).normalize(), 0.78),
+        4,
+        2048,
+    );
+
+    assert_ne!(
+        down.view_proj, tilted.view_proj,
+        "the same matrix for two directions — the shadow cannot follow the light",
+    );
+
+    // And concretely: a point on the floor ahead of the tilted light is
+    // inside its map and outside the one pointing straight down.
+    let ahead = Vec3::new(0.0, 0.0, -9.0);
+    let inside = |m: &[[f32; 4]; 4]| {
+        let clip = Mat4::from_cols_array_2d(m) * ahead.extend(1.0);
+        let ndc = clip.xyz() / clip.w;
+        ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0 && clip.w > 0.0
+    };
+    assert!(
+        inside(&tilted.view_proj),
+        "a point the tilted light shines at falls outside its own shadow map",
+    );
+    assert!(
+        !inside(&down.view_proj),
+        "a point nine metres to the side is inside the map of a light \
+         pointing straight down — the view is ignoring the direction",
+    );
+}
