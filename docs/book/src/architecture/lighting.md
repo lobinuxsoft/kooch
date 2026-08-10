@@ -348,8 +348,19 @@ filter and the border clamp are one implementation, not two.
 | FOV is `outer_angle * 2` | The cone's edge is where the light stops. Fitting the half-angle clips the round pool into a square |
 | Up vector chosen against the cone | A spot pointing straight down is the most ordinary way to author one, and the case a fixed world-up basis is degenerate for |
 | Cone clamped near 90° | `tan` runs away before it gets there and fills the matrix with infinities, which spread into every depth the pass writes |
-| `texel_world_size` measured at the far end | A perspective map has no single answer. The bias exists to stop acne and acne appears where texels are largest. The cost is being over-biased close to the light — the band contact shadows already cover |
+| `texel_world_size` is an ANGLE per texel | `2·tan(outer)/size·√2`, Bevy's `texel_size`, with **no `range` in it**. The shader multiplies by each fragment's own axial distance to the light. Baking `range` in biases everything as though it sat at the far end of the cone: a 100 m spot over objects five metres away offset them 17 cm and the shadow lifted off — found in the first smoke |
 | `MAX_SPOT_SHADOWS = 4` | One layer each, 16 MiB at 2048². A fifth spot still lights the scene with no shadow; dropping the light would be a worse failure |
+
+🔴 **The cull needs its LOD selector configured, and a factor of zero is
+not a neutral default.** `CullParams::new` leaves
+`lod_error_to_pixel_factor` at `0.0`, which makes every meshlet's
+projected error work out to 0 px — always under the threshold, so the
+selector keeps **only roots**. A sphere's shadow then comes out as a
+wedge. `projection_scale_y`'s doc comment has said so since a rotated
+camera hit the same zero: *"a sphere collapses to a blob and a cube to a
+spike"*. A spot uses `with_lod` (perspective), a cascade
+`with_orthographic_lod`; both apply `SHADOW_LOD_RELAXATION`, because a
+shadow is a silhouette and loses detail a lit surface keeps.
 
 🔴 **Slots are handed out inside `extract_lights`, in its walk order**, and
 `shadow_casting_spots` reads that same order back. Two walks that
