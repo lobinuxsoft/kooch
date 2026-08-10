@@ -4,11 +4,34 @@ use glam::{Quat, Vec3};
 #[test]
 fn size_matches_shader() {
     // `inti_pbr.wgsl`'s IntiLight: vec3+f32, vec3+f32, vec3+u32,
-    // f32, f32, f32, f32 — 64 B under std430's vec3-aligns-to-16
-    // rule. A mismatch here is the whole struct read at the wrong
-    // stride.
-    assert_eq!(std::mem::size_of::<GpuLight>(), 64);
+    // f32, f32, u32, u32, f32, then three pad scalars — 80 B under
+    // std430's vec3-aligns-to-16 rule. A mismatch here is the whole
+    // struct read at the wrong stride.
+    //
+    // 🔴 The padding is why this is 80 and not 68: WGSL rounds the
+    // struct up to its own alignment, Rust does not. Dropping the pad
+    // fields would leave Rust writing at 68 and the shader reading at
+    // 80, and every light past the first would be garbage.
+    assert_eq!(std::mem::size_of::<GpuLight>(), 80);
     assert_eq!(std::mem::align_of::<GpuLight>(), 4);
+}
+
+#[test]
+fn radius_scales_with_the_transform() {
+    let world = Mat4::from_scale(Vec3::splat(3.0));
+    let light = PointLight {
+        radius: 0.5,
+        ..Default::default()
+    };
+    assert_eq!(GpuLight::point(&light, world).radius, 1.5);
+}
+
+#[test]
+fn a_directional_light_has_no_radius() {
+    // There is no distance to a light with no position, so the
+    // representative point has nothing to correct.
+    let gpu = GpuLight::directional(&DirectionalLight::default(), Mat4::IDENTITY);
+    assert_eq!(gpu.radius, 0.0);
 }
 
 #[test]

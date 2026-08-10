@@ -19,6 +19,7 @@ use crate::Reflect;
 /// - `color`: white `(1, 1, 1)`
 /// - `intensity`: [`lumens::ROOM_LIGHT_NO_GI`](crate::light_consts::lumens::ROOM_LIGHT_NO_GI)
 /// - `range`: 10.0
+/// - `radius`: 0.0 (a point, as every light in the engine was before)
 /// - `cast_shadows`: true
 /// - `contact_shadows`: false
 #[derive(Debug, Clone, Copy, Reflect)]
@@ -53,6 +54,18 @@ pub struct PointLight {
     /// sphere draws precisely this boundary, and scales with the
     /// entity's transform the way the shading does.
     pub range: f32,
+    /// Radius of the emitting sphere, in world units. `0` is a
+    /// mathematical point.
+    ///
+    /// A real lamp has a size, and its size is what decides how big the
+    /// highlight it leaves on a glossy surface is. Growing this widens
+    /// that highlight without making the surface brighter.
+    ///
+    /// ⚠️ **Specular only.** It does not soften the diffuse falloff and
+    /// it does not soften shadows — a soft shadow is a separate
+    /// technique driven by the same number (#477), not a consequence of
+    /// this one. Bevy's `PointLight::radius` is documented the same way.
+    pub radius: f32,
     /// Whether this light casts shadows.
     ///
     /// ⚠️ Not implemented yet — punctual shadows need a cube map (point)
@@ -79,6 +92,7 @@ impl Default for PointLight {
             color: Vec3::ONE,
             intensity: crate::light_consts::lumens::ROOM_LIGHT_NO_GI,
             range: 10.0,
+            radius: 0.0,
             cast_shadows: true,
             contact_shadows: false,
         }

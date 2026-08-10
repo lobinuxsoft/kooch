@@ -34,7 +34,7 @@ const MIN_CONE_COS_DELTA: f32 = 1e-4;
 /// too: such a light still lights the scene, it just has no map.
 pub const NO_SHADOW_SLOT: u32 = u32::MAX;
 
-/// One light, as the shader reads it. 64 bytes, `std430`-compatible.
+/// One light, as the shader reads it. 80 bytes, `std430`-compatible.
 ///
 /// Mirrors `IntiLight` in `inti_pbr.wgsl` byte for byte. Nothing checks
 /// that correspondence at compile time on either side of the boundary —
@@ -68,12 +68,32 @@ pub struct GpuLight {
     pub flags: u32,
     /// Index into `IntiFrame::spot_shadows` when this spot light casts,
     /// or [`NO_SHADOW_SLOT`] (#777).
-    ///
-    /// 🔴 This was the record's last spare word. At 64 B it is now full:
-    /// `radius` (#776) and a rect light's extent (#779) each need more,
-    /// so the next field added grows the struct for every light in the
-    /// scene, which is a bandwidth decision rather than a free slot.
     pub shadow_slot: u32,
+    /// Radius of the emitting sphere, in world units, scaled by the
+    /// entity's transform the way `range` is. `0` is a point.
+    ///
+    /// This is the field that took the record from 64 B to 80 B (#776).
+    /// Bevy grew theirs for the same reason and carries it as the `.w`
+    /// of `position_radius`; here `position` already spent its `.w` on
+    /// `range`, so there was nowhere to hide it.
+    pub radius: f32,
+    /// Padding to the 16-byte alignment `std430` gives any struct
+    /// containing a `vec3`.
+    ///
+    /// 🔴 **Not free space to raid casually, but not dead either.** The
+    /// shader reads the whole record per light per fragment, so these
+    /// twelve bytes are already being fetched: a field that fits here
+    /// costs nothing further, and the next one after it costs another
+    /// sixteen for every light in the scene. #778's cube-map slot is
+    /// the intended tenant. A rect light is NOT (#779) — that one is a
+    /// second array, the way Bevy keeps `GpuRectLight` separate.
+    ///
+    /// ⚠️ Three scalars, never a `[f32; 3]` standing in for a `vec3`:
+    /// the mirror in `inti_pbr.wgsl` must declare three separate `f32`
+    /// or WGSL realigns and the strides diverge.
+    pub _pad0: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
 }
 
 impl GpuLight {
@@ -110,37 +130,56 @@ impl GpuLight {
             spot_offset: 0.0,
             flags: Self::flags(light.contact_shadows),
             shadow_slot: NO_SHADOW_SLOT,
+            // A star has a size, and it is why its shadows have a
+            // penumbra — but that is a shadow technique (#477), not
+            // this one. The representative point below is a correction
+            // to the distance to a nearby sphere; there is no distance
+            // to a light that has no position.
+            radius: 0.0,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
         }
     }
 
     pub fn point(light: &PointLight, world: Mat4) -> Self {
+        let scale = max_scale(world);
         Self {
             color: light.color.to_array(),
             intensity: light.intensity,
             position: world.w_axis.truncate().to_array(),
-            range: scaled_range(light.range, world),
+            range: (light.range * scale).max(0.0),
             direction: [0.0; 3],
             kind: LIGHT_KIND_POINT,
             spot_scale: 0.0,
             spot_offset: 0.0,
             flags: Self::flags(light.contact_shadows),
             shadow_slot: NO_SHADOW_SLOT,
+            radius: (light.radius * scale).max(0.0),
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
         }
     }
 
     pub fn spot(light: &SpotLight, world: Mat4) -> Self {
-        let (scale, offset) = spot_cone_mad(light.inner_angle, light.outer_angle);
+        let (cone_scale, offset) = spot_cone_mad(light.inner_angle, light.outer_angle);
+        let scale = max_scale(world);
         Self {
             color: light.color.to_array(),
             intensity: light.intensity,
             position: world.w_axis.truncate().to_array(),
-            range: scaled_range(light.range, world),
+            range: (light.range * scale).max(0.0),
             direction: forward(world).to_array(),
             kind: LIGHT_KIND_SPOT,
-            spot_scale: scale,
+            spot_scale: cone_scale,
             spot_offset: offset,
             flags: Self::flags(light.contact_shadows),
             shadow_slot: NO_SHADOW_SLOT,
+            radius: (light.radius * scale).max(0.0),
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
         }
     }
 }
@@ -156,15 +195,19 @@ pub(crate) fn forward(world: Mat4) -> Vec3 {
     f.normalize_or(Vec3::NEG_Y)
 }
 
-/// Range in world units, scaled by the entity's transform.
+/// The entity's largest axis scale, which every world-space length on a
+/// light is multiplied by.
 ///
 /// Matches what the editor's light gizmo draws (`light.range *
 /// scale.abs().max_element()`) — the wire sphere is meant to show
 /// exactly where the falloff reaches zero, and it can only do that if
-/// both sides scale the same way.
-fn scaled_range(range: f32, world: Mat4) -> f32 {
-    let scale = world.to_scale_rotation_translation().0.abs().max_element();
-    (range * scale).max(0.0)
+/// both sides scale the same way. `radius` follows the same rule: a
+/// lamp scaled up has a bigger bulb, not the same bulb further away.
+///
+/// Computed once per light rather than once per length: decomposing a
+/// matrix is not what anyone wants running twice per light per frame.
+fn max_scale(world: Mat4) -> f32 {
+    world.to_scale_rotation_translation().0.abs().max_element()
 }
 
 /// Packs inner/outer **half-angles in degrees** into the multiply-add

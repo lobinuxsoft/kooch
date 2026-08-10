@@ -134,6 +134,9 @@ fn add_spot(resources: &mut Resources, cast_shadows: bool) {
             color: Vec3::ONE,
             intensity: 4_000_000.0,
             range: 40.0,
+            // A point source. A sphere would widen the highlight this
+            // suite measures shadow edges against.
+            radius: 0.0,
             inner_angle: 25.0,
             outer_angle: 40.0,
             cast_shadows,

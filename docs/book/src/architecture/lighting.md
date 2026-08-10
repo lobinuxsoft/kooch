@@ -67,11 +67,44 @@ Two decisions worth stating because they diverge from something:
   Filament does; their *path tracer* does the layering. We took the path
   tracer's form, because a mirror is where the difference shows and a
   mirror is not an edge case.
-- **Point lights have no radius yet**, so there is no sphere-light
-  `a_prime` to get wrong. Bevy got it wrong and fixed it in 0.18: they
-  applied base roughness where the solid angle demanded a widened one,
-  and highlights stayed sharp and far too bright with distance. The trap
-  is recorded in the shader against the day `PointLight` grows a radius.
+- **Point and spot lights have a `radius`**, so a lamp has a size and
+  the highlight it leaves has one too. See below.
+
+### Light size — `radius`
+
+`PointLight::radius` and `SpotLight::radius` are the radius of the
+emitting sphere in world units. `0`, the default, is the mathematical
+point every light in the engine was before, so an existing scene renders
+unchanged.
+
+It is **specular only**. It does not soften the diffuse falloff, and it
+does not soften shadows — a soft shadow is a separate technique driven by
+the same number, not a consequence of this one.
+
+The technique is Karis 2013's *representative point*: instead of
+integrating the BRDF over the sphere, shade against the single point on
+the sphere closest to the mirror ray, and widen the roughness to account
+for the rest of it. Five things travel together and the highlight is
+wrong without any one of them:
+
+| Piece | Why it is not optional |
+|---|---|
+| The representative direction | The highlight has to move, not only spread |
+| A separate `N·L` for the specular layer | The two layers now answer to different directions, so the cosine is applied per layer rather than factored out |
+| `(a / a_prime)²` normalization | Spreading a fixed amount of light must not add any — without it `radius` is a brightness knob |
+| `mix(a, a_prime, 1-(1-a)⁴)` | Feeding the widened roughness straight to the BRDF makes smooth materials read too rough and too dim. Bevy's own comment names Linearly Transformed Cosines as the real fix and this as the tuned stand-in |
+| Sphere visibility, `r²/d²` | At a grazing angle part of the sphere is below the horizon and cannot light the surface at all |
+
+⚠️ The clamp `max(0.0001, dot(offset, R))` in the representative point is
+a **fix, not a guard against division by zero**: the approximation is
+plainly wrong for a surface inside or touching the light's sphere, and
+without the clamp such a surface shows a hard discontinuity. It is
+carried from Bevy, who carry it for
+[bevyengine/bevy#13318](https://github.com/bevyengine/bevy/issues/13318).
+
+A directional light is excluded by kind, not only by its radius: there
+is no distance to a light with no position for the approximation to
+correct. A sun's angular size is a shadow problem, not this one.
 
 ### Ambient
 
@@ -169,7 +202,7 @@ planet's night side coexist in one frame.
 
 ## The GPU record
 
-`GpuLight` is 64 bytes, `#[repr(C)]`, mirroring `IntiLight` in
+`GpuLight` is 80 bytes, `#[repr(C)]`, mirroring `IntiLight` in
 `inti_pbr.wgsl` byte for byte. Nothing checks that correspondence at
 compile time on either side of the boundary — a reordered field reads a
 light's range as its intensity and renders something plausible and
@@ -183,6 +216,15 @@ six scattered fetches. SoA pays when a pass reads one field across many
 records — which is what light **culling** does, positions and ranges
 only, so when clustering lands its input is a separate pair of arrays,
 not a reinterpretation of this one.
+
+It was 64 bytes — one cache line — until `radius` arrived and there was
+nowhere left to put it. Growing the record widens **every** light in the
+scene, the sun included, which is a bandwidth decision on a handheld and
+not a free slot; three padding scalars now ride along to the alignment
+`std430` demands, and they are where the next field goes before the cost
+is paid again. Bevy's equivalent record is 80 bytes for the same reason,
+and they keep directional and rect lights in separate arrays rather than
+widening one record for all of them.
 
 Spot cones are stored pre-packed as the multiply-add the shader
 evaluates, `saturate(cos_angle · scale + offset)` — one MAD per light per
