@@ -996,8 +996,95 @@ fn inti_point_shadow(
     // sampling direction is mirrored here. Fixing either half alone puts
     // the shadow of everything in front of a lamp behind it.
     let dir = frag_ls * vec3<f32>(1.0, 1.0, -1.0);
-    return textureSampleCompareLevel(
-        inti_point_cubes, inti_shadow_sampler, dir, i32(slot), depth);
+    return inti_filter_cube(dir, depth, slot, texel_world);
+}
+
+// A branchless orthonormal basis around `z_basis`, which must be unit.
+//
+// Duff et al. 2017, "Building an Orthonormal Basis, Revisited" — Bevy's
+// `orthonormalize`. It exists because a cube map has no uv plane to
+// offset a filter tap in: the taps have to move across the tangent plane
+// of the sampling DIRECTION, and that plane has to be built per pixel
+// without a branch on which axis is safest to cross with.
+fn inti_orthonormalize(z_basis: vec3<f32>) -> mat3x3<f32> {
+    let sign = select(-1.0, 1.0, z_basis.z >= 0.0);
+    let a = -1.0 / (sign + z_basis.z);
+    let b = z_basis.x * z_basis.y * a;
+    return mat3x3<f32>(
+        vec3<f32>(1.0 + sign * z_basis.x * z_basis.x * a, sign * b, -sign * z_basis.x),
+        vec3<f32>(b, sign + z_basis.y * z_basis.y * a, -z_basis.y),
+        z_basis,
+    );
+}
+
+// How wide the cube filter is, in shadow texels.
+//
+// 🔴 Bevy's equivalent is a fixed `POINT_SHADOW_SCALE = 0.003` in
+// direction units, which at their 1024² face works out to roughly one
+// texel. Ours is expressed in texels instead of in angle so that it does
+// not silently change meaning when the face size does — and it is wider
+// than theirs on purpose, because these faces render at 512² and the
+// engine's owner asked for a soft shadow rather than a detailed one. A
+// point light is a lamp; nobody looks for the outline of a chair leg in
+// what it casts.
+const INTI_POINT_FILTER_TEXELS: f32 = 2.0;
+
+// The eight standard D3D MSAA sample positions, and the coefficients of
+// a zero-mean identity-covariance 2D Gaussian evaluated at them. The
+// coefficients sum to 1, so the filter needs no normalisation.
+//
+// ⚠️ Not the Castano filter the cascades and spots use, and Bevy's own
+// comment says why: Castano is a 2D Gaussian that leans on bilinear
+// hardware to get nine taps out of four fetches, and **that trick does
+// not exist for a cubemap**. Eight explicit taps is the replacement.
+fn inti_filter_cube(
+    dir: vec3<f32>,
+    depth: f32,
+    slot: u32,
+    // 🔴 Already in METRES at this fragment's distance — the caller has
+    // multiplied the record's angular texel by `distance_to_light`.
+    // Multiplying by the distance again here made the filter radius grow
+    // with the distance SQUARED, which is not a wider blur but a
+    // gradient smeared across the whole floor. Caught in the smoke, in
+    // one frame.
+    texel_world: f32,
+) -> f32 {
+    let positions = array<vec2<f32>, 8>(
+        vec2<f32>(0.125, -0.375),
+        vec2<f32>(-0.125, 0.375),
+        vec2<f32>(0.625, 0.125),
+        vec2<f32>(-0.375, -0.625),
+        vec2<f32>(-0.625, 0.625),
+        vec2<f32>(-0.875, -0.125),
+        vec2<f32>(0.375, 0.875),
+        vec2<f32>(0.875, -0.875),
+    );
+    let coeffs = array<f32, 8>(
+        0.157112,
+        0.157112,
+        0.138651,
+        0.130251,
+        0.114946,
+        0.114946,
+        0.107982,
+        0.079001,
+    );
+
+    // The tangent plane of the sampling direction, scaled so one unit of
+    // the pattern is one shadow texel at this fragment's distance. The
+    // offsets are added to a direction vector whose length is that same
+    // distance, so the two are in the same units and the filter covers a
+    // constant number of texels wherever the fragment is.
+    let basis = inti_orthonormalize(normalize(dir))
+        * (texel_world * INTI_POINT_FILTER_TEXELS);
+
+    var sum = 0.0;
+    for (var i = 0; i < 8; i = i + 1) {
+        let offset = positions[i].x * basis[0] + positions[i].y * basis[1];
+        sum += coeffs[i] * textureSampleCompareLevel(
+            inti_point_cubes, inti_shadow_sampler, dir + offset, i32(slot), depth);
+    }
+    return sum;
 }
 
 /// A spot light's shadow (#777).
