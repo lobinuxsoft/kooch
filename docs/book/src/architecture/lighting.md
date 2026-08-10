@@ -305,11 +305,12 @@ function the shading loop sums per light. A view that recomputed the
 maths its own way could disagree with the frame, and then it is one more
 thing to debug instead of the thing that settles the question.
 
-> ⚠️ **A point or spot light usually shows no shadow, and that is
-> correct.** Only a directional light has a shadow map; contact shadows
-> are opt-in and off by default on punctual lights. "Casts nothing" and
-> "the shadow broke" render identically, so the editor prints which one
-> it is next to the selector — `shadow_note` in `kooch_lighting`.
+> ⚠️ **A point light shows no shadow, and that is correct.** It would
+> need a cube map (#778). Contact shadows are the only occlusion it can
+> have and they are off by default. "Casts nothing" and "the shadow
+> broke" render identically, so the editor prints which one it is next
+> to the selector — `shadow_note` in `kooch_lighting`. A **spot** does
+> cast, since #777.
 
 Magenta means the selection has no slot in the light buffer, and the note
 below the selector says which reason:
@@ -328,6 +329,40 @@ Which light travels in `IntiFrame.debug_light`, an index into the light
 buffer that occupies what used to be that struct's tail padding. There is
 no seventh bind group and Inti's is full, so a view needing a binding of
 its own was not going to ship.
+
+### Spot lights (#777)
+
+A cascade is an orthographic slice of the camera's frustum and needs
+fitting, splitting and stabilising. A spot needs none of it: **the light
+is a frustum**, so its shadow view is its own cone and there is one map
+with nothing to blend into.
+
+It renders into a layer of the same array the cascades use, behind them,
+and its record is the same `GpuCascade` — `inti_shadow_coords` already
+divided by `w`, which an orthographic cascade does not need and a
+perspective does. That means the bias, the blocker search, the Castano
+filter and the border clamp are one implementation, not two.
+
+| Decision | Why |
+|---|---|
+| FOV is `outer_angle * 2` | The cone's edge is where the light stops. Fitting the half-angle clips the round pool into a square |
+| Up vector chosen against the cone | A spot pointing straight down is the most ordinary way to author one, and the case a fixed world-up basis is degenerate for |
+| Cone clamped near 90° | `tan` runs away before it gets there and fills the matrix with infinities, which spread into every depth the pass writes |
+| `texel_world_size` measured at the far end | A perspective map has no single answer. The bias exists to stop acne and acne appears where texels are largest. The cost is being over-biased close to the light — the band contact shadows already cover |
+| `MAX_SPOT_SHADOWS = 4` | One layer each, 16 MiB at 2048². A fifth spot still lights the scene with no shadow; dropping the light would be a worse failure |
+
+🔴 **Slots are handed out inside `extract_lights`, in its walk order**, and
+`shadow_casting_spots` reads that same order back. Two walks that
+disagreed would light one spot through another's map — geometry from
+elsewhere in the room, which reads as a broken shadow pass rather than as
+a crossed index.
+
+🔴 **No sun is not no shadows.** A scene lit by a torch and nothing else
+still renders its maps. The cascades are then fitted to a stand-in
+direction so the pass has something coherent to not draw, and
+`FrameShadows::cascades_enabled` stays false — otherwise a directional
+light that does *not* cast would sample them and be shadowed by a sun
+that is not there.
 
 ### The debug views are not in the shader your game runs
 

@@ -183,11 +183,13 @@ fn extract_spot_sources(resources: &Resources) -> Vec<SpotShadowSource> {
 ///
 /// # Why this is text and not something the view draws
 ///
-/// A punctual light has no shadow map: the cascades are fit to the view
-/// frustum for a light with no position, and a point light would need a
-/// cube map instead (#734 is the other half). Contact shadows are the
-/// only occlusion it can have, and they are opt-in and off by default
-/// there — fifty lamps should not each cost a screen-space march.
+/// A POINT light has no shadow map: it would need a cube map, which is
+/// #778. Contact shadows are the only occlusion it can have, and they
+/// are opt-in and off by default — fifty lamps should not each cost a
+/// screen-space march.
+///
+/// A spot light does have one since #777, so its `cast_shadows` means
+/// what it says.
 ///
 /// So "this light casts nothing" is the common, correct answer for a
 /// point light, and it renders **identically** to a shadow that failed.
@@ -216,28 +218,32 @@ pub fn shadow_note(resources: &Resources, entity: Entity) -> Option<&'static str
             (false, false) => "Directional: casts nothing — both shadow options are off",
         });
     }
-    // `cast_shadows` is deliberately not consulted below: there is no
-    // shadow map for a punctual light to cast into, so the field
-    // promises something the engine does not do yet. Reporting it would
-    // be worse than saying nothing.
+    // `cast_shadows` is deliberately not consulted for a POINT light:
+    // there is no cube map for it to cast into yet (#778), so the field
+    // promises something the engine does not do and reporting it would
+    // be worse than saying nothing. A spot below is a different case —
+    // it has had a real map since #777.
     if let Some(light) = Query::<&PointLight>::new(resources).get(entity) {
         if !light.active {
             return Some(INACTIVE_NOTE);
         }
         return Some(if light.contact_shadows {
-            "Point: contact shadows only — no shadow map exists for punctual lights yet"
+            "Point: contact shadows only — point lights have no shadow map yet (#778)"
         } else {
-            "Point: casts no shadow — no shadow map, and contact shadows are off"
+            "Point: casts no shadow — no shadow map yet (#778), contact shadows off"
         });
     }
     if let Some(light) = Query::<&SpotLight>::new(resources).get(entity) {
         if !light.active {
             return Some(INACTIVE_NOTE);
         }
-        return Some(if light.contact_shadows {
-            "Spot: contact shadows only — no shadow map exists for punctual lights yet"
-        } else {
-            "Spot: casts no shadow — no shadow map, and contact shadows are off"
+        // A spot has had a shadow map since #777, so unlike a point
+        // light its `cast_shadows` is a promise the engine keeps.
+        return Some(match (light.cast_shadows, light.contact_shadows) {
+            (true, true) => "Spot: shadow map + contact shadows",
+            (true, false) => "Spot: shadow map, contact shadows off",
+            (false, true) => "Spot: contact shadows only — its shadow map is off",
+            (false, false) => "Spot: casts nothing — both shadow options are off",
         });
     }
     None
