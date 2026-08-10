@@ -168,6 +168,27 @@ pub fn shadow_casting_spots(resources: &Resources, limit: usize) -> Vec<SpotShad
     out
 }
 
+/// Writes each casting point light's cube slot into its `GpuLight`.
+///
+/// 🔴 Separate from `extract_lights`, and it has to be. A spot's slot is
+/// handed out during the walk because `shadow_casting_spots` returns the
+/// same walk order truncated — the two agree by construction. Point
+/// lights are sorted by distance to the camera, so the walk order and
+/// the slot order are **different orders**, and assigning during the
+/// walk would light every lamp with another lamp's cube: geometry from
+/// elsewhere in the room, which reads as a broken shadow pass rather
+/// than as a mismatched index.
+///
+/// So the ranked list is the single source of truth and this looks each
+/// entity back up in it, rather than the sort being repeated anywhere.
+pub fn assign_point_slots(lights: &mut ExtractedLights, casting: &[Entity]) {
+    for (slot, entity) in casting.iter().enumerate() {
+        if let Some(index) = lights.slot_of(*entity) {
+            lights.lights[index as usize].shadow_slot = slot as u32;
+        }
+    }
+}
+
 /// One point light's cube shadow, as the pass needs it (#778).
 ///
 /// No direction: a cube map looks everywhere, which is the entire reason
@@ -281,19 +302,24 @@ pub fn shadow_note(resources: &Resources, entity: Entity) -> Option<&'static str
             (false, false) => "Directional: casts nothing — both shadow options are off",
         });
     }
-    // `cast_shadows` is deliberately not consulted for a POINT light:
-    // there is no cube map for it to cast into yet (#778), so the field
-    // promises something the engine does not do and reporting it would
-    // be worse than saying nothing. A spot below is a different case —
-    // it has had a real map since #777.
+    // Since #778 a point light has a real cube map, so its
+    // `cast_shadows` is finally a promise the engine keeps and this
+    // reads it like every other kind. The note used to say the field
+    // meant nothing here, which was true and is the sort of thing that
+    // outlives the reason for it.
+    //
+    // ⚠️ What it still cannot say is whether THIS light got one of the
+    // `MAX_POINT_SHADOWS` cubes: that is decided per frame by distance
+    // to the camera, and the Inspector is not a frame.
     if let Some(light) = Query::<&PointLight>::new(resources).get(entity) {
         if !light.active {
             return Some(INACTIVE_NOTE);
         }
-        return Some(if light.contact_shadows {
-            "Point: contact shadows only — point lights have no shadow map yet (#778)"
-        } else {
-            "Point: casts no shadow — no shadow map yet (#778), contact shadows off"
+        return Some(match (light.cast_shadows, light.contact_shadows) {
+            (true, true) => "Point: cube map + contact shadows",
+            (true, false) => "Point: cube map, contact shadows off",
+            (false, true) => "Point: contact shadows only — its cube map is off",
+            (false, false) => "Point: casts nothing — both shadow options are off",
         });
     }
     if let Some(light) = Query::<&SpotLight>::new(resources).get(entity) {

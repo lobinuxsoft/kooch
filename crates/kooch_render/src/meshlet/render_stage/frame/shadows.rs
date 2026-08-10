@@ -46,13 +46,21 @@ impl MeshletRenderStage {
         // that scene the one case where shadows silently do not exist.
         let spots =
             kooch_lighting::shadow_casting_spots(resources, kooch_lighting::MAX_SPOT_SHADOWS);
+        // Point lights, likewise (#778) — and nearest-first, because
+        // past the limit a light stops casting and which one should not
+        // depend on spawn order.
+        let points = kooch_lighting::shadow_casting_points(
+            resources,
+            camera.position(),
+            kooch_lighting::MAX_POINT_SHADOWS,
+        );
 
         // Release the atlas when it stops being wanted, or when it was
         // allocated at a resolution the author has since changed. Sixty
         // -four megabytes is worth noticing a settings change over, and
         // a texture cannot be resized in place.
         let texels = settings.clamped_texels();
-        let nothing_casts = sun.is_none() && spots.is_empty();
+        let nothing_casts = sun.is_none() && spots.is_empty() && points.is_empty();
         if !settings.enabled || nothing_casts || self.shadow_texels != texels {
             if let Some(released) = self.shadows.take() {
                 if let Some(tracker) = self.vram_tracker.as_ref() {
@@ -103,6 +111,7 @@ impl MeshletRenderStage {
         // and this is the one call site that runs after every possible
         // rebuild.
         let atlas_view = shadows.atlas_view().clone();
+        let cubes_view = shadows.cubes_view().clone();
         let prepared = shadows.prepare(
             device,
             camera,
@@ -113,10 +122,12 @@ impl MeshletRenderStage {
             settings.first_cascade_distance,
             settings.sun_softness,
             &spots,
+            &points,
             meshlet_capacity,
             group_capacity,
         );
-        self.lights.bind_shadow_atlas(device, &atlas_view);
+        self.lights
+            .bind_shadow_maps(device, &atlas_view, &cubes_view);
         Some(prepared)
     }
 

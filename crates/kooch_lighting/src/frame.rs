@@ -497,6 +497,15 @@ pub struct FrameShadows {
     pub point_shadows: [GpuPointShadow; MAX_POINT_SHADOWS],
     /// How many of `point_shadows` are live.
     pub point_shadow_count: u32,
+    /// Which entity each live cube belongs to, in slot order.
+    ///
+    /// 🔴 Carried rather than recomputed. The slot a point light gets is
+    /// its rank by distance to the camera, so the light buffer's walk
+    /// order and the slot order are different orders — and the two
+    /// places that need the mapping would have to sort identically, from
+    /// the same camera, forever. One of them ranks; this array is the
+    /// answer travelling to the other.
+    pub point_entities: [kooch_ecs::entity::Entity; MAX_POINT_SHADOWS],
 }
 
 /// Tangent of the sun's angular radius, by default.

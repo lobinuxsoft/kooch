@@ -46,6 +46,25 @@ pub const FACE_DIRECTIONS: [(Vec3, Vec3); CUBE_FACES] = [
     (Vec3::Z, Vec3::Y),
 ];
 
+/// One point light's shadow, as the pass needs it: where the light is,
+/// and the six matrices its faces draw with.
+#[derive(Copy, Clone, Debug)]
+pub struct PointShadowDraw {
+    /// The light's position — a real eye, six times over.
+    pub eye: Vec3,
+    /// Clip-from-world per face, in cube-array layer order.
+    pub faces: [Mat4; CUBE_FACES],
+}
+
+impl PointShadowDraw {
+    pub fn new(position: Vec3) -> Self {
+        Self {
+            eye: position,
+            faces: std::array::from_fn(|face| face_view_proj(position, face, POINT_SHADOW_NEAR_Z)),
+        }
+    }
+}
+
 /// The record the shading model reads for one point light.
 ///
 /// `size` is the side of one face in texels.
