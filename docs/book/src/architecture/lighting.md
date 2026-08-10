@@ -311,6 +311,19 @@ thing to debug instead of the thing that settles the question.
 > "the shadow broke" render identically, so the editor prints which one
 > it is next to the selector — `shadow_note` in `kooch_lighting`.
 
+Magenta means the selection has no slot in the light buffer, and the note
+below the selector says which reason:
+
+| Note | What happened |
+|---|---|
+| `This light is inactive — tick active in the Inspector` | The light exists and is switched off, so it never reached the buffer |
+| `Select a light in the World panel` | The selection is not a light |
+
+Those two produce the *same magenta*, and the first smoke of this view
+hit it: two lights in the scene were `active: false`, so selecting them
+looked exactly like selecting a crate. A view built to stop two causes
+from looking alike does not get to ship a third pair of its own.
+
 Which light travels in `IntiFrame.debug_light`, an index into the light
 buffer that occupies what used to be that struct's tail padding. There is
 no seventh bind group and Inti's is full, so a view needing a binding of

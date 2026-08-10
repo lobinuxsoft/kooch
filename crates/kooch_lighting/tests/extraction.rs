@@ -213,3 +213,71 @@ fn an_inactive_light_has_no_slot() {
     assert_eq!(extracted.lights.len(), 1);
     assert!(extracted.slot_of(off).is_none());
 }
+
+/// The smoke test that found this: two lights in a scene were switched
+/// off, the single-light view rendered magenta for both, and magenta was
+/// also what selecting a crate produced. Same pixel, two different
+/// fixes — tick a checkbox, or select something else.
+///
+/// A view built to stop two causes from looking alike does not get to
+/// introduce a third pair, so an inactive light says it is inactive.
+#[test]
+fn an_inactive_light_says_so_instead_of_saying_nothing() {
+    let mut r = world();
+    let off = light_at(
+        &mut r,
+        Mat4::IDENTITY,
+        PointLight {
+            active: false,
+            ..Default::default()
+        },
+    );
+    let not_a_light = spawn(&mut r);
+
+    let note = kooch_lighting::shadow_note(&r, off).expect("an inactive light still reports");
+    assert!(
+        note.contains("inactive"),
+        "an inactive light reported {note:?}, which does not name the reason it is invisible",
+    );
+    assert!(
+        kooch_lighting::shadow_note(&r, not_a_light).is_none(),
+        "only a non-light reports nothing — that is what the panel turns into \
+         `Select a light in the World panel`",
+    );
+}
+
+/// Every kind, because the checkbox is on all three and the smoke found
+/// it on two of them.
+#[test]
+fn every_light_kind_reports_when_switched_off() {
+    let mut r = world();
+    let sun = light_at(
+        &mut r,
+        Mat4::IDENTITY,
+        DirectionalLight {
+            active: false,
+            ..Default::default()
+        },
+    );
+    let lamp = light_at(
+        &mut r,
+        Mat4::IDENTITY,
+        PointLight {
+            active: false,
+            ..Default::default()
+        },
+    );
+    let torch = light_at(
+        &mut r,
+        Mat4::IDENTITY,
+        SpotLight {
+            active: false,
+            ..Default::default()
+        },
+    );
+
+    for entity in [sun, lamp, torch] {
+        let note = kooch_lighting::shadow_note(&r, entity).expect("reports while off");
+        assert!(note.contains("inactive"), "got {note:?}");
+    }
+}
