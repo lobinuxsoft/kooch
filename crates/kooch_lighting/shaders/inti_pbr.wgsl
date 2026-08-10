@@ -83,8 +83,18 @@ struct IntiLight {
     // switch that prevents it costs nothing it was not already
     // reserving.
     flags: u32,
-    _pad0: f32,
+    // Index into `inti.spot_shadows` for a spot light that casts, or
+    // INTI_NO_SHADOW_SLOT. Took the record's last spare word (#777).
+    //
+    // 🔴 The record is now FULL at 64 B. `radius` (#776) and a rect
+    // light's width/height (#779) each need more, so the next field
+    // added here grows the struct — which is a decision about bandwidth
+    // over every light in the scene, not a free slot.
+    shadow_slot: u32,
 }
+
+// `IntiLight.shadow_slot` when the light casts no shadow.
+const INTI_NO_SHADOW_SLOT: u32 = 0xffffffffu;
 
 // Bit 0 of `IntiLight.flags` — this light marches for contact shadows.
 // Mirrors `GpuLight::FLAG_CONTACT_SHADOWS`.
@@ -142,6 +152,15 @@ struct IntiFrame {
     // The four cascades. Fixed-size because the count is baked into the
     // atlas layout: changing it is a texture change, not a loop bound.
     cascades: array<IntiCascade, 4>,
+    // One per shadow-casting spot light (#777), in the same record the
+    // cascades use: `inti_shadow_coords` already divides by w, which is
+    // exactly what a spot's perspective needs and a cascade's
+    // orthographic does not.
+    spot_shadows: array<IntiCascade, 4>,
+    spot_shadow_count: u32,
+    _pad_spot0: u32,
+    _pad_spot1: u32,
+    _pad_spot2: u32,
     // 0 when no directional light casts, or the atlas has not been
     // rendered. The dummy 1x1 atlas bound in that case would return
     // "fully lit" anyway; the flag skips the work.
@@ -542,7 +561,24 @@ fn inti_sample_cascade(
     to_light: vec3<f32>,
     n_dot_l: f32,
 ) -> f32 {
-    let cascade = inti.cascades[index];
+    return inti_sample_cascade_record(
+        inti.cascades[index], world_position, normal, to_light, n_dot_l);
+}
+
+/// The sampling itself, over a record rather than an index into the
+/// cascades.
+///
+/// Split out for spot lights (#777): a spot's shadow is the same record
+/// in a different array, so this way the bias, the blocker search, the
+/// Castano filter and the border clamp are one implementation instead of
+/// two that drift.
+fn inti_sample_cascade_record(
+    cascade: IntiCascade,
+    world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_light: vec3<f32>,
+    n_dot_l: f32,
+) -> f32 {
 
     // Both of Bevy's offsets, in world space, and no rasteriser depth
     // bias to go with them. The normal term scales with how obliquely
@@ -742,6 +778,12 @@ fn inti_light_contribution(
     var shadow = 1.0;
     if (light.kind == INTI_KIND_DIRECTIONAL) {
         shadow = inti_shadow(surf.world_position, surf.n, s.to_light, surf.view_depth, n_dot_l);
+    } else if (light.kind == INTI_KIND_SPOT && light.shadow_slot != INTI_NO_SHADOW_SLOT) {
+        // A spot casts into a layer of the same array the cascades use
+        // (#777). A point light still cannot: it needs six faces, which
+        // is a cube map and its own bindings.
+        shadow = inti_spot_shadow(
+            light.shadow_slot, surf.world_position, surf.n, s.to_light, n_dot_l);
     }
 
     // Contact shadows (#735) — the last few centimetres the cascades
@@ -756,6 +798,25 @@ fn inti_light_contribution(
     }
 
     return (diffuse + specular) * s.irradiance * n_dot_l * shadow;
+}
+
+/// A spot light's shadow (#777).
+///
+/// A spot has one map and no splits, so there is nothing to pick by view
+/// depth and nothing to blend at a boundary — everything else is the
+/// cascade path, called on the spot's own record.
+fn inti_spot_shadow(
+    slot: u32,
+    world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_light: vec3<f32>,
+    n_dot_l: f32,
+) -> f32 {
+    if (slot >= inti.spot_shadow_count) {
+        return 1.0;
+    }
+    return inti_sample_cascade_record(
+        inti.spot_shadows[slot], world_position, normal, to_light, n_dot_l);
 }
 
 // The whole model, for one surface point.

@@ -1,9 +1,24 @@
 use super::*;
 
+/// 🔴 A uniform whose Rust size drifts from its WGSL mirror is not a
+/// compile error anywhere: it surfaces as `min_binding_size` refusing
+/// the pipeline, which reads as a bindings bug. It is how the `vec3<u32>`
+/// pad that grew every cascade by 16 bytes was found, and only because
+/// this number is written down.
 #[test]
 fn frame_size_matches_shader() {
-    // 64 of header, four 96-byte cascades, 16 of tail.
-    assert_eq!(std::mem::size_of::<IntiFrame>(), 464);
+    // 64 of header, four 96-byte cascades, 16 of tail, then #777's four
+    // 96-byte spot-shadow records and their own 16 of count and pad.
+    const HEADER: usize = 64;
+    const CASCADES: usize = 4 * 96;
+    const TAIL: usize = 16;
+    const SPOT_SHADOWS: usize = MAX_SPOT_SHADOWS * 96;
+    const SPOT_TAIL: usize = 16;
+    assert_eq!(
+        std::mem::size_of::<IntiFrame>(),
+        HEADER + CASCADES + TAIL + SPOT_SHADOWS + SPOT_TAIL,
+    );
+    assert_eq!(std::mem::size_of::<IntiFrame>(), 864);
 }
 
 /// std140/std430 require an array's element stride to be a multiple

@@ -38,10 +38,11 @@ pub use buffer::GpuLights;
 pub use extract::{ExtractedLights, extract_lights, shadow_casting_sun, shadow_note};
 pub use frame::{
     AmbientLight, DEFAULT_SUN_SOFTNESS, DebugLight, Exposure, FRAME_CASCADE_COUNT, FrameShadows,
-    GpuCascade, IntiFrame, NO_DEBUG_LIGHT, PhysicalCamera,
+    GpuCascade, IntiFrame, MAX_SPOT_SHADOWS, NO_DEBUG_LIGHT, PhysicalCamera,
 };
 pub use gpu_light::{
-    GpuLight, LIGHT_KIND_DIRECTIONAL, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, spot_cone_mad,
+    GpuLight, LIGHT_KIND_DIRECTIONAL, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, NO_SHADOW_SLOT,
+    spot_cone_mad,
 };
 
 /// The shading model, as a template. Use [`inti_pbr_shader`].
