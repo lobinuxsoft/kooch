@@ -54,6 +54,11 @@ pub struct GpuLights {
     /// crossed a capacity boundary — shadows disappearing when the
     /// seventeenth light is placed, with nothing in the log.
     shadow_atlas: Option<wgpu::TextureView>,
+    /// 1×1×6 cube array bound when no point light casts, for the same
+    /// reason `dummy_shadow` exists: a binding cannot be left empty.
+    dummy_cubes: wgpu::TextureView,
+    /// The cube array currently bound, or `None` while the dummy is.
+    shadow_cubes: Option<wgpu::TextureView>,
     capacity: u32,
     light_count: u32,
 }
@@ -141,6 +146,29 @@ impl GpuLights {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
+                // The point lights' cube array (#778) — a fifth binding
+                // in this same group, not a seventh group.
+                //
+                // 🔴 The issue for this work opened by saying it had to
+                // decide "what a cube array plus two samplers
+                // displaces", because all six bind GROUPS are spent.
+                // Bindings are not groups, and the two samplers above
+                // are reused untouched: a `wgpu::Sampler` is not bound
+                // to a texture, so the comparison sampler that filters
+                // the cascades filters a cube face just as well. The
+                // whole cost is this one entry.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        // Six layers per light, the light index chosen by
+                        // the shader and the face by the direction.
+                        view_dimension: wgpu::TextureViewDimension::CubeArray,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         })
     }
@@ -179,6 +207,7 @@ impl GpuLights {
             ..Default::default()
         });
         let dummy_shadow = create_dummy_shadow(device);
+        let dummy_cubes = create_dummy_cubes(device);
         let bind_group = create_bind_group(
             device,
             &layout,
@@ -187,6 +216,7 @@ impl GpuLights {
             &dummy_shadow,
             &shadow_sampler,
             &shadow_point_sampler,
+            &dummy_cubes,
         );
         Self {
             frame_buffer,
@@ -196,23 +226,33 @@ impl GpuLights {
             shadow_sampler,
             shadow_point_sampler,
             dummy_shadow,
+            dummy_cubes,
             shadow_atlas: None,
+            shadow_cubes: None,
             capacity: INITIAL_CAPACITY,
             light_count: 0,
         }
     }
 
-    /// Points the shadow binding at a real atlas.
+    /// Points the shadow bindings at the real maps.
     ///
     /// Call once the atlas exists; until then the dummy is bound and
     /// `shadows_enabled` is 0. Idempotent — the atlas is allocated once
     /// and this runs per frame, so re-binding the same view has to cost
     /// nothing.
-    pub fn bind_shadow_atlas(&mut self, device: &wgpu::Device, atlas: &wgpu::TextureView) {
-        if self.shadow_atlas.as_ref().is_some_and(|v| v == atlas) {
+    pub fn bind_shadow_maps(
+        &mut self,
+        device: &wgpu::Device,
+        atlas: &wgpu::TextureView,
+        cubes: &wgpu::TextureView,
+    ) {
+        let unchanged = self.shadow_atlas.as_ref().is_some_and(|v| v == atlas)
+            && self.shadow_cubes.as_ref().is_some_and(|v| v == cubes);
+        if unchanged {
             return;
         }
         self.shadow_atlas = Some(atlas.clone());
+        self.shadow_cubes = Some(cubes.clone());
         self.rebuild_bind_group(device);
     }
 
@@ -229,6 +269,7 @@ impl GpuLights {
             self.shadow_atlas.as_ref().unwrap_or(&self.dummy_shadow),
             &self.shadow_sampler,
             &self.shadow_point_sampler,
+            self.shadow_cubes.as_ref().unwrap_or(&self.dummy_cubes),
         );
     }
 
@@ -261,7 +302,17 @@ impl GpuLights {
         camera_position: Vec3,
         shadows: Option<FrameShadows>,
     ) {
-        let extracted = extract_lights(resources);
+        let mut extracted = extract_lights(resources);
+        // Point lights learn their cube slot here rather than during the
+        // walk: the ranking that produced the slots is in `shadows`, and
+        // recomputing it would be a second sort that has to agree with
+        // the first one forever. See `assign_point_slots`.
+        if let Some(frame) = shadows.as_ref() {
+            crate::extract::assign_point_slots(
+                &mut extracted,
+                &frame.point_entities[..frame.point_shadow_count as usize],
+            );
+        }
         let lights = &extracted.lights;
         let count = lights.len() as u32;
         // Logged on change, never per frame. "I placed a light and
@@ -350,6 +401,34 @@ fn create_light_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
 }
 
 /// A 1×1 depth texture for the frames with no atlas.
+/// The 1×1 cube array bound when nothing point-shaped casts.
+///
+/// Six layers, because a cube view of anything else is a validation
+/// failure — the same trap `create_dummy_shadow` documents for `D2` vs
+/// `D2Array`, one dimension further along. Cleared implicitly to zero,
+/// which under reversed-Z is the far plane and therefore "fully lit".
+fn create_dummy_cubes(device: &wgpu::Device) -> wgpu::TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("inti_dummy_cubes"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 6,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("inti_dummy_cubes_view"),
+        dimension: Some(wgpu::TextureViewDimension::CubeArray),
+        ..Default::default()
+    })
+}
+
 fn create_dummy_shadow(device: &wgpu::Device) -> wgpu::TextureView {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("inti_dummy_shadow"),
@@ -385,6 +464,7 @@ fn create_bind_group(
     shadow_atlas: &wgpu::TextureView,
     shadow_sampler: &wgpu::Sampler,
     shadow_point_sampler: &wgpu::Sampler,
+    shadow_cubes: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("inti_lights_bg"),
@@ -409,6 +489,10 @@ fn create_bind_group(
             wgpu::BindGroupEntry {
                 binding: 4,
                 resource: wgpu::BindingResource::Sampler(shadow_point_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(shadow_cubes),
             },
         ],
     })

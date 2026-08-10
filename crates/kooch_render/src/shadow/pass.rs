@@ -13,11 +13,17 @@ use crate::view_camera::ViewCamera;
 
 use super::atlas::ShadowAtlas;
 use super::cascades::{CASCADE_BLEND_FRACTION, CASCADE_COUNT, Cascade, build_cascades};
+use super::cube::{DEFAULT_CUBE_SIZE, PointShadowCubes};
+use super::point::PointShadowDraw;
 use super::raster::ShadowRasterizer;
 
-/// The atlas, the pipeline, and the ordering between them.
+/// The atlas, the point lights' cubes, the pipeline, and the ordering
+/// between them.
 pub struct ShadowPass {
     atlas: ShadowAtlas,
+    /// Separate texture from the atlas, at its own size — see
+    /// [`PointShadowCubes`].
+    cubes: PointShadowCubes,
     rasterizer: ShadowRasterizer,
 }
 
@@ -28,6 +34,9 @@ pub struct PreparedShadows {
     /// One per shadow-casting spot light this frame, already fitted
     /// (#777). Empty is the common case and costs nothing.
     spots: Vec<super::SpotShadowDraw>,
+    /// One per shadow-casting point light this frame (#778). Six draws
+    /// each, so an empty list is worth having.
+    points: Vec<PointShadowDraw>,
     /// What goes in the frame UBO. Handed to
     /// [`kooch_lighting::GpuLights::update`].
     pub frame: kooch_lighting::FrameShadows,
@@ -45,6 +54,13 @@ impl ShadowPass {
             atlas: ShadowAtlas::new(
                 device,
                 cascade_size,
+                instance_capacity,
+                max_triangles_per_meshlet,
+            ),
+            cubes: PointShadowCubes::new(
+                device,
+                DEFAULT_CUBE_SIZE,
+                kooch_lighting::MAX_POINT_SHADOWS as u32,
                 instance_capacity,
                 max_triangles_per_meshlet,
             ),
@@ -68,7 +84,18 @@ impl ShadowPass {
     }
 
     pub fn atlas_bytes(&self) -> u64 {
-        self.atlas.byte_size()
+        self.atlas.byte_size() + self.cubes.byte_size()
+    }
+
+    /// The point lights' cube array, for binding into Inti's group.
+    pub fn cubes_view(&self) -> &wgpu::TextureView {
+        self.cubes.view()
+    }
+
+    /// The cube array itself, for reading back in a test — the same
+    /// reason `atlas_texture` exists.
+    pub fn cubes_texture(&self) -> &wgpu::Texture {
+        self.cubes.texture()
     }
 
     /// Places this frame's cascades and sizes the culls for the scene.
@@ -87,10 +114,13 @@ impl ShadowPass {
         first_cascade_distance: f32,
         sun_softness: f32,
         spots: &[kooch_lighting::SpotShadowSource],
+        points: &[kooch_lighting::PointShadowSource],
         meshlet_capacity: u32,
         group_capacity: u32,
     ) -> PreparedShadows {
         self.atlas
+            .ensure_capacity(device, meshlet_capacity, group_capacity);
+        self.cubes
             .ensure_capacity(device, meshlet_capacity, group_capacity);
 
         let far = camera.far.min(max_distance.max(camera.near + 1e-3));
@@ -121,6 +151,20 @@ impl ShadowPass {
             spot_records[slot] = draw.record;
         }
 
+        let cube_size = self.cubes.size();
+        let point_draws: Vec<PointShadowDraw> = points
+            .iter()
+            .map(|source| PointShadowDraw::new(source.position))
+            .collect();
+        let mut point_records =
+            [kooch_lighting::GpuPointShadow::default(); kooch_lighting::MAX_POINT_SHADOWS];
+        let mut point_entities =
+            [kooch_ecs::entity::Entity::INVALID; kooch_lighting::MAX_POINT_SHADOWS];
+        for (slot, source) in points.iter().enumerate() {
+            point_records[slot] = super::point_shadow(source, cube_size);
+            point_entities[slot] = source.entity;
+        }
+
         PreparedShadows {
             frame: kooch_lighting::FrameShadows {
                 camera_forward: camera.forward(),
@@ -130,9 +174,13 @@ impl ShadowPass {
                 cascades_enabled,
                 spot_shadows: spot_records,
                 spot_shadow_count: draws.len() as u32,
+                point_shadows: point_records,
+                point_shadow_count: point_draws.len() as u32,
+                point_entities,
             },
             cascades,
             spots: draws,
+            points: point_draws,
         }
     }
 
@@ -163,6 +211,20 @@ impl ShadowPass {
             encoder,
             &self.atlas,
             &prepared.cascades,
+            cull_pipelines,
+            pool,
+            scene,
+            meshlet_bg,
+            instance_count,
+            max_meshlets_per_mesh,
+            lod_target,
+        );
+        self.rasterizer.render_points(
+            device,
+            queue,
+            encoder,
+            &self.cubes,
+            &prepared.points,
             cull_pipelines,
             pool,
             scene,

@@ -351,8 +351,8 @@ thing to debug instead of the thing that settles the question.
 > need a cube map (#778). Contact shadows are the only occlusion it can
 > have and they are off by default. "Casts nothing" and "the shadow
 > broke" render identically, so the editor prints which one it is next
-> to the selector — `shadow_note` in `kooch_lighting`. A **spot** does
-> cast, since #777.
+> to the selector — `shadow_note` in `kooch_lighting`. A **spot** casts
+> since #777 and a **point** since #778.
 
 Magenta means the selection has no slot in the light buffer, and the note
 below the selector says which reason:
@@ -416,6 +416,89 @@ direction so the pass has something coherent to not draw, and
 `FrameShadows::cascades_enabled` stays false — otherwise a directional
 light that does *not* cast would sample them and be shadowed by a sun
 that is not there.
+
+### Point lights (#778)
+
+A spot light *is* a frustum, so its shadow is the cone itself. A point
+light is not a frustum at all — it lights every direction — so it gets
+**six 90° faces that tile the sphere**, and the shading model picks one
+by the direction to the fragment rather than by a matrix.
+
+That is why `GpuPointShadow` is sixteen bytes and carries **no
+`view_proj`**: sampling a cube map takes a direction, and the direction
+is a subtraction the shader already does.
+
+| Decision | Why |
+|---|---|
+| A **separate texture** from the cascade array | Different size, and one texture cannot have two. Sharing would mean six 2048² faces per light — 96 MiB each against 6 MiB at the size a lamp actually needs |
+| `DEFAULT_CUBE_SIZE = 512` | 6 MiB per light at `Depth32Float`. Bevy's is 1024; ours is smaller because these render on a handheld and the shadow of a lamp is wanted soft, not detailed |
+| `MAX_POINT_SHADOWS = 4` | **Memory**, not the technique. The `max_texture_array_layers` ceiling of 256 would allow 42, and 42 × 6 MiB is a quarter of a gigabyte of depth |
+| **Six culls, shared across lights** | A light's six faces are what can overlap on the GPU. Lights then serialise, costing three barriers at the limit against eighteen more survivor arenas idle whenever nothing casts |
+| Casting lights ranked **by distance to the camera** | Past the limit a light keeps lighting and stops casting. Which one loses its shadow must not be decided by when it was spawned |
+
+#### The depth is one divide, and that is the whole reconstruction
+
+Bevy sends the lower-right 2×2 of the face projection per light and
+computes `depth = zw.x / zw.y`. Expanded with a standard perspective,
+`w` collapses to the major axis and `depth` to `m23/major − m22` — and
+with the **infinite reverse-Z** projection this engine migrated to
+(ADR 0002), `m22 = 0` and `m23 = near`:
+
+```
+depth = near / major_axis_magnitude
+```
+
+One scalar replaces their four. `depth_is_near_over_the_major_axis`
+checks it against the real matrix rather than trusting the algebra,
+because being wrong here reads as a bias that cannot be tuned rather
+than as a formula that is visibly wrong.
+
+🔴 **`distance_to_light` is `max(|x|, |y|, |z|)`, never `length()`.** The
+faces align with the world axes and their frustum planes meet at 45°, so
+the largest absolute component *is* the depth. The Euclidean distance
+would scale the bias by up to √3 toward the corners of a face — the same
+class of mistake as the axial-vs-radial spot bias above, which shipped
+and had to be fixed.
+
+🔴 **Cube maps are left-handed and this engine is not.** The Z faces are
+stored swapped in `FACE_DIRECTIONS` *and* the sampling direction is
+mirrored on Z. Correcting either half on its own puts the shadow of
+everything in front of a lamp behind it.
+
+#### The filter is a gaussian, not Castano
+
+The cascades and spots use Castano's thirteen — a 2D gaussian that leans
+on bilinear hardware to get nine taps out of four fetches. **That trick
+does not exist for a cube map**, so Bevy's cube path (and ours) is eight
+explicit taps at the standard D3D MSAA positions, weighted by a gaussian
+whose coefficients sum to 1.
+
+A cube map has no uv plane to offset a tap in either, so the offsets move
+across the **tangent plane of the sampling direction**, built per pixel
+by a branchless orthonormal basis (Duff et al. 2017).
+
+The radius is `INTI_POINT_FILTER_TEXELS` **shadow texels**, where Bevy
+uses a fixed 0.003 in direction units: expressing it in texels stops it
+silently changing meaning if the face size ever moves.
+
+⚠️ The offset is added to a direction vector whose length is already the
+distance to the light, so the texel size is converted to metres **once**,
+by the caller. Doing it again inside the filter made the radius grow with
+the distance *squared* — which does not look like a wider blur, it looks
+like a gradient smeared across the floor.
+
+### What point shadows do NOT do yet
+
+Stated because the checkbox now promises something and these are the
+edges of the promise:
+
+- **Nothing is frustum-culled.** Every casting light rasterises its six
+  faces every frame, whether or not the camera can see it.
+- **Nothing is cached.** A lamp that has not moved in a static room pays
+  full price every frame. Epic measures a cached local shadow map at
+  0.05 ms against 0.4–0.8 ms invalidated, on a PS5.
+- **The cap has no graceful edge.** The fifth casting light simply has no
+  cube.
 
 ### The debug views are not in the shader your game runs
 

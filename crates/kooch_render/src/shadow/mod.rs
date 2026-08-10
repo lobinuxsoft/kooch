@@ -20,7 +20,9 @@
 
 mod atlas;
 mod cascades;
+mod cube;
 mod pass;
+mod point;
 mod raster;
 mod settings;
 mod spot;
@@ -30,7 +32,11 @@ pub use cascades::{
     CASCADE_BLEND_FRACTION, CASCADE_COUNT, Cascade, build_cascades, frustum_corners,
     orthographic_rh_reverse_z, split_distances,
 };
+pub use cube::{DEFAULT_CUBE_SIZE, PointShadowCubes};
 pub use pass::{PreparedShadows, ShadowPass};
+pub use point::{
+    CUBE_FACES, FACE_DIRECTIONS, POINT_SHADOW_NEAR_Z, PointShadowDraw, face_view_proj, point_shadow,
+};
 pub use raster::ShadowRasterizer;
 pub use settings::{DEFAULT_SHADOW_DISTANCE, ShadowSettings};
 pub use spot::{SPOT_SHADOW_NEAR_Z, SpotShadowDraw, spot_shadow};

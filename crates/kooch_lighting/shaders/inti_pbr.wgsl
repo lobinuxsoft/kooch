@@ -139,6 +139,22 @@ struct IntiCascade {
     _pad0: f32,
 }
 
+// Mirror of `kooch_lighting::GpuPointShadow` (#778). Sixteen bytes and
+// no matrix: a cube map is sampled by DIRECTION, so the only transform
+// is the subtraction the shader already does.
+struct IntiPointShadow {
+    // The near plane the six faces rendered with. With an infinite
+    // reverse-Z projection the stored depth is exactly
+    // `near / major_axis_magnitude`, which is why Bevy's four projection
+    // terms collapse to this one scalar.
+    near: f32,
+    // Texel size per METRE of distance, like the spots'. A cube face is
+    // 90°, so it is `2 / size` and never involves the light's range.
+    texel_world_size: f32,
+    depth_extent: f32,
+    _pad0: f32,
+}
+
 struct IntiFrame {
     ambient_sky: vec3<f32>,
     light_count: u32,
@@ -163,9 +179,11 @@ struct IntiFrame {
     // orthographic does not.
     spot_shadows: array<IntiCascade, 4>,
     spot_shadow_count: u32,
+    // #778's count, in a word the spot count's padding already had.
+    point_shadow_count: u32,
     _pad_spot0: u32,
     _pad_spot1: u32,
-    _pad_spot2: u32,
+    point_shadows: array<IntiPointShadow, 4>,
     // 0 when no directional light casts, or the atlas has not been
     // rendered. The dummy 1x1 atlas bound in that case would return
     // "fully lit" anyway; the flag skips the work.
@@ -206,6 +224,13 @@ struct IntiFrame {
 // answers "nearer or not". Bevy binds exactly this pair
 // (`directional_shadow_textures_linear_sampler`).
 @group({{INTI_GROUP}}) @binding(4) var inti_shadow_point_sampler: sampler;
+// The point lights' cube array (#778): six layers per light, the light
+// chosen by index and the face by the direction.
+//
+// 🔴 A fifth BINDING in this group, not a seventh group. The six-group
+// budget is spent; bindings are not groups, and the two samplers above
+// are reused unchanged because a sampler is not bound to a texture.
+@group({{INTI_GROUP}}) @binding(5) var inti_point_cubes: texture_depth_cube_array;
 
 // GGX / Trowbridge-Reitz, in Filament's reassociated form. The naïve
 // `a2 / (π·((NdotH²)(a2-1)+1)²)` loses catastrophic precision in f32 at
@@ -879,13 +904,16 @@ fn inti_light_contribution(
     // path tracer that is right.
     let diffuse = (vec3<f32>(1.0) - f) * surf.diffuse_color * diffuse_term;
 
-    // Only the directional light casts today: the cascades are fit
-    // to the view frustum for a light with no position, and a
-    // punctual light needs a cube map or a projected map instead.
-    // #476 is sun shadows; #734's light textures are the other half.
+    // Each light kind reaches its own map: the sun's cascades (#476),
+    // a spot's single projected layer (#777), a point's cube (#778).
+    // #734's light textures are the remaining half of this.
     var shadow = 1.0;
     if (light.kind == INTI_KIND_DIRECTIONAL) {
         shadow = inti_shadow(surf.world_position, surf.n, s.to_light, surf.view_depth, n_dot_l);
+    } else if (light.kind == INTI_KIND_POINT && light.shadow_slot != INTI_NO_SHADOW_SLOT) {
+        // Six faces of one cube (#778). A point light finally casts.
+        shadow = inti_point_shadow(
+            light.shadow_slot, surf.world_position, surf.n, s.to_light, light.position);
     } else if (light.kind == INTI_KIND_SPOT && light.shadow_slot != INTI_NO_SHADOW_SLOT) {
         // A spot casts into a layer of the same array the cascades use
         // (#777). A point light still cannot: it needs six faces, which
@@ -916,6 +944,147 @@ fn inti_light_contribution(
     // Factoring `n_dot_l` back out would silently undo half of #776 —
     // and would look identical until someone authored a radius.
     return (diffuse * n_dot_l + specular * n_dot_l_spec) * s.irradiance * shadow;
+}
+
+/// A point light's shadow: one cube, six faces (#778).
+///
+/// # Why the largest axis and not the distance
+///
+/// The six faces align with the world axes and their frustum planes meet
+/// at 45°, so the world-space depth stored for a fragment is the largest
+/// absolute component of the vector to it — NOT its length. Bevy's
+/// comment says exactly this. Using the Euclidean distance would scale
+/// the bias by up to √3 toward the corners of a face, which is the same
+/// class of mistake as #777's axial-vs-radial spot bias: it reads as a
+/// bias that cannot be tuned rather than as a wrong formula.
+fn inti_point_shadow(
+    slot: u32,
+    world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_light: vec3<f32>,
+    light_position: vec3<f32>,
+) -> f32 {
+    if (slot >= inti.point_shadow_count) {
+        return 1.0;
+    }
+    let record = inti.point_shadows[slot];
+
+    let surface_to_light = light_position - world_position;
+    let abs_to_light = abs(surface_to_light);
+    let distance_to_light =
+        max(abs_to_light.x, max(abs_to_light.y, abs_to_light.z));
+
+    // The same two world-space offsets the cascades and the spots use,
+    // with the texel size resolved to metres by this fragment's own
+    // distance — the record carries an angle, not a length.
+    let texel_world = record.texel_world_size * distance_to_light;
+    let offset_position = world_position
+        + normal * (texel_world * INTI_NORMAL_BIAS)
+        + to_light * INTI_DEPTH_BIAS;
+
+    let frag_ls = offset_position - light_position;
+    let abs_ls = abs(frag_ls);
+    let major = max(abs_ls.x, max(abs_ls.y, abs_ls.z));
+    // The whole depth reconstruction, and it is one divide because the
+    // faces were rendered with the engine's infinite reverse-Z
+    // projection. Reversed-Z: nearer the light is GREATER, which is what
+    // the comparison sampler's `Greater` expects.
+    let depth = record.near / max(major, 1e-4);
+
+    // 🔴 Cube maps are left-handed and this engine is not. The six face
+    // directions are stored swapped on Z (see `FACE_DIRECTIONS`) and the
+    // sampling direction is mirrored here. Fixing either half alone puts
+    // the shadow of everything in front of a lamp behind it.
+    let dir = frag_ls * vec3<f32>(1.0, 1.0, -1.0);
+    return inti_filter_cube(dir, depth, slot, texel_world);
+}
+
+// A branchless orthonormal basis around `z_basis`, which must be unit.
+//
+// Duff et al. 2017, "Building an Orthonormal Basis, Revisited" — Bevy's
+// `orthonormalize`. It exists because a cube map has no uv plane to
+// offset a filter tap in: the taps have to move across the tangent plane
+// of the sampling DIRECTION, and that plane has to be built per pixel
+// without a branch on which axis is safest to cross with.
+fn inti_orthonormalize(z_basis: vec3<f32>) -> mat3x3<f32> {
+    let sign = select(-1.0, 1.0, z_basis.z >= 0.0);
+    let a = -1.0 / (sign + z_basis.z);
+    let b = z_basis.x * z_basis.y * a;
+    return mat3x3<f32>(
+        vec3<f32>(1.0 + sign * z_basis.x * z_basis.x * a, sign * b, -sign * z_basis.x),
+        vec3<f32>(b, sign + z_basis.y * z_basis.y * a, -z_basis.y),
+        z_basis,
+    );
+}
+
+// How wide the cube filter is, in shadow texels.
+//
+// 🔴 Bevy's equivalent is a fixed `POINT_SHADOW_SCALE = 0.003` in
+// direction units, which at their 1024² face works out to roughly one
+// texel. Ours is expressed in texels instead of in angle so that it does
+// not silently change meaning when the face size does — and it is wider
+// than theirs on purpose, because these faces render at 512² and the
+// engine's owner asked for a soft shadow rather than a detailed one. A
+// point light is a lamp; nobody looks for the outline of a chair leg in
+// what it casts.
+const INTI_POINT_FILTER_TEXELS: f32 = 2.0;
+
+// The eight standard D3D MSAA sample positions, and the coefficients of
+// a zero-mean identity-covariance 2D Gaussian evaluated at them. The
+// coefficients sum to 1, so the filter needs no normalisation.
+//
+// ⚠️ Not the Castano filter the cascades and spots use, and Bevy's own
+// comment says why: Castano is a 2D Gaussian that leans on bilinear
+// hardware to get nine taps out of four fetches, and **that trick does
+// not exist for a cubemap**. Eight explicit taps is the replacement.
+fn inti_filter_cube(
+    dir: vec3<f32>,
+    depth: f32,
+    slot: u32,
+    // 🔴 Already in METRES at this fragment's distance — the caller has
+    // multiplied the record's angular texel by `distance_to_light`.
+    // Multiplying by the distance again here made the filter radius grow
+    // with the distance SQUARED, which is not a wider blur but a
+    // gradient smeared across the whole floor. Caught in the smoke, in
+    // one frame.
+    texel_world: f32,
+) -> f32 {
+    let positions = array<vec2<f32>, 8>(
+        vec2<f32>(0.125, -0.375),
+        vec2<f32>(-0.125, 0.375),
+        vec2<f32>(0.625, 0.125),
+        vec2<f32>(-0.375, -0.625),
+        vec2<f32>(-0.625, 0.625),
+        vec2<f32>(-0.875, -0.125),
+        vec2<f32>(0.375, 0.875),
+        vec2<f32>(0.875, -0.875),
+    );
+    let coeffs = array<f32, 8>(
+        0.157112,
+        0.157112,
+        0.138651,
+        0.130251,
+        0.114946,
+        0.114946,
+        0.107982,
+        0.079001,
+    );
+
+    // The tangent plane of the sampling direction, scaled so one unit of
+    // the pattern is one shadow texel at this fragment's distance. The
+    // offsets are added to a direction vector whose length is that same
+    // distance, so the two are in the same units and the filter covers a
+    // constant number of texels wherever the fragment is.
+    let basis = inti_orthonormalize(normalize(dir))
+        * (texel_world * INTI_POINT_FILTER_TEXELS);
+
+    var sum = 0.0;
+    for (var i = 0; i < 8; i = i + 1) {
+        let offset = positions[i].x * basis[0] + positions[i].y * basis[1];
+        sum += coeffs[i] * textureSampleCompareLevel(
+            inti_point_cubes, inti_shadow_sampler, dir + offset, i32(slot), depth);
+    }
+    return sum;
 }
 
 /// A spot light's shadow (#777).

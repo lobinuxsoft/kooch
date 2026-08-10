@@ -18,6 +18,12 @@ use crate::meshlet::{
 
 use super::atlas::{SHADOW_DEPTH_FORMAT, ShadowAtlas};
 use super::cascades::{CASCADE_COUNT, Cascade};
+use super::cube::PointShadowCubes;
+use super::point::{CUBE_FACES, PointShadowDraw};
+
+/// Where the point lights' face matrices start in the shared uniform,
+/// behind the cascades and the spots.
+const POINT_UBO_BASE: usize = CASCADE_COUNT + kooch_lighting::MAX_SPOT_SHADOWS;
 
 const SHADER_SOURCE: &str = include_str!("../../shaders/shadow_depth.wgsl");
 
@@ -185,8 +191,12 @@ impl ShadowRasterizer {
         let cascade_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("shadow_cascade_ubo"),
             // Cascades, then one slot per spot light's shadow (#777),
-            // on the same index scheme as the array's layers.
-            size: cascade_stride * (CASCADE_COUNT + kooch_lighting::MAX_SPOT_SHADOWS) as u64,
+            // on the same index scheme as the array's layers, then six
+            // per point light (#778) — those index a different texture,
+            // but they are the same kind of per-draw matrix and a second
+            // uniform buffer would be a second alignment to get wrong.
+            size: cascade_stride * POINT_UBO_BASE as u64
+                + cascade_stride * (kooch_lighting::MAX_POINT_SHADOWS * CUBE_FACES) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -489,6 +499,134 @@ impl ShadowRasterizer {
             pass.set_bind_group(3, &instances_bg, &[]);
             pass.draw_indirect(cull.indirect_args_buffer(), 0);
         }
+    }
+
+    /// Renders every casting point light's six faces (#778).
+    ///
+    /// 🔴 Per light, not per face across lights: the six culls are
+    /// shared between lights (see [`PointShadowCubes`]), so a light's
+    /// draws must be recorded before the next light's culls overwrite
+    /// the survivor lists they read. Within one light the six faces do
+    /// overlap, which is where the parallelism actually is.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_points(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        cubes: &PointShadowCubes,
+        points: &[PointShadowDraw],
+        cull_pipelines: &MeshletCullPipelines,
+        pool: &GpuGlobalMeshPool,
+        scene: &MeshletScene,
+        meshlet_bg: &wgpu::BindGroup,
+        instance_count: u32,
+        max_meshlets_per_mesh: u32,
+        lod_target: f32,
+    ) {
+        if points.is_empty() {
+            return;
+        }
+        for (slot, light) in points.iter().enumerate() {
+            for (face, view_proj) in light.faces.iter().enumerate() {
+                queue.write_buffer(
+                    &self.cascade_buffer,
+                    self.point_ubo_offset(slot, face),
+                    bytemuck::bytes_of(&CascadeUbo {
+                        view_proj: view_proj.to_cols_array_2d(),
+                    }),
+                );
+            }
+        }
+
+        let scene_params = SceneCullParams::new(instance_count, max_meshlets_per_mesh);
+        let cascade_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow_point_bg"),
+            layout: &self.cascade_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &self.cascade_buffer,
+                    offset: 0,
+                    size: std::num::NonZeroU64::new(std::mem::size_of::<CascadeUbo>() as u64),
+                }),
+            }],
+        });
+        let instances_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow_point_instances_bg"),
+            layout: &self.instances_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: scene.instance_buffer().as_entire_binding(),
+            }],
+        });
+
+        for (slot, light) in points.iter().enumerate() {
+            for (face, view_proj) in light.faces.iter().enumerate() {
+                // Perspective with a real eye, so the LOD selector takes
+                // its distance form — `with_lod`, not the cascades'
+                // orthographic one. And it must be set at all: a factor
+                // of zero is not "no LOD", it projects every error to
+                // 0 px and keeps only roots (#777's smoke).
+                let params = CullParams::new(*view_proj, light.eye, max_meshlets_per_mesh)
+                    .with_lod(
+                        cubes.size() as f32,
+                        projection_scale_y(*view_proj),
+                        (lod_target * SHADOW_LOD_RELAXATION).max(0.01),
+                    );
+                cubes.cull(face).dispatch_scene_pool_atomic(
+                    cull_pipelines,
+                    device,
+                    queue,
+                    encoder,
+                    pool,
+                    scene,
+                    &params,
+                    &scene_params,
+                );
+            }
+
+            for face in 0..CUBE_FACES {
+                let cull = cubes.cull(face);
+                let visible_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("shadow_point_visible_bg"),
+                    layout: &self.visible_bgl,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: cull.visible_meshlets_buffer().as_entire_binding(),
+                    }],
+                });
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("shadow_point_pass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: cubes.face_view(slot, face),
+                        depth_ops: Some(wgpu::Operations {
+                            // Reversed-Z: 0 is far, so an empty face
+                            // reads as "nothing between here and the
+                            // light" rather than as a wall.
+                            load: wgpu::LoadOp::Clear(0.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &cascade_bg, &[self.point_ubo_offset(slot, face) as u32]);
+                pass.set_bind_group(1, meshlet_bg, &[]);
+                pass.set_bind_group(2, &visible_bg, &[]);
+                pass.set_bind_group(3, &instances_bg, &[]);
+                pass.draw_indirect(cull.indirect_args_buffer(), 0);
+            }
+        }
+    }
+
+    /// Byte offset of one face's matrix in the shared uniform.
+    fn point_ubo_offset(&self, slot: usize, face: usize) -> u64 {
+        (POINT_UBO_BASE + slot * CUBE_FACES + face) as u64 * self.cascade_stride
     }
 }
 

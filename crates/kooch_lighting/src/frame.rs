@@ -219,7 +219,53 @@ pub const MAX_SPOT_SHADOWS: usize = 4;
 /// into the atlas layout — changing it is a texture change.
 pub const FRAME_CASCADE_COUNT: usize = 4;
 
-/// Mirror of `IntiFrame` in `inti_pbr.wgsl`. 464 bytes.
+/// How many point lights can cast at once (#778).
+///
+/// Four, and the number is decided by **memory**, not by the technique.
+/// A cube is six faces, so at the 512² this engine renders them at
+/// (`Depth32Float`) each casting point light is 6 MiB — against 16 MiB
+/// for a single 2048² cascade layer. Four of them add 24 MiB to a shadow
+/// budget that is already 128 MiB.
+///
+/// ⚠️ The `max_texture_array_layers` ceiling of 256 would allow 42, and
+/// that number is a red herring: 42 lights at this face size is 252 MiB
+/// of depth, on a handheld sharing its memory with the rest of the
+/// frame. Memory runs out first, by a wide margin.
+///
+/// Lights past the fourth still light the scene, they just do not cast —
+/// same failure as [`MAX_SPOT_SHADOWS`], and see #778 on why the order
+/// they are chosen in has to be deliberate rather than whatever the
+/// query returned.
+pub const MAX_POINT_SHADOWS: usize = 4;
+
+/// What the shading model needs to sample one point light's cube (#778).
+///
+/// Sixteen bytes, and no matrix: `textureSampleCompareLevel` on a cube
+/// array takes a **direction**, so the whole transform is a subtraction
+/// from the light's position, which the shader already does.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Pod, Zeroable)]
+pub struct GpuPointShadow {
+    /// The near plane the six faces were rendered with.
+    ///
+    /// 🔴 This is the whole depth reconstruction. Bevy sends the
+    /// lower-right 2×2 of the face projection and computes
+    /// `depth = zw.x / zw.y`; with an infinite reverse-Z projection
+    /// (ADR 0002) that collapses to `near / major_axis_magnitude`, so
+    /// one scalar replaces their four. It is the same identity
+    /// `depth_ndc_to_view_z` rests on.
+    pub near: f32,
+    /// Shadow-texel size **per metre of distance from the light**, the
+    /// way a spot's is — a cube face is a 90° perspective, so this is
+    /// `2 / size` and never involves `range`.
+    pub texel_world_size: f32,
+    /// World units the usable depth range spans, for the penumbra
+    /// estimate. The light's range.
+    pub depth_extent: f32,
+    pub _pad0: f32,
+}
+
+/// Mirror of `IntiFrame` in `inti_pbr.wgsl`. 928 bytes.
 ///
 /// `camera_position` rides here rather than in the shared camera UBO
 /// because that UBO is pinned at 64 B by two bind-group layouts, and
@@ -261,7 +307,21 @@ pub struct IntiFrame {
     pub spot_shadows: [GpuCascade; MAX_SPOT_SHADOWS],
     /// How many entries of `spot_shadows` are live this frame.
     pub spot_shadow_count: u32,
-    pub _pad_spot: [u32; 3],
+    /// How many entries of `point_shadows` are live this frame.
+    ///
+    /// Rides in one of the three pad words the spot count left, the way
+    /// `debug_light` rides in this struct's tail — a count is a word and
+    /// there was a word.
+    pub point_shadow_count: u32,
+    pub _pad_spot: [u32; 2],
+    /// One per shadow-casting point light (#778).
+    ///
+    /// 🔴 A different record from the spots', and the difference is the
+    /// point of it: a cube map is sampled by DIRECTION, so there is no
+    /// matrix to send and no uv to transform. What is left is the three
+    /// scalars below. Reusing `GpuCascade` here would ship a 64-byte
+    /// matrix per light that nothing reads, four times over.
+    pub point_shadows: [GpuPointShadow; MAX_POINT_SHADOWS],
     /// 0 when nothing casts, or the atlas has not been rendered. The
     /// dummy atlas bound in that case reads as fully lit anyway; the
     /// flag skips the sampling.
@@ -324,7 +384,9 @@ impl IntiFrame {
             cascades: [GpuCascade::default(); FRAME_CASCADE_COUNT],
             spot_shadows: [GpuCascade::default(); MAX_SPOT_SHADOWS],
             spot_shadow_count: 0,
-            _pad_spot: [0; 3],
+            point_shadow_count: 0,
+            _pad_spot: [0; 2],
+            point_shadows: [GpuPointShadow::default(); MAX_POINT_SHADOWS],
             shadows_enabled: 0,
             cascade_blend: 0.1,
             sun_softness: DEFAULT_SUN_SOFTNESS,
@@ -348,7 +410,9 @@ impl IntiFrame {
                 } else {
                     self
                 };
-                frame.with_spot_shadows(s.spot_shadows, s.spot_shadow_count)
+                frame
+                    .with_spot_shadows(s.spot_shadows, s.spot_shadow_count)
+                    .with_point_shadows(s.point_shadows, s.point_shadow_count)
             }
             None => self,
         }
@@ -385,6 +449,18 @@ impl IntiFrame {
         self.spot_shadow_count = count.min(MAX_SPOT_SHADOWS as u32);
         self
     }
+
+    /// Attaches the point lights' cube maps (#778). Independent of the
+    /// cascades for the same reason the spots' are.
+    pub fn with_point_shadows(
+        mut self,
+        point_shadows: [GpuPointShadow; MAX_POINT_SHADOWS],
+        count: u32,
+    ) -> Self {
+        self.point_shadows = point_shadows;
+        self.point_shadow_count = count.min(MAX_POINT_SHADOWS as u32);
+        self
+    }
 }
 
 /// Everything the frame needs to sample shadows, as one value.
@@ -417,6 +493,19 @@ pub struct FrameShadows {
     pub spot_shadows: [GpuCascade; MAX_SPOT_SHADOWS],
     /// How many of `spot_shadows` are live.
     pub spot_shadow_count: u32,
+    /// One per shadow-casting point light (#778).
+    pub point_shadows: [GpuPointShadow; MAX_POINT_SHADOWS],
+    /// How many of `point_shadows` are live.
+    pub point_shadow_count: u32,
+    /// Which entity each live cube belongs to, in slot order.
+    ///
+    /// 🔴 Carried rather than recomputed. The slot a point light gets is
+    /// its rank by distance to the camera, so the light buffer's walk
+    /// order and the slot order are different orders — and the two
+    /// places that need the mapping would have to sort identically, from
+    /// the same camera, forever. One of them ranks; this array is the
+    /// answer travelling to the other.
+    pub point_entities: [kooch_ecs::entity::Entity; MAX_POINT_SHADOWS],
 }
 
 /// Tangent of the sun's angular radius, by default.
