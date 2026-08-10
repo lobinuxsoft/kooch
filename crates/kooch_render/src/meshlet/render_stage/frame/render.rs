@@ -163,6 +163,17 @@ impl MeshletRenderStage {
         self.instance_capacity = self.scene.capacity();
 
         self.scene.upload_instances(queue, &instances);
+        // The whole scene in one number, for the point-shadow cube cache
+        // (#778). Hashed over the bytes that go to the GPU, so anything
+        // that could move a shadow — a transform, a mesh swap, an
+        // instance appearing — changes it, and nothing that cannot does.
+        // O(n) over a Vec that was just walked to upload it.
+        self.scene_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            bytemuck::cast_slice::<_, u8>(&instances).hash(&mut hasher);
+            hasher.finish()
+        };
 
         let scene_params = SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
         // Worst case for every cull this frame, the view's and the four

@@ -179,7 +179,7 @@ impl MeshletRenderStage {
     /// Records the cascade culls and depth passes into this frame's
     /// encoder, ahead of anything that samples them.
     pub(in crate::meshlet::render_stage) fn record_shadows(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
@@ -189,6 +189,41 @@ impl MeshletRenderStage {
         max_meshlets_per_mesh: u32,
         lod_target: f32,
     ) {
+        // 🔴 Which cubes still hold last frame's truth.
+        //
+        // Six faces per light is the most expensive shadow the engine
+        // draws, and a lamp bolted to a wall in a room where nothing
+        // moves redraws all six of them sixty times a second for no
+        // reason. Epic measures a cached local shadow map at 0.05 ms
+        // against 0.4-0.8 ms invalidated, on a PS5.
+        //
+        // The key is deliberately coarse: the light's identity, its
+        // position, and a hash of EVERY instance in the frame. A crate
+        // moving across the level invalidates a lamp that cannot see it.
+        // That is the safe direction — a cube redrawn for nothing costs
+        // a frame's work, and a cube not redrawn when it should have
+        // been is a shadow frozen in place, which is silent and gets
+        // blamed on everything else first. Narrowing it means asking
+        // which instances a light's range reaches, and that is the
+        // cluster structure (#780), not this issue.
+        let scene_hash = self.scene_hash;
+        let mut redraw = Vec::new();
+        for (slot, draw) in prepared.points.iter().enumerate() {
+            let key = draw.key(scene_hash);
+            if self.point_cube_cache.get(slot).copied().flatten() != Some(key) {
+                redraw.push((slot, *draw));
+            }
+        }
+        // Slots past the live count hold a cube for a light that is no
+        // longer casting. Forgetting them is what makes a lamp that
+        // stops casting and starts again reuse a stale cube.
+        self.point_cube_cache
+            .resize(kooch_lighting::MAX_POINT_SHADOWS, None);
+        for slot in 0..kooch_lighting::MAX_POINT_SHADOWS {
+            self.point_cube_cache[slot] =
+                prepared.points.get(slot).map(|draw| draw.key(scene_hash));
+        }
+
         let (Some(shadows), Some(pool)) = (self.shadows.as_ref(), self.gpu_pool.as_ref()) else {
             return;
         };
@@ -197,6 +232,7 @@ impl MeshletRenderStage {
             queue,
             encoder,
             prepared,
+            &redraw,
             &self.cull_pipelines,
             pool,
             &self.scene,

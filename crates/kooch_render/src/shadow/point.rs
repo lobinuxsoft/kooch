@@ -10,6 +10,7 @@
 
 use glam::{Mat4, Vec3};
 
+use kooch_ecs::entity::Entity;
 use kooch_lighting::{GpuPointShadow, PointShadowSource};
 
 use crate::meshlet::sphere_outside_frustum;
@@ -52,6 +53,11 @@ pub const FACE_DIRECTIONS: [(Vec3, Vec3); CUBE_FACES] = [
 /// and the six matrices its faces draw with.
 #[derive(Copy, Clone, Debug)]
 pub struct PointShadowDraw {
+    /// Which light this is. Carried so the cache can tell "the same lamp
+    /// has not moved" from "this slot now belongs to a different lamp",
+    /// which look identical if only the position is compared and the two
+    /// lamps happen to stand in the same place.
+    pub entity: Entity,
     /// The light's position — a real eye, six times over.
     pub eye: Vec3,
     /// Clip-from-world per face, in cube-array layer order.
@@ -59,12 +65,48 @@ pub struct PointShadowDraw {
 }
 
 impl PointShadowDraw {
-    pub fn new(position: Vec3) -> Self {
+    pub fn new(source: &PointShadowSource) -> Self {
+        let position = source.position;
         Self {
+            entity: source.entity,
             eye: position,
             faces: std::array::from_fn(|face| face_view_proj(position, face, POINT_SHADOW_NEAR_Z)),
         }
     }
+
+    /// What has to be equal for last frame's six faces to still be true.
+    pub fn key(&self, scene: u64) -> CubeKey {
+        CubeKey {
+            entity: self.entity,
+            // Bit patterns, not floats: this is an identity test and it
+            // needs `Eq`. A lamp that moves and moves back is genuinely
+            // unchanged.
+            eye: [
+                self.eye.x.to_bits(),
+                self.eye.y.to_bits(),
+                self.eye.z.to_bits(),
+            ],
+            scene,
+        }
+    }
+}
+
+/// Everything a cached cube depends on.
+///
+/// 🔴 Deliberately coarse. `scene` is a hash of **every** instance in
+/// the frame, so a crate moving on the far side of the level invalidates
+/// a lamp that cannot see it. That is the conservative direction: a cube
+/// redrawn for no reason costs a frame's work, and a cube NOT redrawn
+/// when it should have been is a shadow frozen in place — silent, and
+/// blamed on everything else first.
+///
+/// Making it finer means asking which instances a light's range reaches,
+/// which is the clustering structure (#780) and not this issue.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct CubeKey {
+    entity: Entity,
+    eye: [u32; 3],
+    scene: u64,
 }
 
 /// Which casting point lights get one of the [`MAX_POINT_SHADOWS`] cubes

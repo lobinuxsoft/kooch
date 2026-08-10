@@ -71,6 +71,11 @@ pub struct MeshletRenderStage {
     /// (#778), so the warning fires on the transition rather than sixty
     /// times a second. Same shape as the light-count log.
     pub(super) point_shadows_dropped: usize,
+    /// Hash of every instance uploaded this frame, and the cached cube
+    /// key per point-shadow slot (#778). Together they answer "may last
+    /// frame's six faces stand".
+    pub(super) scene_hash: u64,
+    pub(super) point_cube_cache: Vec<Option<crate::shadow::CubeKey>>,
 
     /// GPU mirror of [`MeshletPipeline::pool`]. Lazy-rebuilt by
     /// [`Self::render_with_assets`] when [`Self::pool_dirty`] is set,

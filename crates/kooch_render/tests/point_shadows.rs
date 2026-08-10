@@ -293,3 +293,79 @@ fn the_shadow_falls_away_from_the_light() {
             .join("\n"),
     );
 }
+
+/// Moves the one point light in the scene.
+fn move_light(resources: &Resources, to: Vec3) {
+    kooch_ecs::query::Query::<(&PointLight, &mut GlobalTransform)>::new(resources).for_each(
+        |(_, transform)| {
+            transform.matrix = Mat4::from_translation(to);
+        },
+    );
+}
+
+/// Moves the floating cube, leaving the floor where it is.
+fn move_cube(resources: &Resources, to: Vec3) {
+    kooch_ecs::query::Query::<(&MeshRenderer, &mut GlobalTransform)>::new(resources).for_each(
+        |(_, transform)| {
+            if transform.matrix.w_axis.y > 0.5 {
+                transform.matrix = Mat4::from_translation(to);
+            }
+        },
+    );
+}
+
+/// 🔴 The cache tests, and they need TWO frames.
+///
+/// Every other test in this file renders once, and the first frame of a
+/// cached cube is always drawn. What a cache can break only shows up on
+/// the second frame: a shadow that stays where it was. That failure is
+/// silent, survives every single-frame assertion in this suite, and gets
+/// blamed on the light, the material and the camera before anyone
+/// suspects the thing that skipped the work.
+#[test]
+fn moving_the_light_moves_its_shadow() {
+    let Some(mut rig) = build_rig() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let first = SWEEP[0];
+    let second = SWEEP[1];
+    add_point(&mut rig.resources, first, true);
+    let _ = render(&mut rig);
+
+    move_light(&rig.resources, second);
+    let pixels = render(&mut rig);
+
+    let now = luminance(&pixels, &rig.camera, shadow_centre(second));
+    let before = luminance(&pixels, &rig.camera, shadow_centre(first));
+    assert!(
+        now < before * 0.7,
+        "after moving the lamp the shadow reads {now} at its new place and {before} at the \
+         old one — the cube was reused for a light that moved",
+    );
+}
+
+#[test]
+fn moving_the_caster_moves_its_shadow() {
+    let Some(mut rig) = build_rig() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let light = SWEEP[0];
+    add_point(&mut rig.resources, light, true);
+    let _ = render(&mut rig);
+
+    // The lamp has not moved, so only the scene hash can invalidate the
+    // cube. Without it the shadow stays under where the cube used to be.
+    let moved = CUBE_CENTRE + Vec3::new(-3.0, 0.0, 0.0);
+    move_cube(&rig.resources, moved);
+    let pixels = render(&mut rig);
+
+    let old_spot = luminance(&pixels, &rig.camera, shadow_centre(light));
+    let lit = luminance(&pixels, &rig.camera, OPEN_FLOOR);
+    assert!(
+        old_spot > lit * 0.7,
+        "the floor where the cube used to stand still reads {old_spot} against {lit} lit — \
+         the cube map was not redrawn after the caster moved",
+    );
+}

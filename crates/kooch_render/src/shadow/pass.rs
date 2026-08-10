@@ -36,7 +36,7 @@ pub struct PreparedShadows {
     spots: Vec<super::SpotShadowDraw>,
     /// One per shadow-casting point light this frame (#778). Six draws
     /// each, so an empty list is worth having.
-    points: Vec<PointShadowDraw>,
+    pub points: Vec<PointShadowDraw>,
     /// What goes in the frame UBO. Handed to
     /// [`kooch_lighting::GpuLights::update`].
     pub frame: kooch_lighting::FrameShadows,
@@ -152,10 +152,7 @@ impl ShadowPass {
         }
 
         let cube_size = self.cubes.size();
-        let point_draws: Vec<PointShadowDraw> = points
-            .iter()
-            .map(|source| PointShadowDraw::new(source.position))
-            .collect();
+        let point_draws: Vec<PointShadowDraw> = points.iter().map(PointShadowDraw::new).collect();
         let mut point_records =
             [kooch_lighting::GpuPointShadow::default(); kooch_lighting::MAX_POINT_SHADOWS];
         let mut point_entities =
@@ -197,6 +194,10 @@ impl ShadowPass {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         prepared: &PreparedShadows,
+        // Which point-light cubes actually need redrawing this frame,
+        // with the slot each one occupies. Empty is the good case: a
+        // static lamp in a static room draws its six faces once.
+        redraw: &[(usize, PointShadowDraw)],
         cull_pipelines: &MeshletCullPipelines,
         pool: &GpuGlobalMeshPool,
         scene: &MeshletScene,
@@ -224,7 +225,7 @@ impl ShadowPass {
             queue,
             encoder,
             &self.cubes,
-            &prepared.points,
+            redraw,
             cull_pipelines,
             pool,
             scene,

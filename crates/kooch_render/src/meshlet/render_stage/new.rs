@@ -89,6 +89,8 @@ impl MeshletRenderStage {
             shadows: None,
             shadow_texels: 0,
             point_shadows_dropped: 0,
+            scene_hash: 0,
+            point_cube_cache: Vec::new(),
             gpu_pool: None,
             pool_dirty: false,
             meshlet_bgl,
