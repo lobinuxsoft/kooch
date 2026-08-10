@@ -21,6 +21,7 @@
 mod atlas;
 mod cascades;
 mod pass;
+mod point;
 mod raster;
 mod settings;
 mod spot;
@@ -31,6 +32,7 @@ pub use cascades::{
     orthographic_rh_reverse_z, split_distances,
 };
 pub use pass::{PreparedShadows, ShadowPass};
+pub use point::{CUBE_FACES, FACE_DIRECTIONS, POINT_SHADOW_NEAR_Z, face_view_proj, point_shadow};
 pub use raster::ShadowRasterizer;
 pub use settings::{DEFAULT_SHADOW_DISTANCE, ShadowSettings};
 pub use spot::{SPOT_SHADOW_NEAR_Z, SpotShadowDraw, spot_shadow};

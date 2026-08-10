@@ -8,17 +8,23 @@ use super::*;
 #[test]
 fn frame_size_matches_shader() {
     // 64 of header, four 96-byte cascades, 16 of tail, then #777's four
-    // 96-byte spot-shadow records and their own 16 of count and pad.
+    // 96-byte spot-shadow records and their own 16 of count and pad, and
+    // #778's four 16-byte point records.
+    //
+    // The point records cost 64 and not 80: their count took one of the
+    // three words the spot count left padding, so the tail is the same
+    // tail.
     const HEADER: usize = 64;
     const CASCADES: usize = 4 * 96;
     const TAIL: usize = 16;
     const SPOT_SHADOWS: usize = MAX_SPOT_SHADOWS * 96;
     const SPOT_TAIL: usize = 16;
+    const POINT_SHADOWS: usize = MAX_POINT_SHADOWS * 16;
     assert_eq!(
         std::mem::size_of::<IntiFrame>(),
-        HEADER + CASCADES + TAIL + SPOT_SHADOWS + SPOT_TAIL,
+        HEADER + CASCADES + TAIL + SPOT_SHADOWS + SPOT_TAIL + POINT_SHADOWS,
     );
-    assert_eq!(std::mem::size_of::<IntiFrame>(), 864);
+    assert_eq!(std::mem::size_of::<IntiFrame>(), 928);
 }
 
 /// std140/std430 require an array's element stride to be a multiple

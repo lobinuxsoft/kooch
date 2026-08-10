@@ -168,6 +168,61 @@ pub fn shadow_casting_spots(resources: &Resources, limit: usize) -> Vec<SpotShad
     out
 }
 
+/// One point light's cube shadow, as the pass needs it (#778).
+///
+/// No direction: a cube map looks everywhere, which is the entire reason
+/// it costs six faces where a spot costs one.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct PointShadowSource {
+    pub entity: Entity,
+    pub position: glam::Vec3,
+    pub range: f32,
+}
+
+/// The point lights that cast, in the order their cubes are numbered.
+///
+/// 🔴 Sorted by distance to the camera, NOT by whatever order the query
+/// walked. Past [`MAX_POINT_SHADOWS`](crate::MAX_POINT_SHADOWS) a light
+/// keeps lighting the scene and stops casting, so *which* lights lose
+/// their shadow has to be a decision: archetype order means the lamp
+/// that goes shadowless is chosen by when it was spawned, and it changes
+/// under the author's feet as the scene is edited. Nearest-first at
+/// least degrades where it is least visible.
+///
+/// The slot each light gets here is the `shadow_slot` written into its
+/// `GpuLight`, so both walks have to agree — which is why this is one
+/// function and not a filter repeated at the call site.
+pub fn shadow_casting_points(
+    resources: &Resources,
+    camera_position: glam::Vec3,
+    limit: usize,
+) -> Vec<PointShadowSource> {
+    let mut out = extract_point_sources(resources);
+    out.sort_by(|a, b| {
+        let da = a.position.distance_squared(camera_position);
+        let db = b.position.distance_squared(camera_position);
+        da.total_cmp(&db)
+    });
+    out.truncate(limit);
+    out
+}
+
+fn extract_point_sources(resources: &Resources) -> Vec<PointShadowSource> {
+    let mut out = Vec::new();
+    Query::<(&PointLight, &GlobalTransform)>::new(resources).for_each_entity(
+        |entity, (light, transform)| {
+            if light.active && light.cast_shadows {
+                out.push(PointShadowSource {
+                    entity,
+                    position: transform.matrix.w_axis.truncate(),
+                    range: light.range,
+                });
+            }
+        },
+    );
+    out
+}
+
 fn extract_spot_sources(resources: &Resources) -> Vec<SpotShadowSource> {
     let mut out = Vec::new();
     Query::<(&SpotLight, &GlobalTransform)>::new(resources).for_each_entity(

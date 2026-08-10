@@ -130,6 +130,12 @@ impl ShadowPass {
                 cascades_enabled,
                 spot_shadows: spot_records,
                 spot_shadow_count: draws.len() as u32,
+                // #778 fills these in the next step; an empty count
+                // reads as "no point light casts", which is the truth
+                // until the cube pass exists.
+                point_shadows: [kooch_lighting::GpuPointShadow::default();
+                    kooch_lighting::MAX_POINT_SHADOWS],
+                point_shadow_count: 0,
             },
             cascades,
             spots: draws,

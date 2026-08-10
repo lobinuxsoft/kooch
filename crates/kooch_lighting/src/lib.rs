@@ -36,12 +36,13 @@ mod gpu_light;
 
 pub use buffer::GpuLights;
 pub use extract::{
-    ExtractedLights, SpotShadowSource, extract_lights, shadow_casting_spots, shadow_casting_sun,
-    shadow_note,
+    ExtractedLights, PointShadowSource, SpotShadowSource, extract_lights, shadow_casting_points,
+    shadow_casting_spots, shadow_casting_sun, shadow_note,
 };
 pub use frame::{
     AmbientLight, DEFAULT_SUN_SOFTNESS, DebugLight, Exposure, FRAME_CASCADE_COUNT, FrameShadows,
-    GpuCascade, IntiFrame, MAX_SPOT_SHADOWS, NO_DEBUG_LIGHT, PhysicalCamera,
+    GpuCascade, GpuPointShadow, IntiFrame, MAX_POINT_SHADOWS, MAX_SPOT_SHADOWS, NO_DEBUG_LIGHT,
+    PhysicalCamera,
 };
 pub use gpu_light::{
     GpuLight, LIGHT_KIND_DIRECTIONAL, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, NO_SHADOW_SLOT,
