@@ -45,7 +45,9 @@ written before it is known what it has to fit in.
 
 | | | Why here |
 |---|---|---|
-| **#743** | light debug views — one light, greyscale, with its shadow | An editor tool. It is not in a shipped game's frame, so it costs the budget nothing |
+| ~~#743~~ | ~~light debug views~~ | **Done.** And they left the game's shader entirely — see below |
+| ~~#777~~ | ~~spot light shadows~~ | **Done.** The shadow atlas became a `texture_depth_2d_array` on the way |
+| **#776** | `PointLight.radius` — sphere lights | Next. ~15 lines, no bindings, no passes, and today every light is a mathematical point so no highlight has a size |
 | **#254** | post + auto exposure | The blown-out white floor in every screenshot of three sessions. Cheap, and it makes everything after it judgeable |
 | **#769** | divide the budget, on the device, at 10 W | The gate. Below is why it sits *here* and not later |
 | **#248 / #250** | atmosphere | 🔴 Another volumetric raymarch. Writing it before the budget is known means writing it twice |
@@ -150,6 +152,36 @@ native runners rather than cross-compiling — which is #753, and the
 other half of this.
 
 ---
+
+## After lighting — the areas the user named, 2026-08-10
+
+Not scheduled against the budget yet; written down because the order is
+decided and what is not an issue evaporates.
+
+| | | Note |
+|---|---|---|
+| **#785** | a profiler — where the frame actually goes | 🔴 The user called this "muy importante" and it is: every optimisation decision so far, including three in the #777 smoke, came from arithmetic and reading shaders. The perf HUD is a dashboard — totals for fixed buckets, on the wrong machine |
+| **#784** | shader graph, the Shader Forge clone | #440 already built the half underneath: a graph compiles to the material *body* `compose_material_shader` concatenates |
+| **#732 / #536 / #481** | temporal upscaling — FSR, DLSS, XeSS | Already filed. FSR first: it is the one that runs on the OneXFly, and an untested fallback is a broken fallback |
+| **#477** | virtual shadow maps | 🔴 The user's call: encarar it **with** the ray tracing Bevy has (Solari), not before. See below |
+
+### Why VSM waits for ray tracing
+
+The reframing came from the #777 smoke, and it is in #782 and #477:
+cascades are described as the directional light's solution, but they fit
+the **camera's** frustum, not the light. That argument never mentions
+the light type — so at planetary scale, where a star is a point light
+with no useful `range`, every kind needs detail apportioned by distance
+to the viewer. Generalised, that is a virtual shadow map.
+
+Which puts #477 and #782 in the same place: the same question at two
+scales. And both land near the technique Bevy is building its ray traced
+lighting on, so doing them together is what stops three mechanisms from
+being designed against each other.
+
+🔴 Three places now where Bevy's source stops being the ceiling: shadows
+at planetary scale (#782), virtual shadow maps (#477), and a node
+material editor (#784). Everything else in the lighting port is a port.
 
 ## Done — #758, and a game that runs on a machine that is not this one
 
