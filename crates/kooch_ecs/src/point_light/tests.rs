@@ -11,6 +11,9 @@ fn default_values() {
     // back to a real bulb the day #450 lands.
     assert_eq!(l.intensity, crate::light_consts::lumens::ROOM_LIGHT_NO_GI);
     assert_eq!(l.range, 10.0);
+    // A point, the way every light in the engine was before #776 —
+    // so an existing scene renders unchanged when it loads.
+    assert_eq!(l.radius, 0.0);
     assert!(l.cast_shadows);
     assert!(!l.contact_shadows);
 }
@@ -27,6 +30,7 @@ fn reflect_fields() {
             "color",
             "intensity",
             "range",
+            "radius",
             "cast_shadows",
             "contact_shadows"
         ]

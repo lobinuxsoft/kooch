@@ -11,6 +11,8 @@ fn default_values() {
     // back to a real bulb the day #450 lands.
     assert_eq!(l.intensity, crate::light_consts::lumens::ROOM_LIGHT_NO_GI);
     assert_eq!(l.range, 10.0);
+    // A point, the way every light in the engine was before #776.
+    assert_eq!(l.radius, 0.0);
     assert_eq!(l.inner_angle, 30.0);
     assert_eq!(l.outer_angle, 45.0);
     assert!(l.cast_shadows);
@@ -29,6 +31,7 @@ fn reflect_fields() {
             "color",
             "intensity",
             "range",
+            "radius",
             "inner_angle",
             "outer_angle",
             "cast_shadows",

@@ -27,10 +27,11 @@
 // - **0.18, bevy#22372** — their point/area specular used the base
 //   roughness where the sphere-light solid angle demanded the widened
 //   `a_prime` (Karis 2013), so highlights stayed sharp and far too
-//   bright with distance. Our punctual lights have no radius, so there
-//   is no `a_prime` to get wrong yet — but the day `PointLight` grows
-//   one, the specular term must widen with it. Recorded before we fall
-//   in.
+//   bright with distance. This note used to end "our punctual lights
+//   have no radius, so there is no `a_prime` to get wrong yet". #776
+//   gave them one: `inti_representative_point` produces the `a_prime`,
+//   and everything that reads it in `inti_light_contribution` is the
+//   fix, not an embellishment of it.
 // - **0.19, Solari** — the specular and diffuse lobes each claiming the
 //   full incoming light. `inti_shade` weights the diffuse by `(1 - F)`.
 //   Note this **diverges from Bevy's own forward path**, which still
@@ -54,7 +55,7 @@ const INTI_KIND_SPOT: u32 = 2u;
 // lands one blinding pixel on it.
 const INTI_MIN_PERCEPTUAL_ROUGHNESS: f32 = 0.089;
 
-// Mirror of `kooch_lighting::GpuLight` (64 B, `#[repr(C)]`). Field
+// Mirror of `kooch_lighting::GpuLight` (80 B, `#[repr(C)]`). Field
 // order and padding are load-bearing: a mismatch reads a light's range
 // as its intensity and there is no compiler on either side of that
 // boundary. `gpu_light.rs` holds the test that pins the size.
@@ -84,13 +85,17 @@ struct IntiLight {
     // reserving.
     flags: u32,
     // Index into `inti.spot_shadows` for a spot light that casts, or
-    // INTI_NO_SHADOW_SLOT. Took the record's last spare word (#777).
-    //
-    // 🔴 The record is now FULL at 64 B. `radius` (#776) and a rect
-    // light's width/height (#779) each need more, so the next field
-    // added here grows the struct — which is a decision about bandwidth
-    // over every light in the scene, not a free slot.
+    // INTI_NO_SHADOW_SLOT (#777).
     shadow_slot: u32,
+    // Radius of the emitting sphere in world units, 0 for a point.
+    // Specular only — see `inti_representative_point`.
+    radius: f32,
+    // 🔴 THREE SCALARS, never a vec3: a vec3 aligns to 16 and would
+    // push the struct to 96 while Rust still writes 80. Same trap the
+    // cascade descriptor documents above.
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 // `IntiLight.shadow_slot` when the light casts no shadow.
@@ -291,6 +296,12 @@ struct IntiSample {
     // Radiometric irradiance arriving perpendicular to the surface,
     // pre-exposure. Zero when the fragment is out of the light's reach.
     irradiance: vec3<f32>,
+    // Surface to light, unnormalised. The representative point (#776)
+    // works in this space, and recomputing it there would be the second
+    // subtraction of the same two vectors.
+    offset: vec3<f32>,
+    // Length of `offset`. Zero for a directional light, which has none.
+    distance: f32,
 }
 
 fn inti_sample_light(light: IntiLight, world_position: vec3<f32>) -> IntiSample {
@@ -300,12 +311,16 @@ fn inti_sample_light(light: IntiLight, world_position: vec3<f32>) -> IntiSample 
         // the perpendicular irradiance.
         out.to_light = -light.direction;
         out.irradiance = light.color * light.intensity;
+        out.offset = out.to_light;
+        out.distance = 0.0;
         return out;
     }
 
     let offset = light.position - world_position;
     let distance_sq = dot(offset, offset);
     out.to_light = offset * inverseSqrt(max(distance_sq, 1e-8));
+    out.offset = offset;
+    out.distance = sqrt(distance_sq);
 
     // Luminous flux (lm) → luminous intensity (cd) over the full
     // sphere. Spot lights divide by 4π too, NOT by the cone's solid
@@ -700,6 +715,11 @@ struct IntiSurface {
     n: vec3<f32>,
     // Towards the camera.
     v: vec3<f32>,
+    // The view vector mirrored about the normal — where a perfectly
+    // smooth surface would be looking. Only the representative point
+    // (#776) reads it, but it depends on nothing per-light, so it is
+    // computed once per pixel here rather than once per light.
+    r: vec3<f32>,
     n_dot_v: f32,
     diffuse_color: vec3<f32>,
     f0: vec3<f32>,
@@ -735,6 +755,7 @@ fn inti_surface(
     surf.world_position = world_position;
     surf.n = n;
     surf.v = v;
+    surf.r = reflect(-v, n);
     surf.n_dot_v = n_dot_v;
     // Metals have no diffuse and take F0 from their albedo;
     // dielectrics reflect a flat 4% and keep all of theirs.
@@ -745,6 +766,46 @@ fn inti_surface(
     surf.f_ab = inti_f_ab(perceptual, n_dot_v);
     surf.view_depth = dot(world_position - inti.camera_position, inti.camera_forward);
     return surf;
+}
+
+// Karis 2013's representative point: the point on the light's sphere
+// closest to the mirror ray, standing in for integrating the BRDF over
+// the whole sphere. Returns that direction in `xyz` and the widened
+// linear roughness in `w`.
+//
+// "Representative Point Area Lights", s2013_pbs_epic_notes_v2.pdf p14-16.
+fn inti_representative_point(
+    r: vec3<f32>,
+    a: f32,
+    offset: vec3<f32>,
+    radius: f32,
+    distance: f32,
+) -> vec4<f32> {
+    // 🔴 This max() is a FIX, not a guard against division by zero.
+    // Bevy carries it for bevyengine/bevy#13318: "the point with the
+    // smallest distance to the ray" is not merely imprecise but wrong
+    // for a surface inside or touching the light's sphere, and without
+    // the clamp such a surface shows a hard discontinuity. Anything
+    // that looks like a redundant instruction here is that bug.
+    let lt_f_dot_r = max(0.0001, dot(offset, r));
+    let center_to_ray = lt_f_dot_r * r - offset;
+    let closest = offset + center_to_ray * saturate(
+        radius * inverseSqrt(dot(center_to_ray, center_to_ray)));
+    // Karis p14. The 2 is hand-tuned against reference renders, not
+    // derived.
+    let a_prime = saturate(a + radius / (2.0 * max(distance, 1e-4)));
+    return vec4<f32>(closest * inverseSqrt(dot(closest, closest)), a_prime);
+}
+
+// Bevy's amendment to Karis 2013: feeding the widened roughness
+// straight into the BRDF makes smooth materials read too rough and too
+// dim, so what the BRDF actually gets is a lerp between the original
+// and the widened one, weighted by how rough the material already was.
+// Their own comment names Linearly Transformed Cosines (#779) as the
+// correct fix and this as the tuned stand-in.
+fn inti_specular_fix_remap(a: f32) -> f32 {
+    let inv_a_sq = (1.0 - a) * (1.0 - a);
+    return 1.0 - inv_a_sq * inv_a_sq;
 }
 
 // What one light adds to one surface point, shadows included. Zero when
@@ -760,22 +821,63 @@ fn inti_light_contribution(
         return vec3<f32>(0.0);
     }
 
+    // The diffuse layer always answers to the light's centre.
     let h = normalize(s.to_light + surf.v);
-    let n_dot_h = saturate(dot(surf.n, h));
     let l_dot_h = saturate(dot(s.to_light, h));
+    let diffuse_term = inti_fd_burley(surf.perceptual, surf.n_dot_v, n_dot_l, l_dot_h);
 
-    let d = inti_d_ggx(surf.a, n_dot_h);
-    let vis = inti_v_smith_correlated(surf.a, surf.n_dot_v, n_dot_l);
-    let f = inti_fresnel(surf.f0, l_dot_h);
-    let specular = inti_specular_multiscatter(d * vis * f, surf.f0, surf.f_ab);
+    // The specular layer answers to a different direction as soon as
+    // the light has a size (#776) — the sphere's closest point to the
+    // mirror ray rather than its centre — and to a wider roughness.
+    // Every value below starts as the diffuse layer's, so a light with
+    // `radius == 0` costs nothing and renders exactly as before.
+    var l_spec = s.to_light;
+    var a_spec = surf.a;
+    var n_dot_l_spec = n_dot_l;
+    var l_dot_h_spec = l_dot_h;
+    var h_spec = h;
+    var spec_intensity = 1.0;
+    var solid_angle = 0.0;
+    // A directional light is excluded by kind and not only by its
+    // radius: it has no position, so there is no distance for the
+    // approximation to correct. A sun's angular size is a shadow
+    // problem (#477), not this one.
+    if (light.radius > 0.0 && light.kind != INTI_KIND_DIRECTIONAL) {
+        let rep = inti_representative_point(
+            surf.r, surf.a, s.offset, light.radius, s.distance);
+        l_spec = rep.xyz;
+        h_spec = normalize(l_spec + surf.v);
+        n_dot_l_spec = saturate(dot(surf.n, l_spec));
+        l_dot_h_spec = saturate(dot(l_spec, h_spec));
+        // Spreading the same energy over a wider highlight must not
+        // add any. Without this factor `radius` is a brightness knob.
+        // Note it uses the RAW widened roughness, while the BRDF below
+        // gets the remapped one — Bevy does both and they are not the
+        // same number.
+        let normalization = surf.a / max(rep.w, 1e-4);
+        spec_intensity = normalization * normalization;
+        a_spec = mix(surf.a, rep.w, inti_specular_fix_remap(surf.a));
+        // Sphere visibility: at a grazing angle part of the sphere has
+        // sunk below the horizon and cannot light this point at all.
+        solid_angle = light.radius * light.radius
+            / max(s.distance * s.distance, 1e-8);
+    }
+
+    let n_dot_h = saturate(dot(surf.n, h_spec));
+    let d = inti_d_ggx(a_spec, n_dot_h);
+    let vis = inti_v_smith_correlated(a_spec, surf.n_dot_v, n_dot_l_spec);
+    let f = inti_fresnel(surf.f0, l_dot_h_spec);
+    var specular = inti_specular_multiscatter(
+        d * vis * f * spec_intensity, surf.f0, surf.f_ab);
+    if (solid_angle > 0.0) {
+        specular *= saturate(n_dot_l_spec / max(n_dot_l_spec + solid_angle, 1e-4));
+    }
 
     // Energy the specular layer reflected is energy the diffuse
     // layer underneath never receives. Bevy's forward path skips
     // this weighting; their path tracer does not, and it is the
     // path tracer that is right.
-    let diffuse = (vec3<f32>(1.0) - f)
-        * surf.diffuse_color
-        * inti_fd_burley(surf.perceptual, surf.n_dot_v, n_dot_l, l_dot_h);
+    let diffuse = (vec3<f32>(1.0) - f) * surf.diffuse_color * diffuse_term;
 
     // Only the directional light casts today: the cascades are fit
     // to the view frustum for a light with no position, and a
@@ -807,7 +909,13 @@ fn inti_light_contribution(
             surf.world_position, surf.n, surf.v, s.to_light, frag_coord);
     }
 
-    return (diffuse + specular) * s.irradiance * n_dot_l * shadow;
+    // 🔴 The cosine is applied PER LAYER, not factored out: the
+    // specular layer answers to its own direction and so to its own
+    // N·L. Bevy writes the same line
+    // (`diffuse * derived_input.NdotL + specular_light * specular_derived_input.NdotL`).
+    // Factoring `n_dot_l` back out would silently undo half of #776 —
+    // and would look identical until someone authored a radius.
+    return (diffuse * n_dot_l + specular * n_dot_l_spec) * s.irradiance * shadow;
 }
 
 /// A spot light's shadow (#777).

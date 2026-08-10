@@ -19,6 +19,7 @@ use crate::Reflect;
 /// - `color`: white `(1, 1, 1)`
 /// - `intensity`: 800.0 lumens
 /// - `range`: 10.0
+/// - `radius`: 0.0 (a point, as every light in the engine was before)
 /// - `inner_angle`: 30.0 degrees
 /// - `outer_angle`: 45.0 degrees
 /// - `cast_shadows`: true
@@ -52,6 +53,17 @@ pub struct SpotLight {
     /// A budget rather than a physical property — real light never
     /// stops. The editor's wire cone is drawn to exactly this length.
     pub range: f32,
+    /// Radius of the emitting sphere, in world units. `0` is a
+    /// mathematical point.
+    ///
+    /// The size of the bulb inside the fixture, not the width of the
+    /// cone — that is [`Self::outer_angle`]. It widens the specular
+    /// highlight the light leaves on a glossy surface.
+    ///
+    /// ⚠️ **Specular only**, exactly as on
+    /// [`PointLight`](crate::PointLight): it does not soften the
+    /// penumbra of the cone and it does not soften shadows.
+    pub radius: f32,
     /// HALF-angle of the fully-lit cone, in degrees, measured from the
     /// axis to the edge.
     ///
@@ -94,6 +106,7 @@ impl Default for SpotLight {
             color: Vec3::ONE,
             intensity: crate::light_consts::lumens::ROOM_LIGHT_NO_GI,
             range: 10.0,
+            radius: 0.0,
             inner_angle: 30.0,
             outer_angle: 45.0,
             cast_shadows: true,
