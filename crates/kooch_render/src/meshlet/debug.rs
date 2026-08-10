@@ -205,6 +205,17 @@ impl MeshletDebugMode {
         ]
     }
 
+    /// `true` when the mode reads the editor's selected light.
+    ///
+    /// The predicate exists so the editor cannot forget one: the
+    /// shadow-map view shipped broken for exactly that reason — the
+    /// selection was piped through on a `== SingleLight` check, so the
+    /// new mode got no light and rendered flat grey forever.
+    #[inline]
+    pub const fn needs_selected_light(self) -> bool {
+        matches!(self, Self::SingleLight | Self::ShadowMap)
+    }
+
     /// Reject-reason code the cull shader writes when this mode is
     /// active and `CullParams.debug_active != 0`. Mirrors the
     /// `REJECT_REASON_*` constants in `meshlet_cull/atomic.wgsl`.

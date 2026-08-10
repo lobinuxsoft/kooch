@@ -174,3 +174,18 @@ fn discriminants_are_stable() {
     assert_eq!(MeshletDebugMode::SingleLight.as_u32(), 14);
     assert_eq!(MeshletDebugMode::ShadowMap.as_u32(), 15);
 }
+
+/// 🔴 The shadow-map view shipped broken because the editor piped the
+/// selection through on `== SingleLight`, so the new mode saw no light
+/// and rendered flat grey. Every mode that reads `IntiFrame::debug_light`
+/// has to answer `true` here or it silently gets nothing.
+#[test]
+fn every_mode_that_reads_a_light_says_so() {
+    assert!(MeshletDebugMode::SingleLight.needs_selected_light());
+    assert!(MeshletDebugMode::ShadowMap.needs_selected_light());
+    // And the ones that do not, so the editor is not resolving a
+    // selection sixty times a second for a view that ignores it.
+    assert!(!MeshletDebugMode::Off.needs_selected_light());
+    assert!(!MeshletDebugMode::Normals.needs_selected_light());
+    assert!(!MeshletDebugMode::ShadowCascades.needs_selected_light());
+}
