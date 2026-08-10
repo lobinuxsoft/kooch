@@ -13,6 +13,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::meshlet::{
     CullParams, GpuGlobalMeshPool, MeshletCullPipelines, MeshletScene, SceneCullParams,
+    projection_scale_y,
 };
 
 use super::atlas::{SHADOW_DEPTH_FORMAT, ShadowAtlas};
@@ -424,10 +425,22 @@ impl ShadowRasterizer {
             // cascade needs. The LOD selector is left on its distance
             // form for the same reason: a spot has a viewpoint, so a
             // simplification error projects to pixels the ordinary way.
-            let params = CullParams::new(
-                glam::Mat4::from_cols_array_2d(&spot.record.view_proj),
-                spot.eye,
-                max_meshlets_per_mesh,
+            let view_proj = glam::Mat4::from_cols_array_2d(&spot.record.view_proj);
+            // 🔴 The LOD selector, which `CullParams::new` leaves at a
+            // factor of ZERO — and a factor of zero does not mean "no
+            // LOD", it means every meshlet's projected error is 0 px, so
+            // the selector keeps only roots. `projection_scale_y`'s own
+            // doc has the symptom: "a sphere collapses to a blob and a
+            // cube to a spike". That is precisely what the first smoke
+            // saw in the sphere's shadow.
+            //
+            // Perspective, so `with_lod` rather than the cascades'
+            // orthographic form: a spot has a viewpoint and a
+            // simplification error really does shrink with distance.
+            let params = CullParams::new(view_proj, spot.eye, max_meshlets_per_mesh).with_lod(
+                atlas.cascade_size() as f32,
+                projection_scale_y(view_proj),
+                (lod_target * SHADOW_LOD_RELAXATION).max(0.01),
             );
             cull.dispatch_scene_pool_atomic(
                 cull_pipelines,
