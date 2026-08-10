@@ -117,8 +117,14 @@ pub enum MeshletDebugMode {
     /// the selector — a limitation somebody has to guess at is worse
     /// than one written down.
     SingleLight = 14,
-    /// What the spot lights' shadow maps actually contain, and through
-    /// which projection they are read (#777).
+    /// What the SELECTED light's shadow map contains, and through which
+    /// projection it is read.
+    ///
+    /// Follows the World panel's selection like [`Self::SingleLight`]
+    /// does: the first version took whichever spot came first in the
+    /// buffer, so a scene with two could only ever show one. Every light
+    /// kind answers — a point light says it has no map (#778) and a
+    /// directional hands over to the cascade colours.
     ///
     /// Three things look identical in a shaded frame and live in three
     /// different files: the map is empty because the raster drew
@@ -134,7 +140,7 @@ pub enum MeshletDebugMode {
     ///   stored depth. Rotate the light: if the gradient does not turn
     ///   with it, the record reaching the shader is not the one the
     ///   pass thinks it wrote
-    SpotShadowMap = 15,
+    ShadowMap = 15,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -195,7 +201,7 @@ impl MeshletDebugMode {
             Self::ShadowCascades,
             Self::ContactShadows,
             Self::SingleLight,
-            Self::SpotShadowMap,
+            Self::ShadowMap,
         ]
     }
 
@@ -275,7 +281,7 @@ impl MeshletDebugMode {
             Self::ShadowCascades => "Shadow cascades",
             Self::ContactShadows => "Contact shadows",
             Self::SingleLight => "Single light",
-            Self::SpotShadowMap => "Spot shadow map",
+            Self::ShadowMap => "Shadow map (selected)",
         }
     }
 }
