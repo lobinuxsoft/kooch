@@ -50,7 +50,10 @@ pub const DEFERRED_CONTACT_DEPTH_BINDING: u32 = 6;
 /// only read the normal, wrong the moment a point light needs a
 /// distance. Sharing the chunk is what stops the fallback from quietly
 /// drifting away from the path everyone actually looks at.
-fn shader_source() -> String {
+/// `debug` builds the editor's variant, which is the only one that
+/// contains the debug views at all — see
+/// [`kooch_lighting::INTI_DEBUG_STUB`] (#743).
+fn shader_source(debug: bool) -> String {
     [
         crate::meshlet::SURFACE_RECONSTRUCT_SHADER,
         &crate::contact_shadow::contact_shadow_shader(
@@ -58,9 +61,30 @@ fn shader_source() -> String {
             DEFERRED_CONTACT_DEPTH_BINDING,
         ),
         &kooch_lighting::inti_pbr_shader(DEFERRED_INTI_GROUP),
+        if debug {
+            kooch_lighting::inti_debug_shader()
+        } else {
+            kooch_lighting::INTI_DEBUG_STUB
+        },
         DEFERRED_BODY,
     ]
     .join("\n")
+}
+
+/// The scene-wide shading pipeline, over whichever module it is given.
+fn build_scene_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    module: &wgpu::ShaderModule,
+) -> wgpu::ComputePipeline {
+    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("meshlet_deferred_pipeline_scene"),
+        layout: Some(layout),
+        module,
+        entry_point: Some("cs_shade_scene"),
+        compilation_options: Default::default(),
+        cache: None,
+    })
 }
 
 /// Output color format the deferred shader writes through a storage
@@ -94,6 +118,17 @@ pub(super) struct ScreenUbo {
 pub struct MeshletDeferredShader {
     pub(super) pipeline: wgpu::ComputePipeline,
     pub(super) pipeline_scene: wgpu::ComputePipeline,
+    /// `pipeline_scene` with the debug views concatenated in (#743).
+    ///
+    /// Built on first use, which in a shipped game never comes: the game
+    /// neither compiles the views nor carries them in the pipeline it
+    /// does run.
+    ///
+    /// A `OnceLock` so the render chain stays on `&self` — see the R64
+    /// path's twin field for the reasoning.
+    pub(super) pipeline_scene_debug: std::sync::OnceLock<wgpu::ComputePipeline>,
+    /// Kept so the debug variant is built against the same layout.
+    pub(super) pipeline_layout_scene: wgpu::PipelineLayout,
     pub(super) shading_bgl: wgpu::BindGroupLayout,
     pub(super) scene_bgl: wgpu::BindGroupLayout,
 
@@ -111,7 +146,7 @@ impl MeshletDeferredShader {
     pub fn new(device: &wgpu::Device, meshlet_bgl: &wgpu::BindGroupLayout) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("meshlet_deferred_shader"),
-            source: wgpu::ShaderSource::Wgsl(shader_source().into()),
+            source: wgpu::ShaderSource::Wgsl(shader_source(false).into()),
         });
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -233,18 +268,13 @@ impl MeshletDeferredShader {
             compilation_options: Default::default(),
             cache: None,
         });
-        let pipeline_scene = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("meshlet_deferred_pipeline_scene"),
-            layout: Some(&pipeline_layout_scene),
-            module: &shader,
-            entry_point: Some("cs_shade_scene"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline_scene = build_scene_pipeline(device, &pipeline_layout_scene, &shader);
 
         Self {
             pipeline,
             pipeline_scene,
+            pipeline_scene_debug: std::sync::OnceLock::new(),
+            pipeline_layout_scene,
             shading_bgl,
             scene_bgl,
             camera_buffer,

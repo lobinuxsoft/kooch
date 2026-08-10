@@ -11,6 +11,7 @@ authors.workspace = true
 kooch_core = { workspace = true, features = ["dynamic"] }
 kooch_ecs = { workspace = true, features = ["dynamic"] }
 kooch_render.workspace = true
+kooch_lighting.workspace = true
 kooch_gizmos.workspace = true
 kooch_gizmos_handles.workspace = true
 # `debug-render` pulls in rapier's world walk, which the viewport overlay

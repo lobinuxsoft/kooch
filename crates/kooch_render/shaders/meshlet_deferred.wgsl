@@ -64,14 +64,6 @@ struct MaterialParams {
 
 @group(2) @binding(0) var<storage, read> materials: array<MaterialParams>;
 
-// `MeshletDebugMode::Normals`. Pinned to the Rust enum by a test in
-// `debug.rs`; WGSL cannot import a Rust constant.
-const DEBUG_MODE_NORMALS: u32 = 11u;
-// `MeshletDebugMode::ShadowCascades`, pinned by the same test.
-const DEBUG_MODE_SHADOW_CASCADES: u32 = 12u;
-// `MeshletDebugMode::ContactShadows`, pinned by the same test.
-const DEBUG_MODE_CONTACT_SHADOWS: u32 = 13u;
-
 // PCG-style hash → vec3 rgb in [0.2, 1.0]. The 0.2 floor keeps any
 // id from collapsing to black (which the alpha=0 background uses).
 // Same constants as Bevy's meshlet_visualizer; adequate for visual
@@ -175,15 +167,15 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
             let surf = resolve_surface(visible_slot, tri_idx, vec2<f32>(pixel) + vec2<f32>(0.5));
             let n = normalize(surf.world_normal);
 
-            if (screen.debug_mode == DEBUG_MODE_NORMALS) {
-                rgb = n * 0.5 + 0.5;
-            } else if (screen.debug_mode == DEBUG_MODE_SHADOW_CASCADES) {
-                let vd = dot(
-                    surf.world_position - inti.camera_position, inti.camera_forward);
-                rgb = inti_shadow_debug(surf.world_position, n, vd);
-            } else if (screen.debug_mode == DEBUG_MODE_CONTACT_SHADOWS) {
-                rgb = inti_contact_shadow_debug_view(
-                    surf.world_position, n, vec2<f32>(pixel) + vec2<f32>(0.5));
+            // The debug views (#743). `inti_debug_is_view` is a literal
+            // `false` in a production pipeline, so this branch and every
+            // view behind it are folded away before register allocation.
+            if (inti_debug_is_view(screen.debug_mode)) {
+                rgb = inti_debug_view(
+                    screen.debug_mode,
+                    surf.world_position,
+                    n,
+                    vec2<f32>(pixel) + vec2<f32>(0.5));
             } else {
                 let m = materials[surf.material_id];
                 // No texture sampling on this path: a compute shader

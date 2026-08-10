@@ -271,7 +271,7 @@ to their TAA.
 
 ### Seeing what the shadow system did
 
-Two debug views, because "no light reaches this" and "something shadows
+Three debug views, because "no light reaches this" and "something shadows
 this" look identical in a shaded frame and have different fixes.
 
 - **Shadow cascades** — Bevy's flat per-cascade hue, dimmed by
@@ -280,6 +280,61 @@ this" look identical in a shaded frame and have different fixes.
 - **Contact shadows** — red: the march hit on its first step, which is
   the surface occluding itself. Green: a real occluder. Blue: the ray was
   under two pixels long. Grey: marched and found nothing.
+- **Single light** — one light, alone, in grey, with its shadow.
+
+### Single light
+
+Select a light in the World panel and this view shades the scene with
+that light and nothing else: no other light, no albedo, no ambient.
+
+Each exclusion answers a different confusion:
+
+| Removed | Because otherwise |
+|---|---|
+| Every other light | A surface lit by the wrong one still looks lit |
+| The material's colour | A dark albedo and no light landing produce the same pixel |
+| Ambient | A point in full shadow never renders black, which is the reading the view exists to make unambiguous |
+
+Roughness is *kept* — the width of a highlight is information about the
+light, not the paint — and `metallic` is forced off, because a metal
+takes its F0 from the albedo this view removes, and a metal shaded white
+is a mirror rather than that metal decoloured.
+
+The shadow comes from calling `inti_light_contribution`, the same
+function the shading loop sums per light. A view that recomputed the
+maths its own way could disagree with the frame, and then it is one more
+thing to debug instead of the thing that settles the question.
+
+> ⚠️ **A point or spot light usually shows no shadow, and that is
+> correct.** Only a directional light has a shadow map; contact shadows
+> are opt-in and off by default on punctual lights. "Casts nothing" and
+> "the shadow broke" render identically, so the editor prints which one
+> it is next to the selector — `shadow_note` in `kooch_lighting`.
+
+Which light travels in `IntiFrame.debug_light`, an index into the light
+buffer that occupies what used to be that struct's tail padding. There is
+no seventh bind group and Inti's is full, so a view needing a binding of
+its own was not going to ship.
+
+### The debug views are not in the shader your game runs
+
+`inti_debug.wgsl` is concatenated only by a pipeline that can show a
+view. Production concatenates `INTI_DEBUG_STUB`, where
+`inti_debug_is_view` returns a literal `false` and the two call sites
+fold away.
+
+This is a performance decision, not tidiness. A branch nothing takes is
+still code the shader carries: register allocation is worst-case over the
+whole entry point, so a cascade sample and a screen-space raymarch parked
+behind `if (debug_mode == …)` still raise the VGPR count. VGPR count caps
+how many waves stay in flight, and waves in flight is the whole of an
+integrated GPU's ability to hide memory latency — which is the budget
+this engine is held to.
+
+The debug pipeline is built through a `OnceLock` the first time a view is
+selected, so a shipped game never compiles it either. Both variants are
+validated by tests, because nothing else compiles the debug one until
+somebody opens it.
 
 ## What Inti does not do yet
 

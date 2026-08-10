@@ -115,6 +115,8 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Performance dropdowns surface based on the device's
     /// `Features::TEXTURE_ATOMIC` exposure.
     pub(crate) meshlet_debug_caps: MeshletDebugCaps,
+    /// What the light isolated by `SingleLight` actually casts (#743).
+    pub(crate) single_light_note: Option<&'a str>,
     /// Continuous-LOD threshold (#462). Mutated by the View toolbar
     /// slider so artists can sanity-check the chain at editor
     /// distances without rebuilding any pipeline state.
@@ -241,6 +243,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.meshlet_stats,
                 self.meshlet_debug_mode,
                 self.meshlet_debug_caps,
+                self.single_light_note,
                 self.meshlet_lod_settings,
                 self.hud_visibility,
             ),

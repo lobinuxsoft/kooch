@@ -98,6 +98,25 @@ pub enum MeshletDebugMode {
     /// per light and averaging several would hide the one being looked
     /// at. Magenta means no light in the scene marches.
     ContactShadows = 13,
+    /// One light, alone, in greyscale, with its shadow (#743).
+    ///
+    /// The question is *why is this dark*, and a shaded frame cannot
+    /// answer it: no light reaching the surface, a shadow reaching it,
+    /// and a dark material all produce the same pixel and have three
+    /// different fixes. This removes two of the three — every other
+    /// light, and the material's colour — so what is left on screen is
+    /// one light's contribution and nothing else.
+    ///
+    /// Which light is the entity selected in the World panel, resolved
+    /// to its slot in the light buffer and carried in `IntiFrame`'s
+    /// `debug_light`. Magenta means the selection is not a light this
+    /// frame rendered.
+    ///
+    /// ⚠️ Only a directional light casts a cascade shadow today, so a
+    /// point or spot usually shows none. The editor states that next to
+    /// the selector — a limitation somebody has to guess at is worse
+    /// than one written down.
+    SingleLight = 14,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -157,6 +176,7 @@ impl MeshletDebugMode {
             Self::Normals,
             Self::ShadowCascades,
             Self::ContactShadows,
+            Self::SingleLight,
         ]
     }
 
@@ -235,6 +255,7 @@ impl MeshletDebugMode {
             Self::Normals => "Normals",
             Self::ShadowCascades => "Shadow cascades",
             Self::ContactShadows => "Contact shadows",
+            Self::SingleLight => "Single light",
         }
     }
 }

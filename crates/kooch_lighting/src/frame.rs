@@ -235,8 +235,33 @@ pub struct IntiFrame {
     /// mean a width *at some distance*, and no code path was ever going
     /// to agree on which.
     pub sun_softness: f32,
-    pub _pad_frame: f32,
+    /// Which light the single-light debug view isolates (#743), as an
+    /// index into the light buffer. Anything `>= light_count` means
+    /// "none selected", including the [`NO_DEBUG_LIGHT`] default.
+    ///
+    /// It rides in what used to be this struct's tail padding, so the
+    /// view costs no binding, no buffer and not one byte — which matters
+    /// because there is no seventh bind group to put one in, and Inti's
+    /// group is already full.
+    pub debug_light: u32,
 }
+
+/// [`IntiFrame::debug_light`] when no light is isolated. Any index past
+/// the light count reads the same way; this one is the deliberate value.
+pub const NO_DEBUG_LIGHT: u32 = u32::MAX;
+
+/// Which light `MeshletDebugMode::SingleLight` isolates (#743).
+///
+/// A [`Resource`](kooch_core::resource::Resources) the editor writes
+/// from the World panel's selection, rather than a control of its own:
+/// "one light at a time" is what selecting a light already means, and a
+/// second list of lights to pick from is a second thing to keep in step
+/// with the scene.
+///
+/// `None` — or an entity that is not an active light — renders magenta.
+/// The two are the same answer to the viewer and neither is a failure.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct DebugLight(pub Option<kooch_ecs::entity::Entity>);
 
 impl IntiFrame {
     pub fn new(
@@ -258,8 +283,15 @@ impl IntiFrame {
             shadows_enabled: 0,
             cascade_blend: 0.1,
             sun_softness: DEFAULT_SUN_SOFTNESS,
-            _pad_frame: 0.0,
+            debug_light: NO_DEBUG_LIGHT,
         }
+    }
+
+    /// Isolates one light for the single-light debug view (#743).
+    /// `None` — or an index the buffer does not hold — shows nothing.
+    pub fn with_debug_light(mut self, index: Option<u32>) -> Self {
+        self.debug_light = index.unwrap_or(NO_DEBUG_LIGHT);
+        self
     }
 
     /// Attaches the shadows from [`FrameShadows`], if the frame has any.

@@ -27,14 +27,6 @@ struct MaterialParams {
 @group(4) @binding(2) var metal_rough_tex: texture_2d<f32>;
 @group(4) @binding(3) var material_sampler: sampler;
 
-// `MeshletDebugMode::Normals`. Kept in sync with the Rust enum by the
-// test in `debug.rs` that pins the discriminant.
-const DEBUG_MODE_NORMALS: u32 = 11u;
-// `MeshletDebugMode::ShadowCascades`, pinned by the same test.
-const DEBUG_MODE_SHADOW_CASCADES: u32 = 12u;
-// `MeshletDebugMode::ContactShadows`, pinned by the same test.
-const DEBUG_MODE_CONTACT_SHADOWS: u32 = 13u;
-
 struct FsInput {
     // @invariant: the Equal depth test against the material-depth target
     // demands bit-identical depth from every per-material draw, so the
@@ -76,19 +68,14 @@ fn fs_material(in: FsInput) -> @location(0) vec4<f32> {
     let b = cross(n, t) * surf.world_tangent.w;
     let world_n = normalize(mat3x3<f32>(t, b, n) * n_ts);
 
-    // The world-space normal as colour. Until #441 this WAS the shading
-    // model; it is now one entry in the debug dropdown, which is what a
-    // debug view was always supposed to be.
-    if (screen.debug_mode == DEBUG_MODE_NORMALS) {
-        return vec4<f32>(world_n * 0.5 + 0.5, 1.0);
-    }
-    if (screen.debug_mode == DEBUG_MODE_SHADOW_CASCADES) {
-        let vd = dot(surf.world_position - inti.camera_position, inti.camera_forward);
-        return vec4<f32>(inti_shadow_debug(surf.world_position, world_n, vd), 1.0);
-    }
-    if (screen.debug_mode == DEBUG_MODE_CONTACT_SHADOWS) {
+    // The debug views (#743), and the only place this path mentions
+    // them. In a production pipeline `inti_debug_is_view` is the stub's
+    // literal `false`, so this whole branch — and every view behind it —
+    // is gone before the shader is register-allocated.
+    if (inti_debug_is_view(screen.debug_mode)) {
         return vec4<f32>(
-            inti_contact_shadow_debug_view(surf.world_position, world_n, in.position.xy), 1.0);
+            inti_debug_view(screen.debug_mode, surf.world_position, world_n, in.position.xy),
+            1.0);
     }
 
     // glTF packing: green is roughness, blue is metallic. The 1×1

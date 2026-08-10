@@ -14,6 +14,21 @@ use super::{
 };
 
 impl MeshletDeferredShader {
+    /// The scene pipeline this frame dispatches, compiling the debug
+    /// variant the first time one is asked for.
+    fn scene_pipeline_for(&self, device: &wgpu::Device, debug_mode: u32) -> &wgpu::ComputePipeline {
+        if debug_mode == 0 {
+            return &self.pipeline_scene;
+        }
+        self.pipeline_scene_debug.get_or_init(|| {
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("meshlet_deferred_shader_debug"),
+                source: wgpu::ShaderSource::Wgsl(super::shader_source(true).into()),
+            });
+            super::build_scene_pipeline(device, &self.pipeline_layout_scene, &module)
+        })
+    }
+
     /// Records `cs_shade_scene` for the entire output. Walks every
     /// pixel; background pixels (cleared id 0) keep the clear color.
     /// Foreground pixels resolve their `(instance_id, meshlet_idx)`
@@ -25,8 +40,11 @@ impl MeshletDeferredShader {
     /// the shader pulls from the scene buffer.
     ///
     /// `debug_mode` is the raw [`MeshletDebugMode`](crate::meshlet::MeshletDebugMode)
-    /// discriminant; 0 selects the production path. The shader
-    /// branches on this uniform without an extra dispatch.
+    /// discriminant; 0 selects the production path. Anything else
+    /// selects a second pipeline, compiled on first use, whose shader is
+    /// the only one that contains the debug views at all (#743) — the
+    /// production module does not carry them, so it cannot be slowed by
+    /// them.
     #[allow(clippy::too_many_arguments)]
     pub fn shade_scene(
         &self,
@@ -46,6 +64,8 @@ impl MeshletDeferredShader {
         screen_size: (u32, u32),
         debug_mode: u32,
     ) {
+        let pipeline = self.scene_pipeline_for(device, debug_mode);
+
         queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -120,7 +140,7 @@ impl MeshletDeferredShader {
             label: Some("meshlet_deferred_scene_pass"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&self.pipeline_scene);
+        pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &shading_bg, &[]);
         pass.set_bind_group(1, meshlet_bg, &[]);
         pass.set_bind_group(2, material_bg, &[]);

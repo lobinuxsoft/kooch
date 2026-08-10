@@ -27,6 +27,7 @@ use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::commands::Commands;
 use kooch_ecs::component::registry::ComponentRegistry;
 use kooch_ecs::directional_light::DirectionalLight;
+use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::global_transform::GlobalTransform;
 use kooch_ecs::mesh_renderer::MeshRenderer;
 use kooch_ecs::query::AccessTracker;
@@ -111,22 +112,30 @@ fn rig() -> Option<Rig> {
 /// The direction comes from the transform's -Z, never from a field —
 /// that is the scope correction #441 was rewritten around, so the test
 /// exercises it the same way an author would: by rotating the entity.
-fn add_directional(resources: &mut Resources, direction: Vec3, intensity: f32) {
+fn add_directional(resources: &mut Resources, direction: Vec3, intensity: f32) -> Entity {
+    add_coloured(resources, direction, intensity, Vec3::ONE)
+}
+
+/// Returns the entity, because the single-light view addresses a light
+/// by the one the editor selected and a test has to name it too.
+fn add_coloured(resources: &mut Resources, direction: Vec3, intensity: f32, color: Vec3) -> Entity {
     let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, direction.normalize());
     let mut commands = Commands::new();
-    commands
+    let entity = commands
         .spawn(resources)
         .insert(DirectionalLight {
             active: true,
-            color: Vec3::ONE,
+            color,
             intensity,
             cast_shadows: false,
             contact_shadows: false,
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_quat(rotation),
-        });
+        })
+        .id();
     commands.apply(resources);
+    entity
 }
 
 fn render(rig: &mut Rig) -> Vec<u8> {
@@ -331,5 +340,98 @@ fn the_normals_debug_view_differs_from_lit_shading() {
         lit, normals,
         "MeshletDebugMode::Normals rendered the same as Off, so either \
          the dropdown does nothing or Off is still the debug view",
+    );
+}
+
+/// The single-light view (#743) is only a view of ONE light if a second
+/// one changes nothing about it.
+///
+/// Two suns from opposite poles, so the full frame lights both halves of
+/// the sphere and neither light alone does. If the view were summing
+/// both — or ignoring the selection and shading everything — the pole
+/// facing away from the selected light would not go dark.
+#[test]
+fn isolating_a_light_leaves_the_other_ones_half_dark() {
+    let Some(mut rig) = rig() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    // Ambient off for the reason the pole-vs-pole test gives: it lands
+    // almost equally everywhere, which is the difference being measured.
+    // The view excludes it anyway — this keeps the `Off` frame honest.
+    rig.resources.insert(kooch_lighting::AmbientLight {
+        intensity: 0.0,
+        ..Default::default()
+    });
+    let from_above = add_directional(&mut rig.resources, Vec3::NEG_Y, 2_000.0);
+    add_directional(&mut rig.resources, Vec3::Y, 2_000.0);
+
+    let lit = render(&mut rig);
+    let radius = silhouette_radius(&lit);
+    assert!(radius > 20, "the rig is not rendering a sphere");
+    let offset = radius * 7 / 10;
+    // Row 0 is the top of the image, so the larger row index is the
+    // pole the downward light cannot reach.
+    let (bottom_x, bottom_y) = (SIZE / 2, SIZE / 2 + offset);
+
+    let both_lights = brightness(&lit, bottom_x, bottom_y);
+    assert!(
+        both_lights > 0.1,
+        "with a light on each pole the bottom should be lit ({both_lights:.4} linear); \
+         the rest of this test has nothing to compare against",
+    );
+
+    rig.resources.insert(MeshletDebugMode::SingleLight);
+    rig.resources
+        .insert(kooch_lighting::DebugLight(Some(from_above)));
+    let isolated = render(&mut rig);
+
+    let one_light = brightness(&isolated, bottom_x, bottom_y);
+    assert!(
+        one_light < both_lights / 4.0,
+        "the pole facing away from the isolated light is still at \
+         {one_light:.4} linear against {both_lights:.4} with both — the view \
+         is not isolating anything",
+    );
+}
+
+/// Greyscale is half the point: with the albedo gone, a coloured light
+/// must not put its colour back.
+///
+/// A green sun over a white sphere renders green in the lit frame and
+/// has to render grey here, or the view is answering "what colour is
+/// this" when the question was "how much light lands here".
+#[test]
+fn the_isolated_light_renders_grey_whatever_colour_it_is() {
+    let Some(mut rig) = rig() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    rig.resources.insert(kooch_lighting::AmbientLight {
+        intensity: 0.0,
+        ..Default::default()
+    });
+    let green = add_coloured(
+        &mut rig.resources,
+        Vec3::NEG_Z,
+        2_000.0,
+        Vec3::new(0.1, 1.0, 0.1),
+    );
+
+    rig.resources.insert(MeshletDebugMode::SingleLight);
+    rig.resources
+        .insert(kooch_lighting::DebugLight(Some(green)));
+    let pixels = render(&mut rig);
+
+    let [r, g, b, a] = pixel(&pixels, SIZE / 2, SIZE / 2);
+    assert_eq!(a, 255, "the sphere's centre pixel is background");
+    assert!(
+        g > 20,
+        "the centre pixel is black ({r},{g},{b}); nothing is being shaded",
+    );
+    assert!(
+        r == g && g == b,
+        "the isolated light rendered {r},{g},{b} — a green light is \
+         tinting a view that is supposed to be luminance only",
     );
 }

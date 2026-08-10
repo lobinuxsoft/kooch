@@ -378,6 +378,15 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         ..Default::default()
     };
 
+    // What the isolated light casts, in words (#743). Read before the
+    // UI runs because the panel has no `Resources`, and computed only
+    // while the view is open — it is three component lookups, but three
+    // that no other frame has any reason to pay for.
+    let single_light_note = (meshlet_debug_mode == MeshletDebugMode::SingleLight)
+        .then(|| overlay.selected_entities.first().copied())
+        .flatten()
+        .and_then(|entity| kooch_lighting::shadow_note(resources, entity));
+
     let ui_start = std::time::Instant::now();
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
@@ -411,6 +420,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         project_crate_root.as_deref(),
         &mut meshlet_debug_mode,
         meshlet_debug_caps,
+        single_light_note,
         &mut meshlet_lod_settings,
         meshlet_stats,
         resources
@@ -458,6 +468,20 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // the resource map before the viewport render pass picks them up.
     resources.insert(meshlet_debug_mode);
     resources.insert(meshlet_lod_settings);
+
+    // Which light the single-light view isolates (#743): the selection,
+    // because "one light at a time" is what selecting a light already
+    // means and a second list to pick from is a second thing to keep in
+    // step with the scene.
+    //
+    // Only while the view is open. Off, the resource carries `None` and
+    // `GpuLights::update` skips resolving a slot — a shipped game never
+    // inserts it at all and pays nothing.
+    resources.insert(kooch_lighting::DebugLight(
+        (meshlet_debug_mode == MeshletDebugMode::SingleLight)
+            .then(|| overlay.selected_entities.first().copied())
+            .flatten(),
+    ));
 
     if let Some(size) = viewport_request {
         viewport.request_size(size);

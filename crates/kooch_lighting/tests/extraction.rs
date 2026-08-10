@@ -90,7 +90,7 @@ fn extracts_every_kind() {
         SpotLight::default(),
     );
 
-    let lights = extract_lights(&r);
+    let lights = extract_lights(&r).lights;
     assert_eq!(lights.len(), 3);
     assert!(lights.iter().any(|l| l.kind == LIGHT_KIND_DIRECTIONAL));
     assert!(lights.iter().any(|l| l.kind == LIGHT_KIND_POINT));
@@ -105,7 +105,7 @@ fn a_point_light_carries_its_world_position() {
         Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0)),
         PointLight::default(),
     );
-    let lights = extract_lights(&r);
+    let lights = extract_lights(&r).lights;
     assert_eq!(lights[0].position, [1.0, 2.0, 3.0]);
 }
 
@@ -120,7 +120,7 @@ fn a_directional_lights_direction_follows_its_transform() {
         Mat4::from_quat(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
         DirectionalLight::default(),
     );
-    let dir = Vec3::from(extract_lights(&r)[0].direction);
+    let dir = Vec3::from(extract_lights(&r).lights[0].direction);
     assert!(
         dir.abs_diff_eq(Vec3::NEG_Y, 1e-5),
         "expected -Y, got {dir:?}"
@@ -138,7 +138,7 @@ fn inactive_lights_do_not_reach_the_gpu() {
             ..Default::default()
         },
     );
-    assert!(extract_lights(&r).is_empty());
+    assert!(extract_lights(&r).lights.is_empty());
 }
 
 /// A light with no transform has no direction and no position. Placing
@@ -149,10 +149,67 @@ fn a_light_without_a_transform_is_skipped_not_invented() {
     let mut r = world();
     let entity = spawn(&mut r);
     insert(&mut r, entity, PointLight::default());
-    assert!(extract_lights(&r).is_empty());
+    assert!(extract_lights(&r).lights.is_empty());
 }
 
 #[test]
 fn an_empty_world_extracts_nothing_rather_than_panicking() {
-    assert!(extract_lights(&world()).is_empty());
+    assert!(extract_lights(&world()).lights.is_empty());
+}
+
+/// The single-light debug view (#743) addresses a light by its slot in
+/// the buffer, and the only thing that decides that slot is the order
+/// this walk happens to run in. If a slot ever stops naming the entity
+/// it was resolved from, the view isolates a different light than the
+/// one selected and looks like a shading bug.
+#[test]
+fn a_slot_names_the_entity_it_came_from() {
+    let mut r = world();
+    let sun = light_at(&mut r, Mat4::IDENTITY, DirectionalLight::default());
+    let lamp = light_at(&mut r, Mat4::IDENTITY, PointLight::default());
+    let torch = light_at(&mut r, Mat4::IDENTITY, SpotLight::default());
+
+    let extracted = extract_lights(&r);
+    for (entity, kind) in [
+        (sun, LIGHT_KIND_DIRECTIONAL),
+        (lamp, LIGHT_KIND_POINT),
+        (torch, LIGHT_KIND_SPOT),
+    ] {
+        let slot = extracted.slot_of(entity).expect("every light has a slot");
+        assert_eq!(
+            extracted.lights[slot as usize].kind, kind,
+            "slot {slot} holds a different light than the entity it resolved from",
+        );
+    }
+}
+
+/// Selecting a crate or the camera is the common case, not an error.
+#[test]
+fn an_entity_that_is_not_a_light_has_no_slot() {
+    let mut r = world();
+    light_at(&mut r, Mat4::IDENTITY, DirectionalLight::default());
+    let not_a_light = spawn(&mut r);
+
+    assert!(extract_lights(&r).slot_of(not_a_light).is_none());
+}
+
+/// An inactive light is not in the buffer, so its slot cannot exist —
+/// and the view has to say "nothing selected" rather than point at
+/// whichever light shifted down into its index.
+#[test]
+fn an_inactive_light_has_no_slot() {
+    let mut r = world();
+    let off = light_at(
+        &mut r,
+        Mat4::IDENTITY,
+        DirectionalLight {
+            active: false,
+            ..Default::default()
+        },
+    );
+    light_at(&mut r, Mat4::IDENTITY, PointLight::default());
+
+    let extracted = extract_lights(&r);
+    assert_eq!(extracted.lights.len(), 1);
+    assert!(extracted.slot_of(off).is_none());
 }

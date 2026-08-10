@@ -258,7 +258,8 @@ impl GpuLights {
         camera_position: Vec3,
         shadows: Option<FrameShadows>,
     ) {
-        let lights = extract_lights(resources);
+        let extracted = extract_lights(resources);
+        let lights = &extracted.lights;
         let count = lights.len() as u32;
         // Logged on change, never per frame. "I placed a light and
         // nothing happened" and "the light never reached the GPU" look
@@ -289,8 +290,16 @@ impl GpuLights {
         self.light_count = count;
         self.ensure_capacity(device, self.light_count);
         if !lights.is_empty() {
-            queue.write_buffer(&self.light_buffer, 0, cast_slice(&lights));
+            queue.write_buffer(&self.light_buffer, 0, cast_slice(lights));
         }
+
+        // Resolved here rather than by the editor because this is where
+        // the buffer's order is decided, and the slot only means
+        // anything against that order (#743).
+        let debug_light = resources
+            .get::<crate::DebugLight>()
+            .and_then(|d| d.0)
+            .and_then(|entity| extracted.slot_of(entity));
 
         let ambient = resources.get::<AmbientLight>().copied().unwrap_or_default();
         let exposure = resources.get::<Exposure>().copied().unwrap_or_default();
@@ -299,7 +308,8 @@ impl GpuLights {
             0,
             bytemuck::bytes_of(
                 &IntiFrame::new(&ambient, &exposure, camera_position, self.light_count)
-                    .with_optional_shadows(shadows),
+                    .with_optional_shadows(shadows)
+                    .with_debug_light(debug_light),
             ),
         );
     }
