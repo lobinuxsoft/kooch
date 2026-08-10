@@ -98,9 +98,18 @@ const INTI_LIGHT_CONTACT_SHADOWS: u32 = 1u;
 struct IntiCascade {
     // Light-space clip-from-world.
     view_proj: mat4x4<f32>,
-    // Maps this cascade's [0,1] shadow uv into the atlas: xy scale,
-    // zw bias. One fma instead of a branch on which quadrant.
-    uv_scale_bias: vec4<f32>,
+    // Which layer of the shadow array this cascade rendered into.
+    // Was a quadrant transform into a single atlas texture; an array
+    // layer is one binding all the same and leaves the uv untouched.
+    layer: u32,
+    // 🔴 THREE SCALARS, never `vec3<u32>`. A vec3 aligns to 16, which
+    // pushes this field to the next boundary and grows the struct by 16
+    // bytes per cascade — 464 → 528 for the frame, and the only symptom
+    // is `min_binding_size` rejecting the pipeline. Same trap the GDF
+    // cascade descriptor hit.
+    _pad_layer0: u32,
+    _pad_layer1: u32,
+    _pad_layer2: u32,
     // View-space depth past which the next cascade takes over.
     far_depth: f32,
     // World units per shadow texel, for the filter radius and the
@@ -166,7 +175,7 @@ struct IntiFrame {
 // A comparison sampler, so the hardware does the depth test and returns
 // a filtered occlusion fraction rather than a depth to compare by hand —
 // bilinear PCF for free, on the texture unit.
-@group({{INTI_GROUP}}) @binding(2) var inti_shadow_atlas: texture_depth_2d;
+@group({{INTI_GROUP}}) @binding(2) var inti_shadow_atlas: texture_depth_2d_array;
 @group({{INTI_GROUP}}) @binding(3) var inti_shadow_sampler: sampler_comparison;
 // A second sampler on the SAME texture, non-comparison, for the blocker
 // search: it needs the stored depth, and a comparison sampler only ever
@@ -374,8 +383,7 @@ fn inti_shadow_coords(cascade: IntiCascade, world_position: vec3<f32>) -> vec4<f
     }
     // NDC to uv: x maps directly, y flips because texture space counts
     // down from the top.
-    var uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-    uv = uv * cascade.uv_scale_bias.xy + cascade.uv_scale_bias.zw;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     return vec4<f32>(uv, ndc.z, 1.0);
 }
 
@@ -406,17 +414,19 @@ const INTI_DEPTH_BIAS: f32 = 0.02;
 /// detaching the shadow.
 const INTI_NORMAL_BIAS: f32 = 1.8;
 
-// World units → atlas uv, for this cascade.
+// World units → shadow uv, for this cascade.
 //
-// The cascade's own scale cancels out: a quadrant is `uv_scale_bias.x`
-// of the atlas and spans `texel_world_size × atlas_size ×
-// uv_scale_bias.x` world units, so the ratio is the same expression in
-// every quadrant. Same relation Bevy uses (`1 / (texel_size ×
-// shadow_map_size)`) — a distance in metres is the one honest unit for
-// a filter radius, and texels are not.
+// One layer spans `texel_world_size × layer_size` world units across its
+// whole `[0,1]`, so the ratio is that reciprocal. Same relation Bevy
+// uses (`1 / (texel_size × shadow_map_size)`) — a distance in metres is
+// the one honest unit for a filter radius, and texels are not.
+//
+// `textureDimensions` on an array texture reports one layer, which is
+// what this wants; under the old atlas it reported the whole 2×2 sheet
+// and the quadrant scale had to cancel it back out.
 fn inti_world_to_atlas_uv(cascade: IntiCascade) -> f32 {
-    let atlas = f32(textureDimensions(inti_shadow_atlas).x);
-    return 1.0 / max(cascade.texel_world_size * atlas, 1e-6);
+    let layer_size = f32(textureDimensions(inti_shadow_atlas).x);
+    return 1.0 / max(cascade.texel_world_size * layer_size, 1e-6);
 }
 
 // Average stored depth of whatever is between this point and the light,
@@ -424,6 +434,7 @@ fn inti_world_to_atlas_uv(cascade: IntiCascade) -> f32 {
 // CLOSER to the light and therefore stored GREATER than the receiver.
 fn inti_blocker_depth(
     uv: vec2<f32>,
+    layer: u32,
     receiver_depth: f32,
     radius_uv: f32,
     bounds: vec4<f32>,
@@ -436,7 +447,7 @@ fn inti_blocker_depth(
         // `InvalidSampleLevelExactType` out of naga, which reads like a
         // sampler problem and is a literal one.
         let depth = textureSampleLevel(
-            inti_shadow_atlas, inti_shadow_point_sampler, tap, 0u);
+            inti_shadow_atlas, inti_shadow_point_sampler, tap, layer, 0u);
         sum += select(vec2<f32>(0.0), vec2<f32>(depth, 1.0), depth > receiver_depth);
     }
     if (sum.y == 0.0) {
@@ -476,7 +487,13 @@ fn inti_blocker_depth(
 // where the penumbra is largest, so it would have surfaced as "soft
 // shadows are wrong near cascade boundaries" and looked like a blend
 // bug.
-fn inti_sample_castano(uv: vec2<f32>, depth: f32, scale: f32, bounds: vec4<f32>) -> f32 {
+fn inti_sample_castano(
+    uv: vec2<f32>,
+    layer: u32,
+    depth: f32,
+    scale: f32,
+    bounds: vec4<f32>,
+) -> f32 {
     let map_size = vec2<f32>(textureDimensions(inti_shadow_atlas));
     let inv_map_size = 1.0 / map_size;
 
@@ -511,7 +528,7 @@ fn inti_sample_castano(uv: vec2<f32>, depth: f32, scale: f32, bounds: vec4<f32>)
         for (var i = 0; i < 3; i = i + 1) {
             let tap = clamp(base_uv + vec2<f32>(us[i], vs[j]) * step, bounds.xy, bounds.zw);
             sum += uw[i] * vw[j] * textureSampleCompareLevel(
-                inti_shadow_atlas, inti_shadow_sampler, tap, depth);
+                inti_shadow_atlas, inti_shadow_sampler, tap, layer, depth);
         }
     }
     return sum * (1.0 / 144.0);
@@ -545,19 +562,24 @@ fn inti_sample_cascade(
     }
 
     let to_uv = inti_world_to_atlas_uv(cascade);
-    // This cascade's quadrant, inset by half a texel so a bilinear tap
-    // on the boundary cannot fetch its neighbour either.
+    // The layer, inset by half a texel so a bilinear tap on the border
+    // cannot reach past it. Under the old atlas this clamped to the
+    // cascade's quadrant, because a tap over the edge landed in a
+    // DIFFERENT cascade's depths and shadowed with them. A layer has no
+    // neighbour to bleed from — the clamp stays because a tap outside
+    // [0,1] still wraps or clamps by sampler rule rather than by intent.
     let half_texel = 0.5 / f32(textureDimensions(inti_shadow_atlas).x);
     let bounds = vec4<f32>(
-        cascade.uv_scale_bias.zw + half_texel,
-        cascade.uv_scale_bias.zw + cascade.uv_scale_bias.xy - half_texel,
+        vec2<f32>(half_texel),
+        vec2<f32>(1.0 - half_texel),
     );
 
     // 1. Blocker search, over a disc as wide as the softest penumbra the
     // sun could produce across this cascade's depth range.
     let search_world = max(
         inti.sun_softness * cascade.depth_extent, cascade.texel_world_size * 2.0);
-    let blocker = inti_blocker_depth(coords.xy, coords.z, search_world * to_uv, bounds);
+    let blocker = inti_blocker_depth(
+        coords.xy, cascade.layer, coords.z, search_world * to_uv, bounds);
     if (blocker.y == 0.0) {
         return 1.0;
     }
@@ -579,7 +601,7 @@ fn inti_sample_cascade(
     // stops hiding the shadow map's own aliasing and the edge steps.
     let scale = max(penumbra_world / max(cascade.texel_world_size, 1e-6), 1.0);
 
-    return inti_sample_castano(coords.xy, coords.z, scale, bounds);
+    return inti_sample_castano(coords.xy, cascade.layer, coords.z, scale, bounds);
 }
 
 /// Occlusion at `world_position`, 1 = fully lit.

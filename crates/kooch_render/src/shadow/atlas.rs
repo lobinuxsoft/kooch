@@ -1,14 +1,24 @@
-//! The shadow depth atlas: one texture, one cascade per quadrant.
+//! The shadow depth array: one texture, one cascade per layer.
 //!
-//! # Why an atlas and not four textures
+//! # Why an array and not an atlas
 //!
-//! The shading pass samples whichever cascade covers the fragment, and
-//! which one that is varies per pixel. Four separate textures would mean
-//! four bindings and a dynamic index into them, which WGSL only offers
-//! through binding arrays. One texture with four viewports is a single
-//! binding and a scale-and-bias on the uv — and, on the bind-group
-//! budget this engine has left, one binding is the difference between
-//! fitting and not.
+//! This used to be a single 2×2 atlas with a cascade in each quadrant,
+//! on the stated belief that several shadow maps would mean several
+//! bindings "and a dynamic index into them, which WGSL only offers
+//! through binding arrays".
+//!
+//! 🔴 That conflated two different things. A `texture_depth_2d_array` is
+//! **one** texture and **one** binding, and the layer is an ordinary
+//! argument to `textureSampleCompareLevel` — binding arrays are a
+//! separate feature and are not involved. Bevy has always bound its
+//! shadow maps this way (`directional_shadow_textures:
+//! texture_depth_2d_array`).
+//!
+//! The cost of the mistake was that the atlas is full at four cascades:
+//! a spot light (#777) had nowhere to go, when in Bevy it is one more
+//! layer. Layers also grow without the texture getting quadratically
+//! larger, which is what a 4096² atlas does the moment it needs a fifth
+//! occupant.
 //!
 //! # Why four culls
 //!
@@ -31,33 +41,14 @@ use super::cascades::{CASCADE_COUNT, Cascade};
 /// stair-stepping on the shadow of anything at a shallow angle.
 pub const SHADOW_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// Side of one cascade, in texels. The atlas is twice this on each axis.
+/// Side of one layer, in texels.
 ///
-/// 2048 per cascade means a 4096² atlas — 64 MiB at `Depth32Float`. That
-/// is a real cost and it is the default because the alternative is
-/// visible: at 1024 the near cascade is already soft enough that contact
-/// shadows look detached.
+/// 2048 per cascade over four layers is 64 MiB at `Depth32Float` — the
+/// same as the 4096² atlas it replaced, because the pixel count is
+/// identical. It is the default because the alternative is visible: at
+/// 1024 the near cascade is already soft enough that contact shadows
+/// look detached.
 pub const DEFAULT_CASCADE_SIZE: u32 = 2048;
-
-/// Where a cascade lives in the atlas, in texels.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct AtlasRegion {
-    pub x: u32,
-    pub y: u32,
-    pub size: u32,
-}
-
-impl AtlasRegion {
-    /// Scale and bias that maps a cascade's `[0,1]` shadow uv into the
-    /// atlas's `[0,1]`. The shader multiplies then adds; packing it this
-    /// way keeps the sample site to one `fma` rather than a branch on
-    /// which quadrant.
-    pub fn uv_scale_bias(&self, atlas_size: u32) -> [f32; 4] {
-        let atlas = atlas_size.max(1) as f32;
-        let scale = self.size as f32 / atlas;
-        [scale, scale, self.x as f32 / atlas, self.y as f32 / atlas]
-    }
-}
 
 /// The atlas texture, its per-cascade culls, and where each cascade sits.
 pub struct ShadowAtlas {
@@ -66,7 +57,10 @@ pub struct ShadowAtlas {
     /// One per cascade. See the module docs for why these are not one.
     culls: Vec<MeshletCull>,
     cascade_size: u32,
-    regions: [AtlasRegion; CASCADE_COUNT],
+    /// One view per layer, because a render attachment is a single
+    /// layer: the array view above is for sampling and cannot be a
+    /// depth target.
+    layer_views: Vec<wgpu::TextureView>,
 }
 
 impl ShadowAtlas {
@@ -84,13 +78,13 @@ impl ShadowAtlas {
         max_triangles_per_meshlet: u32,
     ) -> Self {
         let cascade_size = cascade_size.max(1);
-        let atlas_size = cascade_size * 2;
+        let layers = CASCADE_COUNT as u32;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("shadow_atlas"),
             size: wgpu::Extent3d {
-                width: atlas_size,
-                height: atlas_size,
-                depth_or_array_layers: 1,
+                width: cascade_size,
+                height: cascade_size,
+                depth_or_array_layers: layers,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -99,7 +93,22 @@ impl ShadowAtlas {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("shadow_atlas_array_view"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let layer_views = (0..layers)
+            .map(|layer| {
+                texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("shadow_atlas_layer_view"),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: layer,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                })
+            })
+            .collect();
 
         let culls = (0..CASCADE_COUNT)
             .map(|_| MeshletCull::new(device, initial_capacity.max(1), max_triangles_per_meshlet))
@@ -110,7 +119,7 @@ impl ShadowAtlas {
             view,
             culls,
             cascade_size,
-            regions: quadrants(cascade_size),
+            layer_views,
         }
     }
 
@@ -126,12 +135,9 @@ impl ShadowAtlas {
         self.cascade_size
     }
 
-    pub fn atlas_size(&self) -> u32 {
-        self.cascade_size * 2
-    }
-
-    pub fn region(&self, cascade: usize) -> AtlasRegion {
-        self.regions[cascade.min(CASCADE_COUNT - 1)]
+    /// The depth target for one cascade's raster pass.
+    pub fn layer_view(&self, cascade: usize) -> &wgpu::TextureView {
+        &self.layer_views[cascade.min(CASCADE_COUNT - 1)]
     }
 
     pub fn cull(&self, cascade: usize) -> &MeshletCull {
@@ -165,41 +171,38 @@ impl ShadowAtlas {
         &self,
         cascades: &[Cascade; CASCADE_COUNT],
     ) -> [kooch_lighting::GpuCascade; kooch_lighting::FRAME_CASCADE_COUNT] {
-        let atlas = self.atlas_size();
+        gpu_cascade_layers(cascades)
+    }
+}
+
+/// The packing, free of the atlas so it is testable without a device.
+///
+/// Cascade `i` renders into layer `i`. It is the identity today and it
+/// is still written down, because the moment spot lights take layers
+/// behind the cascades (#777) this is the function that has to keep them
+/// apart.
+pub fn gpu_cascade_layers(
+    cascades: &[Cascade; CASCADE_COUNT],
+) -> [kooch_lighting::GpuCascade; kooch_lighting::FRAME_CASCADE_COUNT] {
+    {
         std::array::from_fn(|i| kooch_lighting::GpuCascade {
             view_proj: cascades[i].view_proj.to_cols_array_2d(),
-            uv_scale_bias: self.regions[i].uv_scale_bias(atlas),
+            layer: i as u32,
+            _pad_layer: [0; 3],
             far_depth: cascades[i].far_depth,
             texel_world_size: cascades[i].texel_world_size,
             depth_extent: cascades[i].depth_extent,
             _pad0: 0.0,
         })
     }
-
-    /// Bytes the atlas occupies, for the VRAM tracker.
-    pub fn byte_size(&self) -> u64 {
-        let side = self.atlas_size() as u64;
-        side * side * 4
-    }
 }
 
-/// Quadrant layout: cascade 0 top-left, 1 top-right, 2 bottom-left,
-/// 3 bottom-right.
-///
-/// Reading order, so a capture of the atlas is inspectable by eye — the
-/// near cascade is the small tight one at the top left, and if it is not
-/// there, the split scheme is upside down.
-fn quadrants(cascade_size: u32) -> [AtlasRegion; CASCADE_COUNT] {
-    let mut regions = [AtlasRegion {
-        x: 0,
-        y: 0,
-        size: cascade_size,
-    }; CASCADE_COUNT];
-    for (i, region) in regions.iter_mut().enumerate() {
-        region.x = (i as u32 % 2) * cascade_size;
-        region.y = (i as u32 / 2) * cascade_size;
+impl ShadowAtlas {
+    /// Bytes the array occupies, for the VRAM tracker.
+    pub fn byte_size(&self) -> u64 {
+        let side = self.cascade_size as u64;
+        side * side * 4 * self.layer_views.len() as u64
     }
-    regions
 }
 
 #[cfg(test)]

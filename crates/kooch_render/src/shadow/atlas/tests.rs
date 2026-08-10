@@ -1,70 +1,61 @@
 use super::*;
 
-#[test]
-fn quadrants_tile_the_atlas_without_overlapping() {
-    let regions = quadrants(2048);
-    for (i, a) in regions.iter().enumerate() {
-        for b in regions.iter().skip(i + 1) {
-            let disjoint = a.x + a.size <= b.x
-                || b.x + b.size <= a.x
-                || a.y + a.size <= b.y
-                || b.y + b.size <= a.y;
-            assert!(disjoint, "cascades overlap: {a:?} and {b:?}");
-        }
-    }
-    // And they cover it: four quadrants of a 2× square.
-    let covered: u32 = regions.iter().map(|r| r.size * r.size / 1024).sum();
-    assert_eq!(covered, (4096 * 4096) / 1024);
-}
+use glam::Mat4;
 
-#[test]
-fn the_near_cascade_is_top_left() {
-    let regions = quadrants(2048);
-    assert_eq!(
-        regions[0],
-        AtlasRegion {
-            x: 0,
-            y: 0,
-            size: 2048
-        }
-    );
-}
-
-/// The uv transform has to land a cascade's full `[0,1]` inside its
-/// own quadrant and nowhere else. Getting the bias wrong samples a
-/// neighbouring cascade, which looks like a shadow from the wrong
-/// distance rather than like a broken transform.
-#[test]
-fn uv_transform_maps_each_cascade_into_its_own_quadrant() {
-    let regions = quadrants(2048);
-    let atlas = 4096;
-    for (i, region) in regions.iter().enumerate() {
-        let [sx, sy, bx, by] = region.uv_scale_bias(atlas);
-        let corner = |u: f32, v: f32| (u * sx + bx, v * sy + by);
-
-        let (x0, y0) = corner(0.0, 0.0);
-        let (x1, y1) = corner(1.0, 1.0);
-        let expect_x0 = region.x as f32 / atlas as f32;
-        let expect_y0 = region.y as f32 / atlas as f32;
-
-        assert!((x0 - expect_x0).abs() < 1e-6, "cascade {i} u origin");
-        assert!((y0 - expect_y0).abs() < 1e-6, "cascade {i} v origin");
-        assert!(
-            (x1 - (expect_x0 + 0.5)).abs() < 1e-6,
-            "cascade {i} must span exactly half the atlas, got {x1}",
-        );
-        assert!(
-            (y1 - (expect_y0 + 0.5)).abs() < 1e-6,
-            "cascade {i} v extent"
-        );
-        assert!((0.0..=1.0).contains(&x1) && (0.0..=1.0).contains(&y1));
+/// A cascade with nothing meaningful in it: these tests are about which
+/// layer each one is assigned, and the placement is irrelevant to that.
+fn placeholder() -> Cascade {
+    Cascade {
+        view_proj: Mat4::IDENTITY,
+        light_eye: glam::Vec3::ZERO,
+        far_depth: 0.0,
+        texel_world_size: 1.0,
+        depth_extent: 1.0,
     }
 }
 
+/// The quadrant packing these tests used to check is gone with the
+/// atlas. What replaces it is the one thing a layer layout can still get
+/// wrong: two cascades naming the same layer, which samples one
+/// cascade's depths through another's transform and reads as a shadow
+/// from the wrong distance — the exact failure the packing tests
+/// existed to prevent.
 #[test]
-fn the_atlas_is_twice_a_cascade_on_each_axis() {
-    let regions = quadrants(1024);
-    let max_x = regions.iter().map(|r| r.x + r.size).max().unwrap();
-    let max_y = regions.iter().map(|r| r.y + r.size).max().unwrap();
-    assert_eq!((max_x, max_y), (2048, 2048));
+fn every_cascade_gets_its_own_layer() {
+    let cascades = [placeholder(); CASCADE_COUNT];
+    let gpu = gpu_cascade_layers(&cascades);
+
+    let mut seen = Vec::new();
+    for (i, cascade) in gpu.iter().enumerate() {
+        assert!(
+            !seen.contains(&cascade.layer),
+            "cascade {i} reuses layer {}",
+            cascade.layer,
+        );
+        seen.push(cascade.layer);
+    }
+    assert_eq!(seen.len(), CASCADE_COUNT);
+}
+
+/// The layer is an index into the texture's layers, so it has to stay
+/// inside the count the texture was allocated with. One past the end is
+/// not a validation error at sample time — it clamps, and clamping means
+/// every cascade past the end silently shares the last one's depths.
+#[test]
+fn no_layer_points_past_the_texture() {
+    let gpu = gpu_cascade_layers(&[placeholder(); CASCADE_COUNT]);
+    for cascade in &gpu {
+        assert!((cascade.layer as usize) < CASCADE_COUNT);
+    }
+}
+
+/// Four layers of `size²`, not one texture of `2·size` square. The pixel
+/// count is identical — which is the point, the migration off the atlas
+/// was not supposed to cost or save memory — so a regression here means
+/// somebody changed the layer count without saying so.
+#[test]
+fn the_array_costs_what_the_atlas_did() {
+    let size: u64 = 2048;
+    let per_layer = size * size * 4;
+    assert_eq!(per_layer * CASCADE_COUNT as u64, 4096 * 4096 * 4);
 }

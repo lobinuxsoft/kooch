@@ -302,7 +302,6 @@ impl ShadowRasterizer {
         }
 
         for i in 0..CASCADE_COUNT {
-            let region = atlas.region(i);
             let cull = atlas.cull(i);
             let visible_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("shadow_visible_bg"),
@@ -317,18 +316,20 @@ impl ShadowRasterizer {
                 label: Some("shadow_cascade_pass"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: atlas.view(),
+                    view: atlas.layer_view(i),
                     depth_ops: Some(wgpu::Operations {
                         // Reversed-Z: 0 is the far plane, so an empty
                         // cascade reads as "nothing between here and the
                         // light" rather than as "everything is shadowed".
                         // Clearing to 1 would put the whole scene in
                         // shadow the first frame a cascade draws nothing.
-                        load: if i == 0 {
-                            wgpu::LoadOp::Clear(0.0)
-                        } else {
-                            wgpu::LoadOp::Load
-                        },
+                        //
+                        // Every layer clears, where the atlas had only
+                        // cascade 0 clear (it owned the whole texture)
+                        // and the rest load. A layer is its own
+                        // attachment and loading here would keep last
+                        // frame's depths.
+                        load: wgpu::LoadOp::Clear(0.0),
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -337,20 +338,12 @@ impl ShadowRasterizer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            // The scissor as well as the viewport: a viewport clips
-            // geometry but does not stop a clear or a bias from touching
-            // the rest of the attachment, and a cascade writing into its
-            // neighbour's quadrant reads as a shadow from the wrong
-            // distance.
-            pass.set_viewport(
-                region.x as f32,
-                region.y as f32,
-                region.size as f32,
-                region.size as f32,
-                0.0,
-                1.0,
-            );
-            pass.set_scissor_rect(region.x, region.y, region.size, region.size);
+            // No viewport and no scissor: the layer IS the cascade.
+            // The atlas needed both, because a viewport clips geometry
+            // but does not stop a clear or a depth bias from reaching
+            // the rest of the attachment, and a cascade bleeding into
+            // its neighbour's quadrant read as a shadow from the wrong
+            // distance. Layers cannot touch each other.
             pass.set_pipeline(&self.pipeline);
             let offset = (i as u64 * self.cascade_stride) as u32;
             pass.set_bind_group(0, &cascade_bg, &[offset]);

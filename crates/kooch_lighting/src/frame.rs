@@ -179,8 +179,19 @@ impl PhysicalCamera {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct GpuCascade {
     pub view_proj: [[f32; 4]; 4],
-    /// xy scale, zw bias — maps this cascade's `[0,1]` uv into the atlas.
-    pub uv_scale_bias: [f32; 4],
+    /// Which layer of the shadow array this cascade rendered into.
+    ///
+    /// Replaced a `uv_scale_bias` that packed this cascade's quadrant of
+    /// a single atlas texture. The atlas existed on the belief that a
+    /// dynamic index into several shadow maps needed binding arrays; it
+    /// does not — `texture_depth_2d_array` is one binding and one
+    /// sampler, and the layer is an ordinary argument to
+    /// `textureSampleCompareLevel`. Bevy has always done it this way.
+    pub layer: u32,
+    /// 🔴 Three scalars on the WGSL side too, never a `vec3<u32>`: that
+    /// aligns to 16 and grows every cascade by 16 bytes, which surfaces
+    /// only as `min_binding_size` rejecting the pipeline.
+    pub _pad_layer: [u32; 3],
     pub far_depth: f32,
     pub texel_world_size: f32,
     /// World units the `[0,1]` depth range spans, so the shader can turn
