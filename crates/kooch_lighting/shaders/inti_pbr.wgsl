@@ -562,7 +562,7 @@ fn inti_sample_cascade(
     n_dot_l: f32,
 ) -> f32 {
     return inti_sample_cascade_record(
-        inti.cascades[index], world_position, normal, to_light, n_dot_l);
+        inti.cascades[index], world_position, normal, to_light, n_dot_l, 1.0);
 }
 
 /// The sampling itself, over a record rather than an index into the
@@ -578,7 +578,13 @@ fn inti_sample_cascade_record(
     normal: vec3<f32>,
     to_light: vec3<f32>,
     n_dot_l: f32,
+    // Multiplies `texel_world_size`. 1 for a cascade, whose orthographic
+    // texel is the same size everywhere; a spot's own distance to this
+    // fragment for a spot, whose texel is an ANGLE and only becomes a
+    // length once something says how far away it is.
+    texel_scale: f32,
 ) -> f32 {
+    let texel_world = cascade.texel_world_size * texel_scale;
 
     // Both of Bevy's offsets, in world space, and no rasteriser depth
     // bias to go with them. The normal term scales with how obliquely
@@ -589,7 +595,7 @@ fn inti_sample_cascade_record(
     // doubles the offset on grazing surfaces, which is exactly where a
     // shadow detaching from its object is most visible.
     let offset_position = world_position
-        + normal * (cascade.texel_world_size * INTI_NORMAL_BIAS)
+        + normal * (texel_world * INTI_NORMAL_BIAS)
         + to_light * INTI_DEPTH_BIAS;
 
     let coords = inti_shadow_coords(cascade, offset_position);
@@ -597,7 +603,7 @@ fn inti_sample_cascade_record(
         return 1.0;
     }
 
-    let to_uv = inti_world_to_atlas_uv(cascade);
+    let to_uv = 1.0 / max(texel_world * f32(textureDimensions(inti_shadow_atlas).x), 1e-6);
     // The layer, inset by half a texel so a bilinear tap on the border
     // cannot reach past it. Under the old atlas this clamped to the
     // cascade's quadrant, because a tap over the edge landed in a
@@ -613,7 +619,7 @@ fn inti_sample_cascade_record(
     // 1. Blocker search, over a disc as wide as the softest penumbra the
     // sun could produce across this cascade's depth range.
     let search_world = max(
-        inti.sun_softness * cascade.depth_extent, cascade.texel_world_size * 2.0);
+        inti.sun_softness * cascade.depth_extent, texel_world * 2.0);
     let blocker = inti_blocker_depth(
         coords.xy, cascade.layer, coords.z, search_world * to_uv, bounds);
     if (blocker.y == 0.0) {
@@ -635,7 +641,7 @@ fn inti_sample_cascade_record(
     // The kernel is one texel wide at scale 1, so this is the penumbra
     // measured in kernel widths, floored at 1: below that the filter
     // stops hiding the shadow map's own aliasing and the edge steps.
-    let scale = max(penumbra_world / max(cascade.texel_world_size, 1e-6), 1.0);
+    let scale = max(penumbra_world / max(texel_world, 1e-6), 1.0);
 
     return inti_sample_castano(coords.xy, cascade.layer, coords.z, scale, bounds);
 }
@@ -782,8 +788,12 @@ fn inti_light_contribution(
         // A spot casts into a layer of the same array the cascades use
         // (#777). A point light still cannot: it needs six faces, which
         // is a cube map and its own bindings.
+        // Along the cone axis, the same measure Bevy takes: the radial
+        // distance would widen the bias towards the edge of the cone,
+        // where the map is not actually coarser.
+        let axial = dot(light.direction, surf.world_position - light.position);
         shadow = inti_spot_shadow(
-            light.shadow_slot, surf.world_position, surf.n, s.to_light, n_dot_l);
+            light.shadow_slot, surf.world_position, surf.n, s.to_light, n_dot_l, axial);
     }
 
     // Contact shadows (#735) — the last few centimetres the cascades
@@ -811,12 +821,18 @@ fn inti_spot_shadow(
     normal: vec3<f32>,
     to_light: vec3<f32>,
     n_dot_l: f32,
+    distance_to_light: f32,
 ) -> f32 {
     if (slot >= inti.spot_shadow_count) {
         return 1.0;
     }
+    // Bevy multiplies the normal bias by the distance to the light in
+    // exactly this place, and it is the whole reason a perspective map
+    // does not need a bias tuned per scene: the texel a fragment lands
+    // in really is that much bigger the further out it is.
     return inti_sample_cascade_record(
-        inti.spot_shadows[slot], world_position, normal, to_light, n_dot_l);
+        inti.spot_shadows[slot], world_position, normal, to_light, n_dot_l,
+        max(distance_to_light, 0.0));
 }
 
 // The whole model, for one surface point.

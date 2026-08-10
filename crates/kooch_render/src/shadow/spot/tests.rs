@@ -113,3 +113,38 @@ fn the_record_carries_the_layer_it_was_given() {
         6
     );
 }
+
+/// 🔴 The regression the first smoke found. `texel_world_size` on a spot
+/// is an angle per texel, NOT metres: the shader multiplies it by each
+/// fragment's own distance to the light.
+///
+/// Baking `range` in instead biases every fragment as though it sat at
+/// the far end of the cone. For a 100 m spot over objects five metres
+/// away that was a 17 cm offset along the normal — the shadow shrank and
+/// lifted off the object, and nothing about that reads as a unit error.
+#[test]
+fn the_texel_size_does_not_depend_on_range() {
+    let near = SpotShadowSource {
+        range: 10.0,
+        ..source(Vec3::ZERO, Vec3::NEG_Z, 0.5)
+    };
+    let far = SpotShadowSource {
+        range: 1000.0,
+        ..near
+    };
+    assert_eq!(
+        spot_shadow(&near, 4, 2048).texel_world_size,
+        spot_shadow(&far, 4, 2048).texel_world_size,
+        "range must not reach the bias — it is what made the first smoke \
+         peter-pan",
+    );
+}
+
+/// And it does scale the way a texel does: a wider cone spreads the same
+/// texels over more of the world.
+#[test]
+fn a_wider_cone_has_bigger_texels() {
+    let narrow = spot_shadow(&source(Vec3::ZERO, Vec3::NEG_Z, 0.2), 4, 2048).texel_world_size;
+    let wide = spot_shadow(&source(Vec3::ZERO, Vec3::NEG_Z, 1.0), 4, 2048).texel_world_size;
+    assert!(wide > narrow, "{wide} should exceed {narrow}");
+}

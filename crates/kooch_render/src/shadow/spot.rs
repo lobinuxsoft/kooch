@@ -62,7 +62,9 @@ pub fn spot_shadow(source: &SpotShadowSource, layer: u32, layer_texels: u32) -> 
         // model only reads this to choose between cascades, and it never
         // chooses between spots.
         far_depth: 0.0,
-        texel_world_size: spot_texel_world_size(half_angle, range, layer_texels),
+        // Per metre of distance, not metres — `inti_spot_shadow`
+        // multiplies it by the fragment's own distance to the light.
+        texel_world_size: spot_texel_size_per_metre(half_angle, layer_texels),
         depth_extent: range,
         _pad0: 0.0,
     }
@@ -84,22 +86,30 @@ fn spot_view(position: Vec3, direction: Vec3) -> Mat4 {
     Mat4::look_to_rh(position, forward, up)
 }
 
-/// World units one shadow texel covers, for the bias and the filter.
+/// Shadow-texel size **per metre of distance from the light**, which is
+/// what a perspective map has instead of a constant.
 ///
-/// ⚠️ A perspective map has no single answer: a texel near the light
-/// covers millimetres and the same texel at the far end of the cone
-/// covers a good deal more. This takes the width at `range` — the far
-/// end — because the bias exists to stop acne, acne appears where texels
-/// are largest, and a bias fitted to the near end leaves the far end
-/// striped.
+/// 🔴 This is Bevy's `texel_size` and it deliberately does NOT involve
+/// `range`:
 ///
-/// The cost of the choice is a slightly over-biased shadow close to the
-/// light, which reads as a small gap under a contact. #735's contact
-/// shadows cover exactly that band, which is what makes this the cheap
-/// side to be wrong on.
-fn spot_texel_world_size(half_angle: f32, range: f32, layer_texels: u32) -> f32 {
-    let width_at_range = 2.0 * range * half_angle.tan();
-    width_at_range / layer_texels.max(1) as f32
+/// ```text
+/// texel_size = 2 * tan(outer_angle) / shadow_map_size
+/// ```
+///
+/// It is an angle per texel, so multiplying it by a fragment's own
+/// distance to the light gives that fragment's texel in metres. The
+/// shader does that multiply per pixel — see `inti_spot_shadow`.
+///
+/// Baking `range` in here instead is what the first version did, and it
+/// biases every fragment as though it sat at the far end of the cone. A
+/// 100 m spot lighting objects five metres away then offsets them by
+/// 17 cm along their normals, which shrinks the shadow and lifts it off
+/// the object: textbook peter-panning, found in the first smoke.
+///
+/// The `SQRT_2` is Bevy's too, for the worst-case diagonal offset.
+fn spot_texel_size_per_metre(half_angle: f32, layer_texels: u32) -> f32 {
+    let texels = layer_texels.max(1) as f32;
+    2.0 * half_angle.tan() / texels * std::f32::consts::SQRT_2
 }
 
 #[cfg(test)]
