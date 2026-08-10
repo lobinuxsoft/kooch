@@ -142,6 +142,14 @@ pub struct SpotShadowSource {
     pub position: glam::Vec3,
     /// Where the light shines — the entity's -Z, same as `GpuLight`.
     pub direction: glam::Vec3,
+    /// 🔴 The outer HALF-angle in **radians**, already converted.
+    ///
+    /// `SpotLight::outer_angle` is in degrees, like Unreal's, and it is
+    /// a half-angle. Converting here rather than at the shadow frustum
+    /// keeps the one place that reads the component next to the
+    /// component: a 45 taken for radians is a 2578° cone, which clamps
+    /// to the widest frustum allowed and produces a shadow map covering
+    /// a hemisphere for a light that lights a doorway.
     pub outer_angle: f32,
     pub range: f32,
 }
@@ -169,7 +177,7 @@ fn extract_spot_sources(resources: &Resources) -> Vec<SpotShadowSource> {
                     entity,
                     position: transform.matrix.w_axis.truncate(),
                     direction: crate::gpu_light::forward(transform.matrix),
-                    outer_angle: light.outer_angle,
+                    outer_angle: light.outer_angle.clamp(0.0, 90.0).to_radians(),
                     range: light.range,
                 });
             }
