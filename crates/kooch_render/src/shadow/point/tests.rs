@@ -111,3 +111,55 @@ fn every_face_is_distinct() {
     seen.dedup();
     assert_eq!(seen.len(), CUBE_FACES, "two faces answered for one axis");
 }
+
+/// A camera at the origin looking down −Z, which is what
+/// `extract_frustum_planes` is fed everywhere else.
+fn frustum() -> [[f32; 4]; 6] {
+    let camera = crate::view_camera::ViewCamera::looking_at(Vec3::ZERO, Vec3::NEG_Z);
+    crate::meshlet::extract_frustum_planes(camera.view_proj(1.0))
+}
+
+#[test]
+fn a_lamp_behind_the_camera_gets_no_cube() {
+    let f = frustum();
+    let behind = source(Vec3::new(0.0, 0.0, 50.0), 5.0);
+    assert!(select_point_casters(&[behind], &f, 4).is_empty());
+}
+
+#[test]
+fn a_lamp_off_screen_still_casts_onto_it() {
+    // Its centre is outside the frustum and its reach is not. A point
+    // test would drop it and the shadow it throws across the visible
+    // floor would vanish as the camera turned.
+    let f = frustum();
+    let edge = source(Vec3::new(0.0, 60.0, -30.0), 50.0);
+    assert_eq!(select_point_casters(&[edge], &f, 4).len(), 1);
+}
+
+/// 🔴 The ordering test: cull, then limit.
+///
+/// Limiting first would spend all four cubes on the nearest lights even
+/// when they are behind the camera, and the visible lamp — the only one
+/// whose shadow anybody can see — would get nothing.
+#[test]
+fn culling_happens_before_the_limit() {
+    let f = frustum();
+    let mut ranked: Vec<_> = (0..4)
+        .map(|i| source(Vec3::new(0.0, 0.0, 10.0 + i as f32), 5.0))
+        .collect();
+    let visible = source(Vec3::new(0.0, 0.0, -20.0), 5.0);
+    ranked.push(visible);
+
+    let chosen = select_point_casters(&ranked, &f, 4);
+    assert_eq!(chosen.len(), 1, "only the visible lamp should get a cube");
+    assert_eq!(chosen[0].position, visible.position);
+}
+
+#[test]
+fn the_limit_still_applies_to_visible_lamps() {
+    let f = frustum();
+    let ranked: Vec<_> = (0..6)
+        .map(|i| source(Vec3::new(0.0, 0.0, -10.0 - i as f32), 5.0))
+        .collect();
+    assert_eq!(select_point_casters(&ranked, &f, 4).len(), 4);
+}

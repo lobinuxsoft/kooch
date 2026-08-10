@@ -35,7 +35,8 @@ pub use cascades::{
 pub use cube::{DEFAULT_CUBE_SIZE, PointShadowCubes};
 pub use pass::{PreparedShadows, ShadowPass};
 pub use point::{
-    CUBE_FACES, FACE_DIRECTIONS, POINT_SHADOW_NEAR_Z, PointShadowDraw, face_view_proj, point_shadow,
+    CUBE_FACES, CubeKey, FACE_DIRECTIONS, POINT_SHADOW_NEAR_Z, PointShadowDraw, face_view_proj,
+    point_shadow, select_point_casters,
 };
 pub use raster::ShadowRasterizer;
 pub use settings::{DEFAULT_SHADOW_DISTANCE, ShadowSettings};

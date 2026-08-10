@@ -515,7 +515,7 @@ impl ShadowRasterizer {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         cubes: &PointShadowCubes,
-        points: &[PointShadowDraw],
+        points: &[(usize, PointShadowDraw)],
         cull_pipelines: &MeshletCullPipelines,
         pool: &GpuGlobalMeshPool,
         scene: &MeshletScene,
@@ -527,11 +527,11 @@ impl ShadowRasterizer {
         if points.is_empty() {
             return;
         }
-        for (slot, light) in points.iter().enumerate() {
+        for (slot, light) in points.iter() {
             for (face, view_proj) in light.faces.iter().enumerate() {
                 queue.write_buffer(
                     &self.cascade_buffer,
-                    self.point_ubo_offset(slot, face),
+                    self.point_ubo_offset(*slot, face),
                     bytemuck::bytes_of(&CascadeUbo {
                         view_proj: view_proj.to_cols_array_2d(),
                     }),
@@ -561,7 +561,7 @@ impl ShadowRasterizer {
             }],
         });
 
-        for (slot, light) in points.iter().enumerate() {
+        for (slot, light) in points.iter() {
             for (face, view_proj) in light.faces.iter().enumerate() {
                 // Perspective with a real eye, so the LOD selector takes
                 // its distance form — `with_lod`, not the cascades'
@@ -600,7 +600,7 @@ impl ShadowRasterizer {
                     label: Some("shadow_point_pass"),
                     color_attachments: &[],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: cubes.face_view(slot, face),
+                        view: cubes.face_view(*slot, face),
                         depth_ops: Some(wgpu::Operations {
                             // Reversed-Z: 0 is far, so an empty face
                             // reads as "nothing between here and the
@@ -615,7 +615,7 @@ impl ShadowRasterizer {
                     multiview_mask: None,
                 });
                 pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &cascade_bg, &[self.point_ubo_offset(slot, face) as u32]);
+                pass.set_bind_group(0, &cascade_bg, &[self.point_ubo_offset(*slot, face) as u32]);
                 pass.set_bind_group(1, meshlet_bg, &[]);
                 pass.set_bind_group(2, &visible_bg, &[]);
                 pass.set_bind_group(3, &instances_bg, &[]);

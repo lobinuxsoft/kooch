@@ -487,18 +487,41 @@ by the caller. Doing it again inside the filter made the radius grow with
 the distance *squared* — which does not look like a wider blur, it looks
 like a gradient smeared across the floor.
 
-### What point shadows do NOT do yet
+#### What a cube costs, and when it costs nothing
 
-Stated because the checkbox now promises something and these are the
-edges of the promise:
+Six faces is the most expensive shadow the engine draws, and
+`cast_shadows` defaults to `true`, so the work has to be **avoided**
+rather than paid.
 
-- **Nothing is frustum-culled.** Every casting light rasterises its six
-  faces every frame, whether or not the camera can see it.
-- **Nothing is cached.** A lamp that has not moved in a static room pays
-  full price every frame. Epic measures a cached local shadow map at
-  0.05 ms against 0.4–0.8 ms invalidated, on a PS5.
-- **The cap has no graceful edge.** The fifth casting light simply has no
-  cube.
+**Culled against the camera's frustum, then limited — in that order.**
+Limiting first would spend all four cubes on the nearest lights even when
+they are behind the camera, and the one lamp whose shadow anybody can see
+would get nothing. The test is the sphere of the light's own `range`, not
+its centre: a lamp just off the edge of the screen still shadows pixels
+that are on it.
+
+**A cube is redrawn only when something it depends on changed.** The key
+is the light's identity, its position, and a hash of every instance in
+the frame. Epic measures a cached local shadow map at **0.05 ms against
+0.4–0.8 ms invalidated** on a PS5, and a lamp bolted to a wall in a room
+where nothing moves should pay the first number.
+
+🔴 That key is **deliberately coarse**: a crate moving across the level
+invalidates a lamp that cannot see it. A cube redrawn for nothing costs a
+frame's work; a cube *not* redrawn when it should have been is a shadow
+frozen in place — silent, and blamed on the light, the material and the
+camera long before the thing that skipped the work. Narrowing it means
+asking which instances a light's range reaches, which is the cluster
+structure (#780) and not this.
+
+⚠️ Two tests render **twice**, because the first frame of a cached cube
+is always drawn and a stale cube only appears on the second. Both were
+verified to fail against a cache that never invalidates.
+
+**A light past the budget says so**, once per transition rather than per
+frame. It keeps lighting the scene without a shadow, which is the right
+failure — but an author staring at a lamp with no shadow could not tell
+that from a bug.
 
 ### The debug views are not in the shader your game runs
 
