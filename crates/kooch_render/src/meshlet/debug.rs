@@ -117,30 +117,6 @@ pub enum MeshletDebugMode {
     /// the selector — a limitation somebody has to guess at is worse
     /// than one written down.
     SingleLight = 14,
-    /// What the SELECTED light's shadow map contains, and through which
-    /// projection it is read.
-    ///
-    /// Follows the World panel's selection like [`Self::SingleLight`]
-    /// does: the first version took whichever spot came first in the
-    /// buffer, so a scene with two could only ever show one. Every light
-    /// kind answers — a point light says it has no map (#778) and a
-    /// directional hands over to the cascade colours.
-    ///
-    /// Three things look identical in a shaded frame and live in three
-    /// different files: the map is empty because the raster drew
-    /// nothing; the map has content but was rasterised through a
-    /// different matrix than the one being sampled; the map and the
-    /// matrix are right and the layer index is wrong.
-    ///
-    /// - magenta — no spot light in the scene casts
-    /// - dark blue — outside this spot's frustum, so nothing to read
-    /// - **red** — inside the frustum and the map is EMPTY there: the
-    ///   raster pass did not draw
-    /// - red/green gradient — the sampled uv, with blue carrying the
-    ///   stored depth. Rotate the light: if the gradient does not turn
-    ///   with it, the record reaching the shader is not the one the
-    ///   pass thinks it wrote
-    ShadowMap = 15,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -201,19 +177,19 @@ impl MeshletDebugMode {
             Self::ShadowCascades,
             Self::ContactShadows,
             Self::SingleLight,
-            Self::ShadowMap,
         ]
     }
 
     /// `true` when the mode reads the editor's selected light.
     ///
-    /// The predicate exists so the editor cannot forget one: the
-    /// shadow-map view shipped broken for exactly that reason — the
-    /// selection was piped through on a `== SingleLight` check, so the
-    /// new mode got no light and rendered flat grey forever.
+    /// A predicate rather than an equality at the call site: a view
+    /// that reads `IntiFrame::debug_light` and is not listed here gets
+    /// `None` and renders its "nothing selected" branch forever, with
+    /// nothing to suggest the fault is in another crate. That already
+    /// happened once, to a view since removed.
     #[inline]
     pub const fn needs_selected_light(self) -> bool {
-        matches!(self, Self::SingleLight | Self::ShadowMap)
+        matches!(self, Self::SingleLight)
     }
 
     /// Reject-reason code the cull shader writes when this mode is
@@ -292,7 +268,6 @@ impl MeshletDebugMode {
             Self::ShadowCascades => "Shadow cascades",
             Self::ContactShadows => "Contact shadows",
             Self::SingleLight => "Single light",
-            Self::ShadowMap => "Shadow map (selected)",
         }
     }
 }

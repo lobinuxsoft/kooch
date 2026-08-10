@@ -28,7 +28,6 @@ fn discriminants_match_the_shader() {
             "INTI_DEBUG_CONTACT_SHADOWS",
         ),
         (MeshletDebugMode::SingleLight, "INTI_DEBUG_SINGLE_LIGHT"),
-        (MeshletDebugMode::ShadowMap, "INTI_DEBUG_SHADOW_MAP"),
     ] {
         let declaration = format!("const {name}: u32 = {}u;", mode.as_u32());
         assert!(
@@ -48,7 +47,6 @@ fn every_inti_view_is_above_the_dispatch_floor() {
         MeshletDebugMode::ShadowCascades,
         MeshletDebugMode::ContactShadows,
         MeshletDebugMode::SingleLight,
-        MeshletDebugMode::ShadowMap,
     ] {
         assert!(mode.as_u32() >= floor, "{mode:?} is below INTI_DEBUG_FIRST");
     }
@@ -172,17 +170,14 @@ fn discriminants_are_stable() {
     assert_eq!(MeshletDebugMode::ShadowCascades.as_u32(), 12);
     assert_eq!(MeshletDebugMode::ContactShadows.as_u32(), 13);
     assert_eq!(MeshletDebugMode::SingleLight.as_u32(), 14);
-    assert_eq!(MeshletDebugMode::ShadowMap.as_u32(), 15);
 }
 
-/// 🔴 The shadow-map view shipped broken because the editor piped the
-/// selection through on `== SingleLight`, so the new mode saw no light
-/// and rendered flat grey. Every mode that reads `IntiFrame::debug_light`
-/// has to answer `true` here or it silently gets nothing.
+/// Every mode that reads `IntiFrame::debug_light` has to answer `true`
+/// here or it silently gets nothing — a view once shipped rendering flat
+/// grey because the editor gated the selection on `== SingleLight`.
 #[test]
 fn every_mode_that_reads_a_light_says_so() {
     assert!(MeshletDebugMode::SingleLight.needs_selected_light());
-    assert!(MeshletDebugMode::ShadowMap.needs_selected_light());
     // And the ones that do not, so the editor is not resolving a
     // selection sixty times a second for a view that ignores it.
     assert!(!MeshletDebugMode::Off.needs_selected_light());

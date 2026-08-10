@@ -280,7 +280,7 @@ this" look identical in a shaded frame and have different fixes.
 - **Contact shadows** — red: the march hit on its first step, which is
   the surface occluding itself. Green: a real occluder. Blue: the ray was
   under two pixels long. Grey: marched and found nothing.
-- **Single light** — one light, alone, in grey, with its shadow.
+- **Single light** — one light, alone, in grey, with its shadow. The one that answers what a shadow *looks like*; the other two answer what the shadow system *did*.
 
 ### Single light
 
