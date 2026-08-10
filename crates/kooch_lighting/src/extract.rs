@@ -136,11 +136,21 @@ pub fn shadow_casting_sun(resources: &Resources) -> Option<glam::Vec3> {
 /// The view cannot distinguish them because there is nothing to draw.
 /// A sentence can.
 ///
-/// `None` when the entity is not an active light.
+/// 🔴 An **inactive** light reports that it is inactive rather than
+/// reporting nothing.
+///
+/// A light with `active == false` never reaches the buffer, so it has no
+/// slot and the view renders magenta — the same magenta as selecting a
+/// crate. Those are different facts with different fixes ("tick the box"
+/// against "select a light"), and a view whose whole purpose is to stop
+/// two causes from looking alike must not introduce a third pair.
+///
+/// `None` only when the entity is not a light at all.
 pub fn shadow_note(resources: &Resources, entity: Entity) -> Option<&'static str> {
-    if let Some(light) = Query::<&DirectionalLight>::new(resources).get(entity)
-        && light.active
-    {
+    if let Some(light) = Query::<&DirectionalLight>::new(resources).get(entity) {
+        if !light.active {
+            return Some(INACTIVE_NOTE);
+        }
         return Some(match (light.cast_shadows, light.contact_shadows) {
             (true, true) => "Directional: cascades + contact shadows",
             (true, false) => "Directional: cascades, contact shadows off",
@@ -152,18 +162,20 @@ pub fn shadow_note(resources: &Resources, entity: Entity) -> Option<&'static str
     // shadow map for a punctual light to cast into, so the field
     // promises something the engine does not do yet. Reporting it would
     // be worse than saying nothing.
-    if let Some(light) = Query::<&PointLight>::new(resources).get(entity)
-        && light.active
-    {
+    if let Some(light) = Query::<&PointLight>::new(resources).get(entity) {
+        if !light.active {
+            return Some(INACTIVE_NOTE);
+        }
         return Some(if light.contact_shadows {
             "Point: contact shadows only — no shadow map exists for punctual lights yet"
         } else {
             "Point: casts no shadow — no shadow map, and contact shadows are off"
         });
     }
-    if let Some(light) = Query::<&SpotLight>::new(resources).get(entity)
-        && light.active
-    {
+    if let Some(light) = Query::<&SpotLight>::new(resources).get(entity) {
+        if !light.active {
+            return Some(INACTIVE_NOTE);
+        }
         return Some(if light.contact_shadows {
             "Spot: contact shadows only — no shadow map exists for punctual lights yet"
         } else {
@@ -172,6 +184,10 @@ pub fn shadow_note(resources: &Resources, entity: Entity) -> Option<&'static str
     }
     None
 }
+
+/// What a light that is switched off says. It names the checkbox,
+/// because that is the whole of the fix.
+const INACTIVE_NOTE: &str = "This light is inactive — tick `active` in the Inspector to see it";
 
 /// `Some(count)` when `lights` is past the budget the shader's linear
 /// loop can carry honestly, `None` otherwise.
