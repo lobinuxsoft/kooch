@@ -23,6 +23,7 @@ mod cascades;
 mod pass;
 mod raster;
 mod settings;
+mod spot;
 
 pub use atlas::{DEFAULT_CASCADE_SIZE, SHADOW_DEPTH_FORMAT, ShadowAtlas};
 pub use cascades::{
@@ -32,3 +33,4 @@ pub use cascades::{
 pub use pass::{PreparedShadows, ShadowPass};
 pub use raster::ShadowRasterizer;
 pub use settings::{DEFAULT_SHADOW_DISTANCE, ShadowSettings};
+pub use spot::{SPOT_SHADOW_NEAR_Z, spot_shadow};

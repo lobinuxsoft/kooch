@@ -78,7 +78,10 @@ impl ShadowAtlas {
         max_triangles_per_meshlet: u32,
     ) -> Self {
         let cascade_size = cascade_size.max(1);
-        let layers = CASCADE_COUNT as u32;
+        // Cascades first, then one layer per spot light that can cast
+        // (#777). Cascades keep layers 0..CASCADE_COUNT so a capture of
+        // the array still reads near-to-far from the top.
+        let layers = (CASCADE_COUNT + kooch_lighting::MAX_SPOT_SHADOWS) as u32;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("shadow_atlas"),
             size: wgpu::Extent3d {
@@ -110,7 +113,10 @@ impl ShadowAtlas {
             })
             .collect();
 
-        let culls = (0..CASCADE_COUNT)
+        // One cull per layer, cascades and spots alike: they could
+        // share, and that would serialise the pass, because each one's
+        // indirect draw reads the survivor list the next one writes.
+        let culls = (0..layers)
             .map(|_| MeshletCull::new(device, initial_capacity.max(1), max_triangles_per_meshlet))
             .collect();
 
@@ -138,6 +144,22 @@ impl ShadowAtlas {
     /// The depth target for one cascade's raster pass.
     pub fn layer_view(&self, cascade: usize) -> &wgpu::TextureView {
         &self.layer_views[cascade.min(CASCADE_COUNT - 1)]
+    }
+
+    /// Which layer spot-shadow `slot` renders into: behind the cascades.
+    pub fn spot_layer(slot: usize) -> u32 {
+        (CASCADE_COUNT + slot) as u32
+    }
+
+    /// The depth target for one spot light's shadow.
+    pub fn spot_layer_view(&self, slot: usize) -> &wgpu::TextureView {
+        &self.layer_views[(CASCADE_COUNT + slot).min(self.layer_views.len() - 1)]
+    }
+
+    /// The cull for one spot light's shadow. Lives behind the cascades'
+    /// in the same list, on the same index scheme as the layers.
+    pub fn spot_cull(&self, slot: usize) -> &MeshletCull {
+        &self.culls[(CASCADE_COUNT + slot).min(self.culls.len() - 1)]
     }
 
     pub fn cull(&self, cascade: usize) -> &MeshletCull {

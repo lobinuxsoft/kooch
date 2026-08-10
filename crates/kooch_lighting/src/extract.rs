@@ -81,10 +81,21 @@ pub fn extract_lights(resources: &Resources) -> ExtractedLights {
             }
         },
     );
+    // The spot walk also hands out shadow slots, in this order, because
+    // `shadow_casting_spots` reads the same order back and the two have
+    // to be the same numbering. A spot past the budget still lights the
+    // scene with `NO_SHADOW_SLOT` — losing the light would be a worse
+    // failure than losing its shadow.
+    let mut next_slot = 0u32;
     Query::<(&SpotLight, &GlobalTransform)>::new(resources).for_each_entity(
         |entity, (light, transform)| {
             if light.active {
-                lights.push(GpuLight::spot(light, transform.matrix));
+                let mut gpu = GpuLight::spot(light, transform.matrix);
+                if light.cast_shadows && (next_slot as usize) < crate::MAX_SPOT_SHADOWS {
+                    gpu.shadow_slot = next_slot;
+                    next_slot += 1;
+                }
+                lights.push(gpu);
                 entities.push(entity);
             }
         },
@@ -118,6 +129,53 @@ pub fn shadow_casting_sun(resources: &Resources) -> Option<glam::Vec3> {
         },
     );
     found
+}
+
+/// Everything the shadow pass needs about one spot light that casts.
+///
+/// The angle is the OUTER one: the cone's edge is where the light stops,
+/// so a frustum fitted to anything narrower clips the lit region and
+/// leaves a hard square inside a round pool of light.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SpotShadowSource {
+    pub entity: Entity,
+    pub position: glam::Vec3,
+    /// Where the light shines — the entity's -Z, same as `GpuLight`.
+    pub direction: glam::Vec3,
+    pub outer_angle: f32,
+    pub range: f32,
+}
+
+/// The spot lights that cast, in the order their shadows are numbered.
+///
+/// 🔴 The order is `extract_lights`'s, and the slot each one gets here is
+/// the `shadow_slot` written into its `GpuLight`. Two walks that disagree
+/// would light a spot with another spot's shadow map — geometry from
+/// somewhere else in the room, which reads as a broken shadow pass and
+/// not as a mismatched index. That is why this calls the same walk
+/// rather than repeating its filter.
+pub fn shadow_casting_spots(resources: &Resources, limit: usize) -> Vec<SpotShadowSource> {
+    let mut out = extract_spot_sources(resources);
+    out.truncate(limit);
+    out
+}
+
+fn extract_spot_sources(resources: &Resources) -> Vec<SpotShadowSource> {
+    let mut out = Vec::new();
+    Query::<(&SpotLight, &GlobalTransform)>::new(resources).for_each_entity(
+        |entity, (light, transform)| {
+            if light.active && light.cast_shadows {
+                out.push(SpotShadowSource {
+                    entity,
+                    position: transform.matrix.w_axis.truncate(),
+                    direction: crate::gpu_light::forward(transform.matrix),
+                    outer_angle: light.outer_angle,
+                    range: light.range,
+                });
+            }
+        },
+    );
+    out
 }
 
 /// What shadow one light actually casts, in words, for the editor to

@@ -35,7 +35,10 @@ mod frame;
 mod gpu_light;
 
 pub use buffer::GpuLights;
-pub use extract::{ExtractedLights, extract_lights, shadow_casting_sun, shadow_note};
+pub use extract::{
+    ExtractedLights, SpotShadowSource, extract_lights, shadow_casting_spots, shadow_casting_sun,
+    shadow_note,
+};
 pub use frame::{
     AmbientLight, DEFAULT_SUN_SOFTNESS, DebugLight, Exposure, FRAME_CASCADE_COUNT, FrameShadows,
     GpuCascade, IntiFrame, MAX_SPOT_SHADOWS, NO_DEBUG_LIGHT, PhysicalCamera,
