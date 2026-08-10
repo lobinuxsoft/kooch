@@ -13,6 +13,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::meshlet::{
     CullParams, GpuGlobalMeshPool, MeshletCullPipelines, MeshletScene, SceneCullParams,
+    projection_scale_y,
 };
 
 use super::atlas::{SHADOW_DEPTH_FORMAT, ShadowAtlas};
@@ -183,7 +184,9 @@ impl ShadowRasterizer {
         let cascade_stride = align.max(std::mem::size_of::<CascadeUbo>() as u64);
         let cascade_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("shadow_cascade_ubo"),
-            size: cascade_stride * CASCADE_COUNT as u64,
+            // Cascades, then one slot per spot light's shadow (#777),
+            // on the same index scheme as the array's layers.
+            size: cascade_stride * (CASCADE_COUNT + kooch_lighting::MAX_SPOT_SHADOWS) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -302,7 +305,6 @@ impl ShadowRasterizer {
         }
 
         for i in 0..CASCADE_COUNT {
-            let region = atlas.region(i);
             let cull = atlas.cull(i);
             let visible_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("shadow_visible_bg"),
@@ -317,18 +319,20 @@ impl ShadowRasterizer {
                 label: Some("shadow_cascade_pass"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: atlas.view(),
+                    view: atlas.layer_view(i),
                     depth_ops: Some(wgpu::Operations {
                         // Reversed-Z: 0 is the far plane, so an empty
                         // cascade reads as "nothing between here and the
                         // light" rather than as "everything is shadowed".
                         // Clearing to 1 would put the whole scene in
                         // shadow the first frame a cascade draws nothing.
-                        load: if i == 0 {
-                            wgpu::LoadOp::Clear(0.0)
-                        } else {
-                            wgpu::LoadOp::Load
-                        },
+                        //
+                        // Every layer clears, where the atlas had only
+                        // cascade 0 clear (it owned the whole texture)
+                        // and the rest load. A layer is its own
+                        // attachment and loading here would keep last
+                        // frame's depths.
+                        load: wgpu::LoadOp::Clear(0.0),
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -337,22 +341,148 @@ impl ShadowRasterizer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            // The scissor as well as the viewport: a viewport clips
-            // geometry but does not stop a clear or a bias from touching
-            // the rest of the attachment, and a cascade writing into its
-            // neighbour's quadrant reads as a shadow from the wrong
-            // distance.
-            pass.set_viewport(
-                region.x as f32,
-                region.y as f32,
-                region.size as f32,
-                region.size as f32,
-                0.0,
-                1.0,
-            );
-            pass.set_scissor_rect(region.x, region.y, region.size, region.size);
+            // No viewport and no scissor: the layer IS the cascade.
+            // The atlas needed both, because a viewport clips geometry
+            // but does not stop a clear or a depth bias from reaching
+            // the rest of the attachment, and a cascade bleeding into
+            // its neighbour's quadrant read as a shadow from the wrong
+            // distance. Layers cannot touch each other.
             pass.set_pipeline(&self.pipeline);
             let offset = (i as u64 * self.cascade_stride) as u32;
+            pass.set_bind_group(0, &cascade_bg, &[offset]);
+            pass.set_bind_group(1, meshlet_bg, &[]);
+            pass.set_bind_group(2, &visible_bg, &[]);
+            pass.set_bind_group(3, &instances_bg, &[]);
+            pass.draw_indirect(cull.indirect_args_buffer(), 0);
+        }
+    }
+
+    /// Culls and draws every shadow-casting spot light into its own
+    /// layer (#777).
+    ///
+    /// Separate from [`Self::render`] rather than folded into it: a
+    /// cascade is orthographic and a spot is not, and the two differ in
+    /// the one place that matters to the cull — how a simplification
+    /// error in metres becomes an error in pixels.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_spots(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        atlas: &ShadowAtlas,
+        spots: &[super::spot::SpotShadowDraw],
+        cull_pipelines: &MeshletCullPipelines,
+        pool: &GpuGlobalMeshPool,
+        scene: &MeshletScene,
+        meshlet_bg: &wgpu::BindGroup,
+        instance_count: u32,
+        max_meshlets_per_mesh: u32,
+        lod_target: f32,
+    ) {
+        if spots.is_empty() {
+            return;
+        }
+        for (slot, spot) in spots.iter().enumerate() {
+            queue.write_buffer(
+                &self.cascade_buffer,
+                (CASCADE_COUNT + slot) as u64 * self.cascade_stride,
+                bytemuck::bytes_of(&CascadeUbo {
+                    view_proj: spot.record.view_proj,
+                }),
+            );
+        }
+
+        let scene_params = SceneCullParams::new(instance_count, max_meshlets_per_mesh);
+        let cascade_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow_spot_bg"),
+            layout: &self.cascade_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &self.cascade_buffer,
+                    offset: 0,
+                    size: std::num::NonZeroU64::new(std::mem::size_of::<CascadeUbo>() as u64),
+                }),
+            }],
+        });
+        let instances_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow_spot_instances_bg"),
+            layout: &self.instances_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: scene.instance_buffer().as_entire_binding(),
+            }],
+        });
+
+        // Every cull, then every draw — the same reason the cascades do
+        // it: a draw reads the survivor list the next cull writes, so
+        // interleaving puts a barrier between each pair.
+        for (slot, spot) in spots.iter().enumerate() {
+            let cull = atlas.spot_cull(slot);
+            // The light's own position, and here it is the real eye of a
+            // real perspective rather than the stand-in an orthographic
+            // cascade needs. The LOD selector is left on its distance
+            // form for the same reason: a spot has a viewpoint, so a
+            // simplification error projects to pixels the ordinary way.
+            let view_proj = glam::Mat4::from_cols_array_2d(&spot.record.view_proj);
+            // 🔴 The LOD selector, which `CullParams::new` leaves at a
+            // factor of ZERO — and a factor of zero does not mean "no
+            // LOD", it means every meshlet's projected error is 0 px, so
+            // the selector keeps only roots. `projection_scale_y`'s own
+            // doc has the symptom: "a sphere collapses to a blob and a
+            // cube to a spike". That is precisely what the first smoke
+            // saw in the sphere's shadow.
+            //
+            // Perspective, so `with_lod` rather than the cascades'
+            // orthographic form: a spot has a viewpoint and a
+            // simplification error really does shrink with distance.
+            let params = CullParams::new(view_proj, spot.eye, max_meshlets_per_mesh).with_lod(
+                atlas.cascade_size() as f32,
+                projection_scale_y(view_proj),
+                (lod_target * SHADOW_LOD_RELAXATION).max(0.01),
+            );
+            cull.dispatch_scene_pool_atomic(
+                cull_pipelines,
+                device,
+                queue,
+                encoder,
+                pool,
+                scene,
+                &params,
+                &scene_params,
+            );
+        }
+
+        for (slot, _) in spots.iter().enumerate() {
+            let cull = atlas.spot_cull(slot);
+            let visible_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("shadow_spot_visible_bg"),
+                layout: &self.visible_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: cull.visible_meshlets_buffer().as_entire_binding(),
+                }],
+            });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("shadow_spot_pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: atlas.spot_layer_view(slot),
+                    depth_ops: Some(wgpu::Operations {
+                        // Reversed-Z: 0 is far, so an empty map reads as
+                        // "nothing between here and the light".
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            let offset = ((CASCADE_COUNT + slot) as u64 * self.cascade_stride) as u32;
             pass.set_bind_group(0, &cascade_bg, &[offset]);
             pass.set_bind_group(1, meshlet_bg, &[]);
             pass.set_bind_group(2, &visible_bg, &[]);

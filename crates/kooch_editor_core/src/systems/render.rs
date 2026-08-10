@@ -382,7 +382,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // UI runs because the panel has no `Resources`, and computed only
     // while the view is open — it is three component lookups, but three
     // that no other frame has any reason to pay for.
-    let single_light_note = (meshlet_debug_mode == MeshletDebugMode::SingleLight)
+    let single_light_note = meshlet_debug_mode
+        .needs_selected_light()
         .then(|| overlay.selected_entities.first().copied())
         .flatten()
         .and_then(|entity| kooch_lighting::shadow_note(resources, entity));
@@ -478,7 +479,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // `GpuLights::update` skips resolving a slot — a shipped game never
     // inserts it at all and pays nothing.
     resources.insert(kooch_lighting::DebugLight(
-        (meshlet_debug_mode == MeshletDebugMode::SingleLight)
+        meshlet_debug_mode
+            .needs_selected_light()
             .then(|| overlay.selected_entities.first().copied())
             .flatten(),
     ));

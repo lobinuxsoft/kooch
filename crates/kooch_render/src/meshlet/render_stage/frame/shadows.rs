@@ -40,13 +40,20 @@ impl MeshletRenderStage {
             .copied()
             .unwrap_or_default();
         let sun = kooch_lighting::shadow_casting_sun(resources);
+        // Spot lights keep the array alive on their own (#777): a scene
+        // lit by a torch and no sun still casts, and releasing the
+        // texture because nothing directional casts would have made
+        // that scene the one case where shadows silently do not exist.
+        let spots =
+            kooch_lighting::shadow_casting_spots(resources, kooch_lighting::MAX_SPOT_SHADOWS);
 
         // Release the atlas when it stops being wanted, or when it was
         // allocated at a resolution the author has since changed. Sixty
         // -four megabytes is worth noticing a settings change over, and
         // a texture cannot be resized in place.
         let texels = settings.clamped_texels();
-        if !settings.enabled || sun.is_none() || self.shadow_texels != texels {
+        let nothing_casts = sun.is_none() && spots.is_empty();
+        if !settings.enabled || nothing_casts || self.shadow_texels != texels {
             if let Some(released) = self.shadows.take() {
                 if let Some(tracker) = self.vram_tracker.as_ref() {
                     tracker.sub(released.atlas_bytes());
@@ -58,7 +65,15 @@ impl MeshletRenderStage {
             }
             self.shadow_texels = 0;
         }
-        let sun = sun.filter(|_| settings.enabled)?;
+        if !settings.enabled || nothing_casts {
+            return None;
+        }
+        // No sun is not no shadows any more. A scene with only spot
+        // lights fits no cascades and still renders their maps; the
+        // cascades' own `shadows_enabled` flag stays off, which is what
+        // stops the shading model from sampling four empty layers.
+        let cascades_enabled = sun.is_some();
+        let sun = sun.unwrap_or(glam::Vec3::NEG_Y);
 
         let shadows = match self.shadows.as_mut() {
             Some(pass) => pass,
@@ -93,9 +108,11 @@ impl MeshletRenderStage {
             camera,
             aspect,
             sun,
+            cascades_enabled,
             settings.max_distance,
             settings.first_cascade_distance,
             settings.sun_softness,
+            &spots,
             meshlet_capacity,
             group_capacity,
         );

@@ -66,9 +66,13 @@ pub struct SpotLight {
     pub outer_angle: f32,
     /// Whether this light casts shadows.
     ///
-    /// ⚠️ Not implemented yet — punctual shadows need a cube map (point)
-    /// or a projected map (spot); #476 shipped the sun's cascades only.
-    /// The field is stored and saved; today nothing reads it.
+    /// Real since #777: a spot renders a perspective depth map into a
+    /// layer of the same array the sun's cascades use. Off by default,
+    /// as in Bevy — a map is a cull and a depth pass per light.
+    ///
+    /// ⚠️ Only the first few casting spots get one; past
+    /// `MAX_SPOT_SHADOWS` a light still lights the scene without a
+    /// shadow, because losing the light would be the worse failure.
     pub cast_shadows: bool,
     /// Whether this light marches the depth buffer for contact shadows.
     ///

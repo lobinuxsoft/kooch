@@ -180,6 +180,18 @@ impl MeshletDebugMode {
         ]
     }
 
+    /// `true` when the mode reads the editor's selected light.
+    ///
+    /// A predicate rather than an equality at the call site: a view
+    /// that reads `IntiFrame::debug_light` and is not listed here gets
+    /// `None` and renders its "nothing selected" branch forever, with
+    /// nothing to suggest the fault is in another crate. That already
+    /// happened once, to a view since removed.
+    #[inline]
+    pub const fn needs_selected_light(self) -> bool {
+        matches!(self, Self::SingleLight)
+    }
+
     /// Reject-reason code the cull shader writes when this mode is
     /// active and `CullParams.debug_active != 0`. Mirrors the
     /// `REJECT_REASON_*` constants in `meshlet_cull/atomic.wgsl`.

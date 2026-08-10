@@ -29,6 +29,11 @@ pub const LIGHT_KIND_SPOT: u32 = 2;
 /// Inspector passes through that state on the way to the intended one.
 const MIN_CONE_COS_DELTA: f32 = 1e-4;
 
+/// [`GpuLight::shadow_slot`] when the light casts no shadow. Every spot
+/// light past [`MAX_SPOT_SHADOWS`](crate::MAX_SPOT_SHADOWS) carries it
+/// too: such a light still lights the scene, it just has no map.
+pub const NO_SHADOW_SLOT: u32 = u32::MAX;
+
 /// One light, as the shader reads it. 64 bytes, `std430`-compatible.
 ///
 /// Mirrors `IntiLight` in `inti_pbr.wgsl` byte for byte. Nothing checks
@@ -61,7 +66,14 @@ pub struct GpuLight {
     pub spot_offset: f32,
     /// Per-light opt-ins, one bit each. See [`GpuLight::FLAG_CONTACT_SHADOWS`].
     pub flags: u32,
-    pub _pad0: f32,
+    /// Index into `IntiFrame::spot_shadows` when this spot light casts,
+    /// or [`NO_SHADOW_SLOT`] (#777).
+    ///
+    /// 🔴 This was the record's last spare word. At 64 B it is now full:
+    /// `radius` (#776) and a rect light's extent (#779) each need more,
+    /// so the next field added grows the struct for every light in the
+    /// scene, which is a bandwidth decision rather than a free slot.
+    pub shadow_slot: u32,
 }
 
 impl GpuLight {
@@ -97,7 +109,7 @@ impl GpuLight {
             spot_scale: 0.0,
             spot_offset: 0.0,
             flags: Self::flags(light.contact_shadows),
-            _pad0: 0.0,
+            shadow_slot: NO_SHADOW_SLOT,
         }
     }
 
@@ -112,7 +124,7 @@ impl GpuLight {
             spot_scale: 0.0,
             spot_offset: 0.0,
             flags: Self::flags(light.contact_shadows),
-            _pad0: 0.0,
+            shadow_slot: NO_SHADOW_SLOT,
         }
     }
 
@@ -128,7 +140,7 @@ impl GpuLight {
             spot_scale: scale,
             spot_offset: offset,
             flags: Self::flags(light.contact_shadows),
-            _pad0: 0.0,
+            shadow_slot: NO_SHADOW_SLOT,
         }
     }
 }

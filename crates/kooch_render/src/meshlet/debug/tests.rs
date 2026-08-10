@@ -171,3 +171,16 @@ fn discriminants_are_stable() {
     assert_eq!(MeshletDebugMode::ContactShadows.as_u32(), 13);
     assert_eq!(MeshletDebugMode::SingleLight.as_u32(), 14);
 }
+
+/// Every mode that reads `IntiFrame::debug_light` has to answer `true`
+/// here or it silently gets nothing — a view once shipped rendering flat
+/// grey because the editor gated the selection on `== SingleLight`.
+#[test]
+fn every_mode_that_reads_a_light_says_so() {
+    assert!(MeshletDebugMode::SingleLight.needs_selected_light());
+    // And the ones that do not, so the editor is not resolving a
+    // selection sixty times a second for a view that ignores it.
+    assert!(!MeshletDebugMode::Off.needs_selected_light());
+    assert!(!MeshletDebugMode::Normals.needs_selected_light());
+    assert!(!MeshletDebugMode::ShadowCascades.needs_selected_light());
+}

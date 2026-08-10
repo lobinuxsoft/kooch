@@ -62,7 +62,8 @@ pub use builder::{
 };
 pub use caps::MeshletDebugCaps;
 pub use cull::{
-    CullParams, camera_in_backface_cone, extract_frustum_planes, sphere_outside_frustum,
+    CullParams, camera_in_backface_cone, extract_frustum_planes, projection_scale_y,
+    sphere_outside_frustum,
 };
 pub use debug::{MeshletDebugMode, MeshletLodSettings};
 pub use deferred::{DEFERRED_COLOR_FORMAT, MeshletDeferredShader};

@@ -83,8 +83,18 @@ struct IntiLight {
     // switch that prevents it costs nothing it was not already
     // reserving.
     flags: u32,
-    _pad0: f32,
+    // Index into `inti.spot_shadows` for a spot light that casts, or
+    // INTI_NO_SHADOW_SLOT. Took the record's last spare word (#777).
+    //
+    // 🔴 The record is now FULL at 64 B. `radius` (#776) and a rect
+    // light's width/height (#779) each need more, so the next field
+    // added here grows the struct — which is a decision about bandwidth
+    // over every light in the scene, not a free slot.
+    shadow_slot: u32,
 }
+
+// `IntiLight.shadow_slot` when the light casts no shadow.
+const INTI_NO_SHADOW_SLOT: u32 = 0xffffffffu;
 
 // Bit 0 of `IntiLight.flags` — this light marches for contact shadows.
 // Mirrors `GpuLight::FLAG_CONTACT_SHADOWS`.
@@ -98,9 +108,18 @@ const INTI_LIGHT_CONTACT_SHADOWS: u32 = 1u;
 struct IntiCascade {
     // Light-space clip-from-world.
     view_proj: mat4x4<f32>,
-    // Maps this cascade's [0,1] shadow uv into the atlas: xy scale,
-    // zw bias. One fma instead of a branch on which quadrant.
-    uv_scale_bias: vec4<f32>,
+    // Which layer of the shadow array this cascade rendered into.
+    // Was a quadrant transform into a single atlas texture; an array
+    // layer is one binding all the same and leaves the uv untouched.
+    layer: u32,
+    // 🔴 THREE SCALARS, never `vec3<u32>`. A vec3 aligns to 16, which
+    // pushes this field to the next boundary and grows the struct by 16
+    // bytes per cascade — 464 → 528 for the frame, and the only symptom
+    // is `min_binding_size` rejecting the pipeline. Same trap the GDF
+    // cascade descriptor hit.
+    _pad_layer0: u32,
+    _pad_layer1: u32,
+    _pad_layer2: u32,
     // View-space depth past which the next cascade takes over.
     far_depth: f32,
     // World units per shadow texel, for the filter radius and the
@@ -133,6 +152,15 @@ struct IntiFrame {
     // The four cascades. Fixed-size because the count is baked into the
     // atlas layout: changing it is a texture change, not a loop bound.
     cascades: array<IntiCascade, 4>,
+    // One per shadow-casting spot light (#777), in the same record the
+    // cascades use: `inti_shadow_coords` already divides by w, which is
+    // exactly what a spot's perspective needs and a cascade's
+    // orthographic does not.
+    spot_shadows: array<IntiCascade, 4>,
+    spot_shadow_count: u32,
+    _pad_spot0: u32,
+    _pad_spot1: u32,
+    _pad_spot2: u32,
     // 0 when no directional light casts, or the atlas has not been
     // rendered. The dummy 1x1 atlas bound in that case would return
     // "fully lit" anyway; the flag skips the work.
@@ -166,7 +194,7 @@ struct IntiFrame {
 // A comparison sampler, so the hardware does the depth test and returns
 // a filtered occlusion fraction rather than a depth to compare by hand —
 // bilinear PCF for free, on the texture unit.
-@group({{INTI_GROUP}}) @binding(2) var inti_shadow_atlas: texture_depth_2d;
+@group({{INTI_GROUP}}) @binding(2) var inti_shadow_atlas: texture_depth_2d_array;
 @group({{INTI_GROUP}}) @binding(3) var inti_shadow_sampler: sampler_comparison;
 // A second sampler on the SAME texture, non-comparison, for the blocker
 // search: it needs the stored depth, and a comparison sampler only ever
@@ -374,8 +402,7 @@ fn inti_shadow_coords(cascade: IntiCascade, world_position: vec3<f32>) -> vec4<f
     }
     // NDC to uv: x maps directly, y flips because texture space counts
     // down from the top.
-    var uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-    uv = uv * cascade.uv_scale_bias.xy + cascade.uv_scale_bias.zw;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     return vec4<f32>(uv, ndc.z, 1.0);
 }
 
@@ -406,17 +433,19 @@ const INTI_DEPTH_BIAS: f32 = 0.02;
 /// detaching the shadow.
 const INTI_NORMAL_BIAS: f32 = 1.8;
 
-// World units → atlas uv, for this cascade.
+// World units → shadow uv, for this cascade.
 //
-// The cascade's own scale cancels out: a quadrant is `uv_scale_bias.x`
-// of the atlas and spans `texel_world_size × atlas_size ×
-// uv_scale_bias.x` world units, so the ratio is the same expression in
-// every quadrant. Same relation Bevy uses (`1 / (texel_size ×
-// shadow_map_size)`) — a distance in metres is the one honest unit for
-// a filter radius, and texels are not.
+// One layer spans `texel_world_size × layer_size` world units across its
+// whole `[0,1]`, so the ratio is that reciprocal. Same relation Bevy
+// uses (`1 / (texel_size × shadow_map_size)`) — a distance in metres is
+// the one honest unit for a filter radius, and texels are not.
+//
+// `textureDimensions` on an array texture reports one layer, which is
+// what this wants; under the old atlas it reported the whole 2×2 sheet
+// and the quadrant scale had to cancel it back out.
 fn inti_world_to_atlas_uv(cascade: IntiCascade) -> f32 {
-    let atlas = f32(textureDimensions(inti_shadow_atlas).x);
-    return 1.0 / max(cascade.texel_world_size * atlas, 1e-6);
+    let layer_size = f32(textureDimensions(inti_shadow_atlas).x);
+    return 1.0 / max(cascade.texel_world_size * layer_size, 1e-6);
 }
 
 // Average stored depth of whatever is between this point and the light,
@@ -424,6 +453,7 @@ fn inti_world_to_atlas_uv(cascade: IntiCascade) -> f32 {
 // CLOSER to the light and therefore stored GREATER than the receiver.
 fn inti_blocker_depth(
     uv: vec2<f32>,
+    layer: u32,
     receiver_depth: f32,
     radius_uv: f32,
     bounds: vec4<f32>,
@@ -436,7 +466,7 @@ fn inti_blocker_depth(
         // `InvalidSampleLevelExactType` out of naga, which reads like a
         // sampler problem and is a literal one.
         let depth = textureSampleLevel(
-            inti_shadow_atlas, inti_shadow_point_sampler, tap, 0u);
+            inti_shadow_atlas, inti_shadow_point_sampler, tap, layer, 0u);
         sum += select(vec2<f32>(0.0), vec2<f32>(depth, 1.0), depth > receiver_depth);
     }
     if (sum.y == 0.0) {
@@ -476,7 +506,13 @@ fn inti_blocker_depth(
 // where the penumbra is largest, so it would have surfaced as "soft
 // shadows are wrong near cascade boundaries" and looked like a blend
 // bug.
-fn inti_sample_castano(uv: vec2<f32>, depth: f32, scale: f32, bounds: vec4<f32>) -> f32 {
+fn inti_sample_castano(
+    uv: vec2<f32>,
+    layer: u32,
+    depth: f32,
+    scale: f32,
+    bounds: vec4<f32>,
+) -> f32 {
     let map_size = vec2<f32>(textureDimensions(inti_shadow_atlas));
     let inv_map_size = 1.0 / map_size;
 
@@ -511,7 +547,7 @@ fn inti_sample_castano(uv: vec2<f32>, depth: f32, scale: f32, bounds: vec4<f32>)
         for (var i = 0; i < 3; i = i + 1) {
             let tap = clamp(base_uv + vec2<f32>(us[i], vs[j]) * step, bounds.xy, bounds.zw);
             sum += uw[i] * vw[j] * textureSampleCompareLevel(
-                inti_shadow_atlas, inti_shadow_sampler, tap, depth);
+                inti_shadow_atlas, inti_shadow_sampler, tap, layer, depth);
         }
     }
     return sum * (1.0 / 144.0);
@@ -525,7 +561,30 @@ fn inti_sample_cascade(
     to_light: vec3<f32>,
     n_dot_l: f32,
 ) -> f32 {
-    let cascade = inti.cascades[index];
+    return inti_sample_cascade_record(
+        inti.cascades[index], world_position, normal, to_light, n_dot_l, 1.0);
+}
+
+/// The sampling itself, over a record rather than an index into the
+/// cascades.
+///
+/// Split out for spot lights (#777): a spot's shadow is the same record
+/// in a different array, so this way the bias, the blocker search, the
+/// Castano filter and the border clamp are one implementation instead of
+/// two that drift.
+fn inti_sample_cascade_record(
+    cascade: IntiCascade,
+    world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_light: vec3<f32>,
+    n_dot_l: f32,
+    // Multiplies `texel_world_size`. 1 for a cascade, whose orthographic
+    // texel is the same size everywhere; a spot's own distance to this
+    // fragment for a spot, whose texel is an ANGLE and only becomes a
+    // length once something says how far away it is.
+    texel_scale: f32,
+) -> f32 {
+    let texel_world = cascade.texel_world_size * texel_scale;
 
     // Both of Bevy's offsets, in world space, and no rasteriser depth
     // bias to go with them. The normal term scales with how obliquely
@@ -536,7 +595,7 @@ fn inti_sample_cascade(
     // doubles the offset on grazing surfaces, which is exactly where a
     // shadow detaching from its object is most visible.
     let offset_position = world_position
-        + normal * (cascade.texel_world_size * INTI_NORMAL_BIAS)
+        + normal * (texel_world * INTI_NORMAL_BIAS)
         + to_light * INTI_DEPTH_BIAS;
 
     let coords = inti_shadow_coords(cascade, offset_position);
@@ -544,20 +603,25 @@ fn inti_sample_cascade(
         return 1.0;
     }
 
-    let to_uv = inti_world_to_atlas_uv(cascade);
-    // This cascade's quadrant, inset by half a texel so a bilinear tap
-    // on the boundary cannot fetch its neighbour either.
+    let to_uv = 1.0 / max(texel_world * f32(textureDimensions(inti_shadow_atlas).x), 1e-6);
+    // The layer, inset by half a texel so a bilinear tap on the border
+    // cannot reach past it. Under the old atlas this clamped to the
+    // cascade's quadrant, because a tap over the edge landed in a
+    // DIFFERENT cascade's depths and shadowed with them. A layer has no
+    // neighbour to bleed from — the clamp stays because a tap outside
+    // [0,1] still wraps or clamps by sampler rule rather than by intent.
     let half_texel = 0.5 / f32(textureDimensions(inti_shadow_atlas).x);
     let bounds = vec4<f32>(
-        cascade.uv_scale_bias.zw + half_texel,
-        cascade.uv_scale_bias.zw + cascade.uv_scale_bias.xy - half_texel,
+        vec2<f32>(half_texel),
+        vec2<f32>(1.0 - half_texel),
     );
 
     // 1. Blocker search, over a disc as wide as the softest penumbra the
     // sun could produce across this cascade's depth range.
     let search_world = max(
-        inti.sun_softness * cascade.depth_extent, cascade.texel_world_size * 2.0);
-    let blocker = inti_blocker_depth(coords.xy, coords.z, search_world * to_uv, bounds);
+        inti.sun_softness * cascade.depth_extent, texel_world * 2.0);
+    let blocker = inti_blocker_depth(
+        coords.xy, cascade.layer, coords.z, search_world * to_uv, bounds);
     if (blocker.y == 0.0) {
         return 1.0;
     }
@@ -577,9 +641,9 @@ fn inti_sample_cascade(
     // The kernel is one texel wide at scale 1, so this is the penumbra
     // measured in kernel widths, floored at 1: below that the filter
     // stops hiding the shadow map's own aliasing and the edge steps.
-    let scale = max(penumbra_world / max(cascade.texel_world_size, 1e-6), 1.0);
+    let scale = max(penumbra_world / max(texel_world, 1e-6), 1.0);
 
-    return inti_sample_castano(coords.xy, coords.z, scale, bounds);
+    return inti_sample_castano(coords.xy, cascade.layer, coords.z, scale, bounds);
 }
 
 /// Occlusion at `world_position`, 1 = fully lit.
@@ -720,6 +784,16 @@ fn inti_light_contribution(
     var shadow = 1.0;
     if (light.kind == INTI_KIND_DIRECTIONAL) {
         shadow = inti_shadow(surf.world_position, surf.n, s.to_light, surf.view_depth, n_dot_l);
+    } else if (light.kind == INTI_KIND_SPOT && light.shadow_slot != INTI_NO_SHADOW_SLOT) {
+        // A spot casts into a layer of the same array the cascades use
+        // (#777). A point light still cannot: it needs six faces, which
+        // is a cube map and its own bindings.
+        // Along the cone axis, the same measure Bevy takes: the radial
+        // distance would widen the bias towards the edge of the cone,
+        // where the map is not actually coarser.
+        let axial = dot(light.direction, surf.world_position - light.position);
+        shadow = inti_spot_shadow(
+            light.shadow_slot, surf.world_position, surf.n, s.to_light, n_dot_l, axial);
     }
 
     // Contact shadows (#735) — the last few centimetres the cascades
@@ -734,6 +808,31 @@ fn inti_light_contribution(
     }
 
     return (diffuse + specular) * s.irradiance * n_dot_l * shadow;
+}
+
+/// A spot light's shadow (#777).
+///
+/// A spot has one map and no splits, so there is nothing to pick by view
+/// depth and nothing to blend at a boundary — everything else is the
+/// cascade path, called on the spot's own record.
+fn inti_spot_shadow(
+    slot: u32,
+    world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_light: vec3<f32>,
+    n_dot_l: f32,
+    distance_to_light: f32,
+) -> f32 {
+    if (slot >= inti.spot_shadow_count) {
+        return 1.0;
+    }
+    // Bevy multiplies the normal bias by the distance to the light in
+    // exactly this place, and it is the whole reason a perspective map
+    // does not need a bias tuned per scene: the texel a fragment lands
+    // in really is that much bigger the further out it is.
+    return inti_sample_cascade_record(
+        inti.spot_shadows[slot], world_position, normal, to_light, n_dot_l,
+        max(distance_to_light, 0.0));
 }
 
 // The whole model, for one surface point.

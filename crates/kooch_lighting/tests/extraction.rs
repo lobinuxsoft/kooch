@@ -281,3 +281,49 @@ fn every_light_kind_reports_when_switched_off() {
         assert!(note.contains("inactive"), "got {note:?}");
     }
 }
+
+/// 🔴 `SpotLight::outer_angle` is in DEGREES and is a half-angle. The
+/// shadow frustum is built in radians, and 45 taken for radians is a
+/// 2578° cone: it clamps to the widest frustum allowed and produces a
+/// map covering a hemisphere for a light that lights a doorway. Nothing
+/// about that looks like a unit bug on screen.
+#[test]
+fn a_spots_shadow_angle_is_converted_to_radians() {
+    let mut r = world();
+    light_at(
+        &mut r,
+        Mat4::IDENTITY,
+        SpotLight {
+            active: true,
+            cast_shadows: true,
+            outer_angle: 45.0,
+            ..Default::default()
+        },
+    );
+
+    let spots = kooch_lighting::shadow_casting_spots(&r, 4);
+    assert_eq!(spots.len(), 1);
+    assert!(
+        (spots[0].outer_angle - std::f32::consts::FRAC_PI_4).abs() < 1e-5,
+        "45 degrees should reach the frustum as {} radians, got {}",
+        std::f32::consts::FRAC_PI_4,
+        spots[0].outer_angle,
+    );
+}
+
+/// A spot that does not cast has no source, so it takes no layer from
+/// one that does.
+#[test]
+fn only_casting_spots_get_a_shadow_source() {
+    let mut r = world();
+    light_at(
+        &mut r,
+        Mat4::IDENTITY,
+        SpotLight {
+            active: true,
+            cast_shadows: false,
+            ..Default::default()
+        },
+    );
+    assert!(kooch_lighting::shadow_casting_spots(&r, 4).is_empty());
+}

@@ -100,7 +100,10 @@ impl GpuLights {
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                        // One layer per cascade, and later per spot
+                        // light (#777). The layer is an argument to the
+                        // sample call, not a second binding.
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,
@@ -362,7 +365,16 @@ fn create_dummy_shadow(device: &wgpu::Device) -> wgpu::TextureView {
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
-    texture.create_view(&wgpu::TextureViewDescriptor::default())
+    // 🔴 `D2Array` explicitly, not the default. A one-layer texture's
+    // default view is `D2`, and a `D2` view against a `D2Array` layout
+    // is a validation failure at bind-group creation — on every scene
+    // with no shadow-casting sun, which is the case nobody renders while
+    // developing shadows.
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("inti_dummy_shadow_view"),
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
 }
 
 fn create_bind_group(

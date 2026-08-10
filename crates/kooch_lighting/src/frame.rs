@@ -179,8 +179,19 @@ impl PhysicalCamera {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct GpuCascade {
     pub view_proj: [[f32; 4]; 4],
-    /// xy scale, zw bias — maps this cascade's `[0,1]` uv into the atlas.
-    pub uv_scale_bias: [f32; 4],
+    /// Which layer of the shadow array this cascade rendered into.
+    ///
+    /// Replaced a `uv_scale_bias` that packed this cascade's quadrant of
+    /// a single atlas texture. The atlas existed on the belief that a
+    /// dynamic index into several shadow maps needed binding arrays; it
+    /// does not — `texture_depth_2d_array` is one binding and one
+    /// sampler, and the layer is an ordinary argument to
+    /// `textureSampleCompareLevel`. Bevy has always done it this way.
+    pub layer: u32,
+    /// 🔴 Three scalars on the WGSL side too, never a `vec3<u32>`: that
+    /// aligns to 16 and grows every cascade by 16 bytes, which surfaces
+    /// only as `min_binding_size` rejecting the pipeline.
+    pub _pad_layer: [u32; 3],
     pub far_depth: f32,
     pub texel_world_size: f32,
     /// World units the `[0,1]` depth range spans, so the shader can turn
@@ -191,6 +202,18 @@ pub struct GpuCascade {
     pub depth_extent: f32,
     pub _pad0: f32,
 }
+
+/// How many shadow-casting spot lights one frame can carry (#777).
+///
+/// Four, because each one costs a layer of the shadow array and a cull
+/// of its own — 2048² at `Depth32Float` is 16 MiB per spot. It is a
+/// budget, not a limit of the technique: raising it is this constant and
+/// a larger texture, and 13.9 ms at 10 W is what decides when.
+///
+/// Lights past the fourth still light the scene, they just do not cast.
+/// Dropping the light itself would be a worse failure than dropping its
+/// shadow, and a far more confusing one.
+pub const MAX_SPOT_SHADOWS: usize = 4;
 
 /// How many cascades the frame carries. Fixed because the count is baked
 /// into the atlas layout — changing it is a texture change.
@@ -220,6 +243,25 @@ pub struct IntiFrame {
     pub camera_forward: [f32; 3],
     pub _pad_forward: f32,
     pub cascades: [GpuCascade; FRAME_CASCADE_COUNT],
+    /// One per shadow-casting spot light, in the same record the
+    /// cascades use (#777).
+    ///
+    /// The same type on purpose: `inti_shadow_coords` already divides by
+    /// `w`, which an orthographic cascade does not need and a spot's
+    /// perspective does — the comment there has said "a spot light's,
+    /// later" since #476. Reusing it means the bias, the Castano filter
+    /// and the border clamp are the ones already ported from Bevy rather
+    /// than a second copy that can drift from them.
+    ///
+    /// ⚠️ Bevy does NOT send a matrix here: it rebuilds the spot's basis
+    /// in the shader from the light's direction and cone angle, because
+    /// its light record has nowhere to put one. That is a constraint of
+    /// their layout, not a better algorithm, and porting it would mean a
+    /// second sampling path beside the one already ported.
+    pub spot_shadows: [GpuCascade; MAX_SPOT_SHADOWS],
+    /// How many entries of `spot_shadows` are live this frame.
+    pub spot_shadow_count: u32,
+    pub _pad_spot: [u32; 3],
     /// 0 when nothing casts, or the atlas has not been rendered. The
     /// dummy atlas bound in that case reads as fully lit anyway; the
     /// flag skips the sampling.
@@ -280,6 +322,9 @@ impl IntiFrame {
             camera_forward: Vec3::NEG_Z.to_array(),
             _pad_forward: 0.0,
             cascades: [GpuCascade::default(); FRAME_CASCADE_COUNT],
+            spot_shadows: [GpuCascade::default(); MAX_SPOT_SHADOWS],
+            spot_shadow_count: 0,
+            _pad_spot: [0; 3],
             shadows_enabled: 0,
             cascade_blend: 0.1,
             sun_softness: DEFAULT_SUN_SOFTNESS,
@@ -297,7 +342,14 @@ impl IntiFrame {
     /// Attaches the shadows from [`FrameShadows`], if the frame has any.
     pub fn with_optional_shadows(self, shadows: Option<FrameShadows>) -> Self {
         match shadows {
-            Some(s) => self.with_shadows(s.camera_forward, s.cascades, s.blend, s.sun_softness),
+            Some(s) => {
+                let frame = if s.cascades_enabled {
+                    self.with_shadows(s.camera_forward, s.cascades, s.blend, s.sun_softness)
+                } else {
+                    self
+                };
+                frame.with_spot_shadows(s.spot_shadows, s.spot_shadow_count)
+            }
             None => self,
         }
     }
@@ -315,6 +367,22 @@ impl IntiFrame {
         self.shadows_enabled = 1;
         self.cascade_blend = blend;
         self.sun_softness = sun_softness.max(0.0);
+        self
+    }
+
+    /// Attaches the spot lights' shadow maps (#777).
+    ///
+    /// Separate from [`Self::with_shadows`], which turns
+    /// `shadows_enabled` on: that flag gates the CASCADE sampling, and a
+    /// scene can have a spot casting with no sun at all. A spot reads
+    /// its own record and its own count, so it needs no flag.
+    pub fn with_spot_shadows(
+        mut self,
+        spot_shadows: [GpuCascade; MAX_SPOT_SHADOWS],
+        count: u32,
+    ) -> Self {
+        self.spot_shadows = spot_shadows;
+        self.spot_shadow_count = count.min(MAX_SPOT_SHADOWS as u32);
         self
     }
 }
@@ -336,6 +404,19 @@ pub struct FrameShadows {
     pub blend: f32,
     /// Tangent of the sun's angular radius. See [`IntiFrame::sun_softness`].
     pub sun_softness: f32,
+    /// 🔴 Whether the CASCADES are real.
+    ///
+    /// False when nothing directional casts and the frame exists only
+    /// for spot lights (#777). The cascades still carry numbers — they
+    /// were fitted to a stand-in direction so the pass has something
+    /// coherent to not draw — and a directional light that does not cast
+    /// would otherwise sample them and be shadowed by a sun that is not
+    /// there.
+    pub cascades_enabled: bool,
+    /// One per shadow-casting spot light (#777).
+    pub spot_shadows: [GpuCascade; MAX_SPOT_SHADOWS],
+    /// How many of `spot_shadows` are live.
+    pub spot_shadow_count: u32,
 }
 
 /// Tangent of the sun's angular radius, by default.
