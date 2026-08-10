@@ -88,6 +88,7 @@ impl MeshletRenderStage {
             // field's doc for why not here.
             shadows: None,
             shadow_texels: 0,
+            point_shadows_dropped: 0,
             gpu_pool: None,
             pool_dirty: false,
             meshlet_bgl,

@@ -12,6 +12,8 @@ use glam::{Mat4, Vec3};
 
 use kooch_lighting::{GpuPointShadow, PointShadowSource};
 
+use crate::meshlet::sphere_outside_frustum;
+
 /// Near plane for every cube face, in metres. Bevy's
 /// `PointLight::DEFAULT_SHADOW_MAP_NEAR_Z`, and the same value the spots
 /// use — a light's near plane is about how close geometry may get to the
@@ -63,6 +65,39 @@ impl PointShadowDraw {
             faces: std::array::from_fn(|face| face_view_proj(position, face, POINT_SHADOW_NEAR_Z)),
         }
     }
+}
+
+/// Which casting point lights get one of the [`MAX_POINT_SHADOWS`] cubes
+/// this frame.
+///
+/// [`MAX_POINT_SHADOWS`]: kooch_lighting::MAX_POINT_SHADOWS
+///
+/// `sources` arrives ranked nearest-first. Two things happen here and
+/// the order between them is the point:
+///
+/// 1. **Cull against the camera's frustum first.** Six faces is the most
+///    expensive shadow in the engine and `cast_shadows` defaults to
+///    true, so a corridor of lamps behind the camera would otherwise
+///    rasterise twenty-four faces of geometry nobody can see.
+/// 2. **Then take the limit.** Culling first is also what puts the four
+///    cubes on lights that are on screen, rather than on whichever four
+///    are nearest — which, standing in a doorway, are the ones behind
+///    you.
+///
+/// The test is the sphere of the light's own `range`, not its centre: a
+/// lamp just off the edge of the screen still shadows pixels that are on
+/// it.
+pub fn select_point_casters(
+    sources: &[PointShadowSource],
+    frustum: &[[f32; 4]; 6],
+    limit: usize,
+) -> Vec<PointShadowSource> {
+    sources
+        .iter()
+        .filter(|light| !sphere_outside_frustum(frustum, light.position, light.range))
+        .take(limit)
+        .copied()
+        .collect()
 }
 
 /// The record the shading model reads for one point light.

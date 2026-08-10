@@ -12,6 +12,7 @@
 
 use kooch_core::resource::Resources;
 
+use crate::meshlet::extract_frustum_planes;
 use crate::shadow::{PreparedShadows, ShadowPass, ShadowSettings};
 use crate::view_camera::ViewCamera;
 
@@ -49,11 +50,55 @@ impl MeshletRenderStage {
         // Point lights, likewise (#778) — and nearest-first, because
         // past the limit a light stops casting and which one should not
         // depend on spawn order.
-        let points = kooch_lighting::shadow_casting_points(
-            resources,
-            camera.position(),
+        //
+        // 🔴 Culled against the camera's frustum BEFORE the limit is
+        // applied, not after. Six faces is the most expensive shadow in
+        // the engine and `PointLight::cast_shadows` defaults to true, so
+        // a corridor of lamps behind the camera would otherwise rasterise
+        // twenty-four faces of geometry nobody can see. Culling first
+        // also means the four cubes go to lights that are actually on
+        // screen rather than to whichever four are nearest including the
+        // ones behind you.
+        //
+        // A light is a sphere of `range`: past that it contributes
+        // nothing, so a sphere fully outside the frustum cannot shadow
+        // any visible pixel. It CAN shadow a pixel while its own centre
+        // is off screen, which is why this is the sphere test and not a
+        // point test.
+        let frustum = extract_frustum_planes(camera.view_proj(aspect));
+        let ranked =
+            kooch_lighting::shadow_casting_points(resources, camera.position(), usize::MAX);
+        let points = crate::shadow::select_point_casters(
+            &ranked,
+            &frustum,
             kooch_lighting::MAX_POINT_SHADOWS,
         );
+
+        // 🔴 The cap degrades in silence otherwise. A light past the
+        // budget keeps lighting the scene and stops casting, which is
+        // the right failure — but an author looking at a lamp whose
+        // shadow is missing has no way to tell that from a bug. Logged
+        // on the transition only, the way the light count is: the state
+        // it reports is steady and sixty lines a second would bury it.
+        let visible = ranked
+            .iter()
+            .filter(|light| {
+                !crate::meshlet::sphere_outside_frustum(&frustum, light.position, light.range)
+            })
+            .count();
+        let dropped = visible.saturating_sub(points.len());
+        if dropped != self.point_shadows_dropped {
+            if dropped > 0 {
+                tracing::warn!(
+                    target: "kooch_render::shadow",
+                    dropped,
+                    budget = kooch_lighting::MAX_POINT_SHADOWS,
+                    "more point lights are casting than there are cube maps; the ones \
+                     furthest from the camera light the scene without a shadow",
+                );
+            }
+            self.point_shadows_dropped = dropped;
+        }
 
         // Release the atlas when it stops being wanted, or when it was
         // allocated at a resolution the author has since changed. Sixty

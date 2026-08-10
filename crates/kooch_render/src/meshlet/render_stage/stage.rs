@@ -67,6 +67,10 @@ pub struct MeshletRenderStage {
     /// Cascade resolution `shadows` was allocated at, so a settings
     /// change is noticed rather than silently ignored.
     pub(super) shadow_texels: u32,
+    /// How many casting point lights went without a cube last frame
+    /// (#778), so the warning fires on the transition rather than sixty
+    /// times a second. Same shape as the light-count log.
+    pub(super) point_shadows_dropped: usize,
 
     /// GPU mirror of [`MeshletPipeline::pool`]. Lazy-rebuilt by
     /// [`Self::render_with_assets`] when [`Self::pool_dirty`] is set,
