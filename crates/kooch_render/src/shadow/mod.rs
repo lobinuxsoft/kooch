@@ -33,4 +33,4 @@ pub use cascades::{
 pub use pass::{PreparedShadows, ShadowPass};
 pub use raster::ShadowRasterizer;
 pub use settings::{DEFAULT_SHADOW_DISTANCE, ShadowSettings};
-pub use spot::{SPOT_SHADOW_NEAR_Z, spot_shadow};
+pub use spot::{SPOT_SHADOW_NEAR_Z, SpotShadowDraw, spot_shadow};

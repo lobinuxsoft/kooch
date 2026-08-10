@@ -183,7 +183,9 @@ impl ShadowRasterizer {
         let cascade_stride = align.max(std::mem::size_of::<CascadeUbo>() as u64);
         let cascade_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("shadow_cascade_ubo"),
-            size: cascade_stride * CASCADE_COUNT as u64,
+            // Cascades, then one slot per spot light's shadow (#777),
+            // on the same index scheme as the array's layers.
+            size: cascade_stride * (CASCADE_COUNT + kooch_lighting::MAX_SPOT_SHADOWS) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -346,6 +348,128 @@ impl ShadowRasterizer {
             // distance. Layers cannot touch each other.
             pass.set_pipeline(&self.pipeline);
             let offset = (i as u64 * self.cascade_stride) as u32;
+            pass.set_bind_group(0, &cascade_bg, &[offset]);
+            pass.set_bind_group(1, meshlet_bg, &[]);
+            pass.set_bind_group(2, &visible_bg, &[]);
+            pass.set_bind_group(3, &instances_bg, &[]);
+            pass.draw_indirect(cull.indirect_args_buffer(), 0);
+        }
+    }
+
+    /// Culls and draws every shadow-casting spot light into its own
+    /// layer (#777).
+    ///
+    /// Separate from [`Self::render`] rather than folded into it: a
+    /// cascade is orthographic and a spot is not, and the two differ in
+    /// the one place that matters to the cull — how a simplification
+    /// error in metres becomes an error in pixels.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_spots(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        atlas: &ShadowAtlas,
+        spots: &[super::spot::SpotShadowDraw],
+        cull_pipelines: &MeshletCullPipelines,
+        pool: &GpuGlobalMeshPool,
+        scene: &MeshletScene,
+        meshlet_bg: &wgpu::BindGroup,
+        instance_count: u32,
+        max_meshlets_per_mesh: u32,
+        lod_target: f32,
+    ) {
+        if spots.is_empty() {
+            return;
+        }
+        for (slot, spot) in spots.iter().enumerate() {
+            queue.write_buffer(
+                &self.cascade_buffer,
+                (CASCADE_COUNT + slot) as u64 * self.cascade_stride,
+                bytemuck::bytes_of(&CascadeUbo {
+                    view_proj: spot.record.view_proj,
+                }),
+            );
+        }
+
+        let scene_params = SceneCullParams::new(instance_count, max_meshlets_per_mesh);
+        let cascade_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow_spot_bg"),
+            layout: &self.cascade_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &self.cascade_buffer,
+                    offset: 0,
+                    size: std::num::NonZeroU64::new(std::mem::size_of::<CascadeUbo>() as u64),
+                }),
+            }],
+        });
+        let instances_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow_spot_instances_bg"),
+            layout: &self.instances_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: scene.instance_buffer().as_entire_binding(),
+            }],
+        });
+
+        // Every cull, then every draw — the same reason the cascades do
+        // it: a draw reads the survivor list the next cull writes, so
+        // interleaving puts a barrier between each pair.
+        for (slot, spot) in spots.iter().enumerate() {
+            let cull = atlas.spot_cull(slot);
+            // The light's own position, and here it is the real eye of a
+            // real perspective rather than the stand-in an orthographic
+            // cascade needs. The LOD selector is left on its distance
+            // form for the same reason: a spot has a viewpoint, so a
+            // simplification error projects to pixels the ordinary way.
+            let params = CullParams::new(
+                glam::Mat4::from_cols_array_2d(&spot.record.view_proj),
+                spot.eye,
+                max_meshlets_per_mesh,
+            );
+            cull.dispatch_scene_pool_atomic(
+                cull_pipelines,
+                device,
+                queue,
+                encoder,
+                pool,
+                scene,
+                &params,
+                &scene_params,
+            );
+        }
+
+        for (slot, _) in spots.iter().enumerate() {
+            let cull = atlas.spot_cull(slot);
+            let visible_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("shadow_spot_visible_bg"),
+                layout: &self.visible_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: cull.visible_meshlets_buffer().as_entire_binding(),
+                }],
+            });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("shadow_spot_pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: atlas.spot_layer_view(slot),
+                    depth_ops: Some(wgpu::Operations {
+                        // Reversed-Z: 0 is far, so an empty map reads as
+                        // "nothing between here and the light".
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            let offset = ((CASCADE_COUNT + slot) as u64 * self.cascade_stride) as u32;
             pass.set_bind_group(0, &cascade_bg, &[offset]);
             pass.set_bind_group(1, meshlet_bg, &[]);
             pass.set_bind_group(2, &visible_bg, &[]);

@@ -28,6 +28,16 @@ pub const SPOT_SHADOW_NEAR_Z: f32 = 0.1;
 /// projection.
 const MAX_HALF_ANGLE: f32 = 1.5; // ~86°
 
+/// One spot light's shadow, as the pass needs it.
+#[derive(Copy, Clone, Debug)]
+pub struct SpotShadowDraw {
+    /// What the shading model samples.
+    pub record: GpuCascade,
+    /// The light's position — a real eye, unlike a cascade's, which is
+    /// a stand-in for a projection that has none.
+    pub eye: Vec3,
+}
+
 /// The record the shading model samples for one spot light.
 ///
 /// `layer` is where the pass renders it — see

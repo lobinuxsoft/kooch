@@ -25,6 +25,9 @@ pub struct ShadowPass {
 /// records the shading model samples with.
 pub struct PreparedShadows {
     cascades: [Cascade; CASCADE_COUNT],
+    /// One per shadow-casting spot light this frame, already fitted
+    /// (#777). Empty is the common case and costs nothing.
+    spots: Vec<super::SpotShadowDraw>,
     /// What goes in the frame UBO. Handed to
     /// [`kooch_lighting::GpuLights::update`].
     pub frame: kooch_lighting::FrameShadows,
@@ -79,9 +82,11 @@ impl ShadowPass {
         camera: &ViewCamera,
         aspect: f32,
         sun_direction: Vec3,
+        cascades_enabled: bool,
         max_distance: f32,
         first_cascade_distance: f32,
         sun_softness: f32,
+        spots: &[kooch_lighting::SpotShadowSource],
         meshlet_capacity: u32,
         group_capacity: u32,
     ) -> PreparedShadows {
@@ -100,14 +105,34 @@ impl ShadowPass {
             self.rasterizer.near_extension_scale(),
         );
 
+        let texels = self.atlas.cascade_size();
+        let draws: Vec<super::SpotShadowDraw> = spots
+            .iter()
+            .enumerate()
+            .map(|(slot, source)| super::SpotShadowDraw {
+                record: super::spot_shadow(source, ShadowAtlas::spot_layer(slot), texels),
+                eye: source.position,
+            })
+            .collect();
+
+        let mut spot_records =
+            [kooch_lighting::GpuCascade::default(); kooch_lighting::MAX_SPOT_SHADOWS];
+        for (slot, draw) in draws.iter().enumerate() {
+            spot_records[slot] = draw.record;
+        }
+
         PreparedShadows {
             frame: kooch_lighting::FrameShadows {
                 camera_forward: camera.forward(),
                 cascades: self.atlas.gpu_cascades(&cascades),
                 blend: CASCADE_BLEND_FRACTION,
                 sun_softness,
+                cascades_enabled,
+                spot_shadows: spot_records,
+                spot_shadow_count: draws.len() as u32,
             },
             cascades,
+            spots: draws,
         }
     }
 
@@ -138,6 +163,20 @@ impl ShadowPass {
             encoder,
             &self.atlas,
             &prepared.cascades,
+            cull_pipelines,
+            pool,
+            scene,
+            meshlet_bg,
+            instance_count,
+            max_meshlets_per_mesh,
+            lod_target,
+        );
+        self.rasterizer.render_spots(
+            device,
+            queue,
+            encoder,
+            &self.atlas,
+            &prepared.spots,
             cull_pipelines,
             pool,
             scene,

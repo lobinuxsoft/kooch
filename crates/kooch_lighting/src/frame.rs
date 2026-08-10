@@ -342,7 +342,14 @@ impl IntiFrame {
     /// Attaches the shadows from [`FrameShadows`], if the frame has any.
     pub fn with_optional_shadows(self, shadows: Option<FrameShadows>) -> Self {
         match shadows {
-            Some(s) => self.with_shadows(s.camera_forward, s.cascades, s.blend, s.sun_softness),
+            Some(s) => {
+                let frame = if s.cascades_enabled {
+                    self.with_shadows(s.camera_forward, s.cascades, s.blend, s.sun_softness)
+                } else {
+                    self
+                };
+                frame.with_spot_shadows(s.spot_shadows, s.spot_shadow_count)
+            }
             None => self,
         }
     }
@@ -360,6 +367,22 @@ impl IntiFrame {
         self.shadows_enabled = 1;
         self.cascade_blend = blend;
         self.sun_softness = sun_softness.max(0.0);
+        self
+    }
+
+    /// Attaches the spot lights' shadow maps (#777).
+    ///
+    /// Separate from [`Self::with_shadows`], which turns
+    /// `shadows_enabled` on: that flag gates the CASCADE sampling, and a
+    /// scene can have a spot casting with no sun at all. A spot reads
+    /// its own record and its own count, so it needs no flag.
+    pub fn with_spot_shadows(
+        mut self,
+        spot_shadows: [GpuCascade; MAX_SPOT_SHADOWS],
+        count: u32,
+    ) -> Self {
+        self.spot_shadows = spot_shadows;
+        self.spot_shadow_count = count.min(MAX_SPOT_SHADOWS as u32);
         self
     }
 }
@@ -381,6 +404,19 @@ pub struct FrameShadows {
     pub blend: f32,
     /// Tangent of the sun's angular radius. See [`IntiFrame::sun_softness`].
     pub sun_softness: f32,
+    /// 🔴 Whether the CASCADES are real.
+    ///
+    /// False when nothing directional casts and the frame exists only
+    /// for spot lights (#777). The cascades still carry numbers — they
+    /// were fitted to a stand-in direction so the pass has something
+    /// coherent to not draw — and a directional light that does not cast
+    /// would otherwise sample them and be shadowed by a sun that is not
+    /// there.
+    pub cascades_enabled: bool,
+    /// One per shadow-casting spot light (#777).
+    pub spot_shadows: [GpuCascade; MAX_SPOT_SHADOWS],
+    /// How many of `spot_shadows` are live.
+    pub spot_shadow_count: u32,
 }
 
 /// Tangent of the sun's angular radius, by default.
