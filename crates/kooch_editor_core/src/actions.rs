@@ -168,6 +168,11 @@ pub(crate) enum EditorAction {
     ReloadAssetOnHost(std::path::PathBuf),
     /// Dismiss the "replace this prefab?" prompt without saving.
     CancelPrefabOverwrite,
+    /// Install the engine this editor ships over the one the project is
+    /// building against. The next build of the project is a full one.
+    UpdateEngine,
+    /// Dismiss the engine notice and leave the installed engine alone.
+    KeepEngine,
     /// Stamp a prefab into the open scene.
     InstantiatePrefab {
         /// The prefab asset. A guid rather than a path, so moving or
@@ -457,6 +462,11 @@ impl EditorAction {
             // Answering a prompt is editor state; refusing it while a
             // project builds would leave the modal permanently up.
             | Self::CancelPrefabOverwrite
+            // Dismissing the engine notice writes nothing, and
+            // installing writes to disk outside the project rather than
+            // to the world.
+            | Self::KeepEngine
+            | Self::UpdateEngine
             // Nothing to do locally; it exists to reach the project.
             | Self::ReloadAssetOnHost(_)
             // Both write into the world, so they wait for one.

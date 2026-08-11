@@ -266,6 +266,14 @@ pub(super) fn run_editor_ui(
         if let Some(pending) = prefab_overwrite {
             draw_prefab_overwrite_prompt(ui, pending, &mut actions);
         }
+
+        if let Some(status) = project_state
+            .as_ref()
+            .and_then(|ps| ps.engine_status.as_ref())
+            .filter(|s| s.difference.wants_a_decision())
+        {
+            draw_engine_notice(ui, status, &mut actions);
+        }
     });
 
     // Selection arbitration — the Inspector renders one thing. Picking
@@ -379,6 +387,90 @@ fn draw_connecting_banner(ui: &mut egui::Ui, output: &[String]) {
 /// So the destructive thing is the correct thing, and a prompt is what
 /// makes it safe. A modal rather than an inline confirmation because it is
 /// answering for a file the user cannot see from here.
+/// Says the engine this editor ships is not the one the project builds
+/// against, and lets the user decide.
+///
+/// 🔴 A window and not a `Modal`, unlike its neighbour above. Replacing a
+/// prefab is a question about the action you just took, so it blocks
+/// until answered; this is a question about the machine, asked while
+/// somebody is opening a project to do something else entirely. Blocking
+/// on it would mean the editor demands an answer about its toolchain
+/// before letting anyone look at a scene.
+///
+/// The wording carries the cost, because the cost is the whole reason
+/// this is a question: installing makes the next build a full one.
+fn draw_engine_notice(
+    ui: &egui::Ui,
+    status: &crate::engine_vendor::EngineStatus,
+    actions: &mut Vec<EditorAction>,
+) {
+    let mut answered = None;
+    egui::Window::new(format!("{} Engine", icons::PACKAGE))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::RIGHT_BOTTOM, [-16.0, -16.0])
+        .show(ui.ctx(), |ui| {
+            ui.set_max_width(380.0);
+            ui.label(status.headline());
+            ui.add_space(6.0);
+
+            if let Some(path) = status.installed.as_ref() {
+                ui.weak(path.display().to_string());
+                ui.add_space(6.0);
+            }
+
+            match status.difference {
+                // 🔴 The version cannot tell these apart, so the text
+                // has to. Same number on both sides and a real
+                // difference is the normal state while the engine
+                // itself is being worked on.
+                crate::engine_vendor::Difference::Rebuilt => ui.weak(
+                    "Installing replaces it. The next build of this project is a full \
+                     rebuild, and anything already compiled against the old engine is \
+                     rebuilt with it.",
+                ),
+                // This editor cannot install that version — writing its
+                // own source under another version's name puts an engine
+                // on disk under a name that is not its own (#761).
+                _ => ui.weak(
+                    "This editor can only install the version it ships. Installing moves \
+                     the project onto it, and the next build is a full rebuild.",
+                ),
+            };
+            ui.add_space(12.0);
+
+            ui.horizontal(|ui| {
+                if ui
+                    .button("Install")
+                    .on_hover_text("Replaces the installed engine with this editor's")
+                    .clicked()
+                {
+                    answered = Some(true);
+                }
+                if ui
+                    .button("Keep")
+                    .on_hover_text(
+                        "Leaves it alone. Holds until something else installs over it — \
+                         engines are named by version, so two of the same version have \
+                         nowhere separate to live.",
+                    )
+                    .clicked()
+                {
+                    answered = Some(false);
+                }
+            });
+        });
+
+    // Both answers are actions: this draws, and the action layer owns the
+    // state. Keeping has to be said out loud too, or the notice returns
+    // next frame.
+    match answered {
+        Some(true) => actions.push(EditorAction::UpdateEngine),
+        Some(false) => actions.push(EditorAction::KeepEngine),
+        None => {}
+    }
+}
+
 fn draw_prefab_overwrite_prompt(
     ui: &egui::Ui,
     pending: &PendingPrefabOverwrite,

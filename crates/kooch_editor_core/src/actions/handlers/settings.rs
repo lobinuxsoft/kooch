@@ -24,6 +24,20 @@ pub(super) fn handle_cancel_launch(resources: &mut Resources) {
     }
 }
 
+/// Installs the engine this editor ships, answering the notice.
+pub(super) fn handle_update_engine(resources: &mut Resources) {
+    if let Some(ps) = resources.get_mut::<ProjectState>() {
+        ps.update_engine();
+    }
+}
+
+/// Dismisses the notice without touching what is installed.
+pub(super) fn handle_keep_engine(resources: &mut Resources) {
+    if let Some(ps) = resources.get_mut::<ProjectState>() {
+        ps.keep_engine();
+    }
+}
+
 pub(super) fn handle_set_ide_command(resources: &mut Resources, command: Option<String>) {
     if let Some(ps) = resources.get_mut::<ProjectState>() {
         ps.editor_config.ide_command = command;
