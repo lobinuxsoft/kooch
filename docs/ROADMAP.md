@@ -47,7 +47,9 @@ written before it is known what it has to fit in.
 |---|---|---|
 | ~~#743~~ | ~~light debug views~~ | **Done.** And they left the game's shader entirely — see below |
 | ~~#777~~ | ~~spot light shadows~~ | **Done.** The shadow atlas became a `texture_depth_2d_array` on the way |
-| **#776** | `PointLight.radius` — sphere lights | Next. ~15 lines, no bindings, no passes, and today every light is a mathematical point so no highlight has a size |
+| ~~#776~~ | ~~`PointLight.radius`~~ | **Done.** Not 15 lines: six pieces, and `GpuLight` grew 64 → 80 B because there was nowhere left to put the field |
+| ~~#778~~ | ~~point light shadows~~ | **Done**, feature and budget both. Culled, cached between frames, and the bind-group problem the issue opened with did not exist |
+| **#785** | **a profiler that reaches the game on the target hardware** | 🔴 **Moved here from "after lighting".** Half of it shipped; the half that matters — connecting to a build running on the OneXFly — has not. #769 cannot be done without it |
 | **#254** | post + auto exposure | The blown-out white floor in every screenshot of three sessions. Cheap, and it makes everything after it judgeable |
 | **#769** | divide the budget, on the device, at 10 W | The gate. Below is why it sits *here* and not later |
 | **#248 / #250** | atmosphere | 🔴 Another volumetric raymarch. Writing it before the budget is known means writing it twice |
@@ -160,10 +162,39 @@ decided and what is not an issue evaporates.
 
 | | | Note |
 |---|---|---|
-| **#785** | a profiler — where the frame actually goes | 🔴 The user called this "muy importante" and it is: every optimisation decision so far, including three in the #777 smoke, came from arithmetic and reading shaders. The perf HUD is a dashboard — totals for fixed buckets, on the wrong machine |
+| ~~#785, in the editor~~ | ~~a profiler panel~~ | **Done** (PR #790). Adopted, not written: puffin + `puffin_egui` + the `profiling` facade. See below — the rest of #785 moved up into the queue above |
 | **#784** | shader graph, the Shader Forge clone | #440 already built the half underneath: a graph compiles to the material *body* `compose_material_shader` concatenates |
 | **#732 / #536 / #481** | temporal upscaling — FSR, DLSS, XeSS | Already filed. FSR first: it is the one that runs on the OneXFly, and an untested fallback is a broken fallback |
 | **#477** | virtual shadow maps | 🔴 The user's call: encarar it **with** the ray tracing Bevy has (Solari), not before. See below |
+
+### What the profiler already changed, 2026-08-11
+
+It answered its first question before it was finished, and the answer
+moved work off the queue rather than onto it.
+
+```
+release, 1237 frames   median 4.94 ms   p99 8.25   max 9.10
+Surface::get_current_texture   2.724 ms/frame   ← 55%, and it is WAITING
+frame                          0.692 ms  × 2    ← the whole engine, per viewport
+SkyRenderPass::render          0.008 ms  × 2
+```
+
+- **The editor has no performance problem in release.** The largest entry
+  in the frame is the wait for the compositor. The engine renders a full
+  viewport — cull, shadows, meshlets, shading — in **0.69 ms**.
+- **Debug against release was 14.31 ms against 4.94.** Every impression
+  of slowness during the session came from an unoptimised binary.
+- ⚠️ **`frame` runs twice per editor frame.** The View and Game panels
+  each render the scene with their own cull and shadow passes. Real, and
+  nothing to do with the profiler.
+- ⚠️ **The sky costs 0.008 ms *here*.** #771's 8 192 hashes per pixel is
+  a resolution-and-device claim, and this measurement cannot confirm or
+  deny it. It is the handheld's to answer.
+
+🔴 **And it is why the rest of #785 moved into the main queue.** Every
+number above describes a desktop. The instrument that produced them does
+not reach a game running on the OneXFly yet, and #769 — the gate the
+whole graphics order hangs on — is exactly that measurement.
 
 ### Why VSM waits for ray tracing
 
@@ -182,6 +213,32 @@ being designed against each other.
 🔴 Three places now where Bevy's source stops being the ceiling: shadows
 at planetary scale (#782), virtual shadow maps (#477), and a node
 material editor (#784). Everything else in the lighting port is a port.
+
+### One page pool for every shadow — the user's framing, 2026-08-10
+
+> *"después vamos a hacer que todas las sombras usen un mismo mapa de
+> sombras así resulta más barato el virtual shadowmap"*
+
+Right, and it is the premise of a virtual shadow map rather than a step
+before one. Today there are two allocations, each sized for its own worst
+case, each paid whether or not anything uses it: the cascade + spot array
+at 2048² × 8 layers (**128 MiB**) and the point cubes at 512² × 24
+(**24 MiB**). **152 MiB standing** in a frame that may contain no
+shadow-casting light at all.
+
+A shared pool does not change the total — it changes **what the total is
+a function of**. Pages go to whichever light needs detail *where the
+camera is looking*, so the budget follows the screen instead of the sum
+of every light type's worst case. That is UE5's design, and it is why the
+Chalmers papers reach hundreds of casting lights with bounded memory.
+
+🔴 **It is also the strongest argument for #780 landing before #477.**
+The pool has to be handed a list of which lights need pages, at what
+resolution, where — and that list is what a cluster structure produces.
+
+⚠️ Until that decision: #778's 512² face size and the cascade array's
+layout are **provisional** and must not become public settings. A setting
+is a compatibility promise.
 
 ## Done — #758, and a game that runs on a machine that is not this one
 
