@@ -14,6 +14,8 @@ profiling.workspace = true
 # capture to a `.puffin` the standalone viewer can open.
 puffin = { workspace = true, optional = true, features = ["serialization"] }
 puffin_egui = { workspace = true, optional = true }
+# The client half of the wire a game's `ProfilingPlugin` serves on.
+puffin_http = { workspace = true, optional = true }
 kooch_core = { workspace = true, features = ["dynamic"] }
 kooch_ecs = { workspace = true, features = ["dynamic"] }
 kooch_render.workspace = true
@@ -59,7 +61,12 @@ log = "0.4"
 # selected, every `profiling::scope!` in the engine expands to nothing,
 # so a build without this carries no instrumentation rather than
 # instrumentation that is idle.
-profiling = ["dep:puffin", "dep:puffin_egui", "profiling/profile-with-puffin"]
+profiling = [
+    "dep:puffin",
+    "dep:puffin_egui",
+    "dep:puffin_http",
+    "profiling/profile-with-puffin",
+]
 
 # Reads a .puffin capture in a terminal (#785). Needs the same feature
 # the panel does, or  tries to build it without

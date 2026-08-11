@@ -20,18 +20,10 @@ use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
 use kooch_core::stage::Stage;
 
-/// Port the server listens on when nothing else is asked for.
-///
-/// 8585 is puffin's own default, so `puffin_viewer` connects with no
-/// arguments beyond the address.
-pub const DEFAULT_PORT: u16 = 8585;
-
-/// Environment variable that overrides the bind address, e.g.
-/// `KOOCH_PROFILER_ADDR=0.0.0.0:9000`.
-///
-/// Present so a build already copied onto the device can be moved off a
-/// taken port without compiling a new one.
-pub const ADDR_VAR: &str = "KOOCH_PROFILER_ADDR";
+// The address both ends agree on lives in `kooch_core` because the panel
+// that connects to this server cannot see this crate — the facade depends
+// on the editor, not the reverse.
+pub use kooch_core::profiler::{ADDR_VAR, DEFAULT_PORT, default_bind_addr};
 
 /// Streams this process's profiler frames to anyone who connects.
 ///
@@ -50,9 +42,9 @@ pub struct ProfilingPlugin {
 
 impl Default for ProfilingPlugin {
     fn default() -> Self {
-        let bind_addr =
-            std::env::var(ADDR_VAR).unwrap_or_else(|_| format!("0.0.0.0:{DEFAULT_PORT}"));
-        Self { bind_addr }
+        Self {
+            bind_addr: default_bind_addr(),
+        }
     }
 }
 
