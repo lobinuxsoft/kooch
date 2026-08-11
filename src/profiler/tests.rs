@@ -72,6 +72,20 @@ fn a_viewer_receives_named_frames() {
     // here fails this test rather than reporting a false pass.
     const ADDR: &str = "127.0.0.1:18585";
 
+    // 🔴 Run a frame's scopes BEFORE the server exists, deliberately.
+    // `scope_delta` is a delta: a server that appears after a scope was
+    // first registered never sees its name, and the viewer draws
+    // `scope#ScopeId(67)`. Without this the test would only exercise
+    // that path when another test happened to run first, which is how it
+    // was found.
+    puffin::set_scopes_on(true);
+    let mut warmup = App::new();
+    warmup.schedule.run_frame_stages(&mut warmup.resources);
+    // The boundary is what drains `new_scopes`. Without it the names
+    // would still be queued and the next frame would carry them anyway,
+    // which is why running frames alone does not reproduce this.
+    puffin::GlobalProfiler::lock().new_frame();
+
     let mut app = App::new();
     app.add_plugin(ProfilingPlugin {
         bind_addr: ADDR.to_string(),

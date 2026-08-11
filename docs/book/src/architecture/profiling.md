@@ -138,10 +138,16 @@ second application is preferable to a panel.
   Nobody is going to press Record on a handheld over SSH.
 - A port that will not open logs an error and the game keeps running.
   Killing the process someone wanted to measure is the worse answer.
-- 🟢 The scope-name problem above does **not** apply to a remote capture:
+- 🟢 The scope-name problem above does **not** apply to a *late viewer*:
   the server keeps its own `ScopeCollection` and re-sends all of it to
-  every client that connects, so a viewer attached an hour in still gets
+  every client that connects, so one attached an hour in still gets
   names.
+- 🔴 It does apply to a **late server**. `scope_delta` is a delta:
+  `new_frame` fills it from `new_scopes` and drains that list, so a
+  server created after a scope first ran never learns its name and the
+  viewer draws `scope#ScopeId(67)` forever. `ProfilingPlugin` runs
+  before the first frame, and asks for a snapshot anyway so the
+  guarantee does not depend on where it sits in the plugin list.
 
 ### One frame boundary, and where it lives
 

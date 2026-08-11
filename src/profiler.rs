@@ -70,6 +70,19 @@ impl Plugin for ProfilingPlugin {
                     addr = %self.bind_addr,
                     "profiler listening; connect the editor's Profiler panel or `puffin_viewer --url <host>:{DEFAULT_PORT}`"
                 );
+                // 🔴 A server only learns a scope's NAME from the frame
+                // that first registers it: `GlobalProfiler::new_frame`
+                // fills `scope_delta` from `new_scopes`, which is a
+                // delta and not a list. Anything already registered when
+                // the server appeared is invisible to it forever, and
+                // what the viewer draws is `scope#ScopeId(67)` — a
+                // capture that looks fine and says nothing.
+                //
+                // This plugin is added before the first frame runs, so
+                // normally there is nothing to miss. Asking anyway costs
+                // one bool at startup and makes the guarantee independent
+                // of where in the plugin list somebody puts it.
+                puffin::GlobalProfiler::lock().emit_scope_snapshot();
                 app.insert_resource(ProfilerServer(server));
             }
             // A game that cannot open the port still runs. The port being
