@@ -307,6 +307,7 @@ fn a_directory_that_is_not_the_engine_is_refused_before_writing() {
 /// `cfg(test)` rather than handing back a real path.
 #[test]
 fn tests_cannot_reach_the_real_data_directory() {
+    let _env = super::ENGINE_HOME_LOCK.lock().expect("env lock");
     // SAFETY: single-threaded by `--test-threads=1` in the suite that
     // needs it; nothing else reads the environment here.
     unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
@@ -332,6 +333,7 @@ fn tests_cannot_reach_the_real_data_directory() {
 /// the name.
 #[test]
 fn an_editor_never_materialises_a_version_it_does_not_have() {
+    let _env = super::ENGINE_HOME_LOCK.lock().expect("env lock");
     let dir = tmp("wrong_version");
     let (engine, home) = (dir.join("editor_src"), dir.join("home"));
     fake_engine(&engine);

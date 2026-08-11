@@ -24,6 +24,20 @@ pub(super) fn handle_cancel_launch(resources: &mut Resources) {
     }
 }
 
+/// Installs the engine this editor ships, answering the notice.
+pub(super) fn handle_update_engine(resources: &mut Resources) {
+    if let Some(ps) = resources.get_mut::<ProjectState>() {
+        ps.update_engine();
+    }
+}
+
+/// Dismisses the notice without touching what is installed.
+pub(super) fn handle_keep_engine(resources: &mut Resources) {
+    if let Some(ps) = resources.get_mut::<ProjectState>() {
+        ps.keep_engine();
+    }
+}
+
 pub(super) fn handle_set_ide_command(resources: &mut Resources, command: Option<String>) {
     if let Some(ps) = resources.get_mut::<ProjectState>() {
         ps.editor_config.ide_command = command;
@@ -45,5 +59,18 @@ pub(super) fn handle_set_power_profile(resources: &mut Resources, profile: Power
         }
     } else {
         resources.insert(profile);
+    }
+}
+
+/// Deletes an installed engine.
+///
+/// The version this editor ships is refused inside `remove_engine`, and
+/// the panel does not offer the button for it or for the one the open
+/// project uses — belt and braces, because what it deletes is a
+/// directory a manifest may be naming.
+pub(super) fn handle_remove_engine(version: &str) {
+    match crate::engine_vendor::remove_engine(version) {
+        Ok(()) => tracing::info!(version, "removed an installed engine"),
+        Err(e) => tracing::warn!(version, error = %e, "could not remove the engine"),
     }
 }
