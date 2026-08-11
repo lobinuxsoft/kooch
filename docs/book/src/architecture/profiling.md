@@ -119,9 +119,14 @@ connects. Nothing else to write: `DefaultPlugins` carries
 `ProfilingPlugin` whenever the feature is on, so a game becomes
 profilable without its `main.rs` changing.
 
-```sh
-puffin_viewer --url 192.168.0.36:8585
-```
+Then, in the editor's **Profiler** panel, switch the source from *This
+editor* to **A running game**, type the handheld's address and press
+Connect. The address is remembered in `editor_config.ron`, because it is
+a home-network address that is needed every session and wrong in a way
+that looks like the profiler being broken.
+
+`puffin_viewer --url 192.168.0.36:8585` reads the same socket, if a
+second application is preferable to a panel.
 
 - 🔴 **`0.0.0.0`, not `127.0.0.1`.** Bound to loopback the game is
   reachable only from the handheld, which is the one machine that will
@@ -163,10 +168,21 @@ stage instead of looping over an array. Puffin caches a scope's id in a
 name that site ever sees — one scope inside `run_stage` would file every
 stage of every frame under `Startup`.
 
+### Two things the remote view does backwards, on purpose
+
+- **The flamegraph is drawn while frames arrive.** The local view hides
+  it while recording because drawing it cost 10.97 ms of a 15.98 ms
+  frame. That cost lands on the machine drawing it, and the frames being
+  measured are produced on the other one — the observer is finally
+  outside the experiment.
+- **Clear reconnects** instead of emptying the view. The collection that
+  turns scope ids back into names belongs to the process that recorded
+  them, which is on the handheld; there is no `emit_scope_snapshot` to
+  call from this side. Reconnecting resets the view *and* makes the
+  server re-send every name.
+
 ## What is not built yet
 
-- **The editor as the client.** Today the remote end is `puffin_viewer`,
-  a separate application; the panel only reads this process.
 - **A build preset** that produces the instrumented binary from the build
   panel, instead of a hand-written `--features profiling`.
 - **GPU scopes** via `wgpu-profiler`. ⚠️ `TIMESTAMP_QUERY` is three
