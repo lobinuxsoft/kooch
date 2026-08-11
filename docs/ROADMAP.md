@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-09, `development` at `1f7c31c` — **#758 shipped, and a game built from the editor runs on the OneXFly** (PRs #765, #770). The build question is closed. The order is now set by a performance budget.
+Last updated 2026-08-11 — **the profiler reaches a game on the OneXFly**, and the first capture off the device is below: 56.3 ms against a budget of 13.9. The order is set by a performance budget, and that budget now has one real number in it.
 
 ---
 
@@ -49,7 +49,7 @@ written before it is known what it has to fit in.
 | ~~#777~~ | ~~spot light shadows~~ | **Done.** The shadow atlas became a `texture_depth_2d_array` on the way |
 | ~~#776~~ | ~~`PointLight.radius`~~ | **Done.** Not 15 lines: six pieces, and `GpuLight` grew 64 → 80 B because there was nowhere left to put the field |
 | ~~#778~~ | ~~point light shadows~~ | **Done**, feature and budget both. Culled, cached between frames, and the bind-group problem the issue opened with did not exist |
-| **#785** | **a profiler that reaches the game on the target hardware** | 🔴 **Moved here from "after lighting".** Half of it shipped; the half that matters — connecting to a build running on the OneXFly — has not. #769 cannot be done without it |
+| **#785** | **a profiler that reaches the game on the target hardware** | 🟡 **It reaches it.** A game serves its frames, the editor's panel connects, and the first capture off the OneXFly is below. What is left is attributing them: GPU scopes and anything finer than a pass |
 | **#254** | post + auto exposure | The blown-out white floor in every screenshot of three sessions. Cheap, and it makes everything after it judgeable |
 | **#769** | divide the budget, on the device, at 10 W | The gate. Below is why it sits *here* and not later |
 | **#248 / #250** | atmosphere | 🔴 Another volumetric raymarch. Writing it before the budget is known means writing it twice |
@@ -60,6 +60,41 @@ costing up to 8 192 hash evaluations per pixel (#771). Landing it first
 means optimising two marches instead of one, with the atmosphere already
 written on the expensive technique. The measurement is what says how much
 room it has.
+
+### 🔴 The first measurement of a game on the OneXFly, 2026-08-11
+
+Roll A Ball, release build with `kooch/profiling`, running on the
+handheld, captured from the editor over the network. 740 frames:
+
+```
+median 56.30 ms  →  17.8 FPS          the budget is 13.9 ms
+p99    155.10       max 158.14
+
+Render                  57.926 ms/frame   ← the whole frame
+PuffinServerImpl::send   0.141            ← the transport itself
+PreUpdate 0.114 · Physics 0.086 ×3.5 · Update 0.083 · everything else < 0.04
+```
+
+**Four times over budget**, with a p99 near three times the median.
+
+🔴 **It is not the game's logic.** Physics, update, input and transform
+propagation together come to under half a millisecond. All of it is
+inside `Render`.
+
+🔴 **And 57.9 ms in `Render` does not mean the CPU worked for 57.9 ms.**
+It is a CPU scope wrapping the stage, and the wait on the surface happens
+inside it — in the editor, `Surface::get_current_texture` was 55% of the
+frame doing nothing but waiting for the compositor. GPU-bound and
+CPU-bound look identical from here, and they have opposite fixes.
+
+Separating them is what the rest of #785 is for: **GPU scopes through
+`wgpu-profiler`, and scopes finer than a pass**. Until then `Render` is
+one opaque box and the table #769 has to produce cannot be written.
+
+⚠️ Two things this capture does not establish: whether the handheld was
+at 10 W on battery, and where inside `Render` the time goes. The sky
+(#771) is the standing suspect — 8 192 hash evaluations per pixel, paid
+on pixels the geometry later covers — but it is a suspect, not a finding.
 
 ### #769 — where the frame actually goes
 
@@ -192,9 +227,14 @@ SkyRenderPass::render          0.008 ms  × 2
   deny it. It is the handheld's to answer.
 
 🔴 **And it is why the rest of #785 moved into the main queue.** Every
-number above describes a desktop. The instrument that produced them does
-not reach a game running on the OneXFly yet, and #769 — the gate the
-whole graphics order hangs on — is exactly that measurement.
+number above describes a desktop.
+
+🟢 **It reaches the handheld now** — the capture at the top of this file
+came off the OneXFly over the network. What that capture also showed is
+that reaching it was only half the job: `Render` arrives as one 56 ms box
+with nothing inside it, and the sky scope that shows up here does not
+appear there at all. **Attribution is the remaining half**, and #769
+still cannot be written without it.
 
 ### Why VSM waits for ray tracing
 
