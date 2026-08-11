@@ -52,8 +52,40 @@ source; this only changes where the source is.
 
 Every materialised engine records which source tree it came from, in a
 `.kooch-engine-stamp` beside it — the version, plus a digest of every
-file. An editor compares its own source against that stamp and replaces
-the directory when they differ, leaving one copy behind, never two.
+file. An editor compares its own source against that stamp, and **says
+so rather than acting on it**:
+
+> Engine 0.1.0 — same version, different source than this editor ships
+> `[ Install ]  [ Keep ]`
+
+**Install** replaces the directory, leaving one copy behind, never two.
+**Keep** leaves it alone. Nothing is replaced under a project that was
+about to be built, which is what used to happen with only a log line to
+show for it.
+
+🔴 A missing engine is installed **without asking**: there is nothing to
+keep, and a project that cannot build at all is not a choice worth
+offering.
+
+🔴 What *Keep* cannot promise: engines are named `major.minor.patch` and
+replaced in place, so keeping one holds until something else installs
+over it — updating from another project, for instance. Two engines with
+the same version have nowhere separate to live.
+
+⚠️ Installing is refused while a build is running. Renaming the directory
+cargo is reading produces an error about a missing file in a crate nobody
+touched.
+
+### What is on this machine
+
+**Settings** lists every installed engine, marks the one this editor
+ships and the one the open project uses, and removes the rest. Those two
+cannot be removed: both are named by a manifest, and deleting one leaves
+it pointing at nothing.
+
+New versions are not created from there. The version *is* the engine's
+own `major.minor.patch`, so a new directory appears when an editor
+shipping that version opens a project.
 
 🔴 **Without it, a new editor never updated the engine.** The directory
 is named after the engine version, that version is `0.1.0` for every
@@ -64,8 +96,9 @@ current, and every project on the machine went on compiling against
 weeks-old source with nothing said.
 
 ⚠️ **The build right after a replacement is a full rebuild**, since every
-engine source file is now newer than the project's `target/`. The editor
-logs it for that reason.
+engine source file is now newer than the project's `target/`. That cost
+is why installing is a question rather than something that happens while
+you are opening a project to look at a scene.
 
 A version this editor does **not** ship is never touched: that directory
 is what a pinned project builds against, and differing from the source in
