@@ -35,6 +35,26 @@ use serde::{Deserialize, Serialize};
 /// Extension a build preset carries.
 pub const BUILD_PRESET_EXTENSION: &str = "buildpreset";
 
+/// The feature that compiles the profiler into a game.
+///
+/// 🔴 Reached **through the dependency**, not as a feature of the
+/// project's own crate. `cargo build --features kooch/profiling` works
+/// against any project that depends on the engine; a bare `profiling`
+/// would need every project's `Cargo.toml` to declare a forwarding
+/// feature, so ticking the box in a project made last month would fail
+/// with "does not have feature `profiling`" ten minutes into a build.
+///
+/// The manifest the editor generates is only written when a project is
+/// created (`generate_cargo_toml`), so anything that requires a new one
+/// silently excludes every project that already exists.
+const PROFILING_FEATURE: &str = "kooch/profiling";
+
+/// What someone types into the features field meaning the same thing.
+///
+/// Dropped alongside the qualified name so ticking the box and typing it
+/// do not ask cargo for the feature twice.
+const PROFILING_SHORTHAND: &str = "profiling";
+
 /// One way of building this project.
 #[derive(Debug, Clone, PartialEq, Eq, Reflect, Serialize, Deserialize)]
 #[reflect(category = "Build")]
@@ -98,6 +118,24 @@ pub struct BuildPreset {
     #[serde(default)]
     pub runnable: bool,
 
+    /// Whether the game is built with the profiler compiled in.
+    ///
+    /// On, the binary opens a socket on `0.0.0.0:8585` and streams every
+    /// frame to the editor's Profiler panel. That is the only way to
+    /// measure a game on the hardware it has to run on — a capture taken
+    /// on the desktop describes the desktop (#769).
+    ///
+    /// 🔴 **Never on for a build anyone else receives** (#558). It is a
+    /// listening socket and a thread, and off is not "switched off": with
+    /// the feature absent every `profiling::scope!` in the engine expands
+    /// to nothing at compile time.
+    ///
+    /// Its own preset rather than a checkbox on the release one, so
+    /// "make a build" and "make a build I can measure" stay different
+    /// actions and the fast path cannot acquire a socket by accident.
+    #[serde(default)]
+    pub profiling: bool,
+
     /// Oldest glibc the build has to run on, e.g. `2.28`.
     ///
     /// Empty links against this machine's, which is the bug it exists to
@@ -138,6 +176,10 @@ impl Default for BuildPreset {
             features: String::new(),
             pack_assets: true,
             runnable: true,
+            // Off, and it is the one field where the default is a
+            // shipping decision rather than a convenience: a build made
+            // without thinking about it must not listen on a port.
+            profiling: false,
             min_glibc: String::new(),
         }
     }
@@ -158,13 +200,28 @@ impl BuildPreset {
     /// feature that would put the authoring surface back into a shipped
     /// game, and a preset is a text field somebody can type anything
     /// into (#558).
+    ///
+    /// `profiling` is the reverse: the checkbox decides, and a copy typed
+    /// into the text field is dropped rather than passed twice. Cargo
+    /// tolerates the duplicate; a preset that says the feature is off
+    /// while the build turns it on does not.
     pub fn feature_list(&self) -> Vec<String> {
-        self.features
+        let mut features: Vec<String> = self
+            .features
             .split(',')
             .map(str::trim)
-            .filter(|f| !f.is_empty() && *f != crate::cargo_args::AUTHORING)
+            .filter(|f| {
+                !f.is_empty()
+                    && *f != crate::cargo_args::AUTHORING
+                    && *f != PROFILING_FEATURE
+                    && *f != PROFILING_SHORTHAND
+            })
             .map(str::to_owned)
-            .collect()
+            .collect();
+        if self.profiling {
+            features.push(PROFILING_FEATURE.to_owned());
+        }
+        features
     }
 
     /// The executable's file name for this preset's target, extension

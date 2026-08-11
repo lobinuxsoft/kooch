@@ -19,6 +19,13 @@ pollster.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+# The profiling facade (#785). No backend is selected here: with none of
+# `profiling`'s `profile-with-*` features on, every `scope!` below expands
+# to nothing at all. The backend is chosen once, by whoever builds the
+# binary — `kooch/profiling` for a game, `kooch_editor_core/profiling`
+# for the editor.
+profiling.workspace = true
+
 # Asset handles use slotmap (generational arena: dense Vec storage,
 # u32 indices, generation counter for stale-handle detection — DOD-friendly).
 slotmap = "1.0"

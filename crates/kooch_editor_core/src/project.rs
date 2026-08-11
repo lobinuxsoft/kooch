@@ -96,6 +96,14 @@ pub struct EditorConfig {
     /// `<workspace> -g <file>` is appended. `None` = auto-detect.
     #[serde(default)]
     pub ide_command: Option<String>,
+    /// Last address the Profiler panel connected to, e.g.
+    /// `192.168.0.36:8585`.
+    ///
+    /// Remembered because it is a handheld's address on a home network:
+    /// typed once, needed every session, and wrong in a way that looks
+    /// like the profiler being broken.
+    #[serde(default)]
+    pub profiler_addr: Option<String>,
 }
 
 /// A recently opened project entry.

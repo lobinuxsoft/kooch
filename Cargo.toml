@@ -200,6 +200,15 @@ kooch_remote = { workspace = true, optional = true }
 kooch_editor_core = { workspace = true, optional = true }
 kooch_plugin_api = { workspace = true, optional = true }
 
+# The profiling facade, and the backend a game build selects through it
+# (#785). `profiling` is unconditional and costs nothing on its own: with
+# no `profile-with-*` feature enabled every `scope!` in the workspace
+# expands to nothing. The two below are what the `profiling` feature
+# turns on, and they are what a release build must not contain.
+profiling.workspace = true
+puffin = { workspace = true, optional = true }
+puffin_http = { workspace = true, optional = true }
+
 # External (used by examples)
 wgpu.workspace = true
 glam.workspace = true
@@ -229,6 +238,14 @@ world = ["dep:kooch_world"]
 remote = ["dep:kooch_remote"]
 editor = ["dep:kooch_editor_core"]
 dynamic = ["kooch_core/dynamic", "kooch_ecs/dynamic", "dep:kooch_plugin_api"]
+# Streams this game's frames to a profiler over TCP, and turns on the
+# puffin backend for every `profiling::scope!` in the workspace — feature
+# unification means selecting the backend here selects it everywhere.
+#
+# 🔴 Never in a release build (#558): it opens a listening socket. The
+# build panel offers it as its own preset for that reason. Off here means
+# the scopes are gone at compile time, not idle at runtime.
+profiling = ["dep:puffin", "dep:puffin_http", "profiling/profile-with-puffin"]
 
 [[example]]
 name = "package_editor"

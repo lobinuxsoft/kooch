@@ -28,7 +28,7 @@ release build may carry.
 | Build | Profiler | Channel |
 |---|---|---|
 | Editor, `--features profiling` | compiled in | in-panel |
-| Profiling build preset | compiled in | `puffin_http` over TCP *(not built yet)* |
+| Game, `--features profiling` | compiled in | `puffin_http` over TCP |
 | Release | **absent at compile time** | none |
 
 A happy accident of the facade: **`wgpu` and `egui` already use
@@ -103,14 +103,98 @@ registers after a single snapshot has already gone out.
 - ⚠️ **`frame` appears twice per editor frame**: the View and Game panels
   each render the scene, with their own cull and shadow passes.
 
+## Profiling the game, which is the point of all of this
+
+Everything above measures the editor: this machine, plugged in, drawing a
+viewport. The number the graphics roadmap is judged against is a frame of
+a **game on the OneXFly at 10 W**, and no measurement taken here produces
+it.
+
+```sh
+cargo build --release --features profiling
+```
+
+The binary opens `0.0.0.0:8585` and streams every frame to whoever
+connects. Nothing else to write: `DefaultPlugins` carries
+`ProfilingPlugin` whenever the feature is on, so a game becomes
+profilable without its `main.rs` changing.
+
+Then, in the editor's **Profiler** panel, switch the source from *This
+editor* to **A running game**, type the handheld's address and press
+Connect. The address is remembered in `editor_config.ron`, because it is
+a home-network address that is needed every session and wrong in a way
+that looks like the profiler being broken.
+
+`puffin_viewer --url 192.168.0.36:8585` reads the same socket, if a
+second application is preferable to a panel.
+
+- 🔴 **`0.0.0.0`, not `127.0.0.1`.** Bound to loopback the game is
+  reachable only from the handheld, which is the one machine that will
+  not be running the viewer. The symptom is a connection that times out
+  with nothing logged on either side.
+- `KOOCH_PROFILER_ADDR=0.0.0.0:9000` moves it without a recompile, for
+  when a build left running on the device is still holding the port.
+- Recording is **on from the first frame** here, unlike the editor panel.
+  Nobody is going to press Record on a handheld over SSH.
+- A port that will not open logs an error and the game keeps running.
+  Killing the process someone wanted to measure is the worse answer.
+- 🟢 The scope-name problem above does **not** apply to a *late viewer*:
+  the server keeps its own `ScopeCollection` and re-sends all of it to
+  every client that connects, so one attached an hour in still gets
+  names.
+- 🔴 It does apply to a **late server**. `scope_delta` is a delta:
+  `new_frame` fills it from `new_scopes` and drains that list, so a
+  server created after a scope first ran never learns its name and the
+  viewer draws `scope#ScopeId(67)` forever. `ProfilingPlugin` runs
+  before the first frame, and asks for a snapshot anyway so the
+  guarantee does not depend on where it sits in the plugin list.
+
+### One frame boundary, and where it lives
+
+Puffin builds a frame out of the scopes that closed between two
+`new_frame` calls. Two boundaries in a frame produce a flamegraph of
+half-frames; none produces a single frame that grows forever and never
+renders.
+
+The boundary is a system in `Stage::Last`, and it is a *stage* rather
+than a line in the loop because there are **two** loops:
+`kooch_core::runner::default_runner` for a headless app and
+`kooch_window`'s winit loop for a windowed one. A stage runs under both.
+
+⚠️ The editor marks its own boundary, in
+`kooch_editor_core/src/systems/render/ui.rs`. The editor does not add
+`ProfilingPlugin`; if it ever does, that call goes away in the same
+commit or the flamegraph becomes half-frames.
+
+### Stages are named per stage on purpose
+
+`Schedule::run_pre_physics` and friends expand `run_staged!` once per
+stage instead of looping over an array. Puffin caches a scope's id in a
+`static` belonging to the **call site** and registers it under the first
+name that site ever sees — one scope inside `run_stage` would file every
+stage of every frame under `Startup`.
+
+### Two things the remote view does backwards, on purpose
+
+- **The flamegraph is drawn while frames arrive.** The local view hides
+  it while recording because drawing it cost 10.97 ms of a 15.98 ms
+  frame. That cost lands on the machine drawing it, and the frames being
+  measured are produced on the other one — the observer is finally
+  outside the experiment.
+- **Clear reconnects** instead of emptying the view. The collection that
+  turns scope ids back into names belongs to the process that recorded
+  them, which is on the handheld; there is no `emit_scope_snapshot` to
+  call from this side. Reconnecting resets the view *and* makes the
+  server re-send every name.
+
 ## What is not built yet
 
-- **Connecting to a game running on the target hardware** — the point of
-  the exercise. `puffin_http` in the game, the editor as its client, and a
-  build preset that produces the instrumented binary.
+- **A build preset** that produces the instrumented binary from the build
+  panel, instead of a hand-written `--features profiling`.
 - **GPU scopes** via `wgpu-profiler`. ⚠️ `TIMESTAMP_QUERY` is three
   separate wgpu features and asking for the wrong one fails at submit.
-- Scopes finer than the pass level. `frame` is currently one box.
+- Scopes finer than the pass level. `frame` is currently one box, and the
+  stages around it are the only other names in a game's flamegraph.
 
 ## ⚠️ Four dependencies come from git, temporarily
 

@@ -35,6 +35,11 @@
 /// way, on the same basis.
 pub const LICENSE: &str = include_str!("../LICENSE.md");
 
+// Named `profiler` and not `profiling` on purpose: a module of that name
+// in the crate root shadows the `profiling` facade crate for every path
+// written in this file.
+#[cfg(feature = "profiling")]
+pub mod profiler;
 mod scene_bootstrap;
 pub mod shipped;
 
@@ -348,6 +353,13 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
         let builder = kooch_core::plugin::PluginGroupBuilder::new()
             .add(kooch_core::plugin::CorePlugin)
             .add(kooch_ecs::EcsPlugin);
+
+        // First, so the socket is already listening while the asset
+        // loaders do the slowest work of the run — and so the author of
+        // the game never edits a line to be able to profile it. Absent
+        // from a build that did not ask for the feature.
+        #[cfg(feature = "profiling")]
+        let builder = builder.add(crate::profiler::ProfilingPlugin::default());
 
         #[cfg(all(feature = "physics", feature = "gravity"))]
         let builder = builder.add(kooch_gravity::GravityPlugin);
