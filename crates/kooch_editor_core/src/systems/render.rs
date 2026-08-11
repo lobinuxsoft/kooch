@@ -124,6 +124,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .is_some_and(|ps| ps.is_project_loaded());
 
     let (display_data, mut gather_stages) = if project_loaded {
+        profiling::scope!("editor: gather frame data");
         FrameDisplayData::gather(resources)
     } else {
         (FrameDisplayData::empty(), Default::default())

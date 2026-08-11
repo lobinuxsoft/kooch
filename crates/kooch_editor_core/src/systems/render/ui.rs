@@ -87,6 +87,31 @@ pub(super) fn run_editor_ui(
     prefab_overwrite: Option<&PendingPrefabOverwrite>,
     build: &crate::panels::build::BuildPanel,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
+    // 🔴 One frame boundary per editor frame, and it has to be exactly
+    // here. puffin builds its flamegraph out of the scopes that closed
+    // between two `new_frame` calls; called twice a frame the graph is
+    // two half-frames, and never called it grows one unbounded frame
+    // that never renders. Free when the feature is off — the whole block
+    // is compiled out.
+    // ⚠️ Guarded by the recording flag, not only by the feature. A frame
+    // boundary while stopped would keep rotating buffers for a history
+    // nobody asked for, and "stopped" has to mean the profiler is doing
+    // nothing rather than doing less.
+    #[cfg(feature = "profiling")]
+    if puffin::are_scopes_on() {
+        puffin::GlobalProfiler::lock().new_frame();
+        // After `new_frame`, never before: the request has to land on a
+        // frame that will not come out empty, or puffin takes the flag
+        // and drops it. See `SNAPSHOT_COUNTDOWN`.
+        use std::sync::atomic::Ordering;
+        let left = crate::panels::profiler::SNAPSHOT_COUNTDOWN.load(Ordering::Relaxed);
+        if left > 0 {
+            crate::panels::profiler::SNAPSHOT_COUNTDOWN.store(left - 1, Ordering::Relaxed);
+            puffin::GlobalProfiler::lock().emit_scope_snapshot();
+        }
+    }
+    profiling::scope!("editor ui");
+
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut pinned_gizmos = std::mem::take(&mut overlay.pinned_gizmos);
     let mut selected_asset = overlay.selected_asset;

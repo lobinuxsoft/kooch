@@ -46,18 +46,23 @@ impl MeshletRenderStage {
             .as_ref()
             .expect("path selected only when vbuf64_stage is Some");
 
+        profiling::scope!("path: R64 atomic vbuf");
+
         // Stage 0 (Cull). render() already called `write_start`
         // which lands on stage 0; just close it after the dispatch.
-        self.views[view_id].cull.dispatch_scene_pool_atomic(
-            &self.cull_pipelines,
-            device,
-            queue,
-            &mut encoder,
-            gpu_pool,
-            &self.scene,
-            cull_params,
-            scene_params,
-        );
+        {
+            profiling::scope!("cull: view");
+            self.views[view_id].cull.dispatch_scene_pool_atomic(
+                &self.cull_pipelines,
+                device,
+                queue,
+                &mut encoder,
+                gpu_pool,
+                &self.scene,
+                cull_params,
+                scene_params,
+            );
+        }
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_end(&mut encoder, 0);
         }
@@ -92,6 +97,7 @@ impl MeshletRenderStage {
             self.gpu_timers.write_stage_start(&mut encoder, 1);
         }
         let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
+        profiling::scope!("raster + shade (fused)");
         vbuf64.render(
             device,
             queue,

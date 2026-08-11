@@ -43,6 +43,15 @@ pub(crate) enum EditorTab {
     Console,
     /// Making a shipped game out of the project (#758).
     Build,
+    /// Where the frame actually goes (#785).
+    ///
+    /// 🔴 The variant exists whether or not the `profiling` feature is
+    /// compiled in, and the panel says so when it is not. A variant
+    /// behind `#[cfg]` would make the serialised dock layout mean
+    /// different things in two builds of the same editor — open the
+    /// layout in the other one and deserialisation fails on a tab that
+    /// does not exist, taking the user's whole arrangement with it.
+    Profiler,
 }
 
 /// The `.inputmap` currently open in the Input Map panel.
@@ -104,6 +113,7 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::AssetBrowser,
     EditorTab::InputMap,
     EditorTab::Build,
+    EditorTab::Profiler,
 ];
 
 impl EditorTab {
@@ -120,6 +130,7 @@ impl EditorTab {
             Self::InputMap => format!("{} Input Map", crate::icons::SLIDERS),
             Self::Console => format!("{} Console", crate::icons::TERMINAL),
             Self::Build => format!("{} Build", crate::icons::PACKAGE),
+            Self::Profiler => format!("{} Profiler", crate::icons::CHART_BAR),
         }
     }
 }

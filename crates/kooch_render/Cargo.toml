@@ -17,6 +17,11 @@ wgpu.workspace = true
 glam.workspace = true
 bytemuck.workspace = true
 tracing.workspace = true
+# The profiling facade (#785). No backend is selected here: with none
+# of `profiling`'s `profile-with-*` features on, every `scope!` in this
+# crate expands to nothing, so a release build carries no instrumentation
+# at all rather than instrumentation that is switched off (#558).
+profiling.workspace = true
 gltf.workspace = true
 base64.workspace = true
 image.workspace = true

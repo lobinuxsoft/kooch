@@ -36,6 +36,7 @@ impl MeshletRenderStage {
         meshlet_capacity: u32,
         group_capacity: u32,
     ) -> Option<PreparedShadows> {
+        profiling::scope!("shadows: prepare");
         let settings = resources
             .get::<ShadowSettings>()
             .copied()
@@ -189,6 +190,7 @@ impl MeshletRenderStage {
         max_meshlets_per_mesh: u32,
         lod_target: f32,
     ) {
+        profiling::scope!("shadows: record");
         // 🔴 Which cubes still hold last frame's truth.
         //
         // Six faces per light is the most expensive shadow the engine

@@ -2,6 +2,7 @@ pub(crate) mod add_component_menu;
 pub(crate) mod archetypes;
 pub(crate) mod asset_browser;
 pub(crate) mod build;
+pub(crate) mod profiler;
 pub(crate) mod components;
 pub(crate) mod console;
 pub(crate) mod game;

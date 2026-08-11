@@ -31,6 +31,23 @@ repository = "https://github.com/lobinuxsoft/kooch"
 authors = ["lobinuxsoft"]
 
 [workspace.dependencies]
+# Profiling (#785). Adopted rather than written: the policy is never to
+# implement what a maintained crate covers, and these are pinned to the
+# versions this workspace already uses.
+#
+# 🔴 `wgpu-profiler` 0.28 is on wgpu 30; 0.27 is the one that matches
+# wgpu 29. Taking "latest" here is a compile error, not an upgrade.
+# `puffin_egui` 0.30 wants egui 0.35.0, which is ours exactly.
+#
+# The facade is what is called at every site, so the backend (puffin,
+# tracy, optick, superluminal) stays a cargo feature rather than a
+# rewrite. With no backend feature on, `profiling::scope!` expands to
+# nothing — which is how a release build carries none of this (#558).
+profiling = "1"
+puffin = "0.20"
+puffin_egui = "0.30"
+puffin_http = "0.17"
+wgpu-profiler = { version = "0.27", default-features = false }
 # Asset packs (#758): zstd wins ratio and decompression speed at once;
 # AES-GCM is authenticated, so a tampered pack fails loudly.
 zstd = "0.13"
@@ -267,3 +284,32 @@ path = "examples/compute_vector_add.rs"
 name = "dynamic_plugin"
 path = "examples/dynamic_plugin.rs"
 required-features = ["dynamic"]
+
+# ⚠️ TEMPORARY, and the exit condition is written down: `puffin_egui`
+# 0.30.0 as PUBLISHED pins egui 0.33.3, while this workspace is on 0.35.
+# Two egui versions in one graph make `puffin_egui::egui::Ui` a different
+# type from ours and the panel cannot be drawn at all. Embark's `main`
+# migrated to egui 0.35 and has not been released.
+#
+# 🔴 It is a `patch` and not a plain git dependency on purpose. `puffin`
+# would otherwise exist twice — once from the registry, reached through
+# `profiling/profile-with-puffin`, and once from git, reached through
+# `puffin_egui` — and scopes recorded into one would be invisible to the
+# other. Patching redirects the whole graph to a single copy.
+#
+# Pinned by `rev`, never by branch: a moving branch makes a build that
+# compiled yesterday fail today for reasons no commit here explains.
+#
+# **Remove this section the moment puffin_egui ships a release built
+# against egui 0.35**, and take all three from crates.io again.
+[patch.crates-io]
+# 🔴 `profiling` 1.0.17 (released) depends on puffin ^0.19, and the panel
+# above is on 0.20. Two puffins mean two `GlobalProfiler`s: every scope
+# in the engine would record into one and the panel would read the other,
+# and the symptom is an empty flamegraph with nothing to blame. Their
+# master is 1.0.18 on puffin 0.20, unpublished — same story as the panel,
+# and it leaves with it.
+profiling = { git = "https://github.com/aclysma/profiling", rev = "da44bd1c5497c665c0f00e5d70594fc14d390b4b" }
+puffin = { git = "https://github.com/EmbarkStudios/puffin", rev = "ec04e7f6e9f5b420a969ee663b48896362a0eb00" }
+puffin_egui = { git = "https://github.com/EmbarkStudios/puffin", rev = "ec04e7f6e9f5b420a969ee663b48896362a0eb00" }
+puffin_http = { git = "https://github.com/EmbarkStudios/puffin", rev = "ec04e7f6e9f5b420a969ee663b48896362a0eb00" }
