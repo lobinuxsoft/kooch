@@ -28,6 +28,39 @@ fn no_features_is_an_empty_list() {
     assert!(BuildPreset::default().feature_list().is_empty());
 }
 
+/// The checkbox is what puts the profiler in the build, so a preset that
+/// was never told about it produces a game with no listening socket.
+#[test]
+fn the_profiler_is_opt_in() {
+    assert!(!BuildPreset::default().profiling);
+
+    let measured = BuildPreset {
+        profiling: true,
+        ..Default::default()
+    };
+    assert_eq!(measured.feature_list(), vec!["kooch/profiling"]);
+}
+
+/// Typing it as well as ticking it asks cargo for the same feature twice.
+/// Worse is the other order: a preset whose checkbox reads off while the
+/// build opens a socket.
+#[test]
+fn the_checkbox_decides_not_the_text() {
+    let typed = BuildPreset {
+        features: "profiling, cheats".to_owned(),
+        profiling: false,
+        ..Default::default()
+    };
+    assert_eq!(typed.feature_list(), vec!["cheats"]);
+
+    let both = BuildPreset {
+        features: "profiling, kooch/profiling, cheats".to_owned(),
+        profiling: true,
+        ..Default::default()
+    };
+    assert_eq!(both.feature_list(), vec!["cheats", "kooch/profiling"]);
+}
+
 /// Windows gets `.exe`; Linux gets its architecture, the way Unity and
 /// Godot name their exports. A folder holding both is unambiguous.
 #[test]
@@ -154,6 +187,7 @@ fn a_preset_round_trips_through_ron() {
         features: "cheats".to_owned(),
         pack_assets: false,
         runnable: true,
+        profiling: true,
         min_glibc: "2.28".to_owned(),
     };
 
@@ -171,4 +205,7 @@ fn an_older_preset_still_loads() {
     assert_eq!(sparse.output_dir, "dist");
     assert!(sparse.release);
     assert!(sparse.pack_assets);
+    // 🔴 And a preset that predates the field does not acquire a
+    // listening socket by being loaded by a newer editor (#558).
+    assert!(!sparse.profiling);
 }

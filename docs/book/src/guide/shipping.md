@@ -81,6 +81,22 @@ One key per project, so breaking one says nothing about the next.
 For CI, set `KOOCH_PACK_KEY` to the key's hex and nothing is written into
 the checkout. Keep it in the secret store, not the repository.
 
+## Measuring the game where it runs: `profiling`
+
+Tick **`profiling`** and the build carries the profiler: it opens
+`0.0.0.0:8585` and streams every frame to the editor's Profiler panel,
+which is the only way to find out where a frame goes on the hardware the
+game has to run on. See [Profiling](../architecture/profiling.md).
+
+🔴 **Never on a build anyone else receives.** It is a listening socket
+and a background thread. Off is not "switched off": with the feature
+absent, every scope in the engine expands to nothing at compile time and
+there is no socket to open.
+
+Keep it as its own preset — "handheld, profiled" beside "handheld" — so
+the ordinary build cannot acquire a socket because somebody forgot to
+untick a box.
+
 ## Running on another machine: `min_glibc`
 
 A game built on an up-to-date desktop often **refuses to start** on a
