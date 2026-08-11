@@ -61,3 +61,16 @@ pub(super) fn handle_set_power_profile(resources: &mut Resources, profile: Power
         resources.insert(profile);
     }
 }
+
+/// Deletes an installed engine.
+///
+/// The version this editor ships is refused inside `remove_engine`, and
+/// the panel does not offer the button for it or for the one the open
+/// project uses — belt and braces, because what it deletes is a
+/// directory a manifest may be naming.
+pub(super) fn handle_remove_engine(version: &str) {
+    match crate::engine_vendor::remove_engine(version) {
+        Ok(()) => tracing::info!(version, "removed an installed engine"),
+        Err(e) => tracing::warn!(version, error = %e, "could not remove the engine"),
+    }
+}

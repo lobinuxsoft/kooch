@@ -173,6 +173,9 @@ pub(crate) enum EditorAction {
     UpdateEngine,
     /// Dismiss the engine notice and leave the installed engine alone.
     KeepEngine,
+    /// Delete an installed engine by version. Never the one this editor
+    /// ships, nor the one the open project builds against.
+    RemoveEngine(String),
     /// Stamp a prefab into the open scene.
     InstantiatePrefab {
         /// The prefab asset. A guid rather than a path, so moving or
@@ -467,6 +470,7 @@ impl EditorAction {
             // to the world.
             | Self::KeepEngine
             | Self::UpdateEngine
+            | Self::RemoveEngine(_)
             // Nothing to do locally; it exists to reach the project.
             | Self::ReloadAssetOnHost(_)
             // Both write into the world, so they wait for one.

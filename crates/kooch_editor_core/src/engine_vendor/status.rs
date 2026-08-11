@@ -170,5 +170,63 @@ pub fn status_in(dest: &Path, source: Option<&Path>) -> Difference {
     }
 }
 
+/// One engine this machine has on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Installed {
+    /// `major.minor.patch`, read off the directory name.
+    pub version: String,
+    pub path: PathBuf,
+}
+
+/// Every engine installed on this machine, oldest name first.
+///
+/// Reads the directory rather than a registry, because the directory *is*
+/// the registry: `ensure_current` creates one per version and nothing
+/// else records them. A folder that does not hold engine source is
+/// skipped rather than listed — a half-finished install (`engine.partial`)
+/// is not something to offer anyone.
+pub fn installed_engines() -> Vec<Installed> {
+    let Some(any) = shared_engine_dir("x") else {
+        return Vec::new();
+    };
+    // `<base>/x/engine` → `<base>`. Built from the same function that
+    // resolves the real thing so an override like `KOOCH_ENGINE_HOME`
+    // cannot be honoured in one place and missed in the other.
+    let Some(base) = any.parent().and_then(Path::parent) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return Vec::new();
+    };
+
+    let mut found: Vec<Installed> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let version = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path().join(super::VENDOR_DIR);
+            is_engine_source(&path).then_some(Installed { version, path })
+        })
+        .collect();
+    found.sort_by(|a, b| a.version.cmp(&b.version));
+    found
+}
+
+/// Deletes an installed engine.
+///
+/// ⚠️ Refuses the version this editor ships: it is the one every project
+/// that opens next will be pointed at, so deleting it means the next
+/// open re-copies it — work with no result, and a moment where a project
+/// points at a directory that is not there.
+pub fn remove_engine(version: &str) -> Result<(), super::VendorError> {
+    if version == editor_engine_version() {
+        return Ok(());
+    }
+    let Some(dir) = shared_engine_dir(version).and_then(|d| d.parent().map(Path::to_path_buf))
+    else {
+        return Ok(());
+    };
+    std::fs::remove_dir_all(dir).map_err(super::VendorError::Io)
+}
+
 #[cfg(test)]
 mod tests;

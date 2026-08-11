@@ -105,3 +105,49 @@ fn only_a_real_difference_asks() {
     assert!(Difference::Rebuilt.wants_a_decision());
     assert!(Difference::OtherVersion.wants_a_decision());
 }
+
+/// What the Settings window lists, and what it refuses to delete.
+///
+/// Takes the environment lock: `KOOCH_ENGINE_HOME` belongs to the
+/// process, so a test that sets it moves the ground under every other
+/// test's `shared_engine_dir`.
+#[test]
+fn engines_are_listed_and_the_editors_own_is_kept() {
+    let _env = crate::engine_vendor::ENGINE_HOME_LOCK
+        .lock()
+        .expect("env lock");
+
+    let dir = tmp("listing");
+    let (source, home) = (dir.join("source"), dir.join("home"));
+    fake_engine(&source, "// engine");
+
+    let editors = crate::engine_vendor::editor_engine_version();
+    for version in [editors, "0.0.9"] {
+        let dest = home.join(version).join(crate::engine_vendor::VENDOR_DIR);
+        fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        ensure_current_in(&dest, Some(&source)).expect("installs");
+    }
+    // SAFETY: the lock above is what makes this single-threaded.
+    unsafe { std::env::set_var("KOOCH_ENGINE_HOME", &home) };
+
+    let listed = crate::engine_vendor::installed_engines();
+    let versions: Vec<&str> = listed.iter().map(|e| e.version.as_str()).collect();
+    assert!(versions.contains(&"0.0.9"), "listed: {versions:?}");
+    assert!(versions.contains(&editors), "listed: {versions:?}");
+
+    // An old one goes.
+    crate::engine_vendor::remove_engine("0.0.9").expect("removes");
+    assert!(!home.join("0.0.9").exists());
+
+    // 🔴 The editor's own does not, whatever it is asked. It is where
+    // the next project to open gets pointed.
+    crate::engine_vendor::remove_engine(editors).expect("refuses quietly");
+    assert!(
+        home.join(editors)
+            .join(crate::engine_vendor::VENDOR_DIR)
+            .exists(),
+        "the editor's own engine was deleted",
+    );
+
+    unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
+}

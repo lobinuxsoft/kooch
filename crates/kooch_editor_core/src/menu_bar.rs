@@ -270,6 +270,63 @@ fn remote_status_look(
     }
 }
 
+/// The engines this machine has, which of them is in use, and a way to
+/// get rid of the rest.
+///
+/// # Why this is visible at all
+///
+/// A project builds against `~/.local/share/kooch/<version>/engine` and
+/// nothing in the editor ever said so. The only way to find out which
+/// engine a project was compiling against was to read a log line at the
+/// moment it was replaced, or to look at the directory's timestamp — and
+/// "which engine is this" is the first question when a build behaves
+/// differently than it did yesterday.
+///
+/// ⚠️ New versions are not created from here. The version is the engine's
+/// own `major.minor.patch`, so a new one appears when the editor that
+/// ships it does; this lists what arrived and lets the old ones go.
+fn draw_installed_engines(
+    ui: &mut egui::Ui,
+    project_engine: Option<&str>,
+    actions: &mut Vec<EditorAction>,
+) {
+    let installed = crate::engine_vendor::installed_engines();
+    let editor_version = crate::engine_vendor::editor_engine_version();
+
+    ui.label("Engines on this machine:");
+    ui.add_space(4.0);
+
+    if installed.is_empty() {
+        ui.weak("None yet — one is installed the first time a project is opened.");
+        return;
+    }
+
+    for engine in &installed {
+        ui.horizontal(|ui| {
+            let in_use = Some(engine.version.as_str()) == project_engine;
+            let is_editors = engine.version == editor_version;
+
+            ui.monospace(&engine.version);
+            if is_editors {
+                ui.weak("(this editor)");
+            }
+            if in_use {
+                ui.weak("(this project)");
+            }
+
+            // 🔴 Neither of those two may be removed. The editor's is
+            // what the next project to open is pointed at, and the
+            // project's is what it builds against — deleting either
+            // leaves a manifest naming a directory that is not there.
+            if !is_editors && !in_use && ui.button("Remove").clicked() {
+                actions.push(EditorAction::RemoveEngine(engine.version.clone()));
+            }
+        });
+        ui.weak(engine.path.display().to_string());
+        ui.add_space(4.0);
+    }
+}
+
 /// Where the Settings window's open flag lives.
 fn settings_open_id(ctx: &egui::Context) -> egui::Id {
     let _ = ctx;
@@ -285,6 +342,7 @@ pub(crate) fn draw_settings_window(
     ctx: &egui::Context,
     actions: &mut Vec<EditorAction>,
     ide_command: Option<&str>,
+    project_engine: Option<&str>,
 ) {
     let id = settings_open_id(ctx);
     let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
@@ -341,6 +399,11 @@ pub(crate) fn draw_settings_window(
                 Some(current) => ui.weak(format!("In use: {current}")),
                 None => ui.weak("In use: whatever the desktop says opens a source file."),
             };
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(6.0);
+            draw_installed_engines(ui, project_engine, actions);
         });
 
     ctx.data_mut(|d| d.insert_temp(id, open));

@@ -186,6 +186,7 @@ fn leftovers_from_an_interrupted_swap_are_repaired() {
 /// builds against.
 #[test]
 fn another_version_is_never_replaced() {
+    let _env = super::ENGINE_HOME_LOCK.lock().expect("env lock");
     let dir = tmp("other_version");
     let (engine, home) = (dir.join("engine_src"), dir.join("home"));
     fake_engine(&engine);

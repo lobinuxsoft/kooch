@@ -55,7 +55,7 @@ mod copy;
 pub mod stamp;
 mod status;
 
-pub use status::{Difference, EngineStatus, status};
+pub use status::{Difference, EngineStatus, Installed, installed_engines, remove_engine, status};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -449,6 +449,22 @@ fn materialise(dest: &Path, source: &Path, stamp: &EngineStamp) -> Result<(), Ve
     }
     Ok(())
 }
+
+/// Taken by every test that sets `KOOCH_ENGINE_HOME`.
+///
+/// 🔴 The environment belongs to the **process**, and cargo's harness is
+/// threaded. A test that sets the variable changes where every other
+/// test's `shared_engine_dir` points, including tests that never touch
+/// it — they are the ones that lose the race, and the failure is
+/// intermittent and reads like a bug in the vendoring.
+///
+/// The comment these tests carried said "single-threaded by
+/// `--test-threads=1`", which is not something a test file can assert
+/// about the harness running it. `KOOCH_PACK_KEY` had the identical
+/// comment and the identical race, and it was found by an unrelated test
+/// failing intermittently.
+#[cfg(test)]
+pub(crate) static ENGINE_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests;

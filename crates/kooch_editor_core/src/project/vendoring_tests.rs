@@ -17,6 +17,9 @@ fn fake_engine(root: &Path) {
 /// into the project — one per machine, shared by every project.
 #[test]
 fn a_generated_project_points_at_the_shared_engine_and_contains_none() {
+    let _env = crate::engine_vendor::ENGINE_HOME_LOCK
+        .lock()
+        .expect("env lock");
     let tmp = std::env::temp_dir().join("kooch_project_shared_test");
     let _ = fs::remove_dir_all(&tmp);
     let engine = tmp.join("some/deep/install/kooch");
@@ -63,6 +66,9 @@ fn a_generated_project_points_at_the_shared_engine_and_contains_none() {
 /// and corrects it on open rather than letting cargo fail on it.
 #[test]
 fn opening_a_project_repoints_a_stale_engine_path() {
+    let _env = crate::engine_vendor::ENGINE_HOME_LOCK
+        .lock()
+        .expect("env lock");
     let tmp = std::env::temp_dir().join("kooch_repoint_test");
     let _ = fs::remove_dir_all(&tmp);
     let project = tmp.join("proj");

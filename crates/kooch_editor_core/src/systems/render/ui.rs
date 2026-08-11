@@ -163,6 +163,10 @@ pub(super) fn run_editor_ui(
                 project_state
                     .as_ref()
                     .and_then(|ps| ps.editor_config.ide_command.as_deref()),
+                project_state
+                    .as_ref()
+                    .and_then(|ps| ps.active_project.as_ref())
+                    .map(|p| p.manifest.engine_version.as_str()),
             );
 
             // A build is running and the dock has nothing to show yet.
