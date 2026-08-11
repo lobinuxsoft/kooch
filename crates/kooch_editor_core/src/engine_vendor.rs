@@ -53,6 +53,9 @@
 
 mod copy;
 pub mod stamp;
+mod status;
+
+pub use status::{Difference, EngineStatus, status};
 
 use std::fs;
 use std::path::{Path, PathBuf};
