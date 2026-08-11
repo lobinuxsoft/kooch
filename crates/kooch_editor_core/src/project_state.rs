@@ -413,14 +413,21 @@ impl ProjectState {
             tracing::warn!("a build is running — the engine is not replaced while cargo reads it");
             return;
         }
-        let Some(root_path) = self.active_project.as_ref().map(|p| p.root_path.clone()) else {
+
+        // 🔴 The version comes from the notice, not from the open
+        // project. The notice outlives closing a project — it is about
+        // the machine — and reading the version off `active_project`
+        // made Install a button that returned in silence from the
+        // project manager, which is exactly where it is easiest to
+        // press.
+        let Some(version) = self
+            .engine_status
+            .as_ref()
+            .map(|s| s.project_version.clone())
+        else {
             return;
         };
-        let version = self
-            .active_project
-            .as_ref()
-            .map(|p| p.manifest.engine_version.clone())
-            .unwrap_or_default();
+        let root_path = self.active_project.as_ref().map(|p| p.root_path.clone());
 
         let source = crate::engine_vendor::vendor_source(self.engine_root.as_deref());
         match crate::engine_vendor::ensure_current(&version, source.as_deref()) {
@@ -428,9 +435,14 @@ impl ProjectState {
                 tracing::info!(
                     ?state,
                     path = %engine_dir.display(),
-                    "engine installed — the next build of this project is a full rebuild",
+                    "engine installed — the next build of a project on it is a full rebuild",
                 );
-                if let Err(e) = crate::project::point_manifest_at_engine(&root_path, &engine_dir) {
+                // Only when one is open. With none, the engine is still
+                // installed and the next project to open is pointed at
+                // it by the usual path.
+                if let Some(root) = root_path
+                    && let Err(e) = crate::project::point_manifest_at_engine(&root, &engine_dir)
+                {
                     tracing::warn!("could not point the project at the engine: {e}");
                 }
                 self.engine_status =

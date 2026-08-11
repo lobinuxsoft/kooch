@@ -412,7 +412,11 @@ fn draw_engine_notice(
     egui::Window::new(format!("{} Engine", icons::PACKAGE))
         .collapsible(false)
         .resizable(false)
-        .anchor(egui::Align2::RIGHT_BOTTOM, [-16.0, -16.0])
+        // Centred, not tucked into a corner. It is a question about
+        // whether the next build takes minutes; in the bottom right it
+        // read as a notification to ignore, which on a 4K screen is a
+        // long way from where anyone is looking.
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ui.ctx(), |ui| {
             ui.set_max_width(380.0);
             ui.label(status.headline());
