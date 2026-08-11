@@ -8,6 +8,12 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+anyhow = "1"
+profiling.workspace = true
+# `serialization` is what `FrameView::write` sits behind — saving a
+# capture to a `.puffin` the standalone viewer can open.
+puffin = { workspace = true, optional = true, features = ["serialization"] }
+puffin_egui = { workspace = true, optional = true }
 kooch_core = { workspace = true, features = ["dynamic"] }
 kooch_ecs = { workspace = true, features = ["dynamic"] }
 kooch_render.workspace = true
@@ -47,3 +53,17 @@ sysinfo.workspace = true
 # egui reports unstable widget ids through `log`, and the id-stability
 # test reads those complaints rather than reimplementing the check.
 log = "0.4"
+
+[features]
+# The in-editor profiler (#785). Off by default: with no backend
+# selected, every `profiling::scope!` in the engine expands to nothing,
+# so a build without this carries no instrumentation rather than
+# instrumentation that is idle.
+profiling = ["dep:puffin", "dep:puffin_egui", "profiling/profile-with-puffin"]
+
+# Reads a .puffin capture in a terminal (#785). Needs the same feature
+# the panel does, or  tries to build it without
+# puffin and fails on a crate that is deliberately optional.
+[[example]]
+name = "read_capture"
+required-features = ["profiling"]

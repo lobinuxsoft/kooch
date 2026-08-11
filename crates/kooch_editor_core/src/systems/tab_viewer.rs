@@ -310,6 +310,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 }
             }
             EditorTab::Components => draw_components_content(ui, self.component_types),
+            EditorTab::Profiler => crate::panels::profiler::draw_profiler_content(ui),
             EditorTab::Build => crate::panels::build::draw_build_content(
                 ui,
                 self.build,

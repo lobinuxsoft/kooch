@@ -15,3 +15,8 @@ kooch_render.workspace = true
 kooch_window.workspace = true
 kooch_world.workspace = true
 tracing.workspace = true
+
+[features]
+# Compiles the profiler into the editor (#785). Off by default; see
+# kooch_editor_core's feature of the same name.
+profiling = ["kooch_editor_core/profiling"]

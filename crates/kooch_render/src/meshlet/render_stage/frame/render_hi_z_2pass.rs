@@ -40,6 +40,7 @@ impl MeshletRenderStage {
         timer_slot: Option<usize>,
         instance_count: u32,
     ) -> MeshletRenderStats {
+        profiling::scope!("path: R32 Hi-Z two-pass");
         // Triple-buffer arena rotation (#445 PR #479 Mesa radv
         // workaround): pick the slot 2 frames stale, clear it, and
         // park this frame's bind groups there so they outlive GPU

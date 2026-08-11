@@ -38,6 +38,11 @@ impl MeshletRenderStage {
         camera: &ViewCamera,
         aspect: f32,
     ) -> MeshletRenderStats {
+        // The root of every frame's flamegraph (#785). Named for what a
+        // reader is looking for — "the frame" — rather than for the
+        // function, because a flamegraph of function names tells nobody
+        // which part of the engine to open.
+        profiling::scope!("frame");
         if self.pool_dirty || self.gpu_pool.is_none() {
             if self.pipeline.registered_count() == 0 {
                 return MeshletRenderStats::default();
@@ -162,6 +167,7 @@ impl MeshletRenderStage {
         self.scene.ensure_capacity(device, required);
         self.instance_capacity = self.scene.capacity();
 
+        profiling::scope!("upload instances");
         self.scene.upload_instances(queue, &instances);
         // The whole scene in one number, for the point-shadow cube cache
         // (#778). Hashed over the bytes that go to the GPU, so anything

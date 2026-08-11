@@ -21,6 +21,7 @@
 - [Render Pipeline](./architecture/render-pipeline.md)
 - [Lighting — Inti](./architecture/lighting.md)
 - [Frame Pacing](./architecture/frame-pacing.md)
+- [Profiling](./architecture/profiling.md)
 - [Retired](./architecture/retired/index.md)
   - [BVH-Driven Ray Marching](./architecture/retired/bvh-raymarch.md)
   - [Multi-consumer BVH](./architecture/retired/bvh-multi-consumer.md)
