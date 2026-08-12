@@ -362,6 +362,18 @@ fn an_editor_never_materialises_a_version_it_does_not_have() {
 /// updates.
 #[test]
 fn a_version_already_on_the_machine_is_honoured() {
+    // 🔴 The same lock the two tests above take. `KOOCH_ENGINE_HOME` is
+    // process-wide, and cargo's test harness is not single-threaded: one
+    // test removing the variable while this one reads it makes
+    // `ensure_current` resolve against a directory that is not there, and
+    // the failure is `Io(NotFound)` from a line that never touches the
+    // filesystem itself. Intermittent, and it only shows up in the full
+    // suite — it passes alone and under `--test-threads=1`.
+    //
+    // Same bug as `KOOCH_PACK_KEY`, whose fix took the lock in all seven
+    // tests of its module including the ones that never set the variable.
+    // This module stopped at two of seven.
+    let _env = super::ENGINE_HOME_LOCK.lock().expect("env lock");
     let dir = tmp("honour_existing");
     let (engine, home) = (dir.join("editor_src"), dir.join("home"));
     fake_engine(&engine);
