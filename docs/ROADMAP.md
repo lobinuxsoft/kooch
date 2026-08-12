@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-11 — **the profiler reaches a game on the OneXFly**, and the first capture off the device is below: 56.3 ms against a budget of 13.9. The order is set by a performance budget, and that budget now has one real number in it.
+Last updated 2026-08-12 — **the frame on the OneXFly is fill-rate bound**: 72 ms against a budget of 13.9, the GPU at 96 %, and the whole thing collapsing 5.2× when the internal resolution drops. The order is set by a performance budget, and that budget now has a verdict in it, not just a number.
 
 ---
 
@@ -49,9 +49,9 @@ written before it is known what it has to fit in.
 | ~~#777~~ | ~~spot light shadows~~ | **Done.** The shadow atlas became a `texture_depth_2d_array` on the way |
 | ~~#776~~ | ~~`PointLight.radius`~~ | **Done.** Not 15 lines: six pieces, and `GpuLight` grew 64 → 80 B because there was nowhere left to put the field |
 | ~~#778~~ | ~~point light shadows~~ | **Done**, feature and budget both. Culled, cached between frames, and the bind-group problem the issue opened with did not exist |
-| **#785** | **a profiler that reaches the game on the target hardware** | 🟡 **It reaches it.** A game serves its frames, the editor's panel connects, and the first capture off the OneXFly is below. What is left is attributing them: GPU scopes and anything finer than a pass |
+| **#785** | **GPU scopes — which pass owns the 70 ms** | 🟡 The profiler reaches the game and is trusted. The frame is now known to be fill-rate bound, and **naming the pass is the only thing left in the way of #769** |
 | **#254** | post + auto exposure | The blown-out white floor in every screenshot of three sessions. Cheap, and it makes everything after it judgeable |
-| **#769** | divide the budget, on the device, at 10 W | The gate. Below is why it sits *here* and not later |
+| **#769** | divide the budget, on the device, at 10 W | The gate. Half-answered: the frame is GPU-bound and per-pixel. What is missing is the split by pass, and 10 W on battery |
 | **#248 / #250** | atmosphere | 🔴 Another volumetric raymarch. Writing it before the budget is known means writing it twice |
 
 🔴 **Why #769 sits before the atmosphere and not after it.** #248 is a
@@ -61,46 +61,78 @@ means optimising two marches instead of one, with the atmosphere already
 written on the expensive technique. The measurement is what says how much
 room it has.
 
-### 🔴 The first measurement of a game on the OneXFly, 2026-08-11
+### 🎯 The frame on the OneXFly is fill-rate bound, 2026-08-12
 
-Roll A Ball, release build with `kooch/profiling`, running on the
-handheld, captured from the editor over the network. 740 frames:
+Roll A Ball, release build with `kooch/profiling`, on the handheld,
+captured live off the game's own `puffin_http` server. Same scene, same
+binary, same Steam → gamescope launch; the only thing changed between
+the two rows is the internal resolution:
 
-```
-median 56.30 ms  →  17.8 FPS          the budget is 13.9 ms
-p99    155.10       max 158.14
+| internal res | frame | `vkAcquireNextImageKHR` | `frame` (the engine) | `gpu_busy_percent` | sclk |
+|---|---|---|---|---|---|
+| native, fullscreen | **72.17 ms** | 68.53 | 2.75 | **96 %** | 1144 MHz |
+| `-w 640 -h 360` | **13.91 ms** | 11.56 | 1.68 | 70 % | 1417 MHz |
 
-Render                  57.926 ms/frame   ← the whole frame
-PuffinServerImpl::send   0.141            ← the transport itself
-PreUpdate 0.114 · Physics 0.086 ×3.5 · Update 0.083 · everything else < 0.04
-```
+**The frame collapses 5.2× with the pixels.** The cost is per-pixel, and
+that is a finding, not a suspicion.
 
-**Four times over budget**, with a p99 near three times the median.
+🔴 **The wait is not the compositor.** `vkAcquireNextImageKHR` blocks
+when no swapchain image is free, and an image is not free while the GPU
+is still drawing into it. At 96 % busy the acquire is where the CPU
+learns the GPU is behind — the thermometer, not the fever.
 
-🔴 **It is not the game's logic.** Physics, update, input and transform
-propagation together come to under half a millisecond. All of it is
-inside `Render`.
+🔴 **It is not the CPU either.** `frame` — the whole engine, cull,
+shadows, raster and shade — measures **~2 ms in every condition
+tested**, fullscreen or windowed, fast frame or slow. Physics, update
+and input together stay under half a millisecond.
 
-🔴 **And 57.9 ms in `Render` does not mean the CPU worked for 57.9 ms.**
-It is a CPU scope wrapping the stage, and the wait on the surface happens
-inside it — in the editor, `Surface::get_current_texture` was 55% of the
-frame doing nothing but waiting for the compositor. GPU-bound and
-CPU-bound look identical from here, and they have opposite fixes.
+🔴 **The low clock was a symptom.** 1144 MHz of 2900 at native
+resolution, and 1417 MHz at 640×360 — the GPU clocks *higher* with less
+work, because at native it spends the frame waiting rather than being
+throttled. At 640×360 the game is no longer GPU-bound at all: 13.91 ms
+is the 72 Hz vsync ceiling with 30 % of the GPU to spare.
 
-Separating them is what the rest of #785 is for: **GPU scopes through
-`wgpu-profiler`, and scopes finer than a pass**. Until then `Render` is
-one opaque box and the table #769 has to produce cannot be written.
+**The suspect is #771, the sky** — 8 192 hash evaluations per pixel,
+paid on pixels the geometry later covers, with `frag_depth` disabling
+early-Z. It is the only candidate whose arithmetic scales exactly like
+this. But per-pixel cost is also what the fused shade pass and the
+shadow passes have, so **which** pass owns the 70 ms is still open, and
+that is now the whole job of the GPU scopes in #785.
 
-⚠️ Two things this capture does not establish: whether the handheld was
-at 10 W on battery, and where inside `Render` the time goes. The sky
-(#771) is the standing suspect — 8 192 hash evaluations per pixel, paid
-on pixels the geometry later covers — but it is a suspect, not a finding.
+⚠️ **Still not established: 10 W on battery.** Every number here was
+taken plugged in. The target is 72 FPS at a third of the power.
+
+#### How to measure this, so the next measurement is not thrown away
+
+Four measurements were needed because the first three measured the wrong
+thing, and the mistakes are cheap to repeat:
+
+- 🔴 **Launch the game the way it ships — through Steam, into gamescope,
+  fullscreen.** The same binary run over SSH as a loose 1280×720 wayland
+  window reports **13.9 ms and a healthy GPU**, because gamescope never
+  treats it as a game: no focus, no fullscreen, no scaling to the panel.
+  Measuring outside that path does not measure the game.
+- 🟢 **`gpu_busy_percent` in `/sys/class/drm/card*/device/` separates
+  GPU-bound from waiting in one command**, with nothing instrumented. It
+  is the first thing to read, before any hypothesis.
+- 🟢 `KOOCH_PRESENT_MODE=novsync` takes the vblank out of the frame time,
+  and `KOOCH_FRAME_METRICS=log` prints frame, CPU and GPU milliseconds
+  per second to stdout — no panel, no network, no profiler.
+- 🟢 **The profiler itself is trustworthy and free**: a capture taken
+  live and the game's own log agree to the hundredth of a millisecond in
+  the same run, and draining 15.2 MB off the server in 25 s does not move
+  the frame time. `server.rs` drops frames rather than blocking when a
+  client falls behind.
 
 ### #769 — where the frame actually goes
 
-The budget has to be *divided* and nobody knows the split. One pass can
-be obviously wasteful and fixing it can still leave the frame nowhere
-near 13.9 ms.
+Half of this is now answered: the frame is **GPU-bound and per-pixel**,
+and the engine's CPU side is ~2 ms. What is missing is the split *by
+pass*, and the same measurement at 10 W on battery.
+
+The budget still has to be *divided*, and nobody knows that split. One
+pass can be obviously wasteful and fixing it can still leave the frame
+nowhere near 13.9 ms.
 
 What comes out is a table — pass, milliseconds, share of 13.9 ms — and
 that table sets the order of every performance issue after it. Measured
@@ -230,11 +262,16 @@ SkyRenderPass::render          0.008 ms  × 2
 number above describes a desktop.
 
 🟢 **It reaches the handheld now** — the capture at the top of this file
-came off the OneXFly over the network. What that capture also showed is
-that reaching it was only half the job: `Render` arrives as one 56 ms box
-with nothing inside it, and the sky scope that shows up here does not
-appear there at all. **Attribution is the remaining half**, and #769
-still cannot be written without it.
+came off the OneXFly over the network, and the CPU tree it carries is
+complete: every `kooch_render` scope is there, named, down to
+`raster + shade (fused)`. ⚠️ An earlier note here claimed `Render`
+arrived as one opaque box and that the sky scope was missing from the
+game's capture. **Both were misreadings of the panel**, corrected on
+2026-08-12 by dumping the capture file directly.
+
+What is genuinely missing is the other axis: **the CPU tree cannot
+attribute GPU time**, and the frame is GPU-bound. That is what the GPU
+scopes are for, and #769 still cannot be written without them.
 
 ### Why VSM waits for ray tracing
 
