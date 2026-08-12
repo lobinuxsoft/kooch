@@ -28,34 +28,34 @@ fn no_features_is_an_empty_list() {
     assert!(BuildPreset::default().feature_list().is_empty());
 }
 
-/// The checkbox is what puts the profiler in the build, so a preset that
-/// was never told about it produces a game with no listening socket.
+/// The mode is what puts the profiler in the build, so a preset left on
+/// Release produces a game with no listening socket.
 #[test]
 fn the_profiler_is_opt_in() {
-    assert!(!BuildPreset::default().profiling);
+    assert!(!BuildPreset::default().is_profiling());
 
     let measured = BuildPreset {
-        profiling: true,
+        mode: MODE_PROFILING,
         ..Default::default()
     };
     assert_eq!(measured.feature_list(), vec!["kooch/profiling"]);
 }
 
-/// Typing it as well as ticking it asks cargo for the same feature twice.
-/// Worse is the other order: a preset whose checkbox reads off while the
-/// build opens a socket.
+/// Typing it as well as picking it asks cargo for the same feature
+/// twice. Worse is the other order: a preset whose dropdown reads
+/// Release while the build opens a socket.
 #[test]
-fn the_checkbox_decides_not_the_text() {
+fn the_mode_decides_not_the_text() {
     let typed = BuildPreset {
         features: "profiling, cheats".to_owned(),
-        profiling: false,
+        mode: MODE_RELEASE,
         ..Default::default()
     };
     assert_eq!(typed.feature_list(), vec!["cheats"]);
 
     let both = BuildPreset {
         features: "profiling, kooch/profiling, cheats".to_owned(),
-        profiling: true,
+        mode: MODE_PROFILING,
         ..Default::default()
     };
     assert_eq!(both.feature_list(), vec!["cheats", "kooch/profiling"]);
@@ -124,16 +124,18 @@ fn an_empty_triple_means_this_machine() {
     );
 }
 
+/// Both modes are optimised, so both land in `target/release`. The
+/// profiler is a feature, not a cargo profile.
 #[test]
-fn the_profile_directory_follows_the_flag() {
+fn every_mode_builds_release() {
     assert_eq!(BuildPreset::default().profile_dir(), "release");
     assert_eq!(
         BuildPreset {
-            release: false,
+            mode: MODE_PROFILING,
             ..Default::default()
         }
         .profile_dir(),
-        "debug",
+        "release",
     );
 }
 
@@ -143,7 +145,10 @@ fn the_profile_directory_follows_the_flag() {
 fn the_default_is_a_shippable_build() {
     let preset = BuildPreset::default();
 
-    assert!(preset.release, "the default build is not optimised");
+    assert!(
+        !preset.is_profiling(),
+        "the default build opens a listening socket"
+    );
     assert!(preset.pack_assets, "the default build ships loose assets");
     assert!(preset.is_host());
 }
@@ -183,11 +188,9 @@ fn a_preset_round_trips_through_ron() {
         target_triple: "x86_64-pc-windows-gnu".to_owned(),
         output_dir: "dist".to_owned(),
         executable_name: "game".to_owned(),
-        release: false,
+        mode: MODE_PROFILING,
         features: "cheats".to_owned(),
         pack_assets: false,
-        runnable: true,
-        profiling: true,
         min_glibc: "2.28".to_owned(),
     };
 
@@ -203,9 +206,56 @@ fn an_older_preset_still_loads() {
     let sparse: BuildPreset = ron::from_str("(output_dir: \"dist\")").unwrap();
 
     assert_eq!(sparse.output_dir, "dist");
-    assert!(sparse.release);
     assert!(sparse.pack_assets);
     // 🔴 And a preset that predates the field does not acquire a
     // listening socket by being loaded by a newer editor (#558).
-    assert!(!sparse.profiling);
+    assert!(!sparse.is_profiling());
+}
+
+/// 🔴 The migration that matters. `mode` defaults to Release, so a
+/// preset written before the dropdown — the one saying `profiling: true`
+/// — would otherwise load as Release and build a game with no
+/// instrumentation in it. Nothing would fail: the build succeeds, the
+/// panel offers to connect, and the connection times out against a game
+/// that never opened the port.
+#[test]
+fn a_preset_keeps_its_profiler() {
+    let legacy = "(release: true, profiling: true, runnable: false, min_glibc: \"2.28\")";
+    let preset = load(legacy);
+
+    assert!(
+        preset.is_profiling(),
+        "a preset that asked to be measured lost its profiler",
+    );
+    assert_eq!(preset.feature_list(), vec!["kooch/profiling"]);
+    // And the fields it shares with the new shape survive the trip.
+    assert_eq!(preset.min_glibc, "2.28");
+}
+
+/// The other direction: a preset that shipped must not acquire a
+/// listening socket by being opened in a newer editor (#558).
+#[test]
+fn a_shipping_preset_stays_shipping() {
+    assert!(!load("(release: true, profiling: false, runnable: true)").is_profiling());
+    // `runnable` is gone entirely, and an unknown field is not an error.
+    assert!(!load("(runnable: true)").is_profiling());
+}
+
+/// There is no debug mode any more, so the presets that used it have to
+/// land somewhere. They land on Profiling — a debug build was something
+/// you ran and looked at — and the loader says so rather than quietly
+/// building the other thing.
+#[test]
+fn a_debug_preset_becomes_profiling() {
+    assert!(load("(release: false)").is_profiling());
+}
+
+/// Reads a preset the way the asset loader does, migration included.
+fn load(text: &str) -> BuildPreset {
+    let mut ctx = LoadContext {
+        path: std::path::Path::new("Development.buildpreset"),
+    };
+    BuildPresetLoader
+        .load(text.as_bytes(), &mut ctx)
+        .expect("a preset the editor wrote has to load")
 }

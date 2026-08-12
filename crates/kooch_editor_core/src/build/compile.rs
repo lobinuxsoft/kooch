@@ -224,9 +224,8 @@ pub fn cargo_command(preset: &BuildPreset, project_root: &Path, crate_name: &str
         .arg(project_root.join("Cargo.toml"))
         .arg("--bin")
         .arg(crate_name);
-    if preset.release {
-        command.arg("--release");
-    }
+    command.arg("--release");
+    full_optimisation(&mut command);
     if let Some(triple) = build_triple(preset) {
         // `x86_64-unknown-linux-gnu.2.28` — zigbuild's own spelling for
         // "this target, against that glibc".
@@ -300,6 +299,34 @@ fn allow_shlib_undefined(command: &mut Command) {
         _ => FLAG.to_owned(),
     };
     command.env("RUSTFLAGS", flags);
+}
+
+/// Turns cargo's release profile up to what a shipped game wants: link
+/// time optimisation across every crate, and one codegen unit so the
+/// optimiser sees a whole crate at a time.
+///
+/// 🔴 **Through the environment, never the project's `Cargo.toml`.**
+/// The manifest is generated once, when the project is created, so a
+/// `[profile.release]` written into the template would reach new
+/// projects and silently skip every one that already exists — the same
+/// trap `PROFILING_FEATURE` documents. `CARGO_PROFILE_*` applies to
+/// whatever project is being built.
+///
+/// ⚠️ It costs minutes per build, and it buys throughput on the CPU
+/// side. On the OneXFly the frame is GPU-bound at 96 %, so this is not
+/// the lever that moves that frame — it is what keeps the measured
+/// binary and the shipped binary the same one.
+///
+/// A value already in the environment wins: someone who set it meant it.
+fn full_optimisation(command: &mut Command) {
+    for (key, value) in [
+        ("CARGO_PROFILE_RELEASE_LTO", "fat"),
+        ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
+    ] {
+        if std::env::var_os(key).is_none() {
+            command.env(key, value);
+        }
+    }
 }
 
 /// Where cargo leaves the executable for this preset.
