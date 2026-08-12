@@ -106,32 +106,39 @@ impl MeshletRenderStage {
             self.gpu_timers.write_stage_start(&mut encoder, 1);
         }
         let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
-        profiling::scope!("raster + shade (fused)");
-        // The prime suspect for the 96 % (#769): one fragment shader
-        // doing both the raster and the whole lighting evaluation, over
-        // every pixel the scene covers.
-        let shade_query = scopes.map(|s| s.begin("raster + shade", &mut encoder));
-        vbuf64.render(
-            device,
-            queue,
-            &mut encoder,
-            &self.views[view_id].depth_view,
-            &self.views[view_id].depth_sample_view,
-            &self.views[view_id].color_view,
-            density_view,
-            density_mode,
-            meshlet_bg,
-            material_pipeline.as_deref(),
-            self.lights.bind_group(),
-            &self.views[view_id].cull,
-            &self.scene,
-            view_proj,
-            contact,
-            debug_mode.as_u32(),
-            /* clear_depth */ true,
-        );
-        if let (Some(scopes), Some(query)) = (scopes, shade_query) {
-            scopes.end(&mut encoder, query);
+        // 🔴 Braced, like `upload instances`: a `profiling::scope!`
+        // lives to the end of its block, and mid-function this one
+        // reported the overlay dispatch, the readbacks and `Queue::
+        // submit` as part of the raster. The CPU cost of submitting is
+        // not the cost of shading.
+        {
+            profiling::scope!("raster + shade (fused)");
+            // The prime suspect for the 96 % (#769): one fragment shader
+            // doing both the raster and the whole lighting evaluation, over
+            // every pixel the scene covers.
+            let shade_query = scopes.map(|s| s.begin("raster + shade", &mut encoder));
+            vbuf64.render(
+                device,
+                queue,
+                &mut encoder,
+                &self.views[view_id].depth_view,
+                &self.views[view_id].depth_sample_view,
+                &self.views[view_id].color_view,
+                density_view,
+                density_mode,
+                meshlet_bg,
+                material_pipeline.as_deref(),
+                self.lights.bind_group(),
+                &self.views[view_id].cull,
+                &self.scene,
+                view_proj,
+                contact,
+                debug_mode.as_u32(),
+                /* clear_depth */ true,
+            );
+            if let (Some(scopes), Some(query)) = (scopes, shade_query) {
+                scopes.end(&mut encoder, query);
+            }
         }
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_end(&mut encoder, 1);

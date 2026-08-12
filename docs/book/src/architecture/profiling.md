@@ -120,6 +120,22 @@ came from one session. Save a capture that has names.
 
 ## Reading the numbers
 
+🔴 **The Table view is flat, and it opens sorted by call count.** That
+is why a capture of a 70 ms frame can look like it is made of
+`BindGroup::drop`: 56 calls of 0.1 µs sort above one pass of 40 ms. It
+aggregates by function across the whole frame and does not model
+parents — its own text says it is for finding *functions that are called
+a lot*. For "what is inside what", use the **Flamegraph**, which is the
+tree, or `read_capture`, which prints the same tree in a terminal.
+`puffin_egui` has those two views and no third one.
+
+⚠️ **A scope lives to the end of its block.** Declared mid-function
+without braces, `profiling::scope!` swallows everything after it:
+`upload instances` reported 1.900 ms of which 0.031 was the upload, with
+the whole render path nested underneath, and `raster + shade (fused)`
+was billed for `Queue::submit`. Both are braced now. A flat table cannot
+show this — the self-time column in the tree is what makes it obvious.
+
 - **Self time** excludes children. A parent can last 5 ms with 0.1 ms of
   self time; sort by self time for "what costs", read the flamegraph for
   "who is responsible".

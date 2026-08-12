@@ -167,19 +167,28 @@ impl MeshletRenderStage {
         self.scene.ensure_capacity(device, required);
         self.instance_capacity = self.scene.capacity();
 
-        profiling::scope!("upload instances");
-        self.scene.upload_instances(queue, &instances);
-        // The whole scene in one number, for the point-shadow cube cache
-        // (#778). Hashed over the bytes that go to the GPU, so anything
-        // that could move a shadow — a transform, a mesh swap, an
-        // instance appearing — changes it, and nothing that cannot does.
-        // O(n) over a Vec that was just walked to upload it.
-        self.scene_hash = {
-            use std::hash::{Hash, Hasher};
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            bytemuck::cast_slice::<_, u8>(&instances).hash(&mut hasher);
-            hasher.finish()
-        };
+        // 🔴 Braced. A `profiling::scope!` lives until the end of its
+        // enclosing block, so this one — declared mid-function —
+        // reported everything after it as its own: 1.900 ms of which
+        // 0.031 was actually the upload, with the whole render path
+        // nested underneath. A flat table cannot show that; the tree
+        // in `read_capture` made it obvious.
+        {
+            profiling::scope!("upload instances");
+            self.scene.upload_instances(queue, &instances);
+            // The whole scene in one number, for the point-shadow cube
+            // cache (#778). Hashed over the bytes that go to the GPU, so
+            // anything that could move a shadow — a transform, a mesh
+            // swap, an instance appearing — changes it, and nothing that
+            // cannot does. O(n) over a Vec that was just walked to
+            // upload it.
+            self.scene_hash = {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                bytemuck::cast_slice::<_, u8>(&instances).hash(&mut hasher);
+                hasher.finish()
+            };
+        }
 
         let scene_params = SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
         // Worst case for every cull this frame, the view's and the four
