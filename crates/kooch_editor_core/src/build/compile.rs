@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+use kooch_core::Guid;
 use kooch_pack::PackKey;
 
 use super::{BuildPreset, Package, PackageError};
@@ -23,8 +24,20 @@ use super::{BuildPreset, Package, PackageError};
 /// Where a build has got to.
 #[derive(Debug, Clone)]
 pub enum BuildStatus {
-    /// cargo is running.
-    Compiling,
+    /// cargo is running, and what it was told to build.
+    ///
+    /// 🔴 The configuration travels with the status rather than being
+    /// read back off the selected preset. The list is editable while a
+    /// build runs: selecting another row, or editing the one that is
+    /// building, would otherwise silently relabel a build already in
+    /// flight — and the whole reason to show this is that a four-minute
+    /// compile should say what it is compiling.
+    Compiling {
+        /// Which preset started it, so the panel can name it.
+        preset: Guid,
+        /// What cargo was actually asked for: mode, target, floor.
+        what: String,
+    },
     /// cargo finished; the folder is being laid out.
     Packaging,
     /// Everything worked.
@@ -57,6 +70,7 @@ impl BuildJob {
     /// Checks what can be checked, then starts cargo.
     pub fn start(
         preset: &BuildPreset,
+        preset_guid: Guid,
         project_root: &Path,
         engine_root: Option<&Path>,
         crate_name: &str,
@@ -89,7 +103,10 @@ impl BuildJob {
         Ok(Self {
             child: Some(child),
             output,
-            status: BuildStatus::Compiling,
+            status: BuildStatus::Compiling {
+                preset: preset_guid,
+                what: describe(preset),
+            },
             preset: preset.clone(),
             project_root: project_root.to_path_buf(),
             engine_root: engine_root.map(Path::to_path_buf),
@@ -224,9 +241,8 @@ pub fn cargo_command(preset: &BuildPreset, project_root: &Path, crate_name: &str
         .arg(project_root.join("Cargo.toml"))
         .arg("--bin")
         .arg(crate_name);
-    if preset.release {
-        command.arg("--release");
-    }
+    command.arg("--release");
+    full_optimisation(&mut command);
     if let Some(triple) = build_triple(preset) {
         // `x86_64-unknown-linux-gnu.2.28` — zigbuild's own spelling for
         // "this target, against that glibc".
@@ -300,6 +316,58 @@ fn allow_shlib_undefined(command: &mut Command) {
         _ => FLAG.to_owned(),
     };
     command.env("RUSTFLAGS", flags);
+}
+
+/// One line saying what cargo was actually asked to produce.
+///
+/// The mode leads it: it is the difference between a build you hand out
+/// and one that opens a listening socket, and a compile long enough to
+/// walk away from should say which one it is making.
+fn describe(preset: &BuildPreset) -> String {
+    let mut parts = vec![preset.mode_label().to_owned()];
+    parts.push(match preset.is_host() {
+        true => "this machine".to_owned(),
+        false => preset.target_triple.trim().to_owned(),
+    });
+    if let Some(floor) = preset.glibc_floor() {
+        parts.push(format!("glibc {floor}+"));
+    }
+    if !preset.pack_assets {
+        parts.push("loose assets".to_owned());
+    }
+    let features = preset.feature_list();
+    if !features.is_empty() {
+        parts.push(features.join(" "));
+    }
+    parts.join(", ")
+}
+
+/// Turns cargo's release profile up to what a shipped game wants: link
+/// time optimisation across every crate, and one codegen unit so the
+/// optimiser sees a whole crate at a time.
+///
+/// 🔴 **Through the environment, never the project's `Cargo.toml`.**
+/// The manifest is generated once, when the project is created, so a
+/// `[profile.release]` written into the template would reach new
+/// projects and silently skip every one that already exists — the same
+/// trap `PROFILING_FEATURE` documents. `CARGO_PROFILE_*` applies to
+/// whatever project is being built.
+///
+/// ⚠️ It costs minutes per build, and it buys throughput on the CPU
+/// side. On the OneXFly the frame is GPU-bound at 96 %, so this is not
+/// the lever that moves that frame — it is what keeps the measured
+/// binary and the shipped binary the same one.
+///
+/// A value already in the environment wins: someone who set it meant it.
+fn full_optimisation(command: &mut Command) {
+    for (key, value) in [
+        ("CARGO_PROFILE_RELEASE_LTO", "fat"),
+        ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
+    ] {
+        if std::env::var_os(key).is_none() {
+            command.env(key, value);
+        }
+    }
 }
 
 /// Where cargo leaves the executable for this preset.

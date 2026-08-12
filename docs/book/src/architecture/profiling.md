@@ -6,7 +6,7 @@ Where a frame actually goes (#785).
 
 The flamegraph, the timeline, the frame history, the scope statistics and
 the file format are all [puffin](https://github.com/EmbarkStudios/puffin),
-drawn by `puffin_egui` into the editor's own egui. GPU-side timing will be
+drawn by `puffin_egui` into the editor's own egui. GPU-side timing is
 [wgpu-profiler](https://github.com/Wumpf/wgpu-profiler). The project's
 dependency policy is to never implement what a maintained crate already
 covers, and profilers are a solved problem.
@@ -89,7 +89,52 @@ closes right after recording starts is exactly that empty frame. And a
 scope only registers the first time it runs, so anything occasional
 registers after a single snapshot has already gone out.
 
+## 🔴 The first handheld capture: the sky is 55 % of the frame
+
+Two captures of the same game on the OneXFly, differing only in internal
+resolution:
+
+| scope | 640×360 | 1920×1080 | scales |
+|---|---|---|---|
+| frame (median) | **13.90 ms** | **71.64 ms** | 5.2× |
+| `sky` | 6.11 | **39.60** | 6.5× |
+| `raster + shade` | 3.70 | 27.83 | 7.5× |
+| `shadows` | 0.98 | 1.28 | 1.3× |
+| `blit` | 0.14 | 1.05 | 7.7× |
+| `cull` | 0.046 | 0.042 | 1.0× |
+
+Nine times the pixels, and everything that scales with them does: the
+frame is fill-rate bound, and **the sky alone owns more than half of
+it**. `shadows` and `cull` do not move — they are geometry — and
+together they are under 1.4 ms. They are not the problem, and no amount
+of optimising them would have shown up.
+
+🔴 **Even at 640×360 the sky costs 6.11 ms of a 13.9 ms budget.** Nothing
+won elsewhere fits that in. This is what #771 predicted from shader
+arithmetic; it is now measured.
+
+⚠️ One of the two captures came back as `scope#ScopeId(137)` — the
+silently-unreadable case above. It was recovered by mapping ids against
+the readable capture from the same binary, which works only because both
+came from one session. Save a capture that has names.
+
 ## Reading the numbers
+
+🔴 **The Table view is flat, and it opens sorted by call count.** That
+is why a capture of a 70 ms frame can look like it is made of
+`BindGroup::drop`: 56 calls of 0.1 µs sort above one pass of 40 ms. It
+aggregates by function across the whole frame and does not model
+parents — its own text says it is for finding *functions that are called
+a lot*. For "what is inside what", use the **Flamegraph**, which is the
+tree, or `read_capture`, which prints the same tree in a terminal.
+`puffin_egui` has those two views and no third one.
+
+⚠️ **A scope lives to the end of its block.** Declared mid-function
+without braces, `profiling::scope!` swallows everything after it:
+`upload instances` reported 1.900 ms of which 0.031 was the upload, with
+the whole render path nested underneath, and `raster + shade (fused)`
+was billed for `Queue::submit`. Both are braced now. A flat table cannot
+show this — the self-time column in the tree is what makes it obvious.
 
 - **Self time** excludes children. A parent can last 5 ms with 0.1 ms of
   self time; sort by self time for "what costs", read the flamegraph for
@@ -187,14 +232,95 @@ stage of every frame under `Startup`.
   call from this side. Reconnecting resets the view *and* makes the
   server re-send every name.
 
+## GPU scopes — the half a CPU profiler cannot see
+
+On the OneXFly the frame is **GPU-bound at 96 %** and the engine's CPU
+work is ~2 ms of it. Every CPU scope in this document can say the frame
+is slow; none of them can say which pass spends it. `GpuScopes`
+(`kooch_core/src/gpu/profiler/`) wraps `wgpu-profiler` to answer that,
+and reports the results into puffin so they appear as a **`GPU` thread**
+beside the CPU rows rather than in a second tool.
+
+The passes it names, in the order they are recorded:
+
+| Scope | Encoder | What it covers |
+|---|---|---|
+| `shadows` | meshlet stage | four cascade culls + rasters, plus a cube face per point light |
+| `cull` | meshlet stage | the scene-wide meshlet cull dispatch |
+| `raster + shade` | meshlet stage | the fused R64 pass — raster *and* the whole lighting evaluation |
+| `sky` | game encoder | the raymarch #771 accuses |
+| `blit` | game encoder | the stage's colour composited over the sky |
+
+Turned on by the same `--features profiling` as everything else. A build
+without it carries a `GpuScopes` whose every method compiles to nothing,
+so the render code has one shape rather than a `cfg` at each pass.
+
+### The API is `begin` / `end`, and both halves live on one encoder
+
+`wgpu_profiler::Scope` borrows the encoder for the scope's lifetime,
+which leaves the code being measured with no encoder to record into.
+`begin` returns a query and hands the encoder straight back.
+
+🔴 **A scope must close on the encoder that opened it.** It pushes a
+debug group, and wgpu rejects the encoder outright at `finish()` —
+*"A debug group was not popped before the encoder was finished"*. A
+profiling build would panic where a release build runs.
+
+🔴 **Nesting is by declared parent, not by call order.** A scope opened
+while another is open is *not* its child; `begin_child` is. Left to
+`begin`, a pass and the pass containing it come back as siblings and
+their times read as additive.
+
+### The GPU clock is not puffin's clock
+
+A GPU timestamp's absolute value is undefined — `wgpu-profiler` says so
+in as many words. Reported raw, the GPU track lands an arbitrary distance
+from the CPU track and the viewer draws a frame stretched across the gap
+with both ends too small to read. `puffin_bridge` translates each batch
+so it **ends at now**.
+
+⚠️ **Durations and nesting are exact; the position on the axis is not.**
+The results belong to a frame a few submits back, and wgpu exposes no
+calibrated timestamp to correlate the two clocks with. Read a GPU row for
+how long a pass took, never for what a CPU row was doing at that instant.
+
+### 🔴 `wgpu-profiler`'s own puffin feature cannot be used here
+
+It depends on puffin ^0.19.1, and this workspace patches puffin to 0.20.
+Enabling it yields either an unresolvable lock or the two-`GlobalProfiler`
+failure described at the bottom of this page. `puffin_bridge.rs` is its
+`src/puffin.rs` adapted — 45 lines against API that is identical between
+the two versions — and `wgpu-profiler` is taken with
+`default-features = false`.
+
+⚠️ `TIMESTAMP_QUERY` is **three** separate wgpu features. Scopes on an
+encoder need `TIMESTAMP_QUERY_INSIDE_ENCODERS` specifically;
+`gpu/features.rs` requests all three, conditionally, and an adapter
+missing them yields scopes that measure nothing instead of a failed
+submit.
+
+### In the editor, too
+
+The editor builds its own render stage rather than going through
+`RenderPlugin`, so it inserts its own `GpuScopes` at startup and closes
+the frame in `present_editor_frame`. What it adds beyond the game's
+scopes:
+
+- **`editor ui`** — what egui costs on the GPU, kept apart from the
+  viewport passes. "Why is the editor slow" and "how expensive is my
+  scene" are different questions and now have different rows.
+- ⚠️ **`sky`, `cull` and `raster + shade` appear twice per frame** — the
+  View and Game viewports each render the scene, the same way the CPU
+  scope `frame` does.
+
+⚠️ It still measures a desktop viewport, plugged in. The budget is a
+frame on the handheld, and only a game build produces that.
+
 ## What is not built yet
 
-- **A build preset** that produces the instrumented binary from the build
-  panel, instead of a hand-written `--features profiling`.
-- **GPU scopes** via `wgpu-profiler`. ⚠️ `TIMESTAMP_QUERY` is three
-  separate wgpu features and asking for the wrong one fails at submit.
-- Scopes finer than the pass level. `frame` is currently one box, and the
-  stages around it are the only other names in a game's flamegraph.
+- Scopes finer than a pass. `raster + shade` is one box on both axes, and
+  at 27.8 ms on the handheld it is the second-largest thing in the frame
+  — finding out whether that is the raster or the shading needs one.
 
 ## ⚠️ Four dependencies come from git, temporarily
 

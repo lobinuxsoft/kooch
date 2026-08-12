@@ -77,6 +77,13 @@ pub(crate) fn render_viewport(
             label: Some("viewport_encoder"),
         });
 
+    // #785 — the same `sky` scope the game reports, so a capture taken
+    // in the editor names the same pass. It is the one that measured
+    // 39.6 ms of a 71.6 ms frame on the handheld, and the reason to
+    // have it here is that this is where the project is being authored.
+    let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
+    let sky_query = scopes.map(|s| s.begin("sky", &mut encoder));
+
     // Pass 1: Sky (when available).
     let sky_drawn = if project_loaded {
         if let (Some(active_sky), Some(camera)) =
@@ -106,6 +113,9 @@ pub(crate) fn render_viewport(
 
     if !sky_drawn {
         clear_to_black(&mut encoder, target.view(), target.depth_view());
+    }
+    if let (Some(scopes), Some(query)) = (scopes, sky_query) {
+        scopes.end(&mut encoder, query);
     }
 
     // Pass 2: Meshlet blit composite — only when this frame actually

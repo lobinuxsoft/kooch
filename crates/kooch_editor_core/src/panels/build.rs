@@ -56,12 +56,10 @@ pub(crate) fn draw_build_content(
         .iter()
         .any(|(guid, ..)| Some(*guid) == *selected)
     {
-        *selected = panel
-            .presets
-            .iter()
-            .find(|(_, _, preset)| preset.runnable)
-            .or_else(|| panel.presets.first())
-            .map(|(guid, ..)| *guid);
+        // The first one. There is no "the runnable preset" any more —
+        // the list is the selector, and a field that only decided which
+        // row got a different icon was not one.
+        *selected = panel.presets.first().map(|(guid, ..)| *guid);
     }
 
     draw_presets(ui, panel, selected, inspected, actions);
@@ -88,17 +86,21 @@ fn draw_presets(
             Some(floor) => format!(", glibc {floor}+"),
             None => String::new(),
         };
+        // The mode leads the row: it is the difference between a build
+        // you hand out and one that opens a listening socket, and it is
+        // the field somebody is most likely to have left on the wrong
+        // setting.
         let label = format!(
             "{} {name}  ({}, {}{floor})",
-            match preset.runnable {
-                true => icons::PACKAGE,
-                false => icons::FOLDER,
+            match preset.is_profiling() {
+                true => icons::CHART_BAR,
+                false => icons::PACKAGE,
             },
+            preset.mode_label(),
             match preset.is_host() {
                 true => "this machine",
                 false => preset.target_triple.trim(),
             },
-            preset.profile_dir(),
         );
         if ui.selectable_label(chosen, label).clicked() {
             *selected = Some(*guid);
@@ -113,7 +115,7 @@ fn draw_presets(
     ui.add_space(4.0);
     let building = matches!(
         panel.status,
-        Some(BuildStatus::Compiling | BuildStatus::Packaging),
+        Some(BuildStatus::Compiling { .. } | BuildStatus::Packaging),
     );
     let button = ui.add_enabled(
         !building && selected.is_some(),
@@ -143,13 +145,25 @@ fn draw_presets(
 fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
     match &panel.status {
         None => ui.weak("Idle."),
-        Some(BuildStatus::Compiling) => {
+        Some(BuildStatus::Compiling { preset, what }) => {
+            // The name is looked up rather than stored: a preset can be
+            // renamed while it builds, and the row it came from is the
+            // one a reader is looking at. What it was *told to build*
+            // comes from the status, which cannot be edited underneath.
+            let name = panel
+                .presets
+                .iter()
+                .find(|(guid, ..)| guid == preset)
+                .map(|(_, name, _)| name.as_str())
+                .unwrap_or("a deleted preset");
             ui.horizontal(|ui| {
                 ui.spinner();
                 // Named, because the first build of a project compiles
                 // the engine and someone watching a still panel for four
-                // minutes reasonably concludes it hung.
-                ui.label("Compiling — the first build of a project takes minutes.");
+                // minutes reasonably concludes it hung — and because
+                // "which preset is this" is not answerable from a list
+                // whose selection can be changed while it runs.
+                ui.label(format!("Compiling {name} — {what}."));
             })
             .response
         }

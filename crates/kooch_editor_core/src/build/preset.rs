@@ -7,8 +7,11 @@
 //! - **Named presets, several per project**, saved with the project. Not
 //!   one global configuration: a project has "Windows release", "Linux
 //!   debug", "handheld", and they differ in more than one field.
-//! - **A `runnable` one**, so one click has something to deploy.
 //! - An output path per preset.
+//!
+//! What was not worth taking: Godot's `runnable` flag. The panel's list
+//! is the selector, so a field marking one preset as "the" one decided
+//! nothing except which row drew a different icon.
 //!
 //! # Why it is an asset
 //!
@@ -30,6 +33,7 @@
 
 use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 use kooch_ecs::Reflect;
+use kooch_ecs::reflect::FieldChoice;
 use serde::{Deserialize, Serialize};
 
 /// Extension a build preset carries.
@@ -54,6 +58,32 @@ const PROFILING_FEATURE: &str = "kooch/profiling";
 /// Dropped alongside the qualified name so ticking the box and typing it
 /// do not ask cargo for the feature twice.
 const PROFILING_SHORTHAND: &str = "profiling";
+
+/// The build that ships: fully optimised, no profiler, no open socket.
+pub const MODE_RELEASE: u32 = 0;
+
+/// The build that gets measured: the same optimisations, plus the
+/// profiler.
+pub const MODE_PROFILING: u32 = 1;
+
+/// Labels for the `mode` dropdown.
+///
+/// 🔴 **Both modes are optimised, and that is the point.** An earlier
+/// design had "Debug" here, compiled without `--release`. Measuring that
+/// binary describes that binary: the editor's own debug build ran at
+/// 14.31 ms against 4.94 ms for its release build, and the handheld's
+/// whole budget is 13.9 ms. A mode that answers "how slow is my game"
+/// with a number three times too large is worse than no mode.
+pub static BUILD_MODE_CHOICES: &[FieldChoice] = &[
+    FieldChoice {
+        label: "Release",
+        value: MODE_RELEASE as i64,
+    },
+    FieldChoice {
+        label: "Profiling",
+        value: MODE_PROFILING as i64,
+    },
+];
 
 /// One way of building this project.
 #[derive(Debug, Clone, PartialEq, Eq, Reflect, Serialize, Deserialize)]
@@ -83,12 +113,28 @@ pub struct BuildPreset {
     #[serde(default)]
     pub executable_name: String,
 
-    /// Whether to build with optimisations.
+    /// What this build is for.
     ///
-    /// Off produces a debug build: faster to compile, several times
-    /// larger, and far slower to run. On is what ships.
-    #[serde(default = "default_true")]
-    pub release: bool,
+    /// **Release** — the build you give people. Optimised as far as
+    /// cargo goes: LTO across every crate and a single codegen unit.
+    /// Carries no profiler and opens no port.
+    ///
+    /// **Profiling** — the same build, plus the profiler. It streams
+    /// every frame to the editor's Profiler panel over
+    /// `0.0.0.0:8585`, CPU and GPU alike. Use it to find out where a
+    /// frame goes on the machine the game has to run on.
+    ///
+    /// Both are optimised on purpose. A build compiled without
+    /// optimisations runs several times slower, so measuring one tells
+    /// you about that build and not about your game.
+    ///
+    /// 🔴 **Never hand out a Profiling build** (#558): it listens on a
+    /// socket. Release is not "the profiler switched off" — with the
+    /// feature absent the instrumentation is not in the executable at
+    /// all.
+    #[serde(default)]
+    #[reflect(choices = BUILD_MODE_CHOICES)]
+    pub mode: u32,
 
     /// Extra cargo features, comma separated.
     ///
@@ -110,31 +156,6 @@ pub struct BuildPreset {
     /// make it impossible. See `kooch_pack`.
     #[serde(default = "default_true")]
     pub pack_assets: bool,
-
-    /// Whether this is the preset the toolbar's one-click build uses.
-    ///
-    /// Exactly one should be. The panel picks the first when several say
-    /// yes, and says so.
-    #[serde(default)]
-    pub runnable: bool,
-
-    /// Whether the game is built with the profiler compiled in.
-    ///
-    /// On, the binary opens a socket on `0.0.0.0:8585` and streams every
-    /// frame to the editor's Profiler panel. That is the only way to
-    /// measure a game on the hardware it has to run on — a capture taken
-    /// on the desktop describes the desktop (#769).
-    ///
-    /// 🔴 **Never on for a build anyone else receives** (#558). It is a
-    /// listening socket and a thread, and off is not "switched off": with
-    /// the feature absent every `profiling::scope!` in the engine expands
-    /// to nothing at compile time.
-    ///
-    /// Its own preset rather than a checkbox on the release one, so
-    /// "make a build" and "make a build I can measure" stay different
-    /// actions and the fast path cannot acquire a socket by accident.
-    #[serde(default)]
-    pub profiling: bool,
 
     /// Oldest glibc the build has to run on, e.g. `2.28`.
     ///
@@ -172,26 +193,38 @@ impl Default for BuildPreset {
             target_triple: String::new(),
             output_dir: default_output_dir(),
             executable_name: String::new(),
-            release: true,
+            // The one field whose default is a shipping decision rather
+            // than a convenience: a build made without thinking about it
+            // must not listen on a port.
+            mode: MODE_RELEASE,
             features: String::new(),
             pack_assets: true,
-            runnable: true,
-            // Off, and it is the one field where the default is a
-            // shipping decision rather than a convenience: a build made
-            // without thinking about it must not listen on a port.
-            profiling: false,
             min_glibc: String::new(),
         }
     }
 }
 
 impl BuildPreset {
+    /// Whether this preset compiles the profiler in.
+    pub fn is_profiling(&self) -> bool {
+        self.mode == MODE_PROFILING
+    }
+
+    /// The label this preset's mode carries in the UI.
+    pub fn mode_label(&self) -> &'static str {
+        BUILD_MODE_CHOICES
+            .iter()
+            .find(|choice| choice.value == self.mode as i64)
+            .map(|choice| choice.label)
+            .unwrap_or("Release")
+    }
+
     /// The cargo profile directory this preset's output lands in.
+    ///
+    /// Always `release`: both modes are optimised, and the profiler is a
+    /// feature rather than a profile.
     pub fn profile_dir(&self) -> &'static str {
-        match self.release {
-            true => "release",
-            false => "debug",
-        }
+        "release"
     }
 
     /// The features to pass, split and trimmed.
@@ -218,7 +251,7 @@ impl BuildPreset {
             })
             .map(str::to_owned)
             .collect();
-        if self.profiling {
+        if self.is_profiling() {
             features.push(PROFILING_FEATURE.to_owned());
         }
         features
@@ -283,6 +316,64 @@ impl BuildPreset {
     }
 }
 
+/// The `release` / `profiling` booleans `mode` replaced.
+///
+/// 🔴 **A missing field is not a missing decision.** `mode` defaults to
+/// `Release`, so without this a preset written last week — the one that
+/// says `profiling: true` — would load as Release and produce a binary
+/// with no instrumentation in it. Nothing would fail: the build would
+/// succeed, the panel would offer to connect, and the connection would
+/// time out against a game that never opened the port.
+///
+/// Serde drops unknown fields rather than reporting them, which is what
+/// makes reading them deliberately the only way to see them at all.
+#[derive(Deserialize)]
+struct LegacyMode {
+    #[serde(default, deserialize_with = "present_bool")]
+    release: Option<bool>,
+    #[serde(default, deserialize_with = "present_bool")]
+    profiling: Option<bool>,
+}
+
+/// Reads a plain `true` / `false` into `Some`, leaving `None` to mean
+/// the field was absent.
+///
+/// ⚠️ `Option<bool>` alone does not do this in RON: it writes an option
+/// as `Some(true)` and rejects a bare `true` with `ExpectedOption`. The
+/// files being migrated were written by the old struct, where the field
+/// was a plain `bool`.
+fn present_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    bool::deserialize(deserializer).map(Some)
+}
+
+impl LegacyMode {
+    /// The mode a pre-`mode` preset meant, or `None` when the file was
+    /// written by an editor that already had the dropdown.
+    fn mode(&self) -> Option<u32> {
+        match (self.release, self.profiling) {
+            (None, None) => None,
+            // Whatever it asked for, it asked to be measured.
+            (_, Some(true)) => Some(MODE_PROFILING),
+            // `release: false` was a debug build, and there is no debug
+            // mode any more. It wanted to be run and looked at, which is
+            // what Profiling is for — and it says so in the log rather
+            // than quietly building something else.
+            (Some(false), _) => {
+                tracing::info!(
+                    "build preset: `release: false` has no equivalent — both modes are \
+                     optimised now. Read as Profiling; set it to Release if this preset \
+                     was what you handed out."
+                );
+                Some(MODE_PROFILING)
+            }
+            _ => Some(MODE_RELEASE),
+        }
+    }
+}
+
 /// Reads a `.buildpreset`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct BuildPresetLoader;
@@ -296,7 +387,17 @@ impl AssetLoader<BuildPreset> for BuildPresetLoader {
         let text = std::str::from_utf8(bytes).map_err(|e| AssetError::Loader(Box::new(e)))?;
         // Every field has a serde default, so a preset written by an
         // older editor still loads and gains the new fields' defaults.
-        ron::from_str(text).map_err(|e| AssetError::Loader(Box::new(e)))
+        let mut preset: BuildPreset =
+            ron::from_str(text).map_err(|e| AssetError::Loader(Box::new(e)))?;
+        // Read a second time for the fields the struct no longer has.
+        // A file carrying them predates the dropdown, and its booleans
+        // are the only record of what it was for.
+        if let Ok(legacy) = ron::from_str::<LegacyMode>(text)
+            && let Some(mode) = legacy.mode()
+        {
+            preset.mode = mode;
+        }
+        Ok(preset)
     }
 }
 

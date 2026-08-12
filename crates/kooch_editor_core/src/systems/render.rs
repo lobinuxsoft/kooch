@@ -618,7 +618,14 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     stages.viewport_ms = crate::perf::ms_since(viewport_start);
 
     let present_start = std::time::Instant::now();
-    let presented = present_editor_frame(&gpu, &mut overlay, &window, full_output);
+    // Taken out and put back the way `gpu` is: the frame's resolve and
+    // its boundary need `&mut`, and the viewport passes above only
+    // needed `&`.
+    let mut scopes = resources.remove::<kooch_core::gpu::GpuScopes>();
+    let presented = present_editor_frame(&gpu, &mut overlay, &window, full_output, scopes.as_mut());
+    if let Some(scopes) = scopes {
+        resources.insert(scopes);
+    }
     stages.present_ms = crate::perf::ms_since(present_start);
 
     resources.insert(gpu);

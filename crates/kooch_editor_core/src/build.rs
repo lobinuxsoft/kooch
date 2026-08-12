@@ -60,7 +60,7 @@ impl BuildState {
     pub fn busy(&self) -> bool {
         matches!(
             self.job.as_ref().map(BuildJob::status),
-            Some(BuildStatus::Compiling | BuildStatus::Packaging),
+            Some(BuildStatus::Compiling { .. } | BuildStatus::Packaging),
         )
     }
 }

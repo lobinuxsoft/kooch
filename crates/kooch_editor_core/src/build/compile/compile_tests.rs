@@ -1,6 +1,7 @@
 //! #758 — what cargo is actually asked to do.
 
 use super::*;
+use crate::build::preset::{MODE_PROFILING, MODE_RELEASE};
 
 /// The arguments as strings, for asserting on.
 fn args(preset: &BuildPreset) -> Vec<String> {
@@ -39,21 +40,21 @@ fn the_editor_feature_never_reaches_cargo() {
     assert_eq!(args[at + 1], "cheats");
 }
 
+/// Every mode is a release build — that is what having no debug mode
+/// means. A profiling build compiled without optimisations would report
+/// a frame time several times too large, against a 13.9 ms budget.
 #[test]
-fn a_release_preset_asks_for_release() {
-    assert!(
-        args(&BuildPreset::default())
-            .iter()
-            .any(|a| a == "--release")
-    );
-    assert!(
-        !args(&BuildPreset {
-            release: false,
+fn every_mode_asks_for_release() {
+    for mode in [MODE_RELEASE, MODE_PROFILING] {
+        let preset = BuildPreset {
+            mode,
             ..Default::default()
-        })
-        .iter()
-        .any(|a| a == "--release"),
-    );
+        };
+        assert!(
+            args(&preset).iter().any(|a| a == "--release"),
+            "mode {mode} did not ask for --release",
+        );
+    }
 }
 
 /// An empty triple means this machine, and passing `--target ""` would
@@ -114,7 +115,42 @@ fn a_windows_build_carries_the_mingw_cflags() {
 fn a_host_build_carries_no_cflags() {
     let command = cargo_command(&BuildPreset::default(), Path::new("/proj"), "demo");
 
-    assert_eq!(command.get_envs().count(), 0);
+    assert!(
+        !command
+            .get_envs()
+            .any(|(key, _)| key.to_string_lossy().starts_with("CFLAGS_")),
+        "a host build picked up a cross-compilation CFLAGS",
+    );
+}
+
+/// 🔴 Through the environment, never the project's `Cargo.toml`: that
+/// manifest is written once, when the project is created, so a
+/// `[profile.release]` in the template would reach new projects and skip
+/// every existing one without saying so.
+#[test]
+fn a_build_is_optimised_all_the_way() {
+    let command = cargo_command(&BuildPreset::default(), Path::new("/proj"), "demo");
+    let envs: Vec<(String, String)> = command
+        .get_envs()
+        .filter_map(|(k, v)| {
+            Some((
+                k.to_string_lossy().into_owned(),
+                v?.to_string_lossy().into_owned(),
+            ))
+        })
+        .collect();
+
+    assert!(
+        envs.contains(&("CARGO_PROFILE_RELEASE_LTO".to_owned(), "fat".to_owned())),
+        "no link-time optimisation: {envs:?}",
+    );
+    assert!(
+        envs.contains(&(
+            "CARGO_PROFILE_RELEASE_CODEGEN_UNITS".to_owned(),
+            "1".to_owned(),
+        )),
+        "the optimiser still sees the crate in pieces: {envs:?}",
+    );
 }
 
 /// Where cargo leaves the executable differs by target and profile, and
@@ -127,13 +163,13 @@ fn the_built_binary_is_where_cargo_puts_it() {
         Path::new("/proj/target/release/demo"),
     );
 
-    let debug = BuildPreset {
-        release: false,
+    let measured = BuildPreset {
+        mode: MODE_PROFILING,
         ..Default::default()
     };
     assert_eq!(
-        built_binary(&debug, Path::new("/proj"), "demo"),
-        Path::new("/proj/target/debug/demo"),
+        built_binary(&measured, Path::new("/proj"), "demo"),
+        Path::new("/proj/target/release/demo"),
     );
 
     let windows = BuildPreset {

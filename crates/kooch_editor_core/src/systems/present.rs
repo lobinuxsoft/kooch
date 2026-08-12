@@ -18,6 +18,7 @@ pub(crate) fn present_editor_frame(
     overlay: &mut EditorOverlay,
     window: &Window,
     full_output: egui::FullOutput,
+    mut scopes: Option<&mut kooch_core::gpu::GpuScopes>,
 ) -> bool {
     // Handle platform output (cursor icon, clipboard, etc.).
     {
@@ -46,6 +47,12 @@ pub(crate) fn present_editor_frame(
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("egui_encoder"),
         });
+
+    // #785 — what the editor's own interface costs on the GPU, kept
+    // apart from the viewport passes above it. Someone asking "how
+    // expensive is my scene" is asking about those; someone asking "why
+    // is the editor slow" is usually asking about this one.
+    let ui_query = scopes.as_ref().map(|s| s.begin("editor ui", &mut encoder));
 
     let extra_buffers = overlay.renderer.update_buffers(
         gpu.device(),
@@ -96,10 +103,24 @@ pub(crate) fn present_editor_frame(
             .render(&mut render_pass, &clipped_primitives, &screen_descriptor);
     }
 
+    if let (Some(scopes), Some(query)) = (scopes.as_ref(), ui_query) {
+        scopes.end(&mut encoder, query);
+    }
+    // The frame's last encoder, so the timestamps every viewport wrote
+    // are copied out here — they were submitted before this one and are
+    // resolved on the queue by the time this copy runs.
+    if let Some(scopes) = scopes.as_deref_mut() {
+        scopes.resolve(&mut encoder);
+    }
+
     let mut buffers = extra_buffers;
     buffers.push(encoder.finish());
     gpu.queue().submit(buffers);
     output.present();
+    // After every submit of the frame, never between them.
+    if let Some(scopes) = scopes {
+        scopes.end_frame(gpu.queue());
+    }
 
     for id in &full_output.textures_delta.free {
         overlay.renderer.free_texture(id);

@@ -2,13 +2,13 @@ pub(crate) mod add_component_menu;
 pub(crate) mod archetypes;
 pub(crate) mod asset_browser;
 pub(crate) mod build;
-pub(crate) mod profiler;
 pub(crate) mod components;
 pub(crate) mod console;
 pub(crate) mod game;
 pub(crate) mod input_map;
 pub(crate) mod inspector;
 pub(crate) mod performance;
+pub(crate) mod profiler;
 pub(crate) mod view;
 pub(crate) mod world;
 

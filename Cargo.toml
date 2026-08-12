@@ -245,7 +245,16 @@ dynamic = ["kooch_core/dynamic", "kooch_ecs/dynamic", "dep:kooch_plugin_api"]
 # 🔴 Never in a release build (#558): it opens a listening socket. The
 # build panel offers it as its own preset for that reason. Off here means
 # the scopes are gone at compile time, not idle at runtime.
-profiling = ["dep:puffin", "dep:puffin_http", "profiling/profile-with-puffin"]
+profiling = [
+    "dep:puffin",
+    "dep:puffin_http",
+    "profiling/profile-with-puffin",
+    # The GPU half (#785). Selected together with the CPU half rather
+    # than separately: on the OneXFly the frame is GPU-bound at 96 %, so
+    # a profiling build without GPU scopes is a build that cannot answer
+    # the question it was made for.
+    "kooch_render?/gpu-profiler",
+]
 
 [[example]]
 name = "package_editor"

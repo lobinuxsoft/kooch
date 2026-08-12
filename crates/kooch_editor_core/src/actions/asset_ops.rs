@@ -615,6 +615,7 @@ fn start_build(resources: &mut Resources, guid: kooch_core::Guid) {
 
     match crate::build::BuildJob::start(
         &preset,
+        guid,
         &root,
         engine_root.as_deref(),
         &crate_name,

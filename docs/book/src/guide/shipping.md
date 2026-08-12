@@ -14,7 +14,8 @@ the **Inspector** like anything else. The Build panel only holds the
 list, the button, and cargo's output.
 
 Presets belong in version control. They are configuration, and a project
-usually has more than one.
+usually has more than one. The Build panel's list is where you pick
+which one to build; no preset is "the" preset.
 
 ## What a build produces
 
@@ -81,21 +82,36 @@ One key per project, so breaking one says nothing about the next.
 For CI, set `KOOCH_PACK_KEY` to the key's hex and nothing is written into
 the checkout. Keep it in the secret store, not the repository.
 
-## Measuring the game where it runs: `profiling`
+## The two modes
 
-Tick **`profiling`** and the build carries the profiler: it opens
-`0.0.0.0:8585` and streams every frame to the editor's Profiler panel,
-which is the only way to find out where a frame goes on the hardware the
-game has to run on. See [Profiling](../architecture/profiling.md).
+A preset's **`mode`** is what the build is for. There are two, and both
+are optimised.
 
-🔴 **Never on a build anyone else receives.** It is a listening socket
-and a background thread. Off is not "switched off": with the feature
+| | Release | Profiling |
+|---|---|---|
+| Optimisations | full — LTO, one codegen unit | **the same** |
+| Profiler | absent from the binary | compiled in |
+| Open port | none | `0.0.0.0:8585` |
+| Give it to people | yes | **never** (#558) |
+
+**Profiling** streams every frame to the editor's Profiler panel, CPU
+scopes and per-pass GPU timings alike — the only way to find out where a
+frame goes on the hardware the game has to run on. See
+[Profiling](../architecture/profiling.md).
+
+🔴 **Release is not "the profiler switched off".** With the feature
 absent, every scope in the engine expands to nothing at compile time and
-there is no socket to open.
+there is no socket to open. Nothing can be turned back on at runtime.
 
-Keep it as its own preset — "handheld, profiled" beside "handheld" — so
-the ordinary build cannot acquire a socket because somebody forgot to
-untick a box.
+⚠️ **There is deliberately no debug mode.** A build compiled without
+optimisations runs several times slower — the editor's own debug build
+measured 14.31 ms a frame against 4.94 ms for its release build — so
+profiling one tells you about that build and not about your game. The
+handheld's entire budget is 13.9 ms.
+
+Keep the two as separate presets — "handheld, profiled" beside
+"handheld" — so the ordinary build cannot acquire a socket because
+somebody left a dropdown on the wrong entry.
 
 ## Running on another machine: `min_glibc`
 

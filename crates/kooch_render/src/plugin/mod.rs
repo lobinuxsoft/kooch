@@ -134,12 +134,20 @@ fn init_renderers(resources: &mut Resources) {
     meshlet_stage.enable_gpu_timers(gpu.device(), gpu.queue(), gpu.adapter());
 
     let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
+    // #785 — per-pass GPU timings. `None` in a build without the
+    // `gpu-profiler` feature, and the render code below asks for the
+    // resource the same way either way.
+    let gpu_scopes = kooch_core::gpu::GpuScopes::new(gpu.device(), gpu.queue());
     resources.insert(vbuf64);
     resources.insert(debug_caps);
     resources.insert(sky_pass);
     resources.insert(depth);
     resources.insert(meshlet_stage);
     resources.insert(meshlet_blit);
+    if let Some(gpu_scopes) = gpu_scopes {
+        resources.insert(gpu_scopes);
+        tracing::info!("RenderPlugin: GPU scopes enabled");
+    }
     tracing::info!("RenderPlugin: renderers initialized (sky + meshlet)");
 }
 
@@ -295,6 +303,12 @@ fn render_passes(
             label: Some("game_render_encoder"),
         });
 
+    // #785 — the sky and the blit are the per-pixel work outside the
+    // meshlet stage, and #771 accuses the sky specifically. Timing it
+    // here is what turns that accusation into a number.
+    let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
+    let sky_query = scopes.map(|s| s.begin("sky", &mut encoder));
+
     let sky_drawn = if let (Some(active_sky), Some(camera)) =
         (SkyRenderPass::active_sky(resources), camera.as_ref())
     {
@@ -320,18 +334,40 @@ fn render_passes(
     if !sky_drawn {
         clear_with_gradient(&mut encoder, &view, depth_view);
     }
+    if let (Some(scopes), Some(query)) = (scopes, sky_query) {
+        scopes.end(&mut encoder, query);
+    }
 
     // Composite the meshlet stage's color over the sky only when the
     // stage has GPU-resident meshes. Without this guard the blit would
     // copy the stage's empty color buffer over the sky every frame,
     // blanking the surface to black until something is registered.
     if meshlet_stage.gpu_mesh_count() > 0 {
+        let blit_query = scopes.map(|s| s.begin("blit", &mut encoder));
         meshlet_blit.blit(
             gpu.device(),
             &mut encoder,
             meshlet_stage.color_view(),
             &view,
         );
+        if let (Some(scopes), Some(query)) = (scopes, blit_query) {
+            scopes.end(&mut encoder, query);
+        }
+    }
+
+    // The frame's last encoder, so this is where the timestamps are
+    // copied out — including the meshlet stage's, which were written
+    // into an encoder submitted before this one and are therefore
+    // already resolved on the queue by the time this copy runs.
+    if let Some(mut scopes) = resources.remove::<kooch_core::gpu::GpuScopes>() {
+        scopes.resolve(&mut encoder);
+        gpu.queue().submit(Some(encoder.finish()));
+        frame.present();
+        // After every submit of the frame, never between them: an
+        // encoder still holding open queries makes this fail.
+        scopes.end_frame(gpu.queue());
+        resources.insert(scopes);
+        return;
     }
 
     gpu.queue().submit(Some(encoder.finish()));

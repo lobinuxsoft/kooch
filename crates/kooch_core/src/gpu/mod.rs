@@ -18,6 +18,7 @@ mod context;
 mod error;
 mod features;
 mod limits;
+mod profiler;
 
 #[cfg(test)]
 mod tests;
@@ -25,3 +26,4 @@ mod tests;
 pub use context::GpuContext;
 pub use error::GpuError;
 pub use features::vbuf64_features;
+pub use profiler::{GpuQuery, GpuScopes};
