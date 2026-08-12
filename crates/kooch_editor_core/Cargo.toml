@@ -66,6 +66,10 @@ profiling = [
     "dep:puffin_egui",
     "dep:puffin_http",
     "profiling/profile-with-puffin",
+    # The GPU half. Selected together with the CPU half for the same
+    # reason a game's is: the editor draws the scene being authored, and
+    # a frame that is GPU-bound cannot be explained by CPU scopes.
+    "kooch_render/gpu-profiler",
 ]
 
 # Reads a .puffin capture in a terminal (#785). Needs the same feature

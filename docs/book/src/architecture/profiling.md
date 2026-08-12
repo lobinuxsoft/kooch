@@ -89,6 +89,35 @@ closes right after recording starts is exactly that empty frame. And a
 scope only registers the first time it runs, so anything occasional
 registers after a single snapshot has already gone out.
 
+## 🔴 The first handheld capture: the sky is 55 % of the frame
+
+Two captures of the same game on the OneXFly, differing only in internal
+resolution:
+
+| scope | 640×360 | 1920×1080 | scales |
+|---|---|---|---|
+| frame (median) | **13.90 ms** | **71.64 ms** | 5.2× |
+| `sky` | 6.11 | **39.60** | 6.5× |
+| `raster + shade` | 3.70 | 27.83 | 7.5× |
+| `shadows` | 0.98 | 1.28 | 1.3× |
+| `blit` | 0.14 | 1.05 | 7.7× |
+| `cull` | 0.046 | 0.042 | 1.0× |
+
+Nine times the pixels, and everything that scales with them does: the
+frame is fill-rate bound, and **the sky alone owns more than half of
+it**. `shadows` and `cull` do not move — they are geometry — and
+together they are under 1.4 ms. They are not the problem, and no amount
+of optimising them would have shown up.
+
+🔴 **Even at 640×360 the sky costs 6.11 ms of a 13.9 ms budget.** Nothing
+won elsewhere fits that in. This is what #771 predicted from shader
+arithmetic; it is now measured.
+
+⚠️ One of the two captures came back as `scope#ScopeId(137)` — the
+silently-unreadable case above. It was recovered by mapping ids against
+the readable capture from the same binary, which works only because both
+came from one session. Save a capture that has names.
+
 ## Reading the numbers
 
 - **Self time** excludes children. A parent can last 5 ms with 0.1 ms of
@@ -254,15 +283,28 @@ encoder need `TIMESTAMP_QUERY_INSIDE_ENCODERS` specifically;
 missing them yields scopes that measure nothing instead of a failed
 submit.
 
+### In the editor, too
+
+The editor builds its own render stage rather than going through
+`RenderPlugin`, so it inserts its own `GpuScopes` at startup and closes
+the frame in `present_editor_frame`. What it adds beyond the game's
+scopes:
+
+- **`editor ui`** — what egui costs on the GPU, kept apart from the
+  viewport passes. "Why is the editor slow" and "how expensive is my
+  scene" are different questions and now have different rows.
+- ⚠️ **`sky`, `cull` and `raster + shade` appear twice per frame** — the
+  View and Game viewports each render the scene, the same way the CPU
+  scope `frame` does.
+
+⚠️ It still measures a desktop viewport, plugged in. The budget is a
+frame on the handheld, and only a game build produces that.
+
 ## What is not built yet
 
-- **GPU scopes in the editor.** The editor builds its own render stage in
-  `kooch_editor_core/src/systems/startup.rs` rather than through
-  `RenderPlugin`, so no `GpuScopes` reaches its `Resources` and no scope
-  it would open is ever resolved. The game is where the 96 % was
-  measured; the editor is the follow-up.
 - Scopes finer than a pass. `raster + shade` is one box on both axes, and
-  it is the box the per-pixel cost is expected to be inside.
+  at 27.8 ms on the handheld it is the second-largest thing in the frame
+  — finding out whether that is the raster or the shading needs one.
 
 ## ⚠️ Four dependencies come from git, temporarily
 

@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+use kooch_core::Guid;
 use kooch_pack::PackKey;
 
 use super::{BuildPreset, Package, PackageError};
@@ -23,8 +24,20 @@ use super::{BuildPreset, Package, PackageError};
 /// Where a build has got to.
 #[derive(Debug, Clone)]
 pub enum BuildStatus {
-    /// cargo is running.
-    Compiling,
+    /// cargo is running, and what it was told to build.
+    ///
+    /// 🔴 The configuration travels with the status rather than being
+    /// read back off the selected preset. The list is editable while a
+    /// build runs: selecting another row, or editing the one that is
+    /// building, would otherwise silently relabel a build already in
+    /// flight — and the whole reason to show this is that a four-minute
+    /// compile should say what it is compiling.
+    Compiling {
+        /// Which preset started it, so the panel can name it.
+        preset: Guid,
+        /// What cargo was actually asked for: mode, target, floor.
+        what: String,
+    },
     /// cargo finished; the folder is being laid out.
     Packaging,
     /// Everything worked.
@@ -57,6 +70,7 @@ impl BuildJob {
     /// Checks what can be checked, then starts cargo.
     pub fn start(
         preset: &BuildPreset,
+        preset_guid: Guid,
         project_root: &Path,
         engine_root: Option<&Path>,
         crate_name: &str,
@@ -89,7 +103,10 @@ impl BuildJob {
         Ok(Self {
             child: Some(child),
             output,
-            status: BuildStatus::Compiling,
+            status: BuildStatus::Compiling {
+                preset: preset_guid,
+                what: describe(preset),
+            },
             preset: preset.clone(),
             project_root: project_root.to_path_buf(),
             engine_root: engine_root.map(Path::to_path_buf),
@@ -299,6 +316,30 @@ fn allow_shlib_undefined(command: &mut Command) {
         _ => FLAG.to_owned(),
     };
     command.env("RUSTFLAGS", flags);
+}
+
+/// One line saying what cargo was actually asked to produce.
+///
+/// The mode leads it: it is the difference between a build you hand out
+/// and one that opens a listening socket, and a compile long enough to
+/// walk away from should say which one it is making.
+fn describe(preset: &BuildPreset) -> String {
+    let mut parts = vec![preset.mode_label().to_owned()];
+    parts.push(match preset.is_host() {
+        true => "this machine".to_owned(),
+        false => preset.target_triple.trim().to_owned(),
+    });
+    if let Some(floor) = preset.glibc_floor() {
+        parts.push(format!("glibc {floor}+"));
+    }
+    if !preset.pack_assets {
+        parts.push("loose assets".to_owned());
+    }
+    let features = preset.feature_list();
+    if !features.is_empty() {
+        parts.push(features.join(" "));
+    }
+    parts.join(", ")
 }
 
 /// Turns cargo's release profile up to what a shipped game wants: link

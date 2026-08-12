@@ -86,6 +86,9 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     let vram_tracker = std::sync::Arc::new(kooch_render::EngineVramTracker::new());
     meshlet_stage.set_vram_tracker(vram_tracker.clone());
     let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
+    // #785 — per-pass GPU timings for the editor. Built here, while the
+    // `gpu` borrow is alive, and inserted below with the rest.
+    let gpu_scopes = kooch_core::gpu::GpuScopes::new(gpu.device(), gpu.queue());
 
     // The Game panel's view. A second view of this stage rather than a
     // second stage: it shares the mesh pool, the scene instances and the
@@ -139,6 +142,19 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     resources.insert(meshlet_stage);
     resources.insert(meshlet_blit);
     resources.insert(vram_tracker);
+    // The stage's own scopes (`shadows`, `cull`, `raster + shade`) are
+    // recorded by `kooch_render` the moment this resource exists;
+    // without it the editor could profile its CPU and nothing else,
+    // which is half the question when the thing being authored is a
+    // frame.
+    //
+    // ⚠️ Each viewport renders the scene, so those scopes appear twice
+    // per editor frame — once for View and once for Game — the same way
+    // the CPU scope `frame` does.
+    if let Some(scopes) = gpu_scopes {
+        resources.insert(scopes);
+        tracing::info!("editor: GPU scopes enabled");
+    }
     // Debug-view selector for the meshlet pipeline (#451). Default
     // Off keeps the production normal-debug path; the View toolbar
     // dropdown writes through this resource per-frame.
