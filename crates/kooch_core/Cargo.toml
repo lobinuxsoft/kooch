@@ -41,5 +41,18 @@ serde = { workspace = true }
 libloading = { workspace = true, optional = true }
 kooch_plugin_api = { workspace = true, optional = true }
 
+# GPU timer scopes (#785). `default-features = false` is not a size
+# tweak: `wgpu-profiler`'s own `puffin` feature depends on puffin
+# ^0.19.1, and this workspace patches puffin to 0.20 — the two cannot
+# resolve together. `gpu/profiler/puffin_bridge.rs` reports the results
+# to *our* puffin instead, so there is one `GlobalProfiler` and the GPU
+# rows land in the same flamegraph as the CPU ones.
+wgpu-profiler = { workspace = true, optional = true }
+puffin = { workspace = true, optional = true }
+
 [features]
 dynamic = ["dep:libloading", "dep:kooch_plugin_api"]
+# Per-pass GPU timings. Selected by `kooch/profiling`, never on in a
+# release build: it allocates query sets and buffers per frame and the
+# timestamps themselves are not free.
+gpu-profiler = ["dep:wgpu-profiler", "dep:puffin"]
