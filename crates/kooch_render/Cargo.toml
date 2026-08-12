@@ -39,6 +39,16 @@ metis = { version = "0.2", default-features = false, features = ["vendored"] }
 ron.workspace = true
 serde.workspace = true
 
+[features]
+# Forwards `kooch_core`'s GPU timer scopes (#785). Nothing in this
+# crate is `cfg`'d on it: `GpuScopes` is present either way and its
+# methods compile to nothing when the feature is off, so the render
+# code has one shape.
+gpu-profiler = ["kooch_core/gpu-profiler"]
+
 [dev-dependencies]
 naga = { version = "29", features = ["wgsl-in"] }
 pollster.workspace = true
+# Reading back what the GPU scopes reported (#785). Only the test needs
+# to name puffin: the engine reaches it through `kooch_core`.
+puffin.workspace = true

@@ -323,6 +323,11 @@ impl MeshletRenderStage {
         // costs four culls and four rasters is part of the frame whether
         // or not the HUD says so.
         if let Some(prepared) = shadows.as_ref() {
+            // #785 — the shadow passes are four culls and four rasters
+            // plus a cube face per point light, and until now their
+            // cost was inside whatever number the frame reported.
+            let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
+            let query = scopes.map(|s| s.begin("shadows", &mut encoder));
             self.record_shadows(
                 device,
                 queue,
@@ -333,6 +338,9 @@ impl MeshletRenderStage {
                 max_meshlets_per_mesh,
                 lod_target,
             );
+            if let (Some(scopes), Some(query)) = (scopes, query) {
+                scopes.end(&mut encoder, query);
+            }
         }
 
         // ── Path switch ─────────────────────────────────────────────
