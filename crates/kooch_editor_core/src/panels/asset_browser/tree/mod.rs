@@ -64,6 +64,12 @@ pub(crate) struct RenderCtx<'a> {
     /// editor scans. `None` when no project is open, which makes every
     /// folder [`FolderRole::Other`].
     pub project_root: Option<&'a Path>,
+    /// The scene the project opens with, absolute (#808).
+    ///
+    /// Resolved once by the panel rather than per row: it comes from the
+    /// manifest, every leaf compares against it, and reading it per file
+    /// would be a lookup inside a draw.
+    pub main_scene: Option<&'a Path>,
 }
 
 /// Renders one source root as a top-level collapsible node. `root_path`

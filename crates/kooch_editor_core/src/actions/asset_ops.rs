@@ -12,6 +12,11 @@ use kooch_core::asset_database::AssetDatabase;
 use kooch_core::resource::Resources;
 use kooch_render::material::Material;
 
+mod main_scene;
+
+pub(crate) use main_scene::main_scene_path;
+use main_scene::set_main_scene;
+
 use super::{EditorAction, NewFileKind};
 use crate::systems::LastScannedProject;
 
@@ -27,6 +32,7 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         EditorAction::DeleteAsset { path } => delete_asset(resources, path),
         EditorAction::DeleteFolder { path } => delete_folder(resources, path),
         EditorAction::RevealInFileManager { path } => reveal(path),
+        EditorAction::SetMainScene { path } => set_main_scene(resources, path),
         EditorAction::OpenInIde { file } => open_in_ide(resources, file),
         EditorAction::OpenInputMap { path } => open_input_map(resources, path),
         EditorAction::EditInputMap(edit) => edit_input_map(resources, edit),

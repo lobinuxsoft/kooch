@@ -115,6 +115,10 @@ pub(super) fn run_editor_ui(
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut pinned_gizmos = std::mem::take(&mut overlay.pinned_gizmos);
     let mut selected_asset = overlay.selected_asset;
+    // The scene this project opens with (#808), resolved once for the
+    // frame: every row of the asset tree compares against it, and the
+    // manifest is not something a draw should be re-reading per file.
+    let main_scene = crate::actions::main_scene_path(project_state.as_ref());
     let mut current_folder = overlay.current_folder.take();
     let selected_before = selected.clone();
     let asset_before = selected_asset;
@@ -240,6 +244,7 @@ pub(super) fn run_editor_ui(
                 current_folder: &mut current_folder,
                 engine_assets_root,
                 project_assets_root,
+                main_scene: main_scene.as_deref(),
                 meshlet_debug_mode,
                 meshlet_debug_caps,
                 single_light_note,

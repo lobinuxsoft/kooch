@@ -180,7 +180,26 @@ pub(super) fn leaf_menu(
     _root: &Path,
     actions: &mut Vec<EditorAction>,
     rename: &mut Option<RenameState>,
+    is_main_scene: bool,
 ) {
+    if offers_main_scene(&leaf.path, writable) {
+        // Offered as disabled rather than hidden on the scene that
+        // already is the main one: a menu that changes shape depending on
+        // a state nothing else displays is how you end up right-clicking
+        // three scenes to find out which is which. The badge in the tree
+        // says which; this says it again where the question was asked.
+        let entry = egui::Button::new(format!("{} Set as Main Scene", icons::GLOBE));
+        let resp = ui.add_enabled(!is_main_scene, entry);
+        if is_main_scene {
+            resp.on_disabled_hover_text("Already the scene this project opens with");
+        } else if resp.clicked() {
+            actions.push(EditorAction::SetMainScene {
+                path: leaf.path.clone(),
+            });
+            ui.close();
+        }
+        ui.separator();
+    }
     // Prefabs only. A scene is the same format but not the same invariant:
     // it may have any number of roots, and instancing needs exactly one.
     // Offering this on a scene meant a four-root scene failed at the click
@@ -266,3 +285,24 @@ pub(super) fn leaf_menu(
         ui.close();
     }
 }
+
+/// Whether "Set as Main Scene" belongs on this file's menu (#808).
+///
+/// Scenes only, and only under a writable root. A `.material` is not
+/// something a game can open with, and the engine's shipped assets are
+/// somebody else's — pointing a project's manifest at one would store a
+/// path outside the project, which the handler refuses anyway.
+///
+/// 🔴 A prefab is the same format with a different extension and must
+/// **not** qualify: it carries exactly one root entity, so a game opening
+/// one would start with a single object and no camera. The extension is
+/// the only thing separating them — see `PREFAB_EXTENSION`.
+pub(super) fn offers_main_scene(path: &Path, writable: bool) -> bool {
+    writable
+        && path
+            .extension()
+            .is_some_and(|ext| ext == crate::project::SCENE_EXTENSION)
+}
+
+#[cfg(test)]
+mod main_scene_entry_tests;
