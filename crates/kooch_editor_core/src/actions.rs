@@ -171,6 +171,10 @@ pub(crate) enum EditorAction {
     /// Install the engine this editor ships over the one the project is
     /// building against. The next build of the project is a full one.
     UpdateEngine,
+    /// Points a project at this editor's engine without opening it
+    /// (#800). The launcher's version of [`Self::UpdateEngine`], which
+    /// only ever ran as a side effect of opening a project.
+    MoveProjectToEngine(std::path::PathBuf),
     /// Dismiss the engine notice and leave the installed engine alone.
     KeepEngine,
     /// Delete an installed engine by version. Never the one this editor
@@ -469,6 +473,7 @@ impl EditorAction {
             // installing writes to disk outside the project rather than
             // to the world.
             | Self::KeepEngine
+            | Self::MoveProjectToEngine(_)
             | Self::UpdateEngine
             | Self::RemoveEngine(_)
             // Nothing to do locally; it exists to reach the project.

@@ -110,6 +110,7 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::LaunchProject(path) => handle_launch_project(resources, path),
         EditorAction::CancelLaunch => handle_cancel_launch(resources),
         EditorAction::UpdateEngine => handle_update_engine(resources),
+        EditorAction::MoveProjectToEngine(path) => handle_move_project_to_engine(resources, &path),
         EditorAction::KeepEngine => handle_keep_engine(resources),
         EditorAction::RemoveEngine(version) => handle_remove_engine(version),
         EditorAction::SetPowerProfile(profile) => handle_set_power_profile(resources, *profile),
@@ -151,6 +152,6 @@ use scene::{
     handle_set_active_scene,
 };
 use settings::{
-    handle_cancel_launch, handle_keep_engine, handle_remove_engine, handle_reparent,
-    handle_set_ide_command, handle_set_power_profile, handle_update_engine,
+    handle_cancel_launch, handle_keep_engine, handle_move_project_to_engine, handle_remove_engine,
+    handle_reparent, handle_set_ide_command, handle_set_power_profile, handle_update_engine,
 };
