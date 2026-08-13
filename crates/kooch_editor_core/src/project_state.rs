@@ -447,10 +447,27 @@ impl ProjectState {
                 // Only when one is open. With none, the engine is still
                 // installed and the next project to open is pointed at
                 // it by the usual path.
-                if let Some(root) = root_path
-                    && let Err(e) = crate::project::point_manifest_at_engine(&root, &engine_dir)
-                {
-                    tracing::warn!("could not point the project at the engine: {e}");
+                if let Some(root) = root_path {
+                    if let Err(e) = crate::project::point_manifest_at_engine(&root, &engine_dir) {
+                        tracing::warn!("could not point the project at the engine: {e}");
+                    }
+                    // 🔴 Two files record which engine a project uses,
+                    // and only one of them was being updated.
+                    // `point_manifest_at_engine` rewrites the *cargo*
+                    // manifest's path; `project.kooch` carries
+                    // `engine_version`, and that is what `status()`
+                    // reads (see `open`). Left behind, the project
+                    // pointed at 0.2.0 on disk while still calling
+                    // itself 0.1.0 — so the prompt came back every time,
+                    // for ever, no matter how often Install was pressed.
+                    if let Some(project) = self.active_project.as_mut()
+                        && project.manifest.engine_version != version
+                    {
+                        project.manifest.engine_version = version.clone();
+                        if let Err(e) = project.manifest.save(&root) {
+                            tracing::warn!("could not record the engine version: {e}");
+                        }
+                    }
                 }
                 self.engine_status =
                     Some(crate::engine_vendor::status(&version, source.as_deref()));
