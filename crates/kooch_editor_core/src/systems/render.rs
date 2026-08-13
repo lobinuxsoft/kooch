@@ -219,11 +219,40 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             .resize_if_needed(gpu.device(), &mut overlay.renderer);
     }
 
+    // 🔴 Which history the Edit menu describes follows which one a
+    // Ctrl+Z would reach. With a project open that is the remote one —
+    // the local stack still holds commands, but they describe the mirror
+    // and nothing will ever run them again. Reading the wrong one is how
+    // the menu offered "Undo Duplicate Entity" for an edit made before
+    // the project was opened.
+    let remote_history = resources
+        .get::<crate::remote_session::RemoteState>()
+        .is_some_and(|state| state.is_connected())
+        .then(|| resources.get::<crate::actions::remote_undo::RemoteHistory>())
+        .flatten();
+    let (can_undo, can_redo, undo_desc, redo_desc) = match remote_history {
+        Some(history) => (
+            history.can_undo(),
+            history.can_redo(),
+            history.undo_description().map(String::from),
+            history.redo_description().map(String::from),
+        ),
+        None => (
+            undo_stack.can_undo(),
+            undo_stack.can_redo(),
+            undo_stack.undo_description().map(String::from),
+            undo_stack.redo_description().map(String::from),
+        ),
+    };
+
     let toolbar = ToolbarInfo {
-        can_undo: undo_stack.can_undo(),
-        can_redo: undo_stack.can_redo(),
-        undo_desc: undo_stack.undo_description().map(String::from),
-        redo_desc: undo_stack.redo_description().map(String::from),
+        can_undo,
+        can_redo,
+        undo_desc,
+        redo_desc,
+        clipboard_has_entities: resources
+            .get::<crate::clipboard::EntityClipboard>()
+            .is_some_and(|clipboard| !clipboard.is_empty()),
         remote: resources
             .get::<crate::remote_session::RemoteState>()
             .and_then(|s| s.session.as_ref().map(|s| s.state())),

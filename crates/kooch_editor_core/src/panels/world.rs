@@ -28,6 +28,7 @@ pub(crate) fn draw_world_content(
     active_archetype_count: usize,
     last_clicked_index: &mut Option<usize>,
     scenes: &[SceneDisplayInfo],
+    clipboard_has_entities: bool,
 ) {
     draw_scene_bar(ui, scenes, actions);
     ui.label(format!(
@@ -39,20 +40,32 @@ pub(crate) fn draw_world_content(
     ui.horizontal(|ui| {
         draw_spawn_menu(ui, actions);
         let any_selected = !selected.is_empty();
-        if ui
-            .add_enabled(
-                any_selected,
-                egui::Button::new(format!("{} Duplicate", icons::COPY)),
-            )
-            .on_hover_text(
-                "Clone the selected entity (or entities) with every \
-                 component value preserved. The new entity gets a fresh \
-                 handle; nothing about the source is touched.",
-            )
-            .clicked()
-        {
-            for &entity in selected.iter() {
-                actions.push(EditorAction::Duplicate(entity));
+        // The three clipboard commands, from the same table the menu and
+        // the keyboard read. Each button says its chord, because a
+        // toolbar is where a shortcut is learned — nobody reads a manual
+        // to find out that Ctrl+D exists.
+        for chord in [
+            crate::shortcuts::EditChord::Duplicate,
+            crate::shortcuts::EditChord::Copy,
+            crate::shortcuts::EditChord::Paste,
+        ] {
+            let enabled = match chord {
+                crate::shortcuts::EditChord::Paste => clipboard_has_entities,
+                _ => any_selected,
+            };
+            let icon = match chord {
+                crate::shortcuts::EditChord::Paste => icons::PACKAGE,
+                _ => icons::COPY,
+            };
+            if ui
+                .add_enabled(
+                    enabled,
+                    egui::Button::new(format!("{icon} {}", chord.label())),
+                )
+                .on_hover_text(format!("{}\n\n{}", chord.chord(), chord.tooltip()))
+                .clicked()
+            {
+                actions.extend(crate::shortcuts::actions_for(chord, selected));
             }
         }
         if ui

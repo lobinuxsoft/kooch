@@ -20,6 +20,7 @@ pub(crate) mod actions;
 pub mod bootstrap;
 pub mod build;
 pub(crate) mod cargo_args;
+pub(crate) mod clipboard;
 pub(crate) mod drag_drop;
 pub mod editor_camera;
 pub mod engine_vendor;
@@ -42,6 +43,7 @@ pub(crate) mod queries;
 pub(crate) mod remote_input;
 pub mod remote_mirror;
 pub mod remote_session;
+pub(crate) mod shortcuts;
 pub(crate) mod state;
 pub(crate) mod style;
 pub(crate) mod systems;
@@ -113,6 +115,11 @@ impl Plugin for EditorPlugin {
         app.insert_resource(systems::RemoteSyncState::default());
         app.insert_resource(project_state::ProjectState::new());
         app.insert_resource(undo::UndoStack::new());
+        // The remote half of the same history. Two stacks and not one
+        // because they describe different worlds — see
+        // `actions::remote_undo`.
+        app.insert_resource(actions::remote_undo::RemoteHistory::default());
+        app.insert_resource(clipboard::EntityClipboard::default());
         // #463 perf HUD — populated incrementally by per-metric
         // systems (frame timer, sysinfo poller, GPU timestamp
         // readback, render-side counters). Inserted at zero so the

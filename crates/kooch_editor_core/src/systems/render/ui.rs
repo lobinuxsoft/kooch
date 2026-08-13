@@ -25,6 +25,8 @@ use super::frame_display::FrameDisplayData;
 pub(super) struct ToolbarInfo {
     pub(super) can_undo: bool,
     pub(super) can_redo: bool,
+    /// Whether Ctrl+V has anything to paste.
+    pub(super) clipboard_has_entities: bool,
     pub(super) undo_desc: Option<String>,
     pub(super) redo_desc: Option<String>,
     pub(super) is_playing: bool,
@@ -156,6 +158,10 @@ pub(super) fn run_editor_ui(
                 project_state
                     .as_ref()
                     .and_then(|ps| ps.editor_config.ide_command.as_deref()),
+                crate::menu_bar::EditMenu {
+                    selected: &selected,
+                    clipboard_has_entities: toolbar.clipboard_has_entities,
+                },
             );
 
             // Drawn on the context rather than inside a panel: a window is
@@ -242,6 +248,7 @@ pub(super) fn run_editor_ui(
                 asset_detail,
                 open_input_map,
                 current_folder: &mut current_folder,
+                clipboard_has_entities: toolbar.clipboard_has_entities,
                 engine_assets_root,
                 project_assets_root,
                 main_scene: main_scene.as_deref(),
@@ -267,6 +274,12 @@ pub(super) fn run_editor_ui(
             if !editable {
                 shade_out(ui, dock_rect);
             }
+
+            // After the dock, never before: the chords are gated on which
+            // panel has focus, and the dock is what decides that. Read
+            // above the dock they answered with last frame's focus, which
+            // is how a shortcut ends up working only on the second press.
+            crate::shortcuts::gather(ui, overlay.focused_tab, &selected, &mut actions);
         } else if let Some(ps) = project_state.as_mut() {
             let launch_actions = launch_screen::draw_launch_screen(ui, ps);
             forward_launch_actions(launch_actions, &mut actions);

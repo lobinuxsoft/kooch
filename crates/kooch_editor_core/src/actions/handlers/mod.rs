@@ -43,6 +43,7 @@ pub(super) fn apply_non_ecs_action(
         return;
     }
     match action {
+        EditorAction::CopyEntities(entities) => handle_copy(resources, entities),
         EditorAction::SaveScene => handle_save_scene(resources),
         // Removing the pending prompt already happened in `apply_actions`;
         // there is nothing left for this to do.
@@ -135,6 +136,40 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::ImportAssets { files, dest } => handle_import_assets(resources, files, dest),
         // ECS actions and Undo/Redo handled by caller.
         _ => {}
+    }
+}
+
+/// Fills the clipboard from the selection.
+///
+/// The one handler that is the same in both modes: reading an entity is
+/// reading the local ECS whether that ECS is the world or a mirror of
+/// one, and nothing is sent anywhere. `Copy` is the only edit-menu
+/// command that never touches the project.
+///
+/// An empty selection leaves the clipboard alone rather than clearing it.
+/// Ctrl+C with nothing selected is a miss, and a miss should not cost the
+/// user what they copied a minute ago.
+fn handle_copy(resources: &mut Resources, entities: &[kooch_ecs::entity::Entity]) {
+    if entities.is_empty() {
+        return;
+    }
+    let states: Vec<_> = entities
+        .iter()
+        .map(|entity| crate::actions::entity_state::capture(resources, *entity))
+        .collect();
+    if resources
+        .get::<crate::clipboard::EntityClipboard>()
+        .is_none()
+    {
+        resources.insert(crate::clipboard::EntityClipboard::default());
+    }
+    if let Some(clipboard) = resources.get_mut::<crate::clipboard::EntityClipboard>() {
+        tracing::debug!(
+            target: "kooch_editor_core::clipboard",
+            entities = states.len(),
+            "copied",
+        );
+        clipboard.set(states);
     }
 }
 

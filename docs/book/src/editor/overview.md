@@ -62,6 +62,26 @@ and opened.
 | **Console** | Structured logs from the editor *and* the launched project, filterable. Text is selectable and copyable. |
 | **Performance** | Frame timings, and per-stage counters where they exist. |
 
+## Editing shortcuts
+
+| Chord | What it does |
+|---|---|
+| **Ctrl+Z** / **Ctrl+Y** | Undo / redo the last edit. The Edit menu names the step it would take — *Undo Duplicate Entity* — so you can see what you are about to reverse. |
+| **Ctrl+D** | Duplicate the selection where it stands. |
+| **Ctrl+C** / **Ctrl+V** | Copy the selected entities into the editor's clipboard and paste them as new ones, named `Player Copy`. What is held is the *values*, so a copy still pastes after the original is deleted. |
+
+All four are live only while the **World** panel or the **View** has focus, and never while
+you are typing in a field: Ctrl+C in the Console copies a log line, and in the Inspector it
+copies text. Each command is also in the **Edit** menu and in the World panel's toolbar,
+with its chord written beside it — a greyed-out Paste means the clipboard is empty.
+
+> **With a project open, undo travels to the project.** The editor's world is a mirror of one
+> the project owns, so a Ctrl+Z is sent as the *inverse* of the edit that was made — the
+> project applies it, and the mirror catches up on the next refresh. Undoing a despawn brings
+> the whole subtree back with its values, under new entity handles: it is a rebuild, not a
+> resurrection. Loading a scene or closing the project clears the history, because the world
+> it describes is gone.
+
 ## Play
 
 Play does **not** rebuild anything and does **not** open a second window.

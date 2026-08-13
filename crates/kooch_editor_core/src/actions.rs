@@ -3,6 +3,7 @@
 mod asset_ops;
 mod codegen;
 mod dispatch;
+pub(crate) mod entity_state;
 mod handlers;
 mod ide;
 
@@ -18,6 +19,7 @@ pub(crate) fn detected_ide_command() -> Option<String> {
     Some(parts.join(" "))
 }
 mod remote_edit;
+pub(crate) mod remote_undo;
 pub(crate) mod scene_io;
 
 use std::any::TypeId;
@@ -65,6 +67,15 @@ pub(crate) enum EditorAction {
     /// quickly bring up parallel test entities (e.g. the LOD-stack
     /// inspector workflow needs N copies of one mesh entity).
     Duplicate(Entity),
+    /// Read entities into the editor's clipboard, replacing what was
+    /// there. Carries the selection because the clipboard is filled from
+    /// a panel that has one and the handler has not.
+    CopyEntities(Vec<Entity>),
+    /// Build the clipboard's contents as new entities.
+    ///
+    /// Takes no argument: what to paste is whatever was copied, and a
+    /// paste that named its own source would be a duplicate.
+    PasteEntities,
     SetField {
         entity: Entity,
         component: ComponentId,
@@ -442,6 +453,10 @@ impl EditorAction {
             | Self::SpawnMesh { .. }
             | Self::Despawn(_)
             | Self::Duplicate(_)
+            // Both read or write entities, so both wait for a world to
+            // read them out of.
+            | Self::CopyEntities(_)
+            | Self::PasteEntities
             | Self::SetField { .. }
             | Self::AddComponent { .. }
             | Self::RemoveComponent { .. }
