@@ -154,6 +154,14 @@ impl MeshletPipeline {
                 instance.lod_force_level = LOD_FORCE_NONE;
             }
             instance.group_base = running_base;
+            // #804 — the component has carried `receive_shadows` since
+            // it was written and nothing ever read it: unticking it in
+            // the Inspector changed nothing at all. This is the bit that
+            // makes the checkbox mean something.
+            instance.flags = match renderer.receive_shadows {
+                true => crate::meshlet::scene::INSTANCE_RECEIVES_SHADOWS,
+                false => 0,
+            };
             let group_count = mesh_descriptors
                 .get(mesh_handle.mesh_id as usize)
                 .map(|d| d.group_count)

@@ -101,6 +101,11 @@ struct IntiLight {
 // `IntiLight.shadow_slot` when the light casts no shadow.
 const INTI_NO_SHADOW_SLOT: u32 = 0xffffffffu;
 
+// Bit 0 of `IntiSurface.flags` — this surface samples shadow maps
+// (#804). Mirrors `INSTANCE_RECEIVES_SHADOWS` on the Rust side; the two
+// are one bit in one place and have to agree.
+const INTI_SURFACE_RECEIVES_SHADOWS: u32 = 1u;
+
 // Bit 0 of `IntiLight.flags` — this light marches for contact shadows.
 // Mirrors `GpuLight::FLAG_CONTACT_SHADOWS`.
 const INTI_LIGHT_CONTACT_SHADOWS: u32 = 1u;
@@ -760,6 +765,10 @@ struct IntiSurface {
     // camera turns. Projecting onto the forward axis makes the boundary
     // a plane, which is what the cascade fit assumes.
     view_depth: f32,
+    // #804 — the instance's bits. Bit 0 is "receives shadows"; when it
+    // is clear, `inti_light_contribution` skips the shadow fetch
+    // outright rather than fetching and multiplying by one.
+    flags: u32,
 }
 
 // `base_color` is linear albedo (sRGB textures are decoded by the
@@ -771,6 +780,7 @@ fn inti_surface(
     base_color: vec3<f32>,
     metallic: f32,
     roughness: f32,
+    flags: u32,
 ) -> IntiSurface {
     let v = normalize(inti.camera_position - world_position);
     let n_dot_v = max(dot(n, v), 1e-4);
@@ -790,6 +800,7 @@ fn inti_surface(
     surf.a = perceptual * perceptual;
     surf.f_ab = inti_f_ab(perceptual, n_dot_v);
     surf.view_depth = dot(world_position - inti.camera_position, inti.camera_forward);
+    surf.flags = flags;
     return surf;
 }
 
@@ -907,34 +918,38 @@ fn inti_light_contribution(
     // Each light kind reaches its own map: the sun's cascades (#476),
     // a spot's single projected layer (#777), a point's cube (#778).
     // #734's light textures are the remaining half of this.
+    // #804 — a surface that receives no shadows never fetches. Not a
+    // cheaper fetch: none. The cost this removes is per pixel *and* per
+    // casting light, which is the product that makes lighting expensive
+    // (#780 attacks the same product from the other side).
     var shadow = 1.0;
-    if (light.kind == INTI_KIND_DIRECTIONAL) {
-        shadow = inti_shadow(surf.world_position, surf.n, s.to_light, surf.view_depth, n_dot_l);
-    } else if (light.kind == INTI_KIND_POINT && light.shadow_slot != INTI_NO_SHADOW_SLOT) {
-        // Six faces of one cube (#778). A point light finally casts.
-        shadow = inti_point_shadow(
-            light.shadow_slot, surf.world_position, surf.n, s.to_light, light.position);
-    } else if (light.kind == INTI_KIND_SPOT && light.shadow_slot != INTI_NO_SHADOW_SLOT) {
-        // A spot casts into a layer of the same array the cascades use
-        // (#777). A point light still cannot: it needs six faces, which
-        // is a cube map and its own bindings.
-        // Along the cone axis, the same measure Bevy takes: the radial
-        // distance would widen the bias towards the edge of the cone,
-        // where the map is not actually coarser.
-        let axial = dot(light.direction, surf.world_position - light.position);
-        shadow = inti_spot_shadow(
-            light.shadow_slot, surf.world_position, surf.n, s.to_light, n_dot_l, axial);
-    }
+    if ((surf.flags & INTI_SURFACE_RECEIVES_SHADOWS) != 0u) {
+        if (light.kind == INTI_KIND_DIRECTIONAL) {
+            shadow = inti_shadow(surf.world_position, surf.n, s.to_light, surf.view_depth, n_dot_l);
+        } else if (light.kind == INTI_KIND_POINT && light.shadow_slot != INTI_NO_SHADOW_SLOT) {
+            // Six faces of one cube (#778). A point light finally casts.
+            shadow = inti_point_shadow(
+                light.shadow_slot, surf.world_position, surf.n, s.to_light, light.position);
+        } else if (light.kind == INTI_KIND_SPOT && light.shadow_slot != INTI_NO_SHADOW_SLOT) {
+            // A spot casts into a layer of the same array the cascades
+            // use (#777). Along the cone axis, the same measure Bevy
+            // takes: the radial distance would widen the bias towards
+            // the edge of the cone, where the map is not coarser.
+            let axial = dot(light.direction, surf.world_position - light.position);
+            shadow = inti_spot_shadow(
+                light.shadow_slot, surf.world_position, surf.n, s.to_light, n_dot_l, axial);
+        }
 
-    // Contact shadows (#735) — the last few centimetres the cascades
-    // cannot resolve, for any light kind, because a screen-space
-    // march needs no shadow map and so has no reason to be the sun's
-    // privilege. Skipped where the cascade already shadows this
-    // point: multiplying two occlusions of the same occluder darkens
-    // twice, and a march that finds nothing cannot brighten it back.
-    if ((light.flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u && shadow > 0.0) {
-        shadow *= inti_contact_shadow(
-            surf.world_position, surf.n, surf.v, s.to_light, frag_coord);
+        // Contact shadows (#735) — the last few centimetres the cascades
+        // cannot resolve, for any light kind, because a screen-space
+        // march needs no shadow map and so has no reason to be the sun's
+        // privilege. Skipped where the cascade already shadows this
+        // point: multiplying two occlusions of the same occluder darkens
+        // twice, and a march that finds nothing cannot brighten it back.
+        if ((light.flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u && shadow > 0.0) {
+            shadow *= inti_contact_shadow(
+                surf.world_position, surf.n, surf.v, s.to_light, frag_coord);
+        }
     }
 
     // 🔴 The cosine is applied PER LAYER, not factored out: the
@@ -1124,8 +1139,10 @@ fn inti_shade(
     metallic: f32,
     roughness: f32,
     frag_coord: vec2<f32>,
+    // #804 — the instance's bits, straight off `VertexOutput.flags`.
+    flags: u32,
 ) -> vec3<f32> {
-    let surf = inti_surface(world_position, n, base_color, metallic, roughness);
+    let surf = inti_surface(world_position, n, base_color, metallic, roughness, flags);
 
     var radiance = vec3<f32>(0.0);
     for (var i = 0u; i < inti.light_count; i = i + 1u) {

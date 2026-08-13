@@ -49,6 +49,29 @@ fn main() -> anyhow::Result<()> {
     let frames: Vec<_> = view.all_uniq().cloned().collect();
     println!("{} frames", frames.len());
 
+    // The slowest frame, on its own. An average hides a stall by
+    // definition: one frame of 700 ms across a thousand moves the mean
+    // by 0.7 ms and the median by nothing at all.
+    if std::env::args().any(|a| a == "--slowest")
+        && let Some(worst) = frames.iter().max_by_key(|f| f.duration_ns())
+    {
+        let unpacked = worst.unpacked()?;
+        println!(
+            "\n── slowest frame: {:.2} ms ──",
+            unpacked.duration_ns() as f64 / 1e6
+        );
+        let mut root = Node::default();
+        let mut ignored = HashMap::new();
+        for (thread, stream_info) in unpacked.thread_streams.iter() {
+            let stream = &stream_info.stream;
+            let node = root.children.entry(thread.name.clone()).or_default();
+            if let Ok(scopes) = puffin::Reader::from_start(stream).read_top_scopes() {
+                absorb(&view, stream, &scopes, node, &mut ignored);
+            }
+        }
+        print_children(&root, 1.0, 0);
+    }
+
     let mut durations: Vec<f64> = Vec::new();
     // Total nanoseconds per scope name, and how many times it ran.
     let mut totals: HashMap<String, (i64, usize)> = HashMap::new();

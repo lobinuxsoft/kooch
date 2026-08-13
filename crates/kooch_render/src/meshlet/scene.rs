@@ -24,6 +24,12 @@ use glam::Mat4;
 /// `i32::MIN` so any sensible level (positive small int) cannot
 /// collide with it.
 pub const LOD_FORCE_NONE: i32 = i32::MIN;
+/// This instance samples shadow maps.
+///
+/// Clear it and the shading path skips the fetch entirely — not a
+/// cheaper fetch, no fetch. That cost is per pixel **and** per casting
+/// light, which is why it is worth a bit (#804).
+pub const INSTANCE_RECEIVES_SHADOWS: u32 = 1u32 << 0;
 
 /// Per-instance scene record consumed by `cs_cull_scene`.
 ///
@@ -53,7 +59,14 @@ pub struct MeshInstance {
     pub lod_bias: f32,
     pub lod_force_level: i32,
     pub group_base: u32,
-    pub _pad0: u32,
+    /// Per-instance bits the shading path reads. See
+    /// [`INSTANCE_RECEIVES_SHADOWS`].
+    ///
+    /// Was `_pad0`: same offset, same size, so the 96-byte stride every
+    /// shader mirrors is unchanged. 🔴 Seven WGSL files declare this
+    /// struct; one left behind reads the next field at the wrong offset
+    /// and **does not fail to compile**.
+    pub flags: u32,
     pub _pad1: u32,
     pub _pad2: u32,
 }
@@ -67,7 +80,9 @@ impl MeshInstance {
             lod_bias: 0.0,
             lod_force_level: LOD_FORCE_NONE,
             group_base: 0,
-            _pad0: 0,
+            // Receiving shadows is the default, so a mesh nobody
+            // thought about looks the way it always has.
+            flags: INSTANCE_RECEIVES_SHADOWS,
             _pad1: 0,
             _pad2: 0,
         }

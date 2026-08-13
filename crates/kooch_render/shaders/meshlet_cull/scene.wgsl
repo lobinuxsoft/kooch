@@ -21,7 +21,9 @@ struct MeshInstance {
     // and pick LOD independently (#474). 0 is valid when the scene has
     // at most one instance per mesh.
     group_base: u32,
-    _pad0: u32,
+    // #804 — per-instance bits; bit 0 is "receives shadows". Was
+    // `_pad0`, so the 96-byte stride is unchanged.
+    flags: u32,
     _pad1: u32,
     _pad2: u32,
 }
