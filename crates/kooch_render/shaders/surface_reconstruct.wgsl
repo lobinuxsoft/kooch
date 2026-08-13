@@ -62,7 +62,9 @@ struct MeshInstance {
     lod_bias: f32,
     lod_force_level: i32,
     group_base: u32,
-    _pad0: u32,
+    // #804 — per-instance bits; bit 0 is "receives shadows". Was
+    // `_pad0`, so the 96-byte stride is unchanged.
+    flags: u32,
     _pad1: u32,
     _pad2: u32,
 }
@@ -84,6 +86,9 @@ struct VertexOutput {
     ddy_uv: vec2<f32>,
     world_tangent: vec4<f32>,
     material_id: u32,
+    // #804 — the instance's bits, carried through so the shading path
+    // can skip a shadow fetch this surface never wanted.
+    flags: u32,
 }
 
 struct PartialDerivatives {
@@ -270,5 +275,6 @@ fn resolve_surface(visible_slot: u32, tri_idx: u32, frag_coord: vec2<f32>) -> Ve
     out.ddy_uv = ddy_uv;
     out.world_tangent = world_tangent;
     out.material_id = inst.material_id;
+    out.flags = inst.flags;
     return out;
 }

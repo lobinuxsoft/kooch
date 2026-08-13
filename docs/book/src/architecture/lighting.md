@@ -487,6 +487,32 @@ by the caller. Doing it again inside the filter made the radius grow with
 the distance *squared* — which does not look like a wider blur, it looks
 like a gradient smeared across the floor.
 
+#### A surface can opt out of receiving them
+
+`MeshRenderer::receive_shadows` clears a bit on the instance, and
+`inti_light_contribution` skips the shadow fetch entirely — not a
+cheaper fetch, none at all. It covers the cascades, the spot and point
+maps and the contact-shadow march, because all four are shadows.
+
+Worth it because that cost is **per pixel and per casting light**: the
+same product that makes lighting expensive at all (#780 attacks it from
+the other side, by shrinking the set of lights a pixel considers). A
+ground plane already in shade, backfaces, emissive surfaces and anything
+an author knows will never show a shadow are all paying for a sample
+they discard.
+
+🔴 **The field existed long before anything read it.** Unticking it in
+the Inspector changed nothing, which is worse than the feature being
+absent — the UI made a promise the renderer did not keep. Same shape as
+the `cast_shadows` checkbox on a point light before #778.
+`a_floor_that_receives_no_shadows_has_none` is what keeps it honest, and
+it was verified failing: the same 0.0791 with the flag and without it.
+
+⚠️ Bevy checks two flags before its fetch, one on the mesh and one on
+the light (`pbr_functions.wesl`). This is the mesh half. The light half
+is `cast_shadows` on `MeshRenderer`, which is **still read by nobody** —
+a mesh with it unticked casts anyway.
+
 #### What a cube costs, and when it costs nothing
 
 Six faces is the most expensive shadow the engine draws, and

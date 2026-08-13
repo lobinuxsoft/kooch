@@ -59,6 +59,14 @@ struct Rig {
 /// A cube floating over a wide flat floor, one sun, and a camera that
 /// can see the ground beside the cube.
 fn rig() -> Option<Rig> {
+    rig_with_floor(true)
+}
+
+/// The rig, with control over whether the floor receives shadows (#804).
+///
+/// `true` is the default every other test uses and the default of the
+/// component itself.
+fn rig_with_floor(floor_receives_shadows: bool) -> Option<Rig> {
     let (device, queue) = try_acquire_device()?;
 
     let meshlet_mesh = build_default_meshlets(&build_cube_mesh()).expect("build meshlets");
@@ -106,13 +114,14 @@ fn rig() -> Option<Rig> {
     stage.ensure_gpu_mesh(&device, mesh_guid, &meshlet_mesh);
 
     let mut commands = Commands::new();
-    let mut spawn_cube = |matrix: Mat4| {
+    let mut spawn_cube = |matrix: Mat4, receives: bool| {
         commands
             .spawn(&mut resources)
             .insert(MeshRenderer {
                 mesh: Some(mesh_guid),
                 material: Some(material_guid),
                 visible: true,
+                receive_shadows: receives,
                 ..Default::default()
             })
             .insert(GlobalTransform { matrix });
@@ -121,8 +130,9 @@ fn rig() -> Option<Rig> {
     spawn_cube(
         Mat4::from_translation(Vec3::new(0.0, -0.25, 0.0))
             * Mat4::from_scale(Vec3::new(20.0, 0.5, 20.0)),
+        floor_receives_shadows,
     );
-    spawn_cube(Mat4::from_translation(CUBE_CENTRE));
+    spawn_cube(Mat4::from_translation(CUBE_CENTRE), true);
     commands.apply(&mut resources);
 
     Some(Rig {
@@ -498,5 +508,49 @@ fn a_caster_outside_the_camera_frustum_still_casts_a_whole_shadow() {
         "{} of 25 points inside the shadow are lit with the caster off \
          screen. Open floor reads {open_floor:.4}",
         lit.len(),
+    );
+}
+
+/// 🔴 #804 — `receive_shadows` had been on the component since it was
+/// written and **nothing read it**. Unticking it in the Inspector
+/// changed nothing at all, which is worse than the feature being
+/// absent: the UI made a promise the renderer did not keep.
+///
+/// The floor here opts out while the sun and the caster stay exactly as
+/// the test above leaves them, so the only difference is the flag.
+///
+/// Verified failing before the bit was wired: the shadow was there.
+#[test]
+fn a_floor_that_receives_no_shadows_has_none() {
+    let Some(mut receiving) = rig_with_floor(true) else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    add_sun(&mut receiving.resources, true);
+    let with = render(&mut receiving);
+    let camera = receiving.camera;
+    let shadowed = luminance(&with, &camera, shadow_centre());
+
+    let mut opted_out = rig_with_floor(false).expect("device acquired once already");
+    add_sun(&mut opted_out.resources, true);
+    let without = render(&mut opted_out);
+    let unshadowed = luminance(&without, &camera, shadow_centre());
+
+    assert!(
+        shadowed < 0.9 * unshadowed,
+        "the floor is {shadowed:.4} with the flag set and {unshadowed:.4} \
+         without it (linear) — opting out of shadows did nothing, which \
+         is the bug this test exists for",
+    );
+    // And the point of the flag: what is left is the lit floor, not a
+    // half-shadow. Compare against the same spot with no sun casting at
+    // all, which is as bright as this pixel can be.
+    let mut no_caster = rig_with_floor(true).expect("device acquired once already");
+    add_sun(&mut no_caster.resources, false);
+    let lit = luminance(&render(&mut no_caster), &camera, shadow_centre());
+    assert!(
+        unshadowed > 0.9 * lit,
+        "the opted-out floor is {unshadowed:.4} against {lit:.4} for a \
+         scene with no shadow at all — something still darkened it",
     );
 }
