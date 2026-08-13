@@ -389,3 +389,54 @@ fn a_version_already_on_the_machine_is_honoured() {
 
     unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
 }
+
+/// 🔴 Install has to move the project onto **this editor's** version.
+///
+/// `ensure_current` honours a project's own version when that engine is
+/// already on the machine (`engine_vendor.rs:314`) — deliberately, so a
+/// project pinned to an older engine keeps building. But Install asked
+/// for exactly that version, so with 0.1.0 already on disk and the
+/// editor shipping 0.2.0 the call returned `UpToDate` pointing at the
+/// *old* directory: the button installed nothing, reported nothing, and
+/// the prompt came straight back. Meanwhile it promises "Installing
+/// moves the project onto it".
+///
+/// Verified failing: ask with `project_version` and the returned path is
+/// the 0.1.0 directory that was already there.
+#[test]
+fn install_moves_the_project_to_the_editors_version() {
+    let _env = super::ENGINE_HOME_LOCK.lock().expect("env lock");
+    let dir = tmp("install_other_version");
+    let (engine, home) = (dir.join("editor_src"), dir.join("home"));
+    fake_engine(&engine);
+    // The older engine the project is pinned to, already on the machine.
+    let old = home.join("0.0.1").join(VENDOR_DIR);
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fake_engine(&old);
+    unsafe { std::env::set_var("KOOCH_ENGINE_HOME", &home) };
+
+    let status = EngineStatus {
+        project_version: "0.0.1".to_owned(),
+        editor_version: super::editor_engine_version().to_owned(),
+        installed: Some(old.clone()),
+        difference: Difference::OtherVersion,
+    };
+    assert_eq!(status.version_to_install(), super::editor_engine_version());
+
+    let (_, path) = ensure_current(status.version_to_install(), Some(&engine))
+        .expect("installing the editor's own version has to work");
+    let path = path.expect("Install produced no engine — the button that does nothing");
+
+    assert_ne!(
+        path, old,
+        "Install left the project on the old engine, which is the bug",
+    );
+    assert!(
+        path.to_string_lossy()
+            .contains(super::editor_engine_version()),
+        "installed somewhere that is not this editor's version: {}",
+        path.display(),
+    );
+
+    unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
+}
