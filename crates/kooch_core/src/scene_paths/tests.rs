@@ -35,3 +35,67 @@ fn an_extension_is_bare() {
         assert!(!ext.is_empty());
     }
 }
+
+/// 🔴 The field the runtime ignored until #808. A manifest that names a
+/// scene has to be readable by a game, which does not link the editor
+/// and therefore cannot use `ProjectManifest`.
+#[test]
+fn a_manifest_names_its_main_scene() {
+    let manifest = r#"(
+    name: "roll-a-ball",
+    version: "0.1.0",
+    engine_version: "0.2.0",
+    main_scene: Some("assets/scenes/many_lights.scene"),
+    window: (
+        title: "roll-a-ball",
+        width: 1280,
+        height: 720,
+    ),
+)"#;
+    assert_eq!(
+        main_scene_of(manifest).as_deref(),
+        Some("assets/scenes/many_lights.scene"),
+    );
+}
+
+/// The manifest grows; this function must not have to.
+#[test]
+fn unknown_fields_are_ignored() {
+    let manifest = r#"(
+    name: "x",
+    main_scene: Some("assets/scenes/a.scene"),
+    something_added_next_year: 3,
+)"#;
+    assert_eq!(main_scene_of(manifest).is_some(), true);
+}
+
+#[test]
+fn a_manifest_without_one_names_nothing() {
+    assert_eq!(main_scene_of(r#"(name: "x", main_scene: None)"#), None);
+    // An empty string is a field somebody cleared, not a path.
+    assert_eq!(main_scene_of(r#"(main_scene: Some(""))"#), None);
+    // And nonsense is not a scene either.
+    assert_eq!(main_scene_of("not a manifest"), None);
+}
+
+/// ⚠️ Both forms look plausible and only one resolves. `roll-a-ball`
+/// carried the short one, which joined to a path that did not exist —
+/// and the guard around the load skipped it in silence.
+#[test]
+fn the_short_form_is_normalised() {
+    assert_eq!(
+        normalise_main_scene("scenes/default.scene"),
+        "assets/scenes/default.scene",
+    );
+    assert_eq!(
+        normalise_main_scene("./scenes/default.scene"),
+        "assets/scenes/default.scene",
+    );
+    // Already right, left alone.
+    assert_eq!(
+        normalise_main_scene(DEFAULT_SCENE_REL_PATH),
+        DEFAULT_SCENE_REL_PATH,
+    );
+    // Somebody's own layout is their business.
+    assert_eq!(normalise_main_scene("levels/one.scene"), "levels/one.scene");
+}

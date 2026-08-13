@@ -587,3 +587,48 @@ fn an_engine_asset_nothing_uses_stays_behind() {
         "a demo model shipped"
     );
 }
+
+/// 🔴 Without this the game cannot know which scene it opens with, and
+/// `main_scene` goes back to being a field nothing reads (#808).
+///
+/// The bootstrap looks for the manifest **beside the executable**,
+/// before the asset system exists — so it must be a plain file there,
+/// not an entry in the pack.
+#[test]
+fn the_manifest_travels_beside_the_binary() {
+    let dir = tmp("manifest");
+    // `run` packages `<dir>/proj`, so the manifest goes where the project
+    // is rather than where the fixture starts.
+    write(
+        &dir.join("proj")
+            .join(kooch_core::scene_paths::PROJECT_MANIFEST_FILE),
+        br#"(name: "demo", main_scene: Some("assets/scenes/level.scene"))"#,
+    );
+    let out = run(&dir, &BuildPreset::default()).unwrap();
+
+    let shipped = out.dir.join(kooch_core::scene_paths::PROJECT_MANIFEST_FILE);
+    assert!(
+        shipped.is_file(),
+        "the game has no manifest to read its starting scene from",
+    );
+    assert_eq!(
+        kooch_core::scene_paths::main_scene_of(&std::fs::read_to_string(&shipped).unwrap())
+            .as_deref(),
+        Some("assets/scenes/level.scene"),
+    );
+}
+
+/// A project built before #808 has no manifest to copy, and that is not
+/// an error: the convention path is what such a build has always used.
+#[test]
+fn a_project_without_a_manifest_still_packages() {
+    let dir = tmp("no_manifest");
+    let out = run(&dir, &BuildPreset::default()).unwrap();
+
+    assert!(out.binary.is_file());
+    assert!(
+        !out.dir
+            .join(kooch_core::scene_paths::PROJECT_MANIFEST_FILE)
+            .exists(),
+    );
+}

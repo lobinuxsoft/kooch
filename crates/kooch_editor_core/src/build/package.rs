@@ -124,6 +124,26 @@ pub fn assemble(
     std::fs::copy(binary, &dest_binary)?;
     keep_executable(binary, &dest_binary);
 
+    // The manifest travels, so the game can open the scene the project
+    // says it opens with (#808).
+    //
+    // 🔴 Beside the executable and NOT in the pack. The scene bootstrap
+    // reads it before the asset system exists — a game that failed to
+    // open its pack still has to find its scene — and it holds no
+    // authoring state worth protecting: a name, a version, and the
+    // window size the same game shows in its title bar.
+    //
+    // Missing is not an error. A project built before this had no
+    // manifest beside its binary, and the convention below is what such
+    // a build has always used.
+    let manifest = project_root.join(kooch_core::scene_paths::PROJECT_MANIFEST_FILE);
+    if manifest.is_file() {
+        std::fs::copy(
+            &manifest,
+            dir.join(kooch_core::scene_paths::PROJECT_MANIFEST_FILE),
+        )?;
+    }
+
     // 🔴 Scenes go in the pack too. A scene is the structure of the
     // whole game — every entity, every component, every value, including
     // the names of components its author wrote — and leaving it in plain
