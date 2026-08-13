@@ -727,7 +727,10 @@ fn an_undone_field_goes_back() {
     ));
     assert_eq!(position(&socket), Some(ReflectValue::Vec3(moved)));
 
-    assert!(dispatch(&mut editor, &EditorAction::Undo));
+    assert!(dispatch(
+        &mut editor,
+        &EditorAction::Undo(crate::history::Document::World)
+    ));
     assert_eq!(
         position(&socket),
         Some(ReflectValue::Vec3(glam::Vec3::ZERO)),
@@ -735,7 +738,10 @@ fn an_undone_field_goes_back() {
     );
 
     // And back again — redo is the same machinery run the other way.
-    assert!(dispatch(&mut editor, &EditorAction::Redo));
+    assert!(dispatch(
+        &mut editor,
+        &EditorAction::Redo(crate::history::Document::World)
+    ));
     assert_eq!(
         position(&socket),
         Some(ReflectValue::Vec3(moved)),
@@ -829,7 +835,10 @@ fn an_undone_despawn_rebuilds_it() {
         "the despawn did not reach the project",
     );
 
-    assert!(dispatch(&mut editor, &EditorAction::Undo));
+    assert!(dispatch(
+        &mut editor,
+        &EditorAction::Undo(crate::history::Document::World)
+    ));
     let entities = RemoteClient::new(&socket).list_entities().unwrap();
     assert_eq!(entities.len(), 1, "the entity did not come back");
     assert_eq!(
@@ -936,7 +945,10 @@ fn a_paste_is_built_and_undone() {
         "the pasted entity was not named after its source",
     );
 
-    assert!(dispatch(&mut editor, &EditorAction::Undo));
+    assert!(dispatch(
+        &mut editor,
+        &EditorAction::Undo(crate::history::Document::World)
+    ));
     let after = RemoteClient::new(&socket).list_entities().unwrap();
     assert_eq!(after.len(), 1, "undoing the paste took the wrong entity");
     assert_eq!(after[0].id, snapshot[0].id, "it took the original");

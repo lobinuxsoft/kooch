@@ -122,6 +122,10 @@ pub(crate) enum Ancestor {
 pub(crate) struct Step {
     pub label: String,
     pub inverse: Inverse,
+    /// What this edit was aimed at, so a run of them can be recognised
+    /// as one. `None` for a discrete edit — a spawn is never half of
+    /// something bigger.
+    pub key: Option<crate::history::MergeKey>,
 }
 
 /// The remote counterpart of [`UndoStack`](crate::undo::UndoStack).
@@ -129,6 +133,9 @@ pub(crate) struct Step {
 pub(crate) struct RemoteHistory {
     done: Vec<Step>,
     undone: Vec<Step>,
+    /// Set when something closed the current run of edits — see
+    /// [`crate::history::merge`].
+    sealed: bool,
 }
 
 impl RemoteHistory {
@@ -137,11 +144,31 @@ impl RemoteHistory {
     /// Clears the redo stack, like every undo history: the branch those
     /// steps undid no longer exists.
     pub fn record(&mut self, step: Step) {
+        let sealed = std::mem::take(&mut self.sealed);
+        // A continuation keeps the *older* step's before-state — that is
+        // what an undo has to reach — and takes the newer one's
+        // after-state, which is what a redo has to write. Sixty frames of
+        // a drag become one step holding where it started and where it
+        // ended.
+        if crate::history::merge::continues(
+            self.done.last().and_then(|top| top.key),
+            step.key,
+            sealed,
+        ) && let Some(top) = self.done.last_mut()
+        {
+            top.inverse.absorb(step.inverse);
+            return;
+        }
         self.done.push(step);
         self.undone.clear();
         while self.done.len() > DEPTH {
             self.done.remove(0);
         }
+    }
+
+    /// Ends the current run of edits, so the next one starts a step.
+    pub fn seal(&mut self) {
+        self.sealed = true;
     }
 
     /// Forgets everything, for when the world it describes is gone —
@@ -212,6 +239,10 @@ pub(crate) fn step(resources: &mut Resources, undo: bool) -> bool {
             opposite.push(Step {
                 label: step.label,
                 inverse,
+                // The opposite stack is walked one entry at a time, so a
+                // step that came out of an undo never merges with
+                // anything.
+                key: None,
             });
         }
         // 🔴 The step is *not* put back. It described a world that no
@@ -355,11 +386,16 @@ pub(crate) fn record(
         (None, true) => return,
     };
     let label = label_of(action);
+    let key = merge_key_of(action);
     if resources.get::<RemoteHistory>().is_none() {
         resources.insert(RemoteHistory::default());
     }
     if let Some(history) = resources.get_mut::<RemoteHistory>() {
-        history.record(Step { label, inverse });
+        history.record(Step {
+            label,
+            inverse,
+            key,
+        });
     }
 }
 
@@ -384,6 +420,35 @@ fn label_of(action: &EditorAction) -> String {
     }
 }
 
+/// What a run of edits to the same thing looks like.
+///
+/// 🔴 Only the two that arrive continuously. The Inspector emits an edit
+/// per `changed()` — one per keystroke, one per frame of a drag — and a
+/// gizmo emits one per drag. Everything else here is a click, and two
+/// clicks are two steps however fast they were.
+fn merge_key_of(action: &EditorAction) -> Option<crate::history::MergeKey> {
+    use crate::history::MergeKey;
+    match action {
+        EditorAction::SetField {
+            entity,
+            component,
+            field,
+            ..
+        } => Some(MergeKey::of((
+            entity.index(),
+            entity.generation(),
+            component,
+            field,
+        ))),
+        EditorAction::TransformEdit { entity, .. } => Some(MergeKey::of((
+            entity.index(),
+            entity.generation(),
+            "transform",
+        ))),
+        _ => None,
+    }
+}
+
 /// The interned name behind a [`ComponentId`], which is how the project
 /// keys components.
 fn component_name(
@@ -397,6 +462,29 @@ fn component_name(
 }
 
 impl Inverse {
+    /// Folds a later edit into this one, keeping this one's before-state.
+    ///
+    /// Only the paired kinds can absorb: a field edit knows both sides,
+    /// so the merged step is "from where it started to where it ended".
+    /// Anything else keeps what it has — a step that cannot merge should
+    /// never have carried a key in the first place.
+    fn absorb(&mut self, newer: Inverse) {
+        match (self, newer) {
+            (
+                Inverse::SetField { after, .. },
+                Inverse::SetField {
+                    after: newer_after, ..
+                },
+            ) => *after = newer_after,
+            (Inverse::Several(mine), Inverse::Several(theirs)) => {
+                for (mine, theirs) in mine.iter_mut().zip(theirs) {
+                    mine.absorb(theirs);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Sends this inverse, and returns the one that reverses *it*.
     ///
     /// Every arm captures before it sends: what an undo needs to know is

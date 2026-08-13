@@ -79,11 +79,47 @@ pub(super) fn handle_edit_material(
         return;
     };
 
+    // Before the edit, and on the preview too: the preview is the first
+    // frame of a drag, so recording only on commit would snapshot the
+    // value the drag already reached. The merge key is what keeps the
+    // rest of the drag from filing sixty more.
+    crate::history::documents::record(
+        resources,
+        &crate::history::Document::Asset(guid),
+        "Edit Material",
+        Some(crate::history::MergeKey::of(("material", guid))),
+    );
+
     if !commit {
         preview_material(resources, guid, material);
         return;
     }
 
+    persist_material(resources, guid, material, &path);
+}
+
+/// Puts a material into the world *and* onto disk.
+///
+/// The write is what an undo has to reach: a committed edit wrote the
+/// file, so restoring only the in-memory copy would leave the value the
+/// user undid sitting in the asset both processes read.
+pub(crate) fn write_material(resources: &mut Resources, guid: Guid, material: &Material) {
+    let Some(path) = resources
+        .get::<AssetDatabase>()
+        .and_then(|db| db.entry(guid).map(|e| e.path.clone()))
+    else {
+        return;
+    };
+    preview_material(resources, guid, material);
+    persist_material(resources, guid, material, &path);
+}
+
+fn persist_material(
+    resources: &mut Resources,
+    guid: Guid,
+    material: &Material,
+    path: &std::path::Path,
+) {
     let text = match ron::ser::to_string_pretty(material, ron::ser::PrettyConfig::default()) {
         Ok(text) => text,
         Err(e) => {
@@ -91,11 +127,11 @@ pub(super) fn handle_edit_material(
             return;
         }
     };
-    if let Err(e) = std::fs::write(&path, text) {
+    if let Err(e) = std::fs::write(path, text) {
         tracing::error!(path = %path.display(), error = %e, "failed to write material");
         return;
     }
-    crate::actions::handlers::asset_saved(resources, &path);
+    crate::actions::handlers::asset_saved(resources, path);
     tracing::info!(path = %path.display(), "material saved");
 }
 
@@ -154,6 +190,15 @@ pub(super) fn handle_edit_asset_field(
         return;
     };
 
+    // Same shape as the material path: recorded on the way in, merged by
+    // field so a drag is one step.
+    crate::history::documents::record(
+        resources,
+        &crate::history::Document::Asset(guid),
+        &format!("Set {field}"),
+        Some(crate::history::MergeKey::of((guid, field))),
+    );
+
     if !(registration.write)(resources, guid, field, value) {
         tracing::warn!(%type_name, field, "EditAssetField: the asset refused the value");
         return;
@@ -162,13 +207,26 @@ pub(super) fn handle_edit_asset_field(
         return;
     }
 
+    persist_asset(resources, guid, registration, &path);
+}
+
+/// Serialises a reflected asset to its file and refreshes from it.
+///
+/// Shared with the undo path, which has to persist for the same reason
+/// the commit does — the file is the asset.
+pub(crate) fn persist_asset(
+    resources: &mut Resources,
+    guid: Guid,
+    registration: &kooch_ecs::reflect::ReflectedAssetRegistration,
+    path: &std::path::Path,
+) {
     let Some(text) = (registration.to_ron)(resources, guid) else {
-        tracing::error!(%type_name, "EditAssetField: failed to serialise; not persisted");
+        tracing::error!(guid = %guid, "failed to serialise the asset; not persisted");
         return;
     };
-    if let Err(e) = std::fs::write(&path, text) {
+    if let Err(e) = std::fs::write(path, text) {
         tracing::error!(path = %path.display(), error = %e, "failed to write asset");
         return;
     }
-    super::asset_saved(resources, &path);
+    super::asset_saved(resources, path);
 }

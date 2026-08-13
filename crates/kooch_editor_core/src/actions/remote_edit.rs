@@ -31,8 +31,13 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     // Undo/Redo travel as inverses of the edits already sent — the local
     // command stack describes the mirror, which the next refresh
     // overwrites. See [`crate::actions::remote_undo`].
-    if matches!(action, EditorAction::Undo | EditorAction::Redo) {
-        crate::actions::remote_undo::step(resources, matches!(action, EditorAction::Undo));
+    //
+    // Only the scene's, though: a prefab and an input map are documents
+    // this side owns, and their histories never touch the wire.
+    if let EditorAction::Undo(document) | EditorAction::Redo(document) = action
+        && document.is_world()
+    {
+        crate::actions::remote_undo::step(resources, matches!(action, EditorAction::Undo(_)));
         return true;
     }
 

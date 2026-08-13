@@ -25,6 +25,7 @@ pub(crate) mod drag_drop;
 pub mod editor_camera;
 pub mod engine_vendor;
 pub(crate) mod gizmos;
+pub(crate) mod history;
 pub mod icons;
 pub mod input_focus;
 pub mod launch_screen;
@@ -120,6 +121,9 @@ impl Plugin for EditorPlugin {
         // `actions::remote_undo`.
         app.insert_resource(actions::remote_undo::RemoteHistory::default());
         app.insert_resource(clipboard::EntityClipboard::default());
+        // One history per open document — a prefab, an input map, a
+        // material. The scene's is above; see `history`.
+        app.insert_resource(history::documents::DocumentHistories::default());
         // #463 perf HUD — populated incrementally by per-metric
         // systems (frame timer, sysinfo poller, GPU timestamp
         // readback, render-side counters). Inserted at zero so the

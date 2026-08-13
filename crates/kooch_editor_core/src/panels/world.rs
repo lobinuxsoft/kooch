@@ -65,7 +65,11 @@ pub(crate) fn draw_world_content(
                 .on_hover_text(format!("{}\n\n{}", chord.chord(), chord.tooltip()))
                 .clicked()
             {
-                actions.extend(crate::shortcuts::actions_for(chord, selected));
+                actions.extend(crate::shortcuts::actions_for(
+                    chord,
+                    selected,
+                    Some(&crate::history::Document::World),
+                ));
             }
         }
         if ui

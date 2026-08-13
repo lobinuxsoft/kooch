@@ -9,6 +9,7 @@ fn step(label: &str) -> Step {
             index: 1,
             generation: 0,
         }]),
+        key: None,
     }
 }
 
@@ -96,4 +97,74 @@ fn a_step_is_labelled_by_action() {
         }),
         "Move Entity",
     );
+}
+
+fn field_step(before: f32, after: f32, key: Option<crate::history::MergeKey>) -> Step {
+    Step {
+        label: "Set intensity".to_owned(),
+        inverse: Inverse::SetField {
+            entity: EntityId {
+                index: 1,
+                generation: 0,
+            },
+            component: "Light".to_owned(),
+            field: "intensity".to_owned(),
+            before: kooch_ecs::reflect::ReflectValue::F32(before),
+            after: kooch_ecs::reflect::ReflectValue::F32(after),
+        },
+        key,
+    }
+}
+
+fn intensity(history: &RemoteHistory) -> (f32, f32) {
+    match &history.done.last().expect("no step").inverse {
+        Inverse::SetField {
+            before: kooch_ecs::reflect::ReflectValue::F32(before),
+            after: kooch_ecs::reflect::ReflectValue::F32(after),
+            ..
+        } => (*before, *after),
+        _ => panic!("not a field step"),
+    }
+}
+
+/// 🔴 The Inspector emits an edit per frame of a drag. Sixty of them are
+/// one step, holding where the drag started and where it ended — the
+/// difference between one Ctrl+Z and sixty.
+#[test]
+fn a_drag_is_one_step() {
+    let mut history = RemoteHistory::default();
+    let key = Some(crate::history::MergeKey::of("intensity"));
+    for frame in 1..=60 {
+        history.record(field_step(0.0, frame as f32, key));
+    }
+
+    assert_eq!(history.done.len(), 1, "the drag filed more than one step");
+    assert_eq!(
+        intensity(&history),
+        (0.0, 60.0),
+        "the merged step lost an end of the drag",
+    );
+}
+
+/// A boundary between two drags of the same field keeps them apart, or
+/// undoing the second would silently undo the first as well.
+#[test]
+fn a_seal_splits_two_drags() {
+    let mut history = RemoteHistory::default();
+    let key = Some(crate::history::MergeKey::of("intensity"));
+    history.record(field_step(0.0, 5.0, key));
+    history.seal();
+    history.record(field_step(5.0, 9.0, key));
+
+    assert_eq!(history.done.len(), 2);
+    assert_eq!(intensity(&history), (5.0, 9.0));
+}
+
+/// A step with no key is discrete however fast it arrives.
+#[test]
+fn keyless_steps_stay_apart() {
+    let mut history = RemoteHistory::default();
+    history.record(field_step(0.0, 1.0, None));
+    history.record(field_step(1.0, 2.0, None));
+    assert_eq!(history.done.len(), 2);
 }

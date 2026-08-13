@@ -6,37 +6,71 @@ fn entity(index: u32) -> Entity {
     Entity::new(index, 0)
 }
 
-/// The two panels that show entities are the two that get the chords.
+/// The two panels that show entities are the two that get the chords
+/// that act on entities.
 #[test]
 fn the_entity_panels_hear_them() {
-    assert!(allowed(Some(EditorTab::World), false));
-    assert!(allowed(Some(EditorTab::View), false));
+    let world = Document::World;
+    for tab in [EditorTab::World, EditorTab::View] {
+        for chord in ALL {
+            assert!(allowed(chord, Some(tab), Some(&world), false), "{chord:?}");
+        }
+    }
 }
 
-/// 🔴 The Console, the Assets panel and the Inspector do not. Ctrl+D in
-/// the Assets panel is about a file, and Ctrl+C in the Console is about
-/// a log line — both of those chords already mean something there.
+/// 🔴 Duplicate, copy and paste act on the entity selection, so they
+/// stay in the panels that show entities. Ctrl+D in the Assets panel is
+/// about a file and Ctrl+C in the Console is about a log line — both
+/// already mean something there.
 #[test]
-fn other_panels_do_not() {
-    assert!(!allowed(Some(EditorTab::Console), false));
-    assert!(!allowed(Some(EditorTab::AssetBrowser), false));
-    assert!(!allowed(Some(EditorTab::Inspector), false));
-    assert!(!allowed(None, false));
+fn other_panels_lose_the_clipboard() {
+    let world = Document::World;
+    for tab in [
+        EditorTab::Console,
+        EditorTab::AssetBrowser,
+        EditorTab::Inspector,
+    ] {
+        for chord in [EditChord::Duplicate, EditChord::Copy, EditChord::Paste] {
+            assert!(!allowed(chord, Some(tab), Some(&world), false), "{tab:?}");
+        }
+    }
+}
+
+/// Undo follows the document instead: a panel that edits something has
+/// it, whichever panel that is, and one that edits nothing does not.
+#[test]
+fn undo_follows_the_document() {
+    let prefab = Document::Prefab(kooch_core::Guid::from_bytes([3; 16]));
+    assert!(allowed(
+        EditChord::Undo,
+        Some(EditorTab::Inspector),
+        Some(&prefab),
+        false,
+    ));
+    assert!(!allowed(
+        EditChord::Undo,
+        Some(EditorTab::Console),
+        None,
+        false,
+    ));
 }
 
 /// Typing takes the keyboard from everyone, whichever panel is focused
 /// — the same rule `input_focus` applies to the camera.
 #[test]
 fn typing_takes_them_all() {
-    assert!(!allowed(Some(EditorTab::World), true));
-    assert!(!allowed(Some(EditorTab::View), true));
+    let world = Document::World;
+    for chord in ALL {
+        assert!(!allowed(chord, Some(EditorTab::World), Some(&world), true));
+        assert!(!allowed(chord, Some(EditorTab::View), Some(&world), true));
+    }
 }
 
 /// One action per selected entity, which is what lets the dispatch
 /// layer batch them into a single undo step.
 #[test]
 fn duplicate_acts_on_each() {
-    let actions = actions_for(EditChord::Duplicate, &[entity(1), entity(2)]);
+    let actions = actions_for(EditChord::Duplicate, &[entity(1), entity(2)], None);
     assert_eq!(actions.len(), 2);
     assert!(matches!(actions[0], EditorAction::Duplicate(_)));
 }
@@ -45,8 +79,8 @@ fn duplicate_acts_on_each() {
 /// queueing an action the dispatch layer has to recognise as empty.
 #[test]
 fn an_empty_selection_asks_nothing() {
-    assert!(actions_for(EditChord::Duplicate, &[]).is_empty());
-    assert!(actions_for(EditChord::Copy, &[]).is_empty());
+    assert!(actions_for(EditChord::Duplicate, &[], None).is_empty());
+    assert!(actions_for(EditChord::Copy, &[], None).is_empty());
 }
 
 /// Paste is the exception: it acts on the clipboard, so it fires with
@@ -54,7 +88,7 @@ fn an_empty_selection_asks_nothing() {
 /// clipboard's answer, not the selection's.
 #[test]
 fn paste_ignores_the_selection() {
-    let actions = actions_for(EditChord::Paste, &[]);
+    let actions = actions_for(EditChord::Paste, &[], None);
     assert!(matches!(actions.as_slice(), [EditorAction::PasteEntities]));
 }
 

@@ -16,6 +16,11 @@ use crate::state::{ALL_TABS, EditorTab, dock_has_tab};
 pub(crate) struct EditMenu<'a> {
     pub selected: &'a [kooch_ecs::entity::Entity],
     pub clipboard_has_entities: bool,
+    /// What a Ctrl+Z would reach, or `None` over a panel that edits
+    /// nothing. Named in the entry so the menu says *which* history —
+    /// "Undo Set intensity (this prefab)" is the difference between
+    /// trusting the chord and testing it.
+    pub document: Option<&'a crate::history::Document>,
 }
 
 /// Draws the Edit menu: every chord, whether it can run, and why.
@@ -38,14 +43,22 @@ fn draw_edit_menu(
     for chord in ALL {
         // Undo and Redo name the step they would take — "Undo Duplicate
         // Entity" — which is the whole reason the history keeps labels.
+        let scope = edit
+            .document
+            .map(|document| format!(" ({})", document.describe()))
+            .unwrap_or_default();
         let text = match (chord, undo_desc, redo_desc) {
-            (EditChord::Undo, Some(desc), _) => format!("Undo {desc}  {}", chord.chord()),
-            (EditChord::Redo, _, Some(desc)) => format!("Redo {desc}  {}", chord.chord()),
+            (EditChord::Undo, Some(desc), _) => {
+                format!("Undo {desc}{scope}  {}", chord.chord())
+            }
+            (EditChord::Redo, _, Some(desc)) => {
+                format!("Redo {desc}{scope}  {}", chord.chord())
+            }
             _ => chord.menu_text(),
         };
         let enabled = match chord {
-            EditChord::Undo => can_undo,
-            EditChord::Redo => can_redo,
+            EditChord::Undo => can_undo && edit.document.is_some(),
+            EditChord::Redo => can_redo && edit.document.is_some(),
             EditChord::Duplicate | EditChord::Copy => !edit.selected.is_empty(),
             EditChord::Paste => edit.clipboard_has_entities,
         };
@@ -57,7 +70,7 @@ fn draw_edit_menu(
             .on_hover_text(chord.tooltip())
             .clicked()
         {
-            actions.extend(actions_for(chord, edit.selected));
+            actions.extend(actions_for(chord, edit.selected, edit.document));
             ui.close();
         }
     }

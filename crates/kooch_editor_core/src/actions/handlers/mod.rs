@@ -23,6 +23,7 @@ use crate::actions::EditorAction;
 // The remote path resolves a prefab's destination with the same rules as
 // the local one, rather than a second copy that could disagree about where
 // prefabs live.
+pub(crate) use assets::{persist_asset, write_material};
 pub(crate) use prefab::PendingHostReloads;
 pub(crate) use prefab::{
     asset_saved, entity_name, prefab_path, prefab_saved, project_root as prefab_root,
@@ -43,6 +44,15 @@ pub(super) fn apply_non_ecs_action(
         return;
     }
     match action {
+        // The scene's undo is the caller's business in local mode and the
+        // wire's in remote mode; a document's is neither.
+        EditorAction::Undo(document) | EditorAction::Redo(document) if !document.is_world() => {
+            crate::history::documents::step(
+                resources,
+                document,
+                matches!(action, EditorAction::Undo(_)),
+            );
+        }
         EditorAction::CopyEntities(entities) => handle_copy(resources, entities),
         EditorAction::SaveScene => handle_save_scene(resources),
         // Removing the pending prompt already happened in `apply_actions`;

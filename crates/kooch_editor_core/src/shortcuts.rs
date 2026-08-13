@@ -27,6 +27,7 @@
 use kooch_ecs::entity::Entity;
 
 use crate::actions::EditorAction;
+use crate::history::Document;
 use crate::state::EditorTab;
 
 /// An editing command with a keyboard chord.
@@ -116,16 +117,32 @@ impl EditChord {
     }
 }
 
-/// Whether the chords are live at all this frame.
+/// Whether a chord is live this frame, and why it might not be.
 ///
-/// Separate from reading the keyboard so the rule can be read — and
-/// tested — without an egui context. The two arguments are the whole
-/// rule: which panel you last clicked, and whether you are typing.
-pub(crate) fn allowed(focused_tab: Option<EditorTab>, text_edit_focused: bool) -> bool {
+/// 🔴 The two halves of the rule are not the same rule, which is the
+/// whole of #813:
+///
+/// - **Undo and redo** follow the *document*. Any panel that edits
+///   something has them — the Inspector on a prefab, the Input Map on
+///   its map — and each reaches its own history.
+/// - **Duplicate, copy and paste** act on the entity selection, so they
+///   belong to the two panels that show entities. Ctrl+D over an input
+///   map has nothing to duplicate.
+///
+/// Typing takes all of them, whichever panel is focused.
+pub(crate) fn allowed(
+    chord: EditChord,
+    focused_tab: Option<EditorTab>,
+    document: Option<&Document>,
+    text_edit_focused: bool,
+) -> bool {
     if text_edit_focused {
         return false;
     }
-    matches!(focused_tab, Some(EditorTab::World) | Some(EditorTab::View))
+    match chord {
+        EditChord::Undo | EditChord::Redo => document.is_some(),
+        _ => matches!(focused_tab, Some(EditorTab::World) | Some(EditorTab::View)),
+    }
 }
 
 /// What the editor should do about a chord, given what is selected.
@@ -134,10 +151,21 @@ pub(crate) fn allowed(focused_tab: Option<EditorTab>, text_edit_focused: bool) -
 /// no selection — and is the reason this returns a list rather than one
 /// action: duplicating three entities is three actions, and the dispatch
 /// layer batches them back into one undo step.
-pub(crate) fn actions_for(chord: EditChord, selected: &[Entity]) -> Vec<EditorAction> {
+pub(crate) fn actions_for(
+    chord: EditChord,
+    selected: &[Entity],
+    document: Option<&Document>,
+) -> Vec<EditorAction> {
     match chord {
-        EditChord::Undo => vec![EditorAction::Undo],
-        EditChord::Redo => vec![EditorAction::Redo],
+        // Undo without a document is a chord pressed over a panel that
+        // edits nothing — the Console, the Asset Browser. Doing nothing
+        // is the answer, not falling back to the scene.
+        EditChord::Undo => document
+            .map(|document| vec![EditorAction::Undo(document.clone())])
+            .unwrap_or_default(),
+        EditChord::Redo => document
+            .map(|document| vec![EditorAction::Redo(document.clone())])
+            .unwrap_or_default(),
         EditChord::Duplicate => selected
             .iter()
             .copied()
@@ -158,18 +186,20 @@ pub(crate) fn actions_for(chord: EditChord, selected: &[Entity]) -> Vec<EditorAc
 pub(crate) fn gather(
     ui: &egui::Ui,
     focused_tab: Option<EditorTab>,
+    document: Option<&Document>,
     selected: &[Entity],
     actions: &mut Vec<EditorAction>,
 ) {
-    if !allowed(focused_tab, ui.ctx().text_edit_focused()) {
-        return;
-    }
+    let typing = ui.ctx().text_edit_focused();
     for chord in ALL {
+        if !allowed(chord, focused_tab, document, typing) {
+            continue;
+        }
         let pressed = ui
             .ctx()
             .input(|i| i.modifiers.command && i.key_pressed(chord.key()));
         if pressed {
-            actions.extend(actions_for(chord, selected));
+            actions.extend(actions_for(chord, selected, document));
         }
     }
 }
