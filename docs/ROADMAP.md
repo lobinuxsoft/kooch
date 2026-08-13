@@ -333,6 +333,15 @@ crate reading the same number since the workspace was created. Now
 ⚠️ Still no tag and no release: a version number nothing points at is
 bookkeeping, and #756 (self-update) cannot exist without one.
 
+🔴 **And it has to move with every change to the engine, not once a
+release** (2026-08-13). The editor compares the engine a project builds
+against with the one it ships, and with the number standing still the
+only thing it could say was *"same version, different source"* — an
+alert that fires on every open, says nothing actionable, and gets
+dismissed without reading. A version that does not move is not
+bookkeeping, it is an alert that cries wolf. **0.2.1** is the froxel grid
+(#780) and the main-scene fix (#808).
+
 **Build presets became one dropdown.** `release` / `profiling` /
 `runnable` are gone; `mode` is **Release** or **Profiling**, both
 optimised — LTO and one codegen unit, set through `CARGO_PROFILE_*` in
