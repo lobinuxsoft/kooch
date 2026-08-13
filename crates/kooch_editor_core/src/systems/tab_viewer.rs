@@ -108,6 +108,9 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Project / engine `assets/` roots, for the Asset Browser tree.
     pub(crate) engine_assets_root: Option<&'a std::path::Path>,
     pub(crate) project_assets_root: Option<&'a std::path::Path>,
+    /// The scene the project opens with, for the Asset Browser to mark
+    /// (#808). Resolved once per frame from the manifest.
+    pub(crate) main_scene: Option<&'a std::path::Path>,
     /// Selector for the meshlet pipeline's debug visualization
     /// (#451). Mutated by the View toolbar dropdown.
     pub(crate) meshlet_debug_mode: &'a mut MeshletDebugMode,
@@ -327,6 +330,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.current_folder,
                 self.engine_assets_root,
                 self.project_assets_root,
+                self.main_scene,
                 self.actions,
             ),
         }

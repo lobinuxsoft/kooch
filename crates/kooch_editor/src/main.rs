@@ -14,3 +14,6 @@
 fn main() {
     kooch_editor_core::run_editor();
 }
+
+#[cfg(test)]
+mod profiler_required_tests;

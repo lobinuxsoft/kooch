@@ -88,5 +88,50 @@ pub const SCENES_DIR: &str = "assets/scenes";
 /// allowlist otherwise prevents, arriving from the other side.
 pub const READ_BY_PATH: [&str; 1] = [SCENE_EXTENSION];
 
+/// The `main_scene` a manifest names, if it names one.
+///
+/// # Why the runtime parses the manifest at all
+///
+/// 🔴 Until #808 it did not, and `main_scene` was a field **nothing
+/// read**. A shipped game opened [`DEFAULT_SCENE_REL_PATH`] whatever the
+/// manifest said, so a project whose starting scene was not called
+/// `default.scene` shipped a game that started somewhere else — or
+/// started empty — with no error anywhere. The field looked like a
+/// setting and behaved like a comment.
+///
+/// # Why a struct of one field rather than the editor's `ProjectManifest`
+///
+/// That type lives in `kooch_editor_core`, which a game does not link and
+/// must not: the manifest carries authoring state the runtime has no
+/// business knowing. Serde ignores the fields not named here, so this
+/// keeps reading correctly as the manifest grows.
+pub fn main_scene_of(manifest: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct BootFields {
+        main_scene: Option<String>,
+    }
+    let fields: BootFields = ron::from_str(manifest).ok()?;
+    fields.main_scene.filter(|s| !s.trim().is_empty())
+}
+
+/// The same path, tolerating the form that omits `assets/`.
+///
+/// ⚠️ `main_scene` is relative to the project **root** and therefore
+/// starts with `assets/`, and projects exist on disk carrying
+/// `scenes/x.scene` instead — `roll-a-ball` was one. Both look plausible
+/// and only one resolves, so the short form is accepted and normalised
+/// rather than silently resolving to a file that is not there.
+///
+/// Returns the path unchanged when it already names a directory that is
+/// not `scenes/`, because that is somebody's deliberate layout and not
+/// this function's business.
+pub fn normalise_main_scene(path: &str) -> String {
+    let trimmed = path.trim_start_matches("./");
+    if trimmed.starts_with("assets/") || !trimmed.starts_with("scenes/") {
+        return trimmed.to_owned();
+    }
+    format!("assets/{trimmed}")
+}
+
 #[cfg(test)]
 mod tests;

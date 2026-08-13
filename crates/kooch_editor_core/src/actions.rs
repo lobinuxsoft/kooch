@@ -38,6 +38,7 @@ use self::handlers::apply_non_ecs_action;
 mod prefab_overrides;
 pub(crate) mod prefab_propagate;
 
+pub(crate) use self::asset_ops::main_scene_path;
 pub(crate) use self::codegen::{
     initial_registrations, migrate_to_library, register_scripts, split_authoring,
 };
@@ -311,6 +312,17 @@ pub(crate) enum EditorAction {
     RevealInFileManager {
         path: PathBuf,
     },
+    /// Make `path` the scene the project — and the game built from it —
+    /// opens with (#808).
+    ///
+    /// `path` is absolute, the way the asset tree carries it; the handler
+    /// is what turns it into the project-relative form the manifest
+    /// stores. An absolute path written into `project.kooch` would work
+    /// on the machine that clicked and nowhere else, and nothing would
+    /// report it until the game opened an empty scene.
+    SetMainScene {
+        path: PathBuf,
+    },
     /// Open `file` in an external IDE, with the project's **crate root**
     /// as the workspace, so the whole project (Rust source,
     /// `Cargo.toml`, …) is editable rather than the assets folder alone.
@@ -511,6 +523,8 @@ impl EditorAction {
             | Self::DeleteFolder { .. }
             | Self::RevealInFileManager { .. }
             | Self::OpenInIde { .. }
+            // The manifest is a file beside the project, not the world.
+            | Self::SetMainScene { .. }
             | Self::CreateFile { .. } => false,
         }
     }

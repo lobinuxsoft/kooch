@@ -23,11 +23,31 @@ which one to build; no preset is "the" preset.
 build/
   My Game.x86_64      the executable, named for its target
   assets.kpack        the scenes and everything they reference
+  project.kooch       which scene the game opens with
 ```
 
 The extension follows the target — `.exe` on Windows, the architecture
 on Linux, the same convention Unity and Godot use. A folder holding both
 platforms is then unambiguous.
+
+## Which scene it opens with
+
+Right-click a `.scene` in the Asset Browser → **Set as Main Scene**. That
+scene is marked with a ▶ and an accent-coloured name from then on, and it is the one both
+Play and a built game start from.
+
+It is stored in `project.kooch`, which travels beside the executable —
+that is the only reason a shipped game can know. Nothing else in the
+package says which of five scenes is the first one.
+
+🔴 **This did not work before.** `main_scene` existed in the manifest and
+**nothing read it**: a game opened `assets/scenes/default.scene` whatever
+the field said, so a project whose starting scene had any other name
+shipped a build that started somewhere else — or started empty, with no
+error anywhere.
+
+A project with no `project.kooch` beside the binary still falls back to
+`assets/scenes/default.scene`, which is what every build did until now.
 
 ## What travels, and what does not
 

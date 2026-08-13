@@ -35,6 +35,7 @@ slotmap = "1.0"
 # Rust-native human-editable equivalent of Unity's YAML .meta.
 uuid = { workspace = true }
 toml = { workspace = true }
+ron = { workspace = true }
 serde = { workspace = true }
 
 # Dynamic plugin support (optional)

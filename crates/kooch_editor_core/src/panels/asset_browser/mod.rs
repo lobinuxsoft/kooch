@@ -36,6 +36,7 @@ pub(crate) fn draw_asset_browser_content(
     current_folder: &mut Option<PathBuf>,
     engine_root: Option<&Path>,
     project_root: Option<&Path>,
+    main_scene: Option<&Path>,
     actions: &mut Vec<EditorAction>,
 ) {
     // Full panel area, captured before content so drop detection can
@@ -123,6 +124,7 @@ pub(crate) fn draw_asset_browser_content(
                 nav,
                 has_settings: has_render_settings(catalog, project_root),
                 project_root,
+                main_scene,
             };
             // Cleared here and refilled as rows are drawn, so the list the
             // keyboard reads next frame is exactly what is on screen now.
