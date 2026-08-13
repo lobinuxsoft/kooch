@@ -17,3 +17,4 @@ tracing.workspace = true
 
 [dev-dependencies]
 naga = { version = "29", features = ["wgsl-in"] }
+pollster.workspace = true

@@ -215,15 +215,27 @@ impl MeshletRenderStage {
             required_capacity,
             required_group_capacity,
         );
-        // Inti's per-frame walk. Ahead of the encoder for the same
-        // reason `ensure_capacity` is: growing the light buffer
-        // replaces it, and a replaced buffer must not be one an
-        // already-recorded pass references.
+        // Inti's per-frame walk, and the froxel grid it builds from it
+        // (#780). Ahead of the encoder for the same reason
+        // `ensure_capacity` is: growing a buffer replaces it, and a
+        // replaced buffer must not be one an already-recorded pass
+        // references.
+        //
+        // The view and its projection go in separately rather than as
+        // the `view_proj` everything else here takes: the grid slices
+        // depth in VIEW space, and a combined matrix cannot be taken
+        // apart again.
+        let size = self.views[view_id].size;
         self.lights.update(
             device,
             queue,
             resources,
-            cam_pos,
+            kooch_lighting::ClusterCamera::new(
+                cam_pos,
+                camera.view(),
+                camera.projection(aspect),
+                glam::Vec2::new(size.0 as f32, size.1 as f32),
+            ),
             shadows.as_ref().map(|s| s.frame),
         );
         // Worst-case meshlet stride covers every mesh; the pool path
@@ -347,6 +359,19 @@ impl MeshletRenderStage {
                 max_meshlets_per_mesh,
                 lod_target,
             );
+            if let (Some(scopes), Some(query)) = (scopes, query) {
+                scopes.end(&mut encoder, query);
+            }
+        }
+
+        // The froxel grid (#780), after the shadows and before any
+        // shading: shading reads what it writes. Scoped, because the
+        // whole point of it is a number that moves — the grid costs four
+        // small passes and buys back the light loop.
+        {
+            let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
+            let query = scopes.map(|s| s.begin("cluster grid", &mut encoder));
+            self.lights.record_clusters(&mut encoder);
             if let (Some(scopes), Some(query)) = (scopes, query) {
                 scopes.end(&mut encoder, query);
             }

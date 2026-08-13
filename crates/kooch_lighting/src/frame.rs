@@ -2,7 +2,7 @@
 //! what light arrives from nowhere in particular.
 
 use bytemuck::{Pod, Zeroable};
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 
 /// Hemisphere ambient — the stand-in for image-based lighting until
 /// #450 lands a real probe.
@@ -346,6 +346,34 @@ pub struct IntiFrame {
     /// because there is no seventh bind group to put one in, and Inti's
     /// group is already full.
     pub debug_light: u32,
+    /// The third row of the view matrix, so a fragment can turn its
+    /// world position into a view-space depth with one dot product.
+    ///
+    /// A row rather than the matrix: the only thing shading needs from
+    /// the camera's orientation is which slice of the froxel grid it is
+    /// in, and that is `z` alone. The other three rows would be 48 bytes
+    /// nothing reads.
+    pub view_z_row: [f32; 4],
+    /// xyz = the grid's dimensions, w = their product.
+    pub cluster_dimensions: [u32; 4],
+    /// xy = grid cells per pixel, zw = the logarithmic slice constants.
+    pub cluster_factors: [f32; 4],
+    /// How many indices the list holds, for the loop to clamp against.
+    ///
+    /// A frame whose lighting overflowed the list leaves later cells
+    /// pointing past the end of it. Clamping renders those cells under-lit
+    /// rather than reading whatever a stale index happens to name.
+    pub cluster_capacity: u32,
+    /// Directional lights, which the grid does not cluster: they reach
+    /// every cell, so listing them per cell would say nothing. They are
+    /// the first `directional_count` entries of the light buffer and the
+    /// shader walks them linearly.
+    pub directional_count: u32,
+    /// 0 while no grid has been built — an unclustered frame walks every
+    /// light the way it did before #780, which is what the headless
+    /// tests and any path with no camera matrices do.
+    pub clustered: u32,
+    pub _pad_cluster: u32,
 }
 
 /// [`IntiFrame::debug_light`] when no light is isolated. Any index past
@@ -391,7 +419,40 @@ impl IntiFrame {
             cascade_blend: 0.1,
             sun_softness: DEFAULT_SUN_SOFTNESS,
             debug_light: NO_DEBUG_LIGHT,
+            view_z_row: [0.0, 0.0, -1.0, 0.0],
+            cluster_dimensions: [0; 4],
+            cluster_factors: [0.0; 4],
+            cluster_capacity: 0,
+            directional_count: 0,
+            clustered: 0,
+            _pad_cluster: 0,
         }
+    }
+
+    /// How many of the buffer's leading entries are directional lights.
+    pub fn with_directionals(mut self, count: u32) -> Self {
+        self.directional_count = count;
+        self
+    }
+
+    /// Points shading at the grid this view was clustered with (#780).
+    ///
+    /// Absent, `clustered` stays 0 and the shading loop walks every
+    /// light — which is what it did before the grid existed, and what a
+    /// path with no camera matrices still does.
+    pub fn with_clusters(mut self, grid: &crate::ClusterGrid, view: Mat4, capacity: u32) -> Self {
+        let dims = grid.dimensions;
+        self.view_z_row = view.row(2).to_array();
+        self.cluster_dimensions = [dims.x, dims.y, dims.z, grid.cluster_count()];
+        self.cluster_factors = [
+            grid.tile_factors.x,
+            grid.tile_factors.y,
+            grid.z_factors.x,
+            grid.z_factors.y,
+        ];
+        self.cluster_capacity = capacity;
+        self.clustered = 1;
+        self
     }
 
     /// Isolates one light for the single-light debug view (#743).

@@ -9,8 +9,16 @@
 //! instructions. Splitting into parallel arrays would turn one 64-byte
 //! cache line into six scattered fetches. SoA pays when a pass reads
 //! one field across many records — which is what light **culling** does
-//! (positions and ranges only), so the day clustering lands, its input
-//! is a separate positions/ranges pair, not a reinterpretation of this.
+//! (positions and ranges only).
+//!
+//! ⚠️ This file used to predict that clustering would therefore want a
+//! separate positions/ranges pair. #780 landed and it does not: the grid
+//! reads position and range straight out of this buffer. The prediction
+//! was right about the access pattern and wrong about what follows from
+//! it — the grid touches each light **once per pass**, not once per
+//! pixel, so the scattered fetch it would avoid is not on any hot path,
+//! and a second array would be a copy of this one to keep in step with
+//! it every frame.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};

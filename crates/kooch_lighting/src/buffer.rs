@@ -2,10 +2,10 @@
 //! storage buffer, plus the bind group both shading paths bind.
 
 use bytemuck::cast_slice;
-use glam::Vec3;
 use kooch_core::resource::Resources;
 use wgpu::util::DeviceExt;
 
+use crate::cluster::{ClusterCamera, ClusterSettings, GpuClusters};
 use crate::extract::{extract_lights, over_linear_budget};
 use crate::frame::{AmbientLight, Exposure, FrameShadows, IntiFrame};
 use crate::gpu_light::GpuLight;
@@ -59,6 +59,11 @@ pub struct GpuLights {
     dummy_cubes: wgpu::TextureView,
     /// The cube array currently bound, or `None` while the dummy is.
     shadow_cubes: Option<wgpu::TextureView>,
+    /// The froxel grid (#780). Owned here rather than beside here: its
+    /// two buffers are bindings in this group, its input is this
+    /// struct's light buffer, and the two grow independently — one
+    /// owner is what keeps the bind group naming what is actually bound.
+    clusters: GpuClusters,
     capacity: u32,
     light_count: u32,
 }
@@ -169,6 +174,30 @@ impl GpuLights {
                     },
                     count: None,
                 },
+                // The froxel grid (#780): the per-cell records, then the
+                // shared index list they point into. Two more bindings
+                // in this group, on the same reasoning as the shadow
+                // maps above — groups are what ran out, not bindings.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         })
     }
@@ -208,6 +237,7 @@ impl GpuLights {
         });
         let dummy_shadow = create_dummy_shadow(device);
         let dummy_cubes = create_dummy_cubes(device);
+        let clusters = GpuClusters::new(device);
         let bind_group = create_bind_group(
             device,
             &layout,
@@ -217,6 +247,7 @@ impl GpuLights {
             &shadow_sampler,
             &shadow_point_sampler,
             &dummy_cubes,
+            &clusters,
         );
         Self {
             frame_buffer,
@@ -229,6 +260,7 @@ impl GpuLights {
             dummy_cubes,
             shadow_atlas: None,
             shadow_cubes: None,
+            clusters,
             capacity: INITIAL_CAPACITY,
             light_count: 0,
         }
@@ -270,7 +302,22 @@ impl GpuLights {
             &self.shadow_sampler,
             &self.shadow_point_sampler,
             self.shadow_cubes.as_ref().unwrap_or(&self.dummy_cubes),
+            &self.clusters,
         );
+    }
+
+    /// Records the four passes that build the froxel grid (#780).
+    ///
+    /// Call on the frame's encoder, **before** the pass that shades:
+    /// shading reads what these write. Nothing to record when
+    /// [`Self::update`] was handed a camera with no matrices.
+    pub fn record_clusters(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        self.clusters.record(encoder);
+    }
+
+    /// The grid, for the editor's stats overlay.
+    pub fn clusters(&self) -> &GpuClusters {
+        &self.clusters
     }
 
     pub fn bind_group(&self) -> &wgpu::BindGroup {
@@ -299,7 +346,7 @@ impl GpuLights {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         resources: &Resources,
-        camera_position: Vec3,
+        camera: ClusterCamera,
         shadows: Option<FrameShadows>,
     ) {
         let mut extracted = extract_lights(resources);
@@ -336,8 +383,8 @@ impl GpuLights {
                     target: "kooch_lighting::buffer",
                     lights = lights.len(),
                     budget,
-                    "Inti shades every light for every pixel; past this count that loop is \
-                     the frame. Clustering is the fix and is not implemented yet.",
+                    "past this count the light loop is the frame if the froxel grid is not \
+                     building — check `ClusterSettings::enabled` and KOOCH_CLUSTERING.",
                 );
             }
         }
@@ -346,6 +393,33 @@ impl GpuLights {
         if !lights.is_empty() {
             queue.write_buffer(&self.light_buffer, 0, cast_slice(lights));
         }
+
+        // The grid, ahead of the encoder for the same reason everything
+        // else here is: it grows buffers, and a grown buffer is a
+        // replaced one.
+        let settings = resources
+            .get::<ClusterSettings>()
+            .copied()
+            .unwrap_or_default();
+        let clustered = camera
+            .matrices
+            .filter(|_| settings.enabled)
+            .map(|(view, proj)| {
+                let rebuilt = self.clusters.update(
+                    device,
+                    queue,
+                    &settings,
+                    view,
+                    proj,
+                    camera.viewport,
+                    &self.light_buffer,
+                    self.light_count,
+                );
+                if rebuilt {
+                    self.rebuild_bind_group(device);
+                }
+                view
+            });
 
         // Resolved here rather than by the editor because this is where
         // the buffer's order is decided, and the slot only means
@@ -357,15 +431,14 @@ impl GpuLights {
 
         let ambient = resources.get::<AmbientLight>().copied().unwrap_or_default();
         let exposure = resources.get::<Exposure>().copied().unwrap_or_default();
-        queue.write_buffer(
-            &self.frame_buffer,
-            0,
-            bytemuck::bytes_of(
-                &IntiFrame::new(&ambient, &exposure, camera_position, self.light_count)
-                    .with_optional_shadows(shadows)
-                    .with_debug_light(debug_light),
-            ),
-        );
+        let mut frame = IntiFrame::new(&ambient, &exposure, camera.position, self.light_count)
+            .with_optional_shadows(shadows)
+            .with_debug_light(debug_light)
+            .with_directionals(extracted.directional_count);
+        if let Some(view) = clustered {
+            frame = frame.with_clusters(self.clusters.grid(), view, self.clusters.index_capacity());
+        }
+        queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&frame));
     }
 
     /// Grows geometrically to fit `needed`. Never shrinks: a scene that
@@ -456,6 +529,7 @@ fn create_dummy_shadow(device: &wgpu::Device) -> wgpu::TextureView {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -465,6 +539,7 @@ fn create_bind_group(
     shadow_sampler: &wgpu::Sampler,
     shadow_point_sampler: &wgpu::Sampler,
     shadow_cubes: &wgpu::TextureView,
+    clusters: &GpuClusters,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("inti_lights_bg"),
@@ -493,6 +568,14 @@ fn create_bind_group(
             wgpu::BindGroupEntry {
                 binding: 5,
                 resource: wgpu::BindingResource::TextureView(shadow_cubes),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: clusters.cells().as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: clusters.indices().as_entire_binding(),
             },
         ],
     })

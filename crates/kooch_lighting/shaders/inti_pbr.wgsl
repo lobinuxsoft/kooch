@@ -207,6 +207,36 @@ struct IntiFrame {
     // only way it was going to fit — Inti's group is full and there is
     // no seventh.
     debug_light: u32,
+    // The view matrix's third row: one dot product turns a world
+    // position into the view depth that picks a froxel slice (#780).
+    view_z_row: vec4<f32>,
+    // xyz = grid dimensions, w = their product.
+    cluster_dimensions: vec4<u32>,
+    // xy = grid cells per pixel, zw = the logarithmic slice constants.
+    cluster_factors: vec4<f32>,
+    // How long the index list is, for the loop to clamp against.
+    cluster_capacity: u32,
+    // Directional lights, which the grid does not cluster — they reach
+    // every cell. The first entries of the light buffer, walked
+    // linearly.
+    directional_count: u32,
+    // 0 when no grid was built this frame: shading falls back to the
+    // linear walk over every light.
+    clustered: u32,
+    _pad_cluster: u32,
+}
+
+// One froxel's record. Mirrors `ClusterCell` in `cluster_common.wgsl`,
+// minus the atomics — nothing here writes.
+struct IntiClusterCell {
+    offset: u32,
+    point_count: u32,
+    spot_count: u32,
+    probe_count: u32,
+    volume_count: u32,
+    decal_count: u32,
+    _pad0: u32,
+    _pad1: u32,
 }
 
 @group({{INTI_GROUP}}) @binding(0) var<uniform> inti: IntiFrame;
@@ -236,6 +266,14 @@ struct IntiFrame {
 // budget is spent; bindings are not groups, and the two samplers above
 // are reused unchanged because a sampler is not bound to a texture.
 @group({{INTI_GROUP}}) @binding(5) var inti_point_cubes: texture_depth_cube_array;
+
+// The froxel grid (#780): which lights reach each cell, and where each
+// cell's run of indices starts. A sixth and seventh BINDING in this
+// group, for the same reason the shadow maps are here — the six-group
+// budget is spent and a light list without its lights is nothing any
+// shader wants.
+@group({{INTI_GROUP}}) @binding(6) var<storage, read> inti_clusters: array<IntiClusterCell>;
+@group({{INTI_GROUP}}) @binding(7) var<storage, read> inti_cluster_indices: array<u32>;
 
 // GGX / Trowbridge-Reitz, in Filament's reassociated form. The naïve
 // `a2 / (π·((NdotH²)(a2-1)+1)²)` loses catastrophic precision in f32 at
@@ -1145,12 +1183,83 @@ fn inti_shade(
     let surf = inti_surface(world_position, n, base_color, metallic, roughness, flags);
 
     var radiance = vec3<f32>(0.0);
-    for (var i = 0u; i < inti.light_count; i = i + 1u) {
-        radiance += inti_light_contribution(surf, inti_lights[i], frag_coord);
+    if (inti.clustered == 0u) {
+        // No grid this frame: every light, for every pixel. What this
+        // did before #780, and what a headless test or a path with no
+        // camera matrices still does. Correct, and the reason the frame
+        // cost pixels x lights.
+        for (var i = 0u; i < inti.light_count; i = i + 1u) {
+            radiance += inti_light_contribution(surf, inti_lights[i], frag_coord);
+        }
+    } else {
+        // Directional lights are not in the grid: they reach every cell,
+        // so a cell listing them would say nothing. They are the light
+        // buffer's leading entries — see `ExtractedLights`.
+        for (var i = 0u; i < inti.directional_count; i = i + 1u) {
+            radiance += inti_light_contribution(surf, inti_lights[i], frag_coord);
+        }
+        radiance += inti_clustered_lights(surf, world_position, frag_coord);
     }
 
     radiance += inti_ambient(n, surf.diffuse_color, surf.f0, surf.f_ab);
     return radiance;
+}
+
+// The punctual lights of this fragment's froxel, and only those.
+//
+// 🔴 This is the whole point of #780. The loop bounds come from the
+// cell's record instead of from the scene, so a lamp across the map
+// costs this pixel nothing — not its falloff, and not the shadow map
+// sample that used to come with it.
+//
+// Points and spots are walked as two consecutive ranges rather than one
+// list with a type test inside it: the grid stores each type's indices
+// contiguously precisely so that the test does not have to exist here.
+fn inti_clustered_lights(
+    surf: IntiSurface,
+    world_position: vec3<f32>,
+    frag_coord: vec2<f32>,
+) -> vec3<f32> {
+    let cell = inti_clusters[inti_cluster_of(world_position, frag_coord)];
+    let points_end = cell.offset + cell.point_count;
+    // Reflection probes, irradiance volumes and decals follow the spots
+    // in the same record. Nothing reads them yet; when something does,
+    // it reads its own range and this loop does not change.
+    let spots_end = points_end + cell.spot_count;
+
+    var radiance = vec3<f32>(0.0);
+    for (var i = cell.offset; i < spots_end; i = i + 1u) {
+        // 🔴 Clamped against the list's real length. A frame whose
+        // lighting overflowed the index list leaves later cells pointing
+        // past the end of it, and an out-of-range storage read is
+        // undefined — a cell rendering under-lit is a bug someone can
+        // see, which is the better failure.
+        if (i >= inti.cluster_capacity) {
+            break;
+        }
+        radiance += inti_light_contribution(
+            surf, inti_lights[inti_cluster_indices[i]], frag_coord);
+    }
+    return radiance;
+}
+
+// Which cell of the grid a fragment is in.
+fn inti_cluster_of(world_position: vec3<f32>, frag_coord: vec2<f32>) -> u32 {
+    let view_z = dot(inti.view_z_row, vec4<f32>(world_position, 1.0));
+    let xy = vec2<u32>(floor(frag_coord * inti.cluster_factors.xy));
+    // Mirrors `cluster_z_slice` in `cluster_common.wgsl` and
+    // `ClusterGrid::z_slice` in Rust. Three copies of four operations,
+    // because a fragment that disagrees with the grid reads a cell the
+    // grid never wrote for it.
+    let slice = log(-view_z) * inti.cluster_factors.z - inti.cluster_factors.w + 1.0;
+    let z = min(u32(max(slice, 0.0)), inti.cluster_dimensions.z - 1u);
+    let cell = clamp(
+        vec3<u32>(xy, z),
+        vec3<u32>(0u),
+        inti.cluster_dimensions.xyz - vec3<u32>(1u));
+    return min(
+        (cell.y * inti.cluster_dimensions.x + cell.x) * inti.cluster_dimensions.z + cell.z,
+        inti.cluster_dimensions.w - 1u);
 }
 
 // ACES filmic approximation (Narkowicz 2015). Provisional: #254 owns

@@ -20,11 +20,19 @@ fn frame_size_matches_shader() {
     const SPOT_SHADOWS: usize = MAX_SPOT_SHADOWS * 96;
     const SPOT_TAIL: usize = 16;
     const POINT_SHADOWS: usize = MAX_POINT_SHADOWS * 16;
+    // #780's froxel grid: the view matrix's third row, the grid's
+    // dimensions, its factors, and four words of counts and flags.
+    //
+    // ⚠️ It starts at a 16-byte boundary because everything before it
+    // ends on one. A `[f32; 4]` in Rust aligns to 4 and a `vec4<f32>` in
+    // WGSL to 16, so a field of odd size inserted above this point moves
+    // the two apart without either side complaining.
+    const CLUSTERS: usize = 4 * 16;
     assert_eq!(
         std::mem::size_of::<IntiFrame>(),
-        HEADER + CASCADES + TAIL + SPOT_SHADOWS + SPOT_TAIL + POINT_SHADOWS,
+        HEADER + CASCADES + TAIL + SPOT_SHADOWS + SPOT_TAIL + POINT_SHADOWS + CLUSTERS,
     );
-    assert_eq!(std::mem::size_of::<IntiFrame>(), 928);
+    assert_eq!(std::mem::size_of::<IntiFrame>(), 992);
 }
 
 /// std140/std430 require an array's element stride to be a multiple
