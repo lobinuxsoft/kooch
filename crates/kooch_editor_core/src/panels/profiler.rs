@@ -101,14 +101,20 @@ pub fn draw_profiler_content(ui: &mut Ui) {
     #[cfg(not(feature = "profiling"))]
     {
         let _ = ui;
-        ui.heading("Profiling is not compiled into this build");
+        ui.heading("This editor was built without its profiler");
         ui.add_space(8.0);
         ui.label(
-            "The instrumentation is a cargo feature that is off by default, so a shipped \
-             game carries none of it — not switched off, absent (#558).",
+            "That is not the normal state: the feature is on by default, because an editor \
+             that cannot answer \"why is this frame slow\" is missing the tool this one is \
+             built around. Something passed --no-default-features.",
         );
         ui.add_space(8.0);
-        ui.code("cargo run -p kooch_editor --features profiling");
+        ui.code("cargo run -p kooch_editor");
+        ui.add_space(8.0);
+        ui.label(
+            "A shipped game is the opposite case and stays that way: its instrumentation is \
+             opt-in, so a release carries none of it — not switched off, absent (#558).",
+        );
         ui.add_space(8.0);
         ui.label(
             "To profile a game on the target hardware, build it with the profiling preset \
