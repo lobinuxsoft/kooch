@@ -420,10 +420,17 @@ impl ProjectState {
         // made Install a button that returned in silence from the
         // project manager, which is exactly where it is easiest to
         // press.
+        //
+        // 🔴🔴 And it is the version this editor **ships**, not the one
+        // the project asks for — see `EngineStatus::version_to_install`.
+        // Asking for the project's version returns the engine already on
+        // the machine under that name, which is the right answer for
+        // opening a project and the wrong one for a button that says
+        // *"Installing moves the project onto it."*
         let Some(version) = self
             .engine_status
             .as_ref()
-            .map(|s| s.project_version.clone())
+            .map(|s| s.version_to_install().to_owned())
         else {
             return;
         };

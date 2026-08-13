@@ -79,6 +79,26 @@ pub struct EngineStatus {
 }
 
 impl EngineStatus {
+    /// The version Install materialises.
+    ///
+    /// 🔴 **Always this editor's, never the project's.**
+    /// [`ensure_current`](super::ensure_current) honours a project's own
+    /// version when that engine is already on the machine — deliberately,
+    /// so a project pinned to an older engine keeps building, and so this
+    /// editor never writes its source under a name that is not its own
+    /// (#761).
+    ///
+    /// Install asked for exactly that version. With 0.1.0 on disk and the
+    /// editor shipping 0.2.0, the call returned `UpToDate` pointing at the
+    /// old directory: nothing installed, nothing reported, and the prompt
+    /// straight back on the next frame.
+    ///
+    /// Installing moves the project onto this editor's version, which is
+    /// what the prompt has always said it does.
+    pub fn version_to_install(&self) -> &str {
+        &self.editor_version
+    }
+
     /// One line for a panel, saying which of the two questions this is.
     ///
     /// 🔴 "differs" on its own is the unhelpful version. With one
