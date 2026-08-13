@@ -102,3 +102,53 @@ fn opening_a_project_repoints_a_stale_engine_path() {
     // Idempotent: opening again must not rewrite for nothing.
     assert!(!point_manifest_at_engine(&project, &here).expect("second pass"));
 }
+
+/// 🔴 Two files record which engine a project uses, and moving it has to
+/// write both.
+///
+/// `Cargo.toml` carries the **path** — that is what cargo compiles
+/// against, and `point_manifest_at_engine` rewrites it. `project.kooch`
+/// carries `engine_version`, and that is what `ProjectState::open` hands
+/// to `engine_vendor::status`.
+///
+/// Updating only the first leaves a project pointing at 0.2.0 on disk
+/// while still calling itself 0.1.0, so the engine prompt returns on
+/// every open no matter how many times Install is pressed — the bug this
+/// test exists for. Nothing fails; it just never stops asking.
+#[test]
+fn moving_a_project_takes_two_writes() {
+    let tmp = std::env::temp_dir().join("kooch_project_two_records");
+    let _ = fs::remove_dir_all(&tmp);
+    let (project, new_engine) = (tmp.join("game"), tmp.join("share/0.2.0/engine"));
+    fs::create_dir_all(&project).unwrap();
+    fake_engine(&new_engine);
+
+    fs::write(
+        project.join("Cargo.toml"),
+        "[dependencies]\nkooch = { path = \"/old/share/0.1.0/engine\" }\n",
+    )
+    .unwrap();
+    let mut manifest = ProjectManifest::new("game");
+    manifest.engine_version = "0.1.0".to_owned();
+    manifest.save(&project).unwrap();
+
+    // What Install did, and only this.
+    point_manifest_at_engine(&project, &new_engine).unwrap();
+
+    let cargo = fs::read_to_string(project.join("Cargo.toml")).unwrap();
+    assert!(cargo.contains("0.2.0"), "cargo manifest was not repointed");
+    assert_eq!(
+        ProjectManifest::load(&project).unwrap().engine_version,
+        "0.1.0",
+        "this is the trap: the cargo path moved and the recorded version did not",
+    );
+
+    // The other half, which `update_engine` now does.
+    manifest.engine_version = "0.2.0".to_owned();
+    manifest.save(&project).unwrap();
+    assert_eq!(
+        ProjectManifest::load(&project).unwrap().engine_version,
+        "0.2.0",
+        "the project still does not agree with what it builds against",
+    );
+}
