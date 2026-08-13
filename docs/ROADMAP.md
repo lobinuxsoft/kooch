@@ -54,7 +54,7 @@ said.
 | ~~#776~~ | ~~`PointLight.radius`~~ | **Done.** Not 15 lines: six pieces, and `GpuLight` grew 64 → 80 B |
 | ~~#778~~ | ~~point light shadows~~ | **Done**, feature and budget both |
 | ~~#804~~ | ~~`receive_shadows` does nothing~~ | **Done.** The field existed and nothing read it |
-| **#780** | **GPU clustering — the froxel grid** | 🔴 **Next, and it is the measured bottleneck.** Every pixel iterates every light (`inti_pbr.wgsl:1131`). Cost is pixels × lights, and `raster + shade` is 85 % of the frame |
+| **#780** | **GPU clustering — the froxel grid** | 🟡 **Built, not yet measured.** Four passes, and `inti_shade` walks a cell's lights instead of the scene's. What it bought on the handheld is unknown until someone captures it with `KOOCH_CLUSTERING` on and off |
 | **#731** | volumetric clouds, froxel-based | The clouds are **off**, and that is the only reason the budget is met. They cost 39 ms as written |
 | **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
 | **#254** | post + auto exposure | The blown-out white floor in three sessions of screenshots. Cheap |
@@ -93,10 +93,13 @@ double the median, and why the user predicted it from the device before
 the shader was read: *"anda mal cuando hay muchos objetos que reciben
 luz y se muestran sombras"*.
 
-The engine had already written this down, in `kooch_lighting/src/buffer.rs:339`:
+The engine had already written this down, in `kooch_lighting/src/buffer.rs`:
 
 > *"Inti shades every light for every pixel; past this count that loop
 > is the frame. Clustering is the fix and is not implemented yet."*
+
+That warning has since been rewritten — the fix is implemented, and what
+the line now says is to check whether the grid is switched off.
 
 ### The clouds were 97 % of the sky
 
@@ -113,7 +116,26 @@ everything else.
 that sets coverage above zero pays 39 ms again, and nothing warns. #731
 is the condition on them coming back.
 
-### What #780 has to copy, and what it must not
+### 🟡 #780 is built, and nothing on the handheld has measured it
+
+Four passes — z-slice, count, allocate, populate — and `inti_shade` now
+walks the lights of its own froxel. Every claim about what that is worth
+is still a claim: the grid has GPU tests that say it is **correct** (a
+lit point's cell holds the light that lights it; the count pass and the
+populate pass agree), and no capture that says it is **faster**.
+
+⚠️ **The A/B is one environment variable.** `KOOCH_CLUSTERING=off` falls
+back to the linear walk, same image, same camera. Two captures of the
+same scene is what turns the table above into a number. Until then #780
+is a change in how the frame is spent, not a measured saving.
+
+What it deliberately does not do: read back the furthest light to size
+the grid's far plane, the way Bevy does. That is a readback in the hot
+path. `ClusterSettings::far` is a setting instead, and a light past it
+piles into the last slice — conservative, never wrong, just not saving
+anything out there.
+
+### What #780 had to copy, and what it must not
 
 Read off `pbr_functions.wesl:453` rather than from memory:
 

@@ -19,9 +19,11 @@ use crate::gpu_light::GpuLight;
 /// about, never enforced: clipping a scene's lights silently is worse
 /// than rendering it slowly, and the caller can see the log.
 ///
-/// The fix is clustering, deliberately out of scope for #441 — Bevy
-/// moved theirs to the GPU in 0.18/0.19 and measured ~20× on their
-/// `many_lights` benchmark. A universe has stars.
+/// 🔴 Since #780 the linear loop is the **fallback**, not the path: the
+/// froxel grid walks a cell's lights instead of the scene's, and this
+/// budget only binds when the grid is off — no camera matrices, or
+/// `KOOCH_CLUSTERING=off`. Kept, and kept at the same number, because
+/// that fallback is still what a headless path runs.
 const LINEAR_LOOP_BUDGET: usize = 256;
 
 /// The lights as the shader reads them, plus the entity each one came
@@ -33,6 +35,15 @@ const LINEAR_LOOP_BUDGET: usize = 256;
 pub struct ExtractedLights {
     pub lights: Vec<GpuLight>,
     pub entities: Vec<Entity>,
+    /// How many directional lights the buffer opens with.
+    ///
+    /// 🔴 They are a **prefix**, not a subset, and the shading loop
+    /// depends on it: clustering (#780) walks the punctual lights out of
+    /// the froxel this fragment is in, and a directional light is in
+    /// every froxel — so the grid says nothing about it. What the shader
+    /// does instead is walk `0..directional_count` linearly, which is
+    /// only correct while they come first.
+    pub directional_count: u32,
 }
 
 impl ExtractedLights {
@@ -73,6 +84,11 @@ pub fn extract_lights(resources: &Resources) -> ExtractedLights {
             }
         },
     );
+    // Everything pushed above is directional, and everything below is
+    // not. `directional_count` is that boundary, and the shading loop
+    // reads it as one — see the field's documentation.
+    let directional_count = lights.len() as u32;
+
     Query::<(&PointLight, &GlobalTransform)>::new(resources).for_each_entity(
         |entity, (light, transform)| {
             if light.active {
@@ -101,7 +117,11 @@ pub fn extract_lights(resources: &Resources) -> ExtractedLights {
         },
     );
 
-    ExtractedLights { lights, entities }
+    ExtractedLights {
+        lights,
+        entities,
+        directional_count,
+    }
 }
 
 /// The direction of the one directional light that casts shadows, if

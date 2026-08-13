@@ -327,3 +327,42 @@ fn only_casting_spots_get_a_shadow_source() {
     );
     assert!(kooch_lighting::shadow_casting_spots(&r, 4).is_empty());
 }
+
+/// 🔴 The froxel grid does not cluster directional lights — they reach
+/// every cell — so the shading loop walks the first `directional_count`
+/// entries linearly and takes the rest from its cell.
+///
+/// That is only correct while they are a **prefix**. If a point light
+/// ever lands before a directional one, the linear walk lights the wrong
+/// light and the sun goes missing from the clustered half: a scene lit
+/// by lamps with no daylight, and nothing anywhere reporting it.
+#[test]
+fn directional_lights_are_a_prefix() {
+    // Spawned deliberately out of order: a point, then a directional,
+    // then a spot. The walk is what has to put them right, not the
+    // order somebody happened to author them in.
+    let mut resources = world();
+    light_at(
+        &mut resources,
+        Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0)),
+        PointLight::default(),
+    );
+    light_at(&mut resources, Mat4::IDENTITY, DirectionalLight::default());
+    light_at(
+        &mut resources,
+        Mat4::from_translation(Vec3::new(-4.0, 0.0, 0.0)),
+        SpotLight::default(),
+    );
+
+    let extracted = extract_lights(&resources);
+    assert_eq!(extracted.directional_count, 1);
+    for (i, light) in extracted.lights.iter().enumerate() {
+        let directional = light.kind == LIGHT_KIND_DIRECTIONAL;
+        assert_eq!(
+            directional,
+            (i as u32) < extracted.directional_count,
+            "light {i} of kind {} breaks the prefix",
+            light.kind,
+        );
+    }
+}

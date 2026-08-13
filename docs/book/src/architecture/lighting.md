@@ -25,10 +25,13 @@ to exist.
 flowchart LR
     C["DirectionalLight<br/>PointLight<br/>SpotLight<br/>+ GlobalTransform"] --> E[extract_lights<br/>pure, no GPU]
     E --> B[GpuLights<br/>storage buffer,<br/>grows geometrically]
-    B --> S["inti_shade()<br/>in both shading paths"]
+    B --> G["the froxel grid<br/>four GPU passes,<br/>per view"]
+    G --> S["inti_shade()<br/>in both shading paths"]
+    B --> S
     S --> T[inti_tonemap<br/>exposure → ACES → sRGB]
 
     style C fill:#1e3a5f,stroke:#4d8fbe,color:#fff
+    style G fill:#1e5f3a,stroke:#4dbe8f,color:#fff
     style S fill:#5f3a1e,stroke:#be8f4d,color:#fff
 ```
 
@@ -569,17 +572,99 @@ selected, so a shipped game never compiles it either. Both variants are
 validated by tests, because nothing else compiles the debug one until
 somebody opens it.
 
+## Clustering — the froxel grid (#780)
+
+Until this landed, `inti_shade` looped over **every light in the scene
+for every pixel on screen**, and a lamp on the other side of the map was
+evaluated — falloff, cone, shadow-map sample and all — in every fragment.
+The cost was pixels × lights, multiplied, and it was measured as the
+frame's largest single term on the OneXFly: `raster + shade` scaled
+*worse* than linearly with resolution, because every new pixel paid for
+the whole light list again.
+
+The fix is a spatial index. The view frustum is diced into a grid of
+cells — "froxels", frustum voxels — and each cell is given the list of
+lights whose volume reaches it. A fragment looks up its own cell and
+walks that list.
+
+### The grid is not a light structure
+
+Reflection probes, irradiance volumes and decals are bound to a region of
+space in exactly the same way, and each cell's record reserves a range
+for all five types from the start. It is also the structure virtual
+shadow maps (#477) mark pages with, and the one volumetric fog (#731)
+integrates through. **It gets built once.** Growing a second grid for
+each of those is the failure mode this shape exists to avoid.
+
+### Four passes, and why one of them is a rasterizer
+
+```mermaid
+flowchart TD
+    Z["z-slice<br/>compute, one thread per light"] --> F["finalize<br/>clamp the draw args"]
+    F --> C["count<br/>raster, one fragment per cell-light pair"]
+    C --> A["allocate<br/>compute, prefix sum"]
+    A --> P["populate<br/>raster, the same source again"]
+
+    style C fill:#5f3a1e,stroke:#be8f4d,color:#fff
+    style P fill:#5f3a1e,stroke:#be8f4d,color:#fff
+```
+
+The two middle passes are **draws, not dispatches**, and that is the part
+most descriptions of clustering get wrong. The grid is WxHxD; the pass
+runs on a WxH viewport and draws each (light, slice) pair as a quad
+covering the cells that light can reach. One fragment invocation is then
+exactly one (cell, light) pair — scheduled by the hardware that exists to
+schedule quads. Colour writes are off; the output is storage buffers.
+
+It runs twice because the lists are tightly packed: the counting pass is
+what makes the offsets computable, and the offsets are what the populate
+pass writes into. 🔴 **Both runs must reach the same verdict for every
+pair.** They are the same source compiled twice for that reason — a
+disagreement would overflow one cell's run into its neighbour's, and
+nothing downstream could detect it.
+
+### Slices are logarithmic
+
+```text
+slice = ln(-view_z) * factor.x - factor.y + 1
+```
+
+Cells are distributed the way depth precision falls off rather than by
+metres: thin near the camera, thick far away. Slice 0 is everything
+nearer than `ClusterSettings::first_slice`.
+
+⚠️ **The grid needs a far plane and the camera does not have one.** Kóoch
+projects with an infinite reversed-Z frustum (ADR 0002). Bevy reads back
+the furthest light the GPU saw and resizes next frame; that is a readback
+in the hot path. Here it is a setting — `ClusterSettings::far`, 200 m by
+default. A light further out lands in the last slice with everything else
+behind it, so that cell holds more lights than it should. Nothing renders
+wrong; it just stops saving work out there.
+
+### Directional lights are not in it
+
+They reach every cell, so a cell listing them would say nothing. They are
+the **leading entries** of the light buffer and the shader walks them
+linearly — which is why `ExtractedLights::directional_count` is a prefix
+and not a subset.
+
+### Turning it off
+
+`KOOCH_CLUSTERING=off`, or `ClusterSettings { enabled: false, .. }` in
+`Resources`. The image is identical and the cost is the linear walk this
+replaced. It exists to be the A/B: same camera, same scene, one capture
+each, is the only honest way to say what the grid bought.
+
 ## What Inti does not do yet
 
-- **No punctual shadows.** Point and spot lights carry `cast_shadows`
-  and nothing reads it; a contact shadow is currently the only shadow
-  they cast, which grounds an object without occluding it from anything
-  else in the room.
-- **No clustering.** The shader loops over every light for every pixel.
-  `extract_lights` warns past 256 and never clips — silently dropping a
-  scene's lights is worse than rendering it slowly. Bevy moved theirs to
-  the GPU and measured ~20× on their `many_lights` benchmark. A universe
-  has stars.
+- **Nothing but lights is clustered.** The grid reserves a range per cell
+  for reflection probes, irradiance volumes and decals, and none of those
+  exist yet. The ranges are empty and cost nothing to walk.
+- **The index list grows a frame late.** How long it needs to be is a
+  property of how the scene is lit, which only the GPU knows, so it comes
+  back asynchronously. A frame that overflows renders its later cells
+  under-lit rather than reading past the end of the buffer, and the next
+  frame has the bigger buffer.
 - **No environment map**, no IBL, no area lights, no volumetrics, no
   bloom. The crate's original doc comment promised the last three. It now
   promises what it has.

@@ -30,11 +30,15 @@
 //! path, which is what [`inti_pbr_shader`] exists to prevent.
 
 mod buffer;
+mod cluster;
 mod extract;
 mod frame;
 mod gpu_light;
 
 pub use buffer::GpuLights;
+pub use cluster::{
+    ClusterCamera, ClusterDraw, ClusterGrid, ClusterSettings, ClusterViewUniform, GpuClusters,
+};
 pub use extract::{
     ExtractedLights, PointShadowSource, SpotShadowSource, extract_lights, shadow_casting_points,
     shadow_casting_spots, shadow_casting_sun, shadow_note,
