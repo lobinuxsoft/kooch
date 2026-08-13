@@ -169,7 +169,20 @@ pub(super) fn render_leaf(
         Some(_) => egui::Sense::click_and_drag(),
         None => egui::Sense::click(),
     };
-    let resp = SelectableRow::new(format!("{icon} {}", leaf.name))
+    // The icon says which one; the colour is what makes it readable
+    // without hunting for the icon. Both, because a row is scanned by
+    // shape at a glance and read by name when you stop on it.
+    //
+    // 🔴 From the theme, never a literal. `selection.bg_fill` is the
+    // accent the editor already lights a focused panel with, so it stays
+    // legible in whichever theme is on — a hard-coded colour is legible
+    // in the one it was picked in.
+    let label = match is_main_scene {
+        true => egui::RichText::new(format!("{icon} {}", leaf.name))
+            .color(ui.visuals().selection.bg_fill),
+        false => egui::RichText::new(format!("{icon} {}", leaf.name)),
+    };
+    let resp = SelectableRow::new(label)
         .selected(is_cursor)
         .sense(sense)
         .show(ui);

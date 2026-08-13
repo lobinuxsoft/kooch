@@ -33,7 +33,7 @@ platforms is then unambiguous.
 ## Which scene it opens with
 
 Right-click a `.scene` in the Asset Browser → **Set as Main Scene**. That
-scene is marked with a ▶ in the tree from then on, and it is the one both
+scene is marked with a ▶ and an accent-coloured name from then on, and it is the one both
 Play and a built game start from.
 
 It is stored in `project.kooch`, which travels beside the executable —
