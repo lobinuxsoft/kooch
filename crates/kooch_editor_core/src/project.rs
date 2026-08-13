@@ -286,6 +286,44 @@ kooch_ecs = {{ path = "{engine_path}/crates/kooch_ecs" }}
 /// is corrected on open rather than left for cargo to fail on.
 ///
 /// A no-op when it already matches, so opening a project does not
+/// Moves a project onto an engine, **without opening or compiling it**.
+///
+/// 🔴 Two files record which engine a project uses, and writing one
+/// without the other is what made the engine prompt return for ever
+/// (#801): `Cargo.toml` carries the path cargo builds against, and
+/// `project.kooch` carries `engine_version`, which is what decides
+/// whether the prompt appears at all. They are written here together so
+/// there is one place that can get it wrong.
+///
+/// Nothing is loaded and no build is started — which is the point.
+/// Opening a project compiles its plugin first and discovers the version
+/// mismatch second, throwing that compile away; settled here, the first
+/// compile is already against the right engine (#800).
+pub fn move_project_to_engine(
+    project_root: &Path,
+    engine_dir: &Path,
+    version: &str,
+) -> Result<(), ProjectError> {
+    point_manifest_at_engine(project_root, engine_dir)?;
+    let mut manifest = ProjectManifest::load(project_root)?;
+    if manifest.engine_version != version {
+        manifest.engine_version = version.to_owned();
+        manifest.save(project_root)?;
+    }
+    Ok(())
+}
+
+/// The engine version a project records, without opening it.
+///
+/// `None` when there is no readable manifest — a directory that was
+/// deleted or was never a project. The launcher shows those as missing
+/// rather than guessing a version for them.
+pub fn project_engine_version(project_root: &Path) -> Option<String> {
+    ProjectManifest::load(project_root)
+        .ok()
+        .map(|m| m.engine_version)
+}
+
 /// rewrite its manifest for nothing.
 pub fn point_manifest_at_engine(
     project_root: &Path,

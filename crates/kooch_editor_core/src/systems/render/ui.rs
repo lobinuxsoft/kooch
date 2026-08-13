@@ -307,6 +307,9 @@ fn forward_launch_actions(launch_actions: Vec<LaunchAction>, actions: &mut Vec<E
                 actions.push(EditorAction::CreateProject { name, parent_path })
             }
             LaunchAction::RemoveRecent(path) => actions.push(EditorAction::RemoveRecent(path)),
+            LaunchAction::MoveProjectToEngine(path) => {
+                actions.push(EditorAction::MoveProjectToEngine(path))
+            }
             LaunchAction::LaunchProject(path) => actions.push(EditorAction::LaunchProject(path)),
             LaunchAction::CancelLaunch => actions.push(EditorAction::CancelLaunch),
         }

@@ -152,3 +152,65 @@ fn moving_a_project_takes_two_writes() {
         "the project still does not agree with what it builds against",
     );
 }
+
+/// Moving a project writes both records, and opens nothing.
+///
+/// The launcher's whole reason for existing (#800): settle the engine
+/// version while the project is closed, so its first compile is already
+/// against the right one. `move_project_to_engine` is the single place
+/// that writes both files, which is what stops them drifting apart the
+/// way #801 did.
+#[test]
+fn moving_a_project_writes_both_records() {
+    let tmp = std::env::temp_dir().join("kooch_move_to_engine");
+    let _ = fs::remove_dir_all(&tmp);
+    let (project, engine) = (tmp.join("game"), tmp.join("share/9.9.9/engine"));
+    fs::create_dir_all(&project).unwrap();
+    fake_engine(&engine);
+    fs::write(
+        project.join("Cargo.toml"),
+        "[dependencies]\nkooch = { path = \"/old/share/0.1.0/engine\" }\n",
+    )
+    .unwrap();
+    let mut manifest = ProjectManifest::new("game");
+    manifest.engine_version = "0.1.0".to_owned();
+    manifest.save(&project).unwrap();
+
+    move_project_to_engine(&project, &engine, "9.9.9").unwrap();
+
+    let cargo = fs::read_to_string(project.join("Cargo.toml")).unwrap();
+    assert!(
+        cargo.contains("9.9.9"),
+        "cargo manifest not repointed: {cargo}"
+    );
+    assert_eq!(
+        ProjectManifest::load(&project).unwrap().engine_version,
+        "9.9.9",
+        "the recorded version did not follow the path — this is #801 all over again",
+    );
+    // Nothing was built: a project directory with no `target/` stays that
+    // way. The point of doing this before opening is that it is free.
+    assert!(
+        !project.join("target").exists(),
+        "moving a project compiled it",
+    );
+}
+
+/// The version is readable without opening the project, which is what
+/// lets the launcher show it per row.
+#[test]
+fn a_projects_engine_version_is_readable_closed() {
+    let tmp = std::env::temp_dir().join("kooch_read_version");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).unwrap();
+    assert_eq!(
+        project_engine_version(&tmp),
+        None,
+        "no manifest, no version"
+    );
+
+    let mut manifest = ProjectManifest::new("game");
+    manifest.engine_version = "0.1.0".to_owned();
+    manifest.save(&tmp).unwrap();
+    assert_eq!(project_engine_version(&tmp).as_deref(), Some("0.1.0"));
+}
