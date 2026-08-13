@@ -40,26 +40,105 @@ target. Every number here is taken on the device, at 10 W.
 
 ## Next — the graphics queue, with the budget as the gate
 
-The order is the graphics work again, arranged so nothing expensive gets
-written before it is known what it has to fit in.
+🎯 **2026-08-13: the budget is reachable.** 13.89 ms at 1280×720 on the
+OneXFly is 72 FPS — the number this whole queue was arranged around.
+With clouds off, which is a condition and not a victory (see #731).
+
+The order below is what the measurements say, not what the port list
+said.
 
 | | | Why here |
 |---|---|---|
 | ~~#743~~ | ~~light debug views~~ | **Done.** And they left the game's shader entirely — see below |
 | ~~#777~~ | ~~spot light shadows~~ | **Done.** The shadow atlas became a `texture_depth_2d_array` on the way |
-| ~~#776~~ | ~~`PointLight.radius`~~ | **Done.** Not 15 lines: six pieces, and `GpuLight` grew 64 → 80 B because there was nowhere left to put the field |
-| ~~#778~~ | ~~point light shadows~~ | **Done**, feature and budget both. Culled, cached between frames, and the bind-group problem the issue opened with did not exist |
-| **#785** | **GPU scopes — which pass owns the 70 ms** | 🟡 The profiler reaches the game and is trusted. The frame is now known to be fill-rate bound, and **naming the pass is the only thing left in the way of #769** |
-| **#254** | post + auto exposure | The blown-out white floor in every screenshot of three sessions. Cheap, and it makes everything after it judgeable |
-| **#769** | divide the budget, on the device, at 10 W | The gate. Half-answered: the frame is GPU-bound and per-pixel. What is missing is the split by pass, and 10 W on battery |
-| **#248 / #250** | atmosphere | 🔴 Another volumetric raymarch. Writing it before the budget is known means writing it twice |
+| ~~#776~~ | ~~`PointLight.radius`~~ | **Done.** Not 15 lines: six pieces, and `GpuLight` grew 64 → 80 B |
+| ~~#778~~ | ~~point light shadows~~ | **Done**, feature and budget both |
+| ~~#804~~ | ~~`receive_shadows` does nothing~~ | **Done.** The field existed and nothing read it |
+| **#780** | **GPU clustering — the froxel grid** | 🔴 **Next, and it is the measured bottleneck.** Every pixel iterates every light (`inti_pbr.wgsl:1131`). Cost is pixels × lights, and `raster + shade` is 85 % of the frame |
+| **#731** | volumetric clouds, froxel-based | The clouds are **off**, and that is the only reason the budget is met. They cost 39 ms as written |
+| **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
+| **#254** | post + auto exposure | The blown-out white floor in three sessions of screenshots. Cheap |
+| **#771 / #248** | atmosphere, ported from Bevy | Now worth doing for the sky it gives, not for what it saves: 1.2 ms without clouds |
+| **#481 / #536** | motion vectors + FSR | Treats the symptom — fewer pixels of a pass that costs too much per pixel — but it is what the hardware is asking for |
 
-🔴 **Why #769 sits before the atmosphere and not after it.** #248 is a
-second raymarch in a frame that already does not close, beside a sky
-costing up to 8 192 hash evaluations per pixel (#771). Landing it first
-means optimising two marches instead of one, with the atmosphere already
-written on the expensive technique. The measurement is what says how much
-room it has.
+### 🔴 What the frame is actually spending, 2026-08-13
+
+Three captures, same scene, only the internal resolution changed. The
+first controlled A/B of the whole investigation, and the only reason the
+numbers below can be attributed to anything:
+
+| resolution | frame (median) | p99 | `raster + shade` | `shadows` | `sky` |
+|---|---|---|---|---|---|
+| **1280×720** | **13.89 ms** ✅ | 15.22 | 6.89 | 0.72 | 0.15 |
+| 1600×900 | 14.47 | 29.26 | 12.63 | 0.53 | 0.17 |
+| 1920×1080 | 21.02 | 42.84 | 18.01 | 0.64 | 0.24 |
+
+`raster + shade` scales **worse than linearly**: 2.25× the pixels costs
+2.61× the time. `shadows` does not move with resolution at all — that
+pass rasterises the maps, which is geometry and is cheap. **Sampling**
+them happens inside `raster + shade`, per pixel and per light.
+
+The cause, `inti_pbr.wgsl:1131`:
+
+```wgsl
+for (var i = 0u; i < inti.light_count; i = i + 1u) {
+    radiance += inti_light_contribution(surf, inti_lights[i], frag_coord);
+}
+```
+
+No per-pixel culling. A lamp across the map is evaluated in every
+fragment, and if it casts, its shadow map is sampled there too. **The
+cost is pixels × lights, multiplied** — which is why p99 at 1080p is
+double the median, and why the user predicted it from the device before
+the shader was read: *"anda mal cuando hay muchos objetos que reciben
+luz y se muestran sombras"*.
+
+The engine had already written this down, in `kooch_lighting/src/buffer.rs:339`:
+
+> *"Inti shades every light for every pixel; past this count that loop
+> is the frame. Clustering is the fix and is not implemented yet."*
+
+### The clouds were 97 % of the sky
+
+| | `cloud_coverage: 0.5` | `cloud_coverage: 0` |
+|---|---|---|
+| `sky` | **39.83 ms** | **1.22 ms** |
+
+One scene field. The structural suspicion about that pass — that it
+clears depth to run before geometry and writes `frag_depth`, disabling
+early-Z — is real and worth about a millisecond. The raymarch was
+everything else.
+
+⚠️ **They are switched off, which is not an optimisation.** Any project
+that sets coverage above zero pays 39 ms again, and nothing warns. #731
+is the condition on them coming back.
+
+### What #780 has to copy, and what it must not
+
+Read off `pbr_functions.wesl:453` rather than from memory:
+
+```wgsl
+let cluster_index = clustering::view_fragment_cluster_index(frag_coord.xy, view_z, is_ortho);
+var ranges = clustering::unpack_clusterable_object_index_ranges(cluster_index);
+
+for (var i = ranges.first_point_light_index_offset;
+         i < ranges.first_spot_light_index_offset; i = i + 1u) { ... }
+```
+
+- The z-slice is **logarithmic** in perspective —
+  `log(-view_z) * factors.x - factors.y + 1.0` — so clusters follow how
+  depth precision falls off rather than metres.
+- 🔴 **Ranges per object type, not one light list.** Point, spot,
+  reflection probe, irradiance volume and decal each get a consecutive
+  range, so the loop carries no per-type branch and a shader that needs
+  no decals never walks them. Building it as "lights per cluster"
+  produces half of it, and the other half is a rewrite.
+- Two flags are checked before any fetch: one on the mesh, one on the
+  light. The mesh half is done (#804); the light half is not.
+
+⚠️ **Build the grid once.** #477 (VSM page marking), #731 (the fog
+froxel buffer) and the single shadow-page pool all want this same
+structure. Three grids is the failure mode.
 
 ### 🎯 The frame on the OneXFly is fill-rate bound, 2026-08-12
 
@@ -221,6 +300,63 @@ native runners rather than cross-compiling — which is #753, and the
 other half of this.
 
 ---
+
+## The tooling that had to be fixed to measure any of this, 2026-08-13
+
+None of it was planned. All of it was in the way.
+
+**The version had never moved off 0.1.0** — no tags, no releases, every
+crate reading the same number since the workspace was created. Now
+**0.2.0** (#798), which is a MINOR because `BuildPreset` changed shape.
+⚠️ Still no tag and no release: a version number nothing points at is
+bookkeeping, and #756 (self-update) cannot exist without one.
+
+**Build presets became one dropdown.** `release` / `profiling` /
+`runnable` are gone; `mode` is **Release** or **Profiling**, both
+optimised — LTO and one codegen unit, set through `CARGO_PROFILE_*` in
+the environment rather than a project's `Cargo.toml`, which is generated
+once and would have skipped every existing project. 🔴 There is
+deliberately no debug mode: the editor's own debug build measured
+14.31 ms a frame against 4.94 release, so profiling one describes that
+build and not the game.
+
+**Install was broken twice, for unrelated reasons.** It asked for the
+*project's* engine version, which `ensure_current` answers with whatever
+is already on disk (#799) — and then never recorded the move, because
+**two files hold that state**: `Cargo.toml`'s path and `project.kooch`'s
+`engine_version` (#801). The prompt returned for ever and nothing failed.
+
+**The launcher now sets a project's engine before opening it** (#802).
+The order was backwards: opening compiles the project's plugin and
+*then* compares versions, so a mismatch cost a compile against the
+engine being left behind and produced an `.so` that `BuildStamp`
+refuses. `move_project_to_engine` is now the only writer of either
+record, and moving a project must not build it — there is a test that
+asserts no `target/` appears.
+
+**GPU scopes exist** (#795): `wgpu-profiler` bridged into puffin as a
+`GPU` thread. 🔴 Its own `puffin` feature is unusable here — it wants
+puffin ^0.19.1 against this workspace's patched 0.20 — so the bridge is
+45 lines adapted from its `src/puffin.rs`. That also saved the *game*
+build, which is the root of its own workspace and inherits no
+`[patch.crates-io]`.
+
+⚠️ **Two scopes were reporting other people's time**, found by printing
+the capture as a tree: a `profiling::scope!` lives to the end of its
+block, so declared mid-function `upload instances` claimed 1.900 ms of
+which 0.031 was the upload. Both are braced now.
+
+### 🔴 Five captures, and none of them comparable
+
+Every one came from a different camera or scene, so differences mixed
+the change being tested with what was on screen — 11 ms were attributed
+to "removing the sky" that were the viewpoint. Only the three
+resolution captures were a real A/B, and they are the only ones any
+conclusion here rests on.
+
+**Change one thing. Same view. Same scene.** And check the panel before
+saving: a capture that reads `scope#ScopeId(137)` lost its names and can
+only be read by inference.
 
 ## After lighting — the areas the user named, 2026-08-10
 
