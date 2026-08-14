@@ -58,6 +58,20 @@ impl Default for RemoteSyncState {
 }
 
 impl RemoteSyncState {
+    /// Asks for a pull on the next frame instead of at the next tick of
+    /// the cadence.
+    ///
+    /// 🔴 An edit the editor *just sent* is not "outside change the
+    /// project might have made" — it is a change the editor is waiting
+    /// to see. Without this it waits out the poll: up to half a second
+    /// where the world has already gone back and the screen has not,
+    /// which reads exactly like a Ctrl+Z that was ignored. It is why the
+    /// chord "needed two presses" — the second one was the first one
+    /// arriving, plus a second step undone.
+    pub(crate) fn invalidate(&mut self) {
+        self.last_pull = None;
+    }
+
     /// The same state on a different paused-mode cadence.
     #[cfg(test)]
     pub(crate) fn every_frame() -> Self {
@@ -90,6 +104,7 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
         session,
         mirror,
         playing,
+        pending_selection,
         // The connecting banner's copy of the build log. Nothing here
         // reads it; it is kept and cleared where the session is made.
         connect_output: _,
@@ -182,11 +197,46 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
     let applying = Instant::now();
     let mirror_time = if just_connected || session.changed_last_refresh() {
         mirror.apply(session.snapshot(), resources);
+        // Now that the snapshot has landed, whatever the last creation
+        // made has a mirror handle to select.
+        take_selection(resources, mirror, pending_selection);
         applying.elapsed()
     } else {
         Duration::ZERO
     };
     record_stats(resources, session, refresh, mirror_time);
+}
+
+/// Selects what the project just created, once the mirror can name it.
+///
+/// Nothing happens until *every* id resolves: a paste of three entities
+/// selects three, not the first one to arrive. Ids that never turn up
+/// are dropped with the rest — a creation the project refused should not
+/// leave the editor waiting for it forever.
+fn take_selection(
+    resources: &mut Resources,
+    mirror: &crate::remote_mirror::RemoteMirror,
+    pending: &mut Vec<kooch_remote::protocol::EntityId>,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let entities: Vec<_> = pending
+        .iter()
+        .filter_map(|id| mirror.local_of(*id))
+        .collect();
+    if entities.len() != pending.len() {
+        return;
+    }
+    pending.clear();
+    if let Some(overlay) = resources.get_mut::<crate::state::EditorOverlay>() {
+        overlay.selected_entities = entities;
+        // The Inspector shows one subject: selecting an entity means the
+        // asset selection is over, the same arbitration the UI does when
+        // the click comes from a panel.
+        overlay.selected_asset = None;
+        overlay.last_clicked_index = None;
+    }
 }
 
 /// Folds this pull's cost into [`EditorPerfStats`] (#645).

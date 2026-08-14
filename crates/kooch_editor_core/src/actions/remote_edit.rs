@@ -102,7 +102,20 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     resources.insert(state);
 
     if sent {
+        // Selecting what was just made — but only for a creation the user
+        // asked for. Undoing a despawn also creates, and stealing the
+        // selection there would fight whatever they had selected when
+        // they pressed Ctrl+Z.
+        if selects_what_it_makes(action)
+            && !created.is_empty()
+            && let Some(state) = resources.get_mut::<RemoteState>()
+        {
+            state.pending_selection = created.clone();
+        }
         crate::actions::remote_undo::record(resources, action, before, created);
+        // The editor is waiting to see this one, so it does not wait out
+        // the half-second poll to find out.
+        pull_soon(resources);
     }
 
     // The project wrote the file; this side has to be told it exists, or
@@ -115,6 +128,30 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         crate::actions::handlers::prefab_saved(resources, &path);
     }
     true
+}
+
+/// Whether the entities this action creates should end up selected.
+///
+/// Every editor does this and the reason is the same in all of them: you
+/// duplicate a thing in order to move it, and a copy that lands
+/// unselected in a list of six hundred is a copy you have to go and find.
+fn selects_what_it_makes(action: &EditorAction) -> bool {
+    matches!(
+        action,
+        EditorAction::Duplicate(_)
+            | EditorAction::PasteEntities
+            | EditorAction::Spawn { .. }
+            | EditorAction::SpawnMesh { .. }
+            | EditorAction::InstantiatePrefab { .. }
+    )
+}
+
+/// Asks the mirror to catch up on the next frame rather than at the next
+/// tick of its cadence.
+pub(super) fn pull_soon(resources: &mut Resources) {
+    if let Some(sync) = resources.get_mut::<crate::systems::RemoteSyncState>() {
+        sync.invalidate();
+    }
 }
 
 /// Builds a mesh-bound entity on the project's side.
@@ -178,6 +215,13 @@ fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name: &str) {
         %guid,
         "spawned a mesh entity on the project",
     );
+
+    // Set here rather than through `created`: this arm never reaches
+    // `send`, because resolving the asset needs a mutable world and an
+    // `Edit` has to be sendable from an immutable one.
+    if let Some(state) = resources.get_mut::<RemoteState>() {
+        state.pending_selection = vec![entity];
+    }
 }
 
 /// Loads a mesh asset locally and returns its GUID and asset type name.

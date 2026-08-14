@@ -230,6 +230,9 @@ pub(crate) fn step(resources: &mut Resources, undo: bool) -> bool {
 
     resources.insert(state);
 
+    // Whether it worked or not, what the mirror shows is now a guess.
+    super::remote_edit::pull_soon(resources);
+
     match outcome {
         Ok(inverse) => {
             let opposite = match undo {
