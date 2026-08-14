@@ -57,7 +57,7 @@ said.
 | ~~#780~~ | ~~GPU clustering — the froxel grid~~ | **Done and measured** (2026-08-14). The busiest froxel holds 26 lights against 12 that reach a point — ~24 % over-listing, ordinary for clustering. It costs 0.15 ms. Not a suspect |
 | ~~#824~~ | ~~shade in a compute pass, tile's lights in LDS~~ | **Built and measured: 6.6 %.** Fifteen storage fetches per pixel became fifteen per tile and the shading went 35.98 → 33.60 ms. Its value is what it revealed and unlocked, not the 6.6: the raster is **3.74 ms of 37.34**, so shading is 90 % of that pass — and #825 is buildable now |
 | ~~#825~~ | ~~shade at half rate, raster stays full~~ | **Built.** Lighting runs at one sample per 2×2 quad, upsampled with the vbuf as the edge guide, so the silhouette on screen is still the raster's — asserted exactly, not approximately. `KOOCH_SHADING_RATE=half`. The device capture is what closes it |
-| **#826** | sample the tile's lights, 15 → 2-4 | 🎯 **Next, and no longer optional.** `KOOCH_LIGHT_LIMIT` measured `shade = 11.11 ms + 1.06 ms per light`: neither this nor #825 closes the budget alone, and together they land at ~12 ms. See below |
+| ~~#826~~ | ~~sample the tile's lights, 15 → 2-4~~ | **Built.** A light is picked in proportion to what it contributes and divided by the probability of the pick, so two lights land 3.6 % from the full walk's brightness where two *truncated* ones land 83 % away. `KOOCH_LIGHT_SAMPLES`. It also found what the froxel flicker really was — see below |
 | ~~#796 / #819~~ | ~~ReSTIR / Solari~~ | **Ruled out for this hardware.** Solari's world cache alone is 2.65 ms per refresh in Bistro on the author's machine — 19 % of our whole budget, on far faster silicon — and denoising runs through DLSS Ray Reconstruction, which the 890M has no path to |
 | **#731** | volumetric clouds, froxel-based | The clouds are **off**, and that is the only reason the budget is met. They cost 39 ms as written |
 | **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
@@ -225,6 +225,52 @@ guide moves the wall's 99.9th percentile 17 → 141 while barely touching
 its mean. The second is why that test asserts a percentile — silhouette
 pixels are a rounding error in an average, which is exactly where a
 broken guide hides.
+
+### 🔴 The froxel flicker was never about froxels
+
+`KOOCH_LIGHT_LIMIT` shimmered on the device, and the write-up said what
+everyone assumes: a pixel crossing a cell boundary changes which lights
+it evaluates. #826's temporal-stability test rendered the same
+unchanged view twice and refuted it.
+
+| | pixels changed between two identical frames | worst channel |
+|---|---|---|
+| walking every light | 1 | 1 |
+| `KOOCH_LIGHT_LIMIT=2` | 10 098 | 164 |
+| sampling, first draft | 7 075 | 83 |
+
+Nothing moves and a third of the covered pixels change. The cause is
+`cluster_raster.wgsl::write_index`: a light claims its slot in the
+cell's run with `atomicAdd`, so the run's order is whichever thread
+arrived first — **different every frame**. "The first two of the list"
+is a different pair of lights each time.
+
+Which makes it a trap for anything that reads the run's *order*, and
+the first draft of the sampler walked into it: stratifying the
+cumulative weight is one pass and one random number, and a cumulative
+walk is an order. The shipped version keys each light's draw on its
+**global index** instead — an argmin over independent per-light keys,
+so permuting the run cannot change the winner. `-log(u) / w`, smallest
+wins, which picks light *i* with probability `w_i / w_sum`.
+
+⚠️ **It costs `K + 1` walks of the weights instead of two**, and that is
+affordable only because the weight comes out of workgroup memory. Which
+is where #824 stopped one step short: it cached the tile's light
+*indices*, four bytes each, and every pixel still fetched the whole
+80-byte `IntiLight` for every light in its froxel. Fifteen of those is
+1.2 KB per pixel — #824 removed the four bytes and left the 1200, which
+is why it bought 6.6 %. #826 puts the twenty bytes a weight needs in
+`var<workgroup>`, read once per tile.
+
+⚠️ **A floor in the convergence, recorded rather than fixed.** Past
+about eight samples the error stops falling: ~5/255 and 1.2 % dark.
+A light whose cheap diffuse weight underestimates its specular
+contribution is picked rarely and scaled by a large `1/w` when it is;
+the spike clips against the tonemap and an 8-bit target, and clipping
+only ever loses energy. The fixes — a better weight, or a clamped ratio
+— trade one bias for another, and neither is worth choosing before the
+device says how much of it is visible at the two to four samples a frame
+would actually ship.
 
 ### What was ruled out, so it is not revisited
 

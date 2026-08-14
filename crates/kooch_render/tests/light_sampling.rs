@@ -1,0 +1,253 @@
+//! #826's acceptance: evaluating 2 of a froxel's 15 lights must produce
+//! a picture that is **noisier**, not **darker**.
+//!
+//! That sentence is the whole issue. `KOOCH_LIGHT_LIMIT` already
+//! evaluates fewer lights and it is not this: it keeps a prefix of the
+//! froxel's list and scales it by nothing, so two thirds of the light
+//! simply leaves. Sampling picks in proportion to what a light
+//! contributes and divides by the probability of the pick, so the few
+//! that are evaluated stand in for the ones that were not.
+//!
+//! An assertion that only checked "close to the reference" would pass
+//! for a shader that quietly walked every light, and one that only
+//! checked "different from the reference" would pass for the limit. So
+//! the tests below pin all three corners: **as bright as the full walk**,
+//! **not identical to it**, and **darker only when the limit is used
+//! instead**.
+//!
+//! Run with:
+//!   cargo test -p kooch_render --test light_sampling
+
+mod common;
+
+use common::lit_scene::{render_at, rig};
+use common::srgb_to_linear;
+use kooch_lighting::{LightLimit, LightSamples};
+use kooch_render::meshlet::ShadingRate;
+
+/// Mean linear luminance over the covered pixels.
+///
+/// 🔴 Linear, through `srgb_to_linear`, and that is not pedantry: the
+/// target is sRGB-encoded, so averaging the bytes weighs a dark pixel
+/// far more than it weighs light. A 2x drop in radiance is about 1.4x in
+/// bytes, and a test that averaged bytes would report a third of the
+/// error it was looking for.
+fn mean_luminance(pixels: &[u8]) -> f64 {
+    let mut total = 0.0;
+    let mut covered = 0usize;
+    for p in pixels.chunks_exact(4) {
+        if p[3] == 0 {
+            continue;
+        }
+        covered += 1;
+        total += 0.2126 * srgb_to_linear(p[0]) as f64
+            + 0.7152 * srgb_to_linear(p[1]) as f64
+            + 0.0722 * srgb_to_linear(p[2]) as f64;
+    }
+    assert!(covered > 0, "the scene rendered empty");
+    total / covered as f64
+}
+
+/// Mean absolute channel difference over covered pixels, in 1/255. How
+/// far an estimate is from the reference, noise included.
+fn mean_delta(a: &[u8], b: &[u8]) -> f64 {
+    let mut total = 0u64;
+    let mut covered = 0usize;
+    for (x, y) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+        if x[3] == 0 || y[3] == 0 {
+            continue;
+        }
+        covered += 1;
+        total += x[..3]
+            .iter()
+            .zip(y[..3].iter())
+            .map(|(p, q)| p.abs_diff(*q) as u64)
+            .sum::<u64>();
+    }
+    total as f64 / (covered.max(1) * 3) as f64
+}
+
+/// 🔴 The issue's central claim, against the instrument that motivated
+/// it.
+///
+/// Same number of lights evaluated, two ways. Sampling keeps the scene's
+/// brightness because each pick is divided by its probability;
+/// truncation does not, because it is divided by nothing. If this ever
+/// fails in the direction of "sampled is dark too", the estimator lost
+/// its weight and #826 has become #825's `light_limit` with more code.
+#[test]
+fn sampling_keeps_the_brightness_that_truncation_loses() {
+    let Some(mut r) = rig(4, false) else {
+        eprintln!("no adapter with the 64-bit texture-atomic bundle; skipping");
+        return;
+    };
+
+    r.resources.insert(LightSamples(0));
+    r.resources.insert(LightLimit(0));
+    let full = mean_luminance(&render_at(&mut r, true, ShadingRate::Full));
+
+    r.resources.insert(LightSamples(2));
+    let sampled = mean_luminance(&render_at(&mut r, true, ShadingRate::Full));
+
+    r.resources.insert(LightSamples(0));
+    r.resources.insert(LightLimit(2));
+    let limited = mean_luminance(&render_at(&mut r, true, ShadingRate::Full));
+
+    let sampled_error = (sampled - full).abs() / full;
+    let limited_error = (limited - full).abs() / full;
+    eprintln!(
+        "full {full:.5}  sampled(2) {sampled:.5} ({:.1} %)  limited(2) {limited:.5} ({:.1} %)",
+        sampled_error * 100.0,
+        limited_error * 100.0,
+    );
+
+    assert!(
+        sampled_error < 0.08,
+        "two sampled lights are {:.1} % away from the full walk's brightness. \
+         The estimator is not dividing by the probability it picked with — it is \
+         dropping light, which is what the instrument this replaces already did.",
+        sampled_error * 100.0,
+    );
+    assert!(
+        limited_error > 3.0 * sampled_error,
+        "truncating to the same count cost only {:.1} % against sampling's {:.1} %. \
+         Either the froxels hold too few lights for this scene to test anything, \
+         or the two are doing the same thing.",
+        limited_error * 100.0,
+        sampled_error * 100.0,
+    );
+}
+
+/// More samples must land closer to the answer, or what is being
+/// measured is not convergence towards it.
+///
+/// This is the assertion that separates "unbiased and noisy" from
+/// "wrong by a constant that happens to average out". A biased estimator
+/// can match the mean brightness and still not improve with more
+/// samples.
+///
+/// # 🔴 The measured curve, and the floor in it
+///
+/// Mean |Δ| against the full walk, and the luminance error, on the
+/// parity scene:
+///
+/// | samples | mean Δ | luminance |
+/// |---|---|---|
+/// | 1 | 8.71 | −5.00 % |
+/// | 2 | 7.47 | −3.56 % |
+/// | 4 | 6.41 | −2.31 % |
+/// | 8 | 5.42 | −1.46 % |
+/// | 16 | 5.07 | −1.20 % |
+///
+/// ⚠️ **It converges and then stops**, at about 5/255 and −1.2 %, past
+/// the point where there are more samples than lights. That floor is
+/// real and it is not noise: a light whose cheap weight badly
+/// underestimates what it actually contributes — the weight is a diffuse
+/// estimate and the contribution has a specular layer — gets picked
+/// rarely and scaled by a correspondingly large `1/w` when it is. The
+/// spike lands above what the tonemap and an 8-bit target can carry, is
+/// clipped, and the energy it was standing in for is lost. Always
+/// downwards, which is why the residual is a darkening rather than a
+/// wobble.
+///
+/// It is recorded rather than fixed because the fix is a better weight
+/// or a clamped ratio, both of which trade one bias for another, and
+/// neither is worth choosing before the device says how much of this is
+/// visible at the two-to-four samples a frame would actually ship.
+#[test]
+fn more_samples_land_closer() {
+    let Some(mut r) = rig(4, false) else {
+        eprintln!("no adapter with the 64-bit texture-atomic bundle; skipping");
+        return;
+    };
+
+    r.resources.insert(LightLimit(0));
+    r.resources.insert(LightSamples(0));
+    let full = render_at(&mut r, true, ShadingRate::Full);
+
+    r.resources.insert(LightSamples(1));
+    let one = mean_delta(&full, &render_at(&mut r, true, ShadingRate::Full));
+    r.resources.insert(LightSamples(8));
+    let eight = mean_delta(&full, &render_at(&mut r, true, ShadingRate::Full));
+
+    eprintln!("mean delta vs full walk: 1 sample {one:.3}, 8 samples {eight:.3}");
+    assert!(one > 0.0, "one sample matched the full walk exactly");
+    assert!(
+        eight < one * 0.75,
+        "eight samples ({eight:.3}) are not meaningfully closer to the full walk \
+         than one ({one:.3}), against the 0.62 measured. The estimate is not \
+         converging on the sum it is supposed to estimate.",
+    );
+}
+
+/// 🔴 The anti-flicker requirement — and the test that found out what
+/// the flicker actually was.
+///
+/// The froxel shimmer `KOOCH_LIGHT_LIMIT` produced on the device was
+/// written up as pixels crossing cell boundaries. It is not. This test
+/// renders the same unchanged view twice, and before the sampling was
+/// made order-independent it failed on a still camera:
+///
+/// | | pixels changed between two identical frames | worst channel |
+/// |---|---|---|
+/// | walking every light | 1 | 1 |
+/// | `KOOCH_LIGHT_LIMIT=2` | 10 098 | 164 |
+/// | sampling, first draft | 7 075 | 83 |
+///
+/// The grid fills each cell's run with `atomicAdd`, so the order inside
+/// a cell is whichever thread got there first — different every frame,
+/// with nothing moving. "The first two of the list" is therefore a
+/// different pair of lights each frame, and so was the first draft's
+/// stratified walk of the cumulative weight, because a cumulative walk
+/// is an order.
+///
+/// The fix is that the choice is keyed on each light's **global index**
+/// rather than its slot, so the run can be permuted at will. Nothing
+/// about it may depend on the frame number either — seeding from a
+/// frame counter is the obvious thing to write and would put the
+/// shimmer straight back.
+#[test]
+fn the_same_view_samples_the_same_lights() {
+    let Some(mut r) = rig(4, true) else {
+        eprintln!("no adapter with the 64-bit texture-atomic bundle; skipping");
+        return;
+    };
+    r.resources.insert(LightLimit(0));
+    r.resources.insert(LightSamples(2));
+
+    let first = render_at(&mut r, true, ShadingRate::Full);
+    let second = render_at(&mut r, true, ShadingRate::Full);
+    assert_eq!(
+        first, second,
+        "two renders of an unchanged view chose different lights. \
+         Nothing about the sampling may depend on the frame number.",
+    );
+}
+
+/// Sampling and half rate have to compose: they attack different terms —
+/// one the lights per pixel, the other the pixels — and the budget needs
+/// both. A crash or a black frame here is the interaction failing.
+#[test]
+fn sampling_composes_with_half_rate() {
+    let Some(mut r) = rig(4, false) else {
+        eprintln!("no adapter with the 64-bit texture-atomic bundle; skipping");
+        return;
+    };
+    r.resources.insert(LightLimit(0));
+    r.resources.insert(LightSamples(0));
+    let full = mean_luminance(&render_at(&mut r, true, ShadingRate::Half));
+
+    r.resources.insert(LightSamples(2));
+    let sampled = mean_luminance(&render_at(&mut r, true, ShadingRate::Half));
+
+    let error = (sampled - full).abs() / full;
+    eprintln!(
+        "half rate: full {full:.5}, sampled(2) {sampled:.5} ({:.1} %)",
+        error * 100.0
+    );
+    assert!(
+        error < 0.08,
+        "at half rate, two sampled lights are {:.1} % from the full walk",
+        error * 100.0,
+    );
+}
