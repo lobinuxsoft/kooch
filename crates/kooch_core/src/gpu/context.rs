@@ -100,7 +100,7 @@ impl GpuContext {
             present_mode: present_mode(),
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: frame_latency(),
         };
 
         surface.configure(&device, &surface_config);
@@ -108,6 +108,7 @@ impl GpuContext {
         tracing::info!(
             ?format,
             ?surface_config.present_mode,
+            latency = surface_config.desired_maximum_frame_latency,
             "Surface configured ({width}x{height})"
         );
 
@@ -220,6 +221,50 @@ impl Drop for GpuContext {
 /// `AutoNoVsync` rather than `Immediate`: it falls back to whatever the
 /// surface actually supports instead of failing on a driver that has no
 /// immediate mode.
+/// How many frames the swapchain may have in flight.
+/// `KOOCH_FRAME_LATENCY` overrides it, clamped to 1..=3.
+///
+/// # The measurement this exists for
+///
+/// A 1165-frame capture on the OneXFly (#814) has the same GPU work
+/// produce two different frames: 167 frames turned 33.5 ms of GPU into a
+/// 34.7 ms frame, and 80 turned 34.7 ms into a 69.4 ms frame. Identical
+/// load, and the bad outcome is **exactly double**. A GPU does not do
+/// that. A swapchain with two images does: under FIFO the compositor
+/// holds one while the GPU draws into the other, so
+/// `get_current_texture` waits out the compositor's whole turn instead
+/// of overlapping with it, and a frame that misses one vblank stays
+/// serialised.
+///
+/// # Why 2 is still the default
+///
+/// Because the fix is not free and has not been measured on the hardware
+/// that has the problem. A third image buys back the overlap and costs a
+/// frame of input lag — at 34 ms per frame that is 34 ms of extra lag on
+/// a handheld, which is not a rounding error. Changing the default on
+/// the strength of a plausible mechanism is exactly the move that has
+/// been wrong three times on this frame already, so the number is a
+/// variable until a capture from the OneXFly says which one wins.
+fn frame_latency() -> u32 {
+    let raw = std::env::var("KOOCH_FRAME_LATENCY").ok();
+    let latency = latency_from(raw.as_deref());
+    if raw.is_some() {
+        tracing::info!("KOOCH_FRAME_LATENCY={latency}: swapchain frames in flight");
+    }
+    latency
+}
+
+/// Reads the variable, so the rule is testable without an environment.
+///
+/// Anything unparseable keeps the default: a typo in a measurement run
+/// must not silently change what is being measured, and a panic here
+/// would take the window with it.
+pub(super) fn latency_from(raw: Option<&str>) -> u32 {
+    raw.and_then(|v| v.trim().parse::<u32>().ok())
+        .map(|latency| latency.clamp(1, 3))
+        .unwrap_or(2)
+}
+
 fn present_mode() -> wgpu::PresentMode {
     match std::env::var("KOOCH_PRESENT_MODE").as_deref() {
         Ok("novsync") => {
