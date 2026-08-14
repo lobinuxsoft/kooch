@@ -88,6 +88,7 @@ pub(super) fn run_editor_ui(
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut kooch_lighting::LightsHot,
     cluster_settings: &mut kooch_lighting::ClusterSettings,
+    specular_floor: &mut kooch_lighting::SpecularFloor,
     meshlet_stats: MeshletRenderStats,
     perf_stats: crate::perf::EditorPerfStats,
     gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
@@ -270,6 +271,7 @@ pub(super) fn run_editor_ui(
                 meshlet_lod_settings,
                 lights_hot,
                 cluster_settings,
+                specular_floor,
                 meshlet_stats,
                 perf_stats,
             };

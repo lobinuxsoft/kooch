@@ -186,6 +186,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut cluster_settings = resources
         .remove::<kooch_lighting::ClusterSettings>()
         .unwrap_or_default();
+    let mut specular_floor = resources
+        .remove::<kooch_lighting::SpecularFloor>()
+        .unwrap_or_default();
     // Stats are produced by last frame's viewport render and re-published
     // as a Resource. Read-only here — copied so we don't keep the borrow
     // through the egui pass.
@@ -475,6 +478,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut meshlet_lod_settings,
         &mut lights_hot,
         &mut cluster_settings,
+        &mut specular_floor,
         meshlet_stats,
         resources
             .get::<crate::perf::EditorPerfStats>()
@@ -523,6 +527,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     resources.insert(meshlet_lod_settings);
     resources.insert(lights_hot);
     resources.insert(cluster_settings);
+    resources.insert(specular_floor);
 
     // Which light the single-light view isolates (#743): the selection,
     // because "one light at a time" is what selecting a light already

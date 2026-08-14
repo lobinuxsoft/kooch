@@ -186,7 +186,9 @@ struct IntiFrame {
     spot_shadow_count: u32,
     // #778's count, in a word the spot count's padding already had.
     point_shadow_count: u32,
-    _pad_spot0: u32,
+    // Irradiance below which a light skips its specular layer (#821).
+    // Zero keeps every light on the full model.
+    specular_floor: f32,
     _pad_spot1: u32,
     point_shadows: array<IntiPointShadow, 4>,
     // 0 when no directional light casts, or the atlas has not been
@@ -905,48 +907,69 @@ fn inti_light_contribution(
     // The specular layer answers to a different direction as soon as
     // the light has a size (#776) — the sphere's closest point to the
     // mirror ray rather than its centre — and to a wider roughness.
-    // Every value below starts as the diffuse layer's, so a light with
-    // `radius == 0` costs nothing and renders exactly as before.
-    var l_spec = s.to_light;
-    var a_spec = surf.a;
+    //
+    // 🔴 It is also the expensive half of the model: GGX `D`,
+    // height-correlated Smith `V`, Schlick `F`, the multiscatter fit and
+    // the representative point, per light per pixel. With ~15 lights
+    // reaching a pixel in a lit scene (#820), a light contributing a
+    // fraction of the frame's exposure spends all of that on a highlight
+    // nobody can see. #821 — under `specular_floor`, it pays for the
+    // diffuse layer only.
+    //
+    // `specular_floor == 0.0` takes the branch every time, which is what
+    // every frame did before this existed.
+    var specular = vec3<f32>(0.0);
     var n_dot_l_spec = n_dot_l;
-    var l_dot_h_spec = l_dot_h;
-    var h_spec = h;
-    var spec_intensity = 1.0;
-    var solid_angle = 0.0;
-    // A directional light is excluded by kind and not only by its
-    // radius: it has no position, so there is no distance for the
-    // approximation to correct. A sun's angular size is a shadow
-    // problem (#477), not this one.
-    if (light.radius > 0.0 && light.kind != INTI_KIND_DIRECTIONAL) {
-        let rep = inti_representative_point(
-            surf.r, surf.a, s.offset, light.radius, s.distance);
-        l_spec = rep.xyz;
-        h_spec = normalize(l_spec + surf.v);
-        n_dot_l_spec = saturate(dot(surf.n, l_spec));
-        l_dot_h_spec = saturate(dot(l_spec, h_spec));
-        // Spreading the same energy over a wider highlight must not
-        // add any. Without this factor `radius` is a brightness knob.
-        // Note it uses the RAW widened roughness, while the BRDF below
-        // gets the remapped one — Bevy does both and they are not the
-        // same number.
-        let normalization = surf.a / max(rep.w, 1e-4);
-        spec_intensity = normalization * normalization;
-        a_spec = mix(surf.a, rep.w, inti_specular_fix_remap(surf.a));
-        // Sphere visibility: at a grazing angle part of the sphere has
-        // sunk below the horizon and cannot light this point at all.
-        solid_angle = light.radius * light.radius
-            / max(s.distance * s.distance, 1e-8);
-    }
+    // ⚠️ Fresnel stands in at normal incidence rather than being
+    // dropped. `f` weights the diffuse layer below, so a skipped
+    // specular that also skipped `f` would BRIGHTEN the surface — a
+    // missing highlight is invisible, an over-lit dielectric is not.
+    var f = surf.f0;
+    // The most this light can put on this surface: its irradiance, faced
+    // head-on. Already computed by `inti_sample_light`, so the test
+    // costs a max and a compare.
+    let reach = max(max(s.irradiance.x, s.irradiance.y), s.irradiance.z) * n_dot_l;
+    if (reach >= inti.specular_floor) {
+        var l_spec = s.to_light;
+        var a_spec = surf.a;
+        var l_dot_h_spec = l_dot_h;
+        var h_spec = h;
+        var spec_intensity = 1.0;
+        var solid_angle = 0.0;
+        // A directional light is excluded by kind and not only by its
+        // radius: it has no position, so there is no distance for the
+        // approximation to correct. A sun's angular size is a shadow
+        // problem (#477), not this one.
+        if (light.radius > 0.0 && light.kind != INTI_KIND_DIRECTIONAL) {
+            let rep = inti_representative_point(
+                surf.r, surf.a, s.offset, light.radius, s.distance);
+            l_spec = rep.xyz;
+            h_spec = normalize(l_spec + surf.v);
+            n_dot_l_spec = saturate(dot(surf.n, l_spec));
+            l_dot_h_spec = saturate(dot(l_spec, h_spec));
+            // Spreading the same energy over a wider highlight must not
+            // add any. Without this factor `radius` is a brightness knob.
+            // Note it uses the RAW widened roughness, while the BRDF below
+            // gets the remapped one — Bevy does both and they are not the
+            // same number.
+            let normalization = surf.a / max(rep.w, 1e-4);
+            spec_intensity = normalization * normalization;
+            a_spec = mix(surf.a, rep.w, inti_specular_fix_remap(surf.a));
+            // Sphere visibility: at a grazing angle part of the sphere has
+            // sunk below the horizon and cannot light this point at all.
+            solid_angle = light.radius * light.radius
+                / max(s.distance * s.distance, 1e-8);
+        }
 
-    let n_dot_h = saturate(dot(surf.n, h_spec));
-    let d = inti_d_ggx(a_spec, n_dot_h);
-    let vis = inti_v_smith_correlated(a_spec, surf.n_dot_v, n_dot_l_spec);
-    let f = inti_fresnel(surf.f0, l_dot_h_spec);
-    var specular = inti_specular_multiscatter(
-        d * vis * f * spec_intensity, surf.f0, surf.f_ab);
-    if (solid_angle > 0.0) {
-        specular *= saturate(n_dot_l_spec / max(n_dot_l_spec + solid_angle, 1e-4));
+        let n_dot_h = saturate(dot(surf.n, h_spec));
+        let d = inti_d_ggx(a_spec, n_dot_h);
+        let vis = inti_v_smith_correlated(a_spec, surf.n_dot_v, n_dot_l_spec);
+        f = inti_fresnel(surf.f0, l_dot_h_spec);
+        specular = inti_specular_multiscatter(
+            d * vis * f * spec_intensity, surf.f0, surf.f_ab);
+        if (solid_angle > 0.0) {
+            specular *= saturate(n_dot_l_spec / max(n_dot_l_spec + solid_angle, 1e-4));
+        }
     }
 
     // Energy the specular layer reflected is energy the diffuse

@@ -21,6 +21,7 @@ pub(crate) fn draw_game_content(
     meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
     lights_hot: &mut kooch_lighting::LightsHot,
     cluster_settings: &mut kooch_lighting::ClusterSettings,
+    specular_floor: &mut kooch_lighting::SpecularFloor,
     hud_visibility: &mut crate::perf::HudVisibility,
 ) {
     let available = ui.available_size();
@@ -66,6 +67,7 @@ pub(crate) fn draw_game_content(
             meshlet_lod_settings,
             lights_hot,
             cluster_settings,
+            specular_floor,
             // Physical pixels, like the offscreen target: the grid's
             // columns and rows come out of the viewport's aspect.
             available * pixels_per_point,

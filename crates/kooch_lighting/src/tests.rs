@@ -104,3 +104,38 @@ fn the_stub_matches_the_views_it_replaces() {
     }
     assert!(found >= 2, "the stub should declare both call sites");
 }
+
+/// 🔴 Zero means "never skip", and it is the default. A project that
+/// never heard of #821 has to render exactly what it rendered before.
+#[test]
+fn the_default_floor_keeps_every_specular() {
+    assert_eq!(SpecularFloor::default().0, 0.0);
+    assert_eq!(IntiFrame::default().specular_floor, 0.0);
+}
+
+/// A negative floor would mean nothing, and zero already means never.
+#[test]
+fn a_negative_floor_is_clamped() {
+    assert_eq!(
+        IntiFrame::default()
+            .with_specular_floor(-5.0)
+            .specular_floor,
+        0.0
+    );
+    assert_eq!(
+        IntiFrame::default()
+            .with_specular_floor(120.0)
+            .specular_floor,
+        120.0
+    );
+}
+
+/// The shader has to read the uniform for the control to do anything —
+/// and to compare against the irradiance it already computed, not
+/// against something it recomputes differently.
+#[test]
+fn the_shader_gates_on_the_floor() {
+    let source = inti_pbr_shader(0);
+    assert!(source.contains("inti.specular_floor"));
+    assert!(source.contains("reach >= inti.specular_floor"));
+}

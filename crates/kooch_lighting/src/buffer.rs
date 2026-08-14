@@ -434,6 +434,13 @@ impl GpuLights {
         let mut frame = IntiFrame::new(&ambient, &exposure, camera.position, self.light_count)
             .with_optional_shadows(shadows)
             .with_debug_light(debug_light)
+            .with_specular_floor(
+                resources
+                    .get::<crate::SpecularFloor>()
+                    .copied()
+                    .unwrap_or_default()
+                    .0,
+            )
             .with_lights_hot(
                 resources
                     .get::<crate::LightsHot>()

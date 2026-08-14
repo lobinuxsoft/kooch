@@ -313,7 +313,20 @@ pub struct IntiFrame {
     /// `debug_light` rides in this struct's tail — a count is a word and
     /// there was a word.
     pub point_shadow_count: u32,
-    pub _pad_spot: [u32; 2],
+    /// Irradiance below which a light pays for the diffuse layer only
+    /// (#821).
+    ///
+    /// The specular layer is the expensive half — GGX `D`,
+    /// height-correlated Smith `V`, Schlick `F`, the multiscatter fit,
+    /// and the representative point when the light has a radius — and a
+    /// light reaching this pixel with a fraction of the frame's exposure
+    /// spends all of it on a highlight nobody can see. With 15 lights
+    /// per pixel, that is 15 of them.
+    ///
+    /// **0.0 keeps every light on the full model**, which is what every
+    /// frame did before this existed.
+    pub specular_floor: f32,
+    pub _pad_spot: u32,
     /// One per shadow-casting point light (#778).
     ///
     /// 🔴 A different record from the spots', and the difference is the
@@ -393,6 +406,17 @@ pub struct IntiFrame {
 /// the picture stop being flat.
 pub const LIGHTS_HOT_DEFAULT: u32 = 16;
 
+/// Irradiance below which a light skips its specular layer (#821), as a
+/// [`Resource`](kooch_core::resource::Resources).
+///
+/// `0.0` — the default — keeps every light on the full model, so a
+/// project that never sets it renders exactly as before. It is a
+/// resource rather than a constant because the useful value is a
+/// property of the scene's exposure and light intensities, and the only
+/// way to find it is to sweep it while watching the picture.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct SpecularFloor(pub f32);
+
 /// Top of scale for `MeshletDebugMode::LightsPerPixel`, as a
 /// [`Resource`](kooch_core::resource::Resources) the editor writes.
 ///
@@ -444,7 +468,8 @@ impl IntiFrame {
             spot_shadows: [GpuCascade::default(); MAX_SPOT_SHADOWS],
             spot_shadow_count: 0,
             point_shadow_count: 0,
-            _pad_spot: [0; 2],
+            specular_floor: 0.0,
+            _pad_spot: 0,
             point_shadows: [GpuPointShadow::default(); MAX_POINT_SHADOWS],
             shadows_enabled: 0,
             cascade_blend: 0.1,
@@ -498,6 +523,14 @@ impl IntiFrame {
     /// Clamped to at least one: a top of zero would divide the count by
     /// nothing and paint the whole screen the ramp's hot end, which is
     /// indistinguishable from the answer that means the grid is off.
+    /// Sets the irradiance below which a light skips its specular
+    /// layer (#821). Clamped at zero: a negative floor would mean
+    /// nothing, and zero already means "never skip".
+    pub fn with_specular_floor(mut self, floor: f32) -> Self {
+        self.specular_floor = floor.max(0.0);
+        self
+    }
+
     pub fn with_lights_hot(mut self, hot: u32) -> Self {
         self.debug_lights_hot = hot.max(1);
         self

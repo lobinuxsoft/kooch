@@ -22,7 +22,7 @@
 //! 7. **Remote**           — cost of the snapshot pull, split by
 //!                           transport / decode. Hidden in local mode.
 
-use kooch_lighting::{ClusterGrid, ClusterSettings, LightsHot};
+use kooch_lighting::{ClusterGrid, ClusterSettings, LightsHot, SpecularFloor};
 use kooch_render::meshlet::{
     MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
 };
@@ -39,6 +39,7 @@ pub(crate) fn draw_performance_content(
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut LightsHot,
     cluster_settings: &mut ClusterSettings,
+    specular_floor: &mut SpecularFloor,
     viewport: egui::Vec2,
     hud_visibility: &mut crate::perf::HudVisibility,
     single_light_note: Option<&str>,
@@ -61,6 +62,7 @@ pub(crate) fn draw_performance_content(
                     meshlet_lod_settings,
                     lights_hot,
                     cluster_settings,
+                    specular_floor,
                     meshlet_stats.cluster_occupancy,
                     viewport,
                     single_light_note,
@@ -410,6 +412,7 @@ fn debug_controls(
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut LightsHot,
     cluster_settings: &mut ClusterSettings,
+    specular_floor: &mut SpecularFloor,
     cluster_occupancy: Option<(u32, f32)>,
     viewport: egui::Vec2,
     single_light_note: Option<&str>,
@@ -586,6 +589,26 @@ fn debug_controls(
              different aspect and therefore a different grid.",
         );
     }
+    // #821 — the specular layer is the expensive half of the model, and
+    // a light contributing a fraction of the frame's exposure spends all
+    // of it on a highlight nobody can see. Zero is off, and off is what
+    // every frame did before this existed.
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("diffuse-only under").small());
+        ui.add(
+            egui::DragValue::new(&mut specular_floor.0)
+                .speed(0.5)
+                .range(0.0..=10_000.0)
+                .suffix(" lx"),
+        )
+        .on_hover_text(
+            "Irradiance below which a light skips its specular layer — GGX, Smith, \
+             Fresnel, multiscatter and the representative point. 0 keeps every light on \
+             the full model. Raise it while watching the picture: the frame time falls \
+             immediately, and the value to keep is the last one before highlights start \
+             disappearing where anybody looks.",
+        );
+    });
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("LOD ≤").small())
             .on_hover_text("Pixel-error threshold for the continuous-LOD selector.");
@@ -695,6 +718,7 @@ pub(crate) fn draw_perf_sidebar(
     meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
     lights_hot: &mut LightsHot,
     cluster_settings: &mut ClusterSettings,
+    specular_floor: &mut SpecularFloor,
     viewport: egui::Vec2,
     hud_visibility: &mut crate::perf::HudVisibility,
     single_light_note: Option<&str>,
@@ -778,6 +802,7 @@ pub(crate) fn draw_perf_sidebar(
                     meshlet_lod_settings,
                     lights_hot,
                     cluster_settings,
+                    specular_floor,
                     viewport,
                     hud_visibility,
                     single_light_note,
