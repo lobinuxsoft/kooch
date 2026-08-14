@@ -63,7 +63,19 @@ standalone `puffin_viewer`.
 
 `cargo run -p kooch_editor_core --features profiling --example read_capture -- <file>`
 prints the same ranking in a terminal, which is what a capture pulled off
-the handheld will need.
+the handheld will need. Two flags for the two questions an average
+cannot answer:
+
+| flag | what it prints |
+|---|---|
+| `--slowest` | the worst single frame, whole. A mean hides a stall by definition: one 700 ms frame in a thousand moves it by 0.7 ms. |
+| `--split` | the fastest quarter of frames against the slowest, by self time, plus each frame against the GPU work that produced it. |
+
+🔴 **`--split` is the one to reach for on a capture where the camera
+moves**, because that capture holds two populations and a mean over both
+describes neither. The `frame/GPU` ratio it prints is what separates *the
+GPU is the wall* from *we are waiting for the GPU twice* — see the second
+handheld capture below.
 
 ### 🔴 A capture can be silently unreadable
 
@@ -117,6 +129,48 @@ arithmetic; it is now measured.
 silently-unreadable case above. It was recovered by mapping ids against
 the readable capture from the same binary, which works only because both
 came from one session. Save a capture that has names.
+
+## 🔴 The second handheld capture: a slow frame costs twice its GPU work
+
+1165 frames of the same scene with the camera moving (#814). Split into
+the fastest quarter and the slowest, by **self** time:
+
+| scope path | fast | slow | delta |
+|---|---|---|---|
+| `Render > Surface::get_current_texture > vkAcquireNextImageKHR` | 11.14 ms | **72.71 ms** | +61.57 |
+| `GPU > raster + shade` | 5.27 | **34.92** | +29.65 |
+| `GPU > shadows` | 0.40 | 0.73 | +0.34 |
+| `GPU > blit` | 0.31 | 0.50 | +0.19 |
+| `GPU > cluster grid` | 0.075 | 0.167 | +0.09 |
+
+The engine's own CPU work is under 1.5 ms of a 75 ms frame. Everything
+else is the GPU, or waiting for it. But *how much* waiting is the
+finding — each frame against the GPU work that produced it:
+
+| decile | frame ms | GPU ms | frame/GPU |
+|---|---|---|---|
+| p20 | 13.88 | 5.35 | 2.60 |
+| p50 | 30.71 | 26.63 | 1.15 |
+| p60 | 35.41 | 33.64 | **1.05** |
+| p80 | 72.54 | 35.64 | **2.04** |
+| p90 | 85.48 | 39.94 | 2.14 |
+
+**The same GPU work produces two different frames.** 33.5 ms of GPU
+became a 34.7 ms frame 167 times and a 69.4 ms frame 80 times — the bad
+outcome exactly double, which a GPU does not do and a swapchain does.
+Under FIFO with two images the compositor holds one while the GPU draws
+into the other, so the acquire waits out the compositor's turn instead
+of overlapping with it, and a frame that misses one vblank stays
+serialised. `KOOCH_FRAME_LATENCY=3` asks for a third image; it costs a
+frame of input lag, so the default stays at 2 until a capture from the
+device says which is worse.
+
+⚠️ **The tool that found this had been in the repo for weeks.** The first
+reading of this capture used a hand-written script that summed scopes
+without descending the nesting, so a parent and its children came out as
+siblings, `vkAcquireNextImageKHR` never appeared, and 51 % of the frame
+looked unattributed. `read_capture` walks the tree properly and named it
+on the first run. Read the capture with the tool that models parents.
 
 ## Reading the numbers
 
