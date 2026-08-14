@@ -191,6 +191,16 @@ fn split(
             self_ms,
         });
     }
+    // 🔴 Before any per-frame comparison, ask whether the two series are
+    // even aligned. `GpuScopes` keeps three frames in flight and puffin
+    // files a GPU result under the frame that *reported* it, not the one
+    // that ran it — so a capture with variable frame times can pair a
+    // slow frame with an earlier frame's GPU work and invent a gap that
+    // is pure bookkeeping. This is checked, not assumed, because a
+    // conclusion drawn from a misaligned pairing looks exactly like a
+    // conclusion drawn from a real one.
+    report_lag(&samples);
+
     samples.sort_by(|a, b| a.ms.total_cmp(&b.ms));
 
     let quarter = (samples.len() / 4).max(1);
@@ -250,6 +260,55 @@ fn split(
         );
     }
     Ok(())
+}
+
+/// Prints how well GPU work predicts frame time at each offset, in
+/// capture order.
+///
+/// The offset with the strongest correlation is how many frames late the
+/// GPU results are filed. At 0 the two series are aligned and a
+/// per-frame ratio means what it says; at anything else the ratio is
+/// comparing a frame against another frame's GPU work.
+fn report_lag(samples: &[Sample]) {
+    let correlate = |lag: usize| -> f64 {
+        if samples.len() <= lag + 2 {
+            return f64::NAN;
+        }
+        let pairs: Vec<(f64, f64)> = (lag..samples.len())
+            .map(|i| (samples[i - lag].gpu_ms, samples[i].ms))
+            .collect();
+        let n = pairs.len() as f64;
+        let (mean_gpu, mean_frame) = (
+            pairs.iter().map(|p| p.0).sum::<f64>() / n,
+            pairs.iter().map(|p| p.1).sum::<f64>() / n,
+        );
+        let (mut cov, mut var_gpu, mut var_frame) = (0.0, 0.0, 0.0);
+        for (gpu, frame) in &pairs {
+            let (dg, df) = (gpu - mean_gpu, frame - mean_frame);
+            cov += dg * df;
+            var_gpu += dg * dg;
+            var_frame += df * df;
+        }
+        cov / (var_gpu * var_frame).sqrt()
+    };
+
+    let scores: Vec<(usize, f64)> = (0..=4).map(|lag| (lag, correlate(lag))).collect();
+    println!("\n── is the GPU series aligned with the frame series? ──");
+    for (lag, r) in &scores {
+        println!("  GPU of frame n against frame n+{lag}:  r = {r:.3}");
+    }
+    let best = scores
+        .iter()
+        .filter(|(_, r)| r.is_finite())
+        .max_by(|a, b| a.1.total_cmp(&b.1));
+    if let Some((lag, _)) = best
+        && *lag != 0
+    {
+        println!(
+            "  ⚠️  strongest at +{lag}: the GPU results are filed {lag} frame(s) late, and a \
+             per-frame ratio below pairs a frame with another frame's work."
+        );
+    }
 }
 
 /// Flattens a tree into self time keyed by full path.
