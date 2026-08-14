@@ -49,7 +49,7 @@ fn the_uniform_matches_the_shader_struct() {
         "ClusterView in cluster_common.wgsl has to be changed with it",
     );
     // Four words of draw arguments, then the two the CPU reads back.
-    assert_eq!(size_of::<ClusterDraw>(), 6 * 4);
+    assert_eq!(size_of::<ClusterDraw>(), 8 * 4);
 }
 
 #[test]

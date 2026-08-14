@@ -100,6 +100,16 @@ pub struct ClusterDraw {
     pub wanted: u32,
     /// Indices the grid needs, uncapped.
     pub index_size: u32,
+    /// Lights in the busiest cell of the grid (#820).
+    ///
+    /// The number the lights-per-pixel view (#817) can only be bisected
+    /// for by eye, which does not separate 32 from 45. It rides home in
+    /// the record that already makes the trip, so it costs one
+    /// `atomicMax` in a pass that is already visiting every cell.
+    pub peak_cell: u32,
+    /// Cells holding at least one light, so the mean is over the cells
+    /// that exist rather than over the empty half of the grid.
+    pub filled_cells: u32,
 }
 
 impl ClusterDraw {

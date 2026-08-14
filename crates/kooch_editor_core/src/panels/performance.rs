@@ -61,6 +61,7 @@ pub(crate) fn draw_performance_content(
                     meshlet_lod_settings,
                     lights_hot,
                     cluster_settings,
+                    meshlet_stats.cluster_occupancy,
                     viewport,
                     single_light_note,
                 );
@@ -409,6 +410,7 @@ fn debug_controls(
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut LightsHot,
     cluster_settings: &mut ClusterSettings,
+    cluster_occupancy: Option<(u32, f32)>,
     viewport: egui::Vec2,
     single_light_note: Option<&str>,
 ) {
@@ -452,6 +454,36 @@ fn debug_controls(
     // frame separates into froxels. Fixed *during* a comparison, movable
     // between them — two screenshots at different tops mean nothing.
     if *meshlet_debug_mode == MeshletDebugMode::LightsPerPixel {
+        // 🔴 The measurement, rather than a colour to squint at. Read
+        // where the shading loop pays it, carried home by the readback
+        // the grid already runs — bisecting the scale by eye does not
+        // separate 32 from 45, and cannot compare before and after a
+        // change to the grid without doing the bisection twice (#820).
+        match cluster_occupancy {
+            Some((peak, mean)) => {
+                ui.label(
+                    egui::RichText::new(format!("busiest froxel {peak} lights · mean {mean:.1}"))
+                        .small(),
+                )
+                .on_hover_text(
+                    "Counted on the GPU over every cell of the grid, a frame or two ago. \
+                     The mean is over cells that hold at least one light, not over the \
+                     empty half of the grid. Set the scale below to the peak and the \
+                     picture uses its whole range.",
+                );
+            }
+            None => {
+                ui.label(
+                    egui::RichText::new("froxel counts: not clustering this frame")
+                        .small()
+                        .weak(),
+                )
+                .on_hover_text(
+                    "No camera matrices, clustering switched off, or the first readback \
+                     has not landed yet (1-2 frames).",
+                );
+            }
+        }
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("red at ≥").small());
             ui.add(

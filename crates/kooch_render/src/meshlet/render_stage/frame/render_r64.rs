@@ -245,6 +245,7 @@ impl MeshletRenderStage {
             // whatever the last debug-active frame read, and handing
             // that to the HUD draws a number from an unknown moment as
             // if it described the frame on screen (#703).
+            cluster_occupancy: self.lights.clusters().occupancy(),
             cull_stage_counts: if cull_params.debug_active != 0 {
                 self.stage_counters.last_frame_counts()
             } else {
