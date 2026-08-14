@@ -55,7 +55,10 @@ said.
 | ~~#778~~ | ~~point light shadows~~ | **Done**, feature and budget both |
 | ~~#804~~ | ~~`receive_shadows` does nothing~~ | **Done.** The field existed and nothing read it |
 | ~~#780~~ | ~~GPU clustering — the froxel grid~~ | **Done and measured** (2026-08-14). The busiest froxel holds 26 lights against 12 that reach a point — ~24 % over-listing, ordinary for clustering. It costs 0.15 ms. Not a suspect |
-| **#796 / #819** | **ReSTIR — sample the lights instead of walking them** | 🎯 **Next.** The clustering line is measured out and shading LOD has a 10 % ceiling. `raster + shade` is **not ALU-bound**, so what is left is how many lights each pixel reads |
+| **#824** | **shade in a compute pass, tile's lights in LDS** | 🎯 **Next.** `raster + shade` is **not ALU-bound** (#821) and the grid is not over-listing (#820), so what is left is 15 storage fetches per pixel. A tile can read them once. **Changes no pixel** |
+| **#825** | shade at half rate, raster stays full | The frame falls **5.2×** with internal resolution — the strongest number measured. Possible only once shading is its own pass |
+| **#826** | sample the tile's lights, 15 → 2-4 | The last axis, and the only one that changes the image. **Closes unbuilt if #824 + #825 meet the budget** |
+| ~~#796 / #819~~ | ~~ReSTIR / Solari~~ | **Ruled out for this hardware.** Solari's world cache alone is 2.65 ms per refresh in Bistro on the author's machine — 19 % of our whole budget, on far faster silicon — and denoising runs through DLSS Ray Reconstruction, which the 890M has no path to |
 | **#731** | volumetric clouds, froxel-based | The clouds are **off**, and that is the only reason the budget is met. They cost 39 ms as written |
 | **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
 | **#254** | post + auto exposure | The blown-out white floor in three sessions of screenshots. Cheap |
@@ -147,6 +150,26 @@ version of the shading-LOD control shipped in the editor only, where the
 whole raster pass is 0.12 ms and switching every specular layer off
 moved it by 0.001. `KOOCH_CLUSTERING` already carried that lesson in its
 own doc comment.
+
+### What was ruled out, so it is not revisited
+
+Four families were considered against the measurements and dropped. The
+reasons are worth keeping, because every one of them is a technique
+somebody will suggest again.
+
+| | why not |
+|---|---|
+| **Lightmaps / irradiance volumes** | The cheapest answer by far — a hundred static lights become one texture fetch — and **static by construction**. Ruled out by a product decision: these lights move |
+| **ReSTIR DI / Bevy Solari** (#796, #819) | Solari's world cache alone costs 2.65 ms per refresh in Bistro *on the author's machine*, against our 13.9 ms total. Denoising goes through DLSS Ray Reconstruction; the 890M has no equivalent. Its author calls the design unsatisfying and light sampling is unshipped |
+| **UE5 MegaLights** | Requires hardware ray tracing, and exists for **shadow-casting** lights. `many_lights.scene` sets `cast_shadows: false` on all hundred, and `shadows` is 0.7 ms of a 31 ms pass |
+| **Godot VoxelGI, Lumen, DDGI, radiance cascades, SSGI** | All solve **indirect** light. This engine has no GI and does not pay for one — they *add* to the 31 ms rather than subtracting. Godot's own docs say VoxelGI "is not suited to low-end hardware such as integrated graphics", which is precisely the target |
+
+⚠️ **Voxel injection is the exception worth naming.** VoxelGI does two
+things: it injects lights into a grid, and it cone-traces through that
+grid for bounces. The first half is a pixel taking one sample instead of
+walking fifteen lights — useful. The second half is what makes it
+expensive, and it buys bounces nobody asked for. #826's third option is
+that first half alone.
 
 ### 🔴 What is left is the lights that do reach — and it is not ALU
 
