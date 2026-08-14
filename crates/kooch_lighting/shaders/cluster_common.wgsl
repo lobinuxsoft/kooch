@@ -118,6 +118,11 @@ struct ClusterDraw {
     // allocation pass. Past the list's capacity means cells were
     // truncated and the buffer has to grow.
     index_size: u32,
+    // Lights in the busiest cell, and how many cells hold any (#820).
+    // Written by the allocation pass, which already visits every cell,
+    // and read by the editor through the readback that already runs.
+    peak_cell: atomic<u32>,
+    filled_cells: atomic<u32>,
 }
 
 struct ClusterAabb {

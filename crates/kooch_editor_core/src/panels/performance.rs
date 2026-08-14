@@ -22,6 +22,7 @@
 //! 7. **Remote**           — cost of the snapshot pull, split by
 //!                           transport / decode. Hidden in local mode.
 
+use kooch_lighting::{ClusterGrid, ClusterSettings, LightsHot, SpecularFloor};
 use kooch_render::meshlet::{
     MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
 };
@@ -36,6 +37,10 @@ pub(crate) fn draw_performance_content(
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
+    lights_hot: &mut LightsHot,
+    cluster_settings: &mut ClusterSettings,
+    specular_floor: &mut SpecularFloor,
+    viewport: egui::Vec2,
     hud_visibility: &mut crate::perf::HudVisibility,
     single_light_note: Option<&str>,
 ) {
@@ -55,6 +60,11 @@ pub(crate) fn draw_performance_content(
                     meshlet_debug_mode,
                     meshlet_debug_caps,
                     meshlet_lod_settings,
+                    lights_hot,
+                    cluster_settings,
+                    specular_floor,
+                    meshlet_stats.cluster_occupancy,
+                    viewport,
                     single_light_note,
                 );
             });
@@ -400,6 +410,11 @@ fn debug_controls(
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
+    lights_hot: &mut LightsHot,
+    cluster_settings: &mut ClusterSettings,
+    specular_floor: &mut SpecularFloor,
+    cluster_occupancy: Option<(u32, f32)>,
+    viewport: egui::Vec2,
     single_light_note: Option<&str>,
 ) {
     ui.horizontal(|ui| {
@@ -436,6 +451,164 @@ fn debug_controls(
             }
         }
     }
+    // The scale is a control, not a caption. A heatmap's top of scale is
+    // the one number that decides whether the picture says anything: at
+    // 16 a hundred-light stress scene is flat red and at 40 the same
+    // frame separates into froxels. Fixed *during* a comparison, movable
+    // between them — two screenshots at different tops mean nothing.
+    if *meshlet_debug_mode == MeshletDebugMode::LightsPerPixel {
+        // 🔴 The measurement, rather than a colour to squint at. Read
+        // where the shading loop pays it, carried home by the readback
+        // the grid already runs — bisecting the scale by eye does not
+        // separate 32 from 45, and cannot compare before and after a
+        // change to the grid without doing the bisection twice (#820).
+        match cluster_occupancy {
+            Some((peak, mean)) => {
+                ui.label(
+                    egui::RichText::new(format!("busiest froxel {peak} lights · mean {mean:.1}"))
+                        .small(),
+                )
+                .on_hover_text(
+                    "Counted on the GPU over every cell of the grid, a frame or two ago. \
+                     The mean is over cells that hold at least one light, not over the \
+                     empty half of the grid. Set the scale below to the peak and the \
+                     picture uses its whole range.",
+                );
+            }
+            None => {
+                ui.label(
+                    egui::RichText::new("froxel counts: not clustering this frame")
+                        .small()
+                        .weak(),
+                )
+                .on_hover_text(
+                    "No camera matrices, clustering switched off, or the first readback \
+                     has not landed yet (1-2 frames).",
+                );
+            }
+        }
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("red at ≥").small());
+            ui.add(
+                egui::DragValue::new(&mut lights_hot.0)
+                    .speed(1.0)
+                    .range(1..=256)
+                    .suffix(" lights"),
+            )
+            .on_hover_text(
+                "Top of the colour scale. Raise it until the picture stops being flat: \
+                 that value is roughly how many lights the busiest froxel carries.",
+            );
+        });
+        ui.label(
+            egui::RichText::new(format!(
+                "black 0 · blue few · green {} · red {}+",
+                lights_hot.0 / 2,
+                lights_hot.0
+            ))
+            .small()
+            .weak(),
+        )
+        .on_hover_text(
+            "Lights evaluated per pixel, directional included. A froxel's own count, read \
+             where the shading loop pays it. Whole screen at full red with the scale raised \
+             means the frame is shading without the cluster grid — every light for every pixel.",
+        );
+    }
+    // The grid's reach, beside the view that shows what it costs (#820).
+    //
+    // A light is charged to every pixel of every cell it touches, so a
+    // slice deeper than the light it holds spreads that light across
+    // depth it never lit. The measurement that opened this: the busiest
+    // froxel charged 40 lights where 14 reach the point.
+    if *meshlet_debug_mode == MeshletDebugMode::LightsPerPixel {
+        // 🔴 Both ends, because the window is what matters and the near
+        // one is the stronger lever: 24 slices spread over [5, 200] put
+        // a 5.1 m froxel at 30 m, and over [20, 60] put a 1.4 m one
+        // there. Exposing only `far` hid that the first fifteen metres
+        // of grid were being spent on empty air in front of the camera.
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("grid from").small());
+            ui.add(
+                egui::DragValue::new(&mut cluster_settings.first_slice)
+                    .speed(0.5)
+                    .range(0.1..=(cluster_settings.far - 1.0).max(1.0))
+                    .suffix(" m"),
+            )
+            .on_hover_text(
+                "Where the first slice starts. Everything NEARER piles into slice 0 \
+                 together, so raise it to the distance of your closest lit surface and \
+                 no further.",
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("grid reaches").small());
+            ui.add(
+                egui::DragValue::new(&mut cluster_settings.far)
+                    .speed(1.0)
+                    .range((cluster_settings.first_slice + 1.0)..=1000.0)
+                    .suffix(" m"),
+            )
+            .on_hover_text(
+                "How far the froxel grid reaches. The same slices cover it however far \
+                 it is, so a nearer far plane makes every one of them thinner. A light \
+                 beyond it lands in the last slice with everything behind it — nothing \
+                 renders wrong, but that slice over-lists.",
+            );
+        });
+        // What the number means, which the number itself does not say.
+        //
+        // 🔴 Three distances, not one. A single sample invites picking
+        // the flattering one, and the shape is the point: slices grow
+        // logarithmically, so a grid that looks fine up close is coarse
+        // at the far end — and everything past `far` piles into the last
+        // slice, which is the way lowering it makes things *worse*.
+        let grid = ClusterGrid::new(cluster_settings, glam::Vec2::new(viewport.x, viewport.y));
+        let far = cluster_settings.far;
+        ui.label(
+            egui::RichText::new(format!(
+                "{}×{}×{} cells (this Game view) · froxel {} / {} / {} deep at 10 / 25 / {:.0} m",
+                grid.dimensions.x,
+                grid.dimensions.y,
+                grid.dimensions.z,
+                depth_label(grid.slice_depth(10.0)),
+                depth_label(grid.slice_depth(25.0)),
+                depth_label(grid.slice_depth(far * 0.9)),
+                far * 0.9,
+            ))
+            .small()
+            .weak(),
+        )
+        .on_hover_text(
+            "Compare those depths against the range of your lights: a froxel deeper than \
+             the light it holds makes a pixel pay for lights that never reach it. \
+             🔴 Anything FURTHER than the grid reaches lands in the last slice together, \
+             so a far plane nearer than your geometry over-lists instead of helping — set \
+             it by the distance from the camera to the furthest lit surface, not by the \
+             size of the scene. The cell count is this Game view's; the View panel has a \
+             different aspect and therefore a different grid.",
+        );
+    }
+    // #821 — the specular layer is the expensive half of the model, and
+    // a light contributing a fraction of the frame's exposure spends all
+    // of it on a highlight nobody can see. Zero is off, and off is what
+    // every frame did before this existed.
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("diffuse-only under").small());
+        ui.add(
+            egui::DragValue::new(&mut specular_floor.0)
+                .speed(0.5)
+                .range(0.0..=10_000.0)
+                .suffix(" lx"),
+        )
+        .on_hover_text(
+            "Irradiance below which a light skips its specular layer — GGX, Smith, \
+             Fresnel, multiscatter and the representative point. 0 keeps every light on \
+             the full model. Raise it while watching the picture: the frame time falls \
+             immediately, and the value to keep is the last one before highlights start \
+             disappearing where anybody looks.",
+        );
+    });
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("LOD ≤").small())
             .on_hover_text("Pixel-error threshold for the continuous-LOD selector.");
@@ -513,6 +686,19 @@ const TOOLBAR_BUTTON_SIZE: f32 = 28.0;
 const TOOLBAR_PADDING: f32 = 6.0;
 const TOOLBAR_OFFSET: egui::Vec2 = egui::vec2(8.0, 8.0);
 
+/// A froxel's depth as the panel should state it.
+///
+/// The two clamped ends are the ones that matter: an unbounded last
+/// slice formats as `inf` and a scene sitting in front of the grid reads
+/// as a suspiciously thin cell. Both get words, because both mean "your
+/// geometry is outside the grid" and neither is a measurement.
+fn depth_label(metres: f32) -> String {
+    match metres.is_finite() {
+        true => format!("{metres:.1} m"),
+        false => "unbounded".to_owned(),
+    }
+}
+
 /// Draws the vertical perf sidebar anchored to the right edge of a
 /// panel, with its always-visible toggle chevron.
 ///
@@ -530,6 +716,10 @@ pub(crate) fn draw_perf_sidebar(
     meshlet_debug_mode: &mut kooch_render::meshlet::MeshletDebugMode,
     meshlet_debug_caps: kooch_render::meshlet::MeshletDebugCaps,
     meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
+    lights_hot: &mut LightsHot,
+    cluster_settings: &mut ClusterSettings,
+    specular_floor: &mut SpecularFloor,
+    viewport: egui::Vec2,
     hud_visibility: &mut crate::perf::HudVisibility,
     single_light_note: Option<&str>,
 ) {
@@ -610,6 +800,10 @@ pub(crate) fn draw_perf_sidebar(
                     meshlet_debug_mode,
                     meshlet_debug_caps,
                     meshlet_lod_settings,
+                    lights_hot,
+                    cluster_settings,
+                    specular_floor,
+                    viewport,
                     hud_visibility,
                     single_light_note,
                 );

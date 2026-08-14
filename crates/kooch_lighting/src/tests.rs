@@ -55,3 +55,90 @@ fn shading_model_parses_and_validates() {
         .validate(&module)
         .expect("inti_pbr.wgsl should validate");
 }
+
+/// 🔴 The debug views had nothing validating them.
+///
+/// `inti_pbr.wgsl` is parsed above and `inti_debug.wgsl` was not, so a
+/// typo in a view compiled for the first time when somebody opened it in
+/// the editor — a shader panic on a dropdown selection, in a file whose
+/// whole purpose is to be reached rarely. This concatenates the two the
+/// way the editor's pipeline does and validates the result.
+#[test]
+fn the_debug_views_parse_and_validate() {
+    let module = naga::front::wgsl::parse_str(&format!(
+        "{}\n{}\n{}",
+        INTI_CONTACT_SHADOW_STUB,
+        inti_pbr_shader(0),
+        inti_debug_shader(),
+    ))
+    .expect("inti_debug.wgsl should parse when concatenated after the model");
+    let mut validator = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    );
+    validator
+        .validate(&module)
+        .expect("inti_debug.wgsl should validate");
+}
+
+/// The stub and the real views must present the same call sites, or the
+/// production pipeline stops compiling the moment a view is added.
+///
+/// The names are derived from the stub rather than restated, so a
+/// function renamed in one file and not the other fails here instead of
+/// in whichever build happens to be compiled next.
+#[test]
+fn the_stub_matches_the_views_it_replaces() {
+    let views = inti_debug_shader();
+    let mut found = 0;
+    for line in INTI_DEBUG_STUB.lines() {
+        let Some(signature) = line.strip_prefix("fn ") else {
+            continue;
+        };
+        let name = signature.split('(').next().unwrap_or_default();
+        assert!(
+            views.contains(&format!("fn {name}(")),
+            "the stub declares `{name}` and inti_debug.wgsl does not",
+        );
+        found += 1;
+    }
+    assert!(found >= 2, "the stub should declare both call sites");
+}
+
+/// 🔴 Zero means "never skip", and it is the default. A project that
+/// never heard of #821 has to render exactly what it rendered before.
+///
+/// Reads the uniform rather than `SpecularFloor::default()`, which
+/// consults the environment — a test that asserted on that would fail
+/// for whoever happened to have the variable set while measuring.
+#[test]
+fn the_default_floor_keeps_every_specular() {
+    assert_eq!(IntiFrame::default().specular_floor, 0.0);
+}
+
+/// A negative floor would mean nothing, and zero already means never.
+#[test]
+fn a_negative_floor_is_clamped() {
+    assert_eq!(
+        IntiFrame::default()
+            .with_specular_floor(-5.0)
+            .specular_floor,
+        0.0
+    );
+    assert_eq!(
+        IntiFrame::default()
+            .with_specular_floor(120.0)
+            .specular_floor,
+        120.0
+    );
+}
+
+/// The shader has to read the uniform for the control to do anything —
+/// and to compare against the irradiance it already computed, not
+/// against something it recomputes differently.
+#[test]
+fn the_shader_gates_on_the_floor() {
+    let source = inti_pbr_shader(0);
+    assert!(source.contains("inti.specular_floor"));
+    assert!(source.contains("reach >= inti.specular_floor"));
+}

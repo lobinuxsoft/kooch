@@ -62,6 +62,15 @@ fn allocate_local_main(
     }
 
     if (global_id.x < block_end) {
+        // What this cell ended up holding, while a thread is already
+        // here and the count is final (#820). The populate pass has not
+        // run yet, so this is the counting pass's verdict — which is
+        // exactly the number the shading loop will walk.
+        let total = cell_total(global_id.x);
+        atomicMax(&cluster_draw.peak_cell, total);
+        if (total > 0u) {
+            atomicAdd(&cluster_draw.filled_cells, 1u);
+        }
         atomicStore(&cluster_cells[global_id.x].offset, block_offsets[local]);
         // Zero the scratch counters while a thread is already here: the
         // populate pass counts back up from them, and a stale count

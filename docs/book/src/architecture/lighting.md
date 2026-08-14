@@ -327,6 +327,9 @@ this" look identical in a shaded frame and have different fixes.
   under two pixels long. Grey: marched and found nothing.
 - **Single light** — one light, alone, in grey, with its shadow. The one that answers what a shadow *looks like*; the other two answer what the shadow system *did*.
 
+A fourth answers a question about cost rather than about appearance:
+**Lights per pixel**, below, for *how many* lights a pixel pays for.
+
 ### Single light
 
 Select a light in the World panel and this view shades the scene with
@@ -647,6 +650,76 @@ They reach every cell, so a cell listing them would say nothing. They are
 the **leading entries** of the light buffer and the shader walks them
 linearly — which is why `ExtractedLights::directional_count` is a prefix
 and not a subset.
+
+### Seeing what a pixel pays — `Lights per pixel` (#817)
+
+Clustering makes cost a property of **where the pixel is**. That is the
+whole point of the grid, and it is also why no pass timing can explain a
+slow frame any more: `raster + shade` is one number for the screen, and
+on the OneXFly it grew from 5.27 ms to 34.92 ms between a still camera
+and a moving one without saying which pixels did it.
+
+The debug view paints the count each fragment actually walks, read at
+the point where it is paid — the same `point_count + spot_count` that
+bounds the loop in `inti_clustered_lights`, plus the directional lights,
+which the grid does not cluster because they reach every cell.
+
+| colour | meaning |
+|---|---|
+| black | no light reaches this pixel at all |
+| blue | few |
+| green | half the top of scale |
+| red | the top of scale, or more |
+
+**The top of scale is a control, not a constant.** It is the one number
+that decides whether the picture says anything: at 16 a hundred-light
+stress scene is flat red, and the same frame at 40 separates into
+froxels. Raise it until the image stops being flat — that value is
+roughly what the busiest froxel carries. It rides in the frame uniform
+(`LightsHot`), so moving it costs no recompile.
+
+Fixed *during* a comparison, though: two screenshots taken at different
+tops mean nothing next to each other.
+
+🔴 **A whole screen at full red means the frame is not clustering.**
+`inti.clustered == 0` evaluates every light for every pixel, which is
+what the frame cost before #780 and what a path with no camera matrices
+still does. The view does not special-case it, because a scene that
+quietly stopped clustering should look alarming.
+
+### What each light costs — `specular_floor` (#821)
+
+Clustering bounds *how many* lights a pixel walks. It cannot make any of
+them cheaper, and every one of them pays the full model: GGX `D`,
+height-correlated Smith `V`, Schlick `F`, the multiscatter fit, and the
+representative point when the light has a radius. With ~15 lights
+reaching a pixel, that is fifteen of those.
+
+A light whose irradiance at a point is a fraction of the frame's
+exposure leaves a highlight nobody can see, and pays the expensive half
+to produce it. `SpecularFloor` is the irradiance below which it shades
+**diffuse only**:
+
+```sh
+KOOCH_SPECULAR_FLOOR=2000 ./your-game
+```
+
+**0.0 is the default and keeps every light on the full model**, so a
+project that never sets it renders exactly as before.
+
+⚠️ Fresnel is substituted at normal incidence rather than dropped. `f`
+weights the diffuse layer — `diffuse = (1 - f) · …` — so a skipped
+specular that also skipped `f` would *brighten* the surface. A missing
+highlight is invisible; an over-lit dielectric is not.
+
+🔴 **The editor cannot measure this and the environment variable is not
+a convenience.** On a desktop GPU the whole raster pass is 0.12 ms and
+switching every specular layer off moves it by 0.001 ms — there is no
+bottleneck there to remove. The frame this exists for is a game on the
+handheld, launched over SSH, with no editor in the process. A knob that
+lives only in a panel cannot be swept on the machine whose numbers
+decide anything, which is the same lesson `KOOCH_CLUSTERING` already
+carried.
 
 ### Turning it off
 

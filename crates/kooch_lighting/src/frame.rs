@@ -313,7 +313,20 @@ pub struct IntiFrame {
     /// `debug_light` rides in this struct's tail — a count is a word and
     /// there was a word.
     pub point_shadow_count: u32,
-    pub _pad_spot: [u32; 2],
+    /// Irradiance below which a light pays for the diffuse layer only
+    /// (#821).
+    ///
+    /// The specular layer is the expensive half — GGX `D`,
+    /// height-correlated Smith `V`, Schlick `F`, the multiscatter fit,
+    /// and the representative point when the light has a radius — and a
+    /// light reaching this pixel with a fraction of the frame's exposure
+    /// spends all of it on a highlight nobody can see. With 15 lights
+    /// per pixel, that is 15 of them.
+    ///
+    /// **0.0 keeps every light on the full model**, which is what every
+    /// frame did before this existed.
+    pub specular_floor: f32,
+    pub _pad_spot: u32,
     /// One per shadow-casting point light (#778).
     ///
     /// 🔴 A different record from the spots', and the difference is the
@@ -373,7 +386,92 @@ pub struct IntiFrame {
     /// light the way it did before #780, which is what the headless
     /// tests and any path with no camera matrices do.
     pub clustered: u32,
-    pub _pad_cluster: u32,
+    /// Count at which `MeshletDebugMode::LightsPerPixel` reads full red
+    /// (#817). Rides in the word the cluster flag left, the way
+    /// `debug_light` rides in this struct's tail.
+    ///
+    /// A uniform rather than a shader constant because the useful top of
+    /// scale is a property of the scene: the value that separates a busy
+    /// froxel from a quiet one in a hundred-light stress test washes
+    /// every pixel red in a room with four lamps. Zero reads as
+    /// [`LIGHTS_HOT_DEFAULT`] rather than dividing by nothing.
+    pub debug_lights_hot: u32,
+}
+
+/// Top of scale the lights-per-pixel view starts at.
+///
+/// Sixteen because a count the eye can quarter reads as a count. It is a
+/// starting point and not a limit — the editor's control moves it, and
+/// the whole reason it moves is that the right value is whatever makes
+/// the picture stop being flat.
+pub const LIGHTS_HOT_DEFAULT: u32 = 16;
+
+/// Irradiance below which a light skips its specular layer (#821), as a
+/// [`Resource`](kooch_core::resource::Resources).
+///
+/// `0.0` — the default — keeps every light on the full model, so a
+/// project that never sets it renders exactly as before. It is a
+/// resource rather than a constant because the useful value is a
+/// property of the scene's exposure and light intensities, and the only
+/// way to find it is to sweep it while watching the picture.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SpecularFloor(pub f32);
+
+impl Default for SpecularFloor {
+    fn default() -> Self {
+        Self(floor_from_environment())
+    }
+}
+
+/// `KOOCH_SPECULAR_FLOOR=<lux>`, read once.
+///
+/// 🔴 An environment variable and not only an editor control, because
+/// **the editor is not where this can be measured**. On a desktop GPU
+/// the whole raster pass is 0.12 ms and switching every specular layer
+/// off moves it by 0.001 — there is no bottleneck to remove. The frame
+/// this exists for is a game on the OneXFly, launched over SSH, with no
+/// editor in the process at all.
+///
+/// The same reasoning as `KOOCH_CLUSTERING`, learned the same way: a
+/// knob that only exists in the editor is a knob that cannot be swept
+/// on the machine whose numbers decide anything.
+///
+/// Unparseable keeps the default: a typo during a measurement run must
+/// not silently change what is being measured.
+fn floor_from_environment() -> f32 {
+    static FLOOR: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *FLOOR.get_or_init(|| {
+        let Ok(raw) = std::env::var("KOOCH_SPECULAR_FLOOR") else {
+            return 0.0;
+        };
+        match raw.trim().parse::<f32>() {
+            Ok(floor) if floor >= 0.0 => {
+                tracing::info!(
+                    "KOOCH_SPECULAR_FLOOR={floor}: lights under this irradiance shade \
+                     diffuse-only"
+                );
+                floor
+            }
+            _ => {
+                tracing::warn!("KOOCH_SPECULAR_FLOOR={raw:?} is not a number — keeping 0");
+                0.0
+            }
+        }
+    })
+}
+
+/// Top of scale for `MeshletDebugMode::LightsPerPixel`, as a
+/// [`Resource`](kooch_core::resource::Resources) the editor writes.
+///
+/// The same shape as [`DebugLight`]: a view's parameter belongs beside
+/// the view, not threaded through the render stage.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct LightsHot(pub u32);
+
+impl Default for LightsHot {
+    fn default() -> Self {
+        Self(LIGHTS_HOT_DEFAULT)
+    }
 }
 
 /// [`IntiFrame::debug_light`] when no light is isolated. Any index past
@@ -413,7 +511,8 @@ impl IntiFrame {
             spot_shadows: [GpuCascade::default(); MAX_SPOT_SHADOWS],
             spot_shadow_count: 0,
             point_shadow_count: 0,
-            _pad_spot: [0; 2],
+            specular_floor: 0.0,
+            _pad_spot: 0,
             point_shadows: [GpuPointShadow::default(); MAX_POINT_SHADOWS],
             shadows_enabled: 0,
             cascade_blend: 0.1,
@@ -425,7 +524,7 @@ impl IntiFrame {
             cluster_capacity: 0,
             directional_count: 0,
             clustered: 0,
-            _pad_cluster: 0,
+            debug_lights_hot: LIGHTS_HOT_DEFAULT,
         }
     }
 
@@ -459,6 +558,24 @@ impl IntiFrame {
     /// `None` — or an index the buffer does not hold — shows nothing.
     pub fn with_debug_light(mut self, index: Option<u32>) -> Self {
         self.debug_light = index.unwrap_or(NO_DEBUG_LIGHT);
+        self
+    }
+
+    /// Sets the lights-per-pixel view's top of scale (#817).
+    ///
+    /// Clamped to at least one: a top of zero would divide the count by
+    /// nothing and paint the whole screen the ramp's hot end, which is
+    /// indistinguishable from the answer that means the grid is off.
+    /// Sets the irradiance below which a light skips its specular
+    /// layer (#821). Clamped at zero: a negative floor would mean
+    /// nothing, and zero already means "never skip".
+    pub fn with_specular_floor(mut self, floor: f32) -> Self {
+        self.specular_floor = floor.max(0.0);
+        self
+    }
+
+    pub fn with_lights_hot(mut self, hot: u32) -> Self {
+        self.debug_lights_hot = hot.max(1);
         self
     }
 

@@ -118,6 +118,22 @@ impl GpuClusters {
         &self.grid
     }
 
+    /// What the busiest cell held, and the mean over the cells that held
+    /// anything (#820).
+    ///
+    /// `None` until the first readback lands — a frame or two in, which
+    /// is what an async readback costs and is why this is a debug
+    /// readout rather than anything the frame depends on.
+    ///
+    /// The mean divides the index list's length by the filled cells, so
+    /// it describes the cells that exist instead of being halved by the
+    /// empty part of the grid.
+    pub fn occupancy(&self) -> Option<(u32, f32)> {
+        let draw = self.readback.last()?;
+        let filled = draw.filled_cells.max(1);
+        Some((draw.peak_cell, draw.index_size as f32 / filled as f32))
+    }
+
     /// Per-cell offsets and counts, for Inti's bind group.
     pub fn cells(&self) -> &wgpu::Buffer {
         &self.buffers.cells
