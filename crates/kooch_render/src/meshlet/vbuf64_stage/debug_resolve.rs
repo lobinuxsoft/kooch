@@ -152,6 +152,8 @@ impl DebugResolve {
                 size: [screen_size.0, screen_size.1],
                 material_id: 0,
                 debug_mode,
+                shading_rate: 1,
+                _pad: [0; 3],
             }),
         );
 

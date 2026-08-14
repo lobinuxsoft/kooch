@@ -16,9 +16,21 @@ struct CameraUniforms {
 }
 
 struct ScreenUniforms {
+    // Always the FULL resolution, on every path. #825 shades at a lower
+    // rate by dispatching fewer threads, not by lying about the screen:
+    // the froxel lookup and the contact-shadow dither are functions of
+    // the pixel coordinate, and both paths have to agree on what that
+    // coordinate is.
     size: vec2<u32>,
     material_id: u32,
     debug_mode: u32,
+    // #825 — pixels per shaded sample, per axis. 1 shades every pixel;
+    // 2 shades one pixel of each 2x2 quad and an upsample pass fills the
+    // rest. The fragment path only ever sees 1.
+    shading_rate: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 @group(0) @binding(0) var vbuf64: texture_storage_2d<r64uint, read>;

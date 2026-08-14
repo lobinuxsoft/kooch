@@ -175,7 +175,9 @@ impl MaterialTwoPass {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: true,
-                        min_binding_size: std::num::NonZeroU64::new(16),
+                        min_binding_size: std::num::NonZeroU64::new(
+                            std::mem::size_of::<ScreenUbo>() as u64,
+                        ),
                     },
                     count: None,
                 },
@@ -374,6 +376,11 @@ impl MaterialTwoPass {
                     size: [screen_size.0, screen_size.1],
                     material_id: slot,
                     debug_mode,
+                    // This path shades inside its own raster: one
+                    // invocation per covered pixel, and no thread to
+                    // remove (#825).
+                    shading_rate: 1,
+                    _pad: [0; 3],
                 }),
             );
         }

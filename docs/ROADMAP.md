@@ -56,8 +56,8 @@ said.
 | ~~#804~~ | ~~`receive_shadows` does nothing~~ | **Done.** The field existed and nothing read it |
 | ~~#780~~ | ~~GPU clustering — the froxel grid~~ | **Done and measured** (2026-08-14). The busiest froxel holds 26 lights against 12 that reach a point — ~24 % over-listing, ordinary for clustering. It costs 0.15 ms. Not a suspect |
 | ~~#824~~ | ~~shade in a compute pass, tile's lights in LDS~~ | **Built and measured: 6.6 %.** Fifteen storage fetches per pixel became fifteen per tile and the shading went 35.98 → 33.60 ms. Its value is what it revealed and unlocked, not the 6.6: the raster is **3.74 ms of 37.34**, so shading is 90 % of that pass — and #825 is buildable now |
-| **#825** | shade at half rate, raster stays full | 🎯 **Next.** The frame falls **5.2×** with internal resolution, and #824 measured why that is the axis: shading is 90 % of the pass and the raster it keeps at full resolution costs 3.74 ms |
-| **#826** | sample the tile's lights, 15 → 2-4 | The last axis, and the only one that changes the image. **Closes unbuilt if #824 + #825 meet the budget** |
+| ~~#825~~ | ~~shade at half rate, raster stays full~~ | **Built.** Lighting runs at one sample per 2×2 quad, upsampled with the vbuf as the edge guide, so the silhouette on screen is still the raster's — asserted exactly, not approximately. `KOOCH_SHADING_RATE=half`. The device capture is what closes it |
+| **#826** | sample the tile's lights, 15 → 2-4 | 🎯 **Next, and no longer optional.** `KOOCH_LIGHT_LIMIT` measured `shade = 11.11 ms + 1.06 ms per light`: neither this nor #825 closes the budget alone, and together they land at ~12 ms. See below |
 | ~~#796 / #819~~ | ~~ReSTIR / Solari~~ | **Ruled out for this hardware.** Solari's world cache alone is 2.65 ms per refresh in Bistro on the author's machine — 19 % of our whole budget, on far faster silicon — and denoising runs through DLSS Ray Reconstruction, which the 890M has no path to |
 | **#731** | volumetric clouds, froxel-based | The clouds are **off**, and that is the only reason the budget is met. They cost 39 ms as written |
 | **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
@@ -186,6 +186,46 @@ so its block of froxels can be large. Past `MAX_TILE_CELLS` or
 `MAX_TILE_LIGHTS` the tile shades straight from the storage buffer
 instead — slower and correct, which is the right way round.
 
+### Half rate, and the guide that is not depth
+
+#825 reduces the *shading* rate without touching the raster rate:
+geometry, depth and the visibility buffer stay at full resolution and
+only the light evaluation runs at one sample per 2×2 quad.
+`KOOCH_SHADING_RATE=half`, live and rebuild-free, the same shape the
+other knobs have.
+
+That decoupling is only possible because #824 moved shading out of the
+raster's fragment shader. While it lived there, its resolution *was* the
+raster's — and this would have been "render the game smaller", which is
+a different thing that already exists (#481 / #536, and they compose
+with this rather than replacing it).
+
+🔴 **The upsample's guide is the visibility buffer, not depth.** The
+textbook bilateral upsample compares depth, because a forward or
+deferred renderer has nothing better. This one does: the vbuf already
+stores which meshlet won each pixel, so "same surface" is an integer
+compare instead of a depth epsilon somebody tunes per scene. Two
+surfaces a millimetre apart at a grazing angle — the case a threshold
+gets wrong in both directions — are simply different slots.
+
+⚠️ **Two invariants make the reconstruction hole-free, and both are the
+kind that only hold if they are designed for.** The shaded sample of a
+quad is chosen from the *vbuf alone* — the first covered pixel, in a
+fixed order — never from the dispatch's own material: every material
+dispatch runs over every sample, so a material-dependent choice would
+have two dispatches writing the same texel. And because the choice is
+the first *covered* pixel, a covered screen pixel's own quad was always
+shaded, and that sample is always one of the four the upsample
+considers. There is no covered pixel anywhere with nothing to read.
+
+The thresholds in `half_rate_shading.rs` were **measured by breaking the
+shader on purpose**, not chosen: shifting the reconstruction offset by a
+quarter texel moves the mean 1.01 → 4.29/765, and ignoring the surface
+guide moves the wall's 99.9th percentile 17 → 141 while barely touching
+its mean. The second is why that test asserts a percentile — silhouette
+pixels are a rounding error in an average, which is exactly where a
+broken guide hides.
+
 ### What was ruled out, so it is not revisited
 
 Four families were considered against the measurements and dropped. The
@@ -230,12 +270,51 @@ was the bottleneck:
 ⚠️ **The variable none of them moved is the *number* of lights a pixel
 evaluates.** Twelve to fifteen genuinely reach the surface (#820), so
 clustering cannot remove them by definition — only sampling can (#826).
-Whether that count is the cost is one knob and one capture away, and it
-decides #825 against #826.
 
-Meanwhile the number that has survived every experiment is the pixel
-count: the frame falls 5.2× with internal resolution, and #824 measured
-that shading is 90 % of the pass the resolution scales.
+### 🔴 The straight line, and why both #825 and #826 get built
+
+`KOOCH_LIGHT_LIMIT=n` caps how many of a froxel's lights a pixel walks —
+in both shading paths, so an A/B between them stays one. Three runs on
+the OneXFly through Steam → gamescope:
+
+| run | lights/pixel | `shade` | raster self | frame |
+|---|---|---|---|---|
+| baseline (559 frames) | ~15 | 30.433 | 5.437 | 42.38 |
+| A, `limit=4` (789) | 4 | 15.368 | 3.647 | 21.95 |
+| B, `limit=1` (1071) | 1 | 12.178 | 3.440 | 19.34 |
+
+⚠️ **The baseline run is not trustworthy and A/B are.** `sky` reads
+0.796 against 0.251 and `blit` 1.057 against 0.447 in the baseline —
+passes that do not touch a light, inflated 2-3×, so something else had
+the GPU that run. A and B agree within 2 % on every one of those
+controls, which is what makes the fit below a measurement rather than
+three points through noise:
+
+```
+shade = 11.11 ms + 1.06 ms per light
+```
+
+**There is an ~11 ms per-pixel floor that is not the lights.** That
+floor is what #825 halves and what #826 cannot touch; the 1.06 per light
+is what #826 removes and what #825 only halves. Neither closes the
+budget:
+
+| | shading | frame |
+|---|---|---|
+| #825 alone | ~15.2 | ~27 |
+| #826 alone | ~14.3 | ~19 |
+| **both** | **~7.1** | **~12** ✅ |
+
+⚠️ **The cap also produced the artifact #826 has to solve.** With
+`limit` on, froxels flicker: a pixel crossing a cell boundary changes
+which lights it evaluates, and the change is visible because nothing
+carries state across frames. That is why every real sampling scheme
+carries temporal reservoirs, and it is now a requirement written into
+#826 rather than a surprise waiting inside it.
+
+The other number that has survived every experiment is the pixel count:
+the frame falls 5.2× with internal resolution, and #824 measured that
+shading is 90 % of the pass the resolution scales.
 
 ### 🔴 What is left is the lights that do reach — and it is not ALU
 

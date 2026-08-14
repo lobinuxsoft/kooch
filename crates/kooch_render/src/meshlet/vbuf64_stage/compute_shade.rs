@@ -40,7 +40,8 @@ use crate::meshlet::{
     MATERIAL_PBR_COMPUTE_BODY, SHADING_TILE_SIZE, compose_material_shader,
 };
 
-use super::{CameraUbo, DEFERRED_COLOR_FORMAT, ScreenUbo, VBUF64_FORMAT};
+use super::upsample::SHADED_ID_FORMAT;
+use super::{CameraUbo, DEFERRED_COLOR_FORMAT, ScreenUbo, ShadingRate, VBUF64_FORMAT};
 
 /// Upper bound on shading slots the per-frame screen UBO can address.
 /// Matches the fragment path's, and `MaterialPipeline::DEFAULT_CAPACITY`.
@@ -50,6 +51,11 @@ const MAX_SHADING_SLOTS: u32 = 256;
 /// the contact-shadow pair hold 0..4; this is the next free index and
 /// the shader declares it at the same one.
 const COLOR_OUT_BINDING: u32 = 5;
+
+/// Group-0 binding of the per-sample surface id (#825). Written only at
+/// reduced rate, bound always: a bind group layout cannot depend on a
+/// setting the player changes between frames.
+const SHADED_IDS_BINDING: u32 = 6;
 
 /// `KOOCH_COMPUTE_SHADING=on` (or `1`, or `true`), read once.
 ///
@@ -175,7 +181,7 @@ impl ComputeShading {
                     count: None,
                 },
                 uniform(1, false, 64),
-                uniform(2, true, 16),
+                uniform(2, true, std::mem::size_of::<ScreenUbo>() as u64),
                 uniform(
                     MATERIAL_PASS_CONTACT_UBO_BINDING,
                     false,
@@ -197,6 +203,16 @@ impl ComputeShading {
                     ty: wgpu::BindingType::StorageTexture {
                         access: wgpu::StorageTextureAccess::WriteOnly,
                         format: DEFERRED_COLOR_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: SHADED_IDS_BINDING,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: SHADED_ID_FORMAT,
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
                     count: None,
@@ -272,15 +288,21 @@ impl ComputeShading {
     }
 
     /// One dispatch per registered shading slot, each over the whole
-    /// screen in 16x16 tiles.
+    /// shaded target in 16x16 tiles.
     ///
-    /// Whole-screen and not "the tiles this material covers": which
+    /// Whole-target and not "the tiles this material covers": which
     /// tiles those are is not known without a classification pass, and
     /// a tile with none of this material's pixels costs one vbuf read
     /// per thread and then leaves — no reconstruction, no lights, no
     /// write. Compacting the dispatch is worth doing when a scene has
     /// enough materials for that to show up in a capture, and it is a
     /// change to this function alone.
+    ///
+    /// `color_view` and `ids_view` are the targets for the given `rate`:
+    /// the screen at [`ShadingRate::Full`], the half-resolution pair at
+    /// [`ShadingRate::Half`]. `screen_size` stays the full resolution on
+    /// both — the tile still covers `rate` times as many pixels, and
+    /// every coordinate the shading model uses is a screen coordinate.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn shade(
         &self,
@@ -290,6 +312,7 @@ impl ComputeShading {
         vbuf_view: &wgpu::TextureView,
         depth_sample_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
+        ids_view: &wgpu::TextureView,
         meshlet_bg: &wgpu::BindGroup,
         cull: &MeshletCull,
         scene: &MeshletScene,
@@ -298,6 +321,7 @@ impl ComputeShading {
         view_proj: glam::Mat4,
         contact: &ContactShadowUbo,
         screen_size: (u32, u32),
+        rate: ShadingRate,
         debug_mode: u32,
     ) {
         let pipeline = self.pipeline_for(device, debug_mode);
@@ -323,6 +347,8 @@ impl ComputeShading {
                     size: [screen_size.0, screen_size.1],
                     material_id: slot,
                     debug_mode,
+                    shading_rate: rate.factor(),
+                    _pad: [0; 3],
                 }),
             );
         }
@@ -380,6 +406,10 @@ impl ComputeShading {
                     binding: COLOR_OUT_BINDING,
                     resource: wgpu::BindingResource::TextureView(color_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: SHADED_IDS_BINDING,
+                    resource: wgpu::BindingResource::TextureView(ids_view),
+                },
             ],
         });
         let materials_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -405,8 +435,12 @@ impl ComputeShading {
             ],
         });
 
-        let tiles_x = screen_size.0.div_ceil(SHADING_TILE_SIZE);
-        let tiles_y = screen_size.1.div_ceil(SHADING_TILE_SIZE);
+        // The dispatch covers the shaded target, not the screen: at half
+        // rate that is a quarter of the threads, which is the entire
+        // point of #825.
+        let shaded_size = rate.target_size(screen_size);
+        let tiles_x = shaded_size.0.div_ceil(SHADING_TILE_SIZE);
+        let tiles_y = shaded_size.1.div_ceil(SHADING_TILE_SIZE);
         let texture_pool = material_pipeline.texture_pool();
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("compute_shading_pass"),
