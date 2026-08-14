@@ -687,6 +687,40 @@ what the frame cost before #780 and what a path with no camera matrices
 still does. The view does not special-case it, because a scene that
 quietly stopped clustering should look alarming.
 
+### What each light costs — `specular_floor` (#821)
+
+Clustering bounds *how many* lights a pixel walks. It cannot make any of
+them cheaper, and every one of them pays the full model: GGX `D`,
+height-correlated Smith `V`, Schlick `F`, the multiscatter fit, and the
+representative point when the light has a radius. With ~15 lights
+reaching a pixel, that is fifteen of those.
+
+A light whose irradiance at a point is a fraction of the frame's
+exposure leaves a highlight nobody can see, and pays the expensive half
+to produce it. `SpecularFloor` is the irradiance below which it shades
+**diffuse only**:
+
+```sh
+KOOCH_SPECULAR_FLOOR=2000 ./your-game
+```
+
+**0.0 is the default and keeps every light on the full model**, so a
+project that never sets it renders exactly as before.
+
+⚠️ Fresnel is substituted at normal incidence rather than dropped. `f`
+weights the diffuse layer — `diffuse = (1 - f) · …` — so a skipped
+specular that also skipped `f` would *brighten* the surface. A missing
+highlight is invisible; an over-lit dielectric is not.
+
+🔴 **The editor cannot measure this and the environment variable is not
+a convenience.** On a desktop GPU the whole raster pass is 0.12 ms and
+switching every specular layer off moves it by 0.001 ms — there is no
+bottleneck there to remove. The frame this exists for is a game on the
+handheld, launched over SSH, with no editor in the process. A knob that
+lives only in a panel cannot be swept on the machine whose numbers
+decide anything, which is the same lesson `KOOCH_CLUSTERING` already
+carried.
+
 ### Turning it off
 
 `KOOCH_CLUSTERING=off`, or `ClusterSettings { enabled: false, .. }` in

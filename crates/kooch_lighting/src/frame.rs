@@ -414,8 +414,51 @@ pub const LIGHTS_HOT_DEFAULT: u32 = 16;
 /// resource rather than a constant because the useful value is a
 /// property of the scene's exposure and light intensities, and the only
 /// way to find it is to sweep it while watching the picture.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SpecularFloor(pub f32);
+
+impl Default for SpecularFloor {
+    fn default() -> Self {
+        Self(floor_from_environment())
+    }
+}
+
+/// `KOOCH_SPECULAR_FLOOR=<lux>`, read once.
+///
+/// 🔴 An environment variable and not only an editor control, because
+/// **the editor is not where this can be measured**. On a desktop GPU
+/// the whole raster pass is 0.12 ms and switching every specular layer
+/// off moves it by 0.001 — there is no bottleneck to remove. The frame
+/// this exists for is a game on the OneXFly, launched over SSH, with no
+/// editor in the process at all.
+///
+/// The same reasoning as `KOOCH_CLUSTERING`, learned the same way: a
+/// knob that only exists in the editor is a knob that cannot be swept
+/// on the machine whose numbers decide anything.
+///
+/// Unparseable keeps the default: a typo during a measurement run must
+/// not silently change what is being measured.
+fn floor_from_environment() -> f32 {
+    static FLOOR: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *FLOOR.get_or_init(|| {
+        let Ok(raw) = std::env::var("KOOCH_SPECULAR_FLOOR") else {
+            return 0.0;
+        };
+        match raw.trim().parse::<f32>() {
+            Ok(floor) if floor >= 0.0 => {
+                tracing::info!(
+                    "KOOCH_SPECULAR_FLOOR={floor}: lights under this irradiance shade \
+                     diffuse-only"
+                );
+                floor
+            }
+            _ => {
+                tracing::warn!("KOOCH_SPECULAR_FLOOR={raw:?} is not a number — keeping 0");
+                0.0
+            }
+        }
+    })
+}
 
 /// Top of scale for `MeshletDebugMode::LightsPerPixel`, as a
 /// [`Resource`](kooch_core::resource::Resources) the editor writes.

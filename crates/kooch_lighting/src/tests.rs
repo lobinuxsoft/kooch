@@ -107,9 +107,12 @@ fn the_stub_matches_the_views_it_replaces() {
 
 /// 🔴 Zero means "never skip", and it is the default. A project that
 /// never heard of #821 has to render exactly what it rendered before.
+///
+/// Reads the uniform rather than `SpecularFloor::default()`, which
+/// consults the environment — a test that asserted on that would fail
+/// for whoever happened to have the variable set while measuring.
 #[test]
 fn the_default_floor_keeps_every_specular() {
-    assert_eq!(SpecularFloor::default().0, 0.0);
     assert_eq!(IntiFrame::default().specular_floor, 0.0);
 }
 
