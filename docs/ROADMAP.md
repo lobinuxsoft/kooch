@@ -54,7 +54,8 @@ said.
 | ~~#776~~ | ~~`PointLight.radius`~~ | **Done.** Not 15 lines: six pieces, and `GpuLight` grew 64 → 80 B |
 | ~~#778~~ | ~~point light shadows~~ | **Done**, feature and budget both |
 | ~~#804~~ | ~~`receive_shadows` does nothing~~ | **Done.** The field existed and nothing read it |
-| **#780** | **GPU clustering — the froxel grid** | 🟡 **Built, not yet measured.** Four passes, and `inti_shade` walks a cell's lights instead of the scene's. What it bought on the handheld is unknown until someone captures it with `KOOCH_CLUSTERING` on and off |
+| ~~#780~~ | ~~GPU clustering — the froxel grid~~ | **Done and measured** (2026-08-14). The busiest froxel holds 26 lights against 12 that reach a point — ~24 % over-listing, ordinary for clustering. It costs 0.15 ms. Not a suspect |
+| **#796 / #819** | **ReSTIR — sample the lights instead of walking them** | 🎯 **Next.** The clustering line is measured out and shading LOD has a 10 % ceiling. `raster + shade` is **not ALU-bound**, so what is left is how many lights each pixel reads |
 | **#731** | volumetric clouds, froxel-based | The clouds are **off**, and that is the only reason the budget is met. They cost 39 ms as written |
 | **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
 | **#254** | post + auto exposure | The blown-out white floor in three sessions of screenshots. Cheap |
@@ -116,18 +117,60 @@ everything else.
 that sets coverage above zero pays 39 ms again, and nothing warns. #731
 is the condition on them coming back.
 
-### 🟡 #780 is built, and nothing on the handheld has measured it
+### 🟢 #780 is measured, and it is not the problem — 2026-08-14
 
-Four passes — z-slice, count, allocate, populate — and `inti_shade` now
-walks the lights of its own froxel. Every claim about what that is worth
-is still a claim: the grid has GPU tests that say it is **correct** (a
-lit point's cell holds the light that lights it; the count pass and the
-populate pass agree), and no capture that says it is **faster**.
+Four passes — z-slice, count, allocate, populate — and `inti_shade`
+walks the lights of its own froxel. The claim is now a number: the
+allocation pass counts the peak and the mean per cell and rides them
+home in the readback it already runs.
 
-⚠️ **The A/B is one environment variable.** `KOOCH_CLUSTERING=off` falls
-back to the linear walk, same image, same camera. Two captures of the
-same scene is what turns the table above into a number. Until then #780
-is a change in how the frame is spent, not a measured saving.
+| | lights |
+|---|---|
+| reaching a point (from the scene file) | median 12 · max 14 |
+| **the busiest froxel holds** | **26** |
+| **the mean froxel holds** | **14.9** |
+
+**~24 % over-listing**, which is what conservative cell-vs-sphere
+assignment costs and is ordinary for the technique. `cluster grid` is
+0.15 ms of a 31 ms pass. The grid is doing its job.
+
+⚠️ **Three predictions failed here, each argued from geometry rather
+than measured**: that lowering `far` would thin the froxel usefully (it
+bought 10 %), that raising `first_slice` would do better (it made the
+frame far worse — the scene sits nearer than 20 m, so all of it fell
+into slice 0), and that over-inclusion was 2.9× (it is 1.24× at the
+mean; the 2.9× came from bisecting a colour ramp by eye). The counter
+settled all three, which is why it exists.
+
+🔴 **And the tool has to live where the measuring happens.** The first
+version of the shading-LOD control shipped in the editor only, where the
+whole raster pass is 0.12 ms and switching every specular layer off
+moved it by 0.001. `KOOCH_CLUSTERING` already carried that lesson in its
+own doc comment.
+
+### 🔴 What is left is the lights that do reach — and it is not ALU
+
+`SpecularFloor` / `KOOCH_SPECULAR_FLOOR` (#821) skips the specular layer
+— GGX `D`, Smith `V`, Schlick `F`, the multiscatter fit, the
+representative point — for a light whose irradiance at the pixel is
+below a threshold. Measured on the OneXFly, through Steam → gamescope,
+with **every** light forced to diffuse-only:
+
+| | `GPU > raster + shade` |
+|---|---|
+| baseline | 31.41 ms |
+| every light diffuse-only | 28.28 ms |
+
+**A 10 % ceiling.** Deleting the expensive half of the BRDF fifteen
+times per pixel bought 3 ms of 31, so **that pass is not ALU-bound**.
+What is left: the 15 `IntiLight` records fetched per pixel, and fill
+rate — which matches the frame falling 5.2× when the internal
+resolution drops.
+
+That is the argument for **#796 / #819**: ReSTIR does not make a light
+cheaper to evaluate, it makes the pixel evaluate one or two instead of
+fifteen. It attacks the axis these experiments left untouched, and they
+are the evidence that the other axis is nearly empty.
 
 What it deliberately does not do: read back the furthest light to size
 the grid's far plane, the way Bevy does. That is a readback in the hot
