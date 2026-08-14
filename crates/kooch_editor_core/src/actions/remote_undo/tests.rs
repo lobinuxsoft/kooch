@@ -168,3 +168,61 @@ fn keyless_steps_stay_apart() {
     history.record(field_step(1.0, 2.0, None));
     assert_eq!(history.done.len(), 2);
 }
+
+fn override_step() -> Inverse {
+    Inverse::SetField {
+        entity: EntityId {
+            index: 1,
+            generation: 0,
+        },
+        component: "kooch_ecs::prefab_instance::PrefabInstance".to_owned(),
+        field: "overrides".to_owned(),
+        before: kooch_ecs::reflect::ReflectValue::String(String::new()),
+        after: kooch_ecs::reflect::ReflectValue::String("position".to_owned()),
+    }
+}
+
+/// 🔴 Measured on a prefab instance: one drag filed two steps, and the
+/// override sitting between two edits to the same field stopped them
+/// merging. The user pressed Ctrl+Z six times for two actions.
+#[test]
+fn bookkeeping_joins_its_edit() {
+    let mut history = RemoteHistory::default();
+    let key = Some(crate::history::MergeKey::of("intensity"));
+
+    history.record(field_step(0.0, 5.0, key));
+    history.attach(override_step());
+
+    assert_eq!(history.done.len(), 1, "the rider took a step of its own");
+    assert!(
+        matches!(history.done[0].inverse, Inverse::Several(ref parts) if parts.len() == 2),
+        "the rider did not join the edit",
+    );
+    assert_eq!(history.undo_description(), Some("Set intensity"));
+}
+
+/// And the run keeps merging afterwards, which is the half that was
+/// silently broken: the step above still carries the edit's key.
+#[test]
+fn a_rider_does_not_break_the_run() {
+    let mut history = RemoteHistory::default();
+    let key = Some(crate::history::MergeKey::of("intensity"));
+
+    history.record(field_step(0.0, 5.0, key));
+    history.attach(override_step());
+    history.record(field_step(5.0, 9.0, key));
+    history.attach(override_step());
+
+    assert_eq!(history.done.len(), 1, "the run filed more than one step");
+    let Inverse::Several(ref parts) = history.done[0].inverse else {
+        panic!("the step lost its rider");
+    };
+    // The edit is first and holds both ends of the run.
+    match &parts[0] {
+        Inverse::SetField { before, after, .. } => {
+            assert_eq!(*before, kooch_ecs::reflect::ReflectValue::F32(0.0));
+            assert_eq!(*after, kooch_ecs::reflect::ReflectValue::F32(9.0));
+        }
+        _ => panic!("the edit is not first"),
+    }
+}

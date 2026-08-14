@@ -154,16 +154,62 @@ impl RemoteHistory {
             self.done.last().and_then(|top| top.key),
             step.key,
             sealed,
-        ) && let Some(top) = self.done.last_mut()
-        {
-            top.inverse.absorb(step.inverse);
-            return;
+        ) {
+            let depth = self.done.len();
+            if let Some(top) = self.done.last_mut() {
+                tracing::debug!(
+                    target: "kooch_editor_core::remote_undo",
+                    label = %top.label,
+                    depth,
+                    "merged into the step above",
+                );
+                top.inverse.absorb(step.inverse);
+                return;
+            }
         }
+        // 🔴 One line per step the history takes, because "how many steps
+        // did that edit file?" is not answerable from the outside: the
+        // symptom of getting it wrong is a Ctrl+Z that needs pressing
+        // twice, and by then the evidence is gone.
+        tracing::debug!(
+            target: "kooch_editor_core::remote_undo",
+            label = %step.label,
+            keyed = step.key.is_some(),
+            sealed,
+            depth = self.done.len() + 1,
+            "new step",
+        );
         self.done.push(step);
         self.undone.clear();
         while self.done.len() > DEPTH {
             self.done.remove(0);
         }
+    }
+
+    /// Folds bookkeeping into the step that caused it.
+    ///
+    /// The step keeps its label and its merge key, so the edit that
+    /// follows still continues the run — which is the half of this that
+    /// makes coalescing work on a prefab instance at all.
+    ///
+    /// With nothing above it to belong to, it becomes a step of its own
+    /// rather than being dropped: an override write that reached the
+    /// project has to be undoable by something.
+    pub fn attach(&mut self, inverse: Inverse) {
+        let Some(top) = self.done.last_mut() else {
+            self.done.push(Step {
+                label: "Set overrides".to_owned(),
+                inverse,
+                key: None,
+            });
+            return;
+        };
+        tracing::debug!(
+            target: "kooch_editor_core::remote_undo",
+            label = %top.label,
+            "bookkeeping attached to the step above",
+        );
+        top.inverse.attach(inverse);
     }
 
     /// Ends the current run of edits, so the next one starts a step.
@@ -209,9 +255,21 @@ pub(crate) fn step(resources: &mut Resources, undo: bool) -> bool {
         false => &mut history.undone,
     };
     let Some(step) = stack.pop() else {
+        tracing::debug!(
+            target: "kooch_editor_core::remote_undo",
+            undo,
+            "nothing left to take",
+        );
         resources.insert(history);
         return false;
     };
+    tracing::debug!(
+        target: "kooch_editor_core::remote_undo",
+        undo,
+        label = %step.label,
+        left = stack.len(),
+        "taking a step",
+    );
 
     // Lifted out for the same reason `remote_edit::dispatch` does it: the
     // send borrows the session while the capture reads the rest of the
@@ -390,15 +448,19 @@ pub(crate) fn record(
     };
     let label = label_of(action);
     let key = merge_key_of(action);
+    let rides_along = rides_along(action, resources);
     if resources.get::<RemoteHistory>().is_none() {
         resources.insert(RemoteHistory::default());
     }
     if let Some(history) = resources.get_mut::<RemoteHistory>() {
-        history.record(Step {
-            label,
-            inverse,
-            key,
-        });
+        match rides_along {
+            true => history.attach(inverse),
+            false => history.record(Step {
+                label,
+                inverse,
+                key,
+            }),
+        }
     }
 }
 
@@ -421,6 +483,37 @@ fn label_of(action: &EditorAction) -> String {
         EditorAction::TransformEdit { desc, .. } => (*desc).to_owned(),
         _ => "Edit".to_owned(),
     }
+}
+
+/// Whether this edit is the editor's bookkeeping rather than something
+/// the user did.
+///
+/// 🔴 An override write is appended to the batch by
+/// [`prefab_overrides::record`](super::prefab_overrides::record) — it
+/// records that a field of a prefab instance no longer follows the
+/// prefab. As a step of its own it costs a second Ctrl+Z for one action,
+/// and it does something worse than that: it sits **between** two edits
+/// to the same field, and the merge rule only ever looks at the top of
+/// the stack. So on a prefab instance nothing ever merged, and a drag
+/// went back to filing a step per frame.
+///
+/// Measured, not guessed. One drag and one typed value on an instance:
+///
+/// ```text
+/// new step  label=Move Entity    depth=1
+/// new step  label=Set overrides  depth=2
+/// new step  label=Set position   depth=3
+/// new step  label=Set overrides  depth=4
+/// new step  label=Set position   depth=5   <- did not merge with depth=3
+/// new step  label=Set overrides  depth=6
+/// ```
+fn rides_along(action: &EditorAction, resources: &Resources) -> bool {
+    let EditorAction::SetField { component, .. } = action else {
+        return false;
+    };
+    component_name(resources, *component)
+        .and_then(|name| name.rsplit("::").next().map(str::to_owned))
+        .is_some_and(|name| name == "PrefabInstance" || name == "PrefabMember")
 }
 
 /// What a run of edits to the same thing looks like.
@@ -479,12 +572,38 @@ impl Inverse {
                     after: newer_after, ..
                 },
             ) => *after = newer_after,
+            // Zip stops at the shorter of the two, which is what keeps a
+            // transform's three fields merging after bookkeeping has been
+            // appended as a fourth: the rider keeps the oldest state,
+            // which is the one an undo wants.
             (Inverse::Several(mine), Inverse::Several(theirs)) => {
                 for (mine, theirs) in mine.iter_mut().zip(theirs) {
                     mine.absorb(theirs);
                 }
             }
+            // The edit is always the first element; anything after it
+            // rode along.
+            (Inverse::Several(mine), newer) => {
+                if let Some(first) = mine.first_mut() {
+                    first.absorb(newer);
+                }
+            }
             _ => {}
+        }
+    }
+
+    /// Adds an inverse that has to be applied with this one.
+    ///
+    /// Appended rather than prepended: the edit stays first, so a later
+    /// edit to the same field merges into it and the rider is left
+    /// holding the state it started with.
+    fn attach(&mut self, rider: Inverse) {
+        match self {
+            Inverse::Several(mine) => mine.push(rider),
+            other => {
+                let edit = std::mem::replace(other, Inverse::Despawn(Vec::new()));
+                *other = Inverse::Several(vec![edit, rider]);
+            }
         }
     }
 
