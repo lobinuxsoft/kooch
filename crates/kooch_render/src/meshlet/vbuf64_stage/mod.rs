@@ -193,6 +193,20 @@ impl Vbuf64Stage {
         contact: &crate::contact_shadow::ContactShadowUbo,
         debug_mode: u32,
         clear_depth: bool,
+        // #824 — the shading pass gets its own GPU scope, nested inside
+        // the caller's `raster + shade`.
+        //
+        // 🔴 Without it a capture cannot say which shading path produced
+        // it. `KOOCH_COMPUTE_SHADING` not reaching the process through
+        // Steam looks exactly like the compute path being no faster, and
+        // there would be nothing in the capture to tell the two apart.
+        //
+        // It also separates the two halves `raster + shade` fuses. The
+        // raster does not change between the paths, so measuring them
+        // together dilutes whatever the shading gained — a fifth off the
+        // shading reads as a tenth off the pair.
+        scopes: Option<&kooch_core::gpu::GpuScopes>,
+        parent: Option<&kooch_core::gpu::GpuQuery>,
     ) {
         self.clear
             .dispatch(device, queue, encoder, &self.vbuf_view, self.size);
@@ -236,6 +250,18 @@ impl Vbuf64Stage {
                 debug_mode,
             );
         } else if let Some(pipeline) = material_pipeline {
+            // The label names the path, so the capture answers "which
+            // one ran" without anybody having to trust a log line.
+            let label = if self.compute_enabled {
+                "shade: compute"
+            } else {
+                "shade: fragment"
+            };
+            let query = match (scopes, parent) {
+                (Some(s), Some(p)) => Some(s.begin_child(label, encoder, p)),
+                (Some(s), None) => Some(s.begin(label, encoder)),
+                _ => None,
+            };
             if self.compute_enabled {
                 self.compute_shade.shade(
                     device,
@@ -273,6 +299,9 @@ impl Vbuf64Stage {
                     self.size,
                     debug_mode,
                 );
+            }
+            if let (Some(scopes), Some(query)) = (scopes, query) {
+                scopes.end(encoder, query);
             }
         }
     }

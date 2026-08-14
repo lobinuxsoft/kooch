@@ -148,7 +148,18 @@ fn scene(device: &wgpu::Device, queue: &wgpu::Queue) -> (Resources, MeshletRende
 /// puffin, asserting along the way that at least one carried a real
 /// timestamp.
 fn recorded_labels(device: &wgpu::Device, queue: &wgpu::Queue, frames: usize) -> Vec<String> {
+    labels_with_shading(device, queue, frames, false)
+}
+
+/// [`recorded_labels`], with the shading path chosen (#824).
+fn labels_with_shading(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frames: usize,
+    compute_shading: bool,
+) -> Vec<String> {
     let (mut resources, mut stage) = scene(device, queue);
+    stage.set_compute_shading(compute_shading);
     let captured: Arc<Mutex<Vec<Arc<puffin::FrameData>>>> = Arc::default();
     let sink = {
         let captured = Arc::clone(&captured);
@@ -236,6 +247,48 @@ fn the_atomic_path_names_its_passes() {
         labels.iter().any(|l| l == "raster + shade"),
         "no shading scope among {labels:?}"
     );
+    // #824 — `raster + shade` fuses two halves that no longer change
+    // together. The raster is the same on both shading paths, so a
+    // capture that only names the pair dilutes whatever the shading
+    // gained: a fifth off the shading reads as a tenth off the fused
+    // number.
+    assert!(
+        labels.iter().any(|l| l == "shade: fragment"),
+        "the shading pass is not named separately among {labels:?}"
+    );
+}
+
+/// 🔴 The label a capture is read by (#824).
+///
+/// `KOOCH_COMPUTE_SHADING` failing to reach the process through Steam
+/// looks exactly like the compute path being no faster — same scenes,
+/// same numbers, nothing wrong anywhere. The name in the capture is what
+/// tells those apart, so a capture taken to decide #824 is only worth
+/// reading if this scope exists.
+#[test]
+fn the_compute_path_names_itself() {
+    let _guard = PUFFIN.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = device_for(true) else {
+        eprintln!("no adapter with timestamps + int64 atomics; skipping");
+        return;
+    };
+    let labels = labels_with_shading(&device, &queue, 8, true);
+    assert!(
+        labels.iter().any(|l| l == "shade: compute"),
+        "no compute shading scope among {labels:?}"
+    );
+    // ⚠️ Nothing more than that, and the reason is the harness rather
+    // than the renderer: `scope_delta` is a DELTA. `new_frame` fills it
+    // from `new_scopes` and drains the list, so a name another test in
+    // this binary already registered never reaches this one's
+    // `FrameView` — this test sees `["shade: compute"]` and nothing
+    // else, whatever the frame actually recorded. Asserting that
+    // `raster + shade` is still here, or that `shade: fragment` is not,
+    // would be asserting which test ran first.
+    //
+    // The same puffin behaviour that made a late-starting server draw
+    // `scope#ScopeId(67)` forever, worth an upstream issue and noted in
+    // #785.
 }
 
 /// The fallback path an adapter without int64 atomics takes. Left
