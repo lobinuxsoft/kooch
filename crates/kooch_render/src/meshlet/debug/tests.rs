@@ -28,6 +28,7 @@ fn discriminants_match_the_shader() {
             "INTI_DEBUG_CONTACT_SHADOWS",
         ),
         (MeshletDebugMode::SingleLight, "INTI_DEBUG_SINGLE_LIGHT"),
+        (MeshletDebugMode::LightsPerPixel, "INTI_DEBUG_LIGHT_COUNT"),
     ] {
         let declaration = format!("const {name}: u32 = {}u;", mode.as_u32());
         assert!(
@@ -47,6 +48,7 @@ fn every_inti_view_is_above_the_dispatch_floor() {
         MeshletDebugMode::ShadowCascades,
         MeshletDebugMode::ContactShadows,
         MeshletDebugMode::SingleLight,
+        MeshletDebugMode::LightsPerPixel,
     ] {
         assert!(mode.as_u32() >= floor, "{mode:?} is below INTI_DEBUG_FIRST");
     }
@@ -183,4 +185,29 @@ fn every_mode_that_reads_a_light_says_so() {
     assert!(!MeshletDebugMode::Off.needs_selected_light());
     assert!(!MeshletDebugMode::Normals.needs_selected_light());
     assert!(!MeshletDebugMode::ShadowCascades.needs_selected_light());
+}
+
+/// 🔴 The editor prints "red = 16+" beside the selector and the shader
+/// decides what red means. A legend that disagrees with the ramp is
+/// worse than no legend: it is a number somebody will read off a
+/// screenshot and act on.
+#[test]
+fn the_hot_count_matches_the_shader() {
+    let source = kooch_lighting::inti_debug_shader();
+    let declaration = format!(
+        "const INTI_DEBUG_LIGHTS_HOT: f32 = {}.0;",
+        super::LIGHTS_HOT
+    );
+    assert!(
+        source.contains(&declaration),
+        "inti_debug.wgsl should declare `{declaration}`",
+    );
+}
+
+/// The view reads the froxel, not a texture atomic, so it is offered on
+/// every adapter — including the ones the density heatmaps skip.
+#[test]
+fn lights_per_pixel_is_always_offered() {
+    assert!(!MeshletDebugMode::LightsPerPixel.needs_texture_atomic());
+    assert!(MeshletDebugMode::all_implemented().contains(&MeshletDebugMode::LightsPerPixel));
 }

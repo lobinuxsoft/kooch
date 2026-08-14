@@ -23,7 +23,7 @@
 //!                           transport / decode. Hidden in local mode.
 
 use kooch_render::meshlet::{
-    MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
+    LIGHTS_HOT, MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
 };
 
 use crate::perf::EditorPerfStats;
@@ -435,6 +435,24 @@ fn debug_controls(
                 );
             }
         }
+    }
+    // The scale, because the view is a count and a heatmap without one
+    // is a mood. Fixed rather than per-frame adaptive so two screenshots
+    // can be compared — see `LIGHTS_HOT`.
+    if *meshlet_debug_mode == MeshletDebugMode::LightsPerPixel {
+        ui.label(
+            egui::RichText::new(format!(
+                "black 0 · blue few · green {} · red {LIGHTS_HOT}+",
+                LIGHTS_HOT / 2
+            ))
+            .small()
+            .weak(),
+        )
+        .on_hover_text(
+            "Lights evaluated per pixel, directional included. A froxel's own count, read \
+             where the shading loop pays it. Whole screen at full red means the frame is \
+             shading without the cluster grid — every light for every pixel.",
+        );
     }
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("LOD ≤").small())

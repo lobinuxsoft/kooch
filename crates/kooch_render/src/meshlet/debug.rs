@@ -117,7 +117,40 @@ pub enum MeshletDebugMode {
     /// the selector — a limitation somebody has to guess at is worse
     /// than one written down.
     SingleLight = 14,
+    /// How many lights each pixel actually evaluates, as a heatmap
+    /// (#817).
+    ///
+    /// Clustered shading makes cost a property of *where the pixel is*:
+    /// a fragment pays for the lights in its froxel and for nothing
+    /// else. No pass timing can show that — `raster + shade` is one
+    /// number for the whole screen, and it grew from 5.27 ms to 34.92 ms
+    /// between a still camera and a moving one without saying which
+    /// pixels did it.
+    ///
+    /// Black is nothing, blue is few, green is the middle of the scale
+    /// and red is [`LIGHTS_HOT`] or more. Directional lights are
+    /// included — the grid does not cluster them because they reach
+    /// every cell, so leaving them out would under-report what the pixel
+    /// pays.
+    ///
+    /// 🔴 **A frame shading without the grid reads as flat maximum.**
+    /// `inti.clustered == 0` means every light is evaluated for every
+    /// pixel, which is what the frame cost before #780 and what a path
+    /// with no camera matrices still does. That is not a quirk of the
+    /// view, it is the view working: a scene that quietly stopped
+    /// clustering looks exactly like a scene that is slow for no reason.
+    LightsPerPixel = 15,
 }
+
+/// Count at which [`MeshletDebugMode::LightsPerPixel`] reads full red.
+///
+/// Fixed rather than adaptive: a scale that renormalises per frame makes
+/// two screenshots incomparable, and comparing them — before and after
+/// moving a light, or with the player standing somewhere else — is the
+/// entire use. Sixteen because the grid's own budget per froxel is the
+/// scale that matters, and a value the eye can divide into quarters
+/// reads as a count rather than as a mood.
+pub const LIGHTS_HOT: u32 = 16;
 
 /// Runtime knob for the cull / LOD selector. Lives as a
 /// [`Resource`](kooch_core::resource::Resources) so the editor can
@@ -177,6 +210,7 @@ impl MeshletDebugMode {
             Self::ShadowCascades,
             Self::ContactShadows,
             Self::SingleLight,
+            Self::LightsPerPixel,
         ]
     }
 
@@ -268,6 +302,7 @@ impl MeshletDebugMode {
             Self::ShadowCascades => "Shadow cascades",
             Self::ContactShadows => "Contact shadows",
             Self::SingleLight => "Single light",
+            Self::LightsPerPixel => "Lights per pixel",
         }
     }
 }

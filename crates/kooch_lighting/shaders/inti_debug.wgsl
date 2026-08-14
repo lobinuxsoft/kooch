@@ -32,6 +32,7 @@ const INTI_DEBUG_NORMALS: u32 = 11u;
 const INTI_DEBUG_SHADOW_CASCADES: u32 = 12u;
 const INTI_DEBUG_CONTACT_SHADOWS: u32 = 13u;
 const INTI_DEBUG_SINGLE_LIGHT: u32 = 14u;
+const INTI_DEBUG_LIGHT_COUNT: u32 = 15u;
 // Lowest discriminant handled here. Modes below it are resolved by the
 // shading path itself before the surface is even reconstructed.
 const INTI_DEBUG_FIRST: u32 = INTI_DEBUG_NORMALS;
@@ -51,6 +52,12 @@ const INTI_LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 // removes; a metal shaded with white albedo is not that metal with the
 // colour turned off, it is a mirror.
 const INTI_DEBUG_ROUGHNESS: f32 = 0.5;
+
+// Count at which the lights-per-pixel view reads full red. Pinned to
+// `LIGHTS_HOT` in `kooch_render`'s `debug.rs` by a test — the editor
+// prints the scale beside the selector, and a legend that disagrees
+// with the shader is worse than no legend.
+const INTI_DEBUG_LIGHTS_HOT: f32 = 16.0;
 
 // Bevy's cascade colours, and their derivation: hue swept around the
 // wheel by cascade index (`shadows.wgsl:265`). Ported rather than
@@ -225,6 +232,55 @@ fn inti_single_light_debug(
 
 /// `true` when `mode` is one of the views this file draws.
 ///
+// How many lights this pixel evaluates, as a heatmap (#817).
+//
+// 🔴 The count is read where it is PAID. `inti_clustered_lights` walks
+// exactly `point_count + spot_count` entries of this fragment's cell and
+// nothing else, so the same two fields that bound that loop are what
+// this view paints. A count assembled from anywhere else — the scene's
+// light total, the grid's capacity, a CPU-side estimate — would be a
+// second opinion about a number the shader already knows, and the two
+// would drift.
+//
+// Directional lights are added because the grid does not cluster them:
+// they reach every cell, are the light buffer's leading entries, and the
+// shading loop pays for all of them at every pixel.
+fn inti_light_count_debug(world_position: vec3<f32>, frag_coord: vec2<f32>) -> vec3<f32> {
+    var count = inti.directional_count;
+    if (inti.clustered == 0u) {
+        // No grid this frame: every light for every pixel. Flat maximum
+        // is the honest answer, not a special case — see the mode's doc
+        // comment in `debug.rs`.
+        count = inti.light_count;
+    } else {
+        let cell = inti_clusters[inti_cluster_of(world_position, frag_coord)];
+        count = count + cell.point_count + cell.spot_count;
+    }
+    if (count == 0u) {
+        // Black, and deliberately not the ramp's cold end: "no light
+        // reaches here" and "one light reaches here" are different
+        // answers and the whole view exists to separate them.
+        return vec3<f32>(0.0);
+    }
+    let t = clamp(f32(count) / INTI_DEBUG_LIGHTS_HOT, 0.0, 1.0);
+    return inti_count_heatmap(t);
+}
+
+// Blue → green → red, the same ramp `density_heatmap` paints in
+// `meshlet_debug_resolve.wgsl`.
+//
+// ⚠️ A second copy, on purpose: the two live in different crates and are
+// concatenated into different shaders, and a shared file would exist
+// only to hold four clamps. What must not drift is the *reading* — a
+// green pixel meaning the middle of the scale in one heatmap and
+// something else in another is how an artist learns to distrust both.
+fn inti_count_heatmap(t: f32) -> vec3<f32> {
+    let r = clamp(2.0 * t - 1.0, 0.0, 1.0);
+    let g = clamp(1.0 - 2.0 * abs(t - 0.5), 0.0, 1.0);
+    let b = clamp(1.0 - 2.0 * t, 0.0, 1.0);
+    return vec3<f32>(r, g, b);
+}
+
 /// 🔴 The production build concatenates `INTI_DEBUG_STUB` instead, where
 /// this returns a literal `false`. That is what deletes every view above
 /// from the game's shader: the call inlines to `if (false)`, and the
@@ -254,6 +310,9 @@ fn inti_debug_view(
     }
     if (mode == INTI_DEBUG_SINGLE_LIGHT) {
         return inti_single_light_debug(world_position, n, frag_coord);
+    }
+    if (mode == INTI_DEBUG_LIGHT_COUNT) {
+        return inti_light_count_debug(world_position, frag_coord);
     }
     // A mode the shader does not know. Black rather than a guess: an
     // unimplemented view that renders *something* is one somebody

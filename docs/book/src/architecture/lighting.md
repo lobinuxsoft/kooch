@@ -327,6 +327,9 @@ this" look identical in a shaded frame and have different fixes.
   under two pixels long. Grey: marched and found nothing.
 - **Single light** — one light, alone, in grey, with its shadow. The one that answers what a shadow *looks like*; the other two answer what the shadow system *did*.
 
+A fourth answers a question about cost rather than about appearance:
+**Lights per pixel**, below, for *how many* lights a pixel pays for.
+
 ### Single light
 
 Select a light in the World panel and this view shades the scene with
@@ -647,6 +650,36 @@ They reach every cell, so a cell listing them would say nothing. They are
 the **leading entries** of the light buffer and the shader walks them
 linearly — which is why `ExtractedLights::directional_count` is a prefix
 and not a subset.
+
+### Seeing what a pixel pays — `Lights per pixel` (#817)
+
+Clustering makes cost a property of **where the pixel is**. That is the
+whole point of the grid, and it is also why no pass timing can explain a
+slow frame any more: `raster + shade` is one number for the screen, and
+on the OneXFly it grew from 5.27 ms to 34.92 ms between a still camera
+and a moving one without saying which pixels did it.
+
+The debug view paints the count each fragment actually walks, read at
+the point where it is paid — the same `point_count + spot_count` that
+bounds the loop in `inti_clustered_lights`, plus the directional lights,
+which the grid does not cluster because they reach every cell.
+
+| colour | meaning |
+|---|---|
+| black | no light reaches this pixel at all |
+| blue | few |
+| green | 8 |
+| red | 16 or more (`LIGHTS_HOT`) |
+
+The scale is **fixed, not per-frame adaptive**: renormalising would make
+two screenshots incomparable, and comparing them — the player standing
+here versus there — is the entire use.
+
+🔴 **A whole screen at full red means the frame is not clustering.**
+`inti.clustered == 0` evaluates every light for every pixel, which is
+what the frame cost before #780 and what a path with no camera matrices
+still does. The view does not special-case it, because a scene that
+quietly stopped clustering should look alarming.
 
 ### Turning it off
 
