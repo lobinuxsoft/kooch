@@ -487,12 +487,31 @@ fn debug_controls(
     // depth it never lit. The measurement that opened this: the busiest
     // froxel charged 40 lights where 14 reach the point.
     if *meshlet_debug_mode == MeshletDebugMode::LightsPerPixel {
+        // 🔴 Both ends, because the window is what matters and the near
+        // one is the stronger lever: 24 slices spread over [5, 200] put
+        // a 5.1 m froxel at 30 m, and over [20, 60] put a 1.4 m one
+        // there. Exposing only `far` hid that the first fifteen metres
+        // of grid were being spent on empty air in front of the camera.
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("grid from").small());
+            ui.add(
+                egui::DragValue::new(&mut cluster_settings.first_slice)
+                    .speed(0.5)
+                    .range(0.1..=(cluster_settings.far - 1.0).max(1.0))
+                    .suffix(" m"),
+            )
+            .on_hover_text(
+                "Where the first slice starts. Everything NEARER piles into slice 0 \
+                 together, so raise it to the distance of your closest lit surface and \
+                 no further.",
+            );
+        });
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("grid reaches").small());
             ui.add(
                 egui::DragValue::new(&mut cluster_settings.far)
                     .speed(1.0)
-                    .range(cluster_settings.first_slice.max(1.0) + 1.0..=1000.0)
+                    .range((cluster_settings.first_slice + 1.0)..=1000.0)
                     .suffix(" m"),
             )
             .on_hover_text(
@@ -503,21 +522,36 @@ fn debug_controls(
             );
         });
         // What the number means, which the number itself does not say.
+        //
+        // 🔴 Three distances, not one. A single sample invites picking
+        // the flattering one, and the shape is the point: slices grow
+        // logarithmically, so a grid that looks fine up close is coarse
+        // at the far end — and everything past `far` piles into the last
+        // slice, which is the way lowering it makes things *worse*.
         let grid = ClusterGrid::new(cluster_settings, glam::Vec2::new(viewport.x, viewport.y));
+        let far = cluster_settings.far;
         ui.label(
             egui::RichText::new(format!(
-                "{}×{}×{} cells · froxel {:.1} m deep at 15 m",
+                "{}×{}×{} cells (this Game view) · froxel {:.1} / {:.1} / {:.1} m deep at 10 / 25 / {:.0} m",
                 grid.dimensions.x,
                 grid.dimensions.y,
                 grid.dimensions.z,
-                grid.slice_depth(15.0),
+                grid.slice_depth(10.0),
+                grid.slice_depth(25.0),
+                grid.slice_depth(far * 0.9),
+                far * 0.9,
             ))
             .small()
             .weak(),
         )
         .on_hover_text(
-            "Compare that depth against the range of your lights. A froxel deeper than \
-             the light it holds is what makes a pixel pay for lights that never reach it.",
+            "Compare those depths against the range of your lights: a froxel deeper than \
+             the light it holds makes a pixel pay for lights that never reach it. \
+             🔴 Anything FURTHER than the grid reaches lands in the last slice together, \
+             so a far plane nearer than your geometry over-lists instead of helping — set \
+             it by the distance from the camera to the furthest lit surface, not by the \
+             size of the scene. The cell count is this Game view's; the View panel has a \
+             different aspect and therefore a different grid.",
         );
     }
     ui.horizontal(|ui| {
