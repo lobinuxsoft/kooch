@@ -80,3 +80,48 @@ fn span_of(g: &ClusterGrid, slice: u32) -> f32 {
     }
     0.0
 }
+
+/// The slice a depth lands in and the thickness reported for that depth
+/// have to describe the same slice, or the panel states a number the
+/// grid does not use.
+#[test]
+fn depth_matches_the_slice_it_reports() {
+    let g = grid();
+    for distance in [6.0_f32, 15.0, 40.0, 120.0] {
+        let depth = g.slice_depth(distance);
+        assert!(depth > 0.0, "slice at {distance} m has no thickness");
+        // Stepping back by the reported thickness must not skip a slice.
+        let here = g.z_slice(-distance);
+        let further = g.z_slice(-(distance + depth * 0.9));
+        assert!(
+            further <= here + 1,
+            "at {distance} m the thickness {depth} spans more than one slice",
+        );
+    }
+}
+
+/// 🔴 The point of #820: slices are thinner when the grid does not reach
+/// as far, because the same 24 of them cover less distance.
+#[test]
+fn a_nearer_far_thins_the_slices() {
+    let wide = ClusterGrid::new(
+        &ClusterSettings {
+            far: 200.0,
+            ..Default::default()
+        },
+        Vec2::new(1280.0, 720.0),
+    );
+    let tight = ClusterGrid::new(
+        &ClusterSettings {
+            far: 40.0,
+            ..Default::default()
+        },
+        Vec2::new(1280.0, 720.0),
+    );
+    let (wide_depth, tight_depth) = (wide.slice_depth(15.0), tight.slice_depth(15.0));
+    assert!(
+        tight_depth < wide_depth * 0.75,
+        "far 40 should thin the froxel at 15 m well below far 200: \
+         {tight_depth} vs {wide_depth}",
+    );
+}

@@ -127,6 +127,25 @@ impl ClusterGrid {
         // not promise it. `max` first, in both.
         (slice.max(0.0) as u32).min(self.dimensions.z - 1)
     }
+
+    /// How deep a froxel is, in metres, at `distance` from the camera.
+    ///
+    /// The number that makes `far` mean something. "200 versus 40" says
+    /// nothing on its own; "2.6 metres of froxel against a 4 metre
+    /// light" says the whole problem — a light is charged to every pixel
+    /// of every cell it reaches, so a slice thicker than the light it
+    /// holds spreads that light over depth it never lit (#820).
+    ///
+    /// Inverts the slice mapping: `z = exp((slice + y - 1) / x)`, and the
+    /// thickness is the gap between this slice's near and far edges.
+    pub fn slice_depth(&self, distance: f32) -> f32 {
+        if self.z_factors.x <= 0.0 {
+            return self.far - self.near;
+        }
+        let slice = self.z_slice(-distance.abs()) as f32;
+        let edge = |s: f32| ((s + self.z_factors.y - 1.0) / self.z_factors.x).exp();
+        edge(slice + 1.0) - edge(slice)
+    }
 }
 
 /// Splits `total` cells into columns and rows that stay roughly square

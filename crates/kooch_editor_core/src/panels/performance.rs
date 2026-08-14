@@ -22,7 +22,7 @@
 //! 7. **Remote**           — cost of the snapshot pull, split by
 //!                           transport / decode. Hidden in local mode.
 
-use kooch_lighting::LightsHot;
+use kooch_lighting::{ClusterGrid, ClusterSettings, LightsHot};
 use kooch_render::meshlet::{
     MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
 };
@@ -38,6 +38,8 @@ pub(crate) fn draw_performance_content(
     meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut LightsHot,
+    cluster_settings: &mut ClusterSettings,
+    viewport: egui::Vec2,
     hud_visibility: &mut crate::perf::HudVisibility,
     single_light_note: Option<&str>,
 ) {
@@ -58,6 +60,8 @@ pub(crate) fn draw_performance_content(
                     meshlet_debug_caps,
                     meshlet_lod_settings,
                     lights_hot,
+                    cluster_settings,
+                    viewport,
                     single_light_note,
                 );
             });
@@ -404,6 +408,8 @@ fn debug_controls(
     meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut LightsHot,
+    cluster_settings: &mut ClusterSettings,
+    viewport: egui::Vec2,
     single_light_note: Option<&str>,
 ) {
     ui.horizontal(|ui| {
@@ -472,6 +478,46 @@ fn debug_controls(
             "Lights evaluated per pixel, directional included. A froxel's own count, read \
              where the shading loop pays it. Whole screen at full red with the scale raised \
              means the frame is shading without the cluster grid — every light for every pixel.",
+        );
+    }
+    // The grid's reach, beside the view that shows what it costs (#820).
+    //
+    // A light is charged to every pixel of every cell it touches, so a
+    // slice deeper than the light it holds spreads that light across
+    // depth it never lit. The measurement that opened this: the busiest
+    // froxel charged 40 lights where 14 reach the point.
+    if *meshlet_debug_mode == MeshletDebugMode::LightsPerPixel {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("grid reaches").small());
+            ui.add(
+                egui::DragValue::new(&mut cluster_settings.far)
+                    .speed(1.0)
+                    .range(cluster_settings.first_slice.max(1.0) + 1.0..=1000.0)
+                    .suffix(" m"),
+            )
+            .on_hover_text(
+                "How far the froxel grid reaches. The same slices cover it however far \
+                 it is, so a nearer far plane makes every one of them thinner. A light \
+                 beyond it lands in the last slice with everything behind it — nothing \
+                 renders wrong, but that slice over-lists.",
+            );
+        });
+        // What the number means, which the number itself does not say.
+        let grid = ClusterGrid::new(cluster_settings, glam::Vec2::new(viewport.x, viewport.y));
+        ui.label(
+            egui::RichText::new(format!(
+                "{}×{}×{} cells · froxel {:.1} m deep at 15 m",
+                grid.dimensions.x,
+                grid.dimensions.y,
+                grid.dimensions.z,
+                grid.slice_depth(15.0),
+            ))
+            .small()
+            .weak(),
+        )
+        .on_hover_text(
+            "Compare that depth against the range of your lights. A froxel deeper than \
+             the light it holds is what makes a pixel pay for lights that never reach it.",
         );
     }
     ui.horizontal(|ui| {
@@ -569,6 +615,8 @@ pub(crate) fn draw_perf_sidebar(
     meshlet_debug_caps: kooch_render::meshlet::MeshletDebugCaps,
     meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
     lights_hot: &mut LightsHot,
+    cluster_settings: &mut ClusterSettings,
+    viewport: egui::Vec2,
     hud_visibility: &mut crate::perf::HudVisibility,
     single_light_note: Option<&str>,
 ) {
@@ -650,6 +698,8 @@ pub(crate) fn draw_perf_sidebar(
                     meshlet_debug_caps,
                     meshlet_lod_settings,
                     lights_hot,
+                    cluster_settings,
+                    viewport,
                     hud_visibility,
                     single_light_note,
                 );

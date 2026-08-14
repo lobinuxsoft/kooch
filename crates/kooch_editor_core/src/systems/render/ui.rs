@@ -87,6 +87,7 @@ pub(super) fn run_editor_ui(
     single_light_note: Option<&str>,
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut kooch_lighting::LightsHot,
+    cluster_settings: &mut kooch_lighting::ClusterSettings,
     meshlet_stats: MeshletRenderStats,
     perf_stats: crate::perf::EditorPerfStats,
     gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
@@ -268,6 +269,7 @@ pub(super) fn run_editor_ui(
                 single_light_note,
                 meshlet_lod_settings,
                 lights_hot,
+                cluster_settings,
                 meshlet_stats,
                 perf_stats,
             };

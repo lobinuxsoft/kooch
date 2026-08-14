@@ -181,6 +181,11 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut lights_hot = resources
         .remove::<kooch_lighting::LightsHot>()
         .unwrap_or_default();
+    // Out of the map and back like the rest: the panel edits the same
+    // settings the clustering passes will read this frame.
+    let mut cluster_settings = resources
+        .remove::<kooch_lighting::ClusterSettings>()
+        .unwrap_or_default();
     // Stats are produced by last frame's viewport render and re-published
     // as a Resource. Read-only here — copied so we don't keep the borrow
     // through the egui pass.
@@ -469,6 +474,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         single_light_note,
         &mut meshlet_lod_settings,
         &mut lights_hot,
+        &mut cluster_settings,
         meshlet_stats,
         resources
             .get::<crate::perf::EditorPerfStats>()
@@ -516,6 +522,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     resources.insert(meshlet_debug_mode);
     resources.insert(meshlet_lod_settings);
     resources.insert(lights_hot);
+    resources.insert(cluster_settings);
 
     // Which light the single-light view isolates (#743): the selection,
     // because "one light at a time" is what selecting a light already

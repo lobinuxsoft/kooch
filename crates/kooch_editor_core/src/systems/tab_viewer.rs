@@ -129,6 +129,9 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) meshlet_lod_settings: &'a mut MeshletLodSettings,
     /// Top of scale for the lights-per-pixel view (#817).
     pub(crate) lights_hot: &'a mut kooch_lighting::LightsHot,
+    /// The froxel grid's reach, tuned beside the view that shows what it
+    /// costs (#820).
+    pub(crate) cluster_settings: &'a mut kooch_lighting::ClusterSettings,
     /// Per-frame meshlet pipeline counters republished as a Resource by
     /// the viewport render. Read-only, surfaced through the View
     /// toolbar's stats overlay.
@@ -255,6 +258,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.single_light_note,
                 self.meshlet_lod_settings,
                 self.lights_hot,
+                self.cluster_settings,
                 self.hud_visibility,
             ),
             EditorTab::View => draw_view_content(
