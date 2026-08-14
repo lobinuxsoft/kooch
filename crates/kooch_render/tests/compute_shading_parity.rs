@@ -326,3 +326,37 @@ fn a_deep_silhouette_matches() {
     let compute = render(&mut rig, true);
     assert_same_image(&fragment, &compute, "wall silhouette");
 }
+
+/// 🔴 `KOOCH_LIGHT_LIMIT` exists to be measured with, and a knob that
+/// silently does nothing produces a capture that looks like an answer.
+///
+/// Both paths, because an A/B between them with the cap on would
+/// otherwise be measuring the cap against no cap.
+#[test]
+fn the_light_limit_darkens_both_paths() {
+    let Some(mut rig) = rig(4, false) else {
+        eprintln!("no adapter with the 64-bit texture-atomic bundle; skipping");
+        return;
+    };
+
+    for compute in [false, true] {
+        rig.resources.insert(kooch_lighting::LightLimit(0));
+        let all = render(&mut rig, compute);
+        rig.resources.insert(kooch_lighting::LightLimit(1));
+        let capped = render(&mut rig, compute);
+
+        let path = if compute { "compute" } else { "fragment" };
+        assert_ne!(
+            all, capped,
+            "{path}: capping a froxel's lights to one changed nothing on screen",
+        );
+        // Darker, not merely different: the cap drops light, and a
+        // change in the other direction would mean it is doing
+        // something other than what it says.
+        let sum = |p: &[u8]| p.chunks_exact(4).map(|c| c[0] as u64).sum::<u64>();
+        assert!(
+            sum(&capped) < sum(&all),
+            "{path}: the capped render is not darker",
+        );
+    }
+}

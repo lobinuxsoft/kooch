@@ -326,7 +326,27 @@ pub struct IntiFrame {
     /// **0.0 keeps every light on the full model**, which is what every
     /// frame did before this existed.
     pub specular_floor: f32,
-    pub _pad_spot: u32,
+    /// How many of a froxel's punctual lights a pixel may evaluate, or
+    /// **0 for all of them** — which is what every frame does.
+    ///
+    /// 🔴 A measuring instrument, not a feature. Three experiments have
+    /// now made each light cheaper — the arithmetic (#821, 10 %), the
+    /// storage fetch (#824, 6.6 %), the grid's over-listing (#820,
+    /// nothing to win) — and the frame did not move. The one variable
+    /// none of them touched is *how many* lights a pixel evaluates, and
+    /// #820 measured that twelve to fifteen genuinely reach the surface,
+    /// so clustering cannot remove them by definition.
+    ///
+    /// Truncating the walk is not a technique anybody would ship: it
+    /// drops real light and the picture goes dark where the lights
+    /// overlap. What it answers is whether the cost is proportional to
+    /// that count — which decides #825 against #826, before either is
+    /// built.
+    ///
+    /// Directional lights are not counted. They are the buffer's prefix
+    /// and are not in the grid, so leaving them alone keeps the
+    /// experiment about the froxel's lights and nothing else.
+    pub light_limit: u32,
     /// One per shadow-casting point light (#778).
     ///
     /// 🔴 A different record from the spots', and the difference is the
@@ -460,6 +480,51 @@ fn floor_from_environment() -> f32 {
     })
 }
 
+/// How many of a froxel's punctual lights a pixel evaluates, as a
+/// [`Resource`](kooch_core::resource::Resources). `0` — the default —
+/// evaluates all of them.
+///
+/// See [`IntiFrame::light_limit`] for what it is for. Like
+/// `KOOCH_CLUSTERING` and `KOOCH_SPECULAR_FLOOR` it is an environment
+/// variable, and for the third time for the same reason: the editor is
+/// not where this can be measured. The desktop raster pass is 0.12 ms;
+/// there is no bottleneck there to remove.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct LightLimit(pub u32);
+
+impl Default for LightLimit {
+    fn default() -> Self {
+        Self(limit_from_environment())
+    }
+}
+
+/// `KOOCH_LIGHT_LIMIT=<n>`, read once.
+///
+/// Unparseable or negative keeps the default of "all": a typo during a
+/// measurement run must not silently change what is being measured.
+fn limit_from_environment() -> u32 {
+    static LIMIT: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        let Ok(raw) = std::env::var("KOOCH_LIGHT_LIMIT") else {
+            return 0;
+        };
+        match raw.trim().parse::<u32>() {
+            Ok(limit) => {
+                tracing::info!(
+                    "KOOCH_LIGHT_LIMIT={limit}: a pixel evaluates at most this many of its \
+                     froxel's punctual lights. The picture is wrong on purpose — this \
+                     measures whether the cost scales with that count."
+                );
+                limit
+            }
+            Err(_) => {
+                tracing::warn!("KOOCH_LIGHT_LIMIT={raw:?} is not a count — keeping all lights");
+                0
+            }
+        }
+    })
+}
+
 /// Top of scale for `MeshletDebugMode::LightsPerPixel`, as a
 /// [`Resource`](kooch_core::resource::Resources) the editor writes.
 ///
@@ -512,7 +577,7 @@ impl IntiFrame {
             spot_shadow_count: 0,
             point_shadow_count: 0,
             specular_floor: 0.0,
-            _pad_spot: 0,
+            light_limit: 0,
             point_shadows: [GpuPointShadow::default(); MAX_POINT_SHADOWS],
             shadows_enabled: 0,
             cascade_blend: 0.1,
@@ -571,6 +636,13 @@ impl IntiFrame {
     /// nothing, and zero already means "never skip".
     pub fn with_specular_floor(mut self, floor: f32) -> Self {
         self.specular_floor = floor.max(0.0);
+        self
+    }
+
+    /// Caps how many of a froxel's punctual lights a pixel evaluates
+    /// (0 = all). See [`IntiFrame::light_limit`].
+    pub fn with_light_limit(mut self, limit: u32) -> Self {
+        self.light_limit = limit;
         self
     }
 

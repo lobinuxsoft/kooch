@@ -189,7 +189,10 @@ struct IntiFrame {
     // Irradiance below which a light skips its specular layer (#821).
     // Zero keeps every light on the full model.
     specular_floor: f32,
-    _pad_spot1: u32,
+    // How many of a froxel's punctual lights a pixel may evaluate, or 0
+    // for all of them. A measuring instrument: it drops real light, and
+    // it exists to answer whether the cost scales with that count.
+    light_limit: u32,
     point_shadows: array<IntiPointShadow, 4>,
     // 0 when no directional light casts, or the atlas has not been
     // rendered. The dummy 1x1 atlas bound in that case would return
@@ -1250,7 +1253,14 @@ fn inti_clustered_lights(
     // Reflection probes, irradiance volumes and decals follow the spots
     // in the same record. Nothing reads them yet; when something does,
     // it reads its own range and this loop does not change.
-    let spots_end = points_end + cell.spot_count;
+    var spots_end = points_end + cell.spot_count;
+    // `KOOCH_LIGHT_LIMIT`. Applied here rather than in the caller so
+    // both shading paths inherit it from the one place the walk is
+    // written: the experiment has to be runnable against the fragment
+    // path, which is the one every earlier capture was taken with.
+    if (inti.light_limit != 0u) {
+        spots_end = min(spots_end, cell.offset + inti.light_limit);
+    }
 
     var radiance = vec3<f32>(0.0);
     for (var i = cell.offset; i < spots_end; i = i + 1u) {

@@ -119,7 +119,14 @@ fn shade_from_tile(
     for (var i = 0u; i < inti.directional_count; i = i + 1u) {
         radiance += inti_light_contribution(surf, inti_lights[i], frag_coord);
     }
-    for (var i = 0u; i < len; i = i + 1u) {
+    // `KOOCH_LIGHT_LIMIT`, the same cap `inti_clustered_lights` applies
+    // to the storage walk. Both paths have to honour it or an A/B
+    // between them stops being one.
+    var walk = len;
+    if (inti.light_limit != 0u) {
+        walk = min(walk, inti.light_limit);
+    }
+    for (var i = 0u; i < walk; i = i + 1u) {
         radiance += inti_light_contribution(
             surf, inti_lights[tile_lights[start + i]], frag_coord);
     }

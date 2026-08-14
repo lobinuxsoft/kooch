@@ -142,3 +142,35 @@ fn the_shader_gates_on_the_floor() {
     assert!(source.contains("inti.specular_floor"));
     assert!(source.contains("reach >= inti.specular_floor"));
 }
+
+/// `KOOCH_LIGHT_LIMIT`'s default has to be "every light", or every
+/// capture taken without the variable would silently be measuring a
+/// truncated scene (#824 follow-up).
+#[test]
+fn the_light_limit_defaults_to_all() {
+    assert_eq!(IntiFrame::default().light_limit, 0);
+    assert_eq!(LightLimit::default().0, 0);
+}
+
+#[test]
+fn the_light_limit_reaches_the_uniform() {
+    assert_eq!(IntiFrame::default().with_light_limit(3).light_limit, 3);
+}
+
+/// 🔴 Both shading paths must honour the cap. If only one did, the A/B
+/// between them would be measuring the cap rather than the paths.
+#[test]
+fn both_paths_honour_the_light_limit() {
+    let inti = crate::inti_pbr_shader(5);
+    assert!(inti.contains("inti.light_limit"));
+    assert!(
+        kooch_render_compute_body().contains("inti.light_limit"),
+        "the compute shading path ignores KOOCH_LIGHT_LIMIT",
+    );
+}
+
+/// The compute body lives in `kooch_render`, which depends on this
+/// crate — so it is read from the file rather than imported.
+fn kooch_render_compute_body() -> &'static str {
+    include_str!("../../kooch_render/shaders/material_pbr_compute.wgsl")
+}
