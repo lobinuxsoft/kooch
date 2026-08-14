@@ -8,6 +8,74 @@ use crate::icons;
 use crate::remote_session::ConnectionState;
 use crate::state::{ALL_TABS, EditorTab, dock_has_tab};
 
+/// What the Edit menu needs beyond the undo stack: what a chord would
+/// act on.
+///
+/// A struct rather than two more positional arguments on a function that
+/// already takes eleven.
+pub(crate) struct EditMenu<'a> {
+    pub selected: &'a [kooch_ecs::entity::Entity],
+    pub clipboard_has_entities: bool,
+    /// What a Ctrl+Z would reach, or `None` over a panel that edits
+    /// nothing. Named in the entry so the menu says *which* history —
+    /// "Undo Set intensity (this prefab)" is the difference between
+    /// trusting the chord and testing it.
+    pub document: Option<&'a crate::history::Document>,
+}
+
+/// Draws the Edit menu: every chord, whether it can run, and why.
+///
+/// Entries are **disabled, not hidden**, when they have nothing to act
+/// on. A menu that reorders itself according to the selection is a menu
+/// where the entry you are reaching for is somewhere else, and a greyed
+/// Paste is how a user learns the clipboard is empty.
+fn draw_edit_menu(
+    ui: &mut egui::Ui,
+    actions: &mut Vec<EditorAction>,
+    edit: &EditMenu<'_>,
+    can_undo: bool,
+    can_redo: bool,
+    undo_desc: Option<&str>,
+    redo_desc: Option<&str>,
+) {
+    use crate::shortcuts::{ALL, EditChord, actions_for};
+
+    for chord in ALL {
+        // Undo and Redo name the step they would take — "Undo Duplicate
+        // Entity" — which is the whole reason the history keeps labels.
+        let scope = edit
+            .document
+            .map(|document| format!(" ({})", document.describe()))
+            .unwrap_or_default();
+        let text = match (chord, undo_desc, redo_desc) {
+            (EditChord::Undo, Some(desc), _) => {
+                format!("Undo {desc}{scope}  {}", chord.chord())
+            }
+            (EditChord::Redo, _, Some(desc)) => {
+                format!("Redo {desc}{scope}  {}", chord.chord())
+            }
+            _ => chord.menu_text(),
+        };
+        let enabled = match chord {
+            EditChord::Undo => can_undo && edit.document.is_some(),
+            EditChord::Redo => can_redo && edit.document.is_some(),
+            EditChord::Duplicate | EditChord::Copy => !edit.selected.is_empty(),
+            EditChord::Paste => edit.clipboard_has_entities,
+        };
+        if chord == EditChord::Duplicate {
+            ui.separator();
+        }
+        if ui
+            .add_enabled(enabled, egui::Button::new(text))
+            .on_hover_text(chord.tooltip())
+            .clicked()
+        {
+            actions.extend(actions_for(chord, edit.selected, edit.document));
+            ui.close();
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_menu_bar(
     ui: &mut egui::Ui,
@@ -22,21 +90,13 @@ pub(crate) fn draw_menu_bar(
     redo_desc: Option<&str>,
     power_profile: PowerProfile,
     _ide_command: Option<&str>,
+    edit: EditMenu<'_>,
 ) {
-    // Keyboard shortcuts — check before any UI so they work regardless of focus.
-    let ctrl_z = ui
-        .ctx()
-        .input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z));
-    let ctrl_y = ui
-        .ctx()
-        .input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Y));
-
-    if ctrl_z && can_undo {
-        actions.push(EditorAction::Undo);
-    }
-    if ctrl_y && can_redo {
-        actions.push(EditorAction::Redo);
-    }
+    // 🔴 The chords are read after the dock draws, in `run_editor_ui`,
+    // not here. They are gated on which panel has focus, and the menu bar
+    // draws before the dock has said which one that is — reading them
+    // here meant reading last frame's answer, and made "the shortcut
+    // works if you press it twice" a real behaviour.
 
     // `Panel::top` in egui 0.35: `SidePanel` and `TopBottomPanel` were
     // unified into one `Panel` type (egui #5659).
@@ -90,29 +150,7 @@ pub(crate) fn draw_menu_bar(
                 }
             });
             ui.menu_button("Edit", |ui| {
-                let undo_label = match undo_desc {
-                    Some(desc) => format!("Undo {desc}  Ctrl+Z"),
-                    None => "Undo  Ctrl+Z".to_owned(),
-                };
-                if ui
-                    .add_enabled(can_undo, egui::Button::new(undo_label))
-                    .clicked()
-                {
-                    actions.push(EditorAction::Undo);
-                    ui.close();
-                }
-
-                let redo_label = match redo_desc {
-                    Some(desc) => format!("Redo {desc}  Ctrl+Y"),
-                    None => "Redo  Ctrl+Y".to_owned(),
-                };
-                if ui
-                    .add_enabled(can_redo, egui::Button::new(redo_label))
-                    .clicked()
-                {
-                    actions.push(EditorAction::Redo);
-                    ui.close();
-                }
+                draw_edit_menu(ui, actions, &edit, can_undo, can_redo, undo_desc, redo_desc);
             });
             ui.menu_button("Engine", |ui| {
                 ui.menu_button(format!("Power Profile: {}", power_profile.as_str()), |ui| {

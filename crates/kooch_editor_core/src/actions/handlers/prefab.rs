@@ -271,6 +271,19 @@ pub(super) fn handle_edit_prefab_field(
     field: &str,
     value: kooch_ecs::reflect::ReflectValue,
 ) {
+    // The document as it stands, before this write. Merged by field, so
+    // typing into a prefab's name is one step rather than one per letter.
+    crate::history::documents::record(
+        resources,
+        &crate::history::Document::Prefab(prefab),
+        &format!("Set {field}"),
+        Some(crate::history::MergeKey::of((
+            prefab,
+            entity_index,
+            component,
+            field,
+        ))),
+    );
     let applied = with_cached_document(resources, prefab, |document| {
         let Some(entity) = document.entities.get_mut(entity_index) else {
             return false;
@@ -305,6 +318,17 @@ pub(super) fn handle_edit_prefab_component(
     component: kooch_ecs::component::ComponentId,
     add: bool,
 ) {
+    // No merge key: adding a component is a discrete thing, and two of
+    // them in a row are two steps however fast they were clicked.
+    crate::history::documents::record(
+        resources,
+        &crate::history::Document::Prefab(prefab),
+        match add {
+            true => "Add Component",
+            false => "Remove Component",
+        },
+        None,
+    );
     // The document stores a type name, the menu speaks `ComponentId`, and
     // the registry is the only thing that knows both.
     let Some(type_name) = resources

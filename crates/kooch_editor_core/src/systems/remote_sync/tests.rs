@@ -380,3 +380,63 @@ fn an_idle_handle_set_does_not_block_the_refresh() {
     resources.insert(dragging_handles());
     assert!(drag_in_flight(&resources));
 }
+
+/// An edit the editor just sent is not "outside change": the pull that
+/// shows it has to be the next frame's, not the next tick of a
+/// half-second cadence. Waiting it out is what made Ctrl+Z look ignored.
+#[test]
+fn an_edit_asks_for_a_pull() {
+    let mut sync = RemoteSyncState::default();
+    sync.last_pull = Some(std::time::Instant::now());
+    assert!(
+        sync.last_pull
+            .is_some_and(|last| last.elapsed() < sync.idle_interval),
+        "the cadence would have skipped the pull",
+    );
+
+    sync.invalidate();
+    assert!(
+        sync.last_pull
+            .is_none_or(|last| last.elapsed() >= sync.idle_interval),
+        "the pull is still waiting out the cadence",
+    );
+}
+
+/// The intent is spent when the mirror can name what the project made,
+/// and held until then — the project's id is not a handle this side can
+/// select.
+///
+/// The selection write itself is not covered here: it needs an
+/// `EditorOverlay`, which needs a GPU. What is covered is the half that
+/// decides *when* — which is where a creation either lands selected or
+/// lands lost in a list of six hundred.
+#[test]
+fn a_creation_waits_for_its_snapshot() {
+    use kooch_remote::protocol::{EntityId, EntitySnapshot};
+
+    let mut resources = ecs();
+    let mut mirror = crate::remote_mirror::RemoteMirror::new();
+    let made = EntityId {
+        index: 4,
+        generation: 1,
+    };
+    let mut pending = vec![made];
+
+    // Before the snapshot: nothing to name, so the intent is kept.
+    take_selection(&mut resources, &mirror, &mut pending);
+    assert_eq!(pending.len(), 1, "the intent was dropped too early");
+
+    mirror.apply(
+        &[EntitySnapshot {
+            id: made,
+            name: Some("Hero Copy".to_owned()),
+            parent: None,
+            components: Vec::new(),
+        }],
+        &mut resources,
+    );
+    take_selection(&mut resources, &mirror, &mut pending);
+
+    assert!(pending.is_empty(), "the intent outlived its snapshot");
+    assert!(mirror.local_of(made).is_some());
+}

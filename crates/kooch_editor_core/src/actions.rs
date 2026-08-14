@@ -3,7 +3,8 @@
 mod asset_ops;
 mod codegen;
 mod dispatch;
-mod handlers;
+pub(crate) mod entity_state;
+pub(crate) mod handlers;
 mod ide;
 
 /// The IDE this machine would use, as a command string the Settings
@@ -18,6 +19,7 @@ pub(crate) fn detected_ide_command() -> Option<String> {
     Some(parts.join(" "))
 }
 mod remote_edit;
+pub(crate) mod remote_undo;
 pub(crate) mod scene_io;
 
 use std::any::TypeId;
@@ -65,6 +67,15 @@ pub(crate) enum EditorAction {
     /// quickly bring up parallel test entities (e.g. the LOD-stack
     /// inspector workflow needs N copies of one mesh entity).
     Duplicate(Entity),
+    /// Read entities into the editor's clipboard, replacing what was
+    /// there. Carries the selection because the clipboard is filled from
+    /// a panel that has one and the handler has not.
+    CopyEntities(Vec<Entity>),
+    /// Build the clipboard's contents as new entities.
+    ///
+    /// Takes no argument: what to paste is whatever was copied, and a
+    /// paste that named its own source would be a duplicate.
+    PasteEntities,
     SetField {
         entity: Entity,
         component: ComponentId,
@@ -88,8 +99,13 @@ pub(crate) enum EditorAction {
         after: Transform,
         desc: &'static str,
     },
-    Undo,
-    Redo,
+    /// Reverse the last edit **to one document**.
+    ///
+    /// The document travels with the chord because only the UI knows
+    /// which one is being looked at, and the whole point of #813 is that
+    /// a Ctrl+Z in the Input Map panel must not reach the scene.
+    Undo(crate::history::Document),
+    Redo(crate::history::Document),
     SaveScene,
     OpenScene,
     /// Write an entity and its descendants to a scene file — a prefab.
@@ -442,13 +458,15 @@ impl EditorAction {
             | Self::SpawnMesh { .. }
             | Self::Despawn(_)
             | Self::Duplicate(_)
+            // Both read or write entities, so both wait for a world to
+            // read them out of.
+            | Self::CopyEntities(_)
+            | Self::PasteEntities
             | Self::SetField { .. }
             | Self::AddComponent { .. }
             | Self::RemoveComponent { .. }
             | Self::TransformEdit { .. }
             | Self::Reparent { .. }
-            | Self::Undo
-            | Self::Redo
             | Self::SaveScene
             | Self::SavePrefab { .. }
             | Self::InstantiatePrefab { .. }
@@ -505,6 +523,11 @@ impl EditorAction {
             | Self::EditInputMap(_)
             | Self::SaveInputMap
             | Self::InputMapFocused => false,
+
+            // Only the scene's history needs the world. A prefab or an
+            // input map is a document this side owns, and undoing an edit
+            // to one while the project compiles is fine.
+            Self::Undo(document) | Self::Redo(document) => document.is_world(),
 
             // Editor preferences and things that act on files rather than
             // on the world. An asset edit is about a `.ron` on disk, and
@@ -732,14 +755,17 @@ pub(crate) fn apply_actions(
     while i < actions.len() {
         let action = actions[i];
 
-        // Undo/Redo are handled directly.
-        if matches!(action, EditorAction::Undo) {
-            undo_stack.undo(resources);
-            i += 1;
-            continue;
-        }
-        if matches!(action, EditorAction::Redo) {
-            undo_stack.redo(resources);
+        // Undo/Redo are handled directly — the scene's here, and every
+        // other document by the handler below.
+        if let EditorAction::Undo(document) | EditorAction::Redo(document) = action {
+            let undo = matches!(action, EditorAction::Undo(_));
+            match (document.is_world(), undo) {
+                (true, true) => undo_stack.undo(resources),
+                (true, false) => undo_stack.redo(resources),
+                (false, _) => {
+                    crate::history::documents::step(resources, document, undo);
+                }
+            }
             i += 1;
             continue;
         }

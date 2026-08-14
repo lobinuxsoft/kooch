@@ -48,6 +48,16 @@ pub struct RemoteState {
     /// frame. Starts `false` so the first snapshot always goes: it is the
     /// one that releases whatever the host thinks is still held.
     pub last_input_was_idle: bool,
+    /// Entities the project has just created for us, waiting to be
+    /// selected once the mirror knows about them.
+    ///
+    /// 🔴 A creation cannot select what it made on the spot. The project
+    /// answers with *its* id, and the editor's selection is made of
+    /// mirror handles that do not exist until the next snapshot arrives.
+    /// So the intent is parked here and spent by the sync — which is the
+    /// difference between duplicating an entity and duplicating an
+    /// entity, then hunting for it in a list of six hundred.
+    pub pending_selection: Vec<kooch_remote::protocol::EntityId>,
     /// The last line the project said while connecting, and every line
     /// of it.
     ///

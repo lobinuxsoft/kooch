@@ -28,10 +28,16 @@ use crate::remote_session::RemoteState;
 ///
 /// The caller guarantees a connected session before calling.
 pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool {
-    // Undo/Redo have no remote form yet; swallow them in remote mode
-    // rather than replaying against the mirror (which the next refresh
-    // overwrites anyway).
-    if matches!(action, EditorAction::Undo | EditorAction::Redo) {
+    // Undo/Redo travel as inverses of the edits already sent — the local
+    // command stack describes the mirror, which the next refresh
+    // overwrites. See [`crate::actions::remote_undo`].
+    //
+    // Only the scene's, though: a prefab and an input map are documents
+    // this side owns, and their histories never touch the wire.
+    if let EditorAction::Undo(document) | EditorAction::Redo(document) = action
+        && document.is_world()
+    {
+        crate::actions::remote_undo::step(resources, matches!(action, EditorAction::Undo(_)));
         return true;
     }
 
@@ -71,10 +77,19 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         _ => None,
     };
 
+    // Asked before the send, because after it the state it describes is
+    // gone: an undo needs the value that is about to be overwritten, the
+    // component about to be removed, the subtree about to be despawned.
+    let before = crate::actions::remote_undo::capture_before(action, resources, &state.mirror);
+
     let mut sent = false;
+    // Entities the edit brought into being. Filled by the arms that
+    // create — it is the only thing an undo of a creation needs, and the
+    // ids exist nowhere until the project answers with them.
+    let mut created: Vec<kooch_remote::protocol::EntityId> = Vec::new();
     if let Some(session) = state.session.as_ref() {
         let names = resources.get::<ComponentNames>();
-        match send(edit, session, &state.mirror, names, resources) {
+        match send(edit, session, &state.mirror, names, resources, &mut created) {
             Ok(()) if is_play_toggle => {
                 state.playing = playing;
                 sent = true;
@@ -86,6 +101,23 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
 
     resources.insert(state);
 
+    if sent {
+        // Selecting what was just made — but only for a creation the user
+        // asked for. Undoing a despawn also creates, and stealing the
+        // selection there would fight whatever they had selected when
+        // they pressed Ctrl+Z.
+        if selects_what_it_makes(action)
+            && !created.is_empty()
+            && let Some(state) = resources.get_mut::<RemoteState>()
+        {
+            state.pending_selection = created.clone();
+        }
+        crate::actions::remote_undo::record(resources, action, before, created);
+        // The editor is waiting to see this one, so it does not wait out
+        // the half-second poll to find out.
+        pull_soon(resources);
+    }
+
     // The project wrote the file; this side has to be told it exists, or
     // the Inspector cannot find what the user just made until the editor
     // restarts. Done here rather than in `send`, which holds the world
@@ -96,6 +128,30 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         crate::actions::handlers::prefab_saved(resources, &path);
     }
     true
+}
+
+/// Whether the entities this action creates should end up selected.
+///
+/// Every editor does this and the reason is the same in all of them: you
+/// duplicate a thing in order to move it, and a copy that lands
+/// unselected in a list of six hundred is a copy you have to go and find.
+fn selects_what_it_makes(action: &EditorAction) -> bool {
+    matches!(
+        action,
+        EditorAction::Duplicate(_)
+            | EditorAction::PasteEntities
+            | EditorAction::Spawn { .. }
+            | EditorAction::SpawnMesh { .. }
+            | EditorAction::InstantiatePrefab { .. }
+    )
+}
+
+/// Asks the mirror to catch up on the next frame rather than at the next
+/// tick of its cadence.
+pub(super) fn pull_soon(resources: &mut Resources) {
+    if let Some(sync) = resources.get_mut::<crate::systems::RemoteSyncState>() {
+        sync.invalidate();
+    }
 }
 
 /// Builds a mesh-bound entity on the project's side.
@@ -159,6 +215,13 @@ fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name: &str) {
         %guid,
         "spawned a mesh entity on the project",
     );
+
+    // Set here rather than through `created`: this arm never reaches
+    // `send`, because resolving the asset needs a mutable world and an
+    // `Edit` has to be sendable from an immutable one.
+    if let Some(state) = resources.get_mut::<RemoteState>() {
+        state.pending_selection = vec![entity];
+    }
 }
 
 /// Loads a mesh asset locally and returns its GUID and asset type name.
@@ -211,80 +274,83 @@ fn resolve_mesh_asset(
 /// knows.
 ///
 /// The editor holds every reflected component and its current values for
-/// the mirrored source, so no protocol method is needed: spawn, then
-/// `add_component` per component, then `set_field` per field. The same
-/// decomposition `SpawnMesh` uses.
-///
-/// Fields that fail to apply are logged and skipped rather than aborting.
-/// A half-copied entity the user can see and fix beats an entity that was
-/// never created because one opaque field would not travel.
+/// the mirrored source, so no protocol method is needed: it decomposes
+/// into spawn + `add_component` + `set_field`, which is what [`build`]
+/// does for every entity the editor creates remotely.
 fn duplicate(
     entity: kooch_ecs::entity::Entity,
     client: &kooch_remote::RemoteClient,
     mirror: &crate::remote_mirror::RemoteMirror,
     resources: &Resources,
-) -> Result<(), String> {
-    use kooch_ecs::component::ComponentRegistry;
-
-    let source = mirror
+) -> Result<kooch_remote::protocol::EntityId, String> {
+    // Only to fail early with a clear reason: an entity the mirror does
+    // not know is one the project never had.
+    mirror
         .remote_of(entity)
         .ok_or_else(|| "entity not in mirror".to_owned())?;
-    let registry = resources
-        .get::<ComponentRegistry>()
-        .ok_or_else(|| "no component registry".to_owned())?;
 
-    // Read the source's components off the *mirror*, which is the editor's
-    // copy of what the project has.
-    let components: Vec<(String, Vec<(String, kooch_ecs::reflect::ReflectValue)>)> = registry
-        .reflected_type_names()
-        .into_iter()
-        .filter_map(|(type_id, name)| {
-            let fields = registry.reflect_get_fields(&type_id, entity)?;
-            Some((name.to_owned(), fields))
-        })
-        .collect();
+    let state = crate::actions::entity_state::as_copy(&crate::actions::entity_state::capture(
+        resources, entity,
+    ));
+    let copy = build(client, mirror, &state)?;
+    tracing::info!(
+        target: "kooch_editor_core::remote_edit::duplicate",
+        components = state.components.len(),
+        "duplicated an entity on the project",
+    );
+    Ok(copy)
+}
 
-    let name = components
-        .iter()
-        .find(|(n, _)| n.ends_with("::Name"))
-        .and_then(|(_, fields)| fields.iter().find(|(f, _)| f == "value"))
-        .and_then(|(_, v)| match v {
-            kooch_ecs::reflect::ReflectValue::String(s) => Some(format!("{s} Copy")),
-            _ => None,
-        });
-
-    let copy = client.spawn(name.as_deref()).map_err(|e| e.to_string())?;
-
-    for (type_name, fields) in &components {
-        if let Err(e) = client.add_component(copy, type_name) {
+/// Builds one entity on the project out of a captured state.
+///
+/// The one place an entity is created remotely from values: duplicate,
+/// paste and undoing a despawn all land here, so a component that fails
+/// to travel fails the same way for all three.
+///
+/// Fields that fail to apply are logged and skipped rather than aborting.
+/// A half-copied entity the user can see and fix beats an entity that was
+/// never created because one opaque field would not travel.
+pub(super) fn build(
+    client: &kooch_remote::RemoteClient,
+    mirror: &crate::remote_mirror::RemoteMirror,
+    state: &crate::actions::entity_state::EntityState,
+) -> Result<kooch_remote::protocol::EntityId, String> {
+    let id = client
+        .spawn(state.name.as_deref())
+        .map_err(|e| e.to_string())?;
+    for component in &state.components {
+        if let Err(e) = client.add_component(id, &component.name) {
             tracing::warn!(
-                target: "kooch_editor_core::remote_edit::duplicate",
-                component = %type_name,
-                error = %e,
-                "could not add a component to the copy",
+                target: "kooch_editor_core::remote_edit::build",
+                component = %component.name,
+                "the entity did not get a component: {e}",
             );
             continue;
         }
-        for (field, value) in fields {
-            if let Err(e) = client.set_field(copy, type_name, field, value.clone()) {
+        for (field, value) in &component.fields {
+            let value = match to_remote_value(value.clone(), mirror) {
+                Ok(value) => value,
+                Err(e) => {
+                    tracing::debug!(
+                        target: "kooch_editor_core::remote_edit::build",
+                        component = %component.name,
+                        %field,
+                        "reference did not translate: {e}",
+                    );
+                    continue;
+                }
+            };
+            if let Err(e) = client.set_field(id, &component.name, field, value) {
                 tracing::debug!(
-                    target: "kooch_editor_core::remote_edit::duplicate",
-                    component = %type_name,
+                    target: "kooch_editor_core::remote_edit::build",
+                    component = %component.name,
                     %field,
-                    error = %e,
-                    "field did not copy",
+                    "field did not travel: {e}",
                 );
             }
         }
     }
-
-    tracing::info!(
-        target: "kooch_editor_core::remote_edit::duplicate",
-        ?source,
-        components = components.len(),
-        "duplicated an entity on the project",
-    );
-    Ok(())
+    Ok(id)
 }
 
 /// An ECS edit reduced to the fields the remote protocol needs.
@@ -321,6 +387,17 @@ enum Edit<'a> {
     /// spawn + add_component + set_field. Before this it was claimed by
     /// nobody at all and dropped in silence (#595).
     Duplicate(kooch_ecs::entity::Entity),
+    /// Build entities out of the editor's clipboard.
+    ///
+    /// Carries the values rather than the source entities: what was
+    /// copied is a value, and it still pastes after the entity it came
+    /// from has been deleted — or after the project it came from was
+    /// restarted.
+    ///
+    /// Owned, unlike its neighbours: the values come from the clipboard
+    /// resource, and the borrow of `Resources` that reads it ends before
+    /// the send that needs the session out of the same `Resources`.
+    Paste(Vec<crate::actions::entity_state::EntityState>),
     Spawn {
         name: Option<String>,
         /// Component types the action asked for beyond the base ones.
@@ -410,6 +487,17 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
             new_parent: *new_parent,
         }),
         EditorAction::Duplicate(entity) => Some(Edit::Duplicate(*entity)),
+        // Nothing to send for an empty clipboard, and `None` here would
+        // send it down the local path instead of doing nothing.
+        EditorAction::PasteEntities => {
+            let states = resources
+                .get::<crate::clipboard::EntityClipboard>()?
+                .states();
+            match states.is_empty() {
+                true => None,
+                false => Some(Edit::Paste(states.to_vec())),
+            }
+        }
         EditorAction::Spawn { name, extra } => Some(Edit::Spawn {
             name: name.clone(),
             extra: extra.clone(),
@@ -528,7 +616,7 @@ fn push_writes(
 /// whatever the project happens to have at that index.
 ///
 /// Anything else passes through untouched.
-fn to_remote_value(
+pub(super) fn to_remote_value(
     value: kooch_ecs::reflect::ReflectValue,
     mirror: &crate::remote_mirror::RemoteMirror,
 ) -> Result<kooch_ecs::reflect::ReflectValue, String> {
@@ -551,12 +639,18 @@ fn to_remote_value(
 }
 
 /// Sends one [`Edit`] to the project's server.
+///
+/// `created` collects the ids of entities the edit brought into being.
+/// An out-parameter rather than a return value because only four of the
+/// twenty arms create anything, and threading `Vec::new()` through the
+/// other sixteen would say nothing sixteen times.
 fn send(
     edit: Edit<'_>,
     session: &crate::remote_session::RemoteSession,
     mirror: &crate::remote_mirror::RemoteMirror,
     names: Option<&ComponentNames>,
     resources: &Resources,
+    created: &mut Vec<kooch_remote::protocol::EntityId>,
 ) -> Result<(), String> {
     use kooch_ecs::reflect::ReflectValue;
 
@@ -604,12 +698,26 @@ fn send(
             };
             client.set_parent(remote(entity)?, parent).map_err(map_err)
         }
-        Edit::Duplicate(entity) => duplicate(entity, &client, mirror, resources),
+        Edit::Duplicate(entity) => {
+            created.push(duplicate(entity, &client, mirror, resources)?);
+            Ok(())
+        }
+        Edit::Paste(states) => {
+            for state in &states {
+                created.push(build(
+                    &client,
+                    mirror,
+                    &crate::actions::entity_state::as_copy(state),
+                )?);
+            }
+            Ok(())
+        }
         Edit::Spawn {
             name: entity_name,
             extra,
         } => {
             let entity = client.spawn(entity_name.as_deref()).map_err(map_err)?;
+            created.push(entity);
             // Remote `spawn` creates only `Name`, while the local path adds
             // Name + Transform + extras. Everything past the name has to be
             // asked for explicitly, or the entity arrives inert — a light
@@ -724,6 +832,7 @@ fn send(
             let root = client
                 .instantiate_prefab(&path.to_string_lossy())
                 .map_err(map_err)?;
+            created.push(root);
             // Placing the instance is a `SetField` on the root that just
             // came back, rather than a parameter on the call. It reuses the
             // path that already knows how to write a reflected field, and

@@ -99,6 +99,7 @@ fn the_panel_records_the_range_it_drew() {
             1,
             &mut last_clicked,
             &[],
+            false,
         );
         ui.data(|d| d.get_temp::<(usize, usize)>(visible_range_id()))
     });

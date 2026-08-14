@@ -219,11 +219,49 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             .resize_if_needed(gpu.device(), &mut overlay.renderer);
     }
 
+    // 🔴 Which history the Edit menu describes follows which one a
+    // Ctrl+Z would reach. With a project open that is the remote one —
+    // the local stack still holds commands, but they describe the mirror
+    // and nothing will ever run them again. Reading the wrong one is how
+    // the menu offered "Undo Duplicate Entity" for an edit made before
+    // the project was opened.
+    // Which document the Edit menu is describing, and therefore which
+    // history it reads. The kind comes from the asset database rather
+    // than the Inspector's own snapshot: both know, and the database
+    // knows before the panel has drawn.
+    let document = crate::history::resolve(
+        overlay.focused_tab,
+        overlay
+            .selected_asset
+            .map(|guid| (guid, asset_kind(resources, guid))),
+        resources
+            .get::<crate::state::OpenInputMap>()
+            .map(|open| open.path.clone())
+            .as_deref(),
+    );
+    let (can_undo, can_redo, undo_desc, redo_desc) = match document.as_ref() {
+        // A document of its own, with a history of its own.
+        Some(document) if !document.is_world() => {
+            let histories = resources.get::<crate::history::documents::DocumentHistories>();
+            (
+                histories.is_some_and(|h| h.can_undo(document)),
+                histories.is_some_and(|h| h.can_redo(document)),
+                histories.and_then(|h| h.undo_description(document).map(String::from)),
+                histories.and_then(|h| h.redo_description(document).map(String::from)),
+            )
+        }
+        _ => world_history(resources, &undo_stack),
+    };
+
     let toolbar = ToolbarInfo {
-        can_undo: undo_stack.can_undo(),
-        can_redo: undo_stack.can_redo(),
-        undo_desc: undo_stack.undo_description().map(String::from),
-        redo_desc: undo_stack.redo_description().map(String::from),
+        can_undo,
+        can_redo,
+        undo_desc,
+        redo_desc,
+        document,
+        clipboard_has_entities: resources
+            .get::<crate::clipboard::EntityClipboard>()
+            .is_some_and(|clipboard| !clipboard.is_empty()),
         remote: resources
             .get::<crate::remote_session::RemoteState>()
             .and_then(|s| s.session.as_ref().map(|s| s.state())),
@@ -629,6 +667,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     stages.present_ms = crate::perf::ms_since(present_start);
 
     resources.insert(gpu);
+    // Read before the overlay goes back, applied after this frame's edits
+    // — see `seal_histories`.
+    let ended = overlay.ctx.input(|i| i.pointer.any_released());
     resources.insert(overlay);
     resources.insert(viewport);
     if let Some(game) = game_view {
@@ -651,6 +692,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 
     let actions_start = std::time::Instant::now();
     apply_deferred_actions(resources, &actions, &mut undo_stack);
+    if ended {
+        seal_histories(resources);
+    }
     stages.actions_ms = crate::perf::ms_since(actions_start);
 
     resources.insert(undo_stack);
@@ -768,5 +812,78 @@ fn apply_viewport_click(
         (None, false) => overlay.selected_entities.clear(),
         // Ctrl+click on nothing is a miss, not "deselect everything".
         (None, true) => {}
+    }
+}
+
+/// What the scene's history can offer, from whichever one is driving it.
+///
+/// 🔴 With a project open that is the remote one — the local stack still
+/// holds commands, but they describe the mirror and nothing will ever run
+/// them again. Reading the wrong one is how the menu offered "Undo
+/// Duplicate Entity" for an edit made before the project was opened.
+fn world_history(
+    resources: &kooch_core::resource::Resources,
+    undo_stack: &UndoStack,
+) -> (bool, bool, Option<String>, Option<String>) {
+    let remote = resources
+        .get::<crate::remote_session::RemoteState>()
+        .is_some_and(|state| state.is_connected())
+        .then(|| resources.get::<crate::actions::remote_undo::RemoteHistory>())
+        .flatten();
+    match remote {
+        Some(history) => (
+            history.can_undo(),
+            history.can_redo(),
+            history.undo_description().map(String::from),
+            history.redo_description().map(String::from),
+        ),
+        None => (
+            undo_stack.can_undo(),
+            undo_stack.can_redo(),
+            undo_stack.undo_description().map(String::from),
+            undo_stack.redo_description().map(String::from),
+        ),
+    }
+}
+
+/// Whether a guid names a prefab or an ordinary asset.
+///
+/// By the type the asset database recorded, which is the same answer the
+/// Inspector reaches through its own snapshot — and available here
+/// before the Inspector has drawn.
+fn asset_kind(
+    resources: &kooch_core::resource::Resources,
+    guid: kooch_core::Guid,
+) -> crate::history::AssetKind {
+    let prefab = resources
+        .get::<kooch_core::asset_database::AssetDatabase>()
+        .and_then(|db| db.entry(guid)?.type_name.clone())
+        .is_some_and(|name| name == std::any::type_name::<kooch_ecs::scene::SceneDocument>());
+    match prefab {
+        true => crate::history::AssetKind::Prefab,
+        false => crate::history::AssetKind::Asset,
+    }
+}
+
+/// Closes the current run of edits in every history.
+///
+/// 🔴 Called *after* this frame's edits are applied, never before: a seal
+/// applied first would close the group those edits are still filling, and
+/// every frame of a drag would be its own step again — the bug the merge
+/// rule exists to fix.
+///
+/// A released pointer is the boundary that covers what a person actually
+/// does: it ends a drag, and it is also how they leave one field for the
+/// next, since focus changes follow a click.
+///
+/// Both of them, because the user does not know which one their last
+/// edit went to — they clicked a field, and whether that was a prefab's
+/// or an entity's is the editor's bookkeeping, not theirs.
+fn seal_histories(resources: &mut Resources) {
+    if let Some(history) = resources.get_mut::<crate::actions::remote_undo::RemoteHistory>() {
+        history.seal();
+    }
+    if let Some(histories) = resources.get_mut::<crate::history::documents::DocumentHistories>() {
+        histories.seal();
     }
 }

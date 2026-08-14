@@ -108,6 +108,9 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Project / engine `assets/` roots, for the Asset Browser tree.
     pub(crate) engine_assets_root: Option<&'a std::path::Path>,
     pub(crate) project_assets_root: Option<&'a std::path::Path>,
+    /// Whether Ctrl+V has anything to paste, so the World panel's button
+    /// can be greyed rather than silently doing nothing.
+    pub(crate) clipboard_has_entities: bool,
     /// The scene the project opens with, for the Asset Browser to mark
     /// (#808). Resolved once per frame from the manifest.
     pub(crate) main_scene: Option<&'a std::path::Path>,
@@ -236,6 +239,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.active_archetype_count,
                 self.last_clicked_index,
                 self.scenes,
+                self.clipboard_has_entities,
             ),
             EditorTab::Game => draw_game_content(
                 ui,

@@ -62,6 +62,59 @@ and opened.
 | **Console** | Structured logs from the editor *and* the launched project, filterable. Text is selectable and copyable. |
 | **Performance** | Frame timings, and per-stage counters where they exist. |
 
+## Editing shortcuts
+
+| Chord | What it does |
+|---|---|
+| **Ctrl+Z** / **Ctrl+Y** | Undo / redo the last edit. The Edit menu names the step it would take — *Undo Duplicate Entity* — so you can see what you are about to reverse. |
+| **Ctrl+D** | Duplicate the selection where it stands. |
+| **Ctrl+C** / **Ctrl+V** | Copy the selected entities into the editor's clipboard and paste them as new ones, named `Player Copy`. What is held is the *values*, so a copy still pastes after the original is deleted. |
+
+Ctrl+D, Ctrl+C and Ctrl+V act on the entity selection, so they are live only while the
+**World** panel or the **View** has focus. None of the four fire while you are typing in a
+field: Ctrl+C in the Console copies a log line, and in the Inspector it copies text. Each
+command is also in the **Edit** menu and in the World panel's toolbar, with its chord written
+beside it — a greyed-out Paste means the clipboard is empty.
+
+### Undo follows the document, not the panel
+
+**Ctrl+Z undoes an edit to the thing you are looking at.** The editor holds several documents
+open at once, and each keeps its own history:
+
+| What you are editing | What Ctrl+Z reaches |
+|---|---|
+| The scene (World, View, or the Inspector on an entity) | the project's world |
+| A prefab open in the Inspector | that prefab's document — one history per prefab |
+| A material or an import setting | that asset |
+| The input map in its panel | that map |
+| The Console, the Asset Browser, the Build panel | nothing at all |
+
+The Edit menu names both the step and the document — *Undo Set intensity (this prefab)* — so
+you can see which history you are about to move before you move it.
+
+One stack for the whole editor is the Unity and Unreal model; it fits an editor that holds one
+document open, and this one does not. A history *per panel* would be worse: the Inspector edits
+whatever is selected, so its stack would hold edits to three different things. Godot 4 reaches
+the same answer — histories keyed by scene, a global one for what belongs to no scene, and a
+separate `REMOTE_HISTORY` for a live-edited remote world, which is exactly the split here.
+
+**A continuous edit is one step.** Typing `Player` into a name field emits an edit per
+keystroke and dragging a slider emits one per frame; edits to the same field collapse into a
+single history entry, closed when you release the mouse or leave the field. Without that the
+undo works perfectly and reads as broken — six Ctrl+Z to undo one rename.
+
+**Asset files are deliberately not undoable.** Renaming, deleting and importing are not in any
+history: between the operation and the Ctrl+Z there is a filesystem watcher, an importer and
+whatever else is running, so an undo would be a promise the editor cannot keep. Unity leaves
+its Project window out of the undo stack for the same reason.
+
+> **With a project open, undo travels to the project.** The editor's world is a mirror of one
+> the project owns, so a Ctrl+Z is sent as the *inverse* of the edit that was made — the
+> project applies it, and the mirror catches up on the next refresh. Undoing a despawn brings
+> the whole subtree back with its values, under new entity handles: it is a rebuild, not a
+> resurrection. Loading a scene or closing the project clears the history, because the world
+> it describes is gone.
+
 ## Play
 
 Play does **not** rebuild anything and does **not** open a second window.

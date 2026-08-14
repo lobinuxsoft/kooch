@@ -780,10 +780,68 @@ fn processors_of(
 /// Nothing here writes a file. That is `SaveInputMap`, and the split is
 /// the same one a prefab has: the document is the thing being edited, the
 /// file is where it is eventually put.
+
+/// What an input-map edit is called in the history, and whether it
+/// continues the one before it.
+///
+/// `None` for the ones that are not edits at all — selecting a binding,
+/// arming a rebind, saving. A history entry for "I clicked on it" is a
+/// Ctrl+Z that appears to do nothing, which is worse than one that
+/// misses.
+fn undoable_step(
+    edit: &crate::panels::input_map::InputMapAction,
+) -> Option<(&'static str, Option<crate::history::MergeKey>)> {
+    use crate::history::MergeKey;
+    use crate::panels::input_map::InputMapAction as Edit;
+
+    match edit {
+        Edit::Save | Edit::Select(_) | Edit::BeginRebind(_) | Edit::CancelRebind => None,
+        // Typed and dragged: these arrive per keystroke and per frame, so
+        // they carry a key and collapse into one step.
+        Edit::RenameAction { action, .. } => {
+            Some(("Rename Action", Some(MergeKey::of(("rename", action)))))
+        }
+        Edit::SetProcessor { to, index, .. } => Some((
+            "Edit Processor",
+            Some(MergeKey::of((format!("{to:?}"), index))),
+        )),
+        Edit::SetComposite { at, .. } => {
+            Some(("Edit Composite", Some(MergeKey::of(format!("{at:?}")))))
+        }
+        // Discrete: one click, one step.
+        Edit::SetControlType { .. } => Some(("Set Control Type", None)),
+        Edit::Rebind { .. } => Some(("Rebind", None)),
+        Edit::RemoveBinding(_) => Some(("Remove Binding", None)),
+        Edit::AddBinding { .. } => Some(("Add Binding", None)),
+        Edit::AddComposite { .. } => Some(("Add Composite", None)),
+        Edit::AddProcessor { .. } => Some(("Add Processor", None)),
+        Edit::RemoveProcessor { .. } => Some(("Remove Processor", None)),
+        Edit::MoveProcessor { .. } => Some(("Move Processor", None)),
+        _ => Some(("Edit Input Map", None)),
+    }
+}
+
 fn edit_input_map(resources: &mut Resources, edit: &crate::panels::input_map::InputMapAction) {
     use crate::panels::input_map::InputMapAction as Edit;
     use kooch_input::actions::{Action, Binding, ControlPath, ControlType, Role};
     use kooch_input::ids::KeyCode;
+
+    // Before the edit lands, while the map still holds what an undo
+    // wants. Reading the path first because `record` needs the document
+    // and the borrow below is exclusive.
+    let path = resources
+        .get::<crate::state::OpenInputMap>()
+        .map(|open| open.path.clone());
+    if let Some(path) = path
+        && let Some((label, key)) = undoable_step(edit)
+    {
+        crate::history::documents::record(
+            resources,
+            &crate::history::Document::InputMap(path),
+            label,
+            key,
+        );
+    }
 
     let Some(open) = resources.get_mut::<crate::state::OpenInputMap>() else {
         return;

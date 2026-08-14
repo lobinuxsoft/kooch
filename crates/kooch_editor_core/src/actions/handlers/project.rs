@@ -289,6 +289,12 @@ pub(super) fn handle_close_project(resources: &mut Resources, undo_stack: &mut U
     }
 
     undo_stack.clear();
+    // The remote history describes the world of the project being closed.
+    // Left behind, the next project opened would offer to undo edits made
+    // to the last one, against ids it has no idea about.
+    if let Some(history) = resources.get_mut::<crate::actions::remote_undo::RemoteHistory>() {
+        history.clear();
+    }
 }
 
 pub(super) fn handle_remove_recent(resources: &mut Resources, path: &std::path::Path) {
