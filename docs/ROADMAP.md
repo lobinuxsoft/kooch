@@ -163,6 +163,16 @@ somebody will suggest again.
 | **ReSTIR DI / Bevy Solari** (#796, #819) | Solari's world cache alone costs 2.65 ms per refresh in Bistro *on the author's machine*, against our 13.9 ms total. Denoising goes through DLSS Ray Reconstruction; the 890M has no equivalent. Its author calls the design unsatisfying and light sampling is unshipped |
 | **UE5 MegaLights** | Requires hardware ray tracing, and exists for **shadow-casting** lights. `many_lights.scene` sets `cast_shadows: false` on all hundred, and `shadows` is 0.7 ms of a 31 ms pass |
 | **Godot VoxelGI, Lumen, DDGI, radiance cascades, SSGI** | All solve **indirect** light. This engine has no GI and does not pay for one — they *add* to the 31 ms rather than subtracting. Godot's own docs say VoxelGI "is not suited to low-end hardware such as integrated graphics", which is precisely the target |
+| **Godot SDFGI** | Also indirect, so the same objection — and the directional light it would supposedly relieve is 1 of ~15 lights per pixel with 0.7 ms of shadows. Godot's docs call it "still too slow for older integrated graphics"; 6 cascades to 4 saves 0.5 ms *on a GTX 1080 at 1440p*, and there is an open proposal about stuttering when the camera moves fast — the exact condition our frame collapses under |
+| **An octree instead of the uniform grid** | The lookup is not what costs. `inti_cluster_of` is four arithmetic ops and the whole grid build is 0.153 ms of 31. A tree replaces that with one **dependent** memory read per level — pointer chasing, which is the access pattern left standing after ALU was ruled out. It would worsen the measured bottleneck, and the grid is already adaptive where it matters: logarithmic z-slices, and perspective widening the cells with distance |
+
+⚠️ **Cascades by distance are already here.** The z-slices are
+logarithmic and perspective widens the froxels with distance, so the
+clipmap structure an SDFGI-style scheme would add is built in, in all
+three dimensions. What is missing is *sampling* the grid instead of
+walking it (#826) — not a better grid. And cascades would save nothing
+on `many_lights.scene` regardless: all 100 lights sit within 18 m, with
+no far field to fuse.
 
 ⚠️ **Voxel injection is the exception worth naming.** VoxelGI does two
 things: it injects lights into a grid, and it cone-traces through that
