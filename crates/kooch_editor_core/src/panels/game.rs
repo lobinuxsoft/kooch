@@ -19,6 +19,7 @@ pub(crate) fn draw_game_content(
     meshlet_debug_caps: kooch_render::meshlet::MeshletDebugCaps,
     single_light_note: Option<&str>,
     meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
+    lights_hot: &mut kooch_lighting::LightsHot,
     hud_visibility: &mut crate::perf::HudVisibility,
 ) {
     let available = ui.available_size();
@@ -62,6 +63,7 @@ pub(crate) fn draw_game_content(
             meshlet_debug_mode,
             meshlet_debug_caps,
             meshlet_lod_settings,
+            lights_hot,
             hud_visibility,
             single_light_note,
         );

@@ -187,27 +187,22 @@ fn every_mode_that_reads_a_light_says_so() {
     assert!(!MeshletDebugMode::ShadowCascades.needs_selected_light());
 }
 
-/// 🔴 The editor prints "red = 16+" beside the selector and the shader
-/// decides what red means. A legend that disagrees with the ramp is
-/// worse than no legend: it is a number somebody will read off a
-/// screenshot and act on.
-#[test]
-fn the_hot_count_matches_the_shader() {
-    let source = kooch_lighting::inti_debug_shader();
-    let declaration = format!(
-        "const INTI_DEBUG_LIGHTS_HOT: f32 = {}.0;",
-        super::LIGHTS_HOT
-    );
-    assert!(
-        source.contains(&declaration),
-        "inti_debug.wgsl should declare `{declaration}`",
-    );
-}
-
 /// The view reads the froxel, not a texture atomic, so it is offered on
 /// every adapter — including the ones the density heatmaps skip.
 #[test]
 fn lights_per_pixel_is_always_offered() {
     assert!(!MeshletDebugMode::LightsPerPixel.needs_texture_atomic());
     assert!(MeshletDebugMode::all_implemented().contains(&MeshletDebugMode::LightsPerPixel));
+}
+
+/// 🔴 The scale is a uniform, not a baked constant, so the editor can
+/// move it. A shader that went back to a constant would ignore the
+/// control silently — the picture would simply never change.
+#[test]
+fn the_scale_comes_from_the_uniform() {
+    let source = kooch_lighting::inti_debug_shader();
+    assert!(
+        source.contains("inti.debug_lights_hot"),
+        "the lights-per-pixel view should read its top of scale from the frame uniform",
+    );
 }

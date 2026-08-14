@@ -127,6 +127,8 @@ pub(crate) struct EditorTabViewer<'a> {
     /// slider so artists can sanity-check the chain at editor
     /// distances without rebuilding any pipeline state.
     pub(crate) meshlet_lod_settings: &'a mut MeshletLodSettings,
+    /// Top of scale for the lights-per-pixel view (#817).
+    pub(crate) lights_hot: &'a mut kooch_lighting::LightsHot,
     /// Per-frame meshlet pipeline counters republished as a Resource by
     /// the viewport render. Read-only, surfaced through the View
     /// toolbar's stats overlay.
@@ -252,6 +254,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.meshlet_debug_caps,
                 self.single_light_note,
                 self.meshlet_lod_settings,
+                self.lights_hot,
                 self.hud_visibility,
             ),
             EditorTab::View => draw_view_content(

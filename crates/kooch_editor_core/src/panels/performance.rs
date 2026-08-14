@@ -22,8 +22,9 @@
 //! 7. **Remote**           — cost of the snapshot pull, split by
 //!                           transport / decode. Hidden in local mode.
 
+use kooch_lighting::LightsHot;
 use kooch_render::meshlet::{
-    LIGHTS_HOT, MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
+    MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
 };
 
 use crate::perf::EditorPerfStats;
@@ -36,6 +37,7 @@ pub(crate) fn draw_performance_content(
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
+    lights_hot: &mut LightsHot,
     hud_visibility: &mut crate::perf::HudVisibility,
     single_light_note: Option<&str>,
 ) {
@@ -55,6 +57,7 @@ pub(crate) fn draw_performance_content(
                     meshlet_debug_mode,
                     meshlet_debug_caps,
                     meshlet_lod_settings,
+                    lights_hot,
                     single_light_note,
                 );
             });
@@ -400,6 +403,7 @@ fn debug_controls(
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_debug_caps: MeshletDebugCaps,
     meshlet_lod_settings: &mut MeshletLodSettings,
+    lights_hot: &mut LightsHot,
     single_light_note: Option<&str>,
 ) {
     ui.horizontal(|ui| {
@@ -436,22 +440,38 @@ fn debug_controls(
             }
         }
     }
-    // The scale, because the view is a count and a heatmap without one
-    // is a mood. Fixed rather than per-frame adaptive so two screenshots
-    // can be compared — see `LIGHTS_HOT`.
+    // The scale is a control, not a caption. A heatmap's top of scale is
+    // the one number that decides whether the picture says anything: at
+    // 16 a hundred-light stress scene is flat red and at 40 the same
+    // frame separates into froxels. Fixed *during* a comparison, movable
+    // between them — two screenshots at different tops mean nothing.
     if *meshlet_debug_mode == MeshletDebugMode::LightsPerPixel {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("red at ≥").small());
+            ui.add(
+                egui::DragValue::new(&mut lights_hot.0)
+                    .speed(1.0)
+                    .range(1..=256)
+                    .suffix(" lights"),
+            )
+            .on_hover_text(
+                "Top of the colour scale. Raise it until the picture stops being flat: \
+                 that value is roughly how many lights the busiest froxel carries.",
+            );
+        });
         ui.label(
             egui::RichText::new(format!(
-                "black 0 · blue few · green {} · red {LIGHTS_HOT}+",
-                LIGHTS_HOT / 2
+                "black 0 · blue few · green {} · red {}+",
+                lights_hot.0 / 2,
+                lights_hot.0
             ))
             .small()
             .weak(),
         )
         .on_hover_text(
             "Lights evaluated per pixel, directional included. A froxel's own count, read \
-             where the shading loop pays it. Whole screen at full red means the frame is \
-             shading without the cluster grid — every light for every pixel.",
+             where the shading loop pays it. Whole screen at full red with the scale raised \
+             means the frame is shading without the cluster grid — every light for every pixel.",
         );
     }
     ui.horizontal(|ui| {
@@ -548,6 +568,7 @@ pub(crate) fn draw_perf_sidebar(
     meshlet_debug_mode: &mut kooch_render::meshlet::MeshletDebugMode,
     meshlet_debug_caps: kooch_render::meshlet::MeshletDebugCaps,
     meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
+    lights_hot: &mut LightsHot,
     hud_visibility: &mut crate::perf::HudVisibility,
     single_light_note: Option<&str>,
 ) {
@@ -628,6 +649,7 @@ pub(crate) fn draw_perf_sidebar(
                     meshlet_debug_mode,
                     meshlet_debug_caps,
                     meshlet_lod_settings,
+                    lights_hot,
                     hud_visibility,
                     single_light_note,
                 );

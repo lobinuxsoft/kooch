@@ -668,12 +668,18 @@ which the grid does not cluster because they reach every cell.
 |---|---|
 | black | no light reaches this pixel at all |
 | blue | few |
-| green | 8 |
-| red | 16 or more (`LIGHTS_HOT`) |
+| green | half the top of scale |
+| red | the top of scale, or more |
 
-The scale is **fixed, not per-frame adaptive**: renormalising would make
-two screenshots incomparable, and comparing them — the player standing
-here versus there — is the entire use.
+**The top of scale is a control, not a constant.** It is the one number
+that decides whether the picture says anything: at 16 a hundred-light
+stress scene is flat red, and the same frame at 40 separates into
+froxels. Raise it until the image stops being flat — that value is
+roughly what the busiest froxel carries. It rides in the frame uniform
+(`LightsHot`), so moving it costs no recompile.
+
+Fixed *during* a comparison, though: two screenshots taken at different
+tops mean nothing next to each other.
 
 🔴 **A whole screen at full red means the frame is not clustering.**
 `inti.clustered == 0` evaluates every light for every pixel, which is

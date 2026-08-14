@@ -434,6 +434,13 @@ impl GpuLights {
         let mut frame = IntiFrame::new(&ambient, &exposure, camera.position, self.light_count)
             .with_optional_shadows(shadows)
             .with_debug_light(debug_light)
+            .with_lights_hot(
+                resources
+                    .get::<crate::LightsHot>()
+                    .copied()
+                    .unwrap_or_default()
+                    .0,
+            )
             .with_directionals(extracted.directional_count);
         if let Some(view) = clustered {
             frame = frame.with_clusters(self.clusters.grid(), view, self.clusters.index_capacity());

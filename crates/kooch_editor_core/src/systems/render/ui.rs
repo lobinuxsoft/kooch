@@ -86,6 +86,7 @@ pub(super) fn run_editor_ui(
     meshlet_debug_caps: MeshletDebugCaps,
     single_light_note: Option<&str>,
     meshlet_lod_settings: &mut MeshletLodSettings,
+    lights_hot: &mut kooch_lighting::LightsHot,
     meshlet_stats: MeshletRenderStats,
     perf_stats: crate::perf::EditorPerfStats,
     gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
@@ -266,6 +267,7 @@ pub(super) fn run_editor_ui(
                 meshlet_debug_caps,
                 single_light_note,
                 meshlet_lod_settings,
+                lights_hot,
                 meshlet_stats,
                 perf_stats,
             };

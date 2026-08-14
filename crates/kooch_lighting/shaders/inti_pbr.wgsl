@@ -223,7 +223,9 @@ struct IntiFrame {
     // 0 when no grid was built this frame: shading falls back to the
     // linear walk over every light.
     clustered: u32,
-    _pad_cluster: u32,
+    // Top of scale for the lights-per-pixel debug view (#817). Read only
+    // by `inti_debug.wgsl`; the production pipeline never touches it.
+    debug_lights_hot: u32,
 }
 
 // One froxel's record. Mirrors `ClusterCell` in `cluster_common.wgsl`,

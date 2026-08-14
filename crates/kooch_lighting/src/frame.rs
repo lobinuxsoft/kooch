@@ -373,7 +373,38 @@ pub struct IntiFrame {
     /// light the way it did before #780, which is what the headless
     /// tests and any path with no camera matrices do.
     pub clustered: u32,
-    pub _pad_cluster: u32,
+    /// Count at which `MeshletDebugMode::LightsPerPixel` reads full red
+    /// (#817). Rides in the word the cluster flag left, the way
+    /// `debug_light` rides in this struct's tail.
+    ///
+    /// A uniform rather than a shader constant because the useful top of
+    /// scale is a property of the scene: the value that separates a busy
+    /// froxel from a quiet one in a hundred-light stress test washes
+    /// every pixel red in a room with four lamps. Zero reads as
+    /// [`LIGHTS_HOT_DEFAULT`] rather than dividing by nothing.
+    pub debug_lights_hot: u32,
+}
+
+/// Top of scale the lights-per-pixel view starts at.
+///
+/// Sixteen because a count the eye can quarter reads as a count. It is a
+/// starting point and not a limit — the editor's control moves it, and
+/// the whole reason it moves is that the right value is whatever makes
+/// the picture stop being flat.
+pub const LIGHTS_HOT_DEFAULT: u32 = 16;
+
+/// Top of scale for `MeshletDebugMode::LightsPerPixel`, as a
+/// [`Resource`](kooch_core::resource::Resources) the editor writes.
+///
+/// The same shape as [`DebugLight`]: a view's parameter belongs beside
+/// the view, not threaded through the render stage.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct LightsHot(pub u32);
+
+impl Default for LightsHot {
+    fn default() -> Self {
+        Self(LIGHTS_HOT_DEFAULT)
+    }
 }
 
 /// [`IntiFrame::debug_light`] when no light is isolated. Any index past
@@ -425,7 +456,7 @@ impl IntiFrame {
             cluster_capacity: 0,
             directional_count: 0,
             clustered: 0,
-            _pad_cluster: 0,
+            debug_lights_hot: LIGHTS_HOT_DEFAULT,
         }
     }
 
@@ -459,6 +490,16 @@ impl IntiFrame {
     /// `None` — or an index the buffer does not hold — shows nothing.
     pub fn with_debug_light(mut self, index: Option<u32>) -> Self {
         self.debug_light = index.unwrap_or(NO_DEBUG_LIGHT);
+        self
+    }
+
+    /// Sets the lights-per-pixel view's top of scale (#817).
+    ///
+    /// Clamped to at least one: a top of zero would divide the count by
+    /// nothing and paint the whole screen the ramp's hot end, which is
+    /// indistinguishable from the answer that means the grid is off.
+    pub fn with_lights_hot(mut self, hot: u32) -> Self {
+        self.debug_lights_hot = hot.max(1);
         self
     }
 

@@ -53,12 +53,6 @@ const INTI_LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 // colour turned off, it is a mirror.
 const INTI_DEBUG_ROUGHNESS: f32 = 0.5;
 
-// Count at which the lights-per-pixel view reads full red. Pinned to
-// `LIGHTS_HOT` in `kooch_render`'s `debug.rs` by a test — the editor
-// prints the scale beside the selector, and a legend that disagrees
-// with the shader is worse than no legend.
-const INTI_DEBUG_LIGHTS_HOT: f32 = 16.0;
-
 // Bevy's cascade colours, and their derivation: hue swept around the
 // wheel by cascade index (`shadows.wgsl:265`). Ported rather than
 // picked so a capture from this engine and one from Bevy read the same.
@@ -262,7 +256,12 @@ fn inti_light_count_debug(world_position: vec3<f32>, frag_coord: vec2<f32>) -> v
         // answers and the whole view exists to separate them.
         return vec3<f32>(0.0);
     }
-    let t = clamp(f32(count) / INTI_DEBUG_LIGHTS_HOT, 0.0, 1.0);
+    // The top of scale comes from the uniform, not from a constant: the
+    // value that separates a busy froxel from a quiet one in a
+    // hundred-light stress test washes a four-lamp room flat red. The
+    // editor owns it and prints what it is.
+    let hot = f32(max(inti.debug_lights_hot, 1u));
+    let t = clamp(f32(count) / hot, 0.0, 1.0);
     return inti_count_heatmap(t);
 }
 

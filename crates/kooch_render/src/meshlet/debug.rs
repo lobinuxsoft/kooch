@@ -128,7 +128,10 @@ pub enum MeshletDebugMode {
     /// pixels did it.
     ///
     /// Black is nothing, blue is few, green is the middle of the scale
-    /// and red is [`LIGHTS_HOT`] or more. Directional lights are
+    /// and red is the top of it — [`kooch_lighting::LightsHot`], which
+    /// the editor moves, because the count that separates a busy froxel
+    /// from a quiet one in a hundred-light scene washes a four-lamp room
+    /// flat red. Directional lights are
     /// included — the grid does not cluster them because they reach
     /// every cell, so leaving them out would under-report what the pixel
     /// pays.
@@ -141,16 +144,6 @@ pub enum MeshletDebugMode {
     /// clustering looks exactly like a scene that is slow for no reason.
     LightsPerPixel = 15,
 }
-
-/// Count at which [`MeshletDebugMode::LightsPerPixel`] reads full red.
-///
-/// Fixed rather than adaptive: a scale that renormalises per frame makes
-/// two screenshots incomparable, and comparing them — before and after
-/// moving a light, or with the player standing somewhere else — is the
-/// entire use. Sixteen because the grid's own budget per froxel is the
-/// scale that matters, and a value the eye can divide into quarters
-/// reads as a count rather than as a mood.
-pub const LIGHTS_HOT: u32 = 16;
 
 /// Runtime knob for the cull / LOD selector. Lives as a
 /// [`Resource`](kooch_core::resource::Resources) so the editor can

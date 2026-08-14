@@ -175,6 +175,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .copied()
         .unwrap_or_default();
     let mut meshlet_lod_settings = resources.remove::<MeshletLodSettings>().unwrap_or_default();
+    // The lights-per-pixel view's top of scale (#817). Out of the map
+    // and back like the LOD threshold, so the panel edits the same value
+    // the shading pass will read.
+    let mut lights_hot = resources
+        .remove::<kooch_lighting::LightsHot>()
+        .unwrap_or_default();
     // Stats are produced by last frame's viewport render and re-published
     // as a Resource. Read-only here — copied so we don't keep the borrow
     // through the egui pass.
@@ -462,6 +468,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         meshlet_debug_caps,
         single_light_note,
         &mut meshlet_lod_settings,
+        &mut lights_hot,
         meshlet_stats,
         resources
             .get::<crate::perf::EditorPerfStats>()
@@ -508,6 +515,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // the resource map before the viewport render pass picks them up.
     resources.insert(meshlet_debug_mode);
     resources.insert(meshlet_lod_settings);
+    resources.insert(lights_hot);
 
     // Which light the single-light view isolates (#743): the selection,
     // because "one light at a time" is what selecting a light already
