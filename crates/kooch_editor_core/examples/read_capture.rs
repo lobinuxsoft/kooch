@@ -19,7 +19,14 @@
 //! 40 ms. Sort by total self time, or read the Flamegraph — the panel's
 //! own tree.
 //!
-//! cargo run -p kooch_editor_core --features profiling --example read_capture -- <file.puffin>
+//! `--split` answers the question the averages cannot: **what is
+//! different about the slow frames?** A capture where the camera moves
+//! is two populations, and a mean over both describes neither. It also
+//! prints the frame against the GPU work that produced it — the ratio
+//! between them is what separates "the GPU is the wall" from "something
+//! is making us wait for it twice" (#814).
+//!
+//! cargo run -p kooch_editor_core --features profiling --example read_capture -- <file.puffin> [--slowest] [--split]
 
 use std::collections::HashMap;
 
@@ -119,6 +126,10 @@ fn main() -> anyhow::Result<()> {
         print_children(&node, frame_count, 1);
     }
 
+    if std::env::args().any(|a| a == "--split") {
+        split(&view, &frames)?;
+    }
+
     let mut ranked: Vec<_> = totals.into_iter().collect();
     ranked.sort_by_key(|(_, (ns, _))| -*ns);
     println!("\n── flat, by total cost ──");
@@ -132,6 +143,122 @@ fn main() -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// One frame reduced to what a comparison needs.
+struct Sample {
+    ms: f64,
+    /// Everything the `GPU` thread reported for this frame.
+    gpu_ms: f64,
+    /// Self time per scope *path*, so a `blit` on the GPU thread is
+    /// never added to a `blit` on the CPU.
+    self_ms: HashMap<String, f64>,
+}
+
+/// Compares the fastest quarter of frames against the slowest.
+///
+/// # Why a split and not an average
+///
+/// A capture taken while the camera moves holds two populations, and a
+/// mean over both describes neither. The interesting number is not what
+/// a frame costs — it is what grows when the frame gets slow, which is a
+/// subtraction the eye cannot do across two trees.
+fn split(
+    view: &puffin::FrameView,
+    frames: &[std::sync::Arc<puffin::FrameData>],
+) -> anyhow::Result<()> {
+    let mut samples: Vec<Sample> = Vec::with_capacity(frames.len());
+    for frame in frames {
+        let unpacked = frame.unpacked()?;
+        let mut self_ms = HashMap::new();
+        let mut gpu_ms = 0.0;
+        for (thread, stream_info) in unpacked.thread_streams.iter() {
+            let stream = &stream_info.stream;
+            let mut node = Node::default();
+            let mut ignored = HashMap::new();
+            let Ok(scopes) = puffin::Reader::from_start(stream).read_top_scopes() else {
+                continue;
+            };
+            absorb(view, stream, &scopes, &mut node, &mut ignored);
+            if thread.name == "GPU" {
+                gpu_ms = node.children.values().map(|c| c.total_ns).sum::<i64>() as f64 / 1e6;
+            }
+            flatten(&node, &thread.name, &mut self_ms);
+        }
+        samples.push(Sample {
+            ms: unpacked.duration_ns() as f64 / 1e6,
+            gpu_ms,
+            self_ms,
+        });
+    }
+    samples.sort_by(|a, b| a.ms.total_cmp(&b.ms));
+
+    let quarter = (samples.len() / 4).max(1);
+    let fast = &samples[..quarter];
+    let slow = &samples[samples.len() - quarter..];
+    let mean = |group: &[Sample], path: &str| -> f64 {
+        group
+            .iter()
+            .filter_map(|s| s.self_ms.get(path))
+            .sum::<f64>()
+            / group.len() as f64
+    };
+
+    let paths: std::collections::BTreeSet<&String> =
+        samples.iter().flat_map(|s| s.self_ms.keys()).collect();
+    let mut rows: Vec<(f64, String)> = Vec::new();
+    for path in paths {
+        let (f, s) = (mean(fast, path), mean(slow, path));
+        if (s - f).abs() < 0.05 {
+            continue;
+        }
+        rows.push((s - f, format!("{f:>9.3} {s:>9.3} {:>+9.3}   {path}", s - f)));
+    }
+    rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+
+    let group_mean =
+        |group: &[Sample]| group.iter().map(|s| s.ms).sum::<f64>() / group.len() as f64;
+    println!(
+        "\n── fastest {quarter} frames ({:.2} ms) vs slowest {quarter} ({:.2} ms), by self time ──",
+        group_mean(fast),
+        group_mean(slow),
+    );
+    println!("{:>9} {:>9} {:>9}   scope path", "fast", "slow", "delta");
+    for (_, row) in rows.iter().take(20) {
+        println!("{row}");
+    }
+
+    // 🔴 The ratio is the finding, not the frame time. A frame that
+    // costs what its GPU work costs is GPU-bound and honest; one that
+    // costs twice it is waiting for the GPU twice, which is a swapchain
+    // problem wearing a shading problem's clothes (#814).
+    println!("\n── frame against the GPU work that produced it ──");
+    println!(
+        "{:>9} {:>9} {:>10}   decile",
+        "frame ms", "GPU ms", "frame/GPU"
+    );
+    for decile in 0..10 {
+        let lo = samples.len() * decile / 10;
+        let hi = (samples.len() * (decile + 1) / 10).max(lo + 1);
+        let group = &samples[lo..hi];
+        let frame = group_mean(group);
+        let gpu = group.iter().map(|s| s.gpu_ms).sum::<f64>() / group.len() as f64;
+        println!(
+            "{frame:>9.2} {gpu:>9.2} {:>10.2}   p{}",
+            frame / gpu.max(0.001),
+            decile * 10
+        );
+    }
+    Ok(())
+}
+
+/// Flattens a tree into self time keyed by full path.
+fn flatten(node: &Node, path: &str, out: &mut HashMap<String, f64>) {
+    for (name, child) in &node.children {
+        let path = format!("{path} > {name}");
+        *out.entry(path.clone()).or_default() += child.self_ns() as f64 / 1e6;
+        flatten(child, &path, out);
+    }
 }
 
 /// Walks one scope level, merging it into `parent` and into the flat
