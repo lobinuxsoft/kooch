@@ -441,6 +441,13 @@ impl GpuLights {
                     .unwrap_or_default()
                     .0,
             )
+            .with_light_limit(
+                resources
+                    .get::<crate::LightLimit>()
+                    .copied()
+                    .unwrap_or_default()
+                    .0,
+            )
             .with_lights_hot(
                 resources
                     .get::<crate::LightsHot>()

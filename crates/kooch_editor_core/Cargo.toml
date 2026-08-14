@@ -78,3 +78,11 @@ profiling = [
 [[example]]
 name = "read_capture"
 required-features = ["profiling"]
+
+# Records a running game's frames over the network and writes a
+# .puffin (#824). The editor panel is the only other client and it
+# needs somebody watching for the moment to press Save, which an A/B
+# of two runs cannot rely on.
+[[example]]
+name = "capture_remote"
+required-features = ["profiling"]

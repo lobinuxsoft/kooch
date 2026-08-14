@@ -135,6 +135,8 @@ impl MeshletRenderStage {
                 contact,
                 debug_mode.as_u32(),
                 /* clear_depth */ true,
+                scopes.as_deref(),
+                shade_query.as_ref(),
             );
             if let (Some(scopes), Some(query)) = (scopes, shade_query) {
                 scopes.end(&mut encoder, query);

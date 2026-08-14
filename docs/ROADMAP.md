@@ -55,8 +55,8 @@ said.
 | ~~#778~~ | ~~point light shadows~~ | **Done**, feature and budget both |
 | ~~#804~~ | ~~`receive_shadows` does nothing~~ | **Done.** The field existed and nothing read it |
 | ~~#780~~ | ~~GPU clustering — the froxel grid~~ | **Done and measured** (2026-08-14). The busiest froxel holds 26 lights against 12 that reach a point — ~24 % over-listing, ordinary for clustering. It costs 0.15 ms. Not a suspect |
-| **#824** | **shade in a compute pass, tile's lights in LDS** | 🎯 **Next.** `raster + shade` is **not ALU-bound** (#821) and the grid is not over-listing (#820), so what is left is 15 storage fetches per pixel. A tile can read them once. **Changes no pixel** |
-| **#825** | shade at half rate, raster stays full | The frame falls **5.2×** with internal resolution — the strongest number measured. Possible only once shading is its own pass |
+| ~~#824~~ | ~~shade in a compute pass, tile's lights in LDS~~ | **Built and measured: 6.6 %.** Fifteen storage fetches per pixel became fifteen per tile and the shading went 35.98 → 33.60 ms. Its value is what it revealed and unlocked, not the 6.6: the raster is **3.74 ms of 37.34**, so shading is 90 % of that pass — and #825 is buildable now |
+| **#825** | shade at half rate, raster stays full | 🎯 **Next.** The frame falls **5.2×** with internal resolution, and #824 measured why that is the axis: shading is 90 % of the pass and the raster it keeps at full resolution costs 3.74 ms |
 | **#826** | sample the tile's lights, 15 → 2-4 | The last axis, and the only one that changes the image. **Closes unbuilt if #824 + #825 meet the budget** |
 | ~~#796 / #819~~ | ~~ReSTIR / Solari~~ | **Ruled out for this hardware.** Solari's world cache alone is 2.65 ms per refresh in Bistro on the author's machine — 19 % of our whole budget, on far faster silicon — and denoising runs through DLSS Ray Reconstruction, which the 890M has no path to |
 | **#731** | volumetric clouds, froxel-based | The clouds are **off**, and that is the only reason the budget is met. They cost 39 ms as written |
@@ -151,6 +151,41 @@ whole raster pass is 0.12 ms and switching every specular layer off
 moved it by 0.001. `KOOCH_CLUSTERING` already carried that lesson in its
 own doc comment.
 
+### Two shading paths, and what "the same image" turned out to mean
+
+#824 ships the compute path beside the fragment one rather than in place
+of it, switched by `KOOCH_COMPUTE_SHADING`. Both are built every run, so
+the A/B is one environment variable on the handheld and not a rebuild —
+the same shape `KOOCH_CLUSTERING` has.
+
+Everything above the entry point is the identical composed shader: the
+same reconstruction, the same BRDF, the same lights in the same order.
+What changes is that a workgroup owns a 16×16 tile, reduces its threads'
+froxels to one block of cells, copies that block's light indices into
+`var<workgroup>` memory, and every thread then walks its own cell's run
+out of shared memory.
+
+🔴 **The two paths cannot be byte-identical, and the reason is not this
+issue.** The fragment path's colour reaches the `Rgba8Unorm` target
+through the ROP; the compute path's through `textureStore`. The two
+f32→unorm8 conversions are not required to round the same way in the
+last bit, and they do not: with clustering switched off — which makes
+the compute pass call the *same* `inti_shade` on the *same* data —
+about 8 % of pixels still land one unit apart in one channel, maximum
+delta exactly 1.
+
+So parity is asserted as the two things that are actually provable:
+**coverage is exact** (alpha is 0 or 255, never arithmetic, so a pixel
+lit by the wrong path says so), and **colour agrees to within one unit**.
+Every failure this issue can have — a light missing from the cache,
+counted twice, or a run read at the wrong offset — moves radiance by far
+more than 1/255. Deliberately breaking the tile loop moves it by 94.
+
+⚠️ **A cap and a fallback.** A tile at a silhouette spans many z-slices,
+so its block of froxels can be large. Past `MAX_TILE_CELLS` or
+`MAX_TILE_LIGHTS` the tile shades straight from the storage buffer
+instead — slower and correct, which is the right way round.
+
 ### What was ruled out, so it is not revisited
 
 Four families were considered against the measurements and dropped. The
@@ -180,6 +215,27 @@ grid for bounces. The first half is a pixel taking one sample instead of
 walking fifteen lights — useful. The second half is what makes it
 expensive, and it buys bounces nobody asked for. #826's third option is
 that first half alone.
+
+### 🔴 Three suspects down, and the pixel count still standing
+
+Each of these made the shading cheaper along one axis, and none of them
+was the bottleneck:
+
+| what was made cheaper | how much it bought |
+|---|---|
+| the arithmetic per light (#821 — GGX, Smith, Fresnel, multiscatter, all of it deleted) | **10 %** |
+| reading the lights (#824 — 15 storage fetches per pixel → 15 per tile) | **6.6 %** |
+| the grid's over-listing (#820 — measured at 24 %, not the 2.9× estimated) | nothing to win |
+
+⚠️ **The variable none of them moved is the *number* of lights a pixel
+evaluates.** Twelve to fifteen genuinely reach the surface (#820), so
+clustering cannot remove them by definition — only sampling can (#826).
+Whether that count is the cost is one knob and one capture away, and it
+decides #825 against #826.
+
+Meanwhile the number that has survived every experiment is the pixel
+count: the frame falls 5.2× with internal resolution, and #824 measured
+that shading is 90 % of the pass the resolution scales.
 
 ### 🔴 What is left is the lights that do reach — and it is not ALU
 

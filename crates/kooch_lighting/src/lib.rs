@@ -45,8 +45,8 @@ pub use extract::{
 };
 pub use frame::{
     AmbientLight, DEFAULT_SUN_SOFTNESS, DebugLight, Exposure, FRAME_CASCADE_COUNT, FrameShadows,
-    GpuCascade, GpuPointShadow, IntiFrame, LIGHTS_HOT_DEFAULT, LightsHot, MAX_POINT_SHADOWS,
-    MAX_SPOT_SHADOWS, NO_DEBUG_LIGHT, PhysicalCamera, SpecularFloor,
+    GpuCascade, GpuPointShadow, IntiFrame, LIGHTS_HOT_DEFAULT, LightLimit, LightsHot,
+    MAX_POINT_SHADOWS, MAX_SPOT_SHADOWS, NO_DEBUG_LIGHT, PhysicalCamera, SpecularFloor,
 };
 pub use gpu_light::{
     GpuLight, LIGHT_KIND_DIRECTIONAL, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, NO_SHADOW_SLOT,

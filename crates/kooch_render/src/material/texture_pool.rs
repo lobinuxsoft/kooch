@@ -101,11 +101,18 @@ impl MaterialTexturePool {
     }
 
     /// Per-material bind group layout: albedo(0), normal(1),
-    /// metal_roughness(2) textures + sampler(3), all fragment-visible.
+    /// metal_roughness(2) textures + sampler(3).
+    ///
+    /// Visible to compute as well as fragment (#824). The compute
+    /// shading pass samples the same three maps through
+    /// `textureSampleGrad`, which takes its gradients explicitly and is
+    /// therefore legal outside a fragment stage — the derivatives the
+    /// surface reconstruction computes analytically are what makes that
+    /// true here.
     pub fn bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         let texture_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
+            visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
             ty: wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
                 view_dimension: wgpu::TextureViewDimension::D2,
@@ -121,7 +128,7 @@ impl MaterialTexturePool {
                 texture_entry(2),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },

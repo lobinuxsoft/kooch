@@ -44,6 +44,46 @@ fn the_debug_variant_parses_and_validates() {
     validate(&composed, "composed default material shader (debug)");
 }
 
+#[test]
+fn composed_compute_material_parses_and_validates() {
+    let composed = compose_material_shader(MATERIAL_PBR_COMPUTE_BODY, false);
+    validate(&composed, "composed compute material shader");
+}
+
+#[test]
+fn the_compute_debug_variant_parses_and_validates() {
+    let composed = compose_material_shader(MATERIAL_PBR_COMPUTE_BODY, true);
+    validate(&composed, "composed compute material shader (debug)");
+}
+
+/// The dispatch derives its workgroup count from `SHADING_TILE_SIZE`, so
+/// a shader that disagreed with it would leave a strip of the screen
+/// unshaded — or run threads off the end of it — with nothing to say so.
+#[test]
+fn the_tile_size_matches_the_shader() {
+    assert!(
+        MATERIAL_PBR_COMPUTE_BODY
+            .contains(&format!("const TILE_SIZE: u32 = {SHADING_TILE_SIZE}u;")),
+        "SHADING_TILE_SIZE and the shader's TILE_SIZE have diverged",
+    );
+    assert!(
+        MATERIAL_PBR_COMPUTE_BODY.contains(&format!(
+            "@workgroup_size({SHADING_TILE_SIZE}, {SHADING_TILE_SIZE}, 1)"
+        )),
+        "the workgroup is not one thread per pixel of a tile",
+    );
+}
+
+/// 🔴 The compute path exists to shade with the tile's lights, not to be
+/// a second copy of the fragment path that quietly stopped doing it.
+/// Deleting the workgroup array would leave a shader that still compiles
+/// and still renders correctly through the fallback — and buys nothing.
+#[test]
+fn the_compute_path_caches_the_tile_lights() {
+    assert!(MATERIAL_PBR_COMPUTE_BODY.contains("var<workgroup> tile_lights"));
+    assert!(MATERIAL_PBR_COMPUTE_BODY.contains("inti_lights[tile_lights[start + i]]"));
+}
+
 /// 🔴 The reason the variants exist (#743).
 ///
 /// A branch nothing takes is still code the shader carries: register

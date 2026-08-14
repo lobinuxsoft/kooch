@@ -189,7 +189,10 @@ struct IntiFrame {
     // Irradiance below which a light skips its specular layer (#821).
     // Zero keeps every light on the full model.
     specular_floor: f32,
-    _pad_spot1: u32,
+    // How many of a froxel's punctual lights a pixel may evaluate, or 0
+    // for all of them. A measuring instrument: it drops real light, and
+    // it exists to answer whether the cost scales with that count.
+    light_limit: u32,
     point_shadows: array<IntiPointShadow, 4>,
     // 0 when no directional light casts, or the atlas has not been
     // rendered. The dummy 1x1 atlas bound in that case would return
@@ -1250,7 +1253,14 @@ fn inti_clustered_lights(
     // Reflection probes, irradiance volumes and decals follow the spots
     // in the same record. Nothing reads them yet; when something does,
     // it reads its own range and this loop does not change.
-    let spots_end = points_end + cell.spot_count;
+    var spots_end = points_end + cell.spot_count;
+    // `KOOCH_LIGHT_LIMIT`. Applied here rather than in the caller so
+    // both shading paths inherit it from the one place the walk is
+    // written: the experiment has to be runnable against the fragment
+    // path, which is the one every earlier capture was taken with.
+    if (inti.light_limit != 0u) {
+        spots_end = min(spots_end, cell.offset + inti.light_limit);
+    }
 
     var radiance = vec3<f32>(0.0);
     for (var i = cell.offset; i < spots_end; i = i + 1u) {
@@ -1268,8 +1278,14 @@ fn inti_clustered_lights(
     return radiance;
 }
 
-// Which cell of the grid a fragment is in.
-fn inti_cluster_of(world_position: vec3<f32>, frag_coord: vec2<f32>) -> u32 {
+// Which cell of the grid a fragment is in, in grid coordinates.
+//
+// Split out of `inti_cluster_of` for #824. A compute pass shading a tile
+// reduces its threads' cells to one min/max block per axis, and a linear
+// index cannot be reduced that way: two pixels one z-slice apart differ
+// by 1 in `z` and by nothing else, while their linear indices differ by
+// an amount that says nothing about how far apart the cells are.
+fn inti_cluster_cell(world_position: vec3<f32>, frag_coord: vec2<f32>) -> vec3<u32> {
     let view_z = dot(inti.view_z_row, vec4<f32>(world_position, 1.0));
     let xy = vec2<u32>(floor(frag_coord * inti.cluster_factors.xy));
     // Mirrors `cluster_z_slice` in `cluster_common.wgsl` and
@@ -1278,13 +1294,22 @@ fn inti_cluster_of(world_position: vec3<f32>, frag_coord: vec2<f32>) -> u32 {
     // grid never wrote for it.
     let slice = log(-view_z) * inti.cluster_factors.z - inti.cluster_factors.w + 1.0;
     let z = min(u32(max(slice, 0.0)), inti.cluster_dimensions.z - 1u);
-    let cell = clamp(
+    return clamp(
         vec3<u32>(xy, z),
         vec3<u32>(0u),
         inti.cluster_dimensions.xyz - vec3<u32>(1u));
+}
+
+// That cell's index into `inti_clusters`.
+fn inti_cluster_index(cell: vec3<u32>) -> u32 {
     return min(
         (cell.y * inti.cluster_dimensions.x + cell.x) * inti.cluster_dimensions.z + cell.z,
         inti.cluster_dimensions.w - 1u);
+}
+
+// Which cell of the grid a fragment is in.
+fn inti_cluster_of(world_position: vec3<f32>, frag_coord: vec2<f32>) -> u32 {
+    return inti_cluster_index(inti_cluster_cell(world_position, frag_coord));
 }
 
 // ACES filmic approximation (Narkowicz 2015). Provisional: #254 owns
