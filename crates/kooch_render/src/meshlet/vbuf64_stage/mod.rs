@@ -20,6 +20,7 @@
 //! features (Metal / MSL has no `atomic_uint64`).
 
 mod clear;
+mod compute_shade;
 mod debug_resolve;
 mod density_clear;
 mod raster;
@@ -33,6 +34,7 @@ use crate::meshlet::render_stage::create_2d_attachment;
 use crate::meshlet::scene::MeshletScene;
 
 use clear::Vbuf64Clear;
+use compute_shade::ComputeShading;
 use debug_resolve::DebugResolve;
 use density_clear::DensityClear;
 use raster::Vbuf64Rasterizer;
@@ -75,6 +77,12 @@ pub struct Vbuf64Stage {
     rasterizer: Vbuf64Rasterizer,
     /// Two-pass material shading (#440) for normal-look modes.
     two_pass: two_pass::MaterialTwoPass,
+    /// The compute alternative to `two_pass` (#824), which shades from a
+    /// per-tile light list in workgroup memory. Both are built: the two
+    /// exist to be captured against each other on the device, and
+    /// [`compute_shade::enabled_by_environment`] picks per run.
+    compute_shade: ComputeShading,
+    compute_enabled: bool,
     /// Fullscreen fragment pass for the colorize debug modes.
     debug_resolve: DebugResolve,
     vbuf_texture: wgpu::Texture,
@@ -106,12 +114,16 @@ impl Vbuf64Stage {
         let density_clear = DensityClear::new(device);
         let rasterizer = Vbuf64Rasterizer::new(device, meshlet_bgl, depth_format, pipeline_cache);
         let two_pass = two_pass::MaterialTwoPass::new(device, meshlet_bgl);
+        let compute_shade = ComputeShading::new(device, meshlet_bgl);
+        let compute_enabled = compute_shade::enabled_by_environment();
         let debug_resolve = DebugResolve::new(device);
         Self {
             clear,
             density_clear,
             rasterizer,
             two_pass,
+            compute_shade,
+            compute_enabled,
             debug_resolve,
             vbuf_texture,
             vbuf_view,
@@ -137,6 +149,12 @@ impl Vbuf64Stage {
         self.material_depth_texture = md_tex;
         self.material_depth_view = md_view;
         self.size = size;
+    }
+
+    /// Which shading path this stage takes, overriding what
+    /// `KOOCH_COMPUTE_SHADING` said at construction (#824).
+    pub fn set_compute_shading(&mut self, on: bool) {
+        self.compute_enabled = on;
     }
 
     pub fn material_depth_view(&self) -> &wgpu::TextureView {
@@ -218,24 +236,44 @@ impl Vbuf64Stage {
                 debug_mode,
             );
         } else if let Some(pipeline) = material_pipeline {
-            self.two_pass.shade(
-                device,
-                queue,
-                encoder,
-                &self.vbuf_view,
-                &self.material_depth_view,
-                depth_sample_view,
-                color_view,
-                meshlet_bg,
-                cull,
-                scene,
-                pipeline,
-                lights_bg,
-                view_proj,
-                contact,
-                self.size,
-                debug_mode,
-            );
+            if self.compute_enabled {
+                self.compute_shade.shade(
+                    device,
+                    queue,
+                    encoder,
+                    &self.vbuf_view,
+                    depth_sample_view,
+                    color_view,
+                    meshlet_bg,
+                    cull,
+                    scene,
+                    pipeline,
+                    lights_bg,
+                    view_proj,
+                    contact,
+                    self.size,
+                    debug_mode,
+                );
+            } else {
+                self.two_pass.shade(
+                    device,
+                    queue,
+                    encoder,
+                    &self.vbuf_view,
+                    &self.material_depth_view,
+                    depth_sample_view,
+                    color_view,
+                    meshlet_bg,
+                    cull,
+                    scene,
+                    pipeline,
+                    lights_bg,
+                    view_proj,
+                    contact,
+                    self.size,
+                    debug_mode,
+                );
+            }
         }
     }
 }

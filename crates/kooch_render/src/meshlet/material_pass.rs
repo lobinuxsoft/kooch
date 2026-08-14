@@ -39,6 +39,19 @@ pub const VISIBILITY_BUFFER_RESOLVE_SHADER: &str =
 /// points: `vs_fullscreen`, `fs_material`.
 pub const MATERIAL_PBR_DEFAULT_BODY: &str = include_str!("../../shaders/material_pbr_default.wgsl");
 
+/// The same shading as [`MATERIAL_PBR_DEFAULT_BODY`], as a compute entry
+/// point that owns a 16x16 screen tile and reads that tile's froxel
+/// light list into workgroup memory once (#824). Compose it with
+/// [`compose_material_shader`] — it takes the identical prefix, which is
+/// what keeps the two paths' arithmetic the same. Entry point:
+/// `cs_shade_tile`.
+pub const MATERIAL_PBR_COMPUTE_BODY: &str = include_str!("../../shaders/material_pbr_compute.wgsl");
+
+/// Tile edge, in pixels, of [`MATERIAL_PBR_COMPUTE_BODY`]'s workgroup.
+/// Must match the `TILE_SIZE` the shader declares; the dispatch size is
+/// derived from it.
+pub const SHADING_TILE_SIZE: u32 = 16;
+
 /// Bind group Inti's frame UBO + light storage occupy on this path.
 /// Groups 0..4 are the vbuf/camera/screen, the meshlet pool, the
 /// material storage, the scene buffers and the per-material textures —

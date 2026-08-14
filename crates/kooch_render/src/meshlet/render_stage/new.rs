@@ -245,6 +245,36 @@ impl MeshletRenderStage {
         &self.views[self.primary].color_texture
     }
 
+    /// Switches every view between the fragment shading path and the
+    /// compute one (#824), overriding `KOOCH_COMPUTE_SHADING`.
+    ///
+    /// Both pipelines are already built, so this costs nothing to flip
+    /// and takes effect on the next frame. It exists because the two
+    /// paths have to be compared — a test rendering the same scene twice
+    /// cannot do it through a `OnceLock` that reads the environment once
+    /// per process, and neither can a live control.
+    ///
+    /// A view without the R64 stage (no 64-bit texture atomics) has no
+    /// compute shading path to switch to and is left alone.
+    ///
+    /// 🔴 Returns how many views it reached, and a caller that needs the
+    /// switch to have happened must check it. Zero means every view is
+    /// on the R32 fallback, where this setting does nothing at all —
+    /// which is indistinguishable from "the setting worked" in anything
+    /// that only looks at the rendered image. #824's parity tests passed
+    /// against a stage built with `Vbuf64Support::from_supported(false)`
+    /// until they started checking this.
+    pub fn set_compute_shading(&mut self, on: bool) -> usize {
+        let mut switched = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut() {
+                stage.set_compute_shading(on);
+                switched += 1;
+            }
+        }
+        switched
+    }
+
     pub fn vbuf_texture(&self) -> &wgpu::Texture {
         &self.views[self.primary].vbuf_texture
     }

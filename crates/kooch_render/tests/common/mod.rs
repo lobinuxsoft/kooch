@@ -74,6 +74,66 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         .clone()
 }
 
+/// Acquires a wgpu device carrying the 64-bit texture-atomic bundle, so
+/// the render stage builds its `Vbuf64Stage` and a frame takes the
+/// **R64 path** — the one the OneXFly runs.
+///
+/// 🔴 [`try_acquire_device`] requests `Features::empty()`, which means a
+/// test written against it silently exercises the R32 / Hi-Z fallback
+/// instead. That is not hypothetical: #795's first GPU-scope test passed
+/// with the R64 scopes deleted for exactly this reason, and #824's
+/// parity tests passed with the tile-light loop deliberately broken
+/// until this helper existed. Any test whose subject is the R64 path has
+/// to come through here.
+///
+/// Returns `None` when the adapter does not advertise the bundle (Metal
+/// has no `atomic_uint64`, older drivers lack it), so headless CI skips
+/// cleanly. Its own device rather than the shared one: the features
+/// differ, and a test that needs them must not be handed one without.
+pub fn try_acquire_device_r64() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let required = wgpu::Features::TEXTURE_ATOMIC
+        | wgpu::Features::TEXTURE_INT64_ATOMIC
+        | wgpu::Features::SHADER_INT64
+        | wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX;
+
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
+        flags: wgpu::InstanceFlags::default(),
+        backend_options: wgpu::BackendOptions::default(),
+        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+        display: None,
+    });
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    }))
+    .ok()?;
+    if !adapter.features().contains(required) {
+        return None;
+    }
+
+    // The same limits `try_acquire_device` raises, for the same
+    // pipelines — the cull, vbuf and Hi-Z shaders do not compile
+    // against wgpu's defaults.
+    let mut limits = wgpu::Limits::default();
+    limits.max_storage_textures_per_shader_stage =
+        16.min(adapter.limits().max_storage_textures_per_shader_stage);
+    limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
+    limits.max_storage_buffers_per_shader_stage =
+        16.min(adapter.limits().max_storage_buffers_per_shader_stage);
+
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("kooch_render_test_device_r64"),
+        required_features: required,
+        required_limits: limits,
+        memory_hints: wgpu::MemoryHints::default(),
+        trace: wgpu::Trace::Off,
+        experimental_features: wgpu::ExperimentalFeatures::default(),
+    }))
+    .ok()
+}
+
 /// Acquires a wgpu device with `Features::TIMESTAMP_QUERY` +
 /// `TIMESTAMP_QUERY_INSIDE_ENCODERS` so the mesh-frame bench (#335)
 /// can drive `MeshletGpuTimers` for per-pass timing. Returns `None`

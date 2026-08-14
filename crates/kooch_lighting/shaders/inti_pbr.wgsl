@@ -1268,8 +1268,14 @@ fn inti_clustered_lights(
     return radiance;
 }
 
-// Which cell of the grid a fragment is in.
-fn inti_cluster_of(world_position: vec3<f32>, frag_coord: vec2<f32>) -> u32 {
+// Which cell of the grid a fragment is in, in grid coordinates.
+//
+// Split out of `inti_cluster_of` for #824. A compute pass shading a tile
+// reduces its threads' cells to one min/max block per axis, and a linear
+// index cannot be reduced that way: two pixels one z-slice apart differ
+// by 1 in `z` and by nothing else, while their linear indices differ by
+// an amount that says nothing about how far apart the cells are.
+fn inti_cluster_cell(world_position: vec3<f32>, frag_coord: vec2<f32>) -> vec3<u32> {
     let view_z = dot(inti.view_z_row, vec4<f32>(world_position, 1.0));
     let xy = vec2<u32>(floor(frag_coord * inti.cluster_factors.xy));
     // Mirrors `cluster_z_slice` in `cluster_common.wgsl` and
@@ -1278,13 +1284,22 @@ fn inti_cluster_of(world_position: vec3<f32>, frag_coord: vec2<f32>) -> u32 {
     // grid never wrote for it.
     let slice = log(-view_z) * inti.cluster_factors.z - inti.cluster_factors.w + 1.0;
     let z = min(u32(max(slice, 0.0)), inti.cluster_dimensions.z - 1u);
-    let cell = clamp(
+    return clamp(
         vec3<u32>(xy, z),
         vec3<u32>(0u),
         inti.cluster_dimensions.xyz - vec3<u32>(1u));
+}
+
+// That cell's index into `inti_clusters`.
+fn inti_cluster_index(cell: vec3<u32>) -> u32 {
     return min(
         (cell.y * inti.cluster_dimensions.x + cell.x) * inti.cluster_dimensions.z + cell.z,
         inti.cluster_dimensions.w - 1u);
+}
+
+// Which cell of the grid a fragment is in.
+fn inti_cluster_of(world_position: vec3<f32>, frag_coord: vec2<f32>) -> u32 {
+    return inti_cluster_index(inti_cluster_cell(world_position, frag_coord));
 }
 
 // ACES filmic approximation (Narkowicz 2015). Provisional: #254 owns

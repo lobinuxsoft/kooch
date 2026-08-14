@@ -55,7 +55,7 @@ said.
 | ~~#778~~ | ~~point light shadows~~ | **Done**, feature and budget both |
 | ~~#804~~ | ~~`receive_shadows` does nothing~~ | **Done.** The field existed and nothing read it |
 | ~~#780~~ | ~~GPU clustering — the froxel grid~~ | **Done and measured** (2026-08-14). The busiest froxel holds 26 lights against 12 that reach a point — ~24 % over-listing, ordinary for clustering. It costs 0.15 ms. Not a suspect |
-| **#824** | **shade in a compute pass, tile's lights in LDS** | 🎯 **Next.** `raster + shade` is **not ALU-bound** (#821) and the grid is not over-listing (#820), so what is left is 15 storage fetches per pixel. A tile can read them once. **Changes no pixel** |
+| **#824** | **shade in a compute pass, tile's lights in LDS** | **Built, behind `KOOCH_COMPUTE_SHADING=on`.** Both shading paths ship so the pair can be captured on the device; the number is not in yet. A tile reads its froxel block's light indices into workgroup memory once and its 256 threads walk them from there |
 | **#825** | shade at half rate, raster stays full | The frame falls **5.2×** with internal resolution — the strongest number measured. Possible only once shading is its own pass |
 | **#826** | sample the tile's lights, 15 → 2-4 | The last axis, and the only one that changes the image. **Closes unbuilt if #824 + #825 meet the budget** |
 | ~~#796 / #819~~ | ~~ReSTIR / Solari~~ | **Ruled out for this hardware.** Solari's world cache alone is 2.65 ms per refresh in Bistro on the author's machine — 19 % of our whole budget, on far faster silicon — and denoising runs through DLSS Ray Reconstruction, which the 890M has no path to |
@@ -150,6 +150,41 @@ version of the shading-LOD control shipped in the editor only, where the
 whole raster pass is 0.12 ms and switching every specular layer off
 moved it by 0.001. `KOOCH_CLUSTERING` already carried that lesson in its
 own doc comment.
+
+### Two shading paths, and what "the same image" turned out to mean
+
+#824 ships the compute path beside the fragment one rather than in place
+of it, switched by `KOOCH_COMPUTE_SHADING`. Both are built every run, so
+the A/B is one environment variable on the handheld and not a rebuild —
+the same shape `KOOCH_CLUSTERING` has.
+
+Everything above the entry point is the identical composed shader: the
+same reconstruction, the same BRDF, the same lights in the same order.
+What changes is that a workgroup owns a 16×16 tile, reduces its threads'
+froxels to one block of cells, copies that block's light indices into
+`var<workgroup>` memory, and every thread then walks its own cell's run
+out of shared memory.
+
+🔴 **The two paths cannot be byte-identical, and the reason is not this
+issue.** The fragment path's colour reaches the `Rgba8Unorm` target
+through the ROP; the compute path's through `textureStore`. The two
+f32→unorm8 conversions are not required to round the same way in the
+last bit, and they do not: with clustering switched off — which makes
+the compute pass call the *same* `inti_shade` on the *same* data —
+about 8 % of pixels still land one unit apart in one channel, maximum
+delta exactly 1.
+
+So parity is asserted as the two things that are actually provable:
+**coverage is exact** (alpha is 0 or 255, never arithmetic, so a pixel
+lit by the wrong path says so), and **colour agrees to within one unit**.
+Every failure this issue can have — a light missing from the cache,
+counted twice, or a run read at the wrong offset — moves radiance by far
+more than 1/255. Deliberately breaking the tile loop moves it by 94.
+
+⚠️ **A cap and a fallback.** A tile at a silhouette spans many z-slices,
+so its block of froxels can be large. Past `MAX_TILE_CELLS` or
+`MAX_TILE_LIGHTS` the tile shades straight from the storage buffer
+instead — slower and correct, which is the right way round.
 
 ### What was ruled out, so it is not revisited
 
