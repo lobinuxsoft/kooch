@@ -532,13 +532,13 @@ fn debug_controls(
         let far = cluster_settings.far;
         ui.label(
             egui::RichText::new(format!(
-                "{}×{}×{} cells (this Game view) · froxel {:.1} / {:.1} / {:.1} m deep at 10 / 25 / {:.0} m",
+                "{}×{}×{} cells (this Game view) · froxel {} / {} / {} deep at 10 / 25 / {:.0} m",
                 grid.dimensions.x,
                 grid.dimensions.y,
                 grid.dimensions.z,
-                grid.slice_depth(10.0),
-                grid.slice_depth(25.0),
-                grid.slice_depth(far * 0.9),
+                depth_label(grid.slice_depth(10.0)),
+                depth_label(grid.slice_depth(25.0)),
+                depth_label(grid.slice_depth(far * 0.9)),
                 far * 0.9,
             ))
             .small()
@@ -630,6 +630,19 @@ pub(crate) const PERF_SIDEBAR_WIDTH: f32 = 260.0;
 const TOOLBAR_BUTTON_SIZE: f32 = 28.0;
 const TOOLBAR_PADDING: f32 = 6.0;
 const TOOLBAR_OFFSET: egui::Vec2 = egui::vec2(8.0, 8.0);
+
+/// A froxel's depth as the panel should state it.
+///
+/// The two clamped ends are the ones that matter: an unbounded last
+/// slice formats as `inf` and a scene sitting in front of the grid reads
+/// as a suspiciously thin cell. Both get words, because both mean "your
+/// geometry is outside the grid" and neither is a measurement.
+fn depth_label(metres: f32) -> String {
+    match metres.is_finite() {
+        true => format!("{metres:.1} m"),
+        false => "unbounded".to_owned(),
+    }
+}
 
 /// Draws the vertical perf sidebar anchored to the right edge of a
 /// panel, with its always-visible toggle chevron.

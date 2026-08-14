@@ -88,6 +88,9 @@ fn span_of(g: &ClusterGrid, slice: u32) -> f32 {
 fn depth_matches_the_slice_it_reports() {
     let g = grid();
     for distance in [6.0_f32, 15.0, 40.0, 120.0] {
+        if !g.slice_depth(distance).is_finite() {
+            continue;
+        }
         let depth = g.slice_depth(distance);
         assert!(depth > 0.0, "slice at {distance} m has no thickness");
         // Stepping back by the reported thickness must not skip a slice.
@@ -124,4 +127,33 @@ fn a_nearer_far_thins_the_slices() {
         "far 40 should thin the froxel at 15 m well below far 200: \
          {tight_depth} vs {wide_depth}",
     );
+}
+
+/// 🔴 Slice 0 holds everything nearer than the grid starts, so its depth
+/// is that whole distance — not what the logarithmic mapping computes.
+///
+/// A grid starting at 20 m over a scene 10 m away puts every pixel of
+/// that scene in one cell, and the panel reported a 0.9 m froxel while
+/// the screen turned solid red. The tool has to say 20.
+#[test]
+fn the_near_slice_holds_everything_before_it() {
+    let g = ClusterGrid::new(
+        &ClusterSettings {
+            first_slice: 20.0,
+            far: 60.0,
+            ..Default::default()
+        },
+        Vec2::new(1280.0, 720.0),
+    );
+    assert_eq!(g.slice_depth(10.0), 20.0);
+    assert_eq!(g.slice_depth(0.5), 20.0);
+    // Just inside the grid, the mapping applies again.
+    assert!(g.slice_depth(25.0) < 20.0);
+}
+
+/// And the last slice holds everything behind it, which has no end.
+#[test]
+fn the_far_slice_is_unbounded() {
+    let g = grid();
+    assert!(g.slice_depth(10_000.0).is_infinite());
 }

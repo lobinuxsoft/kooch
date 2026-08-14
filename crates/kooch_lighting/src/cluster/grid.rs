@@ -142,7 +142,25 @@ impl ClusterGrid {
         if self.z_factors.x <= 0.0 {
             return self.far - self.near;
         }
-        let slice = self.z_slice(-distance.abs()) as f32;
+        let distance = distance.abs();
+        // 🔴 The first and last slices are not what the formula says.
+        // Slice 0 holds *everything* nearer than `near` and the last one
+        // everything past `far` — the mapping describes the slices in
+        // between, and reporting its answer for the two ends understates
+        // them by however much geometry is piled there.
+        //
+        // This mattered immediately: with the grid starting at 20 m over
+        // a scene 10 m away, the panel reported a 0.9 m froxel while
+        // every pixel of that scene was in one 20 m cell. The reading
+        // that would have explained the screen was the one the tool
+        // refused to give.
+        if distance < self.near {
+            return self.near;
+        }
+        let slice = self.z_slice(-distance) as f32;
+        if slice >= (self.dimensions.z - 1) as f32 {
+            return f32::INFINITY;
+        }
         let edge = |s: f32| ((s + self.z_factors.y - 1.0) / self.z_factors.x).exp();
         edge(slice + 1.0) - edge(slice)
     }
