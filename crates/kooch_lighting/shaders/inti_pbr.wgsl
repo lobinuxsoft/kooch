@@ -913,6 +913,26 @@ fn inti_light_contribution(
         return vec3<f32>(0.0);
     }
 
+    // The most this light can put on this surface: its irradiance, faced
+    // head-on. `inti_sample_light` already computed it, so the test costs
+    // a max and a compare.
+    //
+    // 🔴 Zero here is EXACT rather than merely small (#835).
+    // `inti_distance_attenuation` saturates its window, so a fragment past
+    // the light's range reads `irradiance == 0.0`, and the return at the
+    // bottom of this function multiplies everything between here and there
+    // by it — both BRDF layers, the shadow cube, the contact march — to
+    // arrive at the value this line returns directly.
+    //
+    // The froxel is why such a light is in the loop at all: a cell accepts
+    // any light whose bounding sphere touches its AABB, which is correct
+    // and deliberately conservative. It leaves roughly 26 of the ~40 lights
+    // in the busiest cell reaching no part of a given pixel (#820).
+    let reach = max(max(s.irradiance.x, s.irradiance.y), s.irradiance.z) * n_dot_l;
+    if (reach <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+
     // The diffuse layer always answers to the light's centre.
     let h = normalize(s.to_light + surf.v);
     let l_dot_h = saturate(dot(s.to_light, h));
@@ -939,10 +959,9 @@ fn inti_light_contribution(
     // specular that also skipped `f` would BRIGHTEN the surface — a
     // missing highlight is invisible, an over-lit dielectric is not.
     var f = surf.f0;
-    // The most this light can put on this surface: its irradiance, faced
-    // head-on. Already computed by `inti_sample_light`, so the test
-    // costs a max and a compare.
-    let reach = max(max(s.irradiance.x, s.irradiance.y), s.irradiance.z) * n_dot_l;
+    // `reach` is the same value the range cut above already computed —
+    // one light's ceiling on this surface, read twice for two different
+    // questions. This one asks whether the highlight is worth its cost.
     if (reach >= inti.specular_floor) {
         var l_spec = s.to_light;
         var a_spec = surf.a;
