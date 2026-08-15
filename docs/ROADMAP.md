@@ -63,7 +63,7 @@ said.
 | **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
 | **#254** | post + auto exposure | The blown-out white floor in three sessions of screenshots. Cheap |
 | **#771 / #248** | atmosphere, ported from Bevy | Now worth doing for the sky it gives, not for what it saves: 1.2 ms without clouds |
-| ~~#481~~ / **#536** | ~~motion vectors + TAA~~ / FSR | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest edges of a still scene the resolved image carries **0.62** of the squared gradient the unresolved one does, and 0.46 on the strongest tenth of a percent — the theoretical halving of a step spread over two pixels. Two departures from upstream, both measured, both written down in `taa.wgsl`. FSR still open |
+| ~~#481~~ / **#536** | ~~motion vectors + TAA~~ / FSR | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest 1 % of edges the resolved image carries **0.38** of the squared gradient the unresolved one does. **Off by default** — asset and engine alike, see below. FSR still open |
 
 ### 🔴 A temporal pass is not free to port, and the copy cost more than the write
 
@@ -79,13 +79,26 @@ operator, fp16's half-thousandth of resolution near 1 is multiplied by
 over twenty frames: **0.09 storing linear against 0.85 storing
 compressed.** It is also one texture instead of two.
 
-**The variance clip is two sigma, not one.** Upstream's one sigma
-rejected the history on 11 % of the pixels of a scene that was not
-moving, and a rejected history is placed on the box *boundary* — a
-contrast boost, not a rejection. Edge energy of the final image, against
-123 for a single unresolved frame: no clip 114 and settling; two sigma
-124 and settling; **one sigma 135 and never settling.** One sigma leaves
-the image with more edge contrast than no temporal pass at all.
+**The variance clip stays at one sigma, and nearly did not.** It
+shipped at two for a day, on the strength of squared gradient summed
+over the *whole* image — a number a lit floor's falloff dominates, and
+which therefore reported upstream's width as making the frame worse.
+Masked to the pixels that actually are edges, the ranking inverts: one
+sigma leaves **0.38** of the unresolved frame's edge energy where two
+leaves 0.62.
+
+The rule that failed was not the arithmetic. Widening a variance clip is
+an **anti-ghosting** parameter, and it was being tuned against a scene
+that never moved — a scene with no ghosting in it. Anything that only
+appears in motion has to be measured in motion, and
+`tests/temporal_motion.rs` exists because this did not.
+
+⚠️ One sigma keeps a period-eight shimmer on a still scene that two
+removes: **0.18 of a level per channel per frame, and not decaying**,
+against 0.08 and settling. That is the clip firing on ~11 % of the
+pixels of a scene with nothing moving in it, and it is upstream's
+behaviour at upstream's width. Open, measured, and not worth trading
+ghosting for.
 
 **And the metric was wrong twice before it was right.** Counting
 "intermediate" pixels gave 21595 against 21337 — a lit floor is already
@@ -94,6 +107,16 @@ against 123, because the lighting falloff carries the total and the
 resolve rightly leaves it alone. Only masking to the strongest edges of
 the *unresolved* frame separated the effect from the scene: 0.62 on the
 top percent, 0.46 on the top tenth of a percent.
+
+🔴 **And it ships OFF, in the asset as well as in the engine.** It went
+in with `compute_shading` and `temporal_aa` both defaulting to true in
+`.rendersettings`, reasoning that a project with a settings asset has an
+author who can see the result. What happened is that every existing
+project — whose file predates these fields and therefore takes every one
+of their defaults — changed shading path *and* gained a temporal resolve
+in one build. Two variables at once is not a change anybody can bisect,
+and the first report was "you broke the whole render". A serde default
+is not a recommendation; it is what an old file silently becomes.
 
 ⚠️ **What TAA does not fix, and it is the thing that started this.**
 The froxel sampler's choice (#826) is seeded on the cluster index, not

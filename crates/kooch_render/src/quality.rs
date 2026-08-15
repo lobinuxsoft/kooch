@@ -49,16 +49,18 @@ pub struct TemporalSettings {
 }
 
 impl Default for TemporalSettings {
-    /// Off.
+    /// Off, unless the environment says otherwise.
     ///
-    /// The stage builds its history pairs either way — turning it on
-    /// must not be the frame that stalls — but a temporal resolve
-    /// rewrites every pixel of the image, and that is not something to
-    /// adopt on behalf of a project that never mentioned it. The
-    /// `.rendersettings` default is the opposite, and deliberately: a
-    /// project that ships an asset has an author who can see the result.
+    /// The stage builds its history pair either way — turning it on must
+    /// not be the frame that stalls — but a temporal resolve rewrites
+    /// every pixel of the image, and that is not something to adopt on
+    /// behalf of a project that never mentioned it. The
+    /// `.rendersettings` default is the same, and for a sharper reason:
+    /// see `default_temporal_aa` in `crate::settings`.
     fn default() -> Self {
-        Self { enabled: false }
+        Self {
+            enabled: temporal_aa_override().unwrap_or(false),
+        }
     }
 }
 
@@ -106,6 +108,39 @@ impl ShadingSettings {
 
 impl TemporalSettings {
     pub fn new(enabled: bool) -> Self {
-        Self { enabled }
+        Self {
+            enabled: temporal_aa_override().unwrap_or(enabled),
+        }
     }
+}
+
+/// `KOOCH_TEMPORAL_AA=on` (or `off`), read once.
+///
+/// The fifth variable of this shape and for the fifth time the same
+/// reason: the editor is not where a temporal resolve can be judged.
+/// What it costs is a full-screen pass on a handheld, and what it buys
+/// is only visible while a camera is being moved by hand — neither of
+/// which happens in a headless test or on a desktop GPU.
+///
+/// `None` when the variable says nothing, so the project's own setting
+/// stands. Anything unrecognised is also `None`: a typo during a
+/// measurement run must not silently decide which half of an A/B is
+/// running.
+pub fn temporal_aa_override() -> Option<bool> {
+    static ON: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *ON.get_or_init(
+        || match std::env::var("KOOCH_TEMPORAL_AA").ok().as_deref() {
+            Some("on") | Some("1") | Some("true") => {
+                tracing::info!(
+                    target: "kooch_render::quality",
+                    "KOOCH_TEMPORAL_AA=on: the camera jitters by a sub-pixel Halton \
+                     offset and each frame is blended with the reprojected one before \
+                     it",
+                );
+                Some(true)
+            }
+            Some("off") | Some("0") | Some("false") => Some(false),
+            _ => None,
+        },
+    )
 }

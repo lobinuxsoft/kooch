@@ -260,17 +260,26 @@ fn default_contact_length() -> f32 {
 fn default_contact_thickness() -> f32 {
     ContactShadowSettings::default().thickness
 }
-/// 🔴 These four do NOT read the engine's `Default`, and that is the
-/// point of the issue.
+/// 🔴 These four are the ENGINE's defaults, deliberately, and an
+/// earlier version of this file got it wrong.
 ///
-/// The engine's defaults are what a build with no settings asset gets,
-/// and they are conservative on purpose: off, full rate, every light,
-/// no history — the shape every capture before #824 was taken against.
-/// A project that ships a `.rendersettings` has an author who can see
-/// the result on a screen, so the asset's defaults are what the engine
-/// would pick for a game rather than for a measurement.
+/// It shipped with `compute_shading` and `temporal_aa` defaulting to
+/// true, reasoning that a project with a settings asset has an author
+/// who can see the result. What actually happened is that every
+/// existing project — which has a `.rendersettings` written before
+/// these fields existed, and therefore takes every one of these
+/// defaults — changed shading path AND gained a temporal resolve in the
+/// same build. Two variables at once is not a change anybody can
+/// bisect, and the first report was "you broke the whole render".
+///
+/// A serde default is not a recommendation. It is what an old file
+/// silently becomes, so it has to be what the engine already did:
+/// fragment path, full rate, every light, no history — the shape every
+/// capture before #824 was taken against. The knobs are in the
+/// Inspector; turning one on is a decision, and a decision has somebody
+/// looking at the screen when it is taken.
 fn default_compute_shading() -> bool {
-    true
+    false
 }
 fn default_shading_rate() -> u32 {
     crate::meshlet::ShadingRate::Full.factor()
@@ -279,7 +288,7 @@ fn default_light_samples() -> u32 {
     0
 }
 fn default_temporal_aa() -> bool {
-    true
+    false
 }
 
 impl Default for RenderSettings {

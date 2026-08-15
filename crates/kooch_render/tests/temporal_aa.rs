@@ -109,12 +109,12 @@ fn gradients(image: &[u8]) -> Vec<f64> {
 ///
 /// Measured on the lit scene, resolved over plain:
 ///
-///     top 10 %    0.77
-///     top 1 %     0.62
-///     top 0.1 %   0.46
+///     top 10 %    0.61
+///     top 1 %     0.38
+///     top 0.1 %   0.32
 ///
-/// The last is that theoretical halving, on the pixels where a step
-/// really is a step.
+/// Past the halving on the strongest edges, because a step there is
+/// spread over more than two pixels — eight jitter phases, not two.
 fn edge_energy_ratio(plain: &[u8], resolved: &[u8], percentile: f64) -> f64 {
     let before = gradients(plain);
     let after = gradients(resolved);
@@ -164,8 +164,11 @@ fn a_silhouette_stops_being_a_step() {
          image. The temporal pass is not reaching the tonemap.",
     );
 
+    for pct in [0.90, 0.99, 0.999] {
+        let r = edge_energy_ratio(&plain, &resolved, pct);
+        eprintln!("edge energy, strongest {:.1}%: {r:.3}", (1.0 - pct) * 100.0);
+    }
     let ratio = edge_energy_ratio(&plain, &resolved, 0.99);
-    eprintln!("edge energy on the strongest 1%: {ratio:.3} of the unresolved frame");
     assert!(
         ratio < 0.8,
         "the strongest edges carry {ratio:.3} of the energy they did unresolved, and \
@@ -176,15 +179,33 @@ fn a_silhouette_stops_being_a_step() {
     );
 }
 
-/// And it has to settle.
+/// And a still scene must not run away from itself.
 ///
-/// A resolve that keeps moving on a scene that does not is the other
-/// failure mode — jitter reaching the image without the history
-/// averaging it away — and it looks like the frame quietly vibrating.
-/// The blend rate is confidence-weighted, so a still pixel should be
-/// changing far less by frame 24 than by frame 4.
+/// # 🔴 It does not fully settle, and that is measured rather than
+/// wished away
+///
+/// The obvious assertion — the frame changes less at step 23 than at
+/// step 3 — is false here, and chasing it is what produced a bug. The
+/// variance clip fires on about 11 % of the pixels of this scene even
+/// with nothing moving, and *which* 11 % follows the jitter phase, so
+/// the image keeps a small period-eight wobble forever: **0.172 at step
+/// 3, 0.181 at step 23**, both under a tenth of a percent of full
+/// scale. That is the shimmer TAA is known for on high-frequency
+/// content, it is upstream's behaviour at upstream's clip width, and it
+/// is not divergence.
+///
+/// Widening the clip does remove it — two sigma gives 0.080 and
+/// settling — and that is exactly the trade this must not take
+/// unmeasured. The clip is what stops a stale history from ghosting,
+/// and it was widened once already on the strength of a metric that
+/// turned out to be measuring the lighting falloff rather than the
+/// edges. See the header of `taa.wgsl`.
+///
+/// So what is asserted is the property that actually matters: the
+/// wobble stays small. A resolve whose history is genuinely wrong does
+/// not wobble, it diverges, and by orders of magnitude.
 #[test]
-fn a_still_scene_settles() {
+fn a_still_scene_does_not_diverge() {
     let Some(mut r) = rig(3, true) else {
         eprintln!("no adapter with the 64-bit texture-atomic bundle; skipping");
         return;
@@ -207,11 +228,15 @@ fn a_still_scene_settles() {
     let early = mean_difference(&frames[2], &frames[3]);
     let late = mean_difference(&frames[22], &frames[23]);
     eprintln!("frame-to-frame change: {early:.4} early, {late:.4} late");
+    // Measured at 0.181. A divergent resolve is nowhere near this
+    // number — it is tens of levels a frame, because its history is
+    // being reprojected somewhere the image is not.
     assert!(
-        late <= early,
-        "the image is changing MORE at frame 23 ({late:.4}) than at frame 3 \
-         ({early:.4}). The jitter is reaching the projection and the history is not \
-         averaging it out — a frame that vibrates rather than one that resolves.",
+        late < 0.5,
+        "twenty-three frames into a scene that is not moving, the image is still \
+         changing by {late:.4} of a level per channel per frame (it was {early:.4} at \
+         frame 3). That is not the clip's period-eight wobble, that is a history being \
+         reprojected somewhere the image is not.",
     );
 }
 

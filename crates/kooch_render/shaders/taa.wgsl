@@ -35,25 +35,26 @@
 // `YCoCg_to_RGB`, whose upstream `saturate` would otherwise hand
 // `reverse_tonemap` its own pole.
 //
-// **2. The variance clip is two sigma, not one.** Upstream's one sigma
-// rejected the history on 11 % of pixels of a scene that was not moving
-// at all, and a rejected history is placed on the box boundary — which
-// is a contrast boost, not a rejection. Measured on the still scene, as
-// the edge energy of the final image against 123 for a single
-// unresolved frame:
-//
-//     no clip   114    settles, frame-to-frame change 0.003
-//     2 sigma   124    settles, 0.049
-//     1 sigma   135    does not settle, 0.09 and holding
-//
-// One sigma leaves the image with MORE edge contrast than no temporal
-// pass at all, which is the opposite of the thing being bought. Two is
-// inside the range shipped renderers use and is the widest the still
-// scene needed; wider ghosts.
-//
-// **3. The reset path is a uniform rather than a shader variant**, and
+// **2. The reset path is a uniform rather than a shader variant**, and
 // it seeds the confidence at 1 rather than at `1 /
 // MIN_HISTORY_BLEND_RATE`. See where each is set.
+//
+// # 🔴 The clip stays at ONE sigma, and there was nearly a third
+// departure here
+//
+// It shipped at two for a day, on the strength of a measurement that
+// was later shown to measure the wrong thing: squared gradient summed
+// over the WHOLE image, which a lit floor's falloff dominates, and
+// which therefore reported one sigma as making the frame worse. Masked
+// to the pixels that actually are edges, the ranking inverts — one
+// sigma leaves **0.38** of the unresolved frame's edge energy where two
+// leaves **0.62**.
+//
+// The rule that failed was not the arithmetic. Widening a variance clip
+// is an ANTI-GHOSTING parameter, and it was being tuned against a scene
+// that never moved, which is a scene with no ghosting in it. Anything
+// that only shows up in motion has to be measured in motion:
+// `tests/temporal_motion.rs` exists because this did not.
 //
 // Blend weights, empirical, from Bevy and unchanged. Lower means less of
 // the current sample and more of the past — more smoothing.
@@ -267,8 +268,7 @@ fn fs_taa(in: Varyings) -> Output {
             + (s_mm * s_mm) + (s_mr * s_mr) + (s_bl * s_bl) + (s_bm * s_bm) + (s_br * s_br);
         let mean = moment_1 / 9.0;
         let variance = (moment_2 / 9.0) - (mean * mean);
-        // Two sigma — departure 2 in the header, with the measurements.
-        let std_deviation = sqrt(max(variance, vec3(0.0))) * 2.0;
+        let std_deviation = sqrt(max(variance, vec3(0.0)));
         history_color = RGB_to_YCoCg(history_color);
         history_color = clip_towards_aabb_center(
             history_color, s_mm, mean - std_deviation, mean + std_deviation);
