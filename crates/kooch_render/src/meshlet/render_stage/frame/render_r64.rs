@@ -134,6 +134,14 @@ impl MeshletRenderStage {
                 view_proj,
                 contact,
                 debug_mode.as_u32(),
+                // #732 — the tonemap is its own pass now, so the scalar
+                // it used to read out of the Inti uniform is passed to
+                // the stage instead.
+                resources
+                    .get::<kooch_lighting::Exposure>()
+                    .copied()
+                    .unwrap_or_default()
+                    .multiplier(),
                 /* clear_depth */ true,
                 scopes.as_deref(),
                 shade_query.as_ref(),

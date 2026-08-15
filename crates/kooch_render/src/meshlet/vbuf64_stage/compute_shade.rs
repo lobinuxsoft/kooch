@@ -41,7 +41,8 @@ use crate::meshlet::{
 };
 
 use super::upsample::SHADED_ID_FORMAT;
-use super::{CameraUbo, DEFERRED_COLOR_FORMAT, ScreenUbo, ShadingRate, VBUF64_FORMAT};
+use super::{CameraUbo, ScreenUbo, ShadingRate, VBUF64_FORMAT};
+use crate::meshlet::deferred::HDR_COLOR_FORMAT;
 
 /// Upper bound on shading slots the per-frame screen UBO can address.
 /// Matches the fragment path's, and `MaterialPipeline::DEFAULT_CAPACITY`.
@@ -202,7 +203,10 @@ impl ComputeShading {
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
                         access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: DEFERRED_COLOR_FORMAT,
+                        // Linear radiance, not a picture (#732). The
+                        // tonemap is a pass of its own so TAA can sit
+                        // between the two.
+                        format: HDR_COLOR_FORMAT,
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
                     count: None,

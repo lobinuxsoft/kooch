@@ -43,9 +43,16 @@ struct MaterialParams {
 // prefix. The shading targets are this path's own, and the first free
 // indices.
 //
-// At `screen.shading_rate == 1` `color_out` is the screen; at 2 it is a
-// half-resolution texture the upsample pass reads back (#825).
-@group(0) @binding(5) var color_out: texture_storage_2d<rgba8unorm, write>;
+// At `screen.shading_rate == 1` `color_out` is the HDR target the
+// tonemap pass resolves; at 2 it is a half-resolution one the upsample
+// pass reads back first (#825).
+//
+// 🔴 `rgba16float`, and it holds LINEAR RADIANCE — not a picture (#732).
+// The format has to match `HDR_COLOR_FORMAT` exactly: wgpu compares the
+// storage class declared here against the bind group layout and rejects
+// the pipeline, which surfaces as "Texture class Storage doesn't match
+// the shader" and not as a wrong image.
+@group(0) @binding(5) var color_out: texture_storage_2d<rgba16float, write>;
 
 // #825 — which surface each shaded sample came from, as
 // `visible_slot + 1` (0 means the sample shaded nothing). The upsample
@@ -927,7 +934,15 @@ fn cs_shade_tile(
                     frag_coord, surf.flags);
             }
             radiance += base * mat.metallic_roughness_emissive_pad.z;
-            rgb = inti_tonemap(radiance);
+            // 🔴 Linear radiance out, NOT a picture (#732). The tonemap
+            // is its own pass now, because temporal anti-aliasing blends
+            // this frame with the last and an average of two
+            // ACES-tonemapped values is not the tonemap of their average.
+            //
+            // The debug branch above is the exception and keeps its own
+            // colour: those views produce a legend, and the tonemap pass
+            // is switched off for them rather than asked to undo one.
+            rgb = radiance;
         }
         textureStore(color_out, vec2<i32>(sample), vec4<f32>(rgb, 1.0));
         // Only the upsample reads this, and only half rate has one. At

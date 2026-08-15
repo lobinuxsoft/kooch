@@ -25,21 +25,23 @@ mod debug_resolve;
 mod density_clear;
 mod raster;
 mod shading_rate;
+mod tonemap;
 mod two_pass;
 mod upsample;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::meshlet::deferred::DEFERRED_COLOR_FORMAT;
 use crate::meshlet::dispatcher::MeshletCull;
 use crate::meshlet::render_stage::create_2d_attachment;
 use crate::meshlet::scene::MeshletScene;
 
+use crate::meshlet::deferred::DEFERRED_COLOR_FORMAT;
 use clear::Vbuf64Clear;
 use compute_shade::ComputeShading;
 use debug_resolve::DebugResolve;
 use density_clear::DensityClear;
 use raster::Vbuf64Rasterizer;
+use tonemap::Tonemap;
 use upsample::ShadingUpsample;
 
 pub use shading_rate::ShadingRate;
@@ -100,6 +102,7 @@ pub struct Vbuf64Stage {
     /// [`ShadingRate::Full`], which is what every capture before this
     /// issue was taken against.
     upsample: ShadingUpsample,
+    tonemap: Tonemap,
     shading_rate: ShadingRate,
     /// Fullscreen fragment pass for the colorize debug modes.
     debug_resolve: DebugResolve,
@@ -135,6 +138,7 @@ impl Vbuf64Stage {
         let compute_shade = ComputeShading::new(device, meshlet_bgl);
         let compute_enabled = compute_shade::enabled_by_environment();
         let upsample = ShadingUpsample::new(device, size);
+        let tonemap = Tonemap::new(device, size);
         // 🔴 Half rate is a property of the compute path and nothing
         // else: the fragment path shades inside its own raster, one
         // invocation per covered pixel, and has no thread to remove.
@@ -154,6 +158,7 @@ impl Vbuf64Stage {
             compute_shade,
             compute_enabled,
             upsample,
+            tonemap,
             shading_rate,
             debug_resolve,
             vbuf_texture,
@@ -180,6 +185,7 @@ impl Vbuf64Stage {
         self.material_depth_texture = md_tex;
         self.material_depth_view = md_view;
         self.upsample.resize(device, size);
+        self.tonemap.resize(device, size);
         self.size = size;
     }
 
@@ -255,6 +261,10 @@ impl Vbuf64Stage {
         view_proj: glam::Mat4,
         contact: &crate::contact_shadow::ContactShadowUbo,
         debug_mode: u32,
+        // #732 — the tonemap moved out of the shading shader, so the
+        // scalar it used to read from the Inti uniform has to reach
+        // the pass that applies it now.
+        exposure: f32,
         clear_depth: bool,
         // #824 — the shading pass gets its own GPU scope, nested inside
         // the caller's `raster + shade`.
@@ -333,10 +343,13 @@ impl Vbuf64Stage {
                 if half {
                     self.upsample.clear_ids(encoder);
                 }
+                // 🔴 Neither branch writes `color_view` any more: the
+                // compute path shades into HDR and the tonemap pass
+                // below puts it on screen (#732).
                 let shade_target = if half {
                     self.upsample.color_view()
                 } else {
-                    color_view
+                    self.tonemap.hdr_view()
                 };
                 self.compute_shade.shade(
                     device,
@@ -395,8 +408,33 @@ impl Vbuf64Stage {
                     queue,
                     encoder,
                     &self.vbuf_view,
-                    color_view,
+                    self.tonemap.hdr_view(),
                     self.size,
+                );
+                if let (Some(scopes), Some(query)) = (scopes, query) {
+                    scopes.end(encoder, query);
+                }
+            }
+            // HDR to the image. Its own scope: it is a full-screen pass
+            // that did not exist before, and "the tonemap moved" has to
+            // be answerable with a number rather than an argument.
+            if self.compute_enabled {
+                let query = match (scopes, parent) {
+                    (Some(s), Some(p)) => Some(s.begin_child("tonemap", encoder, p)),
+                    (Some(s), None) => Some(s.begin("tonemap", encoder)),
+                    _ => None,
+                };
+                self.tonemap.draw(
+                    queue,
+                    device,
+                    encoder,
+                    color_view,
+                    exposure,
+                    // The Inti debug views hand back display-ready
+                    // colour. Putting a false-colour legend through a
+                    // filmic curve turns a readable ramp into a washed
+                    // out one.
+                    !is_debug_view(debug_mode),
                 );
                 if let (Some(scopes), Some(query)) = (scopes, query) {
                     scopes.end(encoder, query);
@@ -404,6 +442,16 @@ impl Vbuf64Stage {
             }
         }
     }
+}
+
+/// True for the debug modes Inti resolves inside the shading shader,
+/// which produce colour that is already display-referred.
+///
+/// Pinned to `INTI_DEBUG_FIRST` in `inti_debug.wgsl`; the discriminants
+/// themselves are already pinned to `MeshletDebugMode` by a test in
+/// `debug.rs`.
+fn is_debug_view(debug_mode: u32) -> bool {
+    debug_mode >= 11
 }
 
 fn create_vbuf64_texture(

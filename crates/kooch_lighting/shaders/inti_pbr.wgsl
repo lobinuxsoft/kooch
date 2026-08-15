@@ -1323,33 +1323,10 @@ fn inti_cluster_of(world_position: vec3<f32>, frag_coord: vec2<f32>) -> u32 {
     return inti_cluster_index(inti_cluster_cell(world_position, frag_coord));
 }
 
-// ACES filmic approximation (Narkowicz 2015). Provisional: #254 owns
-// the real tonemapper and the auto exposure that lets a sunlit surface
-// and a planet's night side coexist in one frame.
-fn inti_aces(x: vec3<f32>) -> vec3<f32> {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
-}
-
-// Linear → sRGB electrical values.
-//
-// 🔴 NOT redundant with a hardware sRGB target. `GpuContext` picks a
-// deliberately NON-sRGB surface format ("most renderers handle gamma
-// correction in the shader") and until now no shader did. Skip this
-// and a correctly-lit scene renders visibly too dark with crushed
-// midtones — which reads as "the lighting is wrong" and is not.
-fn inti_linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
-    let cutoff = c < vec3<f32>(0.0031308);
-    let low = c * 12.92;
-    let high = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(high, low, cutoff);
-}
-
-// HDR radiance → the 8-bit value the surface expects.
+// The tonemap lives in `inti_tonemap.wgsl`, concatenated ahead of this
+// file — see `INTI_TONEMAP`. It is shared with the standalone tonemap
+// pass the compute shading path feeds (#732), which has an HDR texture
+// and no lighting bindings, so the operator cannot read `inti` directly.
 fn inti_tonemap(radiance: vec3<f32>) -> vec3<f32> {
-    return inti_linear_to_srgb(inti_aces(radiance * inti.exposure));
+    return inti_tonemap_with(radiance, inti.exposure);
 }
