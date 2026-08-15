@@ -687,6 +687,51 @@ what the frame cost before #780 and what a path with no camera matrices
 still does. The view does not special-case it, because a scene that
 quietly stopped clustering should look alarming.
 
+### A light in the cell is not a light on the pixel (#835)
+
+The cell is **conservative by design**: `cluster_raster.wgsl` accepts any
+light whose bounding sphere touches the cell's AABB, because a cell that
+excluded a light reaching one of its pixels would drop light from the
+image. A cell is also much larger than a pixel — at 1080p the default
+grid is 17x9x24, so one cell covers roughly 113x120 pixels and a slab of
+depth besides.
+
+Both of those are correct, and together they mean a fragment's list
+contains lights that do not reach *it*. Measured in #820: the busiest
+cell carries ~40 lights where ~14 reach the pixel.
+
+So the shading loop asks a second time, at the pixel, where the answer
+is already in a register:
+
+```wgsl
+let reach = max(max(s.irradiance.x, s.irradiance.y), s.irradiance.z) * n_dot_l;
+if (reach <= 0.0) {
+    return vec3<f32>(0.0);
+}
+```
+
+🔴 **Zero here is exact, not small.** `inti_distance_attenuation` windows
+with `saturate(1.0 - factor * factor)`, which reaches zero *at* the range
+rather than approaching it — the same property that makes the editor's
+wire sphere the truth about where a light stops. So the cut returns the
+value the rest of the function would have computed: both BRDF layers, the
+shadow cube and the contact march, all multiplied by an irradiance of
+zero. No pixel changes, which is what `tests/light_reach.rs` pins
+byte-for-byte.
+
+What it removes is the work in between, and that work is not small: at
+the default of 16 contact-shadow steps, the ~26 unreachable lights in a
+busy cell were spending 416 depth taps per pixel to produce nothing.
+
+⚠️ This is **not** a fix for the cell being loose. The cell is supposed
+to be loose. Tightening the grid — more slices, smaller tiles — trades
+against the cost of building it, and the measurement that would justify
+it is a different one.
+
+A cut at a *threshold* rather than at zero is the next question, and it
+is a different kind of change: visible, tunable, and needing its own
+measurement. That is what the section below is.
+
 ### What each light costs — `specular_floor` (#821)
 
 Clustering bounds *how many* lights a pixel walks. It cannot make any of
