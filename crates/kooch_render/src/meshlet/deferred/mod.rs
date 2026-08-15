@@ -92,6 +92,31 @@ fn build_scene_pipeline(
 /// compare pixel-for-pixel.
 pub const DEFERRED_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
+/// Where the compute path's shading lands **before** the tonemap
+/// (#732 phase 1).
+///
+/// # 🔴 Why the tonemap had to move out of the shading shader
+///
+/// Temporal anti-aliasing blends this frame with the last one, and a
+/// blend is only meaningful in a linear space: averaging two
+/// ACES-tonemapped 8-bit values is not the tonemap of their average.
+/// Bevy's TAA works around a display-referred input by applying a
+/// reversible tonemap inside the resolve, and it can do that because its
+/// input is HDR to begin with. Ours was `Rgba8Unorm` with ACES already
+/// baked in, so the history would have quantised at 1/255 per frame —
+/// exactly the precision a temporal accumulator exists to recover.
+///
+/// So the chain is now `shade → HDR → tonemap → LDR → blit`, and TAA
+/// lands between the first two. The extra pass is not scaffolding for
+/// that: it is where #254's auto exposure belongs regardless.
+///
+/// ⚠️ Sixteen bits per channel is twice the write bandwidth of the pass
+/// the device says is the bottleneck. At half rate the shading writes a
+/// quarter-resolution target, so the extra traffic is a quarter of what
+/// it looks like — but it is real and it is measured on the device
+/// rather than argued here.
+pub const HDR_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub(super) struct CameraUbo {

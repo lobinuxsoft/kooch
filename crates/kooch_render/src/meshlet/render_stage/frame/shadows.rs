@@ -78,9 +78,16 @@ impl MeshletRenderStage {
         // 🔴 The cap degrades in silence otherwise. A light past the
         // budget keeps lighting the scene and stops casting, which is
         // the right failure — but an author looking at a lamp whose
-        // shadow is missing has no way to tell that from a bug. Logged
-        // on the transition only, the way the light count is: the state
-        // it reports is steady and sixty lines a second would bury it.
+        // shadow is missing has no way to tell that from a bug.
+        //
+        // Reported on entering the state, once, and not on every change
+        // of the overflow. The overflow is not steady: culling happens
+        // before the budget, so the count follows the camera — 84 and 96
+        // alternating in the roll-a-ball stress scene — and keying the
+        // log on it printed the same line at frame rate. The number in
+        // the message is what it was when the budget was first exceeded,
+        // which is the fact worth knowing; the rest is where the author
+        // happened to be standing.
         let visible = ranked
             .iter()
             .filter(|light| {
@@ -88,17 +95,18 @@ impl MeshletRenderStage {
             })
             .count();
         let dropped = visible.saturating_sub(points.len());
-        if dropped != self.point_shadows_dropped {
+        if (dropped > 0) != self.point_shadows_over_budget {
             if dropped > 0 {
                 tracing::warn!(
                     target: "kooch_render::shadow",
                     dropped,
                     budget = kooch_lighting::MAX_POINT_SHADOWS,
                     "more point lights are casting than there are cube maps; the ones \
-                     furthest from the camera light the scene without a shadow",
+                     furthest from the camera light the scene without a shadow. Logged \
+                     once — the count moves with the camera",
                 );
             }
-            self.point_shadows_dropped = dropped;
+            self.point_shadows_over_budget = dropped > 0;
         }
 
         // Release the atlas when it stops being wanted, or when it was

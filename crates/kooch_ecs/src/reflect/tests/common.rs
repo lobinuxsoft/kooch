@@ -23,6 +23,7 @@ impl Reflect for Health {
                 asset_type: "",
                 requires: "",
                 doc: "",
+                group: "",
             },
             FieldMeta {
                 name: "max_hp",
@@ -34,6 +35,7 @@ impl Reflect for Health {
                 asset_type: "",
                 requires: "",
                 doc: "",
+                group: "",
             },
         ];
         FIELDS
@@ -109,6 +111,7 @@ impl Reflect for Position {
                 asset_type: "",
                 requires: "",
                 doc: "",
+                group: "",
             },
             FieldMeta {
                 name: "y",
@@ -120,6 +123,7 @@ impl Reflect for Position {
                 asset_type: "",
                 requires: "",
                 doc: "",
+                group: "",
             },
             FieldMeta {
                 name: "z",
@@ -131,6 +135,7 @@ impl Reflect for Position {
                 asset_type: "",
                 requires: "",
                 doc: "",
+                group: "",
             },
         ];
         FIELDS

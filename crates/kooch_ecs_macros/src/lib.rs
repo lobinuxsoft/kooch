@@ -50,8 +50,8 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
 use crate::attrs::{
     parse_category_attr, parse_field_asset_type, parse_field_bits, parse_field_choices,
-    parse_field_doc, parse_field_requires, parse_field_shown_when, parse_field_skip,
-    parse_inspector_attr,
+    parse_field_doc, parse_field_group, parse_field_requires, parse_field_shown_when,
+    parse_field_skip, parse_inspector_attr,
 };
 use crate::type_mapping::type_mapping;
 use crate::unit_struct::unit_struct_impl;
@@ -115,6 +115,14 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         // branch below, so a field cannot gain a tooltip on one code
         // path and lose it on another.
         let field_doc = parse_field_doc(field);
+        // #830 — the Inspector heading this field is drawn under.
+        // Harvested beside the doc comment for the same reason: every
+        // FieldMeta branch below needs it, and a field must not gain a
+        // heading on one code path and lose it on another.
+        let field_group = match parse_field_group(field) {
+            Ok(group) => group.unwrap_or_default(),
+            Err(e) => return e,
+        };
 
         // `#[reflect(skip)]` opts the field out of the inspector +
         // get/set paths entirely. Used for handle-style fields that
@@ -149,6 +157,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     asset_type: #asset_type,
                     requires: "",
                     doc: #field_doc,
+                    group: #field_group,
                 }
             });
             get_arms.push(quote! {
@@ -216,6 +225,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     asset_type: "",
                     requires: #requires,
                     doc: #field_doc,
+                    group: #field_group,
                 }
             });
 
@@ -277,6 +287,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     asset_type: "",
                     requires: "",
                     doc: #field_doc,
+                    group: #field_group,
                 }
             });
 
@@ -396,6 +407,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 asset_type: "",
                 requires: "",
                 doc: #field_doc,
+                group: #field_group,
             }
         });
 

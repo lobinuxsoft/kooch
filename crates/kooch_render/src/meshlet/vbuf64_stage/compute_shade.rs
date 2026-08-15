@@ -41,7 +41,8 @@ use crate::meshlet::{
 };
 
 use super::upsample::SHADED_ID_FORMAT;
-use super::{CameraUbo, DEFERRED_COLOR_FORMAT, ScreenUbo, ShadingRate, VBUF64_FORMAT};
+use super::{CameraUbo, ScreenUbo, ShadingRate, VBUF64_FORMAT};
+use crate::meshlet::deferred::HDR_COLOR_FORMAT;
 
 /// Upper bound on shading slots the per-frame screen UBO can address.
 /// Matches the fragment path's, and `MaterialPipeline::DEFAULT_CAPACITY`.
@@ -75,13 +76,15 @@ const SHADED_IDS_BINDING: u32 = 6;
 /// `KOOCH_SPECULAR_FLOOR` already carried that lesson; this is the
 /// third time it has been the same lesson.
 ///
-/// Anything unrecognised keeps the default: a typo during a measurement
-/// run must not silently change which path is being measured.
-pub(super) fn enabled_by_environment() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+/// Anything unrecognised is `None`, the same as unset: a typo during a
+/// measurement run must not silently change which path is being
+/// measured, and — since the settings asset now supplies a value too
+/// (#830) — must not silently override the author's either.
+pub(crate) fn enabled_by_environment() -> Option<bool> {
+    static ON: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
         let on = parse_enabled(std::env::var("KOOCH_COMPUTE_SHADING").ok().as_deref());
-        if on {
+        if on == Some(true) {
             tracing::info!(
                 target: "kooch_render::vbuf64_stage",
                 "KOOCH_COMPUTE_SHADING=on: shading runs as a compute pass over the \
@@ -97,8 +100,15 @@ pub(super) fn enabled_by_environment() -> bool {
 /// variable is a bug this repository has already shipped twice
 /// (`KOOCH_PACK_KEY`, `KOOCH_ENGINE_HOME`) and a pure function cannot
 /// have it.
-fn parse_enabled(raw: Option<&str>) -> bool {
-    matches!(raw, Some("on") | Some("1") | Some("true"))
+///
+/// `None` means "the variable said nothing", which is what lets the
+/// project's own setting stand.
+fn parse_enabled(raw: Option<&str>) -> Option<bool> {
+    match raw {
+        Some("on") | Some("1") | Some("true") => Some(true),
+        Some("off") | Some("0") | Some("false") => Some(false),
+        _ => None,
+    }
 }
 
 fn build_pipeline(
@@ -202,7 +212,10 @@ impl ComputeShading {
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
                         access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: DEFERRED_COLOR_FORMAT,
+                        // Linear radiance, not a picture (#732). The
+                        // tonemap is a pass of its own so TAA can sit
+                        // between the two.
+                        format: HDR_COLOR_FORMAT,
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
                     count: None,

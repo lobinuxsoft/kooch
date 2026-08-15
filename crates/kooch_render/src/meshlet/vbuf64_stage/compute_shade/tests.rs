@@ -1,22 +1,40 @@
 use super::*;
 
-/// 🔴 The default decides which shading path every existing capture,
-/// screenshot and baseline was taken against. If this flips, three
-/// sessions of measurements stop describing what the engine renders,
-/// and nothing else in the suite would say so.
+/// 🔴 An unset variable has to read as `None`, not as `Some(false)`.
+///
+/// The variable now sits ON TOP of the project's `.rendersettings`
+/// (#830). If "unset" meant "off", every project would be forced onto
+/// the fragment path by an environment nobody configured, and the
+/// settings asset would appear to have a compute-shading switch that
+/// does nothing.
 #[test]
-fn compute_shading_is_off_unless_asked_for() {
-    assert!(!parse_enabled(None));
-    assert!(!parse_enabled(Some("")));
-    assert!(!parse_enabled(Some("off")));
-    assert!(!parse_enabled(Some("yes")));
-    assert!(!parse_enabled(Some("ON")));
+fn an_unset_variable_says_nothing() {
+    assert_eq!(parse_enabled(None), None);
+    // …and so does a spelling the parser does not recognise. A typo
+    // during a measurement run must not silently change which path is
+    // being measured.
+    assert_eq!(parse_enabled(Some("")), None);
+    assert_eq!(parse_enabled(Some("yes")), None);
+    assert_eq!(parse_enabled(Some("ON")), None);
 }
 
 #[test]
 fn the_spellings_a_measurement_run_would_use_all_work() {
     for raw in ["on", "1", "true"] {
-        assert!(parse_enabled(Some(raw)), "KOOCH_COMPUTE_SHADING={raw}");
+        assert_eq!(
+            parse_enabled(Some(raw)),
+            Some(true),
+            "KOOCH_COMPUTE_SHADING={raw}",
+        );
+    }
+    // Both directions, because the asset's default is now `true`: a
+    // capture that needs the fragment path has to be able to ask for it.
+    for raw in ["off", "0", "false"] {
+        assert_eq!(
+            parse_enabled(Some(raw)),
+            Some(false),
+            "KOOCH_COMPUTE_SHADING={raw}",
+        );
     }
 }
 

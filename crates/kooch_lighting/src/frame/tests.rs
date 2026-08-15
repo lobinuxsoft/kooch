@@ -28,11 +28,18 @@ fn frame_size_matches_shader() {
     // WGSL to 16, so a field of odd size inserted above this point moves
     // the two apart without either side complaining.
     const CLUSTERS: usize = 4 * 16;
+    // #826's sample count. A whole 16 for one word, because the four
+    // that preceded it — `cluster_capacity`, `directional_count`,
+    // `clustered`, `debug_lights_hot` — closed their group exactly. The
+    // next scalar opens a new one and pays for its three empty
+    // neighbours; there was no padding left to ride in, the way
+    // `debug_light` and `light_limit` each did.
+    const SAMPLES: usize = 16;
     assert_eq!(
         std::mem::size_of::<IntiFrame>(),
-        HEADER + CASCADES + TAIL + SPOT_SHADOWS + SPOT_TAIL + POINT_SHADOWS + CLUSTERS,
+        HEADER + CASCADES + TAIL + SPOT_SHADOWS + SPOT_TAIL + POINT_SHADOWS + CLUSTERS + SAMPLES,
     );
-    assert_eq!(std::mem::size_of::<IntiFrame>(), 992);
+    assert_eq!(std::mem::size_of::<IntiFrame>(), 1008);
 }
 
 /// std140/std430 require an array's element stride to be a multiple

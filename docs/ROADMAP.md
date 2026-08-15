@@ -57,13 +57,120 @@ said.
 | ~~#780~~ | ~~GPU clustering — the froxel grid~~ | **Done and measured** (2026-08-14). The busiest froxel holds 26 lights against 12 that reach a point — ~24 % over-listing, ordinary for clustering. It costs 0.15 ms. Not a suspect |
 | ~~#824~~ | ~~shade in a compute pass, tile's lights in LDS~~ | **Built and measured: 6.6 %.** Fifteen storage fetches per pixel became fifteen per tile and the shading went 35.98 → 33.60 ms. Its value is what it revealed and unlocked, not the 6.6: the raster is **3.74 ms of 37.34**, so shading is 90 % of that pass — and #825 is buildable now |
 | ~~#825~~ | ~~shade at half rate, raster stays full~~ | **Built.** Lighting runs at one sample per 2×2 quad, upsampled with the vbuf as the edge guide, so the silhouette on screen is still the raster's — asserted exactly, not approximately. `KOOCH_SHADING_RATE=half`. The device capture is what closes it |
-| **#826** | sample the tile's lights, 15 → 2-4 | 🎯 **Next, and no longer optional.** `KOOCH_LIGHT_LIMIT` measured `shade = 11.11 ms + 1.06 ms per light`: neither this nor #825 closes the budget alone, and together they land at ~12 ms. See below |
+| ~~#826~~ | ~~sample the tile's lights, 15 → 2-4~~ | **Built twice.** A light is picked in proportion to what it contributes and divided by the probability of the pick, so two lights land 5 % from the full walk's brightness where two *truncated* ones land 83 % away. `KOOCH_LIGHT_SAMPLES`, capped at 8. The first version chose **per pixel** and the device refused it; the second chooses **per froxel, cooperatively** — see below. It also found what the froxel flicker really was |
 | ~~#796 / #819~~ | ~~ReSTIR / Solari~~ | **Ruled out for this hardware.** Solari's world cache alone is 2.65 ms per refresh in Bistro on the author's machine — 19 % of our whole budget, on far faster silicon — and denoising runs through DLSS Ray Reconstruction, which the 890M has no path to |
 | **#731** | volumetric clouds, froxel-based | The clouds are **off**, and that is the only reason the budget is met. They cost 39 ms as written |
 | **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
 | **#254** | post + auto exposure | The blown-out white floor in three sessions of screenshots. Cheap |
 | **#771 / #248** | atmosphere, ported from Bevy | Now worth doing for the sky it gives, not for what it saves: 1.2 ms without clouds |
-| **#481 / #536** | motion vectors + FSR | Treats the symptom — fewer pixels of a pass that costs too much per pixel — but it is what the hardware is asking for |
+| ~~#481~~ / **#536** | ~~motion vectors + TAA~~ / FSR | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest 1 % of edges the resolved image carries **0.38** of the squared gradient the unresolved one does. **Off by default** — asset and engine alike, see below. FSR still open |
+
+### 🔴 A range compressor needs the exposure, and this engine's radiance is nowhere near 1
+
+The temporal resolve shipped looking like a broken toon shader: a dark
+rim on every silhouette and iso-luminance contours sweeping the floor.
+It was reported from a screenshot before any assertion here caught it,
+and the assertions could not have caught it — every number they produce
+is a magnitude, and this artifact is *signed*. What found it was dumping
+the difference between the resolved and unresolved frames amplified
+about mid grey, which is now `dump_frames` in `tests/temporal_aa.rs`.
+
+The cause is one line, and it generalises past TAA. The resolve blends
+in a range-compressed space, `c / (max(c) + 1)`, so that one firefly
+cannot drag a neighbourhood. That operator has all of its resolution
+between 0 and about 4, and it is written against a scene whose radiance
+sits near 1.
+
+**Ours does not.** Exposure is applied downstream in the tonemap pass,
+and the scene is blown out besides (#254), so lit surfaces reach the
+resolve at radiance in the hundreds. Compressed, every one of them lands
+between 0.998 and 0.9999 — the whole image inside a thousandth of the
+operator's range. Blend there, expand with the inverse, and what comes
+back is posterised: flat bands with hard boundaries, and a rim wherever
+two bands meet.
+
+Multiplying by the exposure before compressing, and dividing after, is
+the whole fix. Every measurement moved the right way at once, which is
+what separates a fix from a tuning:
+
+| | before | after |
+|---|---|---|
+| still scene, frame-to-frame | 0.172 → 0.181, **growing** | 0.099 → 0.095, settling |
+| pan, distance from the unresolved frame | 1.506 | **1.058** |
+| after stopping, pan history vs fresh | 0.450 | **0.324** |
+
+⚠️ The rule to carry: **anything in this engine that compresses range —
+a resolve, a bloom threshold, a firefly clamp — has to see the exposure
+first.** The renderer's linear values are not display-referred and are
+not near 1, and every operator borrowed from a renderer whose values are
+will misbehave in a way that looks like a shading bug rather than a
+scaling one.
+
+⚠️ **Still missing from the port:** Bevy `#[require]`s `MipBias`
+alongside its TAA, and we have none. Jittered accumulation reconstructs
+detail finer than one frame carries, so textures want a negative LOD
+bias to match. Open.
+
+### 🔴 A temporal pass is not free to port, and the copy cost more than the write
+
+#481 was a port, per the standing rule, and the port still had to be
+measured against the thing it was ported into. Two of upstream's choices
+are wrong here, and neither announced itself — both render a plausible
+image.
+
+**The history holds linear radiance, not the compressed value.** Bevy
+stores the range-compressed colour; read back through the inverse
+operator, fp16's half-thousandth of resolution near 1 is multiplied by
+`1/(1-t)²`. Frame-to-frame change of the final image on a still scene,
+over twenty frames: **0.09 storing linear against 0.85 storing
+compressed.** It is also one texture instead of two.
+
+**The variance clip stays at one sigma, and nearly did not.** It
+shipped at two for a day, on the strength of squared gradient summed
+over the *whole* image — a number a lit floor's falloff dominates, and
+which therefore reported upstream's width as making the frame worse.
+Masked to the pixels that actually are edges, the ranking inverts: one
+sigma leaves **0.38** of the unresolved frame's edge energy where two
+leaves 0.62.
+
+The rule that failed was not the arithmetic. Widening a variance clip is
+an **anti-ghosting** parameter, and it was being tuned against a scene
+that never moved — a scene with no ghosting in it. Anything that only
+appears in motion has to be measured in motion, and
+`tests/temporal_motion.rs` exists because this did not.
+
+⚠️ One sigma keeps a period-eight shimmer on a still scene that two
+removes: **0.18 of a level per channel per frame, and not decaying**,
+against 0.08 and settling. That is the clip firing on ~11 % of the
+pixels of a scene with nothing moving in it, and it is upstream's
+behaviour at upstream's width. Open, measured, and not worth trading
+ghosting for.
+
+**And the metric was wrong twice before it was right.** Counting
+"intermediate" pixels gave 21595 against 21337 — a lit floor is already
+a gradient. Summing squared gradients over the whole image gave 124
+against 123, because the lighting falloff carries the total and the
+resolve rightly leaves it alone. Only masking to the strongest edges of
+the *unresolved* frame separated the effect from the scene: 0.62 on the
+top percent, 0.46 on the top tenth of a percent.
+
+🔴 **And it ships OFF, in the asset as well as in the engine.** It went
+in with `compute_shading` and `temporal_aa` both defaulting to true in
+`.rendersettings`, reasoning that a project with a settings asset has an
+author who can see the result. What happened is that every existing
+project — whose file predates these fields and therefore takes every one
+of their defaults — changed shading path *and* gained a temporal resolve
+in one build. Two variables at once is not a change anybody can bisect,
+and the first report was "you broke the whole render". A serde default
+is not a recommendation; it is what an old file silently becomes.
+
+⚠️ **What TAA does not fix, and it is the thing that started this.**
+The froxel sampler's choice (#826) is seeded on the cluster index, not
+on the frame, so its noise is the same noise every frame and there is
+nothing for an average to average. The jitter perturbs which froxel a
+pixel lands in and no more. Making #826's noise temporal — a frame term
+in the seed — is what turns the resolve loose on it, and it is not in
+this change.
 
 ### 🔴 What the frame is actually spending, 2026-08-13
 
@@ -226,6 +333,52 @@ its mean. The second is why that test asserts a percentile — silhouette
 pixels are a rounding error in an average, which is exactly where a
 broken guide hides.
 
+### 🔴 The froxel flicker was never about froxels
+
+`KOOCH_LIGHT_LIMIT` shimmered on the device, and the write-up said what
+everyone assumes: a pixel crossing a cell boundary changes which lights
+it evaluates. #826's temporal-stability test rendered the same
+unchanged view twice and refuted it.
+
+| | pixels changed between two identical frames | worst channel |
+|---|---|---|
+| walking every light | 1 | 1 |
+| `KOOCH_LIGHT_LIMIT=2` | 10 098 | 164 |
+| sampling, first draft | 7 075 | 83 |
+
+Nothing moves and a third of the covered pixels change. The cause is
+`cluster_raster.wgsl::write_index`: a light claims its slot in the
+cell's run with `atomicAdd`, so the run's order is whichever thread
+arrived first — **different every frame**. "The first two of the list"
+is a different pair of lights each time.
+
+Which makes it a trap for anything that reads the run's *order*, and
+the first draft of the sampler walked into it: stratifying the
+cumulative weight is one pass and one random number, and a cumulative
+walk is an order. The shipped version keys each light's draw on its
+**global index** instead — an argmin over independent per-light keys,
+so permuting the run cannot change the winner. `-log(u) / w`, smallest
+wins, which picks light *i* with probability `w_i / w_sum`.
+
+⚠️ **It costs `K + 1` walks of the weights instead of two**, and that is
+affordable only because the weight comes out of workgroup memory. Which
+is where #824 stopped one step short: it cached the tile's light
+*indices*, four bytes each, and every pixel still fetched the whole
+80-byte `IntiLight` for every light in its froxel. Fifteen of those is
+1.2 KB per pixel — #824 removed the four bytes and left the 1200, which
+is why it bought 6.6 %. #826 puts the twenty bytes a weight needs in
+`var<workgroup>`, read once per tile.
+
+⚠️ **A floor in the convergence, recorded rather than fixed.** Past
+about eight samples the error stops falling: ~5/255 and 1.2 % dark.
+A light whose cheap diffuse weight underestimates its specular
+contribution is picked rarely and scaled by a large `1/w` when it is;
+the spike clips against the tonemap and an 8-bit target, and clipping
+only ever loses energy. The fixes — a better weight, or a clamped ratio
+— trade one bias for another, and neither is worth choosing before the
+device says how much of it is visible at the two to four samples a frame
+would actually ship.
+
 ### What was ruled out, so it is not revisited
 
 Four families were considered against the measurements and dropped. The
@@ -311,6 +464,56 @@ which lights it evaluates, and the change is visible because nothing
 carries state across frames. That is why every real sampling scheme
 carries temporal reservoirs, and it is now a requirement written into
 #826 rather than a surprise waiting inside it.
+
+### 🔴 A weight costs a fifth of an evaluation, so the choice cannot live in the pixel
+
+#826 shipped choosing per pixel and the device priced it, on the
+OneXFly, at half rate, with everything else held still:
+
+| samples | `shade: compute` | weights per pixel |
+|---|---|---|
+| 0 (walk all 15) | 12.624 ms | 0 |
+| 2 | **10.482 ms** | 45 |
+| 4 | 16.837 ms | 75 |
+
+**Non-monotonic**, which is the whole finding. Solving those three for
+the cost of one weight against one full light evaluation gives **0.196**
+— a fifth, not the fifteenth the design assumed. At that ratio the
+`(K+1) × 15` weights a pixel walks cost more than the twelve evaluations
+they remove as soon as K reaches 4, and the technique appears to fail
+while being perfectly correct.
+
+The estimator was in the wrong loop. It now runs **once per froxel**,
+cooperatively: one thread per (cell, stratum), at most 16 × 8 of a
+tile's 256, each walking its cell's run once. What reaches the pixel is
+a list of picks and their scales, so shading costs `picks` evaluations
+and **no weights at all**.
+
+This is what HypeHype's Stratified Tile-Based Lighting does (SIGGRAPH
+2025), minus a level: their two-level scheme exists because they have no
+cluster grid, and #780 already reduced 100 lights to ~15. Their small
+tile is 16 px, which is this workgroup exactly.
+
+⚠️ **It costs image quality and the numbers say so** — mean |Δ| against
+the full walk went 8.71 → 24.33 at one sample and 5.42 → 7.53 at eight,
+because one choice now serves 256 pixels instead of being averaged away.
+The error also stops being per-pixel noise and becomes a discontinuity
+at froxel boundaries, which for an engine with no temporal pass is the
+better artefact and is chosen deliberately. **The device decides whether
+the exchange was worth it. Nothing here says it was.**
+
+Two invariants came out of it, both from the device rather than from
+theory:
+
+- **A light with a shadow map is never sampled.** A shadow is binary and
+  high-contrast; a caster a tile declines to pick reads as a shadow that
+  blinks, not as a slightly wrong estimate. There are at most 8 in a
+  scene, so the rule is free.
+- **Every light gets a floor under its probability.** A froxel is a
+  volume, so a light whose range cuts through it can score zero at the
+  representative point and still reach real pixels — the one failure the
+  estimator cannot absorb, because a light that is never picked is never
+  divided back up.
 
 The other number that has survived every experiment is the pixel count:
 the frame falls 5.2× with internal resolution, and #824 measured that

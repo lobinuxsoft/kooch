@@ -57,13 +57,16 @@ pub struct RenderSettings {
     /// Exposure is expressed as a camera because EV100 is a correct
     /// number and an unusable control. f/16 in bright sun, f/1.0 indoors.
     #[serde(default = "default_aperture")]
+    #[reflect(group = "Exposure")]
     pub aperture_f_stops: f32,
     /// Shutter time in SECONDS. Longer is brighter. 1/125 is 0.008.
     #[serde(default = "default_shutter")]
+    #[reflect(group = "Exposure")]
     pub shutter_speed_s: f32,
     /// Film speed. Higher is brighter — and in a real camera noisier,
     /// though here it is brightness only.
     #[serde(default = "default_iso")]
+    #[reflect(group = "Exposure")]
     pub sensitivity_iso: f32,
 
     /// Ambient light arriving from world up, as linear RGB.
@@ -72,10 +75,12 @@ pub struct RenderSettings {
     /// metal facing away from every light renders pure black — correct
     /// for the model, and indistinguishable from a bug.
     #[serde(default = "default_sky")]
+    #[reflect(group = "Ambient light")]
     pub ambient_sky_color: glam::Vec3,
     /// Ambient light arriving from world down, as linear RGB. Bounce
     /// off the ground, not sky.
     #[serde(default = "default_ground")]
+    #[reflect(group = "Ambient light")]
     pub ambient_ground_color: glam::Vec3,
     /// Ambient illuminance in LUX, on the same scale as a directional
     /// light. An office is 320; a directional light defaults to 10 000.
@@ -84,11 +89,13 @@ pub struct RenderSettings {
     /// flattens, because ambient arrives from everywhere and therefore
     /// describes no direction.
     #[serde(default = "default_ambient_intensity")]
+    #[reflect(group = "Ambient light")]
     pub ambient_intensity: f32,
 
     /// Whether the sun casts shadows. Off frees the atlas entirely —
     /// 64 MiB at the default resolution.
     #[serde(default = "default_shadows_enabled")]
+    #[reflect(group = "Sun shadows")]
     pub shadows_enabled: bool,
     /// How far from the camera shadows are drawn, in METRES.
     ///
@@ -97,10 +104,12 @@ pub struct RenderSettings {
     /// are given, so a larger distance blurs the shadows near the
     /// camera, which are the ones being looked at.
     #[serde(default = "default_shadow_distance")]
+    #[reflect(group = "Sun shadows")]
     pub shadow_distance: f32,
     /// Side of one shadow cascade in TEXELS. The atlas is twice this on
     /// each axis: 2048 costs 64 MiB, 1024 costs 16.
     #[serde(default = "default_cascade_texels")]
+    #[reflect(group = "Sun shadows")]
     pub shadow_cascade_texels: u32,
     /// How soft shadow edges get with distance: the TANGENT of the sun's
     /// angular radius, so 0.03 widens a shadow by three centimetres per
@@ -110,6 +119,7 @@ pub struct RenderSettings {
     /// shadow is indistinguishable from a hard one. Raise it for an
     /// overcast look; drop it to zero for a hard edge.
     #[serde(default = "default_sun_softness")]
+    #[reflect(group = "Sun shadows")]
     pub sun_softness: f32,
     /// Where the first shadow cascade ends, in METRES. The other three
     /// follow logarithmically out to `shadow_distance`.
@@ -119,6 +129,7 @@ pub struct RenderSettings {
     /// the same texels; raise it and everything close gets coarser.
     /// Unity ships 10.05 and Godot 10.
     #[serde(default = "default_first_cascade")]
+    #[reflect(group = "Sun shadows")]
     pub shadow_first_cascade_distance: f32,
 
     /// Steps a contact-shadow ray takes. **Zero turns contact shadows
@@ -128,11 +139,13 @@ pub struct RenderSettings {
     /// resolve — where an object meets the floor. Cost is per light that
     /// opted in, per pixel it touches.
     #[serde(default = "default_contact_steps")]
+    #[reflect(group = "Contact shadows")]
     pub contact_shadow_steps: u32,
     /// How far a contact-shadow ray travels, in METRES. Longer grounds
     /// objects that hover further from what they stand on, and costs the
     /// same — the steps just spread wider.
     #[serde(default = "default_contact_length")]
+    #[reflect(group = "Contact shadows")]
     pub contact_shadow_length: f32,
     /// Thickness the march assumes every surface has, in METRES.
     ///
@@ -141,8 +154,69 @@ pub struct RenderSettings {
     /// detach from thin geometry; too large and a railing shadows
     /// everything behind it.
     #[serde(default = "default_contact_thickness")]
+    #[reflect(group = "Contact shadows")]
     pub contact_shadow_thickness: f32,
+
+    /// Shading as a COMPUTE pass over the visibility buffer (#824)
+    /// rather than a fragment one.
+    ///
+    /// The compute path keeps each tile's froxel lights in workgroup
+    /// memory, so the lights are read once per tile instead of once per
+    /// pixel. It is also the only path that can shade at a reduced rate
+    /// or accumulate frames — half rate and temporal anti-aliasing both
+    /// do nothing without it.
+    #[serde(default = "default_compute_shading")]
+    #[reflect(group = "Shading")]
+    pub compute_shading: bool,
+    /// Pixels per shaded sample, per AXIS (#825). 1 shades every pixel;
+    /// 2 shades one per 2x2 quad and reconstructs the rest using the
+    /// visibility buffer as the edge guide.
+    ///
+    /// Geometry, depth and the visibility buffer stay at full
+    /// resolution on every setting — only the lighting evaluation moves.
+    #[serde(default = "default_shading_rate")]
+    #[reflect(group = "Shading", choices = SHADING_RATE_CHOICES)]
+    pub shading_rate: u32,
+    /// How many of a froxel's lights each pixel evaluates (#826). **Zero
+    /// evaluates all of them**, which is exact and the most expensive
+    /// thing the frame does.
+    ///
+    /// The lights are chosen in proportion to what they contribute and
+    /// each result is divided by the probability of having chosen it, so
+    /// the average over the picked set estimates the sum over all of
+    /// them. What it costs is noise, not darkness — and noise is what
+    /// the temporal resolve below is for.
+    #[serde(default = "default_light_samples")]
+    #[reflect(group = "Shading")]
+    pub light_samples: u32,
+
+    /// Temporal anti-aliasing (#481): each frame samples a different
+    /// sub-pixel position and is blended with the ones before it.
+    ///
+    /// This is what turns the stochastic parts of the renderer from
+    /// noise into detail — the sampled lights above, the dithered
+    /// contact-shadow ray, the reduced shading rate. It costs one
+    /// full-screen pass and one history texture, and it needs
+    /// `compute_shading`.
+    #[serde(default = "default_temporal_aa")]
+    #[reflect(group = "Temporal")]
+    pub temporal_aa: bool,
 }
+
+/// The two rates that exist. Quarter rate is deliberately absent: at
+/// 4x4 the upsample's guide stops being able to reconstruct a
+/// silhouette, which is a different technique rather than a bigger
+/// constant.
+const SHADING_RATE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
+    kooch_ecs::reflect::FieldChoice {
+        label: "Full — one sample per pixel",
+        value: 1,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Half — one sample per 2x2 quad",
+        value: 2,
+    },
+];
 
 fn default_aperture() -> f32 {
     PhysicalCamera::default().aperture_f_stops
@@ -186,6 +260,36 @@ fn default_contact_length() -> f32 {
 fn default_contact_thickness() -> f32 {
     ContactShadowSettings::default().thickness
 }
+/// 🔴 These four are the ENGINE's defaults, deliberately, and an
+/// earlier version of this file got it wrong.
+///
+/// It shipped with `compute_shading` and `temporal_aa` defaulting to
+/// true, reasoning that a project with a settings asset has an author
+/// who can see the result. What actually happened is that every
+/// existing project — which has a `.rendersettings` written before
+/// these fields existed, and therefore takes every one of these
+/// defaults — changed shading path AND gained a temporal resolve in the
+/// same build. Two variables at once is not a change anybody can
+/// bisect, and the first report was "you broke the whole render".
+///
+/// A serde default is not a recommendation. It is what an old file
+/// silently becomes, so it has to be what the engine already did:
+/// fragment path, full rate, every light, no history — the shape every
+/// capture before #824 was taken against. The knobs are in the
+/// Inspector; turning one on is a decision, and a decision has somebody
+/// looking at the screen when it is taken.
+fn default_compute_shading() -> bool {
+    false
+}
+fn default_shading_rate() -> u32 {
+    crate::meshlet::ShadingRate::Full.factor()
+}
+fn default_light_samples() -> u32 {
+    0
+}
+fn default_temporal_aa() -> bool {
+    false
+}
 
 impl Default for RenderSettings {
     /// The same values the engine uses with no settings asset at all —
@@ -211,6 +315,10 @@ impl Default for RenderSettings {
             contact_shadow_steps: contact.linear_steps,
             contact_shadow_length: contact.length,
             contact_shadow_thickness: contact.thickness,
+            compute_shading: default_compute_shading(),
+            shading_rate: default_shading_rate(),
+            light_samples: default_light_samples(),
+            temporal_aa: default_temporal_aa(),
         }
     }
 }
@@ -250,6 +358,26 @@ impl RenderSettings {
         }
     }
 
+    /// What the frame is allowed to spend, with any `KOOCH_*` override
+    /// applied on top — see [`crate::quality`] for why the variable
+    /// outranks the asset.
+    pub fn shading(&self) -> crate::quality::ShadingSettings {
+        crate::quality::ShadingSettings::from_asset(
+            self.compute_shading,
+            crate::meshlet::ShadingRate::from_factor(self.shading_rate),
+            self.light_samples,
+        )
+    }
+
+    /// 🔴 Gated on the shading path, not merely documented as needing
+    /// it. The resolve lives in the compute path's HDR chain, so asking
+    /// for it on the fragment path would leave the jitter on with
+    /// nothing to integrate it — a frame that shimmers, which reads as
+    /// TAA being broken rather than absent.
+    pub fn temporal(&self) -> crate::quality::TemporalSettings {
+        crate::quality::TemporalSettings::new(self.temporal_aa && self.shading().compute)
+    }
+
     /// Publishes into the `Resources` the shading model already reads.
     ///
     /// The indirection is the point: `inti_pbr.wgsl` and `GpuLights`
@@ -260,6 +388,14 @@ impl RenderSettings {
         resources.insert(self.ambient());
         resources.insert(self.shadows());
         resources.insert(self.contact_shadows());
+        let shading = self.shading();
+        resources.insert(shading);
+        resources.insert(self.temporal());
+        // The sampled-light count reaches the shader through Inti's own
+        // resource rather than a second path, so a game that sets
+        // `LightSamples` by hand keeps working and this is one more
+        // writer of it rather than a competing one.
+        resources.insert(kooch_lighting::LightSamples(shading.light_samples));
     }
 }
 
@@ -332,10 +468,14 @@ pub fn apply_render_settings_system(resources: &mut Resources) {
     let ambient = settings.ambient();
     let shadows = settings.shadows();
     let contact = settings.contact_shadows();
+    let shading = settings.shading();
+    let temporal = settings.temporal();
     let stale = resources.get::<Exposure>() != Some(&exposure)
         || resources.get::<AmbientLight>() != Some(&ambient)
         || resources.get::<ShadowSettings>() != Some(&shadows)
-        || resources.get::<ContactShadowSettings>() != Some(&contact);
+        || resources.get::<ContactShadowSettings>() != Some(&contact)
+        || resources.get::<crate::quality::ShadingSettings>() != Some(&shading)
+        || resources.get::<crate::quality::TemporalSettings>() != Some(&temporal);
     if stale {
         settings.apply(resources);
         tracing::debug!(

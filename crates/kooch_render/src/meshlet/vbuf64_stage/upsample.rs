@@ -16,7 +16,8 @@ use bytemuck::{Pod, Zeroable, bytes_of};
 
 use crate::meshlet::render_stage::create_2d_attachment;
 
-use super::{DEFERRED_COLOR_FORMAT, ShadingRate, VBUF64_FORMAT};
+use super::{ShadingRate, VBUF64_FORMAT};
+use crate::meshlet::deferred::HDR_COLOR_FORMAT;
 
 /// Per-sample surface id written by the shading pass, as
 /// `visible_slot + 1`. `R32Uint` because `visible_slot` is a 25-bit
@@ -116,7 +117,7 @@ impl ShadingUpsample {
                 module: &shader,
                 entry_point: Some("fs_upsample"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: DEFERRED_COLOR_FORMAT,
+                    format: HDR_COLOR_FORMAT,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -275,7 +276,7 @@ fn create_shaded_color(
         device,
         "shading_half_rate_color",
         size,
-        DEFERRED_COLOR_FORMAT,
+        HDR_COLOR_FORMAT,
         wgpu::TextureUsages::STORAGE_BINDING
             | wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::RENDER_ATTACHMENT,

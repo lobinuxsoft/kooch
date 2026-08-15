@@ -213,6 +213,13 @@ pub struct GpuCascade {
 /// Lights past the fourth still light the scene, they just do not cast.
 /// Dropping the light itself would be a worse failure than dropping its
 /// shadow, and a far more confusing one.
+/// The most lights one froxel can be asked to choose (#826).
+///
+/// Mirrors `MAX_TILE_STRATA` in `material_pbr_compute.wgsl`, where one
+/// thread runs one stratum and a 256-thread tile has up to 16 froxels to
+/// serve. Past this the shader silently repeats the previous picture.
+pub const MAX_LIGHT_SAMPLES: u32 = 8;
+
 pub const MAX_SPOT_SHADOWS: usize = 4;
 
 /// How many cascades the frame carries. Fixed because the count is baked
@@ -416,6 +423,23 @@ pub struct IntiFrame {
     /// every pixel red in a room with four lamps. Zero reads as
     /// [`LIGHTS_HOT_DEFAULT`] rather than dividing by nothing.
     pub debug_lights_hot: u32,
+    /// How many of a froxel's punctual lights a pixel actually
+    /// **evaluates**, chosen by estimated contribution (#826). 0 walks
+    /// all of them, which is what every frame before this did.
+    ///
+    /// 🔴 Not [`Self::light_limit`] with a nicer name, and the
+    /// difference is the whole issue. The limit truncates by the
+    /// froxel's list ORDER, which is arbitrary — cross a cell boundary,
+    /// the list reorders, and the set a pixel evaluates jumps. That is
+    /// the froxel flicker the limit produced on the device. This picks
+    /// by CONTRIBUTION and divides by the probability of having picked
+    /// it, so the estimate is unbiased and the choice is continuous
+    /// across the boundary the limit was discontinuous at.
+    pub light_samples: u32,
+    /// To 16. `debug_lights_hot` closed the previous group of four, so a
+    /// fifth scalar opens a new one — see `IntiLight`'s three scalars
+    /// for the same trap in the other direction.
+    pub _pad_samples: [u32; 3],
 }
 
 /// Top of scale the lights-per-pixel view starts at.
@@ -525,6 +549,86 @@ fn limit_from_environment() -> u32 {
     })
 }
 
+/// How many of a froxel's punctual lights a pixel evaluates, picked by
+/// estimated contribution (#826). 0 evaluates all of them.
+///
+/// 🔴 **Not [`LightLimit`] renamed.** The limit was an instrument: it
+/// truncates the froxel's list by ORDER, keeps the first *n*, and drops
+/// real light on purpose so a capture can answer whether the cost scales
+/// with the count. It does — `shade = 11.11 ms + 1.06 ms per light` —
+/// and it flickered on the device, because crossing a cell boundary
+/// reorders the list and the kept set jumps.
+///
+/// This is the fix rather than the measurement. The lights are chosen in
+/// proportion to what they contribute and each one's result is divided
+/// by the probability of having chosen it, so the average over the
+/// picked set estimates the sum over all of them. Two consequences that
+/// the limit does not have: the estimate is **unbiased**, and the choice
+/// is **continuous** across a cell boundary — the bright light near the
+/// pixel stays the likely pick however the list is ordered.
+///
+/// It still costs something, and the something is noise rather than
+/// darkness. Which is why it is a knob with a capture behind it and not
+/// a default.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct LightSamples(pub u32);
+
+impl Default for LightSamples {
+    fn default() -> Self {
+        Self(light_samples_override().unwrap_or(0))
+    }
+}
+
+/// `KOOCH_LIGHT_SAMPLES=<n>`, read once. Same shape as the three knobs
+/// above, and for the fourth time the same reason: the editor is not
+/// where this can be measured.
+///
+/// `None` when the variable says nothing, which is what lets the
+/// project's `.rendersettings` value stand (#830). The variable outranks
+/// the asset when it is set: it is the instrument, and an instrument
+/// whose reading depends on which project happens to be open measures
+/// nothing.
+pub fn light_samples_override() -> Option<u32> {
+    static SAMPLES: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *SAMPLES.get_or_init(|| {
+        let Ok(raw) = std::env::var("KOOCH_LIGHT_SAMPLES") else {
+            return None;
+        };
+        match raw.trim().parse::<u32>() {
+            Ok(samples) => {
+                // 🔴 The shader runs one stratum per thread and has 16
+                // cells to serve out of 256, so it caps at
+                // `MAX_TILE_STRATA`. Clamping here rather than there is
+                // what makes a request past the cap say so: silently
+                // producing the same picture for 8 and for 16 is a knob
+                // that lies, and it would be found in a capture that
+                // showed two identical measurements.
+                let capped = samples.min(MAX_LIGHT_SAMPLES);
+                if capped < samples {
+                    tracing::warn!(
+                        "KOOCH_LIGHT_SAMPLES={samples} is past the {MAX_LIGHT_SAMPLES} the \
+                         tile can choose; using {capped}",
+                    );
+                }
+                tracing::info!(
+                    "KOOCH_LIGHT_SAMPLES={capped}: each froxel of a tile chooses this many \
+                     of its punctual lights, in proportion to what they contribute, and \
+                     every pixel of the froxel evaluates that choice weighted by the \
+                     probability of the pick. Trades exactness for noise, not for darkness."
+                );
+                Some(capped)
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "KOOCH_LIGHT_SAMPLES={raw:?} is not a count — leaving the project's own \
+                     setting alone",
+                );
+                None
+            }
+        }
+    })
+}
+
 /// Top of scale for `MeshletDebugMode::LightsPerPixel`, as a
 /// [`Resource`](kooch_core::resource::Resources) the editor writes.
 ///
@@ -590,6 +694,8 @@ impl IntiFrame {
             directional_count: 0,
             clustered: 0,
             debug_lights_hot: LIGHTS_HOT_DEFAULT,
+            light_samples: 0,
+            _pad_samples: [0; 3],
         }
     }
 
@@ -643,6 +749,13 @@ impl IntiFrame {
     /// (0 = all). See [`IntiFrame::light_limit`].
     pub fn with_light_limit(mut self, limit: u32) -> Self {
         self.light_limit = limit;
+        self
+    }
+
+    /// How many of a froxel's punctual lights a pixel evaluates, picked
+    /// by contribution (0 = all). See [`IntiFrame::light_samples`].
+    pub fn with_light_samples(mut self, samples: u32) -> Self {
+        self.light_samples = samples;
         self
     }
 

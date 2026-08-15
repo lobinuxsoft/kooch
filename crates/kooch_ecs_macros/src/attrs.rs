@@ -208,6 +208,40 @@ pub(crate) fn parse_field_shown_when(field: &syn::Field) -> Result<Option<syn::E
     Ok(None)
 }
 
+/// Parses `#[reflect(group = "...")]` from a field's attributes.
+///
+/// The heading the Inspector draws the field under. Consecutive fields
+/// sharing a group form one section — see [`FieldMeta::group`] for why
+/// this is a label rather than a nested struct.
+///
+/// [`FieldMeta::group`]: ::kooch_ecs::reflect::FieldMeta::group
+pub(crate) fn parse_field_group(field: &syn::Field) -> Result<Option<String>, TokenStream> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("reflect") {
+            continue;
+        }
+        let nested = match attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        {
+            Ok(n) => n,
+            Err(e) => return Err(e.to_compile_error().into()),
+        };
+        for meta in nested {
+            if let Meta::NameValue(MetaNameValue {
+                path,
+                value: syn::Expr::Lit(expr_lit),
+                ..
+            }) = meta
+                && path.is_ident("group")
+                && let Lit::Str(lit_str) = &expr_lit.lit
+            {
+                return Ok(Some(lit_str.value()));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// Parses `#[reflect(category = "...")]` from struct attributes.
 ///
 /// Returns `Ok(Some(string))` with the category name if the attribute is

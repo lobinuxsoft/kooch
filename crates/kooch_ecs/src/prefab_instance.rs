@@ -251,6 +251,7 @@ impl Reflect for PrefabInstance {
         static FIELDS: &[FieldMeta] = &[
             FieldMeta {
                 name: "source",
+                group: "",
                 doc: "The prefab this instance came from.\n\nSaving the prefab propagates its \
 changes here, except where an override says otherwise.",
                 type_name: "Option<Guid>",
@@ -263,6 +264,7 @@ changes here, except where an override says otherwise.",
             },
             FieldMeta {
                 name: "overrides",
+                group: "",
                 doc: "Fields this instance changed away from its prefab, as RON.\n\nWritten by \
 the editor when you edit an instance. An override survives the prefab \
 being saved — that is what makes it an override.",

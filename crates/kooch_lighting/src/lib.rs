@@ -45,8 +45,9 @@ pub use extract::{
 };
 pub use frame::{
     AmbientLight, DEFAULT_SUN_SOFTNESS, DebugLight, Exposure, FRAME_CASCADE_COUNT, FrameShadows,
-    GpuCascade, GpuPointShadow, IntiFrame, LIGHTS_HOT_DEFAULT, LightLimit, LightsHot,
-    MAX_POINT_SHADOWS, MAX_SPOT_SHADOWS, NO_DEBUG_LIGHT, PhysicalCamera, SpecularFloor,
+    GpuCascade, GpuPointShadow, IntiFrame, LIGHTS_HOT_DEFAULT, LightLimit, LightSamples, LightsHot,
+    MAX_LIGHT_SAMPLES, MAX_POINT_SHADOWS, MAX_SPOT_SHADOWS, NO_DEBUG_LIGHT, PhysicalCamera,
+    SpecularFloor, light_samples_override,
 };
 pub use gpu_light::{
     GpuLight, LIGHT_KIND_DIRECTIONAL, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, NO_SHADOW_SLOT,
@@ -62,6 +63,15 @@ const GROUP_PLACEHOLDER: &str = "{{INTI_GROUP}}";
 /// The debug views. Concatenated only by a pipeline that can show them.
 const INTI_DEBUG_SOURCE: &str = include_str!("../shaders/inti_debug.wgsl");
 
+/// The tonemap operator, with no bindings of its own (#732).
+///
+/// [`inti_pbr_shader`] already prepends it, so a shading path gets it
+/// for free. The standalone tonemap pass concatenates **this alone**:
+/// it has an HDR texture and an exposure scalar, and pulling in the
+/// whole shading model to reach one curve would drag the light storage
+/// buffer and the shadow atlas into a pass that samples neither.
+pub const INTI_TONEMAP: &str = include_str!("../shaders/inti_tonemap.wgsl");
+
 /// The shading model as WGSL, bound at `group`.
 ///
 /// WGSL has no `#include` and no way to parameterise `@group`, so the
@@ -73,7 +83,11 @@ const INTI_DEBUG_SOURCE: &str = include_str!("../shaders/inti_debug.wgsl");
 /// Each path passes its own first free group: the R64 two-pass path has
 /// 0..4 taken, the R32 compute path 0..3.
 pub fn inti_pbr_shader(group: u32) -> String {
-    INTI_PBR_TEMPLATE.replace(GROUP_PLACEHOLDER, &group.to_string())
+    // The tonemap first: `inti_tonemap` calls into it, and WGSL wants a
+    // function declared before it is used.
+    let mut out = String::from(INTI_TONEMAP);
+    out.push_str(&INTI_PBR_TEMPLATE.replace(GROUP_PLACEHOLDER, &group.to_string()));
+    out
 }
 
 /// The debug views as WGSL, to concatenate **after**

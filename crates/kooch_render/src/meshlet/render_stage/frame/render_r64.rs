@@ -32,6 +32,9 @@ impl MeshletRenderStage {
         mut encoder: wgpu::CommandEncoder,
         resources: &Resources,
         view_proj: Mat4,
+        // The camera's own matrix, before the sub-pixel jitter (#481).
+        // Equal to `view_proj` when the temporal resolve is off.
+        unjittered_view_proj: Mat4,
         cam_pos: Vec3,
         cull_params: &CullParams,
         scene_params: &SceneCullParams,
@@ -132,8 +135,17 @@ impl MeshletRenderStage {
                 &self.views[view_id].cull,
                 &self.scene,
                 view_proj,
+                unjittered_view_proj,
                 contact,
                 debug_mode.as_u32(),
+                // #732 — the tonemap is its own pass now, so the scalar
+                // it used to read out of the Inti uniform is passed to
+                // the stage instead.
+                resources
+                    .get::<kooch_lighting::Exposure>()
+                    .copied()
+                    .unwrap_or_default()
+                    .multiplier(),
                 /* clear_depth */ true,
                 scopes.as_deref(),
                 shade_query.as_ref(),

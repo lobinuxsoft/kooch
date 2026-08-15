@@ -88,7 +88,7 @@ impl MeshletRenderStage {
             // field's doc for why not here.
             shadows: None,
             shadow_texels: 0,
-            point_shadows_dropped: 0,
+            point_shadows_over_budget: false,
             scene_hash: 0,
             point_cube_cache: Vec::new(),
             gpu_pool: None,
@@ -243,6 +243,45 @@ impl MeshletRenderStage {
     /// copy it out for readback or composite it onto another target.
     pub fn color_texture(&self) -> &wgpu::Texture {
         &self.views[self.primary].color_texture
+    }
+
+    /// The primary view's motion vectors (#481), when it runs the R64
+    /// path. `None` on the fallback, which has no vbuf to reconstruct
+    /// from.
+    pub fn motion_vector_texture(&self) -> Option<&wgpu::Texture> {
+        self.views[self.primary]
+            .vbuf64_stage
+            .as_ref()
+            .map(|stage| stage.motion_vector_texture())
+    }
+
+    /// The primary view's most recent temporal resolve (#481), for a
+    /// test to read back. `None` on the R32 fallback.
+    pub fn resolved_texture(&self) -> Option<&wgpu::Texture> {
+        self.views[self.primary]
+            .vbuf64_stage
+            .as_ref()
+            .map(|stage| stage.resolved_texture())
+    }
+
+    /// Switches temporal anti-aliasing on or off across every view
+    /// (#481), which is also what switches the sub-pixel jitter.
+    ///
+    /// 🔴 Returns how many views took it, for the same reason
+    /// [`Self::set_compute_shading`] does: zero means every view is on
+    /// the R32 fallback, where there is neither a motion vector nor a
+    /// history and this does nothing — and "did nothing" is
+    /// indistinguishable from "worked" in anything that only looks at
+    /// the image.
+    pub fn set_temporal_aa(&mut self, on: bool) -> usize {
+        let mut switched = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut() {
+                stage.set_temporal_aa(on);
+                switched += 1;
+            }
+        }
+        switched
     }
 
     /// Switches every view between the fragment shading path and the

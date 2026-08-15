@@ -88,5 +88,16 @@ pub use scene::{
 };
 pub use stage_counters::{CullStageCounts, MeshletStageCounters};
 pub use system::{MeshletPipeline, instance_at_origin};
-pub use vbuf64_stage::{ShadingRate, Vbuf64Stage};
+pub use vbuf64_stage::{JITTER_PERIOD, Jitter, ShadingRate, Vbuf64Stage};
+
+/// `KOOCH_COMPUTE_SHADING`, when it says anything. See
+/// [`crate::quality`] for why the variable outranks the settings asset.
+pub fn compute_shading_override() -> Option<bool> {
+    vbuf64_stage::compute_shading_override()
+}
+
+/// `KOOCH_SHADING_RATE`, when it says anything.
+pub fn shading_rate_override() -> Option<ShadingRate> {
+    vbuf64_stage::shading_rate_override()
+}
 pub use vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
