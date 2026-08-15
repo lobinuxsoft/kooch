@@ -57,6 +57,32 @@ pub struct Rig {
 /// cache has a cap for, and the one half-rate shading has to
 /// reconstruct across.
 pub fn rig(lights: u32, wall: bool) -> Option<Rig> {
+    build(lights, wall, false)
+}
+
+/// The same scene plus **one blue shadow-casting light**, and the shadow
+/// atlas switched on so it is given a slot.
+///
+/// # Why it is as bright as its neighbours, and blue
+///
+/// The obvious way to test "a caster is never sampled" is to make it so
+/// dim that importance sampling would never choose it. That does not
+/// work, and the reason is worth writing down: **the weight and the
+/// contribution are the same quantity**. A light dim enough to reliably
+/// lose the race is dim enough to be invisible in the result — measured
+/// at a hundredth of its neighbours, its blue tint came out at 0.0002 of
+/// a channel and the test could not tell the rule from its absence.
+///
+/// So the discrimination is spatial instead. At one sample a tile picks
+/// one light of seventeen, so without the rule roughly fifteen blocks in
+/// sixteen would contain no blue at all — the caster's contribution
+/// would survive in the *average* and disappear from most of the
+/// *picture*. Counting blocks sees that; counting photons does not.
+pub fn rig_with_caster(lights: u32) -> Option<Rig> {
+    build(lights, true, true)
+}
+
+fn build(lights: u32, wall: bool, caster: bool) -> Option<Rig> {
     let (device, queue) = try_acquire_device_r64()?;
 
     let meshlet_mesh = build_default_meshlets(&build_cube_mesh()).expect("build meshlets");
@@ -69,7 +95,7 @@ pub fn rig(lights: u32, wall: bool) -> Option<Rig> {
     // Shadows off: a shadow map is a second reason for two renders to
     // differ, and it is not the one under test.
     resources.insert(ShadowSettings {
-        enabled: false,
+        enabled: caster,
         ..Default::default()
     });
     resources.insert(kooch_lighting::AmbientLight {
@@ -156,6 +182,27 @@ pub fn rig(lights: u32, wall: bool) -> Option<Rig> {
                     matrix: Mat4::from_translation(Vec3::new(x, 1.6, z)),
                 });
         }
+    }
+    if caster {
+        commands
+            .spawn(&mut resources)
+            .insert(PointLight {
+                active: true,
+                // Cold, so its contribution is visible against the warm
+                // grid rather than merely adding to it.
+                color: Vec3::new(0.05, 0.2, 1.0),
+                intensity: 60_000.0,
+                // Reaches further than the grid does, so it lights
+                // enough blocks for the count to mean something. At the
+                // grid's 6 m it cleared only eleven.
+                range: 14.0,
+                radius: 0.1,
+                cast_shadows: true,
+                contact_shadows: false,
+            })
+            .insert(GlobalTransform {
+                matrix: Mat4::from_translation(Vec3::new(0.0, 2.0, 1.0)),
+            });
     }
     commands.apply(&mut resources);
 

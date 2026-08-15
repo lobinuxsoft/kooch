@@ -57,7 +57,7 @@ said.
 | ~~#780~~ | ~~GPU clustering — the froxel grid~~ | **Done and measured** (2026-08-14). The busiest froxel holds 26 lights against 12 that reach a point — ~24 % over-listing, ordinary for clustering. It costs 0.15 ms. Not a suspect |
 | ~~#824~~ | ~~shade in a compute pass, tile's lights in LDS~~ | **Built and measured: 6.6 %.** Fifteen storage fetches per pixel became fifteen per tile and the shading went 35.98 → 33.60 ms. Its value is what it revealed and unlocked, not the 6.6: the raster is **3.74 ms of 37.34**, so shading is 90 % of that pass — and #825 is buildable now |
 | ~~#825~~ | ~~shade at half rate, raster stays full~~ | **Built.** Lighting runs at one sample per 2×2 quad, upsampled with the vbuf as the edge guide, so the silhouette on screen is still the raster's — asserted exactly, not approximately. `KOOCH_SHADING_RATE=half`. The device capture is what closes it |
-| ~~#826~~ | ~~sample the tile's lights, 15 → 2-4~~ | **Built.** A light is picked in proportion to what it contributes and divided by the probability of the pick, so two lights land 3.6 % from the full walk's brightness where two *truncated* ones land 83 % away. `KOOCH_LIGHT_SAMPLES`. It also found what the froxel flicker really was — see below |
+| ~~#826~~ | ~~sample the tile's lights, 15 → 2-4~~ | **Built twice.** A light is picked in proportion to what it contributes and divided by the probability of the pick, so two lights land 5 % from the full walk's brightness where two *truncated* ones land 83 % away. `KOOCH_LIGHT_SAMPLES`, capped at 8. The first version chose **per pixel** and the device refused it; the second chooses **per froxel, cooperatively** — see below. It also found what the froxel flicker really was |
 | ~~#796 / #819~~ | ~~ReSTIR / Solari~~ | **Ruled out for this hardware.** Solari's world cache alone is 2.65 ms per refresh in Bistro on the author's machine — 19 % of our whole budget, on far faster silicon — and denoising runs through DLSS Ray Reconstruction, which the 890M has no path to |
 | **#731** | volumetric clouds, froxel-based | The clouds are **off**, and that is the only reason the budget is met. They cost 39 ms as written |
 | **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
@@ -357,6 +357,56 @@ which lights it evaluates, and the change is visible because nothing
 carries state across frames. That is why every real sampling scheme
 carries temporal reservoirs, and it is now a requirement written into
 #826 rather than a surprise waiting inside it.
+
+### 🔴 A weight costs a fifth of an evaluation, so the choice cannot live in the pixel
+
+#826 shipped choosing per pixel and the device priced it, on the
+OneXFly, at half rate, with everything else held still:
+
+| samples | `shade: compute` | weights per pixel |
+|---|---|---|
+| 0 (walk all 15) | 12.624 ms | 0 |
+| 2 | **10.482 ms** | 45 |
+| 4 | 16.837 ms | 75 |
+
+**Non-monotonic**, which is the whole finding. Solving those three for
+the cost of one weight against one full light evaluation gives **0.196**
+— a fifth, not the fifteenth the design assumed. At that ratio the
+`(K+1) × 15` weights a pixel walks cost more than the twelve evaluations
+they remove as soon as K reaches 4, and the technique appears to fail
+while being perfectly correct.
+
+The estimator was in the wrong loop. It now runs **once per froxel**,
+cooperatively: one thread per (cell, stratum), at most 16 × 8 of a
+tile's 256, each walking its cell's run once. What reaches the pixel is
+a list of picks and their scales, so shading costs `picks` evaluations
+and **no weights at all**.
+
+This is what HypeHype's Stratified Tile-Based Lighting does (SIGGRAPH
+2025), minus a level: their two-level scheme exists because they have no
+cluster grid, and #780 already reduced 100 lights to ~15. Their small
+tile is 16 px, which is this workgroup exactly.
+
+⚠️ **It costs image quality and the numbers say so** — mean |Δ| against
+the full walk went 8.71 → 24.33 at one sample and 5.42 → 7.53 at eight,
+because one choice now serves 256 pixels instead of being averaged away.
+The error also stops being per-pixel noise and becomes a discontinuity
+at froxel boundaries, which for an engine with no temporal pass is the
+better artefact and is chosen deliberately. **The device decides whether
+the exchange was worth it. Nothing here says it was.**
+
+Two invariants came out of it, both from the device rather than from
+theory:
+
+- **A light with a shadow map is never sampled.** A shadow is binary and
+  high-contrast; a caster a tile declines to pick reads as a shadow that
+  blinks, not as a slightly wrong estimate. There are at most 8 in a
+  scene, so the rule is free.
+- **Every light gets a floor under its probability.** A froxel is a
+  volume, so a light whose range cuts through it can score zero at the
+  representative point and still reach real pixels — the one failure the
+  estimator cannot absorb, because a light that is never picked is never
+  divided back up.
 
 The other number that has survived every experiment is the pixel count:
 the frame falls 5.2× with internal resolution, and #824 measured that

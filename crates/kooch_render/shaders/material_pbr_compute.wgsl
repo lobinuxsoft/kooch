@@ -115,6 +115,35 @@ var<workgroup> tile_cell_len: array<u32, MAX_TILE_CELLS>;
 // is the only reason any of this is faster.
 var<workgroup> tile_light_pos: array<vec4<f32>, MAX_TILE_LIGHTS>;
 var<workgroup> tile_light_range: array<f32, MAX_TILE_LIGHTS>;
+// Set for a light that owns a shadow map. Those are never sampled — see
+// `tile_choose`.
+var<workgroup> tile_light_caster: array<u32, MAX_TILE_LIGHTS>;
+
+// 🔴 #826 — what the tile chose, per cell of its block.
+//
+// `tile_pick` holds slots into `tile_lights`; `tile_pick_scale` the
+// reciprocal of the probability each was chosen with, which is 1 for a
+// shadow caster because a caster is not chosen at all. Every pixel of a
+// cell evaluates this list and nothing else, so the per-pixel cost stops
+// depending on how many lights reach the cell.
+const MAX_TILE_PICKS: u32 = 16u;
+// Half the list, so a cell whose casters fill their half still samples.
+const MAX_TILE_STRATA: u32 = 8u;
+var<workgroup> tile_pick: array<u32, MAX_TILE_CELLS * MAX_TILE_PICKS>;
+var<workgroup> tile_pick_scale: array<f32, MAX_TILE_CELLS * MAX_TILE_PICKS>;
+var<workgroup> tile_pick_count: array<atomic<u32>, MAX_TILE_CELLS>;
+
+// One real surface point inside each cell, and which thread published
+// it. The weights are computed against this rather than against the
+// pixel being shaded — that is the whole saving, and `tile_light_reach`
+// documents why it costs no correctness.
+//
+// Elected by `atomicMin` over the thread id rather than taken from
+// whichever thread arrives last. A race here would pick a different
+// point each frame with the camera still, and #826 already learnt what
+// a per-frame choice of light looks like on a screen.
+var<workgroup> tile_rep_owner: array<atomic<u32>, MAX_TILE_CELLS>;
+var<workgroup> tile_rep_pos: array<vec3<f32>, MAX_TILE_CELLS>;
 
 // Set when the block did not fit. Read by every thread after the load
 // barrier; written only by lane 0, before it.
@@ -162,29 +191,37 @@ fn shade_from_tile(
     return radiance;
 }
 
-/// What this light is worth to this pixel, before any BRDF (#826).
+/// What this light is worth **anywhere near** `p`, before any BRDF
+/// (#826).
 ///
-/// Unshadowed irradiance times the cosine — the same three quantities
-/// `inti_sample_light` computes first, off the workgroup copy instead of
-/// the 80-byte record. Roughly ten arithmetic operations against a full
-/// `inti_light_contribution`, which is the ratio the whole issue trades
-/// on.
+/// Luminance times distance attenuation, off the workgroup copy instead
+/// of the 80-byte record. Roughly six arithmetic operations against a
+/// full `inti_light_contribution`, which is the ratio the whole issue
+/// trades on.
 ///
-/// ⚠️ **Deliberately cruder than the thing it estimates.** It ignores the
-/// spot cone, the light's radius and the shadow, so a spot lighting away
-/// from the pixel still gets weight. That costs a wasted sample, never a
-/// wrong image: the weight only decides *which* lights get evaluated,
-/// and whatever is evaluated is divided by the probability it was picked
-/// with. A bad estimator makes this noisier. Only a **zero** weight on a
-/// light that does contribute would bias it, which is why nothing here
-/// is allowed to return 0 for a reason the real model disagrees with.
-fn tile_light_weight(slot: u32, world_position: vec3<f32>, n: vec3<f32>) -> f32 {
+/// # 🔴 Why the cosine is gone
+///
+/// The first draft multiplied by `n·L` and was evaluated per pixel, with
+/// that pixel's own normal. Moving the choice to the tile means one
+/// point stands in for a whole froxel — and a froxel spans surfaces
+/// facing different ways, so there is no normal that is honest for all
+/// of them.
+///
+/// Keeping a representative normal would have been worse than dropping
+/// it. The estimator stays unbiased no matter how crude the weight is,
+/// **as long as no light that contributes is given a weight of zero** —
+/// each pick is divided by the probability it was made with, so a bad
+/// ranking costs variance and nothing else. A cosine against the wrong
+/// normal returns exactly that forbidden zero, for every light on the
+/// far side of a plane the pixel does not share.
+///
+/// So the weight ranks by "how much light arrives in this neighbourhood"
+/// and lets the BRDF decide what the surface does with it. Cruder, and
+/// the crudeness is the safe direction.
+fn tile_light_reach(slot: u32, p: vec3<f32>) -> f32 {
     let rec = tile_light_pos[slot];
-    let offset = rec.xyz - world_position;
-    let distance_sq = dot(offset, offset);
-    let to_light = offset * inverseSqrt(max(distance_sq, 1e-8));
-    let n_dot_l = saturate(dot(n, to_light));
-    return rec.w * inti_distance_attenuation(distance_sq, tile_light_range[slot]) * n_dot_l;
+    let offset = rec.xyz - p;
+    return rec.w * inti_distance_attenuation(dot(offset, offset), tile_light_range[slot]);
 }
 
 /// A uniform number in [0,1) for one (light, pixel, stratum) triple.
@@ -224,8 +261,46 @@ fn tile_light_random(light_index: u32, pixel: vec2<u32>, stratum: u32) -> f32 {
     return f32(h >> 8u) * (1.0 / 16777216.0);
 }
 
-/// The tile's lights, `inti.light_samples` of them, chosen in proportion
-/// to what they contribute (#826).
+/// The cell's lights, `inti.light_samples` of them, chosen in proportion
+/// to what they contribute — **once for the whole tile** (#826).
+///
+/// # Why this is not per pixel, in the numbers that decided it
+///
+/// The first version ran this race in every pixel, and the device
+/// measured what that costs. Solving the three runs for the cost of one
+/// weight against the cost of one full light evaluation:
+///
+/// | samples | `shade: compute` | weights per pixel |
+/// |---|---|---|
+/// | 0 (walk all 15) | 12.624 ms | 0 |
+/// | 2 | 10.482 ms | 45 |
+/// | 4 | 16.837 ms | 75 |
+///
+/// gives **a weight at 0.196 of an evaluation** — a fifth, not the
+/// fifteenth the design assumed. At that ratio `(K+1) x 15` weights
+/// costs more than the twelve evaluations it removes as soon as K
+/// reaches 4, which is exactly the non-monotonic curve above. The
+/// technique was not wrong; the estimator was in the wrong loop.
+///
+/// Here the `len` weights are paid once per cell by one thread, in
+/// parallel with the other cells and strata, instead of once per stratum
+/// per pixel. What survives into the pixel is a list of picks and their
+/// scales, so shading costs `picks` evaluations and **no weights at
+/// all**.
+///
+/// # What the tile shares, and the seam that comes with it
+///
+/// Every pixel of a cell now evaluates the same lights. That is the
+/// trade, and it is the same one HypeHype's Stratified Tile-Based
+/// Lighting makes (SIGGRAPH 2025) — their small tile is 16 px, which is
+/// this workgroup exactly. The error stops being per-pixel noise and
+/// becomes a discontinuity at cell boundaries.
+///
+/// ⚠️ For an engine with no temporal pass that is the **better** artefact
+/// and the choice is deliberate: a block that is slightly wrong is
+/// spatially coherent and reads as shading, where per-pixel noise reads
+/// as dirt. The contact shadows already demonstrate the other side of
+/// this on the device.
 ///
 /// # The exponential race, and why not the cheaper thing
 ///
@@ -242,17 +317,30 @@ fn tile_light_random(light_index: u32, pixel: vec2<u32>, stratum: u32) -> f32 {
 /// is whatever the grid's atomics produced that frame. See
 /// `tile_light_random` for the measurement that caught it.
 ///
-/// So the walk is paid `strata + 1` times over instead of twice. That is
-/// affordable only because the weight comes out of workgroup memory:
-/// against one `inti_light_contribution` — two BRDF layers, a
-/// representative point, a shadow lookup — a weight is roughly a
-/// fifteenth. Three cheap walks to remove twelve expensive ones.
+/// One thread runs one stratum, so the `strata` races happen at once
+/// across the workgroup rather than one after another. A cell with four
+/// strata occupies four threads for the length of one walk.
 ///
 /// ⚠️ Two strata can pick the same light and it is then evaluated twice.
 /// Correct, because each carries its own `1/K` share, and rare unless
-/// one light dominates the froxel. Deduplicating would need a K-wide
-/// array indexed dynamically, which is private memory the compiler may
-/// spill — the redundant evaluation is cheaper than the spill.
+/// one light dominates the froxel.
+///
+/// # 🔴 The floor under every weight, and the bias it buys off
+///
+/// A froxel is a volume. A light whose range cuts through it reaches
+/// some of the cell and not the representative point, so its weight
+/// comes out zero while its contribution to a real pixel does not — the
+/// one failure the estimator cannot absorb, because a light that is
+/// never picked is never divided back up.
+///
+/// So every light in the run is given a share of the probability
+/// regardless of what it scored: a thirty-second of the budget, spread
+/// evenly. That is defensive sampling, it costs a little variance, and
+/// it turns "may silently lose a light" into "may occasionally spend a
+/// sample on a dim one". When nothing scores at all the mixture is all
+/// there is and the choice becomes uniform, which is correct rather than
+/// a fallback: if the representative sees no light and a pixel does,
+/// uniform is the only honest prior.
 ///
 /// # Why the result is not just darker
 ///
@@ -264,7 +352,99 @@ fn tile_light_random(light_index: u32, pixel: vec2<u32>, stratum: u32) -> f32 {
 /// it by nothing: on the parity scene, two sampled lights land 3.6 %
 /// from the full walk\'s brightness where two truncated ones land 83 %
 /// away.
-fn shade_sampled_from_tile(
+/// `cell` indexes this tile's block; `seed` is the same froxel's index in
+/// the grid.
+///
+/// 🔴 The two are not interchangeable and the seam depends on which one
+/// the race is drawn from. A froxel is about 75 x 80 px and a tile is 16,
+/// so several tiles cover one froxel and each numbers it differently
+/// inside its own block. Seeded on the local number, neighbouring tiles
+/// draw different lights from the same list and the discontinuity lands
+/// every 16 px. Seeded on the grid's index they draw the same ones, and
+/// what is left shows only where the light list genuinely changes.
+fn tile_choose(cell: u32, seed: u32, stratum: u32, strata: u32) {
+    let start = tile_cell_start[cell];
+    let len = tile_cell_len[cell];
+    if (len == 0u) {
+        return;
+    }
+    let rep = tile_rep_pos[cell];
+
+    // Pass 1 — the total, and the mixture that keeps every light
+    // reachable. Casters are excluded from both: they are already in the
+    // list and sampling them again would double them.
+    var raw_sum = 0.0;
+    var sampled = 0u;
+    for (var i = 0u; i < len; i = i + 1u) {
+        if (tile_light_caster[start + i] != 0u) {
+            continue;
+        }
+        raw_sum += tile_light_reach(start + i, rep);
+        sampled = sampled + 1u;
+    }
+    if (sampled == 0u || stratum >= min(strata, sampled)) {
+        return;
+    }
+    // A thirty-second of the budget, spread evenly — or the whole of it
+    // when nothing scored, which makes the choice uniform.
+    let share = select(1.0, raw_sum / (f32(sampled) * 32.0), raw_sum > 0.0);
+    let w_sum = raw_sum + share * f32(sampled);
+
+    let used = min(strata, sampled);
+    let inv_used = 1.0 / f32(used);
+    var best_key = 3.402823e38;
+    var best_slot = 0xffffffffu;
+    var best_w = 0.0;
+    for (var i = 0u; i < len; i = i + 1u) {
+        let slot = start + i;
+        if (tile_light_caster[slot] != 0u) {
+            continue;
+        }
+        let w = tile_light_reach(slot, rep) + share;
+        // 🔴 One draw per light, ROTATED by the stratum, not a fresh
+        // draw per stratum. `fract(u + k/K)` is still uniform, so each
+        // race on its own is still proportional to `w` — but a light
+        // that won with `u` near 1 gets a low one next time, so the
+        // strata stop landing on the same light. That is stratification's
+        // variance reduction without stratification's dependence on the
+        // run's order.
+        //
+        // Seeded on the froxel, not on a pixel: this runs once for all of
+        // them. `tile_lights[slot]` is the light's global index, which is
+        // what makes the winner independent of where the grid's atomics
+        // happened to put it this frame.
+        let u = fract(tile_light_random(tile_lights[slot], vec2<u32>(seed, 0u), 0u)
+            + f32(stratum) * inv_used);
+        // `-log(u) / w` is an exponential of rate `w`; the smallest of a
+        // set of them belongs to index `i` with probability `w_i /
+        // w_sum`, which is the distribution this needs.
+        let key = -log(max(u, 1e-7)) / w;
+        if (key < best_key) {
+            best_key = key;
+            best_slot = slot;
+            best_w = w;
+        }
+    }
+    if (best_slot == 0xffffffffu) {
+        return;
+    }
+    let at = atomicAdd(&tile_pick_count[cell], 1u);
+    if (at < MAX_TILE_PICKS) {
+        tile_pick[cell * MAX_TILE_PICKS + at] = best_slot;
+        tile_pick_scale[cell * MAX_TILE_PICKS + at] = w_sum * inv_used / best_w;
+    }
+}
+
+/// Shading from what the tile chose: `picks` evaluations, no weights.
+///
+/// The scale on each pick is the reciprocal of the probability it was
+/// chosen with, so a light twice as important is chosen twice as often
+/// and counted half as much and the average estimates the sum over all
+/// the lights. That is the whole difference from `KOOCH_LIGHT_LIMIT`,
+/// which keeps a prefix and scales it by nothing: on the parity scene,
+/// two sampled lights land 3.6 % from the full walk's brightness where
+/// two truncated ones land 83 % away.
+fn shade_picked_from_tile(
     world_position: vec3<f32>,
     n: vec3<f32>,
     base_color: vec3<f32>,
@@ -272,8 +452,7 @@ fn shade_sampled_from_tile(
     roughness: f32,
     frag_coord: vec2<f32>,
     flags: u32,
-    start: u32,
-    len: u32,
+    cell: u32,
 ) -> vec3<f32> {
     let surf = inti_surface(world_position, n, base_color, metallic, roughness, flags);
 
@@ -282,64 +461,12 @@ fn shade_sampled_from_tile(
         radiance += inti_light_contribution(surf, inti_lights[i], frag_coord);
     }
 
-    // Pass 1 — the total, from workgroup memory.
-    var w_sum = 0.0;
-    for (var i = 0u; i < len; i = i + 1u) {
-        w_sum += tile_light_weight(start + i, world_position, n);
-    }
-    if (w_sum <= 0.0) {
-        // No punctual light reaches this pixel at all. Not a special
-        // case worth sampling: every weight was zero, so every
-        // contribution is too.
-        radiance += inti_ambient(n, surf.diffuse_color, surf.f0, surf.f_ab);
-        return radiance;
-    }
-
-    // One race per stratum. Asking for more samples than the froxel has
-    // lights would only draw the same ones again.
-    let strata = min(inti.light_samples, len);
-    let inv_strata = 1.0 / f32(strata);
-    // The pixel, so neighbouring pixels do not all pick the same lights
-    // and the error reads as noise instead of as banding. Integer, and
-    // taken from the coordinate rather than any frame counter: this is
-    // the other half of the temporal stability `tile_light_random`
-    // documents.
-    let seed = vec2<u32>(frag_coord);
-    for (var k = 0u; k < strata; k = k + 1u) {
-        var best_key = 3.402823e38;
-        var best_slot = 0xffffffffu;
-        var best_w = 0.0;
-        for (var i = 0u; i < len; i = i + 1u) {
-            let w = tile_light_weight(start + i, world_position, n);
-            // A light that cannot reach this pixel must never be picked:
-            // its `1/w` would be infinite and the estimate with it.
-            if (w <= 0.0) {
-                continue;
-            }
-            // 🔴 One draw per light, ROTATED by the stratum, not a fresh
-            // draw per stratum. `fract(u + k/K)` is still uniform, so
-            // each race on its own is still proportional to `w` — but a
-            // light that won with `u` near 1 gets a low one next time,
-            // so the strata stop landing on the same light. That is
-            // stratification's variance reduction without
-            // stratification's dependence on the run's order.
-            let u = fract(tile_light_random(tile_lights[start + i], seed, 0u)
-                + f32(k) * inv_strata);
-            // `-log(u) / w` is an exponential of rate `w`; the smallest
-            // of a set of them belongs to index `i` with probability
-            // `w_i / w_sum`, which is the distribution this needs.
-            let key = -log(max(u, 1e-7)) / w;
-            if (key < best_key) {
-                best_key = key;
-                best_slot = start + i;
-                best_w = w;
-            }
-        }
-        if (best_slot != 0xffffffffu) {
-            radiance += inti_light_contribution(
-                surf, inti_lights[tile_lights[best_slot]], frag_coord)
-                * (w_sum * inv_strata / best_w);
-        }
+    let picks = min(atomicLoad(&tile_pick_count[cell]), MAX_TILE_PICKS);
+    for (var m = 0u; m < picks; m = m + 1u) {
+        let at = cell * MAX_TILE_PICKS + m;
+        radiance += inti_light_contribution(
+            surf, inti_lights[tile_lights[tile_pick[at]]], frag_coord)
+            * tile_pick_scale[at];
     }
 
     radiance += inti_ambient(n, surf.diffuse_color, surf.f0, surf.f_ab);
@@ -520,6 +647,15 @@ fn cs_shade_tile(
                         * light.intensity / (4.0 * INTI_PI);
                     tile_light_pos[cursor + i] = vec4<f32>(light.position, luminance);
                     tile_light_range[cursor + i] = light.range;
+                    // 🔴 A light with a shadow map is never sampled.
+                    // A shadow is a binary, high-contrast signal: losing
+                    // a caster for a frame does not read as a slightly
+                    // wrong estimate, it reads as a shadow that blinks.
+                    // There are at most eight of them in the whole
+                    // scene, so evaluating them all costs a bounded
+                    // amount and removes the artefact entirely.
+                    tile_light_caster[cursor + i] =
+                        select(0u, 1u, light.shadow_slot != INTI_NO_SHADOW_SLOT);
                 }
             }
             cursor = cursor + len;
@@ -530,6 +666,75 @@ fn cs_shade_tile(
         }
     }
     workgroupBarrier();
+
+    // Phase 2.5 — the tile chooses its lights (#826).
+    //
+    // Every condition guarding a barrier here is the same in all 256
+    // threads — `sampling` and `clustered` come from the uniform,
+    // `cell_count` from atomics all of them read, `tile_overflow` from
+    // workgroup memory behind the barrier above. Uniform control flow is
+    // not a style note in this function: a thread that skipped one of
+    // these barriers would hang the ones that did not.
+    if (sampling && clustered && tile_overflow == 0u && cell_count > 0u) {
+        if (lid < cell_count) {
+            atomicStore(&tile_rep_owner[lid], TILE_THREADS);
+            atomicStore(&tile_pick_count[lid], 0u);
+        }
+        workgroupBarrier();
+
+        // Elect one pixel per cell to speak for it.
+        var my_c = 0u;
+        if (mine) {
+            let my = my_cell - lo;
+            my_c = (my.x * dims.y + my.y) * dims.z + my.z;
+            atomicMin(&tile_rep_owner[my_c], lid);
+        }
+        workgroupBarrier();
+
+        // The elected thread publishes its surface point; meanwhile one
+        // thread per cell puts that cell's shadow casters into the list,
+        // before anything is sampled into it.
+        if (mine && atomicLoad(&tile_rep_owner[my_c]) == lid) {
+            tile_rep_pos[my_c] = surf.world_position;
+        }
+        if (lid < cell_count) {
+            let start = tile_cell_start[lid];
+            let len = tile_cell_len[lid];
+            for (var i = 0u; i < len; i = i + 1u) {
+                if (tile_light_caster[start + i] == 0u) {
+                    continue;
+                }
+                let at = atomicAdd(&tile_pick_count[lid], 1u);
+                if (at < MAX_TILE_PICKS) {
+                    tile_pick[lid * MAX_TILE_PICKS + at] = start + i;
+                    // Not chosen, so not scaled. A caster is evaluated
+                    // because it is there, at its full contribution.
+                    tile_pick_scale[lid * MAX_TILE_PICKS + at] = 1.0;
+                }
+            }
+        }
+        workgroupBarrier();
+
+        // One thread per (cell, stratum) — at most 16 x 8 of the 256,
+        // each walking its cell's run once. Against `(strata + 1)` walks
+        // in every one of the 256 pixels, which is what the device
+        // measured at 0.196 of an evaluation apiece.
+        let strata = min(inti.light_samples, MAX_TILE_STRATA);
+        if (lid < cell_count * strata) {
+            let c = lid / strata;
+            // A cell with no elected representative has no pixel in this
+            // tile: it was reached by the block's bounding box and not by
+            // any thread, so nothing will read what it chose.
+            if (atomicLoad(&tile_rep_owner[c]) != TILE_THREADS) {
+                let at = lo + vec3<u32>(
+                    c / (dims.y * dims.z),
+                    (c / dims.z) % dims.y,
+                    c % dims.z);
+                tile_choose(c, inti_cluster_index(at), lid % strata, strata);
+            }
+        }
+        workgroupBarrier();
+    }
 
     // Phase 3 — shade.
     if (mine) {
@@ -562,9 +767,9 @@ fn cs_shade_tile(
                 let my = my_cell - lo;
                 let c = (my.x * dims.y + my.y) * dims.z + my.z;
                 if (sampling) {
-                    radiance = shade_sampled_from_tile(
+                    radiance = shade_picked_from_tile(
                         surf.world_position, world_n, base, metallic, roughness,
-                        frag_coord, surf.flags, tile_cell_start[c], tile_cell_len[c]);
+                        frag_coord, surf.flags, c);
                 } else {
                     radiance = shade_from_tile(
                         surf.world_position, world_n, base, metallic, roughness,

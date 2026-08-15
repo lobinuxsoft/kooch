@@ -20,7 +20,7 @@
 
 mod common;
 
-use common::lit_scene::{render_at, rig};
+use common::lit_scene::{render_at, rig, rig_with_caster};
 use common::srgb_to_linear;
 use kooch_lighting::{LightLimit, LightSamples};
 use kooch_render::meshlet::ShadingRate;
@@ -131,24 +131,40 @@ fn sampling_keeps_the_brightness_that_truncation_loses() {
 /// Mean |Δ| against the full walk, and the luminance error, on the
 /// parity scene:
 ///
-/// | samples | mean Δ | luminance |
-/// |---|---|---|
-/// | 1 | 8.71 | −5.00 % |
-/// | 2 | 7.47 | −3.56 % |
-/// | 4 | 6.41 | −2.31 % |
-/// | 8 | 5.42 | −1.46 % |
-/// | 16 | 5.07 | −1.20 % |
+/// Mean |Δ| against the full walk and the luminance error, on the parity
+/// scene, with the choice made **per froxel** — and next to what the
+/// same scene measured when it was made **per pixel**, because that is
+/// the cost of the move:
 ///
-/// ⚠️ **It converges and then stops**, at about 5/255 and −1.2 %, past
-/// the point where there are more samples than lights. That floor is
-/// real and it is not noise: a light whose cheap weight badly
-/// underestimates what it actually contributes — the weight is a diffuse
-/// estimate and the contribution has a specular layer — gets picked
-/// rarely and scaled by a correspondingly large `1/w` when it is. The
-/// spike lands above what the tonemap and an 8-bit target can carry, is
-/// clipped, and the energy it was standing in for is lost. Always
-/// downwards, which is why the residual is a darkening rather than a
-/// wobble.
+/// | samples | Δ per pixel | Δ per froxel | lum per pixel | lum per froxel |
+/// |---|---|---|---|---|
+/// | 1 | 8.71 | 24.33 | −5.00 % | −8.07 % |
+/// | 2 | 7.47 | 13.51 | −3.56 % | −5.08 % |
+/// | 4 | 6.41 | 9.79 | −2.31 % | −4.64 % |
+/// | 8 | 5.42 | 7.53 | −1.46 % | −3.34 % |
+/// | 16 | 5.07 | 7.53 | −1.20 % | −3.34 % |
+///
+/// 🔴 **The right-hand columns are worse and that is the trade, not a
+/// regression.** One choice now serves 256 pixels, so the error it makes
+/// is made 256 times instead of being averaged away. What is bought is
+/// that the weights leave the per-pixel loop entirely — the device is
+/// the only thing that can say whether the exchange was worth it, and
+/// nothing here should be read as saying it was.
+///
+/// ⚠️ **16 samples equals 8** because `MAX_TILE_STRATA` is 8: one thread
+/// runs one stratum and the workgroup has 16 cells to serve. Asking for
+/// more is silently the same picture, which is the right failure for a
+/// knob and the wrong one to discover in a capture.
+///
+/// ⚠️ **It converges and then stops**, at 7.53/255 and −3.3 %. That floor
+/// is real and it is not noise: a light whose cheap weight badly
+/// underestimates what it actually contributes gets picked rarely and
+/// scaled by a correspondingly large `1/w` when it is. The spike lands
+/// above what the tonemap and an 8-bit target can carry, is clipped, and
+/// the energy it was standing in for is lost. Always downwards, which is
+/// why the residual is a darkening rather than a wobble — and deeper
+/// here than per pixel for the same reason the deltas are, because a
+/// tile-wide weight is a cruder estimate and its `1/w` is larger.
 ///
 /// It is recorded rather than fixed because the fix is a better weight
 /// or a clamped ratio, both of which trade one bias for another, and
@@ -165,12 +181,20 @@ fn more_samples_land_closer() {
     r.resources.insert(LightSamples(0));
     let full = render_at(&mut r, true, ShadingRate::Full);
 
-    r.resources.insert(LightSamples(1));
-    let one = mean_delta(&full, &render_at(&mut r, true, ShadingRate::Full));
-    r.resources.insert(LightSamples(8));
-    let eight = mean_delta(&full, &render_at(&mut r, true, ShadingRate::Full));
-
-    eprintln!("mean delta vs full walk: 1 sample {one:.3}, 8 samples {eight:.3}");
+    // The whole curve, printed, because the table in this comment is
+    // only trustworthy if the run that would contradict it says so.
+    let full_lum = mean_luminance(&full);
+    let mut curve = Vec::new();
+    for k in [1u32, 2, 4, 8, 16] {
+        r.resources.insert(LightSamples(k));
+        let shot = render_at(&mut r, true, ShadingRate::Full);
+        let delta = mean_delta(&full, &shot);
+        let lum = (mean_luminance(&shot) - full_lum) / full_lum * 100.0;
+        eprintln!("  {k:2} samples: mean delta {delta:6.2}   luminance {lum:+.2} %");
+        curve.push(delta);
+    }
+    let one = curve[0];
+    let eight = curve[3];
     assert!(one > 0.0, "one sample matched the full walk exactly");
     assert!(
         eight < one * 0.75,
@@ -221,6 +245,101 @@ fn the_same_view_samples_the_same_lights() {
         first, second,
         "two renders of an unchanged view chose different lights. \
          Nothing about the sampling may depend on the frame number.",
+    );
+}
+
+/// How much blue each 16x16 block has that the warm grid cannot account
+/// for.
+///
+/// The grid is `(1.0, 0.9, 0.8)` and the caster `(0.05, 0.2, 1.0)`, so
+/// this is a direct readout of one light's contribution with no way for
+/// the others to fake it — and **per block**, because the block is the
+/// unit the tile chooses in. An average over the frame would be blind to
+/// the failure this looks for: a caster that survives in one tile of
+/// sixteen keeps most of its energy in the mean and vanishes from the
+/// picture.
+fn blue_blocks(pixels: &[u8]) -> Vec<f64> {
+    const TILE: usize = 16;
+    let size = common::lit_scene::SIZE as usize;
+    let blocks = size.div_ceil(TILE);
+    let mut out = vec![0.0; blocks * blocks];
+    for (b, cell) in out.iter_mut().enumerate() {
+        let (bx, by) = ((b % blocks) * TILE, (b / blocks) * TILE);
+        let mut total = 0.0;
+        let mut covered = 0usize;
+        for y in by..(by + TILE).min(size) {
+            for x in bx..(bx + TILE).min(size) {
+                let p = &pixels[(y * size + x) * 4..][..4];
+                if p[3] == 0 {
+                    continue;
+                }
+                covered += 1;
+                total += (srgb_to_linear(p[2]) as f64 - srgb_to_linear(p[0]) as f64).max(0.0);
+            }
+        }
+        *cell = if covered == 0 {
+            0.0
+        } else {
+            total / covered as f64
+        };
+    }
+    out
+}
+
+/// 🔴 A light that owns a shadow map is never sampled.
+///
+/// This is the rule the device asked for. A shadow is a binary,
+/// high-contrast signal: a caster that a tile declines to pick does not
+/// read as a slightly wrong estimate, it reads as **a shadow that
+/// blinks** — the same artefact `KOOCH_LIGHT_LIMIT` produced, moved onto
+/// the one feature where it is least forgivable.
+///
+/// The caster is measured **per block**, not per frame, because at one
+/// sample a tile picks one light of seventeen: without the rule the
+/// caster would keep most of its energy in the average and disappear
+/// from fifteen blocks in sixteen. See `rig_with_caster` for why making
+/// it dim instead does not work.
+#[test]
+fn a_shadow_caster_is_never_sampled_away() {
+    let Some(mut r) = rig_with_caster(4) else {
+        eprintln!("no adapter with the 64-bit texture-atomic bundle; skipping");
+        return;
+    };
+    r.resources.insert(LightLimit(0));
+
+    r.resources.insert(LightSamples(0));
+    let full = blue_blocks(&render_at(&mut r, true, ShadingRate::Full));
+
+    r.resources.insert(LightSamples(1));
+    let sampled = blue_blocks(&render_at(&mut r, true, ShadingRate::Full));
+
+    // The blocks the caster clearly reaches on the full walk. Anywhere
+    // else it contributes nothing and losing nothing proves nothing.
+    let peak = full.iter().cloned().fold(0.0f64, f64::max);
+    let lit: Vec<usize> = (0..full.len()).filter(|&i| full[i] > peak * 0.25).collect();
+    let kept = lit.iter().filter(|&&i| sampled[i] > full[i] * 0.25).count();
+    let retention = kept as f64 / lit.len().max(1) as f64;
+
+    eprintln!(
+        "caster blocks: peak {peak:.4}, {} clearly lit, {kept} kept at one sample ({:.0} %)",
+        lit.len(),
+        retention * 100.0,
+    );
+    // Fifteen on this scene. Not a round number and not worth distorting
+    // the scene to make one: without the rule the caster wins about one
+    // race in seventeen, so the expected survivor count is 1. Fifteen
+    // against 1 discriminates with room to spare.
+    assert!(
+        lit.len() >= 12,
+        "only {} blocks are clearly lit by the caster; the scene cannot test the rule",
+        lit.len(),
+    );
+    assert!(
+        retention > 0.9,
+        "one sample kept the caster in only {:.0} % of the blocks it lights. \
+         A light with a shadow map entered the draw and lost, which on screen is \
+         a shadow that disappears for whole tiles at a time.",
+        retention * 100.0,
     );
 }
 

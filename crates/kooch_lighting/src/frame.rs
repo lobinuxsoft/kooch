@@ -213,6 +213,13 @@ pub struct GpuCascade {
 /// Lights past the fourth still light the scene, they just do not cast.
 /// Dropping the light itself would be a worse failure than dropping its
 /// shadow, and a far more confusing one.
+/// The most lights one froxel can be asked to choose (#826).
+///
+/// Mirrors `MAX_TILE_STRATA` in `material_pbr_compute.wgsl`, where one
+/// thread runs one stratum and a 256-thread tile has up to 16 froxels to
+/// serve. Past this the shader silently repeats the previous picture.
+pub const MAX_LIGHT_SAMPLES: u32 = 8;
+
 pub const MAX_SPOT_SHADOWS: usize = 4;
 
 /// How many cascades the frame carries. Fixed because the count is baked
@@ -583,13 +590,27 @@ fn samples_from_environment() -> u32 {
         };
         match raw.trim().parse::<u32>() {
             Ok(samples) => {
+                // 🔴 The shader runs one stratum per thread and has 16
+                // cells to serve out of 256, so it caps at
+                // `MAX_TILE_STRATA`. Clamping here rather than there is
+                // what makes a request past the cap say so: silently
+                // producing the same picture for 8 and for 16 is a knob
+                // that lies, and it would be found in a capture that
+                // showed two identical measurements.
+                let capped = samples.min(MAX_LIGHT_SAMPLES);
+                if capped < samples {
+                    tracing::warn!(
+                        "KOOCH_LIGHT_SAMPLES={samples} is past the {MAX_LIGHT_SAMPLES} the \
+                         tile can choose; using {capped}",
+                    );
+                }
                 tracing::info!(
-                    "KOOCH_LIGHT_SAMPLES={samples}: a pixel evaluates this many of its \
-                     froxel's punctual lights, picked in proportion to what they \
-                     contribute and weighted by the probability of the pick. Trades \
-                     exactness for noise, not for darkness."
+                    "KOOCH_LIGHT_SAMPLES={capped}: each froxel of a tile chooses this many \
+                     of its punctual lights, in proportion to what they contribute, and \
+                     every pixel of the froxel evaluates that choice weighted by the \
+                     probability of the pick. Trades exactness for noise, not for darkness."
                 );
-                samples
+                capped
             }
             Err(_) => {
                 tracing::warn!("KOOCH_LIGHT_SAMPLES={raw:?} is not a count — evaluating all");
