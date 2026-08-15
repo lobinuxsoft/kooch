@@ -136,25 +136,35 @@ fn sampling_keeps_the_brightness_that_truncation_loses() {
 /// same scene measured when it was made **per pixel**, because that is
 /// the cost of the move:
 ///
-/// | samples | Δ per pixel | Δ per froxel | lum per pixel | lum per froxel |
+/// Four estimators were built for this and three were measured wrong.
+/// The columns are where the choice is made:
+///
+/// | samples | per pixel | per froxel | luminance only | **two stage** |
 /// |---|---|---|---|---|
-/// | 1 | 8.71 | 24.33 | −5.00 % | −8.07 % |
-/// | 2 | 7.47 | 13.51 | −3.56 % | −5.08 % |
-/// | 4 | 6.41 | 9.79 | −2.31 % | −4.64 % |
-/// | 8 | 5.42 | 7.53 | −1.46 % | −3.34 % |
-/// | 16 | 5.07 | 7.53 | −1.20 % | −3.34 % |
+/// | 1 | 8.71 | 24.33 | 88.19 | **16.62** |
+/// | 2 | 7.47 | 13.51 | 64.91 | **12.49** |
+/// | 4 | 6.41 | 9.79 | 46.72 | **10.65** |
+/// | 8 | 5.42 | 7.53 | 32.73 | **10.10** |
 ///
-/// 🔴 **The right-hand columns are worse and that is the trade, not a
-/// regression.** One choice now serves 256 pixels, so the error it makes
-/// is made 256 times instead of being averaged away. What is bought is
-/// that the weights leave the per-pixel loop entirely — the device is
-/// the only thing that can say whether the exchange was worth it, and
-/// nothing here should be read as saying it was.
+/// - **per pixel** is the best picture and the device refused it: the
+///   weights cost 0.196 of an evaluation each and `(K+1) x 15` of them
+///   made K=4 slower than walking all fifteen lights.
+/// - **per froxel** moved the whole choice to the tile. Fast, and it
+///   produced the chromatic blocking the handheld photographed.
+/// - **luminance only** made the froxel's ranking stable across tiles by
+///   deleting geometry from it. With every light in a scene at one
+///   intensity that is uniform sampling, and it is the worst column here
+///   by a factor of five.
+/// - **two stage** is what shipped: the froxel proposes `2K` candidates
+///   with geometry, the pixel resamples `K` of them with its own normal
+///   and distance. Better than per-froxel exactly where a frame would
+///   run it, and the final choice is per pixel again, so there is no
+///   tile-shaped structure left to see.
 ///
-/// ⚠️ **16 samples equals 8** because `MAX_TILE_STRATA` is 8: one thread
-/// runs one stratum and the workgroup has 16 cells to serve. Asking for
-/// more is silently the same picture, which is the right failure for a
-/// knob and the wrong one to discover in a capture.
+/// ⚠️ **8 samples barely beats 4** because the froxel offers `2K`
+/// candidates capped at `MAX_TILE_STRATA` = 8: at K=8 there are eight
+/// candidates and eight kept, so the second stage has nothing to choose
+/// between and degenerates into the first. The useful range is K = 1..4.
 ///
 /// ⚠️ **It converges and then stops**, at 7.53/255 and −3.3 %. That floor
 /// is real and it is not noise: a light whose cheap weight badly
