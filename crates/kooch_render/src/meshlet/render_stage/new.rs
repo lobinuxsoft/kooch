@@ -245,6 +245,16 @@ impl MeshletRenderStage {
         &self.views[self.primary].color_texture
     }
 
+    /// The primary view's motion vectors (#481), when it runs the R64
+    /// path. `None` on the fallback, which has no vbuf to reconstruct
+    /// from.
+    pub fn motion_vector_texture(&self) -> Option<&wgpu::Texture> {
+        self.views[self.primary]
+            .vbuf64_stage
+            .as_ref()
+            .map(|stage| stage.motion_vector_texture())
+    }
+
     /// Switches every view between the fragment shading path and the
     /// compute one (#824), overriding `KOOCH_COMPUTE_SHADING`.
     ///

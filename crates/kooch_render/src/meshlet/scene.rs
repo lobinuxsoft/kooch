@@ -146,8 +146,35 @@ impl SceneCullParams {
 /// reference to the buffer across frames.
 pub struct MeshletScene {
     instance_buffer: wgpu::Buffer,
+    /// Each instance's transform **from the previous frame** (#481), as a
+    /// flat array the motion-vector pass indexes with the same
+    /// `inst_id`.
+    ///
+    /// 🔴 Parallel to the instances rather than a field inside them. The
+    /// record is 96 bytes and six shaders mirror its layout; growing it
+    /// would mean editing all six to add a matrix that exactly one of
+    /// them reads. Separate arrays, indexed by the same id, is also what
+    /// the engine's own data-oriented rule asks for.
+    previous_transform_buffer: wgpu::Buffer,
     capacity: u32,
     bgl: wgpu::BindGroupLayout,
+    /// Last frame's transform for each entity that had one.
+    ///
+    /// 🔴 Keyed by ENTITY, never by position. The instance vector is
+    /// rebuilt from an ECS query every frame, so an entity appearing or
+    /// changing archetype renumbers everything after it — index `i`
+    /// simply is not the same object two frames running. Keyed by index,
+    /// a reorder hands each instance somebody else's previous matrix and
+    /// the motion vectors come out wrong with nothing failing.
+    ///
+    /// A map on the CPU, feeding a flat array on the GPU. The DOD rule
+    /// bans hash lookups from hot paths that cross to the GPU; this one
+    /// runs once per frame over the instance list to *build* that array,
+    /// which is the streaming-and-coordination case it allows.
+    previous_transforms: std::collections::HashMap<kooch_ecs::entity::Entity, [[f32; 4]; 4]>,
+    /// Scratch for the upload, kept so the per-frame gather does not
+    /// allocate.
+    previous_scratch: Vec<[[f32; 4]; 4]>,
 }
 
 impl MeshletScene {
@@ -160,11 +187,15 @@ impl MeshletScene {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let previous_transform_buffer = create_previous_buffer(device, capacity);
         let bgl = Self::bind_group_layout(device);
         Self {
             instance_buffer,
+            previous_transform_buffer,
             capacity,
             bgl,
+            previous_transforms: std::collections::HashMap::new(),
+            previous_scratch: Vec::new(),
         }
     }
 
@@ -203,6 +234,7 @@ impl MeshletScene {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        self.previous_transform_buffer = create_previous_buffer(device, new_capacity);
         tracing::debug!(
             target: "kooch_render::meshlet::scene",
             from = self.capacity,
@@ -211,6 +243,10 @@ impl MeshletScene {
             "grew the instance buffer",
         );
         self.capacity = new_capacity;
+    }
+
+    pub fn previous_transform_buffer(&self) -> &wgpu::Buffer {
+        &self.previous_transform_buffer
     }
 
     pub fn instance_buffer(&self) -> &wgpu::Buffer {
@@ -258,6 +294,57 @@ impl MeshletScene {
     /// Uploads `instances[..]` into the GPU buffer (offset 0). Caller
     /// is responsible for keeping `instances.len() <= capacity`.
     pub fn upload_instances(&self, queue: &wgpu::Queue, instances: &[MeshInstance]) {
+        self.upload_instance_data(queue, instances);
+    }
+
+    /// Uploads the instances **and** each one's transform from the
+    /// previous frame, then remembers this frame's for the next one
+    /// (#481).
+    ///
+    /// An entity seen for the first time gets its current transform as
+    /// its previous one, which is a motion vector of zero. That is the
+    /// right answer: an object that did not exist last frame has no
+    /// history for a temporal pass to reproject, and claiming it moved
+    /// from wherever the slot's last occupant was would smear it across
+    /// the screen on its first frame.
+    pub fn upload_instances_with_history(
+        &mut self,
+        queue: &wgpu::Queue,
+        instances: &[MeshInstance],
+        entities: &[kooch_ecs::entity::Entity],
+    ) {
+        debug_assert_eq!(instances.len(), entities.len());
+        self.previous_scratch.clear();
+        self.previous_scratch
+            .extend(instances.iter().zip(entities).map(|(instance, entity)| {
+                self.previous_transforms
+                    .get(entity)
+                    .copied()
+                    .unwrap_or(instance.transform)
+            }));
+        if !self.previous_scratch.is_empty() {
+            queue.write_buffer(
+                &self.previous_transform_buffer,
+                0,
+                bytemuck::cast_slice(&self.previous_scratch),
+            );
+        }
+        self.upload_instance_data(queue, instances);
+
+        // Rebuilt rather than updated: an entity that stopped rendering
+        // has to leave, or the map grows for the lifetime of the process
+        // and a despawned object's matrix comes back if its entity id is
+        // reused.
+        self.previous_transforms.clear();
+        self.previous_transforms.extend(
+            entities
+                .iter()
+                .zip(instances)
+                .map(|(entity, instance)| (*entity, instance.transform)),
+        );
+    }
+
+    fn upload_instance_data(&self, queue: &wgpu::Queue, instances: &[MeshInstance]) {
         assert!(
             instances.len() as u32 <= self.capacity,
             "instance count {} exceeds scene capacity {}",
@@ -292,3 +379,12 @@ mod tests;
 
 #[cfg(test)]
 mod capacity_tests;
+
+fn create_previous_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("meshlet_scene_previous_transforms"),
+        size: capacity as u64 * std::mem::size_of::<[[f32; 4]; 4]>() as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}

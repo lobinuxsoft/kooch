@@ -23,6 +23,7 @@ mod clear;
 mod compute_shade;
 mod debug_resolve;
 mod density_clear;
+mod motion;
 mod raster;
 mod shading_rate;
 mod tonemap;
@@ -40,6 +41,7 @@ use clear::Vbuf64Clear;
 use compute_shade::ComputeShading;
 use debug_resolve::DebugResolve;
 use density_clear::DensityClear;
+use motion::MotionVectors;
 use raster::Vbuf64Rasterizer;
 use tonemap::Tonemap;
 use upsample::ShadingUpsample;
@@ -103,6 +105,7 @@ pub struct Vbuf64Stage {
     /// issue was taken against.
     upsample: ShadingUpsample,
     tonemap: Tonemap,
+    motion: MotionVectors,
     shading_rate: ShadingRate,
     /// Fullscreen fragment pass for the colorize debug modes.
     debug_resolve: DebugResolve,
@@ -139,6 +142,7 @@ impl Vbuf64Stage {
         let compute_enabled = compute_shade::enabled_by_environment();
         let upsample = ShadingUpsample::new(device, size);
         let tonemap = Tonemap::new(device, size);
+        let motion = MotionVectors::new(device, size, meshlet_bgl);
         // 🔴 Half rate is a property of the compute path and nothing
         // else: the fragment path shades inside its own raster, one
         // invocation per covered pixel, and has no thread to remove.
@@ -159,6 +163,7 @@ impl Vbuf64Stage {
             compute_enabled,
             upsample,
             tonemap,
+            motion,
             shading_rate,
             debug_resolve,
             vbuf_texture,
@@ -186,6 +191,7 @@ impl Vbuf64Stage {
         self.material_depth_view = md_view;
         self.upsample.resize(device, size);
         self.tonemap.resize(device, size);
+        self.motion.resize(device, size);
         self.size = size;
     }
 
@@ -220,6 +226,12 @@ impl Vbuf64Stage {
         }
         self.shading_rate = rate;
         true
+    }
+
+    /// The motion-vector target (#481). `Rg16Float`, full resolution,
+    /// one UV offset per pixel.
+    pub fn motion_vector_texture(&self) -> &wgpu::Texture {
+        self.motion.texture()
     }
 
     pub fn shading_rate(&self) -> ShadingRate {
@@ -305,6 +317,33 @@ impl Vbuf64Stage {
             view_proj,
             clear_depth,
         );
+        // Motion vectors, right after the raster that fills the vbuf
+        // they read and before anything that shades (#481). Its own
+        // scope: it is a full-resolution pass that did not exist, and it
+        // runs on every debug mode too — the vector is a property of the
+        // geometry and the camera, not of how the pixel was lit.
+        {
+            let query = match (scopes, parent) {
+                (Some(s), Some(p)) => Some(s.begin_child("motion vectors", encoder, p)),
+                (Some(s), None) => Some(s.begin("motion vectors", encoder)),
+                _ => None,
+            };
+            self.motion.dispatch(
+                device,
+                queue,
+                encoder,
+                &self.vbuf_view,
+                meshlet_bg,
+                cull.visible_meshlets_buffer(),
+                scene.instance_buffer(),
+                scene.previous_transform_buffer(),
+                view_proj,
+                self.size,
+            );
+            if let (Some(scopes), Some(query)) = (scopes, query) {
+                scopes.end(encoder, query);
+            }
+        }
         // Colorize debug modes (ids / heatmaps / cull passthrough) render
         // through the fullscreen debug fragment pass. Every other mode —
         // Off and the normal-look debug modes — shades through the

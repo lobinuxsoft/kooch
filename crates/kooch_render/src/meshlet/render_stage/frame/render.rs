@@ -141,7 +141,9 @@ impl MeshletRenderStage {
                 return MeshletRenderStats::default();
             }
         };
-        let instances = self.pipeline.collect_scene_instances(resources);
+        let (instances, instance_entities) = self
+            .pipeline
+            .collect_scene_instances_with_entities(resources);
         if instances.is_empty() {
             tracing::debug!(
                 target: "kooch_render::meshlet::render",
@@ -175,7 +177,8 @@ impl MeshletRenderStage {
         // in `read_capture` made it obvious.
         {
             profiling::scope!("upload instances");
-            self.scene.upload_instances(queue, &instances);
+            self.scene
+                .upload_instances_with_history(queue, &instances, &instance_entities);
             // The whole scene in one number, for the point-shadow cube
             // cache (#778). Hashed over the bytes that go to the GPU, so
             // anything that could move a shadow — a transform, a mesh

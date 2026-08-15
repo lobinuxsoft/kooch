@@ -116,6 +116,26 @@ impl MeshletPipeline {
     /// resource if present; otherwise every instance falls back to
     /// slot 0 (the white-diffuse default).
     pub fn collect_scene_instances(&self, resources: &Resources) -> Vec<MeshInstance> {
+        self.collect_scene_instances_with_entities(resources).0
+    }
+
+    /// The same walk, with the entity each instance came from (#481).
+    ///
+    /// 🔴 Motion vectors need last frame's transform for **this object**,
+    /// and the position in this vector is not an identity: the walk is an
+    /// ECS query, so an entity appearing, disappearing or changing
+    /// archetype renumbers everything after it. Keyed by index, a
+    /// reordering would hand each instance some other object's previous
+    /// matrix and produce motion vectors that are wrong without anything
+    /// failing.
+    ///
+    /// The entity is the identity. It costs one `Vec<Entity>` per frame
+    /// and it is the difference between a temporal pass that works and
+    /// one that smears whenever the scene changes.
+    pub fn collect_scene_instances_with_entities(
+        &self,
+        resources: &Resources,
+    ) -> (Vec<MeshInstance>, Vec<kooch_ecs::entity::Entity>) {
         let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
         // Side-channel lookup of optional LodForceLevel components.
         // The MeshRenderer query is the primary walk; per-entity we
@@ -124,6 +144,7 @@ impl MeshletPipeline {
         let lod_force_lookup = collect_lod_force_levels(resources);
         let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut out = Vec::new();
+        let mut entities = Vec::new();
         let mesh_descriptors = &self.pool.mesh_descriptors;
         // Per-instance prefix sum into `group_max_err`: each instance
         // reserves `mesh_descriptors[mesh_id].group_count` consecutive
@@ -168,8 +189,9 @@ impl MeshletPipeline {
                 .unwrap_or(0);
             running_base = running_base.saturating_add(group_count);
             out.push(instance);
+            entities.push(entity);
         });
-        out
+        (out, entities)
     }
 
     /// Total `group_max_err` slots the scene needs given an already-
