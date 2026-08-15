@@ -39,7 +39,8 @@ pub const TAA_CONFIDENCE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16F
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 struct TaaUbo {
     reset: u32,
-    _pad: [u32; 3],
+    exposure: f32,
+    _pad: [u32; 2],
 }
 
 /// Ping-pong state, behind a lock for the same reason the motion pass's
@@ -238,6 +239,7 @@ impl Taa {
         current: &wgpu::TextureView,
         motion: &wgpu::TextureView,
         depth: &wgpu::TextureView,
+        exposure: f32,
     ) -> &wgpu::TextureView {
         let mut state = self.state.lock().expect("taa history lock");
         let previous = state.index;
@@ -248,7 +250,8 @@ impl Taa {
             0,
             bytemuck::bytes_of(&TaaUbo {
                 reset: u32::from(state.reset),
-                _pad: [0; 3],
+                exposure,
+                _pad: [0; 2],
             }),
         );
 

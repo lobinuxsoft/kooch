@@ -66,9 +66,11 @@ struct TaaUniforms {
     // There is nothing to reproject from, and blending against a cleared
     // texture is a black frame that fades in over sixty frames.
     reset: u32,
+    // 🔴 The same multiplier the tonemap pass applies, and the resolve
+    // is worthless without it. See `tonemap` below.
+    exposure: f32,
     _pad0: u32,
     _pad1: u32,
-    _pad2: u32,
 }
 
 @group(0) @binding(0) var view_target: texture_2d<f32>;
@@ -96,7 +98,30 @@ struct Output {
 // to 202, which is a bright dot that then survives in the history.
 fn rcp(x: f32) -> f32 { return 1.0 / x; }
 fn max3(x: vec3<f32>) -> f32 { return max(x.r, max(x.g, x.b)); }
-fn tonemap(color: vec3<f32>) -> vec3<f32> { return color * rcp(max3(color) + 1.0); }
+
+// 🔴 EXPOSED first, and this is the correction that mattered.
+//
+// `c / (max(c) + 1)` is a range compressor with all of its resolution
+// between 0 and about 4. It assumes radiance near 1, which is what a
+// scene with a sane exposure produces and what upstream is written
+// against.
+//
+// This engine's radiance is not near 1 — it is in the hundreds, because
+// the exposure is applied downstream in the tonemap pass and the scene
+// is blown out besides (#254). Feeding it raw, every lit surface lands
+// between 0.998 and 0.9999: the whole image is compressed into a
+// thousandth of the operator's range, blended there, and re-expanded by
+// the inverse. What comes back is posterised — flat bands with hard
+// boundaries between them, and a dark rim wherever two bands meet.
+// Which is exactly what it looked like: a broken toon shader.
+//
+// Multiplying by the exposure first puts the values where the operator
+// has resolution. It is the same scalar the tonemap pass uses, so the
+// two agree about what "bright" means.
+fn tonemap(color: vec3<f32>) -> vec3<f32> {
+    let c = color * taa.exposure;
+    return c * rcp(max3(c) + 1.0);
+}
 
 // The inverse, and 1.0 is its pole: `1 / (1 - 1)`. Nothing that reaches
 // here should be there — the forward operator maps `[0, inf)` into
@@ -104,7 +129,8 @@ fn tonemap(color: vec3<f32>) -> vec3<f32> { return color * rcp(max3(color) + 1.0
 // the floor is the guard rail for the case nobody thought of, because
 // one infinity written into the history stays in the history.
 fn reverse_tonemap(color: vec3<f32>) -> vec3<f32> {
-    return color * rcp(max(1.0 - max3(color), 1.0 / 65504.0));
+    let c = color * rcp(max(1.0 - max3(color), 1.0 / 65504.0));
+    return c / max(taa.exposure, 1.0 / 65504.0);
 }
 
 // 🔴 How close to 1 the compressed space is allowed to get, and

@@ -65,6 +65,52 @@ said.
 | **#771 / #248** | atmosphere, ported from Bevy | Now worth doing for the sky it gives, not for what it saves: 1.2 ms without clouds |
 | ~~#481~~ / **#536** | ~~motion vectors + TAA~~ / FSR | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest 1 % of edges the resolved image carries **0.38** of the squared gradient the unresolved one does. **Off by default** — asset and engine alike, see below. FSR still open |
 
+### 🔴 A range compressor needs the exposure, and this engine's radiance is nowhere near 1
+
+The temporal resolve shipped looking like a broken toon shader: a dark
+rim on every silhouette and iso-luminance contours sweeping the floor.
+It was reported from a screenshot before any assertion here caught it,
+and the assertions could not have caught it — every number they produce
+is a magnitude, and this artifact is *signed*. What found it was dumping
+the difference between the resolved and unresolved frames amplified
+about mid grey, which is now `dump_frames` in `tests/temporal_aa.rs`.
+
+The cause is one line, and it generalises past TAA. The resolve blends
+in a range-compressed space, `c / (max(c) + 1)`, so that one firefly
+cannot drag a neighbourhood. That operator has all of its resolution
+between 0 and about 4, and it is written against a scene whose radiance
+sits near 1.
+
+**Ours does not.** Exposure is applied downstream in the tonemap pass,
+and the scene is blown out besides (#254), so lit surfaces reach the
+resolve at radiance in the hundreds. Compressed, every one of them lands
+between 0.998 and 0.9999 — the whole image inside a thousandth of the
+operator's range. Blend there, expand with the inverse, and what comes
+back is posterised: flat bands with hard boundaries, and a rim wherever
+two bands meet.
+
+Multiplying by the exposure before compressing, and dividing after, is
+the whole fix. Every measurement moved the right way at once, which is
+what separates a fix from a tuning:
+
+| | before | after |
+|---|---|---|
+| still scene, frame-to-frame | 0.172 → 0.181, **growing** | 0.099 → 0.095, settling |
+| pan, distance from the unresolved frame | 1.506 | **1.058** |
+| after stopping, pan history vs fresh | 0.450 | **0.324** |
+
+⚠️ The rule to carry: **anything in this engine that compresses range —
+a resolve, a bloom threshold, a firefly clamp — has to see the exposure
+first.** The renderer's linear values are not display-referred and are
+not near 1, and every operator borrowed from a renderer whose values are
+will misbehave in a way that looks like a shading bug rather than a
+scaling one.
+
+⚠️ **Still missing from the port:** Bevy `#[require]`s `MipBias`
+alongside its TAA, and we have none. Jittered accumulation reconstructs
+detail finer than one frame carries, so textures want a negative LOD
+bias to match. Open.
+
 ### 🔴 A temporal pass is not free to port, and the copy cost more than the write
 
 #481 was a port, per the standing rule, and the port still had to be

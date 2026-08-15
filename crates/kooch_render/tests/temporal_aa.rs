@@ -274,3 +274,46 @@ fn nothing_moves_with_the_resolve_off() {
          resolve to integrate it is a frame that shimmers.",
     );
 }
+
+/// Writes plain / resolved / difference as binary PPMs for eyeballing.
+/// The tool that found the posterisation, kept because it found it.
+///
+/// `cargo test -p kooch_render --test temporal_aa dump_frames -- --ignored`
+/// writes three binary PPMs to `KOOCH_DUMP_DIR` (default `/tmp`): the
+/// unresolved frame, the resolved one, and their **signed** difference
+/// amplified four times about mid grey.
+///
+/// 🔴 The signed difference is the one that matters, and it is why this
+/// exists rather than a pair of screenshots. A magnitude image says
+/// "these pixels changed", which at every edge is true and expected. The
+/// signed one says whether the resolve *darkened* or *brightened* them,
+/// and a temporal pass that is misbehaving does both in alternating
+/// bands — which is what it showed: iso-luminance contours sweeping the
+/// floor, the signature of a range compressor being fed values it has no
+/// resolution for. Nothing in the numeric assertions above could have
+/// named that.
+#[test]
+#[ignore]
+fn dump_frames() {
+    let Some(mut r) = rig(3, true) else { return };
+    let plain = accumulate(&mut r, false, 4);
+    let resolved = accumulate(&mut r, true, 24);
+    let dir = std::env::var("KOOCH_DUMP_DIR").unwrap_or_else(|_| "/tmp".into());
+    let write = |name: &str, px: &[u8]| {
+        let mut out = format!("P6\n{SIZE} {SIZE}\n255\n").into_bytes();
+        out.extend(px.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]));
+        std::fs::write(format!("{dir}/{name}.ppm"), out).expect("dump directory is writable");
+    };
+    write("taa_plain", &plain);
+    write("taa_resolved", &resolved);
+    let diff: Vec<u8> = plain
+        .chunks_exact(4)
+        .zip(resolved.chunks_exact(4))
+        .flat_map(|(a, b)| {
+            let f = |i: usize| (128 + (b[i] as i32 - a[i] as i32) * 4).clamp(0, 255) as u8;
+            [f(0), f(1), f(2), 255]
+        })
+        .collect();
+    write("taa_diff", &diff);
+    eprintln!("wrote {dir}/taa_plain.ppm, taa_resolved.ppm, taa_diff.ppm");
+}

@@ -556,6 +556,7 @@ impl Vbuf64Stage {
                         self.tonemap.hdr_view(),
                         self.motion.view(),
                         depth_sample_view,
+                        exposure,
                     );
                     if let (Some(scopes), Some(query)) = (scopes, query) {
                         scopes.end(encoder, query);
