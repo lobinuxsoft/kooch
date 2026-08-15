@@ -350,9 +350,13 @@ impl RenderSettings {
         }
     }
 
+    /// The author's contact shadows, with `KOOCH_CONTACT_SHADOW_STEPS`
+    /// applied on top — see [`crate::contact_shadow::steps_from_environment`]
+    /// for why the variable outranks the asset.
     pub fn contact_shadows(&self) -> ContactShadowSettings {
         ContactShadowSettings {
-            linear_steps: self.contact_shadow_steps,
+            linear_steps: crate::contact_shadow::steps_from_environment()
+                .unwrap_or(self.contact_shadow_steps),
             length: self.contact_shadow_length,
             thickness: self.contact_shadow_thickness,
         }

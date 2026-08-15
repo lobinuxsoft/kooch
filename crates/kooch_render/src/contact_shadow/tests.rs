@@ -43,6 +43,26 @@ fn substitution_leaves_no_placeholder_behind() {
     assert!(src.contains("@group(0) @binding(4)"));
 }
 
+/// An unset variable has to be distinguishable from `0`: one leaves the
+/// author's value standing, the other turns the march off everywhere.
+#[test]
+fn unset_is_not_zero() {
+    assert_eq!(parse_steps(None), None);
+    assert_eq!(parse_steps(Some("0")), Some(0));
+}
+
+/// 🔴 A typo must not read as an off switch. A measurement run that
+/// silently marched nothing would credit the saving to whatever else
+/// changed that day — the failure mode `KOOCH_SHADING_RATE` was written
+/// to avoid.
+#[test]
+fn a_typo_says_nothing() {
+    for raw in ["off", "", "-4", "sixteen", "8.0"] {
+        assert_eq!(parse_steps(Some(raw)), None, "{raw:?} should say nothing");
+    }
+    assert_eq!(parse_steps(Some(" 8 ")), Some(8), "surrounding blanks");
+}
+
 /// Zero steps is the off switch, and it has to be reachable from the
 /// settings rather than only from a light's flag — a project that
 /// wants none of this should not pay a uniform read per light.
