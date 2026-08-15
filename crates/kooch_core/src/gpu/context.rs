@@ -224,27 +224,46 @@ impl Drop for GpuContext {
 /// How many frames the swapchain may have in flight.
 /// `KOOCH_FRAME_LATENCY` overrides it, clamped to 1..=3.
 ///
-/// # The measurement this exists for
+/// # The measurement this existed for, and what it came back with
 ///
 /// A 1165-frame capture on the OneXFly (#814) has the same GPU work
 /// produce two different frames: 167 frames turned 33.5 ms of GPU into a
 /// 34.7 ms frame, and 80 turned 34.7 ms into a 69.4 ms frame. Identical
-/// load, and the bad outcome is **exactly double**. A GPU does not do
-/// that. A swapchain with two images does: under FIFO the compositor
-/// holds one while the GPU draws into the other, so
-/// `get_current_texture` waits out the compositor's whole turn instead
-/// of overlapping with it, and a frame that misses one vblank stays
-/// serialised.
+/// load, and the bad outcome **exactly double**.
+///
+/// The explanation written here used to be a swapchain of two images:
+/// under FIFO the compositor holds one while the GPU draws into the
+/// other, so `get_current_texture` waits out the compositor's whole turn
+/// instead of overlapping with it.
+///
+/// ❌ **Measured on the device, and it is wrong.** Three 30-second
+/// captures of one binary, one variable each:
+///
+/// | | latency 2 | latency 3 | `novsync` |
+/// |---|---|---|---|
+/// | frame/GPU p80 | 1.98 | 1.99 | 1.94 |
+/// | frame/GPU p90 | 2.49 | 2.50 | 2.21 |
+///
+/// A third image does not move the ratio by a hundredth, and neither
+/// does leaving FIFO. Two things this leaves behind:
+///
+/// - **An acquire of ~35 ms against a GPU of ~35 ms is not a defect.**
+///   Being GPU-bound means the CPU waits somewhere, and it waits here.
+///   What is unexplained is only the tail — frames where the wait grows
+///   by 50 ms while our GPU work grows by 2.
+/// - **A present mode is close to decorative when a compositor owns the
+///   display.** These captures run under gamescope, which composites on
+///   the same GPU on its own schedule and is invisible to our scopes:
+///   they time *our* passes. Whatever is left lives outside this
+///   process, and no environment variable on this side will find it.
 ///
 /// # Why 2 is still the default
 ///
-/// Because the fix is not free and has not been measured on the hardware
-/// that has the problem. A third image buys back the overlap and costs a
-/// frame of input lag — at 34 ms per frame that is 34 ms of extra lag on
-/// a handheld, which is not a rounding error. Changing the default on
-/// the strength of a plausible mechanism is exactly the move that has
-/// been wrong three times on this frame already, so the number is a
-/// variable until a capture from the OneXFly says which one wins.
+/// Because a third image costs a frame of input lag — at 34 ms per frame
+/// that is 34 ms of extra lag on a handheld, which is not a rounding
+/// error — and it now has a measurement saying it buys nothing. Holding
+/// the default while the mechanism was only plausible turned out to be
+/// the right call: the lag would have been paid for no return.
 fn frame_latency() -> u32 {
     let raw = std::env::var("KOOCH_FRAME_LATENCY").ok();
     let latency = latency_from(raw.as_deref());
