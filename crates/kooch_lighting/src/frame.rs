@@ -575,18 +575,24 @@ pub struct LightSamples(pub u32);
 
 impl Default for LightSamples {
     fn default() -> Self {
-        Self(samples_from_environment())
+        Self(light_samples_override().unwrap_or(0))
     }
 }
 
 /// `KOOCH_LIGHT_SAMPLES=<n>`, read once. Same shape as the three knobs
 /// above, and for the fourth time the same reason: the editor is not
 /// where this can be measured.
-fn samples_from_environment() -> u32 {
-    static SAMPLES: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+///
+/// `None` when the variable says nothing, which is what lets the
+/// project's `.rendersettings` value stand (#830). The variable outranks
+/// the asset when it is set: it is the instrument, and an instrument
+/// whose reading depends on which project happens to be open measures
+/// nothing.
+pub fn light_samples_override() -> Option<u32> {
+    static SAMPLES: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
     *SAMPLES.get_or_init(|| {
         let Ok(raw) = std::env::var("KOOCH_LIGHT_SAMPLES") else {
-            return 0;
+            return None;
         };
         match raw.trim().parse::<u32>() {
             Ok(samples) => {
@@ -610,11 +616,14 @@ fn samples_from_environment() -> u32 {
                      every pixel of the froxel evaluates that choice weighted by the \
                      probability of the pick. Trades exactness for noise, not for darkness."
                 );
-                capped
+                Some(capped)
             }
             Err(_) => {
-                tracing::warn!("KOOCH_LIGHT_SAMPLES={raw:?} is not a count — evaluating all");
-                0
+                tracing::warn!(
+                    "KOOCH_LIGHT_SAMPLES={raw:?} is not a count — leaving the project's own \
+                     setting alone",
+                );
+                None
             }
         }
     })

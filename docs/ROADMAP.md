@@ -63,7 +63,45 @@ said.
 | **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
 | **#254** | post + auto exposure | The blown-out white floor in three sessions of screenshots. Cheap |
 | **#771 / #248** | atmosphere, ported from Bevy | Now worth doing for the sky it gives, not for what it saves: 1.2 ms without clouds |
-| **#481 / #536** | motion vectors + FSR | Treats the symptom — fewer pixels of a pass that costs too much per pixel — but it is what the hardware is asking for |
+| ~~#481~~ / **#536** | ~~motion vectors + TAA~~ / FSR | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest edges of a still scene the resolved image carries **0.62** of the squared gradient the unresolved one does, and 0.46 on the strongest tenth of a percent — the theoretical halving of a step spread over two pixels. Two departures from upstream, both measured, both written down in `taa.wgsl`. FSR still open |
+
+### 🔴 A temporal pass is not free to port, and the copy cost more than the write
+
+#481 was a port, per the standing rule, and the port still had to be
+measured against the thing it was ported into. Two of upstream's choices
+are wrong here, and neither announced itself — both render a plausible
+image.
+
+**The history holds linear radiance, not the compressed value.** Bevy
+stores the range-compressed colour; read back through the inverse
+operator, fp16's half-thousandth of resolution near 1 is multiplied by
+`1/(1-t)²`. Frame-to-frame change of the final image on a still scene,
+over twenty frames: **0.09 storing linear against 0.85 storing
+compressed.** It is also one texture instead of two.
+
+**The variance clip is two sigma, not one.** Upstream's one sigma
+rejected the history on 11 % of the pixels of a scene that was not
+moving, and a rejected history is placed on the box *boundary* — a
+contrast boost, not a rejection. Edge energy of the final image, against
+123 for a single unresolved frame: no clip 114 and settling; two sigma
+124 and settling; **one sigma 135 and never settling.** One sigma leaves
+the image with more edge contrast than no temporal pass at all.
+
+**And the metric was wrong twice before it was right.** Counting
+"intermediate" pixels gave 21595 against 21337 — a lit floor is already
+a gradient. Summing squared gradients over the whole image gave 124
+against 123, because the lighting falloff carries the total and the
+resolve rightly leaves it alone. Only masking to the strongest edges of
+the *unresolved* frame separated the effect from the scene: 0.62 on the
+top percent, 0.46 on the top tenth of a percent.
+
+⚠️ **What TAA does not fix, and it is the thing that started this.**
+The froxel sampler's choice (#826) is seeded on the cluster index, not
+on the frame, so its noise is the same noise every frame and there is
+nothing for an average to average. The jitter perturbs which froxel a
+pixel lands in and no more. Making #826's noise temporal — a frame term
+in the seed — is what turns the resolve loose on it, and it is not in
+this change.
 
 ### 🔴 What the frame is actually spending, 2026-08-13
 

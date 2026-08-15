@@ -245,12 +245,18 @@ impl MotionVectors {
         &self.texture
     }
 
-    /// Records the pass and remembers `view_proj` for the next frame.
+    /// Records the pass and remembers `unjittered` for the next frame.
     ///
-    /// ⚠️ `view_proj` must be the **unjittered** matrix. Sub-pixel jitter
-    /// is what a temporal resolve accumulates; a motion vector carrying
-    /// it would describe the jitter as scene motion and the reprojection
-    /// would cancel exactly the signal being integrated.
+    /// ⚠️ The two matrices are not interchangeable and both are needed.
+    ///
+    /// - `jittered` is what the raster used, so it is what the
+    ///   barycentric reconstruction has to use: the pixel's NDC came
+    ///   from that projection, and asking a different one where the
+    ///   triangle is returns a point that is off by the jitter.
+    /// - `unjittered` is what the vector itself is measured against.
+    ///   Jitter reaching it would describe the jitter as scene motion
+    ///   and the resolve would cancel exactly the signal it exists to
+    ///   integrate — a temporal pass that runs, costs and does nothing.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn dispatch(
         &self,
@@ -262,7 +268,8 @@ impl MotionVectors {
         visible_meshlets: &wgpu::Buffer,
         instances: &wgpu::Buffer,
         previous_transforms: &wgpu::Buffer,
-        view_proj: glam::Mat4,
+        jittered: glam::Mat4,
+        unjittered: glam::Mat4,
         size: (u32, u32),
     ) {
         // 🔴 The first frame reprojects against itself, which is a vector
@@ -270,12 +277,12 @@ impl MotionVectors {
         // `w` divide is a division by zero — NaNs into a texture a
         // temporal pass will read for as long as its history survives.
         let mut history = self.previous_view_proj.lock().expect("motion history lock");
-        let previous = history.unwrap_or(view_proj);
+        let previous = history.unwrap_or(unjittered);
         queue.write_buffer(
             &self.ubo,
             0,
             bytemuck::bytes_of(&MotionUbo {
-                clip_from_world: view_proj.to_cols_array_2d(),
+                clip_from_world: unjittered.to_cols_array_2d(),
                 previous_clip_from_world: previous.to_cols_array_2d(),
             }),
         );
@@ -283,7 +290,7 @@ impl MotionVectors {
             &self.camera_ubo,
             0,
             bytemuck::bytes_of(&CameraUbo {
-                view_proj: view_proj.to_cols_array_2d(),
+                view_proj: jittered.to_cols_array_2d(),
             }),
         );
         queue.write_buffer(
@@ -376,7 +383,7 @@ impl MotionVectors {
             pass.draw(0..3, 0..1);
         }
 
-        *history = Some(view_proj);
+        *history = Some(unjittered);
     }
 }
 

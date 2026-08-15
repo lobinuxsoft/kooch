@@ -123,7 +123,51 @@ impl MeshletRenderStage {
         // The lens rather than the matrix, because the shadow cascades
         // need the near and far planes to place themselves and a
         // `Mat4` has already thrown them away (#476).
-        let view_proj = camera.view_proj(aspect);
+        let unjittered_view_proj = camera.view_proj(aspect);
+
+        // #481 — the sub-pixel offset, advanced once per frame per view.
+        //
+        // 🔴 This is the only place the two matrices are still together.
+        // Everything below takes the jittered one — the cull, the Hi-Z
+        // test, the raster, and every reconstruction that reads the
+        // visibility buffer the raster wrote, all of which have to agree
+        // on where a triangle landed. The camera's own matrix goes to
+        // exactly one pass, and carrying it that far as a second
+        // argument is the price of not having a `ViewUniform` the way
+        // Bevy does.
+        //
+        // The cascades are deliberately not in that list: they build
+        // from `camera` directly, and a shadow map that jittered would
+        // put the offset into the shadow rather than into the image.
+        //
+        // 🔴 The quality resources are applied only when they EXIST, not
+        // with a default when they do not. A test that calls
+        // `set_shading_rate` and then renders must keep the rate it
+        // asked for, and a project with no settings asset must render
+        // exactly as it did before those resources were introduced.
+        // Absent is "nobody has an opinion", not "everybody wants the
+        // default" — see `crate::quality`.
+        let temporal = resources.get::<crate::quality::TemporalSettings>().copied();
+        let shading = resources.get::<crate::quality::ShadingSettings>().copied();
+        let jitter = match self.views[view_id].vbuf64_stage.as_mut() {
+            Some(stage) => {
+                if let Some(shading) = shading {
+                    // Path first, rate second: a reduced rate needs the
+                    // compute path and is refused rather than
+                    // half-applied on the fragment one.
+                    stage.set_compute_shading(shading.compute);
+                    let _ = stage.set_shading_rate(shading.rate);
+                }
+                if let Some(temporal) = temporal {
+                    stage.set_temporal_aa(temporal.enabled);
+                }
+                stage.next_jitter(unjittered_view_proj)
+            }
+            // The legacy R32 path has neither motion vectors nor a
+            // history, so jitter there is a wobble and nothing else.
+            None => crate::meshlet::vbuf64_stage::Jitter::none(unjittered_view_proj),
+        };
+        let view_proj = jitter.view_proj;
         let cam_pos = camera.position();
 
         // ── Prelude: shared between both GPU paths ─────────────────
@@ -391,6 +435,7 @@ impl MeshletRenderStage {
                 encoder,
                 resources,
                 view_proj,
+                unjittered_view_proj,
                 cam_pos,
                 &cull_params,
                 &scene_params,

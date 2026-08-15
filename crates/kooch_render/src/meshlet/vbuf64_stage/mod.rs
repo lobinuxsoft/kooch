@@ -23,9 +23,11 @@ mod clear;
 mod compute_shade;
 mod debug_resolve;
 mod density_clear;
+mod jitter;
 mod motion;
 mod raster;
 mod shading_rate;
+mod taa;
 mod tonemap;
 mod two_pass;
 mod upsample;
@@ -43,10 +45,15 @@ use debug_resolve::DebugResolve;
 use density_clear::DensityClear;
 use motion::MotionVectors;
 use raster::Vbuf64Rasterizer;
+use taa::Taa;
 use tonemap::Tonemap;
 use upsample::ShadingUpsample;
 
+pub use jitter::{JITTER_PERIOD, Jitter};
 pub use shading_rate::ShadingRate;
+
+pub(super) use compute_shade::enabled_by_environment as compute_shading_override;
+pub(super) use shading_rate::rate_from_environment as shading_rate_override;
 
 /// Storage texture format for the atomic visibility buffer.
 pub(super) const VBUF64_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R64Uint;
@@ -106,6 +113,16 @@ pub struct Vbuf64Stage {
     upsample: ShadingUpsample,
     tonemap: Tonemap,
     motion: MotionVectors,
+    /// The temporal resolve (#481) and whether it is switched on. Built
+    /// unconditionally: its two history pairs are allocated for the life
+    /// of the stage so turning it on is not the frame that stalls, the
+    /// same rule the shading rate follows (#830).
+    taa: Taa,
+    taa_enabled: bool,
+    /// Which sub-pixel offset the next frame takes. Advances once per
+    /// frame per view, which is why it lives here rather than beside the
+    /// camera — two views of the same scene must not share a phase.
+    jitter_index: u32,
     shading_rate: ShadingRate,
     /// Fullscreen fragment pass for the colorize debug modes.
     debug_resolve: DebugResolve,
@@ -139,17 +156,18 @@ impl Vbuf64Stage {
         let rasterizer = Vbuf64Rasterizer::new(device, meshlet_bgl, depth_format, pipeline_cache);
         let two_pass = two_pass::MaterialTwoPass::new(device, meshlet_bgl);
         let compute_shade = ComputeShading::new(device, meshlet_bgl);
-        let compute_enabled = compute_shade::enabled_by_environment();
+        let compute_enabled = compute_shade::enabled_by_environment().unwrap_or(false);
         let upsample = ShadingUpsample::new(device, size);
         let tonemap = Tonemap::new(device, size);
         let motion = MotionVectors::new(device, size, meshlet_bgl);
+        let taa = Taa::new(device, size);
         // 🔴 Half rate is a property of the compute path and nothing
         // else: the fragment path shades inside its own raster, one
         // invocation per covered pixel, and has no thread to remove.
         // Honouring the variable there would silently measure the wrong
         // thing.
         let shading_rate = if compute_enabled {
-            shading_rate::rate_from_environment()
+            shading_rate::rate_from_environment().unwrap_or_default()
         } else {
             ShadingRate::Full
         };
@@ -164,6 +182,13 @@ impl Vbuf64Stage {
             upsample,
             tonemap,
             motion,
+            taa,
+            // Off until an author or a settings asset asks for it. A
+            // temporal resolve changes every pixel of the image, and
+            // that is not a default an engine should adopt on behalf of
+            // a project that never mentioned it.
+            taa_enabled: false,
+            jitter_index: 0,
             shading_rate,
             debug_resolve,
             vbuf_texture,
@@ -192,6 +217,7 @@ impl Vbuf64Stage {
         self.upsample.resize(device, size);
         self.tonemap.resize(device, size);
         self.motion.resize(device, size);
+        self.taa.resize(device, size);
         self.size = size;
     }
 
@@ -234,6 +260,42 @@ impl Vbuf64Stage {
         self.motion.texture()
     }
 
+    /// The most recent temporal resolve, for a test to read back.
+    pub fn resolved_texture(&self) -> &wgpu::Texture {
+        self.taa.resolved_texture()
+    }
+
+    /// Switches the temporal resolve on or off (#481).
+    ///
+    /// 🔴 This is also what switches the sub-pixel jitter, and the two
+    /// are not separable. Jitter without a resolve is a frame that
+    /// wobbles; a resolve without jitter averages an image with itself,
+    /// costs two passes and removes nothing. Exposing them as one
+    /// setting is what stops half of the pair being turned on.
+    pub fn set_temporal_aa(&mut self, on: bool) {
+        self.taa_enabled = on;
+    }
+
+    pub fn temporal_aa(&self) -> bool {
+        self.taa_enabled
+    }
+
+    /// This frame's sub-pixel offset, and the pair of matrices that
+    /// follow from it.
+    ///
+    /// Advances the sequence, so it must be called exactly once per
+    /// frame per view — from the one place that then hands both matrices
+    /// down. Returns the identity when the resolve is off, which leaves
+    /// the projection untouched rather than merely small.
+    pub fn next_jitter(&mut self, view_proj: glam::Mat4) -> Jitter {
+        if !self.taa_enabled {
+            return Jitter::none(view_proj);
+        }
+        let jitter = Jitter::at(self.jitter_index, view_proj, self.size);
+        self.jitter_index = self.jitter_index.wrapping_add(1);
+        jitter
+    }
+
     pub fn shading_rate(&self) -> ShadingRate {
         self.shading_rate
     }
@@ -270,7 +332,14 @@ impl Vbuf64Stage {
         lights_bg: &wgpu::BindGroup,
         cull: &MeshletCull,
         scene: &MeshletScene,
+        // #481 — the jittered matrix the raster and every reconstruction
+        // off its visibility buffer use.
         view_proj: glam::Mat4,
+        // …and the camera's own, which only the motion vectors read.
+        // Equal to `view_proj` whenever TAA is off. See
+        // [`Self::next_jitter`] for why they are handed down as a pair
+        // rather than one being derived here.
+        unjittered_view_proj: glam::Mat4,
         contact: &crate::contact_shadow::ContactShadowUbo,
         debug_mode: u32,
         // #732 — the tonemap moved out of the shading shader, so the
@@ -293,8 +362,14 @@ impl Vbuf64Stage {
         scopes: Option<&kooch_core::gpu::GpuScopes>,
         parent: Option<&kooch_core::gpu::GpuQuery>,
     ) {
-        self.clear
-            .dispatch(device, queue, encoder, &self.vbuf_view, self.size);
+        self.clear.dispatch(
+            device,
+            queue,
+            encoder,
+            &self.vbuf_view,
+            self.tonemap.hdr_view(),
+            self.size,
+        );
         // Clear the density accumulator before each frame's raster
         // pass so the heatmap reflects only the current frame's
         // contribution count. Cost is negligible (one 8×8-tiled
@@ -338,6 +413,7 @@ impl Vbuf64Stage {
                 scene.instance_buffer(),
                 scene.previous_transform_buffer(),
                 view_proj,
+                unjittered_view_proj,
                 self.size,
             );
             if let (Some(scopes), Some(query)) = (scopes, query) {
@@ -454,10 +530,41 @@ impl Vbuf64Stage {
                     scopes.end(encoder, query);
                 }
             }
-            // HDR to the image. Its own scope: it is a full-screen pass
-            // that did not exist before, and "the tonemap moved" has to
-            // be answerable with a number rather than an argument.
             if self.compute_enabled {
+                // The temporal resolve, between the radiance and the
+                // curve (#481). Skipped on the debug views: they hand
+                // back display-referred false colour, and averaging a
+                // cluster index with last frame's produces a number that
+                // indexes nothing.
+                //
+                // 🔴 Its own scope, and the honest place to read what it
+                // costs. Everything it is meant to pay for — the
+                // stochastic light choice, the dithered contact ray, the
+                // half-rate interpolation — is cheaper somewhere else in
+                // this frame, and the two numbers have to be subtractable.
+                let mut source = self.tonemap.hdr_view();
+                if self.taa_enabled && !is_debug_view(debug_mode) {
+                    let query = match (scopes, parent) {
+                        (Some(s), Some(p)) => Some(s.begin_child("taa", encoder, p)),
+                        (Some(s), None) => Some(s.begin("taa", encoder)),
+                        _ => None,
+                    };
+                    source = self.taa.draw(
+                        device,
+                        queue,
+                        encoder,
+                        self.tonemap.hdr_view(),
+                        self.motion.view(),
+                        depth_sample_view,
+                    );
+                    if let (Some(scopes), Some(query)) = (scopes, query) {
+                        scopes.end(encoder, query);
+                    }
+                }
+                // HDR to the image. Its own scope: it is a full-screen
+                // pass that did not exist before, and "the tonemap
+                // moved" has to be answerable with a number rather than
+                // an argument.
                 let query = match (scopes, parent) {
                     (Some(s), Some(p)) => Some(s.begin_child("tonemap", encoder, p)),
                     (Some(s), None) => Some(s.begin("tonemap", encoder)),
@@ -467,6 +574,7 @@ impl Vbuf64Stage {
                     queue,
                     device,
                     encoder,
+                    source,
                     color_view,
                     exposure,
                     // The Inti debug views hand back display-ready

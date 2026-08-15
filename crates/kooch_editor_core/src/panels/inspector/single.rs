@@ -143,6 +143,46 @@ pub(super) fn field_is_shown(
     condition.is_met(discriminant)
 }
 
+/// The heading a field is drawn under (#830), or `""` for none.
+pub(super) fn group_for(field_metas: Option<&'static [FieldMeta]>, name: &str) -> &'static str {
+    field_metas
+        .and_then(|metas| metas.iter().find(|m| m.name == name))
+        .map(|m| m.group)
+        .unwrap_or("")
+}
+
+/// Splits the visible fields into consecutive runs that share a heading.
+///
+/// # Why runs and not a grouping
+///
+/// Collecting every field of a group together would reorder the
+/// author's struct behind their back, and the order of fields in a
+/// settings asset is itself information — exposure reads as a triple
+/// because aperture, shutter and ISO sit in that order. A run keeps the
+/// declaration order and lets a heading appear twice if the struct says
+/// so, which is visible and fixable rather than silent.
+///
+/// The `shown_when` filter is applied here rather than at draw time, so
+/// a group whose every field is hidden by the current variant does not
+/// leave a heading with nothing under it.
+pub(super) fn group_runs<'a>(
+    fields: &'a [(String, ReflectValue)],
+    field_metas: Option<&'static [FieldMeta]>,
+) -> Vec<(&'static str, Vec<&'a (String, ReflectValue)>)> {
+    let mut runs: Vec<(&'static str, Vec<&'a (String, ReflectValue)>)> = Vec::new();
+    for field in fields {
+        if !field_is_shown(field_metas, &field.0, fields) {
+            continue;
+        }
+        let group = group_for(field_metas, &field.0);
+        match runs.last_mut() {
+            Some((current, members)) if *current == group => members.push(field),
+            _ => runs.push((group, vec![field])),
+        }
+    }
+    runs
+}
+
 /// Reads a reflected value as an `i64`, for comparing against a
 /// [`FieldCondition`]'s values. `None` for anything not an integer — a
 /// condition on a float or a vector is meaningless, and treating it as
@@ -196,62 +236,79 @@ pub(super) fn draw_reflected_fields(
     entities: &[EntityDisplayInfo],
 ) -> Vec<(String, ReflectValue)> {
     let mut edits = Vec::new();
-    // Keyed on the component alone — see the note in `mod.rs`. The entity
-    // used to be part of it, which renamed every widget in the grid the
-    // moment the selection moved, while the grid stayed in the same place.
-    egui::Grid::new(format!("fields_{component:?}"))
-        .num_columns(2)
-        .spacing([8.0, 4.0])
-        .show(ui, |ui| {
-            for (name, value) in fields {
-                // A variant's own parameters only. Showing a capsule's
-                // half_height while a sphere is selected implies it does
-                // something; the value is still stored and still saved.
-                if !field_is_shown(field_metas, name, fields) {
-                    continue;
-                }
-                // Keyed on the field, not on its position in the grid.
-                // `field_is_shown` hides a variant's unused parameters, so
-                // the row count changes as a collider switches shape — and
-                // with automatic ids that renames every widget below.
-                //
-                // One scope per cell, not one around the row: a scope
-                // advances the grid's cursor, so wrapping both would put
-                // the label and its editor in the same column.
-                ui.push_id(("label", name), |ui| {
-                    let label = ui.label(name);
-                    let doc = doc_for(field_metas, name);
-                    if !doc.is_empty() {
-                        label.on_hover_text(doc);
-                    }
-                });
-                ui.push_id(name, |ui| {
-                    let field = FieldContext {
-                        name,
-                        choices: choices_for(field_metas, name),
-                        bits: bits_for(field_metas, name),
-                        assets: asset_catalog,
-                        entities,
-                        requires: requires_for(field_metas, name),
-                    };
-                    let new_value = match value {
-                        ReflectValue::Quat(q) => {
-                            let ctx = if is_transform_rotation(type_id, name) {
-                                rotation_ctx
-                            } else {
-                                RotationContext::local_only()
-                            };
-                            draw_quat_with_cache(ui, entity, component, name, *q, ctx, euler_cache)
+    // One grid per heading (#830). A single grid for the whole component
+    // is what produced the pile the settings asset had become: fourteen
+    // rows with no indication of which three belong to the exposure and
+    // which five to the shadows.
+    //
+    // Keyed on the component **and the heading** — see the note in
+    // `mod.rs` for why the entity is not part of it. The heading is, and
+    // has to be: two grids sharing an id share their column widths, so
+    // one long tooltip in the shadows section would resize the exposure
+    // section above it.
+    for (group, members) in group_runs(fields, field_metas) {
+        if !group.is_empty() {
+            ui.add_space(6.0);
+            ui.strong(group);
+        }
+        egui::Grid::new(format!("fields_{component:?}_{group}"))
+            .num_columns(2)
+            .spacing([8.0, 4.0])
+            .show(ui, |ui| {
+                for (name, value) in members {
+                    // Keyed on the field, not on its position in the
+                    // grid. `field_is_shown` hides a variant's unused
+                    // parameters, so the row count changes as a collider
+                    // switches shape — and with automatic ids that
+                    // renames every widget below.
+                    //
+                    // One scope per cell, not one around the row: a
+                    // scope advances the grid's cursor, so wrapping both
+                    // would put the label and its editor in the same
+                    // column.
+                    ui.push_id(("label", name), |ui| {
+                        let label = ui.label(name);
+                        let doc = doc_for(field_metas, name);
+                        if !doc.is_empty() {
+                            label.on_hover_text(doc);
                         }
-                        _ => draw_value_widget(ui, value, &field),
-                    };
-                    if let Some(new_value) = new_value {
-                        edits.push((name.clone(), new_value));
-                    }
-                });
-                ui.end_row();
-            }
-        });
+                    });
+                    ui.push_id(name, |ui| {
+                        let field = FieldContext {
+                            name,
+                            choices: choices_for(field_metas, name),
+                            bits: bits_for(field_metas, name),
+                            assets: asset_catalog,
+                            entities,
+                            requires: requires_for(field_metas, name),
+                        };
+                        let new_value = match value {
+                            ReflectValue::Quat(q) => {
+                                let ctx = if is_transform_rotation(type_id, name) {
+                                    rotation_ctx
+                                } else {
+                                    RotationContext::local_only()
+                                };
+                                draw_quat_with_cache(
+                                    ui,
+                                    entity,
+                                    component,
+                                    name,
+                                    *q,
+                                    ctx,
+                                    euler_cache,
+                                )
+                            }
+                            _ => draw_value_widget(ui, value, &field),
+                        };
+                        if let Some(new_value) = new_value {
+                            edits.push((name.clone(), new_value));
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+    }
     edits
 }
 
@@ -262,32 +319,32 @@ pub(super) fn draw_readonly_fields(
     fields: &[(String, ReflectValue)],
     field_metas: Option<&'static [FieldMeta]>,
 ) {
-    egui::Grid::new(format!("ro_fields_{component:?}"))
-        .num_columns(2)
-        .spacing([8.0, 4.0])
-        .show(ui, |ui| {
-            for (name, value) in fields {
-                // A variant's own parameters only. Showing a capsule's
-                // half_height while a sphere is selected implies it does
-                // something; the value is still stored and still saved.
-                if !field_is_shown(field_metas, name, fields) {
-                    continue;
+    for (group, members) in group_runs(fields, field_metas) {
+        if !group.is_empty() {
+            ui.add_space(6.0);
+            ui.strong(group);
+        }
+        egui::Grid::new(format!("ro_fields_{component:?}_{group}"))
+            .num_columns(2)
+            .spacing([8.0, 4.0])
+            .show(ui, |ui| {
+                for (name, value) in members {
+                    ui.push_id(("label", name), |ui| {
+                        let label = ui.label(name);
+                        let doc = doc_for(field_metas, name);
+                        if !doc.is_empty() {
+                            label.on_hover_text(doc);
+                        }
+                    });
+                    ui.push_id(name, |ui| {
+                        let choices = choices_for(field_metas, name);
+                        let bits = bits_for(field_metas, name);
+                        draw_readonly_value(ui, value, choices, bits);
+                    });
+                    ui.end_row();
                 }
-                ui.push_id(("label", name), |ui| {
-                    let label = ui.label(name);
-                    let doc = doc_for(field_metas, name);
-                    if !doc.is_empty() {
-                        label.on_hover_text(doc);
-                    }
-                });
-                ui.push_id(name, |ui| {
-                    let choices = choices_for(field_metas, name);
-                    let bits = bits_for(field_metas, name);
-                    draw_readonly_value(ui, value, choices, bits);
-                });
-                ui.end_row();
-            }
-        });
+            });
+    }
 }
 
 #[cfg(test)]

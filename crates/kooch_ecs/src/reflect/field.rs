@@ -77,6 +77,25 @@ pub struct FieldMeta {
     /// `///` is stripped, so the tooltip reads as prose rather than as
     /// source.
     pub doc: &'static str,
+    /// Heading this field is drawn under in the Inspector, from
+    /// `#[reflect(group = "...")]`. `""` for a field that belongs to no
+    /// group and is drawn before the first heading.
+    ///
+    /// # Why a string on the field rather than nesting
+    ///
+    /// Nesting would be the obvious answer — `PhysicalCamera` and
+    /// `AmbientLight` *are* structs — and it is the wrong one here. A
+    /// nested field is a nested value: it changes the serialised shape
+    /// of every asset and scene, it needs `FieldKind::Nested` handling
+    /// in the editor, the undo stack and the RON round-trip, and it does
+    /// all of that to solve a problem that is entirely about where a
+    /// label is drawn.
+    ///
+    /// Consecutive fields sharing a group are one section. Runs, not
+    /// sets: the order in the struct is the order on screen, and a group
+    /// that appears twice draws twice rather than silently reordering
+    /// the author's fields.
+    pub group: &'static str,
 }
 
 /// A labelled value in a [`FieldMeta::choices`] set.

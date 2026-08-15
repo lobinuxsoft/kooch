@@ -40,6 +40,20 @@ impl ShadingRate {
         }
     }
 
+    /// The inverse of [`Self::factor`], for the settings asset, which
+    /// stores the rate as the number an author reads (#830).
+    ///
+    /// Anything past 2 is [`Self::Half`] rather than an error: the
+    /// reflected field is a plain `u32` and a project file can hold any
+    /// of them, so the choice is between the nearest rate that exists
+    /// and a panic on load.
+    pub fn from_factor(factor: u32) -> Self {
+        match factor {
+            0 | 1 => Self::Full,
+            _ => Self::Half,
+        }
+    }
+
     /// Dimensions of the shaded target for a screen of `size`.
     ///
     /// `div_ceil`, so an odd width still shades its last column: the
@@ -79,13 +93,15 @@ impl ShadingRate {
 /// `KOOCH_CLUSTERING`, `KOOCH_SPECULAR_FLOOR`, `KOOCH_COMPUTE_SHADING`
 /// and `KOOCH_LIGHT_LIMIT` all learned that the same way.
 ///
-/// Anything unrecognised keeps `Full`: a typo during a measurement run
-/// must not silently change which rate is being measured.
-pub(super) fn rate_from_environment() -> ShadingRate {
-    static RATE: std::sync::OnceLock<ShadingRate> = std::sync::OnceLock::new();
+/// Anything unrecognised is `None`, the same as unset: a typo during a
+/// measurement run must not silently change which rate is being
+/// measured, and — since the settings asset now supplies a value too
+/// (#830) — must not silently override the author's either.
+pub(crate) fn rate_from_environment() -> Option<ShadingRate> {
+    static RATE: std::sync::OnceLock<Option<ShadingRate>> = std::sync::OnceLock::new();
     *RATE.get_or_init(|| {
         let rate = parse_rate(std::env::var("KOOCH_SHADING_RATE").ok().as_deref());
-        if rate != ShadingRate::Full {
+        if rate == Some(ShadingRate::Half) {
             tracing::info!(
                 target: "kooch_render::vbuf64_stage",
                 "KOOCH_SHADING_RATE=half: lighting runs at one sample per 2x2 quad, \
@@ -99,30 +115,16 @@ pub(super) fn rate_from_environment() -> ShadingRate {
 
 /// The parse, apart from the read, so a test can exercise it without
 /// touching the process environment.
-fn parse_rate(raw: Option<&str>) -> ShadingRate {
+///
+/// `None` means "the variable said nothing", which is what lets the
+/// project's own setting stand.
+fn parse_rate(raw: Option<&str>) -> Option<ShadingRate> {
     match raw {
-        Some("half") | Some("2") => ShadingRate::Half,
-        _ => ShadingRate::Full,
+        Some("half") | Some("2") => Some(ShadingRate::Half),
+        Some("full") | Some("1") => Some(ShadingRate::Full),
+        _ => None,
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_half_and_two_lower_the_rate() {
-        assert_eq!(parse_rate(Some("half")), ShadingRate::Half);
-        assert_eq!(parse_rate(Some("2")), ShadingRate::Half);
-        for raw in ["full", "1", "on", "HALF", "yes", ""] {
-            assert_eq!(parse_rate(Some(raw)), ShadingRate::Full, "{raw}");
-        }
-        assert_eq!(parse_rate(None), ShadingRate::Full);
-    }
-
-    #[test]
-    fn an_odd_size_keeps_its_last_row() {
-        assert_eq!(ShadingRate::Full.target_size((1281, 721)), (1281, 721));
-        assert_eq!(ShadingRate::Half.target_size((1281, 721)), (641, 361));
-    }
-}
+mod tests;

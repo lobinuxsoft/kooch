@@ -1,4 +1,5 @@
-//! Compute clear of the atomic R64 visibility buffer (#493).
+//! Compute clear of the atomic R64 visibility buffer (#493), and of the
+//! HDR shading target beside it (#481).
 //!
 //! `wgpu::CommandEncoder::clear_texture` is not always available on the
 //! same adapters that expose `TEXTURE_INT64_ATOMIC`, so we own a tiny
@@ -60,6 +61,16 @@ impl Vbuf64Clear {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: crate::meshlet::deferred::HDR_COLOR_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -90,6 +101,7 @@ impl Vbuf64Clear {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         vbuf64_view: &wgpu::TextureView,
+        hdr_view: &wgpu::TextureView,
         size: (u32, u32),
     ) {
         queue.write_buffer(
@@ -112,6 +124,10 @@ impl Vbuf64Clear {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: self.uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(hdr_view),
                 },
             ],
         });

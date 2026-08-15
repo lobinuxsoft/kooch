@@ -67,10 +67,19 @@ pub struct MeshletRenderStage {
     /// Cascade resolution `shadows` was allocated at, so a settings
     /// change is noticed rather than silently ignored.
     pub(super) shadow_texels: u32,
-    /// How many casting point lights went without a cube last frame
+    /// Whether any casting point light went without a cube last frame
     /// (#778), so the warning fires on the transition rather than sixty
     /// times a second. Same shape as the light-count log.
-    pub(super) point_shadows_dropped: usize,
+    ///
+    /// 🔴 A **flag**, not the count. It was the count, and the count is
+    /// not steady: the lights are culled against the frustum before the
+    /// budget is applied, so nudging the camera moves how many casters
+    /// are visible — measured swinging between 84 and 96 in a scene of
+    /// 100 — and "log when it changes" then logs every single frame.
+    /// What an author needs to know is that the budget is exceeded at
+    /// all; the exact overflow changes with where they are standing and
+    /// says nothing more.
+    pub(super) point_shadows_over_budget: bool,
     /// Hash of every instance uploaded this frame, and the cached cube
     /// key per point-shadow slot (#778). Together they answer "may last
     /// frame's six faces stand".

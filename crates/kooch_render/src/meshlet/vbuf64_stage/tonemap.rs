@@ -133,7 +133,12 @@ impl Tonemap {
         &self.hdr_view
     }
 
-    /// Resolves the HDR target onto `target`.
+    /// Resolves `source` onto `target`.
+    ///
+    /// `source` is this stage's own HDR target most of the time and the
+    /// temporal resolve's output when TAA is on (#481) — the pass reads
+    /// whichever texture last held linear radiance, which is why it is a
+    /// parameter rather than the field beside it.
     ///
     /// `enabled` is false for the debug views, which produce
     /// display-ready false colour: putting a legend through a filmic
@@ -143,6 +148,7 @@ impl Tonemap {
         queue: &wgpu::Queue,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
+        source: &wgpu::TextureView,
         target: &wgpu::TextureView,
         exposure: f32,
         enabled: bool,
@@ -163,7 +169,7 @@ impl Tonemap {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.hdr_view),
+                    resource: wgpu::BindingResource::TextureView(source),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
