@@ -58,12 +58,63 @@ said.
 | ~~#824~~ | ~~shade in a compute pass, tile's lights in LDS~~ | **Built and measured: 6.6 %.** Fifteen storage fetches per pixel became fifteen per tile and the shading went 35.98 → 33.60 ms. Its value is what it revealed and unlocked, not the 6.6: the raster is **3.74 ms of 37.34**, so shading is 90 % of that pass — and #825 is buildable now |
 | ~~#825~~ | ~~shade at half rate, raster stays full~~ | **Built.** Lighting runs at one sample per 2×2 quad, upsampled with the vbuf as the edge guide, so the silhouette on screen is still the raster's — asserted exactly, not approximately. `KOOCH_SHADING_RATE=half`. The device capture is what closes it |
 | ~~#826~~ | ~~sample the tile's lights, 15 → 2-4~~ | **Built twice.** A light is picked in proportion to what it contributes and divided by the probability of the pick, so two lights land 5 % from the full walk's brightness where two *truncated* ones land 83 % away. `KOOCH_LIGHT_SAMPLES`, capped at 8. The first version chose **per pixel** and the device refused it; the second chooses **per froxel, cooperatively** — see below. It also found what the froxel flicker really was |
+| **#835** | a light out of range paid the full BRDF, its shadow cube and the contact march | **Built, PR #836 open.** The froxel is conservative by design and hands the loop lights that reach no part of a given pixel — ~26 of the ~40 in the busiest cell. Nothing asked again at the pixel, so all of it ran and was then multiplied by an irradiance of exactly zero. The cut reuses the `reach` already computed for `specular_floor` and is bit-exact. Half-rate shading on the device went 48.791 → 21.6 ms across the change, with a camera difference in the way |
+| ~~#837~~ | ~~submit the scene before acquiring the swapchain image~~ | **Merged, and it bought nothing.** Structurally right — the meshlet stage draws into its own textures and had no reason to be gated on the surface — but the frame was already 0.66 ms from the GPU, not 3. See the refutation below |
 | ~~#796 / #819~~ | ~~ReSTIR / Solari~~ | **Ruled out for this hardware.** Solari's world cache alone is 2.65 ms per refresh in Bistro on the author's machine — 19 % of our whole budget, on far faster silicon — and denoising runs through DLSS Ray Reconstruction, which the 890M has no path to |
 | **#731** | volumetric clouds, froxel-based | The clouds are **off**, and that is the only reason the budget is met. They cost 39 ms as written |
 | **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
 | **#254** | post + auto exposure | The blown-out white floor in three sessions of screenshots. Cheap |
 | **#771 / #248** | atmosphere, ported from Bevy | Now worth doing for the sky it gives, not for what it saves: 1.2 ms without clouds |
 | ~~#481~~ / **#536** | ~~motion vectors + TAA~~ / FSR | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest 1 % of edges the resolved image carries **0.38** of the squared gradient the unresolved one does. **Off by default** — asset and engine alike, see below. FSR still open |
+
+### ❌ The doubled frame is not the swapchain, 2026-08-15
+
+Two explanations were carried for weeks, one of them written into
+`gpu/context.rs` as fact. Three 30-second captures on the OneXFly, one
+binary, one variable changed each, killed both:
+
+| | latency 2 | latency 3 | `novsync` |
+|---|---|---|---|
+| frame/GPU p80 | 1.98 | 1.99 | 1.94 |
+| frame/GPU p90 | 2.49 | 2.50 | 2.21 |
+| `vkAcquireNextImageKHR` ms/frame | 35.209 | 33.646 | 37.162 |
+
+A third swapchain image does not move the ratio by a hundredth. Neither
+does leaving FIFO.
+
+🔴 **An acquire of ~35 ms against a GPU of ~35 ms is not a defect.**
+Being GPU-bound means the CPU waits somewhere, and `get_current_texture`
+is where. Reading that number as the symptom is what sent two sessions
+after the wrong thing. What is genuinely unexplained is the **tail**
+alone: frames where the wait grows by 50 ms while our GPU work grows
+by 2.
+
+⚠️ **A present mode is close to decorative when a compositor owns the
+display.** These captures run under gamescope, which composites on the
+same GPU, on its own schedule, and is invisible to our scopes — they
+time our passes and nothing else. `novsync` turns off *our* vsync, not
+its. **No environment variable on this side is going to find what is
+left**; the next measurement is gamescope's own statistics, or a run
+without it.
+
+#### And what the tail was hiding
+
+```text
+GPU:          ~35 ms
+budget:        13.9 ms
+```
+
+**2.5x over, with a still camera and at half shading rate.** If the tail
+vanished entirely the frame would still miss by more than double.
+`shade: compute (half rate)` alone is 19.7–22.8 ms across the three
+captures — more than the whole frame is allowed.
+
+The tail is a mystery in 30 % of frames. The shading is 60 % of every
+one of them, and the largest thing still untouched inside it is the
+contact-shadow march: 16 steps per light that reaches, ~14 lights, and
+no cap anywhere. The atlas caps projected shadows at 4+4; the march caps
+nothing. `contact_shadow_steps: 0` remains the single-variable test that
+has never been run.
 
 ### 🔴 A range compressor needs the exposure, and this engine's radiance is nowhere near 1
 
