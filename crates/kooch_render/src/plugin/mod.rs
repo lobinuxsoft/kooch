@@ -236,6 +236,42 @@ fn acquire_and_render(
     resources: &mut Resources,
     aspect: f32,
 ) -> SurfaceOutcome {
+    // 🔴 The scene is recorded and submitted BEFORE the swapchain image is
+    // asked for, and the order is the whole point of this function.
+    //
+    // Nothing between here and the sky pass touches the surface: the
+    // meshlet stage draws into its own textures and submits its own
+    // command buffer. Acquiring first — which is what this did — makes
+    // the CPU block on the compositor before recording work the
+    // compositor has nothing to do with, so the GPU cannot start this
+    // frame until the presentation engine has let go of the last one.
+    // Measured on the OneXFly: a 37.14 ms median frame made of 34 ms of
+    // GPU and 3.006 ms of recording, added rather than overlapped.
+    //
+    // ⚠️ On the failure paths below this work is already submitted and
+    // goes unseen. That is a resize or a lost surface — rare, and the
+    // alternative is paying the serialisation on every frame that works
+    // to save one that does not.
+    let camera = active_camera(resources);
+    let stats = meshlet_stage.render_with_assets_primary(
+        gpu.device(),
+        gpu.queue(),
+        resources,
+        // The sky draws only when the scene really has a camera; the
+        // meshlet stage falls back to a default lens rather than to an
+        // identity matrix, which is not a projection.
+        &camera.clone().unwrap_or_default(),
+        aspect,
+    );
+
+    // The one measurement a game could not otherwise have: the editor
+    // reads these stats, and until now a windowed game threw them away.
+    // Written into the engine's own metrics rather than kept here, so
+    // there is one place that answers "how long did the frame take".
+    if let Some(metrics) = resources.get_mut::<kooch_core::frame_metrics::FrameMetrics>() {
+        metrics.gpu_frame_ms = stats.gpu_frame_ms;
+    }
+
     match gpu.surface().get_current_texture() {
         CurrentSurfaceTexture::Success(tex) | CurrentSurfaceTexture::Suboptimal(tex) => {
             render_passes(
@@ -247,6 +283,7 @@ fn acquire_and_render(
                 resources,
                 aspect,
                 tex,
+                camera,
             );
             SurfaceOutcome::Presented
         }
@@ -259,43 +296,27 @@ fn acquire_and_render(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Everything that needs the swapchain image, and nothing that does not.
+///
+/// The meshlet stage has already submitted its own command buffer (cull
+/// + raster + deferred) by the time this runs — see the comment in
+/// [`acquire_and_render`]. Order still matters on the queue: the blit
+/// reads the stage's colour view, so the stage's submit must land first,
+/// and it does because it happened before the acquire.
 fn render_passes(
     gpu: &GpuContext,
     sky_pass: &mut SkyRenderPass,
-    meshlet_stage: &mut MeshletRenderStage,
+    meshlet_stage: &MeshletRenderStage,
     meshlet_blit: &MeshletBlit,
     depth_view: &wgpu::TextureView,
     resources: &mut Resources,
     aspect: f32,
     frame: SurfaceTexture,
+    camera: Option<crate::ViewCamera>,
 ) {
     let view = frame
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
-
-    // The meshlet stage submits its own command buffer (cull + raster
-    // + deferred) before we record the surface-targeted encoder. Order
-    // matters: blit reads the stage's color view, so the stage's submit
-    // must complete first on the queue.
-    let camera = active_camera(resources);
-    // The sky draws only when the scene really has a camera; the meshlet
-    // stage falls back to a default lens rather than to an identity
-    // matrix, which is not a projection.
-    let stats = meshlet_stage.render_with_assets_primary(
-        gpu.device(),
-        gpu.queue(),
-        resources,
-        &camera.unwrap_or_default(),
-        aspect,
-    );
-
-    // The one measurement a game could not otherwise have: the editor
-    // reads these stats, and until now a windowed game threw them away.
-    // Written into the engine's own metrics rather than kept here, so
-    // there is one place that answers "how long did the frame take".
-    if let Some(metrics) = resources.get_mut::<kooch_core::frame_metrics::FrameMetrics>() {
-        metrics.gpu_frame_ms = stats.gpu_frame_ms;
-    }
 
     let mut encoder = gpu
         .device()
@@ -428,3 +449,6 @@ fn clear_with_gradient(
         multiview_mask: None,
     });
 }
+
+#[cfg(test)]
+mod tests;

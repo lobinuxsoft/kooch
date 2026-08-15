@@ -81,3 +81,46 @@ for one. A `WaitUntil` deadline expiring reports through
 `StartCause::ResumeTimeReached`, and a cross-thread wake arrives as a
 winit user event — the proxy rather than `request_redraw`, because the
 proxy is the API documented to be callable from another thread.
+
+## The swapchain image is asked for last
+
+The game runtime's frame is two halves that need very different things.
+The meshlet stage — cull, raster, shading, shadows, TAA, tonemap — draws
+into textures the engine owns and submits its own command buffer. Only
+the sky and the blit write to the surface.
+
+So the surface image is acquired **between** them, and not before both:
+
+```text
+record + submit the scene   ──►  get_current_texture()  ──►  sky, blit, present
+        ~34 ms of GPU work         blocks on the compositor      ~0.65 ms
+```
+
+🔴 **Acquiring first costs a full frame of overlap**, and that is what
+this did until #837. `get_current_texture` blocks until the presentation
+engine releases an image, so asking for it before recording puts the
+whole CPU-side of the frame *after* the wait — and the GPU cannot start
+this frame's work until the compositor has let go of the last one.
+Measured on the OneXFly: a median frame of 37.14 ms made of 34 ms of GPU
+and 3.006 ms of recording, added together rather than overlapped.
+
+Nothing about the image is needed to record the scene. The dependency
+was in the control flow, not in the data.
+
+⚠️ **The editor already did this correctly**, which is why the two paths
+look different: `systems/present.rs` tessellates the UI, uploads its
+textures and updates its buffers before acquiring, and the viewport
+passes run earlier still. Only the game runtime had the acquire on top.
+
+### What this does not fix
+
+The frame-time distribution is bimodal on the OneXFly — the same GPU
+work produces a 34.7 ms frame and a 69.4 ms one — and this change does
+not address that. The suspected cause is separate and still unmeasured:
+a swapchain with two images under FIFO, where the compositor holds one
+while the GPU draws into the other. `KOOCH_FRAME_LATENCY` (1..=3,
+default 2) is the knob, and a third image costs a frame of input lag,
+which on a handheld at 34 ms per frame is not a rounding error.
+
+Two causes, one symptom. This one is structural and visible by reading;
+the other needs a capture from the device that has the problem.
