@@ -24,7 +24,9 @@ mod compute_shade;
 mod debug_resolve;
 mod density_clear;
 mod raster;
+mod shading_rate;
 mod two_pass;
+mod upsample;
 
 use bytemuck::{Pod, Zeroable};
 
@@ -38,6 +40,9 @@ use compute_shade::ComputeShading;
 use debug_resolve::DebugResolve;
 use density_clear::DensityClear;
 use raster::Vbuf64Rasterizer;
+use upsample::ShadingUpsample;
+
+pub use shading_rate::ShadingRate;
 
 /// Storage texture format for the atomic visibility buffer.
 pub(super) const VBUF64_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R64Uint;
@@ -60,6 +65,13 @@ pub(super) struct ScreenUbo {
     pub size: [u32; 2],
     pub material_id: u32,
     pub debug_mode: u32,
+    /// Pixels per shaded sample, per axis (#825). Only the compute path
+    /// reads it; the fragment paths write 1 and the field is inert.
+    pub shading_rate: u32,
+    /// To 32 bytes. The uniform is bound with a dynamic offset, and a
+    /// size that is a multiple of 16 is the shape every backend agrees
+    /// on without argument.
+    pub _pad: [u32; 3],
 }
 
 /// End-to-end atomic R64 visibility-buffer pipeline (clear + raster +
@@ -83,6 +95,12 @@ pub struct Vbuf64Stage {
     /// [`compute_shade::enabled_by_environment`] picks per run.
     compute_shade: ComputeShading,
     compute_enabled: bool,
+    /// Half-rate lighting and the pass that puts it back on screen
+    /// (#825). Owns its own reduced-resolution targets; idle at
+    /// [`ShadingRate::Full`], which is what every capture before this
+    /// issue was taken against.
+    upsample: ShadingUpsample,
+    shading_rate: ShadingRate,
     /// Fullscreen fragment pass for the colorize debug modes.
     debug_resolve: DebugResolve,
     vbuf_texture: wgpu::Texture,
@@ -116,6 +134,17 @@ impl Vbuf64Stage {
         let two_pass = two_pass::MaterialTwoPass::new(device, meshlet_bgl);
         let compute_shade = ComputeShading::new(device, meshlet_bgl);
         let compute_enabled = compute_shade::enabled_by_environment();
+        let upsample = ShadingUpsample::new(device, size);
+        // 🔴 Half rate is a property of the compute path and nothing
+        // else: the fragment path shades inside its own raster, one
+        // invocation per covered pixel, and has no thread to remove.
+        // Honouring the variable there would silently measure the wrong
+        // thing.
+        let shading_rate = if compute_enabled {
+            shading_rate::rate_from_environment()
+        } else {
+            ShadingRate::Full
+        };
         let debug_resolve = DebugResolve::new(device);
         Self {
             clear,
@@ -124,6 +153,8 @@ impl Vbuf64Stage {
             two_pass,
             compute_shade,
             compute_enabled,
+            upsample,
+            shading_rate,
             debug_resolve,
             vbuf_texture,
             vbuf_view,
@@ -148,13 +179,45 @@ impl Vbuf64Stage {
         let (md_tex, md_view) = create_material_depth_texture(device, size);
         self.material_depth_texture = md_tex;
         self.material_depth_view = md_view;
+        self.upsample.resize(device, size);
         self.size = size;
     }
 
     /// Which shading path this stage takes, overriding what
     /// `KOOCH_COMPUTE_SHADING` said at construction (#824).
+    ///
+    /// Turning it off drops the rate back to [`ShadingRate::Full`]: the
+    /// fragment path cannot shade at a reduced rate, and leaving the
+    /// setting standing would make it come back the moment compute
+    /// shading did, without anybody asking for it.
     pub fn set_compute_shading(&mut self, on: bool) {
         self.compute_enabled = on;
+        if !on {
+            self.shading_rate = ShadingRate::Full;
+        }
+    }
+
+    /// How many pixels share one shaded sample (#825).
+    ///
+    /// Live, per frame, and with no reallocation: the reduced-resolution
+    /// targets are allocated for the whole life of the stage. This is a
+    /// player-facing quality setting, so the frame it changes on must
+    /// not be the frame that stalls (#830).
+    ///
+    /// 🔴 Returns whether it took. A reduced rate needs the compute
+    /// shading path; asked for on the fragment path it is refused rather
+    /// than half-applied, because a rate that silently did nothing is
+    /// indistinguishable in a capture from a rate that bought nothing.
+    pub fn set_shading_rate(&mut self, rate: ShadingRate) -> bool {
+        if rate != ShadingRate::Full && !self.compute_enabled {
+            return false;
+        }
+        self.shading_rate = rate;
+        true
+    }
+
+    pub fn shading_rate(&self) -> ShadingRate {
+        self.shading_rate
     }
 
     pub fn material_depth_view(&self) -> &wgpu::TextureView {
@@ -253,7 +316,7 @@ impl Vbuf64Stage {
             // The label names the path, so the capture answers "which
             // one ran" without anybody having to trust a log line.
             let label = if self.compute_enabled {
-                "shade: compute"
+                self.shading_rate.scope_label()
             } else {
                 "shade: fragment"
             };
@@ -263,13 +326,26 @@ impl Vbuf64Stage {
                 _ => None,
             };
             if self.compute_enabled {
+                // At a reduced rate the shading writes the upsample's
+                // own targets; at full rate it writes the screen and the
+                // id target is bound but never stored to.
+                let half = self.shading_rate.needs_upsample();
+                if half {
+                    self.upsample.clear_ids(encoder);
+                }
+                let shade_target = if half {
+                    self.upsample.color_view()
+                } else {
+                    color_view
+                };
                 self.compute_shade.shade(
                     device,
                     queue,
                     encoder,
                     &self.vbuf_view,
                     depth_sample_view,
-                    color_view,
+                    shade_target,
+                    self.upsample.id_view(),
                     meshlet_bg,
                     cull,
                     scene,
@@ -278,6 +354,7 @@ impl Vbuf64Stage {
                     view_proj,
                     contact,
                     self.size,
+                    self.shading_rate,
                     debug_mode,
                 );
             } else {
@@ -302,6 +379,28 @@ impl Vbuf64Stage {
             }
             if let (Some(scopes), Some(query)) = (scopes, query) {
                 scopes.end(encoder, query);
+            }
+            // Its own scope, and a sibling of the shading rather than a
+            // child of it: the whole question this issue asks is whether
+            // what the reduced rate saves survives what putting it back
+            // on screen costs. Two numbers a capture can subtract.
+            if self.compute_enabled && self.shading_rate.needs_upsample() {
+                let query = match (scopes, parent) {
+                    (Some(s), Some(p)) => Some(s.begin_child("shade: upsample", encoder, p)),
+                    (Some(s), None) => Some(s.begin("shade: upsample", encoder)),
+                    _ => None,
+                };
+                self.upsample.draw(
+                    device,
+                    queue,
+                    encoder,
+                    &self.vbuf_view,
+                    color_view,
+                    self.size,
+                );
+                if let (Some(scopes), Some(query)) = (scopes, query) {
+                    scopes.end(encoder, query);
+                }
             }
         }
     }

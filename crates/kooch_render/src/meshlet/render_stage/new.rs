@@ -275,6 +275,37 @@ impl MeshletRenderStage {
         switched
     }
 
+    /// How many pixels share one shaded sample (#825), across every
+    /// view.
+    ///
+    /// 🔴 Returns how many views took it, for the same reason
+    /// [`Self::set_compute_shading`] does — and one more: a reduced rate
+    /// needs the compute shading path, so this returns zero both when a
+    /// view has no R64 stage and when it has one still on the fragment
+    /// path. Either way nothing changed, and only the return value says
+    /// so.
+    pub fn set_shading_rate(&mut self, rate: crate::meshlet::ShadingRate) -> usize {
+        let mut switched = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut()
+                && stage.set_shading_rate(rate)
+            {
+                switched += 1;
+            }
+        }
+        switched
+    }
+
+    /// The primary view's current shading rate (#825). `Full` when the
+    /// view has no R64 stage, which is the rate it renders at.
+    pub fn shading_rate(&self) -> crate::meshlet::ShadingRate {
+        self.views[self.primary]
+            .vbuf64_stage
+            .as_ref()
+            .map(|s| s.shading_rate())
+            .unwrap_or_default()
+    }
+
     pub fn vbuf_texture(&self) -> &wgpu::Texture {
         &self.views[self.primary].vbuf_texture
     }

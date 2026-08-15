@@ -40,9 +40,19 @@ struct MaterialParams {
 
 // Group 0 holds the vbuf (0), camera (1), screen (2) and the contact
 // shadow's UBO (3) + depth (4) — all declared by the concatenated
-// prefix. The shading target is this path's own, and the first free
-// index.
+// prefix. The shading targets are this path's own, and the first free
+// indices.
+//
+// At `screen.shading_rate == 1` `color_out` is the screen; at 2 it is a
+// half-resolution texture the upsample pass reads back (#825).
 @group(0) @binding(5) var color_out: texture_storage_2d<rgba8unorm, write>;
+
+// #825 — which surface each shaded sample came from, as
+// `visible_slot + 1` (0 means the sample shaded nothing). The upsample
+// pass compares it against the full-resolution vbuf to decide which
+// samples a pixel is allowed to blend, which is what keeps silhouettes
+// sharp when the lighting is not. Written only at half rate.
+@group(0) @binding(6) var shaded_ids: texture_storage_2d<r32uint, write>;
 
 @group(2) @binding(0) var<storage, read> materials: array<MaterialParams>;
 
@@ -154,14 +164,52 @@ fn cs_shade_tile(
     }
     workgroupBarrier();
 
-    let pixel = gid.xy;
-    let inside = pixel.x < screen.size.x && pixel.y < screen.size.y;
+    // The sample this thread owns, and the quad of pixels it stands for.
+    // At full rate the quad is one pixel and `pixel == sample`.
+    let sample = gid.xy;
+    let rate = screen.shading_rate;
+    let origin = sample * rate;
+
+    // 🔴 The representative is chosen from the VISIBILITY BUFFER ALONE —
+    // the first covered pixel of the quad, in a fixed order — and never
+    // from this dispatch's material.
+    //
+    // Every material dispatch runs over every sample, so if each picked
+    // the pixel of its own material the two would write the same texel
+    // and the last one to run would win. Choosing from the vbuf makes
+    // the representative a property of the frame: exactly one dispatch
+    // finds `material_id` equal, exactly one writes.
+    //
+    // It also removes a hole the upsample would otherwise have. A
+    // covered pixel's own quad always contains a covered pixel — itself
+    // — so its own quad's sample was shaded, and that sample is always
+    // one of the four the upsample considers. There is no covered pixel
+    // anywhere on screen with nothing to read from.
+    var pixel = origin;
+    var visibility = 0lu;
+    var covered = false;
+    let quad = rate * rate;
+    for (var q = 0u; q < quad; q = q + 1u) {
+        let cand = origin + vec2<u32>(q % rate, q / rate);
+        if (cand.x < screen.size.x && cand.y < screen.size.y) {
+            let packed = textureLoad(vbuf64, cand).x;
+            // `packed >> 32 == 0` is the background sentinel under
+            // reversed-Z, the same test `resolve_material_depth.wgsl`
+            // makes before it discards.
+            if ((packed >> 32u) != 0lu) {
+                pixel = cand;
+                visibility = packed;
+                covered = true;
+                break;
+            }
+        }
+    }
     // The pixel centre — the same coordinate the fragment path's
     // `@builtin(position)` carries, so the froxel lookup and the
     // contact-shadow dither agree between the two paths.
     let frag_coord = vec2<f32>(pixel) + vec2<f32>(0.5);
 
-    // Phase 1 — decode the visibility buffer and claim the pixel.
+    // Phase 1 — decode the visibility buffer and claim the sample.
     //
     // Resolving the material takes two dependent reads (`visible_slot` →
     // instance → `material_id`) and stops there: the full barycentric
@@ -171,25 +219,21 @@ fn cs_shade_tile(
     var mine = false;
     var surf: VertexOutput;
     var my_cell = vec3<u32>(0u);
-    if (inside) {
-        let visibility = textureLoad(vbuf64, pixel).x;
-        // `packed >> 32 == 0` is the background sentinel under
-        // reversed-Z, the same test `resolve_material_depth.wgsl` makes
-        // before it discards.
-        if ((visibility >> 32u) != 0lu) {
-            let visible_slot = u32(visibility) >> 7u;
-            let inst_id = visible_meshlets[visible_slot] >> 16u;
-            if (instances[inst_id].material_id == screen.material_id) {
-                mine = true;
-                surf = resolve_surface(visible_slot, u32(visibility) & 0x7Fu, frag_coord);
-                my_cell = inti_cluster_cell(surf.world_position, frag_coord);
-                atomicMin(&tile_cell_min[0], my_cell.x);
-                atomicMin(&tile_cell_min[1], my_cell.y);
-                atomicMin(&tile_cell_min[2], my_cell.z);
-                atomicMax(&tile_cell_max[0], my_cell.x);
-                atomicMax(&tile_cell_max[1], my_cell.y);
-                atomicMax(&tile_cell_max[2], my_cell.z);
-            }
+    var my_slot = 0u;
+    if (covered) {
+        let visible_slot = u32(visibility) >> 7u;
+        let inst_id = visible_meshlets[visible_slot] >> 16u;
+        if (instances[inst_id].material_id == screen.material_id) {
+            mine = true;
+            my_slot = visible_slot;
+            surf = resolve_surface(visible_slot, u32(visibility) & 0x7Fu, frag_coord);
+            my_cell = inti_cluster_cell(surf.world_position, frag_coord);
+            atomicMin(&tile_cell_min[0], my_cell.x);
+            atomicMin(&tile_cell_min[1], my_cell.y);
+            atomicMin(&tile_cell_min[2], my_cell.z);
+            atomicMax(&tile_cell_max[0], my_cell.x);
+            atomicMax(&tile_cell_max[1], my_cell.y);
+            atomicMax(&tile_cell_max[2], my_cell.z);
         }
     }
     workgroupBarrier();
@@ -305,6 +349,13 @@ fn cs_shade_tile(
             radiance += base * mat.metallic_roughness_emissive_pad.z;
             rgb = inti_tonemap(radiance);
         }
-        textureStore(color_out, vec2<i32>(pixel), vec4<f32>(rgb, 1.0));
+        textureStore(color_out, vec2<i32>(sample), vec4<f32>(rgb, 1.0));
+        // Only the upsample reads this, and only half rate has one. At
+        // full rate the store would be one write per pixel bought
+        // nothing — the branch is uniform across the workgroup, so it
+        // costs a scalar compare.
+        if (rate > 1u) {
+            textureStore(shaded_ids, vec2<i32>(sample), vec4<u32>(my_slot + 1u, 0u, 0u, 0u));
+        }
     }
 }

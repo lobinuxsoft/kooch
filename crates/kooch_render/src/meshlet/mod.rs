@@ -88,5 +88,5 @@ pub use scene::{
 };
 pub use stage_counters::{CullStageCounts, MeshletStageCounters};
 pub use system::{MeshletPipeline, instance_at_origin};
-pub use vbuf64_stage::Vbuf64Stage;
+pub use vbuf64_stage::{ShadingRate, Vbuf64Stage};
 pub use vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
