@@ -47,6 +47,9 @@ impl ShadowPass {
         device: &wgpu::Device,
         meshlet_bgl: &wgpu::BindGroupLayout,
         cascade_size: u32,
+        // Cube maps to allocate — the VRAM this pass costs beyond the
+        // atlas, at 6 MiB each (#849).
+        point_budget: u32,
         instance_capacity: u32,
         max_triangles_per_meshlet: u32,
     ) -> Self {
@@ -60,7 +63,7 @@ impl ShadowPass {
             cubes: PointShadowCubes::new(
                 device,
                 DEFAULT_CUBE_SIZE,
-                kooch_lighting::MAX_POINT_SHADOWS as u32,
+                point_budget,
                 instance_capacity,
                 max_triangles_per_meshlet,
             ),

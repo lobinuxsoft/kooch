@@ -132,6 +132,20 @@ pub struct RenderSettings {
     #[reflect(group = "Sun shadows")]
     pub shadow_first_cascade_distance: f32,
 
+    /// How many point lights may cast a cube map at once (#849).
+    ///
+    /// 🔴 The number that decides whether shadows **pop**. The cubes go
+    /// to the lights that matter most from where the camera is, so with
+    /// more casting lights on screen than cubes, moving reassigns them
+    /// and a shadow appears or disappears for no authored reason.
+    ///
+    /// **6 MiB of VRAM each.** 4 is 24 MiB, 32 is 192 — on a handheld
+    /// that memory is the system's, so this is a real trade and not a
+    /// quality slider.
+    #[serde(default = "default_point_shadows")]
+    #[reflect(group = "Sun shadows")]
+    pub point_shadows: u32,
+
     /// Steps a contact-shadow ray takes. **Zero turns contact shadows
     /// off** for the whole project, whatever the individual lights say.
     ///
@@ -271,6 +285,9 @@ fn default_contact_steps() -> u32 {
 fn default_contact_length() -> f32 {
     ContactShadowSettings::default().length
 }
+fn default_point_shadows() -> u32 {
+    crate::shadow::DEFAULT_POINT_SHADOWS
+}
 fn default_contact_dominant() -> bool {
     ContactShadowSettings::default().dominant_only
 }
@@ -333,6 +350,7 @@ impl Default for RenderSettings {
             contact_shadow_length: contact.length,
             contact_shadow_thickness: contact.thickness,
             contact_shadow_dominant: contact.dominant_only,
+            point_shadows: shadows.point_shadows,
             compute_shading: default_compute_shading(),
             shading_rate: default_shading_rate(),
             light_samples: default_light_samples(),
@@ -365,6 +383,8 @@ impl RenderSettings {
             enabled: self.shadows_enabled,
             sun_softness: self.sun_softness,
             first_cascade_distance: self.shadow_first_cascade_distance,
+            point_shadows: crate::shadow::point_shadows_from_environment()
+                .unwrap_or(self.point_shadows),
         }
     }
 

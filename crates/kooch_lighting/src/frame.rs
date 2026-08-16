@@ -243,7 +243,7 @@ pub const FRAME_CASCADE_COUNT: usize = 4;
 /// same failure as [`MAX_SPOT_SHADOWS`], and see #778 on why the order
 /// they are chosen in has to be deliberate rather than whatever the
 /// query returned.
-pub const MAX_POINT_SHADOWS: usize = 4;
+pub const MAX_POINT_SHADOWS: usize = 32;
 
 /// What the shading model needs to sample one point light's cube (#778).
 ///

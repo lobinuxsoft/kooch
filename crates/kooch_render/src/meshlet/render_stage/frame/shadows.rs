@@ -72,7 +72,7 @@ impl MeshletRenderStage {
         let points = crate::shadow::select_point_casters(
             &ranked,
             &frustum,
-            kooch_lighting::MAX_POINT_SHADOWS,
+            settings.point_budget(),
             &self.point_shadow_holders,
         );
         // Next frame's hysteresis is this frame's answer. Written even
@@ -108,7 +108,7 @@ impl MeshletRenderStage {
                 tracing::warn!(
                     target: "kooch_render::shadow",
                     dropped,
-                    budget = kooch_lighting::MAX_POINT_SHADOWS,
+                    budget = settings.point_budget(),
                     "more point lights are casting than there are cube maps; the ones \
                      furthest from the camera light the scene without a shadow. Logged \
                      once — the count moves with the camera",
@@ -157,6 +157,7 @@ impl MeshletRenderStage {
                     device,
                     self.cull_pipelines.meshlet_bind_group_layout(),
                     texels,
+                    settings.point_budget() as u32,
                     self.config.meshlet_capacity,
                     super::super::super::DEFAULT_MAX_TRIANGLES as u32,
                 );

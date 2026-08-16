@@ -60,6 +60,16 @@ const INTI_PBR_TEMPLATE: &str = include_str!("../shaders/inti_pbr.wgsl");
 /// Placeholder the template carries where the bind-group index goes.
 const GROUP_PLACEHOLDER: &str = "{{INTI_GROUP}}";
 
+/// Placeholder for [`MAX_POINT_SHADOWS`], which sizes an array the Rust
+/// side declares too.
+///
+/// 🔴 Substituted rather than written in both places. The number was
+/// literal `4` in the WGSL and a constant in Rust, with nothing between
+/// them: raising one and not the other reads every field after the array
+/// at the wrong offset and **does not fail to compile**. The same shape
+/// of defect as the seven files that declare `MeshInstance`.
+const POINT_SHADOWS_PLACEHOLDER: &str = "{{INTI_MAX_POINT_SHADOWS}}";
+
 /// The debug views. Concatenated only by a pipeline that can show them.
 const INTI_DEBUG_SOURCE: &str = include_str!("../shaders/inti_debug.wgsl");
 
@@ -86,7 +96,11 @@ pub fn inti_pbr_shader(group: u32) -> String {
     // The tonemap first: `inti_tonemap` calls into it, and WGSL wants a
     // function declared before it is used.
     let mut out = String::from(INTI_TONEMAP);
-    out.push_str(&INTI_PBR_TEMPLATE.replace(GROUP_PLACEHOLDER, &group.to_string()));
+    out.push_str(
+        &INTI_PBR_TEMPLATE
+            .replace(GROUP_PLACEHOLDER, &group.to_string())
+            .replace(POINT_SHADOWS_PLACEHOLDER, &MAX_POINT_SHADOWS.to_string()),
+    );
     out
 }
 
