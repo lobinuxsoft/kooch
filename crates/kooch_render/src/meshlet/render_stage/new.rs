@@ -422,6 +422,16 @@ impl MeshletRenderStage {
         self.views.get(id).map(|v| &v.color_view)
     }
 
+    /// Colour TEXTURE of `id`, or `None` if the handle is stale.
+    ///
+    /// The view above is what a blit binds; this is what a readback
+    /// copies from. Added because every shadow picture this repo takes
+    /// came from the primary view, so the Game panel — a second `ViewId`
+    /// on the same stage — was the one surface no test could look at.
+    pub fn view_color_texture(&self, id: ViewId) -> Option<&wgpu::Texture> {
+        self.views.get(id).map(|v| &v.color_texture)
+    }
+
     /// Size of `id`, or `None` if the handle is stale.
     pub fn view_size(&self, id: ViewId) -> Option<(u32, u32)> {
         self.views.get(id).map(|v| v.size)
