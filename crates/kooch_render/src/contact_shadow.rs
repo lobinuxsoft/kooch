@@ -122,5 +122,50 @@ impl ContactShadowUbo {
     }
 }
 
+/// `KOOCH_CONTACT_SHADOW_STEPS=<count>`, read once. `0` marches nothing.
+///
+/// 🔴 The variable exists because **the editor is not where this can be
+/// measured**: the frame this answers for is a game on the OneXFly
+/// launched through Steam, and `KOOCH_CLUSTERING`, `KOOCH_SPECULAR_FLOOR`,
+/// `KOOCH_COMPUTE_SHADING` and `KOOCH_SHADING_RATE` all learned that the
+/// same way. The asset field already exists (#830) and reaching it means
+/// repacking and copying a build to the device, which changes two things
+/// at once.
+///
+/// The count and not an on/off switch: the march is the one term in
+/// `shade: compute` with no cap of any kind, so `16 → 8 → 4 → 0` says
+/// whether the cost is the taps or the setup, and a switch only says
+/// whether the whole thing is free.
+///
+/// Anything unparseable is `None`, the same as unset — a typo during a
+/// measurement run must not silently change what is being measured, nor
+/// override the author's value.
+pub(crate) fn steps_from_environment() -> Option<u32> {
+    static STEPS: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *STEPS.get_or_init(|| {
+        let steps = parse_steps(std::env::var("KOOCH_CONTACT_SHADOW_STEPS").ok().as_deref());
+        match steps {
+            Some(0) => tracing::info!(
+                target: "kooch_render::contact_shadow",
+                "KOOCH_CONTACT_SHADOW_STEPS=0: no light marches the depth buffer, \
+                 whatever the lights and the settings asset say",
+            ),
+            Some(count) => tracing::info!(
+                target: "kooch_render::contact_shadow",
+                "KOOCH_CONTACT_SHADOW_STEPS={count}: each light that reaches a pixel \
+                 takes {count} depth taps instead of the asset's value",
+            ),
+            None => {}
+        }
+        steps
+    })
+}
+
+/// The parse, apart from the read, so a test can exercise it without
+/// touching the process environment.
+fn parse_steps(raw: Option<&str>) -> Option<u32> {
+    raw?.trim().parse().ok()
+}
+
 #[cfg(test)]
 mod tests;

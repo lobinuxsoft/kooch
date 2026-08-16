@@ -40,8 +40,8 @@ pub use cluster::{
     ClusterCamera, ClusterDraw, ClusterGrid, ClusterSettings, ClusterViewUniform, GpuClusters,
 };
 pub use extract::{
-    ExtractedLights, PointShadowSource, SpotShadowSource, extract_lights, shadow_casting_points,
-    shadow_casting_spots, shadow_casting_sun, shadow_note,
+    ExtractedLights, PointShadowSource, SpotShadowSource, extract_lights, point_shadow_importance,
+    shadow_casting_points, shadow_casting_spots, shadow_casting_sun, shadow_note,
 };
 pub use frame::{
     AmbientLight, DEFAULT_SUN_SOFTNESS, DebugLight, Exposure, FRAME_CASCADE_COUNT, FrameShadows,

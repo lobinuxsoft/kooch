@@ -19,6 +19,22 @@ fn source(position: Vec3, range: f32) -> PointShadowSource {
         entity: Entity::new(0, 0),
         position,
         range,
+        intensity: 1.0,
+        // Equal for every lamp a test builds this way, so the selection
+        // sort leaves them in the order the test wrote them and these
+        // tests keep asking what they asked before hysteresis existed.
+        importance: 1.0,
+    }
+}
+
+/// A lamp in front of the camera, identified and ranked.
+fn lamp(id: u32, importance: f32) -> PointShadowSource {
+    PointShadowSource {
+        entity: Entity::new(id, 0),
+        position: Vec3::new(0.0, 0.0, -20.0),
+        range: 5.0,
+        intensity: 1.0,
+        importance,
     }
 }
 
@@ -123,7 +139,7 @@ fn frustum() -> [[f32; 4]; 6] {
 fn a_lamp_behind_the_camera_gets_no_cube() {
     let f = frustum();
     let behind = source(Vec3::new(0.0, 0.0, 50.0), 5.0);
-    assert!(select_point_casters(&[behind], &f, 4).is_empty());
+    assert!(select_point_casters(&[behind], &f, 4, &[]).is_empty());
 }
 
 #[test]
@@ -133,7 +149,7 @@ fn a_lamp_off_screen_still_casts_onto_it() {
     // floor would vanish as the camera turned.
     let f = frustum();
     let edge = source(Vec3::new(0.0, 60.0, -30.0), 50.0);
-    assert_eq!(select_point_casters(&[edge], &f, 4).len(), 1);
+    assert_eq!(select_point_casters(&[edge], &f, 4, &[]).len(), 1);
 }
 
 /// 🔴 The ordering test: cull, then limit.
@@ -150,7 +166,7 @@ fn culling_happens_before_the_limit() {
     let visible = source(Vec3::new(0.0, 0.0, -20.0), 5.0);
     ranked.push(visible);
 
-    let chosen = select_point_casters(&ranked, &f, 4);
+    let chosen = select_point_casters(&ranked, &f, 4, &[]);
     assert_eq!(chosen.len(), 1, "only the visible lamp should get a cube");
     assert_eq!(chosen[0].position, visible.position);
 }
@@ -161,5 +177,45 @@ fn the_limit_still_applies_to_visible_lamps() {
     let ranked: Vec<_> = (0..6)
         .map(|i| source(Vec3::new(0.0, 0.0, -10.0 - i as f32), 5.0))
         .collect();
-    assert_eq!(select_point_casters(&ranked, &f, 4).len(), 4);
+    assert_eq!(select_point_casters(&ranked, &f, 4, &[]).len(), 4);
+}
+
+/// 🔴 The failure this exists to stop: a hundred lamps on a grid, the
+/// ranking continuous and the cut not, so a step in any direction swaps
+/// which four hold cubes and the shadow blinks.
+#[test]
+fn a_holder_keeps_its_cube_against_a_marginal_rival() {
+    let f = frustum();
+    let holder = lamp(1, 1.0);
+    let rival = lamp(2, 1.2);
+    let chosen = select_point_casters(&[rival, holder], &f, 1, &[holder.entity]);
+    assert_eq!(chosen.len(), 1);
+    assert_eq!(
+        chosen[0].entity, holder.entity,
+        "a rival 20% ahead is inside the margin and must not take the cube",
+    );
+}
+
+/// The control. Without it the test above would pass just as well with
+/// the bonus set to infinity, which would freeze the cubes on whatever
+/// four lamps the first frame happened to pick.
+#[test]
+fn a_clearly_better_rival_takes_the_cube() {
+    let f = frustum();
+    let holder = lamp(1, 1.0);
+    let rival = lamp(2, 1.5);
+    let chosen = select_point_casters(&[holder, rival], &f, 1, &[holder.entity]);
+    assert_eq!(chosen.len(), 1);
+    assert_eq!(chosen[0].entity, rival.entity);
+}
+
+/// Holding is worth something; being out of view is worth nothing. A
+/// lamp behind the camera keeps no cube, bonus or not — otherwise the
+/// four faces it costs would be spent rasterising for a viewer who
+/// turned around.
+#[test]
+fn a_holder_that_left_the_view_loses_its_cube() {
+    let f = frustum();
+    let gone = source(Vec3::new(0.0, 0.0, 50.0), 5.0);
+    assert!(select_point_casters(&[gone], &f, 4, &[gone.entity]).is_empty());
 }

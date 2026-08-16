@@ -58,7 +58,7 @@ said.
 | ~~#824~~ | ~~shade in a compute pass, tile's lights in LDS~~ | **Built and measured: 6.6 %.** Fifteen storage fetches per pixel became fifteen per tile and the shading went 35.98 → 33.60 ms. Its value is what it revealed and unlocked, not the 6.6: the raster is **3.74 ms of 37.34**, so shading is 90 % of that pass — and #825 is buildable now |
 | ~~#825~~ | ~~shade at half rate, raster stays full~~ | **Built.** Lighting runs at one sample per 2×2 quad, upsampled with the vbuf as the edge guide, so the silhouette on screen is still the raster's — asserted exactly, not approximately. `KOOCH_SHADING_RATE=half`. The device capture is what closes it |
 | ~~#826~~ | ~~sample the tile's lights, 15 → 2-4~~ | **Built twice.** A light is picked in proportion to what it contributes and divided by the probability of the pick, so two lights land 5 % from the full walk's brightness where two *truncated* ones land 83 % away. `KOOCH_LIGHT_SAMPLES`, capped at 8. The first version chose **per pixel** and the device refused it; the second chooses **per froxel, cooperatively** — see below. It also found what the froxel flicker really was |
-| **#835** | a light out of range paid the full BRDF, its shadow cube and the contact march | **Built, PR #836 open.** The froxel is conservative by design and hands the loop lights that reach no part of a given pixel — ~26 of the ~40 in the busiest cell. Nothing asked again at the pixel, so all of it ran and was then multiplied by an irradiance of exactly zero. The cut reuses the `reach` already computed for `specular_floor` and is bit-exact. Half-rate shading on the device went 48.791 → 21.6 ms across the change, with a camera difference in the way |
+| ~~#835~~ | ~~a light out of range paid the full BRDF, its shadow cube and the contact march~~ | **Merged (#836).** The froxel is conservative by design and hands the loop lights that reach no part of a given pixel — ~26 of the ~40 in the busiest cell. Nothing asked again at the pixel, so all of it ran and was then multiplied by an irradiance of exactly zero. The cut reuses the `reach` already computed for `specular_floor` and is bit-exact. Half-rate shading on the device went 48.791 → 21.6 ms across the change, with a camera difference in the way |
 | ~~#837~~ | ~~submit the scene before acquiring the swapchain image~~ | **Merged, and it bought nothing.** Structurally right — the meshlet stage draws into its own textures and had no reason to be gated on the surface — but the frame was already 0.66 ms from the GPU, not 3. See the refutation below |
 | ~~#796 / #819~~ | ~~ReSTIR / Solari~~ | **Ruled out for this hardware.** Solari's world cache alone is 2.65 ms per refresh in Bistro on the author's machine — 19 % of our whole budget, on far faster silicon — and denoising runs through DLSS Ray Reconstruction, which the 890M has no path to |
 | **#731** | volumetric clouds, froxel-based | The clouds are **off**, and that is the only reason the budget is met. They cost 39 ms as written |
@@ -113,8 +113,16 @@ The tail is a mystery in 30 % of frames. The shading is 60 % of every
 one of them, and the largest thing still untouched inside it is the
 contact-shadow march: 16 steps per light that reaches, ~14 lights, and
 no cap anywhere. The atlas caps projected shadows at 4+4; the march caps
-nothing. `contact_shadow_steps: 0` remains the single-variable test that
-has never been run.
+nothing.
+
+`contact_shadow_steps: 0` was the single-variable test that had never
+been run, and the reason it had not is that the value only existed in
+the settings asset — reaching it meant repacking and copying a build,
+which changes two things at once. It is now
+**`KOOCH_CONTACT_SHADOW_STEPS=<count>`**, a launch option like the five
+before it, so `16 → 8 → 4 → 0` runs against one binary. The count and
+not a switch: the ladder separates the taps from the setup, an off
+switch only says whether the whole thing is free.
 
 ### 🔴 A range compressor needs the exposure, and this engine's radiance is nowhere near 1
 

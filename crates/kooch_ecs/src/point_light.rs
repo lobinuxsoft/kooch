@@ -68,9 +68,11 @@ pub struct PointLight {
     pub radius: f32,
     /// Whether this light casts shadows.
     ///
-    /// ⚠️ Not implemented yet — punctual shadows need a cube map (point)
-    /// or a projected map (spot); #476 shipped the sun's cascades only.
-    /// The field is stored and saved; today nothing reads it.
+    /// Since #778 this is a cube map and a promise the engine keeps —
+    /// for **at most `MAX_POINT_SHADOWS` lights at a time**. Past that a
+    /// light keeps lighting the scene and stops casting; which ones lose
+    /// their cube is decided per frame by how much a cube spent on them
+    /// would show, so the Inspector cannot answer it for a given light.
     pub cast_shadows: bool,
     /// Whether this light marches the depth buffer for contact shadows.
     ///
@@ -79,9 +81,12 @@ pub struct PointLight {
     /// can have fifty lamps. Turn it on for the few whose contact with
     /// the floor the viewer actually looks at.
     ///
-    /// ⚠️ This is the ONLY shadow a punctual light casts today, so it
-    /// grounds an object without the light being occluded by anything
-    /// else in the room.
+    /// 🔴 **Measured, and it is the most expensive thing a point light
+    /// can be asked to do.** In `many_lights.scene` — a hundred lamps,
+    /// eight steps each — turning this off across the scene took
+    /// `shade: compute` from 24.860 ms to 11.081 on the OneXFly, against
+    /// a whole-frame budget of 13.9. Unlike the cube map it has **no
+    /// cap**: every light that reaches a pixel marches for it.
     pub contact_shadows: bool,
 }
 

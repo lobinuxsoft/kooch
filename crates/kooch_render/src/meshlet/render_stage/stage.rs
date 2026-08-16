@@ -80,6 +80,12 @@ pub struct MeshletRenderStage {
     /// all; the exact overflow changes with where they are standing and
     /// says nothing more.
     pub(super) point_shadows_over_budget: bool,
+    /// The lights that held a cube last frame, so
+    /// [`select_point_casters`](crate::shadow::select_point_casters) can
+    /// favour them over a rival that is barely ahead. At most
+    /// `MAX_POINT_SHADOWS` entries — this is a hysteresis term, not a
+    /// cache.
+    pub(super) point_shadow_holders: Vec<kooch_ecs::entity::Entity>,
     /// Hash of every instance uploaded this frame, and the cached cube
     /// key per point-shadow slot (#778). Together they answer "may last
     /// frame's six faces stand".

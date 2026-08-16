@@ -218,17 +218,64 @@ pub struct PointShadowSource {
     pub entity: Entity,
     pub position: glam::Vec3,
     pub range: f32,
+    /// The light's own brightness, carried because the ranking needs it
+    /// and the component is out of reach by then.
+    pub intensity: f32,
+    /// How much a cube spent on this light would show, this frame. See
+    /// [`point_shadow_importance`].
+    ///
+    /// Derived from the camera, so it belongs to the frame rather than
+    /// to the light: recomputed every time this list is built and never
+    /// stored on the component.
+    pub importance: f32,
 }
 
-/// The point lights that cast, in the order their cubes are numbered.
+/// How much a cube map spent on this light would show on screen.
 ///
-/// 🔴 Sorted by distance to the camera, NOT by whatever order the query
-/// walked. Past [`MAX_POINT_SHADOWS`](crate::MAX_POINT_SHADOWS) a light
-/// keeps lighting the scene and stops casting, so *which* lights lose
-/// their shadow has to be a decision: archetype order means the lamp
-/// that goes shadowless is chosen by when it was spawned, and it changes
-/// under the author's feet as the scene is edited. Nearest-first at
-/// least degrades where it is least visible.
+/// Two factors, and distance is only half of one of them:
+///
+/// **How much of the screen the light can darken.** A light is a sphere
+/// of `range`; the fraction of the view it can cover goes with the
+/// square of its angular radius, `range / distance`. Clamped at 1: once
+/// the camera is inside the sphere the light is all around the viewer
+/// and getting closer to its centre does not make its shadow bigger.
+///
+/// **How much light there is to occlude.** A shadow is the absence of a
+/// light's contribution, so a dim lamp casts a shadow nobody can see
+/// standing next to a bright one. `intensity` alone and not
+/// `intensity * luma(color)`: a saturated red lamp at high intensity is
+/// still a bright lamp, and weighting by luma would quietly rank it
+/// under a dim white one.
+///
+/// 🔴 This replaces sorting by distance. Nearest-first put the cubes on
+/// whichever four lamps the camera happened to be closest to, and with
+/// lights on a grid **the order changes every time the viewer walks a
+/// metre** — the shadow appears, disappears, and reappears with no
+/// authored reason. The stability fix is [`select_point_casters`]'s
+/// hysteresis; this is the half that decides what stability is worth
+/// preserving.
+///
+/// [`select_point_casters`]: https://docs.rs/kooch_render
+pub fn point_shadow_importance(
+    position: glam::Vec3,
+    range: f32,
+    intensity: f32,
+    camera_position: glam::Vec3,
+) -> f32 {
+    let distance = position.distance(camera_position).max(1e-4);
+    let angular = (range / distance).min(1.0);
+    intensity.max(0.0) * angular * angular
+}
+
+/// The point lights that cast, ranked by what a cube spent on them would
+/// show ([`point_shadow_importance`]).
+///
+/// 🔴 Ranked, NOT in whatever order the query walked. Past
+/// [`MAX_POINT_SHADOWS`](crate::MAX_POINT_SHADOWS) a light keeps
+/// lighting the scene and stops casting, so *which* lights lose their
+/// shadow has to be a decision: archetype order means the lamp that goes
+/// shadowless is chosen by when it was spawned, and it changes under the
+/// author's feet as the scene is edited.
 ///
 /// The slot each light gets here is the `shadow_slot` written into its
 /// `GpuLight`, so both walks have to agree — which is why this is one
@@ -239,11 +286,18 @@ pub fn shadow_casting_points(
     limit: usize,
 ) -> Vec<PointShadowSource> {
     let mut out = extract_point_sources(resources);
-    out.sort_by(|a, b| {
-        let da = a.position.distance_squared(camera_position);
-        let db = b.position.distance_squared(camera_position);
-        da.total_cmp(&db)
-    });
+    for source in &mut out {
+        source.importance = point_shadow_importance(
+            source.position,
+            source.range,
+            source.intensity,
+            camera_position,
+        );
+    }
+    // Descending: the most worth showing first. `total_cmp` because a
+    // NaN intensity would otherwise make the comparator inconsistent and
+    // `sort_by` is allowed to panic on that.
+    out.sort_by(|a, b| b.importance.total_cmp(&a.importance));
     out.truncate(limit);
     out
 }
@@ -257,6 +311,10 @@ fn extract_point_sources(resources: &Resources) -> Vec<PointShadowSource> {
                     entity,
                     position: transform.matrix.w_axis.truncate(),
                     range: light.range,
+                    intensity: light.intensity,
+                    // Filled by `shadow_casting_points`, which is the
+                    // only thing that knows where the camera is.
+                    importance: 0.0,
                 });
             }
         },

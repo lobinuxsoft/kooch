@@ -174,3 +174,47 @@ fn both_paths_honour_the_light_limit() {
 fn kooch_render_compute_body() -> &'static str {
     include_str!("../../kooch_render/shaders/material_pbr_compute.wgsl")
 }
+
+/// 🔴 What the old ranking got wrong. Sorted by distance, the dim lamp
+/// two metres away outranked the floodlight across the room, and the
+/// cubes went to whatever the camera happened to be standing next to.
+#[test]
+fn a_floodlight_outranks_a_nearby_candle() {
+    let eye = glam::Vec3::ZERO;
+    let candle = point_shadow_importance(glam::Vec3::new(0.0, 0.0, -2.0), 2.0, 10.0, eye);
+    let flood = point_shadow_importance(glam::Vec3::new(0.0, 0.0, -20.0), 30.0, 4000.0, eye);
+    assert!(flood > candle, "candle {candle}, floodlight {flood}");
+}
+
+/// Distance still decides between equals — the half of the old rule
+/// that was right.
+#[test]
+fn the_nearer_of_two_equal_lamps_wins() {
+    let eye = glam::Vec3::ZERO;
+    let near = point_shadow_importance(glam::Vec3::new(0.0, 0.0, -10.0), 5.0, 100.0, eye);
+    let far = point_shadow_importance(glam::Vec3::new(0.0, 0.0, -40.0), 5.0, 100.0, eye);
+    assert!(near > far);
+}
+
+/// Inside the sphere the light is all around the viewer, so walking
+/// closer to its centre cannot make its shadow cover more screen. Left
+/// unclamped, `range / distance` runs to infinity at the centre and one
+/// lamp owns every cube the moment the player stands in it.
+#[test]
+fn being_inside_the_sphere_saturates() {
+    let eye = glam::Vec3::ZERO;
+    let inside = point_shadow_importance(glam::Vec3::new(0.0, 0.0, -1.0), 5.0, 100.0, eye);
+    let deeper = point_shadow_importance(glam::Vec3::new(0.0, 0.0, -0.01), 5.0, 100.0, eye);
+    assert_eq!(inside, deeper);
+    assert_eq!(inside, 100.0);
+}
+
+/// A light at the camera's exact position is authorable and must not
+/// produce a NaN — `sort_by` with an inconsistent comparator is allowed
+/// to panic, so one bad lamp would take the frame down.
+#[test]
+fn a_lamp_on_the_camera_is_finite() {
+    let eye = glam::Vec3::new(3.0, 1.0, -2.0);
+    let on_top = point_shadow_importance(eye, 5.0, 100.0, eye);
+    assert!(on_top.is_finite(), "got {on_top}");
+}
