@@ -219,3 +219,110 @@ fn a_holder_that_left_the_view_loses_its_cube() {
     let gone = source(Vec3::new(0.0, 0.0, 50.0), 5.0);
     assert!(select_point_casters(&[gone], &f, 4, &[gone.entity]).is_empty());
 }
+
+/// 🔴 The stress scene in miniature: a hundred lamps on a two-metre
+/// grid, all in front of the camera, all casting.
+///
+/// Written because a device capture showed `Device::create_bind_group`
+/// at 53 calls a frame — the number a frame with NO cube draws reports —
+/// while the scene had `cast_shadows: true` on all hundred lights.
+#[test]
+fn a_grid_of_lamps_fills_every_cube() {
+    let f = frustum();
+    let eye = Vec3::ZERO;
+    let mut ranked: Vec<PointShadowSource> = (0..100u32)
+        .map(|i| {
+            // 10x10, two metres apart, centred ahead of the camera.
+            let position = Vec3::new(
+                (i % 10) as f32 * 2.0 - 9.0,
+                1.0,
+                -((i / 10) as f32 * 2.0) - 5.0,
+            );
+            PointShadowSource {
+                entity: Entity::new(i, 0),
+                position,
+                range: 4.0,
+                intensity: 1000.0,
+                importance: kooch_lighting::point_shadow_importance(position, 4.0, 1000.0, eye),
+            }
+        })
+        .collect();
+    ranked.sort_by(|a, b| b.importance.total_cmp(&a.importance));
+
+    let chosen = select_point_casters(&ranked, &f, kooch_lighting::MAX_POINT_SHADOWS, &[]);
+    assert_eq!(
+        chosen.len(),
+        kooch_lighting::MAX_POINT_SHADOWS,
+        "every cube should be spoken for; got {} of {}",
+        chosen.len(),
+        kooch_lighting::MAX_POINT_SHADOWS,
+    );
+}
+
+fn instance(center: Vec3, radius: f32, hash: u64) -> InstanceBounds {
+    InstanceBounds {
+        center,
+        radius,
+        hash,
+    }
+}
+
+/// 🔴 The defect #847 exists for: a crate moving on the far side of the
+/// level used to redraw every cube in the frame.
+#[test]
+fn a_distant_instance_does_not_touch_the_key() {
+    let lamp = Vec3::ZERO;
+    let near = instance(Vec3::new(1.0, 0.0, 0.0), 0.5, 111);
+    let far = instance(Vec3::new(80.0, 0.0, 0.0), 0.5, 222);
+    let moved = instance(Vec3::new(80.0, 0.0, 0.0), 0.5, 999);
+
+    let before = light_scene_hash(&[near, far], lamp, 4.0);
+    let after = light_scene_hash(&[near, moved], lamp, 4.0);
+    assert_eq!(
+        before, after,
+        "a lamp cannot see 80 m away with a 4 m range"
+    );
+}
+
+/// The control. Without it the test above passes just as well with a
+/// hash that ignores every instance — which would freeze every cube in
+/// the scene, the silent failure this cache is written to avoid.
+#[test]
+fn an_instance_in_range_does_change_it() {
+    let lamp = Vec3::ZERO;
+    let near = instance(Vec3::new(1.0, 0.0, 0.0), 0.5, 111);
+    let moved = instance(Vec3::new(1.0, 0.0, 0.0), 0.5, 112);
+    assert_ne!(
+        light_scene_hash(&[near], lamp, 4.0),
+        light_scene_hash(&[moved], lamp, 4.0),
+    );
+}
+
+/// The floor case, and the reason the test is sphere against sphere
+/// rather than point against sphere: a 20 m floor slab is centred far
+/// from a lamp standing on it and is the very surface its shadow lands
+/// on. A point test would drop it and freeze the shadow.
+#[test]
+fn a_big_slab_counts_from_its_edge() {
+    let lamp = Vec3::new(0.0, 1.0, 0.0);
+    let floor = instance(Vec3::new(0.0, -0.25, 0.0), 14.0, 7);
+    let moved = instance(Vec3::new(0.0, -0.25, 0.0), 14.0, 8);
+    assert_ne!(
+        light_scene_hash(&[floor], lamp, 4.0),
+        light_scene_hash(&[moved], lamp, 4.0),
+        "the slab's own radius has to be added to the light's range",
+    );
+}
+
+/// Order is part of the digest: two instances swapping places is a
+/// change, and the array is rebuilt in walk order every frame.
+#[test]
+fn order_is_part_of_the_digest() {
+    let lamp = Vec3::ZERO;
+    let a = instance(Vec3::new(1.0, 0.0, 0.0), 0.5, 1);
+    let b = instance(Vec3::new(-1.0, 0.0, 0.0), 0.5, 2);
+    assert_ne!(
+        light_scene_hash(&[a, b], lamp, 4.0),
+        light_scene_hash(&[b, a], lamp, 4.0),
+    );
+}

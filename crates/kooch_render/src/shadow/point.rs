@@ -62,6 +62,9 @@ pub struct PointShadowDraw {
     pub eye: Vec3,
     /// Clip-from-world per face, in cube-array layer order.
     pub faces: [Mat4; CUBE_FACES],
+    /// How far this light reaches, so the cache can ask which instances
+    /// are inside it (#847).
+    pub range: f32,
 }
 
 impl PointShadowDraw {
@@ -71,6 +74,7 @@ impl PointShadowDraw {
             entity: source.entity,
             eye: position,
             faces: std::array::from_fn(|face| face_view_proj(position, face, POINT_SHADOW_NEAR_Z)),
+            range: source.range,
         }
     }
 
@@ -89,6 +93,44 @@ impl PointShadowDraw {
             scene,
         }
     }
+}
+
+/// One instance as the cube cache sees it: where it is, how far it
+/// reaches, and a digest of everything about it that could move a
+/// shadow (#847).
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct InstanceBounds {
+    pub center: Vec3,
+    pub radius: f32,
+    pub hash: u64,
+}
+
+/// A digest of the instances a light's own range can reach.
+///
+/// 🔴 This is the whole of #847. The cube cache used to key on a hash of
+/// **every instance in the frame**, so a crate sliding in a sealed room
+/// on the far side of the level redrew all four cubes — 24 faces,
+/// measured at +2.0 ms, in any scene where anything moves at all.
+///
+/// Order matters and is the array's: two instances swapping places would
+/// otherwise digest the same, and the array is rebuilt in ECS walk order
+/// every frame — the same order the GPU upload uses.
+///
+/// ⚠️ The test is sphere against sphere, and the instance's sphere is
+/// deliberately generous (see [`MeshBounds`](crate::meshlet::MeshBounds)).
+/// A false positive costs one redrawn cube; a false negative is a shadow
+/// frozen in place, which is silent and gets blamed on everything else
+/// first.
+pub fn light_scene_hash(instances: &[InstanceBounds], position: Vec3, range: f32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for instance in instances {
+        let reach = range + instance.radius;
+        if instance.center.distance_squared(position) <= reach * reach {
+            instance.hash.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
 }
 
 /// Everything a cached cube depends on.

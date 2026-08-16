@@ -223,18 +223,40 @@ impl MeshletRenderStage {
             profiling::scope!("upload instances");
             self.scene
                 .upload_instances_with_history(queue, &instances, &instance_entities);
-            // The whole scene in one number, for the point-shadow cube
-            // cache (#778). Hashed over the bytes that go to the GPU, so
-            // anything that could move a shadow — a transform, a mesh
-            // swap, an instance appearing — changes it, and nothing that
-            // cannot does. O(n) over a Vec that was just walked to
-            // upload it.
-            self.scene_hash = {
+            // Every instance as a world-space sphere and a hash of its
+            // own bytes, for the point-shadow cube cache (#778, #847).
+            //
+            // 🔴 Per instance rather than one number for the scene. A
+            // single hash meant a crate sliding anywhere in the level
+            // invalidated all four cubes — 24 faces redrawn, measured at
+            // +2.0 ms — and since something always moves in a game, the
+            // cache helped only in the case that never happens.
+            //
+            // Hashed over the bytes that go to the GPU, so anything that
+            // could move a shadow — a transform, a mesh swap — changes
+            // it, and nothing that cannot does. O(n) over a Vec that was
+            // just walked to upload it.
+            self.instance_bounds.clear();
+            self.instance_bounds.reserve(instances.len());
+            for instance in &instances {
                 use std::hash::{Hash, Hasher};
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                bytemuck::cast_slice::<_, u8>(&instances).hash(&mut hasher);
-                hasher.finish()
-            };
+                bytemuck::bytes_of(instance).hash(&mut hasher);
+                let bounds = self
+                    .pipeline
+                    .pool()
+                    .mesh_bounds
+                    .get(instance.mesh_id as usize)
+                    .copied()
+                    .unwrap_or_default();
+                let (center, radius) =
+                    bounds.transformed(glam::Mat4::from_cols_array_2d(&instance.transform));
+                self.instance_bounds.push(crate::shadow::InstanceBounds {
+                    center,
+                    radius,
+                    hash: hasher.finish(),
+                });
+            }
         }
 
         let scene_params = SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);

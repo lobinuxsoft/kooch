@@ -13,7 +13,7 @@
 use kooch_core::resource::Resources;
 
 use crate::meshlet::extract_frustum_planes;
-use crate::shadow::{PreparedShadows, ShadowPass, ShadowSettings};
+use crate::shadow::{CubeKey, PreparedShadows, ShadowPass, ShadowSettings};
 use crate::view_camera::ViewCamera;
 
 use super::super::MeshletRenderStage;
@@ -215,20 +215,34 @@ impl MeshletRenderStage {
         // reason. Epic measures a cached local shadow map at 0.05 ms
         // against 0.4-0.8 ms invalidated, on a PS5.
         //
-        // The key is deliberately coarse: the light's identity, its
-        // position, and a hash of EVERY instance in the frame. A crate
-        // moving across the level invalidates a lamp that cannot see it.
-        // That is the safe direction — a cube redrawn for nothing costs
-        // a frame's work, and a cube not redrawn when it should have
-        // been is a shadow frozen in place, which is silent and gets
-        // blamed on everything else first. Narrowing it means asking
-        // which instances a light's range reaches, and that is the
-        // cluster structure (#780), not this issue.
-        let scene_hash = self.scene_hash;
+        // The key is the light's identity, its position, and a digest of
+        // the instances ITS OWN RANGE reaches (#847). It used to be a
+        // hash of every instance in the frame, which meant a crate
+        // moving across the level invalidated a lamp that could not see
+        // it — +2.0 ms in any scene where anything moves, which is every
+        // scene in a game.
+        //
+        // Still conservative where it counts: a cube redrawn for nothing
+        // costs a frame's work, and a cube NOT redrawn when it should
+        // have been is a shadow frozen in place, which is silent and
+        // gets blamed on everything else first.
+        // `light_scene_hash` digests
+        // only the instances this lamp's own range can reach, so a crate
+        // moving in another room no longer costs six faces here.
+        let keys: Vec<CubeKey> = prepared
+            .points
+            .iter()
+            .map(|draw| {
+                draw.key(crate::shadow::light_scene_hash(
+                    &self.instance_bounds,
+                    draw.eye,
+                    draw.range,
+                ))
+            })
+            .collect();
         let mut redraw = Vec::new();
         for (slot, draw) in prepared.points.iter().enumerate() {
-            let key = draw.key(scene_hash);
-            if self.point_cube_cache.get(slot).copied().flatten() != Some(key) {
+            if self.point_cube_cache.get(slot).copied().flatten() != Some(keys[slot]) {
                 redraw.push((slot, *draw));
             }
         }
@@ -238,8 +252,7 @@ impl MeshletRenderStage {
         self.point_cube_cache
             .resize(kooch_lighting::MAX_POINT_SHADOWS, None);
         for slot in 0..kooch_lighting::MAX_POINT_SHADOWS {
-            self.point_cube_cache[slot] =
-                prepared.points.get(slot).map(|draw| draw.key(scene_hash));
+            self.point_cube_cache[slot] = keys.get(slot).copied();
         }
 
         let (Some(shadows), Some(pool)) = (self.shadows.as_ref(), self.gpu_pool.as_ref()) else {
