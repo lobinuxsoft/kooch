@@ -128,56 +128,12 @@ fn every_face_is_distinct() {
     assert_eq!(seen.len(), CUBE_FACES, "two faces answered for one axis");
 }
 
-/// A camera at the origin looking down −Z, which is what
-/// `extract_frustum_planes` is fed everywhere else.
-fn frustum() -> [[f32; 4]; 6] {
-    let camera = crate::view_camera::ViewCamera::looking_at(Vec3::ZERO, Vec3::NEG_Z);
-    crate::meshlet::extract_frustum_planes(camera.view_proj(1.0))
-}
-
-#[test]
-fn a_lamp_behind_the_camera_gets_no_cube() {
-    let f = frustum();
-    let behind = source(Vec3::new(0.0, 0.0, 50.0), 5.0);
-    assert!(select_point_casters(&[behind], &f, 4, &[]).is_empty());
-}
-
-#[test]
-fn a_lamp_off_screen_still_casts_onto_it() {
-    // Its centre is outside the frustum and its reach is not. A point
-    // test would drop it and the shadow it throws across the visible
-    // floor would vanish as the camera turned.
-    let f = frustum();
-    let edge = source(Vec3::new(0.0, 60.0, -30.0), 50.0);
-    assert_eq!(select_point_casters(&[edge], &f, 4, &[]).len(), 1);
-}
-
-/// 🔴 The ordering test: cull, then limit.
-///
-/// Limiting first would spend all four cubes on the nearest lights even
-/// when they are behind the camera, and the visible lamp — the only one
-/// whose shadow anybody can see — would get nothing.
-#[test]
-fn culling_happens_before_the_limit() {
-    let f = frustum();
-    let mut ranked: Vec<_> = (0..4)
-        .map(|i| source(Vec3::new(0.0, 0.0, 10.0 + i as f32), 5.0))
-        .collect();
-    let visible = source(Vec3::new(0.0, 0.0, -20.0), 5.0);
-    ranked.push(visible);
-
-    let chosen = select_point_casters(&ranked, &f, 4, &[]);
-    assert_eq!(chosen.len(), 1, "only the visible lamp should get a cube");
-    assert_eq!(chosen[0].position, visible.position);
-}
-
 #[test]
 fn the_limit_still_applies_to_visible_lamps() {
-    let f = frustum();
     let ranked: Vec<_> = (0..6)
         .map(|i| source(Vec3::new(0.0, 0.0, -10.0 - i as f32), 5.0))
         .collect();
-    assert_eq!(select_point_casters(&ranked, &f, 4, &[]).len(), 4);
+    assert_eq!(select_point_casters(&ranked, 4, &[]).len(), 4);
 }
 
 /// 🔴 The failure this exists to stop: a hundred lamps on a grid, the
@@ -185,10 +141,9 @@ fn the_limit_still_applies_to_visible_lamps() {
 /// which four hold cubes and the shadow blinks.
 #[test]
 fn a_holder_keeps_its_cube_against_a_marginal_rival() {
-    let f = frustum();
     let holder = lamp(1, 1.0);
     let rival = lamp(2, 1.2);
-    let chosen = select_point_casters(&[rival, holder], &f, 1, &[holder.entity]);
+    let chosen = select_point_casters(&[rival, holder], 1, &[holder.entity]);
     assert_eq!(chosen.len(), 1);
     assert_eq!(
         chosen[0].entity, holder.entity,
@@ -201,23 +156,31 @@ fn a_holder_keeps_its_cube_against_a_marginal_rival() {
 /// four lamps the first frame happened to pick.
 #[test]
 fn a_clearly_better_rival_takes_the_cube() {
-    let f = frustum();
     let holder = lamp(1, 1.0);
     let rival = lamp(2, 1.5);
-    let chosen = select_point_casters(&[holder, rival], &f, 1, &[holder.entity]);
+    let chosen = select_point_casters(&[holder, rival], 1, &[holder.entity]);
     assert_eq!(chosen.len(), 1);
     assert_eq!(chosen[0].entity, rival.entity);
 }
 
-/// Holding is worth something; being out of view is worth nothing. A
-/// lamp behind the camera keeps no cube, bonus or not — otherwise the
-/// four faces it costs would be spent rasterising for a viewer who
-/// turned around.
+/// 🔴 A lamp behind the camera KEEPS its cube, and that is the fix.
+///
+/// This used to assert the opposite. The reasoning was that six faces
+/// rasterised for a viewer who turned around are six faces wasted — true
+/// as arithmetic, wrong as a contract: a cube map is drawn from the
+/// light, so what it holds cannot depend on where anyone stands, and
+/// this selection runs once per VIEW while the cubes and `holders`
+/// belong to the stage. With the editor's two views on one stage, the
+/// gameplay camera decided what the View panel could see a shadow of.
 #[test]
-fn a_holder_that_left_the_view_loses_its_cube() {
-    let f = frustum();
-    let gone = source(Vec3::new(0.0, 0.0, 50.0), 5.0);
-    assert!(select_point_casters(&[gone], &f, 4, &[gone.entity]).is_empty());
+fn a_lamp_behind_the_camera_keeps_its_cube() {
+    let behind = source(Vec3::new(0.0, 0.0, 50.0), 5.0);
+    assert_eq!(select_point_casters(&[behind], 4, &[]).len(), 1);
+    assert_eq!(
+        select_point_casters(&[behind], 4, &[behind.entity]).len(),
+        1,
+        "and holding one changes nothing about it",
+    );
 }
 
 /// 🔴 The stress scene in miniature: a hundred lamps on a two-metre
@@ -228,7 +191,6 @@ fn a_holder_that_left_the_view_loses_its_cube() {
 /// while the scene had `cast_shadows: true` on all hundred lights.
 #[test]
 fn a_grid_of_lamps_fills_every_cube() {
-    let f = frustum();
     let eye = Vec3::ZERO;
     let mut ranked: Vec<PointShadowSource> = (0..100u32)
         .map(|i| {
@@ -249,7 +211,7 @@ fn a_grid_of_lamps_fills_every_cube() {
         .collect();
     ranked.sort_by(|a, b| b.importance.total_cmp(&a.importance));
 
-    let chosen = select_point_casters(&ranked, &f, kooch_lighting::MAX_POINT_SHADOWS, &[]);
+    let chosen = select_point_casters(&ranked, kooch_lighting::MAX_POINT_SHADOWS, &[]);
     assert_eq!(
         chosen.len(),
         kooch_lighting::MAX_POINT_SHADOWS,

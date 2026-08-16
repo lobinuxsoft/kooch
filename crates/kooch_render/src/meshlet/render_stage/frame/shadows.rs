@@ -12,7 +12,6 @@
 
 use kooch_core::resource::Resources;
 
-use crate::meshlet::extract_frustum_planes;
 use crate::shadow::{CubeKey, PreparedShadows, ShadowPass, ShadowSettings};
 use crate::view_camera::ViewCamera;
 
@@ -52,33 +51,32 @@ impl MeshletRenderStage {
         // show, because past the limit a light stops casting and which
         // one should not depend on spawn order.
         //
-        // 🔴 Culled against the camera's frustum BEFORE the limit is
-        // applied, not after. Six faces is the most expensive shadow in
-        // the engine and `PointLight::cast_shadows` defaults to true, so
-        // a corridor of lamps behind the camera would otherwise rasterise
-        // twenty-four faces of geometry nobody can see. Culling first
-        // also means the four cubes go to lights that are actually on
-        // screen rather than to whichever four are nearest including the
-        // ones behind you.
+        // 🔴 No camera frustum here any more. It used to cull lamps whose
+        // `range` sphere fell outside this camera before the limit was
+        // applied, to keep a corridor of lamps behind the viewer from
+        // rasterising twenty-four faces nobody can see.
         //
-        // A light is a sphere of `range`: past that it contributes
-        // nothing, so a sphere fully outside the frustum cannot shadow
-        // any visible pixel. It CAN shadow a pixel while its own centre
-        // is off screen, which is why this is the sphere test and not a
-        // point test.
-        let frustum = extract_frustum_planes(camera.view_proj(aspect));
+        // A cube map is drawn from the LIGHT, so what it holds cannot
+        // depend on where anyone stands — and this function runs once per
+        // VIEW while the cubes, the cache and the holders below belong to
+        // the stage. The editor renders two views through one stage, so a
+        // lamp outside the gameplay camera lost its cube for both panels
+        // and the one looking straight at it drew no shadow. Whichever
+        // view rendered last decided.
+        //
+        // The optimisation is still worth having, but it has to be asked
+        // of the frame — the union of every active view's frustum, or one
+        // selection reused by all of them — not of whoever is rendering.
         let ranked =
             kooch_lighting::shadow_casting_points(resources, camera.position(), usize::MAX);
         let points = crate::shadow::select_point_casters(
             &ranked,
-            &frustum,
             settings.point_budget(),
             &self.point_shadow_holders,
         );
         // Next frame's hysteresis is this frame's answer. Written even
-        // when the list is empty: a light that lost its cube because it
-        // left the frustum must not be handed the bonus back the moment
-        // it returns.
+        // when the list is empty: a light that lost its cube must not be
+        // handed the bonus back the moment it returns.
         self.point_shadow_holders.clear();
         self.point_shadow_holders
             .extend(points.iter().map(|light| light.entity));
@@ -89,20 +87,11 @@ impl MeshletRenderStage {
         // shadow is missing has no way to tell that from a bug.
         //
         // Reported on entering the state, once, and not on every change
-        // of the overflow. The overflow is not steady: culling happens
-        // before the budget, so the count follows the camera — 84 and 96
-        // alternating in the roll-a-ball stress scene — and keying the
-        // log on it printed the same line at frame rate. The number in
-        // the message is what it was when the budget was first exceeded,
-        // which is the fact worth knowing; the rest is where the author
-        // happened to be standing.
-        let visible = ranked
-            .iter()
-            .filter(|light| {
-                !crate::meshlet::sphere_outside_frustum(&frustum, light.position, light.range)
-            })
-            .count();
-        let dropped = visible.saturating_sub(points.len());
+        // of the overflow. It used to move with the camera — 84 and 96
+        // alternating in the roll-a-ball stress scene — because the cull
+        // ran before the budget; now the count is a property of the
+        // scene, so the line is printed once and stays true.
+        let dropped = ranked.len().saturating_sub(points.len());
         if (dropped > 0) != self.point_shadows_over_budget {
             if dropped > 0 {
                 tracing::warn!(

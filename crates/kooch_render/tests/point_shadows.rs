@@ -792,3 +792,56 @@ fn an_empty_floor_is_not_shadowed_by_itself() {
         );
     }
 }
+
+/// 🔴🔴 Two views on one stage — the editor's arrangement, which this
+/// suite never had.
+///
+/// `render_with_assets(view_id, ..)` runs a whole frame per view and the
+/// shadow preparation takes the CAMERA, while the cube array, the cube
+/// cache and the holders belong to the stage. So the selection used to
+/// cull lamps against whoever was rendering, and the last view to render
+/// decided for both: a lamp outside the gameplay camera lost its cube,
+/// and the View panel — looking straight at it — drew no shadow.
+///
+/// The Game camera here is pointed forty metres away on purpose. That is
+/// the case that failed, and it failed silently in every single-view
+/// picture this file takes.
+#[test]
+fn a_second_view_does_not_take_the_shadow_away() {
+    let Some(mut rig) = build_rig() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let light = SWEEP[0];
+    add_point(&mut rig.resources, light, true);
+
+    let pixels = render(&mut rig);
+    let alone = luminance(&pixels, &rig.camera, shadow_centre(light));
+    let lit = luminance(&pixels, &rig.camera, OPEN_FLOOR);
+    assert!(
+        alone < lit * 0.7,
+        "the shadow is not there before the second view even exists ({alone} against {lit})",
+    );
+
+    // A second view, looking somewhere else entirely.
+    let second = rig.stage.create_view(&rig.device, (SIZE, SIZE));
+    let elsewhere = ViewCamera::looking_at(Vec3::new(60.0, 2.0, 60.0), Vec3::new(70.0, 0.0, 70.0));
+    rig.stage.render_with_assets(
+        second,
+        &rig.device,
+        &rig.queue,
+        &rig.resources,
+        &elsewhere,
+        1.0,
+    );
+
+    let pixels = render(&mut rig);
+    let after = luminance(&pixels, &rig.camera, shadow_centre(light));
+    assert!(
+        after < lit * 0.7,
+        "after a second view rendered from a camera that cannot see the lamp, this view's \
+         shadow reads {after} against {lit} lit — it read {alone} a frame ago and nothing \
+         moved. A cube map is drawn from the light; which lamps get one must not depend on \
+         who is looking",
+    );
+}
