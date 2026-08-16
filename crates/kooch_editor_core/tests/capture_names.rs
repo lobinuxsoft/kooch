@@ -9,10 +9,11 @@
 //! missing. It cost a session's worth of reading a capture by guessing
 //! at magnitudes before the cause was found.
 //!
-//! And the cause is a **cliff**: 846 frames came back named, 1022 the
-//! same evening did not. Any test shorter than the ring is a test that
-//! passes for the wrong reason, which is why the count here is over it
-//! on purpose.
+//! And it is **intermittent**: 846 frames came back named, 1022 the same
+//! evening did not, but the length is not the rule — see [`CHEAP`] for
+//! what actually decides it. A capture that reads fine is not evidence
+//! the problem is gone, which is exactly why this is a test and not a
+//! habit of capturing shorter.
 
 use std::sync::{Arc, Mutex};
 
