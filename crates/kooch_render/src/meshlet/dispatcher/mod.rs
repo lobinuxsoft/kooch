@@ -48,6 +48,8 @@ mod init;
 mod pipelines;
 mod types;
 
+use crate::meshlet::cull::CullParams;
+
 pub use pipelines::MeshletCullPipelines;
 pub use types::{DrawIndirectArgs, HiZTestParams};
 
@@ -104,7 +106,39 @@ pub struct MeshletCull {
 
     pub(super) capacity: u32,
     pub(super) vertex_count_per_instance: u32,
+
+    /// Bytes between two parameter slots in `params_buffer`, rounded up
+    /// to the device's `min_uniform_buffer_offset_alignment`.
+    pub(super) params_stride: u64,
+    /// Which slot the next dispatch writes. See [`Self::stage_params`].
+    pub(super) params_cursor: std::sync::atomic::AtomicU32,
 }
+
+/// How many parameter sets `params_buffer` holds.
+///
+/// 🔴 This buffer is a ring and not a single struct, and that is the
+/// whole of #853.
+///
+/// `queue.write_buffer` is **not** ordered against the encoder. Every
+/// write queued while a frame is being recorded is applied at the head
+/// of the submit, before a single command runs — so writing one buffer
+/// twice in one frame does not give two dispatches two values, it gives
+/// both of them the second one.
+///
+/// The point-light shadow pass dispatches one cull per light per cube
+/// face, and the six culls belong to the FACE, shared by every lamp.
+/// So with two casting point lights, both cubes were culled against
+/// whichever lamp's frustum was written last, while each was rasterised
+/// with its own matrix. Every occluder the first lamp could see and the
+/// second could not vanished from the first lamp's map. One lamp was
+/// always correct, which is why it took a scene with two.
+///
+/// The bound is how many times one cull object can be dispatched inside
+/// one encoder: [`MAX_POINT_SHADOWS`](kooch_lighting::MAX_POINT_SHADOWS),
+/// 32 today. 64 leaves a factor of two. Cross-submit reuse is not a
+/// hazard — wgpu barriers a buffer that goes from uniform read to copy
+/// destination between submits.
+pub(super) const PARAMS_RING: u64 = 64;
 
 impl MeshletCull {
     /// Storage capacity (in meshlets) of the visible-output buffer.
@@ -259,6 +293,47 @@ impl MeshletCull {
     /// on (any reject-overlay variant today).
     pub fn stage_counters_buffer(&self) -> &wgpu::Buffer {
         &self.stage_counters
+    }
+
+    /// Puts one dispatch's [`CullParams`] somewhere the previous
+    /// dispatch's copy is not, and hands back the range to bind.
+    ///
+    /// Call once per dispatch, before building the bind group. See
+    /// [`PARAMS_RING`] for why a plain write to offset 0 is wrong.
+    ///
+    /// `scene_params_buffer` deliberately has no ring: its contents are
+    /// `(instance_count, meshlets_per_mesh)`, a property of the frame
+    /// rather than of the dispatch, and every dispatch in a frame writes
+    /// the same bytes. [`Self::scene_params_buffer`] is handed to the
+    /// reject-overlay pass on exactly that assumption.
+    pub(super) fn stage_params(
+        &self,
+        queue: &wgpu::Queue,
+        params: &CullParams,
+    ) -> wgpu::BufferBinding<'_> {
+        use std::sync::atomic::Ordering;
+        let slot = self.params_cursor.fetch_add(1, Ordering::Relaxed) as u64 % PARAMS_RING;
+        let offset = slot * self.params_stride;
+        queue.write_buffer(&self.params_buffer, offset, bytemuck::bytes_of(params));
+        wgpu::BufferBinding {
+            buffer: &self.params_buffer,
+            offset,
+            size: std::num::NonZeroU64::new(std::mem::size_of::<CullParams>() as u64),
+        }
+    }
+
+    /// The slot the most recent [`Self::stage_params`] wrote, for a
+    /// second pass that shares one pass's parameters — the Hi-Z
+    /// 2-pass cull's pass B, which deliberately re-reads what pass A
+    /// was dispatched with.
+    pub(super) fn last_params(&self) -> wgpu::BufferBinding<'_> {
+        use std::sync::atomic::Ordering;
+        let written = self.params_cursor.load(Ordering::Relaxed).wrapping_sub(1);
+        wgpu::BufferBinding {
+            buffer: &self.params_buffer,
+            offset: (written as u64 % PARAMS_RING) * self.params_stride,
+            size: std::num::NonZeroU64::new(std::mem::size_of::<CullParams>() as u64),
+        }
     }
 
     /// `wgpu::Buffer` holding the per-frame `SceneCullParams` UBO.

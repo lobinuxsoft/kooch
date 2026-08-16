@@ -33,6 +33,8 @@ const INTI_DEBUG_SHADOW_CASCADES: u32 = 12u;
 const INTI_DEBUG_CONTACT_SHADOWS: u32 = 13u;
 const INTI_DEBUG_SINGLE_LIGHT: u32 = 14u;
 const INTI_DEBUG_LIGHT_COUNT: u32 = 15u;
+const INTI_DEBUG_POINT_SHADOW: u32 = 16u;
+const INTI_DEBUG_POINT_CUBE: u32 = 17u;
 // Lowest discriminant handled here. Modes below it are resolved by the
 // shading path itself before the surface is even reconstructed.
 const INTI_DEBUG_FIRST: u32 = INTI_DEBUG_NORMALS;
@@ -224,6 +226,154 @@ fn inti_single_light_debug(
     return inti_tonemap(vec3<f32>(dot(radiance, INTI_LUMA)));
 }
 
+
+/// A point light's cube map, answering for itself (#852).
+///
+/// # Why a shaded frame cannot answer this
+///
+/// "The shadow is not there" is four different faults wearing the same
+/// pixel: no lamp near this point casts at all, the point is past the
+/// lamp's reach so there is nothing to block, the cube says lit because
+/// the occluder never reached the map, or the cube says dark and the
+/// other lamps in the room fill it back in. Those have four different
+/// fixes and a lit frame shows one colour for all of them — which is how
+/// a whole session went into a defect that turned out to be two defects
+/// and one piece of arithmetic.
+///
+/// So this paints the cube's answer and NOTHING else. No BRDF, no
+/// cosine, no exposure, no ambient, no other light:
+///
+/// - **magenta** — no point light with a cube reaches this pixel
+/// - **blue**    — a lamp holds a cube but this point is past its
+///                 `range`, so the map is never consulted
+/// - **grey**    — the cube's own factor: black is fully occluded, white
+///                 is fully lit, and the ramp between them is the filter
+///
+/// Which lamp is the one selected in the World panel when that is a
+/// casting point light, and otherwise the FIRST one that casts — a
+/// choice that is the same for every pixel. See the loop for why it is
+/// not the strongest one per pixel.
+fn inti_point_shadow_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    let chosen = inti_point_debug_light();
+    if (chosen == 0xffffffffu) {
+        return vec3<f32>(1.0, 0.0, 1.0);
+    }
+
+    let light = inti_lights[chosen];
+    let to_light = light.position - world_position;
+    let distance_sq = dot(to_light, to_light);
+    // The same window `inti_distance_attenuation` saturates. Past it the
+    // lamp contributes nothing, so whatever the cube holds is moot and
+    // saying "lit" here would read as a hole in the map.
+    if (distance_sq >= light.range * light.range) {
+        return vec3<f32>(0.0, 0.0, 0.35);
+    }
+
+    return vec3<f32>(inti_point_shadow(
+        light.shadow_slot,
+        world_position,
+        n,
+        normalize(to_light),
+        light.position));
+}
+
+
+/// Which lamp the two point-shadow views answer about, or
+/// `0xffffffff` when none casts. Shared so the factor view and the cube
+/// view can never disagree about whose shadow is on screen.
+fn inti_point_debug_light() -> u32 {
+    let selected = inti.debug_light;
+    if (selected < inti.light_count
+        && inti_lights[selected].kind == INTI_KIND_POINT
+        && inti_lights[selected].shadow_slot != INTI_NO_SHADOW_SLOT) {
+        return selected;
+    }
+    for (var i = 0u; i < inti.light_count; i = i + 1u) {
+        let light = inti_lights[i];
+        if (light.kind == INTI_KIND_POINT
+            && light.shadow_slot != INTI_NO_SHADOW_SLOT) {
+            return i;
+        }
+    }
+    return 0xffffffffu;
+}
+
+/// The cube map itself, all six faces at once (#852).
+///
+/// The factor view above answers "is this point occluded". When the
+/// answer is wrong there are still two possibilities left — the map
+/// holds the wrong depth, or it holds nothing at all because the
+/// occluder never got rasterised into that face — and only opening the
+/// texture separates them.
+///
+/// The screen becomes a 3x2 grid, one cell per world axis in the order
+/// +X, -X, +Y, -Y, +Z, -Z. Which array layer answers is left to the
+/// hardware, exactly as it is during shading: the cell builds a world
+/// direction and samples with it, so what is on screen is what the
+/// shading model would have read looking that way. A face that renders
+/// blank here is a face the shading model also finds blank.
+///
+/// - **dark blue** — nothing recorded: reversed-Z clears to 0, which the
+///   comparison reads as "no occluder between here and infinity". This
+///   is the picture of an occluder that was culled out of the map.
+/// - **grey ramp** — distance to the recorded occluder over the lamp's
+///   `range`. Black is at the bulb, white is at the edge of its reach.
+/// - **magenta** — no point light casts, or the frame is not clustered
+///   (the screen size is derived from the froxel grid).
+fn inti_point_cube_debug(frag_coord: vec2<f32>) -> vec3<f32> {
+    let chosen = inti_point_debug_light();
+    // The grid is the only thing in this uniform that knows how big the
+    // screen is: `cluster_factors.xy` is tiles per pixel and
+    // `cluster_dimensions.xy` is how many tiles there are.
+    if (chosen == 0xffffffffu || inti.clustered == 0u) {
+        return vec3<f32>(1.0, 0.0, 1.0);
+    }
+    let screen = vec2<f32>(inti.cluster_dimensions.xy)
+        / max(inti.cluster_factors.xy, vec2<f32>(1e-6));
+    let cell = vec2<f32>(frag_coord.x / screen.x * 3.0, frag_coord.y / screen.y * 2.0);
+    let face = u32(clamp(floor(cell.y), 0.0, 1.0)) * 3u
+        + u32(clamp(floor(cell.x), 0.0, 2.0));
+    // -1..1 inside the cell, with a hairline of margin so the six panels
+    // read as six panels rather than as one smear.
+    let local = (fract(cell) * 2.0 - 1.0) * 0.97;
+
+    var axis = vec3<f32>(1.0, 0.0, 0.0);
+    var right = vec3<f32>(0.0, 0.0, 1.0);
+    var up = vec3<f32>(0.0, 1.0, 0.0);
+    if (face == 1u) {
+        axis = vec3<f32>(-1.0, 0.0, 0.0);
+    } else if (face == 2u) {
+        axis = vec3<f32>(0.0, 1.0, 0.0);
+        right = vec3<f32>(1.0, 0.0, 0.0);
+        up = vec3<f32>(0.0, 0.0, 1.0);
+    } else if (face == 3u) {
+        axis = vec3<f32>(0.0, -1.0, 0.0);
+        right = vec3<f32>(1.0, 0.0, 0.0);
+        up = vec3<f32>(0.0, 0.0, 1.0);
+    } else if (face == 4u) {
+        axis = vec3<f32>(0.0, 0.0, 1.0);
+        right = vec3<f32>(1.0, 0.0, 0.0);
+    } else if (face == 5u) {
+        axis = vec3<f32>(0.0, 0.0, -1.0);
+        right = vec3<f32>(1.0, 0.0, 0.0);
+    }
+
+    let light = inti_lights[chosen];
+    let record = inti.point_shadows[light.shadow_slot];
+    // The same mirror the shading path applies. Sampling the debug view
+    // through a different convention than the one being debugged is how
+    // an instrument confirms whatever it is pointed at.
+    let dir = (axis + right * local.x + up * local.y) * vec3<f32>(1.0, 1.0, -1.0);
+    let depth = textureSampleLevel(
+        inti_point_cubes, inti_shadow_point_sampler, dir, i32(light.shadow_slot), 0i);
+    if (depth <= 0.0) {
+        return vec3<f32>(0.05, 0.05, 0.25);
+    }
+    // Reversed-Z: the stored value is `near / distance_along_major_axis`.
+    let metres = record.near / depth;
+    return vec3<f32>(clamp(metres / max(light.range, 1e-4), 0.0, 1.0));
+}
+
 /// `true` when `mode` is one of the views this file draws.
 ///
 // How many lights this pixel evaluates, as a heatmap (#817).
@@ -312,6 +462,12 @@ fn inti_debug_view(
     }
     if (mode == INTI_DEBUG_LIGHT_COUNT) {
         return inti_light_count_debug(world_position, frag_coord);
+    }
+    if (mode == INTI_DEBUG_POINT_SHADOW) {
+        return inti_point_shadow_debug(world_position, n);
+    }
+    if (mode == INTI_DEBUG_POINT_CUBE) {
+        return inti_point_cube_debug(frag_coord);
     }
     // A mode the shader does not know. Black rather than a guess: an
     // unimplemented view that renders *something* is one somebody

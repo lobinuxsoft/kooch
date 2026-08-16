@@ -143,6 +143,41 @@ pub enum MeshletDebugMode {
     /// view, it is the view working: a scene that quietly stopped
     /// clustering looks exactly like a scene that is slow for no reason.
     LightsPerPixel = 15,
+    /// A point light's cube map, answering for itself (#852).
+    ///
+    /// "The shadow is not there" is four faults wearing one pixel: no
+    /// lamp near this point casts, the point is past the lamp's reach so
+    /// there is nothing to block, the cube says lit because the occluder
+    /// never reached the map, or the cube says dark and the other lamps
+    /// in the room fill it back in. Four different fixes, one colour in
+    /// a shaded frame.
+    ///
+    /// So this paints the cube's answer and nothing else — no BRDF, no
+    /// cosine, no exposure, no ambient, no second light. Magenta is no
+    /// casting lamp here, blue is past the lamp's `range`, and grey is
+    /// the factor itself: black fully occluded, white fully lit.
+    ///
+    /// Which lamp is whichever is selected in the World panel when that
+    /// is a casting point light, and otherwise the first one that casts —
+    /// the same lamp for every pixel. Choosing the strongest one per
+    /// pixel drew a hard seam where the winner changed, which reads as a
+    /// cut shadow: the exact fault the view exists to rule out.
+    PointShadowFactor = 16,
+    /// The cube map itself, all six faces at once (#852).
+    ///
+    /// [`Self::PointShadowFactor`] answers "is this point occluded". When
+    /// that answer is wrong, two possibilities are left — the map holds
+    /// the wrong depth, or it holds nothing because the occluder never
+    /// got rasterised into that face — and only opening the texture
+    /// separates them.
+    ///
+    /// The screen becomes a 3x2 grid, one cell per world axis in the
+    /// order +X, -X, +Y, -Y, +Z, -Z. Dark blue is nothing recorded,
+    /// which is the picture of an occluder culled out of the map; the
+    /// grey ramp is distance to the recorded occluder over the lamp's
+    /// range. Magenta means no point light casts, or the frame is not
+    /// clustered — the screen size is derived from the froxel grid.
+    PointCubeFaces = 17,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -204,6 +239,8 @@ impl MeshletDebugMode {
             Self::ContactShadows,
             Self::SingleLight,
             Self::LightsPerPixel,
+            Self::PointShadowFactor,
+            Self::PointCubeFaces,
         ]
     }
 
@@ -296,6 +333,8 @@ impl MeshletDebugMode {
             Self::ContactShadows => "Contact shadows",
             Self::SingleLight => "Single light",
             Self::LightsPerPixel => "Lights per pixel",
+            Self::PointShadowFactor => "Point shadow factor",
+            Self::PointCubeFaces => "Point cube faces",
         }
     }
 }

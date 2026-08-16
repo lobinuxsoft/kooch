@@ -47,7 +47,7 @@ impl MeshletCull {
             "dispatch_scene_pool called with an empty pool",
         );
 
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(cull_params));
+        let params_binding = self.stage_params(queue, cull_params);
         queue.write_buffer(
             &self.scene_params_buffer,
             0,
@@ -66,7 +66,7 @@ impl MeshletCull {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.params_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(params_binding.clone()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,

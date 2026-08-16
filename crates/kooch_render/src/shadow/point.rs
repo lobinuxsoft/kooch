@@ -13,8 +13,6 @@ use glam::{Mat4, Vec3};
 use kooch_ecs::entity::Entity;
 use kooch_lighting::{GpuPointShadow, PointShadowSource};
 
-use crate::meshlet::sphere_outside_frustum;
-
 /// Near plane for every cube face, in metres. Bevy's
 /// `PointLight::DEFAULT_SHADOW_MAP_NEAR_Z`, and the same value the spots
 /// use — a light's near plane is about how close geometry may get to the
@@ -156,22 +154,35 @@ pub struct CubeKey {
 ///
 /// [`MAX_POINT_SHADOWS`]: kooch_lighting::MAX_POINT_SHADOWS
 ///
-/// `sources` arrives ranked by importance. Three things happen here and
-/// the order between them is the point:
+/// `sources` arrives ranked by importance. Two things happen here:
+/// whoever already held a cube is favoured (see below), and then the
+/// limit is taken.
 ///
-/// 1. **Cull against the camera's frustum first.** Six faces is the most
-///    expensive shadow in the engine and `cast_shadows` defaults to
-///    true, so a corridor of lamps behind the camera would otherwise
-///    rasterise twenty-four faces of geometry nobody can see.
-/// 2. **Favour whoever already held a cube.** See below.
-/// 3. **Then take the limit.** Culling first is also what puts the four
-///    cubes on lights that are on screen, rather than on whichever four
-///    rank highest — which, standing in a doorway, can be the ones
-///    behind you.
+/// # 🔴 There is no camera frustum in here, and there used to be
 ///
-/// The test is the sphere of the light's own `range`, not its centre: a
-/// lamp just off the edge of the screen still shadows pixels that are on
-/// it.
+/// This culled lamps whose `range` sphere fell outside the camera's
+/// frustum, before applying the limit, because six faces is the most
+/// expensive shadow in the engine and `cast_shadows` defaults to true —
+/// a corridor of lamps behind the viewer would otherwise rasterise
+/// twenty-four faces nobody can see.
+///
+/// The premise was wrong. **A cube map is drawn from the light**, so
+/// what it contains cannot depend on where anyone is standing, and the
+/// cube array, the cache and `holders` all belong to the render stage
+/// while a frustum belongs to one view. The editor renders two views
+/// through one stage — the View panel and the Game panel — so a lamp
+/// outside the *gameplay* camera's frustum lost its cube for both, and
+/// the panel that was looking straight at it drew no shadow. Whichever
+/// view rendered last decided, every frame.
+///
+/// `two_views_on_one_stage` in `tests/point_shadow_dump.rs` is that
+/// picture, and `two_views_where_game_also_sees_the_lamp` is the control
+/// that pins it on the frustum and not on the shared cache.
+///
+/// The optimisation is worth having back, but it has to be asked of the
+/// frame rather than of a view: the union of every active view's
+/// frustum, or one selection computed once and reused. Neither is a
+/// filter that lives in this function.
 ///
 /// # 🔴 Why holding a cube is worth something
 ///
@@ -192,15 +203,10 @@ pub struct CubeKey {
 /// history to preserve.
 pub fn select_point_casters(
     sources: &[PointShadowSource],
-    frustum: &[[f32; 4]; 6],
     limit: usize,
     holders: &[Entity],
 ) -> Vec<PointShadowSource> {
-    let mut visible: Vec<PointShadowSource> = sources
-        .iter()
-        .filter(|light| !sphere_outside_frustum(frustum, light.position, light.range))
-        .copied()
-        .collect();
+    let mut visible: Vec<PointShadowSource> = sources.to_vec();
     // Stable, so lights the bonus leaves tied keep the order importance
     // gave them rather than swapping on an implementation detail.
     visible.sort_by(|a, b| {
