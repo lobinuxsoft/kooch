@@ -348,6 +348,7 @@ impl GpuLights {
         resources: &Resources,
         camera: ClusterCamera,
         shadows: Option<FrameShadows>,
+        frame_index: u32,
     ) {
         let mut extracted = extract_lights(resources);
         // Point lights learn their cube slot here rather than during the
@@ -462,6 +463,7 @@ impl GpuLights {
                     .unwrap_or_default()
                     .0,
             )
+            .with_frame_index(frame_index)
             .with_directionals(extracted.directional_count);
         if let Some(view) = clustered {
             frame = frame.with_clusters(self.clusters.grid(), view, self.clusters.index_capacity());

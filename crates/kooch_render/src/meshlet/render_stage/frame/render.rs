@@ -295,6 +295,36 @@ impl MeshletRenderStage {
         // depth in VIEW space, and a combined matrix cannot be taken
         // apart again.
         let size = self.views[view_id].size;
+        // Advanced here rather than beside its first reader, because it
+        // now has two: contact shadows jitter on it and the light
+        // sampler decorrelates on it (#826). Two counters would be two
+        // answers to "which frame is this", and the point of the second
+        // one is that it agrees with the first.
+        self.frames_recorded = self.frames_recorded.wrapping_add(1);
+
+        // 🔴 The light sampler only gets the frame when a temporal
+        // resolve is running, and this is a correctness condition
+        // rather than an optimisation.
+        //
+        // #826 asks for the frame in the seed because without it every
+        // frame draws the same sample and the resolve has an unchanging
+        // sequence to average. `light_sampling`'s
+        // `the_same_view_samples_the_same_lights` asks for the
+        // opposite, and its docs say so in as many words: *"seeding
+        // from a frame counter is the obvious thing to write and would
+        // put the shimmer straight back"* — measured, 7075 pixels
+        // changing between two identical frames.
+        //
+        // Both are right, in different regimes. Noise that changes
+        // every frame is what a resolve integrates and what an
+        // unresolved image shows as shimmer. So the seed advances
+        // exactly when something downstream is averaging it, and a
+        // project with the resolve off renders bit-for-bit what it
+        // rendered before this change.
+        let sampler_frame = match temporal {
+            Some(temporal) if temporal.enabled => self.frames_recorded,
+            _ => 0,
+        };
         self.lights.update(
             device,
             queue,
@@ -306,6 +336,7 @@ impl MeshletRenderStage {
                 glam::Vec2::new(size.0 as f32, size.1 as f32),
             ),
             shadows.as_ref().map(|s| s.frame),
+            sampler_frame,
         );
         // Worst-case meshlet stride covers every mesh; the pool path
         // bounds-checks per-instance against pool_mesh_descriptors.
@@ -397,7 +428,6 @@ impl MeshletRenderStage {
         // because both need it and only this function still holds the
         // camera's lens: `near` and `far` are what turn a stored depth
         // back into metres, and a `Mat4` has thrown them away.
-        self.frames_recorded = self.frames_recorded.wrapping_add(1);
         let contact = crate::contact_shadow::ContactShadowUbo::new(
             view_proj,
             camera.near,

@@ -436,10 +436,27 @@ pub struct IntiFrame {
     /// it, so the estimate is unbiased and the choice is continuous
     /// across the boundary the limit was discontinuous at.
     pub light_samples: u32,
+    /// A counter that advances once per recorded frame, for anything
+    /// that has to draw a *different* random number this frame than it
+    /// drew last frame (#826).
+    ///
+    /// 🔴 Without this, [`Self::light_samples`] cannot ship. The sampler
+    /// seeds on the froxel's grid index and the fragment's coordinate,
+    /// both of which are the same every frame for a still camera — so
+    /// the "noise" is a fixed pattern, and a temporal resolve averages a
+    /// sequence of identical values to exactly that pattern. The engine
+    /// is already paying 6.4 ms for that resolve; this word is what
+    /// gives it something to average.
+    ///
+    /// Wraps, and is meant to: it only ever feeds a hash. It is the same
+    /// counter `ContactShadowUbo::frame` takes, deliberately — two
+    /// counters advancing independently would be two answers to "which
+    /// frame is this".
+    pub frame_index: u32,
     /// To 16. `debug_lights_hot` closed the previous group of four, so a
     /// fifth scalar opens a new one — see `IntiLight`'s three scalars
     /// for the same trap in the other direction.
-    pub _pad_samples: [u32; 3],
+    pub _pad_samples: [u32; 2],
 }
 
 /// Top of scale the lights-per-pixel view starts at.
@@ -695,7 +712,8 @@ impl IntiFrame {
             clustered: 0,
             debug_lights_hot: LIGHTS_HOT_DEFAULT,
             light_samples: 0,
-            _pad_samples: [0; 3],
+            frame_index: 0,
+            _pad_samples: [0; 2],
         }
     }
 
@@ -756,6 +774,13 @@ impl IntiFrame {
     /// by contribution (0 = all). See [`IntiFrame::light_samples`].
     pub fn with_light_samples(mut self, samples: u32) -> Self {
         self.light_samples = samples;
+        self
+    }
+
+    /// The frame counter the samplers decorrelate on. See
+    /// [`IntiFrame::frame_index`].
+    pub fn with_frame_index(mut self, frame: u32) -> Self {
+        self.frame_index = frame;
         self
     }
 

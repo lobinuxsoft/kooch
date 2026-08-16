@@ -128,7 +128,9 @@ fn build_with(
     camera: ClusterCamera,
 ) -> (Vec<u32>, Vec<u32>) {
     let mut lights = GpuLights::new(device);
-    lights.update(device, queue, resources, camera, None);
+    // Frame 0: the grid is built from geometry, and nothing this test
+    // reads is seeded. See `IntiFrame::frame_index`.
+    lights.update(device, queue, resources, camera, None, 0);
 
     let mut encoder = device.create_command_encoder(&Default::default());
     lights.record_clusters(&mut encoder);

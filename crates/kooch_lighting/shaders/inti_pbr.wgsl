@@ -239,9 +239,13 @@ struct IntiFrame {
     // CONTRIBUTION and divides by the probability of the pick, so the
     // result estimates the full sum instead of a prefix of it.
     light_samples: u32,
+    // Advances once per recorded frame. What `light_samples` needs to be
+    // shippable: without it the sampler draws the same "random" light
+    // every frame for a still camera, and the temporal resolve has an
+    // unchanging sequence to average (#826).
+    frame_index: u32,
     _pad_samples0: u32,
     _pad_samples1: u32,
-    _pad_samples2: u32,
 }
 
 // One froxel's record. Mirrors `ClusterCell` in `cluster_common.wgsl`,

@@ -314,11 +314,23 @@ fn tile_light_casts(slot: u32) -> bool {
 /// Keying on the global index makes the choice a property of the light
 /// and the pixel. The run can be permuted at will and the same lights
 /// come out.
-fn tile_light_random(light_index: u32, pixel: vec2<u32>, stratum: u32) -> f32 {
+/// `salt` decorrelates draws that share a light and a pixel.
+///
+/// 🔴 It is a third channel and not something folded into `pixel`, and
+/// that is the whole reason the frame index goes here. The pair is mixed
+/// as `pixel.x * 2654435761u + pixel.y * 40503u`, so a frame index added
+/// into a pixel lane is a frame index that also *moves the pixel*: the
+/// next frame draws what a neighbour drew this frame. That is spatial
+/// correlation wearing temporal clothes, and a temporal resolve cannot
+/// remove it — it is exactly the failure this parameter avoids.
+///
+/// Both call sites passed `0u` before #826, so nothing loses a channel
+/// by this carrying the frame.
+fn tile_light_random(light_index: u32, pixel: vec2<u32>, salt: u32) -> f32 {
     var h = light_index * 747796405u + 2891336453u;
     h = h ^ ((pixel.x * 2654435761u) + (pixel.y * 40503u));
     h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
-    h = h ^ (stratum * 1013904223u);
+    h = h ^ (salt * 1013904223u);
     h = (h >> 22u) ^ h;
     // 24 bits is every value an f32 can hold exactly below 1.0.
     return f32(h >> 8u) * (1.0 / 16777216.0);
@@ -476,7 +488,8 @@ fn tile_choose(cell: u32, seed: u32, stratum: u32, strata: u32) {
         // them. `tile_lights[slot]` is the light's global index, which is
         // what makes the winner independent of where the grid's atomics
         // happened to put it this frame.
-        let u = fract(tile_light_random(tile_lights[slot], vec2<u32>(seed, 0u), 0u)
+        let u = fract(
+            tile_light_random(tile_lights[slot], vec2<u32>(seed, 0u), inti.frame_index)
             + f32(stratum) * inv_used);
         // `-log(u) / w` is an exponential of rate `w`; the smallest of a
         // set of them belongs to index `i` with probability `w_i /
@@ -606,7 +619,8 @@ fn shade_picked_from_tile(
                         continue;
                     }
                     let u = fract(
-                        tile_light_random(tile_lights[tile_pick[at]], seed, 0u)
+                        tile_light_random(
+                            tile_lights[tile_pick[at]], seed, inti.frame_index)
                         + f32(k) * inv_keep);
                     let key = -log(max(u, 1e-7)) / a;
                     if (key < best_key) {

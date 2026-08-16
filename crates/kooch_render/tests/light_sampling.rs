@@ -380,3 +380,77 @@ fn sampling_composes_with_half_rate() {
         error * 100.0,
     );
 }
+
+/// 🔴 The other half of the anti-flicker rule: with a temporal resolve
+/// running, the sampling **must** decorrelate between frames.
+///
+/// `the_same_view_samples_the_same_lights` above and this one look like
+/// they contradict each other, and the pair is the finding. #826 asked
+/// for the frame index in the seed because without it a still camera
+/// draws the same sample forever and the resolve averages an unchanging
+/// sequence to exactly the pattern it was meant to remove. That test's
+/// docs asked for the opposite in as many words — *"seeding from a frame
+/// counter [...] would put the shimmer straight back"*, measured at 7075
+/// pixels changing between two identical frames.
+///
+/// Both are right, and the condition neither of them named is whether
+/// anything downstream is integrating. Noise that changes every frame is
+/// what a resolve consumes and what an unresolved image shows as
+/// shimmer. So the seed carries the frame exactly when the resolve is
+/// on, and the two tests pin the two regimes.
+///
+/// # Why this needs a control
+///
+/// With the resolve on, two consecutive frames differ *anyway*: the
+/// camera jitters and the history blends. A bare "they differ"
+/// assertion would pass with the seed change reverted, measuring the
+/// resolve instead of the sampling — which is the exact shape of
+/// mistake this suite has made before. So the frames are compared at
+/// `light_samples = 0`, where no seed is drawn at all, and the sampled
+/// pair has to move substantially more than that floor.
+#[test]
+fn a_resolve_gets_a_sequence_to_average() {
+    let Some(mut r) = rig(4, true) else {
+        eprintln!("no adapter with the 64-bit texture-atomic bundle; skipping");
+        return;
+    };
+    r.resources.insert(LightLimit(0));
+    r.resources
+        .insert(kooch_render::quality::TemporalSettings { enabled: true });
+
+    // The control: the resolve and the jitter, with nothing sampled.
+    r.resources.insert(LightSamples(0));
+    let _ = render_at(&mut r, true, ShadingRate::Full);
+    let walk_a = render_at(&mut r, true, ShadingRate::Full);
+    let walk_b = render_at(&mut r, true, ShadingRate::Full);
+    let floor = mean_delta(&walk_a, &walk_b);
+
+    // The same two frames, sampling two lights of the froxel.
+    r.resources.insert(LightSamples(2));
+    let _ = render_at(&mut r, true, ShadingRate::Full);
+    let sampled_a = render_at(&mut r, true, ShadingRate::Full);
+    let sampled_b = render_at(&mut r, true, ShadingRate::Full);
+    let moved = mean_delta(&sampled_a, &sampled_b);
+
+    // 🔴 The multiplier is measured, not chosen to look strict, and the
+    // first version of this test got it wrong in the direction that
+    // matters: at `floor * 2.0` it PASSED with the seed change reverted.
+    //
+    // | | floor (no sampling) | moved (2 samples) |
+    // |---|---|---|
+    // | frame in the seed | 0.220 | **6.114** |
+    // | seed without it | 0.220 | 0.898 |
+    //
+    // 0.898 is not zero because the resolve is genuinely running: the
+    // camera jitters and the history blends even when the same lights
+    // are picked every frame. That is the number this has to clear, and
+    // `floor * 2.0` sat underneath it. Ten leaves 2.4x of headroom
+    // below the broken case and 2.8x above it.
+    assert!(
+        moved > floor * 10.0,
+        "sampling moved {moved:.3}/255 between consecutive resolved frames against a \
+         no-sampling floor of {floor:.3}. Reverting the frame index measured 0.898 here, so \
+         a value near that means the seed is not carrying it and the resolve is averaging \
+         the same draw over and over — see IntiFrame::frame_index.",
+    );
+}
