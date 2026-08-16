@@ -763,3 +763,61 @@ fn does_the_shadow_close_up_at_a_finer_lod() {
         eprintln!("wrote {name}");
     }
 }
+
+/// The new view (#852), on the owner's scene.
+///
+/// Nothing on top of the cube's answer, so what comes out is readable as
+/// a fault and not as a shade: magenta no caster, blue past range, grey
+/// the factor itself.
+#[test]
+#[ignore = "writes PNGs to look at; not an assertion"]
+fn the_point_shadow_factor_view() {
+    const BALL: Vec3 = Vec3::new(0.0, 0.5, 0.0);
+    let Some(mut rig) = owners_rig(true) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    rig.resources
+        .insert(kooch_render::meshlet::MeshletDebugMode::PointShadowFactor);
+    for (name, eye) in [
+        ("factor_high.png", Vec3::new(2.6, 9.0, 4.0)),
+        ("factor_low.png", Vec3::new(5.0, 3.0, 5.0)),
+    ] {
+        let camera = ViewCamera::looking_at(eye, BALL);
+        rig.stage
+            .render_with_assets_primary(&rig.device, &rig.queue, &rig.resources, &camera, 1.0);
+        let px = read_rgba8(&rig.device, &rig.queue, rig.stage.color_texture());
+        let path = format!("/tmp/kooch_point_shadows/{name}");
+        image::save_buffer(&path, &px, SIZE, SIZE, image::ColorType::Rgba8).unwrap();
+        eprintln!("wrote {path}");
+    }
+}
+
+/// The cube view (#852), on the owner's scene.
+#[test]
+#[ignore = "writes PNGs to look at; not an assertion"]
+fn the_point_cube_view() {
+    const BALL: Vec3 = Vec3::new(0.0, 0.5, 0.0);
+    let Some(mut rig) = owners_rig(true) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    rig.resources
+        .insert(kooch_render::meshlet::MeshletDebugMode::PointCubeFaces);
+    // Straight down, so the floor fills the frame: the view is a
+    // SURFACE shader, so it paints only where there is geometry and the
+    // sky leaves its cells blank.
+    let camera = ViewCamera::looking_at(Vec3::new(0.0, 9.0, 0.2), BALL);
+    rig.stage
+        .render_with_assets_primary(&rig.device, &rig.queue, &rig.resources, &camera, 1.0);
+    let px = read_rgba8(&rig.device, &rig.queue, rig.stage.color_texture());
+    image::save_buffer(
+        "/tmp/kooch_point_shadows/cube_faces.png",
+        &px,
+        SIZE,
+        SIZE,
+        image::ColorType::Rgba8,
+    )
+    .unwrap();
+    eprintln!("wrote cube_faces.png");
+}

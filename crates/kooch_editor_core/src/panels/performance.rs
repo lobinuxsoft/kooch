@@ -451,6 +451,36 @@ fn debug_controls(
             }
         }
     }
+    // A legend, because this view's whole value is that its three cases
+    // are different faults and not different amounts of the same one.
+    // Left to be inferred, blue reads as "very dark shadow".
+    if *meshlet_debug_mode == MeshletDebugMode::PointShadowFactor {
+        ui.label(
+            egui::RichText::new(
+                "grey = the cube's factor · blue = past range · magenta = no caster",
+            )
+            .small()
+            .weak(),
+        )
+        .on_hover_text(
+            "The cube map's answer with nothing on top of it: no BRDF, no cosine, no \
+             exposure, no ambient, no second light. Black is fully occluded, white fully \
+             lit. Select a point light in the World panel to ask about that one; otherwise \
+             it answers for the strongest lamp reaching each pixel.",
+        );
+    }
+    if *meshlet_debug_mode == MeshletDebugMode::PointCubeFaces {
+        ui.label(
+            egui::RichText::new("+X -X +Y / -Y +Z -Z · dark blue = nothing recorded")
+                .small()
+                .weak(),
+        )
+        .on_hover_text(
+            "The cube map opened up, one cell per world axis. Dark blue is a face with no \
+             occluder in it — what a caster culled out of the shadow pass looks like. The \
+             grey ramp is distance to the recorded occluder over the lamp's range.",
+        );
+    }
     // The scale is a control, not a caption. A heatmap's top of scale is
     // the one number that decides whether the picture says anything: at
     // 16 a hundred-light stress scene is flat red and at 40 the same
