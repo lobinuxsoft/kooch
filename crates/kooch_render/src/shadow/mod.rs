@@ -39,5 +39,7 @@ pub use point::{
     PointShadowDraw, face_view_proj, light_scene_hash, point_shadow, select_point_casters,
 };
 pub use raster::ShadowRasterizer;
-pub use settings::{DEFAULT_SHADOW_DISTANCE, ShadowSettings};
+pub use settings::{
+    DEFAULT_POINT_SHADOWS, DEFAULT_SHADOW_DISTANCE, ShadowSettings, point_shadows_from_environment,
+};
 pub use spot::{SPOT_SHADOW_NEAR_Z, SpotShadowDraw, spot_shadow};

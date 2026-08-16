@@ -32,6 +32,14 @@ pub const DEFAULT_FIRST_CASCADE_DISTANCE: f32 = 10.0;
 pub const DEFAULT_CASCADE_TEXELS: u32 = super::atlas::DEFAULT_CASCADE_SIZE;
 
 /// Shadow settings, as a `Resource`.
+/// Cubes a project gets before it asks for more.
+///
+/// Four, unchanged from when it was a hard constant: it is what every
+/// capture so far was taken against, and a default that quietly costs a
+/// project 192 MiB of VRAM would be a worse surprise than a shadow that
+/// pops.
+pub const DEFAULT_POINT_SHADOWS: u32 = 4;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShadowSettings {
     /// Distance from the camera the cascades cover, in metres.
@@ -49,6 +57,26 @@ pub struct ShadowSettings {
     /// Where the first cascade ends, in metres. The rest follow
     /// logarithmically out to `max_distance`.
     pub first_cascade_distance: f32,
+    /// How many point lights may hold a cube at once (#849).
+    ///
+    /// 🔴 The one number that decides whether shadows **pop**. Which
+    /// lights hold the cubes is chosen per frame from where the camera
+    /// is, so when the budget is smaller than the number of lights on
+    /// screen, moving hands the cubes to different lamps and a shadow
+    /// appears or vanishes with no authored reason. Raising it does not
+    /// make shadows better — it makes them stop changing.
+    ///
+    /// **6 MiB each**, six faces of 512² at `Depth32Float`. Clamped to
+    /// [`MAX_POINT_SHADOWS`](kooch_lighting::MAX_POINT_SHADOWS), which
+    /// sizes the uniform array and costs nothing unspent.
+    pub point_shadows: u32,
+}
+
+impl ShadowSettings {
+    /// The budget, never past what the uniform can address.
+    pub fn point_budget(&self) -> usize {
+        (self.point_shadows as usize).min(kooch_lighting::MAX_POINT_SHADOWS)
+    }
 }
 
 impl Default for ShadowSettings {
@@ -59,6 +87,7 @@ impl Default for ShadowSettings {
             enabled: true,
             sun_softness: kooch_lighting::DEFAULT_SUN_SOFTNESS,
             first_cascade_distance: DEFAULT_FIRST_CASCADE_DISTANCE,
+            point_shadows: DEFAULT_POINT_SHADOWS,
         }
     }
 }
@@ -77,3 +106,31 @@ impl ShadowSettings {
 
 #[cfg(test)]
 mod tests;
+
+/// `KOOCH_POINT_SHADOWS=<count>`, read once (#849).
+///
+/// The seventh variable of its family, for the reason all of them exist:
+/// the question this answers — does raising the budget stop the shadows
+/// from popping, and what does it cost — is answered on the OneXFly
+/// through Steam, where reaching the settings asset means a repack and a
+/// copy.
+pub fn point_shadows_from_environment() -> Option<u32> {
+    static COUNT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *COUNT.get_or_init(|| {
+        let count = std::env::var("KOOCH_POINT_SHADOWS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u32>().ok());
+        if let Some(count) = count {
+            tracing::info!(
+                target: "kooch_render::shadow",
+                "KOOCH_POINT_SHADOWS={count}: up to {count} point lights hold a cube \
+                 at once, {} MiB of it",
+                count as u64 * 6,
+            );
+        }
+        count
+    })
+}
+
+#[cfg(test)]
+mod budget_tests;

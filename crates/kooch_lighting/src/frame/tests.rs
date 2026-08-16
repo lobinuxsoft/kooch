@@ -39,7 +39,11 @@ fn frame_size_matches_shader() {
         std::mem::size_of::<IntiFrame>(),
         HEADER + CASCADES + TAIL + SPOT_SHADOWS + SPOT_TAIL + POINT_SHADOWS + CLUSTERS + SAMPLES,
     );
-    assert_eq!(std::mem::size_of::<IntiFrame>(), 1008);
+    // The literal, so a layout change is noticed and not merely
+    // recomputed by the sum above. It moves with `MAX_POINT_SHADOWS`:
+    // 1008 at a budget of 4, 1456 at 32 (#849). Nothing else in this
+    // struct is allowed to move it silently.
+    assert_eq!(std::mem::size_of::<IntiFrame>(), 1456);
 }
 
 /// std140/std430 require an array's element stride to be a multiple

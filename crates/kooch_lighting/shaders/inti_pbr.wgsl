@@ -193,7 +193,7 @@ struct IntiFrame {
     // for all of them. A measuring instrument: it drops real light, and
     // it exists to answer whether the cost scales with that count.
     light_limit: u32,
-    point_shadows: array<IntiPointShadow, 4>,
+    point_shadows: array<IntiPointShadow, {{INTI_MAX_POINT_SHADOWS}}>,
     // 0 when no directional light casts, or the atlas has not been
     // rendered. The dummy 1x1 atlas bound in that case would return
     // "fully lit" anyway; the flag skips the work.
