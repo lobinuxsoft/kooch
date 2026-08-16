@@ -6,6 +6,59 @@ use crate::mesh::MeshVertex;
 use crate::meshlet::asset::{MeshletDescriptor, MeshletMesh};
 
 use super::descriptor::{MeshDescriptor, MeshHandle};
+use glam::{Mat4, Vec3};
+
+/// A mesh's extent, as one sphere in mesh space.
+///
+/// A sphere and not the AABB it is derived from: the question it answers
+/// is "does this instance come within a light's range", and a sphere
+/// survives an arbitrary rotation where an AABB has to be rebuilt.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct MeshBounds {
+    pub center: Vec3,
+    pub radius: f32,
+}
+
+impl MeshBounds {
+    /// The union of every meshlet's AABB, as a sphere.
+    ///
+    /// Every LOD level, not just LOD 0: a coarser level is a simplified
+    /// copy of the same surface and can bulge slightly past the original.
+    /// Conservative in the direction that matters — a sphere too large
+    /// redraws a cube that did not need it, one too small freezes a
+    /// shadow, and only the second is silent.
+    pub fn of_meshlets(meshlets: &[MeshletDescriptor]) -> Self {
+        let Some(first) = meshlets.first() else {
+            return Self::default();
+        };
+        let mut min = Vec3::from(first.aabb_min);
+        let mut max = Vec3::from(first.aabb_max);
+        for meshlet in &meshlets[1..] {
+            min = min.min(Vec3::from(meshlet.aabb_min));
+            max = max.max(Vec3::from(meshlet.aabb_max));
+        }
+        Self {
+            center: (min + max) * 0.5,
+            radius: (max - min).length() * 0.5,
+        }
+    }
+
+    /// The same sphere after `transform`, in world space.
+    ///
+    /// The radius scales by the LARGEST axis scale, because a sphere has
+    /// no axes to scale separately: taking the average would shrink the
+    /// bound on a stretched instance, which is the silent failure.
+    pub fn transformed(&self, transform: Mat4) -> (Vec3, f32) {
+        let center = transform.transform_point3(self.center);
+        let scale = transform
+            .x_axis
+            .truncate()
+            .length()
+            .max(transform.y_axis.truncate().length())
+            .max(transform.z_axis.truncate().length());
+        (center, self.radius * scale)
+    }
+}
 
 /// CPU-side accumulator. Call [`Self::register`] once per meshlet mesh,
 /// then [`super::GpuGlobalMeshPool::upload`] to push the latest state to
@@ -17,6 +70,15 @@ pub struct GlobalMeshPool {
     pub vertices: Vec<MeshVertex>,
     pub meshlet_vertices: Vec<u32>,
     pub meshlet_triangles: Vec<u8>,
+    /// One bounding sphere per registered mesh, in MESH space, parallel
+    /// to `mesh_descriptors` (#847).
+    ///
+    /// 🔴 A separate array and not a field on [`MeshDescriptor`]: that
+    /// struct is `#[repr(C)]` and uploaded verbatim, mirrored by WGSL
+    /// that would read every field after the insertion at the wrong
+    /// offset — and **would not fail to compile**. This is read by the
+    /// CPU only.
+    pub mesh_bounds: Vec<MeshBounds>,
     /// Sum of `1 + max_group_id` across registered meshes — the size
     /// of the per-frame `group_max_err` buffer the 2-pass cull (#465)
     /// indexes by `MeshletDescriptor::group_index`. Pooled meshes
@@ -66,6 +128,8 @@ impl GlobalMeshPool {
     /// the caller should write into `MeshInstance::mesh_id`.
     pub fn register(&mut self, mesh: &MeshletMesh) -> MeshHandle {
         let mesh_id = self.mesh_descriptors.len() as u32;
+        self.mesh_bounds
+            .push(MeshBounds::of_meshlets(&mesh.meshlets));
 
         let vertex_offset = self.vertices.len() as u32;
         let meshlet_vertex_offset = self.meshlet_vertices.len() as u32;

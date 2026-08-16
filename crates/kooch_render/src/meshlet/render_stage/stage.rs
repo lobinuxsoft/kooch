@@ -89,7 +89,10 @@ pub struct MeshletRenderStage {
     /// Hash of every instance uploaded this frame, and the cached cube
     /// key per point-shadow slot (#778). Together they answer "may last
     /// frame's six faces stand".
-    pub(super) scene_hash: u64,
+    /// One entry per instance this frame — see
+    /// [`InstanceBounds`](crate::shadow::InstanceBounds). Replaces the
+    /// single scene-wide hash the cube cache used to key on (#847).
+    pub(super) instance_bounds: Vec<crate::shadow::InstanceBounds>,
     pub(super) point_cube_cache: Vec<Option<crate::shadow::CubeKey>>,
 
     /// GPU mirror of [`MeshletPipeline::pool`]. Lazy-rebuilt by
