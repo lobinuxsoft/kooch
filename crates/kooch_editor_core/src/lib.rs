@@ -33,6 +33,11 @@ pub(crate) mod layout;
 pub(crate) mod menu_bar;
 pub(crate) mod numeric;
 pub(crate) mod panels;
+/// Re-exported for `capture_remote`, which is a client of the same
+/// `puffin_http::Client` the panel drives and needs the same guard
+/// against a long capture discarding its own scope names.
+#[cfg(feature = "profiling")]
+pub use panels::profiler::keep_all_frames;
 pub mod perf;
 mod picking;
 pub mod play_state;

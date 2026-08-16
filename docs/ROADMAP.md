@@ -34,7 +34,37 @@ feature this engine has.
 
 ⚠️ **At 10 W the GPU clocks well below its desktop behaviour.** A
 measurement taken plugged in and unthrottled says nothing about this
-target. Every number here is taken on the device, at 10 W.
+target. Every number here is taken on the device.
+
+### 🔴 …but not every number here was taken at 10 W. Warm the device first
+
+**Measured 2026-08-16, `many_lights.scene`, five unbroken minutes from
+the game's first frame:**
+
+| | first 2 min | after | |
+|---|---|---|---|
+| frame | **27.8 ms** | **40.7 ms** | +46 % |
+| GPU work | 25.1 ms | 31.3 ms | +25 % |
+| `sclk` | ~1150 MHz | ~850 MHz | −26 % |
+| package power | **12.0 W** | **10.0 W** | |
+
+The handheld runs a boost budget for about two minutes and then settles.
+RSS and VRAM are flat across the whole run, so nothing in the engine is
+accumulating — the GPU is doing the same work at a lower clock.
+
+**The settled state is the one this budget is about**, since the target
+is written at 10 W. So the frame to judge against 13.9 ms is **40.7 ms,
+2.9× over** — not the 27.8 ms a short capture reports.
+
+🔴 **Any capture shorter than ~2 minutes measured the boosted chip.**
+That includes most of the numbers in the sections below, and it retires
+a discrepancy that was being treated as a mystery: a capture reading
+41.4 ms and another reading 27.8 ms on the same build were the same
+engine in two thermal states, not two engines.
+
+⚠️ **Procedure, from now on:** let the game run two minutes before
+capturing, or capture long enough to contain the transition and read it
+with `read_capture --over-time`, which prints the drift and says so.
 
 ---
 
