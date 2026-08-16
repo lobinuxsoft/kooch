@@ -89,7 +89,23 @@ pub fn draw_launch_screen(
             ui.add_space(40.0);
             ui.heading(egui::RichText::new("Kóoch").size(32.0).strong());
             ui.add_space(8.0);
-            ui.label(egui::RichText::new("Project Manager").size(14.0).weak());
+            // The editor's own version, next to the word that names the
+            // screen. Each row below shows the engine version its
+            // project is pinned to, and the two being different is
+            // normal — but the comparison is unreadable while only one
+            // of the two numbers is on screen.
+            ui.label(
+                egui::RichText::new(format!(
+                    "Project Manager · {}",
+                    crate::engine_vendor::editor_engine_version()
+                ))
+                .size(14.0)
+                .weak(),
+            )
+            .on_hover_text(
+                "This editor's version. A project pinned to another one keeps building \
+                 against the engine it names — use its button to move it here.",
+            );
             ui.add_space(24.0);
         });
 
