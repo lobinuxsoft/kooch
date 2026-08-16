@@ -53,6 +53,11 @@ struct Rig {
     resources: Resources,
     stage: MeshletRenderStage,
     camera: ViewCamera,
+    /// So a test can add geometry of its own — the suite's own cube
+    /// stands ON the floor, and a light directly above it hides its
+    /// shadow under it.
+    mesh: Guid,
+    material: Guid,
 }
 
 fn build_rig() -> Option<Rig> {
@@ -123,6 +128,8 @@ fn build_rig() -> Option<Rig> {
         queue,
         resources,
         stage,
+        mesh: mesh_guid,
+        material: material_guid,
         // 🔴 Nearly overhead, and that is a requirement rather than a
         // framing choice. The sweep measures the floor on all four
         // sides of the cube, and from a low camera the cube stands
@@ -669,5 +676,53 @@ fn an_offscreen_caster_still_casts() {
         shadowed < lit * 0.7,
         "with the caster off screen the floor reads {shadowed} in its shadow and \
          {lit} beside it — the shadow pass is being fed the camera's visible set",
+    );
+}
+
+/// 🔴🔴🔴 A lamp directly above its occluder.
+///
+/// Reported from the editor with a picture: the lamp standing straight
+/// over the ball casts **nothing**, while a second lamp off to the side
+/// casts a clean shadow in the same frame, same scene, same settings.
+///
+/// The whole suite lights from `SWEEP` — (±5, 6, 0) and (0, 6, ±5) —
+/// every one of them off to a side. A shadow cast straight down is
+/// resolved almost entirely by the cube's **−Y face**, and no assertion
+/// here had ever asked that face a question.
+///
+/// The occluder floats, because the suite's own cube stands on the floor
+/// and its shadow at noon hides underneath it.
+#[test]
+fn a_lamp_straight_overhead_casts_down() {
+    let Some(mut rig) = build_rig() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let mesh = rig.mesh;
+    let material = rig.material;
+    let mut commands = Commands::new();
+    commands
+        .spawn(&mut rig.resources)
+        .insert(MeshRenderer {
+            mesh: Some(mesh),
+            material: Some(material),
+            visible: true,
+            ..Default::default()
+        })
+        .insert(GlobalTransform {
+            matrix: Mat4::from_translation(Vec3::new(3.0, 3.0, 0.0)),
+        });
+    commands.apply(&mut rig.resources);
+
+    // Straight above it. Nothing lateral about this at all.
+    add_point(&mut rig.resources, Vec3::new(3.0, 6.0, 0.0), true);
+    let pixels = render(&mut rig);
+
+    let shadowed = luminance(&pixels, &rig.camera, Vec3::new(3.0, 0.0, 0.0));
+    let lit = luminance(&pixels, &rig.camera, Vec3::new(3.0, 0.0, 3.0));
+    assert!(
+        shadowed < lit * 0.7,
+        "a lamp directly overhead leaves the floor under its occluder at \
+         {shadowed} against {lit} beside it — the -Y cube face is not answering",
     );
 }
