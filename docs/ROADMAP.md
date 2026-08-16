@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-12 — **the frame on the OneXFly is fill-rate bound**: 72 ms against a budget of 13.9, the GPU at 96 %, and the whole thing collapsing 5.2× when the internal resolution drops. The order is set by a performance budget, and that budget now has a verdict in it, not just a number.
+Last updated 2026-08-16 — **the next three are ordered, and the first one is the ruler**: our profiler and the compositor disagree about this game's frame time by 2×, so the queue starts by reconciling them rather than by optimising against a number that may be wrong. Then the seed that makes #826 usable, then the contact march's cap. The budget below is unchanged and still unmet.
 
 ---
 
@@ -57,7 +57,8 @@ said.
 | ~~#780~~ | ~~GPU clustering — the froxel grid~~ | **Done and measured** (2026-08-14). The busiest froxel holds 26 lights against 12 that reach a point — ~24 % over-listing, ordinary for clustering. It costs 0.15 ms. Not a suspect |
 | ~~#824~~ | ~~shade in a compute pass, tile's lights in LDS~~ | **Built and measured: 6.6 %.** Fifteen storage fetches per pixel became fifteen per tile and the shading went 35.98 → 33.60 ms. Its value is what it revealed and unlocked, not the 6.6: the raster is **3.74 ms of 37.34**, so shading is 90 % of that pass — and #825 is buildable now |
 | ~~#825~~ | ~~shade at half rate, raster stays full~~ | **Built.** Lighting runs at one sample per 2×2 quad, upsampled with the vbuf as the edge guide, so the silhouette on screen is still the raster's — asserted exactly, not approximately. `KOOCH_SHADING_RATE=half`. The device capture is what closes it |
-| ~~#826~~ | ~~sample the tile's lights, 15 → 2-4~~ | **Built twice.** A light is picked in proportion to what it contributes and divided by the probability of the pick, so two lights land 5 % from the full walk's brightness where two *truncated* ones land 83 % away. `KOOCH_LIGHT_SAMPLES`, capped at 8. The first version chose **per pixel** and the device refused it; the second chooses **per froxel, cooperatively** — see below. It also found what the froxel flicker really was |
+| ~~#826~~ | ~~sample the tile's lights, 15 → 2-4~~ | **Built twice.** A light is picked in proportion to what it contributes and divided by the probability of the pick, so two lights land 5 % from the full walk's brightness where two *truncated* ones land 83 % away. `KOOCH_LIGHT_SAMPLES`, capped at 8. The first version chose **per pixel** and the device refused it; the second chooses **per froxel, cooperatively** — see below. It also found what the froxel flicker really was. 🔴 **Unusable at `light_samples > 0` until the seed carries the frame** — `material_pbr_compute.wgsl` seeds on `frag_coord` alone, so every frame draws the same sample and the TAA has nothing to average. That is **B** above |
+| ~~#851 / #853~~ | ~~a point light's cube was culled with another lamp's frustum~~ | **Merged.** `queue.write_buffer` is not ordered against the encoder — every write queued while a frame is recorded lands before the first command runs. The six cube culls belong to the **face** and are shared by every lamp, so with two casting point lights both cubes were culled against whichever frustum was written last while each was still rasterised with its own matrix. It accounts for all three reports at once: the shadow that dies unless the lamp moves (a moving lamp is redrawn alone, one dispatch), the different picture in each panel (the slot order is the importance ranking, computed from the camera), and the breakage when lamps overlap. Also here: point lights had been running on the **sun's** shadow bias, and `select_point_casters` culled per *view* against state owned by the *stage* |
 | ~~#835~~ | ~~a light out of range paid the full BRDF, its shadow cube and the contact march~~ | **Merged (#836).** The froxel is conservative by design and hands the loop lights that reach no part of a given pixel — ~26 of the ~40 in the busiest cell. Nothing asked again at the pixel, so all of it ran and was then multiplied by an irradiance of exactly zero. The cut reuses the `reach` already computed for `specular_floor` and is bit-exact. Half-rate shading on the device went 48.791 → 21.6 ms across the change, with a camera difference in the way |
 | ~~#837~~ | ~~submit the scene before acquiring the swapchain image~~ | **Merged, and it bought nothing.** Structurally right — the meshlet stage draws into its own textures and had no reason to be gated on the surface — but the frame was already 0.66 ms from the GPU, not 3. See the refutation below |
 | ~~#796 / #819~~ | ~~ReSTIR / Solari~~ | **Ruled out for this hardware.** Solari's world cache alone is 2.65 ms per refresh in Bistro on the author's machine — 19 % of our whole budget, on far faster silicon — and denoising runs through DLSS Ray Reconstruction, which the 890M has no path to |
@@ -66,6 +67,85 @@ said.
 | **#254** | post + auto exposure | The blown-out white floor in three sessions of screenshots. Cheap |
 | **#771 / #248** | atmosphere, ported from Bevy | Now worth doing for the sky it gives, not for what it saves: 1.2 ms without clouds |
 | ~~#481~~ / **#536** | ~~motion vectors + TAA~~ / FSR | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest 1 % of edges the resolved image carries **0.38** of the squared gradient the unresolved one does. **Off by default** — asset and engine alike, see below. FSR still open |
+
+### 🎯 The next three, in order — decided 2026-08-16
+
+The user set the order. It is **A → B → C**, and A is first because of what the device
+said today rather than because it is the biggest win. It is not.
+
+| | | Why in this position |
+|---|---|---|
+| **A · #785** | reconcile the profiler with an outside measurement | Our scopes say `Render` **35.7 ms**; gamescope's stats pipe says **20 ms**. Everything else in this queue is chosen by a ruler that may be 2× out |
+| **B · #826** | put the frame index in the sampling seed | The seed is `vec2<u32>(frag_coord)` and nothing else, so the noise is identical every frame and the TAA has nothing to average. Unblocks the only lever aimed at the 15.4 ms |
+| **C · #839** | cap the contact-shadow march | Cheap, and its cost is buried inside B's pass — so it is measurable only after B |
+
+#### A — the instrument, before the optimisation
+
+`/run/user/1000/gamescope.*/stats.pipe` emits `fps=` and `focus=` and needs nothing
+instrumented. **That is the outside measurement this roadmap has been asking for since the
+doubled-frame section below**, and the first thing it did was disagree with us.
+
+```
+gamescope stats pipe   50-70 fps        (20.0 ms)
+our capture            p50 41.4 ms      (24 fps)
+gpu_busy_percent       93-99 %
+GPU work per frame     ~31 ms, flat in EVERY decile
+```
+
+`gpu_busy` at 95 % with 31 ms of GPU work closes with ~32 fps, so the suspect is gamescope
+— but *suspect* is not *refuted*, and this file has twice recorded a doubled-frame
+hypothesis that later fell. The tiebreaker is `KOOCH_FRAME_METRICS=log` as a Steam launch
+option: wall clock between frame starts, measured inside the game, no transport.
+
+⚠️ `focus=steam` in that pipe means the game is **not** in front and the number is void.
+Check it before believing anything — an unfocused window is how this project got a 5×
+better and entirely false reading once already.
+
+🟢 Re-confirmed while we were there: **the profiler client costs nothing.** Same run,
+50.6 / 49.6 / 50.2 fps before, during and after attaching it. The "846 frames in 30 s" is
+the transport dropping frames, not the game slowing down.
+
+#### B — six milliseconds already being spent that buy nothing yet
+
+The device frame, `many_lights.scene`, v0.2.41:
+
+```
+raster + shade                 28.6 ms
+├─ shade: compute (half rate)  15.4      ← half the GPU frame
+├─ taa                          3.7      ← new since 2026-08-14
+├─ motion vectors               2.6      ← new
+├─ shade: upsample              1.7
+├─ tonemap                      0.8
+└─ (self)                       4.2
+shadows 0.82 · blit 0.55 · sky 0.31 · cluster grid 0.21
+```
+
+**TAA + motion vectors are 6.4 ms, 21 % of the GPU frame**, on a device already 2.2× over
+budget. They are worth that only if something needs temporal averaging, and the one thing
+that would — #826's sampling — produces the *same* noise every frame because of the seed.
+One line turns 6.4 ms of cost into the enabler for the 15.4.
+
+#### Measured, and not a 5×
+
+Against the like-for-like capture of 2026-08-14, same scene:
+
+| | 2026-08-14 | 2026-08-16 |
+|---|---|---|
+| frame median | 39.31 ms | ~40 ms |
+| `raster + shade` | 31.41 | **28.7** |
+| shadows / blit / sky / cluster grid | 0.699 / 0.479 / 0.268 / 0.153 | 0.824 / 0.551 / 0.311 / 0.209 |
+
+⚠️ The four passes nothing here touches are all **16-37 % higher**, so this run's machine
+was slower — 11.6 W, `sclk` 1141 of 2900, 58 °C, which is **power-limited and not
+thermal**. Against that drift `raster + shade` still came down.
+
+🔴 And the frame is **not** five times better. The 72.17 ms on record is a *different
+scene*; this build's `main_scene` is `many_lights.scene`. Check `project.kooch` before
+comparing two captures — that mistake was made and retracted the same day.
+
+🔴 The doubled frame **survives everything shipped**: `frame/GPU` p0 1.05 → p90 2.29, with
+the GPU work flat at ~31 ms across all of them. Slow frames do exactly the work fast ones
+do.
 
 ### ❌ The doubled frame is not the swapchain, 2026-08-15
 
