@@ -93,13 +93,20 @@ fn build(lights: &[(Vec3, bool)], occluder: bool, compute: bool) -> Option<Rig> 
     );
     let mesh = Guid::new_v4();
     stage.ensure_gpu_mesh(&device, mesh, &meshlet_mesh);
+    // A dense sphere for the caster, because the owner's is a ball and
+    // a cube is six quads: a defect that drops SOME meshlets of an
+    // object cannot show on geometry that has almost none.
+    let ball_mesh =
+        build_default_meshlets(&common::build_sphere_mesh(32, 48)).expect("build sphere");
+    let ball = Guid::new_v4();
+    stage.ensure_gpu_mesh(&device, ball, &ball_mesh);
 
     let mut commands = Commands::new();
-    let mut spawn = |matrix: Mat4| {
+    let mut spawn = |matrix: Mat4, which: Guid| {
         commands
             .spawn(&mut resources)
             .insert(MeshRenderer {
-                mesh: Some(mesh),
+                mesh: Some(which),
                 material: Some(material),
                 visible: true,
                 ..Default::default()
@@ -109,9 +116,13 @@ fn build(lights: &[(Vec3, bool)], occluder: bool, compute: bool) -> Option<Rig> 
     spawn(
         Mat4::from_translation(Vec3::new(0.0, -0.25, 0.0))
             * Mat4::from_scale(Vec3::new(20.0, 0.5, 20.0)),
+        mesh,
     );
     if occluder {
-        spawn(Mat4::from_translation(Vec3::new(0.0, 0.5, 0.0)));
+        spawn(
+            Mat4::from_translation(Vec3::new(0.0, 0.5, 0.0)) * Mat4::from_scale(Vec3::splat(0.5)),
+            ball,
+        );
     }
 
     for (position, cast_shadows) in lights {
@@ -281,4 +292,109 @@ fn two_cameras_must_agree() {
     // must be the same picture — anything else is the cube remembering
     // who looked at it last.
     shoot(&mut rig, "agree_3_back.png", Vec3::new(6.0, 5.0, 6.0));
+}
+
+/// The remaining report — "dependiendo de en qué posición esté la cámara
+/// la point light genera sombras cortadas o no las genera".
+///
+/// A dense ball, the lamp at the position the inspector showed, and NINE
+/// cameras around it through ONE stage, so the cube cache lives across
+/// all of them exactly as it does in a running editor. The cube maps are
+/// rendered from the LIGHT: the shadow must land on the same patch of
+/// floor in every one of these, whole, with no straight edge cutting it.
+#[test]
+#[ignore = "writes PNGs to look at; not an assertion"]
+fn the_shadow_must_not_depend_on_the_camera() {
+    // Straight off the inspector.
+    const LAMP: Vec3 = Vec3::new(-2.651, 3.477, -1.813);
+    let Some(mut rig) = build(&[(LAMP, true)], true, true) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    // Around the ball at a constant height and radius, so the only
+    // thing that changes between frames is where the lens is.
+    for i in 0..9 {
+        let a = i as f32 * std::f32::consts::TAU / 8.0;
+        let eye = Vec3::new(a.cos() * 6.0, 4.0, a.sin() * 6.0);
+        shoot(&mut rig, &format!("orbit_{i}.png"), eye);
+    }
+}
+
+/// The editor's arrangement, which no test has ever had: **two views on
+/// one stage**.
+///
+/// `render_with_assets(view_id, ..)` runs the whole frame per view, and
+/// `prepare_shadows` takes the CAMERA. So `select_point_casters` culls
+/// lamps against whichever camera is rendering, while
+/// `point_cube_cache` and `point_shadow_holders` belong to the stage and
+/// are shared. Every previous picture in this file came from one view,
+/// which is why every previous picture agreed with itself.
+///
+/// The Game camera here is deliberately pointed away from the lamp, the
+/// way a gameplay camera is while the author looks at the lamp in the
+/// View panel.
+#[test]
+#[ignore = "writes PNGs to look at; not an assertion"]
+fn two_views_on_one_stage() {
+    const LAMP: Vec3 = Vec3::new(-2.651, 3.477, -1.813);
+    let Some(mut rig) = build(&[(LAMP, true)], true, true) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let second = rig.stage.create_view(&rig.device, (SIZE, SIZE));
+
+    // The reference: the View camera alone, cold, drawn twice so the
+    // second one is a cache hit with nothing else interleaved.
+    let view_eye = Vec3::new(6.0, 4.0, 0.0);
+    shoot(&mut rig, "views_0_alone.png", view_eye);
+    shoot(&mut rig, "views_1_alone_again.png", view_eye);
+
+    // Now alternate, the way the editor does every frame: Game looking
+    // away from the lamp, then View from the same eye as above. If the
+    // last picture differs from the first two, the shadow depends on
+    // who else looked this frame.
+    for round in 0..3 {
+        let game = ViewCamera::looking_at(Vec3::new(30.0, 2.0, 30.0), Vec3::new(40.0, 0.0, 40.0));
+        rig.stage
+            .render_with_assets(second, &rig.device, &rig.queue, &rig.resources, &game, 1.0);
+        shoot(
+            &mut rig,
+            &format!("views_2_after_game_{round}.png"),
+            view_eye,
+        );
+    }
+}
+
+/// Which half of the two-view frame does it: the camera-frustum cull, or
+/// the shared cube cache?
+///
+/// Same alternation as `two_views_on_one_stage`, except the Game camera
+/// is pointed AT the lamp instead of away from it. Everything else is
+/// identical — same stage, same alternation, same cache traffic. If the
+/// shadow survives this and dies in the other, the deciding input is
+/// whether the lamp fell inside the rendering camera's frustum, and
+/// `select_point_casters` culling against `camera` is the whole bug.
+#[test]
+#[ignore = "writes PNGs to look at; not an assertion"]
+fn two_views_where_game_also_sees_the_lamp() {
+    const LAMP: Vec3 = Vec3::new(-2.651, 3.477, -1.813);
+    let Some(mut rig) = build(&[(LAMP, true)], true, true) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let second = rig.stage.create_view(&rig.device, (SIZE, SIZE));
+    let view_eye = Vec3::new(6.0, 4.0, 0.0);
+    shoot(&mut rig, "sees_0_alone.png", view_eye);
+
+    for round in 0..3 {
+        // Looking at the origin, so the lamp's sphere is well inside.
+        let game = ViewCamera::looking_at(Vec3::new(0.0, 5.0, 8.0), Vec3::new(0.0, 0.5, 0.0));
+        rig.stage
+            .render_with_assets(second, &rig.device, &rig.queue, &rig.resources, &game, 1.0);
+        shoot(
+            &mut rig,
+            &format!("sees_1_after_game_{round}.png"),
+            view_eye,
+        );
+    }
 }
