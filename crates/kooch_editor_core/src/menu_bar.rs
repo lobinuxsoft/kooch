@@ -222,13 +222,32 @@ pub(crate) fn draw_menu_bar(
                 actions.push(EditorAction::Stop);
             }
 
-            // Remote status, right-aligned: a project build takes long
-            // enough that a silent editor reads as a hang.
-            if let Some(remote) = remote {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Right-aligned, and in a right-to-left layout the first
+            // thing drawn is the furthest right — so the version sits at
+            // the corner and the remote status stays beside it.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // 🔴 Which editor is this. The engine a project builds
+                // against is vendored per version, so "same version,
+                // different source" is a warning an author cannot act on
+                // without knowing what version they are running — and it
+                // is the warning that hid a stale engine for a whole
+                // session.
+                ui.label(
+                    egui::RichText::new(crate::engine_vendor::editor_engine_version())
+                        .weak()
+                        .small(),
+                )
+                .on_hover_text(
+                    "Editor version. The project builds against the engine vendored for \
+                     it, which the Project Manager shows per project.",
+                );
+                // Remote status: a project build takes long enough that a
+                // silent editor reads as a hang.
+                if let Some(remote) = remote {
+                    ui.separator();
                     draw_remote_status(ui, remote, remote_stale, actions);
-                });
-            }
+                }
+            });
         });
     });
 }

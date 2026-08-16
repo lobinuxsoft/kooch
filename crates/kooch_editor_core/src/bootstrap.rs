@@ -16,6 +16,21 @@ use kooch_world::WorldStreamingPlugin;
 use crate::EditorPlugin;
 use crate::project_state::ProjectState;
 
+/// The window's title: the editor, its version, and the open project.
+///
+/// One function rather than a `format!` at each of the three sites that
+/// set this. The version belongs here because the title bar and the task
+/// switcher are where it is legible without opening anything, and
+/// because "which editor is running" is the question a stale vendored
+/// engine makes someone ask.
+pub fn window_title(project: Option<&str>) -> String {
+    let version = crate::engine_vendor::editor_engine_version();
+    match project {
+        Some(name) => format!("{name} — Kóoch {version}"),
+        None => format!("Kóoch {version}"),
+    }
+}
+
 /// Runs the editor with no project plugin — the standalone launcher.
 pub fn run_editor() {
     run_editor_with(NoProjectPlugin);
@@ -36,7 +51,7 @@ pub fn run_editor_with<P: Plugin + 'static>(project: P) {
     app.insert_resource(crate::panels::console::ConsoleState::default());
     app.add_plugins(MinimalPlugins);
     app.add_plugin(WindowPlugin {
-        title: "Kóoch".into(),
+        title: window_title(None),
         width: 1280,
         height: 720,
     });
@@ -183,3 +198,6 @@ fn force_x11_backend_if_needed() {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

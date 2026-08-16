@@ -52,7 +52,9 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
             tracing::info!("opened project: {title}");
 
             if let Some(wh) = resources.get::<kooch_window::WindowHandle>() {
-                let _ = wh.window().set_title(&format!("{title} — Kóoch"));
+                let _ = wh
+                    .window()
+                    .set_title(&crate::bootstrap::window_title(Some(&title)));
             }
 
             // Bring an older project's layout up to date *before* looking
@@ -285,7 +287,7 @@ pub(super) fn handle_close_project(resources: &mut Resources, undo_stack: &mut U
         ps.close_project();
     }
     if let Some(wh) = resources.get::<kooch_window::WindowHandle>() {
-        let _ = wh.window().set_title("Kóoch");
+        let _ = wh.window().set_title(&crate::bootstrap::window_title(None));
     }
 
     undo_stack.clear();
