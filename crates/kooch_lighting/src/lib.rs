@@ -186,6 +186,12 @@ fn inti_contact_shadow_probe(
 fn inti_contact_shadow_debug(probe: ContactShadowProbe) -> vec3<f32> {
     return vec3<f32>(0.0);
 }
+
+// Nothing to march, so nothing to choose between: the shading model
+// takes its per-light path and every call above returns unoccluded.
+fn inti_contact_dominant_only() -> bool {
+    return false;
+}
 ";
 
 #[cfg(test)]
