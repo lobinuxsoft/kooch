@@ -200,6 +200,14 @@ impl MeshletRenderStage {
         self.shadows.as_ref().map(|s| s.atlas_texture())
     }
 
+    /// The point-light cube array, for the same reason as the atlas
+    /// above: a test that reads the map answers "is the occluder in
+    /// there" without going through the sampling path, the filter, the
+    /// bias and a surface shader — four places a picture can lie.
+    pub fn shadow_cubes_texture(&self) -> Option<&wgpu::Texture> {
+        self.shadows.as_ref().map(|s| s.cubes_texture())
+    }
+
     pub fn pipeline(&self) -> &MeshletPipeline {
         &self.pipeline
     }

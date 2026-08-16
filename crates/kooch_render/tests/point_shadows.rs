@@ -845,3 +845,64 @@ fn a_second_view_does_not_take_the_shadow_away() {
          who is looking",
     );
 }
+
+/// Two casting lamps, and **both** shadows have to be there (#853).
+///
+/// 🔴 The one this suite could not see. Every other test here lights the
+/// scene with a single lamp, and with a single lamp the pass is correct.
+///
+/// The cube cull's parameters were uploaded with `queue.write_buffer`,
+/// which is not ordered against the encoder: everything queued while a
+/// frame is recorded lands before the first command runs. The six cull
+/// objects belong to the cube FACE and are shared by every lamp, so the
+/// second lamp's frustum overwrote the first's, both cubes were culled
+/// against it, and each was still rasterised with its own matrix. The
+/// first lamp lost every occluder the second one could not see.
+///
+/// It hid behind the cube cache, too: a lamp that MOVES is redrawn on
+/// its own, one dispatch, nothing to overwrite. So the shadow appeared
+/// while the lamp moved and died when it stopped, which is how it was
+/// reported.
+#[test]
+fn a_second_lamp_does_not_erase_the_first_shadow() {
+    let (Some(mut alone), Some(mut together)) = (build_rig(), build_rig()) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    // Opposite sides, so neither shadow reaches the other's spot.
+    let (first, second) = (SWEEP[0], SWEEP[1]);
+    // The two rigs differ by ONE flag: whether the second lamp casts.
+    // It lights the scene identically either way, and at the FIRST
+    // lamp's shadow centre it is not blocked by anything — so its
+    // casting cannot legally change that pixel by any amount.
+    add_point(&mut alone.resources, first, true);
+    add_point(&mut alone.resources, second, false);
+    add_point(&mut together.resources, first, true);
+    add_point(&mut together.resources, second, true);
+
+    let probe = shadow_centre(first);
+    let one = luminance(&render(&mut alone), &alone.camera, probe);
+    let two = luminance(&render(&mut together), &together.camera, probe);
+    assert!(
+        (one - two).abs() < 0.02,
+        "the first lamp's shadow reads {one} with the second lamp not casting and {two} \
+         with it casting; the second lamp took the first one's cube",
+    );
+
+    // And the shadow has to exist, or the two agree at nothing.
+    let Some(mut neither) = build_rig() else {
+        return;
+    };
+    add_point(&mut neither.resources, first, false);
+    add_point(&mut neither.resources, second, false);
+    let open = luminance(&render(&mut neither), &neither.camera, probe);
+    // Only a few percent, and that is correct rather than weak: shadows
+    // multiply per light and lights add, so blocking one of two lamps
+    // can never take more than that lamp's share of the pixel. The
+    // guard is there to catch "no shadow at all" — which is what the
+    // defect produced, exactly equal to `open`.
+    assert!(
+        one < open * 0.95,
+        "the first lamp casts no shadow at all: {one} against {open} with it not casting",
+    );
+}

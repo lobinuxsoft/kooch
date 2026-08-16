@@ -9,6 +9,7 @@ impl MeshletCull {
         pipelines: &MeshletCullPipelines,
         device: &wgpu::Device,
         mesh: &GpuMeshletMesh,
+        params: wgpu::BufferBinding<'_>,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_bg_dispatch"),
@@ -16,7 +17,7 @@ impl MeshletCull {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.params_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(params),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,

@@ -74,7 +74,22 @@ impl PointShadowCubes {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: SHADOW_DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            // 🔴 `COPY_SRC` so a test can read the map itself.
+            //
+            // #853 was found by copying a face out and stretching its
+            // contrast: every other picture available went through the
+            // sampling path, the filter, the bias and a surface shader
+            // first, and one of those — a grid normalised by the light's
+            // `range` — turned a solid occluder into a crescent and sent
+            // the search after a defect that was not there.
+            //
+            // ⚠️ The cost is not measured. Some drivers drop depth
+            // compression on a texture that can be copied from; on the
+            // handheld's 13.9 ms that is worth a number before it is
+            // taken for granted.
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor {

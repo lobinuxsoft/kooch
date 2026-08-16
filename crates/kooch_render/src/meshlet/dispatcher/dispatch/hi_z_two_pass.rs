@@ -45,7 +45,7 @@ impl MeshletCull {
             "dispatch_scene_pool_atomic_hi_z called with an empty pool",
         );
 
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(cull_params));
+        let params_binding = self.stage_params(queue, cull_params);
         queue.write_buffer(
             &self.scene_params_buffer,
             0,
@@ -62,7 +62,7 @@ impl MeshletCull {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.params_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(params_binding.clone()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -206,6 +206,9 @@ impl MeshletCull {
         // but the API takes the params explicitly to keep the call
         // site self-documenting).
         queue.write_buffer(&self.hi_z_params_buffer, 0, bytemuck::bytes_of(hi_z_params));
+        // Pass A's parameters, deliberately — pass B re-tests the same
+        // frustum against the pyramid it just built.
+        let params_binding = self.last_params();
 
         let extended_cull_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_pass_b_extended_cull_bg"),
@@ -213,7 +216,7 @@ impl MeshletCull {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.params_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(params_binding.clone()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
