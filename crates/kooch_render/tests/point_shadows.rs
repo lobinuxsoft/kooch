@@ -726,3 +726,69 @@ fn a_lamp_straight_overhead_casts_down() {
          {shadowed} against {lit} beside it — the -Y cube face is not answering",
     );
 }
+
+/// 🔴🔴 The floor must not shadow itself, and this suite never asked.
+///
+/// Every other test here puts an occluder in the scene and then measures
+/// that the floor got darker somewhere. That question cannot fail on a
+/// bias: acne makes the floor darker too, and darker was what the
+/// assertion wanted. So a shadow map printing a hard stair-stepped
+/// square onto an empty floor passed thirteen of them.
+///
+/// This asks the opposite question. The cube is moved out of the frame,
+/// so **nothing in the scene can cast anything**, and the same floor is
+/// rendered twice — once with the lamp casting, once not. Any darkening
+/// between the two is the floor shadowing itself, and the correct amount
+/// is zero.
+///
+/// It was the owner who saw the square, from a chair, after this file
+/// had grown to thirteen green assertions. The lesson is the shape of
+/// the question, not the count.
+#[test]
+fn an_empty_floor_is_not_shadowed_by_itself() {
+    // Well inside the lamp's reach and spread across the boundary where
+    // a cube face hands over to its neighbour — under a lamp `h` up
+    // that is a square of side 2h, and the seam ran along it.
+    const PROBES: [Vec3; 5] = [
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(3.0, 0.0, 0.0),
+        Vec3::new(6.5, 0.0, 0.0),
+        Vec3::new(0.0, 0.0, 6.5),
+        Vec3::new(5.0, 0.0, 5.0),
+    ];
+    // A lamp 6 m up hands its -Y face over at +/- 6 m, so the probes at
+    // 6.5 sit on the far side of that seam and the ones at 3 do not.
+    const LAMP: Vec3 = Vec3::new(0.0, 6.0, 0.0);
+    // Out of frame and out of the lamp's range, so the only geometry
+    // left is the floor itself.
+    const AWAY: Vec3 = Vec3::new(100.0, 0.5, 0.0);
+
+    let mut readings = Vec::new();
+    for casting in [false, true] {
+        let Some(mut rig) = build_rig() else {
+            eprintln!("no GPU adapter, skipping");
+            return;
+        };
+        move_cube(&rig.resources, AWAY);
+        add_point(&mut rig.resources, LAMP, casting);
+        let pixels = render(&mut rig);
+        readings.push(
+            PROBES
+                .iter()
+                .map(|p| luminance(&pixels, &rig.camera, *p))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    for (i, probe) in PROBES.iter().enumerate() {
+        let open = readings[0][i];
+        let cast = readings[1][i];
+        assert!(
+            cast > open - 0.02,
+            "at {probe:?} an empty floor reads {cast} with the lamp casting and {open} with \
+             it not — nothing in this scene can cast a shadow, so the cube map is darkening \
+             the floor with itself. Point lights get their own shadow bias for this reason; \
+             the sun's pair leaves them at a quarter of the depth push they need",
+        );
+    }
+}

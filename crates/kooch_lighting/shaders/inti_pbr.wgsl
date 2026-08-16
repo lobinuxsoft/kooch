@@ -518,21 +518,51 @@ const INTI_BLOCKER_TAPS: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
 
 /// Depth pushed along the direction to the light, in world units.
 ///
-/// Bevy 0.19's `shadow_depth_bias` default, and it does this in world
-/// space rather than through the rasteriser's depth bias — which is why
-/// the shadow pipeline here no longer sets one. Two biases doing the
-/// same job is how a shadow ends up detached from its object while
-/// still showing acne somewhere else.
+/// Bevy's `DirectionalLight::DEFAULT_SHADOW_DEPTH_BIAS`, and it does
+/// this in world space rather than through the rasteriser's depth bias —
+/// which is why the shadow pipeline here no longer sets one. Two biases
+/// doing the same job is how a shadow ends up detached from its object
+/// while still showing acne somewhere else.
+///
+/// Shared with the spots, which is Bevy's arrangement too: their
+/// `SpotLight` defaults are this same pair.
 const INTI_DEPTH_BIAS: f32 = 0.02;
 
 /// How far along its own normal a surface's sample point is pushed, in
-/// shadow texels. Bevy 0.19's `shadow_normal_bias` default.
+/// shadow texels. Bevy's `DirectionalLight::DEFAULT_SHADOW_NORMAL_BIAS`.
 ///
 /// A surface edge-on to the light covers many world units inside one
 /// shadow texel, and no constant depth bias covers that. Moving along
 /// the surface instead of pushing depth is what stops acne without
 /// detaching the shadow.
 const INTI_NORMAL_BIAS: f32 = 1.8;
+
+/// 🔴 A point light gets its **own** pair, and this file used to hand it
+/// the two above.
+///
+/// Bevy has three light types and only two sets of numbers: the
+/// directional and the spot share `0.02 / 1.8`, and the point is the one
+/// that differs — `PointLight::DEFAULT_SHADOW_DEPTH_BIAS = 0.08` with
+/// `DEFAULT_SHADOW_NORMAL_BIAS = 0.6`. Borrowing the sun's pair ran the
+/// cubes at a **quarter** of the depth bias they need.
+///
+/// # What that looked like
+///
+/// An empty floor under one lamp — nothing in the scene that could cast
+/// anything — came out with a hard stair-stepped square printed on it,
+/// which is the floor shadowing itself. The square is where the bias
+/// changes regime: a cube face measures depth along the largest axis, so
+/// below the lamp that distance is the lamp's height and constant, and
+/// past it the distance starts growing with the ground offset. The two
+/// sides of that boundary get different bias and the seam between them
+/// is a square, centred under the lamp.
+///
+/// Why the numbers go opposite ways is the geometry: a cube face is 90°
+/// and its texels are coarse, so the point needs more depth push, while
+/// a lower normal push keeps a shadow from crawling away from its
+/// object across six faces that meet at 45°.
+const INTI_POINT_DEPTH_BIAS: f32 = 0.08;
+const INTI_POINT_NORMAL_BIAS: f32 = 1.8;
 
 // World units → shadow uv, for this cascade.
 //
@@ -1126,8 +1156,8 @@ fn inti_point_shadow(
     // distance — the record carries an angle, not a length.
     let texel_world = record.texel_world_size * distance_to_light;
     let offset_position = world_position
-        + normal * (texel_world * INTI_NORMAL_BIAS)
-        + to_light * INTI_DEPTH_BIAS;
+        + normal * (texel_world * INTI_POINT_NORMAL_BIAS)
+        + to_light * INTI_POINT_DEPTH_BIAS;
 
     let frag_ls = offset_position - light_position;
     let abs_ls = abs(frag_ls);
