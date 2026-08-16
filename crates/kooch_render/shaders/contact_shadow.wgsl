@@ -69,9 +69,12 @@ struct ContactShadowView {
     // the other, and every field after the hole reads garbage. Caught by
     // `the_uniform_matches_the_shader_struct`, which is the only
     // compiler this boundary has.
+    /// Non-zero when the shading model marches once per pixel, for the
+    /// strongest light, instead of once per light (#845). Read through
+    /// `inti_contact_dominant_only` so the stub can answer too.
+    dominant_only: u32,
     _pad0: u32,
     _pad1: u32,
-    _pad2: u32,
 }
 
 @group(0) @binding({{CONTACT_SHADOW_UBO_BINDING}}) var<uniform> contact_shadow: ContactShadowView;

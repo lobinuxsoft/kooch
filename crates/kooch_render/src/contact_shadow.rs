@@ -69,6 +69,21 @@ pub struct ContactShadowSettings {
     /// Ray length in METRES — how far from a surface an occluder can be
     /// and still ground it.
     pub length: f32,
+    /// March once per pixel, for the light that lit it hardest, instead
+    /// of once for every light that reaches it (#845).
+    ///
+    /// 🔴 The march is linear in taps and had no cap: measured on the
+    /// OneXFly it costs 1.7 ms per step, and ~14 lights reach a pixel in
+    /// a lit scene — the whole 13.9 ms frame budget, spent on contact.
+    /// Every one of those marches interrogates the same depth buffer
+    /// about the same point and differs only in direction.
+    ///
+    /// What it costs is the contact of the second-brightest lamp. In a
+    /// scene lit by fourteen that was already diluted past seeing, by
+    /// the same arithmetic that makes one light's shadow invisible among
+    /// many. Turn it off for a scene lit by two or three, where each
+    /// contact carries.
+    pub dominant_only: bool,
 }
 
 impl Default for ContactShadowSettings {
@@ -82,6 +97,7 @@ impl Default for ContactShadowSettings {
             linear_steps: 16,
             thickness: 0.1,
             length: 0.3,
+            dominant_only: true,
         }
     }
 }
@@ -101,7 +117,8 @@ pub struct ContactShadowUbo {
     pub thickness: f32,
     pub linear_steps: u32,
     pub frame: u32,
-    pub _pad: [u32; 3],
+    pub dominant_only: u32,
+    pub _pad: [u32; 2],
 }
 
 impl ContactShadowUbo {
@@ -117,7 +134,8 @@ impl ContactShadowUbo {
             thickness: settings.thickness,
             linear_steps: settings.linear_steps,
             frame,
-            _pad: [0; 3],
+            dominant_only: u32::from(settings.dominant_only),
+            _pad: [0; 2],
         }
     }
 }
@@ -165,6 +183,44 @@ pub(crate) fn steps_from_environment() -> Option<u32> {
 /// touching the process environment.
 fn parse_steps(raw: Option<&str>) -> Option<u32> {
     raw?.trim().parse().ok()
+}
+
+/// `KOOCH_CONTACT_SHADOW_DOMINANT=on` (or `off`), read once (#845).
+///
+/// Same reason as every other variable in this family: the A/B that
+/// decides this runs on the OneXFly through Steam, and reaching the
+/// settings asset there costs a repack and a copy — two changes where
+/// the measurement needs one.
+pub(crate) fn dominant_from_environment() -> Option<bool> {
+    static DOMINANT: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *DOMINANT.get_or_init(|| {
+        let dominant = parse_dominant(
+            std::env::var("KOOCH_CONTACT_SHADOW_DOMINANT")
+                .ok()
+                .as_deref(),
+        );
+        if let Some(value) = dominant {
+            tracing::info!(
+                target: "kooch_render::contact_shadow",
+                "KOOCH_CONTACT_SHADOW_DOMINANT={}: the march runs {}",
+                if value { "on" } else { "off" },
+                if value {
+                    "once per pixel, for the light that lit it hardest"
+                } else {
+                    "once for every light that reaches the pixel"
+                },
+            );
+        }
+        dominant
+    })
+}
+
+fn parse_dominant(raw: Option<&str>) -> Option<bool> {
+    match raw.map(str::trim) {
+        Some("on") | Some("1") => Some(true),
+        Some("off") | Some("0") => Some(false),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

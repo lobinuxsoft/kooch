@@ -900,6 +900,19 @@ fn inti_specular_fix_remap(a: f32) -> f32 {
     return 1.0 - inv_a_sq * inv_a_sq;
 }
 
+// One light's answer, with enough of the question left attached for the
+// caller to decide which light mattered most (#845).
+struct IntiLit {
+    // What this light adds to the surface point.
+    radiance: vec3<f32>,
+    // The ceiling this light had on this point: irradiance faced head-on,
+    // times the cosine. The same number the range cut and
+    // `specular_floor` already read — a light's weight in one scalar.
+    reach: f32,
+    // Unit vector toward it, which is what a contact march needs.
+    to_light: vec3<f32>,
+}
+
 // What one light adds to one surface point, shadows included. Zero when
 // the surface faces away from it.
 fn inti_light_contribution(
@@ -907,10 +920,27 @@ fn inti_light_contribution(
     light: IntiLight,
     frag_coord: vec2<f32>,
 ) -> vec3<f32> {
+    return inti_light_lit(surf, light, frag_coord, true).radiance;
+}
+
+// The same, with the contact march made optional and the light's weight
+// reported back.
+//
+// 🔴 `march == false` is not "no contact shadows" — it is "not here".
+// The caller marches once, for whichever light came back with the
+// highest `reach`, and applies the result to that light's radiance
+// alone. See `inti_shade`.
+fn inti_light_lit(
+    surf: IntiSurface,
+    light: IntiLight,
+    frag_coord: vec2<f32>,
+    march: bool,
+) -> IntiLit {
     let s = inti_sample_light(light, surf.world_position);
     let n_dot_l = dot(surf.n, s.to_light);
+    let nothing = IntiLit(vec3<f32>(0.0), 0.0, s.to_light);
     if (n_dot_l <= 0.0) {
-        return vec3<f32>(0.0);
+        return nothing;
     }
 
     // The most this light can put on this surface: its irradiance, faced
@@ -930,7 +960,7 @@ fn inti_light_contribution(
     // in the busiest cell reaching no part of a given pixel (#820).
     let reach = max(max(s.irradiance.x, s.irradiance.y), s.irradiance.z) * n_dot_l;
     if (reach <= 0.0) {
-        return vec3<f32>(0.0);
+        return nothing;
     }
 
     // The diffuse layer always answers to the light's centre.
@@ -1042,7 +1072,7 @@ fn inti_light_contribution(
         // privilege. Skipped where the cascade already shadows this
         // point: multiplying two occlusions of the same occluder darkens
         // twice, and a march that finds nothing cannot brighten it back.
-        if ((light.flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u && shadow > 0.0) {
+        if (march && (light.flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u && shadow > 0.0) {
             shadow *= inti_contact_shadow(
                 surf.world_position, surf.n, surf.v, s.to_light, frag_coord);
         }
@@ -1054,7 +1084,13 @@ fn inti_light_contribution(
     // (`diffuse * derived_input.NdotL + specular_light * specular_derived_input.NdotL`).
     // Factoring `n_dot_l` back out would silently undo half of #776 —
     // and would look identical until someone authored a radius.
-    return (diffuse * n_dot_l + specular * n_dot_l_spec) * s.irradiance * shadow;
+    let radiance = (diffuse * n_dot_l + specular * n_dot_l_spec) * s.irradiance * shadow;
+    // `reach` is reported only when this light may still be marched: a
+    // light whose own shadow map already blocks it must not win the
+    // dominance test and spend the frame's one march on a point that is
+    // dark either way.
+    let marchable = shadow > 0.0 && (light.flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u;
+    return IntiLit(radiance, select(0.0, reach, marchable), s.to_light);
 }
 
 /// A point light's shadow: one cube, six faces (#778).
@@ -1228,6 +1264,40 @@ fn inti_spot_shadow(
 // Returns linear HDR radiance. Exposure and the transfer function are
 // applied by `inti_tonemap` separately, so a shadow pass or a debug
 // overlay can consume the raw value.
+// The running sum, plus the strongest light seen so far.
+struct IntiAccum {
+    radiance: vec3<f32>,
+    // That light's own radiance, so the march can be applied to it and
+    // to nothing else.
+    brightest: vec3<f32>,
+    reach: f32,
+    to_light: vec3<f32>,
+}
+
+fn inti_accumulate(acc: IntiAccum, lit: IntiLit) -> IntiAccum {
+    var out = acc;
+    out.radiance += lit.radiance;
+    // Strictly greater, so the first of two equals wins and the choice
+    // does not depend on which order the froxel happened to list them.
+    if (lit.reach > out.reach) {
+        out.brightest = lit.radiance;
+        out.reach = lit.reach;
+        out.to_light = lit.to_light;
+    }
+    return out;
+}
+
+fn inti_merge(a: IntiAccum, b: IntiAccum) -> IntiAccum {
+    var out = a;
+    out.radiance += b.radiance;
+    if (b.reach > out.reach) {
+        out.brightest = b.brightest;
+        out.reach = b.reach;
+        out.to_light = b.to_light;
+    }
+    return out;
+}
+
 fn inti_shade(
     world_position: vec3<f32>,
     n: vec3<f32>,
@@ -1240,28 +1310,55 @@ fn inti_shade(
 ) -> vec3<f32> {
     let surf = inti_surface(world_position, n, base_color, metallic, roughness, flags);
 
-    var radiance = vec3<f32>(0.0);
+    // 🔴 One march per PIXEL instead of one per light (#845).
+    //
+    // The march is linear in taps and had no cap of any kind: measured
+    // on the OneXFly it cost 1.7 ms per step, and with ~14 lights
+    // reaching a pixel that is the whole frame budget spent on contact.
+    // Every one of those marches asks the same depth buffer about the
+    // same point; only the direction differs.
+    //
+    // So the loop marches nothing, remembers which light lit the point
+    // hardest, and one march is applied to that light's radiance
+    // afterwards. What is lost is the contact of the second-brightest
+    // lamp, which in a scene lit by fourteen was already diluted past
+    // seeing — the same arithmetic that makes one light's shadow
+    // invisible among many.
+    var acc = IntiAccum(vec3<f32>(0.0), vec3<f32>(0.0), 0.0, vec3<f32>(0.0));
+    let dominant = inti_contact_dominant_only();
     if (inti.clustered == 0u) {
         // No grid this frame: every light, for every pixel. What this
         // did before #780, and what a headless test or a path with no
         // camera matrices still does. Correct, and the reason the frame
         // cost pixels x lights.
         for (var i = 0u; i < inti.light_count; i = i + 1u) {
-            radiance += inti_light_contribution(surf, inti_lights[i], frag_coord);
+            acc = inti_accumulate(acc, inti_light_lit(
+                surf, inti_lights[i], frag_coord, !dominant));
         }
     } else {
         // Directional lights are not in the grid: they reach every cell,
         // so a cell listing them would say nothing. They are the light
         // buffer's leading entries — see `ExtractedLights`.
         for (var i = 0u; i < inti.directional_count; i = i + 1u) {
-            radiance += inti_light_contribution(surf, inti_lights[i], frag_coord);
+            acc = inti_accumulate(acc, inti_light_lit(
+                surf, inti_lights[i], frag_coord, !dominant));
         }
-        radiance += inti_clustered_lights(surf, world_position, frag_coord);
+        acc = inti_merge(acc, inti_clustered_lights(surf, world_position, frag_coord, dominant));
+    }
+
+    var radiance = acc.radiance;
+    if (dominant && acc.reach > 0.0) {
+        // Subtracting what the march removes, rather than re-adding a
+        // shaded copy: the winner's radiance is already inside the sum.
+        let shadow = inti_contact_shadow(
+            surf.world_position, surf.n, surf.v, acc.to_light, frag_coord);
+        radiance -= acc.brightest * (1.0 - shadow);
     }
 
     radiance += inti_ambient(n, surf.diffuse_color, surf.f0, surf.f_ab);
     return radiance;
 }
+
 
 // The punctual lights of this fragment's froxel, and only those.
 //
@@ -1277,7 +1374,8 @@ fn inti_clustered_lights(
     surf: IntiSurface,
     world_position: vec3<f32>,
     frag_coord: vec2<f32>,
-) -> vec3<f32> {
+    dominant: bool,
+) -> IntiAccum {
     let cell = inti_clusters[inti_cluster_of(world_position, frag_coord)];
     let points_end = cell.offset + cell.point_count;
     // Reflection probes, irradiance volumes and decals follow the spots
@@ -1292,7 +1390,7 @@ fn inti_clustered_lights(
         spots_end = min(spots_end, cell.offset + inti.light_limit);
     }
 
-    var radiance = vec3<f32>(0.0);
+    var acc = IntiAccum(vec3<f32>(0.0), vec3<f32>(0.0), 0.0, vec3<f32>(0.0));
     for (var i = cell.offset; i < spots_end; i = i + 1u) {
         // 🔴 Clamped against the list's real length. A frame whose
         // lighting overflowed the index list leaves later cells pointing
@@ -1302,10 +1400,10 @@ fn inti_clustered_lights(
         if (i >= inti.cluster_capacity) {
             break;
         }
-        radiance += inti_light_contribution(
-            surf, inti_lights[inti_cluster_indices[i]], frag_coord);
+        acc = inti_accumulate(acc, inti_light_lit(
+            surf, inti_lights[inti_cluster_indices[i]], frag_coord, !dominant));
     }
-    return radiance;
+    return acc;
 }
 
 // Which cell of the grid a fragment is in, in grid coordinates.

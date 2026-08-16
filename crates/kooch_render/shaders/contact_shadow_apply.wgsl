@@ -159,6 +159,15 @@ fn calculate_contact_shadow(
         world_position, normal, to_camera, light_dir, depth_size, noise, contact_shadow_steps);
 }
 
+/// Whether the shading model should march once for the strongest light
+/// instead of once per light (#845).
+///
+/// A function rather than a field read, because `inti_pbr.wgsl` must
+/// compile against the stub too, and the stub has no uniform to read.
+fn inti_contact_dominant_only() -> bool {
+    return contact_shadow.dominant_only != 0u;
+}
+
 /// How much of the light survives the march. `1.0` = unoccluded.
 ///
 /// ⚠️ Screen-space: an occluder outside the frame or behind the camera

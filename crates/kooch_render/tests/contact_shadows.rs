@@ -440,3 +440,78 @@ fn the_debug_view_separates_a_hit_from_open_floor() {
          which is what a mode falling through to lit shading looks like",
     );
 }
+
+/// A second light, from a second direction, whose contact lands where
+/// the sun's does not.
+const SIDE: Vec3 = Vec3::new(0.0, -1.0, 0.5);
+
+/// Floor point 10 cm from the cube on the side `SIDE`'s rays travel
+/// toward, and visible from the camera — which the mirror of
+/// `CONTACT_POINT` would not be, standing behind the cube.
+const SIDE_CONTACT: Vec3 = Vec3::new(0.0, 0.0, 0.6);
+
+fn add_light(resources: &mut Resources, direction: Vec3, intensity: f32) {
+    let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, direction.normalize());
+    let mut commands = Commands::new();
+    commands
+        .spawn(resources)
+        .insert(DirectionalLight {
+            active: true,
+            color: Vec3::ONE,
+            intensity,
+            cast_shadows: false,
+            contact_shadows: true,
+        })
+        .insert(GlobalTransform {
+            matrix: Mat4::from_quat(rotation),
+        });
+    commands.apply(resources);
+}
+
+/// Two lights, one march (#845).
+///
+/// 🔴 The assertion is on the DIM light's contact, not the bright one's.
+/// Both lights reach both points, so a march that ran for both darkens
+/// `SIDE_CONTACT`; a march that ran only for the strongest leaves it
+/// lit. Asserting on the bright light's contact would pass either way.
+#[test]
+fn only_the_strongest_light_marches() {
+    let Some(mut dominant) = rig(Path::ComputeDeferred) else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    add_light(&mut dominant.resources, SUN, 3_000.0);
+    add_light(&mut dominant.resources, SIDE, 1_200.0);
+    let one_march = render(&mut dominant);
+
+    let mut every = rig(Path::ComputeDeferred).expect("device acquired once already");
+    every.resources.insert(kooch_render::ContactShadowSettings {
+        dominant_only: false,
+        ..Default::default()
+    });
+    add_light(&mut every.resources, SUN, 3_000.0);
+    add_light(&mut every.resources, SIDE, 1_200.0);
+    let every_march = render(&mut every);
+
+    let camera = dominant.camera;
+    let kept = luminance(&one_march, &camera, SIDE_CONTACT);
+    let shadowed = luminance(&every_march, &camera, SIDE_CONTACT);
+    assert!(
+        shadowed < kept * 0.95,
+        "the dim light's contact reads {shadowed:.4} when every light marches and \
+         {kept:.4} when only the strongest does — if these agree, either both \
+         marched or neither did",
+    );
+
+    // The control: the strongest light's own contact is there in both.
+    // Without it this test passes just as well with the march removed
+    // entirely, which is the same shape of mistake #841's control exists
+    // to catch.
+    let bright_one = luminance(&one_march, &camera, CONTACT_POINT);
+    let bright_all = luminance(&every_march, &camera, CONTACT_POINT);
+    assert!(
+        (bright_one - bright_all).abs() < bright_all * 0.05,
+        "the strongest light's contact moved ({bright_one:.4} vs {bright_all:.4}); \
+         it is marched in both modes and must not",
+    );
+}

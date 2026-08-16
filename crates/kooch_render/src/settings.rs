@@ -156,6 +156,20 @@ pub struct RenderSettings {
     #[serde(default = "default_contact_thickness")]
     #[reflect(group = "Contact shadows")]
     pub contact_shadow_thickness: f32,
+    /// March once per pixel — for the light that lit it hardest —
+    /// instead of once for every light that reaches it (#845).
+    ///
+    /// 🔴 On for good reason: the march is linear in taps and has no cap
+    /// otherwise. Measured on the OneXFly it costs 1.7 ms per step, and
+    /// ~14 lights reach a pixel in a lit scene, which is the whole 13.9
+    /// ms frame budget spent on contact alone.
+    ///
+    /// Turn it off for a scene lit by two or three lights, where each
+    /// contact is visible. Under a dozen, the second-brightest lamp's
+    /// contact is diluted past seeing anyway.
+    #[serde(default = "default_contact_dominant")]
+    #[reflect(group = "Contact shadows")]
+    pub contact_shadow_dominant: bool,
 
     /// Shading as a COMPUTE pass over the visibility buffer (#824)
     /// rather than a fragment one.
@@ -257,6 +271,9 @@ fn default_contact_steps() -> u32 {
 fn default_contact_length() -> f32 {
     ContactShadowSettings::default().length
 }
+fn default_contact_dominant() -> bool {
+    ContactShadowSettings::default().dominant_only
+}
 fn default_contact_thickness() -> f32 {
     ContactShadowSettings::default().thickness
 }
@@ -315,6 +332,7 @@ impl Default for RenderSettings {
             contact_shadow_steps: contact.linear_steps,
             contact_shadow_length: contact.length,
             contact_shadow_thickness: contact.thickness,
+            contact_shadow_dominant: contact.dominant_only,
             compute_shading: default_compute_shading(),
             shading_rate: default_shading_rate(),
             light_samples: default_light_samples(),
@@ -359,6 +377,8 @@ impl RenderSettings {
                 .unwrap_or(self.contact_shadow_steps),
             length: self.contact_shadow_length,
             thickness: self.contact_shadow_thickness,
+            dominant_only: crate::contact_shadow::dominant_from_environment()
+                .unwrap_or(self.contact_shadow_dominant),
         }
     }
 

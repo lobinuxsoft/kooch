@@ -197,12 +197,17 @@ fn shade_from_tile(
 ) -> vec3<f32> {
     let surf = inti_surface(world_position, n, base_color, metallic, roughness, flags);
 
-    var radiance = vec3<f32>(0.0);
+    // One march per pixel rather than one per light (#845), exactly as
+    // `inti_shade` does it — the two walks have to agree or the A/B
+    // between the paths stops being one.
+    var acc = IntiAccum(vec3<f32>(0.0), vec3<f32>(0.0), 0.0, vec3<f32>(0.0));
+    let dominant = inti_contact_dominant_only();
     // Directional lights are not in the grid — they reach every cell, so
     // a cell listing them would say nothing. They are the light buffer's
     // leading entries and this walk is unchanged.
     for (var i = 0u; i < inti.directional_count; i = i + 1u) {
-        radiance += inti_light_contribution(surf, inti_lights[i], frag_coord);
+        acc = inti_accumulate(acc, inti_light_lit(
+            surf, inti_lights[i], frag_coord, !dominant));
     }
     // `KOOCH_LIGHT_LIMIT`, the same cap `inti_clustered_lights` applies
     // to the storage walk. Both paths have to honour it or an A/B
@@ -212,8 +217,14 @@ fn shade_from_tile(
         walk = min(walk, inti.light_limit);
     }
     for (var i = 0u; i < walk; i = i + 1u) {
-        radiance += inti_light_contribution(
-            surf, inti_lights[tile_lights[start + i]], frag_coord);
+        acc = inti_accumulate(acc, inti_light_lit(
+            surf, inti_lights[tile_lights[start + i]], frag_coord, !dominant));
+    }
+    var radiance = acc.radiance;
+    if (dominant && acc.reach > 0.0) {
+        let shadow = inti_contact_shadow(
+            surf.world_position, surf.n, surf.v, acc.to_light, frag_coord);
+        radiance -= acc.brightest * (1.0 - shadow);
     }
     radiance += inti_ambient(n, surf.diffuse_color, surf.f0, surf.f_ab);
     return radiance;
@@ -550,6 +561,13 @@ fn shade_picked_from_tile(
 
     var radiance = vec3<f32>(0.0);
     for (var i = 0u; i < inti.directional_count; i = i + 1u) {
+        // ⚠️ The sampled walk keeps one march per light on purpose
+        // (#845 applies to the full walks above). A sampled light's
+        // radiance is divided by the probability of having picked it, so
+        // "the light that lit this pixel hardest" is not a quantity this
+        // estimator has — and picking the march by an inverse-probability
+        // weight would march whichever light was drawn, not the one that
+        // matters. `light_samples` is 0 in everything shipped (#826).
         radiance += inti_light_contribution(surf, inti_lights[i], frag_coord);
     }
 

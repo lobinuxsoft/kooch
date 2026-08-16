@@ -75,3 +75,15 @@ fn zero_steps_is_expressible() {
     let ubo = ContactShadowUbo::new(Mat4::IDENTITY, 0.1, &settings, 0);
     assert_eq!(ubo.linear_steps, 0);
 }
+
+/// The variable is three-valued, and the third value is what keeps a
+/// measurement run honest: unset must not read as either mode.
+#[test]
+fn the_dominant_switch_says_nothing_when_unset() {
+    assert_eq!(parse_dominant(None), None);
+    assert_eq!(parse_dominant(Some("on")), Some(true));
+    assert_eq!(parse_dominant(Some("off")), Some(false));
+    for raw in ["dominant", "true", "yes", ""] {
+        assert_eq!(parse_dominant(Some(raw)), None, "{raw:?}");
+    }
+}
