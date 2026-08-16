@@ -133,6 +133,7 @@ pub(super) fn draw(ui: &mut Ui) {
     let mut reconnect = false;
     {
         let mut frames = connection.frame_view();
+        super::keep_all_frames(&mut frames);
         ui.separator();
         ui.horizontal(|ui| {
             let stats = frames.stats();

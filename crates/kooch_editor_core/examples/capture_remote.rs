@@ -92,7 +92,13 @@ fn main() {
             println!("connected");
             announced = true;
         }
-        frames = client.frame_view().all_uniq().count();
+        let mut view = client.frame_view();
+        // Every turn, not once: the client rebuilds its view from
+        // scratch on each (re)connect, and the default it rebuilds with
+        // is the one that throws the names away.
+        kooch_editor_core::keep_all_frames(&mut view);
+        frames = view.all_uniq().count();
+        drop(view);
         print!("\r{frames} frames");
         use std::io::Write;
         let _ = std::io::stdout().flush();

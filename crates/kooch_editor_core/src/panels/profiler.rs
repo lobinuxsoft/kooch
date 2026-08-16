@@ -56,12 +56,60 @@ mod remote;
 /// atomic and one bool per frame for two seconds, against a capture that
 /// is silently unreadable.
 ///
-/// 🟢 None of this applies to [`remote`]: `puffin_http::Server` keeps its
-/// own `ScopeCollection` and re-sends all of it to every client that
-/// connects, so a viewer attached an hour in still gets names.
+/// ⚠️ [`remote`] has the same symptom for a **different** reason, and
+/// this countdown does not fix it. See [`keep_all_frames`].
 #[cfg(feature = "profiling")]
 pub(crate) static SNAPSHOT_COUNTDOWN: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0);
+
+/// Stops a long capture from throwing away its own scope names.
+///
+/// # The names live in one frame, and that frame expires
+///
+/// `puffin_http::Server` does keep its own `ScopeCollection` and does
+/// re-send all of it to every client that connects — which is true, and
+/// was written here as the reason [`remote`] could not have the naming
+/// problem. It can.
+///
+/// The snapshot arrives as the `scope_delta` of **the first frame the
+/// client receives**, and `FrameView::add_frame` moves it into the
+/// view's collection as that frame goes in. But `FrameView::write` does
+/// not serialise the collection:
+///
+/// ```text
+/// pub fn write(&self, write: &mut impl std::io::Write) -> anyhow::Result<()> {
+///     write.write_all(b"PUF0")?;
+///     for frame in self.all_uniq() { frame.write_into(None, write)?; }
+/// }
+/// ```
+///
+/// The names reach a `.puffin` only by riding inside a frame that
+/// `all_uniq` still yields, and a `FrameView` retains a frame through
+/// **two** independent nets: the last `max_recent = 1000`, and the
+/// slowest `max_slow = 256`. The carrier survives if it is in either.
+///
+/// 🔴 Which makes the failure **intermittent, not a threshold**, and
+/// getting that wrong costs a debugging session: the first version of
+/// the test below asserted the names were lost past 1000 frames and
+/// passed while proving the opposite, because a synthetic capture's
+/// first frame is also its slowest and the second net kept it. Whether
+/// a real capture comes back readable depends on whether its first
+/// frame happened to be slow — which is why 846 frames on 2026-08-16
+/// were named and 1022 the same evening were not, and why the same
+/// length can go either way on another run.
+///
+/// So a client that intends to save keeps every frame. The cost is RAM
+/// on the capturing machine, which is a desktop, and puffin packs older
+/// frames as they age. The alternative is a bigger arbitrary number,
+/// which just moves the same silent cliff somewhere less obvious.
+#[cfg(feature = "profiling")]
+pub fn keep_all_frames(view: &mut puffin::FrameView) {
+    // 🔴 Re-applied rather than set once: `puffin_http::Client` assigns
+    // `*frame_view.lock() = FrameView::default()` on every (re)connect,
+    // which puts the 1000 back. A capture that survived a dropped
+    // connection would otherwise lose its names at the reconnect.
+    view.set_max_recent(usize::MAX);
+}
 
 /// Which process the panel is showing.
 ///
