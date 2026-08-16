@@ -369,3 +369,140 @@ fn moving_the_caster_moves_its_shadow() {
          the cube map was not redrawn after the caster moved",
     );
 }
+
+/// 🔴🔴 The same assertion, in the shading path the GAME actually uses.
+///
+/// Every test above runs with `ShadingSettings::default()`, whose
+/// `compute` is **false** — the fragment path. A project that turns
+/// `compute_shading` on in its `.rendersettings`, which is what
+/// `roll-a-ball` ships and what every performance capture on record was
+/// taken with, shades through `shade_from_tile` in
+/// `material_pbr_compute.wgsl`: a second copy of the light walk, with
+/// its own bindings.
+///
+/// This suite never touched it. The engine has been caught by exactly
+/// this once before — the first GPU-scope test passed with the R64
+/// scopes deleted, because the device was taking the other path — and
+/// the answer then was one test per path.
+#[test]
+fn the_compute_path_casts_the_same_shadow() {
+    let Some(mut rig) = build_rig() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    rig.resources
+        .insert(kooch_render::quality::ShadingSettings {
+            compute: true,
+            ..Default::default()
+        });
+    let light = SWEEP[0];
+    add_point(&mut rig.resources, light, true);
+    let pixels = render(&mut rig);
+
+    let shadowed = luminance(&pixels, &rig.camera, shadow_centre(light));
+    let lit = luminance(&pixels, &rig.camera, OPEN_FLOOR);
+    assert!(
+        shadowed < lit * 0.7,
+        "with compute shading on, the floor under the cube ({shadowed}) is not \
+         meaningfully darker than open floor ({lit}) — the cube map reaches the \
+         fragment path and not this one",
+    );
+}
+
+/// And at the shading rate the game ships with.
+///
+/// `roll-a-ball` runs `shading_rate: 2` — one shaded sample per 2x2
+/// quad, upsampled back with the visibility buffer as the edge guide.
+/// A cube map's shadow edge is high frequency and the upsample is the
+/// only thing between it and the screen, so it gets its own test rather
+/// than being assumed to follow from the full-rate one.
+#[test]
+fn half_rate_shading_keeps_the_shadow() {
+    let Some(mut rig) = build_rig() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    rig.resources
+        .insert(kooch_render::quality::ShadingSettings {
+            compute: true,
+            rate: kooch_render::meshlet::ShadingRate::Half,
+            ..Default::default()
+        });
+    let light = SWEEP[0];
+    add_point(&mut rig.resources, light, true);
+    let pixels = render(&mut rig);
+
+    let shadowed = luminance(&pixels, &rig.camera, shadow_centre(light));
+    let lit = luminance(&pixels, &rig.camera, OPEN_FLOOR);
+    assert!(
+        shadowed < lit * 0.7,
+        "at half shading rate the floor under the cube ({shadowed}) is not \
+         meaningfully darker than open floor ({lit})",
+    );
+}
+
+/// 🔴 The scene's own scale, not the suite's.
+///
+/// Every test above uses `range: 40` and four million lux, which is a
+/// lamp that reaches the whole rig. `many_lights.scene` — the one whose
+/// shadows were reported broken — authors `range: 4.0` at 60 000, a lamp
+/// that reaches barely past the object it stands over. The cube's stored
+/// depth is `near / major_axis` and its `depth_extent` is the range, so
+/// a tenth of the reach is a tenth of the depth precision and a
+/// different penumbra estimate.
+#[test]
+fn a_short_range_lamp_still_casts() {
+    let Some(mut rig) = build_rig() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    rig.resources
+        .insert(kooch_render::quality::ShadingSettings {
+            compute: true,
+            rate: kooch_render::meshlet::ShadingRate::Half,
+            ..Default::default()
+        });
+    // Close enough that a 4 m sphere still covers the cube and the floor
+    // beside it, which is what the authored scene does.
+    // Close and low, because 4 m of reach is all it has: from (1.5, 2)
+    // the sphere's edge lands short of the floor either side of the cube
+    // and BOTH samples read pure ambient — 0.0791, the number this repo
+    // has been fooled by before. A test whose light does not reach its
+    // own samples reports "no shadow" for a shader that is working.
+    let light = Vec3::new(1.2, 1.2, 0.0);
+    let mut commands = kooch_ecs::commands::Commands::new();
+    commands
+        .spawn(&mut rig.resources)
+        .insert(kooch_ecs::point_light::PointLight {
+            active: true,
+            color: Vec3::ONE,
+            intensity: 60_000.0,
+            range: 4.0,
+            radius: 0.0,
+            cast_shadows: true,
+            contact_shadows: false,
+        })
+        .insert(GlobalTransform {
+            matrix: Mat4::from_translation(light),
+        });
+    commands.apply(&mut rig.resources);
+    let pixels = render(&mut rig);
+
+    // Opposite the lamp, just past the cube's edge, and a lit point at
+    // the same distance from the lamp so the two differ by the shadow
+    // and not by falloff.
+    let shadowed = luminance(&pixels, &rig.camera, Vec3::new(-0.9, 0.0, 0.0));
+    let lit = luminance(&pixels, &rig.camera, Vec3::new(0.0, 0.0, 1.3));
+    // 🔴 A weaker margin than the rest of the suite, and it is the
+    // finding rather than a concession. At `range: 4` the shadowed
+    // sample sits far enough down the falloff that the rig's ambient
+    // (200 lx, which casts nothing) is a large share of what is left, so
+    // removing the lamp's contribution entirely can only darken it so
+    // much: 0.198 against 0.270, a 27 % drop, where the 40 m lamp gives
+    // well over 50 %. A short-range lamp's shadow is faint by
+    // construction, before any shader is blamed for it.
+    assert!(
+        shadowed < lit * 0.8,
+        "a 4 m lamp leaves the floor under the cube at {shadowed} against {lit} lit",
+    );
+}
