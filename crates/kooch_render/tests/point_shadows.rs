@@ -506,3 +506,168 @@ fn a_short_range_lamp_still_casts() {
         "a 4 m lamp leaves the floor under the cube at {shadowed} against {lit} lit",
     );
 }
+
+/// 🔴🔴 A cube map cannot depend on where the camera is.
+///
+/// Six faces rendered from the LIGHT, sampled by direction. Nothing in
+/// that chain has a view matrix in it, so the same floor point must come
+/// back the same brightness from any angle. Reported from the editor:
+/// *"dependiendo del ángulo de la cámara se muestra o no la sombra"*.
+///
+/// Sampled well away from the silhouette, and with a rough material, so
+/// the only view-dependent term left is a specular lobe worth a few
+/// percent rather than the difference between shadowed and lit.
+#[test]
+fn the_shadow_does_not_move_with_the_camera() {
+    let Some(mut high) = build_rig() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let light = SWEEP[0];
+    let probe = shadow_centre(light);
+    add_point(&mut high.resources, light, true);
+    let from_high = render(&mut high);
+    let high_value = luminance(&from_high, &high.camera, probe);
+
+    let mut low = build_rig().expect("second rig");
+    add_point(&mut low.resources, light, true);
+    // Same scene, same light, a different place to stand.
+    low.camera = ViewCamera::looking_at(Vec3::new(-9.0, 7.0, 9.0), Vec3::ZERO);
+    let from_low = render(&mut low);
+    let low_value = luminance(&from_low, &low.camera, probe);
+
+    let spread = (high_value - low_value).abs() / high_value.max(1e-4);
+    assert!(
+        spread < 0.15,
+        "the same shadowed floor point reads {high_value:.4} from above and \
+         {low_value:.4} from the side — a cube map has no camera in it",
+    );
+}
+
+/// 🔴 A point light is a point. Its falloff on a flat floor is a set of
+/// circles, and anything with a corner in it comes from the cube, not
+/// from the light.
+///
+/// Reported as a visible **square** in the lit floor around the lamp.
+/// Four floor points at the same distance from the light, on the two
+/// axes, are the same distance and the same angle — they can only differ
+/// by which cube face answers for them.
+#[test]
+fn the_falloff_has_no_corners() {
+    let Some(mut rig) = build_rig() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    // Straight overhead, so the four probes below are symmetric about it
+    // and no cube face is favoured by geometry.
+    let light = Vec3::new(0.0, 6.0, 0.0);
+    add_point(&mut rig.resources, light, true);
+    let pixels = render(&mut rig);
+
+    // 🔴 Radius 7, and the number is the whole test. The downward cube
+    // face spans 90°, so from 6 m up it covers the floor out to 6 m
+    // along each axis and 8.5 m along each diagonal. At radius 4 every
+    // probe lands inside that one face and the test passes without
+    // asking anything — which is what the first version of it did.
+    //
+    // At 7 the axis probes have crossed onto the SIDE faces while the
+    // diagonal probes are still on the bottom one, at the same distance
+    // from the lamp and so with the same falloff. Anything left between
+    // them is the seam.
+    let radius = 7.0_f32;
+    let diagonal = radius / 2.0_f32.sqrt();
+    let axes: Vec<f32> = [
+        Vec3::new(radius, 0.0, 0.0),
+        Vec3::new(-radius, 0.0, 0.0),
+        Vec3::new(0.0, 0.0, radius),
+        Vec3::new(0.0, 0.0, -radius),
+    ]
+    .iter()
+    .map(|p| luminance(&pixels, &rig.camera, *p))
+    .collect();
+    let diagonals: Vec<f32> = [
+        Vec3::new(diagonal, 0.0, diagonal),
+        Vec3::new(-diagonal, 0.0, diagonal),
+        Vec3::new(diagonal, 0.0, -diagonal),
+        Vec3::new(-diagonal, 0.0, -diagonal),
+    ]
+    .iter()
+    .map(|p| luminance(&pixels, &rig.camera, *p))
+    .collect();
+
+    let mean = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
+    let on_axis = mean(&axes);
+    let on_diagonal = mean(&diagonals);
+    let spread = (on_axis - on_diagonal).abs() / on_axis.max(1e-4);
+    assert!(
+        spread < 0.10,
+        "floor at radius {radius} reads {on_axis:.4} on the axes and \
+         {on_diagonal:.4} on the diagonals — that difference is a square, \
+         and a point light does not have corners",
+    );
+}
+
+/// One lamp, but the budget the owner had set when the artifacts were
+/// reported.
+///
+/// The cube array is allocated at `point_shadows` and the shader indexes
+/// it by `shadow_slot`, so a budget far larger than the number of lights
+/// exercises an array whose live slots are a small prefix of its layers.
+#[test]
+fn a_large_budget_does_not_lose_the_shadow() {
+    let Some(mut rig) = build_rig() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    rig.resources.insert(ShadowSettings {
+        cascade_texels: 512,
+        max_distance: 30.0,
+        enabled: true,
+        point_shadows: 32,
+        ..Default::default()
+    });
+    let light = SWEEP[0];
+    add_point(&mut rig.resources, light, true);
+    let pixels = render(&mut rig);
+
+    let shadowed = luminance(&pixels, &rig.camera, shadow_centre(light));
+    let lit = luminance(&pixels, &rig.camera, OPEN_FLOOR);
+    assert!(
+        shadowed < lit * 0.7,
+        "with a budget of 32 the floor under the cube reads {shadowed} against \
+         {lit} lit",
+    );
+}
+
+/// 🔴🔴 A caster the camera cannot see still casts.
+///
+/// Reported from the editor: *"si la luz no está dentro de la cámara
+/// tampoco se ven las sombras"*. The classic form of this defect is a
+/// shadow pass fed the CAMERA's visible set instead of the light's, and
+/// it is invisible in every test that frames the occluder.
+///
+/// Here the lamp is low and to one side, so the cube throws a long
+/// shadow, and the camera looks straight down at a patch of that shadow
+/// with the cube itself outside the frame.
+#[test]
+fn an_offscreen_caster_still_casts() {
+    let Some(mut rig) = build_rig() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    add_point(&mut rig.resources, Vec3::new(8.0, 3.0, 0.0), true);
+    // Low enough that the frame is about 3.4 m wide: the cube at the
+    // origin is four metres away and out of it.
+    rig.camera = ViewCamera::looking_at(Vec3::new(-4.0, 3.0, 0.01), Vec3::new(-4.0, 0.0, 0.0));
+    let pixels = render(&mut rig);
+
+    // Inside the shadow the cube throws, and beside it in z where the
+    // same lamp reaches the floor unobstructed.
+    let shadowed = luminance(&pixels, &rig.camera, Vec3::new(-3.6, 0.0, 0.0));
+    let lit = luminance(&pixels, &rig.camera, Vec3::new(-3.6, 0.0, 1.4));
+    assert!(
+        shadowed < lit * 0.7,
+        "with the caster off screen the floor reads {shadowed} in its shadow and \
+         {lit} beside it — the shadow pass is being fed the camera's visible set",
+    );
+}
