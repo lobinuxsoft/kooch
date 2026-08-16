@@ -48,9 +48,9 @@ impl MeshletRenderStage {
         // that scene the one case where shadows silently do not exist.
         let spots =
             kooch_lighting::shadow_casting_spots(resources, kooch_lighting::MAX_SPOT_SHADOWS);
-        // Point lights, likewise (#778) — and nearest-first, because
-        // past the limit a light stops casting and which one should not
-        // depend on spawn order.
+        // Point lights, likewise (#778) — ranked by what a cube would
+        // show, because past the limit a light stops casting and which
+        // one should not depend on spawn order.
         //
         // 🔴 Culled against the camera's frustum BEFORE the limit is
         // applied, not after. Six faces is the most expensive shadow in
@@ -73,7 +73,15 @@ impl MeshletRenderStage {
             &ranked,
             &frustum,
             kooch_lighting::MAX_POINT_SHADOWS,
+            &self.point_shadow_holders,
         );
+        // Next frame's hysteresis is this frame's answer. Written even
+        // when the list is empty: a light that lost its cube because it
+        // left the frustum must not be handed the bonus back the moment
+        // it returns.
+        self.point_shadow_holders.clear();
+        self.point_shadow_holders
+            .extend(points.iter().map(|light| light.entity));
 
         // 🔴 The cap degrades in silence otherwise. A light past the
         // budget keeps lighting the scene and stops casting, which is

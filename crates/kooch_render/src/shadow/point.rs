@@ -114,32 +114,77 @@ pub struct CubeKey {
 ///
 /// [`MAX_POINT_SHADOWS`]: kooch_lighting::MAX_POINT_SHADOWS
 ///
-/// `sources` arrives ranked nearest-first. Two things happen here and
+/// `sources` arrives ranked by importance. Three things happen here and
 /// the order between them is the point:
 ///
 /// 1. **Cull against the camera's frustum first.** Six faces is the most
 ///    expensive shadow in the engine and `cast_shadows` defaults to
 ///    true, so a corridor of lamps behind the camera would otherwise
 ///    rasterise twenty-four faces of geometry nobody can see.
-/// 2. **Then take the limit.** Culling first is also what puts the four
+/// 2. **Favour whoever already held a cube.** See below.
+/// 3. **Then take the limit.** Culling first is also what puts the four
 ///    cubes on lights that are on screen, rather than on whichever four
-///    are nearest — which, standing in a doorway, are the ones behind
-///    you.
+///    rank highest — which, standing in a doorway, can be the ones
+///    behind you.
 ///
 /// The test is the sphere of the light's own `range`, not its centre: a
 /// lamp just off the edge of the screen still shadows pixels that are on
 /// it.
+///
+/// # 🔴 Why holding a cube is worth something
+///
+/// The ranking is continuous and the cut is not: two lights a hair apart
+/// in importance are on opposite sides of a cliff, and the tiniest camera
+/// movement swaps them. In `many_lights.scene` — a hundred lamps on a
+/// two-metre grid — that is a shadow that **appears and disappears as the
+/// viewer walks**, which reads as a broken shadow rather than as a budget
+/// being enforced.
+///
+/// So a light that had a cube last frame keeps it unless a rival beats it
+/// by [`CUBE_STICKINESS`]. A margin and not a lock: a genuinely more
+/// important light still takes the cube, it just has to be clearly more
+/// important rather than a rounding difference away.
+///
+/// `holders` is last frame's result. Empty on the first frame, which
+/// makes this a plain ranked take — the right behaviour when there is no
+/// history to preserve.
 pub fn select_point_casters(
     sources: &[PointShadowSource],
     frustum: &[[f32; 4]; 6],
     limit: usize,
+    holders: &[Entity],
 ) -> Vec<PointShadowSource> {
-    sources
+    let mut visible: Vec<PointShadowSource> = sources
         .iter()
         .filter(|light| !sphere_outside_frustum(frustum, light.position, light.range))
-        .take(limit)
         .copied()
-        .collect()
+        .collect();
+    // Stable, so lights the bonus leaves tied keep the order importance
+    // gave them rather than swapping on an implementation detail.
+    visible.sort_by(|a, b| {
+        let a_score = a.importance * stickiness(holders, a.entity);
+        let b_score = b.importance * stickiness(holders, b.entity);
+        b_score.total_cmp(&a_score)
+    });
+    visible.truncate(limit);
+    visible
+}
+
+/// What a light's importance is multiplied by while it holds a cube.
+///
+/// 25 % is chosen against the failure it exists to stop rather than
+/// tuned: importance goes with the square of the angular radius, so a
+/// quarter is about the difference a **12 % change in distance** makes.
+/// Below that the swap is the camera breathing; above it, the viewer has
+/// genuinely moved toward a different lamp.
+pub const CUBE_STICKINESS: f32 = 1.25;
+
+fn stickiness(holders: &[Entity], entity: Entity) -> f32 {
+    if holders.contains(&entity) {
+        CUBE_STICKINESS
+    } else {
+        1.0
+    }
 }
 
 /// The record the shading model reads for one point light.
