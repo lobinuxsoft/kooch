@@ -17,6 +17,7 @@ still parses.
 """
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -99,18 +100,78 @@ def write_lockfile(old: str, new: str, names: list[str]) -> int:
     return moved
 
 
+# `type(scope)!:` — the `!` is what makes it breaking, per Conventional
+# Commits. Anchored to the start of the subject so a `!` anywhere else in
+# the sentence is not a declaration.
+BREAKING_SUBJECT = re.compile(r"^[a-z]+(\([^)]+\))?!:")
+FEATURE_SUBJECT = re.compile(r"^feat(\([^)]+\))?:")
+# 🔴 A FOOTER, which means the start of its own line — not the string
+# appearing anywhere in the body. This workflow's own pull request
+# described the rule in a bullet, the unanchored version matched that
+# bullet, and the engine went from 0.2.44 to 1.0.0 on the first run.
+BREAKING_FOOTER = re.compile(r"^BREAKING[ -]CHANGE:", re.MULTILINE)
+
+
+def decide(title: str, body: str) -> str:
+    """How far a PR with this title and body moves the version."""
+    if BREAKING_SUBJECT.search(title) or BREAKING_FOOTER.search(body):
+        return "major"
+    if FEATURE_SUBJECT.search(title):
+        return "minor"
+    return "patch"
+
+
+def self_test() -> int:
+    cases = [
+        ("feat!: rip out the old renderer", "", "major"),
+        ("feat(render)!: rip out the old renderer", "", "major"),
+        ("refactor!: rename every crate", "", "major"),
+        ("fix: a footer declares it", "BREAKING CHANGE: the asset format moved", "major"),
+        ("fix: a hyphenated footer", "BREAKING-CHANGE: same thing", "major"),
+        # The regression this function exists for.
+        ("ci: every pull request moves the engine version",
+         "- `feat!:` / `BREAKING CHANGE:` -> major, `feat:` -> minor", "patch"),
+        ("feat: contact shadows", "", "minor"),
+        ("feat(lighting): the froxel grid", "", "minor"),
+        ("fix: the cascade seam", "", "patch"),
+        ("docs(book): the pipeline diagram", "", "patch"),
+        ("chore: bump wgpu", "", "patch"),
+        ("a title with no prefix at all", "", "patch"),
+    ]
+    failed = 0
+    for title, body, want in cases:
+        got = decide(title, body)
+        if got != want:
+            failed += 1
+            print(f"FAIL {title!r} -> {got}, wanted {want}")
+    print(f"{len(cases) - failed}/{len(cases)} decisions correct")
+    return 1 if failed else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--bump", choices=["major", "minor", "patch"])
     group.add_argument("--set", dest="exact", metavar="X.Y.Z")
     group.add_argument("--print", action="store_true", help="read the current version and stop")
+    group.add_argument(
+        "--decide",
+        metavar="TITLE",
+        help="print major/minor/patch for this PR title; the body comes from $PR_BODY",
+    )
+    group.add_argument("--self-test", action="store_true", help="check --decide against known cases")
     parser.add_argument(
         "--check",
         action="store_true",
         help="run `cargo metadata --no-deps` afterwards to prove the manifest still parses",
     )
     args = parser.parse_args()
+
+    if args.self_test:
+        return self_test()
+    if args.decide:
+        print(decide(args.decide, os.environ.get("PR_BODY", "")))
+        return 0
 
     current = read_version()
     if args.print:
