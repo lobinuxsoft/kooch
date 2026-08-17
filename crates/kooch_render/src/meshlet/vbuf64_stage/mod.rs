@@ -280,6 +280,22 @@ impl Vbuf64Stage {
         self.taa_enabled
     }
 
+    /// Whether anything this frame will read the motion vectors.
+    ///
+    /// A predicate rather than `if self.taa_enabled` at the call site,
+    /// because the buffer is about to have a second consumer: FSR (#536)
+    /// reprojects with the same vectors. One condition both of them
+    /// extend is how the pass avoids being turned on twice and off once.
+    ///
+    /// The history the vectors are computed *from* — `previous_transform_buffer`
+    /// — is maintained by the scene upload and not by this pass, so a
+    /// frame that skips it does not leave the next one reprojecting
+    /// against a stale matrix. Turning the resolve back on mid-session
+    /// gets correct vectors on its first frame.
+    fn needs_motion(&self) -> bool {
+        self.taa_enabled
+    }
+
     /// This frame's sub-pixel offset, and the pair of matrices that
     /// follow from it.
     ///
@@ -395,9 +411,16 @@ impl Vbuf64Stage {
         // Motion vectors, right after the raster that fills the vbuf
         // they read and before anything that shades (#481). Its own
         // scope: it is a full-resolution pass that did not exist, and it
-        // runs on every debug mode too — the vector is a property of the
+        // runs on every debug mode — the vector is a property of the
         // geometry and the camera, not of how the pixel was lit.
-        {
+        //
+        // 🔴 But only when something will READ it. Measured on the
+        // OneXFly with the resolve off: 1.994 ms of a 20.5 ms GPU frame,
+        // writing a full-resolution buffer nobody sampled. `taa.wgsl` is
+        // the only shader that binds it, so with the resolve off the pass
+        // is pure waste — and unlike the resolve itself, which is a
+        // quality trade, this is an `if`.
+        if self.needs_motion() {
             let query = match (scopes, parent) {
                 (Some(s), Some(p)) => Some(s.begin_child("motion vectors", encoder, p)),
                 (Some(s), None) => Some(s.begin("motion vectors", encoder)),
