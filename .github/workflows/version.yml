@@ -50,22 +50,25 @@ jobs:
         id: decide
         env:
           TITLE: ${{ github.event.pull_request.title }}
-          BODY: ${{ github.event.pull_request.body }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
+          set -euo pipefail
           # Conventional Commits, read off the PR title — which is what
           # ends up on `development` as the merge commit's subject.
-          # `feat!:` or a `BREAKING CHANGE:` in the body is a major;
-          # `feat:` is a minor; everything else — fix, docs, chore,
-          # refactor, test, ci, perf — is a patch, because the rule is
-          # that the version moves with EVERY change. A number that sits
-          # still turns the engine's own drift warning into noise.
-          if [[ "$TITLE" =~ ^[a-z]+(\(.+\))?!: ]] || [[ "$BODY" == *"BREAKING CHANGE:"* ]]; then
-            echo "part=major" >> "$GITHUB_OUTPUT"
-          elif [[ "$TITLE" =~ ^feat(\(.+\))?: ]]; then
-            echo "part=minor" >> "$GITHUB_OUTPUT"
-          else
-            echo "part=patch" >> "$GITHUB_OUTPUT"
-          fi
+          # `feat!:` or a `BREAKING CHANGE:` FOOTER is a major; `feat:` is
+          # a minor; everything else — fix, docs, chore, refactor, test,
+          # ci, perf — is a patch, because the rule is that the version
+          # moves with EVERY change. A number that sits still turns the
+          # engine's own drift warning into noise.
+          #
+          # 🔴 The rule lives in Python with a self-test beside it, not
+          # in a bash conditional here. The bash version matched
+          # "BREAKING CHANGE:" anywhere in the body, this workflow's own
+          # pull request explained the rule in a bullet, and the first
+          # run it ever did took the engine from 0.2.44 to 1.0.0.
+          python3 .github/scripts/bump_version.py --self-test
+          PART=$(python3 .github/scripts/bump_version.py --decide "$TITLE")
+          echo "part=$PART" >> "$GITHUB_OUTPUT"
 
       - name: Move the version
         id: move
