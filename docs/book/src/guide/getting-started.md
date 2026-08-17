@@ -88,12 +88,24 @@ own `major.minor.patch`, so a new directory appears when an editor
 shipping that version opens a project.
 
 🔴 **Without it, a new editor never updated the engine.** The directory
-is named after the engine version, that version is `0.1.0` for every
-development build, and the old check only asked whether `Cargo.toml`,
-`crates` and `src` existed — which is true of every copy of the engine
-ever made. So a freshly installed editor found the directory, called it
-current, and every project on the machine went on compiling against
-weeks-old source with nothing said.
+is named after the engine version, that version used to be `0.1.0` for
+every development build, and the old check only asked whether
+`Cargo.toml`, `crates` and `src` existed — which is true of every copy of
+the engine ever made. So a freshly installed editor found the directory,
+called it current, and every project on the machine went on compiling
+against weeks-old source with nothing said.
+
+**The version moves on every pull request now**, automatically:
+`.github/workflows/version.yml` bumps `[workspace.package]` in the PR's
+own branch — major for a `!` or a `BREAKING CHANGE:`, minor for `feat:`,
+patch for everything else. A number that sits still is what made all
+three mechanisms that depend on it — this directory's name, the
+`BuildStamp` a project compares itself against, and the pipeline cache —
+blind at once. Label a PR `no-version-bump` to opt out.
+
+⚠️ **One directory per version, and they are not cleaned up
+automatically.** A version a week now means a directory a week; Settings
+is where the unused ones are removed.
 
 ⚠️ **The build right after a replacement is a full rebuild**, since every
 engine source file is now newer than the project's `target/`. That cost
