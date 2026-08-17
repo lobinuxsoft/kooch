@@ -129,7 +129,8 @@ said.
 | **#771 / #248** | atmosphere, ported from Bevy | Now worth doing for the sky it gives, not for what it saves: 1.2 ms without clouds |
 | **#481** | motion vectors + TAA → **the engine's own upscaler** | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest 1 % of edges the resolved image carries **0.38** of the squared gradient the unresolved one does. **Off by default** — asset and engine alike, see below. 🎯 The issue stays open because it **grew**: it now owns the engine's own temporal upscaler, Phase 1 below |
 | **#536** | ~~vendor plugin backend~~ → optional vendor backends | **Inverted 2026-08-17.** It read *"detect the adapter, load that vendor's SDK, fall back to TAA"*, which makes a vendor's upscaler the path that ships and ours the path nobody tests. Now: ours is the default on every adapter, vendors are optional behind the same trait. `dlss_wgpu` is a genuine adopt — and 🔴 **Vulkan-only**, which on Windows means pinning a backend, plus an SDK it cannot redistribute |
-| ❌ **FSR 4** | ruled out for this hardware, 2026-08-17 | Not a licence problem — a **`wgpu` and silicon** problem. FSR 4 is a neural network; `wgpu` 29 exposes no cooperative/subgroup matrix (checked in `wgpu-types-29.0.4/src/features.rs`: `SUBGROUP` only, though naga *does* implement `dot4I8Packed`), and gfx1150 is RDNA 3.5 with no FP8. AMD's own INT8 variant on a **300 W** RDNA 3 part nets **9 %** over native where FSR 3.1 nets **29 %**. 🎯 What survives is a constraint on #481: **its inputs are FSR 3.1's six**, which is the contract drivers upgrade behind — so FSR 4 can arrive later through a backend without this engine vendoring anyone's weights |
+| ❌ **FSR 4, reimplemented in WGSL** | ruled out, 2026-08-17 | Not a licence problem — a **`wgpu` and silicon** problem. FSR 4 is a neural network; `wgpu` 29 exposes no cooperative/subgroup matrix (checked in `wgpu-types-29.0.4/src/features.rs`: `SUBGROUP` only, though naga *does* implement `dot4I8Packed`), and gfx1150 is RDNA 3.5 with no FP8. AMD's own INT8 variant on a **300 W** RDNA 3 part nets **9 %** over native where FSR 3.1 nets **29 %** |
+| 🟢 **FSR over FFI** | the route that replaced it | **Calling AMD's shipped library is a different question from reimplementing its algorithm, and it has a better answer.** FSR 3.1's FidelityFX API is a stable C ABI that FSR 4 also uses: one `bindgen` surface covers both. FSR 3.1 builds on Linux with a native Vulkan backend (⚠️ `wine` for the shader compiler) and runs on all three vendors; FSR 4 is Windows-only because AMD ships it as *signed prebuilt DLLs*. See #536 |
 | ~~#732~~ | ~~temporal upscaling on both vendors~~ | **Closed as superseded.** One issue describing three things; its phases are done (#481) or split (#481 + #536), and its findings were carried across rather than dropped |
 
 ### 🎯 The order, decided 2026-08-17 — graphics first, and the game waits
@@ -150,11 +151,40 @@ died on their own measurement this week, and each of these bounds an item below 
 | **3 · #839** | `contact_shadow_steps: 0` | The control that has never been run. ⚠️ **Premise corrected**: the shipped settings are 6 steps with `dominant: true`, not the 16 × ~14 the issue was written against, so expect **under a millisecond** |
 | **4 · #865** | a scene with the same coverage and far fewer vertices per pixel | The shading pass fetches **96 bytes of vertex per pixel** (3 × 32 B, unpacked). Whether that is 3 ms or 0.3 depends on cache hit rate, and packing before knowing is how the last three died |
 
-**Phase 1 — the engine's own temporal upscaler: #481.** 🎯 **Promoted here 2026-08-17, ahead of
-#866, and the user's directive is why:** *"me gustaría que el engine tenga su propio
-escalador"*, on Windows as well as Linux and on NVIDIA and Intel as well as AMD. That is not a
-preference, it decides the architecture — a vendor SDK cannot be the path a build depends on,
-so the always-there path is ours and the vendor backends (#536) become optional on top of it.
+**Phase 1 — upscaling, and it is now #536 first: bind AMD's library rather than reimplement it.**
+🎯 **Promoted here 2026-08-17, ahead of #866.** The user's directive, in two parts and the second
+corrects the first reading of it: the engine ships for Windows as well as Linux and for NVIDIA
+and Intel as well as AMD — *and* *"no quiero portearlo de cero, quiero implementar un paquete de
+AMD funcional, el tema es adaptarlo a Rust"*.
+
+⚠️ **The first plan here read "no crate covers this, therefore write it" — the bottom row of
+this project's own dependency policy, reached by asking the wrong question.** The search asked
+*is there a wgpu upscaler crate* (no) instead of *can AMD's C API be bound* (yes). FSR 3.1
+introduced the **FidelityFX API**, a stable C ABI, and FSR 4 continues to use it — so one FFI
+surface over two headers covers FSR 3.1 today and what ships behind that ABI later.
+
+**Phase 1a — a build spike, and it is a day rather than weeks.** Everything below hinges on
+three unknowns that are cheap to settle and expensive to assume:
+
+| | The unknown | Why it is not obvious |
+|---|---|---|
+| 1 | Does the SDK's **Vulkan** backend build on Bazzite? | It builds with gcc/clang, but ⚠️ **`FidelityFX_SC.exe`, the shader compiler, needs `wine`** — and this is an atomic distro, so wine means `rpm-ostree` and a reboot |
+| 2 | Does `bindgen` run here? | 🔴 Three LLVM installs in parallel on this machine already break `*-sys` crates with *`'stdbool.h' not found`*; `BINDGEN_EXTRA_CLANG_ARGS` is the known fix and it has to be in the `build.rs`, not in someone's shell |
+| 3 | Does `Device::as_hal::<Vulkan>()` hand over a usable device, queue and texture? | The interop is `unsafe` and pinned to **wgpu 29**. `dlss_wgpu` proves the pattern works; it does not prove it works for our texture usages |
+
+If all three pass, **#481's steps 4–6 (resolution split, RCAS, feature locking) are cancelled**
+— they are reimplementations of what the SDK does, and the policy says do not write them. If any
+fails, they are the fallback and we learned that for a day's work instead of a month's.
+
+**Phase 1b — what #481 keeps either way**, because none of it is wasted: 16-phase jitter, motion
+vectors dilated by closest depth, and history rejection by variance in YCoCg. They improve the
+TAA that ships **today**, and a good motion-vector buffer is an input every backend consumes.
+Plus the input contract: `UpscaleInputs` is FSR 3.1's six, which stops being a courtesy once a
+real FSR 3.1 is the thing reading them.
+
+🔴 **FSR 4 is Windows-only over this route** — AMD ships it as *prebuilt, signed DLLs*, with no
+`.so`. FSR 3.1 covers Linux and all three vendors; FSR 4 arrives on Windows through the same
+ABI at no extra integration cost. That is a good outcome, not a compromise.
 
 It is also, on the numbers, **the largest single lever on this board**. Rendering at 67 %
 linear is 44 % of the pixels, and per-pixel shading is what dominates the frame:
@@ -170,12 +200,9 @@ Every other item is bounded far below that: all shadows total **1.153 ms**, the 
 grid 0.156. And unlike them it **compounds** — every per-pixel cost added afterwards is bought
 at 44 %.
 
-The scope is six steps, and 🔴 **the first three improve the TAA that already ships even if the
-upscaling never lands**: 16-phase jitter, motion vectors dilated by closest depth, and history
-rejection by variance in YCoCg. Then the resolution split (the step with the real risk), RCAS,
-and feature locking. It is a **port, not an invention** — FSR 2/3 is MIT with the full HLSL in
-language-independent headers, there is a precedent port to GLSL, and no crate covers it
-(`fsr-rs` archived, nothing on crates.io for wgpu).
+⚠️ **The saving is arithmetic, not a measurement.** It assumes the resolve costs what today's
+`taa` costs; a real FSR 3.1 may cost more, and on this iGPU that has to be measured before the
+−5 ms is quoted as a result.
 
 ⚠️ **It is a reconstruction, so it is still a trade.** 1280×720 *output* is a hostile case
 because there is little detail to reconstruct from. The device decides. Which is why #254 now
