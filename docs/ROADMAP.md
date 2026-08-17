@@ -70,9 +70,40 @@ with `read_capture --over-time`, which prints the drift and says so.
 
 ## Next — the graphics queue, with the budget as the gate
 
-🎯 **2026-08-13: the budget is reachable.** 13.89 ms at 1280×720 on the
-OneXFly is 72 FPS — the number this whole queue was arranged around.
-With clouds off, which is a condition and not a victory (see #731).
+⚠️ **2026-08-17: that 13.89 ms is unverified, and #769 is closed carrying
+the caveat.** It was measured on 2026-08-13, before the rule that a
+handheld must be warmed for two minutes before it is captured, and before
+point cubes (#778), spot maps (#777), the froxel grid (#780) and the
+temporal resolve (#481) landed. The captures did not record which scene
+they were of, so the issue cannot say whether today's 27.8 ms is a
+different scene or a regression.
+
+**What is measured, warmed and settled (10 W / 776 MHz), 2026-08-17,
+`many_lights.scene` at 1280×720 with the ball rolling, 11158 frames:**
+
+```
+frame 27.83 ms (median)   ·   GPU 24.8   ·   budget 13.9
+raster + shade                 21.715  [self 3.655]
+├─ shade: compute (half rate)  10.969
+├─ taa                          2.883
+├─ motion vectors               2.085
+├─ shade: upsample              1.533
+└─ tonemap                      0.591
+shadows 1.153 · sky 0.648 · blit 0.430 · cluster grid 0.156 · cull 0.040
+vkAcquireNextImageKHR 23.908 of a 26.670 ms Render
+```
+
+Three things in that table decide the order below, and none of them is
+what the previous order assumed:
+
+- **The meshlet side is free.** `cull` is 0.040 ms and the geometry pool
+  uploads once. VRAM is **817 MiB of 4096** on the device. Nothing about
+  meshlets or memory is a suspect.
+- **The temporal machinery costs 4.97 ms — 20 % of the GPU** — and it is
+  larger than every shadow, the sky, the blit, the grid and the cull
+  **combined** (2.43 ms).
+- **Shadows total 1.153 ms.** That bounds every shadow-side idea on this
+  board, forever, including #477's.
 
 The order below is what the measurements say, not what the port list
 said.
@@ -98,16 +129,48 @@ said.
 | **#771 / #248** | atmosphere, ported from Bevy | Now worth doing for the sky it gives, not for what it saves: 1.2 ms without clouds |
 | ~~#481~~ / **#536** | ~~motion vectors + TAA~~ / FSR | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest 1 % of edges the resolved image carries **0.38** of the squared gradient the unresolved one does. **Off by default** — asset and engine alike, see below. FSR still open |
 
-### 🎯 The next three, in order — decided 2026-08-16
+### 🎯 The order, decided 2026-08-17 — graphics first, and the game waits
 
-The user set the order. It is **A → B → C**, and A is first because of what the device
-said today rather than because it is the biggest win. It is not.
+The user's call, in their words: *"el juego va a esperar un poco más, ordena el roadmap del
+engine para atacar toda esta parte gráfica primero"*. The previous A → B → C is spent: **A
+(#785) closed** — the profiler was exonerated by three rulers agreeing within a frame — and
+**B (#826) refuted and removed**.
 
-| | | Why in this position |
+**Phase 0 — four measurements, no code.** Every one is a setting already in
+`project.rendersettings` or a capture. They exist first because three graphics ideas in a row
+died on their own measurement this week, and each of these bounds an item below it.
+
+| | | The question, and the number it is against |
 |---|---|---|
-| **A · #785** | reconcile the profiler with an outside measurement | Our scopes say `Render` **35.7 ms**; gamescope's stats pipe says **20 ms**. Everything else in this queue is chosen by a ruler that may be 2× out |
-| **B · ~~#826~~** | ~~put the frame index in the sampling seed~~ | Refuted and removed — see the row above. The frame index makes a per-froxel choice flicker rather than resolve |
-| **C · #839** | cap the contact-shadow march | Cheap, and its cost is buried inside B's pass — so it is measurable only after B |
+| **1 · #481** | `temporal_aa: false`, warmed, same route | **4.968 ms, 20 % of the GPU.** Does the frame drop by it, or does the shading grow to absorb it? And what does the image lose — this is antialiasing, so the answer is a trade, not a win. Watch for the contact-shadow seam returning: TAA is what softens it |
+| **2 · #825** | `shading_rate: 1` against `2` | Half-rate shading costs a **1.533 ms** upsample to save part of a 10.969 ms dispatch. Nobody has measured the pair as one line |
+| **3 · #839** | `contact_shadow_steps: 0` | The control that has never been run. ⚠️ **Premise corrected**: the shipped settings are 6 steps with `dominant: true`, not the 16 × ~14 the issue was written against, so expect **under a millisecond** |
+| **4 · #865** | a scene with the same coverage and far fewer vertices per pixel | The shading pass fetches **96 bytes of vertex per pixel** (3 × 32 B, unpacked). Whether that is 3 ms or 0.3 depends on cache hit rate, and packing before knowing is how the last three died |
+
+**Phase 1 — the structure all of it needs: #866.** One page pool (bricks out of an atlas, not
+an octree), clipmap levels for range, and invalidation by reach rather than by the world. It
+is not three features, it is one structure with three consumers — and this project has already
+built and measured the small version of each part: the froxel grid (#780) produces "which
+lights need detail where", and #847 proved invalidation-by-reach is worth **2.781 → 1.153 ms**
+at cube granularity.
+
+**Phase 2 — the consumers, on top of #866 and not before.**
+
+| | | Why it waits for the pool |
+|---|---|---|
+| **#450** | surfel / surface radiance cache | 🎯 **The only item on this board that changes the SHAPE of the cost** — from *pixels × lights every frame* to *cache texels × lights at a low rate*. A meshlet is a natural cache page, which is an advantage Lumen's cards and SEED's surfels both work around |
+| **#477** | virtual shadow maps | Its justification is **scale and memory** — four cubes for a hundred lights, 152 MiB standing — **not frame time**, because shadows total 1.153 ms. Any summary promising milliseconds here is wrong |
+| ~~#841 / #849~~ | which four lights get a cube | **Superseded if #866 lands**: pages allocated by need retire the question of slots handed out by rank |
+
+**Phase 3 — the additive features, once there is headroom to spend.** #254 (post + auto
+exposure), #771 / #248 (atmosphere), #731 (clouds, which cost 39 ms as written). Every one of
+these *adds* to a frame that is 1.8× over budget, so they are gated on Phase 1 buying
+something.
+
+🔴 **The gate on the whole plan.** 24.8 ms of GPU against 13.9, in a scene built to break the
+engine with a hundred shadow-casting lights. **A real level has never been measured**, and if
+Phase 0 does not close most of the gap, the honest next move is to measure one before
+committing to Phase 1's weeks.
 
 #### A — the instrument, before the optimisation
 
