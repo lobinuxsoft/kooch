@@ -18,8 +18,9 @@
 //! What could not be folded in is the confidence counter. Upstream keeps
 //! it in the history's alpha, which is free there because its history is
 //! private; here the same texture reaches the tonemap, where alpha means
-//! coverage. It gets its own `R16Float` pair — two bytes a pixel to keep
-//! the two meanings apart, against eight to duplicate the colour.
+//! coverage. It gets its own pair, and shares it with the depth the
+//! disocclusion test compares against — four bytes a pixel to keep three
+//! meanings apart, against eight to duplicate the colour.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -30,10 +31,20 @@ const SHADER_SOURCE: &str = include_str!("../../../shaders/taa.wgsl");
 /// The resolved image and next frame's history, one and the same.
 pub const TAA_COLOR_FORMAT: wgpu::TextureFormat = HDR_COLOR_FORMAT;
 
-/// How many still frames a pixel has accumulated. One channel, half
-/// precision: the counter saturates the blend rate at 1/64 and never
-/// needs to represent more than a few hundred.
-pub const TAA_CONFIDENCE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
+/// What the next frame's reprojection consults about this pixel.
+///
+/// **R** — how many still frames it has accumulated. The counter
+/// saturates the blend rate at 1/64 and never needs to represent more
+/// than a few hundred.
+///
+/// **G** — the reversed-Z depth it was written at, which is the whole of
+/// the disocclusion test. Half precision is not a compromise here: the
+/// test is a RATIO of two depths, so what it needs is relative accuracy,
+/// and fp16 carries about 0.05 % of it against a tolerance of 10 %. An
+/// absolute floor would have been the problem, and reversed-Z puts the
+/// distant geometry — where the absolute values are smallest — where
+/// float precision is densest.
+pub const TAA_REPROJECT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
@@ -64,8 +75,8 @@ pub(super) struct Taa {
     linear: wgpu::Sampler,
     color: [wgpu::Texture; 2],
     color_views: [wgpu::TextureView; 2],
-    confidence: [wgpu::Texture; 2],
-    confidence_views: [wgpu::TextureView; 2],
+    reproject: [wgpu::Texture; 2],
+    reproject_views: [wgpu::TextureView; 2],
     state: std::sync::Mutex<History>,
 }
 
@@ -149,7 +160,7 @@ impl Taa {
                 entry_point: Some("fs_taa"),
                 targets: &[
                     Some(TAA_COLOR_FORMAT.into()),
-                    Some(TAA_CONFIDENCE_FORMAT.into()),
+                    Some(TAA_REPROJECT_FORMAT.into()),
                 ],
                 compilation_options: Default::default(),
             }),
@@ -185,7 +196,7 @@ impl Taa {
             ..Default::default()
         });
 
-        let (color, color_views, confidence, confidence_views) = create_targets(device, size);
+        let (color, color_views, reproject, reproject_views) = create_targets(device, size);
         Self {
             pipeline,
             bgl,
@@ -194,8 +205,8 @@ impl Taa {
             linear,
             color,
             color_views,
-            confidence,
-            confidence_views,
+            reproject,
+            reproject_views,
             state: std::sync::Mutex::new(History {
                 index: 0,
                 reset: true,
@@ -204,11 +215,11 @@ impl Taa {
     }
 
     pub(super) fn resize(&mut self, device: &wgpu::Device, size: (u32, u32)) {
-        let (color, color_views, confidence, confidence_views) = create_targets(device, size);
+        let (color, color_views, reproject, reproject_views) = create_targets(device, size);
         self.color = color;
         self.color_views = color_views;
-        self.confidence = confidence;
-        self.confidence_views = confidence_views;
+        self.reproject = reproject;
+        self.reproject_views = reproject_views;
         let mut state = self.state.lock().expect("taa history lock");
         state.index = 0;
         state.reset = true;
@@ -269,7 +280,7 @@ impl Taa {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.confidence_views[previous]),
+                    resource: wgpu::BindingResource::TextureView(&self.reproject_views[previous]),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -312,7 +323,7 @@ impl Taa {
                 label: Some("taa_pass"),
                 color_attachments: &[
                     attachment(&self.color_views[target]),
-                    attachment(&self.confidence_views[target]),
+                    attachment(&self.reproject_views[target]),
                 ],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -362,7 +373,7 @@ fn create_targets(device: &wgpu::Device, size: (u32, u32)) -> Targets {
     };
     let (c0, v0) = make("taa_history_0", TAA_COLOR_FORMAT);
     let (c1, v1) = make("taa_history_1", TAA_COLOR_FORMAT);
-    let (f0, w0) = make("taa_confidence_0", TAA_CONFIDENCE_FORMAT);
-    let (f1, w1) = make("taa_confidence_1", TAA_CONFIDENCE_FORMAT);
+    let (f0, w0) = make("taa_reproject_0", TAA_REPROJECT_FORMAT);
+    let (f1, w1) = make("taa_reproject_1", TAA_REPROJECT_FORMAT);
     ([c0, c1], [v0, v1], [f0, f1], [w0, w1])
 }
