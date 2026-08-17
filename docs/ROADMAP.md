@@ -1428,7 +1428,7 @@ engine-wide, not render-only.
 | **#718** | A camera follows a **`CameraTarget` tag**, not an entity reference. Several tagged entities *are* a group, so following one and framing four are one code path |
 | **#723** | A project's component had no fields in the prefab inspector — three sources answer "what fields does this type have" and that panel asked the only one it was not in |
 | **#724** | "Open in IDE" opens the project root, in the IDE this machine has. Four bugs, each exposed by the previous fix |
-| **#669 phase 0** | **Done.** A ball rolls under WASD and a stick, camera-relative; a raycast gates the jump; a virtual camera follows. Verdict in the issue |
+| **Roll a Ball, phase 0** | **Done.** A ball rolls under WASD and a stick, camera-relative; a raycast gates the jump; a virtual camera follows. Verdict in `lobinuxsoft/roll-a-ball#4`; the plan lives there now, #669 is the pointer |
 | **#605** | The custom ECS stays. `bevy_ecs` evaluated on measurements and declined |
 | **#607** | Stable entity references — a component can point at an entity and survive a save |
 | **#609** | More than one scene loaded at once |
@@ -1588,33 +1588,36 @@ carrying something that does not belong to it. Size alone is not the verdict. Se
 The full list, any time: `find crates src examples -name '*.rs' | xargs wc -l | sort -rn |
 awk '$1 > 600'`.
 
-### The audit that changed what "next" means — #669
+### The audit that changed what "next" means — Roll a Ball
 
-**#669 — Roll a Ball, a first-user pass over the whole engine.** We have been testing the
-engine as its authors; this tests it as its first user, in a project, against the public API
-only. Each phase ends in a verdict about the engine rather than a feature for the game.
+**The plan moved out of this repository on 2026-08-17.** Roll a Ball is a first-user pass over
+the whole engine — the engine tested by a project, against the public API only, rather than by
+its authors. It has its own repository, its own roadmap and one issue per phase:
+**`lobinuxsoft/roll-a-ball`**, tracker issue #3, `docs/ROADMAP.md`. That repository is
+**private**; #669 here is now a pointer and the place where its engine-facing findings land.
 
-Reading the tree to plan it turned up how much of the presentation layer does not exist:
+What stays this document's business is what the exercise *produced* for the engine.
 
-| Subsystem | State |
-|---|---|
-| Physics, gravity, meshlet path, materials | **strong** |
-| Input, scripting | present, unproven from a project |
-| **Lights** | **authorable and inert** — see below |
-| Audio | kira backend, no `AudioSource` to author (#63) |
-| Shadows (#476/#477), post (#254), particles (#97), runtime UI (#280/#96) | **missing** |
+**The audit that started it (2026-07-29) read the tree and found the presentation layer
+missing.** Two of its four verdicts have since been paid off:
 
-**`DirectionalLight`, `PointLight` and `SpotLight` exist in `kooch_ecs` and nothing reads
-them.** `kooch_lighting/src/lib.rs` is nine lines; `kooch_render` never mentions them; #441 is
-open. They are the exact shape of the gotcha in `MEMORY.md` — *a missing feature does not fail
-the build: the component is authored, mirrored, draws a gizmo, and does nothing.* A user who
-places a light and sees no change is the first bug #669 will find.
+| Subsystem | Then | Now |
+|---|---|---|
+| Physics, gravity, meshlet path, materials | strong | strong |
+| Input, scripting | present, unproven from a project | proven — and #711 found the backend was connected to nothing |
+| **Lights** | **authorable and inert** — nine-line `kooch_lighting`, nothing read the components | **#441 shipped**, with CSM (#476) and contact shadows (#735) behind it |
+| Audio | kira backend, no `AudioSource` to author (#63) | unchanged |
+| Post (#254), particles (#97), runtime UI (#280/#96) | missing | unchanged |
 
-**#668 — how systems get to run in parallel**, given that users write their own. Blocked on a
-scene that needs it: a hosting project currently does **0.17 ms** of work per frame, so there
-is nothing to parallelise. #669's terrain phase produces that scene.
+The lights were the exact shape of the gotcha in `MEMORY.md` — *a missing feature does not fail
+the build: the component is authored, mirrored, draws a gizmo, and does nothing* — and a user
+placing a light and seeing nothing was, as predicted, the first bug the project found.
 
-### #669 phase 0 is done, and what it found
+**#668 — how systems get to run in parallel**, given that users write their own. Still blocked
+on a scene that needs it: a hosting project does **0.17 ms** of work per frame, so there is
+nothing to parallelise. Roll a Ball's terrain phase produces that scene.
+
+### What phase 0 found, and why the exercise earns its cost
 
 A ball that rolls, a jump gated on a downward ray, and a virtual camera following it — built in
 a project, against the public API only. **#671 phase 1 was proven for the first time**: the rig
@@ -1622,13 +1625,17 @@ had been written since 31 July and had never been seen to move a camera.
 
 The finding that matters is not any single bug. It is that **neither Play showed a working
 game, and each failed differently**: remote Play could not receive a key (#710, now closed by
-#713), and the direct game lost the camera's target on load (#712). As the engine's authors,
-both halves had green tests. Only using it from outside put them in the same room.
+#713), and the direct game lost the camera's target on load (#712, still open). As the engine's
+authors, both halves had green tests. Only using it from outside put them in the same room.
 
 Seven separate cases turned up of **complete code with no reachable call site** — the input
 crate, `feed_window_event`, the standalone Play path (#720), the dynamic type registry the
 prefab inspector never asked, and three in the IDE launcher. **None of them fails a build.**
-That is the argument for this epic, and it is no longer a hypothesis.
+That is the argument for the exercise, and it is no longer a hypothesis.
+
+**#712 is what the next phase runs into.** Collectibles are prefab work by definition, and a
+reference into a prefab instance is dropped on load, at DEBUG, without failing. Phase 0 dodged
+it by inlining the ball into the scene; phase 1 cannot.
 
 ### Done — the action became data, and the player became parts
 
