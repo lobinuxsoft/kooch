@@ -183,6 +183,43 @@ changes what "a pixel" means to every pass downstream. Then RCAS and feature loc
 optional polish**: without them the result reads soft, which is exactly how this lands as *"we
 tried it, it looked worse, we turned it off"*.
 
+### 🎯 And "based on FSR" means **transliterated, not inspired** — decided 2026-08-17 (option C)
+
+Two things were verified in the vendored sources rather than assumed, and together they change how
+ambitious this can be:
+
+| | Verified where | What FSR needs it for |
+|---|---|---|
+| **`SHADER_F16`** | `wgpu-types-29.0.4/src/features.rs:1657` | Its `FFX_HALF` path — packed half math, which most of the implementation leans on |
+| **`SUBGROUP` + `subgroupAdd` &c.** | `naga-29.0.4/src/front/wgsl/parse/conv.rs:379` | Wave-level reductions |
+| `dot4I8Packed` | `naga-29.0.4/src/back/spv/block.rs:1452` | DP4a — not needed by the upscaler, only by a network |
+
+**Both things that would have blocked a direct port are present.** So FSR 3.1's passes can be
+transliterated to WGSL with **its own tuned constants**, which are the part nobody can guess, and
+the licence permits it outright: MIT, with attribution — AMD's copyright header retained in the
+ported files and the MIT text shipped in a `NOTICE`.
+
+**The user's order is C**, and the ordering matters more than the ambition:
+
+1. **Step 1 first** (16-phase jitter). Both routes need it.
+2. **Steps 2–3 next** — they produce a visible improvement in the TAA that ships *today*, judged
+   by eye on the handheld in the same session.
+3. **Then the transliteration**, arriving with the input infrastructure already validated. 🔴 That
+   is where ports die — in the inputs, not in the shaders.
+
+⚠️ **The transliteration's real risk is that it has no oracle**: nothing to diff against, so
+validation is by eye. If it ever degenerates into *"it looks wrong and I do not know why"*, the way
+out is to build the deferred FFI backend (#536) **as a reference to compare against** — that is a
+debugging tool, not a change of plan.
+
+🔴 **And nothing below us is going to solve this.** `wgpu` is a GPU API abstraction and ships no
+render techniques by design — no TAA, no shadows, no upscaling, and it never will. The layer that
+would is Bevy, and Bevy is **binding vendors rather than building one**: DLSS integrated through
+`dlss_wgpu`, FSR / XeSS / MetalFX noted as *"would not be a challenge to integrate"* later, and
+frame interpolation and **dynamic resolution scaling explicitly not planned**. There is no port
+target coming. What `wgpu` does give us is the three primitives in the table above, which is
+exactly enough.
+
 **What survives from the FFI plan, and it is not small:** #536's trait, `UpscalerCaps` and startup
 selection are **built in Phase 1 with ours as the first backend behind them**. Building the seam
 while there is one implementation is what makes the second one a day's work; building it after is
