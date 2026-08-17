@@ -13,7 +13,7 @@
 mod common;
 
 use common::lit_scene::{render_at, rig};
-use kooch_lighting::{Exposure, LightLimit, LightSamples};
+use kooch_lighting::{Exposure, LightLimit};
 use kooch_render::meshlet::ShadingRate;
 
 /// Pixels that are pure white — every channel saturated, nothing left to
@@ -47,7 +47,6 @@ fn detail_survives_above_what_the_display_can_show() {
         return;
     };
     r.resources.insert(LightLimit(0));
-    r.resources.insert(LightSamples(0));
 
     // Low EV100 is a wide-open shutter: the scene blows out.
     r.resources.insert(Exposure { ev100: 6.0 });
@@ -99,7 +98,6 @@ fn exposure_reaches_the_tonemap() {
         return;
     };
     r.resources.insert(LightLimit(0));
-    r.resources.insert(LightSamples(0));
 
     r.resources.insert(Exposure { ev100: 9.0 });
     let base = render_at(&mut r, true, ShadingRate::Full);
