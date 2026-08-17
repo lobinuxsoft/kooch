@@ -201,11 +201,39 @@ ported files and the MIT text shipped in a `NOTICE`.
 
 **The user's order is C**, and the ordering matters more than the ambition:
 
-1. **Step 1 first** (16-phase jitter). Both routes need it.
+1. ✅ **Step 1 first** (16-phase jitter). Both routes need it. **Built** — see below.
 2. **Steps 2–3 next** — they produce a visible improvement in the TAA that ships *today*, judged
    by eye on the handheld in the same session.
 3. **Then the transliteration**, arriving with the input infrastructure already validated. 🔴 That
    is where ports die — in the inputs, not in the shaders.
+
+#### ✅ Step 1, as built — the period is now a function of the ratio
+
+`JITTER_PERIOD` is gone. In its place `jitter::phase_count(render_width, display_width)`, which is
+FSR's rule with our base: **the count scales with the square of the ratio**, because what the
+sequence has to cover is an area. At 1.5× every output pixel is fed by 1/2.25 of an input one, so
+reaching the same sub-pixel density takes 2.25× the samples — 36, not 24. Scaling it linearly is
+the plausible-looking mistake, and it reads as *"FSR is soft"* rather than as a jitter bug.
+
+Two choices in there are not FSR's, and both are one line to reverse:
+
+- 🔴 **Our base is 16 where AMD's is 8.** At 1:1 — which is every capture that exists today — 8
+  phases against a minimum blend rate of 1/64 means a pixel that never rejects its history
+  averages each of eight points seven times over instead of covering more of the pixel. **Set
+  `JITTER_BASE_PHASES` back to 8 if the transliterated passes disagree**: their accumulation
+  constants are tuned against AMD's count, and that count is one of the things in the port that
+  cannot be guessed.
+- **A ceiling, `JITTER_MAX_PHASES` = 144** (3×, FSR's Ultra Performance preset). Not tidying: a
+  render width of zero — a minimised window, a target queried a frame early — squares to tens of
+  millions of phases, and a period that large is a sequence that **never repeats**. The
+  accumulation would then drift instead of closing a cycle, which is soft in a way no capture
+  explains.
+
+The split itself is not built: `Vbuf64Stage::jitter_phases` passes its own width as both
+arguments, so today's answer is 16 and **the second argument is the single thing that changes**
+when step 4 separates them. `Jitter::at` takes the **render** target's size — the camera is
+jittered by a fraction of the pixel it actually rasterises, and measuring it against the output
+would shrink every offset by the ratio.
 
 ⚠️ **The transliteration's real risk is that it has no oracle**: nothing to diff against, so
 validation is by eye. If it ever degenerates into *"it looks wrong and I do not know why"*, the way

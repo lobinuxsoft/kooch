@@ -1,6 +1,10 @@
 use super::*;
 use glam::Vec4Swizzles;
 
+/// The three counts every assertion below is checked against: 1:1, the
+/// 1.5× the Steam Deck target implies, and 2×.
+const COUNTS: [u32; 3] = [16, 36, 64];
+
 /// An offset outside the pixel is parallax, not anti-aliasing.
 ///
 /// It would still look plausible — the image moves, the resolve blends,
@@ -9,12 +13,14 @@ use glam::Vec4Swizzles;
 /// blurred frame and nothing that says why.
 #[test]
 fn every_offset_stays_inside_one_pixel() {
-    for index in 0..JITTER_PERIOD * 3 {
-        let o = offset(index);
-        assert!(
-            o.x.abs() <= 0.5 && o.y.abs() <= 0.5,
-            "frame {index} offsets by {o:?}, which leaves the pixel",
-        );
+    for phases in COUNTS {
+        for index in 0..phases * 3 {
+            let o = offset(index, phases);
+            assert!(
+                o.x.abs() <= 0.5 && o.y.abs() <= 0.5,
+                "{phases} phases, frame {index} offsets by {o:?}, which leaves the pixel",
+            );
+        }
     }
 }
 
@@ -25,30 +31,75 @@ fn every_offset_stays_inside_one_pixel() {
 /// integrates a sample it already has — and one that includes the exact
 /// centre wastes it twice over, because the unjittered image is the one
 /// every other sample is being averaged against.
+///
+/// 🔴 Asserted at every count, not just the base one. Halton stays
+/// injective however far it is taken, but a period that ever wraps to a
+/// term already used would degrade silently into a shorter sequence.
 #[test]
-fn a_cycle_visits_eight_distinct_points() {
-    let points: Vec<_> = (0..JITTER_PERIOD).map(offset).collect();
-    for (i, a) in points.iter().enumerate() {
-        assert!(
-            a.length() > 1e-4,
-            "frame {i} sits on the pixel centre, contributing nothing new",
-        );
-        for (j, b) in points.iter().enumerate().skip(i + 1) {
+fn a_cycle_visits_distinct_points() {
+    for phases in COUNTS {
+        let points: Vec<_> = (0..phases).map(|i| offset(i, phases)).collect();
+        for (i, a) in points.iter().enumerate() {
             assert!(
-                (*a - *b).length() > 1e-4,
-                "frames {i} and {j} sample the same point {a:?}",
+                a.length() > 1e-4,
+                "{phases} phases, frame {i} sits on the pixel centre",
             );
+            for (j, b) in points.iter().enumerate().skip(i + 1) {
+                assert!(
+                    (*a - *b).length() > 1e-4,
+                    "{phases} phases, frames {i} and {j} both sample {a:?}",
+                );
+            }
         }
     }
 }
 
-/// And it repeats after exactly eight, so the accumulated image is a
-/// fixed set of samples rather than a drifting one.
+/// And it repeats after exactly its period, so the accumulated image is
+/// a fixed set of samples rather than a drifting one.
 #[test]
 fn the_sequence_repeats_on_period() {
-    for index in 0..JITTER_PERIOD {
-        assert_eq!(offset(index), offset(index + JITTER_PERIOD));
+    for phases in COUNTS {
+        for index in 0..phases {
+            assert_eq!(offset(index, phases), offset(index + phases, phases));
+        }
     }
+}
+
+/// 🔴 The count scales with the SQUARE of the ratio, because what the
+/// sequence covers is an area.
+///
+/// Scaling it linearly is the plausible-looking mistake: at 1.5× it
+/// would give 24 phases where the input pixels carry 2.25× less of the
+/// output, so the reconstruction is starved exactly where the upscaler
+/// is working hardest — and it reads as "FSR is soft", not as a jitter
+/// bug.
+#[test]
+fn phases_scale_with_the_area() {
+    assert_eq!(phase_count(1280, 1280), JITTER_BASE_PHASES);
+    assert_eq!(phase_count(1280, 1920), 36);
+    assert_eq!(phase_count(960, 1920), 64);
+}
+
+/// Rendering above display resolution is supersampling, which needs no
+/// help from the projection. Shrinking the sequence there would shorten
+/// the history for nothing.
+#[test]
+fn supersampling_keeps_the_base_count() {
+    assert_eq!(phase_count(3840, 1920), JITTER_BASE_PHASES);
+    assert_eq!(phase_count(1920, 0), JITTER_BASE_PHASES);
+}
+
+/// 🔴 A degenerate width must not produce a sequence that never
+/// repeats.
+///
+/// Zero is reachable — a minimised window, a target queried a frame
+/// early — and unclamped it squares to tens of millions of phases. The
+/// image would go soft because the accumulation never closes a cycle,
+/// and nothing in a capture would say so.
+#[test]
+fn a_zero_width_stays_bounded() {
+    assert_eq!(phase_count(0, 1920), JITTER_MAX_PHASES);
+    assert_eq!(phase_count(0, 0), JITTER_BASE_PHASES);
 }
 
 /// 🔴 The assertion that catches the sign-and-scale family at once.
@@ -65,8 +116,8 @@ fn the_shift_is_the_offset_in_ndc() {
         * Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
     let world = glam::Vec4::new(0.3, -0.7, 0.0, 1.0);
 
-    for index in 0..JITTER_PERIOD {
-        let j = Jitter::at(index, view_proj, size);
+    for index in 0..JITTER_BASE_PHASES {
+        let j = Jitter::at(index, view_proj, size, JITTER_BASE_PHASES);
         let plain = j.unjittered * world;
         let shifted = j.view_proj * world;
         let delta = shifted.xy() / shifted.w - plain.xy() / plain.w;
@@ -89,9 +140,9 @@ fn the_shift_is_the_offset_in_ndc() {
 #[test]
 fn the_unjittered_matrix_is_the_original() {
     let view_proj = Mat4::perspective_rh(1.0, 1.6, 0.1, 100.0);
-    for index in 0..JITTER_PERIOD {
+    for index in 0..JITTER_BASE_PHASES {
         assert_eq!(
-            Jitter::at(index, view_proj, (800, 500)).unjittered,
+            Jitter::at(index, view_proj, (800, 500), JITTER_BASE_PHASES).unjittered,
             view_proj
         );
     }
