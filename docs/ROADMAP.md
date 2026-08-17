@@ -182,9 +182,26 @@ TAA that ships **today**, and a good motion-vector buffer is an input every back
 Plus the input contract: `UpscaleInputs` is FSR 3.1's six, which stops being a courtesy once a
 real FSR 3.1 is the thing reading them.
 
-🔴 **FSR 4 is Windows-only over this route** — AMD ships it as *prebuilt, signed DLLs*, with no
-`.so`. FSR 3.1 covers Linux and all three vendors; FSR 4 arrives on Windows through the same
-ABI at no extra integration cost. That is a good outcome, not a compromise.
+🔴 **FSR 4 is DirectX 12 only, and that decides everything about it.** Not a licence limit and
+not a hardware one: AMD has shipped no Vulkan backend for FSR 4, so *"it cannot be integrated
+into games that use the Vulkan API"*. Which means:
+
+| | FSR 3.1 | FSR 4 / 4.1.1 |
+|---|---|---|
+| **Windows** | ✅ VK or DX12, MIT source | 🟢 real path, via `wgpu`'s D3D12 backend and `as_hal::<Dx12>()` |
+| **Linux — this machine and the OneXFly** | ✅ native VK backend | ❌ no D3D12 on Linux, so none |
+
+So FSR 4 is **a desktop-Windows image-quality feature that costs a second `unsafe` interop
+path**, and it does nothing for the 13.9 ms problem, because the device the budget is about runs
+Linux. It is **deferred, not refused**: a second backend, opened once the Vulkan one works.
+⏭️ The single fact that would collapse this back into one path is AMD shipping a Vulkan FSR 4.
+
+⚠️ Adrenalin's automatic upgrade of an FSR 3.1 integration to 4.1.1 is **DX12-only too**, which
+cuts both ways: no free FSR 4 on a Vulkan integration, and no surprise change to an image we
+validated. And *"FSR 4 on Linux"* as it exists today — VKD3D-Proton 3.0, with an INT8/FP16
+fallback its own authors warn costs *"significant performance overhead and noticeably reduced
+image quality"* on RDNA 2/3 — requires being **a Windows binary under Wine**. A native ELF has
+none of it.
 
 It is also, on the numbers, **the largest single lever on this board**. Rendering at 67 %
 linear is 44 % of the pixels, and per-pixel shading is what dominates the frame:
