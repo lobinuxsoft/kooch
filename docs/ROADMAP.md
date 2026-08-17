@@ -151,36 +151,50 @@ died on their own measurement this week, and each of these bounds an item below 
 | **3 · #839** | `contact_shadow_steps: 0` | The control that has never been run. ⚠️ **Premise corrected**: the shipped settings are 6 steps with `dominant: true`, not the 16 × ~14 the issue was written against, so expect **under a millisecond** |
 | **4 · #865** | a scene with the same coverage and far fewer vertices per pixel | The shading pass fetches **96 bytes of vertex per pixel** (3 × 32 B, unpacked). Whether that is 3 ms or 0.3 depends on cache hit rate, and packing before knowing is how the last three died |
 
-**Phase 1 — upscaling, and it is now #536 first: bind AMD's library rather than reimplement it.**
-🎯 **Promoted here 2026-08-17, ahead of #866.** The user's directive, in two parts and the second
-corrects the first reading of it: the engine ships for Windows as well as Linux and for NVIDIA
-and Intel as well as AMD — *and* *"no quiero portearlo de cero, quiero implementar un paquete de
-AMD funcional, el tema es adaptarlo a Rust"*.
+**Phase 1 — the engine's own temporal upscaler: #481. Third-party ones later (#536).** 🎯
+**Promoted here 2026-08-17, ahead of #866**, and settled after two corrections in one afternoon —
+both recorded because the reasoning matters more than the conclusion.
 
-⚠️ **The first plan here read "no crate covers this, therefore write it" — the bottom row of
-this project's own dependency policy, reached by asking the wrong question.** The search asked
-*is there a wgpu upscaler crate* (no) instead of *can AMD's C API be bound* (yes). FSR 3.1
-introduced the **FidelityFX API**, a stable C ABI, and FSR 4 continues to use it — so one FFI
-surface over two headers covers FSR 3.1 today and what ships behind that ABI later.
+The user's call: *"si no podemos usar los escaladores, lo ideal sería hacer el nuestro con la data
+que encontremos, y más adelante buscamos usar los de terceros"*.
 
-**Phase 1a — a build spike, and it is a day rather than weeks.** Everything below hinges on
-three unknowns that are cheap to settle and expensive to assume:
+⚠️ **The premise is not quite right and the decision survives it.** FSR **3.1** *is* usable — MIT
+source, native Vulkan backend, runs on all three vendors. Only **FSR 4** is out of reach, being
+DirectX 12 only. So this is a choice rather than a forced move, and it is the right one for
+reasons about this project rather than about FSR: the SDK's shader compiler needs **`wine`** on an
+atomic distro, `as_hal::<Vulkan>()` is `unsafe` and pinned to **wgpu 29**, an external signed
+library has to be located and redistributed, and ours reaches WebGPU and Metal where a native
+library backend reaches neither. The one that decides it: **a bug in ours is a bug we can fix.**
 
-| | The unknown | Why it is not obvious |
-|---|---|---|
-| 1 | Does the SDK's **Vulkan** backend build on Bazzite? | It builds with gcc/clang, but ⚠️ **`FidelityFX_SC.exe`, the shader compiler, needs `wine`** — and this is an atomic distro, so wine means `rpm-ostree` and a reboot |
-| 2 | Does `bindgen` run here? | 🔴 Three LLVM installs in parallel on this machine already break `*-sys` crates with *`'stdbool.h' not found`*; `BINDGEN_EXTRA_CLANG_ARGS` is the known fix and it has to be in the `build.rs`, not in someone's shell |
-| 3 | Does `Device::as_hal::<Vulkan>()` hand over a usable device, queue and texture? | The interop is `unsafe` and pinned to **wgpu 29**. `dlss_wgpu` proves the pattern works; it does not prove it works for our texture usages |
+🔴 **What is given up, stated rather than discovered: quality.** *"Improved temporal stability,
+less flickering, ghosting reduction"* is the changelog of a single FSR point release. Ours will not
+match years of tuning, and the honest bar is **better than the TAA we ship today, at a lower
+render resolution** — not *as good as FSR*.
 
-If all three pass, **#481's steps 4–6 (resolution split, RCAS, feature locking) are cancelled**
-— they are reimplementations of what the SDK does, and the policy says do not write them. If any
-fails, they are the fallback and we learned that for a day's work instead of a month's.
+⚠️ **And an earlier version of this section had it backwards.** It read *"no crate covers this,
+therefore write it"* — the bottom row of this project's dependency policy, reached by asking *is
+there a wgpu upscaler crate* (no) instead of *can AMD's C API be bound* (yes, and FSR 3.1's
+FidelityFX API is a stable C ABI). The conclusion is the same; it is now reached on purpose.
 
-**Phase 1b — what #481 keeps either way**, because none of it is wasted: 16-phase jitter, motion
-vectors dilated by closest depth, and history rejection by variance in YCoCg. They improve the
-TAA that ships **today**, and a good motion-vector buffer is an input every backend consumes.
-Plus the input contract: `UpscaleInputs` is FSR 3.1's six, which stops being a courtesy once a
-real FSR 3.1 is the thing reading them.
+**Six steps, and the first three ship one at a time and improve today's TAA even if the upscaling
+never lands:** 16-phase jitter, motion vectors dilated by closest depth, history rejection by
+variance in YCoCg. Then step 4, the resolution split, which is where the real risk is because it
+changes what "a pixel" means to every pass downstream. Then RCAS and feature locking — 🔴 **not
+optional polish**: without them the result reads soft, which is exactly how this lands as *"we
+tried it, it looked worse, we turned it off"*.
+
+**What survives from the FFI plan, and it is not small:** #536's trait, `UpscalerCaps` and startup
+selection are **built in Phase 1 with ours as the first backend behind them**. Building the seam
+while there is one implementation is what makes the second one a day's work; building it after is
+a refactor. And `UpscaleInputs` stays **FSR 3.1's six** — jittered colour, depth, motion vectors,
+jitter offset, `exposure`, reset — which is what makes *"más adelante"* a configuration change.
+
+🎯 **The corpus is written down in #481 with a licence column**, because that column is the trap:
+FSR 2/3.1's HLSL is **MIT and copyable** and is the primary reference; Bevy's is MIT/Apache;
+Karis 2014, Playdead's INSIDE (where the YCoCg variance clipping comes from), Salvi and the Decima
+talk are papers to implement from. 🔴 **UE5 TSR is the closest existing thing to this exact
+category and is under Epic's EULA — read the talks, never the source.** FSR's is MIT and solves
+the same problem, so there is no reason to go near the encumbered one.
 
 🔴 **FSR 4 is DirectX 12 only, and that decides everything about it.** Not a licence limit and
 not a hardware one: AMD has shipped no Vulkan backend for FSR 4, so *"it cannot be integrated
@@ -193,8 +207,8 @@ into games that use the Vulkan API"*. Which means:
 
 So FSR 4 is **a desktop-Windows image-quality feature that costs a second `unsafe` interop
 path**, and it does nothing for the 13.9 ms problem, because the device the budget is about runs
-Linux. It is **deferred, not refused**: a second backend, opened once the Vulkan one works.
-⏭️ The single fact that would collapse this back into one path is AMD shipping a Vulkan FSR 4.
+Linux. It is **deferred, not refused** — the third backend behind the trait, after ours and after
+FSR 3.1. ⏭️ The single fact that would move it up is AMD shipping a Vulkan FSR 4.
 
 ⚠️ Adrenalin's automatic upgrade of an FSR 3.1 integration to 4.1.1 is **DX12-only too**, which
 cuts both ways: no free FSR 4 on a Vulkan integration, and no surprise change to an image we
