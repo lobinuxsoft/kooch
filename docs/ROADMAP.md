@@ -127,7 +127,9 @@ said.
 | **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
 | **#254** | post + auto exposure | The blown-out white floor in three sessions of screenshots. Cheap |
 | **#771 / #248** | atmosphere, ported from Bevy | Now worth doing for the sky it gives, not for what it saves: 1.2 ms without clouds |
-| ~~#481~~ / **#536** | ~~motion vectors + TAA~~ / FSR | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest 1 % of edges the resolved image carries **0.38** of the squared gradient the unresolved one does. **Off by default** — asset and engine alike, see below. FSR still open |
+| **#481** | motion vectors + TAA → **the engine's own upscaler** | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest 1 % of edges the resolved image carries **0.38** of the squared gradient the unresolved one does. **Off by default** — asset and engine alike, see below. 🎯 The issue stays open because it **grew**: it now owns the engine's own temporal upscaler, Phase 1 below |
+| **#536** | ~~vendor plugin backend~~ → optional vendor backends | **Inverted 2026-08-17.** It read *"detect the adapter, load that vendor's SDK, fall back to TAA"*, which makes a vendor's upscaler the path that ships and ours the path nobody tests. Now: ours is the default on every adapter, vendors are optional behind the same trait. `dlss_wgpu` is a genuine adopt — and 🔴 **Vulkan-only**, which on Windows means pinning a backend, plus an SDK it cannot redistribute |
+| ~~#732~~ | ~~temporal upscaling on both vendors~~ | **Closed as superseded.** One issue describing three things; its phases are done (#481) or split (#481 + #536), and its findings were carried across rather than dropped |
 
 ### 🎯 The order, decided 2026-08-17 — graphics first, and the game waits
 
@@ -142,19 +144,52 @@ died on their own measurement this week, and each of these bounds an item below 
 
 | | | The question, and the number it is against |
 |---|---|---|
-| **1 · #481** | `temporal_aa: false`, warmed, same route | **4.968 ms, 20 % of the GPU.** Does the frame drop by it, or does the shading grow to absorb it? And what does the image lose — this is antialiasing, so the answer is a trade, not a win. Watch for the contact-shadow seam returning: TAA is what softens it |
+| ~~**1 · #481**~~ | ~~`temporal_aa: false`, warmed, same route~~ | ✅ **Measured, and the answer was not the one asked for.** The shading did **not** grow to absorb it — 10.969 → 10.803 is noise — so the resolve is additive work: frame 27.83 → 22.10, GPU 24.8 → 20.5. 🎯 **The finding was elsewhere: `motion vectors` cost 1.994 ms with its only consumer off.** Gated in #868 — the cheapest whole millisecond on this board, and an `if` rather than a quality trade. ⚠️ The −5.73 ms frame delta is directionally right and imprecise (4523 frames against 11158, a 2069 ms stall, `sky` halved = a different route). Still owed: the visual judgement on the device, including whether the contact-shadow seam returns |
 | **2 · #825** | `shading_rate: 1` against `2` | Half-rate shading costs a **1.533 ms** upsample to save part of a 10.969 ms dispatch. Nobody has measured the pair as one line |
 | **3 · #839** | `contact_shadow_steps: 0` | The control that has never been run. ⚠️ **Premise corrected**: the shipped settings are 6 steps with `dominant: true`, not the 16 × ~14 the issue was written against, so expect **under a millisecond** |
 | **4 · #865** | a scene with the same coverage and far fewer vertices per pixel | The shading pass fetches **96 bytes of vertex per pixel** (3 × 32 B, unpacked). Whether that is 3 ms or 0.3 depends on cache hit rate, and packing before knowing is how the last three died |
 
-**Phase 1 — the structure all of it needs: #866.** One page pool (bricks out of an atlas, not
-an octree), clipmap levels for range, and invalidation by reach rather than by the world. It
-is not three features, it is one structure with three consumers — and this project has already
-built and measured the small version of each part: the froxel grid (#780) produces "which
-lights need detail where", and #847 proved invalidation-by-reach is worth **2.781 → 1.153 ms**
-at cube granularity.
+**Phase 1 — the engine's own temporal upscaler: #481.** 🎯 **Promoted here 2026-08-17, ahead of
+#866, and the user's directive is why:** *"me gustaría que el engine tenga su propio
+escalador"*, on Windows as well as Linux and on NVIDIA and Intel as well as AMD. That is not a
+preference, it decides the architecture — a vendor SDK cannot be the path a build depends on,
+so the always-there path is ours and the vendor backends (#536) become optional on top of it.
 
-**Phase 2 — the consumers, on top of #866 and not before.**
+It is also, on the numbers, **the largest single lever on this board**. Rendering at 67 %
+linear is 44 % of the pixels, and per-pixel shading is what dominates the frame:
+
+| | today | at 44 % of the pixels |
+|---|---|---|
+| `shade: compute (half rate)` | 10.969 ms | ~4.9 |
+| `shade: upsample` | 1.533 | ~0.7 |
+| temporal resolve | 2.883 (`taa`) | ~2.0–2.5, replacing it |
+| **net** | | 🎯 **≈ −5 ms of 24.8** |
+
+Every other item is bounded far below that: all shadows total **1.153 ms**, the cull 0.040, the
+grid 0.156. And unlike them it **compounds** — every per-pixel cost added afterwards is bought
+at 44 %.
+
+The scope is six steps, and 🔴 **the first three improve the TAA that already ships even if the
+upscaling never lands**: 16-phase jitter, motion vectors dilated by closest depth, and history
+rejection by variance in YCoCg. Then the resolution split (the step with the real risk), RCAS,
+and feature locking. It is a **port, not an invention** — FSR 2/3 is MIT with the full HLSL in
+language-independent headers, there is a precedent port to GLSL, and no crate covers it
+(`fsr-rs` archived, nothing on crates.io for wgpu).
+
+⚠️ **It is a reconstruction, so it is still a trade.** 1280×720 *output* is a hostile case
+because there is little detail to reconstruct from. The device decides. Which is why #254 now
+also owns the **non-temporal** fallback — `None | Spatial | Temporal`, with CMAA2 over SMAA 1x
+for a compute frame with no LUT assets to ship.
+
+**Phase 2 — the structure the light and shadow side needs: #866.** One page pool (bricks out of
+an atlas, not an octree), clipmap levels for range, and invalidation by reach rather than by
+the world. It is not three features, it is one structure with three consumers — and this
+project has already built and measured the small version of each part: the froxel grid (#780)
+produces "which lights need detail where", and #847 proved invalidation-by-reach is worth
+**2.781 → 1.153 ms** at cube granularity. **Demoted below #481** because its payoff is scale
+and memory, and the frame's problem today is cost per pixel.
+
+**Phase 3 — the consumers, on top of #866 and not before.**
 
 | | | Why it waits for the pool |
 |---|---|---|
@@ -162,10 +197,17 @@ at cube granularity.
 | **#477** | virtual shadow maps | Its justification is **scale and memory** — four cubes for a hundred lights, 152 MiB standing — **not frame time**, because shadows total 1.153 ms. Any summary promising milliseconds here is wrong |
 | ~~#841 / #849~~ | which four lights get a cube | **Superseded if #866 lands**: pages allocated by need retire the question of slots handed out by rank |
 
-**Phase 3 — the additive features, once there is headroom to spend.** #254 (post + auto
+**Phase 4 — the additive features, once there is headroom to spend.** #254 (post + auto
 exposure), #771 / #248 (atmosphere), #731 (clouds, which cost 39 ms as written). Every one of
 these *adds* to a frame that is 1.8× over budget, so they are gated on Phase 1 buying
 something.
+
+🎯 **…with one exception, and it is a prerequisite rather than a feature: auto exposure.** Every
+temporal resolve — ours and every vendor backend — takes an `exposure` input and does its
+history rejection in a perceptual space, and this engine's radiance is in the **hundreds**.
+Feeding an unexposed image to a reconstruction is feeding it noise. So the exposure half of
+#254 belongs *inside* Phase 1, which is the same conclusion already recorded about anything
+that compresses range.
 
 🔴 **The gate on the whole plan.** 24.8 ms of GPU against 13.9, in a scene built to break the
 engine with a hundred shadow-casting lights. **A real level has never been measured**, and if
