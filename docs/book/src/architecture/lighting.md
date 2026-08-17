@@ -3,9 +3,9 @@
 **Inti** is Kóoch's lighting system, named for the Inca sun.
 
 The name covers the whole thing, not one crate: extraction, the GPU light
-record, the shading model, shadows when they land, clustering, light
-textures, global illumination. When something says "the Inti path" it
-means the same way "the meshlet path" does.
+record, the shading model, shadows, clustering, light textures, and the
+global illumination that is still to come. When something says "the Inti
+path" it means the same way "the meshlet path" does.
 
 The crate is still called `kooch_lighting`. Renaming a crate rewrites
 every serialised `type_name` in every `.scene` and `.prefab` in every
@@ -28,7 +28,7 @@ flowchart LR
     B --> G["the froxel grid<br/>four GPU passes,<br/>per view"]
     G --> S["inti_shade()<br/>in both shading paths"]
     B --> S
-    S --> T[inti_tonemap<br/>exposure → ACES → sRGB]
+    S --> T["inti_tonemap<br/>exposure → ACES → sRGB<br/>inline on the fragment path,<br/>its own pass on the compute one"]
 
     style C fill:#1e3a5f,stroke:#4d8fbe,color:#fff
     style G fill:#1e5f3a,stroke:#4dbe8f,color:#fff
@@ -200,8 +200,30 @@ transfer function. Both are provisional and belong to
 real tonemapper and the auto exposure that lets a sunlit surface and a
 planet's night side coexist in one frame.
 
-> ⚠️ `Exposure` and `AmbientLight` are `Resources` that **no editor
-> surface reaches**. The control exists and is not in your hands yet.
+### Where the author sets it — `.rendersettings` (#744)
+
+Exposure and ambient used to be `Resources` with defaults and **no way to
+change them**: #441 built the control and left it out of reach, which is
+this engine's recurring failure committed knowingly. They are now fields
+of a **project settings asset** — `aperture_f_stops`, `shutter_speed_s`,
+`sensitivity_iso`, `ambient_sky_color`, `ambient_ground_color`,
+`ambient_intensity` — edited in the Inspector like any other asset.
+
+It is an asset rather than a panel because the machinery already existed:
+a RON loader that registers itself, reflection for the generic editor,
+the save-and-refresh path of #728, and the asset browser as its home.
+**The evidence that bespoke settings panels do not get built is that this
+setting had none for as long as it existed.**
+
+⚠️ **Author settings, not player settings.** This ships with the game and
+belongs in version control. What the *player* picks — resolution, volume,
+key bindings — is #736 and lives under `~/.config/`. Merged, they would
+put an artist's exposure and a volume slider in the same commit.
+
+🔴 The fields are **flat** rather than a nested `PhysicalCamera`, and
+every `serde` default is *what the engine already did* — see the render
+pipeline page on why an old file silently taking a new default is how
+"you broke the whole render" gets reported.
 
 ## The GPU record
 
@@ -217,8 +239,8 @@ touching light `i` reads *all* of light `i`'s fields within a few
 instructions. Splitting into parallel arrays turns one cache line into
 six scattered fetches. SoA pays when a pass reads one field across many
 records — which is what light **culling** does, positions and ranges
-only, so when clustering lands its input is a separate pair of arrays,
-not a reinterpretation of this one.
+only, and that is exactly how the froxel grid takes its input: a separate
+pair of arrays, not a reinterpretation of this one.
 
 It was 64 bytes — one cache line — until `radius` arrived and there was
 nowhere left to put it. Growing the record widens **every** light in the
@@ -251,8 +273,10 @@ atlas, sampled with **Castaño '13** — nine bilinear taps — under a PCSS
 penumbra that widens with the gap between blocker and receiver
 (`sun_softness` is the tangent of the sun's angular radius, not a width).
 
-Only the **first active directional light** casts. A punctual light needs
-a cube map or a projected map, and neither exists yet.
+Only the **first active directional light** gets cascades. That is a
+statement about *cascades*, not about punctual shadows: a spot casts
+through its own perspective map (#777) and a point through a cube (#778),
+both below, and both default to `cast_shadows: true`.
 
 The cascade fit is the one thing in the renderer that still asks for a
 **bounded** projection — a slice of an unbounded frustum is unbounded.
@@ -353,12 +377,12 @@ function the shading loop sums per light. A view that recomputed the
 maths its own way could disagree with the frame, and then it is one more
 thing to debug instead of the thing that settles the question.
 
-> ⚠️ **A point light shows no shadow, and that is correct.** It would
-> need a cube map (#778). Contact shadows are the only occlusion it can
-> have and they are off by default. "Casts nothing" and "the shadow
-> broke" render identically, so the editor prints which one it is next
-> to the selector — `shadow_note` in `kooch_lighting`. A **spot** casts
-> since #777 and a **point** since #778.
+> ⚠️ **A light that shows no shadow is not necessarily broken.** A spot
+> casts since #777 and a point since #778, but both are limited to four
+> maps each: past the budget a light keeps lighting the scene and stops
+> casting. "Casts nothing" and "the shadow broke" render identically, so
+> the editor prints which one it is next to the selector — `shadow_note`
+> in `kooch_lighting`.
 
 Magenta means the selection has no slot in the light buffer, and the note
 below the selector says which reason:
@@ -732,6 +756,43 @@ A cut at a *threshold* rather than at zero is the next question, and it
 is a different kind of change: visible, tunable, and needing its own
 measurement. That is what the section below is.
 
+### ❌ What does not work: cutting the list by count (#826)
+
+Recorded because it is the obvious next idea and it is wrong.
+
+If a cell carries ~40 lights and ~14 reach the pixel, sampling *k* of
+them stochastically and weighting the result looks like the standard
+answer — RIS, in the shape ReSTIR made famous. It was built, measured and
+removed, and 1139 lines went with it.
+
+**It is incompatible with the grid's continuity property.** A light joins
+a cell exactly when its contribution reaches zero, which is what makes
+the boundary between two cells invisible. Choose *k* of *n* per froxel
+and the froxel becomes visible: neighbouring cells pick different subsets
+of the same lights, and the picture breaks into flickering blocks the
+size of a cell — 75×80 px at 1080p, repainted every frame.
+
+The histogram says the same thing arithmetically. Over a hundred-light
+scene:
+
+| lights kept | share of the froxel's irradiance |
+|---|---|
+| top 2 | 60.8 % |
+| top 6 | 95 % |
+| top 8 | 93 % *of the worst froxel* |
+
+**There is no small *k*.** Getting to 95 % takes six of the fourteen that
+reach the pixel, and the two the ordering drops are exactly the ones a
+neighbouring cell keeps.
+
+⚠️ A related hypothesis died with it: that the workgroup memory the
+sampler used was costing occupancy. Removing it freed 9.88 KB of LDS and
+moved a settled handheld frame from 40.7 ms to 40.5 — inside the noise.
+**The shading dispatch is not misconfigured. It is doing real work.**
+
+The direction that survives is not fewer lights, it is cheaper lights —
+which is the section below — and a smaller reach per light (#835 above).
+
 ### What each light costs — `specular_floor` (#821)
 
 Clustering bounds *how many* lights a pixel walks. It cannot make any of
@@ -783,6 +844,12 @@ each, is the only honest way to say what the grid bought.
   back asynchronously. A frame that overflows renders its later cells
   under-lit rather than reading past the end of the buffer, and the next
   frame has the bigger buffer.
+- **Four spot maps and four point cubes**, both memory limits rather than
+  limits of the technique. Past them a light keeps lighting and stops
+  casting, ranked by distance to the camera.
 - **No environment map**, no IBL, no area lights, no volumetrics, no
   bloom. The crate's original doc comment promised the last three. It now
   promises what it has.
+- **No global illumination** ([#450](https://github.com/lobinuxsoft/kooch/issues/450)),
+  which is why the punctual default is forty times a real bulb. That
+  number goes back to physics the day GI lands, and not before.
