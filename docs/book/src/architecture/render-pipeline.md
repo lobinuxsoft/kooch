@@ -25,7 +25,14 @@ appears once a second view exists, or once shadow cascades do, where it
 reads as "the shadows are wrong" rather than as a shared-state bug.
 
 Two views run today: the editor's **View** panel and its **Game** panel.
-Shadow cascades and virtual-shadow-map pages will be views too.
+
+**Shadow cascades did not become views**, which was the plan when this
+page was written. They record inside the stage instead, against the
+unjittered camera and with their own bounded projection, because a
+cascade shares the pool and the instance buffer but wants none of a
+view's render targets. Virtual-shadow-map pages
+([#477](https://github.com/lobinuxsoft/kooch/issues/477)) may still be
+the case that makes a view the right shape.
 
 Each view records **and submits** its own command encoder. Several
 per-frame buffers are shared across views on exactly that basis: a write
@@ -38,34 +45,65 @@ Which path runs depends on one capability: 64-bit texture atomics. The
 device either has `TEXTURE_INT64_ATOMIC` + `SHADER_INT64` +
 `SHADER_INT64_ATOMIC_MIN_MAX` or it does not.
 
+The node labels below are the **GPU scope names a capture prints**, so a
+flamegraph and this diagram can be read side by side. Anything not named
+here does not have a timer on it.
+
 ```mermaid
 flowchart TD
     START([Frame begins]) --> EXTRACT[CPU: walk the ECS<br/>MeshRenderer + GlobalTransform → instances<br/>lights → Inti's GPU buffer]
     EXTRACT --> UPLOAD[Upload instances, grow buffers to fit]
-    UPLOAD --> R64{64-bit texture<br/>atomics?}
+    UPLOAD --> SHADOWS["shadows<br/>4 cascade culls + rasters,<br/>plus a cube face per shadowed point light"]
+    SHADOWS --> GRID["cluster grid<br/>the froxel light index — 4 passes, two of them draws"]
+    GRID --> R64{64-bit texture<br/>atomics?}
 
-    R64 -- yes --> A0[Cull: one thread per instance-meshlet<br/>frustum · backface cone · LOD chain descent]
-    A0 --> A1[Clear the R64 visibility buffer]
-    A1 --> A2["Raster: draw_indirect the survivors<br/>fragment does atomicMax(depth &lt;&lt; 32 | ids)"]
-    A2 --> A3[Resolve material id into a depth target]
-    A3 --> A4[Shade: one fullscreen pass per material,<br/>depth-tested Equal → Inti]
+    R64 -- yes --> A0["cull: one thread per instance-meshlet<br/>frustum · backface cone · LOD chain descent"]
 
-    R64 -- no --> B0[Cull A against last frame's Hi-Z]
-    B0 --> B1[Raster A into the R32 visibility buffer]
-    B1 --> B2[Build the Hi-Z pyramid: SPD]
-    B2 --> B3[Cull B: what pass A occluded]
-    B3 --> B4[Raster B]
-    B4 --> B5[Shade: one compute dispatch → Inti]
+    subgraph FUSED["raster + shade — one fused scope, timed as a whole"]
+        direction TB
+        A1[Clear the R64 visibility buffer] --> A2["Raster: draw_indirect the survivors<br/>fragment does atomicMax(depth &lt;&lt; 32 | ids)"]
+        A2 --> MV["motion vectors<br/>previous clip position, unjittered camera"]
+        MV --> SH{"compute<br/>shading?"}
+        SH -- yes --> A4["shade: compute — or (half rate)<br/>one dispatch → Inti, into an HDR target"]
+        SH -- "no, the default" --> A5["shade: fragment<br/>one fullscreen pass per material, depth-tested Equal"]
+        A4 --> UP["shade: upsample<br/>only when the rate is half"]
+        UP --> TAA["taa<br/>off by default — #481"]
+        TAA --> TM["tonemap<br/>HDR radiance → display-referred"]
+    end
 
-    A4 --> BLIT[Blit the stage's colour over the sky]
-    B5 --> BLIT
+    A0 --> A1
+
+    R64 -- no --> B0["cull + raster A against last frame's Hi-Z"]
+    B0 --> B2["hi-z build: SPD pyramid"]
+    B2 --> B3["cull + raster B: what pass A occluded"]
+    B3 --> B5["shade: one compute dispatch → Inti<br/>no motion vectors, no TAA on this path"]
+
+    TM --> SKY["sky"]
+    A5 --> SKY
+    B5 --> SKY
+    SKY --> BLIT["blit the stage's colour over the sky"]
     BLIT --> PRESENT([Present])
 
     style A2 fill:#1e5f3a,stroke:#4dbe8f,color:#fff
     style A4 fill:#5f3a1e,stroke:#be8f4d,color:#fff
+    style A5 fill:#5f3a1e,stroke:#be8f4d,color:#fff
     style B5 fill:#5f3a1e,stroke:#be8f4d,color:#fff
+    style SHADOWS fill:#3a1e5f,stroke:#8f4dbe,color:#fff
+    style GRID fill:#3a1e5f,stroke:#8f4dbe,color:#fff
     style EXTRACT fill:#1e3a5f,stroke:#4d8fbe,color:#fff
 ```
+
+Two of those run **before** anything is drawn, and the order is not
+arbitrary: shading samples the shadow atlas and reads the froxel grid, so
+both have to be filled first. They are separately scoped because a shadow
+pass that costs four culls and four rasters was, until #785, hiding
+inside whatever number the frame reported.
+
+The R64 path's `raster + shade` is **one fused scope** covering
+everything from the clear to the tonemap. Its children — motion vectors,
+the shade dispatch, the upsample, TAA, the tonemap — are timed
+individually inside it, which is how a capture answers *which half of the
+fused pass is the cost*.
 
 ### Cull
 
@@ -122,15 +160,59 @@ normals and never computed a world position at all, which was invisible
 while shading was a function of the normal alone and would have lit the
 centroid of every triangle the moment a point light needed a distance.
 
-- **R64** shades with one fullscreen fragment pass *per material*,
+- **R64, fragment — the default.** One fullscreen pass *per material*,
   depth-testing `Equal` against a target holding each pixel's material
   id. The depth test is the per-material cull, in hardware, with
   early-Z. Each pass binds its own textures.
+- **R64, compute — opt-in.** One dispatch for the whole screen, into an
+  HDR target. Turned on per project (`compute_shading`) or per run
+  (`KOOCH_COMPUTE_SHADING`), and it is what half-rate shading and the
+  reduced-rate upsample require.
 - **R32** shades with one compute dispatch. **No texture sampling**: a
   compute shader has no implicit derivatives, and `textureSampleGrad` is
   a fragment-stage call. Scalars only.
 
+> 🔴 **A `serde` default is not a recommendation — it is what an old file
+> silently becomes.** `compute_shading`, `shading_rate` and `temporal_aa`
+> all default to what the engine already did — fragment path, full rate,
+> no history — because an earlier version defaulted two of them to *on*
+> and every existing project changed shading path and gained a temporal
+> resolve in the same build. Two variables at once is not a change
+> anybody can bisect, and the first report was "you broke the whole
+> render".
+
 Then [Inti](./lighting.md) — Cook-Torrance driven by the scene's lights.
+
+### After the shade: rate, history, and the tonemap
+
+Three passes sit between Inti and the sky, and all three exist on the R64
+path only.
+
+- **Half-rate shading.** `KOOCH_SHADING_RATE=half` shades a quarter of
+  the pixels and `shade: upsample` puts them back on screen. The scope
+  renames itself — `shade: compute (half rate)` — so a capture answers
+  *which rate produced this* without anyone trusting a log line. The
+  cheap half of the frame stays full-rate: the visibility buffer, the
+  depth, the motion vectors.
+- **`motion vectors`.** Each pixel's previous clip position, from the
+  camera's *unjittered* matrix. The jittered one goes to everything else
+  — cull, Hi-Z, raster, every reconstruction that reads the buffer the
+  raster wrote — and the pair being separable is the whole reason the
+  vectors are not wrong by a sub-pixel offset every frame.
+- **`taa`, and it is off by default.** The resolve exists and works;
+  turning it on is #481's remaining half. Debug views bypass it, because
+  averaging a false-colour legend across frames is not a legend any more.
+- **`tonemap`.** Shading writes **HDR radiance** into a linear target and
+  the tonemap converts it at the end, because TAA has to run on linear
+  radiance. The operator is *concatenated* from Inti rather than
+  reimplemented — two copies of a curve that must agree to within one
+  255th is how a parity test starts failing for a reason nobody can find.
+
+> 🔴 Everything that compresses range — the resolve, the tonemap, any
+> firefly clamp — needs the **exposure applied first**. Radiance in this
+> engine is in the hundreds, and `c / (max(c) + 1)` on those numbers
+> posterises into flat bands that read as a broken toon shader rather
+> than as a missing divide.
 
 ### Sky and composite
 
@@ -162,6 +244,15 @@ branch on a single `u32`. `Off` is the production path.
 | `Normals` | The world-space normal as colour |
 | `ShadowCascades` / `ContactShadows` | What each shadow mechanism saw — see [Inti](./lighting.md) |
 | `SingleLight` | The selected light, alone, in grey, with its shadow |
+| `LightsPerPixel` | How many lights the pixel actually evaluated. Cost becomes a property of *where the pixel is*, which no pass timing can show — `raster + shade` is one number for the whole screen. 🔴 A flat maximum means the frame is **not clustering**: every light, every pixel |
+| `PointShadowFactor` | One point light's cube map answering for itself — no BRDF, no cosine, no exposure, no second light. Magenta: no casting lamp. Blue: past its `range`. Grey ramp: the factor |
+| `PointCubeFaces` | The cube map itself, six faces in a 3×2 grid (+X, −X, +Y, −Y, +Z, −Z). Dark blue is *nothing recorded*, which is what an occluder culled out of the map looks like |
+
+The last three exist because *"the shadow is not there"* is four faults
+wearing one pixel — no lamp near this point casts, the point is past the
+lamp's reach, the cube says lit because the occluder never reached the
+map, or the cube says dark and the other lamps fill it back in. Four
+fixes, one colour in a shaded frame.
 
 `Normals` deserves a note: until #441 it *was* the shading model. The
 renderer computed `normal * 0.5 + 0.5` and multiplied by albedo, which is
@@ -227,17 +318,26 @@ of what this touched: [ADR 0002](../../../decisions/0002_infinite_reverse_z.md).
   ([#453](https://github.com/lobinuxsoft/kooch/issues/453)), so an
   animation that reaches outside the rest volume culls a character who
   is on screen.
-- **No motion vectors**, which blocks temporal upscaling, TAA and motion
-  blur at once ([#732](https://github.com/lobinuxsoft/kooch/issues/732)).
-  It is also what leaves the contact-shadow seam visible: the march
-  answers hit-or-miss per pixel and only averaging softens that, which
-  is what Bevy's TAA does for them.
+- **The R32 path has no motion vectors and no history**, so no TAA and no
+  temporal upscaling there. Jitter on that path is a wobble and nothing
+  else, which is why it is not applied.
+- **TAA ships off** ([#481](https://github.com/lobinuxsoft/kooch/issues/481)).
+  The resolve is built and the vectors feed it; what is missing is the
+  half that turns it on by default without softening a still image.
 
 ## Not in the pipeline yet
 
-- **Shadows** — cascades ([#476](https://github.com/lobinuxsoft/kooch/issues/476)),
-  contact shadows ([#735](https://github.com/lobinuxsoft/kooch/issues/735)),
-  VSM ([#477](https://github.com/lobinuxsoft/kooch/issues/477)).
+Shadows, contact shadows and clustered shading used to be listed here.
+Cascades ([#476](https://github.com/lobinuxsoft/kooch/issues/476)) and
+contact shadows ([#735](https://github.com/lobinuxsoft/kooch/issues/735))
+shipped, and the froxel grid
+([#780](https://github.com/lobinuxsoft/kooch/issues/780)) runs every
+frame — the passes in the diagram above are what replaced those bullets.
+What is genuinely still absent:
+
+- **Virtual shadow maps** ([#477](https://github.com/lobinuxsoft/kooch/issues/477)).
+  Cascades cover the sun; a hundred shadowed point lights each want a
+  cube map, and that is the wall VSM exists to move.
 - **Global illumination** ([#450](https://github.com/lobinuxsoft/kooch/issues/450)) —
   surfel + voxel, not raytraced. Its absence is why punctual light
   defaults are larger than physics says they should be; see
@@ -245,11 +345,10 @@ of what this touched: [ADR 0002](../../../decisions/0002_infinite_reverse_z.md).
 - **Atmosphere** ([#250](https://github.com/lobinuxsoft/kooch/issues/250),
   [#248](https://github.com/lobinuxsoft/kooch/issues/248)) — correct from
   orbit, and tinting the sunlight.
-- **Post-processing and auto exposure**
-  ([#254](https://github.com/lobinuxsoft/kooch/issues/254)). Inti ships a
-  fixed exposure and an ACES approximation as placeholders.
-- **Light clustering.** The shader loops over every light for every
-  pixel: honest for tens, wrong for thousands.
+- **The post-processing stack**
+  ([#254](https://github.com/lobinuxsoft/kooch/issues/254)) — AgX, SMAA,
+  CAS, vignette. The `tonemap` pass exists; the stack around it does not,
+  and exposure is a setting rather than an auto-exposure loop.
 
 ## Why there is no render graph
 
