@@ -205,18 +205,6 @@ pub struct RenderSettings {
     #[serde(default = "default_shading_rate")]
     #[reflect(group = "Shading", choices = SHADING_RATE_CHOICES)]
     pub shading_rate: u32,
-    /// How many of a froxel's lights each pixel evaluates (#826). **Zero
-    /// evaluates all of them**, which is exact and the most expensive
-    /// thing the frame does.
-    ///
-    /// The lights are chosen in proportion to what they contribute and
-    /// each result is divided by the probability of having chosen it, so
-    /// the average over the picked set estimates the sum over all of
-    /// them. What it costs is noise, not darkness — and noise is what
-    /// the temporal resolve below is for.
-    #[serde(default = "default_light_samples")]
-    #[reflect(group = "Shading")]
-    pub light_samples: u32,
 
     /// Temporal anti-aliasing (#481): each frame samples a different
     /// sub-pixel position and is blended with the ones before it.
@@ -318,9 +306,6 @@ fn default_compute_shading() -> bool {
 fn default_shading_rate() -> u32 {
     crate::meshlet::ShadingRate::Full.factor()
 }
-fn default_light_samples() -> u32 {
-    0
-}
 fn default_temporal_aa() -> bool {
     false
 }
@@ -353,7 +338,6 @@ impl Default for RenderSettings {
             point_shadows: shadows.point_shadows,
             compute_shading: default_compute_shading(),
             shading_rate: default_shading_rate(),
-            light_samples: default_light_samples(),
             temporal_aa: default_temporal_aa(),
         }
     }
@@ -409,7 +393,6 @@ impl RenderSettings {
         crate::quality::ShadingSettings::from_asset(
             self.compute_shading,
             crate::meshlet::ShadingRate::from_factor(self.shading_rate),
-            self.light_samples,
         )
     }
 
@@ -435,11 +418,6 @@ impl RenderSettings {
         let shading = self.shading();
         resources.insert(shading);
         resources.insert(self.temporal());
-        // The sampled-light count reaches the shader through Inti's own
-        // resource rather than a second path, so a game that sets
-        // `LightSamples` by hand keeps working and this is one more
-        // writer of it rather than a competing one.
-        resources.insert(kooch_lighting::LightSamples(shading.light_samples));
     }
 }
 

@@ -82,3 +82,39 @@ fn the_unit_of_each_number_is_stated() {
     assert!(doc("shutter_speed_s").contains("SECONDS"));
     assert!(doc("ambient_intensity").contains("LUX"));
 }
+
+/// 🔴 A `.rendersettings` written before #826 was removed must still
+/// load, and quietly.
+///
+/// This is the removal's only real hazard. Deleting a field from a
+/// serialized asset is not like deleting a function: the compiler cannot
+/// see the files already on disk, and every project that ever opened the
+/// Shading group has `light_samples` written into its own
+/// `project.rendersettings` — roll-a-ball's said `light_samples: 4` when
+/// this landed. If RON rejected the unknown key the asset would fail to
+/// load, and the project would come up with default exposure, default
+/// shadows and default everything with nothing naming the cause.
+///
+/// Goes through the real loader rather than `ron::from_str`, because the
+/// loader is what a project actually hits.
+#[test]
+fn a_settings_file_with_the_removed_field_still_loads() {
+    let loader = RenderSettingsLoader;
+    let path = std::path::Path::new("project.rendersettings");
+    let mut ctx = LoadContext { path };
+    let parsed = loader
+        .load(
+            b"(aperture_f_stops: 2.8, light_samples: 4, compute_shading: true)",
+            &mut ctx,
+        )
+        .expect(
+            "a .rendersettings carrying the removed `light_samples` key failed to load. \
+             Every project that touched the Shading group has one, and a project whose \
+             settings fail to load renders with defaults and says nothing.",
+        );
+    assert!(
+        parsed.compute_shading,
+        "the file loaded but the field after the removed key was not read",
+    );
+    assert_eq!(parsed.aperture_f_stops, 2.8);
+}

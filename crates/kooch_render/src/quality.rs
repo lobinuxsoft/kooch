@@ -73,10 +73,6 @@ pub struct ShadingSettings {
     /// `compute`; the stage refuses it otherwise rather than half
     /// applying it.
     pub rate: ShadingRate,
-    /// How many of a froxel's lights each pixel evaluates (#826). Zero
-    /// means all of them, which is exact and the most expensive thing
-    /// the frame does.
-    pub light_samples: u32,
 }
 
 impl Default for ShadingSettings {
@@ -86,7 +82,6 @@ impl Default for ShadingSettings {
         Self {
             compute: crate::meshlet::compute_shading_override().unwrap_or(false),
             rate: crate::meshlet::shading_rate_override().unwrap_or_default(),
-            light_samples: kooch_lighting::light_samples_override().unwrap_or(0),
         }
     }
 }
@@ -97,11 +92,10 @@ impl ShadingSettings {
     /// See the module header for why the variable wins: it is the
     /// instrument, and an instrument whose reading depends on which
     /// project is open measures nothing.
-    pub fn from_asset(compute: bool, rate: ShadingRate, light_samples: u32) -> Self {
+    pub fn from_asset(compute: bool, rate: ShadingRate) -> Self {
         Self {
             compute: crate::meshlet::compute_shading_override().unwrap_or(compute),
             rate: crate::meshlet::shading_rate_override().unwrap_or(rate),
-            light_samples: kooch_lighting::light_samples_override().unwrap_or(light_samples),
         }
     }
 }

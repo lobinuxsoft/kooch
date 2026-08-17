@@ -231,17 +231,10 @@ struct IntiFrame {
     // Top of scale for the lights-per-pixel debug view (#817). Read only
     // by `inti_debug.wgsl`; the production pipeline never touches it.
     debug_lights_hot: u32,
-    // How many of a froxel's punctual lights a pixel evaluates, picked
-    // by estimated contribution (#826). 0 walks all of them.
-    //
-    // 🔴 Not `light_limit` with a nicer name. That one truncates the
-    // list by ORDER and drops light on purpose; this one picks by
-    // CONTRIBUTION and divides by the probability of the pick, so the
-    // result estimates the full sum instead of a prefix of it.
-    light_samples: u32,
     _pad_samples0: u32,
     _pad_samples1: u32,
     _pad_samples2: u32,
+    _pad_samples3: u32,
 }
 
 // One froxel's record. Mirrors `ClusterCell` in `cluster_common.wgsl`,

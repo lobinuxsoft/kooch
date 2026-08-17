@@ -658,7 +658,6 @@ fn owners_rig(casting: bool) -> Option<Rig> {
         .insert(kooch_render::quality::ShadingSettings {
             compute: true,
             rate: kooch_render::meshlet::ShadingRate::Half,
-            light_samples: 0,
         });
     rig.resources
         .insert(kooch_render::quality::TemporalSettings { enabled: true });
@@ -1002,7 +1001,6 @@ fn reported_scene(casting: bool) -> Option<Rig> {
         .insert(kooch_render::quality::ShadingSettings {
             compute: true,
             rate: kooch_render::meshlet::ShadingRate::Half,
-            light_samples: 0,
         });
     rig.resources
         .insert(kooch_render::quality::TemporalSettings { enabled: true });
