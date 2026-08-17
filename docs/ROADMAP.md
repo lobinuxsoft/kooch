@@ -70,9 +70,40 @@ with `read_capture --over-time`, which prints the drift and says so.
 
 ## Next — the graphics queue, with the budget as the gate
 
-🎯 **2026-08-13: the budget is reachable.** 13.89 ms at 1280×720 on the
-OneXFly is 72 FPS — the number this whole queue was arranged around.
-With clouds off, which is a condition and not a victory (see #731).
+⚠️ **2026-08-17: that 13.89 ms is unverified, and #769 is closed carrying
+the caveat.** It was measured on 2026-08-13, before the rule that a
+handheld must be warmed for two minutes before it is captured, and before
+point cubes (#778), spot maps (#777), the froxel grid (#780) and the
+temporal resolve (#481) landed. The captures did not record which scene
+they were of, so the issue cannot say whether today's 27.8 ms is a
+different scene or a regression.
+
+**What is measured, warmed and settled (10 W / 776 MHz), 2026-08-17,
+`many_lights.scene` at 1280×720 with the ball rolling, 11158 frames:**
+
+```
+frame 27.83 ms (median)   ·   GPU 24.8   ·   budget 13.9
+raster + shade                 21.715  [self 3.655]
+├─ shade: compute (half rate)  10.969
+├─ taa                          2.883
+├─ motion vectors               2.085
+├─ shade: upsample              1.533
+└─ tonemap                      0.591
+shadows 1.153 · sky 0.648 · blit 0.430 · cluster grid 0.156 · cull 0.040
+vkAcquireNextImageKHR 23.908 of a 26.670 ms Render
+```
+
+Three things in that table decide the order below, and none of them is
+what the previous order assumed:
+
+- **The meshlet side is free.** `cull` is 0.040 ms and the geometry pool
+  uploads once. VRAM is **817 MiB of 4096** on the device. Nothing about
+  meshlets or memory is a suspect.
+- **The temporal machinery costs 4.97 ms — 20 % of the GPU** — and it is
+  larger than every shadow, the sky, the blit, the grid and the cull
+  **combined** (2.43 ms).
+- **Shadows total 1.153 ms.** That bounds every shadow-side idea on this
+  board, forever, including #477's.
 
 The order below is what the measurements say, not what the port list
 said.
@@ -96,18 +127,188 @@ said.
 | **#803** | 452 ms compiling pipelines on frame one | Load time, not frame time — but it is half a second of black screen every launch |
 | **#254** | post + auto exposure | The blown-out white floor in three sessions of screenshots. Cheap |
 | **#771 / #248** | atmosphere, ported from Bevy | Now worth doing for the sky it gives, not for what it saves: 1.2 ms without clouds |
-| ~~#481~~ / **#536** | ~~motion vectors + TAA~~ / FSR | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest 1 % of edges the resolved image carries **0.38** of the squared gradient the unresolved one does. **Off by default** — asset and engine alike, see below. FSR still open |
+| **#481** | motion vectors + TAA → **the engine's own upscaler** | **Temporal anti-aliasing built.** Sub-pixel jitter into the raster's projection, motion vectors reconstructed from the visibility buffer with the *unjittered* pair, Bevy's resolve between the radiance and the tonemap. On the strongest 1 % of edges the resolved image carries **0.38** of the squared gradient the unresolved one does. **Off by default** — asset and engine alike, see below. 🎯 The issue stays open because it **grew**: it now owns the engine's own temporal upscaler, Phase 1 below |
+| **#536** | ~~vendor plugin backend~~ → optional vendor backends | **Inverted 2026-08-17.** It read *"detect the adapter, load that vendor's SDK, fall back to TAA"*, which makes a vendor's upscaler the path that ships and ours the path nobody tests. Now: ours is the default on every adapter, vendors are optional behind the same trait. `dlss_wgpu` is a genuine adopt — and 🔴 **Vulkan-only**, which on Windows means pinning a backend, plus an SDK it cannot redistribute |
+| ❌ **FSR 4, reimplemented in WGSL** | ruled out, 2026-08-17 | Not a licence problem — a **`wgpu` and silicon** problem. FSR 4 is a neural network; `wgpu` 29 exposes no cooperative/subgroup matrix (checked in `wgpu-types-29.0.4/src/features.rs`: `SUBGROUP` only, though naga *does* implement `dot4I8Packed`), and gfx1150 is RDNA 3.5 with no FP8. AMD's own INT8 variant on a **300 W** RDNA 3 part nets **9 %** over native where FSR 3.1 nets **29 %** |
+| 🟢 **FSR over FFI** | the route that replaced it | **Calling AMD's shipped library is a different question from reimplementing its algorithm, and it has a better answer.** FSR 3.1's FidelityFX API is a stable C ABI that FSR 4 also uses: one `bindgen` surface covers both. FSR 3.1 builds on Linux with a native Vulkan backend (⚠️ `wine` for the shader compiler) and runs on all three vendors; FSR 4 is Windows-only because AMD ships it as *signed prebuilt DLLs*. See #536 |
+| ~~#732~~ | ~~temporal upscaling on both vendors~~ | **Closed as superseded.** One issue describing three things; its phases are done (#481) or split (#481 + #536), and its findings were carried across rather than dropped |
 
-### 🎯 The next three, in order — decided 2026-08-16
+### 🎯 The order, decided 2026-08-17 — graphics first, and the game waits
 
-The user set the order. It is **A → B → C**, and A is first because of what the device
-said today rather than because it is the biggest win. It is not.
+The user's call, in their words: *"el juego va a esperar un poco más, ordena el roadmap del
+engine para atacar toda esta parte gráfica primero"*. The previous A → B → C is spent: **A
+(#785) closed** — the profiler was exonerated by three rulers agreeing within a frame — and
+**B (#826) refuted and removed**.
 
-| | | Why in this position |
+**Phase 0 — four measurements, no code.** Every one is a setting already in
+`project.rendersettings` or a capture. They exist first because three graphics ideas in a row
+died on their own measurement this week, and each of these bounds an item below it.
+
+| | | The question, and the number it is against |
 |---|---|---|
-| **A · #785** | reconcile the profiler with an outside measurement | Our scopes say `Render` **35.7 ms**; gamescope's stats pipe says **20 ms**. Everything else in this queue is chosen by a ruler that may be 2× out |
-| **B · ~~#826~~** | ~~put the frame index in the sampling seed~~ | Refuted and removed — see the row above. The frame index makes a per-froxel choice flicker rather than resolve |
-| **C · #839** | cap the contact-shadow march | Cheap, and its cost is buried inside B's pass — so it is measurable only after B |
+| ~~**1 · #481**~~ | ~~`temporal_aa: false`, warmed, same route~~ | ✅ **Measured, and the answer was not the one asked for.** The shading did **not** grow to absorb it — 10.969 → 10.803 is noise — so the resolve is additive work: frame 27.83 → 22.10, GPU 24.8 → 20.5. 🎯 **The finding was elsewhere: `motion vectors` cost 1.994 ms with its only consumer off.** Gated in #868 — the cheapest whole millisecond on this board, and an `if` rather than a quality trade. ⚠️ The −5.73 ms frame delta is directionally right and imprecise (4523 frames against 11158, a 2069 ms stall, `sky` halved = a different route). Still owed: the visual judgement on the device, including whether the contact-shadow seam returns |
+| **2 · #825** | `shading_rate: 1` against `2` | Half-rate shading costs a **1.533 ms** upsample to save part of a 10.969 ms dispatch. Nobody has measured the pair as one line |
+| **3 · #839** | `contact_shadow_steps: 0` | The control that has never been run. ⚠️ **Premise corrected**: the shipped settings are 6 steps with `dominant: true`, not the 16 × ~14 the issue was written against, so expect **under a millisecond** |
+| **4 · #865** | a scene with the same coverage and far fewer vertices per pixel | The shading pass fetches **96 bytes of vertex per pixel** (3 × 32 B, unpacked). Whether that is 3 ms or 0.3 depends on cache hit rate, and packing before knowing is how the last three died |
+
+**Phase 1 — the engine's own temporal upscaler: #481. Third-party ones later (#536).** 🎯
+**Promoted here 2026-08-17, ahead of #866**, and settled after two corrections in one afternoon —
+both recorded because the reasoning matters more than the conclusion.
+
+The user's call: *"si no podemos usar los escaladores, lo ideal sería hacer el nuestro con la data
+que encontremos, y más adelante buscamos usar los de terceros"*.
+
+⚠️ **The premise is not quite right and the decision survives it.** FSR **3.1** *is* usable — MIT
+source, native Vulkan backend, runs on all three vendors. Only **FSR 4** is out of reach, being
+DirectX 12 only. So this is a choice rather than a forced move, and it is the right one for
+reasons about this project rather than about FSR: the SDK's shader compiler needs **`wine`** on an
+atomic distro, `as_hal::<Vulkan>()` is `unsafe` and pinned to **wgpu 29**, an external signed
+library has to be located and redistributed, and ours reaches WebGPU and Metal where a native
+library backend reaches neither. The one that decides it: **a bug in ours is a bug we can fix.**
+
+🔴 **What is given up, stated rather than discovered: quality.** *"Improved temporal stability,
+less flickering, ghosting reduction"* is the changelog of a single FSR point release. Ours will not
+match years of tuning, and the honest bar is **better than the TAA we ship today, at a lower
+render resolution** — not *as good as FSR*.
+
+⚠️ **And an earlier version of this section had it backwards.** It read *"no crate covers this,
+therefore write it"* — the bottom row of this project's dependency policy, reached by asking *is
+there a wgpu upscaler crate* (no) instead of *can AMD's C API be bound* (yes, and FSR 3.1's
+FidelityFX API is a stable C ABI). The conclusion is the same; it is now reached on purpose.
+
+**Six steps, and the first three ship one at a time and improve today's TAA even if the upscaling
+never lands:** 16-phase jitter, motion vectors dilated by closest depth, history rejection by
+variance in YCoCg. Then step 4, the resolution split, which is where the real risk is because it
+changes what "a pixel" means to every pass downstream. Then RCAS and feature locking — 🔴 **not
+optional polish**: without them the result reads soft, which is exactly how this lands as *"we
+tried it, it looked worse, we turned it off"*.
+
+### 🎯 And "based on FSR" means **transliterated, not inspired** — decided 2026-08-17 (option C)
+
+Two things were verified in the vendored sources rather than assumed, and together they change how
+ambitious this can be:
+
+| | Verified where | What FSR needs it for |
+|---|---|---|
+| **`SHADER_F16`** | `wgpu-types-29.0.4/src/features.rs:1657` | Its `FFX_HALF` path — packed half math, which most of the implementation leans on |
+| **`SUBGROUP` + `subgroupAdd` &c.** | `naga-29.0.4/src/front/wgsl/parse/conv.rs:379` | Wave-level reductions |
+| `dot4I8Packed` | `naga-29.0.4/src/back/spv/block.rs:1452` | DP4a — not needed by the upscaler, only by a network |
+
+**Both things that would have blocked a direct port are present.** So FSR 3.1's passes can be
+transliterated to WGSL with **its own tuned constants**, which are the part nobody can guess, and
+the licence permits it outright: MIT, with attribution — AMD's copyright header retained in the
+ported files and the MIT text shipped in a `NOTICE`.
+
+**The user's order is C**, and the ordering matters more than the ambition:
+
+1. **Step 1 first** (16-phase jitter). Both routes need it.
+2. **Steps 2–3 next** — they produce a visible improvement in the TAA that ships *today*, judged
+   by eye on the handheld in the same session.
+3. **Then the transliteration**, arriving with the input infrastructure already validated. 🔴 That
+   is where ports die — in the inputs, not in the shaders.
+
+⚠️ **The transliteration's real risk is that it has no oracle**: nothing to diff against, so
+validation is by eye. If it ever degenerates into *"it looks wrong and I do not know why"*, the way
+out is to build the deferred FFI backend (#536) **as a reference to compare against** — that is a
+debugging tool, not a change of plan.
+
+🔴 **And nothing below us is going to solve this.** `wgpu` is a GPU API abstraction and ships no
+render techniques by design — no TAA, no shadows, no upscaling, and it never will. The layer that
+would is Bevy, and Bevy is **binding vendors rather than building one**: DLSS integrated through
+`dlss_wgpu`, FSR / XeSS / MetalFX noted as *"would not be a challenge to integrate"* later, and
+frame interpolation and **dynamic resolution scaling explicitly not planned**. There is no port
+target coming. What `wgpu` does give us is the three primitives in the table above, which is
+exactly enough.
+
+**What survives from the FFI plan, and it is not small:** #536's trait, `UpscalerCaps` and startup
+selection are **built in Phase 1 with ours as the first backend behind them**. Building the seam
+while there is one implementation is what makes the second one a day's work; building it after is
+a refactor. And `UpscaleInputs` stays **FSR 3.1's six** — jittered colour, depth, motion vectors,
+jitter offset, `exposure`, reset — which is what makes *"más adelante"* a configuration change.
+
+🎯 **The corpus is written down in #481 with a licence column**, because that column is the trap:
+FSR 2/3.1's HLSL is **MIT and copyable** and is the primary reference; Bevy's is MIT/Apache;
+Karis 2014, Playdead's INSIDE (where the YCoCg variance clipping comes from), Salvi and the Decima
+talk are papers to implement from. 🔴 **UE5 TSR is the closest existing thing to this exact
+category and is under Epic's EULA — read the talks, never the source.** FSR's is MIT and solves
+the same problem, so there is no reason to go near the encumbered one.
+
+🔴 **FSR 4 is DirectX 12 only, and that decides everything about it.** Not a licence limit and
+not a hardware one: AMD has shipped no Vulkan backend for FSR 4, so *"it cannot be integrated
+into games that use the Vulkan API"*. Which means:
+
+| | FSR 3.1 | FSR 4 / 4.1.1 |
+|---|---|---|
+| **Windows** | ✅ VK or DX12, MIT source | 🟢 real path, via `wgpu`'s D3D12 backend and `as_hal::<Dx12>()` |
+| **Linux — this machine and the OneXFly** | ✅ native VK backend | ❌ no D3D12 on Linux, so none |
+
+So FSR 4 is **a desktop-Windows image-quality feature that costs a second `unsafe` interop
+path**, and it does nothing for the 13.9 ms problem, because the device the budget is about runs
+Linux. It is **deferred, not refused** — the third backend behind the trait, after ours and after
+FSR 3.1. ⏭️ The single fact that would move it up is AMD shipping a Vulkan FSR 4.
+
+⚠️ Adrenalin's automatic upgrade of an FSR 3.1 integration to 4.1.1 is **DX12-only too**, which
+cuts both ways: no free FSR 4 on a Vulkan integration, and no surprise change to an image we
+validated. And *"FSR 4 on Linux"* as it exists today — VKD3D-Proton 3.0, with an INT8/FP16
+fallback its own authors warn costs *"significant performance overhead and noticeably reduced
+image quality"* on RDNA 2/3 — requires being **a Windows binary under Wine**. A native ELF has
+none of it.
+
+It is also, on the numbers, **the largest single lever on this board**. Rendering at 67 %
+linear is 44 % of the pixels, and per-pixel shading is what dominates the frame:
+
+| | today | at 44 % of the pixels |
+|---|---|---|
+| `shade: compute (half rate)` | 10.969 ms | ~4.9 |
+| `shade: upsample` | 1.533 | ~0.7 |
+| temporal resolve | 2.883 (`taa`) | ~2.0–2.5, replacing it |
+| **net** | | 🎯 **≈ −5 ms of 24.8** |
+
+Every other item is bounded far below that: all shadows total **1.153 ms**, the cull 0.040, the
+grid 0.156. And unlike them it **compounds** — every per-pixel cost added afterwards is bought
+at 44 %.
+
+⚠️ **The saving is arithmetic, not a measurement.** It assumes the resolve costs what today's
+`taa` costs; a real FSR 3.1 may cost more, and on this iGPU that has to be measured before the
+−5 ms is quoted as a result.
+
+⚠️ **It is a reconstruction, so it is still a trade.** 1280×720 *output* is a hostile case
+because there is little detail to reconstruct from. The device decides. Which is why #254 now
+also owns the **non-temporal** fallback — `None | Spatial | Temporal`, with CMAA2 over SMAA 1x
+for a compute frame with no LUT assets to ship.
+
+**Phase 2 — the structure the light and shadow side needs: #866.** One page pool (bricks out of
+an atlas, not an octree), clipmap levels for range, and invalidation by reach rather than by
+the world. It is not three features, it is one structure with three consumers — and this
+project has already built and measured the small version of each part: the froxel grid (#780)
+produces "which lights need detail where", and #847 proved invalidation-by-reach is worth
+**2.781 → 1.153 ms** at cube granularity. **Demoted below #481** because its payoff is scale
+and memory, and the frame's problem today is cost per pixel.
+
+**Phase 3 — the consumers, on top of #866 and not before.**
+
+| | | Why it waits for the pool |
+|---|---|---|
+| **#450** | surfel / surface radiance cache | 🎯 **The only item on this board that changes the SHAPE of the cost** — from *pixels × lights every frame* to *cache texels × lights at a low rate*. A meshlet is a natural cache page, which is an advantage Lumen's cards and SEED's surfels both work around |
+| **#477** | virtual shadow maps | Its justification is **scale and memory** — four cubes for a hundred lights, 152 MiB standing — **not frame time**, because shadows total 1.153 ms. Any summary promising milliseconds here is wrong |
+| ~~#841 / #849~~ | which four lights get a cube | **Superseded if #866 lands**: pages allocated by need retire the question of slots handed out by rank |
+
+**Phase 4 — the additive features, once there is headroom to spend.** #254 (post + auto
+exposure), #771 / #248 (atmosphere), #731 (clouds, which cost 39 ms as written). Every one of
+these *adds* to a frame that is 1.8× over budget, so they are gated on Phase 1 buying
+something.
+
+🎯 **…with one exception, and it is a prerequisite rather than a feature: auto exposure.** Every
+temporal resolve — ours and every vendor backend — takes an `exposure` input and does its
+history rejection in a perceptual space, and this engine's radiance is in the **hundreds**.
+Feeding an unexposed image to a reconstruction is feeding it noise. So the exposure half of
+#254 belongs *inside* Phase 1, which is the same conclusion already recorded about anything
+that compresses range.
+
+🔴 **The gate on the whole plan.** 24.8 ms of GPU against 13.9, in a scene built to break the
+engine with a hundred shadow-casting lights. **A real level has never been measured**, and if
+Phase 0 does not close most of the gap, the honest next move is to measure one before
+committing to Phase 1's weeks.
 
 #### A — the instrument, before the optimisation
 
