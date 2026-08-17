@@ -68,14 +68,21 @@ cannot answer:
 
 | flag | what it prints |
 |---|---|
+| *(none)* | the ranking, and the frame's GPU tree with self times |
 | `--slowest` | the worst single frame, whole. A mean hides a stall by definition: one 700 ms frame in a thousand moves it by 0.7 ms. |
 | `--split` | the fastest quarter of frames against the slowest, by self time, plus each frame against the GPU work that produced it. |
+| `--over-time` | the capture in ten chronological buckets, and a warning when the last drifts more than 10 % from the first. |
 
 🔴 **`--split` is the one to reach for on a capture where the camera
 moves**, because that capture holds two populations and a mean over both
 describes neither. The `frame/GPU` ratio it prints is what separates *the
 GPU is the wall* from *we are waiting for the GPU twice* — see the second
 handheld capture below.
+
+🔴 **`--over-time` is the one to reach for on a handheld**, and it exists
+because of what the third capture below found: the same binary, the same
+scene and a camera that never moves gets **46 % slower two minutes in**.
+A median over that capture describes a machine that was never running.
 
 ### 🔴 A capture can be silently unreadable
 
@@ -100,6 +107,42 @@ that frame came out empty — carrying the request away. The frame that
 closes right after recording starts is exactly that empty frame. And a
 scope only registers the first time it runs, so anything occasional
 registers after a single snapshot has already gone out.
+
+#### And a second cause, which is the one that kept biting
+
+The snapshot above fixes *receiving* the names. **Saving them is a
+separate problem**, and it is the one that produced
+`scope#ScopeId(67)` in capture after capture:
+
+```rust
+// FrameView::write
+write.write_all(b"PUF0")?;
+for frame in self.all_uniq() { frame.write_into(None, write)?; }
+```
+
+`FrameView::write` **does not serialise the scope collection**. The names
+reach a `.puffin` only by riding inside a frame that `all_uniq` still
+yields — and a `FrameView` retains a frame through **two** independent
+nets: the last `max_recent = 1000`, and the slowest `max_slow = 256`. The
+frame carrying the names survives if it is in either.
+
+🔴 **Which makes the failure intermittent, not a threshold**, and getting
+that wrong costs a session. The first test written for it asserted the
+names were lost past 1000 frames and *passed while proving the opposite*:
+a synthetic capture's first frame is also its slowest, so the second net
+kept it. Whether a real capture comes back readable depends on whether
+its first frame happened to be slow — which is why 846 frames on
+2026-08-16 were named and 1022 the same evening were not.
+
+`ProfilerPanel::keep_all_frames` sets `max_recent` to `usize::MAX` on any
+view that intends to save. The cost is RAM on the capturing machine,
+which is a desktop, and puffin packs older frames as they age. A bigger
+arbitrary number would just move the same silent cliff somewhere less
+obvious.
+
+⚠️ `read_capture` now says so out loud: a capture whose scopes are all
+`scope#…` prints a warning naming this cause, instead of printing a
+ranking of anonymous ids that looks like data.
 
 ## 🔴 The first handheld capture: the sky is 55 % of the frame
 
@@ -172,6 +215,45 @@ siblings, `vkAcquireNextImageKHR` never appeared, and 51 % of the frame
 looked unattributed. `read_capture` walks the tree properly and named it
 on the first run. Read the capture with the tool that models parents.
 
+## 🔴 The third handheld capture: the machine gets 46 % slower in two minutes
+
+The measurement that was supposed to answer *"is the profiler lying?"*
+(#785) and answered something else instead.
+
+**First, the profiler is not lying.** Three independent readings of the
+same run agreed to within a frame:
+
+| source | reading |
+|---|---|
+| `read_capture`, median frame | 27.80 ms = **36.0 fps** |
+| mangoapp's overlay, read off the screen | **34–39 fps** |
+| 1022 frames over 30 s of wall clock | **34.1 fps** |
+
+⚠️ **What disagreed was gamescope, and it was not measuring the game.**
+`stats.pipe` reports `fps=144.02`, which is the panel's refresh rate, not
+the application's: that counter increments **once per composition**, and
+the compositor composites whether or not the game produced a new frame.
+The `focus=steam` field does not discriminate either. Use **mangoapp** as
+the outside witness; it is an in-process Vulkan layer and counts presents.
+
+**Then the finding nobody was looking for.** Same binary, same scene, a
+camera that never moves, 8435 frames — read with `--over-time`:
+
+| bucket | frame ms | power | clock |
+|---|---|---|---|
+| 1 (first ~40 s) | **27.8** | 12 W | ~1150 MHz |
+| 3–10 (from ~2 min) | **40.4 – 41.1** | 10 W | ~850 MHz |
+
+Nothing accumulates: RSS and VRAM are flat across the whole capture, and
+the GPU tree keeps the same shape — every pass grows by the same factor.
+The device simply leaves its boost state and settles, and **the settled
+number is the real one**: 40.7 ms, not 27.8.
+
+🔴 **Warm the handheld for two minutes before capturing.** A capture
+taken cold reports a machine that only exists for forty seconds, and
+every budget judged against it is off by nearly half. The 13.9 ms target
+is 2.9× under 40.7, not 2× under 27.8.
+
 ## Reading the numbers
 
 🔴 **The Table view is flat, and it opens sorted by call count.** That
@@ -226,6 +308,23 @@ that looks like the profiler being broken.
 
 `puffin_viewer --url 192.168.0.36:8585` reads the same socket, if a
 second application is preferable to a panel.
+
+### Capturing without a person watching the clock
+
+```sh
+cargo run -p kooch_editor_core --features profiling \
+  --example capture_remote -- 192.168.0.36:8585 out.puffin --seconds 300
+```
+
+The panel can do this, but it needs somebody watching for the right
+moment to press **Save**. That is fine for one capture and bad for what
+captures are actually for: **an A/B needs two runs of the same route**,
+and a click at the wrong moment silently makes them incomparable. This
+records a fixed window, keeps every frame, and writes the file.
+
+It writes and does not analyse, deliberately. A scratchpad script that
+summed scopes without descending the tree once produced an issue built
+on a false premise; reading is left to the tool that models parents.
 
 - 🔴 **`0.0.0.0`, not `127.0.0.1`.** Bound to loopback the game is
   reachable only from the handheld, which is the one machine that will
@@ -300,10 +399,19 @@ The passes it names, in the order they are recorded:
 | Scope | Encoder | What it covers |
 |---|---|---|
 | `shadows` | meshlet stage | four cascade culls + rasters, plus a cube face per point light |
+| `cluster grid` | meshlet stage | the froxel light index — four passes, two of them draws |
 | `cull` | meshlet stage | the scene-wide meshlet cull dispatch |
-| `raster + shade` | meshlet stage | the fused R64 pass — raster *and* the whole lighting evaluation |
+| `raster + shade` | meshlet stage | the fused R64 pass, and the parent of the five below |
+| ├ `motion vectors` | meshlet stage | previous clip position per pixel, from the unjittered camera |
+| ├ `shade: compute` / `(half rate)` / `shade: fragment` | meshlet stage | **the label names the path that ran**, so a capture answers "which one produced this" without trusting a log line |
+| ├ `shade: upsample` | meshlet stage | a *sibling* of the shading, not a child: the question is whether what half rate saves survives what putting it back on screen costs, and that is two numbers a capture can subtract |
+| ├ `taa` | meshlet stage | the temporal resolve, when it is on |
+| └ `tonemap` | meshlet stage | HDR radiance to a display-referred image |
 | `sky` | game encoder | the raymarch #771 accuses |
 | `blit` | game encoder | the stage's colour composited over the sky |
+
+On the R32 path the middle rows are `cull + raster A`, `hi-z build`,
+`cull + raster B` and `shade` instead.
 
 Turned on by the same `--features profiling` as everything else. A build
 without it carries a `GpuScopes` whose every method compiles to nothing,
@@ -372,9 +480,19 @@ frame on the handheld, and only a game build produces that.
 
 ## What is not built yet
 
-- Scopes finer than a pass. `raster + shade` is one box on both axes, and
-  at 27.8 ms on the handheld it is the second-largest thing in the frame
-  — finding out whether that is the raster or the shading needs one.
+Scopes finer than a pass used to be listed here. They exist now — the
+five children of `raster + shade` in the table above — and the answer
+they gave is that the shading is the cost: on the settled handheld,
+`shade: compute (half rate)` is 14.9 ms of a 28.1 ms `raster + shade`,
+with the raster itself in the 4.4 ms the parent keeps as self time.
+
+What is still missing:
+
+- **Scopes inside a shading dispatch.** Which *part* of the BRDF
+  evaluation costs — the light loop, the shadow samples, the contact
+  shadow march — is not something a pass timer can separate. That is a
+  debug view's job (`LightsPerPixel`) or a shader permutation's, not a
+  scope's.
 
 ## ⚠️ Four dependencies come from git, temporarily
 
