@@ -49,7 +49,7 @@ use taa::Taa;
 use tonemap::Tonemap;
 use upsample::ShadingUpsample;
 
-pub use jitter::{JITTER_PERIOD, Jitter};
+pub use jitter::{JITTER_BASE_PHASES, Jitter};
 pub use shading_rate::ShadingRate;
 
 pub(super) use compute_shade::enabled_by_environment as compute_shading_override;
@@ -307,9 +307,25 @@ impl Vbuf64Stage {
         if !self.taa_enabled {
             return Jitter::none(view_proj);
         }
-        let jitter = Jitter::at(self.jitter_index, view_proj, self.size);
+        let jitter = Jitter::at(
+            self.jitter_index,
+            view_proj,
+            self.size,
+            self.jitter_phases(),
+        );
         self.jitter_index = self.jitter_index.wrapping_add(1);
         jitter
+    }
+
+    /// How many sub-pixel offsets this view cycles through.
+    ///
+    /// Render and display are the same surface until the resolution
+    /// split of #481 lands, so this is the base count today. **The
+    /// second argument is the only thing that changes** when they
+    /// separate — the sequence, the offsets and the matrix are already
+    /// written against a ratio.
+    fn jitter_phases(&self) -> u32 {
+        jitter::phase_count(self.size.0, self.size.0)
     }
 
     pub fn shading_rate(&self) -> ShadingRate {

@@ -16,7 +16,9 @@
 //! partial sum after three frames is already close to uniform, which is
 //! what a resolve that keeps rejecting its history actually gets.
 //!
-//! Halton(2, 3) over eight samples is what UE, Unity and Bevy all use.
+//! Halton(2, 3) is what UE, Unity, Bevy and FSR all use. How many of
+//! its terms to take before repeating is the part that differs, and it
+//! is not a taste question — see [`phase_count`].
 //!
 //! # 🔴 The jitter is a lie told to exactly one matrix
 //!
@@ -31,14 +33,51 @@
 
 use glam::{Mat4, Vec2, Vec3};
 
-/// How many offsets before the sequence repeats.
+/// How many offsets before the sequence repeats, at 1:1.
 ///
-/// Eight is the industry figure and it is not arbitrary: the resolve's
-/// minimum blend rate is 1/64, so a pixel that never rejects its history
-/// integrates over roughly sixty frames — several full cycles — while a
-/// pixel that rejects often only ever sees the first two or three, which
-/// is where a low-discrepancy sequence is most evenly spread.
-pub const JITTER_PERIOD: u32 = 8;
+/// Eight is the industry figure for a resolve that only antialiases, and
+/// it is what FSR uses as its base. Sixteen is this engine's, because
+/// the resolve's minimum blend rate is 1/64: a pixel that never rejects
+/// its history integrates over roughly sixty frames, so eight distinct
+/// points leave it averaging each one seven times over instead of
+/// covering more of the pixel.
+///
+/// 🔴 Set this back to 8 if the transliterated FSR passes disagree with
+/// it. Their accumulation constants are tuned against AMD's count, and
+/// AMD's count is one of the things in that port that cannot be guessed.
+pub const JITTER_BASE_PHASES: u32 = 16;
+
+/// The count at 3× upscaling, which is FSR's most aggressive preset
+/// (Ultra Performance) and therefore the largest ratio anything here
+/// will legitimately ask for.
+pub const JITTER_MAX_PHASES: u32 = JITTER_BASE_PHASES * 9;
+
+/// How many phases to run when rendering at `render_width` and
+/// presenting at `display_width`.
+///
+/// FSR's rule, with our base: the count scales with the **square** of
+/// the ratio, because what the sequence has to cover is an area. At 1.5×
+/// upscaling every output pixel is fed by 1/2.25 of an input one, so
+/// reaching the same sub-pixel density needs 2.25× the samples — take
+/// the ratio linearly and the reconstruction is starved exactly where
+/// upscaling is doing the most work.
+///
+/// Never returns less than [`JITTER_BASE_PHASES`]: rendering above
+/// display resolution is supersampling, which needs no help from the
+/// projection, and shrinking the sequence there would only shorten the
+/// history for no gain.
+///
+/// 🔴 And never more than [`JITTER_MAX_PHASES`]. The ceiling is not
+/// defensive tidying: a render width of zero — a minimised window, a
+/// target queried a frame early — sends the square to tens of millions,
+/// and a period that large is a sequence that *never repeats*. The
+/// accumulated image would then be a drifting sample set instead of a
+/// fixed one, which is soft in a way no capture explains.
+pub fn phase_count(render_width: u32, display_width: u32) -> u32 {
+    let ratio = display_width.max(1) as f32 / render_width.max(1) as f32;
+    let scaled = (JITTER_BASE_PHASES as f32 * ratio * ratio).ceil() as u32;
+    scaled.clamp(JITTER_BASE_PHASES, JITTER_MAX_PHASES)
+}
 
 /// One frame's sub-pixel offset and the matrices that follow from it.
 #[derive(Debug, Clone, Copy)]
@@ -70,8 +109,17 @@ impl Jitter {
     /// in pixels and clip space is not: a half-pixel is one NDC unit
     /// divided by half the width, and getting that wrong scales the
     /// jitter with the window.
-    pub fn at(index: u32, view_proj: Mat4, size: (u32, u32)) -> Self {
-        let pixels = offset(index);
+    ///
+    /// 🔴 When the resolution split lands, `size` is the **render**
+    /// target, not the presented one. The camera is jittered by a
+    /// fraction of the pixel it actually rasterises; measuring it
+    /// against the output would shrink every offset by the ratio and
+    /// leave the sequence covering a fraction of the pixel it is
+    /// supposed to fill.
+    ///
+    /// `phases` comes from [`phase_count`].
+    pub fn at(index: u32, view_proj: Mat4, size: (u32, u32), phases: u32) -> Self {
+        let pixels = offset(index, phases);
         let width = size.0.max(1) as f32;
         let height = size.1.max(1) as f32;
         // NDC spans 2 across the viewport, hence the doubling; V runs
@@ -95,8 +143,8 @@ impl Jitter {
 /// The sequence is 1-based: Halton's first term is 0 in every base, and
 /// an offset of exactly zero is the one frame that contributes nothing
 /// new.
-fn offset(index: u32) -> Vec2 {
-    let n = index % JITTER_PERIOD + 1;
+fn offset(index: u32, phases: u32) -> Vec2 {
+    let n = index % phases.max(1) + 1;
     Vec2::new(radical_inverse(n, 2) - 0.5, radical_inverse(n, 3) - 0.5)
 }
 

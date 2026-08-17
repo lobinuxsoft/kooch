@@ -15,7 +15,12 @@
 // they are stochastic, and stochastic is only cheap if something
 // averages the samples. This is that something.
 //
-// # 🔴 Three departures from upstream, each with a number behind it
+// # 🔴 Four departures from upstream, each with a number behind it
+//
+// **0. The dilation is FSR's 3x3 and the history is rejected on
+// disocclusion**, which is steps 2–3 of #481 — the two things that
+// improve this resolve whether or not the upscaler after it ever lands.
+// Both are below, at the point where they act.
 //
 // **1. The history holds LINEAR radiance, not the compressed value.**
 // Bevy stores the range-compressed colour and reads it back straight.
@@ -75,7 +80,9 @@ struct TaaUniforms {
 
 @group(0) @binding(0) var view_target: texture_2d<f32>;
 @group(0) @binding(1) var history: texture_2d<f32>;
-@group(0) @binding(2) var history_confidence: texture_2d<f32>;
+// R: how many still frames the pixel has accumulated. G: the reversed-Z
+// depth it was written at, which is what the disocclusion test reads.
+@group(0) @binding(2) var history_reproject: texture_2d<f32>;
 @group(0) @binding(3) var motion_vectors: texture_2d<f32>;
 @group(0) @binding(4) var depth: texture_depth_2d;
 @group(0) @binding(5) var nearest_sampler: sampler;
@@ -86,10 +93,12 @@ struct Output {
     // Resolved LINEAR radiance — what the tonemap reads, and what next
     // frame reads back as its history. Alpha is coverage, untouched.
     @location(0) color: vec4<f32>,
-    // How many still frames this pixel has accumulated. Its own target
-    // because alpha above means coverage by the time the tonemap gets
-    // it; two bytes a pixel to keep the two meanings apart.
-    @location(1) confidence: vec4<f32>,
+    // What the NEXT frame's reprojection needs to judge this pixel by.
+    // R is how many still frames it has accumulated; G is the depth it
+    // was written at. Its own target because alpha above means coverage
+    // by the time the tonemap gets it, and four bytes a pixel to keep
+    // the meanings apart.
+    @location(1) reproject: vec4<f32>,
 }
 
 // The reversible tonemapper from GPUOpen, via Bevy. Blending has to
@@ -164,6 +173,48 @@ fn YCoCg_to_RGB(ycocg: vec3<f32>) -> vec3<f32> {
     return clamp(vec3(r, g, b), vec3(0.0), vec3(TONEMAP_CEILING));
 }
 
+// How far apart two distances may be before the history at that address
+// is taken to describe a different surface. Relative, so it means the
+// same thing at two metres and at two hundred.
+//
+// Ten per cent is deliberately loose. What this has to separate is a
+// foreground silhouette from the background behind it, which is a jump
+// of tens of per cent or more; what it must NOT fire on is a camera
+// walking forward, which moves every distance in the frame by a few per
+// cent per frame at any speed a player uses. Tighten it and the whole
+// image stops accumulating whenever the camera moves — a resolve that
+// costs two passes and resolves nothing, which is the failure mode that
+// looks like "TAA does not work here" rather than like a bad constant.
+const DISOCCLUSION_TOLERANCE: f32 = 0.1;
+
+// 🔴 The cheap test, and it is worth saying which one it is NOT.
+//
+// FSR reconstructs the previous frame's depth into the current frame's
+// grid — an extra pass with atomics — and compares against that, which
+// is exact under any camera motion. This compares the depth stored at
+// the reprojected address against this pixel's depth directly, so a
+// camera moving along its own view axis shows up as a small relative
+// error in every pixel at once. That is what the tolerance absorbs, and
+// it is why the tolerance is loose rather than tight.
+//
+// # Reversed-Z pays for itself here
+//
+// The infinite-far projection maps `z = near / distance` exactly, so
+// the RATIO of two depths is the ratio of the two distances, inverted.
+// The test is therefore a divide: no linearisation, no near plane in a
+// uniform, and nothing to keep in sync with the camera.
+fn is_disoccluded(current_depth: f32, history_depth: f32) -> bool {
+    let nearer = max(current_depth, history_depth);
+    let farther = min(current_depth, history_depth);
+    // Sky is exactly zero in reversed-Z. Sky against sky is the same
+    // surface — the ratio below would read 0/0 — and sky against
+    // geometry is the sharpest disocclusion there is.
+    if (farther <= 0.0) {
+        return nearer > 0.0;
+    }
+    return (nearer / farther) - 1.0 > DISOCCLUSION_TOLERANCE;
+}
+
 // Pulls the history towards the centre of the neighbourhood's box until
 // it is inside it. Clipping rather than clamping: clamping each channel
 // independently moves the colour's hue, which is what makes a rejected
@@ -225,26 +276,42 @@ fn fs_taa(in: Varyings) -> Output {
     var current_color = tonemap(original_color.rgb);
     var confidence = 1.0;
 
+    // The pixel's own depth, kept for the disocclusion test and written
+    // out for the next frame to read back. Not the dilated one: what has
+    // to be compared across frames is where THIS surface is, and the
+    // dilated value deliberately belongs to a neighbour.
+    let center_depth = textureSample(depth, nearest_sampler, uv);
+
     if (taa.reset == 0u) {
-        // Closest of five depths, not the pixel's own vector. A pixel on
-        // the silhouette of a moving object reads the background's
-        // vector as often as the object's, and reprojecting the edge of
-        // a car to where the road was is the classic TAA smear.
-        let offset = texel_size * 2.0;
-        let d_uv_tl = uv + vec2(-offset.x, offset.y);
-        let d_uv_tr = uv + vec2(offset.x, offset.y);
-        let d_uv_bl = uv + vec2(-offset.x, -offset.y);
-        let d_uv_br = uv + vec2(offset.x, -offset.y);
+        // Closest depth of the full 3x3, not the pixel's own vector. A
+        // pixel on the silhouette of a moving object reads the
+        // background's vector as often as the object's, and reprojecting
+        // the edge of a car to where the road was is the classic TAA
+        // smear.
+        //
+        // 🔴 Nine taps at ONE texel, where this used to take five at
+        // two. The wider cross is Karis' and it is the version tuned for
+        // a resolve at display resolution; the 3x3 is FSR's, and the
+        // difference is what the search is allowed to claim. At two
+        // texels the winner can be a surface that does not touch this
+        // pixel at all, so a thin foreground object hands its velocity
+        // to a two-pixel skirt of background around it — which reads as
+        // the object dragging a halo. Step 4 makes that worse by
+        // construction: after the resolution split one input texel is
+        // 1.5 output pixels, so a two-texel reach is three.
         var closest_uv = uv;
-        var closest_depth = textureSample(depth, nearest_sampler, uv);
-        let d_tl = textureSample(depth, nearest_sampler, d_uv_tl);
-        let d_tr = textureSample(depth, nearest_sampler, d_uv_tr);
-        let d_bl = textureSample(depth, nearest_sampler, d_uv_bl);
-        let d_br = textureSample(depth, nearest_sampler, d_uv_br);
-        if (d_tl > closest_depth) { closest_uv = d_uv_tl; closest_depth = d_tl; }
-        if (d_tr > closest_depth) { closest_uv = d_uv_tr; closest_depth = d_tr; }
-        if (d_bl > closest_depth) { closest_uv = d_uv_bl; closest_depth = d_bl; }
-        if (d_br > closest_depth) { closest_uv = d_uv_br; }
+        var closest_depth = center_depth;
+        for (var y = -1; y <= 1; y++) {
+            for (var x = -1; x <= 1; x++) {
+                let tap_uv = uv + vec2(f32(x), f32(y)) * texel_size;
+                let tap = textureSample(depth, nearest_sampler, tap_uv);
+                // Reversed-Z: greater is nearer. See `projection.rs`.
+                if (tap > closest_depth) {
+                    closest_depth = tap;
+                    closest_uv = tap_uv;
+                }
+            }
+        }
         let closest_motion_vector = textureSample(motion_vectors, nearest_sampler, closest_uv).rg;
 
         // 🔴 MINUS. A vector says where the surface came FROM, so the
@@ -300,12 +367,21 @@ fn fs_taa(in: Varyings) -> Output {
             history_color, s_mm, mean - std_deviation, mean + std_deviation);
         history_color = YCoCg_to_RGB(history_color);
 
+        // 🔴 Read at `history_uv`, not at `uv`. Both of these describe
+        // the surface the history belongs to, so both have to be
+        // fetched from where that surface WAS. Reading the counter at
+        // this pixel's own address — which is what this did while it was
+        // the only channel — asks how long whatever happens to sit here
+        // now has been still, and under a turning camera that is a
+        // different surface every frame.
+        let reprojected = textureSample(history_reproject, nearest_sampler, history_uv);
+
         // A pixel that has been still for a while has accumulated many
         // samples and its history is worth more than this frame's one.
         // This is where the noise from #826 actually goes: at a blend
         // rate of 1/64 the resolve is averaging sixty-odd independent
         // light choices per pixel.
-        confidence = textureSample(history_confidence, nearest_sampler, uv).r;
+        confidence = reprojected.r;
         let pixel_motion_vector = abs(closest_motion_vector) * texture_size;
         if (pixel_motion_vector.x < 0.01 && pixel_motion_vector.y < 0.01) {
             confidence += 10.0;
@@ -320,6 +396,17 @@ fn fs_taa(in: Varyings) -> Output {
         // clamps to the border texel, which smears the frame's outermost
         // row inwards for as long as the camera keeps turning.
         if (any(saturate(history_uv) != history_uv)) {
+            current_color_factor = 1.0;
+            confidence = 1.0;
+        }
+
+        // Disocclusion. The variance clip catches a history whose COLOUR
+        // no longer fits; this catches one whose colour fits perfectly
+        // and belongs to a different surface — a wall revealed from
+        // behind a pillar, in front of a wall of the same shade. That is
+        // the case that survives a clip and ghosts for the twenty frames
+        // the blend takes to forget it.
+        if (is_disoccluded(center_depth, reprojected.g)) {
             current_color_factor = 1.0;
             confidence = 1.0;
         }
@@ -348,6 +435,8 @@ fn fs_taa(in: Varyings) -> Output {
     // Back to linear: the tonemap expects radiance, and so does the next
     // frame reading this same texture as its history.
     out.color = vec4<f32>(reverse_tonemap(current_color), original_color.a);
-    out.confidence = vec4<f32>(confidence, 0.0, 0.0, 0.0);
+    // The depth goes out unmodified: next frame reads it at the address
+    // its motion vector points to, and compares it against its own.
+    out.reproject = vec4<f32>(confidence, center_depth, 0.0, 0.0);
     return out;
 }
