@@ -202,8 +202,8 @@ ported files and the MIT text shipped in a `NOTICE`.
 **The user's order is C**, and the ordering matters more than the ambition:
 
 1. ✅ **Step 1 first** (16-phase jitter). Both routes need it. **Built** — see below.
-2. **Steps 2–3 next** — they produce a visible improvement in the TAA that ships *today*, judged
-   by eye on the handheld in the same session.
+2. ✅ **Steps 2–3 next** — they produce a visible improvement in the TAA that ships *today*, judged
+   by eye on the handheld in the same session. **Built** — see below.
 3. **Then the transliteration**, arriving with the input infrastructure already validated. 🔴 That
    is where ports die — in the inputs, not in the shaders.
 
@@ -234,6 +234,59 @@ arguments, so today's answer is 16 and **the second argument is the single thing
 when step 4 separates them. `Jitter::at` takes the **render** target's size — the camera is
 jittered by a fraction of the pixel it actually rasterises, and measuring it against the output
 would shrink every offset by the ratio.
+
+#### ✅ Steps 2–3, as built — and one premise in the plan was wrong
+
+🔴 **The plan said step 3 was "today's resolve uses a neighbourhood clamp, which is the crude
+version of this". It was not.** The resolve has clipped against a YCoCg mean ± σ AABB since it
+was written — Playdead's, clip and not clamp, at one sigma for the reason recorded in
+`taa.wgsl`. The step was written from memory rather than from the shader. What was actually
+missing was the *other* half of step 3, the **disocclusion mask**, and that is what got built.
+
+| | before | now |
+|---|---|---|
+| **Dilation** | 5 taps at **2** texels (Karis' cross) | **9 taps at 1** (FSR's 3×3) |
+| **Variance clip** | YCoCg, 1σ, clip-not-clamp | unchanged — it was already there |
+| **Disocclusion** | ❌ nothing | reversed-Z depth compared at the reprojected address |
+| **Confidence counter** | read at the pixel's **own** address | read at the reprojected one |
+
+**Why the dilation narrowed rather than widened.** At two texels the closest-depth winner can be
+a surface that does not touch this pixel at all, so a thin foreground object hands its velocity
+to a two-pixel skirt of background — the object drags a halo. Step 4 makes that worse by
+construction: after the resolution split one input texel is 1.5 output pixels, so a two-texel
+reach is three.
+
+**Why the disocclusion mask is not redundant with the clip.** The clip catches a history whose
+*colour* no longer fits its neighbourhood. It cannot catch one whose colour fits perfectly and
+belongs to a surface at a different distance — a wall revealed from behind a pillar, in front of
+a wall of the same shade. That one survives the clip and ghosts for the twenty frames the blend
+takes to forget it.
+
+🎯 **Reversed-Z pays for itself here.** The infinite-far projection maps `z = near / distance`
+exactly, so the **ratio of two depths is the ratio of the two distances**. The whole test is a
+divide: no linearisation, no near plane in a uniform, nothing to keep in sync with the camera.
+The depth rides in the confidence target's second channel — `R16Float` → `Rg16Float`, two bytes
+a pixel, no new attachment.
+
+⚠️ **The tolerance is 10 % and deliberately loose.** It has to separate a foreground silhouette
+from its background (tens of per cent) without firing on a camera walking forward (a few per
+cent per frame at any speed a player uses). Tighten it and the resolve rejects everything the
+moment the camera moves — which still costs both passes and reads as *"TAA does nothing here"*
+rather than as a bad constant. `a_slow_pan_keeps_accumulating` exists to fail if that happens.
+
+🔴 **This is the cheap test, not FSR's.** FSR reconstructs the previous frame's depth into the
+current grid — an extra pass with atomics — and is exact under any camera motion. Ours compares
+against this pixel's own depth, so axial camera motion shows up as a small error everywhere at
+once. That is what the loose tolerance absorbs, and it is the thing to revisit if the mask ever
+misbehaves on the device.
+
+⚠️ **Not judged by eye yet.** These are the two steps whose payoff is visual, and the handheld
+run has not happened.
+
+🔴 **And a test-harness trap that cost a debugging round:** `tests/common` hands every case in a
+binary the **same** device, so four cases running at once segfault radv intermittently — and
+pass reliably under `--test-threads=1`, which is the worst possible way to be told. That binary
+is now serialised behind a mutex, the same pattern `gpu_scopes.rs` already used.
 
 ⚠️ **The transliteration's real risk is that it has no oracle**: nothing to diff against, so
 validation is by eye. If it ever degenerates into *"it looks wrong and I do not know why"*, the way
