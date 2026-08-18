@@ -42,6 +42,20 @@ pub struct AssetMeta {
     /// `Some(type_name)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_type: Option<String>,
+    /// Per-type import settings, verbatim.
+    ///
+    /// Kept as an opaque table because what belongs in it is the
+    /// loader's business and not this crate's: a texture says whether
+    /// it wants a mip chain, a mesh would say what its units are.
+    /// [`LoadContext::import`](crate::asset_loader::LoadContext::import)
+    /// hands it to whoever owns the type.
+    ///
+    /// 🔴 Absent means "the engine's default", NOT "everything off".
+    /// A sidecar written before this field existed keeps parsing and
+    /// keeps behaving the way it did — which is the same rule
+    /// `asset_type` follows above, for the same reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<toml::Table>,
 }
 
 impl AssetMeta {
@@ -52,6 +66,7 @@ impl AssetMeta {
         Self {
             guid: Guid::new_v4(),
             asset_type: None,
+            import: None,
         }
     }
 
@@ -60,6 +75,7 @@ impl AssetMeta {
         Self {
             guid: Guid::new_v4(),
             asset_type: Some(asset_type.into()),
+            import: None,
         }
     }
 }

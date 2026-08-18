@@ -551,7 +551,15 @@ impl RenderSettings {
         } else {
             crate::quality::UpscaleTechnique::None
         };
-        crate::quality::TemporalSettings::new(technique, self.render_scale, self.sharpening)
+        // 🔴 The effective compute flag, not the field: `KOOCH_COMPUTE_SHADING`
+        // can turn the path off for a capture run, and a scale that
+        // survived that override would take the frame down with it.
+        crate::quality::TemporalSettings::new(
+            technique,
+            self.render_scale,
+            self.sharpening,
+            self.shading().compute,
+        )
     }
 
     /// The technique this file asks for.

@@ -334,6 +334,14 @@ impl MeshletRenderStage {
         self.render_scale = scale.clamp(1, 100);
     }
 
+    /// Whether any view shades in compute.
+    fn compute_shading_active(&self) -> bool {
+        self.views
+            .iter()
+            .filter_map(|(_, view)| view.vbuf64_stage.as_ref())
+            .any(|stage| stage.compute_shading())
+    }
+
     /// What a fragment coordinate is multiplied by to find its froxel.
     ///
     /// 🔴 Exposed because sizing this from the wrong resolution shipped
@@ -350,6 +358,21 @@ impl MeshletRenderStage {
 
     /// What a view of `output` renders at, under the current technique.
     pub(super) fn render_size_for(&self, output: (u32, u32)) -> (u32, u32) {
+        // 🔴 The fragment path renders at the window's size whatever the
+        // settings say. It tonemaps inline into the image the window
+        // presents — no HDR target, nothing at render resolution — so a
+        // smaller frame there puts a render-sized depth buffer and a
+        // window-sized colour target into one pass, and **wgpu discards
+        // the pass**. The failure is not a soft picture, it is no
+        // picture. Reported from the editor at 1023x816 and 50 %.
+        //
+        // Applied HERE rather than in the setters, so the order the two
+        // arrive in cannot decide the outcome: a scale set before the
+        // compute path is switched on must not be lost, and one set
+        // after must not slip through.
+        if !self.compute_shading_active() {
+            return output;
+        }
         self.upscale_technique
             .render_size(output, self.render_scale)
     }

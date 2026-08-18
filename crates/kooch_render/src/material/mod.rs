@@ -23,7 +23,7 @@ mod texture_pool;
 pub use asset::{Material, MaterialLoader, MaterialParseError};
 pub use pipeline::{
     DEFAULT_CAPACITY as MATERIAL_POOL_DEFAULT_CAPACITY, FALLBACK_MATERIAL_ID, MATERIAL_TYPE_NAME,
-    MaterialPipeline,
+    MaterialPipeline, TextureReimports,
 };
 pub use texture_pool::{MaterialTexturePool, TextureSlot};
 
@@ -37,19 +37,27 @@ pub const NO_TEXTURE: u32 = u32::MAX;
 
 /// PBR scalar parameters for a single material slot.
 ///
-/// Layout (48 B, multiple of 16 for std140):
+/// Layout (64 B, multiple of 16 for std140):
 /// - `base_color` (vec4): RGB albedo + alpha (linear-space).
 /// - `metallic_roughness_emissive_pad` (vec4): metallic, roughness,
 ///   emissive intensity, _pad. Packed together so the struct stays
 ///   16-byte aligned for the storage-buffer stride.
 /// - `texture_indices` (uvec4): albedo, normal, metal_roughness pool
 ///   indices + _pad. [`NO_TEXTURE`] means "no map — use the scalar".
+/// - `uv_scale_offset` (vec4): `xy` tiling, `zw` offset.
+///
+/// 🔴 This struct is declared in Rust and in **three** WGSL files, and
+/// nothing checks that they agree except a test that reads them. A field
+/// added to two of the three does not fail to compile — every material
+/// after the mismatch reads the next one's bytes, which looks like the
+/// wrong material rather than like a layout bug.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MaterialParams {
     pub base_color: [f32; 4],
     pub metallic_roughness_emissive_pad: [f32; 4],
     pub texture_indices: [u32; 4],
+    pub uv_scale_offset: [f32; 4],
 }
 
 impl Default for MaterialParams {
@@ -64,7 +72,14 @@ impl MaterialParams {
             base_color,
             metallic_roughness_emissive_pad: [metallic, roughness, emissive, 0.0],
             texture_indices: [NO_TEXTURE; 4],
+            uv_scale_offset: [1.0, 1.0, 0.0, 0.0],
         }
+    }
+
+    /// Sets the texture transform: `scale` tiles, `offset` slides.
+    pub fn with_uv(mut self, scale: [f32; 2], offset: [f32; 2]) -> Self {
+        self.uv_scale_offset = [scale[0], scale[1], offset[0], offset[1]];
+        self
     }
 
     /// Assigns the resolved pool indices for the three texture channels.

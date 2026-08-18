@@ -46,9 +46,7 @@ fn ron_minimal_uses_defaults() {
     // Empty struct literal — every field falls through to its
     // serde default. Exercises the back-compat contract: future
     // schemas must preserve this property.
-    let mut ctx = LoadContext {
-        path: Path::new("empty.kooch_material.ron"),
-    };
+    let mut ctx = LoadContext::new(Path::new("empty.kooch_material.ron"));
     let m = MaterialLoader
         .load(b"()", &mut ctx)
         .expect("empty struct parses");
@@ -63,9 +61,7 @@ fn ron_full_round_trip() {
         .with_metal_roughness(Guid::new_v4());
     let text = ron::ser::to_string_pretty(&original, ron::ser::PrettyConfig::default())
         .expect("serialize");
-    let mut ctx = LoadContext {
-        path: Path::new("red.kooch_material.ron"),
-    };
+    let mut ctx = LoadContext::new(Path::new("red.kooch_material.ron"));
     let parsed = MaterialLoader
         .load(text.as_bytes(), &mut ctx)
         .expect("parse");
@@ -80,9 +76,7 @@ fn ron_parses_texture_guid_literals() {
     albedo: Some("550e8400-e29b-41d4-a716-446655440000"),
     metal_roughness: Some("00000000-0000-0000-0000-000000000001"),
 )"#;
-    let mut ctx = LoadContext {
-        path: Path::new("textured.kooch_material.ron"),
-    };
+    let mut ctx = LoadContext::new(Path::new("textured.kooch_material.ron"));
     let m = MaterialLoader
         .load(text.as_bytes(), &mut ctx)
         .expect("parse");
@@ -105,9 +99,7 @@ fn ron_partial_fills_remaining_with_defaults() {
     base_color: (0.1, 0.2, 0.3, 1.0),
     emissive: 2.0,
 )"#;
-    let mut ctx = LoadContext {
-        path: Path::new("partial.kooch_material.ron"),
-    };
+    let mut ctx = LoadContext::new(Path::new("partial.kooch_material.ron"));
     let m = MaterialLoader
         .load(text.as_bytes(), &mut ctx)
         .expect("parse");
@@ -120,9 +112,7 @@ fn ron_partial_fills_remaining_with_defaults() {
 
 #[test]
 fn invalid_bytes_return_loader_error() {
-    let mut ctx = LoadContext {
-        path: Path::new("garbage.kooch_material.ron"),
-    };
+    let mut ctx = LoadContext::new(Path::new("garbage.kooch_material.ron"));
     let err = MaterialLoader
         .load(b"not RON at all =", &mut ctx)
         .expect_err("garbage rejected");

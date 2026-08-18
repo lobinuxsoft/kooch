@@ -36,6 +36,11 @@ struct MaterialParams {
     // x metallic, y roughness, z emissive, w pad.
     metallic_roughness_emissive_pad: vec4<f32>,
     texture_indices: vec4<u32>,
+    // xy tiling, zw offset. See `MaterialParams` in `material/mod.rs`:
+    // this struct is declared here and in two other shaders, and a test
+    // reads all three because a field added to two of them fails
+    // silently rather than at compile time.
+    uv_scale_offset: vec4<f32>,
 }
 
 // Group 0 holds the vbuf (0), camera (1), screen (2) and the contact
@@ -163,6 +168,35 @@ fn shade_from_tile(
     }
     radiance += inti_ambient(n, surf.diffuse_color, surf.f0, surf.f_ab);
     return radiance;
+}
+
+// `MeshletDebugMode::TextureMipLevel`, pinned by a test in `debug.rs`.
+const DEBUG_TEXTURE_MIP_LEVEL: u32 = 18u;
+
+// The mip level this pixel would sample, computed the way the hardware
+// computes it: the uv footprint in texels, log2 of the longer axis.
+//
+// 🔴 WGSL has no `textureQueryLod`, so this is the formula rather than
+// the driver's answer — but it is the SAME formula
+// `textureSampleGrad` applies to the same two derivatives, which is
+// what makes it worth painting. If this says 10 on a surface filling
+// the screen, the sampler is being asked for 10.
+fn debug_mip_level(dims: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> f32 {
+    let footprint = max(length(ddx * dims), length(ddy * dims));
+    return max(0.0, log2(max(footprint, 1e-6)));
+}
+
+// One colour per whole level, so the frame reads as bands rather than as
+// a gradient — a band that moves with the camera is a LOD that works,
+// and a screen of one colour is the fault this view exists to show.
+// Blue is level 0, and it warms as the level climbs.
+fn debug_mip_colour(lod: f32) -> vec3<f32> {
+    let level = floor(lod);
+    let ramp = clamp(level / 10.0, 0.0, 1.0);
+    let base = vec3<f32>(ramp, 1.0 - abs(ramp - 0.5) * 2.0, 1.0 - ramp);
+    // The fractional part darkens within a band, so the boundary between
+    // two levels is a visible step and not a guess.
+    return base * (0.55 + 0.45 * fract(lod));
 }
 
 @compute @workgroup_size(16, 16, 1)
@@ -331,12 +365,23 @@ fn cs_shade_tile(
     // Phase 3 — shade.
     if (mine) {
         let mat = materials[screen.material_id];
+
+        // 🔴 The DERIVATIVES scale with the coordinate, and forgetting
+        // that is the trap. `textureSampleGrad` picks the mip from how
+        // fast the uv moves between pixels; tiling a texture twenty
+        // times makes it move twenty times faster, and handing the
+        // untiled derivatives selects a level about four steps too
+        // sharp. The result is the aliasing the mip chain exists to
+        // remove, on exactly the surfaces that asked for tiling.
+        let uv = surf.uv * mat.uv_scale_offset.xy + mat.uv_scale_offset.zw;
+        let ddx_uv = surf.ddx_uv * mat.uv_scale_offset.xy;
+        let ddy_uv = surf.ddy_uv * mat.uv_scale_offset.xy;
         let albedo = textureSampleGrad(
-            albedo_tex, material_sampler, surf.uv, surf.ddx_uv, surf.ddy_uv);
+            albedo_tex, material_sampler, uv, ddx_uv, ddy_uv);
         let base = albedo.rgb * mat.base_color.rgb;
 
         let n_ts = textureSampleGrad(
-            normal_tex, material_sampler, surf.uv, surf.ddx_uv, surf.ddy_uv).xyz * 2.0 - 1.0;
+            normal_tex, material_sampler, uv, ddx_uv, ddy_uv).xyz * 2.0 - 1.0;
         let n = normalize(surf.world_normal);
         let t = normalize(surf.world_tangent.xyz);
         let b = cross(n, t) * surf.world_tangent.w;
@@ -346,11 +391,24 @@ fn cs_shade_tile(
         // The debug views (#743). `inti_debug_is_view` is a literal
         // `false` in a production pipeline, so this branch and every
         // view behind it are gone before register allocation.
-        if (inti_debug_is_view(screen.debug_mode)) {
+        //
+        // The mip view is resolved HERE rather than inside Inti: it is a
+        // question about the material's sampling, and Inti is handed a
+        // world position and a normal — it has never seen a uv.
+        if (screen.debug_mode == DEBUG_TEXTURE_MIP_LEVEL) {
+            let dims = vec2<f32>(textureDimensions(albedo_tex, 0));
+            if (dims.x <= 1.0 && dims.y <= 1.0) {
+                // The 1x1 fallback: no albedo map, so no chain to pick
+                // from and nothing this view can say.
+                rgb = vec3<f32>(1.0, 0.0, 1.0);
+            } else {
+                rgb = debug_mip_colour(debug_mip_level(dims, ddx_uv, ddy_uv));
+            }
+        } else if (inti_debug_is_view(screen.debug_mode)) {
             rgb = inti_debug_view(screen.debug_mode, surf.world_position, world_n, frag_coord);
         } else {
             let mr = textureSampleGrad(
-                metal_rough_tex, material_sampler, surf.uv, surf.ddx_uv, surf.ddy_uv);
+                metal_rough_tex, material_sampler, uv, ddx_uv, ddy_uv);
             let metallic = mat.metallic_roughness_emissive_pad.x * mr.b;
             let roughness = mat.metallic_roughness_emissive_pad.y * mr.g;
 

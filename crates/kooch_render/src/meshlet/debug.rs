@@ -178,6 +178,27 @@ pub enum MeshletDebugMode {
     /// range. Magenta means no point light casts, or the frame is not
     /// clustered — the screen size is derived from the froxel grid.
     PointCubeFaces = 17,
+    /// Which mip level each pixel samples, as colour.
+    ///
+    /// 🔴 Built because a screenshot cannot tell three faults apart: a
+    /// mip chain that was never generated, a chain that was generated
+    /// wrong, and a chain that is fine while the LOD selection asks for
+    /// the wrong level. All three look like the same flat grey surface,
+    /// and the third one is invisible to every test in the suite —
+    /// found by the owner, who noticed the texture looked identical
+    /// however close the camera got.
+    ///
+    /// The level is computed the way the hardware computes it: the
+    /// footprint of the uv derivatives in texels, `log2` of the longer
+    /// axis. Each whole level gets its own colour, so a correct frame
+    /// shows **bands** that move when the camera does — near the camera
+    /// the low levels, toward the horizon the high ones. A frame stuck
+    /// on one colour is a LOD that is not listening, which is the whole
+    /// question.
+    ///
+    /// Magenta means the material has no albedo map, so there is no
+    /// chain to select from and nothing to say.
+    TextureMipLevel = 18,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -241,6 +262,7 @@ impl MeshletDebugMode {
             Self::LightsPerPixel,
             Self::PointShadowFactor,
             Self::PointCubeFaces,
+            Self::TextureMipLevel,
         ]
     }
 
@@ -335,6 +357,7 @@ impl MeshletDebugMode {
             Self::LightsPerPixel => "Lights per pixel",
             Self::PointShadowFactor => "Point shadow factor",
             Self::PointCubeFaces => "Point cube faces",
+            Self::TextureMipLevel => "Texture mip level",
         }
     }
 }

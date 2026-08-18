@@ -565,3 +565,6 @@ mod licence_tests;
 
 #[cfg(test)]
 mod boot_scene_tests;
+
+#[cfg(test)]
+mod engine_assets_tests;

@@ -78,3 +78,21 @@ itself a port of AMD's `ffx_fsr1.h` from FidelityFX FSR
 > WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 FidelityFX is a trademark of Advanced Micro Devices, Inc.
+
+---
+
+## Prototype Textures (Kenney)
+
+The textures under `assets/textures/prototype/` are Kenney's *Prototype
+Textures* pack, version 1.0 (<https://kenney.nl/assets/prototype-textures>),
+unmodified.
+
+> License: Creative Commons Zero, CC0
+> <http://creativecommons.org/publicdomain/zero/1.0/>
+>
+> This content is free to use in personal, educational and commercial
+> projects. Support us by crediting Kenney or www.kenney.nl (this is not
+> mandatory)
+
+CC0 requires nothing, so this notice is the credit they ask for and do
+not require. **Kenney does not endorse Kóoch.**

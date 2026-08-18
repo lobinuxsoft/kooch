@@ -47,6 +47,63 @@ pub(super) fn handle_import_assets(
     }
 }
 
+/// Rewrites a texture's `[import]` table and queues the re-upload.
+///
+/// Three steps, and the third is the one that is easy to leave out: the
+/// sidecar is written, the loaded `Image` is dropped so the next read
+/// comes from disk, and the GPU pool is told to forget the texture. A
+/// mip chain is levels allocated when the texture is created and no API
+/// adds one afterwards — without the eviction the file would be correct,
+/// the asset would be correct, and the picture would keep sampling the
+/// texture uploaded at startup until the project was reopened.
+pub(super) fn handle_set_image_import(
+    resources: &mut Resources,
+    guid: Guid,
+    import: kooch_render::texture::ImageImport,
+) {
+    let Some(path) = resources
+        .get::<AssetDatabase>()
+        .and_then(|db| db.entry(guid).map(|e| e.path.clone()))
+    else {
+        tracing::warn!(guid = %guid, "SetImageImport: no path in AssetDatabase; not persisted");
+        return;
+    };
+
+    let mut meta = match kooch_core::asset_meta::read_meta(&path) {
+        Ok(meta) => meta,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "SetImageImport: no readable .meta beside the texture",
+            );
+            return;
+        }
+    };
+    meta.import = match kooch_core::toml::Table::try_from(import) {
+        Ok(table) => Some(table),
+        Err(error) => {
+            tracing::warn!(%error, "SetImageImport: import settings did not serialise");
+            return;
+        }
+    };
+    if let Err(error) = kooch_core::asset_meta::write_meta(&path, &meta) {
+        tracing::warn!(path = %path.display(), %error, "SetImageImport: could not write .meta");
+        return;
+    }
+
+    // The bytes did not change, so the mtime-driven reload will not fire
+    // on its own. This is the re-import.
+    crate::actions::handlers::asset_saved(resources, &path);
+    if let Some(reimports) = resources.get_mut::<kooch_render::material::TextureReimports>() {
+        reimports.queue(guid);
+    } else {
+        let mut reimports = kooch_render::material::TextureReimports::default();
+        reimports.queue(guid);
+        resources.insert(reimports);
+    }
+}
+
 /// Applies a Material asset edit.
 ///
 /// Two speeds, because a slider produces one of these per frame:

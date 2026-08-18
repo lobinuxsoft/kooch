@@ -9,8 +9,38 @@
 //! loader with [`ImageLoader::linear`] so the hint becomes `Rgba8Unorm`.
 
 use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
+use serde::{Deserialize, Serialize};
 
 use super::asset::{Image, ImageFormat};
+
+/// What a texture's `.meta` may say about how it is imported.
+///
+/// ```toml
+/// guid = "..."
+/// asset_type = "kooch_render::texture::asset::Image"
+///
+/// [import]
+/// mipmaps = false
+/// ```
+///
+/// 🔴 The default is ON, and it is the answer for almost every texture:
+/// anything seen in perspective aliases without a chain, and the ones
+/// that do not want one are the exceptions — a UI atlas sampled 1:1, a
+/// lookup table whose neighbouring texels are unrelated values, a
+/// gradient ramp read by index. Those say so; everything else says
+/// nothing and gets the right thing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ImageImport {
+    /// Whether the upload builds the mip chain.
+    pub mipmaps: bool,
+}
+
+impl Default for ImageImport {
+    fn default() -> Self {
+        Self { mipmaps: true }
+    }
+}
 
 /// Configurable PNG/JPEG loader.
 ///
@@ -55,18 +85,19 @@ impl AssetLoader<Image> for ImageLoader {
         &["png", "jpg", "jpeg"]
     }
 
-    fn load(&self, bytes: &[u8], _ctx: &mut LoadContext<'_>) -> AssetResult<Image> {
+    fn load(&self, bytes: &[u8], ctx: &mut LoadContext<'_>) -> AssetResult<Image> {
         let dynamic = image::load_from_memory(bytes)
             .map_err(|e| AssetError::Loader(Box::new(ImageDecodeError(e))))?;
         // Normalize to RGBA8 — branch-free downstream upload.
         let rgba = dynamic.to_rgba8();
         let (width, height) = rgba.dimensions();
-        Ok(Image::from_rgba8(
-            rgba.into_raw(),
-            width,
-            height,
-            self.format,
-        ))
+        let import: ImageImport = ctx.import();
+        let image = Image::from_rgba8(rgba.into_raw(), width, height, self.format);
+        Ok(if import.mipmaps {
+            image
+        } else {
+            image.without_mipmaps()
+        })
     }
 }
 

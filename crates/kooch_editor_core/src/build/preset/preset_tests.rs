@@ -252,9 +252,7 @@ fn a_debug_preset_becomes_profiling() {
 
 /// Reads a preset the way the asset loader does, migration included.
 fn load(text: &str) -> BuildPreset {
-    let mut ctx = LoadContext {
-        path: std::path::Path::new("Development.buildpreset"),
-    };
+    let mut ctx = LoadContext::new(std::path::Path::new("Development.buildpreset"));
     BuildPresetLoader
         .load(text.as_bytes(), &mut ctx)
         .expect("a preset the editor wrote has to load")

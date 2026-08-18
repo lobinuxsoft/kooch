@@ -269,6 +269,14 @@ pub(crate) enum EditorAction {
         /// `false` while a drag is still in flight — update memory only.
         commit: bool,
     },
+    /// Rewrites a texture's `[import]` table and re-imports it.
+    ///
+    /// No `commit` flag, unlike the two below: this is a checkbox, and a
+    /// checkbox has no drag to be in the middle of.
+    SetImageImport {
+        guid: kooch_core::Guid,
+        import: kooch_render::texture::ImageImport,
+    },
     /// Writes one field of a reflected asset (#744).
     ///
     /// The generic counterpart to `EditMaterial`: any type registered
@@ -535,6 +543,7 @@ impl EditorAction {
             Self::SetPowerProfile(_)
             | Self::SetIdeCommand { .. }
             | Self::EditMaterial { .. }
+            | Self::SetImageImport { .. }
             | Self::EditAssetField { .. }
             | Self::ImportAssets { .. }
             | Self::CreateFolder { .. }

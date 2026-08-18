@@ -14,11 +14,10 @@
 //! Covered:
 //! - PNG / JPEG decode via `image` crate
 //! - sRGB and linear format hints (color vs data textures)
-//! - Single-mip GPU upload
+//! - GPU upload, with a mip chain when the import asks for one
 //! - 1×1 solid-color factory for default textures
 //!
 //! Deferred (follow-ups):
-//! - Mipmap generation (PBR materials need it)
 //! - KTX2 + compressed formats (BC7, ASTC, ETC2)
 //! - HDR (Rgba16Float / Rgba32Float) for IBL
 //! - Default texture cache (1×1 white / normal / black) inserted at startup
@@ -28,7 +27,9 @@
 mod asset;
 mod gpu_texture;
 mod image_loader;
+mod mipmap;
 
 pub use asset::{Image, ImageFormat};
 pub use gpu_texture::GpuTexture;
-pub use image_loader::ImageLoader;
+pub use image_loader::{ImageImport, ImageLoader};
+pub use mipmap::{Mipmapper, level_count};
