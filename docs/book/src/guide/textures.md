@@ -58,6 +58,23 @@ free plumbing: a mip chain is levels allocated when the texture is
 created and no API adds one afterwards, so the editor has to evict the
 uploaded copy and let the next frame put it back.
 
+## Tiling
+
+How densely a texture sits on a surface is the **material's** decision,
+not the mesh's: `Tiling` in the Inspector, `uv_scale` in the `.ron`. A
+floor twenty units across wants `20, 20` from a grid whose square is
+meant to read as one unit. `Offset` slides the texture; on a tiling
+texture whole numbers change nothing, which is the point.
+
+Scaling the mesh's UVs is not the same thing — the mesh is shared, so it
+would change every object using it.
+
+> 🔴 Tiling makes the uv move faster between neighbouring pixels, and
+> the mip is selected from exactly that. The engine scales the
+> derivatives with the coordinate; if it did not, a texture tiled 20×
+> would sample about four levels too sharp and alias — the thing the
+> chain exists to prevent, on the surfaces that asked for tiling.
+
 ## The prototype textures
 
 The engine ships Kenney's *Prototype Textures* (CC0) under
