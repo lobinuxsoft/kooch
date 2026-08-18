@@ -12,6 +12,13 @@
 //! The claim is not "the level is right"; it is the weaker and more
 //! useful one: **the level responds to the camera at all**.
 //!
+//! Measured across the fix that made it pass:
+//!
+//! | | near (1.2 m) | far (90 m) |
+//! |---|---|---|
+//! | `half_screen_size` | 10.00 | 10.00 |
+//! | `two_over_screen_size` | 3.01 | 6.99 |
+//!
 //! Run with:
 //!   cargo test -p kooch_render --test texture_mip_selection
 
@@ -30,7 +37,15 @@ use kooch_render::material::{Material, MaterialPipeline};
 use kooch_render::meshlet::{MeshletDebugMode, ShadingRate};
 use kooch_render::texture::{Image, ImageFormat};
 
-/// A 256x256 one-pixel checker: the finest detail a chain can lose, so
+/// A 2048x2048 one-pixel checker.
+///
+/// ⚠️ Big on purpose. The rig renders 200 px across, so a 256-texel
+/// texture on a floor that fills the frame has a footprint under one
+/// texel at any distance this scene offers — level 0 everywhere, and a
+/// test with no range to measure. 2048 puts several levels between the
+/// near camera and the far one.
+///
+/// A one-pixel checker: the finest detail a chain can lose, so
 /// the level being sampled decides what comes back.
 fn checker(side: u32) -> Image {
     let mut px = Vec::with_capacity((side * side * 4) as usize);
@@ -43,11 +58,27 @@ fn checker(side: u32) -> Image {
     Image::from_rgba8(px, side, side, ImageFormat::Rgba8UnormSrgb)
 }
 
-/// The mean red of the frame. In the mip view red climbs with the level,
-/// so this is a proxy for "which level is the frame sampling".
-fn mean_red(image: &[u8]) -> f64 {
-    let sum: u64 = image.chunks_exact(4).map(|p| u64::from(p[0])).sum();
-    sum as f64 / (image.len() / 4) as f64
+/// Decodes the level out of the view's colour at the centre of the
+/// frame, which is where this scene always has floor.
+///
+/// ⚠️ The centre and not the mean. From ninety metres the floor covers a
+/// handful of pixels and the rest is background, so a frame average
+/// measures how much floor is on screen — which is what the first two
+/// versions of this test measured, and reported as a mip level, twice.
+///
+/// The ramp is `base * (0.55 + 0.45 * fract(lod))` with
+/// `base = (ramp, _, 1 - ramp)` and `ramp = level / 10`, so `R + B`
+/// recovers the brightness factor and `R / (R + B)` recovers the level.
+fn level_at_centre(image: &[u8], side: usize) -> f64 {
+    let i = ((side / 2) * side + side / 2) * 4;
+    let (r, b) = (f64::from(image[i]), f64::from(image[i + 2]));
+    let sum = r + b;
+    assert!(
+        sum > 1.0,
+        "the centre of the frame is black — nothing was shaded there, so there is no \
+         level to read",
+    );
+    (r / sum) * 10.0
 }
 
 /// Renders the mip view with the camera at `eye`.
@@ -60,13 +91,18 @@ fn mip_view_at(eye: Vec3) -> Option<Vec<u8>> {
     // resolves GUIDs through the asset server and off the disk, which is
     // a filesystem this test has no business needing.
     let texture = Guid::new_v4();
-    let material = Guid::new_v4();
+    // 🔴 The rig's OWN material guid, not a fresh one. A new material is
+    // a material nothing references: the scene renders untextured, the
+    // view paints its "no albedo map" magenta, and the mean of that
+    // tracks how much floor is on screen — which is what the first
+    // version of this test measured, and reported as a mip level.
+    let material = r.material;
     {
         let pipeline = r
             .resources
             .get_mut::<MaterialPipeline>()
             .expect("the rig registers a material pipeline");
-        pipeline.register_texture(&r.device, &r.queue, texture, &checker(256));
+        pipeline.register_texture(&r.device, &r.queue, texture, &checker(2048));
         pipeline.register(
             &r.queue,
             material,
@@ -96,27 +132,26 @@ fn mip_view_at(eye: Vec3) -> Option<Vec<u8>> {
 /// the same colour from any distance, which is exactly the picture that
 /// was reported.
 #[test]
-#[ignore = "reproduces an open bug: the selection is inverted, near 255 / far 16.5"]
 fn the_mip_level_responds_to_the_camera() {
     let _gpu = gpu_lock();
-    let Some(near) = mip_view_at(Vec3::new(0.0, 1.0, 2.0)) else {
+    let Some(near) = mip_view_at(Vec3::new(0.0, 0.6, 1.2)) else {
         eprintln!("no adapter with the 64-bit texture-atomic bundle; skipping");
         return;
     };
-    let Some(far) = mip_view_at(Vec3::new(0.0, 12.0, 40.0)) else {
+    let Some(far) = mip_view_at(Vec3::new(0.0, 30.0, 90.0)) else {
         return;
     };
 
-    let (n, f) = (mean_red(&near), mean_red(&far));
-    eprintln!("mip view — near {n:.2}, far {f:.2} (red climbs with the level)");
+    let (n, f) = (level_at_centre(&near, 200), level_at_centre(&far, 200));
+    eprintln!("mip level at the centre — near {n:.2}, far {f:.2}");
     assert!(
         (n - f).abs() > 1.0,
-        "the mip view paints the same thing from 2 m and from 40 m ({n:.2} vs {f:.2}), so \
-         the level is not being computed from the camera",
+        "the level is the same from 1.2 m and from 90 m ({n:.2} vs {f:.2}), so it is not \
+         being computed from the camera",
     );
     assert!(
         f > n,
-        "the distant frame samples a LOWER level than the near one ({f:.2} vs {n:.2}), \
+        "the distant surface samples a LOWER level than the near one ({f:.2} vs {n:.2}), \
          which is the selection inverted",
     );
 }

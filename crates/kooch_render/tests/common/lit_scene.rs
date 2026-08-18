@@ -47,6 +47,13 @@ pub struct Rig {
     pub resources: Resources,
     pub stage: MeshletRenderStage,
     pub camera: ViewCamera,
+    /// The material every box in the scene renders with.
+    ///
+    /// Exposed so a test can REPLACE it — registering a second material
+    /// nobody references renders exactly the same scene, which is how a
+    /// texture test ends up measuring the untextured fallback and
+    /// believing it measured a mip level.
+    pub material: Guid,
 }
 
 /// A floor, `lights x lights` point lights above it, and a camera
@@ -212,6 +219,7 @@ fn build(lights: u32, wall: bool, caster: bool) -> Option<Rig> {
         resources,
         stage,
         camera: ViewCamera::looking_at(Vec3::new(0.0, 2.5, 9.0), Vec3::new(0.0, 0.5, 0.0)),
+        material: material_guid,
     })
 }
 

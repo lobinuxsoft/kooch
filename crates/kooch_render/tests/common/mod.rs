@@ -280,11 +280,26 @@ pub fn build_cube_mesh() -> Mesh {
     for (face_idx, corners) in face_indices.iter().enumerate() {
         let normal = face_normals[face_idx];
         let base = vertices.len() as u32;
-        for &c in corners {
+        // 🔴 A uv per corner, and it used to be [0, 0] on all 24.
+        //
+        // Nothing rendered differently for it — every material in these
+        // tests sampled the 1x1 white fallback, where any coordinate
+        // reads the same texel. What it broke was the ability to MEASURE
+        // texture sampling at all: a mesh whose uvs are constant has uv
+        // derivatives of exactly zero, so mip selection reports level 0
+        // from every distance and a test looking at it concludes the
+        // selection is broken. That is a wrong conclusion this file
+        // handed out once already.
+        for (corner, &c) in corners.iter().enumerate() {
             vertices.push(MeshVertex {
                 position: positions[c],
                 normal,
-                uv: [0.0, 0.0],
+                uv: match corner {
+                    0 => [0.0, 0.0],
+                    1 => [1.0, 0.0],
+                    2 => [1.0, 1.0],
+                    _ => [0.0, 1.0],
+                },
             });
         }
         // Quad → 2 triangles. Order chosen for outward-facing CCW.
