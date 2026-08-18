@@ -273,8 +273,20 @@ fn sample_history(u: f32, v: f32) -> vec3<f32> {
 /// distance, so a tap that lands on the pixel dominates and one a full
 /// texel away contributes nothing.
 fn sample_weight(offset: vec2<f32>) -> f32 {
+    // 🔴 The window WIDENS as the ratio approaches 1 and narrows as it
+    // grows, which is the opposite of the intuition. At 1:1 the samples
+    // are dense and averaging further costs nothing; at 2x each sample
+    // carries four output pixels and reaching wide smears them
+    // together. FSR's and SGSR's constant, and the shape is theirs.
+    //
+    // Worked at 2x it comes to 1.0, which is what a fixed window
+    // happened to be — so this changes nothing at Performance and
+    // everything at Native, where a fixed window was half as wide as it
+    // should be.
+    let ratio = max(taa.output_size.x / max(taa.render_size.x, 1.0), 1.0);
+    let bias = mix(ratio, max(1.0, 0.3 + 0.3 * ratio), 0.0) * 0.5;
     let d2 = dot(offset, offset);
-    let base = clamp(d2, 0.0, 1.0);
+    let base = clamp(d2 * bias * bias, 0.0, 1.0);
     let y = base - 1.0;
     let y2 = y * y;
     return (0.75 * y + y2) * y2;
@@ -353,7 +365,13 @@ fn fs_taa(in: Varyings) -> Output {
         if (total > 1.0e-05) {
             current_color = accumulated / total;
         }
-        gathered_weight = clamp(total, 0.0, 1.0);
+        // 🔴 A THIRD of the accumulated weight, which is upstream's and
+        // was missing. The raw sum runs well past one when several taps
+        // land near the pixel, and feeding that to the blend hands a
+        // gathered sample MORE authority than a native one ever had —
+        // the current frame wins outright and its aliasing arrives
+        // untouched, which is jagged edges rather than a soft image.
+        gathered_weight = clamp(total * (1.0 / 3.0), 0.0, 1.0);
     }
 
     // The pixel's own depth, kept for the disocclusion test and written
@@ -446,6 +464,31 @@ fn fs_taa(in: Varyings) -> Output {
         history_color = clip_towards_aabb_center(
             history_color, s_mm, mean - std_deviation, mean + std_deviation);
         history_color = YCoCg_to_RGB(history_color);
+
+        // 🔴 The GATHERED colour is clamped to the same neighbourhood,
+        // and only when upsampling. Upstream does this and it was
+        // missing here.
+        //
+        // A gather is a weighted sum of taps that each belong to a
+        // different surface near a silhouette, so it can land outside
+        // everything it was built from — brighter than the brightest
+        // tap, darker than the darkest. Blended in unbounded that
+        // overshoot is a hard rim along every edge, which reads as
+        // aliasing the resolve failed to remove rather than as an
+        // artefact the resolve introduced.
+        //
+        // The margin is upstream's 0.075, and it is in COMPRESSED space
+        // where the range is about [0, 1] — the same reason every
+        // constant in this shader has to be applied after `tonemap`.
+        if (is_upsampling()) {
+            let gathered = RGB_to_YCoCg(current_color);
+            let bounded = clamp(
+                gathered,
+                mean - std_deviation - vec3(0.075),
+                mean + std_deviation + vec3(0.075),
+            );
+            current_color = YCoCg_to_RGB(bounded);
+        }
 
         // 🔴 Read at `history_uv`, not at `uv`. Both of these describe
         // the surface the history belongs to, so both have to be
