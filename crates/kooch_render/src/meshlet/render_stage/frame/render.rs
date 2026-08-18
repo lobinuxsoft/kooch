@@ -159,8 +159,14 @@ impl MeshletRenderStage {
                     let _ = stage.set_shading_rate(shading.rate);
                 }
                 if let Some(temporal) = temporal {
-                    stage.set_temporal_aa(temporal.enabled());
+                    stage.set_upscale(temporal.technique);
                 }
+                // SGSR 2's depth-clip threshold scales by the lens, so
+                // it has to be told. Set unconditionally: a technique
+                // that ignores it costs nothing, and one that needs it
+                // and does not get it fails as a wrong edge mask rather
+                // than as an error.
+                stage.set_camera_lens(camera.fov_y_rad, aspect);
                 stage.next_jitter(unjittered_view_proj)
             }
             // The legacy R32 path has neither motion vectors nor a

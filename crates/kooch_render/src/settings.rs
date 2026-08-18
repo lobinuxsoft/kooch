@@ -236,9 +236,12 @@ pub struct RenderSettings {
 
 /// The techniques the inspector offers.
 ///
-/// ⚠️ `Sgsr2` (2) is missing on purpose: its upscale pass is not built,
-/// and an entry that selects nothing is worse than no entry. It goes in
-/// when the pass does — one line, which is the point of the seam.
+/// 🎯 SGSR 2 is here now that its two passes are built. At a ratio of
+/// 1:1 it resolves without upscaling, which is exactly the
+/// configuration the transliteration is judged in: run it against the
+/// engine's own resolve on the same frames and a port that is wrong
+/// shows as a difference from a known-good image, not as a vague
+/// softness. The resolution split is step 4 and is not built.
 const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "None — no history, no jitter",
@@ -247,6 +250,10 @@ const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "TAA — the engine's own resolve",
         value: 1,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "SGSR 2 — Qualcomm's, transliterated (1:1 for now)",
+        value: 2,
     },
 ];
 

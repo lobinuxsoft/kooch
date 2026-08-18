@@ -293,6 +293,31 @@ impl MeshletRenderStage {
         switched
     }
 
+    /// Selects the temporal technique on every view that has the R64
+    /// stage, and returns how many took it (#536).
+    pub fn set_upscale(&mut self, technique: crate::quality::UpscaleTechnique) -> usize {
+        let mut applied = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut() {
+                stage.set_upscale(technique);
+                applied += 1;
+            }
+        }
+        applied
+    }
+
+    /// The lens both the cull and SGSR 2's edge mask are derived from.
+    pub fn set_camera_lens(&mut self, fov_y_rad: f32, aspect: f32) -> usize {
+        let mut applied = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut() {
+                stage.set_camera_lens(fov_y_rad, aspect);
+                applied += 1;
+            }
+        }
+        applied
+    }
+
     /// Switches every view between the fragment shading path and the
     /// compute one (#824), overriding `KOOCH_COMPUTE_SHADING`.
     ///
