@@ -152,6 +152,8 @@ died on their own measurement this week, and each of these bounds an item below 
 | **4 · #865** | a scene with the same coverage and far fewer vertices per pixel | The shading pass fetches **96 bytes of vertex per pixel** (3 × 32 B, unpacked). Whether that is 3 ms or 0.3 depends on cache hit rate, and packing before knowing is how the last three died |
 
 **Phase 1 — the engine's own temporal upscaler: #481. Third-party ones later (#536).** 🎯
+🎉 **SHIPPED 2026-08-18 (#874, v0.4.0): steps 1–4 built and the handheld budget closes — 40.7 ms
+to 13.9, GPU 24.8 to ~8.4, 72 fps at 76 % occupancy.** Full numbers below.
 **Promoted here 2026-08-17, ahead of #866**, and settled after two corrections in one afternoon —
 both recorded because the reasoning matters more than the conclusion.
 
@@ -204,8 +206,73 @@ ported files and the MIT text shipped in a `NOTICE`.
 1. ✅ **Step 1 first** (16-phase jitter). Both routes need it. **Built** — see below.
 2. ✅ **Steps 2–3 next** — they produce a visible improvement in the TAA that ships *today*, judged
    by eye on the handheld in the same session. **Built** — see below.
-3. **Then the transliteration**, arriving with the input infrastructure already validated. 🔴 That
-   is where ports die — in the inputs, not in the shaders.
+3. ✅ **Then the transliteration**, arriving with the input infrastructure already validated. 🔴 That
+   is where ports die — in the inputs, not in the shaders. **Built** — and it did not die there,
+   which is the plan's one real prediction that held.
+
+#### 🎉 The result, measured on the OneXFly (2026-08-18) — **the budget closes**
+
+SGSR 2 at Performance (50 %), `many_lights.scene`, TDP pinned at 10 W:
+
+| GPU scope | before (v0.2.44) | **after** | |
+|---|---|---|---|
+| `shade: compute (half rate)` | 10.969 ms | **2.461** | **4.5x** |
+| `motion vectors` | 2.085 | **0.469** | 4.4x |
+| `shade: upsample` | 1.533 | **0.410** | 3.7x |
+| the resolve | `taa` 2.883 | **`sgsr2` 1.868** | cheaper **and** it reconstructs |
+| `shadows` · `cluster grid` · `blit` | 1.153 · 0.156 · 0.430 | 1.203 · 0.134 · 0.398 | ← unchanged |
+| **GPU total** | **24.8 ms** | **~8.4 ms** | **~3x** |
+
+**72 fps stable, `gpu_busy` 76 %.** Before this the device sat at 93–99 % occupancy, power-limited
+to 1141 MHz of 2900, and still missed the budget. It now makes it with a quarter of the GPU spare.
+
+🎯 Everything that costs per pixel fell between 3.7x and 4.5x; everything that does not depend on
+resolution stayed identical. That is the independent check that the size sweep was complete.
+
+⚠️ `vkAcquireNextImageKHR` is 11.2 of the 13.9 ms — the frame is **waiting on vsync**, and the CPU
+side does its work in 1.6 ms. And **p99 is 28.29 ms**, which `read_capture` reports is *not*
+explained by GPU work (r = 0.18): with the GPU at 76 %, whatever moves the slow frames is elsewhere.
+
+#### ❌ TAAU — built, measured, and removed. Do not re-litigate
+
+Ours, the same shader as the resolve: at 1:1 every gather weight collapses to one and it IS the
+plain resolve (measured at 0.0003). It lost on **both** counts — **4.482 ms against SGSR 2's
+1.868**, frame 16.29 against 13.91, `gpu_busy` 98 % against 76 %, and jagged edges.
+
+🎯 **The cost was never the taps.** Cutting nine to five bought 13 %. Counted per output pixel,
+**TAAU issued 19 fetches where SGSR 2 issues 7**: SGSR 2 builds its variance box from the SAME five
+taps it already read for the gather and reads history with one bilinear tap, where ours sampled
+three independent neighbourhoods — five for a Catmull-Rom history, nine for the box, five for the
+gather. Closing that means restructuring the resolve, and it would still lose on image.
+
+**Removed entirely** rather than left as a worse entry in a menu. TAAU is the CATEGORY and SGSR 2 is
+an implementation of it, and a year of somebody tuning constants beat starting from a better
+rejection test. **That is what turns "transliterate rather than invent" from an opinion into a
+measurement.**
+
+#### 🎯 The size sweep, and the rule it exposed
+
+The resolution split broke four things that had never had to state an assumption before, because
+the render size and the presented size had always been the same number:
+
+| | |
+|---|---|
+| **The froxel grid** | 🔴 Found **by the owner, from the picture** — the lighting broke into blocks of wrong colour. The shading pass indexes it from a fragment coordinate produced at RENDER resolution |
+| The LOD target | Compares a meshlet's projected error against a PIXEL, and the pixels that exist are the rasterised ones |
+| Both Hi-Z pyramids | They are mip chains of the depth buffer, which shrinks |
+| The shading dispatch | The pass the whole scale exists to make cheaper |
+
+🎯 **Everything that DERIVED its size from a texture was already correct; everything that RECEIVED a
+size as a parameter was wrong.** Contact shadows read `textureDimensions(depth)` and needed nothing.
+The projected shadows rasterise from the light at their own resolution and never look at the screen.
+
+#### ⏭️ What is left of #481
+
+- **Steps 5–6: RCAS and feature locking.** 🔴 Not optional polish — without them the result reads
+  soft, which is how this lands as *"we tried it, it looked worse, we turned it off"*.
+- **FSR 3.1** as the second backend, which is what the seam was built for.
+- ⚠️ **`MipBias` is still missing.** The jitter reconstructs detail finer than one frame carries and
+  the textures want a negative LOD bias. Noted since the resolve was written, still not done.
 
 #### ✅ Step 1, as built — the period is now a function of the ratio
 
