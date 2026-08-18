@@ -189,7 +189,7 @@ impl MeshletRenderStage {
                 &self.scene,
                 gpu_pool,
                 view_proj,
-                self.views[view_id].size,
+                self.views[view_id].render_size,
                 reason,
                 /* line_thickness_px */ 2,
                 total_threads,
