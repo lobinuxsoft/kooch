@@ -663,6 +663,7 @@ fn owners_rig(casting: bool) -> Option<Rig> {
         .insert(kooch_render::quality::TemporalSettings::new(
             kooch_render::quality::UpscaleTechnique::Taa,
             100,
+            0,
         ));
     rig.resources.insert(ShadowSettings {
         cascade_texels: 512,
@@ -1009,6 +1010,7 @@ fn reported_scene(casting: bool) -> Option<Rig> {
         .insert(kooch_render::quality::TemporalSettings::new(
             kooch_render::quality::UpscaleTechnique::Taa,
             100,
+            0,
         ));
     rig.resources.insert(ShadowSettings {
         cascade_texels: 512,
