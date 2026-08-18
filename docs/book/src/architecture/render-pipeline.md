@@ -67,8 +67,9 @@ flowchart TD
         SH -- yes --> A4["shade: compute — or (half rate)<br/>one dispatch → Inti, into an HDR target"]
         SH -- "no, the default" --> A5["shade: fragment<br/>one fullscreen pass per material, depth-tested Equal"]
         A4 --> UP["shade: upsample<br/>only when the rate is half"]
-        UP --> TAA["taa<br/>off by default — #481"]
+        UP --> TAA["taa / sgsr2<br/>the temporal resolve — off by default, #481"]
         TAA --> TM["tonemap<br/>HDR radiance → display-referred"]
+        TM --> RCAS["rcas<br/>sharpening, after the curve — off by default"]
     end
 
     A0 --> A1
@@ -78,7 +79,7 @@ flowchart TD
     B2 --> B3["cull + raster B: what pass A occluded"]
     B3 --> B5["shade: one compute dispatch → Inti<br/>no motion vectors, no TAA on this path"]
 
-    TM --> SKY["sky"]
+    RCAS --> SKY["sky"]
     A5 --> SKY
     B5 --> SKY
     SKY --> BLIT["blit the stage's colour over the sky"]
@@ -100,10 +101,10 @@ pass that costs four culls and four rasters was, until #785, hiding
 inside whatever number the frame reported.
 
 The R64 path's `raster + shade` is **one fused scope** covering
-everything from the clear to the tonemap. Its children — motion vectors,
-the shade dispatch, the upsample, TAA, the tonemap — are timed
-individually inside it, which is how a capture answers *which half of the
-fused pass is the cost*.
+everything from the clear to the sharpening. Its children — motion
+vectors, the shade dispatch, the upsample, the temporal resolve, the
+tonemap, RCAS — are timed individually inside it, which is how a capture
+answers *which half of the fused pass is the cost*.
 
 ### Cull
 
@@ -202,6 +203,15 @@ path only.
 - **`taa`, and it is off by default.** The resolve exists and works;
   turning it on is #481's remaining half. Debug views bypass it, because
   averaging a false-colour legend across frames is not a legend any more.
+- **`rcas`, and it is off by default.** Robust Contrast Adaptive
+  Sharpening, one full-screen pass, `sharpening` in `.rendersettings`.
+  🔴 It runs **after** the tonemap, unlike everything else in this list:
+  RCAS is adaptive because it solves for the filter weight at which the
+  signal would clip out of `{0, 1}`, and handed radiance in the hundreds
+  that limiter stops limiting. When it runs, the tonemap resolves into
+  its texture instead of into the window. Reconstruction is soft by
+  construction — a resolve builds each output pixel from samples that
+  landed *near* it — so at a `render_scale` below 100 this is not polish.
 - **`tonemap`.** Shading writes **HDR radiance** into a linear target and
   the tonemap converts it at the end, because TAA has to run on linear
   radiance. The operator is *concatenated* from Inti rather than
@@ -347,8 +357,8 @@ What is genuinely still absent:
   orbit, and tinting the sunlight.
 - **The post-processing stack**
   ([#254](https://github.com/lobinuxsoft/kooch/issues/254)) — AgX, SMAA,
-  CAS, vignette. The `tonemap` pass exists; the stack around it does not,
-  and exposure is a setting rather than an auto-exposure loop.
+  vignette. The `tonemap` and `rcas` passes exist; the stack around them
+  does not, and exposure is a setting rather than an auto-exposure loop.
 
 ## Why there is no render graph
 
