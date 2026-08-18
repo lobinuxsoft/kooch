@@ -26,6 +26,7 @@ mod density_clear;
 mod jitter;
 mod motion;
 mod raster;
+mod sgsr2;
 mod shading_rate;
 mod taa;
 mod tonemap;
@@ -50,6 +51,7 @@ use tonemap::Tonemap;
 use upsample::ShadingUpsample;
 
 pub use jitter::{JITTER_BASE_PHASES, Jitter};
+pub use sgsr2::{MIN_LERP_CONTRIBUTION, SGSR2_CONVERT_FORMAT, fov_k, scale_ratio};
 pub use shading_rate::ShadingRate;
 
 pub(super) use compute_shade::enabled_by_environment as compute_shading_override;
