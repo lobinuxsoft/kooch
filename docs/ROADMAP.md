@@ -274,8 +274,30 @@ The projected shadows rasterise from the light at their own resolution and never
   that just paid for itself. **Judged on the device first**: if a one-pixel wire dissolves at
   Performance, the mechanism is decided then, and against what SGSR 2 already does.
 - **FSR 3.1** as the second backend, which is what the seam was built for.
-- ⚠️ **`MipBias` is still missing.** The jitter reconstructs detail finer than one frame carries and
-  the textures want a negative LOD bias. Noted since the resolve was written, still not done.
+- ⚠️ **`MipBias` is still missing**, and the reason it was never going to work has been fixed
+  first: 🔴 **the engine had no mip chains at all.** Every texture was uploaded with
+  `mip_level_count: 1` since the first PR that had textures, so a negative LOD bias would have
+  selected level zero — which is what it already selected. The setting could not have moved a
+  pixel, and it would have been debugged as an upscaler problem. Chains land in this PR; the bias
+  is next and now has something to bias.
+
+#### 🔴 What judging RCAS actually needs — found by trying to judge it
+
+The owner set `sharpening` to 0, 60 and 100 in the editor and saw no difference. Two findings,
+both of them about the input rather than the pass:
+
+1. **The scene was a white room.** Flat white Suzannes on a flat white floor at
+   `ambient_intensity 300`, half the frame clipped at 1.0 and no texture anywhere. RCAS amplifies
+   *local* contrast: where the five taps agree, the filter is the identity by definition. Measured
+   on the test scene the pass moves the mean gradient by 33 % and the worst 0.1 % of pixels by
+   21/255 — a real effect, and invisible on a surface that has no detail. Hence the prototype
+   textures, which are now shipped.
+2. 🔴 **There were no mip chains.** See above. A grid texture on that floor would have boiled, and
+   the boiling would have been blamed on the upscaler.
+
+🎯 **The lesson is the one #481 keeps teaching: a renderer feature judged against nothing measures
+nothing.** The order is chains → bias → judge, and it was arrived at by looking at a screen and
+finding the answer was not in the pass.
 
 #### ✅ Step 5, as built — RCAS, and where a sharpening pass has to sit
 
