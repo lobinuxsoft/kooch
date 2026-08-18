@@ -339,38 +339,54 @@ fn fs_taa(in: Varyings) -> Output {
     // than being handed a guess with full confidence.
     var gathered_weight = 1.0;
     if (is_upsampling()) {
-        // Where this output pixel sits in the render grid.
+        // Where this output pixel sits in the render grid, and the
+        // texel that contains it.
         let render_pos = uv * taa.render_size;
-        let centre = floor(render_pos - 0.5) + 0.5;
+        let base = vec2<i32>(floor(render_pos - 0.5));
+        let limit = vec2<i32>(taa.render_size) - vec2<i32>(1);
         var accumulated = vec3<f32>(0.0);
         var total = 0.0;
-        for (var y = -1; y <= 1; y++) {
-            for (var x = -1; x <= 1; x++) {
-                let texel = centre + vec2<f32>(f32(x), f32(y));
-                let tap_uv = texel / taa.render_size;
-                // 🔴 The jitter is SUBTRACTED: the projection was
-                // offset by it, so the sample stored at this texel was
-                // actually taken from that much further along. Adding
-                // it instead moves every weight the wrong way and the
-                // result reads as a soft, slightly swimming image —
-                // plausible enough to ship and wrong.
-                let landed = texel - taa.jitter;
-                let weight = sample_weight(landed - render_pos);
-                accumulated += tonemap(
-                    textureSample(view_target, nearest_sampler, tap_uv).rgb
-                ) * weight;
-                total += weight;
-            }
+
+        // 🔴 FIVE taps in a cross, not nine, and `textureLoad` rather
+        // than `textureSample`. Measured on the device the nine-tap
+        // filtered version cost 5.177 ms against SGSR 2's 1.868 for the
+        // same job — nine filtered fetches per output pixel where five
+        // direct ones do, on a device that measures as bandwidth-bound.
+        // The corners are what upstream leaves behind `if (false)` with
+        // the note that they "could generate more realistic output":
+        // they are worth having when there is budget, and there is not.
+        var offsets = array<vec2<i32>, 5>(
+            vec2<i32>(0, 1),
+            vec2<i32>(1, 0),
+            vec2<i32>(-1, 0),
+            vec2<i32>(0, 0),
+            vec2<i32>(0, -1),
+        );
+        for (var i = 0; i < 5; i++) {
+            let texel = base + offsets[i];
+            // ⚠️ `textureLoad` out of range is DEFINED to return zero in
+            // WGSL, so the clamp is load-bearing: without it every
+            // screen edge rings a black border into the accumulation.
+            let colour = tonemap(
+                textureLoad(view_target, clamp(texel, vec2<i32>(0), limit), 0).rgb
+            );
+            // 🔴 The jitter is SUBTRACTED: the projection was offset by
+            // it, so the sample stored at this texel was taken from that
+            // much further along. Adding it moves every weight the wrong
+            // way and reads as a soft, faintly swimming image.
+            let landed = vec2<f32>(texel) + vec2<f32>(0.5) - taa.jitter;
+            let weight = sample_weight(landed - render_pos);
+            accumulated += colour * weight;
+            total += weight;
         }
+
         if (total > 1.0e-05) {
             current_color = accumulated / total;
         }
-        // 🔴 A THIRD of the accumulated weight, which is upstream's and
-        // was missing. The raw sum runs well past one when several taps
-        // land near the pixel, and feeding that to the blend hands a
-        // gathered sample MORE authority than a native one ever had —
-        // the current frame wins outright and its aliasing arrives
-        // untouched, which is jagged edges rather than a soft image.
+        // A third of the accumulated weight, which is upstream's. The
+        // raw sum runs past one when several taps land near the pixel,
+        // and that hands a gathered sample more authority than a native
+        // one ever had.
         gathered_weight = clamp(total * (1.0 / 3.0), 0.0, 1.0);
     }
 
