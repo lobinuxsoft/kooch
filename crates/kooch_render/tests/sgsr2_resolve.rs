@@ -183,6 +183,14 @@ fn the_scene_renders_smaller_than_the_window() {
     };
     let full = r.stage.depth_texture().size();
 
+    // 🔴 Required, and it used to be absent: the scale needs the compute
+    // path. The fragment one tonemaps inline into the window's image and
+    // has nothing at render resolution to hold a smaller frame, so a
+    // scale there mixes attachment sizes in one pass and wgpu discards
+    // it. This test asked for the combination that produces that, and
+    // passed, because it asserts on texture sizes rather than on a frame
+    // reaching the screen.
+    assert!(r.stage.set_compute_shading(true) > 0);
     assert!(r.stage.set_upscale(UpscaleTechnique::Sgsr2) > 0);
     r.stage.set_render_scale(50);
     // The editor calls this every frame with the panel's size; it is
@@ -228,6 +236,7 @@ fn a_plain_resolve_is_refused_the_scale() {
     };
     let full = r.stage.depth_texture().size();
 
+    assert!(r.stage.set_compute_shading(true) > 0);
     assert!(r.stage.set_upscale(UpscaleTechnique::Taa) > 0);
     r.stage.set_render_scale(50);
     r.stage.resize(

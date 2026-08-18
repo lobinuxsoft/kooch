@@ -128,17 +128,25 @@ fn the_amount_reaches_the_shader() {
         common::read_rgba8(&r.device, &r.queue, r.stage.color_texture())
     };
 
-    // ⚠️ Discarded: the first frame of a fresh rig is the one that
-    // uploads the meshlets and the material textures, and it comes back
-    // black often enough to have failed this file in a batch while
-    // passing on its own. The claim under test is that the setting
-    // reaches the shader, not that frame zero is complete.
-    let _warm_up = shot(0, &mut r);
-    let first = shot(0, &mut r);
-    let again = shot(0, &mut r);
-    assert_eq!(
-        first, again,
-        "the rig does not repeat itself frame to frame, so nothing below could \
+    // ⚠️ Settled first, rather than trusting frame zero. The opening
+    // frames of a rig upload the meshlets and the material textures and
+    // come back black or half-drawn — which failed this file in a batch
+    // while passing on its own, twice. The claim under test is that the
+    // setting reaches the shader, not that frame zero is complete, so
+    // the rig is rendered until it repeats itself and only then read.
+    let mut first = shot(0, &mut r);
+    let mut settled = false;
+    for _ in 0..8 {
+        let again = shot(0, &mut r);
+        if again == first {
+            settled = true;
+            break;
+        }
+        first = again;
+    }
+    assert!(
+        settled,
+        "the rig never produced two identical frames in a row, so nothing below could \
          distinguish the setting from the noise",
     );
 
