@@ -935,3 +935,112 @@ fn every_asset_format_is_classified() {
          waste repeated once per asset.",
     );
 }
+
+/// 🔴 An asset only the game's code names still ships.
+///
+/// The walk collects what the game can REACH by reading files, and a
+/// guid built in Rust — loaded by path, chosen from a table, assembled
+/// from a string — is reachable by nothing. Unity answers this with
+/// `Resources/`, Godot with export filters; this manifest answers it
+/// with a list, because the assets in question usually live in the
+/// ENGINE's tree where a project cannot put a folder.
+#[test]
+fn a_declared_asset_ships_without_being_named() {
+    let dir = tmp("packager_declared");
+    let key = PackKey::generate();
+    let (proj, eng) = (dir.join("proj"), dir.join("engine"));
+    project(&proj);
+    engine(&eng);
+    // `demo.glb` is the engine asset no document mentions — the fixture
+    // ships it precisely to prove it stays behind.
+    write(
+        &proj.join("project.kooch"),
+        br#"(
+            name: "demo",
+            version: "0.1.0",
+            engine_version: "0.6.0",
+            main_scene: None,
+            window: (title: "demo", width: 1280, height: 720),
+            build: (include: ["assets/meshes/demo.glb"]),
+        )"#,
+    );
+    let exe = binary(&dir);
+    let out = assemble(
+        &BuildPreset::default(),
+        &known(),
+        &proj,
+        Some(&eng),
+        &exe,
+        "demo",
+        &key,
+    )
+    .expect("packaging should succeed");
+    let mut pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    assert_eq!(
+        pack.read("assets/meshes/demo.glb").unwrap(),
+        b"12 MB of demo",
+        "the manifest declared it and it did not ship",
+    );
+}
+
+/// And a declared asset is a ROOT, so what it names comes too.
+///
+/// Declaring a material and then having to declare its three textures
+/// as well would be a list that goes stale the first time somebody edits
+/// the material.
+#[test]
+fn a_declared_asset_brings_what_it_references() {
+    let dir = tmp("packager_declared_chain");
+    let key = PackKey::generate();
+    let (proj, eng) = (dir.join("proj"), dir.join("engine"));
+    project(&proj);
+    engine(&eng);
+    // An engine material nothing names, pointing at an engine texture
+    // nothing names either.
+    write(
+        &eng.join("assets/materials/hidden.ron"),
+        format!(r#"(albedo: Some("{ENGINE_TEXTURE}"))"#).as_bytes(),
+    );
+    write(
+        &eng.join("assets/materials/hidden.ron.meta"),
+        b"guid = \"bbbbbbbb-0000-4000-8000-00000000000b\"\n",
+    );
+    write(&eng.join("assets/textures/grid.png"), b"engine texture");
+    write(
+        &eng.join("assets/textures/grid.png.meta"),
+        format!("guid = \"{ENGINE_TEXTURE}\"\n").as_bytes(),
+    );
+    write(
+        &proj.join("project.kooch"),
+        br#"(
+            name: "demo",
+            version: "0.1.0",
+            engine_version: "0.6.0",
+            main_scene: None,
+            window: (title: "demo", width: 1280, height: 720),
+            build: (include: ["assets/materials/hidden.ron"]),
+        )"#,
+    );
+    let exe = binary(&dir);
+    let out = assemble(
+        &BuildPreset::default(),
+        &known(),
+        &proj,
+        Some(&eng),
+        &exe,
+        "demo",
+        &key,
+    )
+    .expect("packaging should succeed");
+    let mut pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    assert!(
+        pack.read("assets/materials/hidden.ron").is_ok(),
+        "the declared material did not ship",
+    );
+    assert_eq!(
+        pack.read("assets/textures/grid.png").unwrap(),
+        b"engine texture",
+        "the declared material shipped without the texture it names, so a declaration \
+         would have to list every asset underneath it by hand",
+    );
+}

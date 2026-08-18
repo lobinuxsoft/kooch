@@ -388,6 +388,11 @@ fn reachable_guids(
     let mut read: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     let mut queue: Vec<String> = Vec::new();
 
+    // Assets the manifest declares because only code names them. Each is
+    // a root of this walk like a document is, so declaring a material
+    // brings the textures it points at.
+    queue.extend(declared_roots(project_root, engine_root));
+
     // 🔴 The roots are the project's FILES, not their guids. The whole
     // project ships, so anything in it can reach into the engine's tree
     // — and a scene has no sidecar of its own, so keying the roots off
@@ -424,6 +429,46 @@ fn reachable_guids(
         }
     }
     seen
+}
+
+/// The manifest's `build.include` list, resolved to files.
+///
+/// A path is looked for in the project first and in the engine second,
+/// which is the order everything else here resolves names in: the
+/// project is the author and wins.
+///
+/// ⚠️ A declared path that resolves to nothing is REPORTED, not fatal.
+/// It is the same class of mistake this whole walk exists to prevent —
+/// an asset that does not ship — so it must not be silent; but refusing
+/// to build over one stale line in a manifest is a worse trade than a
+/// build that says what it could not find.
+/// ⚠️ Guids, not files. Reading the declared file directly looks like
+/// the thorough thing to do and is unreachable: a declared file in the
+/// PROJECT is already read as a root, and one in the engine has a
+/// sidecar, so its guid goes on the queue and the walk opens it there.
+/// Written, found untestable, removed.
+fn declared_roots(project_root: &Path, engine_root: Option<&Path>) -> Vec<String> {
+    let Ok(manifest) = crate::project::ProjectManifest::load(project_root) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for declared in &manifest.build.include {
+        let relative = Path::new(declared.trim_start_matches('/'));
+        let candidates = [
+            Some(project_root.join(relative)),
+            engine_root.map(|engine| engine.join(relative)),
+        ];
+        match candidates.into_iter().flatten().find(|path| path.is_file()) {
+            Some(path) => found.extend(guid_of(&path)),
+            None => tracing::warn!(
+                target: "kooch_editor_core::build",
+                declared = %declared,
+                "the manifest declares an asset for the build and no such file exists in \
+                 the project or the engine; it will be missing from the game",
+            ),
+        }
+    }
+    found
 }
 
 /// Extensions whose bytes cannot name another asset.
