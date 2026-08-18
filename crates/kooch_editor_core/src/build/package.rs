@@ -270,7 +270,7 @@ fn collect_assets(
     if let Some(engine) = engine_root {
         walk(&engine.join("assets"), "assets", &mut files);
         files.retain(|(name, _)| travels(name, known));
-        let wanted = referenced_guids(project_root);
+        let wanted = reachable_guids(project_root, engine_root, known);
         let by_name: std::collections::HashMap<&str, PathBuf> = files
             .iter()
             .map(|(name, path)| (name.as_str(), path.clone()))
@@ -331,30 +331,127 @@ fn collect_assets(
 /// reads them at startup.
 const AUTHORING_ONLY: [&str; 1] = [super::preset::BUILD_PRESET_EXTENSION];
 
-/// Every guid the project's scenes and prefabs name.
+/// Every guid the game can reach, followed to a fixed point.
 ///
-/// Read out of the files as text rather than through the scene loader:
-/// packaging must not need a live ECS, and a guid is a guid wherever it
-/// appears — a nested prefab reference counts the same as a mesh field.
-fn referenced_guids(project_root: &Path) -> std::collections::HashSet<String> {
-    let mut found = std::collections::HashSet::new();
-    let mut documents = Vec::new();
-    walk(&project_root.join("assets"), "", &mut documents);
-    for (name, path) in &documents {
-        let is_document = [
-            kooch_core::scene_paths::SCENE_EXTENSION,
-            kooch_core::scene_paths::PREFAB_EXTENSION,
-        ]
-        .iter()
-        .any(|ext| name.ends_with(&format!(".{ext}")));
-        if !is_document {
+/// 🔴 The graph has DEPTH, and this used to read one level of it. A
+/// scene names a material and the material names a texture; collecting
+/// only what scenes and prefabs say ships the material and leaves the
+/// texture behind. A missing guid is silent, so the game starts and
+/// samples the 1x1 white fallback — a textured surface that renders like
+/// somebody authored it flat. Reported from a build made for the
+/// handheld, and the earlier shape of this same bug is recorded two
+/// functions down.
+///
+/// # How it walks
+///
+/// An index of `guid -> path` built once over both trees, then a
+/// worklist from the roots. Each guid is visited **once**: a texture
+/// forty materials share is queued once, resolved once, and its file
+/// read once. That is what makes a cycle — two prefabs naming each
+/// other — terminate rather than hang the build.
+///
+/// The roots are every project asset that travels, not just its
+/// documents. The project ships whole, so any file in it can reach into
+/// the engine's tree, which is exactly what a project material with an
+/// engine texture does.
+fn reachable_guids(
+    project_root: &Path,
+    engine_root: Option<&Path>,
+    known: &[String],
+) -> std::collections::HashSet<String> {
+    // guid -> file, over both trees: a reference crosses from the
+    // project into the engine, and inside the engine from a material to
+    // its texture.
+    let mut index: std::collections::HashMap<String, PathBuf> = std::collections::HashMap::new();
+    let mut catalogue = |root: &Path| {
+        let mut files = Vec::new();
+        walk(root, "assets", &mut files);
+        for (name, path) in files {
+            // A sidecar has no identity of its own; it carries its
+            // asset's.
+            if name.ends_with(".meta") || !travels(&name, known) {
+                continue;
+            }
+            if let Some(guid) = guid_of(&path) {
+                index.insert(guid, path);
+            }
+        }
+    };
+    if let Some(engine) = engine_root {
+        catalogue(&engine.join("assets"));
+    }
+    // Second, so a project asset shadowing an engine one by name owns
+    // the index entry as well as the pack.
+    catalogue(&project_root.join("assets"));
+
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut read: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut queue: Vec<String> = Vec::new();
+
+    // 🔴 The roots are the project's FILES, not their guids. The whole
+    // project ships, so anything in it can reach into the engine's tree
+    // — and a scene has no sidecar of its own, so keying the roots off
+    // guids drops the very documents the walk exists to start from.
+    let mut project_files = Vec::new();
+    walk(&project_root.join("assets"), "assets", &mut project_files);
+    for (name, path) in project_files {
+        if !travels(&name, known) {
             continue;
         }
-        if let Ok(text) = std::fs::read_to_string(path) {
-            found.extend(guids_in(&text));
+        if let Some(text) = read_if_text(&path) {
+            read.insert(path);
+            queue.extend(guids_in(&text));
         }
     }
-    found
+
+    while let Some(guid) = queue.pop() {
+        if !seen.insert(guid.clone()) {
+            continue;
+        }
+        let Some(path) = index.get(&guid) else {
+            // Named by something and present in no tree: a dangling
+            // reference, which is the author's problem and not a reason
+            // to stop packaging.
+            continue;
+        };
+        // Once per file, whatever names it — a texture forty materials
+        // share is opened once.
+        if !read.insert(path.clone()) {
+            continue;
+        }
+        if let Some(text) = read_if_text(path) {
+            queue.extend(guids_in(&text));
+        }
+    }
+    seen
+}
+
+/// Extensions whose bytes cannot name another asset.
+///
+/// 🔴 Verified across every loader this engine registers: nothing
+/// binary embeds a guid. A `.glb` is geometry and its material is
+/// assigned by the scene, not by the file.
+///
+/// This exists for cost, not for correctness — reading a 16 MB texture
+/// to search it for a 36-character string is waste repeated once per
+/// asset. ⚠️ **A binary format that starts referencing assets has to
+/// come off this list**, and `binary_formats_reference_nothing` in the
+/// tests is what fails when one is added without doing so.
+pub(super) const OPAQUE_FORMATS: [&str; 7] = ["png", "jpg", "jpeg", "glb", "gltf", "bin", "kpack"];
+
+/// The file's text, or `None` when it cannot name anything.
+fn read_if_text(path: &Path) -> Option<String> {
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if OPAQUE_FORMATS.contains(&extension.as_str()) {
+        return None;
+    }
+    // Still fallible: an unlisted binary reads as invalid UTF-8 and is
+    // skipped rather than mis-parsed.
+    std::fs::read_to_string(path).ok()
 }
 
 /// A guid as bytes only, so two spellings of one id compare equal.
