@@ -867,3 +867,71 @@ fn a_chain_inside_the_engine_resolves() {
          nothing but following the material finds it",
     );
 }
+
+/// Extensions the packager reads looking for references.
+///
+/// The counterpart of [`OPAQUE_FORMATS`]: between the two, every format
+/// this engine loads is accounted for.
+const TEXT_FORMATS: [&str; 6] = [
+    "ron",
+    "scene",
+    "prefab",
+    "rendersettings",
+    "buildpreset",
+    "inputaction",
+];
+
+/// 🔴 A new asset format has to be classified, and nothing else forces
+/// it.
+///
+/// The packager decides whether to read a file by extension: text is
+/// searched for references, binary is skipped. Both answers are silent
+/// when wrong — a binary read as text finds nothing and ships an
+/// incomplete pack; a text file skipped does the same. Neither fails to
+/// compile and neither logs.
+///
+/// So the test is the forcing function. Add a loader, and this fails
+/// until its extension is named as one or the other. ⚠️ Today the
+/// answer for every binary format is "references nothing", which is a
+/// fact about this engine and not a law: a `.glb` carries geometry and
+/// its material is assigned by the scene. When that stops being true,
+/// the format moves to [`TEXT_FORMATS`] and the packager follows it.
+#[test]
+fn every_asset_format_is_classified() {
+    use kooch_core::asset_loader::AssetServer;
+
+    let mut server = AssetServer::new();
+    // The four the asset plugin registers by hand, plus everything
+    // declared with `register_asset!`.
+    server.register_loader::<kooch_render::mesh::Mesh, _>(kooch_render::mesh::GltfMeshLoader);
+    server.register_loader::<kooch_render::meshlet::MeshletMesh, _>(
+        kooch_render::meshlet::MeshletMeshLoader,
+    );
+    server.register_loader::<kooch_render::texture::Image, _>(
+        kooch_render::texture::ImageLoader::srgb(),
+    );
+    server.register_loader::<kooch_render::material::Material, _>(
+        kooch_render::material::MaterialLoader,
+    );
+    kooch_ecs::scene::prefab::register_loader(&mut server);
+    for registration in kooch_core::asset_registry::registered_asset_types() {
+        (registration.register_loader)(&mut server);
+    }
+
+    let mut unclassified: Vec<String> = Vec::new();
+    for (extension, type_name) in server.known_extensions() {
+        let lower = extension.to_ascii_lowercase();
+        let opaque = OPAQUE_FORMATS.contains(&lower.as_str());
+        let text = TEXT_FORMATS.contains(&lower.as_str());
+        if opaque == text {
+            unclassified.push(format!("{lower} ({type_name})"));
+        }
+    }
+    assert!(
+        unclassified.is_empty(),
+        "these formats are in neither OPAQUE_FORMATS nor TEXT_FORMATS, so the packager \
+         guessed: {unclassified:?}. Decide whether a file of that type can name another \
+         asset — if it can, the packager must read it, and if it cannot, reading it is \
+         waste repeated once per asset.",
+    );
+}
