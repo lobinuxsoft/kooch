@@ -170,6 +170,35 @@ fn shade_from_tile(
     return radiance;
 }
 
+// `MeshletDebugMode::TextureMipLevel`, pinned by a test in `debug.rs`.
+const DEBUG_TEXTURE_MIP_LEVEL: u32 = 18u;
+
+// The mip level this pixel would sample, computed the way the hardware
+// computes it: the uv footprint in texels, log2 of the longer axis.
+//
+// 🔴 WGSL has no `textureQueryLod`, so this is the formula rather than
+// the driver's answer — but it is the SAME formula
+// `textureSampleGrad` applies to the same two derivatives, which is
+// what makes it worth painting. If this says 10 on a surface filling
+// the screen, the sampler is being asked for 10.
+fn debug_mip_level(dims: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> f32 {
+    let footprint = max(length(ddx * dims), length(ddy * dims));
+    return max(0.0, log2(max(footprint, 1e-6)));
+}
+
+// One colour per whole level, so the frame reads as bands rather than as
+// a gradient — a band that moves with the camera is a LOD that works,
+// and a screen of one colour is the fault this view exists to show.
+// Blue is level 0, and it warms as the level climbs.
+fn debug_mip_colour(lod: f32) -> vec3<f32> {
+    let level = floor(lod);
+    let ramp = clamp(level / 10.0, 0.0, 1.0);
+    let base = vec3<f32>(ramp, 1.0 - abs(ramp - 0.5) * 2.0, 1.0 - ramp);
+    // The fractional part darkens within a band, so the boundary between
+    // two levels is a visible step and not a guess.
+    return base * (0.55 + 0.45 * fract(lod));
+}
+
 @compute @workgroup_size(16, 16, 1)
 fn cs_shade_tile(
     @builtin(global_invocation_id) gid: vec3<u32>,
@@ -362,7 +391,20 @@ fn cs_shade_tile(
         // The debug views (#743). `inti_debug_is_view` is a literal
         // `false` in a production pipeline, so this branch and every
         // view behind it are gone before register allocation.
-        if (inti_debug_is_view(screen.debug_mode)) {
+        //
+        // The mip view is resolved HERE rather than inside Inti: it is a
+        // question about the material's sampling, and Inti is handed a
+        // world position and a normal — it has never seen a uv.
+        if (screen.debug_mode == DEBUG_TEXTURE_MIP_LEVEL) {
+            let dims = vec2<f32>(textureDimensions(albedo_tex, 0));
+            if (dims.x <= 1.0 && dims.y <= 1.0) {
+                // The 1x1 fallback: no albedo map, so no chain to pick
+                // from and nothing this view can say.
+                rgb = vec3<f32>(1.0, 0.0, 1.0);
+            } else {
+                rgb = debug_mip_colour(debug_mip_level(dims, ddx_uv, ddy_uv));
+            }
+        } else if (inti_debug_is_view(screen.debug_mode)) {
             rgb = inti_debug_view(screen.debug_mode, surf.world_position, world_n, frag_coord);
         } else {
             let mr = textureSampleGrad(

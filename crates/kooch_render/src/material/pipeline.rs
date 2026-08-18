@@ -121,6 +121,24 @@ impl MaterialPipeline {
         self.registry.len() as u32
     }
 
+    /// Uploads a texture straight into the pool under `guid`.
+    ///
+    /// For tests and tools that have the pixels rather than a file on
+    /// disk: the normal path is `sync_textures`, which resolves a
+    /// material's GUIDs through the `AssetServer` and reads them off the
+    /// filesystem. A test that wanted a textured surface had to write a
+    /// PNG to a temp directory and stand up an asset database for it,
+    /// which is a lot of ceremony for four texels.
+    pub fn register_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        guid: Guid,
+        image: &Image,
+    ) {
+        self.texture_pool.register(device, queue, guid, image);
+    }
+
     /// Read-only handle to the underlying GPU pool.
     pub fn pool(&self) -> &MaterialPool {
         &self.pool
