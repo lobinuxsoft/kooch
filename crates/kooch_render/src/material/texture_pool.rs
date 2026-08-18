@@ -29,7 +29,7 @@ use std::collections::HashMap;
 
 use kooch_core::Guid;
 
-use crate::texture::{GpuTexture, Image, ImageFormat};
+use crate::texture::{GpuTexture, Image, ImageFormat, Mipmapper};
 
 /// Which PBR channel a texture feeds. Selects the matching fallback and
 /// documents the expected color space at the call site.
@@ -55,6 +55,9 @@ pub struct MaterialTexturePool {
     fallback_metal_roughness: GpuTexture,
     sampler: wgpu::Sampler,
     bgl: wgpu::BindGroupLayout,
+    /// Owned here because it caches a render pipeline per format, and
+    /// this is the one place textures are uploaded from.
+    mipmapper: Mipmapper,
 }
 
 impl MaterialTexturePool {
@@ -95,6 +98,7 @@ impl MaterialTexturePool {
             fallback_albedo,
             fallback_normal,
             fallback_metal_roughness,
+            mipmapper: Mipmapper::new(device),
             sampler,
             bgl,
         }
@@ -145,7 +149,7 @@ impl MaterialTexturePool {
         guid: Guid,
         image: &Image,
     ) {
-        let texture = GpuTexture::upload(device, queue, image);
+        let texture = GpuTexture::upload_with(device, queue, image, &mut self.mipmapper);
         self.textures.insert(guid, texture);
     }
 

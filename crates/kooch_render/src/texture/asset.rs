@@ -56,6 +56,14 @@ pub struct Image {
     pub height: u32,
     /// Format hint used at upload time.
     pub format: ImageFormat,
+    /// Whether the upload builds a mip chain (#481's prerequisite).
+    ///
+    /// An import setting rather than an engine constant: a UI atlas
+    /// sampled 1:1 gains nothing from a chain and a lookup table is
+    /// actively broken by one, while every surface seen in perspective
+    /// needs it. The `.meta` sidecar carries the author's answer; see
+    /// [`ImageImport`](super::ImageImport).
+    pub mipmaps: bool,
 }
 
 impl Image {
@@ -72,7 +80,14 @@ impl Image {
             width,
             height,
             format,
+            mipmaps: true,
         }
+    }
+
+    /// The same image, with the chain turned off.
+    pub fn without_mipmaps(mut self) -> Self {
+        self.mipmaps = false;
+        self
     }
 
     /// 1×1 image of `[r, g, b, a]`. Useful as a default / placeholder
@@ -84,6 +99,10 @@ impl Image {
             width: 1,
             height: 1,
             format,
+            // A 1x1 image has exactly one level by definition, and
+            // saying so here keeps the fallbacks out of the mip path
+            // entirely rather than relying on it to no-op.
+            mipmaps: false,
         }
     }
 
