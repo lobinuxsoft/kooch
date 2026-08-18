@@ -158,3 +158,32 @@ fn a_file_naming_the_deleted_toggle_still_loads() {
         "the field after the deleted key was not read",
     );
 }
+
+/// 🔴 `render_scale` must not be offered for a technique that ignores
+/// it.
+///
+/// It is already forced to 100 for `None` and `TAA`, so the control did
+/// nothing — and a control that silently does nothing is worse than an
+/// absent one, because it reads as "I tried the setting and it did not
+/// help". Reported by the owner, who set it under TAA and reasonably
+/// expected it to apply.
+///
+/// Pinned as the condition's VALUES rather than by rendering anything:
+/// the enum's numbers are serialised into user projects and are
+/// append-only, so a variant renumbered without updating this would
+/// show the control for the wrong technique.
+#[test]
+fn the_scale_is_offered_only_where_it_acts() {
+    let shown: Vec<u32> = UPSCALES_WHEN.values.iter().map(|v| *v as u32).collect();
+    for value in 0..4u32 {
+        let technique = crate::quality::UpscaleTechnique::from_asset(value);
+        assert_eq!(
+            shown.contains(&value),
+            technique.upscales(),
+            "technique {technique:?} (asset value {value}) upscales={} but the inspector \
+             condition says shown={}",
+            technique.upscales(),
+            shown.contains(&value),
+        );
+    }
+}

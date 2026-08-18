@@ -251,7 +251,11 @@ pub struct RenderSettings {
     /// up by the blit — softer for no gain, which is the classic way
     /// this setting gets a bad reputation.
     #[serde(default = "default_render_scale")]
-    #[reflect(group = "Temporal", choices = RENDER_SCALE_CHOICES)]
+    #[reflect(
+        group = "Temporal",
+        choices = RENDER_SCALE_CHOICES,
+        shown_when = UPSCALES_WHEN
+    )]
     pub render_scale: u32,
 }
 
@@ -288,6 +292,22 @@ const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 fn default_upscale() -> u32 {
     0
 }
+
+/// 🔴 `render_scale` is only shown for techniques that reconstruct.
+///
+/// It is already IGNORED for the others — `RenderSettings::temporal`
+/// forces it to 100 unless the technique upscales — but a control that
+/// silently does nothing is worse than an absent one: it invites the
+/// reading that the setting was tried and did not help. Reported by the
+/// owner, who set it under TAA and reasonably expected it to apply.
+///
+/// The values are the enum's, and they are append-only for the same
+/// reason the choices are: they live in user projects.
+static UPSCALES_WHEN: kooch_ecs::reflect::FieldCondition = kooch_ecs::reflect::FieldCondition {
+    field: "upscale",
+    // Taau, Sgsr2.
+    values: &[3, 2],
+};
 
 /// AMD's preset ladder, by the name each ratio is known under, because
 /// "Quality" is what a player recognises and 67 % is what it means.
