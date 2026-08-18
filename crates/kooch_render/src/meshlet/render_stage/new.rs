@@ -312,6 +312,19 @@ impl MeshletRenderStage {
         applied
     }
 
+    /// How hard RCAS sharpens the finished image on every view that has
+    /// the R64 stage, 0..=100 (#481 step 5). Returns how many took it.
+    pub fn set_sharpening(&mut self, percent: u32) -> usize {
+        let mut applied = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut() {
+                stage.set_sharpening(percent);
+                applied += 1;
+            }
+        }
+        applied
+    }
+
     /// How much smaller than its panel each view renders, 1..=100.
     ///
     /// Takes effect on the next `resize_view`, which the editor calls

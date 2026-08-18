@@ -268,11 +268,39 @@ The projected shadows rasterise from the light at their own resolution and never
 
 #### ⏭️ What is left of #481
 
-- **Steps 5–6: RCAS and feature locking.** 🔴 Not optional polish — without them the result reads
-  soft, which is how this lands as *"we tried it, it looked worse, we turned it off"*.
+- **Step 6: feature locking.** ⚠️ Written for a resolve of our own shape, and the resolve that won
+  is SGSR 2 — which has no locks and reconstructs thin geometry through the Lanczos weight
+  instead. Grafting FSR's lock buffer into a transliterated shader is the opposite of the rule
+  that just paid for itself. **Judged on the device first**: if a one-pixel wire dissolves at
+  Performance, the mechanism is decided then, and against what SGSR 2 already does.
 - **FSR 3.1** as the second backend, which is what the seam was built for.
 - ⚠️ **`MipBias` is still missing.** The jitter reconstructs detail finer than one frame carries and
   the textures want a negative LOD bias. Noted since the resolve was written, still not done.
+
+#### ✅ Step 5, as built — RCAS, and where a sharpening pass has to sit
+
+`sharpening` in `.rendersettings`, 0..=100, `KOOCH_SHARPENING` on top of it for a capture run.
+One full-screen pass, its own `rcas` scope, **ported from Bevy's `robust_contrast_adaptive_
+sharpening.wesl`** — which is FidelityFX FSR 1's `ffx_fsr1.h`, MIT, and carries a constant
+(`0.1875`) that someone spent a year finding.
+
+🔴 **It runs AFTER the tonemap, and that is the whole design decision.** RCAS is adaptive because
+it solves for the filter weight at which the signal would clip out of `{0, 1}`; handed linear
+radiance in the hundreds, that limiter stops limiting. The same lesson the resolve learned about
+the exposure, arrived at from the other side — there the fix was to bring the arithmetic to the
+data, here it is to put the pass where the data already is. The cost is one `Rgba8Unorm` target at
+output resolution, which the tonemap writes into instead of into the window while the pass runs.
+
+🎯 **Two of the four GPU tests could not fail as first written, and both were caught by breaking
+the shader on purpose rather than by reading them:**
+
+| First version | Why it could not fail | What replaced it |
+|---|---|---|
+| The border's mean brightness | Removing the bounds clamp does not darken the edge — a zero neighbour drives `mn4` to zero, which drives the solved lobe to **exactly zero**. The number did not move in the third decimal | The bottom row's own **gradient**: with the clamp it sharpens like every other row, without it, it is the one row that never does |
+| The frame's mean brightness | Raising the limiter 53× moves it by **0.1 %**. RCAS redistributes contrast, so the mean is what it is designed not to touch | The **p99.9 per-channel change**: 21 of 255 with the cap, 43 without, worst pixel 29 against 136 |
+
+⚠️ **The default is 0, and the engine's own capture project is the one that must not leave it
+there** — a scale below 100 without this is half the change, and it is the half that gets judged.
 
 #### ✅ Step 1, as built — the period is now a function of the ratio
 
