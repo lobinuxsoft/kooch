@@ -28,6 +28,7 @@ mod motion;
 mod raster;
 mod sgsr2;
 mod shading_rate;
+mod sharpen;
 mod taa;
 mod tonemap;
 mod two_pass;
@@ -127,6 +128,12 @@ pub struct Vbuf64Stage {
     /// Which one runs. See [`UpscaleTechnique`](crate::quality::UpscaleTechnique)
     /// for why this is an enum rather than a trait object.
     technique: crate::quality::UpscaleTechnique,
+    /// RCAS, the pass that ends the frame (#481 step 5). Built
+    /// unconditionally like the two above, and for the same reason.
+    sharpen: sharpen::Sharpen,
+    /// How much of it, 0..=100. Zero skips the pass entirely — off has
+    /// to cost nothing, not cost a full-screen identity.
+    sharpening: u32,
     /// This frame's sub-pixel offset in RENDER pixels, kept because
     /// SGSR 2 needs the value the projection was jittered by and the
     /// resolve does not.
@@ -212,6 +219,11 @@ impl Vbuf64Stage {
             // a project that never mentioned it.
             sgsr2: sgsr2::Sgsr2::new(device, size, output_size),
             technique: crate::quality::UpscaleTechnique::None,
+            sharpen: sharpen::Sharpen::new(device, output_size),
+            // Off until asked for, like the technique above it: this
+            // rewrites every pixel of a finished image, and a project
+            // that never mentioned sharpening did not ask for that.
+            sharpening: 0,
             last_jitter: glam::Vec2::ZERO,
             // A 60-degree vertical lens at 16:9, replaced on the first
             // frame that has a camera.
@@ -248,6 +260,7 @@ impl Vbuf64Stage {
         self.motion.resize(device, size);
         self.taa.resize(device, size);
         self.sgsr2.resize(device, size, output_size);
+        self.sharpen.resize(device, output_size);
         self.size = size;
         self.output_size = output_size;
     }
@@ -321,6 +334,20 @@ impl Vbuf64Stage {
 
     pub fn technique(&self) -> crate::quality::UpscaleTechnique {
         self.technique
+    }
+
+    /// How hard RCAS sharpens the finished image, 0..=100 (#481 step 5).
+    ///
+    /// Independent of the technique on purpose. Reconstruction is what
+    /// makes it necessary, but a native frame is also allowed to want a
+    /// little of it, and gating the control on the upscaler would mean
+    /// switching upscaler silently changes how sharp the game looks.
+    pub fn set_sharpening(&mut self, percent: u32) {
+        self.sharpening = percent.min(100);
+    }
+
+    pub fn sharpening(&self) -> u32 {
+        self.sharpening
     }
 
     /// The lens, for the one technique whose thresholds depend on it.
@@ -679,6 +706,19 @@ impl Vbuf64Stage {
                         scopes.end(encoder, query);
                     }
                 }
+                // 🔴 Sharpening reads a FINISHED image (#481 step 5),
+                // so when it runs the tonemap resolves into its texture
+                // instead of into the window and it is RCAS that writes
+                // what is presented. Excluded from the debug views for
+                // the reason the curve is: a false-colour legend with
+                // its edges enhanced is a legend nobody can read off.
+                let sharpening = self.sharpening;
+                let sharpening_runs = sharpening > 0 && !is_debug_view(debug_mode);
+                let tonemap_target = if sharpening_runs {
+                    self.sharpen.input_view()
+                } else {
+                    color_view
+                };
                 // HDR to the image. Its own scope: it is a full-screen
                 // pass that did not exist before, and "the tonemap
                 // moved" has to be answerable with a number rather than
@@ -693,7 +733,7 @@ impl Vbuf64Stage {
                     device,
                     encoder,
                     source,
-                    color_view,
+                    tonemap_target,
                     exposure,
                     // The Inti debug views hand back display-ready
                     // colour. Putting a false-colour legend through a
@@ -703,6 +743,22 @@ impl Vbuf64Stage {
                 );
                 if let (Some(scopes), Some(query)) = (scopes, query) {
                     scopes.end(encoder, query);
+                }
+                // Its own scope, because the whole argument for this
+                // pass is that ~0.2 ms buys back what reconstruction
+                // takes away, and an argument of that shape is settled
+                // by two numbers rather than by an opinion.
+                if sharpening_runs {
+                    let query = match (scopes, parent) {
+                        (Some(s), Some(p)) => Some(s.begin_child("rcas", encoder, p)),
+                        (Some(s), None) => Some(s.begin("rcas", encoder)),
+                        _ => None,
+                    };
+                    self.sharpen
+                        .draw(device, queue, encoder, color_view, sharpening);
+                    if let (Some(scopes), Some(query)) = (scopes, query) {
+                        scopes.end(encoder, query);
+                    }
                 }
             }
         }
