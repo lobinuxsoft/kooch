@@ -149,6 +149,21 @@ impl MeshletRenderStage {
         // default" — see `crate::quality`.
         let temporal = resources.get::<crate::quality::TemporalSettings>().copied();
         let shading = resources.get::<crate::quality::ShadingSettings>().copied();
+        // 🔴 Recorded on the stage BEFORE the per-view borrow below,
+        // because what a view renders at is decided by the technique and
+        // the scale, and `resize_view` is where that turns into
+        // textures. It is the editor dragging a divider that calls it,
+        // and a divider knows nothing about upscaling.
+        //
+        // ⚠️ So a change of scale lands on the next `resize_view`. The
+        // editor calls it every frame, so it is immediate there; a
+        // shipped game calls it when the surface is configured, which is
+        // startup and every window resize. Reallocating from inside the
+        // render would drop bind groups the GPU still has in flight.
+        if let Some(temporal) = temporal {
+            self.upscale_technique = temporal.technique;
+            self.render_scale = temporal.render_scale;
+        }
         let jitter = match self.views[view_id].vbuf64_stage.as_mut() {
             Some(stage) => {
                 if let Some(shading) = shading {

@@ -162,3 +162,83 @@ fn it_lands_near_the_engines_resolve() {
          still producing a plausible-looking image.",
     );
 }
+
+/// 🔴 Step 4: the scene renders SMALLER than the window, and the
+/// upscaler puts it back.
+///
+/// This is where the technique stops being an antialiaser and starts
+/// paying for itself. Everything that costs per pixel — the visibility
+/// buffer, the depth target, the Hi-Z pyramids, the shading dispatch —
+/// shrinks with the scale; only what the blit presents does not.
+///
+/// Asserted on the TEXTURES rather than on the image, because that is
+/// the claim: a frame that merely looks right could still be rendering
+/// at full resolution and throwing the work away.
+#[test]
+fn the_scene_renders_smaller_than_the_window() {
+    let _gpu = gpu_lock();
+    let Some(mut r) = rig(3, true) else {
+        eprintln!("no adapter with the 64-bit texture-atomic bundle; skipping");
+        return;
+    };
+    let full = r.stage.depth_texture().size();
+
+    assert!(r.stage.set_upscale(UpscaleTechnique::Sgsr2) > 0);
+    r.stage.set_render_scale(50);
+    // The editor calls this every frame with the panel's size; it is
+    // where a change of scale turns into textures.
+    r.stage.resize(
+        &r.device,
+        (common::lit_scene::SIZE, common::lit_scene::SIZE),
+    );
+
+    let depth = r.stage.depth_texture().size();
+    let color = r.stage.color_texture().size();
+    eprintln!(
+        "at 50 %: depth {}x{}, presented {}x{} (native depth was {}x{})",
+        depth.width, depth.height, color.width, color.height, full.width, full.height,
+    );
+
+    assert_eq!(
+        (depth.width, depth.height),
+        (full.width / 2, full.height / 2),
+        "the depth target did not shrink, so nothing before the resolve got cheaper and \
+         the scale is a setting that costs the upscale and buys nothing",
+    );
+    assert_eq!(
+        (color.width, color.height),
+        (full.width, full.height),
+        "what the blit presents must stay at the window's size, or the upscaler is \
+         resolving into a target as small as the one it read",
+    );
+}
+
+/// And a technique that cannot reconstruct must be refused the scale.
+///
+/// TAA resolves at render resolution: handed a smaller frame it returns
+/// a smaller frame, the blit stretches it, and the result is softer for
+/// a saving the stretch gives back. Refused at the settings boundary
+/// rather than documented as a footgun — see `quality.rs`.
+#[test]
+fn a_plain_resolve_is_refused_the_scale() {
+    let _gpu = gpu_lock();
+    let Some(mut r) = rig(3, true) else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let full = r.stage.depth_texture().size();
+
+    assert!(r.stage.set_upscale(UpscaleTechnique::Taa) > 0);
+    r.stage.set_render_scale(50);
+    r.stage.resize(
+        &r.device,
+        (common::lit_scene::SIZE, common::lit_scene::SIZE),
+    );
+
+    let depth = r.stage.depth_texture().size();
+    assert_eq!(
+        (depth.width, depth.height),
+        (full.width, full.height),
+        "TAA rendered at half size, which it cannot reconstruct from",
+    );
+}

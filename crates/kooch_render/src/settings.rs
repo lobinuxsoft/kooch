@@ -228,6 +228,31 @@ pub struct RenderSettings {
     #[serde(default = "default_upscale")]
     #[reflect(group = "Temporal", choices = UPSCALE_CHOICES)]
     pub upscale: u32,
+
+    /// How much smaller than the window the scene is RENDERED, as a
+    /// percentage of the output's width (#481, step 4).
+    ///
+    /// 100 renders at the window's size and the upscaler resolves
+    /// without reconstructing — which is what every capture so far was
+    /// taken at, and the configuration the transliteration was
+    /// validated in. Below 100 the raster, the depth buffer, the
+    /// visibility buffer and the shading all shrink; only the resolve's
+    /// output and the tonemap stay at the window.
+    ///
+    /// 🔴 **This is the whole performance argument.** The shading pass
+    /// costs what it costs per PIXEL — dropping to 67 % of the width is
+    /// 44 % of the pixels — and everything before it shrinks with it.
+    /// Nothing else in this settings file moves the frame time by that
+    /// much.
+    ///
+    /// ⚠️ Ignored unless the technique upscales: `None` and `TAA` both
+    /// resolve at render resolution and have nothing to reconstruct
+    /// with, so a scale under 100 there would be a smaller image blown
+    /// up by the blit — softer for no gain, which is the classic way
+    /// this setting gets a bad reputation.
+    #[serde(default = "default_render_scale")]
+    #[reflect(group = "Temporal", choices = RENDER_SCALE_CHOICES)]
+    pub render_scale: u32,
 }
 
 /// The techniques the inspector offers.
@@ -258,6 +283,31 @@ const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 /// something to adopt for a project that never asked for it.
 fn default_upscale() -> u32 {
     0
+}
+
+/// AMD's preset ladder, by the name each ratio is known under, because
+/// "Quality" is what a player recognises and 67 % is what it means.
+const RENDER_SCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
+    kooch_ecs::reflect::FieldChoice {
+        label: "Native — 100 %, no reconstruction",
+        value: 100,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Quality — 67 % (1.5x)",
+        value: 67,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Balanced — 59 % (1.7x)",
+        value: 59,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Performance — 50 % (2x)",
+        value: 50,
+    },
+];
+
+fn default_render_scale() -> u32 {
+    100
 }
 
 /// The two rates that exist. Quarter rate is deliberately absent: at
@@ -376,8 +426,8 @@ impl Default for RenderSettings {
             point_shadows: shadows.point_shadows,
             compute_shading: default_compute_shading(),
             shading_rate: default_shading_rate(),
-            // A value, not the sentinel: nothing to migrate from.
             upscale: 0,
+            render_scale: default_render_scale(),
         }
     }
 }
@@ -446,7 +496,7 @@ impl RenderSettings {
         } else {
             crate::quality::UpscaleTechnique::None
         };
-        crate::quality::TemporalSettings::new(technique)
+        crate::quality::TemporalSettings::new(technique, self.render_scale)
     }
 
     /// The technique this file asks for.

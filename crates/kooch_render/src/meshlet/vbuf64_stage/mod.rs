@@ -151,7 +151,14 @@ pub struct Vbuf64Stage {
     /// the stage's size alongside the vbuf / dummy targets.
     material_depth_texture: wgpu::Texture,
     material_depth_view: wgpu::TextureView,
+    /// 🔴 The size everything up to the resolve is rendered at, which is
+    /// NOT the size presented once a technique upscales (#481 step 4).
+    /// Every target in this struct is this size except the resolve's
+    /// output and the tonemap's.
     size: (u32, u32),
+    /// What reaches the window. Equal to `size` unless the technique
+    /// upscales and the project asked for a scale below 100.
+    output_size: (u32, u32),
 }
 
 impl Vbuf64Stage {
@@ -160,6 +167,7 @@ impl Vbuf64Stage {
         meshlet_bgl: &wgpu::BindGroupLayout,
         depth_format: wgpu::TextureFormat,
         size: (u32, u32),
+        output_size: (u32, u32),
         pipeline_cache: Option<&wgpu::PipelineCache>,
     ) -> Self {
         let (vbuf_texture, vbuf_view) = create_vbuf64_texture(device, size);
@@ -202,7 +210,7 @@ impl Vbuf64Stage {
             // temporal resolve changes every pixel of the image, and
             // that is not a default an engine should adopt on behalf of
             // a project that never mentioned it.
-            sgsr2: sgsr2::Sgsr2::new(device, size, size),
+            sgsr2: sgsr2::Sgsr2::new(device, size, output_size),
             technique: crate::quality::UpscaleTechnique::None,
             last_jitter: glam::Vec2::ZERO,
             // A 60-degree vertical lens at 16:9, replaced on the first
@@ -210,6 +218,7 @@ impl Vbuf64Stage {
             fov_k: (std::f32::consts::FRAC_PI_3 * 0.5).tan() * (16.0 / 9.0),
             jitter_index: 0,
             shading_rate,
+            output_size,
             debug_resolve,
             vbuf_texture,
             vbuf_view,
@@ -221,8 +230,8 @@ impl Vbuf64Stage {
         }
     }
 
-    pub fn resize(&mut self, device: &wgpu::Device, size: (u32, u32)) {
-        if size == self.size || size.0 == 0 || size.1 == 0 {
+    pub fn resize(&mut self, device: &wgpu::Device, size: (u32, u32), output_size: (u32, u32)) {
+        if (size, output_size) == (self.size, self.output_size) || size.0 == 0 || size.1 == 0 {
             return;
         }
         let (texture, view) = create_vbuf64_texture(device, size);
@@ -238,11 +247,9 @@ impl Vbuf64Stage {
         self.tonemap.resize(device, size);
         self.motion.resize(device, size);
         self.taa.resize(device, size);
-        // Render and output are the same size until the resolution
-        // split; this is the second of the two call sites that changes
-        // when they separate.
-        self.sgsr2.resize(device, size, size);
+        self.sgsr2.resize(device, size, output_size);
         self.size = size;
+        self.output_size = output_size;
     }
 
     /// Which shading path this stage takes, overriding what
@@ -366,13 +373,11 @@ impl Vbuf64Stage {
 
     /// How many sub-pixel offsets this view cycles through.
     ///
-    /// Render and display are the same surface until the resolution
-    /// split of #481 lands, so this is the base count today. **The
-    /// second argument is the only thing that changes** when they
-    /// separate — the sequence, the offsets and the matrix are already
-    /// written against a ratio.
+    /// 🎯 The second argument is the split, and it is the only thing
+    /// that changed here when it landed — the sequence, the offsets and
+    /// the matrix were already written against a ratio.
     fn jitter_phases(&self) -> u32 {
-        jitter::phase_count(self.size.0, self.size.0)
+        jitter::phase_count(self.size.0, self.output_size.0)
     }
 
     pub fn shading_rate(&self) -> ShadingRate {

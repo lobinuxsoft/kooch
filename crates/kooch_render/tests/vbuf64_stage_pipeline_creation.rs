@@ -97,6 +97,9 @@ fn vbuf64_stage_creates_without_uncaptured_errors() {
         &device,
         meshlet_bgl,
         wgpu::TextureFormat::Depth32Float,
+        // Render and output, which are the same until a technique
+        // upscales (#481 step 4).
+        (256, 256),
         (256, 256),
         None,
     );

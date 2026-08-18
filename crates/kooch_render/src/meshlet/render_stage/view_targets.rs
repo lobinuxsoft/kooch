@@ -93,14 +93,28 @@ pub(crate) struct MeshletView {
     /// while in flight.
     pub(crate) retired_pyramids: [Vec<HiZ>; 3],
 
+    /// What the blit presents.
     pub(crate) size: (u32, u32),
+    /// What the scene is rasterised at. Equal to `size` unless a
+    /// technique upscales — see [`MeshletView::new`].
+    pub(crate) render_size: (u32, u32),
 }
 
 impl MeshletView {
-    /// Allocates one view's attachments at `size`.
+    /// Allocates one view's attachments.
+    ///
+    /// 🔴 `size` is what reaches the window; `render_size` is what the
+    /// scene is rasterised at (#481 step 4). Everything that costs per
+    /// PIXEL — the visibility buffer, depth, the Hi-Z pyramids and every
+    /// target inside the R64 stage — is allocated at `render_size`.
+    /// Only `color_texture`, which the blit presents, stays at `size`.
+    ///
+    /// That is the whole performance argument: at 67 % of the width the
+    /// shading pass evaluates 44 % of the pixels.
     pub(crate) fn new(
         device: &wgpu::Device,
         size: (u32, u32),
+        render_size: (u32, u32),
         debug_caps: MeshletDebugCaps,
         vbuf64: Vbuf64Support,
         meshlet_bgl: &wgpu::BindGroupLayout,
@@ -112,7 +126,7 @@ impl MeshletView {
         let (vbuf_texture, vbuf_view) = create_2d_attachment(
             device,
             "meshlet_view_vbuf",
-            size,
+            render_size,
             VISIBILITY_BUFFER_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
@@ -121,7 +135,7 @@ impl MeshletView {
         let (depth_texture, depth_view) = create_2d_attachment(
             device,
             "meshlet_view_depth",
-            size,
+            render_size,
             wgpu::TextureFormat::Depth32Float,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
@@ -141,13 +155,14 @@ impl MeshletView {
         );
 
         let (triangle_density_texture, triangle_density_view) =
-            Self::create_density(device, size, debug_caps.supports_texture_atomic());
+            Self::create_density(device, render_size, debug_caps.supports_texture_atomic());
 
         let vbuf64_stage = if vbuf64.is_supported() {
             Some(Vbuf64Stage::new(
                 device,
                 meshlet_bgl,
                 wgpu::TextureFormat::Depth32Float,
+                render_size,
                 size,
                 None,
             ))
@@ -172,6 +187,7 @@ impl MeshletView {
             hi_z_initialized: false,
             retired_pyramids: [Vec::new(), Vec::new(), Vec::new()],
             size,
+            render_size,
         }
     }
 
@@ -213,6 +229,7 @@ impl MeshletView {
         &mut self,
         device: &wgpu::Device,
         new_size: (u32, u32),
+        new_render_size: (u32, u32),
         retire_index: usize,
     ) -> i64 {
         assert!(
@@ -223,7 +240,7 @@ impl MeshletView {
         let (vbuf_texture, vbuf_view) = create_2d_attachment(
             device,
             "meshlet_view_vbuf",
-            new_size,
+            new_render_size,
             VISIBILITY_BUFFER_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
@@ -232,7 +249,7 @@ impl MeshletView {
         let (depth_texture, depth_view) = create_2d_attachment(
             device,
             "meshlet_view_depth",
-            new_size,
+            new_render_size,
             wgpu::TextureFormat::Depth32Float,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
@@ -251,8 +268,11 @@ impl MeshletView {
         // Rebuilt in lock-step with the production attachments, and only
         // when construction installed it — that caps decision is
         // preserved across resize rather than re-surveyed.
-        let (triangle_density_texture, triangle_density_view) =
-            Self::create_density(device, new_size, self.triangle_density_texture.is_some());
+        let (triangle_density_texture, triangle_density_view) = Self::create_density(
+            device,
+            new_render_size,
+            self.triangle_density_texture.is_some(),
+        );
 
         let old_pyramid_bytes = self.pyramid_bytes();
         // Recreated only if they were already allocated: the lazy
@@ -260,11 +280,11 @@ impl MeshletView {
         let hiz_prev = self
             .hiz_prev
             .is_some()
-            .then(|| HiZ::new(device, new_size.0, new_size.1));
+            .then(|| HiZ::new(device, new_render_size.0, new_render_size.1));
         let hiz_curr = self
             .hiz_curr
             .is_some()
-            .then(|| HiZ::new(device, new_size.0, new_size.1));
+            .then(|| HiZ::new(device, new_render_size.0, new_render_size.1));
 
         self.vbuf_texture = vbuf_texture;
         self.vbuf_view = vbuf_view;
@@ -289,9 +309,10 @@ impl MeshletView {
         // #493: keep the atomic R64 path in lockstep, or one of the two
         // vbuf paths would be valid and the other stale.
         if let Some(stage) = self.vbuf64_stage.as_mut() {
-            stage.resize(device, new_size);
+            stage.resize(device, new_render_size, new_size);
         }
         self.size = new_size;
+        self.render_size = new_render_size;
 
         self.pyramid_bytes() as i64 - old_pyramid_bytes as i64
     }

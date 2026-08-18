@@ -125,6 +125,30 @@ impl UpscaleTechnique {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TemporalSettings {
     pub technique: UpscaleTechnique,
+    /// Render width as a percentage of the output's, 1..=100.
+    ///
+    /// 🔴 Already gated: [`RenderSettings::temporal`] forces this to 100
+    /// unless the technique upscales, so nothing downstream has to ask
+    /// twice. A resolve that cannot reconstruct handed a smaller frame
+    /// produces a blurrier one and no speed the blit does not give back.
+    pub render_scale: u32,
+}
+
+impl UpscaleTechnique {
+    /// The render target's size for an output of `output`.
+    ///
+    /// Rounded down and floored at one: a window dragged to nothing must
+    /// not ask for a zero-sized texture, which wgpu rejects outright.
+    pub fn render_size(self, output: (u32, u32), scale: u32) -> (u32, u32) {
+        if !self.upscales() || scale >= 100 {
+            return output;
+        }
+        let s = scale.clamp(1, 100) as f32 / 100.0;
+        (
+            ((output.0 as f32 * s) as u32).max(1),
+            ((output.1 as f32 * s) as u32).max(1),
+        )
+    }
 }
 
 impl Default for TemporalSettings {
@@ -137,7 +161,7 @@ impl Default for TemporalSettings {
     /// `.rendersettings` default is the same, and for a sharper reason:
     /// see `default_upscale` in `crate::settings`.
     fn default() -> Self {
-        Self::new(UpscaleTechnique::None)
+        Self::new(UpscaleTechnique::None, 100)
     }
 }
 
@@ -178,8 +202,13 @@ impl ShadingSettings {
 }
 
 impl TemporalSettings {
-    pub fn new(technique: UpscaleTechnique) -> Self {
+    pub fn new(technique: UpscaleTechnique, render_scale: u32) -> Self {
         Self {
+            render_scale: if technique.upscales() {
+                render_scale
+            } else {
+                100
+            },
             // 🔴 The variable is still a BOOLEAN, and deliberately so.
             // It exists to force a technique on or off from a Steam
             // launch option while capturing on the handheld, where the
@@ -230,4 +259,57 @@ pub fn temporal_aa_override() -> Option<bool> {
             _ => None,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 🔴 A technique that cannot reconstruct must not be handed a
+    /// smaller frame.
+    ///
+    /// `None` and `TAA` both resolve at render resolution, so a scale
+    /// under 100 there is a smaller image blown up by the blit: softer,
+    /// and the speed goes back out through the upscale it cannot do.
+    /// That is the classic way this setting earns a bad name, and it is
+    /// refused here rather than documented as a footgun.
+    #[test]
+    fn only_an_upscaler_renders_smaller() {
+        let out = (1920, 1080);
+        assert_eq!(UpscaleTechnique::None.render_size(out, 50), out);
+        assert_eq!(UpscaleTechnique::Taa.render_size(out, 50), out);
+        assert_eq!(UpscaleTechnique::Sgsr2.render_size(out, 50), (960, 540));
+    }
+
+    /// And the gate is applied once, at the settings boundary, so
+    /// nothing downstream has to remember to ask.
+    #[test]
+    fn the_settings_clamp_the_scale() {
+        assert_eq!(
+            TemporalSettings::new(UpscaleTechnique::Taa, 50).render_scale,
+            100
+        );
+        assert_eq!(
+            TemporalSettings::new(UpscaleTechnique::Sgsr2, 50).render_scale,
+            50
+        );
+    }
+
+    /// A window dragged to nothing must not ask wgpu for a zero-sized
+    /// texture, which it rejects outright — the frame after a minimise
+    /// would fail rather than render nothing.
+    #[test]
+    fn a_tiny_window_stays_renderable() {
+        assert_eq!(UpscaleTechnique::Sgsr2.render_size((1, 1), 50), (1, 1));
+        assert_eq!(UpscaleTechnique::Sgsr2.render_size((0, 0), 50), (1, 1));
+    }
+
+    /// 100 is the identity, and it is what every capture on record was
+    /// taken at.
+    #[test]
+    fn native_scale_changes_nothing() {
+        let out = (1280, 720);
+        assert_eq!(UpscaleTechnique::Sgsr2.render_size(out, 100), out);
+        assert_eq!(UpscaleTechnique::Sgsr2.render_size(out, 200), out);
+    }
 }
