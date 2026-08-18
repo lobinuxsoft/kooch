@@ -66,8 +66,8 @@ reference geometry, with a material beside each one.
 
 ![The prototype textures, by colour and index](../images/prototype-textures.png)
 
-⚠️ **The index is not the same pattern across colours.** `dark/texture_01`
-and `green/texture_01` are different images — the pack numbers each
+⚠️ **The index is not the same pattern across colours.** `dark_texture_01`
+and `green_texture_01` are different images — the pack numbers each
 colour independently. Pick from the sheet above, not from the number.
 
 They are worth reaching for beyond blocking out a level: a scene of
