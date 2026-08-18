@@ -3,7 +3,7 @@ use glam::Vec4Swizzles;
 
 /// The three counts every assertion below is checked against: 1:1, the
 /// 1.5× the Steam Deck target implies, and 2×.
-const COUNTS: [u32; 3] = [16, 36, 64];
+const COUNTS: [u32; 3] = [8, 18, 32];
 
 /// An offset outside the pixel is parallax, not anti-aliasing.
 ///
@@ -76,8 +76,11 @@ fn the_sequence_repeats_on_period() {
 #[test]
 fn phases_scale_with_the_area() {
     assert_eq!(phase_count(1280, 1280), JITTER_BASE_PHASES);
-    assert_eq!(phase_count(1280, 1920), 36);
-    assert_eq!(phase_count(960, 1920), 64);
+    // 1.5x squares to 2.25: ceil(8 x 2.25) = 18, where scaling the
+    // ratio linearly would give 12.
+    assert_eq!(phase_count(1280, 1920), 18);
+    // 2x squares to 4: 32, against 16 for the linear misreading.
+    assert_eq!(phase_count(960, 1920), 32);
 }
 
 /// Rendering above display resolution is supersampling, which needs no

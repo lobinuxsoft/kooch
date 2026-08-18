@@ -315,7 +315,18 @@ impl MeshletRenderStage {
         // the `view_proj` everything else here takes: the grid slices
         // depth in VIEW space, and a combined matrix cannot be taken
         // apart again.
-        let size = self.views[view_id].size;
+        // 🔴 RENDER size, not the presented one. The froxel grid is
+        // indexed from `frag_coord` by the shading pass, and the shading
+        // pass runs at render resolution once a technique upscales
+        // (#481 step 4). Sized to the window instead, every pixel reads
+        // a froxel at twice its address: half the grid is never
+        // consulted and the other half is read crossed, which looks like
+        // blocks of wrong-coloured light and not like a resolution bug.
+        //
+        // Found by the owner in the editor, from the picture. The two
+        // sizes agreeing was an assumption this file never had to state
+        // until the split existed.
+        let size = self.views[view_id].render_size;
         self.lights.update(
             device,
             queue,
@@ -336,7 +347,12 @@ impl MeshletRenderStage {
         // single matrix element here used to disable the LOD selector
         // outright at 90° of roll or looking straight down.
         let proj_scale_y = crate::meshlet::cull::projection_scale_y(view_proj);
-        let viewport_h_px = self.views[view_id].size.1 as f32;
+        // Render size for the same reason: the LOD selector compares a
+        // meshlet's projected error against a PIXEL, and the pixels that
+        // exist are the rasterised ones. Measured against the window it
+        // would keep detail the raster cannot resolve — paying for
+        // triangles that land inside one sample.
+        let viewport_h_px = self.views[view_id].render_size.1 as f32;
         let lod_target = resources
             .get::<MeshletLodSettings>()
             .copied()

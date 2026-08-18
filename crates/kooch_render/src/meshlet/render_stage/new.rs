@@ -321,6 +321,20 @@ impl MeshletRenderStage {
         self.render_scale = scale.clamp(1, 100);
     }
 
+    /// What a fragment coordinate is multiplied by to find its froxel.
+    ///
+    /// 🔴 Exposed because sizing this from the wrong resolution shipped
+    /// (#481 step 4). The grid's DIMENSIONS come from the aspect ratio
+    /// and a fixed cluster budget, so they do not move with the
+    /// resolution and cannot catch the mistake — this is the number that
+    /// does. Built from the window while the shading pass produces
+    /// fragment coordinates at render resolution, every pixel reads a
+    /// froxel at twice its address. The owner found it by eye; nothing
+    /// in the suite could have.
+    pub fn cluster_tile_factors(&self) -> glam::Vec2 {
+        self.lights.clusters().grid().tile_factors
+    }
+
     /// What a view of `output` renders at, under the current technique.
     pub(super) fn render_size_for(&self, output: (u32, u32)) -> (u32, u32) {
         self.upscale_technique

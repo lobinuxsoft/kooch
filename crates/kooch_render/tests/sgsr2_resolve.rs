@@ -242,3 +242,59 @@ fn a_plain_resolve_is_refused_the_scale() {
         "TAA rendered at half size, which it cannot reconstruct from",
     );
 }
+
+/// 🔴 The froxel grid has to be sized from the RENDER resolution.
+///
+/// Found by the owner in the editor, from the picture: at 50 % the
+/// lighting broke into blocks of wrong colour. The grid is indexed from
+/// `frag_coord` by the shading pass, and that pass runs at render
+/// resolution — sized to the window instead, every pixel reads a froxel
+/// at twice its address, so half the grid is never consulted and the
+/// other half is read crossed.
+///
+/// ⚠️ Asserted on the MAPPING, not on the image, and not on the grid's
+/// dimensions either — those come from the aspect ratio and a fixed
+/// cluster budget, so they are identical at both scales and cannot
+/// catch this. The first version of this
+/// test compared mean brightness and could not fail: with the bug in
+/// place it moved 0.45 % against a 20 % threshold, because three lamps
+/// covering the whole scene light it about the same however the froxels
+/// are addressed. The defect needs a hundred localised lights to show
+/// up in a mean — or one assertion on the number that is actually
+/// wrong, which is this one.
+#[test]
+fn the_froxel_grid_follows_the_render_size() {
+    let _gpu = gpu_lock();
+    let side = common::lit_scene::SIZE;
+
+    let grid = |scale: u32| -> Option<glam::Vec2> {
+        let mut r = rig(3, true)?;
+        assert!(r.stage.set_compute_shading(true) > 0);
+        assert!(r.stage.set_upscale(UpscaleTechnique::Sgsr2) > 0);
+        r.stage.set_render_scale(scale);
+        r.stage.resize(&r.device, (side, side));
+        r.stage
+            .render_with_assets_primary(&r.device, &r.queue, &r.resources, &r.camera, 1.0);
+        Some(r.stage.cluster_tile_factors())
+    };
+
+    let Some(native) = grid(100) else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let Some(halved) = grid(50) else { return };
+
+    eprintln!("tile factors — native {native:?}, at 50 % {halved:?}");
+    assert!(native.x > 0.0, "the native grid is degenerate");
+    // Half the width means a fragment coordinate covers twice the grid
+    // per pixel, so the factor doubles.
+    assert!(
+        (halved.x / native.x - 2.0).abs() < 0.1 && (halved.y / native.y - 2.0).abs() < 0.1,
+        "the froxel mapping went from {native:?} to {halved:?} when the scene dropped to \
+         half the width, where it should have doubled. \
+         The shading pass indexes this grid from a fragment coordinate it produces at \
+         RENDER resolution, so every pixel would read a froxel at twice its address — \
+         half the grid never consulted, the other half read crossed, which is blocks of \
+         wrong-coloured light and not a resolution artefact.",
+    );
+}
