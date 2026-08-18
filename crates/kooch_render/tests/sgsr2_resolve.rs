@@ -298,3 +298,63 @@ fn the_froxel_grid_follows_the_render_size() {
          wrong-coloured light and not a resolution artefact.",
     );
 }
+
+/// 🎯 TAAU is the same pass as TAA, and at 1:1 it must be identical.
+///
+/// That is the claim the shared shader rests on: below 1:1 the gather
+/// weights the low-resolution samples by where the jitter dropped them,
+/// and at 1:1 the two grids coincide so every weight collapses to one.
+/// If the two differ here, the gather is doing something at a scale
+/// where it should be inert — and whatever that is would be riding
+/// along in every TAA frame the engine has ever rendered.
+#[test]
+fn taau_at_one_to_one_is_the_resolve() {
+    let _gpu = gpu_lock();
+    let Some(taa) = settle(UpscaleTechnique::Taa, 12) else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let Some(taau) = settle(UpscaleTechnique::Taau, 12) else {
+        return;
+    };
+
+    let difference = mean_difference(&taa, &taau);
+    eprintln!("taau vs taa at 1:1 — {difference:.4}");
+    assert!(
+        difference < 0.01,
+        "TAAU and TAA differ by {difference:.4} at 1:1, where the gather is supposed to \
+         be inert. Whatever it is doing at this scale is also happening in every frame \
+         the plain resolve has ever produced.",
+    );
+}
+
+/// And it does shrink the scene, which is the point of having it.
+#[test]
+fn taau_renders_smaller_than_the_window() {
+    let _gpu = gpu_lock();
+    let Some(mut r) = rig(3, true) else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let full = r.stage.depth_texture().size();
+
+    assert!(r.stage.set_upscale(UpscaleTechnique::Taau) > 0);
+    r.stage.set_render_scale(50);
+    r.stage.resize(
+        &r.device,
+        (common::lit_scene::SIZE, common::lit_scene::SIZE),
+    );
+
+    let depth = r.stage.depth_texture().size();
+    let color = r.stage.color_texture().size();
+    assert_eq!(
+        (depth.width, depth.height),
+        (full.width / 2, full.height / 2),
+        "TAAU did not shrink the render target, so it is a resolve with extra taps",
+    );
+    assert_eq!(
+        (color.width, color.height),
+        (full.width, full.height),
+        "TAAU resolved into a target as small as the one it read",
+    );
+}

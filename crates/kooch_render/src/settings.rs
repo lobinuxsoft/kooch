@@ -273,7 +273,11 @@ const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
         value: 1,
     },
     kooch_ecs::reflect::FieldChoice {
-        label: "SGSR 2 — Qualcomm's, transliterated (1:1 for now)",
+        label: "TAAU — ours, upscaling",
+        value: 3,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "SGSR 2 — Qualcomm's, transliterated",
         value: 2,
     },
 ];

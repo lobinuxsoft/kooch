@@ -51,7 +51,9 @@ pub const TAA_REPROJECT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16F
 struct TaaUbo {
     reset: u32,
     exposure: f32,
-    _pad: [u32; 2],
+    jitter: [f32; 2],
+    render_size: [f32; 2],
+    output_size: [f32; 2],
 }
 
 /// Ping-pong state, behind a lock for the same reason the motion pass's
@@ -81,7 +83,7 @@ pub(super) struct Taa {
 }
 
 impl Taa {
-    pub(super) fn new(device: &wgpu::Device, size: (u32, u32)) -> Self {
+    pub(super) fn new(device: &wgpu::Device, size: (u32, u32), output: (u32, u32)) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("taa_shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
@@ -196,7 +198,10 @@ impl Taa {
             ..Default::default()
         });
 
-        let (color, color_views, reproject, reproject_views) = create_targets(device, size);
+        // 🔴 The history and the resolved image live at OUTPUT size:
+        // running as TAAU this pass gathers a smaller frame INTO the
+        // output grid, so its own targets are the grid it writes.
+        let (color, color_views, reproject, reproject_views) = create_targets(device, output);
         Self {
             pipeline,
             bgl,
@@ -214,8 +219,8 @@ impl Taa {
         }
     }
 
-    pub(super) fn resize(&mut self, device: &wgpu::Device, size: (u32, u32)) {
-        let (color, color_views, reproject, reproject_views) = create_targets(device, size);
+    pub(super) fn resize(&mut self, device: &wgpu::Device, _size: (u32, u32), output: (u32, u32)) {
+        let (color, color_views, reproject, reproject_views) = create_targets(device, output);
         self.color = color;
         self.color_views = color_views;
         self.reproject = reproject;
@@ -251,6 +256,9 @@ impl Taa {
         motion: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         exposure: f32,
+        jitter: glam::Vec2,
+        render_size: (u32, u32),
+        output_size: (u32, u32),
     ) -> &wgpu::TextureView {
         let mut state = self.state.lock().expect("taa history lock");
         let previous = state.index;
@@ -262,7 +270,9 @@ impl Taa {
             bytemuck::bytes_of(&TaaUbo {
                 reset: u32::from(state.reset),
                 exposure,
-                _pad: [0; 2],
+                jitter: [jitter.x, jitter.y],
+                render_size: [render_size.0.max(1) as f32, render_size.1.max(1) as f32],
+                output_size: [output_size.0.max(1) as f32, output_size.1.max(1) as f32],
             }),
         );
 
