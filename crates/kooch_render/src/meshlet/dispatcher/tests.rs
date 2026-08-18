@@ -42,3 +42,44 @@ fn cull_shader_parses_and_validates() {
         .validate(&module)
         .expect("meshlet_cull.wgsl should validate");
 }
+
+/// 🔴 The ring has to cover the worst frame, and the worst frame is
+/// every view's point-shadow cubes in one encoder.
+///
+/// This exists because the original sizing was off by the number of
+/// views: 64 slots against 32 lamps read as "a factor of two" and was
+/// exactly break-even once the editor's second viewport was counted.
+/// The result was #853's symptom again — lamps culled with each other's
+/// frusta, several shadows appearing as copies of one — and nothing
+/// reported it, because a ring laps in silence.
+///
+/// It stayed hidden for as long as the shipped budget was 6. Twelve
+/// dispatches into sixty-four cannot collide, so "it works" had been
+/// measured on the one case that could not fail. Raising
+/// `MAX_POINT_SHADOWS`, adding a viewport, or dispatching a cull object
+/// once more per light all break this, and each of them would otherwise
+/// be found by eye, weeks later, as "the shadows are wrong again".
+#[test]
+fn the_ring_covers_the_worst_case() {
+    // 🔴 An OBSERVED number, not `VIEWS_ASSUMED`. Deriving the bound
+    // from the same constant the ring is derived from makes both sides
+    // move together and the assertion can never fail — which is what the
+    // first version of this test did.
+    //
+    // Two is what the editor renders through one stage today: a Scene
+    // panel and a Game panel. Anything that adds a third viewport has to
+    // raise `VIEWS_ASSUMED`, and this is what says so.
+    const EDITOR_VIEWS: u64 = 2;
+    let per_frame = kooch_lighting::MAX_POINT_SHADOWS as u64 * EDITOR_VIEWS;
+    assert!(
+        super::PARAMS_RING >= per_frame * 2,
+        "the params ring has {} slots and one encoder can dispatch a single cull object \
+         {} times ({} lamps x {} views). It needs at least double that, because the \
+         cursor is never rewound at the start of a frame and a frame beginning mid-ring \
+         wraps onto its own earlier slots.",
+        super::PARAMS_RING,
+        per_frame,
+        kooch_lighting::MAX_POINT_SHADOWS,
+        EDITOR_VIEWS,
+    );
+}

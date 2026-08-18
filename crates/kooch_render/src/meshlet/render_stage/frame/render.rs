@@ -149,6 +149,21 @@ impl MeshletRenderStage {
         // default" — see `crate::quality`.
         let temporal = resources.get::<crate::quality::TemporalSettings>().copied();
         let shading = resources.get::<crate::quality::ShadingSettings>().copied();
+        // 🔴 Recorded on the stage BEFORE the per-view borrow below,
+        // because what a view renders at is decided by the technique and
+        // the scale, and `resize_view` is where that turns into
+        // textures. It is the editor dragging a divider that calls it,
+        // and a divider knows nothing about upscaling.
+        //
+        // ⚠️ So a change of scale lands on the next `resize_view`. The
+        // editor calls it every frame, so it is immediate there; a
+        // shipped game calls it when the surface is configured, which is
+        // startup and every window resize. Reallocating from inside the
+        // render would drop bind groups the GPU still has in flight.
+        if let Some(temporal) = temporal {
+            self.upscale_technique = temporal.technique;
+            self.render_scale = temporal.render_scale;
+        }
         let jitter = match self.views[view_id].vbuf64_stage.as_mut() {
             Some(stage) => {
                 if let Some(shading) = shading {
@@ -159,8 +174,14 @@ impl MeshletRenderStage {
                     let _ = stage.set_shading_rate(shading.rate);
                 }
                 if let Some(temporal) = temporal {
-                    stage.set_temporal_aa(temporal.enabled);
+                    stage.set_upscale(temporal.technique);
                 }
+                // SGSR 2's depth-clip threshold scales by the lens, so
+                // it has to be told. Set unconditionally: a technique
+                // that ignores it costs nothing, and one that needs it
+                // and does not get it fails as a wrong edge mask rather
+                // than as an error.
+                stage.set_camera_lens(camera.fov_y_rad, aspect);
                 stage.next_jitter(unjittered_view_proj)
             }
             // The legacy R32 path has neither motion vectors nor a
@@ -294,7 +315,18 @@ impl MeshletRenderStage {
         // the `view_proj` everything else here takes: the grid slices
         // depth in VIEW space, and a combined matrix cannot be taken
         // apart again.
-        let size = self.views[view_id].size;
+        // 🔴 RENDER size, not the presented one. The froxel grid is
+        // indexed from `frag_coord` by the shading pass, and the shading
+        // pass runs at render resolution once a technique upscales
+        // (#481 step 4). Sized to the window instead, every pixel reads
+        // a froxel at twice its address: half the grid is never
+        // consulted and the other half is read crossed, which looks like
+        // blocks of wrong-coloured light and not like a resolution bug.
+        //
+        // Found by the owner in the editor, from the picture. The two
+        // sizes agreeing was an assumption this file never had to state
+        // until the split existed.
+        let size = self.views[view_id].render_size;
         self.lights.update(
             device,
             queue,
@@ -315,7 +347,12 @@ impl MeshletRenderStage {
         // single matrix element here used to disable the LOD selector
         // outright at 90° of roll or looking straight down.
         let proj_scale_y = crate::meshlet::cull::projection_scale_y(view_proj);
-        let viewport_h_px = self.views[view_id].size.1 as f32;
+        // Render size for the same reason: the LOD selector compares a
+        // meshlet's projected error against a PIXEL, and the pixels that
+        // exist are the rasterised ones. Measured against the window it
+        // would keep detail the raster cannot resolve — paying for
+        // triangles that land inside one sample.
+        let viewport_h_px = self.views[view_id].render_size.1 as f32;
         let lod_target = resources
             .get::<MeshletLodSettings>()
             .copied()

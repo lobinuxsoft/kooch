@@ -62,6 +62,20 @@ fn half_to_f32(bits: u16) -> f32 {
 fn render(r: &mut common::lit_scene::Rig) -> Vec<(f32, f32)> {
     r.stage.set_compute_shading(true);
     r.stage.set_shading_rate(ShadingRate::Full);
+    // 🔴 The pass is GATED on there being a consumer (#868) — writing
+    // velocity nobody reads cost 1.994 ms of a 20.5 ms frame. Without
+    // this line the texture is never written, every assertion below
+    // reads zeros, and the failure reads as "the pass is broken" rather
+    // than "the pass did not run".
+    //
+    // ⚠️ This file was left behind when the gate landed: it asserts on a
+    // pass it did not switch on, so both of its moving-camera cases went
+    // red and stayed red. A gate has to be added to every test that
+    // depends on what it gates.
+    assert!(
+        r.stage.set_temporal_aa(true) > 0,
+        "no view took the temporal setting — the motion pass would not run at all",
+    );
     r.stage
         .render_with_assets_primary(&r.device, &r.queue, &r.resources, &r.camera, 1.0);
     read_motion(r)

@@ -86,6 +86,13 @@ pub struct MeshletRenderStage {
     /// `MAX_POINT_SHADOWS` entries — this is a hysteresis term, not a
     /// cache.
     pub(super) point_shadow_holders: Vec<kooch_ecs::entity::Entity>,
+    /// What decides how much smaller than its panel a view renders
+    /// (#481 step 4). Kept on the stage rather than asked of the
+    /// settings at allocation time, because a view is resized by the
+    /// editor dragging a divider — which knows the panel's size and
+    /// nothing about upscaling.
+    pub(super) upscale_technique: crate::quality::UpscaleTechnique,
+    pub(super) render_scale: u32,
     /// Hash of every instance uploaded this frame, and the cached cube
     /// key per point-shadow slot (#778). Together they answer "may last
     /// frame's six faces stand".

@@ -26,6 +26,7 @@ mod density_clear;
 mod jitter;
 mod motion;
 mod raster;
+mod sgsr2;
 mod shading_rate;
 mod taa;
 mod tonemap;
@@ -118,7 +119,21 @@ pub struct Vbuf64Stage {
     /// of the stage so turning it on is not the frame that stalls, the
     /// same rule the shading rate follows (#830).
     taa: Taa,
-    taa_enabled: bool,
+    /// SGSR 2, transliterated (#481 step 4). Built unconditionally
+    /// alongside the resolve, for the reason the resolve itself is:
+    /// switching technique must not be the frame that stalls, and the
+    /// A/B between them in one session is how an upscaler is judged.
+    sgsr2: sgsr2::Sgsr2,
+    /// Which one runs. See [`UpscaleTechnique`](crate::quality::UpscaleTechnique)
+    /// for why this is an enum rather than a trait object.
+    technique: crate::quality::UpscaleTechnique,
+    /// This frame's sub-pixel offset in RENDER pixels, kept because
+    /// SGSR 2 needs the value the projection was jittered by and the
+    /// resolve does not.
+    last_jitter: glam::Vec2,
+    /// `tan(fov_vertical / 2) * aspect`, which SGSR 2's depth-clip
+    /// threshold scales by. Set from the camera each frame.
+    fov_k: f32,
     /// Which sub-pixel offset the next frame takes. Advances once per
     /// frame per view, which is why it lives here rather than beside the
     /// camera — two views of the same scene must not share a phase.
@@ -136,7 +151,14 @@ pub struct Vbuf64Stage {
     /// the stage's size alongside the vbuf / dummy targets.
     material_depth_texture: wgpu::Texture,
     material_depth_view: wgpu::TextureView,
+    /// 🔴 The size everything up to the resolve is rendered at, which is
+    /// NOT the size presented once a technique upscales (#481 step 4).
+    /// Every target in this struct is this size except the resolve's
+    /// output and the tonemap's.
     size: (u32, u32),
+    /// What reaches the window. Equal to `size` unless the technique
+    /// upscales and the project asked for a scale below 100.
+    output_size: (u32, u32),
 }
 
 impl Vbuf64Stage {
@@ -145,6 +167,7 @@ impl Vbuf64Stage {
         meshlet_bgl: &wgpu::BindGroupLayout,
         depth_format: wgpu::TextureFormat,
         size: (u32, u32),
+        output_size: (u32, u32),
         pipeline_cache: Option<&wgpu::PipelineCache>,
     ) -> Self {
         let (vbuf_texture, vbuf_view) = create_vbuf64_texture(device, size);
@@ -187,9 +210,15 @@ impl Vbuf64Stage {
             // temporal resolve changes every pixel of the image, and
             // that is not a default an engine should adopt on behalf of
             // a project that never mentioned it.
-            taa_enabled: false,
+            sgsr2: sgsr2::Sgsr2::new(device, size, output_size),
+            technique: crate::quality::UpscaleTechnique::None,
+            last_jitter: glam::Vec2::ZERO,
+            // A 60-degree vertical lens at 16:9, replaced on the first
+            // frame that has a camera.
+            fov_k: (std::f32::consts::FRAC_PI_3 * 0.5).tan() * (16.0 / 9.0),
             jitter_index: 0,
             shading_rate,
+            output_size,
             debug_resolve,
             vbuf_texture,
             vbuf_view,
@@ -201,8 +230,8 @@ impl Vbuf64Stage {
         }
     }
 
-    pub fn resize(&mut self, device: &wgpu::Device, size: (u32, u32)) {
-        if size == self.size || size.0 == 0 || size.1 == 0 {
+    pub fn resize(&mut self, device: &wgpu::Device, size: (u32, u32), output_size: (u32, u32)) {
+        if (size, output_size) == (self.size, self.output_size) || size.0 == 0 || size.1 == 0 {
             return;
         }
         let (texture, view) = create_vbuf64_texture(device, size);
@@ -218,7 +247,9 @@ impl Vbuf64Stage {
         self.tonemap.resize(device, size);
         self.motion.resize(device, size);
         self.taa.resize(device, size);
+        self.sgsr2.resize(device, size, output_size);
         self.size = size;
+        self.output_size = output_size;
     }
 
     /// Which shading path this stage takes, overriding what
@@ -262,7 +293,10 @@ impl Vbuf64Stage {
 
     /// The most recent temporal resolve, for a test to read back.
     pub fn resolved_texture(&self) -> &wgpu::Texture {
-        self.taa.resolved_texture()
+        match self.technique {
+            crate::quality::UpscaleTechnique::Sgsr2 => self.sgsr2.resolved_texture(),
+            _ => self.taa.resolved_texture(),
+        }
     }
 
     /// Switches the temporal resolve on or off (#481).
@@ -273,16 +307,34 @@ impl Vbuf64Stage {
     /// costs two passes and removes nothing. Exposing them as one
     /// setting is what stops half of the pair being turned on.
     pub fn set_temporal_aa(&mut self, on: bool) {
-        self.taa_enabled = on;
+        self.technique = if on {
+            crate::quality::UpscaleTechnique::Taa
+        } else {
+            crate::quality::UpscaleTechnique::None
+        };
+    }
+
+    /// Selects the technique (#536).
+    pub fn set_upscale(&mut self, technique: crate::quality::UpscaleTechnique) {
+        self.technique = technique;
+    }
+
+    pub fn technique(&self) -> crate::quality::UpscaleTechnique {
+        self.technique
+    }
+
+    /// The lens, for the one technique whose thresholds depend on it.
+    pub fn set_camera_lens(&mut self, fov_y_rad: f32, aspect: f32) {
+        self.fov_k = sgsr2::fov_k(fov_y_rad, aspect);
     }
 
     pub fn temporal_aa(&self) -> bool {
-        self.taa_enabled
+        self.technique.is_temporal()
     }
 
     /// Whether anything this frame will read the motion vectors.
     ///
-    /// A predicate rather than `if self.taa_enabled` at the call site,
+    /// A predicate rather than matching the technique at the call site,
     /// because the buffer is about to have a second consumer: FSR (#536)
     /// reprojects with the same vectors. One condition both of them
     /// extend is how the pass avoids being turned on twice and off once.
@@ -293,7 +345,7 @@ impl Vbuf64Stage {
     /// against a stale matrix. Turning the resolve back on mid-session
     /// gets correct vectors on its first frame.
     fn needs_motion(&self) -> bool {
-        self.taa_enabled
+        self.technique.is_temporal()
     }
 
     /// This frame's sub-pixel offset, and the pair of matrices that
@@ -304,7 +356,8 @@ impl Vbuf64Stage {
     /// down. Returns the identity when the resolve is off, which leaves
     /// the projection untouched rather than merely small.
     pub fn next_jitter(&mut self, view_proj: glam::Mat4) -> Jitter {
-        if !self.taa_enabled {
+        if !self.technique.is_temporal() {
+            self.last_jitter = glam::Vec2::ZERO;
             return Jitter::none(view_proj);
         }
         let jitter = Jitter::at(
@@ -314,18 +367,17 @@ impl Vbuf64Stage {
             self.jitter_phases(),
         );
         self.jitter_index = self.jitter_index.wrapping_add(1);
+        self.last_jitter = jitter.pixels;
         jitter
     }
 
     /// How many sub-pixel offsets this view cycles through.
     ///
-    /// Render and display are the same surface until the resolution
-    /// split of #481 lands, so this is the base count today. **The
-    /// second argument is the only thing that changes** when they
-    /// separate — the sequence, the offsets and the matrix are already
-    /// written against a ratio.
+    /// 🎯 The second argument is the split, and it is the only thing
+    /// that changed here when it landed — the sequence, the offsets and
+    /// the matrix were already written against a ratio.
     fn jitter_phases(&self) -> u32 {
-        jitter::phase_count(self.size.0, self.size.0)
+        jitter::phase_count(self.size.0, self.output_size.0)
     }
 
     pub fn shading_rate(&self) -> ShadingRate {
@@ -582,21 +634,47 @@ impl Vbuf64Stage {
                 // half-rate interpolation — is cheaper somewhere else in
                 // this frame, and the two numbers have to be subtractable.
                 let mut source = self.tonemap.hdr_view();
-                if self.taa_enabled && !is_debug_view(debug_mode) {
+                if self.technique.is_temporal() && !is_debug_view(debug_mode) {
+                    // 🔴 The scope carries the technique's name rather
+                    // than a shared "temporal". A capture has to say
+                    // WHICH one cost what, or the A/B that decides
+                    // between them is two numbers under one label.
+                    let label = match self.technique {
+                        crate::quality::UpscaleTechnique::Sgsr2 => "sgsr2",
+                        _ => "taa",
+                    };
                     let query = match (scopes, parent) {
-                        (Some(s), Some(p)) => Some(s.begin_child("taa", encoder, p)),
-                        (Some(s), None) => Some(s.begin("taa", encoder)),
+                        (Some(s), Some(p)) => Some(s.begin_child(label, encoder, p)),
+                        (Some(s), None) => Some(s.begin(label, encoder)),
                         _ => None,
                     };
-                    source = self.taa.draw(
-                        device,
-                        queue,
-                        encoder,
-                        self.tonemap.hdr_view(),
-                        self.motion.view(),
-                        depth_sample_view,
-                        exposure,
-                    );
+                    // Strategy, dispatched by value: one match per
+                    // frame, no vtable, and the compiler checks that a
+                    // new technique is handled here.
+                    source = match self.technique {
+                        crate::quality::UpscaleTechnique::Sgsr2 => self.sgsr2.draw(
+                            device,
+                            queue,
+                            encoder,
+                            sgsr2::UpscaleInputs {
+                                color: self.tonemap.hdr_view(),
+                                depth: depth_sample_view,
+                                motion: self.motion.view(),
+                                jitter: self.last_jitter,
+                                exposure,
+                                fov_k: self.fov_k,
+                            },
+                        ),
+                        _ => self.taa.draw(
+                            device,
+                            queue,
+                            encoder,
+                            self.tonemap.hdr_view(),
+                            self.motion.view(),
+                            depth_sample_view,
+                            exposure,
+                        ),
+                    };
                     if let (Some(scopes), Some(query)) = (scopes, query) {
                         scopes.end(encoder, query);
                     }

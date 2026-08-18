@@ -35,17 +35,26 @@ use glam::{Mat4, Vec2, Vec3};
 
 /// How many offsets before the sequence repeats, at 1:1.
 ///
-/// Eight is the industry figure for a resolve that only antialiases, and
-/// it is what FSR uses as its base. Sixteen is this engine's, because
-/// the resolve's minimum blend rate is 1/64: a pixel that never rejects
-/// its history integrates over roughly sixty frames, so eight distinct
-/// points leave it averaging each one seven times over instead of
-/// covering more of the pixel.
+/// Eight, which is FSR's base and the industry figure.
 ///
-/// 🔴 Set this back to 8 if the transliterated FSR passes disagree with
-/// it. Their accumulation constants are tuned against AMD's count, and
-/// AMD's count is one of the things in that port that cannot be guessed.
-pub const JITTER_BASE_PHASES: u32 = 16;
+/// 🔴 It shipped at SIXTEEN for one session and was reverted, and the
+/// reasoning that put it there is worth keeping because it sounded
+/// right: the resolve's minimum blend rate is 1/64, so a pixel that
+/// never rejects its history integrates over sixty-odd frames, and
+/// eight distinct points leave it averaging each one seven times over
+/// instead of covering more of the pixel.
+///
+/// What that argument ignores is the pixel that DOES reject. Confidence
+/// resets the moment a pixel moves, so a moving camera blends at 0.1
+/// and never gets near the floor — and there the sequence is not being
+/// integrated, it is being SEEN. Sixteen positions swung twice as far
+/// as eight before the resolve could average them, and the owner
+/// reported it as violent jitter.
+///
+/// ⚠️ The general shape of the mistake: a constant justified by the
+/// converged case and paid for by the transient one. This resolve
+/// spends most of its life in the transient.
+pub const JITTER_BASE_PHASES: u32 = 8;
 
 /// The count at 3× upscaling, which is FSR's most aggressive preset
 /// (Ultra Performance) and therefore the largest ratio anything here

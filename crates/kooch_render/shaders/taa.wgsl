@@ -276,6 +276,7 @@ fn fs_taa(in: Varyings) -> Output {
     var current_color = tonemap(original_color.rgb);
     var confidence = 1.0;
 
+
     // The pixel's own depth, kept for the disocclusion test and written
     // out for the next frame to read back. Not the dilated one: what has
     // to be compared across frames is where THIS surface is, and the

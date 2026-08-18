@@ -15,6 +15,23 @@
 
 mod common;
 
+/// 🔴 Serialises this binary's cases, and it closes a long-standing
+/// flake rather than adding caution.
+///
+/// `common` hands every case the SAME device — one per binary, by
+/// `OnceLock`, to dodge the radv `request_adapter` race of #334 — so
+/// seven cases at once means seven threads recording and submitting
+/// against one device. Under radv that segfaults the PROCESS instead of
+/// failing a case, intermittently, while passing every time under
+/// `--test-threads=1`. This file and `gpu_scopes` are the two that were
+/// known to "fail sometimes in `cargo test --workspace` and always pass
+/// in isolation"; that is what this was.
+static GPU: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn gpu_lock() -> std::sync::MutexGuard<'static, ()> {
+    GPU.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 use common::{build_cube_mesh, luminance_at, read_rgba8, try_acquire_device};
 use glam::{Mat4, Quat, Vec3};
 use kooch_core::Guid;
@@ -266,6 +283,7 @@ fn with_and_without(path: Path) -> Option<(Vec<u8>, Vec<u8>, ViewCamera)> {
 /// in the scene at all**.
 #[test]
 fn a_cube_standing_on_a_floor_darkens_the_floor_it_touches() {
+    let _gpu = gpu_lock();
     let Some((with, without, camera)) = with_and_without(Path::ComputeDeferred) else {
         eprintln!("no GPU adapter available; skipping");
         return;
@@ -293,6 +311,7 @@ fn a_cube_standing_on_a_floor_darkens_the_floor_it_touches() {
 /// move. Without this, a `return 0.0` passes the test above.
 #[test]
 fn floor_with_nothing_near_it_is_unchanged() {
+    let _gpu = gpu_lock();
     let Some((with, without, camera)) = with_and_without(Path::ComputeDeferred) else {
         eprintln!("no GPU adapter available; skipping");
         return;
@@ -318,6 +337,7 @@ fn floor_with_nothing_near_it_is_unchanged() {
 /// feature off in its settings still pays for it and still sees it.
 #[test]
 fn zero_steps_in_the_settings_overrides_the_light() {
+    let _gpu = gpu_lock();
     let Some(mut opted_in) = rig(Path::ComputeDeferred) else {
         eprintln!("no GPU adapter available; skipping");
         return;
@@ -355,6 +375,7 @@ fn zero_steps_in_the_settings_overrides_the_light() {
 /// going to notice.
 #[test]
 fn the_fragment_path_marches_too() {
+    let _gpu = gpu_lock();
     let Some((with, without, camera)) = with_and_without(Path::TwoPassFragment) else {
         eprintln!("no adapter with the int64-atomic bundle; skipping");
         return;
@@ -379,6 +400,7 @@ fn the_fragment_path_marches_too() {
 /// And its guard: an unconditional occlusion passes the test above.
 #[test]
 fn the_fragment_path_leaves_open_floor_alone() {
+    let _gpu = gpu_lock();
     let Some((with, without, camera)) = with_and_without(Path::TwoPassFragment) else {
         eprintln!("no adapter with the int64-atomic bundle; skipping");
         return;
@@ -404,6 +426,7 @@ fn the_fragment_path_leaves_open_floor_alone() {
 /// floor the cube stands on must not.
 #[test]
 fn the_debug_view_separates_a_hit_from_open_floor() {
+    let _gpu = gpu_lock();
     let Some(mut rig) = rig(Path::ComputeDeferred) else {
         eprintln!("no GPU adapter available; skipping");
         return;
@@ -476,6 +499,7 @@ fn add_light(resources: &mut Resources, direction: Vec3, intensity: f32) {
 /// lit. Asserting on the bright light's contact would pass either way.
 #[test]
 fn only_the_strongest_light_marches() {
+    let _gpu = gpu_lock();
     let Some(mut dominant) = rig(Path::ComputeDeferred) else {
         eprintln!("no GPU adapter available; skipping");
         return;

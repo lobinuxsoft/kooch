@@ -118,3 +118,72 @@ fn a_settings_file_with_the_removed_field_still_loads() {
     );
     assert_eq!(parsed.aperture_f_stops, 2.8);
 }
+
+/// 🔴 The resolve is gated on the compute path, and the enum must not
+/// have quietly dropped that gate: the jitter would stay on with
+/// nothing to integrate it, which shimmers and reads as the technique
+/// being broken rather than inapplicable.
+#[test]
+fn the_fragment_path_gets_no_technique() {
+    let settings = "(upscale: 1, compute_shading: false)";
+    let parsed: RenderSettings = ron::from_str(settings).expect("should load");
+    assert_eq!(parsed.technique(), crate::quality::UpscaleTechnique::Taa);
+    assert!(
+        !parsed.temporal().enabled(),
+        "the fragment path must resolve to no technique whatever the file asks for",
+    );
+}
+
+/// 🔴 A file written before `temporal_aa` was deleted must still load.
+///
+/// Same hazard the removal of `light_samples` had, and the same test:
+/// the compiler cannot see the files already on disk, and every project
+/// that ever opened the Temporal group has `temporal_aa` written into
+/// its own `project.rendersettings`. If RON rejected the unknown key the
+/// asset would fail to load and the project would render with engine
+/// defaults for EVERYTHING, not just for this one setting.
+///
+/// The value itself is gone on purpose — the owner's call, since the
+/// dropdown replaced it and no project outside this repo predates it.
+/// What must not happen is the file failing.
+#[test]
+fn a_file_naming_the_deleted_toggle_still_loads() {
+    let parsed: RenderSettings =
+        ron::from_str("(aperture_f_stops: 2.8, temporal_aa: true, upscale: 1)")
+            .expect("an unknown key must not fail the load");
+    assert_eq!(parsed.aperture_f_stops, 2.8);
+    assert_eq!(
+        parsed.technique(),
+        crate::quality::UpscaleTechnique::Taa,
+        "the field after the deleted key was not read",
+    );
+}
+
+/// 🔴 `render_scale` must not be offered for a technique that ignores
+/// it.
+///
+/// It is already forced to 100 for `None` and `TAA`, so the control did
+/// nothing — and a control that silently does nothing is worse than an
+/// absent one, because it reads as "I tried the setting and it did not
+/// help". Reported by the owner, who set it under TAA and reasonably
+/// expected it to apply.
+///
+/// Pinned as the condition's VALUES rather than by rendering anything:
+/// the enum's numbers are serialised into user projects and are
+/// append-only, so a variant renumbered without updating this would
+/// show the control for the wrong technique.
+#[test]
+fn the_scale_is_offered_only_where_it_acts() {
+    let shown: Vec<u32> = UPSCALES_WHEN.values.iter().map(|v| *v as u32).collect();
+    for value in 0..4u32 {
+        let technique = crate::quality::UpscaleTechnique::from_asset(value);
+        assert_eq!(
+            shown.contains(&value),
+            technique.upscales(),
+            "technique {technique:?} (asset value {value}) upscales={} but the inspector \
+             condition says shown={}",
+            technique.upscales(),
+            shown.contains(&value),
+        );
+    }
+}

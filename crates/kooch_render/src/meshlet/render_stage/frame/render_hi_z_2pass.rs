@@ -51,10 +51,15 @@ impl MeshletRenderStage {
         self.views[view_id].retired_pyramids[arena_idx].clear();
 
         if self.views[view_id].hiz_prev.is_none() {
+            // 🔴 RENDER size: a Hi-Z pyramid is a mip chain of the DEPTH
+            // buffer, and the depth buffer shrinks with the scale (#481
+            // step 4). Built at the window's size it would describe a
+            // depth target that does not exist, and the occlusion cull
+            // would test against the wrong texels.
             let pyr = crate::hi_z::HiZ::new(
                 device,
-                self.views[view_id].size.0,
-                self.views[view_id].size.1,
+                self.views[view_id].render_size.0,
+                self.views[view_id].render_size.1,
             );
             if let Some(tracker) = &self.vram_tracker {
                 tracker.add(pyr.byte_size());
@@ -62,10 +67,15 @@ impl MeshletRenderStage {
             self.views[view_id].hiz_prev = Some(pyr);
         }
         if self.views[view_id].hiz_curr.is_none() {
+            // 🔴 RENDER size: a Hi-Z pyramid is a mip chain of the DEPTH
+            // buffer, and the depth buffer shrinks with the scale (#481
+            // step 4). Built at the window's size it would describe a
+            // depth target that does not exist, and the occlusion cull
+            // would test against the wrong texels.
             let pyr = crate::hi_z::HiZ::new(
                 device,
-                self.views[view_id].size.0,
-                self.views[view_id].size.1,
+                self.views[view_id].render_size.0,
+                self.views[view_id].render_size.1,
             );
             if let Some(tracker) = &self.vram_tracker {
                 tracker.add(pyr.byte_size());
@@ -283,7 +293,9 @@ impl MeshletRenderStage {
             self.lights.bind_group(),
             view_proj,
             contact,
-            self.views[view_id].size,
+            // Render size: this is the shading dispatch, and it is the
+            // pass the whole scale exists to make cheaper.
+            self.views[view_id].render_size,
             debug_mode,
         );
         if let (Some(scopes), Some(query)) = (scopes, shade_query) {

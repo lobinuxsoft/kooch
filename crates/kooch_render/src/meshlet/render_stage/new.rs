@@ -55,6 +55,9 @@ impl MeshletRenderStage {
         let primary = views.insert(super::view_targets::MeshletView::new(
             device,
             size,
+            // Nothing has selected a technique yet, so a fresh view
+            // renders at its panel's size.
+            size,
             debug_caps,
             vbuf64,
             cull_pipelines.meshlet_bind_group_layout(),
@@ -90,6 +93,8 @@ impl MeshletRenderStage {
             shadow_texels: 0,
             point_shadows_over_budget: false,
             point_shadow_holders: Vec::new(),
+            upscale_technique: crate::quality::UpscaleTechnique::None,
+            render_scale: 100,
             instance_bounds: Vec::new(),
             point_cube_cache: Vec::new(),
             gpu_pool: None,
@@ -293,6 +298,61 @@ impl MeshletRenderStage {
         switched
     }
 
+    /// Selects the temporal technique on every view that has the R64
+    /// stage, and returns how many took it (#536).
+    pub fn set_upscale(&mut self, technique: crate::quality::UpscaleTechnique) -> usize {
+        self.upscale_technique = technique;
+        let mut applied = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut() {
+                stage.set_upscale(technique);
+                applied += 1;
+            }
+        }
+        applied
+    }
+
+    /// How much smaller than its panel each view renders, 1..=100.
+    ///
+    /// Takes effect on the next `resize_view`, which the editor calls
+    /// every frame with the panel's size — so a change lands within a
+    /// frame without a reallocation path of its own.
+    pub fn set_render_scale(&mut self, scale: u32) {
+        self.render_scale = scale.clamp(1, 100);
+    }
+
+    /// What a fragment coordinate is multiplied by to find its froxel.
+    ///
+    /// 🔴 Exposed because sizing this from the wrong resolution shipped
+    /// (#481 step 4). The grid's DIMENSIONS come from the aspect ratio
+    /// and a fixed cluster budget, so they do not move with the
+    /// resolution and cannot catch the mistake — this is the number that
+    /// does. Built from the window while the shading pass produces
+    /// fragment coordinates at render resolution, every pixel reads a
+    /// froxel at twice its address. The owner found it by eye; nothing
+    /// in the suite could have.
+    pub fn cluster_tile_factors(&self) -> glam::Vec2 {
+        self.lights.clusters().grid().tile_factors
+    }
+
+    /// What a view of `output` renders at, under the current technique.
+    pub(super) fn render_size_for(&self, output: (u32, u32)) -> (u32, u32) {
+        self.upscale_technique
+            .render_size(output, self.render_scale)
+    }
+
+    /// The lens both the cull and SGSR 2's edge mask are derived from.
+    pub fn set_camera_lens(&mut self, fov_y_rad: f32, aspect: f32) -> usize {
+        let mut applied = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut() {
+                stage.set_camera_lens(fov_y_rad, aspect);
+                applied += 1;
+            }
+        }
+        applied
+    }
+
     /// Switches every view between the fragment shading path and the
     /// compute one (#824), overriding `KOOCH_COMPUTE_SHADING`.
     ///
@@ -385,9 +445,11 @@ impl MeshletRenderStage {
     /// puts the pool at 6.33 MiB for four assets, and duplicating it
     /// per camera would buy nothing.
     pub fn create_view(&mut self, device: &wgpu::Device, size: (u32, u32)) -> ViewId {
+        let render_size = self.render_size_for(size);
         self.views.insert(super::view_targets::MeshletView::new(
             device,
             size,
+            render_size,
             self.config.debug_caps,
             self.config.vbuf64,
             self.cull_pipelines.meshlet_bind_group_layout(),
