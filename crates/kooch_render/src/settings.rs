@@ -214,8 +214,17 @@ pub struct RenderSettings {
     /// contact-shadow ray, the reduced shading rate. It costs one
     /// full-screen pass and one history texture, and it needs
     /// `compute_shading`.
+    /// 🔴 Legacy, and NOT shown in the inspector — the dropdown below
+    /// replaced it, and two controls for one decision is how they end up
+    /// disagreeing.
+    ///
+    /// ⚠️ The FIELD stays even though the control is gone, because it is
+    /// what an old file's `upscale` is migrated from. Deleting it would
+    /// take that with it and every project that had the resolve on would
+    /// come back with it off — silently. It can go once no project in
+    /// the wild predates `upscale`, which is not a date anyone can name.
     #[serde(default = "default_temporal_aa")]
-    #[reflect(group = "Temporal")]
+    #[reflect(skip)]
     #[deprecated(note = "superseded by `upscale`; read only to migrate old files")]
     pub temporal_aa: bool,
 

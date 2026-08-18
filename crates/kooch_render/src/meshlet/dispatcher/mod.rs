@@ -133,12 +133,36 @@ pub struct MeshletCull {
 /// second could not vanished from the first lamp's map. One lamp was
 /// always correct, which is why it took a scene with two.
 ///
-/// The bound is how many times one cull object can be dispatched inside
-/// one encoder: [`MAX_POINT_SHADOWS`](kooch_lighting::MAX_POINT_SHADOWS),
-/// 32 today. 64 leaves a factor of two. Cross-submit reuse is not a
-/// hazard — wgpu barriers a buffer that goes from uniform read to copy
-/// destination between submits.
-pub(super) const PARAMS_RING: u64 = 64;
+/// # 🔴 Sizing it, and the arithmetic that was wrong
+///
+/// The bound is how many times one cull object is dispatched inside one
+/// encoder. That was read as
+/// [`MAX_POINT_SHADOWS`](kooch_lighting::MAX_POINT_SHADOWS) — 32 — with
+/// 64 leaving "a factor of two".
+///
+/// **It counted one view.** The stage renders every active view into
+/// one encoder, and the editor has two. At 32 casting lamps that is
+/// exactly 64 dispatches of the same cull object against 64 slots, so
+/// the ring laps itself inside the frame and lamps are culled with each
+/// other's frusta — #853 again, by exhaustion rather than by reuse. It
+/// stayed hidden because the shipped budget was 6: twelve dispatches
+/// into sixty-four never collided, and "it works" was measured on the
+/// case that could not fail.
+///
+/// ⚠️ And the cursor is monotonic — it is never rewound at the start of
+/// a frame — so a frame beginning mid-ring wraps onto its own earlier
+/// slots with FEWER dispatches than there are slots. The margin has to
+/// swallow that too, which is why this is generous rather than exact.
+///
+/// `VIEWS_ASSUMED` is the number this is allowed to be wrong about. Two
+/// is what the editor uses today; four is the headroom, and
+/// `the_ring_covers_the_worst_case` fails if anything makes that false.
+///
+/// Cross-submit reuse is not a hazard — wgpu barriers a buffer that
+/// goes from uniform read to copy destination between submits.
+pub(super) const VIEWS_ASSUMED: u64 = 4;
+
+pub(super) const PARAMS_RING: u64 = kooch_lighting::MAX_POINT_SHADOWS as u64 * VIEWS_ASSUMED * 2;
 
 impl MeshletCull {
     /// Storage capacity (in meshlets) of the visible-output buffer.
