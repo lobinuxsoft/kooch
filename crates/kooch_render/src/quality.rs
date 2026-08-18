@@ -135,7 +135,7 @@ impl Default for TemporalSettings {
     /// every pixel of the image, and that is not something to adopt on
     /// behalf of a project that never mentioned it. The
     /// `.rendersettings` default is the same, and for a sharper reason:
-    /// see `default_temporal_aa` in `crate::settings`.
+    /// see `default_upscale` in `crate::settings`.
     fn default() -> Self {
         Self::new(UpscaleTechnique::None)
     }

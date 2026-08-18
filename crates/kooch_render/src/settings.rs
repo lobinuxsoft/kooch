@@ -214,19 +214,6 @@ pub struct RenderSettings {
     /// contact-shadow ray, the reduced shading rate. It costs one
     /// full-screen pass and one history texture, and it needs
     /// `compute_shading`.
-    /// 🔴 Legacy, and NOT shown in the inspector — the dropdown below
-    /// replaced it, and two controls for one decision is how they end up
-    /// disagreeing.
-    ///
-    /// ⚠️ The FIELD stays even though the control is gone, because it is
-    /// what an old file's `upscale` is migrated from. Deleting it would
-    /// take that with it and every project that had the resolve on would
-    /// come back with it off — silently. It can go once no project in
-    /// the wild predates `upscale`, which is not a date anyone can name.
-    #[serde(default = "default_temporal_aa")]
-    #[reflect(skip)]
-    #[deprecated(note = "superseded by `upscale`; read only to migrate old files")]
-    pub temporal_aa: bool,
 
     /// Which temporal technique resolves the frame (#481, #536).
     ///
@@ -266,21 +253,11 @@ const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     },
 ];
 
-/// 🔴 A sentinel, not a technique: "this file predates the field".
-///
-/// It cannot be `0`, because `0` is a real answer — a project that
-/// deliberately chose no resolve — and a file written before `upscale`
-/// existed says nothing about which of the two it meant. The loader
-/// resolves this from the legacy `temporal_aa` and writes a real value,
-/// so nothing downstream ever sees it.
-///
-/// ⚠️ Without this the migration is silent data loss of exactly the
-/// kind the project's rules single out: every project that had turned
-/// the resolve ON would come back with it off, no error, no warning.
-pub const UPSCALE_UNSET: u32 = u32::MAX;
-
+/// No resolve — what every capture before #481 was taken against. A
+/// temporal technique rewrites every pixel of the image, which is not
+/// something to adopt for a project that never asked for it.
 fn default_upscale() -> u32 {
-    UPSCALE_UNSET
+    0
 }
 
 /// The two rates that exist. Quarter rate is deliberately absent: at
@@ -349,7 +326,7 @@ fn default_contact_thickness() -> f32 {
 /// 🔴 These four are the ENGINE's defaults, deliberately, and an
 /// earlier version of this file got it wrong.
 ///
-/// It shipped with `compute_shading` and `temporal_aa` defaulting to
+/// It shipped with `compute_shading` and the temporal resolve defaulting to
 /// true, reasoning that a project with a settings asset has an author
 /// who can see the result. What actually happened is that every
 /// existing project — which has a `.rendersettings` written before
@@ -369,9 +346,6 @@ fn default_compute_shading() -> bool {
 }
 fn default_shading_rate() -> u32 {
     crate::meshlet::ShadingRate::Full.factor()
-}
-fn default_temporal_aa() -> bool {
-    false
 }
 
 impl Default for RenderSettings {
@@ -402,7 +376,6 @@ impl Default for RenderSettings {
             point_shadows: shadows.point_shadows,
             compute_shading: default_compute_shading(),
             shading_rate: default_shading_rate(),
-            temporal_aa: default_temporal_aa(),
             // A value, not the sentinel: nothing to migrate from.
             upscale: 0,
         }
@@ -476,36 +449,9 @@ impl RenderSettings {
         crate::quality::TemporalSettings::new(technique)
     }
 
-    /// The technique this file asks for, with the legacy field
-    /// resolved.
-    ///
-    /// A file written before `upscale` existed carries the sentinel, and
-    /// what it meant lives in `temporal_aa`. Reading it here rather than
-    /// only in the loader means a `RenderSettings` built by hand — a
-    /// test, a game that sets it in code — migrates too.
+    /// The technique this file asks for.
     pub fn technique(&self) -> crate::quality::UpscaleTechnique {
-        if self.upscale == UPSCALE_UNSET {
-            #[allow(deprecated)]
-            return if self.temporal_aa {
-                crate::quality::UpscaleTechnique::Taa
-            } else {
-                crate::quality::UpscaleTechnique::None
-            };
-        }
         crate::quality::UpscaleTechnique::from_asset(self.upscale)
-    }
-
-    /// Replaces the sentinel with the technique it stood for, so the
-    /// inspector never has to draw a value that is not on its menu and
-    /// the next save writes the real one.
-    pub fn migrate_upscale(&mut self) {
-        if self.upscale == UPSCALE_UNSET {
-            self.upscale = match self.technique() {
-                crate::quality::UpscaleTechnique::None => 0,
-                crate::quality::UpscaleTechnique::Taa => 1,
-                crate::quality::UpscaleTechnique::Sgsr2 => 2,
-            };
-        }
     }
 
     /// Publishes into the `Resources` the shading model already reads.
@@ -538,12 +484,7 @@ impl AssetLoader<RenderSettings> for RenderSettingsLoader {
         // Every field has a serde default, so a file with one line in it
         // is valid and everything else stays at the engine's value. A
         // settings file should never fail to load because it is old.
-        let mut settings: RenderSettings =
-            ron::from_str(text).map_err(|e| AssetError::Loader(Box::new(e)))?;
-        // The one migration step: a file older than `upscale` carries
-        // the sentinel, and what it meant is in `temporal_aa`.
-        settings.migrate_upscale();
-        Ok(settings)
+        ron::from_str(text).map_err(|e| AssetError::Loader(Box::new(e)))
     }
 }
 
