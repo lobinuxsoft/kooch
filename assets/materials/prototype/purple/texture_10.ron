@@ -1,0 +1,7 @@
+(
+    base_color: (1.0, 1.0, 1.0, 1.0),
+    metallic: 0.0,
+    roughness: 0.9,
+    emissive: 0.0,
+    albedo: Some("1aca95b2-0721-47a2-a9cf-64253631a2d5"),
+)
