@@ -128,6 +128,12 @@ fn the_amount_reaches_the_shader() {
         common::read_rgba8(&r.device, &r.queue, r.stage.color_texture())
     };
 
+    // ⚠️ Discarded: the first frame of a fresh rig is the one that
+    // uploads the meshlets and the material textures, and it comes back
+    // black often enough to have failed this file in a batch while
+    // passing on its own. The claim under test is that the setting
+    // reaches the shader, not that frame zero is complete.
+    let _warm_up = shot(0, &mut r);
     let first = shot(0, &mut r);
     let again = shot(0, &mut r);
     assert_eq!(

@@ -171,7 +171,7 @@ impl Default for TemporalSettings {
     /// `.rendersettings` default is the same, and for a sharper reason:
     /// see `default_upscale` in `crate::settings`.
     fn default() -> Self {
-        Self::new(UpscaleTechnique::None, 100, 0)
+        Self::new(UpscaleTechnique::None, 100, 0, false)
     }
 }
 
@@ -212,9 +212,30 @@ impl ShadingSettings {
 }
 
 impl TemporalSettings {
-    pub fn new(technique: UpscaleTechnique, render_scale: u32, sharpening: u32) -> Self {
+    /// `compute` is whether the compute shading path is on, and it is a
+    /// gate on the scale for the same reason the technique is.
+    ///
+    /// 🔴 The fragment path tonemaps inline and shades straight into the
+    /// image the window presents: it has no HDR target, so it has no
+    /// intermediate at render resolution and nothing to resolve one
+    /// from. Handed a smaller frame it mixes a depth buffer at render
+    /// size with a colour target at window size in one pass, and **wgpu
+    /// refuses the pass** — the frame is discarded whole, which is worse
+    /// than the softness the gate on the technique exists to prevent.
+    /// Reported from the editor at 1023x816 and 50 %.
+    ///
+    /// The same rule the shading rate already follows: turning compute
+    /// off drops the rate back to full, because the fragment path has no
+    /// thread to remove. This drops the scale back to 100, because it
+    /// has nowhere to put a smaller frame.
+    pub fn new(
+        technique: UpscaleTechnique,
+        render_scale: u32,
+        sharpening: u32,
+        compute: bool,
+    ) -> Self {
         Self {
-            render_scale: if technique.upscales() {
+            render_scale: if technique.upscales() && compute {
                 render_scale
             } else {
                 100

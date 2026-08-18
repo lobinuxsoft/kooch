@@ -21,11 +21,11 @@ fn only_an_upscaler_renders_smaller() {
 #[test]
 fn the_settings_clamp_the_scale() {
     assert_eq!(
-        TemporalSettings::new(UpscaleTechnique::Taa, 50, 0).render_scale,
+        TemporalSettings::new(UpscaleTechnique::Taa, 50, 0, true).render_scale,
         100
     );
     assert_eq!(
-        TemporalSettings::new(UpscaleTechnique::Sgsr2, 50, 0).render_scale,
+        TemporalSettings::new(UpscaleTechnique::Sgsr2, 50, 0, true).render_scale,
         50
     );
 }
@@ -50,15 +50,15 @@ fn a_tiny_window_stays_renderable() {
 #[test]
 fn sharpening_is_clamped_and_ungated() {
     assert_eq!(
-        TemporalSettings::new(UpscaleTechnique::None, 100, 500).sharpening,
+        TemporalSettings::new(UpscaleTechnique::None, 100, 500, true).sharpening,
         100
     );
     assert_eq!(
-        TemporalSettings::new(UpscaleTechnique::None, 100, 60).sharpening,
+        TemporalSettings::new(UpscaleTechnique::None, 100, 60, true).sharpening,
         60
     );
     assert_eq!(
-        TemporalSettings::new(UpscaleTechnique::Sgsr2, 50, 60).sharpening,
+        TemporalSettings::new(UpscaleTechnique::Sgsr2, 50, 60, true).sharpening,
         60
     );
 }
@@ -70,4 +70,25 @@ fn native_scale_changes_nothing() {
     let out = (1280, 720);
     assert_eq!(UpscaleTechnique::Sgsr2.render_size(out, 100), out);
     assert_eq!(UpscaleTechnique::Sgsr2.render_size(out, 200), out);
+}
+
+/// 🔴 The fragment path is refused the scale, whatever the technique.
+///
+/// It tonemaps inline and shades straight into the window's image: no
+/// HDR target, no intermediate at render resolution, nothing to resolve
+/// a smaller frame from. Handed one anyway it mixes a render-sized depth
+/// buffer with a window-sized colour target in one pass and **wgpu
+/// discards the pass** — so the failure is not a soft image, it is no
+/// image. Reported from the editor at 1023x816 and 50 %.
+#[test]
+fn the_fragment_path_is_refused_the_scale() {
+    assert_eq!(
+        TemporalSettings::new(UpscaleTechnique::Sgsr2, 50, 0, false).render_scale,
+        100,
+        "an upscaler without the compute path still got a smaller frame",
+    );
+    assert_eq!(
+        TemporalSettings::new(UpscaleTechnique::Sgsr2, 50, 0, true).render_scale,
+        50,
+    );
 }

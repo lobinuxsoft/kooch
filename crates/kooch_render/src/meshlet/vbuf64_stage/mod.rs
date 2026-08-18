@@ -279,6 +279,15 @@ impl Vbuf64Stage {
         }
     }
 
+    /// Whether this view shades in compute.
+    ///
+    /// Read by the stage above to decide whether a render scale is
+    /// allowed at all: the fragment path has nothing at render
+    /// resolution to put a smaller frame into.
+    pub fn compute_shading(&self) -> bool {
+        self.compute_enabled
+    }
+
     /// How many pixels share one shaded sample (#825).
     ///
     /// Live, per frame, and with no reallocation: the reduced-resolution
