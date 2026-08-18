@@ -74,16 +74,8 @@ struct TaaUniforms {
     // 🔴 The same multiplier the tonemap pass applies, and the resolve
     // is worthless without it. See `tonemap` below.
     exposure: f32,
-    // This frame's sub-pixel offset, in RENDER pixels — the value the
-    // projection was jittered by. Zero when there is no jitter.
-    //
-    // Only the upsampling path reads it: at 1:1 every sample lands on
-    // its own pixel and the offset cancels out of the weight.
-    jitter: vec2<f32>,
-    // The render target's size, and the output's. Equal unless this is
-    // running as TAAU.
-    render_size: vec2<f32>,
-    output_size: vec2<f32>,
+    _pad0: u32,
+    _pad1: u32,
 }
 
 @group(0) @binding(0) var view_target: texture_2d<f32>;
@@ -255,48 +247,6 @@ fn sample_history(u: f32, v: f32) -> vec3<f32> {
     return tonemap(textureSample(history, linear_sampler, vec2(u, v)).rgb);
 }
 
-/// 🎯 How much this output pixel should trust a low-resolution sample
-/// that landed `offset` render-pixels away from it.
-///
-/// This one function is the whole difference between TAA and TAAU, and
-/// it is why they are the same shader. At 1:1 the render grid and the
-/// output grid coincide, every sample sits on its own pixel, the offset
-/// is the jitter alone and the weight is near one for the centre tap —
-/// which is the resolve that shipped. Below 1:1 the grids no longer
-/// line up: a sample the jitter happened to drop near this pixel is
-/// worth believing, one it dropped between pixels is not, and the
-/// history covers the difference.
-///
-/// The kernel is FSR's and SGSR's `FastLanczos`, which is the same
-/// shape both of them reach for and cheap enough to evaluate per tap.
-/// It is zero at one render pixel of separation and peaks at zero
-/// distance, so a tap that lands on the pixel dominates and one a full
-/// texel away contributes nothing.
-fn sample_weight(offset: vec2<f32>) -> f32 {
-    // 🔴 The window WIDENS as the ratio approaches 1 and narrows as it
-    // grows, which is the opposite of the intuition. At 1:1 the samples
-    // are dense and averaging further costs nothing; at 2x each sample
-    // carries four output pixels and reaching wide smears them
-    // together. FSR's and SGSR's constant, and the shape is theirs.
-    //
-    // Worked at 2x it comes to 1.0, which is what a fixed window
-    // happened to be — so this changes nothing at Performance and
-    // everything at Native, where a fixed window was half as wide as it
-    // should be.
-    let ratio = max(taa.output_size.x / max(taa.render_size.x, 1.0), 1.0);
-    let bias = mix(ratio, max(1.0, 0.3 + 0.3 * ratio), 0.0) * 0.5;
-    let d2 = dot(offset, offset);
-    let base = clamp(d2 * bias * bias, 0.0, 1.0);
-    let y = base - 1.0;
-    let y2 = y * y;
-    return (0.75 * y + y2) * y2;
-}
-
-/// Whether the render and output grids differ at all.
-fn is_upsampling() -> bool {
-    return taa.render_size.x < taa.output_size.x - 0.5;
-}
-
 fn sample_view_target(uv: vec2<f32>) -> vec3<f32> {
     let s = textureSample(view_target, nearest_sampler, uv).rgb;
     return RGB_to_YCoCg(tonemap(s));
@@ -326,69 +276,6 @@ fn fs_taa(in: Varyings) -> Output {
     var current_color = tonemap(original_color.rgb);
     var confidence = 1.0;
 
-    // 🎯 TAAU: this frame's contribution is GATHERED from the render
-    // grid rather than read off it, because below 1:1 there is no
-    // "this pixel's sample" to read — the grids do not line up.
-    //
-    // Each nearby low-resolution sample is weighted by how close the
-    // jitter dropped it to this output pixel. A sample that landed on
-    // the pixel dominates; one that landed between pixels contributes
-    // almost nothing and the history covers the gap. `gathered_weight`
-    // is how much this frame is worth here, and it feeds the blend
-    // below — so a pixel the jitter missed leans on its past rather
-    // than being handed a guess with full confidence.
-    var gathered_weight = 1.0;
-    if (is_upsampling()) {
-        // Where this output pixel sits in the render grid, and the
-        // texel that contains it.
-        let render_pos = uv * taa.render_size;
-        let base = vec2<i32>(floor(render_pos - 0.5));
-        let limit = vec2<i32>(taa.render_size) - vec2<i32>(1);
-        var accumulated = vec3<f32>(0.0);
-        var total = 0.0;
-
-        // 🔴 FIVE taps in a cross, not nine, and `textureLoad` rather
-        // than `textureSample`. Measured on the device the nine-tap
-        // filtered version cost 5.177 ms against SGSR 2's 1.868 for the
-        // same job — nine filtered fetches per output pixel where five
-        // direct ones do, on a device that measures as bandwidth-bound.
-        // The corners are what upstream leaves behind `if (false)` with
-        // the note that they "could generate more realistic output":
-        // they are worth having when there is budget, and there is not.
-        var offsets = array<vec2<i32>, 5>(
-            vec2<i32>(0, 1),
-            vec2<i32>(1, 0),
-            vec2<i32>(-1, 0),
-            vec2<i32>(0, 0),
-            vec2<i32>(0, -1),
-        );
-        for (var i = 0; i < 5; i++) {
-            let texel = base + offsets[i];
-            // ⚠️ `textureLoad` out of range is DEFINED to return zero in
-            // WGSL, so the clamp is load-bearing: without it every
-            // screen edge rings a black border into the accumulation.
-            let colour = tonemap(
-                textureLoad(view_target, clamp(texel, vec2<i32>(0), limit), 0).rgb
-            );
-            // 🔴 The jitter is SUBTRACTED: the projection was offset by
-            // it, so the sample stored at this texel was taken from that
-            // much further along. Adding it moves every weight the wrong
-            // way and reads as a soft, faintly swimming image.
-            let landed = vec2<f32>(texel) + vec2<f32>(0.5) - taa.jitter;
-            let weight = sample_weight(landed - render_pos);
-            accumulated += colour * weight;
-            total += weight;
-        }
-
-        if (total > 1.0e-05) {
-            current_color = accumulated / total;
-        }
-        // A third of the accumulated weight, which is upstream's. The
-        // raw sum runs past one when several taps land near the pixel,
-        // and that hands a gathered sample more authority than a native
-        // one ever had.
-        gathered_weight = clamp(total * (1.0 / 3.0), 0.0, 1.0);
-    }
 
     // The pixel's own depth, kept for the disocclusion test and written
     // out for the next frame to read back. Not the dilated one: what has
@@ -481,31 +368,6 @@ fn fs_taa(in: Varyings) -> Output {
             history_color, s_mm, mean - std_deviation, mean + std_deviation);
         history_color = YCoCg_to_RGB(history_color);
 
-        // 🔴 The GATHERED colour is clamped to the same neighbourhood,
-        // and only when upsampling. Upstream does this and it was
-        // missing here.
-        //
-        // A gather is a weighted sum of taps that each belong to a
-        // different surface near a silhouette, so it can land outside
-        // everything it was built from — brighter than the brightest
-        // tap, darker than the darkest. Blended in unbounded that
-        // overshoot is a hard rim along every edge, which reads as
-        // aliasing the resolve failed to remove rather than as an
-        // artefact the resolve introduced.
-        //
-        // The margin is upstream's 0.075, and it is in COMPRESSED space
-        // where the range is about [0, 1] — the same reason every
-        // constant in this shader has to be applied after `tonemap`.
-        if (is_upsampling()) {
-            let gathered = RGB_to_YCoCg(current_color);
-            let bounded = clamp(
-                gathered,
-                mean - std_deviation - vec3(0.075),
-                mean + std_deviation + vec3(0.075),
-            );
-            current_color = YCoCg_to_RGB(bounded);
-        }
-
         // 🔴 Read at `history_uv`, not at `uv`. Both of these describe
         // the surface the history belongs to, so both have to be
         // fetched from where that surface WAS. Reading the counter at
@@ -530,12 +392,6 @@ fn fs_taa(in: Varyings) -> Output {
 
         var current_color_factor =
             clamp(1.0 / confidence, MIN_HISTORY_BLEND_RATE, DEFAULT_HISTORY_BLEND_RATE);
-        // Scaled by what this frame is worth at this pixel. At 1:1 the
-        // gather is skipped and this is 1, which is the resolve that
-        // shipped; upsampling, a pixel the jitter missed keeps more of
-        // its history instead of being overwritten by a sample that
-        // describes somewhere else.
-        current_color_factor *= gathered_weight;
 
         // Off-screen history is not history. Reprojecting past the edge
         // clamps to the border texel, which smears the frame's outermost

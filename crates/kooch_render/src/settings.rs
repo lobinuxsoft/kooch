@@ -277,10 +277,6 @@ const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
         value: 1,
     },
     kooch_ecs::reflect::FieldChoice {
-        label: "TAAU — ours, upscaling",
-        value: 3,
-    },
-    kooch_ecs::reflect::FieldChoice {
         label: "SGSR 2 — Qualcomm's, transliterated",
         value: 2,
     },
@@ -305,8 +301,8 @@ fn default_upscale() -> u32 {
 /// reason the choices are: they live in user projects.
 static UPSCALES_WHEN: kooch_ecs::reflect::FieldCondition = kooch_ecs::reflect::FieldCondition {
     field: "upscale",
-    // Taau, Sgsr2.
-    values: &[3, 2],
+    // Sgsr2.
+    values: &[2],
 };
 
 /// AMD's preset ladder, by the name each ratio is known under, because

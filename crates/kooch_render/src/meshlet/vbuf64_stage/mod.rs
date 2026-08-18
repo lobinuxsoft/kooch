@@ -183,7 +183,7 @@ impl Vbuf64Stage {
         let upsample = ShadingUpsample::new(device, size);
         let tonemap = Tonemap::new(device, size);
         let motion = MotionVectors::new(device, size, meshlet_bgl);
-        let taa = Taa::new(device, size, output_size);
+        let taa = Taa::new(device, size);
         // 🔴 Half rate is a property of the compute path and nothing
         // else: the fragment path shades inside its own raster, one
         // invocation per covered pixel, and has no thread to remove.
@@ -246,7 +246,7 @@ impl Vbuf64Stage {
         self.upsample.resize(device, size);
         self.tonemap.resize(device, size);
         self.motion.resize(device, size);
-        self.taa.resize(device, size, output_size);
+        self.taa.resize(device, size);
         self.sgsr2.resize(device, size, output_size);
         self.size = size;
         self.output_size = output_size;
@@ -641,7 +641,6 @@ impl Vbuf64Stage {
                     // between them is two numbers under one label.
                     let label = match self.technique {
                         crate::quality::UpscaleTechnique::Sgsr2 => "sgsr2",
-                        crate::quality::UpscaleTechnique::Taau => "taau",
                         _ => "taa",
                     };
                     let query = match (scopes, parent) {
@@ -666,8 +665,6 @@ impl Vbuf64Stage {
                                 fov_k: self.fov_k,
                             },
                         ),
-                        // Taa and Taau are the same pass: at 1:1 every
-                        // gather weight collapses to one and it IS Taa.
                         _ => self.taa.draw(
                             device,
                             queue,
@@ -676,9 +673,6 @@ impl Vbuf64Stage {
                             self.motion.view(),
                             depth_sample_view,
                             exposure,
-                            self.last_jitter,
-                            self.size,
-                            self.output_size,
                         ),
                     };
                     if let (Some(scopes), Some(query)) = (scopes, query) {

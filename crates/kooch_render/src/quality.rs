@@ -78,18 +78,6 @@ pub enum UpscaleTechnique {
     /// of Bevy, with the departures recorded in `taa.wgsl`. Resolves at
     /// render resolution; it antialiases and does not upscale.
     Taa,
-    /// The same resolve, gathering the low-resolution samples into the
-    /// output grid instead of reading one per pixel (#481).
-    ///
-    /// 🎯 TAAU is the CATEGORY and SGSR 2 is one implementation of it.
-    /// This is ours, and it is the same shader as [`Self::Taa`] — at 1:1
-    /// the two grids coincide, every weight collapses to one and it IS
-    /// `Taa`. What differs from SGSR 2 is every decision inside: history
-    /// clipped in YCoCg rather than clamped in RGB, disocclusion from a
-    /// reversed-Z ratio rather than from AMD's tuned separation
-    /// constant, and a range compressor that sees the exposure — which
-    /// this engine cannot do without and mobile renderers never need.
-    Taau,
     /// Snapdragon Game Super Resolution 2, transliterated (BSD-3).
     /// Resolves **and** upscales.
     ///
@@ -116,7 +104,7 @@ impl UpscaleTechnique {
     /// presents. Distinct from [`Self::is_temporal`]: a resolve that
     /// only antialiases is temporal and not upscaling.
     pub fn upscales(self) -> bool {
-        matches!(self, Self::Taau | Self::Sgsr2)
+        matches!(self, Self::Sgsr2)
     }
 
     /// The value as it is written in a `.rendersettings` file.
@@ -128,7 +116,6 @@ impl UpscaleTechnique {
         match value {
             1 => Self::Taa,
             2 => Self::Sgsr2,
-            3 => Self::Taau,
             _ => Self::None,
         }
     }
