@@ -111,7 +111,11 @@ impl Mipmapper {
         }
     }
 
-    fn pipeline(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+    fn pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
         self.pipelines.entry(format).or_insert_with(|| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("mip_blit_pipeline"),
@@ -145,7 +149,12 @@ impl Mipmapper {
     /// the caller submits later would read a level that is not there
     /// yet. One texture is one submission; this runs at import, not per
     /// frame.
-    pub fn generate(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) {
+    pub fn generate(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+    ) {
         let levels = texture.mip_level_count();
         if levels < 2 {
             return;

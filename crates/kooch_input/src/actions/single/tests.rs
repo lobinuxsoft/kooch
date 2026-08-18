@@ -14,9 +14,7 @@ fn jump() -> Action {
 fn one_action_round_trips_through_its_own_file() {
     let action = jump();
     let text = to_ron(&action).expect("serialise");
-    let mut ctx = LoadContext {
-        path: std::path::Path::new("jump.inputaction"),
-    };
+    let mut ctx = LoadContext::new(std::path::Path::new("jump.inputaction"));
     let back = InputActionLoader
         .load(text.as_bytes(), &mut ctx)
         .expect("load");

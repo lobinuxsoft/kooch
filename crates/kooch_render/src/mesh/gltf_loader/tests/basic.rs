@@ -17,9 +17,7 @@ fn extensions_includes_glb_and_gltf() {
 #[test]
 fn invalid_bytes_return_loader_error() {
     let loader = GltfMeshLoader;
-    let mut ctx = LoadContext {
-        path: Path::new("bogus.glb"),
-    };
+    let mut ctx = LoadContext::new(Path::new("bogus.glb"));
     let err = loader.load(b"not a real glb", &mut ctx).unwrap_err();
     match err {
         AssetError::Loader(_) => {}
@@ -31,9 +29,7 @@ fn invalid_bytes_return_loader_error() {
 fn minimal_glb_round_trip() {
     let glb = build_minimal_triangle_glb();
     let loader = GltfMeshLoader;
-    let mut ctx = LoadContext {
-        path: Path::new("triangle.glb"),
-    };
+    let mut ctx = LoadContext::new(Path::new("triangle.glb"));
     let mesh = loader
         .load(&glb, &mut ctx)
         .expect("loader should accept minimal glb");

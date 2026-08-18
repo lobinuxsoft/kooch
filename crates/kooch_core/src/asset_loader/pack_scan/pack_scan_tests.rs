@@ -60,6 +60,7 @@ fn packed_assets_are_registered_by_guid() {
             Some(AssetMeta {
                 guid,
                 asset_type: Some("Mesh".to_owned()),
+                import: None,
             }),
         )],
     );
@@ -91,6 +92,7 @@ fn the_registered_path_is_readable() {
             Some(AssetMeta {
                 guid,
                 asset_type: None,
+                import: None,
             }),
         )],
     );
@@ -118,6 +120,7 @@ fn sidecars_are_not_registered_as_assets() {
             Some(AssetMeta {
                 guid: Guid::new_v4(),
                 asset_type: None,
+                import: None,
             }),
         )],
     );
@@ -162,6 +165,7 @@ fn a_malformed_sidecar_is_an_orphan() {
             toml::to_string_pretty(&AssetMeta {
                 guid: Guid::new_v4(),
                 asset_type: None,
+                import: None,
             })
             .unwrap()
             .as_bytes(),

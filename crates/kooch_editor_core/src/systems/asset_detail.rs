@@ -221,12 +221,22 @@ fn gather_image(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
     let handle = load_handle::<Image>(guid, resources)?;
     let images = resources.get::<Assets<Image>>()?;
     let img = images.get(handle)?;
-    Some(AssetDetail::Image(ImageImportInfo {
+    let info = ImageImportInfo {
         width: img.width,
         height: img.height,
         format: format_name(img.format),
         bytes: img.byte_count(),
-    }))
+        // Read off the loaded image rather than the sidecar: the image
+        // is what the loader decided after reading the sidecar, so this
+        // shows what the texture IS and not what a file says it should
+        // be. They differ exactly while a `.meta` is malformed, which is
+        // the case worth seeing.
+        import: kooch_render::texture::ImageImport {
+            mipmaps: img.mipmaps,
+        },
+        levels: kooch_render::texture::level_count(img.width, img.height),
+    };
+    Some(AssetDetail::Image(info))
 }
 
 /// Resolves `guid` to a typed handle through the `AssetServer`, loading

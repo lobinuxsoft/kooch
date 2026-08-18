@@ -31,5 +31,5 @@ mod mipmap;
 
 pub use asset::{Image, ImageFormat};
 pub use gpu_texture::GpuTexture;
-pub use image_loader::ImageLoader;
+pub use image_loader::{ImageImport, ImageLoader};
 pub use mipmap::{Mipmapper, level_count};

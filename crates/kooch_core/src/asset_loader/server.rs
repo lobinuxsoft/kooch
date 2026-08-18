@@ -177,7 +177,13 @@ impl AssetServer {
         }
 
         let bytes = self.packs.read_or_disk(&path)?;
-        let mut ctx = LoadContext { path: &path };
+        // The sidecar is read for its `[import]` table, and its absence
+        // is not an error: a file with no `.meta` yet — one dropped into
+        // the folder a moment ago — still loads, on the engine's
+        // defaults.
+        let meta = asset_meta::read_meta(&path).ok();
+        let mut ctx =
+            LoadContext::with_import(&path, meta.as_ref().and_then(|m| m.import.as_ref()));
         let boxed = loader.load_boxed(&bytes, &mut ctx)?;
 
         // Downcast back to T. Safe by construction — registry is keyed by
@@ -316,7 +322,12 @@ impl AssetServer {
                 // this one does not — nothing to refresh it with.
                 continue;
             };
-            let mut ctx = LoadContext { path: &path };
+            // Hot reload takes the sidecar as it is on disk right now:
+            // editing the `[import]` table and saving is a reload, and
+            // the point of the table is to see the answer change.
+            let meta = asset_meta::read_meta(&path).ok();
+            let mut ctx =
+                LoadContext::with_import(&path, meta.as_ref().and_then(|m| m.import.as_ref()));
             match loader.reload_into(&bytes, &mut ctx, key, resources)? {
                 true => reloaded += 1,
                 false => stale.push(type_id),

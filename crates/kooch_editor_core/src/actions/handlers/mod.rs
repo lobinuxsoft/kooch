@@ -135,6 +135,9 @@ pub(super) fn apply_non_ecs_action(
         } => {
             handle_edit_material(resources, *guid, material, *commit);
         }
+        EditorAction::SetImageImport { guid, import } => {
+            handle_set_image_import(resources, *guid, *import);
+        }
         EditorAction::EditAssetField {
             guid,
             field,
@@ -185,7 +188,9 @@ fn handle_copy(resources: &mut Resources, entities: &[kooch_ecs::entity::Entity]
 
 /// Copies each source file into `dest`, then forces a project asset
 /// re-scan so the new files register (and get `.meta` sidecars) and
-use assets::{handle_edit_asset_field, handle_edit_material, handle_import_assets};
+use assets::{
+    handle_edit_asset_field, handle_edit_material, handle_import_assets, handle_set_image_import,
+};
 use play::{handle_play, handle_stop};
 use project::{
     handle_clean_project, handle_close_project, handle_create_project, handle_launch_project,

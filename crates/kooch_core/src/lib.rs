@@ -42,6 +42,13 @@
 //! * Physics stages run N times per frame to catch up to real time
 //! ```
 
+// Re-exported because `AssetMeta::import` and
+// `LoadContext::with_import` both carry a `toml::Table` in their public
+// signatures: a crate that writes an importer already depends on this
+// type, and making it add the dependency by hand is how two versions of
+// the same parser end up in one build.
+pub use toml;
+
 pub mod aabb;
 pub mod app;
 pub mod asset_database;

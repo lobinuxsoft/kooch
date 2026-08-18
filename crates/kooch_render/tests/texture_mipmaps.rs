@@ -23,7 +23,9 @@ fn read_level(
     texture: &wgpu::Texture,
     level: u32,
 ) -> Vec<u8> {
-    let size = texture.size().mip_level_size(level, wgpu::TextureDimension::D2);
+    let size = texture
+        .size()
+        .mip_level_size(level, wgpu::TextureDimension::D2);
     let (w, h) = (size.width, size.height);
     let padded = (w * 4).div_ceil(256) * 256;
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
@@ -174,7 +176,11 @@ fn every_level_is_written() {
     let texture = GpuTexture::upload_with(&device, &queue, &image, &mut mipmapper);
 
     let levels = level_count(side as u32, side as u32);
-    assert_eq!(texture.texture.mip_level_count(), levels, "wrong chain length");
+    assert_eq!(
+        texture.texture.mip_level_count(),
+        levels,
+        "wrong chain length"
+    );
     for level in 0..levels {
         let data = read_level(&device, &queue, &texture.texture, level);
         assert!(

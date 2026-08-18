@@ -3,9 +3,7 @@ use super::*;
 fn ctx_free_load(bytes: &[u8]) -> AssetResult<SceneDocument> {
     // The context only carries the source path, which this loader does
     // not consult — a prefab's contents are self-describing.
-    let mut ctx = LoadContext {
-        path: std::path::Path::new("x.prefab"),
-    };
+    let mut ctx = LoadContext::new(std::path::Path::new("x.prefab"));
     PrefabLoader.load(bytes, &mut ctx)
 }
 

@@ -14,7 +14,7 @@ fn defaults_match_what_the_engine_does_without_a_file() {
 fn a_partial_file_fills_the_rest_from_defaults() {
     let loader = RenderSettingsLoader;
     let path = std::path::Path::new("project.rendersettings");
-    let mut ctx = LoadContext { path };
+    let mut ctx = LoadContext::new(path);
     let parsed = loader
         .load(b"(aperture_f_stops: 1.4)", &mut ctx)
         .expect("a one-field file should load");
@@ -29,7 +29,7 @@ fn a_partial_file_fills_the_rest_from_defaults() {
 fn an_empty_file_is_entirely_defaults() {
     let loader = RenderSettingsLoader;
     let path = std::path::Path::new("project.rendersettings");
-    let mut ctx = LoadContext { path };
+    let mut ctx = LoadContext::new(path);
     let parsed = loader
         .load(b"()", &mut ctx)
         .expect("an empty record should load");
@@ -50,7 +50,7 @@ fn round_trips_through_ron() {
 fn nonsense_is_refused_rather_than_defaulted() {
     let loader = RenderSettingsLoader;
     let path = std::path::Path::new("project.rendersettings");
-    let mut ctx = LoadContext { path };
+    let mut ctx = LoadContext::new(path);
     assert!(loader.load(b"this is not ron", &mut ctx).is_err());
 }
 
@@ -101,7 +101,7 @@ fn the_unit_of_each_number_is_stated() {
 fn a_settings_file_with_the_removed_field_still_loads() {
     let loader = RenderSettingsLoader;
     let path = std::path::Path::new("project.rendersettings");
-    let mut ctx = LoadContext { path };
+    let mut ctx = LoadContext::new(path);
     let parsed = loader
         .load(
             b"(aperture_f_stops: 2.8, light_samples: 4, compute_shading: true)",

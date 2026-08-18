@@ -52,12 +52,7 @@ impl GpuTexture {
         texture
     }
 
-    fn allocate(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        image: &Image,
-        levels: u32,
-    ) -> Self {
+    fn allocate(device: &wgpu::Device, queue: &wgpu::Queue, image: &Image, levels: u32) -> Self {
         let size = wgpu::Extent3d {
             width: image.width,
             height: image.height,

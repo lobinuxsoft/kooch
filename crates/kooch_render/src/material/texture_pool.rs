@@ -153,6 +153,16 @@ impl MaterialTexturePool {
         self.textures.insert(guid, texture);
     }
 
+    /// Drops the texture for `guid`, so the next sync uploads it again.
+    ///
+    /// What a re-import is, from the pool's side. The bytes on disk did
+    /// not change — the answer about them did, and the answer lives in
+    /// the texture's descriptor: a chain is levels allocated at creation
+    /// and there is no way to add one to a texture that already exists.
+    pub fn evict(&mut self, guid: Guid) -> bool {
+        self.textures.remove(&guid).is_some()
+    }
+
     /// True if a texture is already uploaded for `guid`.
     pub fn contains(&self, guid: Guid) -> bool {
         self.textures.contains_key(&guid)

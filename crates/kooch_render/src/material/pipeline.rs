@@ -24,6 +24,28 @@ use kooch_core::resource::Resources;
 use super::{Material, MaterialParams, MaterialPool, MaterialTexturePool};
 use crate::texture::Image;
 
+/// Textures whose `.meta` changed and have to be uploaded again.
+///
+/// A resource rather than a method call because the editor is what
+/// edits an import and the pool lives inside the render stage, several
+/// borrows away. Whoever rewrites a sidecar puts the GUID here; the
+/// texture sync drains it on its next pass.
+///
+/// 🔴 It exists because a mip chain is **levels allocated at texture
+/// creation**. There is no API that adds one afterwards, so an import
+/// setting that only rewrote the file would show its effect the next
+/// time the project was opened — which reads as "the checkbox does
+/// nothing".
+#[derive(Debug, Default)]
+pub struct TextureReimports(pub std::collections::HashSet<Guid>);
+
+impl TextureReimports {
+    /// Marks `guid` for re-upload on the next texture sync.
+    pub fn queue(&mut self, guid: Guid) {
+        self.0.insert(guid);
+    }
+}
+
 /// Static type name [`AssetEntry`s carry] when their loader is
 /// [`MaterialLoader`](super::MaterialLoader). Keeps the picker's
 /// `#[reflect(asset = …)]` attribute and the pipeline's filter in
@@ -311,6 +333,15 @@ impl MaterialPipeline {
         snapshots: &[(Guid, Material)],
         resources: &mut Resources,
     ) {
+        // A re-import is a texture the pool must forget before it can
+        // ask whether it has it. Drained rather than read, so one edit
+        // costs one re-upload.
+        if let Some(reimports) = resources.get_mut::<TextureReimports>() {
+            let guids: Vec<Guid> = reimports.0.drain().collect();
+            for guid in guids {
+                self.texture_pool.evict(guid);
+            }
+        }
         let mut pending: Vec<Guid> = Vec::new();
         let mut seen: HashSet<Guid> = HashSet::new();
         for (_, mat) in snapshots {
