@@ -83,3 +83,38 @@ fn an_even_panel_still_works() {
         eprintln!("no adapter; skipping");
     }
 }
+
+/// 🔴 The frame where the two settings disagree.
+///
+/// This is the one the editor actually hits, and the gate at the
+/// settings boundary does not catch it: the scale and the shading path
+/// arrive on different frames. `resize_view` allocates from the scale it
+/// can see; `render` applies the path it was given. In between there is
+/// a frame whose targets belong to one answer and whose shader belongs
+/// to the other — reported from a running editor **after** the boundary
+/// gate had shipped, which is how this test came to exist.
+///
+/// Reproduced by doing exactly that: allocate at a reduced size with the
+/// compute path on, then switch the path off without resizing.
+#[test]
+fn a_path_switch_between_frames_does_not_take_the_frame_down() {
+    let _gpu = gpu_lock();
+    let Some(mut r) = rig(3, true) else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    assert!(r.stage.set_compute_shading(true) > 0);
+    assert!(r.stage.set_upscale(UpscaleTechnique::Sgsr2) > 0);
+    r.stage.set_render_scale(50);
+    r.stage.resize(&r.device, (1023, 816));
+
+    // The frame the editor produces: the path changed, the attachments
+    // have not been rebuilt for it yet.
+    assert!(r.stage.set_compute_shading(false) > 0);
+    r.stage
+        .render_with_assets_primary(&r.device, &r.queue, &r.resources, &r.camera, 1.0);
+    let _ = r.device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
+}

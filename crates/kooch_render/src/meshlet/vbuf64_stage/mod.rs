@@ -612,6 +612,25 @@ impl Vbuf64Stage {
                     self.shading_rate,
                     debug_mode,
                 );
+            } else if self.size != self.output_size {
+                // 🔴 The fragment path shades a render-sized material
+                // depth buffer onto the window-sized image, and wgpu
+                // refuses a pass whose attachments disagree — it
+                // discards the whole thing, so the frame is not soft, it
+                // is absent.
+                //
+                // The settings boundary already refuses a scale without
+                // the compute path, and this still happens: the two
+                // arrive on different frames. `resize_view` allocates
+                // from the scale it can see, `render` applies the path
+                // it was given, and between those two a frame exists
+                // where the targets belong to one answer and the shader
+                // to the other.
+                //
+                // Skipped rather than reconciled. It is one frame, the
+                // next one has both, and the alternative — reallocating
+                // mid-render — drops bind groups the GPU still holds.
+                warn_once_about_transitional_frame(self.size, self.output_size);
             } else {
                 self.two_pass.shade(
                     device,
@@ -772,6 +791,24 @@ impl Vbuf64Stage {
             }
         }
     }
+}
+
+/// Reports the mismatched frame once, and never again.
+///
+/// Once, because it is transitional by nature: a settings change lands
+/// on one frame and the reallocation on the next. A line per frame would
+/// be a log nobody reads; a line per session is how anyone finds out
+/// this path exists at all.
+fn warn_once_about_transitional_frame(render: (u32, u32), output: (u32, u32)) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing::warn!(
+            target: "kooch_render::meshlet",
+            render_size = ?render,
+            output_size = ?output,
+            "the fragment shading path was handed a reduced render size and skipped a              frame; the scale belongs to the compute path and the two settings landed              one frame apart",
+        );
+    });
 }
 
 /// True for the debug modes Inti resolves inside the shading shader,

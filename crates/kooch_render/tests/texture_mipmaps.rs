@@ -207,3 +207,70 @@ fn an_import_can_refuse_the_chain() {
     let texture = GpuTexture::upload_with(&device, &queue, &image, &mut mipmapper);
     assert_eq!(texture.texture.mip_level_count(), 1);
 }
+
+/// 🔴 Level zero survives, and the levels above it lose detail in order.
+///
+/// ⚠️ Written because `every_level_is_written` cannot fail on the thing
+/// that matters: it fills a texture with solid white and asserts every
+/// level is white, and every average of white is white. A chain that
+/// wrote garbage, that copied the smallest level over all of them, or
+/// that overwrote level zero with its own average would pass it.
+///
+/// This one uses a checker, so each level has an expected VARIANCE: the
+/// original is all-or-nothing, and each halving averages more of it away
+/// until the last level is flat. Level zero staying sharp is the half
+/// that matters — a texture whose level zero was averaged looks the same
+/// at every distance, which is exactly what a broken LOD selection also
+/// looks like, and the two would be indistinguishable from a screenshot.
+#[test]
+fn the_chain_loses_detail_in_order() {
+    let _gpu = gpu_lock();
+    let Some((device, queue)) = common::try_acquire_device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    // 8x8, one-pixel checker: four levels, and the last is 1x1.
+    let side = 8usize;
+    let mut px = Vec::with_capacity(side * side * 4);
+    for y in 0..side {
+        for x in 0..side {
+            let v = if (x + y) % 2 == 0 { 0u8 } else { 255 };
+            px.extend_from_slice(&[v, v, v, 255]);
+        }
+    }
+    let image = Image::from_rgba8(px, side as u32, side as u32, ImageFormat::Rgba8Unorm);
+    let mut mipmapper = Mipmapper::new(&device);
+    let texture = GpuTexture::upload_with(&device, &queue, &image, &mut mipmapper);
+    assert_eq!(texture.texture.mip_level_count(), 4);
+
+    let spread = |data: &[u8]| -> u32 {
+        let reds: Vec<u8> = data.chunks_exact(4).map(|p| p[0]).collect();
+        u32::from(*reds.iter().max().unwrap()) - u32::from(*reds.iter().min().unwrap())
+    };
+
+    let level_0 = read_level(&device, &queue, &texture.texture, 0);
+    eprintln!("level 0 spread {}", spread(&level_0));
+    assert_eq!(
+        spread(&level_0),
+        255,
+        "level zero is no longer the image that was uploaded — something averaged it, \
+         and a texture like that looks identical at every distance",
+    );
+
+    let mut previous = spread(&level_0);
+    for level in 1..4 {
+        let data = read_level(&device, &queue, &texture.texture, level);
+        let s = spread(&data);
+        eprintln!("level {level} spread {s}");
+        assert!(
+            s <= previous,
+            "level {level} has MORE contrast than the level below it, so it was not \
+             built from it",
+        );
+        previous = s;
+    }
+    assert_eq!(
+        previous, 0,
+        "the last level is 1x1 and cannot have a spread"
+    );
+}
