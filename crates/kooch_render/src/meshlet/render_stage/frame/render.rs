@@ -175,6 +175,11 @@ impl MeshletRenderStage {
                 }
                 if let Some(temporal) = temporal {
                     stage.set_upscale(temporal.technique);
+                    // Applied per frame rather than at resize: unlike
+                    // the scale, this allocates nothing and changes no
+                    // texture's size, so it can land immediately and be
+                    // judged by dragging the slider and looking.
+                    stage.set_sharpening(temporal.sharpening);
                 }
                 // SGSR 2's depth-clip threshold scales by the lens, so
                 // it has to be told. Set unconditionally: a technique

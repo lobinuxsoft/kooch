@@ -257,6 +257,29 @@ pub struct RenderSettings {
         shown_when = UPSCALES_WHEN
     )]
     pub render_scale: u32,
+
+    /// How hard the finished image is sharpened, 0..=100 (#481, step 5).
+    ///
+    /// RCAS — a single full-screen pass at the very end of the frame,
+    /// after the curve. Reconstruction is soft by construction: the
+    /// resolve builds each output pixel out of samples that landed NEAR
+    /// it rather than on it, and a weighted average of neighbours is a
+    /// low-pass filter however good the weights are. Every shipping
+    /// upscaler ends in this pass.
+    ///
+    /// 🔴 **Not optional polish when `render_scale` is below 100.**
+    /// Leaving it at zero there is how an upscaler earns the verdict
+    /// *"we tried it, it looked worse, we turned it off"* — the frame
+    /// time is won and the image is the thing everyone remembers.
+    /// 60 is a reasonable starting amount; the value is judged on a
+    /// screen, not in a test.
+    ///
+    /// ⚠️ Deliberately NOT gated on the technique. A native frame may
+    /// want a little, and a control that turns itself off when the
+    /// upscaler changes is worse than one that stays put.
+    #[serde(default = "default_sharpening")]
+    #[reflect(group = "Temporal")]
+    pub sharpening: u32,
 }
 
 /// The techniques the inspector offers.
@@ -328,6 +351,17 @@ const RENDER_SCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 
 fn default_render_scale() -> u32 {
     100
+}
+
+/// No sharpening, for the reason no resolve is the default: this
+/// rewrites every pixel of a finished image, and a project that never
+/// mentioned it did not ask for that.
+///
+/// ⚠️ The engine's own capture project is not that project — a scale
+/// below 100 without this is half the change, and the half that gets
+/// judged.
+fn default_sharpening() -> u32 {
+    0
 }
 
 /// The two rates that exist. Quarter rate is deliberately absent: at
@@ -448,6 +482,7 @@ impl Default for RenderSettings {
             shading_rate: default_shading_rate(),
             upscale: 0,
             render_scale: default_render_scale(),
+            sharpening: default_sharpening(),
         }
     }
 }
@@ -516,7 +551,7 @@ impl RenderSettings {
         } else {
             crate::quality::UpscaleTechnique::None
         };
-        crate::quality::TemporalSettings::new(technique, self.render_scale)
+        crate::quality::TemporalSettings::new(technique, self.render_scale, self.sharpening)
     }
 
     /// The technique this file asks for.

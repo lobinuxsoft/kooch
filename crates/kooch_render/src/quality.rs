@@ -132,6 +132,16 @@ pub struct TemporalSettings {
     /// twice. A resolve that cannot reconstruct handed a smaller frame
     /// produces a blurrier one and no speed the blit does not give back.
     pub render_scale: u32,
+    /// How hard RCAS sharpens the finished image, 0..=100 (#481 step 5).
+    ///
+    /// ⚠️ Not temporal, and it travels here anyway: it exists because
+    /// reconstruction is soft by construction, it is chosen in the same
+    /// breath as the technique and the scale, and a settings bundle
+    /// split three ways is three places to forget. What it is NOT is
+    /// gated on the technique — a native frame may want a little of it,
+    /// and a control that silently turns itself off when the upscaler
+    /// changes is the footgun `render_scale` already had.
+    pub sharpening: u32,
 }
 
 impl UpscaleTechnique {
@@ -161,7 +171,7 @@ impl Default for TemporalSettings {
     /// `.rendersettings` default is the same, and for a sharper reason:
     /// see `default_upscale` in `crate::settings`.
     fn default() -> Self {
-        Self::new(UpscaleTechnique::None, 100)
+        Self::new(UpscaleTechnique::None, 100, 0)
     }
 }
 
@@ -202,13 +212,18 @@ impl ShadingSettings {
 }
 
 impl TemporalSettings {
-    pub fn new(technique: UpscaleTechnique, render_scale: u32) -> Self {
+    pub fn new(technique: UpscaleTechnique, render_scale: u32, sharpening: u32) -> Self {
         Self {
             render_scale: if technique.upscales() {
                 render_scale
             } else {
                 100
             },
+            // Clamped once, here, for the same reason the scale is
+            // gated once: every consumer downstream then gets a value
+            // it can use without asking whether someone typed 500 into
+            // a text file.
+            sharpening: sharpening_override().unwrap_or(sharpening).min(100),
             // 🔴 The variable is still a BOOLEAN, and deliberately so.
             // It exists to force a technique on or off from a Steam
             // launch option while capturing on the handheld, where the
@@ -261,6 +276,31 @@ pub fn temporal_aa_override() -> Option<bool> {
     )
 }
 
+/// `KOOCH_SHARPENING=0..100`, read once.
+///
+/// The sixth variable of this shape, and the first one whose reason is
+/// not cost but LOOK: what RCAS buys is only visible on a screen being
+/// looked at, and the screen that matters is a handheld's at 1280x720
+/// running a shipped build through Steam. There is no editor in that
+/// process to move a slider in.
+///
+/// `None` when the variable says nothing or says something
+/// unrecognised, so the project's own setting stands — a typo during a
+/// capture must not silently decide which half of an A/B is running.
+pub fn sharpening_override() -> Option<u32> {
+    static AMOUNT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *AMOUNT.get_or_init(|| {
+        let raw = std::env::var("KOOCH_SHARPENING").ok()?;
+        let percent = raw.trim().parse::<u32>().ok()?.min(100);
+        tracing::info!(
+            target: "kooch_render::quality",
+            percent,
+            "KOOCH_SHARPENING: the finished image is sharpened by RCAS",
+        );
+        Some(percent)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,11 +326,11 @@ mod tests {
     #[test]
     fn the_settings_clamp_the_scale() {
         assert_eq!(
-            TemporalSettings::new(UpscaleTechnique::Taa, 50).render_scale,
+            TemporalSettings::new(UpscaleTechnique::Taa, 50, 0).render_scale,
             100
         );
         assert_eq!(
-            TemporalSettings::new(UpscaleTechnique::Sgsr2, 50).render_scale,
+            TemporalSettings::new(UpscaleTechnique::Sgsr2, 50, 0).render_scale,
             50
         );
     }
@@ -302,6 +342,30 @@ mod tests {
     fn a_tiny_window_stays_renderable() {
         assert_eq!(UpscaleTechnique::Sgsr2.render_size((1, 1), 50), (1, 1));
         assert_eq!(UpscaleTechnique::Sgsr2.render_size((0, 0), 50), (1, 1));
+    }
+
+    /// 🔴 Sharpening is clamped at the same boundary the scale is gated
+    /// at, and it is NOT gated on the technique.
+    ///
+    /// The clamp matters because the amount multiplies a limiter that
+    /// upstream measured as the edge of natural results: 500 % is five
+    /// times past it, which is a halo around every edge in the frame,
+    /// from one typo in a text file. And the absence of a gate is
+    /// deliberate — a native frame is allowed to ask for a little.
+    #[test]
+    fn sharpening_is_clamped_and_ungated() {
+        assert_eq!(
+            TemporalSettings::new(UpscaleTechnique::None, 100, 500).sharpening,
+            100
+        );
+        assert_eq!(
+            TemporalSettings::new(UpscaleTechnique::None, 100, 60).sharpening,
+            60
+        );
+        assert_eq!(
+            TemporalSettings::new(UpscaleTechnique::Sgsr2, 50, 60).sharpening,
+            60
+        );
     }
 
     /// 100 is the identity, and it is what every capture on record was
