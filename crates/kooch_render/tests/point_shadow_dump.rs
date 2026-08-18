@@ -660,7 +660,9 @@ fn owners_rig(casting: bool) -> Option<Rig> {
             rate: kooch_render::meshlet::ShadingRate::Half,
         });
     rig.resources
-        .insert(kooch_render::quality::TemporalSettings { enabled: true });
+        .insert(kooch_render::quality::TemporalSettings {
+            technique: kooch_render::quality::UpscaleTechnique::Taa,
+        });
     rig.resources.insert(ShadowSettings {
         cascade_texels: 512,
         max_distance: 30.0,
@@ -1003,7 +1005,9 @@ fn reported_scene(casting: bool) -> Option<Rig> {
             rate: kooch_render::meshlet::ShadingRate::Half,
         });
     rig.resources
-        .insert(kooch_render::quality::TemporalSettings { enabled: true });
+        .insert(kooch_render::quality::TemporalSettings {
+            technique: kooch_render::quality::UpscaleTechnique::Taa,
+        });
     rig.resources.insert(ShadowSettings {
         cascade_texels: 512,
         max_distance: 30.0,

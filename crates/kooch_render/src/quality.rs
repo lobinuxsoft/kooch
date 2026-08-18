@@ -37,15 +37,94 @@
 
 use crate::meshlet::ShadingRate;
 
-/// Whether frames are accumulated (#481).
+/// Which technique accumulates frames (#481, #536).
 ///
-/// One switch for two mechanisms, and they are not separable: the
-/// sub-pixel jitter is what gives the resolve something to integrate,
-/// and the resolve is what makes the jitter anything other than a
-/// wobble. Half of the pair is always worse than neither.
+/// # Strategy, dispatched by enum rather than by trait object
+///
+/// The techniques are interchangeable behaviours behind one contract,
+/// which is Strategy — but not `Box<dyn Upscaler>`. The set is **closed
+/// by construction**: an engine ships the techniques it ships, and
+/// nothing downstream can define a new one. That turns the usual
+/// trade-off inside out — an enum costs no allocation, no vtable and no
+/// pointer chase, the compiler checks that every site handles every
+/// variant, and the one `match` per frame is not a hot path in any
+/// meaningful sense.
+///
+/// This is also what the project's Rust rules require: identities are
+/// values, not pointers.
+///
+/// # What each variant owes
+///
+/// Every technique consumes the same six inputs — jittered colour,
+/// depth, motion vectors, the jitter offset, exposure and a reset flag
+/// — and returns a resolved image. That contract is FSR 3.1's, kept
+/// deliberately so a third-party backend can be added later without
+/// changing what the renderer hands it.
+///
+/// 🔴 **Jitter and resolve are not separable.** The sub-pixel jitter is
+/// what gives a resolve something to integrate, and the resolve is what
+/// makes the jitter anything other than a wobble. Half of the pair is
+/// always worse than neither, which is why this is one setting and not
+/// two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UpscaleTechnique {
+    /// No accumulation and no jitter. What every capture before #481
+    /// was taken against, and still the default: a temporal resolve
+    /// rewrites every pixel of the image, which is not something to
+    /// adopt on behalf of a project that never asked for it.
+    #[default]
+    None,
+    /// The engine's own resolve — the Playdead / Karis lineage, by way
+    /// of Bevy, with the departures recorded in `taa.wgsl`. Resolves at
+    /// render resolution; it antialiases and does not upscale.
+    Taa,
+    /// Snapdragon Game Super Resolution 2, transliterated (BSD-3).
+    /// Resolves **and** upscales.
+    ///
+    /// ⚠️ Not offered in the inspector yet — the upscale pass is not
+    /// built, so selecting it would be a menu entry that does nothing.
+    /// The variant exists because the seam is what makes the second
+    /// technique cheap, and building the seam with one implementation
+    /// behind it is the whole point of doing it now.
+    Sgsr2,
+}
+
+impl UpscaleTechnique {
+    /// Whether anything accumulates history, and therefore whether the
+    /// camera jitters and the motion vectors are written.
+    ///
+    /// One predicate rather than `!= None` at each call site, because
+    /// the question every pass actually asks is "is there a history",
+    /// and a third temporal technique must not need those sites edited.
+    pub fn is_temporal(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    /// Whether the technique renders at a lower resolution than it
+    /// presents. Distinct from [`Self::is_temporal`]: a resolve that
+    /// only antialiases is temporal and not upscaling.
+    pub fn upscales(self) -> bool {
+        matches!(self, Self::Sgsr2)
+    }
+
+    /// The value as it is written in a `.rendersettings` file.
+    ///
+    /// 🔴 These numbers are serialised into user projects, so they are
+    /// append-only: reordering the variants would silently change what
+    /// an existing file means. Same rule as a renamed component.
+    pub fn from_asset(value: u32) -> Self {
+        match value {
+            1 => Self::Taa,
+            2 => Self::Sgsr2,
+            _ => Self::None,
+        }
+    }
+}
+
+/// Which technique accumulates frames, as the project asked for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TemporalSettings {
-    pub enabled: bool,
+    pub technique: UpscaleTechnique,
 }
 
 impl Default for TemporalSettings {
@@ -58,9 +137,7 @@ impl Default for TemporalSettings {
     /// `.rendersettings` default is the same, and for a sharper reason:
     /// see `default_temporal_aa` in `crate::settings`.
     fn default() -> Self {
-        Self {
-            enabled: temporal_aa_override().unwrap_or(false),
-        }
+        Self::new(UpscaleTechnique::None)
     }
 }
 
@@ -101,10 +178,26 @@ impl ShadingSettings {
 }
 
 impl TemporalSettings {
-    pub fn new(enabled: bool) -> Self {
+    pub fn new(technique: UpscaleTechnique) -> Self {
         Self {
-            enabled: temporal_aa_override().unwrap_or(enabled),
+            // 🔴 The variable is still a BOOLEAN, and deliberately so.
+            // It exists to force a technique on or off from a Steam
+            // launch option while capturing on the handheld, where the
+            // question is "what does this cost", not "which of three".
+            // On, it selects the project's technique or falls back to
+            // the resolve; off, it selects nothing.
+            technique: match temporal_aa_override() {
+                Some(true) if technique.is_temporal() => technique,
+                Some(true) => UpscaleTechnique::Taa,
+                Some(false) => UpscaleTechnique::None,
+                None => technique,
+            },
         }
+    }
+
+    /// Whether a history is accumulated at all.
+    pub fn enabled(&self) -> bool {
+        self.technique.is_temporal()
     }
 }
 

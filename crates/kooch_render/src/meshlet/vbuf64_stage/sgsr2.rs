@@ -26,6 +26,12 @@
 //! clause also forbids using their name to endorse this — so: **this is
 //! not a Qualcomm product and Qualcomm has not endorsed it.**
 
+// ⚠️ Unused until the upscale pass lands, and allowed rather than left
+// to warn: these constants are compiled into every project that builds
+// on this engine, and a warning in someone else's build is noise they
+// cannot act on. The `#[allow]` comes off with the pass that uses them.
+#![allow(dead_code)]
+
 const CONVERT_SOURCE: &str = include_str!("../../../shaders/sgsr2_convert.wgsl");
 
 /// What the convert pass writes and the upscale pass reads.

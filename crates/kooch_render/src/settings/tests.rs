@@ -118,3 +118,63 @@ fn a_settings_file_with_the_removed_field_still_loads() {
     );
     assert_eq!(parsed.aperture_f_stops, 2.8);
 }
+
+/// 🔴 A project that had turned the resolve ON must not come back with
+/// it off.
+///
+/// This is the silent-data-loss case the project's rules single out for
+/// serialised fields: `temporal_aa` became `upscale`, and without the
+/// sentinel a file written before the change is indistinguishable from
+/// one that deliberately chose no resolve. Nothing fails, nothing warns,
+/// and the setting is simply gone the next time the project is opened.
+#[test]
+fn an_old_file_keeps_its_resolve() {
+    let old = "(temporal_aa: true, compute_shading: true)";
+    let mut parsed: RenderSettings = ron::from_str(old).expect("an old file must still load");
+    assert_eq!(
+        parsed.upscale, UPSCALE_UNSET,
+        "a file with no `upscale` key must carry the sentinel, not a real technique",
+    );
+    assert_eq!(parsed.technique(), crate::quality::UpscaleTechnique::Taa);
+
+    parsed.migrate_upscale();
+    assert_eq!(parsed.upscale, 1, "the migration must write a real value");
+    assert_eq!(parsed.technique(), crate::quality::UpscaleTechnique::Taa);
+}
+
+/// And one that had it off stays off, which is the half that a
+/// migration keyed on "is the field missing" would get right by
+/// accident and for the wrong reason.
+#[test]
+fn an_old_file_without_it_stays_off() {
+    let old = "(temporal_aa: false, compute_shading: true)";
+    let mut parsed: RenderSettings = ron::from_str(old).expect("an old file must still load");
+    assert_eq!(parsed.technique(), crate::quality::UpscaleTechnique::None);
+    parsed.migrate_upscale();
+    assert_eq!(parsed.upscale, 0);
+}
+
+/// A new file says what it means, and the legacy field does not get a
+/// vote — otherwise choosing None in the inspector would be overridden
+/// by whatever `temporal_aa` happened to still hold.
+#[test]
+fn a_new_file_ignores_the_legacy_field() {
+    let new = "(upscale: 0, temporal_aa: true, compute_shading: true)";
+    let parsed: RenderSettings = ron::from_str(new).expect("should load");
+    assert_eq!(parsed.technique(), crate::quality::UpscaleTechnique::None);
+}
+
+/// 🔴 The resolve is gated on the compute path, and the enum must not
+/// have quietly dropped that gate: the jitter would stay on with
+/// nothing to integrate it, which shimmers and reads as the technique
+/// being broken rather than inapplicable.
+#[test]
+fn the_fragment_path_gets_no_technique() {
+    let settings = "(upscale: 1, compute_shading: false)";
+    let parsed: RenderSettings = ron::from_str(settings).expect("should load");
+    assert_eq!(parsed.technique(), crate::quality::UpscaleTechnique::Taa);
+    assert!(
+        !parsed.temporal().enabled(),
+        "the fragment path must resolve to no technique whatever the file asks for",
+    );
+}

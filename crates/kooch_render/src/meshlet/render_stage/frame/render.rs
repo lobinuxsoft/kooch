@@ -159,7 +159,7 @@ impl MeshletRenderStage {
                     let _ = stage.set_shading_rate(shading.rate);
                 }
                 if let Some(temporal) = temporal {
-                    stage.set_temporal_aa(temporal.enabled);
+                    stage.set_temporal_aa(temporal.enabled());
                 }
                 stage.next_jitter(unjittered_view_proj)
             }
