@@ -52,6 +52,24 @@ pub struct Material {
     /// `metallic` / `roughness` scalars.
     #[serde(default)]
     pub metal_roughness: Option<Guid>,
+    /// How many times the maps repeat across the mesh's UVs.
+    ///
+    /// A mesh's UVs describe the surface once; how densely a texture
+    /// sits on it is the material's business, not the mesh's. Without
+    /// this a 1024-pixel grid stretches to a single tile over a floor
+    /// however large the floor is, which is the one thing a prototype
+    /// grid exists not to do — one square is supposed to be a known
+    /// distance.
+    ///
+    /// 🔴 Scaling the mesh's UVs instead is not the same thing: the mesh
+    /// is shared, so it would change every object that uses it.
+    #[serde(default = "default_uv_scale")]
+    pub uv_scale: [f32; 2],
+    /// Where the maps start, in the same units. Slides the texture
+    /// across the surface; whole numbers change nothing on a tiling
+    /// texture, which is the point.
+    #[serde(default)]
+    pub uv_offset: [f32; 2],
 }
 
 impl Material {
@@ -66,6 +84,8 @@ impl Material {
             albedo: None,
             normal: None,
             metal_roughness: None,
+            uv_scale: default_uv_scale(),
+            uv_offset: [0.0, 0.0],
         }
     }
 
@@ -87,6 +107,13 @@ impl Material {
         self
     }
 
+    /// Sets the texture transform.
+    pub fn with_uv(mut self, scale: [f32; 2], offset: [f32; 2]) -> Self {
+        self.uv_scale = scale;
+        self.uv_offset = offset;
+        self
+    }
+
     /// Builds the GPU-side packed representation.
     pub fn to_params(&self) -> MaterialParams {
         MaterialParams::new(
@@ -95,6 +122,7 @@ impl Material {
             self.roughness,
             self.emissive,
         )
+        .with_uv(self.uv_scale, self.uv_offset)
     }
 }
 
@@ -108,6 +136,8 @@ impl Default for Material {
             albedo: None,
             normal: None,
             metal_roughness: None,
+            uv_scale: default_uv_scale(),
+            uv_offset: [0.0, 0.0],
         }
     }
 }
@@ -118,6 +148,13 @@ fn default_base_color() -> [f32; 4] {
 
 fn default_roughness() -> f32 {
     0.5
+}
+
+/// One tile across the mesh's UVs — the texture as the mesh's author
+/// laid it out. Anything else is the material's decision, so this is the
+/// value a `.ron` that says nothing gets.
+fn default_uv_scale() -> [f32; 2] {
+    [1.0, 1.0]
 }
 
 /// `AssetLoader<Material>` for `*.ron` files.

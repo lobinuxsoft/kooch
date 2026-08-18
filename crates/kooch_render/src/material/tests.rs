@@ -1,10 +1,11 @@
 use super::*;
 
 #[test]
-fn material_params_layout_is_pod_48_bytes() {
+fn material_params_layout_is_pod_64_bytes() {
     // 16 B base_color + 16 B (metallic, rough, emissive, pad)
-    // + 16 B (albedo, normal, metal_rough, pad) = 48 B.
-    assert_eq!(std::mem::size_of::<MaterialParams>(), 48);
+    // + 16 B (albedo, normal, metal_rough, pad)
+    // + 16 B (uv scale, uv offset) = 64 B.
+    assert_eq!(std::mem::size_of::<MaterialParams>(), 64);
     assert_eq!(std::mem::align_of::<MaterialParams>(), 4);
 }
 
@@ -37,4 +38,126 @@ fn new_packs_scalars_correctly() {
     assert_eq!(m.metallic(), 0.7);
     assert_eq!(m.roughness(), 0.3);
     assert_eq!(m.emissive(), 1.5);
+}
+
+/// 🔴 The layout is declared four times and checked nowhere.
+///
+/// `MaterialParams` exists in Rust and in three WGSL files, all reading
+/// the same storage buffer. Adding a field to two of the three compiles
+/// perfectly: the shader that missed it reads every material at the
+/// wrong stride, so material 3 gets material 2's bytes and the picture
+/// shows the wrong material rather than anything that looks like a
+/// layout bug.
+///
+/// Compares the field NAMES in order, which is what a stride mismatch
+/// comes from, and the byte size against Rust's.
+#[test]
+fn every_shader_agrees_on_the_material_layout() {
+    const SHADERS: [&str; 3] = [
+        include_str!("../../shaders/material_pbr_compute.wgsl"),
+        include_str!("../../shaders/material_pbr_default.wgsl"),
+        include_str!("../../shaders/meshlet_deferred.wgsl"),
+    ];
+    // Rust's own, in declaration order.
+    let expected = [
+        "base_color",
+        "metallic_roughness_emissive_pad",
+        "texture_indices",
+        "uv_scale_offset",
+    ];
+
+    for (index, source) in SHADERS.iter().enumerate() {
+        let body = source
+            .split("struct MaterialParams {")
+            .nth(1)
+            .unwrap_or_else(|| panic!("shader {index} declares no MaterialParams"))
+            .split('}')
+            .next()
+            .expect("unterminated struct");
+        let fields: Vec<&str> = body
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                if line.starts_with("//") || line.is_empty() {
+                    return None;
+                }
+                line.split(':').next().map(str::trim)
+            })
+            .collect();
+        assert_eq!(
+            fields, expected,
+            "shader {index} declares MaterialParams as {fields:?}, which is not what \
+             Rust writes into the buffer — every material after the first mismatched \
+             field reads the next one's bytes",
+        );
+    }
+
+    // Four vec4s. The assertion is on the number rather than on the
+    // expression so a field added as a bare `f32` — which pads to 16
+    // anyway and would keep the count right — still fails here.
+    assert_eq!(std::mem::size_of::<MaterialParams>(), 64);
+}
+
+/// The texture transform reaches the GPU struct in the order the shader
+/// unpacks it: `xy` scale, `zw` offset. Swapping the pairs is a silent
+/// change of meaning — a tiled texture would slide instead.
+#[test]
+fn the_uv_transform_packs_scale_then_offset() {
+    let params = MaterialParams::default().with_uv([4.0, 2.0], [0.25, 0.5]);
+    assert_eq!(params.uv_scale_offset, [4.0, 2.0, 0.25, 0.5]);
+}
+
+/// And a material that says nothing tiles exactly once.
+///
+/// The default has to be the identity: every `.ron` in every project
+/// written before this field existed elides it, and those materials must
+/// look the way they looked.
+#[test]
+fn the_default_transform_is_the_identity() {
+    assert_eq!(
+        crate::material::Material::default()
+            .to_params()
+            .uv_scale_offset,
+        [1.0, 1.0, 0.0, 0.0],
+    );
+}
+
+/// 🔴 Whatever tiles the coordinate must tile its derivatives too.
+///
+/// `textureSampleGrad` picks the mip from how fast the uv moves between
+/// neighbouring pixels. Tiling twenty times makes it move twenty times
+/// faster, so handing it the untiled derivatives selects a level about
+/// four steps too sharp — the aliasing the mip chain exists to remove,
+/// on exactly the surfaces that asked for tiling.
+///
+/// ⚠️ This reads the shader as TEXT, which is a weak test and is here
+/// anyway: nothing else in the suite fails when the multiply is
+/// dropped, and the way it gets dropped is a copy-paste that keeps the
+/// coordinate and forgets the two lines under it. A GPU test that
+/// measured the chosen mip would be better and is not written.
+#[test]
+fn tiling_scales_the_derivatives_too() {
+    for (name, source) in [
+        (
+            "material_pbr_compute",
+            include_str!("../../shaders/material_pbr_compute.wgsl"),
+        ),
+        (
+            "material_pbr_default",
+            include_str!("../../shaders/material_pbr_default.wgsl"),
+        ),
+    ] {
+        for derivative in ["ddx_uv", "ddy_uv"] {
+            let line = source
+                .lines()
+                .map(str::trim)
+                .find(|line| line.starts_with(&format!("let {derivative} =")))
+                .unwrap_or_else(|| panic!("{name} does not derive {derivative} at all"));
+            assert!(
+                line.contains("uv_scale_offset.xy"),
+                "{name} computes `{line}` — the coordinate is tiled and this is not, so \
+                 the mip is selected for a texture that is not the one being sampled",
+            );
+        }
+    }
 }

@@ -54,6 +54,11 @@ struct MaterialParams {
     // 0xffffffff = no map (fall back to scalars). Only the two-pass
     // fragment path samples them; this path uses the scalars.
     texture_indices: vec4<u32>,
+    // xy tiling, zw offset. See `MaterialParams` in `material/mod.rs`:
+    // this struct is declared here and in two other shaders, and a test
+    // reads all three because a field added to two of them fails
+    // silently rather than at compile time.
+    uv_scale_offset: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;

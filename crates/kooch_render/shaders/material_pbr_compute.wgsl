@@ -36,6 +36,11 @@ struct MaterialParams {
     // x metallic, y roughness, z emissive, w pad.
     metallic_roughness_emissive_pad: vec4<f32>,
     texture_indices: vec4<u32>,
+    // xy tiling, zw offset. See `MaterialParams` in `material/mod.rs`:
+    // this struct is declared here and in two other shaders, and a test
+    // reads all three because a field added to two of them fails
+    // silently rather than at compile time.
+    uv_scale_offset: vec4<f32>,
 }
 
 // Group 0 holds the vbuf (0), camera (1), screen (2) and the contact
@@ -331,12 +336,23 @@ fn cs_shade_tile(
     // Phase 3 — shade.
     if (mine) {
         let mat = materials[screen.material_id];
+
+        // 🔴 The DERIVATIVES scale with the coordinate, and forgetting
+        // that is the trap. `textureSampleGrad` picks the mip from how
+        // fast the uv moves between pixels; tiling a texture twenty
+        // times makes it move twenty times faster, and handing the
+        // untiled derivatives selects a level about four steps too
+        // sharp. The result is the aliasing the mip chain exists to
+        // remove, on exactly the surfaces that asked for tiling.
+        let uv = surf.uv * mat.uv_scale_offset.xy + mat.uv_scale_offset.zw;
+        let ddx_uv = surf.ddx_uv * mat.uv_scale_offset.xy;
+        let ddy_uv = surf.ddy_uv * mat.uv_scale_offset.xy;
         let albedo = textureSampleGrad(
-            albedo_tex, material_sampler, surf.uv, surf.ddx_uv, surf.ddy_uv);
+            albedo_tex, material_sampler, uv, ddx_uv, ddy_uv);
         let base = albedo.rgb * mat.base_color.rgb;
 
         let n_ts = textureSampleGrad(
-            normal_tex, material_sampler, surf.uv, surf.ddx_uv, surf.ddy_uv).xyz * 2.0 - 1.0;
+            normal_tex, material_sampler, uv, ddx_uv, ddy_uv).xyz * 2.0 - 1.0;
         let n = normalize(surf.world_normal);
         let t = normalize(surf.world_tangent.xyz);
         let b = cross(n, t) * surf.world_tangent.w;
@@ -350,7 +366,7 @@ fn cs_shade_tile(
             rgb = inti_debug_view(screen.debug_mode, surf.world_position, world_n, frag_coord);
         } else {
             let mr = textureSampleGrad(
-                metal_rough_tex, material_sampler, surf.uv, surf.ddx_uv, surf.ddy_uv);
+                metal_rough_tex, material_sampler, uv, ddx_uv, ddy_uv);
             let metallic = mat.metallic_roughness_emissive_pad.x * mr.b;
             let roughness = mat.metallic_roughness_emissive_pad.y * mr.g;
 

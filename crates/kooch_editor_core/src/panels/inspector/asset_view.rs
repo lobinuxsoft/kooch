@@ -254,6 +254,38 @@ fn draw_material_editor(
 
     ui.separator();
     ui.label("Textures");
+    egui::Grid::new(("material_uv", guid))
+        .num_columns(2)
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            // Above the slots on purpose: it applies to all three, and
+            // reading it after them invites the idea that it belongs to
+            // the last one.
+            ui.label("Tiling");
+            ui.horizontal(|ui| {
+                for axis in 0..2 {
+                    let response = ui.add(
+                        crate::numeric::drag(&mut edited.uv_scale[axis])
+                            .speed(0.05)
+                            .range(0.001..=1024.0),
+                    );
+                    changed |= response.changed();
+                    released |= response.drag_stopped();
+                }
+            });
+            ui.end_row();
+
+            ui.label("Offset");
+            ui.horizontal(|ui| {
+                for axis in 0..2 {
+                    let response =
+                        ui.add(crate::numeric::drag(&mut edited.uv_offset[axis]).speed(0.01));
+                    changed |= response.changed();
+                    released |= response.drag_stopped();
+                }
+            });
+            ui.end_row();
+        });
     changed |= texture_row(ui, "Albedo", &mut edited.albedo, catalog);
     changed |= texture_row(ui, "Normal", &mut edited.normal, catalog);
     changed |= texture_row(ui, "Metal/Rough", &mut edited.metal_roughness, catalog);
