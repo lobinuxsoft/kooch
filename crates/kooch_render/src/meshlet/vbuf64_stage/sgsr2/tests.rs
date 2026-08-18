@@ -16,6 +16,21 @@ fn the_convert_shader_validates() {
         .expect("sgsr2 convert shader should validate");
 }
 
+/// Same for the pass that does the actual reconstruction, and it is
+/// the larger of the two by a wide margin.
+#[test]
+fn the_upscale_shader_validates() {
+    let module =
+        naga::front::wgsl::parse_str(UPSCALE_SOURCE).expect("sgsr2 upscale shader should parse");
+    let mut validator = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    );
+    validator
+        .validate(&module)
+        .expect("sgsr2 upscale shader should validate");
+}
+
 /// 1:1 is the identity, and it is the configuration the port is
 /// validated at — see the module header. A `scale_ratio` that is not
 /// exactly `(1, 1)` there would widen the variance box for an upscale
