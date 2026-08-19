@@ -1,0 +1,79 @@
+# Runs the ECS test suite under Miri, which is the only thing in this
+# repository that can see the bugs it exists for.
+#
+# 🔴 It was added after Miri found TWO pieces of undefined behaviour that
+# 360 passing tests did not, both of them years old:
+#
+#   - `WriteFetch` held a `&mut dyn AnyStorage` and `fetch(&self, …)`
+#     reborrowed it SHARED before casting back to `*mut`. Stacked Borrows
+#     forbids retagging a shared tag for writes — and **every mutable
+#     query in the engine went through it**: transform propagation,
+#     physics, hierarchy, anything that writes a component.
+#   - `EntityCommands::despawn` used a borrow that `mem::forget(self)`
+#     had invalidated one line earlier.
+#
+# Neither ever miscompiled, because such violations usually do not — until
+# the optimiser decides otherwise. Tests cannot find them: a test asserts
+# what a program computes, and undefined behaviour is about what the
+# compiler is allowed to assume while computing it.
+#
+# ⏱️ 92 seconds for the whole crate on a developer machine. That is the
+# entire price of the two bugs above never happening again.
+name: miri
+
+on:
+  pull_request:
+    branches: [development]
+    paths:
+      # Every crate this covers, plus the workflow itself. Scoped rather
+      # than run-always because Miri interprets rather than executes, and
+      # a docs PR has nothing for it to interpret.
+      - 'crates/kooch_ecs/**'
+      - '.github/workflows/miri.yml'
+  # So a suspicion can be checked without inventing a commit.
+  workflow_dispatch:
+
+# One per PR. A second push does not need the first run's answer.
+concurrency:
+  group: miri-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ecs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ⚠️ Floating nightly, deliberately. Miri exists on no other
+      # channel, so there is no stable option to prefer; and a pinned
+      # date goes stale silently, which is the failure mode this
+      # repository dislikes most. If an upstream nightly starts breaking
+      # runs for reasons unrelated to the code, pin the date HERE with a
+      # comment saying which nightly and why — do not delete the job.
+      - name: Install nightly with miri
+        run: |
+          set -euo pipefail
+          rustup toolchain install nightly --profile minimal --component miri
+          rustup run nightly cargo miri --version
+
+      # Builds Miri's own standard library. Separate from the run so a
+      # failure here reads as an environment problem rather than as a
+      # finding.
+      - name: Prepare the Miri sysroot
+        run: rustup run nightly cargo miri setup
+
+      - name: kooch_ecs under Miri
+        env:
+          # `strict-provenance` is what catches an integer cast into a
+          # pointer — `align as *mut u8` instead of
+          # `ptr::without_provenance_mut`. It found one on the first run.
+          #
+          # `disable-isolation` is NOT a soundness concession: Miri blocks
+          # filesystem access by default, and one scene test writes a
+          # temporary directory. Without it the run stops on a `mkdir`
+          # that has nothing to do with memory.
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation
+        run: rustup run nightly cargo miri test -p kooch_ecs --lib
