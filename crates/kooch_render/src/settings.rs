@@ -280,6 +280,59 @@ pub struct RenderSettings {
     #[serde(default = "default_sharpening")]
     #[reflect(group = "Temporal")]
     pub sharpening: u32,
+
+    /// Samples the filter takes along the long axis of a texture
+    /// footprint, 1..=16.
+    ///
+    /// 🔴 The setting that improves a floor, and it is not the mip bias.
+    /// A surface seen at a grazing angle covers a footprint that is long
+    /// and thin, and an ordinary filter has one level for it: it takes
+    /// the LONG axis, picks a level that would not alias there, and
+    /// blurs the short axis by the same amount. That is why a tiled
+    /// floor softens towards the horizon while a wall facing the camera
+    /// stays sharp.
+    ///
+    /// ⚠️ It costs bandwidth, not arithmetic: more samples per fetch on
+    /// exactly the surfaces that already cover the most pixels. On a
+    /// handheld measured as bandwidth-bound that is the expensive kind,
+    /// so 1 is the default and the number is chosen by looking at a
+    /// floor and at a capture, not by picking the largest.
+    #[serde(default = "default_anisotropy")]
+    #[reflect(group = "Shading", choices = ANISOTROPY_CHOICES)]
+    pub anisotropy: u32,
+}
+
+/// The powers of two hardware implements. Anything between them is
+/// rounded down by the driver, so offering 3 would be offering 2 under
+/// another name.
+const ANISOTROPY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
+    kooch_ecs::reflect::FieldChoice {
+        label: "Off — one sample",
+        value: 1,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "2x",
+        value: 2,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "4x",
+        value: 4,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "8x",
+        value: 8,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "16x",
+        value: 16,
+    },
+];
+
+/// Off, like every other quality setting in this file: it costs
+/// bandwidth on the surfaces that already cover the most pixels, and a
+/// project that never asked for that should not pay it.
+fn default_anisotropy() -> u32 {
+    1
 }
 
 /// The techniques the inspector offers.
@@ -483,6 +536,7 @@ impl Default for RenderSettings {
             upscale: 0,
             render_scale: default_render_scale(),
             sharpening: default_sharpening(),
+            anisotropy: default_anisotropy(),
         }
     }
 }
@@ -537,6 +591,7 @@ impl RenderSettings {
         crate::quality::ShadingSettings::from_asset(
             self.compute_shading,
             crate::meshlet::ShadingRate::from_factor(self.shading_rate),
+            self.anisotropy.min(u32::from(u16::MAX)) as u16,
         )
     }
 

@@ -75,6 +75,56 @@ would change every object using it.
 > would sample about four levels too sharp and alias — the thing the
 > chain exists to prevent, on the surfaces that asked for tiling.
 
+## Sharpness: bias and anisotropy
+
+Two settings decide how sharp a texture reads, and they fix different
+problems.
+
+### Mip bias — automatic, and only with a temporal technique
+
+A frame rendered at `render_scale` 50 % samples every texture for half
+the pixels, so the detail the upscaler exists to reconstruct was never
+rasterised. The engine compensates with the bias FSR documents:
+
+```text
+mipBias = log2(render / display) - 1.0
+```
+
+The `log2` term buys back the resolution the frame does not have; the
+extra `-1` is there because the **jitter resolves sub-pixel detail** —
+with a history to accumulate into, a sharper level comes out correct
+instead of shimmering.
+
+🔴 Which is why it only applies when a temporal technique is on. With
+`upscale: None` there is no history, and a sharper mip would be aliasing
+on purpose. Nothing to configure: it follows the scale and the
+technique.
+
+Measured through the mip debug view: at half scale a surface samples
+**one level sharper than native**, because the reduced resolution costs
+a level on its own and the bias pays it back and spends one more.
+
+### Anisotropy — a setting, and the one that fixes floors
+
+`anisotropy` in `.rendersettings`, 1 (off) to 16.
+
+A surface at a grazing angle covers a footprint that is long and thin,
+and an ordinary filter has a single level for it: it takes the **long**
+axis, picks a level that would not alias there, and blurs the short axis
+by the same amount. That is why a tiled floor softens towards the
+horizon while a wall facing the camera stays sharp — and no amount of
+mip bias fixes it, because the level is right for one axis and wrong for
+the other.
+
+Anisotropic filtering takes several samples along the long axis instead
+of one coarse one. On a grazing floor with a tiled checker, 16× kept
+**1.8× the detail** of no anisotropy.
+
+> ⚠️ It costs bandwidth, not arithmetic: more fetches on exactly the
+> surfaces that already cover the most pixels. On a handheld measured as
+> bandwidth-bound that is the expensive kind, which is why the default is
+> off and the number is chosen by looking at a floor *and* at a capture.
+
 ## The prototype textures
 
 The engine ships Kenney's *Prototype Textures* (CC0) under

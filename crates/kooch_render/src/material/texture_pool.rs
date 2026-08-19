@@ -43,6 +43,19 @@ pub enum TextureSlot {
     MetalRoughness,
 }
 
+/// The hardware minimum, which means the feature is off.
+///
+/// 🔴 This is the setting that actually improves a floor, and it is not
+/// the mip bias. A surface at a grazing angle covers a footprint that is
+/// long and thin, and an isotropic filter has one number for it: it
+/// takes the LONG axis, picks the level that would not alias there, and
+/// blurs the short axis by the same amount. That is why a tiled floor
+/// goes soft towards the horizon while a wall facing the camera stays
+/// sharp — the level is right for one axis and wrong for the other.
+/// Anisotropic filtering takes several samples along the long axis
+/// instead of one coarse one.
+pub const NO_ANISOTROPY: u16 = 1;
+
 /// GPU texture registry + per-material bind group factory.
 ///
 /// CPU-side coordination structure (populated at asset-load / sync time,
@@ -54,6 +67,7 @@ pub struct MaterialTexturePool {
     fallback_normal: GpuTexture,
     fallback_metal_roughness: GpuTexture,
     sampler: wgpu::Sampler,
+    anisotropy: u16,
     bgl: wgpu::BindGroupLayout,
     /// Owned here because it caches a render pipeline per format, and
     /// this is the one place textures are uploaded from.
@@ -80,16 +94,7 @@ impl MaterialTexturePool {
             &Image::solid_color([255, 255, 255, 255], ImageFormat::Rgba8Unorm),
         );
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("material_texture_sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            ..Default::default()
-        });
+        let sampler = create_sampler(device, NO_ANISOTROPY);
 
         let bgl = Self::bind_group_layout(device);
 
@@ -100,6 +105,7 @@ impl MaterialTexturePool {
             fallback_metal_roughness,
             mipmapper: Mipmapper::new(device),
             sampler,
+            anisotropy: NO_ANISOTROPY,
             bgl,
         }
     }
@@ -138,6 +144,27 @@ impl MaterialTexturePool {
                 },
             ],
         })
+    }
+
+    /// Replaces the sampler with one taking `samples` along the long
+    /// axis of a footprint, and reports whether anything changed.
+    ///
+    /// ⚠️ Every per-material bind group is rebuilt from this sampler
+    /// each frame, so there is nothing to invalidate — which is what
+    /// makes this a live setting rather than a restart.
+    pub fn set_anisotropy(&mut self, device: &wgpu::Device, samples: u16) -> bool {
+        let samples = samples.max(NO_ANISOTROPY);
+        if samples == self.anisotropy {
+            return false;
+        }
+        self.anisotropy = samples;
+        self.sampler = create_sampler(device, samples);
+        true
+    }
+
+    /// What the sampler currently takes.
+    pub fn anisotropy(&self) -> u16 {
+        self.anisotropy
     }
 
     /// Uploads `image` under `guid`, replacing any prior texture for that
@@ -239,3 +266,22 @@ impl MaterialTexturePool {
 
 #[cfg(test)]
 mod tests;
+
+/// The material sampler, at a given anisotropy.
+///
+/// ⚠️ `anisotropy_clamp` above 1 requires every filter mode to be
+/// linear — wgpu rejects the sampler otherwise. All three already are,
+/// and this function is where that stays true.
+fn create_sampler(device: &wgpu::Device, anisotropy: u16) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("material_texture_sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        address_mode_w: wgpu::AddressMode::Repeat,
+        anisotropy_clamp: anisotropy.max(NO_ANISOTROPY),
+        ..Default::default()
+    })
+}

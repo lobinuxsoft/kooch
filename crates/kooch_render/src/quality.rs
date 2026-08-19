@@ -184,6 +184,14 @@ pub struct ShadingSettings {
     /// `compute`; the stage refuses it otherwise rather than half
     /// applying it.
     pub rate: ShadingRate,
+    /// Samples the texture filter takes along the long axis of a
+    /// footprint, 1..=16 (1 = off).
+    ///
+    /// Here rather than beside the exposure because it is a **cost**
+    /// setting: more fetches per sample on the surfaces that already
+    /// cover the most pixels. What it buys is a floor that stays legible
+    /// towards the horizon.
+    pub anisotropy: u16,
 }
 
 impl Default for ShadingSettings {
@@ -193,6 +201,7 @@ impl Default for ShadingSettings {
         Self {
             compute: crate::meshlet::compute_shading_override().unwrap_or(false),
             rate: crate::meshlet::shading_rate_override().unwrap_or_default(),
+            anisotropy: 1,
         }
     }
 }
@@ -203,10 +212,14 @@ impl ShadingSettings {
     /// See the module header for why the variable wins: it is the
     /// instrument, and an instrument whose reading depends on which
     /// project is open measures nothing.
-    pub fn from_asset(compute: bool, rate: ShadingRate) -> Self {
+    pub fn from_asset(compute: bool, rate: ShadingRate, anisotropy: u16) -> Self {
         Self {
             compute: crate::meshlet::compute_shading_override().unwrap_or(compute),
             rate: crate::meshlet::shading_rate_override().unwrap_or(rate),
+            // Clamped to what hardware implements. A driver rounds an
+            // in-between value down anyway, and 0 is not a legal
+            // sampler.
+            anisotropy: anisotropy.clamp(1, 16),
         }
     }
 }
