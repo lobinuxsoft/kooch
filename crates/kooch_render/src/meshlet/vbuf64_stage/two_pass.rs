@@ -368,6 +368,10 @@ impl MaterialTwoPass {
             slots.end <= MAX_SHADING_SLOTS,
             "shading slot count exceeds MAX_SHADING_SLOTS",
         );
+        // `KOOCH_SHADING_PAD`, applied here so the loop below writes a
+        // `ScreenUbo` for the padded slots too. Zero unless a
+        // measurement run asked for it (#885).
+        let slots = super::shading_pad::padded_slots(slots, MAX_SHADING_SLOTS);
         for slot in slots.clone() {
             queue.write_buffer(
                 &self.screen_buffer,
