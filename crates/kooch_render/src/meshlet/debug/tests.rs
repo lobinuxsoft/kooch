@@ -274,3 +274,42 @@ fn off_asks_for_no_stage() {
     assert_eq!(MeshletDebugMode::Off.fsr3_stage(), 0);
     assert!(!MeshletDebugMode::Off.replaces_shading());
 }
+
+/// 🔴 The three steps that show radiance must NOT bypass the tonemap.
+///
+/// Bypassing it was the first attempt, and it painted a perfectly good
+/// frame black: radiance without the filmic curve is nearly nothing in
+/// any dimly-lit scene, so the instrument reported a defect that was not
+/// there. The numeric steps are the opposite case and must bypass it, or
+/// a 0..1 ramp comes back crushed.
+#[test]
+fn the_radiance_steps_keep_the_tonemap() {
+    for mode in [
+        MeshletDebugMode::Fsr3Input,
+        MeshletDebugMode::Fsr3Upsample,
+        MeshletDebugMode::Fsr3History,
+    ] {
+        assert!(
+            !mode.is_display_referred(),
+            "{mode:?} shows radiance, so bypassing the tonemap reads as black",
+        );
+    }
+    for mode in [
+        MeshletDebugMode::Fsr3Motion,
+        MeshletDebugMode::Fsr3Masks,
+        MeshletDebugMode::Fsr3Locks,
+        MeshletDebugMode::Normals,
+        MeshletDebugMode::TextureMipLevel,
+    ] {
+        assert!(
+            mode.is_display_referred(),
+            "{mode:?} is a 0..1 legend, so the filmic curve would crush it",
+        );
+    }
+}
+
+/// Off is production shading and must keep the curve like any frame.
+#[test]
+fn off_is_not_display_referred() {
+    assert!(!MeshletDebugMode::Off.is_display_referred());
+}

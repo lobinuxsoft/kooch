@@ -851,8 +851,10 @@ impl Vbuf64Stage {
                     // The Inti debug views hand back display-ready
                     // colour. Putting a false-colour legend through a
                     // filmic curve turns a readable ramp into a washed
-                    // out one.
-                    !is_debug_view(debug_mode),
+                    // out one — and putting radiance through NO curve
+                    // turns a dim scene into a black frame, which is why
+                    // FSR's colour steps answer this differently.
+                    !is_display_referred(debug_mode),
                 );
                 if let (Some(scopes), Some(query)) = (scopes, query) {
                     scopes.end(encoder, query);
@@ -920,6 +922,18 @@ fn replaces_shading(debug_mode: u32) -> bool {
         .iter()
         .find(|m| m.as_u32() == debug_mode)
         .is_some_and(|m| m.replaces_shading())
+}
+
+/// True when the tonemap must pass the colour through untouched.
+///
+/// Not the same question as [`is_debug_view`]: FSR's three colour steps
+/// hand back radiance and need the curve, or a dim scene reads as a
+/// black frame and the instrument lies.
+fn is_display_referred(debug_mode: u32) -> bool {
+    crate::meshlet::debug::MeshletDebugMode::all_implemented()
+        .iter()
+        .find(|m| m.as_u32() == debug_mode)
+        .is_some_and(|m| m.is_display_referred())
 }
 
 /// Which FSR 3.1 intermediate the debug dropdown is asking for, or 0.

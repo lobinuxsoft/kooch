@@ -439,6 +439,28 @@ impl MeshletDebugMode {
     pub const fn replaces_shading(self) -> bool {
         self.as_u32() >= Self::Normals.as_u32() && self.fsr3_stage() == 0
     }
+
+    /// True when the mode hands back colour that is already ready for
+    /// the screen, so the tonemap must pass it through untouched.
+    ///
+    /// 🔴 Three of FSR's steps are the exception, and the reason is a
+    /// mistake this made the first time: they show RADIANCE — the input
+    /// frame, the upsample, the history — and radiance without the
+    /// filmic curve is nearly black in any dimly-lit scene. A debug view
+    /// that reads black when the data is fine is worse than no view at
+    /// all, because it sends the search after a defect that is not
+    /// there. So those three go through the ordinary tonemap and are
+    /// directly comparable with the real image; the steps that show a
+    /// 0..1 quantity bypass it and read as a grey ramp.
+    pub const fn is_display_referred(self) -> bool {
+        if matches!(
+            self,
+            Self::Fsr3Input | Self::Fsr3Upsample | Self::Fsr3History
+        ) {
+            return false;
+        }
+        self.as_u32() >= Self::Normals.as_u32()
+    }
 }
 
 #[cfg(test)]

@@ -286,3 +286,37 @@ fn it_survives_the_resolution_split() {
         mean_brightness(&half),
     );
 }
+
+/// 🔴 Step 2 of the staircase writes a literal mid grey. Nothing else.
+///
+/// `vec3(motion * 50 + 0.5, 0.5)` reads no texture and depends on no
+/// history, so a still camera makes it exactly 0.5 everywhere. If the
+/// screen is black under this mode, the staircase is not running at all
+/// and every other step's answer is about the wrong thing.
+#[test]
+fn the_motion_step_is_grey_and_not_black() {
+    let _gpu = gpu_lock();
+    let Some(mut r) = rig(3, true) else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    assert!(r.stage.set_compute_shading(true) > 0);
+    assert!(r.stage.set_upscale(UpscaleTechnique::Fsr3) > 0);
+    r.resources
+        .insert(kooch_render::meshlet::MeshletDebugMode::Fsr3Motion);
+
+    let mut last = Vec::new();
+    for _ in 0..4 {
+        r.stage
+            .render_with_assets_primary(&r.device, &r.queue, &r.resources, &r.camera, 1.0);
+        last = common::read_rgba8(&r.device, &r.queue, r.stage.color_texture());
+    }
+
+    let grey = mean_brightness(&last);
+    eprintln!("step 2 mean {grey:.2} (0.5 linear lands near 128 raw)");
+    assert!(
+        grey > 50.0,
+        "step 2 came back at {grey:.2}. It writes a constant 0.5 that reads no texture, \
+         so anything near black means the debug selector never reached the shader.",
+    );
+}

@@ -111,6 +111,9 @@ struct History {
     frame_index: u32,
     prev_jitter: glam::Vec2,
     prev_exposure: f32,
+    /// The last debug stage this instance logged, so the line below
+    /// appears once per change instead of once per frame.
+    logged_stage: Option<u32>,
 }
 
 const COMPUTE: wgpu::ShaderStages = wgpu::ShaderStages::COMPUTE;
@@ -434,6 +437,7 @@ impl Fsr3 {
                 frame_index: 0,
                 prev_jitter: glam::Vec2::ZERO,
                 prev_exposure: 1.0,
+                logged_stage: None,
             }),
         }
     }
@@ -504,6 +508,25 @@ impl Fsr3 {
         } else {
             1.0
         };
+
+        // 🔴 One line per change of debug step, and it exists because a
+        // black frame in the editor could equally mean this pass never
+        // ran, ran on an empty input, or ran on an exposure that puts
+        // the whole scene under a bit. The test rig cannot tell those
+        // apart from the outside and neither could I.
+        if state.logged_stage != Some(inputs.debug_stage) {
+            state.logged_stage = Some(inputs.debug_stage);
+            tracing::info!(
+                stage = inputs.debug_stage,
+                render = ?self.render_size,
+                output = ?self.output_size,
+                exposure,
+                near = inputs.near,
+                jitter = ?inputs.jitter,
+                frame = state.frame_index,
+                "fsr3 draw",
+            );
+        }
 
         queue.write_buffer(
             &self.ubo,

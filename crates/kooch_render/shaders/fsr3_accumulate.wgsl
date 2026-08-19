@@ -533,17 +533,21 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
 /// that IS wrong, and everything after it is downstream of the same
 /// fault.
 ///
-/// 🎯 The tonemap passes a debug view through UNTOUCHED — no exposure,
-/// no curve — so a 0..1 quantity arrives on screen as a 0..1 grey. The
-/// colour steps therefore hand back radiance already multiplied by the
-/// exposure, which is what the internal buffers hold anyway.
+/// 🎯 Two kinds of step, and they leave through different doors.
+///
+/// The steps that show a 0..1 QUANTITY bypass the tonemap, so what is
+/// returned lands on screen as a grey ramp of the same number. The three
+/// that show RADIANCE keep the ordinary tonemap — exposure and filmic
+/// curve — so they are directly comparable with the real image. Handing
+/// radiance to a bypassed tonemap was the first attempt, and it painted
+/// a perfectly good frame black.
 fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
     switch params.debug {
         // 1 — the HDR frame FSR was handed. Black here means the fault
         // is upstream of this technique entirely.
         case 1u: {
             let rgb = textureLoad(input_colour, vec2<i32>(c.hr_uv * params.render_size), 0).rgb;
-            return max(rgb, vec3<f32>(0.0)) * params.exposure;
+            return max(rgb, vec3<f32>(0.0));
         }
         // 2 — dilated motion, biased so zero is grey. ⚠️ Uniform grey
         // with a still camera is CORRECT.
@@ -559,13 +563,15 @@ fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
         // 4 — THIS frame's upsample alone, no history. If the scene is
         // here, the inputs and the kernel are fine.
         case 4u: {
-            return max(ycocg_to_rgb(d.upsampled_colour), vec3<f32>(0.0));
+            // The internal buffers hold radiance already multiplied by
+            // the exposure; the tonemap is about to multiply again.
+            return max(ycocg_to_rgb(d.upsampled_colour), vec3<f32>(0.0)) / params.exposure;
         }
         // 5 — the reprojected history alone, before anything this frame
         // is blended into it. Black here with a settled camera means the
         // history never survives from one frame to the next.
         case 5u: {
-            return max(ycocg_to_rgb(reprojected), vec3<f32>(0.0));
+            return max(ycocg_to_rgb(reprojected), vec3<f32>(0.0)) / params.exposure;
         }
         // 6 — red the lock, green the luma instability, blue the
         // upsample's total weight.
