@@ -133,6 +133,26 @@ said.
 | 🟢 **FSR over FFI** | the route that replaced it | **Calling AMD's shipped library is a different question from reimplementing its algorithm, and it has a better answer.** FSR 3.1's FidelityFX API is a stable C ABI that FSR 4 also uses: one `bindgen` surface covers both. FSR 3.1 builds on Linux with a native Vulkan backend (⚠️ `wine` for the shader compiler) and runs on all three vendors; FSR 4 is Windows-only because AMD ships it as *signed prebuilt DLLs*. See #536 |
 | ~~#732~~ | ~~temporal upscaling on both vendors~~ | **Closed as superseded.** One issue describing three things; its phases are done (#481) or split (#481 + #536), and its findings were carried across rather than dropped |
 
+### 🎯 The order, decided 2026-08-19 — the audit first, VSM second, Arm ASR last
+
+With #884 merged, three items were on the table and none of them was urgent.
+The user picked the order, and it is A → B → C.
+
+| | | Why here |
+|---|---|---|
+| **A** | **#885 — a full audit of the tree** | It costs **zero handheld cycles**: no rebuild, no thermal settling, nothing the user has to wait through, so the audit runs while they work on something else. And the ~1400 lines of FSR 3.1 only just landed — auditing them now costs half what re-reading them cold in three weeks does. Scope: duplication, shaders, iteration techniques, entities/components/queries, Rust practice, leaks, GPU resource lifetime, DOD |
+| **B** | **#866 — one page pool for every shadow (VSM)** | What the **game** asks for: shadows that survive planetary scale. It is the largest of the three, and it gets built on the tree A leaves clean rather than on the one that just grew by an upscaler |
+| **C** | **#886 — Arm ASR** | A third upscaler, proposed the week the second one landed as *desktop-only*. Arm's **+53 % fps / −20 % power are press material**, not a number this project took, and the source still sits in an unopened submodule. It moves the needle least: the frame budget already closes at 13.89 ms without it |
+
+**What #884 settled, and why C is last.** On the settled OneXFly (10 W, the
+Steam → gamescope route, `gpu_busy` 90–99 %), `fsr3` costs **11.682 ms**
+against SGSR 2's **1.868** for the same frame — six times, against a whole-frame
+budget of **13.9**. FSR 3.1 ships as a **desktop** technique and SGSR 2 stays the
+handheld default. ⚠️ The optimisation pass that took `fsr3` from 14.704 to 11.682
+is **contaminated and was reported as such**: untouched `shade: compute` fell 22 %
+in the same batch and the `fsr3`/`shade` ratio went 2.734 → 2.793 — no attributable
+gain. The comparison that decides is the cross-technique one, not the before/after.
+
 ### 🎯 The order, decided 2026-08-17 — graphics first, and the game waits
 
 The user's call, in their words: *"el juego va a esperar un poco más, ordena el roadmap del
