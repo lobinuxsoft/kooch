@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 
 use crate::component::{ComponentRegistry, StorageId};
+use crate::entity::Entity;
 use crate::storage::column::Column;
-use crate::storage::table::Table;
+use crate::storage::table::{Table, TableRow};
 
 /// Which table of a world a row lives in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -119,6 +120,45 @@ impl Tables {
     #[inline]
     pub fn get_mut(&mut self, id: TableId) -> Option<&mut Table> {
         self.tables.get_mut(id.index())
+    }
+
+    /// Moves a row from one table to another, returning where it landed and
+    /// the entity dragged into the hole it left.
+    ///
+    /// The two tables are borrowed mutably at once, which a plain `Vec`
+    /// cannot hand out — hence the split.
+    ///
+    /// 🔴 See [`Table::move_row_to`]: the destination is left mid-write for
+    /// any component it holds and the source does not. The caller pushes
+    /// those, because they are typed and this layer is not.
+    ///
+    /// # Panics
+    ///
+    /// If either id is unknown, or if `from` and `to` are the same table —
+    /// moving a row onto itself is a caller bug, not a no-op worth
+    /// swallowing.
+    pub fn move_row(
+        &mut self,
+        from: TableId,
+        row: TableRow,
+        to: TableId,
+    ) -> (TableRow, Option<Entity>) {
+        assert_ne!(from, to, "a row cannot move to the table it is already in");
+        assert!(from.index() < self.tables.len(), "unknown table {from:?}");
+        assert!(to.index() < self.tables.len(), "unknown table {to:?}");
+
+        // `split_at_mut` is what makes two `&mut` out of one `Vec`: the
+        // pivot sits between the two indices, so each half holds exactly
+        // one of them.
+        let (source, target) = if from.index() < to.index() {
+            let (left, right) = self.tables.split_at_mut(to.index());
+            (&mut left[from.index()], &mut right[0])
+        } else {
+            let (left, right) = self.tables.split_at_mut(from.index());
+            (&mut right[0], &mut left[to.index()])
+        };
+
+        source.move_row_to(row, target)
     }
 }
 

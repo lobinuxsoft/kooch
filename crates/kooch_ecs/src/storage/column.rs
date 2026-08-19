@@ -152,12 +152,55 @@ impl Column {
     ///
     /// If `row` is past the end.
     pub fn swap_remove(&mut self, row: usize) {
+        self.vacate(row, true);
+    }
+
+    /// Moves the value at `row` into `dst`, appending it there, and vacates
+    /// the row here **without running its destructor**.
+    ///
+    /// Returns the row it landed in.
+    ///
+    /// 🔴 The destructor is the whole subtlety. The value was *moved*, so
+    /// there is exactly one copy of it and it now lives in `dst`. Running
+    /// the destructor here as well would be a double free — the classic
+    /// way a migration between two containers corrupts a heap.
+    ///
+    /// # Safety
+    ///
+    /// `dst` must hold the same item type as this column.
+    ///
+    /// # Panics
+    ///
+    /// If `row` is past the end.
+    pub unsafe fn move_row_to(&mut self, row: usize, dst: &mut Column) -> usize {
+        assert!(row < self.len, "row {row} is past the end ({})", self.len);
+        debug_assert_eq!(self.stride, dst.stride, "columns hold different types");
+        debug_assert_eq!(self.align, dst.align, "columns hold different types");
+
+        dst.reserve_one();
+        let landed = dst.len;
+        // SAFETY: `reserve_one` made room at `landed`, the two columns are
+        // distinct allocations, and the caller guarantees the shared type.
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.row_ptr(row), dst.row_ptr(landed), self.stride)
+        };
+        dst.len += 1;
+
+        self.vacate(row, false);
+        landed
+    }
+
+    /// Frees `row`, pulling the last row into it.
+    ///
+    /// `run_drop` is false only when the value has been moved elsewhere and
+    /// its single remaining copy is somebody else's to destroy.
+    fn vacate(&mut self, row: usize, run_drop: bool) {
         assert!(row < self.len, "row {row} is past the end ({})", self.len);
         let last = self.len - 1;
         // SAFETY: both rows are in bounds, and the two regions cannot
         // overlap because they are distinct rows of the same stride.
         unsafe {
-            if let Some(drop_one) = self.drop_one {
+            if run_drop && let Some(drop_one) = self.drop_one {
                 drop_one(self.row_ptr(row));
             }
             if row != last {

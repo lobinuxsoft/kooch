@@ -180,6 +180,52 @@ impl Table {
         // the removed one was last, in which case nothing moved.
         self.entities.get(row.index()).copied()
     }
+
+    /// Moves `row` into `dst`, carrying every component both tables hold
+    /// and **dropping** the ones only this table has.
+    ///
+    /// Returns the row it landed in, and the entity this table dragged into
+    /// the hole — `None` if the moved row was the last one here.
+    ///
+    /// 🔴 **`dst` is left mid-write when it holds components this table does
+    /// not.** Those columns receive nothing, so `dst.rows_agree()` is false
+    /// until the caller pushes them. That is not an oversight: an entity
+    /// gaining a component is exactly this case, and the value being gained
+    /// is the caller's, not this function's — it is typed, and everything
+    /// here is not.
+    ///
+    /// # Panics
+    ///
+    /// If `row` is past the end.
+    pub fn move_row_to(&mut self, row: TableRow, dst: &mut Table) -> (TableRow, Option<Entity>) {
+        assert!(
+            row.index() < self.entities.len(),
+            "row {} is past the end ({})",
+            row.0,
+            self.entities.len()
+        );
+        debug_assert!(self.rows_agree(), "a column drifted out of step");
+
+        let entity = self.entities[row.index()];
+        let landed = dst.push_entity(entity);
+
+        for index in 0..self.columns.len() {
+            let id = self.ids[index];
+            match dst.column_mut(id) {
+                // SAFETY: both columns were built for the component `id`
+                // names, so they hold the same item type.
+                Some(target) => unsafe {
+                    self.columns[index].move_row_to(row.index(), target);
+                },
+                // Only this table has it: the entity is losing it, so the
+                // value is destroyed rather than carried.
+                None => self.columns[index].swap_remove(row.index()),
+            }
+        }
+
+        self.entities.swap_remove(row.index());
+        (landed, self.entities.get(row.index()).copied())
+    }
 }
 
 #[cfg(test)]
