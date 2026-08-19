@@ -131,3 +131,186 @@ fn the_column_matches_the_component_type() {
         assert_eq!(table.column(speed).unwrap().get::<Speed>(0).unwrap().0, 2.5);
     }
 }
+
+// -- Moving a row between tables (#891, stage 5a) ---------------------------
+
+use crate::entity::Entity;
+use crate::storage::TableRow;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Counts its own drops, so a test can tell a move from a copy.
+struct Tracked(Arc<AtomicUsize>);
+impl Component for Tracked {}
+
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn entity(index: u32) -> Entity {
+    Entity::new(index, 0)
+}
+
+#[test]
+fn a_move_carries_the_shared_components() {
+    let (registry, health, speed, _) = registry();
+    let mut tables = Tables::new();
+    let from = tables.get_or_insert(&registry, &[health, speed]);
+    let to = tables.get_or_insert(&registry, &[health]);
+
+    let source = tables.get_mut(from).unwrap();
+    source.push_entity(entity(7));
+    unsafe {
+        source.column_mut(health).unwrap().push(Health(120));
+        source.column_mut(speed).unwrap().push(Speed(2.5));
+    }
+
+    let (landed, displaced) = tables.move_row(from, TableRow(0), to);
+
+    assert_eq!(landed, TableRow(0));
+    assert_eq!(displaced, None, "it was the only row");
+    let target = tables.get(to).unwrap();
+    assert_eq!(target.entities(), &[entity(7)]);
+    assert_eq!(
+        unsafe { target.column(health).unwrap().get::<Health>(0).unwrap().0 },
+        120
+    );
+    assert!(tables.get(from).unwrap().is_empty());
+}
+
+/// 🔴 The test this whole operation exists for. The value was **moved**:
+/// there is one copy of it and it lives in the target now. Running the
+/// destructor on the way out would be a double free.
+#[test]
+fn a_moved_value_is_dropped_exactly_once() {
+    let mut registry = ComponentRegistry::new();
+    let tracked = registry.register_cpu::<Tracked>();
+    let health = registry.register_cpu::<Health>();
+    let drops = Arc::new(AtomicUsize::new(0));
+
+    let mut tables = Tables::new();
+    let from = tables.get_or_insert(&registry, &[tracked]);
+    // A different SET, so a different table — and one that still holds
+    // `tracked`, so the value is carried rather than destroyed.
+    let to = tables.get_or_insert(&registry, &[tracked, health]);
+
+    let source = tables.get_mut(from).unwrap();
+    source.push_entity(entity(7));
+    unsafe {
+        source
+            .column_mut(tracked)
+            .unwrap()
+            .push(Tracked(drops.clone()))
+    };
+
+    let (landed, _) = tables.move_row(from, TableRow(0), to);
+    assert_eq!(drops.load(Ordering::Relaxed), 0, "moved, not destroyed");
+    // The destination is mid-write until `health` is filled; fill it so the
+    // table is left in a state its own invariant allows.
+    unsafe {
+        tables
+            .get_mut(to)
+            .unwrap()
+            .column_mut(health)
+            .unwrap()
+            .push(Health(1))
+    };
+    assert_eq!(landed, TableRow(0));
+
+    drop(tables);
+    assert_eq!(
+        drops.load(Ordering::Relaxed),
+        1,
+        "destroyed once, at the end"
+    );
+}
+
+/// A component the destination does not hold is one the entity is losing,
+/// so its value is destroyed here and not carried anywhere.
+#[test]
+fn a_component_the_target_lacks_is_destroyed() {
+    let mut registry = ComponentRegistry::new();
+    let health = registry.register_cpu::<Health>();
+    let tracked = registry.register_cpu::<Tracked>();
+    let drops = Arc::new(AtomicUsize::new(0));
+
+    let mut tables = Tables::new();
+    let from = tables.get_or_insert(&registry, &[health, tracked]);
+    let to = tables.get_or_insert(&registry, &[health]);
+
+    let source = tables.get_mut(from).unwrap();
+    source.push_entity(entity(7));
+    unsafe {
+        source.column_mut(health).unwrap().push(Health(50));
+        source
+            .column_mut(tracked)
+            .unwrap()
+            .push(Tracked(drops.clone()));
+    }
+
+    tables.move_row(from, TableRow(0), to);
+
+    assert_eq!(drops.load(Ordering::Relaxed), 1, "dropped on the way out");
+    assert!(tables.get(to).unwrap().rows_agree());
+}
+
+/// An entity gaining a component lands mid-write, and that has to be
+/// observable — the value being gained is typed and belongs to the caller.
+#[test]
+fn gaining_a_component_lands_mid_write() {
+    let (registry, health, speed, _) = registry();
+    let mut tables = Tables::new();
+    let from = tables.get_or_insert(&registry, &[health]);
+    let to = tables.get_or_insert(&registry, &[health, speed]);
+
+    let source = tables.get_mut(from).unwrap();
+    source.push_entity(entity(7));
+    unsafe { source.column_mut(health).unwrap().push(Health(50)) };
+
+    tables.move_row(from, TableRow(0), to);
+
+    let target = tables.get_mut(to).unwrap();
+    assert!(!target.rows_agree(), "speed has no value yet");
+    unsafe { target.column_mut(speed).unwrap().push(Speed(1.0)) };
+    assert!(target.rows_agree());
+}
+
+#[test]
+fn a_move_reports_the_entity_it_displaced() {
+    let (registry, health, _, _) = registry();
+    let mut tables = Tables::new();
+    let from = tables.get_or_insert(&registry, &[health]);
+    let to = tables.get_or_insert(&registry, &[]);
+
+    let source = tables.get_mut(from).unwrap();
+    for id in [7u32, 8, 9] {
+        source.push_entity(entity(id));
+        unsafe { source.column_mut(health).unwrap().push(Health(id)) };
+    }
+
+    let (_, displaced) = tables.move_row(from, TableRow(0), to);
+
+    assert_eq!(displaced, Some(entity(9)));
+    let source = tables.get(from).unwrap();
+    assert_eq!(source.entities(), &[entity(9), entity(8)]);
+    assert_eq!(
+        unsafe { source.column(health).unwrap().get::<Health>(0).unwrap().0 },
+        9,
+        "the displaced entity kept its own value"
+    );
+}
+
+#[test]
+#[should_panic(expected = "already in")]
+fn moving_a_row_onto_its_own_table_panics() {
+    let (registry, health, _, _) = registry();
+    let mut tables = Tables::new();
+    let id = tables.get_or_insert(&registry, &[health]);
+    let table = tables.get_mut(id).unwrap();
+    table.push_entity(entity(7));
+    unsafe { table.column_mut(health).unwrap().push(Health(1)) };
+
+    tables.move_row(id, TableRow(0), id);
+}
