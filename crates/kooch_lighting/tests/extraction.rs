@@ -21,7 +21,16 @@ use kooch_ecs::point_light::PointLight;
 use kooch_ecs::query::AccessTracker;
 use kooch_ecs::spot_light::SpotLight;
 
-use kooch_lighting::{LIGHT_KIND_DIRECTIONAL, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, extract_lights};
+use kooch_lighting::{LIGHT_KIND_DIRECTIONAL, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, LightFrame};
+
+/// The walk, as every test here reaches it now.
+///
+/// It used to be `extract_lights`, next to a second walk in the shadow
+/// stage that read the same archetypes again. There is one walk.
+fn extract_lights(resources: &Resources) -> kooch_lighting::ExtractedLights {
+    let frame = LightFrame::extract(resources);
+    frame.lights().clone()
+}
 
 fn world() -> Resources {
     let mut r = Resources::new();
@@ -301,7 +310,9 @@ fn a_spots_shadow_angle_is_converted_to_radians() {
         },
     );
 
-    let spots = kooch_lighting::shadow_casting_spots(&r, 4);
+    let spots = LightFrame::extract(&r).spot_shadows()
+        [..4.min(LightFrame::extract(&r).spot_shadows().len())]
+        .to_vec();
     assert_eq!(spots.len(), 1);
     assert!(
         (spots[0].outer_angle - std::f32::consts::FRAC_PI_4).abs() < 1e-5,
@@ -325,7 +336,12 @@ fn only_casting_spots_get_a_shadow_source() {
             ..Default::default()
         },
     );
-    assert!(kooch_lighting::shadow_casting_spots(&r, 4).is_empty());
+    assert!(
+        LightFrame::extract(&r).spot_shadows()
+            [..4.min(LightFrame::extract(&r).spot_shadows().len())]
+            .to_vec()
+            .is_empty()
+    );
 }
 
 /// 🔴 The froxel grid does not cluster directional lights — they reach

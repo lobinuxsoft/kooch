@@ -6,9 +6,10 @@ use kooch_core::resource::Resources;
 use wgpu::util::DeviceExt;
 
 use crate::cluster::{ClusterCamera, ClusterSettings, GpuClusters};
-use crate::extract::{extract_lights, over_linear_budget};
+use crate::extract::over_linear_budget;
 use crate::frame::{AmbientLight, Exposure, FrameShadows, IntiFrame};
 use crate::gpu_light::GpuLight;
+use crate::light_frame::LightFrame;
 
 /// Lights a fresh buffer holds before it has to grow. Sixteen covers an
 /// authored room; growth is geometric from there.
@@ -348,19 +349,19 @@ impl GpuLights {
         resources: &Resources,
         camera: ClusterCamera,
         shadows: Option<FrameShadows>,
+        light_frame: &mut LightFrame,
     ) {
-        let mut extracted = extract_lights(resources);
         // Point lights learn their cube slot here rather than during the
         // walk: the ranking that produced the slots is in `shadows`, and
         // recomputing it would be a second sort that has to agree with
         // the first one forever. See `assign_point_slots`.
-        if let Some(frame) = shadows.as_ref() {
+        if let Some(shadows) = shadows.as_ref() {
             crate::extract::assign_point_slots(
-                &mut extracted,
-                &frame.point_entities[..frame.point_shadow_count as usize],
+                light_frame.lights_mut(),
+                &shadows.point_entities[..shadows.point_shadow_count as usize],
             );
         }
-        let lights = &extracted.lights;
+        let lights = &light_frame.lights().lights;
         let count = lights.len() as u32;
         // Logged on change, never per frame. "I placed a light and
         // nothing happened" and "the light never reached the GPU" look
@@ -427,7 +428,7 @@ impl GpuLights {
         let debug_light = resources
             .get::<crate::DebugLight>()
             .and_then(|d| d.0)
-            .and_then(|entity| extracted.slot_of(entity));
+            .and_then(|entity| light_frame.lights().slot_of(entity));
 
         let ambient = resources.get::<AmbientLight>().copied().unwrap_or_default();
         let exposure = resources.get::<Exposure>().copied().unwrap_or_default();
@@ -455,7 +456,7 @@ impl GpuLights {
                     .unwrap_or_default()
                     .0,
             )
-            .with_directionals(extracted.directional_count);
+            .with_directionals(light_frame.lights().directional_count);
         if let Some(view) = clustered {
             frame = frame.with_clusters(self.clusters.grid(), view, self.clusters.index_capacity());
         }

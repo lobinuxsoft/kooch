@@ -16,6 +16,7 @@ fn face_seeing(eye: Vec3, world: Vec3) -> Option<(usize, f32)> {
 
 fn source(position: Vec3, range: f32) -> PointShadowSource {
     PointShadowSource {
+        buffer_slot: 0,
         entity: Entity::new(0, 0),
         position,
         range,
@@ -30,6 +31,7 @@ fn source(position: Vec3, range: f32) -> PointShadowSource {
 /// A lamp in front of the camera, identified and ranked.
 fn lamp(id: u32, importance: f32) -> PointShadowSource {
     PointShadowSource {
+        buffer_slot: 0,
         entity: Entity::new(id, 0),
         position: Vec3::new(0.0, 0.0, -20.0),
         range: 5.0,
@@ -201,6 +203,7 @@ fn a_grid_of_lamps_fills_every_cube() {
                 -((i / 10) as f32 * 2.0) - 5.0,
             );
             PointShadowSource {
+                buffer_slot: 0,
                 entity: Entity::new(i, 0),
                 position,
                 range: 4.0,
