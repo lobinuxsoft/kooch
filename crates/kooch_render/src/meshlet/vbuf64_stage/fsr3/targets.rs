@@ -128,9 +128,19 @@ pub(super) struct Targets {
     /// Output resolution. Written by a render-resolution pass, so it
     /// has to be cleared rather than overwritten.
     pub(super) new_locks: Target,
-    /// Output resolution. `rgb` is the resolved image — what the
-    /// tonemap reads — and `a` carries the lock into the next frame.
+    /// Output resolution. The resolved image, and next frame's history.
+    ///
+    /// 🔴 Its alpha is COVERAGE, and that is not a free channel. FSR
+    /// carries the feature lock in the history's alpha because its
+    /// history is private; this one doubles as the image the blit
+    /// composites, where alpha 0 means "the stage did not draw here".
+    /// Writing the lock there made the whole frame transparent except
+    /// the thin features a lock lands on — which reads as a black screen
+    /// with the geometry's edges dotted in.
     pub(super) history: Pair,
+    /// Output resolution. The feature lock, in the channel FSR would
+    /// have put in `history.a`.
+    pub(super) lock: Pair,
 }
 
 impl Targets {
@@ -168,6 +178,7 @@ impl Targets {
                 wgpu::TextureFormat::R32Float,
             ),
             history: Pair::new(device, "fsr3_history", output, HDR_COLOR_FORMAT),
+            lock: Pair::new(device, "fsr3_lock", output, wgpu::TextureFormat::R32Float),
         }
     }
 }

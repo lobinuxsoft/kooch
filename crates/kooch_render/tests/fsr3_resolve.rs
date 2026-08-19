@@ -320,3 +320,48 @@ fn the_motion_step_is_grey_and_not_black() {
          so anything near black means the debug selector never reached the shader.",
     );
 }
+
+/// 🔴 The alpha of the resolved image is COVERAGE, and the blit reads it.
+///
+/// `blit.rs` composites premultiplied: a pixel written with alpha 0 is
+/// "the meshlet stage did not draw here" and the background shows
+/// through. SGSR 2 writes a literal 1.0 for exactly this reason.
+///
+/// FSR keeps its feature lock in the history's alpha, because ITS
+/// history is a private texture. Carrying that straight across made the
+/// whole frame transparent except the thin features a lock lands on —
+/// which reads as a black screen with the geometry's edges dotted in,
+/// and cost most of a session to find because every debug view of the
+/// colour was correct. The colour was never the problem.
+///
+/// Every other test in this file reads the tonemap's target, where alpha
+/// is passed through and never composited, so all of them stayed green.
+#[test]
+fn the_resolved_image_is_fully_covered() {
+    let _gpu = gpu_lock();
+    let Some(mut r) = rig(3, true) else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    assert!(r.stage.set_compute_shading(true) > 0);
+    assert!(r.stage.set_upscale(UpscaleTechnique::Fsr3) > 0);
+
+    let mut last = Vec::new();
+    for _ in 0..8 {
+        r.stage
+            .render_with_assets_primary(&r.device, &r.queue, &r.resources, &r.camera, 1.0);
+        last = common::read_rgba8(&r.device, &r.queue, r.stage.color_texture());
+    }
+
+    let covered = last.chunks_exact(4).filter(|p| p[3] > 250).count();
+    let total = last.len() / 4;
+    let ratio = covered as f64 / total as f64;
+    eprintln!("covered {:.1}% of {total} pixels", ratio * 100.0);
+    assert!(
+        ratio > 0.99,
+        "only {:.1}% of the frame is opaque. The blit composites on this alpha, so \
+         everything under it is the background — a black screen with the geometry \
+         dotted in wherever something happened to write a non-zero alpha.",
+        ratio * 100.0,
+    );
+}

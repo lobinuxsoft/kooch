@@ -354,6 +354,12 @@ impl Fsr3 {
                     wgpu::StorageTextureAccess::ReadWrite,
                 ),
                 write_hdr(9),
+                unfilterable(10),
+                storage(
+                    11,
+                    wgpu::TextureFormat::R32Float,
+                    wgpu::StorageTextureAccess::WriteOnly,
+                ),
             ],
         );
 
@@ -743,6 +749,14 @@ impl Fsr3 {
                 wgpu::BindGroupEntry {
                     binding: 9,
                     resource: texture(t.history.view(target)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: texture(t.lock.view(previous)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: texture(t.lock.view(target)),
                 },
             ],
         });
