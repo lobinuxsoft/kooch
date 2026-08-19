@@ -30,7 +30,7 @@ use crate::component::cpu_storage::ComponentStorage;
 use crate::component::storage_id::StorageId;
 use crate::component::traits::{AnyStorage, Component};
 use crate::storage::Column;
-use crate::storage::{Table, TableRow};
+use crate::storage::{Table, TableId, TableRow, Tables};
 
 /// Everything the registry knows about one registered component type.
 ///
@@ -66,6 +66,21 @@ pub struct ComponentRegistry {
     /// The only map left, and it is consulted at registration and at query
     /// construction — never inside a walk.
     pub(super) ids: HashMap<TypeId, StorageId>,
+    /// Where component VALUES live, for the ones that have moved (#891).
+    ///
+    /// 🎯 Here and not on the archetype registry, and the split is the
+    /// point: an archetype is an **index** — who has which components —
+    /// while a table is **where the value is**. Reflection and queries both
+    /// already ask this registry for a component; with the tables here they
+    /// can resolve a location without reaching for a second registry, which
+    /// is what would otherwise have meant threading one through eighty call
+    /// sites in three crates.
+    ///
+    /// It is also how Bevy splits it: `Components`/`Storages` against
+    /// `Archetypes`.
+    pub(super) tables: Tables,
+    /// Which table row holds an entity's values, once they live in one.
+    pub(super) entity_at: HashMap<Entity, (TableId, TableRow)>,
 }
 
 // SAFETY: All public methods either take `&mut self` (exclusive access) or
@@ -80,7 +95,41 @@ impl ComponentRegistry {
         Self {
             slots: Vec::new(),
             ids: HashMap::new(),
+            tables: Tables::new(),
+            entity_at: HashMap::new(),
         }
+    }
+
+    // -- Where the values live (#891) -----------------------------------------
+
+    /// The tables holding component values.
+    #[inline]
+    pub fn tables(&self) -> &Tables {
+        &self.tables
+    }
+
+    /// The tables, mutably.
+    #[inline]
+    pub fn tables_mut(&mut self) -> &mut Tables {
+        &mut self.tables
+    }
+
+    /// Where `entity`'s values live, if they live in a table.
+    #[inline]
+    pub fn location(&self, entity: Entity) -> Option<(TableId, TableRow)> {
+        self.entity_at.get(&entity).copied()
+    }
+
+    /// The table serving `components`, **without creating one**.
+    #[inline]
+    pub fn table_for(&self, components: &[StorageId]) -> Option<TableId> {
+        self.tables.find(components)
+    }
+
+    /// The table and row holding `entity`'s values, resolved for reading.
+    fn at(&self, entity: Entity) -> Option<(&Table, TableRow)> {
+        let (table, row) = self.location(entity)?;
+        Some((self.tables.get(table)?, row))
     }
 
     // -- The dense handle -----------------------------------------------------
@@ -228,7 +277,7 @@ impl ComponentRegistry {
         type_id: &TypeId,
         entity: Entity,
     ) -> Option<Vec<(String, ReflectValue)>> {
-        self.reflect_fields_at(type_id, entity, None)
+        self.reflect_fields_at(type_id, entity, self.at(entity))
     }
 
     /// Reads a component's fields from wherever its value actually lives.
@@ -275,7 +324,44 @@ impl ComponentRegistry {
         field: &str,
         value: ReflectValue,
     ) -> Result<(), ReflectError> {
-        self.reflect_write_at(type_id, entity, field, value, None)
+        // 🔴 The value's ADDRESS first, so every borrow it needed is
+        // released before the accessor is reached. Handing a `&Table` down
+        // while `&mut self` is live is an aliasing violation — and laundering
+        // it through a raw pointer only hides it from the compiler, not from
+        // Miri.
+        let slot = *self
+            .ids
+            .get(type_id)
+            .ok_or(ReflectError::ComponentNotFound)?;
+        let column_value = self
+            .entity_at
+            .get(&entity)
+            .copied()
+            .and_then(|(table, row)| {
+                let column = self.tables.get(table)?.column(slot)?;
+                // SAFETY: the column holds this component's type, and the
+                // pointer derives from the column's own allocation.
+                unsafe { column.value_ptr::<u8>(row.index()) }
+            });
+
+        let target = match column_value {
+            Some(value) => value,
+            None => {
+                // SAFETY: `&mut self` is the exclusive access the write needs.
+                let storage = unsafe { &mut **self.slots[slot.index()].storage.get() };
+                storage
+                    .get_mut_ptr(entity)
+                    .ok_or(ReflectError::ComponentNotFound)?
+            }
+        };
+
+        let accessor = self.slots[slot.index()]
+            .reflector
+            .as_deref()
+            .ok_or(ReflectError::ComponentNotFound)?;
+        // SAFETY: `target` points at a live component of this type, and the
+        // borrow above is the exclusive access.
+        unsafe { accessor.write_field(target, field, value) }
     }
 
     /// Sets a field on a component wherever its value actually lives.
