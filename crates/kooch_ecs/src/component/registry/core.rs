@@ -30,6 +30,7 @@ use crate::component::cpu_storage::ComponentStorage;
 use crate::component::storage_id::StorageId;
 use crate::component::traits::{AnyStorage, Component};
 use crate::storage::Column;
+use crate::storage::{Table, TableRow};
 
 /// Everything the registry knows about one registered component type.
 ///
@@ -227,11 +228,43 @@ impl ComponentRegistry {
         type_id: &TypeId,
         entity: Entity,
     ) -> Option<Vec<(String, ReflectValue)>> {
+        self.reflect_fields_at(type_id, entity, None)
+    }
+
+    /// Reads a component's fields from wherever its value actually lives.
+    ///
+    /// 🔴 The inspector, scene saving, undo, prefabs and the remote mirror
+    /// all reach components through here rather than through a query, so
+    /// this is the one place that has to know about both homes. A value
+    /// that moved to a column and was only readable by queries would show
+    /// as an empty component in the inspector and be lost by a save — with
+    /// nothing failing. See #891.
+    ///
+    /// `at` is `None` for a component still held in the per-type map,
+    /// which today is all of them.
+    pub fn reflect_fields_at(
+        &self,
+        type_id: &TypeId,
+        entity: Entity,
+        at: Option<(&Table, TableRow)>,
+    ) -> Option<Vec<(String, ReflectValue)>> {
         let slot = self.slot(type_id)?;
         let accessor = slot.reflector.as_deref()?;
+        let id = self.ids.get(type_id).copied();
+
+        if let Some((table, row)) = at
+            && let Some(column) = id.and_then(|id| table.column(id))
+        {
+            // SAFETY: the column was built for this component's type, and
+            // the row is the caller's to have checked.
+            let value = unsafe { column.value_ptr::<u8>(row.index())? };
+            return Some(unsafe { accessor.read_fields(value) });
+        }
+
         // SAFETY: We have &self and no mutable references are active.
-        let storage_ref = unsafe { &**slot.storage.get() };
-        accessor.get_fields(storage_ref, entity)
+        let storage = unsafe { &**slot.storage.get() };
+        let value = storage.get_ptr(entity)?;
+        Some(unsafe { accessor.read_fields(value) })
     }
 
     /// Sets a single reflected field on a component for an entity.
@@ -242,14 +275,45 @@ impl ComponentRegistry {
         field: &str,
         value: ReflectValue,
     ) -> Result<(), ReflectError> {
+        self.reflect_write_at(type_id, entity, field, value, None)
+    }
+
+    /// Sets a field on a component wherever its value actually lives.
+    ///
+    /// The write side of [`Self::reflect_fields_at`], and it has to follow
+    /// the same rule: reading from one home and writing to the other would
+    /// let the inspector show a value it cannot change.
+    pub fn reflect_write_at(
+        &mut self,
+        type_id: &TypeId,
+        entity: Entity,
+        field: &str,
+        value: ReflectValue,
+        at: Option<(&Table, TableRow)>,
+    ) -> Result<(), ReflectError> {
+        let id = self.ids.get(type_id).copied();
         let slot = self.slot(type_id).ok_or(ReflectError::ComponentNotFound)?;
         let accessor = slot
             .reflector
             .as_deref()
             .ok_or(ReflectError::ComponentNotFound)?;
+
+        if let Some((table, row)) = at
+            && let Some(column) = id.and_then(|id| table.column(id))
+        {
+            // SAFETY: the column holds this component's type, and `&mut
+            // self` is the exclusive access the write needs.
+            let target = unsafe { column.value_ptr::<u8>(row.index()) }
+                .ok_or(ReflectError::ComponentNotFound)?;
+            return unsafe { accessor.write_field(target, field, value) };
+        }
+
         // SAFETY: We have &mut self, so exclusive access is guaranteed.
-        let storage_mut = unsafe { &mut **slot.storage.get() };
-        accessor.set_field(storage_mut, entity, field, value)
+        let storage = unsafe { &mut **slot.storage.get() };
+        let target = storage
+            .get_mut_ptr(entity)
+            .ok_or(ReflectError::ComponentNotFound)?;
+        unsafe { accessor.write_field(target, field, value) }
     }
 
     /// Returns the inspector visibility for a reflected component type.

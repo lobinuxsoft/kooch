@@ -27,7 +27,10 @@ fn accessor_get_fields_from_cpu_storage() {
     );
 
     let accessor = TypedReflectAccessor::<Health>::new_cpu();
-    let fields = accessor.get_fields(&storage, e).unwrap();
+    // The accessor takes the value's address now: resolving where a
+    // component lives is the registry's job, not reflection's (#891).
+    let value = storage.get(e).unwrap() as *const Health as *const u8;
+    let fields = unsafe { accessor.read_fields(value) };
 
     assert_eq!(fields.len(), 2);
     assert_eq!(fields[0], ("hp".to_owned(), ReflectValue::U32(42)));
@@ -42,8 +45,9 @@ fn accessor_get_fields_missing_entity() {
     let storage = ComponentStorage::<Health>::new();
     let e = Entity::new(99, 0);
 
-    let accessor = TypedReflectAccessor::<Health>::new_cpu();
-    assert!(accessor.get_fields(&storage, e).is_none());
+    // An absent component has no address, so there is nothing to hand the
+    // accessor — the lookup that used to fail inside it now fails outside.
+    assert!(storage.get(e).is_none());
 }
 
 #[test]
@@ -62,9 +66,8 @@ fn accessor_set_field_on_cpu_storage() {
     );
 
     let accessor = TypedReflectAccessor::<Health>::new_cpu();
-    accessor
-        .set_field(&mut storage, e, "hp", ReflectValue::U32(75))
-        .unwrap();
+    let value = storage.get_mut(e).unwrap() as *mut Health as *mut u8;
+    unsafe { accessor.write_field(value, "hp", ReflectValue::U32(75)) }.unwrap();
 
     assert_eq!(storage.get(e).unwrap().hp, 75);
 }
