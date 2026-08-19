@@ -2,7 +2,9 @@ use std::any::TypeId;
 use std::collections::{BTreeSet, HashMap};
 
 use crate::archetype::{Archetype, ArchetypeId};
+use crate::component::ComponentRegistry;
 use crate::entity::Entity;
+use crate::storage::{TableId, Tables};
 
 /// Central registry of all archetypes and entity-archetype mappings.
 ///
@@ -17,6 +19,10 @@ pub struct ArchetypeRegistry {
     add_transitions: HashMap<(ArchetypeId, TypeId), ArchetypeId>,
     /// Cache: `(from_archetype, -component_type)` → `to_archetype`.
     remove_transitions: HashMap<(ArchetypeId, TypeId), ArchetypeId>,
+    /// Where the component VALUES will live (#891). Empty until something
+    /// asks for a table, which is the point where the component registry
+    /// is in scope and a column can actually be built.
+    tables: Tables,
 }
 
 impl ArchetypeRegistry {
@@ -30,7 +36,71 @@ impl ArchetypeRegistry {
             entity_archetype: HashMap::new(),
             add_transitions: HashMap::new(),
             remove_transitions: HashMap::new(),
+            tables: Tables::new(),
         }
+    }
+
+    /// The tables holding this world's component values.
+    #[inline]
+    pub fn tables(&self) -> &Tables {
+        &self.tables
+    }
+
+    /// The tables, mutably.
+    #[inline]
+    pub fn tables_mut(&mut self) -> &mut Tables {
+        &mut self.tables
+    }
+
+    /// The table serving `archetype`'s component set, built on first ask.
+    ///
+    /// Returns `None` if the archetype is unknown.
+    ///
+    /// # Why this is a lookup and not a field on `Archetype`
+    ///
+    /// Both ids are functions of the **same component set**:
+    /// `ArchetypeId::from_components` hashes the types, and
+    /// [`Tables::get_or_insert`] keys on their [`StorageId`]s. Storing the
+    /// table on the archetype would mean handing a `&ComponentRegistry` to
+    /// every one of the 38 places that create or transition an archetype,
+    /// none of which cares about storage — and a column cannot be built
+    /// without the concrete type, so the registry has to be *somewhere*.
+    ///
+    /// It is asked for where a value is actually written, which already
+    /// holds both registries.
+    ///
+    /// ⚠️ **And it is deliberately not cached.** [`Tables::get_or_insert`]
+    /// already dedupes by component set, so a cache here would change no
+    /// observable behaviour — it would only save recomputing a short
+    /// `Vec<StorageId>`, an amount nobody has measured, at the price of a
+    /// second structure that can drift from the first. If a capture ever
+    /// says this lookup matters, cache it then, with the number.
+    ///
+    /// # Panics
+    ///
+    /// If a component of the archetype is not registered. Reaching a table
+    /// for a component nothing ever registered is a bug upstream — the
+    /// insert path registers before it transitions.
+    ///
+    /// [`StorageId`]: crate::component::StorageId
+    pub fn table_of(
+        &mut self,
+        archetype: ArchetypeId,
+        components: &ComponentRegistry,
+    ) -> Option<TableId> {
+        let ids: Vec<_> = self
+            .archetypes
+            .get(&archetype)?
+            .components()
+            .iter()
+            .map(|type_id| {
+                components
+                    .storage_id(type_id)
+                    .unwrap_or_else(|| panic!("component {type_id:?} is not registered"))
+            })
+            .collect();
+
+        Some(self.tables.get_or_insert(components, &ids))
     }
 
     /// Returns the archetype for a component set, creating it if needed.
