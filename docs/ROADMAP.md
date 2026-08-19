@@ -1400,6 +1400,101 @@ other half of this.
 
 ---
 
+## The 11 ms nobody had looked at, 2026-08-19
+
+Area 2 of #885 audited all 58 shaders (12 014 lines). The inventory is in
+that issue; what belongs here is the framing it produced, because it
+reads the fit above in a way nothing else had.
+
+```
+shade = 11.11 ms + 1.06 ms per light
+```
+
+#821 (the arithmetic), #824 (the storage fetch), #820 (the over-listing)
+and #826 (sampling) all attacked **the slope**. The other term is named
+three sections up — *"there is an ~11 ms per-pixel floor that is not the
+lights"* — and then dropped. **That floor is 37 % of the pass and had
+never been broken down.** #825 halves it because it halves the pixels,
+not because anyone knows what it is made of.
+
+At `render_scale: 50` and `shading_rate: 2` the pass shades 320x180, so
+the floor is **193 ns a pixel** to decode a vbuf, reconstruct a triangle
+and take three `textureSampleGrad`. Two candidates account for shape of
+that, and both are per-pixel by construction:
+
+**The shading sweeps the whole screen once per material in the PROJECT.**
+`shading_slots()` is `0..next_slot` and `sync_from_resources` registers
+every material the `AssetDatabase` knows about — not the scene's, not the
+frame's visible ones. `roll-a-ball` has three, so the pass makes **four**
+full-screen sweeps counting the fallback, and each pixel is visited four
+times to be written once. A thread in a tile that owns none of this
+material's pixels still pays a `textureLoad` of the R64 vbuf, then
+`visible_meshlets[slot]`, then `instances[inst_id].material_id` — two
+dependent storage reads, which is the access pattern the device left
+standing after ALU was ruled out — plus three unconditional barriers.
+
+🔴 **It scales with something the game author changes without knowing.**
+Dropping an unused `.ron` into the project's materials folder adds a
+full-screen sweep to every frame.
+
+**`motion_vectors` reconstructs the triangle the shading already
+reconstructed.** Same pixel, same `textureLoad(vbuf64)`, same payload
+decode, same three `global_vertex_id`, same `compute_partial_derivatives`
+— 2.6 ms whose only own work is `previous_transforms[inst_id]` and one
+matrix multiply. The written justification is correct **at half rate**: a
+temporal resolve needs a vector per pixel and the shading runs per quad.
+At `shading_rate: 1` the two passes do identical work. Fusing them costs
+`Rg16Float` -> `Rgba16Float`, 8 B/px against 4, because `Rg16Float` is
+not a storage format — the same wgpu format tax FSR 3.1 paid.
+
+🎯 **The experiment does not touch the engine**: merge roll-a-ball's three
+materials into one and capture again. If the floor does not move, the
+first candidate is out. ⚠️ Check that `sky` and `blit` agree between the
+two runs before believing the difference — the mistake the baseline run
+of the `KOOCH_LIGHT_LIMIT` fit made.
+
+### The rest of the inventory
+
+**TAA reads the same depth ten times a pixel.** `taa.wgsl:305-312` is a
+3x3 loop of `textureSample(depth, nearest_sampler, ...)` and the `(0,0)`
+tap re-reads `center_depth` from `:284` — ten reads where the algorithm
+asks for nine, with a **nearest** sampler, which is the textbook case for
+`textureGather`. The pass is **3.7 ms**. The repo already uses the
+instruction in `hi_z_spd.wgsl:335` and `sgsr2_convert.wgsl:104`, so this
+is asymmetric knowledge rather than a technique nobody here has.
+
+**Resource lifetime, found in passing.** `material_depth_texture`
+(`Depth16Unorm`, full screen) is created unconditionally in `new()` and
+`resize()` but only the fragment path reads it — ~1.84 MB **per view**,
+and the editor runs N. `material_bind_group()` builds a fresh bind group
+on every call, one per slot per frame per view.
+
+### Two claims the device refutes, now fixed
+
+`compute_shade`'s header said *"fifteen storage fetches per pixel become
+fifteen per tile"*. It cached the **indices**, four bytes each; every
+thread still fetches the whole 80-byte `IntiLight`, which is what the
+6.6 % measurement above already said and what #826 is for. The dispatch
+comment said an idle tile *"costs one vbuf read per thread and then
+leaves"* — it is three reads, two of them dependent, plus the barriers.
+
+Both corrected in #909, along with the test that pins
+`DOWNSAMPLE_WORKGROUP_SIZE` to the shader. That constant lives in three
+places — the host, the shader's `const`, and `@workgroup_size` — and none
+of them fails to compile when they disagree; the grid-stride loop simply
+steps by a different count than there are threads and the cascade reads
+some voxels twice. Its twin `POPULATE_WORKGROUP_SIZE` had the test since
+it was written.
+
+✅ Ruled out as false positives, so they are not re-audited:
+`SHADING_TILE_SIZE` ↔ `TILE_SIZE` (tested), `enable f16` (injected, tested),
+and `compute_shading: false` as the serde default — deliberate, and
+`settings.rs:510` argues it well: a default is what an old file silently
+becomes, not a recommendation.
+
+---
+
+
 ## The tooling that had to be fixed to measure any of this, 2026-08-13
 
 None of it was planned. All of it was in the way.
