@@ -1,10 +1,24 @@
 //! Core [`ComponentRegistry`] type and inherent impls.
+//!
+//! # Why one dense slot instead of a map per concern
+//!
+//! Storages, type names and reflectors used to be three `HashMap`s keyed
+//! by the same `TypeId`: three lookups where one is enough, and three
+//! chances for a type to be present in one and absent from another.
+//!
+//! 🔴 The reason it changed is not tidiness. A **column cannot be indexed
+//! by a `TypeId`** — it is a 128-bit hash, not an integer. Dense component
+//! columns are what #891 is for, and they need an integer handle that
+//! exists before the columns do.
+//!
+//! So the registry mints a [`StorageId`] on first registration and keeps
+//! one slot per id. The `TypeId` map survives for exactly one job: turning
+//! a Rust type into its id. That happens at registration and when a query
+//! is built — **never per entity**, which is the whole point.
 
 use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
-
-use wgpu::{Device, Queue};
 
 use crate::entity::Entity;
 use crate::reflect::{
@@ -13,20 +27,37 @@ use crate::reflect::{
 };
 
 use crate::component::cpu_storage::ComponentStorage;
+use crate::component::storage_id::StorageId;
 use crate::component::traits::{AnyStorage, Component};
+
+/// Everything the registry knows about one registered component type.
+///
+/// One slot, not four parallel arrays: these four are written together at
+/// registration and read together afterwards, so splitting them would buy
+/// nothing and cost a way for them to disagree.
+pub(super) struct Slot {
+    storage: UnsafeCell<Box<dyn AnyStorage>>,
+    type_id: TypeId,
+    name: &'static str,
+    /// `None` for a component registered without reflection.
+    reflector: Option<Box<dyn ReflectAccessor>>,
+}
 
 /// Central registry for all component storages.
 ///
-/// Stores one [`ComponentStorage<T>`] per
-/// registered component type, keyed by `TypeId`.
+/// Holds one [`ComponentStorage<T>`] per registered component type, in a
+/// dense slot addressed by [`StorageId`].
 ///
 /// Uses [`UnsafeCell`] internally to allow the query system to borrow
 /// multiple storages simultaneously. Safety is enforced at the query
 /// level through runtime access tracking.
 pub struct ComponentRegistry {
-    pub(super) storages: HashMap<TypeId, UnsafeCell<Box<dyn AnyStorage>>>,
-    pub(super) type_names: HashMap<TypeId, &'static str>,
-    pub(super) reflectors: HashMap<TypeId, Box<dyn ReflectAccessor>>,
+    /// Indexed by [`StorageId`]. Append-only: a slot is never removed, so
+    /// an id handed out stays valid for the life of the registry.
+    pub(super) slots: Vec<Slot>,
+    /// The only map left, and it is consulted at registration and at query
+    /// construction — never inside a walk.
+    pub(super) ids: HashMap<TypeId, StorageId>,
 }
 
 // SAFETY: All public methods either take `&mut self` (exclusive access) or
@@ -39,47 +70,73 @@ impl ComponentRegistry {
     /// Creates an empty registry.
     pub fn new() -> Self {
         Self {
-            storages: HashMap::new(),
-            type_names: HashMap::new(),
-            reflectors: HashMap::new(),
+            slots: Vec::new(),
+            ids: HashMap::new(),
         }
+    }
+
+    // -- The dense handle -----------------------------------------------------
+
+    /// The slot `type_id` was registered into, if it was.
+    ///
+    /// Resolve once and keep the id: that is what makes the walk free.
+    pub fn storage_id(&self, type_id: &TypeId) -> Option<StorageId> {
+        self.ids.get(type_id).copied()
+    }
+
+    /// How many component types are registered.
+    ///
+    /// Also the exclusive upper bound of every live [`StorageId`].
+    pub fn registered_count(&self) -> usize {
+        self.slots.len()
+    }
+
+    #[inline]
+    fn slot(&self, type_id: &TypeId) -> Option<&Slot> {
+        self.slots.get(self.ids.get(type_id)?.index())
     }
 
     /// Registers a CPU-only component type.
     ///
-    /// Does nothing if the type is already registered.
-    pub fn register_cpu<T: Component>(&mut self) {
+    /// Does nothing if the type is already registered, and returns the
+    /// existing id in that case — registration is idempotent and an id,
+    /// once handed out, never moves.
+    pub fn register_cpu<T: Component>(&mut self) -> StorageId {
         let type_id = TypeId::of::<T>();
-        self.storages
-            .entry(type_id)
-            .or_insert_with(|| UnsafeCell::new(Box::new(ComponentStorage::<T>::new())));
-        self.type_names
-            .entry(type_id)
-            .or_insert_with(|| std::any::type_name::<T>());
+        if let Some(id) = self.ids.get(&type_id) {
+            return *id;
+        }
+        let id = StorageId(self.slots.len() as u32);
+        self.slots.push(Slot {
+            storage: UnsafeCell::new(Box::new(ComponentStorage::<T>::new())),
+            type_id,
+            name: std::any::type_name::<T>(),
+            reflector: None,
+        });
+        self.ids.insert(type_id, id);
+        id
     }
 
     /// Returns an immutable reference to a CPU component storage.
     pub fn get_cpu<T: Component>(&self) -> Option<&ComponentStorage<T>> {
-        self.storages.get(&TypeId::of::<T>()).and_then(|cell| {
-            // SAFETY: No mutable references exist (we have &self, not via query).
-            let storage = unsafe { &*cell.get() };
-            storage.as_any().downcast_ref()
-        })
+        let slot = self.slot(&TypeId::of::<T>())?;
+        // SAFETY: No mutable references exist (we have &self, not via query).
+        let storage = unsafe { &*slot.storage.get() };
+        storage.as_any().downcast_ref()
     }
 
     /// Returns a mutable reference to a CPU component storage.
     pub fn get_cpu_mut<T: Component>(&mut self) -> Option<&mut ComponentStorage<T>> {
-        self.storages.get_mut(&TypeId::of::<T>()).and_then(|cell| {
-            // SAFETY: We have &mut self, so exclusive access is guaranteed.
-            let storage = cell.get_mut();
-            storage.as_any_mut().downcast_mut()
-        })
+        let id = self.ids.get(&TypeId::of::<T>()).copied()?;
+        let slot = self.slots.get_mut(id.index())?;
+        // SAFETY: We have &mut self, so exclusive access is guaranteed.
+        slot.storage.get_mut().as_any_mut().downcast_mut()
     }
 
     /// Removes `entity` from all registered storages.
     pub fn remove_entity(&mut self, entity: Entity) {
-        for cell in self.storages.values_mut() {
-            cell.get_mut().remove_entity(entity);
+        for slot in &mut self.slots {
+            slot.storage.get_mut().remove_entity(entity);
         }
     }
 
@@ -87,19 +144,22 @@ impl ComponentRegistry {
     ///
     /// Does nothing if the type is not registered or the entity doesn't have it.
     pub fn remove_component(&mut self, entity: Entity, type_id: &TypeId) {
-        if let Some(cell) = self.storages.get_mut(type_id) {
-            cell.get_mut().remove_entity(entity);
+        let Some(id) = self.ids.get(type_id).copied() else {
+            return;
+        };
+        if let Some(slot) = self.slots.get_mut(id.index()) {
+            slot.storage.get_mut().remove_entity(entity);
         }
     }
 
     /// Returns `true` if a storage is registered for the given `TypeId`.
     pub fn contains_type(&self, type_id: &TypeId) -> bool {
-        self.storages.contains_key(type_id)
+        self.ids.contains_key(type_id)
     }
 
     /// Returns the human-readable type name for a registered component.
     pub fn component_name(&self, type_id: &TypeId) -> Option<&'static str> {
-        self.type_names.get(type_id).copied()
+        self.slot(type_id).map(|slot| slot.name)
     }
 
     // -- Reflected registration -------------------------------------------------
@@ -107,24 +167,30 @@ impl ComponentRegistry {
     /// Registers a CPU-only component with reflection support.
     ///
     /// The component must implement both [`Component`] and [`Reflect`].
-    /// Does nothing if the type is already registered.
+    /// Keeps the existing reflector if the type already has one.
     pub fn register_cpu_reflected<T: Component + Reflect>(&mut self) {
-        self.register_cpu::<T>();
-        self.reflectors
-            .entry(TypeId::of::<T>())
-            .or_insert_with(|| Box::new(TypedReflectAccessor::<T>::new_cpu()));
+        let id = self.register_cpu::<T>();
+        let slot = &mut self.slots[id.index()];
+        if slot.reflector.is_none() {
+            slot.reflector = Some(Box::new(TypedReflectAccessor::<T>::new_cpu()));
+        }
     }
 
     // -- Reflection API -------------------------------------------------------
 
+    #[inline]
+    fn reflector(&self, type_id: &TypeId) -> Option<&dyn ReflectAccessor> {
+        self.slot(type_id)?.reflector.as_deref()
+    }
+
     /// Returns `true` if a reflection accessor is registered for `type_id`.
     pub fn has_reflector(&self, type_id: &TypeId) -> bool {
-        self.reflectors.contains_key(type_id)
+        self.reflector(type_id).is_some()
     }
 
     /// Returns field metadata for a reflected component type.
     pub fn reflect_field_metas(&self, type_id: &TypeId) -> Option<&'static [FieldMeta]> {
-        self.reflectors.get(type_id).map(|r| r.fields())
+        self.reflector(type_id).map(|r| r.fields())
     }
 
     /// The field values a freshly-constructed component would have.
@@ -132,7 +198,7 @@ impl ComponentRegistry {
     /// No entity involved: this is for building a component somewhere an
     /// entity does not exist, such as adding one to a prefab document.
     pub fn reflect_default_fields(&self, type_id: &TypeId) -> Option<Vec<(String, ReflectValue)>> {
-        Some(self.reflectors.get(type_id)?.default_fields())
+        Some(self.reflector(type_id)?.default_fields())
     }
 
     /// Reads all reflected field values for a component on an entity.
@@ -144,10 +210,10 @@ impl ComponentRegistry {
         type_id: &TypeId,
         entity: Entity,
     ) -> Option<Vec<(String, ReflectValue)>> {
-        let accessor = self.reflectors.get(type_id)?;
-        let storage = self.storages.get(type_id)?;
+        let slot = self.slot(type_id)?;
+        let accessor = slot.reflector.as_deref()?;
         // SAFETY: We have &self and no mutable references are active.
-        let storage_ref = unsafe { &**storage.get() };
+        let storage_ref = unsafe { &**slot.storage.get() };
         accessor.get_fields(storage_ref, entity)
     }
 
@@ -159,60 +225,59 @@ impl ComponentRegistry {
         field: &str,
         value: ReflectValue,
     ) -> Result<(), ReflectError> {
-        let accessor = self
-            .reflectors
-            .get(type_id)
-            .ok_or(ReflectError::ComponentNotFound)?;
-        let storage = self
-            .storages
-            .get(type_id)
+        let slot = self.slot(type_id).ok_or(ReflectError::ComponentNotFound)?;
+        let accessor = slot
+            .reflector
+            .as_deref()
             .ok_or(ReflectError::ComponentNotFound)?;
         // SAFETY: We have &mut self, so exclusive access is guaranteed.
-        let storage_mut = unsafe { &mut **storage.get() };
+        let storage_mut = unsafe { &mut **slot.storage.get() };
         accessor.set_field(storage_mut, entity, field, value)
     }
 
     /// Returns the inspector visibility for a reflected component type.
-    /// Returns the inspector visibility for a reflected component type.
     pub fn reflect_inspector_visibility(&self, type_id: &TypeId) -> Option<InspectorVisibility> {
-        self.reflectors
-            .get(type_id)
-            .map(|r| r.inspector_visibility())
+        self.reflector(type_id).map(|r| r.inspector_visibility())
     }
 
     /// Returns the editor category for a reflected component type, if any.
     pub fn reflect_category(&self, type_id: &TypeId) -> Option<&'static str> {
-        self.reflectors.get(type_id).and_then(|r| r.category())
+        self.reflector(type_id).and_then(|r| r.category())
     }
 
     /// Returns all `TypeId`s that have a registered reflector.
     pub fn reflected_type_ids(&self) -> Vec<TypeId> {
-        self.reflectors.keys().copied().collect()
+        self.slots
+            .iter()
+            .filter(|slot| slot.reflector.is_some())
+            .map(|slot| slot.type_id)
+            .collect()
     }
 
     /// Looks up a `TypeId` by its full type name string.
     ///
-    /// Linear scan of the `type_names` map. Only called at scene load time.
+    /// Linear scan of the slots. Only called at scene load time.
     pub fn type_id_by_name(&self, name: &str) -> Option<TypeId> {
-        self.type_names
+        self.slots
             .iter()
-            .find(|(_, n)| **n == name)
-            .map(|(tid, _)| *tid)
+            .find(|slot| slot.name == name)
+            .map(|slot| slot.type_id)
     }
 
     /// Returns all registered component types with their human-readable names.
     pub fn all_type_names(&self) -> Vec<(TypeId, &'static str)> {
-        self.type_names
+        self.slots
             .iter()
-            .map(|(tid, name)| (*tid, *name))
+            .map(|slot| (slot.type_id, slot.name))
             .collect()
     }
 
     /// Returns all reflected types with their human-readable names.
     pub fn reflected_type_names(&self) -> Vec<(TypeId, &'static str)> {
-        self.reflectors
-            .keys()
-            .filter_map(|tid| self.type_names.get(tid).map(|name| (*tid, *name)))
+        self.slots
+            .iter()
+            .filter(|slot| slot.reflector.is_some())
+            .map(|slot| (slot.type_id, slot.name))
             .collect()
     }
 
@@ -221,14 +286,14 @@ impl ComponentRegistry {
     /// Returns `true` if the component was inserted successfully.
     /// Returns `false` if the type has no reflector, no storage, or insert failed.
     pub fn insert_default_reflected(&mut self, type_id: &TypeId, entity: Entity) -> bool {
-        let Some(accessor) = self.reflectors.get(type_id) else {
+        let Some(slot) = self.slot(type_id) else {
             return false;
         };
-        let Some(cell) = self.storages.get(type_id) else {
+        let Some(accessor) = slot.reflector.as_deref() else {
             return false;
         };
         // SAFETY: We have &mut self, exclusive access guaranteed.
-        let storage = unsafe { &mut **cell.get() };
+        let storage = unsafe { &mut **slot.storage.get() };
         accessor.insert_default_into(storage, entity)
     }
 
@@ -241,9 +306,8 @@ impl ComponentRegistry {
     /// Caller must ensure no mutable reference to the same `TypeId` storage
     /// is active (i.e. no concurrent `storage_mut` call for the same type).
     pub(crate) unsafe fn storage(&self, type_id: &TypeId) -> Option<&dyn AnyStorage> {
-        self.storages
-            .get(type_id)
-            .map(|cell| unsafe { &**cell.get() })
+        let slot = self.slot(type_id)?;
+        Some(unsafe { &**slot.storage.get() })
     }
 
     /// Returns a mutable reference to the type-erased storage for the given `TypeId`.
@@ -253,9 +317,8 @@ impl ComponentRegistry {
     /// Caller must ensure no other reference (mutable or immutable) to the
     /// same `TypeId` storage is active.
     pub(crate) unsafe fn storage_mut(&self, type_id: &TypeId) -> Option<&mut dyn AnyStorage> {
-        self.storages
-            .get(type_id)
-            .map(|cell| unsafe { &mut **cell.get() })
+        let slot = self.slot(type_id)?;
+        Some(unsafe { &mut **slot.storage.get() })
     }
 }
 
