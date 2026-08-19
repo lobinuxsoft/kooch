@@ -36,11 +36,39 @@ fn the_instability_shader_validates() {
     validates("fsr3 luma_instability", INSTABILITY_SOURCE);
 }
 
-/// The largest of the five by a wide margin, and the only one that runs
-/// at output resolution.
+/// The largest of the five by a wide margin, the only one that runs at
+/// output resolution, and the only one built with `enable f16`.
 #[test]
 fn the_accumulate_shader_validates() {
-    validates("fsr3 accumulate", ACCUMULATE_SOURCE);
+    let wgsl = source_f16(ACCUMULATE_SOURCE);
+    let module = naga::front::wgsl::parse_str(&wgsl)
+        .unwrap_or_else(|e| panic!("fsr3 accumulate should parse: {}", e.emit_to_string(&wgsl)));
+    let mut validator = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    );
+    validator
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("fsr3 accumulate should validate: {e:?}"));
+}
+
+/// 🔴 And the other four must NOT carry the directive: `enable` is
+/// module-wide, so one of them demanding half precision makes a device
+/// without it fail to create a shader that never uses an `f16`.
+#[test]
+fn only_the_accumulation_demands_half() {
+    for (label, pass) in [
+        ("prepare_inputs", PREPARE_INPUTS_SOURCE),
+        ("reduce", REDUCE_SOURCE),
+        ("reactivity", REACTIVITY_SOURCE),
+        ("instability", INSTABILITY_SOURCE),
+    ] {
+        assert!(
+            !source(pass).contains("enable f16"),
+            "{label} demands SHADER_F16 and does not use it",
+        );
+    }
+    assert!(source_f16(ACCUMULATE_SOURCE).contains("enable f16"));
 }
 
 /// 🔴 The uniform block is declared twice — once in WGSL and once as a

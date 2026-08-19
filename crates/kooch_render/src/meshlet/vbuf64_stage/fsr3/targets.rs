@@ -4,20 +4,23 @@
 //! grids is a thing worth reading on its own, and because the memory it
 //! costs is a number someone will want to find.
 //!
-//! # 🔴 Why so much of this is `Rgba16Float` for one channel of data
+//! # Formats, and a tax that turned out not to be owed
 //!
-//! FSR stores these as `R16_FLOAT` and `R8_UNORM`. Neither is a storage
-//! format in WebGPU without `TEXTURE_FORMATS_TIER1`, and the ones that
-//! ARE storage formats below 32 bits are all four-channel. Meanwhile
-//! `R32Float` is a storage format but is **not filterable** without
-//! `FLOAT32_FILTERABLE`, and four of these are read through a linear
-//! sampler.
+//! FSR stores the single-channel intermediates as `R16_FLOAT` and
+//! `R8_UNORM`. Neither is a storage format in WebGPU without
+//! `TEXTURE_FORMATS_TIER1`, and the storage formats below 32 bits are
+//! all four-channel — so anything sampled looked like it had to pay for
+//! four channels to use one.
 //!
-//! Storage ∩ filterable ∩ under 32 bits per channel leaves exactly
-//! `Rgba16Float`. So anything sampled pays for four channels to use
-//! one, rather than the engine growing a required feature for it.
-//! `dilated_depth` and `reconstructed_depth` escape it by never being
-//! sampled — they are `textureLoad`ed, where filtering does not apply.
+//! 🔴 That reasoning had a false premise: `R32Float` is a storage format
+//! and it IS filterable, because `FLOAT32_FILTERABLE` has been a hard
+//! requirement of this engine since #370's cascade fetch. Checking what
+//! the engine already demands would have cost one grep and saved four
+//! bytes a pixel on five targets.
+//!
+//! So the single-channel ones are `R32Float`: same bytes as two halves,
+//! half of what four cost. `dilated_depth` and `reconstructed_depth`
+//! were always 32-bit for precision, not for filtering.
 //!
 //! # What this costs, at 858×480 → 1280×720
 //!
@@ -163,16 +166,31 @@ impl Targets {
                 render,
                 wgpu::TextureFormat::R32Uint,
             ),
-            current_luma: Target::new(device, "fsr3_current_luma", render, HDR_COLOR_FORMAT),
+            current_luma: Target::new(
+                device,
+                "fsr3_current_luma",
+                render,
+                wgpu::TextureFormat::R32Float,
+            ),
             reactive_masks: Target::new(device, "fsr3_reactive_masks", render, HDR_COLOR_FORMAT),
             luma_instability: Target::new(
                 device,
                 "fsr3_luma_instability",
                 render,
-                HDR_COLOR_FORMAT,
+                wgpu::TextureFormat::R32Float,
             ),
-            farthest_mip1: Target::new(device, "fsr3_farthest_mip1", half, HDR_COLOR_FORMAT),
-            accumulation: Pair::new(device, "fsr3_accumulation", render, HDR_COLOR_FORMAT),
+            farthest_mip1: Target::new(
+                device,
+                "fsr3_farthest_mip1",
+                half,
+                wgpu::TextureFormat::R32Float,
+            ),
+            accumulation: Pair::new(
+                device,
+                "fsr3_accumulation",
+                render,
+                wgpu::TextureFormat::R32Float,
+            ),
             luma_history: Pair::new(device, "fsr3_luma_history", render, HDR_COLOR_FORMAT),
             new_locks: Target::new(
                 device,

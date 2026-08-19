@@ -66,6 +66,18 @@ fn source(pass: &str) -> String {
     format!("{COMMON_SOURCE}\n{pass}")
 }
 
+/// The same, for the one pass that needs half precision.
+///
+/// 🔴 `enable` is a module-wide directive and must precede every
+/// declaration, so putting it in the shared half made all five passes
+/// demand `SHADER_F16` — including the four that never write an `f16`.
+/// A device without the extension then failed to create a shader it had
+/// no reason to care about, which is how two unrelated tests started
+/// dying inside `fsr3_prepare_inputs`.
+fn source_f16(pass: &str) -> String {
+    format!("enable f16;\n{COMMON_SOURCE}\n{pass}")
+}
+
 /// The resolved image, and next frame's history. Same format as the
 /// resolve's, so the tonemap downstream cannot tell which technique
 /// produced what it reads.
@@ -183,6 +195,17 @@ fn write_hdr(binding: u32) -> wgpu::BindGroupLayoutEntry {
     )
 }
 
+/// The single-channel intermediates. `R32Float` is four bytes where
+/// `Rgba16Float` is eight, and it is filterable because the engine has
+/// required `FLOAT32_FILTERABLE` since #370.
+fn write_r32(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    storage(
+        binding,
+        wgpu::TextureFormat::R32Float,
+        wgpu::StorageTextureAccess::WriteOnly,
+    )
+}
+
 fn sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -264,7 +287,10 @@ impl Fsr3 {
         let reduce_module = module("fsr3_reduce", REDUCE_SOURCE);
         let reactivity_module = module("fsr3_prepare_reactivity", REACTIVITY_SOURCE);
         let instability_module = module("fsr3_luma_instability", INSTABILITY_SOURCE);
-        let accumulate_module = module("fsr3_accumulate", ACCUMULATE_SOURCE);
+        let accumulate_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("fsr3_accumulate"),
+            source: wgpu::ShaderSource::Wgsl(source_f16(ACCUMULATE_SOURCE).into()),
+        });
 
         let prepare_inputs_bgl = layout(
             device,
@@ -285,22 +311,13 @@ impl Fsr3 {
                     wgpu::TextureFormat::R32Float,
                     wgpu::StorageTextureAccess::WriteOnly,
                 ),
-                write_hdr(7),
+                write_r32(7),
             ],
         );
         let reduce_bgl = layout(
             device,
             "fsr3_reduce_bgl",
-            &[
-                uniform(0),
-                filterable(1),
-                write_hdr(2),
-                storage(
-                    3,
-                    wgpu::TextureFormat::R32Float,
-                    wgpu::StorageTextureAccess::WriteOnly,
-                ),
-            ],
+            &[uniform(0), filterable(1), write_r32(2), write_r32(3)],
         );
         let reactivity_bgl = layout(
             device,
@@ -314,12 +331,8 @@ impl Fsr3 {
                 filterable(5),
                 sampler_entry(6),
                 write_hdr(7),
-                write_hdr(8),
-                storage(
-                    9,
-                    wgpu::TextureFormat::R32Float,
-                    wgpu::StorageTextureAccess::WriteOnly,
-                ),
+                write_r32(8),
+                write_r32(9),
             ],
         );
         let instability_bgl = layout(
@@ -333,7 +346,7 @@ impl Fsr3 {
                 filterable(4),
                 sampler_entry(5),
                 write_hdr(6),
-                write_hdr(7),
+                write_r32(7),
             ],
         );
         let accumulate_bgl = layout(

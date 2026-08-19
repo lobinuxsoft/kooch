@@ -75,6 +75,41 @@ const LOCK_MAX: f32 = 2.0;
 /// here rather than a uniform field nobody writes.
 const VELOCITY_FACTOR: f32 = 1.0;
 
+/// The half twins of the colour helpers.
+///
+/// 🎯 This is FSR's `FFX_HALF` path, and it is the optimisation the
+/// technique is built around: `accumulate` measured 11.982 of the
+/// technique's 14.704 ms, and it carries 25 colours through YCoCg, a
+/// tonemap round trip and a variance box for every output pixel. In
+/// half that is half the registers, which on a 10 W part is occupancy,
+/// which is latency hiding — the thing a pass doing thirty texture
+/// fetches per pixel is actually short of.
+///
+/// WGSL has no overloading, so these are twins rather than the same
+/// name. ⚠️ Only the SAMPLE LOOPS are half. The rectification and the
+/// blend stay f32, because two of their constants (`FSR3_FP32_MIN` and
+/// the 1.193e-7 box floor) are below the smallest normal half and would
+/// quietly become zero.
+fn rgb_to_ycocg_h(rgb: vec3<f16>) -> vec3<f16> {
+    return vec3<f16>(
+        0.25h * rgb.r + 0.5h * rgb.g + 0.25h * rgb.b,
+        0.5h * rgb.r - 0.5h * rgb.b,
+        -0.25h * rgb.r + 0.5h * rgb.g - 0.25h * rgb.b,
+    );
+}
+
+fn ycocg_to_rgb_h(ycocg: vec3<f16>) -> vec3<f16> {
+    return vec3<f16>(
+        ycocg.x + ycocg.y - ycocg.z,
+        ycocg.x + ycocg.z,
+        ycocg.x - ycocg.y - ycocg.z,
+    );
+}
+
+fn fsr3_tonemap_h(rgb: vec3<f16>) -> vec3<f16> {
+    return rgb / (max(max(0.0h, rgb.r), max(rgb.g, rgb.b)) + 1.0h);
+}
+
 // ------------------------------------------------------- Lanczos
 
 fn lanczos2_no_clamp(x: f32) -> f32 {
@@ -100,32 +135,37 @@ fn lanczos2_approx_sq(x2_in: f32) -> f32 {
     return ((25.0 / 16.0) * a * a - (25.0 / 16.0 - 1.0)) * (b * b);
 }
 
-fn lanczos2_row(c0: vec4<f32>, c1: vec4<f32>, c2: vec4<f32>, c3: vec4<f32>, t: f32) -> vec4<f32> {
+/// The weights come from f32 offsets and the colours are half: the
+/// kernel's shape is geometry and stays exact, the data it carries does
+/// not need to be.
+fn lanczos2_row(c0: vec4<f16>, c1: vec4<f16>, c2: vec4<f16>, c3: vec4<f16>, t: f32) -> vec4<f16> {
     let w0 = lanczos2(-1.0 - t);
     let w1 = lanczos2(-0.0 - t);
     let w2 = lanczos2(1.0 - t);
     let w3 = lanczos2(2.0 - t);
-    return (w0 * c0 + w1 * c1 + w2 * c2 + w3 * c3) / (w0 + w1 + w2 + w3);
+    let n = f16(1.0 / (w0 + w1 + w2 + w3));
+    return (f16(w0) * c0 + f16(w1) * c1 + f16(w2) * c2 + f16(w3) * c3) * n;
 }
 
 /// Separable Lanczos-2 over the 4×4 around `uv`, then clamped to the
 /// range of the inner 2×2. The clamp is the deringing: Lanczos has
 /// negative lobes, and without it a bright edge grows a dark halo that
 /// the history then remembers forever.
-fn sample_history(uv: vec2<f32>, size: vec2<f32>) -> vec4<f32> {
+fn sample_history(uv: vec2<f32>, size: vec2<f32>) -> vec4<f16> {
     var px_sample = uv * size - vec2<f32>(0.5);
     let frac = fract(px_sample);
     px_sample = clamp(px_sample, vec2<f32>(0.0), size - vec2<f32>(1.0));
     let base = vec2<i32>(floor(px_sample));
     let isize = vec2<i32>(size);
 
-    var taps: array<vec4<f32>, 16>;
+    var taps: array<vec4<f16>, 16>;
     for (var row = 0; row < 4; row++) {
         for (var col = 0; col < 4; col++) {
             let offset = vec2<i32>(col - 1, row - 1);
             // One fetch, and the lock is filtered by the same kernel as
             // the colour — which is the whole reason FSR keeps it here.
-            taps[row * 4 + col] = textureLoad(history_prev, clamp_load(base, offset, isize), 0);
+            taps[row * 4 + col] =
+                vec4<f16>(textureLoad(history_prev, clamp_load(base, offset, isize), 0));
         }
     }
 
@@ -153,14 +193,14 @@ fn sample_history(uv: vec2<f32>, size: vec2<f32>) -> vec4<f32> {
 /// hard min/max used for deringing. Accumulated weighted, so a sample
 /// further from the output pixel counts for less.
 struct RectificationBox {
-    centre: vec3<f32>,
-    vec: vec3<f32>,
-    aabb_min: vec3<f32>,
-    aabb_max: vec3<f32>,
-    weight: f32,
+    centre: vec3<f16>,
+    vec: vec3<f16>,
+    aabb_min: vec3<f16>,
+    aabb_max: vec3<f16>,
+    weight: f16,
 }
 
-fn box_add(box_in: RectificationBox, initial: bool, colour: vec3<f32>, weight: f32) -> RectificationBox {
+fn box_add(box_in: RectificationBox, initial: bool, colour: vec3<f16>, weight: f16) -> RectificationBox {
     var box = box_in;
     let weighted = colour * weight;
     if (initial) {
@@ -181,8 +221,11 @@ fn box_add(box_in: RectificationBox, initial: bool, colour: vec3<f32>, weight: f
 
 fn box_finish(box_in: RectificationBox) -> RectificationBox {
     var box = box_in;
-    if (abs(box.weight) <= FSR3_FP32_MIN) {
-        box.weight = 1.0;
+    // ⚠️ FSR compares against FP32_MIN here. That is below the
+    // smallest normal half, so in this path it would be a comparison
+    // against zero — the half floor is the honest substitute.
+    if (abs(box.weight) <= f16(FSR3_FP16_MIN)) {
+        box.weight = 1.0h;
     }
     box.centre /= box.weight;
     box.vec /= box.weight;
@@ -214,10 +257,10 @@ struct Common {
 
 struct Data {
     box: RectificationBox,
-    upsampled_colour: vec3<f32>,
-    upsampled_weight: f32,
-    history_colour: vec3<f32>,
-    history_weight: f32,
+    upsampled_colour: vec3<f16>,
+    upsampled_weight: f16,
+    history_colour: vec3<f16>,
+    history_weight: f16,
     lock: f32,
     lock_contribution: f32,
     /// The Lanczos sum BEFORE the epsilon gate zeroes it, kept only so
@@ -232,9 +275,9 @@ struct Data {
     kernel_bias: f32,
 }
 
-fn load_prepared_colour(pos: vec2<i32>) -> vec3<f32> {
+fn load_prepared_colour(pos: vec2<i32>) -> vec3<f16> {
     let rgb = max(vec3<f32>(0.0), textureLoad(input_colour, pos, 0).rgb) * params.exposure;
-    return rgb_to_ycocg(rgb);
+    return rgb_to_ycocg_h(vec3<f16>(rgb));
 }
 
 fn init_common(hr_pos: vec2<i32>) -> Common {
@@ -282,11 +325,11 @@ fn init_common(hr_pos: vec2<i32>) -> Common {
 fn reproject_history(c: Common, d_in: Data) -> Data {
     var d = d_in;
     let history = sample_history(c.reprojected_hr_uv, params.output_size);
-    var colour = history.rgb;
-    colour *= params.delta_pre_exposure;
-    colour *= params.exposure;
-    d.history_colour = rgb_to_ycocg(colour);
-    d.lock = history.w;
+    // The exposure pair is a host constant, so it folds to one half
+    // multiply rather than two.
+    let rescale = f16(params.delta_pre_exposure * params.exposure);
+    d.history_colour = rgb_to_ycocg_h(history.rgb * rescale);
+    d.lock = f32(history.w);
     return d;
 }
 
@@ -326,7 +369,7 @@ fn base_accumulation_weight(c: Common, d_in: Data) -> Data {
         base,
         mix(base, 0.15, saturate(max(0.0, (c.velocity_4k * VELOCITY_FACTOR) / 0.5))),
     );
-    d.history_weight = base;
+    d.history_weight = f16(base);
     return d;
 }
 
@@ -363,7 +406,7 @@ fn upsample(c: Common, d_in: Data) -> Data {
     let initial_frame = c.accumulation == 0.0;
     let size = render_size_i();
 
-    var samples: array<vec3<f32>, 9>;
+    var samples: array<vec3<f16>, 9>;
     var index = 0;
     for (var row = 0; row < 3; row++) {
         for (var col = 0; col < 3; col++) {
@@ -382,7 +425,7 @@ fn upsample(c: Common, d_in: Data) -> Data {
     // fireball pixel would otherwise set the whole box.
     if (initial_frame) {
         for (var i = 0; i < 9; i++) {
-            samples[i] = rgb_to_ycocg(fsr3_tonemap(ycocg_to_rgb(samples[i])));
+            samples[i] = rgb_to_ycocg_h(fsr3_tonemap_h(ycocg_to_rgb_h(samples[i])));
         }
     }
 
@@ -390,7 +433,7 @@ fn upsample(c: Common, d_in: Data) -> Data {
     let kernel_min = max(1.0, (1.0 + kernel_max) * 0.3);
     let kernel_weight = min(
         1.0 - c.disocclusion * 0.5,
-        min(1.0 - c.shading_change, saturate(d.history_weight * 5.0)),
+        min(1.0 - c.shading_change, saturate(f32(d.history_weight) * 5.0)),
     );
     let kernel_bias = mix(kernel_min, kernel_max, kernel_weight);
     d.base_offset = base_offset;
@@ -411,7 +454,7 @@ fn upsample(c: Common, d_in: Data) -> Data {
 
             if (!initial_frame) {
                 let biased = src_sample_offset * kernel_bias;
-                let weight = on_screen * lanczos2_approx_sq(dot(biased, biased));
+                let weight = f16(on_screen * lanczos2_approx_sq(dot(biased, biased)));
                 d.upsampled_colour += samples[index] * weight;
                 d.upsampled_weight += weight;
             }
@@ -421,7 +464,7 @@ fn upsample(c: Common, d_in: Data) -> Data {
             // it, so it must stay positive.
             const RECTIFICATION_CURVE_BIAS: f32 = -2.3;
             let offset_sq = dot(src_sample_offset, src_sample_offset);
-            let box_weight = exp(RECTIFICATION_CURVE_BIAS * offset_sq) * on_screen;
+            let box_weight = f16(exp(RECTIFICATION_CURVE_BIAS * offset_sq) * on_screen);
             d.box = box_add(d.box, row == 0 && col == 0, samples[index], box_weight);
             index++;
         }
@@ -429,20 +472,24 @@ fn upsample(c: Common, d_in: Data) -> Data {
 
     d.box = box_finish(d.box);
 
-    d.raw_weight = d.upsampled_weight;
-    d.upsampled_weight *= f32(d.upsampled_weight > FSR3_EPSILON);
-    if (d.upsampled_weight > FSR3_EPSILON) {
+    d.raw_weight = f32(d.upsampled_weight);
+    let live = f16(d.upsampled_weight > f16(FSR3_EPSILON));
+    d.upsampled_weight *= live;
+    if (d.upsampled_weight > f16(FSR3_EPSILON)) {
         d.upsampled_colour = d.upsampled_colour / d.upsampled_weight;
-        d.upsampled_weight *= AVERAGE_LANCZOS_WEIGHT_PER_FRAME;
+        d.upsampled_weight *= f16(AVERAGE_LANCZOS_WEIGHT_PER_FRAME);
         // Deringing, again: the Lanczos result cannot leave the range
         // of the samples that produced it.
         d.upsampled_colour = clamp(d.upsampled_colour, d.box.aabb_min, d.box.aabb_max);
     }
 
     if (initial_frame) {
-        d.upsampled_colour = rgb_to_ycocg(fsr3_inverse_tonemap(ycocg_to_rgb(d.box.centre)));
-        d.upsampled_weight = 1.0;
-        d.history_weight = 0.0;
+        // The inverse tonemap divides by `1 - max`, which runs away as
+        // max approaches 1 — that one stays f32.
+        let centre = ycocg_to_rgb(vec3<f32>(d.box.centre));
+        d.upsampled_colour = rgb_to_ycocg_h(vec3<f16>(fsr3_inverse_tonemap(centre)));
+        d.upsampled_weight = 1.0h;
+        d.history_weight = 0.0h;
     }
     return d;
 }
@@ -465,13 +512,14 @@ fn rectify_history(c: Common, d_in: Data) -> Data {
     let box_scale = mix(3.0, 1.0, scale_t);
     // Luma is stretched because the eye forgives a chroma error and
     // does not forgive a luma one.
-    let scaled = d.box.vec * vec3<f32>(1.7, 1.0, 1.0) * box_scale;
+    let scaled = vec3<f32>(d.box.vec) * vec3<f32>(1.7, 1.0, 1.0) * box_scale;
     let clamped_scaled = max(scaled, vec3<f32>(1.193e-7));
-    let transformed = (d.history_colour - d.box.centre) / clamped_scaled;
+    let centre = vec3<f32>(d.box.centre);
+    let transformed = (vec3<f32>(d.history_colour) - centre) / clamped_scaled;
 
     if (length(transformed) > 1.0) {
         let clamped = normalize(transformed);
-        let final_colour = clamped * scaled + d.box.centre;
+        let final_colour = clamped * scaled + centre;
 
         // 🎯 The line that separates this from a neighbourhood clamp:
         // a locked or oscillating pixel is allowed to KEEP its history
@@ -479,25 +527,32 @@ fn rectify_history(c: Common, d_in: Data) -> Data {
         // is wrong in those two cases.
         let contribution =
             max(c.luma_instability, d.lock_contribution) * c.accumulation * (1.0 - c.disocclusion);
-        d.history_colour = mix(final_colour, d.history_colour, saturate(contribution));
+        d.history_colour = vec3<f16>(mix(
+            final_colour,
+            vec3<f32>(d.history_colour),
+            saturate(contribution),
+        ));
     }
     return d;
 }
 
 fn accumulate_colour(d_in: Data) -> Data {
     var d = d_in;
-    d.history_weight *= f32(d.history_weight > FSR3_FP16_MIN);
-    d.history_weight = max(FSR3_EPSILON, d.history_weight + d.upsampled_weight);
+    d.history_weight *= f16(d.history_weight > f16(FSR3_FP16_MIN));
+    d.history_weight = max(f16(FSR3_EPSILON), d.history_weight + d.upsampled_weight);
 
     // Blend in the compressed range so that a bright new sample cannot
     // dominate by magnitude, then invert.
-    d.upsampled_colour = rgb_to_ycocg(fsr3_tonemap(ycocg_to_rgb(d.upsampled_colour)));
-    d.history_colour = rgb_to_ycocg(fsr3_tonemap(ycocg_to_rgb(d.history_colour)));
+    d.upsampled_colour = rgb_to_ycocg_h(fsr3_tonemap_h(ycocg_to_rgb_h(d.upsampled_colour)));
+    d.history_colour = rgb_to_ycocg_h(fsr3_tonemap_h(ycocg_to_rgb_h(d.history_colour)));
 
     let alpha = saturate(d.upsampled_weight / d.history_weight);
-    d.history_colour = mix(d.history_colour, d.upsampled_colour, alpha);
-    d.history_colour = ycocg_to_rgb(d.history_colour);
-    d.history_colour = fsr3_inverse_tonemap(d.history_colour);
+    d.history_colour = mix(d.history_colour, d.upsampled_colour, vec3<f16>(alpha));
+    // ⚠️ The inverse tonemap divides by `1 - max`. Near white that is a
+    // small number and half has four decimal digits, so this one leaves
+    // the half path deliberately.
+    let linear = fsr3_inverse_tonemap(ycocg_to_rgb(vec3<f32>(d.history_colour)));
+    d.history_colour = vec3<f16>(linear);
     return d;
 }
 
@@ -511,10 +566,10 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
     let c = init_common(hr_pos);
 
     var d: Data;
-    d.upsampled_colour = vec3<f32>(0.0);
-    d.history_colour = vec3<f32>(0.0);
-    d.history_weight = 1.0;
-    d.upsampled_weight = 0.0;
+    d.upsampled_colour = vec3<f16>(0.0h);
+    d.history_colour = vec3<f16>(0.0h);
+    d.history_weight = 1.0h;
+    d.upsampled_weight = 0.0h;
     d.lock = 0.0;
     d.lock_contribution = 0.0;
     d.raw_weight = 0.0;
@@ -527,7 +582,7 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
     // Snapshotted here because `accumulate_colour` turns `history_colour`
     // from YCoCg into the final RGB, and the debug step that wants to
     // know whether there IS a history has to ask before that.
-    let reprojected = d.history_colour;
+    let reprojected = vec3<f32>(d.history_colour);
 
     d = update_lock_status(c, d);
     d = base_accumulation_weight(c, d);
@@ -535,10 +590,10 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
     d = rectify_history(c, d);
     d = accumulate_colour(d);
 
-    d.history_colour /= params.exposure;
-    d.history_colour = max(d.history_colour, vec3<f32>(0.0));
-
-    var out = d.history_colour;
+    // Back to f32 for the store: the target is `rgba16float`, so the
+    // narrowing happens in hardware either way, but the exposure divide
+    // is by a number around 1e-3 and half would lose it.
+    var out = max(vec3<f32>(d.history_colour) / params.exposure, vec3<f32>(0.0));
     if (params.debug != 0u) {
         out = debug_stage(c, d, reprojected);
     }
@@ -588,13 +643,14 @@ fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
         case 4u: {
             // The internal buffers hold radiance already multiplied by
             // the exposure; the tonemap is about to multiply again.
-            return max(ycocg_to_rgb(d.upsampled_colour), vec3<f32>(0.0)) / params.exposure;
+            return max(ycocg_to_rgb(vec3<f32>(d.upsampled_colour)), vec3<f32>(0.0))
+                / params.exposure;
         }
         // 5 — the reprojected history alone, before anything this frame
         // is blended into it. Black here with a settled camera means the
         // history never survives from one frame to the next.
         case 5u: {
-            return max(ycocg_to_rgb(reprojected), vec3<f32>(0.0)) / params.exposure;
+            return max(ycocg_to_rgb(vec3<f32>(reprojected)), vec3<f32>(0.0)) / params.exposure;
         }
         // 6 — red the lock, green the luma instability, blue the
         // upsample's total weight.
@@ -602,7 +658,7 @@ fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
             return vec3<f32>(
                 d.lock / LOCK_MAX,
                 c.luma_instability,
-                d.upsampled_weight / AVERAGE_LANCZOS_WEIGHT_PER_FRAME,
+                f32(d.upsampled_weight) / AVERAGE_LANCZOS_WEIGHT_PER_FRAME,
             );
         }
         // 7 — why is this pixel black. Red is the first-frame branch,
@@ -620,7 +676,7 @@ fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
             return vec3<f32>(abs(d.base_offset), d.kernel_bias * 0.5);
         }
         default: {
-            return d.history_colour;
+            return vec3<f32>(d.history_colour);
         }
     }
 }

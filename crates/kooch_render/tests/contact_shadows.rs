@@ -97,7 +97,14 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     }))
     .ok()?;
 
-    let needed = wgpu::Features::TEXTURE_ATOMIC
+    // 🔴 SHADER_F16 is here because building a `Vbuf64Stage` builds
+    // FSR 3.1's accumulation, which is compiled with `enable f16`. The
+    // list is a copy of the engine's, and it is the fifth in the tree —
+    // a device short of one of them fails inside a shader this test has
+    // no interest in.
+    let needed = wgpu::Features::SHADER_F16
+        | wgpu::Features::FLOAT32_FILTERABLE
+        | wgpu::Features::TEXTURE_ATOMIC
         | wgpu::Features::TEXTURE_INT64_ATOMIC
         | wgpu::Features::SHADER_INT64
         | wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX

@@ -20,8 +20,18 @@ pub(super) fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
     // the Steam Deck APU all advertise this feature; raising it as a
     // hard-required surfaces unsupported HW at startup rather than a
     // crash mid-frame inside `create_bind_group`.
+    //
+    // SHADER_F16 is FSR 3.1's `FFX_HALF` path (#481). The accumulation
+    // carries 25 colours per output pixel through YCoCg, a tonemap round
+    // trip and a variance box; in half that is half the registers, and
+    // on a 10 W part registers are occupancy and occupancy is latency
+    // hiding. It is `VK_KHR_shader_float16_int8` — present on RADV
+    // STRIX1 (the OneXFly's 890M) and on gfx1201, and on anything that
+    // also carries the 64-bit texture atomics the meshlet path already
+    // demands, which are far rarer.
     let required = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-        | wgpu::Features::FLOAT32_FILTERABLE;
+        | wgpu::Features::FLOAT32_FILTERABLE
+        | wgpu::Features::SHADER_F16;
     let missing = required - adapter.features();
     assert!(
         missing.is_empty(),
@@ -29,7 +39,8 @@ pub(super) fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
          #136 S6 — sparse SDF storage needs R16Float storage textures, \
          which requires TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES on the adapter. \
          PR-4 of epic #370 — GDF cascade fetch needs FLOAT32_FILTERABLE for \
-         linear-sampled R32Float textures."
+         linear-sampled R32Float textures. \
+         #481 — FSR 3.1's half-precision path needs SHADER_F16."
     );
     required
 }

@@ -26,11 +26,17 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     }))
     .ok()?;
 
+    // 🔴 The sixth copy of the engine's feature list in this tree, and
+    // the last one to learn about `SHADER_F16` — FSR 3.1's accumulation
+    // is compiled with `enable f16`, and this test exists precisely to
+    // catch a stage that fails to build its pipelines.
     let needed = wgpu::Features::TEXTURE_ATOMIC
         | wgpu::Features::TEXTURE_INT64_ATOMIC
         | wgpu::Features::SHADER_INT64
         | wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX
-        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+        | wgpu::Features::SHADER_F16
+        | wgpu::Features::FLOAT32_FILTERABLE;
     if !adapter.features().contains(needed) {
         return None;
     }

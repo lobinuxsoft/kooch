@@ -127,6 +127,7 @@ impl Vbuf64Support {
 /// the real check is `TEXTURE_ATOMIC`). `TEXTURE_INT64_ATOMIC` adds the
 /// R64 format on top. `SHADER_INT64` enables `u64` in the shader.
 /// `SHADER_INT64_ATOMIC_MIN_MAX` enables `textureAtomicMax(u64)`.
+
 fn required_features() -> Features {
     Features::TEXTURE_ATOMIC
         | Features::TEXTURE_INT64_ATOMIC

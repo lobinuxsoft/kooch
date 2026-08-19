@@ -22,7 +22,7 @@
 // hammer for it.
 
 @group(0) @binding(1) var dilated: texture_2d<f32>;
-@group(0) @binding(2) var farthest_mip1_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var farthest_mip1_out: texture_storage_2d<r32float, write>;
 @group(0) @binding(3) var new_locks: texture_storage_2d<r32float, write>;
 
 /// Half-resolution farthest depth, in metres. The `.z` of the dilated

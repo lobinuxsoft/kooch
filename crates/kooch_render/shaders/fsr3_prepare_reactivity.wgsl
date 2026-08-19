@@ -53,7 +53,7 @@
 @group(0) @binding(5) var accumulation_prev: texture_2d<f32>;
 @group(0) @binding(6) var linear_sampler: sampler;
 @group(0) @binding(7) var reactive_masks: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(8) var accumulation_next: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(8) var accumulation_next: texture_storage_2d<r32float, write>;
 @group(0) @binding(9) var new_locks: texture_storage_2d<r32float, write>;
 
 /// FSR's default. A pixel earns a third of a frame of trust per frame,

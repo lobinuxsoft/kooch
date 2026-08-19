@@ -34,7 +34,7 @@
 @group(0) @binding(4) var reactive_masks: texture_2d<f32>;
 @group(0) @binding(5) var linear_sampler: sampler;
 @group(0) @binding(6) var luma_history_next: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(7) var luma_instability_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(7) var luma_instability_out: texture_storage_2d<r32float, write>;
 
 struct Instability {
     history: vec4<f32>,

@@ -42,7 +42,7 @@
 /// values are `near / distance`, which at a kilometre is below the
 /// smallest normal half.
 @group(0) @binding(6) var dilated_depth: texture_storage_2d<r32float, write>;
-@group(0) @binding(7) var current_luma: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(7) var current_luma: texture_storage_2d<r32float, write>;
 
 /// FSR loads the engine's motion buffer through a callback; ours is the
 /// place the sign flips. See decision 3 in `fsr3_common.wgsl`.
