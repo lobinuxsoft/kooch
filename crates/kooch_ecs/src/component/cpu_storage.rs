@@ -6,7 +6,6 @@
 use std::any::Any;
 use std::collections::HashMap;
 
-use wgpu::{Device, Queue};
 
 use crate::entity::Entity;
 
