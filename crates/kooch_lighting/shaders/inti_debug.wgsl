@@ -38,6 +38,14 @@ const INTI_DEBUG_POINT_CUBE: u32 = 17u;
 // Lowest discriminant handled here. Modes below it are resolved by the
 // shading path itself before the surface is even reconstructed.
 const INTI_DEBUG_FIRST: u32 = INTI_DEBUG_NORMALS;
+// 🔴 And the highest, which is NOT optional. The dispatch below used to
+// be an open-ended `>=`, so every discriminant added above this range
+// silently became "an Inti view Inti does not implement" — and the
+// fallthrough for those is BLACK. A mode resolved somewhere else
+// entirely (the texture mip level in the material shader, FSR's
+// intermediates in the upscaler) had its surface painted black before
+// the pass that was meant to answer for it ever ran.
+const INTI_DEBUG_LAST: u32 = INTI_DEBUG_POINT_CUBE;
 
 // Rec. 709 luma weights, applied to LINEAR radiance — which is what
 // makes the grey mean "how much light landed here" rather than "how
@@ -436,7 +444,7 @@ fn inti_count_heatmap(t: f32) -> vec3<f32> {
 /// branch — with its cascade sampling and its screen-space march — is
 /// folded away before register allocation ever sees it.
 fn inti_debug_is_view(mode: u32) -> bool {
-    return mode >= INTI_DEBUG_FIRST;
+    return mode >= INTI_DEBUG_FIRST && mode <= INTI_DEBUG_LAST;
 }
 
 /// The selected view, as colour. Called once, from the one place in each

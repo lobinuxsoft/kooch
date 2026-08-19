@@ -313,3 +313,32 @@ fn the_radiance_steps_keep_the_tonemap() {
 fn off_is_not_display_referred() {
     assert!(!MeshletDebugMode::Off.is_display_referred());
 }
+
+/// 🔴 Inti's dispatch is a RANGE, and it has to stay one.
+///
+/// It was an open-ended `mode >= INTI_DEBUG_FIRST`, and the fallthrough
+/// for a mode it does not implement is black. So every discriminant
+/// added above the range silently became "an Inti view Inti does not
+/// know", and its surface was painted black before the pass that was
+/// meant to answer for it ever ran — which is exactly what happened to
+/// FSR's six steps, and what the texture-mip view escapes only because
+/// the material shader tests for it first.
+///
+/// This asserts the shader's two bounds against the enum, the way
+/// `discriminants_match_the_shader` already does for the names.
+#[test]
+fn the_inti_range_stops_where_inti_stops() {
+    let shader = include_str!("../../../../kooch_lighting/shaders/inti_debug.wgsl");
+    assert!(
+        shader.contains("mode >= INTI_DEBUG_FIRST && mode <= INTI_DEBUG_LAST"),
+        "the Inti dispatch is open-ended again, so every mode above it renders black",
+    );
+    assert!(
+        shader.contains("const INTI_DEBUG_LAST: u32 = INTI_DEBUG_POINT_CUBE;"),
+        "the top of the range moved without this test being told",
+    );
+    // And the enum agrees about where that top is: everything above it
+    // is resolved somewhere other than Inti.
+    assert_eq!(MeshletDebugMode::PointCubeFaces.as_u32(), 17);
+    assert_eq!(MeshletDebugMode::TextureMipLevel.as_u32(), 18);
+}
