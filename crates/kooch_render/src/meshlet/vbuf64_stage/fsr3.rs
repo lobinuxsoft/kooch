@@ -245,13 +245,6 @@ pub(super) struct Fsr3 {
     targets: Targets,
     render_size: (u32, u32),
     output_size: (u32, u32),
-    /// `KOOCH_FSR3_DEBUG`, read once. Non-zero makes the accumulation
-    /// write an intermediate instead of the image.
-    ///
-    /// 🎯 An env var and not an inspector control on purpose: this is a
-    /// staircase for finding which of six stages produced a wrong frame,
-    /// not a feature. It corrupts the history while it is on.
-    debug: u32,
     state: std::sync::Mutex<History>,
 }
 
@@ -433,10 +426,6 @@ impl Fsr3 {
                 ..Default::default()
             }),
             targets: Targets::new(device, render, output),
-            debug: std::env::var("KOOCH_FSR3_DEBUG")
-                .ok()
-                .and_then(|v| v.trim().parse().ok())
-                .unwrap_or(0),
             render_size: render,
             output_size: output,
             state: std::sync::Mutex::new(History {
@@ -536,7 +525,7 @@ impl Fsr3 {
                 // frame at this one.
                 delta_pre_exposure: state.prev_exposure / exposure,
                 jitter_sequence_length: inputs.jitter_phases.max(1.0),
-                debug: self.debug,
+                debug: inputs.debug_stage,
                 _pad: [0.0; 3],
             }),
         );

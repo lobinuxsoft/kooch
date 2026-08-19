@@ -148,6 +148,10 @@ pub(super) struct UpscaleInputs<'a> {
     /// How many sub-pixel offsets the jitter sequence cycles through.
     /// FSR decays a feature lock over exactly one pass of it.
     pub jitter_phases: f32,
+    /// Which intermediate to write instead of the image, or 0. Comes
+    /// from the editor's debug dropdown; SGSR 2 has no intermediates
+    /// worth a legend and ignores it.
+    pub debug_stage: u32,
 }
 
 pub(super) struct Sgsr2 {

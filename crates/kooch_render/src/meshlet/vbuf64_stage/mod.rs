@@ -481,6 +481,7 @@ impl Vbuf64Stage {
         &'a self,
         depth: &'a wgpu::TextureView,
         exposure: f32,
+        debug_stage: u32,
     ) -> sgsr2::UpscaleInputs<'a> {
         sgsr2::UpscaleInputs {
             color: self.tonemap.hdr_view(),
@@ -491,6 +492,7 @@ impl Vbuf64Stage {
             fov_k: self.fov_k,
             near: self.near,
             jitter_phases: self.jitter_phases() as f32,
+            debug_stage,
         }
     }
 
@@ -768,7 +770,7 @@ impl Vbuf64Stage {
                 // half-rate interpolation — is cheaper somewhere else in
                 // this frame, and the two numbers have to be subtractable.
                 let mut source = self.tonemap.hdr_view();
-                if self.technique.is_temporal() && !is_debug_view(debug_mode) {
+                if self.technique.is_temporal() && !replaces_shading(debug_mode) {
                     // 🔴 The scope carries the technique's name rather
                     // than a shared "temporal". A capture has to say
                     // WHICH one cost what, or the A/B that decides
@@ -791,13 +793,17 @@ impl Vbuf64Stage {
                             device,
                             queue,
                             encoder,
-                            self.upscale_inputs(depth_sample_view, exposure),
+                            self.upscale_inputs(depth_sample_view, exposure, 0),
                         ),
                         crate::quality::UpscaleTechnique::Fsr3 => self.fsr3.draw(
                             device,
                             queue,
                             encoder,
-                            self.upscale_inputs(depth_sample_view, exposure),
+                            self.upscale_inputs(
+                                depth_sample_view,
+                                exposure,
+                                fsr3_debug_stage(debug_mode),
+                            ),
                         ),
                         _ => self.taa.draw(
                             device,
@@ -890,14 +896,38 @@ fn warn_once_about_transitional_frame(render: (u32, u32), output: (u32, u32)) {
     });
 }
 
-/// True for the debug modes Inti resolves inside the shading shader,
-/// which produce colour that is already display-referred.
+/// True for every debug mode, which is the question the TONEMAP asks:
+/// all of them produce colour that is already display-referred, and a
+/// false-colour legend through a filmic curve is a legend nobody can
+/// read off.
 ///
 /// Pinned to `INTI_DEBUG_FIRST` in `inti_debug.wgsl`; the discriminants
 /// themselves are already pinned to `MeshletDebugMode` by a test in
 /// `debug.rs`.
 fn is_debug_view(debug_mode: u32) -> bool {
     debug_mode >= 11
+}
+
+/// True only for the modes Inti resolves INSIDE the shading shader, so
+/// there is no radiance for a temporal technique to resolve.
+///
+/// 🔴 Distinct from [`is_debug_view`], and the distinction is the whole
+/// point of FSR 3.1's staircase: those six modes leave the upscaler
+/// running and ask it to write one of its own intermediates. Gating them
+/// out here would turn the tool off exactly when it is wanted.
+fn replaces_shading(debug_mode: u32) -> bool {
+    crate::meshlet::debug::MeshletDebugMode::all_implemented()
+        .iter()
+        .find(|m| m.as_u32() == debug_mode)
+        .is_some_and(|m| m.replaces_shading())
+}
+
+/// Which FSR 3.1 intermediate the debug dropdown is asking for, or 0.
+fn fsr3_debug_stage(debug_mode: u32) -> u32 {
+    crate::meshlet::debug::MeshletDebugMode::all_implemented()
+        .iter()
+        .find(|m| m.as_u32() == debug_mode)
+        .map_or(0, |m| m.fsr3_stage())
 }
 
 fn create_vbuf64_texture(

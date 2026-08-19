@@ -503,6 +503,10 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
     if (c.existing_sample && !c.new_sample) {
         d = reproject_history(c, d);
     }
+    // Snapshotted here because `accumulate_colour` turns `history_colour`
+    // from YCoCg into the final RGB, and the debug step that wants to
+    // know whether there IS a history has to ask before that.
+    let reprojected = d.history_colour;
 
     d = update_lock_status(c, d);
     d = base_accumulation_weight(c, d);
@@ -515,7 +519,7 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var out = d.history_colour;
     if (params.debug != 0u) {
-        out = debug_stage(c, d);
+        out = debug_stage(c, d, reprojected);
     }
 
     textureStore(history_next, hr_pos, vec4<f32>(out, d.lock));
@@ -524,53 +528,53 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
 
 /// The staircase, for finding which stage produced a wrong frame.
 ///
-/// Selected by `KOOCH_FSR3_DEBUG`, and the order is the order the data
-/// flows: the first mode that looks wrong is the first stage that IS
-/// wrong, and everything after it is downstream of the same fault.
+/// Selected by the editor's debug dropdown, and the order is the order
+/// the data flows: the first mode that looks wrong is the first stage
+/// that IS wrong, and everything after it is downstream of the same
+/// fault.
 ///
-/// Values are written into an HDR target that the tonemap then exposes,
-/// so anything meant to be READ as a number is scaled by the exposure it
-/// is about to be divided by — that is what `as_image` is for.
-fn debug_stage(c: Common, d: Data) -> vec3<f32> {
-    // Cancels the tonemap's exposure so a 0..1 quantity arrives on
-    // screen as a 0..1 grey rather than as black.
-    let as_image = 1.0 / max(params.exposure, FSR3_EPSILON);
-
+/// 🎯 The tonemap passes a debug view through UNTOUCHED — no exposure,
+/// no curve — so a 0..1 quantity arrives on screen as a 0..1 grey. The
+/// colour steps therefore hand back radiance already multiplied by the
+/// exposure, which is what the internal buffers hold anyway.
+fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
     switch params.debug {
-        // 1 — the HDR frame FSR was handed, at the render pixel this
-        // output pixel sits in. Black here means the fault is upstream
-        // of this technique entirely.
+        // 1 — the HDR frame FSR was handed. Black here means the fault
+        // is upstream of this technique entirely.
         case 1u: {
-            return textureLoad(input_colour, vec2<i32>(c.hr_uv * params.render_size), 0).rgb;
+            let rgb = textureLoad(input_colour, vec2<i32>(c.hr_uv * params.render_size), 0).rgb;
+            return max(rgb, vec3<f32>(0.0)) * params.exposure;
         }
-        // 2 — dilated motion, biased to grey. Uniform grey with a still
-        // camera is CORRECT; a still camera cannot test this.
+        // 2 — dilated motion, biased so zero is grey. ⚠️ Uniform grey
+        // with a still camera is CORRECT.
         case 2u: {
-            return vec3<f32>(c.motion * 50.0 + 0.5, 0.5) * as_image;
+            return vec3<f32>(c.motion * 50.0 + 0.5, 0.5);
         }
-        // 3 — the masks: red reactive, green disocclusion, blue how many
-        // frames of history the pixel has earned. Blue should climb to
-        // full over three still frames. Staying black is the
-        // accumulation counter never advancing.
+        // 3 — red reactive, green disocclusion, blue frames of history
+        // earned. Blue climbs to full over three still frames; staying
+        // black is the accumulation counter never advancing.
         case 3u: {
-            return vec3<f32>(c.reactive, c.disocclusion, c.accumulation) * as_image;
+            return vec3<f32>(c.reactive, c.disocclusion, c.accumulation);
         }
-        // 4 — THIS frame's upsample alone, no history. If this is the
-        // scene, the Lanczos and the inputs are fine and the fault is in
-        // the history path below.
+        // 4 — THIS frame's upsample alone, no history. If the scene is
+        // here, the inputs and the kernel are fine.
         case 4u: {
-            return max(ycocg_to_rgb(d.upsampled_colour), vec3<f32>(0.0)) / params.exposure;
+            return max(ycocg_to_rgb(d.upsampled_colour), vec3<f32>(0.0));
         }
-        // 5 — the reprojected history alone, before rectification.
+        // 5 — the reprojected history alone, before anything this frame
+        // is blended into it. Black here with a settled camera means the
+        // history never survives from one frame to the next.
         case 5u: {
-            return max(ycocg_to_rgb(d.history_colour), vec3<f32>(0.0)) / params.exposure;
+            return max(ycocg_to_rgb(reprojected), vec3<f32>(0.0));
         }
-        // 6 — red is the lock, green the luma instability, blue the
-        // upsample's total weight. All three are the terms that decide
-        // how hard the history is rectified.
+        // 6 — red the lock, green the luma instability, blue the
+        // upsample's total weight.
         case 6u: {
-            return vec3<f32>(d.lock / LOCK_MAX, c.luma_instability, d.upsampled_weight * 16.0)
-                * as_image;
+            return vec3<f32>(
+                d.lock / LOCK_MAX,
+                c.luma_instability,
+                d.upsampled_weight / AVERAGE_LANCZOS_WEIGHT_PER_FRAME,
+            );
         }
         default: {
             return d.history_colour;

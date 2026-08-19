@@ -206,3 +206,71 @@ fn the_scale_comes_from_the_uniform() {
         "the lights-per-pixel view should read its top of scale from the frame uniform",
     );
 }
+
+/// 🔴 The invariant this whole staircase rests on.
+///
+/// Every debug mode above the Inti floor replaces the shading, which is
+/// why nothing temporal runs under one — except these six, which exist
+/// precisely to inspect the temporal pass and are useless if it is
+/// skipped. A later tidy-up of `replaces_shading` back into a `>= 11`
+/// would turn the tool off exactly when it is reached for, and nothing
+/// would report it: the dropdown would still list them and the frame
+/// would still look plausible.
+#[test]
+fn the_fsr_views_leave_the_upscaler_running() {
+    for mode in [
+        MeshletDebugMode::Fsr3Input,
+        MeshletDebugMode::Fsr3Motion,
+        MeshletDebugMode::Fsr3Masks,
+        MeshletDebugMode::Fsr3Upsample,
+        MeshletDebugMode::Fsr3History,
+        MeshletDebugMode::Fsr3Locks,
+    ] {
+        assert!(
+            !mode.replaces_shading(),
+            "{mode:?} replaces the shading, so the upscaler it is meant to inspect never runs",
+        );
+        assert!(mode.as_u32() > MeshletDebugMode::Normals.as_u32());
+    }
+}
+
+/// And the converse, or the exemption above would be free to grow until
+/// a genuine Inti view stopped being one.
+#[test]
+fn every_inti_view_still_replaces_the_shading() {
+    for mode in [
+        MeshletDebugMode::Normals,
+        MeshletDebugMode::ShadowCascades,
+        MeshletDebugMode::ContactShadows,
+        MeshletDebugMode::SingleLight,
+        MeshletDebugMode::LightsPerPixel,
+        MeshletDebugMode::PointShadowFactor,
+        MeshletDebugMode::PointCubeFaces,
+        MeshletDebugMode::TextureMipLevel,
+    ] {
+        assert!(
+            mode.replaces_shading(),
+            "{mode:?} stopped replacing the shading"
+        );
+        assert_eq!(mode.fsr3_stage(), 0);
+    }
+}
+
+/// The stage numbers are what the shader switches on, so a duplicate or
+/// a gap silently shows the wrong intermediate.
+#[test]
+fn the_fsr_stages_are_one_to_six() {
+    let stages: Vec<u32> = MeshletDebugMode::all_implemented()
+        .iter()
+        .map(|m| m.fsr3_stage())
+        .filter(|s| *s != 0)
+        .collect();
+    assert_eq!(stages, [1, 2, 3, 4, 5, 6]);
+}
+
+/// Off is not a stage, and it is the value every other technique passes.
+#[test]
+fn off_asks_for_no_stage() {
+    assert_eq!(MeshletDebugMode::Off.fsr3_stage(), 0);
+    assert!(!MeshletDebugMode::Off.replaces_shading());
+}
