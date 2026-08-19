@@ -66,8 +66,15 @@ impl Column {
         let layout = Layout::new::<T>();
         let align = layout.align();
         Self {
-            // SAFETY: an alignment is never zero, so this is never null.
-            data: unsafe { NonNull::new_unchecked(align as *mut u8) },
+            // A pointer with no provenance, at the item's own alignment.
+            //
+            // 🔴 NOT `align as *mut u8`. An integer-to-pointer cast claims
+            // provenance it never had, and Miri rejects it outright under
+            // strict provenance — which is how this line was found. The
+            // address is all a never-dereferenced dangling pointer needs,
+            // and a zero-sized read needs no provenance either.
+            data: NonNull::new(std::ptr::without_provenance_mut(align))
+                .expect("an alignment is never zero"),
             len: 0,
             capacity: 0,
             stride: layout.size(),
