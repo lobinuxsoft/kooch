@@ -482,6 +482,8 @@ impl Vbuf64Stage {
         depth: &'a wgpu::TextureView,
         exposure: f32,
         debug_stage: u32,
+        scopes: Option<&'a kooch_core::gpu::GpuScopes>,
+        parent: Option<&'a kooch_core::gpu::GpuQuery>,
     ) -> sgsr2::UpscaleInputs<'a> {
         sgsr2::UpscaleInputs {
             color: self.tonemap.hdr_view(),
@@ -493,6 +495,8 @@ impl Vbuf64Stage {
             near: self.near,
             jitter_phases: self.jitter_phases() as f32,
             debug_stage,
+            scopes,
+            parent,
         }
     }
 
@@ -793,7 +797,7 @@ impl Vbuf64Stage {
                             device,
                             queue,
                             encoder,
-                            self.upscale_inputs(depth_sample_view, exposure, 0),
+                            self.upscale_inputs(depth_sample_view, exposure, 0, None, None),
                         ),
                         crate::quality::UpscaleTechnique::Fsr3 => self.fsr3.draw(
                             device,
@@ -803,6 +807,8 @@ impl Vbuf64Stage {
                                 depth_sample_view,
                                 exposure,
                                 fsr3_debug_stage(debug_mode),
+                                scopes,
+                                query.as_ref(),
                             ),
                         ),
                         _ => self.taa.draw(

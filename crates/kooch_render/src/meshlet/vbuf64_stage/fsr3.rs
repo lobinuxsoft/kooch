@@ -765,24 +765,39 @@ impl Fsr3 {
         let half_groups = groups((self.render_size.0 / 2, self.render_size.1 / 2));
         let output_groups = groups(self.output_size);
 
-        let mut dispatch = |label: &str,
+        // 🎯 One GPU scope per dispatch, nested inside the caller's.
+        // The alternative measured 15.164 ms for the six of them
+        // together on the handheld — a number that condemns the
+        // technique and does not say which pass to open.
+        let (scopes, parent) = (inputs.scopes, inputs.parent);
+        let mut dispatch = |label: &'static str,
                             pipeline: &wgpu::ComputePipeline,
                             bind_group: &wgpu::BindGroup,
                             count: (u32, u32)| {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some(label),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
-            pass.dispatch_workgroups(count.0, count.1, 1);
+            let query = match (scopes, parent) {
+                (Some(s), Some(p)) => Some(s.begin_child(label, encoder, p)),
+                (Some(s), None) => Some(s.begin(label, encoder)),
+                _ => None,
+            };
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some(label),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, bind_group, &[]);
+                pass.dispatch_workgroups(count.0, count.1, 1);
+            }
+            if let (Some(scopes), Some(query)) = (scopes, query) {
+                scopes.end(encoder, query);
+            }
         };
 
         // The scatter only writes where something reprojects to, so
         // anything it misses would keep the previous frame's depth and
         // report a false occlusion.
         dispatch(
-            "fsr3_clear_reconstructed_depth",
+            "clear depth",
             &self.clear_reconstructed,
             &inputs_bg,
             render_groups,
@@ -793,38 +808,38 @@ impl Fsr3 {
         // against these targets at all — has to do it explicitly.
         if state.reset {
             dispatch(
-                "fsr3_clear_new_locks",
+                "clear locks",
                 &self.clear_new_locks,
                 &reduce_bg,
                 output_groups,
             );
         }
         dispatch(
-            "fsr3_prepare_inputs",
+            "prepare inputs",
             &self.prepare_inputs,
             &inputs_bg,
             render_groups,
         );
         dispatch(
-            "fsr3_farthest_depth_mip1",
+            "farthest mip1",
             &self.farthest_mip1,
             &reduce_bg,
             half_groups,
         );
         dispatch(
-            "fsr3_prepare_reactivity",
+            "prepare reactivity",
             &self.reactivity,
             &reactivity_bg,
             render_groups,
         );
         dispatch(
-            "fsr3_luma_instability",
+            "luma instability",
             &self.instability,
             &instability_bg,
             render_groups,
         );
         dispatch(
-            "fsr3_accumulate",
+            "accumulate",
             &self.accumulate,
             &accumulate_bg,
             output_groups,
