@@ -90,7 +90,10 @@ fn the_two_uniform_declarations_agree() {
             "frame_index",
             "delta_pre_exposure",
             "jitter_sequence_length",
-            "_pad",
+            "debug",
+            "_pad0",
+            "_pad1",
+            "_pad2",
         ],
     );
 }

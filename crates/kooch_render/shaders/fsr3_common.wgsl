@@ -91,7 +91,17 @@ struct Fsr3Params {
     /// How many jitter phases the sequence has. A lock decays over the
     /// whole sequence, so a longer one holds thin features longer.
     jitter_sequence_length: f32,
-    _pad: vec4<f32>,
+    /// 0 is off. Anything else makes the accumulation write an
+    /// intermediate instead of the image — see `fsr3_accumulate.wgsl`.
+    /// ⚠️ Corrupts the history while it is on, deliberately: the point
+    /// is to see ONE stage, not to keep a valid frame.
+    debug: u32,
+    // 🔴 Three scalars, not a `vec3<f32>`: a vec3 aligns to 16 in WGSL
+    // and `[f32; 3]` aligns to 4 in Rust, so the pair would disagree on
+    // the block's size without either side saying so.
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Fsr3Params;

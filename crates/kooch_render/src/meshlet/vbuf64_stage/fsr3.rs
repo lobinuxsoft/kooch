@@ -98,7 +98,8 @@ struct Fsr3Ubo {
     frame_index: u32,
     delta_pre_exposure: f32,
     jitter_sequence_length: f32,
-    _pad: [f32; 4],
+    debug: u32,
+    _pad: [f32; 3],
 }
 
 /// Which half of each ping-pong holds the previous frame, and whether
@@ -244,6 +245,13 @@ pub(super) struct Fsr3 {
     targets: Targets,
     render_size: (u32, u32),
     output_size: (u32, u32),
+    /// `KOOCH_FSR3_DEBUG`, read once. Non-zero makes the accumulation
+    /// write an intermediate instead of the image.
+    ///
+    /// 🎯 An env var and not an inspector control on purpose: this is a
+    /// staircase for finding which of six stages produced a wrong frame,
+    /// not a feature. It corrupts the history while it is on.
+    debug: u32,
     state: std::sync::Mutex<History>,
 }
 
@@ -425,6 +433,10 @@ impl Fsr3 {
                 ..Default::default()
             }),
             targets: Targets::new(device, render, output),
+            debug: std::env::var("KOOCH_FSR3_DEBUG")
+                .ok()
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(0),
             render_size: render,
             output_size: output,
             state: std::sync::Mutex::new(History {
@@ -524,7 +536,8 @@ impl Fsr3 {
                 // frame at this one.
                 delta_pre_exposure: state.prev_exposure / exposure,
                 jitter_sequence_length: inputs.jitter_phases.max(1.0),
-                _pad: [0.0; 4],
+                debug: self.debug,
+                _pad: [0.0; 3],
             }),
         );
 
