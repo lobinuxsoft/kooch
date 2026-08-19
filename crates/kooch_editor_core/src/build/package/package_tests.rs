@@ -11,6 +11,10 @@ use kooch_pack::Pack;
 fn known() -> Vec<String> {
     [
         "glb",
+        // The image loader claims it, and a texture is what a material
+        // reaches for — a fixture without it cannot exercise the graph
+        // this file exists to walk.
+        "png",
         "ron",
         "prefab",
         "rendersettings",
@@ -630,5 +634,413 @@ fn a_project_without_a_manifest_still_packages() {
         !out.dir
             .join(kooch_core::scene_paths::PROJECT_MANIFEST_FILE)
             .exists(),
+    );
+}
+
+/// An engine texture that only a material names.
+const ENGINE_TEXTURE: &str = "33333333-0000-4000-8000-000000000003";
+
+/// The reported bug, as files: the scene names a material, the material
+/// names a texture, and nothing else mentions the texture.
+fn chained(dir: &Path, key: &PackKey) -> Package {
+    let (proj, eng) = (dir.join("proj"), dir.join("engine"));
+    project(&proj);
+    engine(&eng);
+    write(
+        &proj.join("assets/materials/floor.ron"),
+        format!(r#"(base_color: (1,1,1,1), albedo: Some("{ENGINE_TEXTURE}"))"#).as_bytes(),
+    );
+    write(
+        &proj.join("assets/materials/floor.ron.meta"),
+        b"guid = \"44444444-0000-4000-8000-000000000004\"\n",
+    );
+    write(&eng.join("assets/textures/grid.png"), b"engine texture");
+    write(
+        &eng.join("assets/textures/grid.png.meta"),
+        format!("guid = \"{ENGINE_TEXTURE}\"\n").as_bytes(),
+    );
+    let exe = binary(dir);
+    assemble(
+        &BuildPreset::default(),
+        &known(),
+        &proj,
+        Some(&eng),
+        &exe,
+        "demo",
+        key,
+    )
+    .expect("packaging should succeed")
+}
+
+/// 🔴 The bug: a texture named only by a material has to travel.
+///
+/// The scene names the material, so the material shipped and the texture
+/// did not — and a missing guid is silent, so the game rendered the 1x1
+/// white fallback and looked like a material somebody authored flat.
+/// Reported from a build made for the handheld.
+#[test]
+fn a_texture_named_only_by_a_material_travels() {
+    let dir = tmp("packager_chain");
+    let key = PackKey::generate();
+    let out = chained(&dir, &key);
+    let mut pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    assert_eq!(
+        pack.read("assets/textures/grid.png").unwrap(),
+        b"engine texture",
+        "the engine texture did not ship; the packager stopped one level short",
+    );
+    // And its identity card with it: a file with no `.meta` is present
+    // on disk and absent from the engine.
+    assert!(pack.read("assets/textures/grid.png.meta").is_ok());
+}
+
+/// 🔴 A cycle terminates.
+///
+/// Two prefabs naming each other is authorable — a door prefab
+/// referencing the room it opens into — and a closure that re-queues
+/// what it has already seen turns that into a build which never
+/// finishes. The dedup is what makes this a test that returns rather
+/// than one that hangs the suite.
+#[test]
+fn a_reference_cycle_terminates() {
+    let dir = tmp("packager_cycle");
+    let key = PackKey::generate();
+    let (proj, eng) = (dir.join("proj"), dir.join("engine"));
+    project(&proj);
+    engine(&eng);
+    let (a, b) = (
+        "55555555-0000-4000-8000-000000000005",
+        "66666666-0000-4000-8000-000000000006",
+    );
+    for (name, guid, points_at) in [("a", a, b), ("b", b, a)] {
+        write(
+            &proj.join(format!("assets/{name}.prefab")),
+            format!(
+                r#"(entities: [(components: [(fields: [("x", AssetRef(guid: Some("{points_at}")))])])])"#
+            )
+            .as_bytes(),
+        );
+        write(
+            &proj.join(format!("assets/{name}.prefab.meta")),
+            format!("guid = \"{guid}\"\n").as_bytes(),
+        );
+    }
+    let exe = binary(&dir);
+    let out = assemble(
+        &BuildPreset::default(),
+        &known(),
+        &proj,
+        Some(&eng),
+        &exe,
+        "demo",
+        &key,
+    )
+    .expect("a cycle is authorable and must not stop the build");
+    let mut pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    assert!(pack.read("assets/a.prefab").is_ok());
+}
+
+/// 🔴 And the engine's demos still stay behind.
+///
+/// The failure mode of a transitive closure is the opposite of the bug
+/// it fixes: follow one reference too far and the pack grows back into
+/// the engine's 13 MB of demo content. Reachability has to stay
+/// reachability.
+#[test]
+fn the_closure_does_not_swallow_the_engine() {
+    let dir = tmp("packager_bounded");
+    let key = PackKey::generate();
+    let out = chained(&dir, &key);
+    let mut pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    assert!(
+        pack.read("assets/meshes/demo.glb").is_err(),
+        "an unreferenced engine demo shipped — the closure followed something it should not",
+    );
+}
+
+/// An asset many things name is collected once.
+///
+/// Measured as a DIFFERENCE rather than a total: the fixture ships its
+/// own files, so an absolute count is a number that has to be updated
+/// whenever the fixture grows — and the first version of this test
+/// asserted 8, got 14, and was measuring the fixture.
+///
+/// Three materials sharing one texture must cost exactly two files more
+/// than one material sharing it — the extra `.ron` and its `.meta`. A
+/// closure that queued the texture once per referrer would copy it
+/// again each time.
+#[test]
+fn a_shared_asset_is_collected_once() {
+    fn pack_with(materials: usize, tag: &str) -> usize {
+        let dir = tmp(tag);
+        let (proj, eng) = (dir.join("proj"), dir.join("engine"));
+        project(&proj);
+        engine(&eng);
+        for index in 0..materials {
+            write(
+                &proj.join(format!("assets/materials/m{index}.ron")),
+                format!(r#"(albedo: Some("{ENGINE_TEXTURE}"))"#).as_bytes(),
+            );
+            write(
+                &proj.join(format!("assets/materials/m{index}.ron.meta")),
+                format!("guid = \"7{index}777777-0000-4000-8000-000000000007\"\n").as_bytes(),
+            );
+        }
+        write(&eng.join("assets/textures/grid.png"), b"engine texture");
+        write(
+            &eng.join("assets/textures/grid.png.meta"),
+            format!("guid = \"{ENGINE_TEXTURE}\"\n").as_bytes(),
+        );
+        let exe = binary(&dir);
+        assemble(
+            &BuildPreset::default(),
+            &known(),
+            &proj,
+            Some(&eng),
+            &exe,
+            "demo",
+            &PackKey::generate(),
+        )
+        .expect("packaging should succeed")
+        .assets
+    }
+
+    let one = pack_with(1, "packager_shared_one");
+    let three = pack_with(3, "packager_shared_three");
+    assert_eq!(
+        three - one,
+        4,
+        "two extra materials cost {} files instead of 4, so the shared texture was \
+         collected more than once",
+        three - one,
+    );
+}
+
+/// 🔴 The case that needs the recursion, and not just the roots.
+///
+/// The project's own files are all read as roots, so a PROJECT material
+/// reaching an engine texture is found without following anything —
+/// which is why the first version of the test above passed with the
+/// closure removed entirely.
+///
+/// This is the chain that only a walk can resolve: a scene names an
+/// ENGINE material, and that material — a file the project never
+/// touches — names an ENGINE texture. Exactly the shape of the shipped
+/// prototype pack, where `dark_texture_08.ron` lives beside its own png
+/// in the engine's tree.
+#[test]
+fn a_chain_inside_the_engine_resolves() {
+    let dir = tmp("packager_engine_chain");
+    let key = PackKey::generate();
+    let (proj, eng) = (dir.join("proj"), dir.join("engine"));
+    project(&proj);
+    engine(&eng);
+
+    // The engine's material — named by the fixture's scene — points at
+    // an engine texture nothing else mentions.
+    write(
+        &eng.join("assets/materials/default.ron"),
+        format!(r#"(albedo: Some("{ENGINE_TEXTURE}"))"#).as_bytes(),
+    );
+    write(&eng.join("assets/textures/grid.png"), b"engine texture");
+    write(
+        &eng.join("assets/textures/grid.png.meta"),
+        format!("guid = \"{ENGINE_TEXTURE}\"\n").as_bytes(),
+    );
+
+    let exe = binary(&dir);
+    let out = assemble(
+        &BuildPreset::default(),
+        &known(),
+        &proj,
+        Some(&eng),
+        &exe,
+        "demo",
+        &key,
+    )
+    .expect("packaging should succeed");
+    let mut pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    assert_eq!(
+        pack.read("assets/textures/grid.png").unwrap(),
+        b"engine texture",
+        "the texture is two references deep and only through the engine's own tree, so \
+         nothing but following the material finds it",
+    );
+}
+
+/// Extensions the packager reads looking for references.
+///
+/// The counterpart of [`OPAQUE_FORMATS`]: between the two, every format
+/// this engine loads is accounted for.
+const TEXT_FORMATS: [&str; 6] = [
+    "ron",
+    "scene",
+    "prefab",
+    "rendersettings",
+    "buildpreset",
+    "inputaction",
+];
+
+/// 🔴 A new asset format has to be classified, and nothing else forces
+/// it.
+///
+/// The packager decides whether to read a file by extension: text is
+/// searched for references, binary is skipped. Both answers are silent
+/// when wrong — a binary read as text finds nothing and ships an
+/// incomplete pack; a text file skipped does the same. Neither fails to
+/// compile and neither logs.
+///
+/// So the test is the forcing function. Add a loader, and this fails
+/// until its extension is named as one or the other. ⚠️ Today the
+/// answer for every binary format is "references nothing", which is a
+/// fact about this engine and not a law: a `.glb` carries geometry and
+/// its material is assigned by the scene. When that stops being true,
+/// the format moves to [`TEXT_FORMATS`] and the packager follows it.
+#[test]
+fn every_asset_format_is_classified() {
+    use kooch_core::asset_loader::AssetServer;
+
+    let mut server = AssetServer::new();
+    // The four the asset plugin registers by hand, plus everything
+    // declared with `register_asset!`.
+    server.register_loader::<kooch_render::mesh::Mesh, _>(kooch_render::mesh::GltfMeshLoader);
+    server.register_loader::<kooch_render::meshlet::MeshletMesh, _>(
+        kooch_render::meshlet::MeshletMeshLoader,
+    );
+    server.register_loader::<kooch_render::texture::Image, _>(
+        kooch_render::texture::ImageLoader::srgb(),
+    );
+    server.register_loader::<kooch_render::material::Material, _>(
+        kooch_render::material::MaterialLoader,
+    );
+    kooch_ecs::scene::prefab::register_loader(&mut server);
+    for registration in kooch_core::asset_registry::registered_asset_types() {
+        (registration.register_loader)(&mut server);
+    }
+
+    let mut unclassified: Vec<String> = Vec::new();
+    for (extension, type_name) in server.known_extensions() {
+        let lower = extension.to_ascii_lowercase();
+        let opaque = OPAQUE_FORMATS.contains(&lower.as_str());
+        let text = TEXT_FORMATS.contains(&lower.as_str());
+        if opaque == text {
+            unclassified.push(format!("{lower} ({type_name})"));
+        }
+    }
+    assert!(
+        unclassified.is_empty(),
+        "these formats are in neither OPAQUE_FORMATS nor TEXT_FORMATS, so the packager \
+         guessed: {unclassified:?}. Decide whether a file of that type can name another \
+         asset — if it can, the packager must read it, and if it cannot, reading it is \
+         waste repeated once per asset.",
+    );
+}
+
+/// 🔴 An asset only the game's code names still ships.
+///
+/// The walk collects what the game can REACH by reading files, and a
+/// guid built in Rust — loaded by path, chosen from a table, assembled
+/// from a string — is reachable by nothing. Unity answers this with
+/// `Resources/`, Godot with export filters; this manifest answers it
+/// with a list, because the assets in question usually live in the
+/// ENGINE's tree where a project cannot put a folder.
+#[test]
+fn a_declared_asset_ships_without_being_named() {
+    let dir = tmp("packager_declared");
+    let key = PackKey::generate();
+    let (proj, eng) = (dir.join("proj"), dir.join("engine"));
+    project(&proj);
+    engine(&eng);
+    // `demo.glb` is the engine asset no document mentions — the fixture
+    // ships it precisely to prove it stays behind.
+    write(
+        &proj.join("project.kooch"),
+        br#"(
+            name: "demo",
+            version: "0.1.0",
+            engine_version: "0.6.0",
+            main_scene: None,
+            window: (title: "demo", width: 1280, height: 720),
+            build: (include: ["assets/meshes/demo.glb"]),
+        )"#,
+    );
+    let exe = binary(&dir);
+    let out = assemble(
+        &BuildPreset::default(),
+        &known(),
+        &proj,
+        Some(&eng),
+        &exe,
+        "demo",
+        &key,
+    )
+    .expect("packaging should succeed");
+    let mut pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    assert_eq!(
+        pack.read("assets/meshes/demo.glb").unwrap(),
+        b"12 MB of demo",
+        "the manifest declared it and it did not ship",
+    );
+}
+
+/// And a declared asset is a ROOT, so what it names comes too.
+///
+/// Declaring a material and then having to declare its three textures
+/// as well would be a list that goes stale the first time somebody edits
+/// the material.
+#[test]
+fn a_declared_asset_brings_what_it_references() {
+    let dir = tmp("packager_declared_chain");
+    let key = PackKey::generate();
+    let (proj, eng) = (dir.join("proj"), dir.join("engine"));
+    project(&proj);
+    engine(&eng);
+    // An engine material nothing names, pointing at an engine texture
+    // nothing names either.
+    write(
+        &eng.join("assets/materials/hidden.ron"),
+        format!(r#"(albedo: Some("{ENGINE_TEXTURE}"))"#).as_bytes(),
+    );
+    write(
+        &eng.join("assets/materials/hidden.ron.meta"),
+        b"guid = \"bbbbbbbb-0000-4000-8000-00000000000b\"\n",
+    );
+    write(&eng.join("assets/textures/grid.png"), b"engine texture");
+    write(
+        &eng.join("assets/textures/grid.png.meta"),
+        format!("guid = \"{ENGINE_TEXTURE}\"\n").as_bytes(),
+    );
+    write(
+        &proj.join("project.kooch"),
+        br#"(
+            name: "demo",
+            version: "0.1.0",
+            engine_version: "0.6.0",
+            main_scene: None,
+            window: (title: "demo", width: 1280, height: 720),
+            build: (include: ["assets/materials/hidden.ron"]),
+        )"#,
+    );
+    let exe = binary(&dir);
+    let out = assemble(
+        &BuildPreset::default(),
+        &known(),
+        &proj,
+        Some(&eng),
+        &exe,
+        "demo",
+        &key,
+    )
+    .expect("packaging should succeed");
+    let mut pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    assert!(
+        pack.read("assets/materials/hidden.ron").is_ok(),
+        "the declared material did not ship",
+    );
+    assert_eq!(
+        pack.read("assets/textures/grid.png").unwrap(),
+        b"engine texture",
+        "the declared material shipped without the texture it names, so a declaration \
+         would have to list every asset underneath it by hand",
     );
 }

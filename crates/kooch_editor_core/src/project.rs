@@ -32,6 +32,39 @@ pub struct ProjectManifest {
     pub engine_version: String,
     pub main_scene: Option<String>,
     pub window: WindowSettings,
+    /// Assets that ship even though no scene or prefab names them.
+    ///
+    /// 🔴 The packager ships what the game can REACH: scenes, prefabs,
+    /// and everything those reference. A guid built in Rust — loaded by
+    /// path at runtime, chosen from a table, assembled from a string —
+    /// is not reachable by reading files, so it does not ship and the
+    /// game misses it in silence.
+    ///
+    /// Every engine answers this with a declaration: Unity has
+    /// `Resources/`, Godot has export filters. This is ours, and it is a
+    /// list rather than a folder because the assets in question usually
+    /// live in the ENGINE's tree, where a project cannot put a folder.
+    #[serde(default)]
+    pub build: BuildIncludes,
+}
+
+/// The `build` field of `project.kooch`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BuildIncludes {
+    /// Project- or engine-relative paths, as they appear in the asset
+    /// browser:
+    ///
+    /// ```ron
+    /// build: (
+    ///     include: ["assets/meshes/suzanne.glb"],
+    /// ),
+    /// ```
+    ///
+    /// Each is resolved to its guid and treated as a **root** of the
+    /// same walk documents are, so declaring a material brings its
+    /// textures without naming them too.
+    #[serde(default)]
+    pub include: Vec<String>,
 }
 
 /// Window settings embedded in the project manifest.
@@ -50,6 +83,7 @@ impl ProjectManifest {
             version: "0.1.0".to_owned(),
             engine_version: env!("CARGO_PKG_VERSION").to_owned(),
             main_scene: None,
+            build: BuildIncludes::default(),
             window: WindowSettings {
                 title: name.to_owned(),
                 width: 1280,

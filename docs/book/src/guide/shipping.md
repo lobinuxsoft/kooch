@@ -51,11 +51,47 @@ A project with no `project.kooch` beside the binary still falls back to
 
 ## What travels, and what does not
 
-Only what the game reaches. Packaging walks the scenes and prefabs,
-collects the GUIDs they reference, and takes those files and their
-`.meta` sidecars. An asset nobody uses stays behind, and so does every
-`.buildpreset` — a build does not ship the instructions for making
-itself.
+Only what the game reaches — and *reaches* is followed all the way
+down. Packaging starts from the project's files, collects the GUIDs they
+reference, then follows those assets to the GUIDs **they** reference,
+and repeats until nothing new appears:
+
+```text
+level.scene  →  floor.ron  →  grid.png
+```
+
+A scene names a material, the material names a texture, and all three
+travel. Each asset is collected once however many things point at it,
+and a cycle — two prefabs naming each other — terminates rather than
+hanging the build.
+
+An asset nobody reaches stays behind, and so does every `.buildpreset` —
+a build does not ship the instructions for making itself.
+
+> 🔴 This used to stop at the first step: scenes and prefabs were read
+> and nothing else was. The material shipped and its texture did not,
+> and because a missing GUID is silent the game started and drew the 1×1
+> white fallback — a textured surface that looks like somebody authored
+> it flat.
+
+### Assets only your code names
+
+A GUID built in Rust is not something the packager can find by reading
+files: a scene loaded by path, an asset chosen from a table, an id
+assembled from a string. Declare those in `project.kooch`:
+
+```ron
+build: (
+    include: ["assets/meshes/suzanne.glb"],
+),
+```
+
+Paths are resolved against the project first and the engine second. Each
+one is a **root** of the same walk, so declaring a material brings the
+textures it names — you never have to list what is underneath.
+
+A declared path that matches no file is reported in the build log and
+does not stop the build.
 
 Source does not travel either. A shipped game is a compiled binary; the
 `src/` folder is what produced it, not part of it.
