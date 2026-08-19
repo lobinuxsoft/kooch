@@ -173,11 +173,31 @@ pub fn load_project_plugin(
             plugin.build(&mut host);
             plugins.loaded.push(path);
         }
-        Err(e) => {
-            // Not fatal. The project still opens; it just shows none of
-            // its own components, and the reason says why.
-            tracing::warn!("{e}");
+        // Not fatal either way. The project still opens; it just shows
+        // none of its own components until a build produces a library
+        // this engine will load.
+        Err(kooch_core::dynamic::PluginLoadError::Incompatible {
+            reason: kooch_core::dynamic::Incompatibility::EngineVersion { .. },
+            ..
+        }) => {
+            // 🔴 Expected, and self-correcting. The engine bumps its
+            // version on every merged PR, so the project's library is
+            // stale the first time the editor opens after one — and the
+            // editor rebuilds the project moments later, which is where
+            // `loaded project plugin` comes from two lines down in the
+            // same log.
+            //
+            // Reported as a warning it read as a fault the owner had to
+            // act on, three sessions running. A warning that appears
+            // every time and needs nothing done is what teaches people
+            // to skim past the one that matters.
+            tracing::info!(
+                target: "kooch_editor_core::project_plugin",
+                "the project's library was built against another engine version; \
+                 rebuilding it is part of opening the project",
+            );
         }
+        Err(e) => tracing::warn!("{e}"),
     }
 
     resources.insert(plugins);
