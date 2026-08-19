@@ -234,3 +234,6 @@ const BGL_ENTRIES: [wgpu::BindGroupLayoutEntry; 6] = [
         count: None,
     },
 ];
+
+#[cfg(test)]
+mod tests;

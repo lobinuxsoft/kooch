@@ -15,10 +15,18 @@
 //! identical by construction. Three things change:
 //!
 //! - **A workgroup owns a 16x16 tile.** It reduces its threads' froxels
-//!   to one block of cells, copies that block's light indices into
+//!   to one block of cells, copies that block's light *indices* into
 //!   `var<workgroup>` memory, and every thread then walks its own cell's
-//!   run out of shared memory. Fifteen storage fetches per pixel become
-//!   fifteen per tile.
+//!   run out of shared memory.
+//!
+//!   🔴 The INDICES, and only those — four bytes each. Every thread
+//!   still fetches the whole 80-byte `IntiLight` out of the storage
+//!   buffer for every light in its froxel, because that is what
+//!   `inti_lights[tile_lights[i]]` reads. Fifteen of those is 1.2 KB a
+//!   pixel; this pass removed the 60 bytes of indices and left the
+//!   1200, which is why it measured 6.6 % on the device and not more.
+//!   Moving the records themselves is #826's, and `ROADMAP.md` carries
+//!   the numbers.
 //! - **No material-depth target.** The fragment path resolves
 //!   `material_id` into a depth buffer and lets a hardware `Equal` test
 //!   do the per-material cull. A compute pass has no depth test, so each
@@ -304,12 +312,28 @@ impl ComputeShading {
     /// shaded target in 16x16 tiles.
     ///
     /// Whole-target and not "the tiles this material covers": which
-    /// tiles those are is not known without a classification pass, and
-    /// a tile with none of this material's pixels costs one vbuf read
-    /// per thread and then leaves — no reconstruction, no lights, no
-    /// write. Compacting the dispatch is worth doing when a scene has
-    /// enough materials for that to show up in a capture, and it is a
-    /// change to this function alone.
+    /// tiles those are is not known without a classification pass. A
+    /// tile with none of this material's pixels does no reconstruction,
+    /// reads no lights and writes nothing — but it does not leave for
+    /// free either. Every thread of it still pays:
+    ///
+    /// - one `textureLoad` of the R64 vbuf,
+    /// - `visible_meshlets[slot]`, which depends on that load,
+    /// - `instances[inst_id].material_id`, which depends on that one,
+    /// - and the three `workgroupBarrier`s, which are unconditional.
+    ///
+    /// Two dependent storage reads, which is the access pattern the
+    /// device measurements left standing after ALU was ruled out.
+    ///
+    /// 🔴 And the count is not "materials in the scene". [`shading_slots`]
+    /// is `0..next_slot`, and `sync_from_resources` registers every
+    /// material the `AssetDatabase` knows about — so dropping an unused
+    /// `.ron` into the project's folder adds a full-screen sweep to
+    /// every frame. Compacting the dispatch is a change to this function
+    /// alone; whether it is worth making is the experiment written into
+    /// #885.
+    ///
+    /// [`shading_slots`]: crate::material::MaterialPipeline::shading_slots
     ///
     /// `color_view` and `ids_view` are the targets for the given `rate`:
     /// the screen at [`ShadingRate::Full`], the half-resolution pair at
