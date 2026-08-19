@@ -327,15 +327,24 @@ impl ComponentRegistry {
         Some(unsafe { &**slot.storage.get() })
     }
 
-    /// Returns a mutable reference to the type-erased storage for the given `TypeId`.
+    /// A **raw pointer** to the type-erased storage, for writing.
+    ///
+    /// 🔴 A pointer and not a `&mut`, and the difference is soundness. A
+    /// `&mut` stored in a fetch and later reborrowed **shared** — which is
+    /// what `fetch(&self, …)` does — can only be cast back to `*mut` by
+    /// retagging a shared tag for writes. Stacked Borrows forbids that, and
+    /// Miri caught it doing exactly that on a test that had been passing.
+    ///
+    /// The pointer here comes straight from the `UnsafeCell`, so its
+    /// provenance grants writes for as long as the registry lives.
     ///
     /// # Safety
     ///
-    /// Caller must ensure no other reference (mutable or immutable) to the
-    /// same `TypeId` storage is active.
-    pub(crate) unsafe fn storage_mut(&self, type_id: &TypeId) -> Option<&mut dyn AnyStorage> {
+    /// Caller must ensure no other reference to the same storage is active.
+    /// The query system's borrow tracker is what does that upstream.
+    pub(crate) unsafe fn storage_ptr(&self, type_id: &TypeId) -> Option<*mut dyn AnyStorage> {
         let slot = self.slot(type_id)?;
-        Some(unsafe { &mut **slot.storage.get() })
+        Some(unsafe { &mut **slot.storage.get() as *mut dyn AnyStorage })
     }
 }
 
