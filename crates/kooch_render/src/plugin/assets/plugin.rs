@@ -327,9 +327,18 @@ fn init_material_pipeline_system(resources: &mut Resources) {
         return;
     }
     let Some(gpu) = resources.get::<GpuContext>() else {
-        tracing::warn!(
+        // 🔴 Not a warning: this is the ordinary path. The editor builds
+        // its GPU context after Startup runs, so every session takes
+        // this branch once and the retry a moment later is what logs
+        // `MaterialPipeline inserted into Resources`.
+        //
+        // A warning that fires every time and needs nothing done is how
+        // people learn to skim past the one that matters — and when this
+        // deferral genuinely never resolves, the symptom is a project
+        // with no materials at all, which nobody misses.
+        tracing::debug!(
             target: "kooch_render::plugin::assets",
-            "GpuContext missing at Startup; MaterialPipeline init deferred",
+            "GpuContext not up yet; MaterialPipeline init deferred to the retry",
         );
         return;
     };

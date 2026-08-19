@@ -110,7 +110,9 @@ fn init_renderers(resources: &mut Resources) {
         return;
     }
     let Some(gpu) = resources.get::<GpuContext>() else {
-        tracing::warn!("RenderPlugin: GpuContext missing at Startup, deferring init");
+        // The same ordinary path as the material pipeline's: the
+        // context is built after Startup and the retry picks this up.
+        tracing::debug!("RenderPlugin: GpuContext not up yet, deferring init to the retry");
         return;
     };
     let pipeline_cache = gpu.pipeline_cache();

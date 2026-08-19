@@ -31,6 +31,10 @@ pub mod wrapper;
 pub use bridges::{ComponentBridge, EntityBridge};
 pub use host::EngineHost;
 pub use loader::{PluginLoadError, PluginLoader};
+// Re-exported because `PluginLoadError::Incompatible` carries one, so a
+// caller that wants to tell "rebuild me" apart from "this will never
+// load" already depends on the type.
+pub use kooch_plugin_api::version::Incompatibility;
 pub use plugin_data::PluginData;
 pub use resource_registry::ResourceRegistry;
 pub use wrapper::DynamicPlugin;
