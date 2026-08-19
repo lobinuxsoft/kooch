@@ -1,5 +1,9 @@
-//! The ECS walk: light components + their world transforms → the flat
-//! record the shader loops over.
+//! What the light walk produces, and the bookkeeping around it.
+//!
+//! 🔴 **The walk itself lives in [`crate::LightFrame`].** It used to live
+//! here, and a second copy of it lived in the shadow stage: the same
+//! archetypes read twice per frame, three times in the editor. This module
+//! keeps the records and the ranking; nothing here walks the world.
 //!
 //! Pure and `Resources`-only, so the whole extraction is testable with
 //! no GPU in the room. The buffer upload is [`crate::GpuLights`]'s job.
@@ -32,6 +36,7 @@ const LINEAR_LOOP_BUDGET: usize = 256;
 /// Two parallel vectors rather than an entity field on [`GpuLight`]:
 /// that record is a 64 B POD that crosses to the GPU, and an identity
 /// the shader will never read has no business riding in it.
+#[derive(Clone)]
 pub struct ExtractedLights {
     pub lights: Vec<GpuLight>,
     pub entities: Vec<Entity>,
@@ -62,95 +67,6 @@ impl ExtractedLights {
     }
 }
 
-/// Walks the world for every active light and packs it for the GPU.
-///
-/// A light with no `GlobalTransform` is skipped rather than defaulted:
-/// a directional light without a transform has no direction, and
-/// placing it at the origin pointing down would be an invention.
-///
-/// 🔴 The order this walks in **is** the layout of the light buffer, and
-/// [`ExtractedLights::slot_of`] resolves against it. One walk produces
-/// both, because two that disagreed would isolate the wrong light in the
-/// debug view and nothing would report it.
-pub fn extract_lights(resources: &Resources) -> ExtractedLights {
-    let mut lights = Vec::new();
-    let mut entities = Vec::new();
-
-    Query::<(&DirectionalLight, &GlobalTransform)>::new(resources).for_each_entity(
-        |entity, (light, transform)| {
-            if light.active {
-                lights.push(GpuLight::directional(light, transform.matrix));
-                entities.push(entity);
-            }
-        },
-    );
-    // Everything pushed above is directional, and everything below is
-    // not. `directional_count` is that boundary, and the shading loop
-    // reads it as one — see the field's documentation.
-    let directional_count = lights.len() as u32;
-
-    Query::<(&PointLight, &GlobalTransform)>::new(resources).for_each_entity(
-        |entity, (light, transform)| {
-            if light.active {
-                lights.push(GpuLight::point(light, transform.matrix));
-                entities.push(entity);
-            }
-        },
-    );
-    // The spot walk also hands out shadow slots, in this order, because
-    // `shadow_casting_spots` reads the same order back and the two have
-    // to be the same numbering. A spot past the budget still lights the
-    // scene with `NO_SHADOW_SLOT` — losing the light would be a worse
-    // failure than losing its shadow.
-    let mut next_slot = 0u32;
-    Query::<(&SpotLight, &GlobalTransform)>::new(resources).for_each_entity(
-        |entity, (light, transform)| {
-            if light.active {
-                let mut gpu = GpuLight::spot(light, transform.matrix);
-                if light.cast_shadows && (next_slot as usize) < crate::MAX_SPOT_SHADOWS {
-                    gpu.shadow_slot = next_slot;
-                    next_slot += 1;
-                }
-                lights.push(gpu);
-                entities.push(entity);
-            }
-        },
-    );
-
-    ExtractedLights {
-        lights,
-        entities,
-        directional_count,
-    }
-}
-
-/// The direction of the one directional light that casts shadows, if
-/// the scene has one.
-///
-/// Points **where the light shines** — the entity's -Z, the same vector
-/// the shading model reads — so a caller can hand it straight to
-/// `build_cascades`.
-///
-/// # Why the first and not all of them
-///
-/// The atlas holds four cascades of one light. A second sun would need
-/// a second atlas, and there is no bind group left to put it in. Taking
-/// the first in walk order is a limitation stated rather than a choice:
-/// a scene with two shadow-casting suns gets shadows from one of them,
-/// which is visibly wrong and therefore reportable, as opposed to
-/// getting none, which reads as the feature being broken.
-pub fn shadow_casting_sun(resources: &Resources) -> Option<glam::Vec3> {
-    let mut found = None;
-    Query::<(&DirectionalLight, &GlobalTransform)>::new(resources).for_each(
-        |(light, transform)| {
-            if found.is_none() && light.active && light.cast_shadows {
-                found = Some(crate::gpu_light::forward(transform.matrix));
-            }
-        },
-    );
-    found
-}
-
 /// Everything the shadow pass needs about one spot light that casts.
 ///
 /// The angle is the OUTER one: the cone's edge is where the light stops,
@@ -159,6 +75,14 @@ pub fn shadow_casting_sun(resources: &Resources) -> Option<glam::Vec3> {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SpotShadowSource {
     pub entity: Entity,
+    /// Which slot of the light buffer this spot landed in.
+    ///
+    /// 🔴 **Not interchangeable with `entity`.** The slot is a position in
+    /// THIS frame's buffer and means nothing in the next one; the entity is
+    /// the identity that survives. Recorded during the walk because that is
+    /// the only moment both are known at once, which is what retires
+    /// `slot_of`'s linear scan on this path.
+    pub buffer_slot: u32,
     pub position: glam::Vec3,
     /// Where the light shines — the entity's -Z, same as `GpuLight`.
     pub direction: glam::Vec3,
@@ -182,16 +106,10 @@ pub struct SpotShadowSource {
 /// somewhere else in the room, which reads as a broken shadow pass and
 /// not as a mismatched index. That is why this calls the same walk
 /// rather than repeating its filter.
-pub fn shadow_casting_spots(resources: &Resources, limit: usize) -> Vec<SpotShadowSource> {
-    let mut out = extract_spot_sources(resources);
-    out.truncate(limit);
-    out
-}
-
 /// Writes each casting point light's cube slot into its `GpuLight`.
 ///
 /// 🔴 Separate from `extract_lights`, and it has to be. A spot's slot is
-/// handed out during the walk because `shadow_casting_spots` returns the
+/// handed out during the walk because `LightFrame` records the source in
 /// same walk order truncated — the two agree by construction. Point
 /// lights are sorted by distance to the camera, so the walk order and
 /// the slot order are **different orders**, and assigning during the
@@ -216,6 +134,13 @@ pub fn assign_point_slots(lights: &mut ExtractedLights, casting: &[Entity]) {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PointShadowSource {
     pub entity: Entity,
+    /// Which slot of the light buffer this lamp landed in.
+    ///
+    /// 🔴 See [`SpotShadowSource::buffer_slot`]: a position in this frame,
+    /// not an identity. The cross-frame hysteresis that decides which lamps
+    /// keep their cubes matches on `entity`, and must keep doing so — a
+    /// slot means a different lamp the moment anything despawns.
+    pub buffer_slot: u32,
     pub position: glam::Vec3,
     pub range: f32,
     /// The light's own brightness, carried because the ranking needs it
@@ -280,66 +205,6 @@ pub fn point_shadow_importance(
 /// The slot each light gets here is the `shadow_slot` written into its
 /// `GpuLight`, so both walks have to agree — which is why this is one
 /// function and not a filter repeated at the call site.
-pub fn shadow_casting_points(
-    resources: &Resources,
-    camera_position: glam::Vec3,
-    limit: usize,
-) -> Vec<PointShadowSource> {
-    let mut out = extract_point_sources(resources);
-    for source in &mut out {
-        source.importance = point_shadow_importance(
-            source.position,
-            source.range,
-            source.intensity,
-            camera_position,
-        );
-    }
-    // Descending: the most worth showing first. `total_cmp` because a
-    // NaN intensity would otherwise make the comparator inconsistent and
-    // `sort_by` is allowed to panic on that.
-    out.sort_by(|a, b| b.importance.total_cmp(&a.importance));
-    out.truncate(limit);
-    out
-}
-
-fn extract_point_sources(resources: &Resources) -> Vec<PointShadowSource> {
-    let mut out = Vec::new();
-    Query::<(&PointLight, &GlobalTransform)>::new(resources).for_each_entity(
-        |entity, (light, transform)| {
-            if light.active && light.cast_shadows {
-                out.push(PointShadowSource {
-                    entity,
-                    position: transform.matrix.w_axis.truncate(),
-                    range: light.range,
-                    intensity: light.intensity,
-                    // Filled by `shadow_casting_points`, which is the
-                    // only thing that knows where the camera is.
-                    importance: 0.0,
-                });
-            }
-        },
-    );
-    out
-}
-
-fn extract_spot_sources(resources: &Resources) -> Vec<SpotShadowSource> {
-    let mut out = Vec::new();
-    Query::<(&SpotLight, &GlobalTransform)>::new(resources).for_each_entity(
-        |entity, (light, transform)| {
-            if light.active && light.cast_shadows {
-                out.push(SpotShadowSource {
-                    entity,
-                    position: transform.matrix.w_axis.truncate(),
-                    direction: crate::gpu_light::forward(transform.matrix),
-                    outer_angle: light.outer_angle.clamp(0.0, 90.0).to_radians(),
-                    range: light.range,
-                });
-            }
-        },
-    );
-    out
-}
-
 /// What shadow one light actually casts, in words, for the editor to
 /// show next to the single-light debug view (#743).
 ///

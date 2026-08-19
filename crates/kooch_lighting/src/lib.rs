@@ -39,9 +39,9 @@ pub use buffer::GpuLights;
 pub use cluster::{
     ClusterCamera, ClusterDraw, ClusterGrid, ClusterSettings, ClusterViewUniform, GpuClusters,
 };
+pub mod light_frame;
 pub use extract::{
-    ExtractedLights, PointShadowSource, SpotShadowSource, extract_lights, point_shadow_importance,
-    shadow_casting_points, shadow_casting_spots, shadow_casting_sun, shadow_note,
+    ExtractedLights, PointShadowSource, SpotShadowSource, point_shadow_importance, shadow_note,
 };
 pub use frame::{
     AmbientLight, DEFAULT_SUN_SOFTNESS, DebugLight, Exposure, FRAME_CASCADE_COUNT, FrameShadows,
@@ -52,6 +52,7 @@ pub use gpu_light::{
     GpuLight, LIGHT_KIND_DIRECTIONAL, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, NO_SHADOW_SLOT,
     spot_cone_mad,
 };
+pub use light_frame::LightFrame;
 
 /// The shading model, as a template. Use [`inti_pbr_shader`].
 const INTI_PBR_TEMPLATE: &str = include_str!("../shaders/inti_pbr.wgsl");

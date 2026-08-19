@@ -5,6 +5,7 @@ use kooch_ecs::entity::Entity;
 
 fn source(position: Vec3, direction: Vec3, outer_angle: f32) -> SpotShadowSource {
     SpotShadowSource {
+        buffer_slot: 0,
         entity: Entity::new(0, 0),
         position,
         direction,
@@ -125,10 +126,12 @@ fn the_record_carries_the_layer_it_was_given() {
 #[test]
 fn the_texel_size_does_not_depend_on_range() {
     let near = SpotShadowSource {
+        buffer_slot: 0,
         range: 10.0,
         ..source(Vec3::ZERO, Vec3::NEG_Z, 0.5)
     };
     let far = SpotShadowSource {
+        buffer_slot: 0,
         range: 1000.0,
         ..near
     };
