@@ -141,7 +141,7 @@ The user picked the order, and it is A → B → C.
 | | | Why here |
 |---|---|---|
 | **A** | **#885 — a full audit of the tree** | It costs **zero handheld cycles**: no rebuild, no thermal settling, nothing the user has to wait through, so the audit runs while they work on something else. And the ~1400 lines of FSR 3.1 only just landed — auditing them now costs half what re-reading them cold in three weeks does. Scope: duplication, shaders, iteration techniques, entities/components/queries, Rust practice, leaks, GPU resource lifetime, DOD |
-| **B** | **#866 — one page pool for every shadow (VSM)** | What the **game** asks for: shadows that survive planetary scale. It is the largest of the three, and it gets built on the tree A leaves clean rather than on the one that just grew by an upscaler |
+| **B** | **Virtual shadow maps — which is #866 *then* #477** | ⚠️ Corrected: **VSM is #477**, and it sits on top of #866, the shared page pool, per Phase 2 / Phase 3 below. What the **game** asks for: shadows that survive planetary scale. It is the largest of the three, and it gets built on the tree A leaves clean rather than on the one that just grew by an upscaler |
 | **C** | **#886 — Arm ASR** | A third upscaler, proposed the week the second one landed as *desktop-only*. Arm's **+53 % fps / −20 % power are press material**, not a number this project took, and the source still sits in an unopened submodule. It moves the needle least: the frame budget already closes at 13.89 ms without it |
 
 **What #884 settled, and why C is last.** On the settled OneXFly (10 W, the
@@ -152,6 +152,52 @@ handheld default. ⚠️ The optimisation pass that took `fsr3` from 14.704 to 1
 is **contaminated and was reported as such**: untouched `shade: compute` fell 22 %
 in the same batch and the `fsr3`/`shade` ratio went 2.734 → 2.793 — no attributable
 gain. The comparison that decides is the cross-technique one, not the before/after.
+
+### 🔴 One budget was doing the work of two — #889, 2026-08-19
+
+A survey of fifty-three years of SIGGRAPH was run through a single filter:
+*does it fit in wgpu, and does it fit in 13.9 ms on a OneXFly?* Sixty-seven
+techniques judged, thirty-six discarded. The user's objection is the right
+one: **games built with this editor run on the handheld and on a high-end PC,
+AMD and Nvidia alike, and the editor itself runs on the desktop.** One budget
+cannot judge both.
+
+Sorting the discards by *reason* is what makes it actionable, and it recovers
+less than it sounds like:
+
+| Reason | What a second target changes |
+|---|---|
+| **The API — wgpu** | **Nothing.** No GPU gives wgpu hardware ray tracing or cooperative vectors. ReSTIR and its whole line, ORCA, variable-rate ray tracing, neural shading, PSSR and the Neural Light Grid stay out at every tier. This is most of the thirty-six |
+| **The budget** | **This is the real recovery.** Stochastic SSR, GTAO at full resolution, volumetric fog on a finer froxel grid, LTC with more lights, full-rate shading, a larger VSM page budget — those were never *wrong*, only wrong **at one tier** |
+| A decision already taken | Lumen, MegaLights, VoxelGI/SDFGI/DDGI, lightmaps, TAAU, XeSS — closed on their own merits, unchanged |
+
+**The engine had no way to express a tier**, which is why the survey had to pick
+a target and discard against it. **#889** is that gap: a technique declares its
+cost per tier, and a preset names the tier. Explicitly — **not** by detecting the
+adapter, which is the same mistake #536 was re-scoped to remove. FSR 3.1 is
+already a tier and is currently recorded as **a string in a dropdown**.
+
+**Two vendor questions, answered rather than assumed (verified 2026-08-19):**
+
+- 🟢 **DLSS is reachable, and it is #536.** `dlss_wgpu` 4.0.0 wraps it for wgpu on
+  **both Linux and Windows — through the Vulkan backend only**, so Nvidia would
+  mean pinning the backend on Windows, where wgpu picks D3D12. On Linux the app
+  ships `libnvidia-ngx-dlss.so` beside the binary. 🔴 **The NGX SDK cannot be
+  redistributed**, so DLSS can never be in a default build — whoever uses the
+  editor supplies it. It also emits Vulkan validation errors by an NVIDIA bug,
+  which our validation-clean CI would have to except.
+- 🔴 **vkd3d-proton does not deliver FSR 4, and it is not close.** FSR 4 is still
+  **DX12 only and cannot be integrated into a Vulkan application**; the brief
+  open-source release was **withdrawn** and FidelityFX SDK 2.0 ships it as signed
+  prebuilt DLLs with no source. The way it works on Linux today is
+  `PROTON_FSR4_UPGRADE=1` downloading **`amdxcffx64.dll` into a Wine prefix** and
+  injecting it into a D3D12 title. A native ELF binary has no prefix, no PE
+  loader and no `d3d12.dll` to intercept. Reaching it would mean a D3D12 render
+  path (wgpu only has one on Windows), vkd3d-proton's native build — which its
+  own documentation calls *"mostly relevant for development purposes"* — **and**
+  Wine on top for the signed DLL. That is shipping a Wine prefix inside the
+  engine. On RDNA 3.5 it would land on the glitchy FP16 path, to compete with
+  SGSR 2's 1.868 ms.
 
 ### 🎯 The order, decided 2026-08-17 — graphics first, and the game waits
 
