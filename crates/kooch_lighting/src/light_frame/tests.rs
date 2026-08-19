@@ -203,3 +203,58 @@ fn a_despawned_light_is_skipped() {
     assert_eq!(frame.point_shadows().len(), 1, "nor does it cast");
     assert!(!frame.lights().entities.contains(&doomed));
 }
+
+/// 🔴 The walk is shared by every view of a frame, and each view makes its
+/// own cube selection — so `assign_point_slots` runs more than once over
+/// the same lights. A lamp the previous view picked must not still be
+/// holding that view's slot, or it samples a cube drawn for somebody else.
+#[test]
+fn a_second_selection_replaces_the_first() {
+    use kooch_ecs::entity::Entity as E;
+
+    let mut r = world();
+    let a = light_at(&mut r, Vec3::X, lamp(true));
+    let b = light_at(&mut r, Vec3::Y, lamp(true));
+    let c = light_at(&mut r, Vec3::Z, lamp(true));
+
+    let mut frame = LightFrame::extract(&r);
+    let slot_of = |frame: &LightFrame, entity: E| {
+        let index = frame.lights().slot_of(entity).unwrap() as usize;
+        frame.lights().lights[index].shadow_slot
+    };
+
+    crate::extract::assign_point_slots(frame.lights_mut(), &[a, b]);
+    assert_eq!(slot_of(&frame, a), 0);
+    assert_eq!(slot_of(&frame, b), 1);
+    assert_eq!(slot_of(&frame, c), crate::NO_SHADOW_SLOT);
+
+    // A second view picks a different lamp.
+    crate::extract::assign_point_slots(frame.lights_mut(), &[c]);
+    assert_eq!(slot_of(&frame, c), 0);
+    assert_eq!(
+        slot_of(&frame, a),
+        crate::NO_SHADOW_SLOT,
+        "the first view's pick let go of its slot"
+    );
+    assert_eq!(slot_of(&frame, b), crate::NO_SHADOW_SLOT);
+}
+
+/// And it must not touch the spots. Their slots are handed out during the
+/// walk and belong to nobody else.
+#[test]
+fn a_selection_leaves_the_spots_alone() {
+    let mut r = world();
+    let torch_entity = light_at(&mut r, Vec3::Y, torch(true));
+    let lamp_entity = light_at(&mut r, Vec3::X, lamp(true));
+
+    let mut frame = LightFrame::extract(&r);
+    let spot_slot = |frame: &LightFrame| {
+        let index = frame.lights().slot_of(torch_entity).unwrap() as usize;
+        frame.lights().lights[index].shadow_slot
+    };
+    assert_eq!(spot_slot(&frame), 0, "handed out during the walk");
+
+    crate::extract::assign_point_slots(frame.lights_mut(), &[lamp_entity]);
+
+    assert_eq!(spot_slot(&frame), 0, "still the spot's own slot");
+}

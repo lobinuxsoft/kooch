@@ -110,7 +110,7 @@ pub struct SpotShadowSource {
 ///
 /// 🔴 Separate from `extract_lights`, and it has to be. A spot's slot is
 /// handed out during the walk because `LightFrame` records the source in
-/// same walk order truncated — the two agree by construction. Point
+/// the same breath — the two agree by construction. Point
 /// lights are sorted by distance to the camera, so the walk order and
 /// the slot order are **different orders**, and assigning during the
 /// walk would light every lamp with another lamp's cube: geometry from
@@ -119,7 +119,22 @@ pub struct SpotShadowSource {
 ///
 /// So the ranked list is the single source of truth and this looks each
 /// entity back up in it, rather than the sort being repeated anywhere.
+///
+/// 🔴 **Idempotent, and it has to be.** The walk is shared by every view of
+/// a frame, and each view makes its own selection — so this runs more than
+/// once over the same lights. Writing only the chosen ones would leave a
+/// lamp the previous view picked still holding that view's slot, and it
+/// would then sample a cube drawn for somebody else. Every point light's
+/// slot is cleared first, so the answer depends on `casting` alone.
+///
+/// Only the point lights: a spot's slot is handed out during the walk and
+/// is not this function's to touch.
 pub fn assign_point_slots(lights: &mut ExtractedLights, casting: &[Entity]) {
+    for light in &mut lights.lights {
+        if light.kind == crate::gpu_light::LIGHT_KIND_POINT {
+            light.shadow_slot = crate::gpu_light::NO_SHADOW_SLOT;
+        }
+    }
     for (slot, entity) in casting.iter().enumerate() {
         if let Some(index) = lights.slot_of(*entity) {
             lights.lights[index as usize].shadow_slot = slot as u32;
