@@ -311,10 +311,23 @@ impl MeshletRenderStage {
         // value that outlives the frame can name a despawned entity, and
         // nothing here outlives the frame it describes.
         //
-        // ⚠️ Still once per VIEW. Lifting it to the frame is what
-        // `prepare_shadows` asks for when it explains why the point-light
-        // frustum cull had to be removed — see #891 and the comment there.
-        let mut lights = kooch_lighting::LightFrame::extract(resources);
+        // 🎯 Once per FRAME now, not per view. `Time::frame_count` is the
+        // stamp: the editor's two views and a split screen's N all render
+        // inside one count, so the second and later views reuse the walk
+        // rather than repeating it.
+        //
+        // Taken out and put back rather than borrowed, because everything
+        // between here and there wants `&mut self`.
+        //
+        // ⚠️ Without a `Time` — every headless test — it falls back to a
+        // walk per view, which is exactly what it did before.
+        let stamp = resources
+            .get::<kooch_core::time::Time>()
+            .map(|t| t.frame_count());
+        let mut lights = match self.light_frame.take() {
+            Some((taken, frame)) if stamp.is_some() && Some(taken) == stamp => frame,
+            _ => kooch_lighting::LightFrame::extract(resources),
+        };
 
         // The sun's cascades (#476). Ahead of the encoder because it can
         // allocate the atlas and grow four culls, and `None` when
@@ -363,6 +376,11 @@ impl MeshletRenderStage {
             shadows.as_ref().map(|s| s.frame),
             &mut lights,
         );
+        // Back on the stage for the rest of this frame's views. Dropped
+        // when there is no stamp, so it can never go stale.
+        if let Some(stamp) = stamp {
+            self.light_frame = Some((stamp, lights));
+        }
         // Worst-case meshlet stride covers every mesh; the pool path
         // bounds-checks per-instance against pool_mesh_descriptors.
         // (`max_meshlets_per_mesh` was bound from `gpu_pool` above so
