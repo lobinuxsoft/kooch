@@ -13,3 +13,6 @@ mod tests;
 
 pub use core::Query;
 pub use iter::QueryIter;
+
+#[cfg(test)]
+mod bench;
