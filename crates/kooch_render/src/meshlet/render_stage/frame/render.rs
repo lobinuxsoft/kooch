@@ -299,6 +299,23 @@ impl MeshletRenderStage {
         // verdict (#474).
         let required_group_capacity = self.pipeline.instance_group_capacity(&instances).max(1);
 
+        // 🎯 ONE walk of the light archetypes, for the whole view.
+        //
+        // The shadow stage and the light buffer both used to walk them —
+        // the same components read twice, and three times in the editor,
+        // which renders two views through one stage. They agreed only
+        // because nobody had added a condition to one of them, and
+        // nothing would have failed when they drifted.
+        //
+        // Built here and BORROWED by both. Not parked in `Resources`: a
+        // value that outlives the frame can name a despawned entity, and
+        // nothing here outlives the frame it describes.
+        //
+        // ⚠️ Still once per VIEW. Lifting it to the frame is what
+        // `prepare_shadows` asks for when it explains why the point-light
+        // frustum cull had to be removed — see #891 and the comment there.
+        let mut lights = kooch_lighting::LightFrame::extract(resources);
+
         // The sun's cascades (#476). Ahead of the encoder because it can
         // allocate the atlas and grow four culls, and `None` when
         // nothing casts.
@@ -309,6 +326,7 @@ impl MeshletRenderStage {
             aspect,
             required_capacity,
             required_group_capacity,
+            &lights,
         );
         // Inti's per-frame walk, and the froxel grid it builds from it
         // (#780). Ahead of the encoder for the same reason
@@ -343,6 +361,7 @@ impl MeshletRenderStage {
                 glam::Vec2::new(size.0 as f32, size.1 as f32),
             ),
             shadows.as_ref().map(|s| s.frame),
+            &mut lights,
         );
         // Worst-case meshlet stride covers every mesh; the pool path
         // bounds-checks per-instance against pool_mesh_descriptors.
