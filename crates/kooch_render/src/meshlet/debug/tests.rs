@@ -225,6 +225,7 @@ fn the_fsr_views_leave_the_upscaler_running() {
         MeshletDebugMode::Fsr3Upsample,
         MeshletDebugMode::Fsr3History,
         MeshletDebugMode::Fsr3Locks,
+        MeshletDebugMode::Fsr3Weights,
     ] {
         assert!(
             !mode.replaces_shading(),
@@ -265,7 +266,7 @@ fn the_fsr_stages_are_one_to_six() {
         .map(|m| m.fsr3_stage())
         .filter(|s| *s != 0)
         .collect();
-    assert_eq!(stages, [1, 2, 3, 4, 5, 6]);
+    assert_eq!(stages, [1, 2, 3, 4, 5, 6, 7]);
 }
 
 /// Off is not a stage, and it is the value every other technique passes.
@@ -298,6 +299,7 @@ fn the_radiance_steps_keep_the_tonemap() {
         MeshletDebugMode::Fsr3Motion,
         MeshletDebugMode::Fsr3Masks,
         MeshletDebugMode::Fsr3Locks,
+        MeshletDebugMode::Fsr3Weights,
         MeshletDebugMode::Normals,
         MeshletDebugMode::TextureMipLevel,
     ] {

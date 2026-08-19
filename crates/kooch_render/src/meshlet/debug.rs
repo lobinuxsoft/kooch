@@ -242,6 +242,14 @@ pub enum MeshletDebugMode {
     /// total weight — the three terms that decide how hard the history
     /// is rectified against the neighbourhood.
     Fsr3Locks = 24,
+    /// Why a pixel is black: red the first-frame branch, green the RAW
+    /// Lanczos sum before the epsilon gate throws it away, blue the
+    /// history weight.
+    ///
+    /// 🎯 The step that separates the two ways the accumulation can
+    /// produce nothing — a kernel that summed to zero, and a history
+    /// that was never written — which every other step conflates.
+    Fsr3Weights = 25,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -312,6 +320,7 @@ impl MeshletDebugMode {
             Self::Fsr3Upsample,
             Self::Fsr3History,
             Self::Fsr3Locks,
+            Self::Fsr3Weights,
         ]
     }
 
@@ -413,6 +422,7 @@ impl MeshletDebugMode {
             Self::Fsr3Upsample => "FSR 3.1 — 4 upsample, no history",
             Self::Fsr3History => "FSR 3.1 — 5 reprojected history",
             Self::Fsr3Locks => "FSR 3.1 — 6 lock / instability / weight",
+            Self::Fsr3Weights => "FSR 3.1 — 7 why is it black",
         }
     }
 
@@ -430,6 +440,7 @@ impl MeshletDebugMode {
             Self::Fsr3Upsample => 4,
             Self::Fsr3History => 5,
             Self::Fsr3Locks => 6,
+            Self::Fsr3Weights => 7,
             _ => 0,
         }
     }

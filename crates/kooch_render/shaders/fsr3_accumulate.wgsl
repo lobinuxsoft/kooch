@@ -215,6 +215,10 @@ struct Data {
     history_weight: f32,
     lock: f32,
     lock_contribution: f32,
+    /// The Lanczos sum BEFORE the epsilon gate zeroes it, kept only so
+    /// the last debug step can tell "the kernel summed to nothing" apart
+    /// from "the gate threw it away".
+    raw_weight: f32,
 }
 
 fn load_prepared_colour(pos: vec2<i32>) -> vec3<f32> {
@@ -412,6 +416,7 @@ fn upsample(c: Common, d_in: Data) -> Data {
 
     d.box = box_finish(d.box);
 
+    d.raw_weight = d.upsampled_weight;
     d.upsampled_weight *= f32(d.upsampled_weight > FSR3_EPSILON);
     if (d.upsampled_weight > FSR3_EPSILON) {
         d.upsampled_colour = d.upsampled_colour / d.upsampled_weight;
@@ -499,6 +504,7 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
     d.upsampled_weight = 0.0;
     d.lock = 0.0;
     d.lock_contribution = 0.0;
+    d.raw_weight = 0.0;
 
     if (c.existing_sample && !c.new_sample) {
         d = reproject_history(c, d);
@@ -581,6 +587,14 @@ fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
                 c.luma_instability,
                 d.upsampled_weight / AVERAGE_LANCZOS_WEIGHT_PER_FRAME,
             );
+        }
+        // 7 — why is this pixel black. Red is the first-frame branch,
+        // green the RAW Lanczos sum before the epsilon gate, blue the
+        // history weight. A black frame with no green anywhere means the
+        // kernel summed to nothing and the accumulation kept a history
+        // that was never written.
+        case 7u: {
+            return vec3<f32>(f32(c.accumulation == 0.0), d.raw_weight, d.history_weight);
         }
         default: {
             return d.history_colour;
