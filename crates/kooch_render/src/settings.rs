@@ -343,9 +343,17 @@ fn default_anisotropy() -> u32 {
 /// A port that is wrong shows as a difference from a known-good image
 /// rather than as a vague softness.
 ///
-/// SGSR 2 is two passes and cheap; FSR 3.1 is six and is not. The
-/// choice between them is a measurement on the target device plus a
-/// look at the image, and neither number decides it alone.
+/// SGSR 2 is two passes and cheap; FSR 3.1 is six and is not, and that
+/// is now measured rather than expected. On the settled OneXFly at 10 W,
+/// through the Steam launch path: **SGSR 2 1.868 ms, FSR 3.1 11.682**,
+/// against a whole-frame budget of 13.9. The upscaler alone takes 84 %
+/// of it, and 81 % of the upscaler is its accumulation pass.
+///
+/// 🔴 So the label says "desktop", because a menu that offers a
+/// handheld user a technique which cannot fit in their frame is a trap
+/// dressed as a choice. It stays offered because on a part with headroom
+/// it is the better image — feature locking, reactivity, and a
+/// disocclusion test that is exact rather than approximate.
 const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "None — no history, no jitter",
@@ -360,7 +368,7 @@ const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
         value: 2,
     },
     kooch_ecs::reflect::FieldChoice {
-        label: "FSR 3.1 — AMD's, transliterated",
+        label: "FSR 3.1 — AMD's, transliterated (desktop: 6x SGSR 2)",
         value: 3,
     },
 ];

@@ -85,8 +85,15 @@ pub enum UpscaleTechnique {
     /// Resolves **and** upscales. Six dispatches against SGSR 2's two,
     /// and what they buy is feature locking, reactivity and an exact
     /// disocclusion test — the things that stop an upscaler reading as
-    /// soft. Judge the pair by eye AND by the profiler; neither number
-    /// decides this alone.
+    /// soft.
+    ///
+    /// 🔴 **Measured, and it does not fit a handheld.** 11.682 ms on the
+    /// settled OneXFly against a 13.9 ms whole-frame budget — 6.3x
+    /// SGSR 2's 1.868 on the same device, with FSR's own optimisations
+    /// applied (`FFX_HALF`, its two-target history split, and the
+    /// single-channel intermediates at four bytes instead of eight).
+    /// 81 % of it is the accumulation pass, and nothing left in FSR's
+    /// toolbox closes a factor of six.
     Fsr3,
 }
 
