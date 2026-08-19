@@ -4,5 +4,7 @@
 //! says *where the values are*, by row rather than by key.
 
 pub mod column;
+pub mod table;
 
 pub use column::Column;
+pub use table::{Table, TableRow};
