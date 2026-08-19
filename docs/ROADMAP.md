@@ -167,7 +167,7 @@ less than it sounds like:
 
 | Reason | What a second target changes |
 |---|---|
-| **The API — wgpu** | **Nothing.** No GPU gives wgpu hardware ray tracing or cooperative vectors. ReSTIR and its whole line, ORCA, variable-rate ray tracing, neural shading, PSSR and the Neural Light Grid stay out at every tier. This is most of the thirty-six |
+| **The API — wgpu** | Less than was claimed here at first, and the correction is below. **Cooperative vectors** genuinely do not exist in wgpu, so neural shading, PSSR and the Neural Light Grid stay out at every tier. **Ray tracing does exist** — see the next section |
 | **The budget** | **This is the real recovery.** Stochastic SSR, GTAO at full resolution, volumetric fog on a finer froxel grid, LTC with more lights, full-rate shading, a larger VSM page budget — those were never *wrong*, only wrong **at one tier** |
 | A decision already taken | Lumen, MegaLights, VoxelGI/SDFGI/DDGI, lightmaps, TAAU, XeSS — closed on their own merits, unchanged |
 
@@ -176,6 +176,33 @@ a target and discard against it. **#889** is that gap: a technique declares its
 cost per tier, and a preset names the tier. Explicitly — **not** by detecting the
 adapter, which is the same mistake #536 was re-scoped to remove. FSR 3.1 is
 already a tier and is currently recorded as **a string in a dropdown**.
+
+🔴 **Correction, same day: wgpu HAS ray tracing, and this document said it did not.**
+`Features::EXPERIMENTAL_RAY_QUERY` is in **wgpu 29 — the version this engine is
+already on** — and it carries acceleration structures (BLAS/TLAS) plus inline ray
+queries in WGSL behind `enable wgpu_ray_query`. It is how **Bevy Solari** is built.
+So "no GPU gives wgpu ray tracing" was wrong, and every verdict that leaned on it
+has to be re-derived from the reasons that actually hold:
+
+- 🧪 **Experimental, and the word is upstream's.** *"May have major bugs"*,
+  *"expected to be subject to breaking changes"*. Ray **pipelines** (raygen/hit
+  shaders) are still in development; only inline ray queries work.
+- 🔴 **The denoiser is the real wall, and it is vendor-shaped.** Solari is *"still
+  NVIDIA only in practice due to relying on DLSS-RR"*. FSR Ray Regeneration exists
+  and is **DX12-only, no Vulkan**. So on the 9070 XT the rays are reachable and the
+  thing that makes one sample per pixel look like an image is not.
+- 🔴 **And the cost is against the wrong budget.** Solari on an **RTX 3080** at
+  1600×900 upscaled: Bistro **14.06 ms**, PICA PICA 7.96, Dragons 8.58 — of which
+  the DLSS-RR denoiser alone is **~6.1 ms**. Bistro on a 3080 is *more than this
+  project's entire frame budget*, and the denoiser alone is 44 % of it.
+
+What that re-opens is **not** ReSTIR-class GI on a handheld. It is the family that
+needs few rays and little denoising, and it lands exactly where this board already
+had a hard problem: **shadows that survive planetary scale**. A ray query has no
+cascade to fit, no atlas to page and no four-cubes-for-a-hundred-lights problem —
+which is the whole reason #477 and #782 exist. The section *"Why VSM waits for ray
+tracing"* below was written before this was checked; it is now a live comparison
+rather than a wait.
 
 **Two vendor questions, answered rather than assumed (verified 2026-08-19):**
 
