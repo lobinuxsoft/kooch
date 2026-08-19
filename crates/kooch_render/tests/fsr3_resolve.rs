@@ -232,3 +232,57 @@ fn the_reprojection_tracks_the_camera() {
          sampled at the current frame's jitter instead of the previous one's.",
     );
 }
+
+/// Renders at `scale` percent of the window and returns the last frame.
+fn settle_at_scale(technique: UpscaleTechnique, scale: u32, frames: u32) -> Option<Vec<u8>> {
+    let mut r = rig(3, true)?;
+    assert!(r.stage.set_compute_shading(true) > 0);
+    r.stage.set_shading_rate(ShadingRate::Full);
+    assert!(r.stage.set_upscale(technique) > 0);
+    r.stage.set_render_scale(scale);
+    r.stage.resize(
+        &r.device,
+        (common::lit_scene::SIZE, common::lit_scene::SIZE),
+    );
+
+    let mut last = Vec::new();
+    for _ in 0..frames {
+        r.stage
+            .render_with_assets_primary(&r.device, &r.queue, &r.resources, &r.camera, 1.0);
+        last = common::read_rgba8(&r.device, &r.queue, r.stage.color_texture());
+    }
+    Some(last)
+}
+
+/// 🔴 The reproduction: at 50 % the frame comes back black with sparse
+/// bright speckles, and at 100 % it does not.
+#[test]
+fn it_survives_the_resolution_split() {
+    let _gpu = gpu_lock();
+    let Some(plain) = settle_at_scale(UpscaleTechnique::None, 100, 1) else {
+        eprintln!("no adapter with the 64-bit texture-atomic bundle; skipping");
+        return;
+    };
+    let Some(native) = settle_at_scale(UpscaleTechnique::Fsr3, 100, 12) else {
+        return;
+    };
+    let Some(half) = settle_at_scale(UpscaleTechnique::Fsr3, 50, 12) else {
+        return;
+    };
+    let Some(sgsr) = settle_at_scale(UpscaleTechnique::Sgsr2, 50, 12) else {
+        return;
+    };
+
+    let reference = mean_brightness(&plain);
+    eprintln!(
+        "brightness: unresolved {reference:.2} | fsr3@100 {:.2} | fsr3@50 {:.2} | sgsr2@50 {:.2}",
+        mean_brightness(&native),
+        mean_brightness(&half),
+        mean_brightness(&sgsr),
+    );
+    assert!(
+        (mean_brightness(&half) - reference).abs() < reference * 0.35,
+        "FSR 3.1 at 50 % settled at {:.2} where the unresolved frame is {reference:.2}",
+        mean_brightness(&half),
+    );
+}
