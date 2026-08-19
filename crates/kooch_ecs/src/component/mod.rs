@@ -13,12 +13,14 @@ pub mod names;
 #[cfg(feature = "dynamic")]
 pub mod plugin_bridge;
 pub mod registry;
+pub mod storage_id;
 pub(crate) mod traits;
 
 pub use cpu_storage::ComponentStorage;
 pub use dynamic_types::{DynamicField, DynamicType, DynamicTypeRegistry};
 pub use names::{ComponentId, ComponentNames};
 pub use registry::ComponentRegistry;
+pub use storage_id::StorageId;
 pub use traits::Component;
 
 use kooch_core::gpu::GpuContext;

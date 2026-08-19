@@ -184,3 +184,80 @@ fn an_unreflected_type_reports_no_defaults() {
             .is_none()
     );
 }
+
+// -- The dense handle (#891, stage 1) ---------------------------------------
+
+struct Health(u32);
+impl Component for Health {}
+
+/// Needs `Reflect` for the slot-reuse test; `Default` because the derive
+/// requires it.
+#[derive(Debug, Clone, Copy, Default, crate::Reflect)]
+struct Armour {
+    plates: u32,
+}
+impl Component for Armour {}
+
+/// Ids come out 0, 1, 2 — with no gaps, because a column will index a
+/// `Vec` with them and a gap there is a wasted allocation per type.
+#[test]
+fn ids_are_dense() {
+    let mut registry = ComponentRegistry::new();
+    let a = registry.register_cpu::<Position>();
+    let b = registry.register_cpu::<Name>();
+    let c = registry.register_cpu::<Health>();
+
+    assert_eq!([a.0, b.0, c.0], [0, 1, 2]);
+    assert_eq!(registry.registered_count(), 3);
+}
+
+/// Registering the same type twice hands back the same slot rather than
+/// minting a second one. A duplicate slot would mean two storages for one
+/// component, and whichever a query found first would win.
+#[test]
+fn registering_twice_is_idempotent() {
+    let mut registry = ComponentRegistry::new();
+    let first = registry.register_cpu::<Position>();
+    let again = registry.register_cpu::<Position>();
+
+    assert_eq!(first, again);
+    assert_eq!(registry.registered_count(), 1);
+}
+
+/// 🔴 The invariant the whole port rests on: an id, once handed out, never
+/// moves. A query resolves it once and then indexes forever — if a later
+/// registration could shift it, every cached id would silently address
+/// another component's storage.
+#[test]
+fn an_id_outlives_later_registrations() {
+    let mut registry = ComponentRegistry::new();
+    let position = registry.register_cpu::<Position>();
+    registry.register_cpu::<Name>();
+    registry.register_cpu::<Health>();
+
+    assert_eq!(
+        registry.storage_id(&TypeId::of::<Position>()),
+        Some(position)
+    );
+}
+
+/// Adding reflection to an already-registered component reuses its slot.
+#[test]
+fn reflection_reuses_the_slot() {
+    let mut registry = ComponentRegistry::new();
+    let id = registry.register_cpu::<Armour>();
+    registry.register_cpu_reflected::<Armour>();
+
+    assert_eq!(registry.registered_count(), 1);
+    assert_eq!(registry.storage_id(&TypeId::of::<Armour>()), Some(id));
+    assert!(registry.has_reflector(&TypeId::of::<Armour>()));
+}
+
+/// An unregistered type has no id, rather than a defaulted one.
+#[test]
+fn an_unknown_type_has_no_id() {
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu::<Position>();
+
+    assert_eq!(registry.storage_id(&TypeId::of::<Health>()), None);
+}

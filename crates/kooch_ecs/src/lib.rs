@@ -49,7 +49,9 @@ pub use allocator::EntityAllocator;
 pub use archetype::{Archetype, ArchetypeId};
 pub use archetype_registry::ArchetypeRegistry;
 pub use commands::Commands;
-pub use component::{Component, ComponentId, ComponentNames, ComponentRegistry, ComponentStorage};
+pub use component::{
+    Component, ComponentId, ComponentNames, ComponentRegistry, ComponentStorage, StorageId,
+};
 pub use directional_light::DirectionalLight;
 pub use entity::Entity;
 pub use ephemeral::EphemeralComponents;
