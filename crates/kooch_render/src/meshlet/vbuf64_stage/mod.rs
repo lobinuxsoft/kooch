@@ -81,10 +81,20 @@ pub(super) struct ScreenUbo {
     /// Pixels per shaded sample, per axis (#825). Only the compute path
     /// reads it; the fragment paths write 1 and the field is inert.
     pub shading_rate: u32,
+    /// What the uv derivatives are multiplied by before the mip is
+    /// chosen — `exp2(mip_bias)`, and 1.0 for no bias (#881).
+    ///
+    /// A factor rather than the bias itself because that is what the
+    /// shader needs: `lod = log2(footprint)`, so scaling the footprint
+    /// by `exp2(b)` adds `b` to the level, and no `log2` runs per pixel.
+    ///
+    /// Was `_pad0`: same offset, same size, so the 32-byte block every
+    /// shader mirrors is unchanged.
+    pub mip_bias_scale: f32,
     /// To 32 bytes. The uniform is bound with a dynamic offset, and a
     /// size that is a multiple of 16 is the shape every backend agrees
     /// on without argument.
-    pub _pad: [u32; 3],
+    pub _pad: [u32; 2],
 }
 
 /// End-to-end atomic R64 visibility-buffer pipeline (clear + raster +
@@ -277,6 +287,38 @@ impl Vbuf64Stage {
         if !on {
             self.shading_rate = ShadingRate::Full;
         }
+    }
+
+    /// What the uv derivatives are multiplied by before a mip is chosen
+    /// — `exp2(mip_bias)` (#881).
+    ///
+    /// FSR 2 and 3 both document `mipBias = log2(render / display) -
+    /// 1.0`, and the two halves have different reasons. The `log2` term
+    /// compensates the resolution: a frame rendered at half width
+    /// samples every texture for half the pixels, so the detail a
+    /// reconstructing upscaler exists to recover was never rasterised.
+    /// The extra `-1` is there because the **jitter** resolves sub-pixel
+    /// detail: with a history to accumulate into, a level sharper than
+    /// one frame could hold on its own comes out correct.
+    ///
+    /// 🔴 Which is why the whole thing is gated on there being a
+    /// temporal technique. Applied with no history, the `-1` is aliasing
+    /// on purpose — a sharper mip with nothing to resolve it, shimmering
+    /// on every surface. Same gate the render scale carries, for a
+    /// related reason.
+    ///
+    /// Returned as the factor rather than the bias because that is what
+    /// the shader needs: `lod = log2(footprint)`, so multiplying the
+    /// footprint by `exp2(b)` adds `b` to the level. And
+    /// `exp2(log2(r/d) - 1)` is `(r / d) * 0.5` — no `log2` per pixel,
+    /// one multiply beside the one `uv_scale` already does.
+    fn mip_bias_scale(&self) -> f32 {
+        if !self.technique.is_temporal() {
+            return 1.0;
+        }
+        let render = self.size.0.max(1) as f32;
+        let output = self.output_size.0.max(1) as f32;
+        (render / output) * 0.5
     }
 
     /// Whether this view shades in compute.
@@ -610,6 +652,7 @@ impl Vbuf64Stage {
                     contact,
                     self.size,
                     self.shading_rate,
+                    self.mip_bias_scale(),
                     debug_mode,
                 );
             } else if self.size != self.output_size {

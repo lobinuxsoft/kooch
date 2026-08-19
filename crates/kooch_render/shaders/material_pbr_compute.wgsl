@@ -374,8 +374,14 @@ fn cs_shade_tile(
         // sharp. The result is the aliasing the mip chain exists to
         // remove, on exactly the surfaces that asked for tiling.
         let uv = surf.uv * mat.uv_scale_offset.xy + mat.uv_scale_offset.zw;
-        let ddx_uv = surf.ddx_uv * mat.uv_scale_offset.xy;
-        let ddy_uv = surf.ddy_uv * mat.uv_scale_offset.xy;
+        // 🔴 The mip bias rides on the SAME multiply (#881). A bias is
+        // `lod += b`, and `lod` is `log2(footprint)`, so scaling the
+        // footprint by `exp2(b)` is the bias exactly — no `log2` per
+        // pixel and no sampler feature, which wgpu does not expose
+        // anyway.
+        let derivative_scale = mat.uv_scale_offset.xy * screen.mip_bias_scale;
+        let ddx_uv = surf.ddx_uv * derivative_scale;
+        let ddy_uv = surf.ddy_uv * derivative_scale;
         let albedo = textureSampleGrad(
             albedo_tex, material_sampler, uv, ddx_uv, ddy_uv);
         let base = albedo.rgb * mat.base_color.rgb;

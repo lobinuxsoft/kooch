@@ -28,7 +28,9 @@ struct ScreenUniforms {
     // 2 shades one pixel of each 2x2 quad and an upsample pass fills the
     // rest. The fragment path only ever sees 1.
     shading_rate: u32,
-    _pad0: u32,
+    // `exp2(mip_bias)` — what the uv derivatives are scaled by before
+    // the mip is chosen (#881). 1.0 means no bias. See `ScreenUbo`.
+    mip_bias_scale: f32,
     _pad1: u32,
     _pad2: u32,
 }

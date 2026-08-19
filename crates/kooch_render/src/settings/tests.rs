@@ -187,3 +187,41 @@ fn the_scale_is_offered_only_where_it_acts() {
         );
     }
 }
+
+/// The anisotropy in the asset reaches the settings the renderer reads.
+///
+/// ⚠️ Its own test because the GPU one cannot cover it: that rig
+/// registers its material by hand, so the texture sync — which is what
+/// carries this number from `ShadingSettings` to the sampler — has no
+/// snapshots to run on. Two claims, two tests: this one is "the file is
+/// read", the GPU one is "the sampler does something".
+#[test]
+fn the_anisotropy_travels_from_the_asset() {
+    let ron = r#"(compute_shading: true, anisotropy: 8)"#;
+    let path = std::path::Path::new("look.rendersettings");
+    let mut ctx = LoadContext::new(path);
+    let parsed = RenderSettingsLoader.load(ron.as_bytes(), &mut ctx).unwrap();
+    assert_eq!(parsed.anisotropy, 8);
+    assert_eq!(parsed.shading().anisotropy, 8);
+}
+
+/// 🔴 And a number hardware does not implement is clamped, not passed on.
+///
+/// `anisotropy_clamp` is a `u16` the sampler validates: zero is not a
+/// legal value and wgpu rejects the descriptor outright, which would
+/// take down every material in the project over one hand-edited line.
+#[test]
+fn an_impossible_anisotropy_is_clamped() {
+    for (written, expected) in [(0u32, 1u16), (3, 3), (64, 16), (100_000, 16)] {
+        let ron = format!("(anisotropy: {written})");
+        let path = std::path::Path::new("look.rendersettings");
+        let mut ctx = LoadContext::new(path);
+        let parsed = RenderSettingsLoader.load(ron.as_bytes(), &mut ctx).unwrap();
+        assert_eq!(
+            parsed.shading().anisotropy,
+            expected,
+            "anisotropy {written} reached the sampler as {}",
+            parsed.shading().anisotropy,
+        );
+    }
+}

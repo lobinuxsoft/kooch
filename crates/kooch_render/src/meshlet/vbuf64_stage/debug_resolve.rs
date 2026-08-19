@@ -153,7 +153,9 @@ impl DebugResolve {
                 material_id: 0,
                 debug_mode,
                 shading_rate: 1,
-                _pad: [0; 3],
+                // No bias: this pass does not sample material textures.
+                mip_bias_scale: 1.0,
+                _pad: [0; 2],
             }),
         );
 

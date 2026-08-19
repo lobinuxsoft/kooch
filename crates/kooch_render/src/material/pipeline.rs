@@ -121,6 +121,16 @@ impl MaterialPipeline {
         self.registry.len() as u32
     }
 
+    /// Sets how many samples the material sampler takes along the long
+    /// axis of a footprint, and reports whether it changed.
+    ///
+    /// Also applied from `sync_textures` on the project's setting; this
+    /// is the direct route for a test or a tool, which has the number
+    /// but not a populated `Assets<Material>` to drive a sync with.
+    pub fn set_anisotropy(&mut self, device: &wgpu::Device, samples: u16) -> bool {
+        self.texture_pool.set_anisotropy(device, samples)
+    }
+
     /// Uploads a texture straight into the pool under `guid`.
     ///
     /// For tests and tools that have the pixels rather than a file on
@@ -351,6 +361,20 @@ impl MaterialPipeline {
         snapshots: &[(Guid, Material)],
         resources: &mut Resources,
     ) {
+        // The sampler follows the project's setting. Here rather than in
+        // the render, which only has `&Resources` — and cheap: it
+        // rebuilds one sampler when the number changes and returns
+        // immediately when it has not.
+        if let Some(shading) = resources.get::<crate::quality::ShadingSettings>().copied()
+            && self.texture_pool.set_anisotropy(device, shading.anisotropy)
+        {
+            tracing::info!(
+                target: "kooch_render::material",
+                samples = shading.anisotropy,
+                "material sampler anisotropy changed",
+            );
+        }
+
         // A re-import is a texture the pool must forget before it can
         // ask whether it has it. Drained rather than read, so one edit
         // costs one re-upload.
