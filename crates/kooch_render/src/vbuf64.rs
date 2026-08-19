@@ -117,22 +117,16 @@ impl Vbuf64Support {
     }
 }
 
-/// Feature bundle required for the atomic R64 visibility buffer. Mirrors
-/// [`kooch_core::gpu::vbuf64_features`]; duplicated here to avoid a hard
-/// dependency from `kooch_render` on `kooch_core::gpu` for this single helper.
+/// Feature bundle required for the atomic R64 visibility buffer.
 ///
-/// `TEXTURE_ATOMIC` is the gate on `StorageTextureAccess::Atomic` in
-/// wgpu 29 (the validation error message historically said
-/// `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`, which is misleading —
-/// the real check is `TEXTURE_ATOMIC`). `TEXTURE_INT64_ATOMIC` adds the
-/// R64 format on top. `SHADER_INT64` enables `u64` in the shader.
-/// `SHADER_INT64_ATOMIC_MIN_MAX` enables `textureAtomicMax(u64)`.
-
+/// 🔴 It used to be spelled out again here, with a comment saying the
+/// duplication avoided "a hard dependency from `kooch_render` on
+/// `kooch_core::gpu`". That dependency has existed for a long time —
+/// this crate uses `GpuScopes` from the same module — so the copy was
+/// buying nothing and costing the usual: seven places to edit, and no
+/// compiler to notice when one is missed.
 fn required_features() -> Features {
-    Features::TEXTURE_ATOMIC
-        | Features::TEXTURE_INT64_ATOMIC
-        | Features::SHADER_INT64
-        | Features::SHADER_INT64_ATOMIC_MIN_MAX
+    kooch_core::gpu::vbuf64_features()
 }
 
 #[cfg(test)]

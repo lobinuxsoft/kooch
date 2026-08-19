@@ -6,9 +6,13 @@ fn from_supported_round_trips() {
     assert!(!Vbuf64Support::from_supported(false).is_supported());
 }
 
+/// 🔴 And that it IS the shared one: a local copy that happened to hold
+/// the same four flags would pass every assertion below while drifting
+/// the moment either list gains a fifth.
 #[test]
 fn required_bundle_is_four_flags() {
     let bundle = required_features();
+    assert_eq!(bundle, kooch_core::gpu::vbuf64_features());
     assert!(bundle.contains(Features::TEXTURE_ATOMIC));
     assert!(bundle.contains(Features::TEXTURE_INT64_ATOMIC));
     assert!(bundle.contains(Features::SHADER_INT64));
@@ -70,5 +74,56 @@ fn default_max_triangles_fits_tri_id_slot() {
     assert!(
         DEFAULT_MAX_TRIANGLES as u32 <= TRI_ID_MASK + 1,
         "DEFAULT_MAX_TRIANGLES ({DEFAULT_MAX_TRIANGLES}) overflows {TRI_ID_BITS}-bit tri_id slot"
+    );
+}
+
+/// 🔴 The bundle is spelled out in exactly ONE place, and this walks the
+/// crate to keep it that way.
+///
+/// It was in seven: the engine, this gate, and five test files that each
+/// wrote the four flags again. Adding `SHADER_F16` meant remembering all
+/// seven, and forgetting one does not fail to compile — the device
+/// request comes back short, the test skips with "no adapter", and the
+/// reader concludes the machine lacks the hardware rather than the list
+/// lacking a line. That cost real time on #481.
+///
+/// Two mentions are allowed and both are assertions ABOUT the shared
+/// list, not copies of it: the one above, and `kooch_core`'s own.
+#[test]
+fn the_feature_bundle_is_written_once() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut offenders = Vec::new();
+    let mut stack = vec![root.join("src"), root.join("tests")];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_some_and(|e| e == "rs")
+                && path.file_name().is_some_and(|n| n != "tests.rs")
+                && std::fs::read_to_string(&path)
+                    .is_ok_and(|s| s.contains("Features::TEXTURE_INT64_ATOMIC"))
+            {
+                offenders.push(
+                    path.strip_prefix(root)
+                        .unwrap_or(&path)
+                        .display()
+                        .to_string(),
+                );
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "the atomic bundle is spelled out again in {offenders:?}. \
+         Call `kooch_core::gpu::vbuf64_features()` or \
+         `all_required_features()` instead — a second copy is a second \
+         place to remember, and nothing here fails to compile when it is \
+         the one that gets forgotten.",
     );
 }

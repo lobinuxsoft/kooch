@@ -94,18 +94,7 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// cleanly. Its own device rather than the shared one: the features
 /// differ, and a test that needs them must not be handed one without.
 pub fn try_acquire_device_r64() -> Option<(wgpu::Device, wgpu::Queue)> {
-    // 🔴 A fourth copy of the engine's feature list, and the reason it
-    // is spelled out again is that the rig asks the adapter directly.
-    // `SHADER_F16` and `FLOAT32_FILTERABLE` are here because the shaders
-    // under test use them, not because the vbuf64 path needs them —
-    // leaving either out makes every GPU test skip with "no adapter",
-    // which reads as missing hardware rather than a stale list.
-    let required = wgpu::Features::TEXTURE_ATOMIC
-        | wgpu::Features::TEXTURE_INT64_ATOMIC
-        | wgpu::Features::SHADER_INT64
-        | wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX
-        | wgpu::Features::SHADER_F16
-        | wgpu::Features::FLOAT32_FILTERABLE;
+    let required = kooch_core::gpu::all_required_features();
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,

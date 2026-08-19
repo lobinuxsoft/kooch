@@ -10,7 +10,7 @@ use wgpu::Adapter;
 ///   wgpu refuses storage access on `R16Float`. RDNA 2/4 (Steam Deck,
 ///   RX 9070 XT) supports it natively over Vulkan; DX12 / Metal also
 ///   expose it on contemporary hardware.
-pub(super) fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
+pub fn engine_features() -> wgpu::Features {
     // FLOAT32_FILTERABLE is required by PR-4 of epic #370: the GDF
     // cascade-0 storage texture is `R32Float` (no native R16Float
     // STORAGE_BINDING in wgpu 29 / WebGPU core), and the production
@@ -29,9 +29,28 @@ pub(super) fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
     // STRIX1 (the OneXFly's 890M) and on gfx1201, and on anything that
     // also carries the 64-bit texture atomics the meshlet path already
     // demands, which are far rarer.
-    let required = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+    wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
         | wgpu::Features::FLOAT32_FILTERABLE
-        | wgpu::Features::SHADER_F16;
+        | wgpu::Features::SHADER_F16
+}
+
+/// Everything a device must expose for the whole engine to run: the
+/// hard-required set plus the meshlet path's atomic bundle.
+///
+/// 🔴 **The one list.** This existed in seven places — the engine, the
+/// vbuf64 gate, and five test files that each spelled it out again —
+/// and adding `SHADER_F16` meant remembering all seven. Forgetting one
+/// does not fail to compile: it makes the device request come back
+/// short, the test skip with "no adapter", and the reader conclude the
+/// machine lacks the hardware rather than the list lacks a line.
+pub fn all_required_features() -> wgpu::Features {
+    engine_features() | vbuf64_features()
+}
+
+/// Asserts the adapter carries [`engine_features`], with a message that
+/// names why each one is there.
+pub(super) fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
+    let required = engine_features();
     let missing = required - adapter.features();
     assert!(
         missing.is_empty(),
