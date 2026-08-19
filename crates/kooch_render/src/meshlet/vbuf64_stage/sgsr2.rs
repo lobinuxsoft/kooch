@@ -140,6 +140,14 @@ pub(super) struct UpscaleInputs<'a> {
     pub exposure: f32,
     /// `tan(fov_vertical / 2) * aspect`; see [`fov_k`].
     pub fov_k: f32,
+    /// The near plane. Under this engine's infinite reversed-Z
+    /// projection it is the WHOLE depth transform — `view_z = near / d`
+    /// — which is what FSR 3.1 needs to express its thresholds in
+    /// metres. SGSR 2 does not read it.
+    pub near: f32,
+    /// How many sub-pixel offsets the jitter sequence cycles through.
+    /// FSR decays a feature lock over exactly one pass of it.
+    pub jitter_phases: f32,
 }
 
 pub(super) struct Sgsr2 {

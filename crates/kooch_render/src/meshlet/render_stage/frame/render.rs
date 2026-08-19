@@ -186,7 +186,7 @@ impl MeshletRenderStage {
                 // that ignores it costs nothing, and one that needs it
                 // and does not get it fails as a wrong edge mask rather
                 // than as an error.
-                stage.set_camera_lens(camera.fov_y_rad, aspect);
+                stage.set_camera_lens(camera.fov_y_rad, aspect, camera.near);
                 stage.next_jitter(unjittered_view_proj)
             }
             // The legacy R32 path has neither motion vectors nor a
