@@ -110,6 +110,19 @@ impl Tables {
         table_id
     }
 
+    /// The table serving `components`, **without creating one**.
+    ///
+    /// The read side of [`Self::get_or_insert`]: a query walks archetypes
+    /// and must not mint a table as a side effect of looking. `None` means
+    /// nothing has been stored for that set yet, which during the
+    /// migration of #891 is the normal answer.
+    pub fn find(&self, components: &[StorageId]) -> Option<TableId> {
+        let mut key: Vec<StorageId> = components.to_vec();
+        key.sort_unstable();
+        key.dedup();
+        self.by_components.get(key.as_slice()).copied()
+    }
+
     /// The table `id` names.
     #[inline]
     pub fn get(&self, id: TableId) -> Option<&Table> {

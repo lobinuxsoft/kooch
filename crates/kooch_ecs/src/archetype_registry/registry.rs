@@ -177,6 +177,26 @@ impl ArchetypeRegistry {
         self.entity_rows.get(&entity).copied()
     }
 
+    /// The table serving `archetype`, **without creating one**.
+    ///
+    /// What a query uses: looking must not mint a table. `None` while
+    /// nothing has been stored for that archetype yet, which during the
+    /// migration of #891 is the normal answer for most of them.
+    pub fn table_for(
+        &self,
+        archetype: ArchetypeId,
+        components: &ComponentRegistry,
+    ) -> Option<TableId> {
+        let ids: Vec<_> = self
+            .archetypes
+            .get(&archetype)?
+            .components()
+            .iter()
+            .map(|type_id| components.storage_id(type_id))
+            .collect::<Option<_>>()?;
+        self.tables.find(&ids)
+    }
+
     /// Registers `entity` in `archetype` **and** claims it a row in that
     /// archetype's table.
     ///

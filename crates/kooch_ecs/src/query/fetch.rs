@@ -6,9 +6,18 @@
 
 use std::any::TypeId;
 
+use crate::component::StorageId;
 use crate::component::registry::ComponentRegistry;
 use crate::component::traits::AnyStorage;
 use crate::entity::Entity;
+use crate::storage::{Column, Table, TableRow};
+
+/// Where an entity's values live, when they live in a table.
+///
+/// `None` while the archetype's components are still in the per-type map
+/// — which, during the migration of #891, is most of them. Resolved once
+/// per archetype by the query rather than once per entity.
+pub type Row<'w> = Option<(&'w Table, TableRow)>;
 
 use super::access::AccessTracker;
 
@@ -76,7 +85,11 @@ pub trait WorldQuery {
     ///
     /// Caller must ensure the fetch was initialised and the entity has the
     /// required components (verified at the archetype level).
-    unsafe fn fetch<'w>(fetch: &Self::Fetch<'w>, entity: Entity) -> Option<Self::Item<'w>>;
+    unsafe fn fetch<'w>(
+        fetch: &Self::Fetch<'w>,
+        entity: Entity,
+        at: Row<'w>,
+    ) -> Option<Self::Item<'w>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +116,11 @@ impl WorldQuery for Entity {
 
     fn release_fetch(_tracker: &AccessTracker) {}
 
-    unsafe fn fetch<'w>(_fetch: &Self::Fetch<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+    unsafe fn fetch<'w>(
+        _fetch: &Self::Fetch<'w>,
+        entity: Entity,
+        _at: Row<'w>,
+    ) -> Option<Self::Item<'w>> {
         Some(entity)
     }
 }
@@ -115,6 +132,8 @@ impl WorldQuery for Entity {
 /// Fetch state for immutable component access.
 pub struct ReadFetch<'w, T: 'static> {
     storage: Option<&'w dyn AnyStorage>,
+    /// Which column holds `T`, once its values have moved to one (#891).
+    id: Option<StorageId>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -143,6 +162,7 @@ impl<T: Send + Sync + 'static> WorldQuery for &T {
         }
         ReadFetch {
             storage,
+            id: registry.storage_id(&TypeId::of::<T>()),
             _marker: std::marker::PhantomData,
         }
     }
@@ -153,7 +173,23 @@ impl<T: Send + Sync + 'static> WorldQuery for &T {
         tracker.release_read(TypeId::of::<T>());
     }
 
-    unsafe fn fetch<'w>(fetch: &Self::Fetch<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+    unsafe fn fetch<'w>(
+        fetch: &Self::Fetch<'w>,
+        entity: Entity,
+        at: Row<'w>,
+    ) -> Option<Self::Item<'w>> {
+        // The column first, for components whose values have moved there.
+        // 🔴 A value lives in exactly ONE place — moving it to a column
+        // takes it out of the map — so this is a lookup, not a preference:
+        // whichever holds it is where it is.
+        if let Some((table, row)) = at
+            && let Some(id) = fetch.id
+            && let Some(column) = table.column(id)
+        {
+            // SAFETY: the column was built for the component `id` names,
+            // which is `T`.
+            return unsafe { column.get::<T>(row.index()) };
+        }
         let storage = fetch.storage?;
         let ptr = storage.get_ptr(entity)?;
         // SAFETY: The storage was registered with TypeId::of::<T>(), so the
@@ -169,7 +205,14 @@ impl<T: Send + Sync + 'static> WorldQuery for &T {
 
 /// Fetch state for mutable component access.
 pub struct WriteFetch<'w, T: 'static> {
-    storage: Option<&'w mut dyn AnyStorage>,
+    /// 🔴 A raw pointer, not a `&'w mut`. `fetch` takes `&self`, so a
+    /// stored `&mut` would have to be reborrowed shared and cast back —
+    /// and Stacked Borrows forbids retagging a shared tag for writes. This
+    /// one carries the `UnsafeCell`'s provenance, which grants them.
+    storage: Option<*mut dyn AnyStorage>,
+    _lifetime: std::marker::PhantomData<&'w ()>,
+    /// Which column holds `T`, once its values have moved to one (#891).
+    id: Option<StorageId>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -192,12 +235,14 @@ impl<T: Send + Sync + 'static> WorldQuery for &mut T {
         registry: &'w ComponentRegistry,
         tracker: &'w AccessTracker,
     ) -> Self::Fetch<'w> {
-        let storage = unsafe { registry.storage_mut(&TypeId::of::<T>()) };
+        let storage = unsafe { registry.storage_ptr(&TypeId::of::<T>()) };
         if storage.is_some() {
             tracker.borrow_write(TypeId::of::<T>());
         }
         WriteFetch {
             storage,
+            _lifetime: std::marker::PhantomData,
+            id: registry.storage_id(&TypeId::of::<T>()),
             _marker: std::marker::PhantomData,
         }
     }
@@ -206,14 +251,39 @@ impl<T: Send + Sync + 'static> WorldQuery for &mut T {
         tracker.release_write(TypeId::of::<T>());
     }
 
-    unsafe fn fetch<'w>(fetch: &Self::Fetch<'w>, entity: Entity) -> Option<Self::Item<'w>> {
-        let storage = fetch.storage.as_ref()?;
-        // SAFETY: We need a mutable pointer but fetch holds &mut dyn AnyStorage.
-        // Each entity maps to a unique slot in the storage (different HashMap keys
-        // or different Vec indices), so references to different entities never alias.
-        // The borrow tracker ensures no other query accesses this storage.
-        let storage_ptr = *storage as *const dyn AnyStorage as *mut dyn AnyStorage;
-        let ptr = unsafe { (*storage_ptr).get_mut_ptr(entity)? };
+    unsafe fn fetch<'w>(
+        fetch: &Self::Fetch<'w>,
+        entity: Entity,
+        at: Row<'w>,
+    ) -> Option<Self::Item<'w>> {
+        // 🔴 The write path has to follow the read path exactly. If `&T`
+        // read a column and `&mut T` did not, an entity whose values had
+        // moved would simply stop appearing in mutable queries — present
+        // to one half of the engine and absent to the other.
+        if let Some((table, row)) = at
+            && let Some(id) = fetch.id
+            && let Some(column) = table.column(id)
+        {
+            // SAFETY: the column was built for `T`, and the borrow
+            // tracker guarantees this query holds the only access to this
+            // component this frame.
+            //
+            // 🔴 Through the column's OWN pointer, never by casting the
+            // shared borrow to `*mut` — Miri rejects that retag, and it is
+            // right to: the shared tag does not grant writes.
+            return unsafe { column.value_ptr::<T>(row.index()).map(|p| &mut *p) };
+        }
+        let storage = fetch.storage?;
+        // SAFETY: `storage` is the pointer the registry handed out, whose
+        // provenance comes from its `UnsafeCell` and grants writes. Each
+        // entity maps to a unique slot, so different entities never alias,
+        // and the borrow tracker guarantees no other query holds this
+        // component this frame.
+        //
+        // 🔴 It used to reach the same place by casting a shared reborrow
+        // of a `&mut` back to `*mut`. Miri rejected the retag — a shared
+        // tag does not grant writes — on a test that had been passing.
+        let ptr = unsafe { (*storage).get_mut_ptr(entity)? };
         Some(unsafe { &mut *(ptr as *mut T) })
     }
 }
@@ -258,9 +328,13 @@ impl<Q: WorldQuery> WorldQuery for Option<Q> {
         // know if init_fetch returned Some or None.
     }
 
-    unsafe fn fetch<'w>(fetch: &Self::Fetch<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+    unsafe fn fetch<'w>(
+        fetch: &Self::Fetch<'w>,
+        entity: Entity,
+        at: Row<'w>,
+    ) -> Option<Self::Item<'w>> {
         match fetch {
-            Some(inner) => Some(unsafe { Q::fetch(inner, entity) }),
+            Some(inner) => Some(unsafe { Q::fetch(inner, entity, at) }),
             None => Some(None),
         }
     }
@@ -304,10 +378,11 @@ macro_rules! impl_world_query_tuple {
             unsafe fn fetch<'w>(
                 fetch: &Self::Fetch<'w>,
                 entity: Entity,
+                at: Row<'w>,
             ) -> Option<Self::Item<'w>> {
                 let ($($name,)+) = fetch;
                 Some((
-                    $(unsafe { $name::fetch($name, entity)? },)+
+                    $(unsafe { $name::fetch($name, entity, at)? },)+
                 ))
             }
         }
