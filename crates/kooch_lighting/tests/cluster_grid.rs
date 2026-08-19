@@ -128,7 +128,8 @@ fn build_with(
     camera: ClusterCamera,
 ) -> (Vec<u32>, Vec<u32>) {
     let mut lights = GpuLights::new(device);
-    lights.update(device, queue, resources, camera, None);
+    let mut frame = kooch_lighting::LightFrame::extract(resources);
+    lights.update(device, queue, resources, camera, None, &mut frame);
 
     let mut encoder = device.create_command_encoder(&Default::default());
     lights.record_clusters(&mut encoder);

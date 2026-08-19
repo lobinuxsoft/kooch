@@ -48,6 +48,18 @@ pub struct MeshletRenderStage {
     /// because each view records *and submits* its own encoder; see
     /// [`kooch_lighting::GpuLights`] for the ordering argument.
     pub(super) lights: kooch_lighting::GpuLights,
+    /// The light walk of the current frame, and the frame it was taken in.
+    ///
+    /// 🎯 One walk per FRAME, shared by every view — the editor renders two
+    /// through this one stage, and a split screen renders one per player.
+    /// What it holds is view-independent by construction: which lights
+    /// exist, where they are, which cast. Everything that depends on where
+    /// anyone stands takes a camera and stays per view — the point ranking,
+    /// the cascade fit, the froxel grid.
+    ///
+    /// ⚠️ `None` when there is no `Time` to stamp against, which is every
+    /// headless test: the walk then happens per view exactly as it used to.
+    pub(super) light_frame: Option<(u64, kooch_lighting::LightFrame)>,
 
     /// The sun's shadow atlas and depth pipeline (#476).
     ///

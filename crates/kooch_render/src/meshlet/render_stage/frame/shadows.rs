@@ -34,19 +34,22 @@ impl MeshletRenderStage {
         aspect: f32,
         meshlet_capacity: u32,
         group_capacity: u32,
+        lights: &kooch_lighting::LightFrame,
     ) -> Option<PreparedShadows> {
         profiling::scope!("shadows: prepare");
         let settings = resources
             .get::<ShadowSettings>()
             .copied()
             .unwrap_or_default();
-        let sun = kooch_lighting::shadow_casting_sun(resources);
+        let sun = lights.sun();
         // Spot lights keep the array alive on their own (#777): a scene
         // lit by a torch and no sun still casts, and releasing the
         // texture because nothing directional casts would have made
         // that scene the one case where shadows silently do not exist.
-        let spots =
-            kooch_lighting::shadow_casting_spots(resources, kooch_lighting::MAX_SPOT_SHADOWS);
+        // Already capped at the budget during the walk, and numbered in
+        // the order the slots were handed out — there is no second place
+        // that decides which spots fit.
+        let spots = lights.spot_shadows().to_vec();
         // Point lights, likewise (#778) — ranked by what a cube would
         // show, because past the limit a light stops casting and which
         // one should not depend on spawn order.
@@ -67,8 +70,7 @@ impl MeshletRenderStage {
         // The optimisation is still worth having, but it has to be asked
         // of the frame — the union of every active view's frustum, or one
         // selection reused by all of them — not of whoever is rendering.
-        let ranked =
-            kooch_lighting::shadow_casting_points(resources, camera.position(), usize::MAX);
+        let ranked = lights.ranked_points(camera.position(), usize::MAX);
         let points = crate::shadow::select_point_casters(
             &ranked,
             settings.point_budget(),
