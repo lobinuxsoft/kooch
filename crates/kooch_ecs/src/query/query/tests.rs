@@ -420,3 +420,102 @@ fn eight_mutable_components_fit_in_one_query() {
     let (first, last) = query.iter().next().unwrap();
     assert_eq!((first.0, last.0), (11, 18), "not every slot was written");
 }
+
+// -- Reading from a column (#891, stage 5d-a) -------------------------------
+
+mod columns {
+    use std::any::TypeId;
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    /// Puts `entity` in an archetype holding `Health`, with the value in
+    /// the **column and nowhere else**: the per-type map is cleared after
+    /// the row is filled.
+    ///
+    /// 🔴 That is what makes this test worth writing. If the value were in
+    /// both, a pass would prove nothing — the fallback would answer and
+    /// look identical. With the map empty, only the column can.
+    fn only_in_a_column(resources: &mut Resources, entity: Entity, value: u32) {
+        // Taken out and put back: `place` wants the component registry by
+        // shared reference and the archetype registry by exclusive one, and
+        // `Resources` cannot hand out both at once. The real insert path
+        // does not have this problem — it already receives the two as
+        // separate parameters.
+        let mut components = resources.remove::<ComponentRegistry>().unwrap();
+        components.register_cpu::<Health>();
+        let health = components.storage_id(&TypeId::of::<Health>()).unwrap();
+
+        let set: BTreeSet<TypeId> = [TypeId::of::<Health>()].into_iter().collect();
+        {
+            let archetypes = resources.get_mut::<ArchetypeRegistry>().unwrap();
+            let archetype = archetypes.get_or_create(set);
+            archetypes.place(entity, archetype, &components).unwrap();
+            let table = archetypes.table_of(archetype, &components).unwrap();
+            unsafe {
+                archetypes
+                    .tables_mut()
+                    .get_mut(table)
+                    .unwrap()
+                    .column_mut(health)
+                    .unwrap()
+                    .push(Health(value))
+            };
+        }
+
+        // The map holds nothing for this entity, so only the column can
+        // answer. That is the whole point of the fixture.
+        resources.insert(components);
+    }
+
+    #[test]
+    fn for_each_reads_the_column() {
+        let mut r = setup();
+        let entity = spawn_entity(&mut r, 1);
+        only_in_a_column(&mut r, entity, 77);
+
+        let mut seen = Vec::new();
+        Query::<&Health>::new(&r).for_each(|h| seen.push(h.0));
+
+        assert_eq!(seen, vec![77], "read from the column, not the map");
+    }
+
+    /// 🔴 The iterator and `for_each` must read the same place. One
+    /// following the column and the other not would make an entity visible
+    /// to half the engine and absent from the other half, silently.
+    #[test]
+    fn iter_reads_the_column_too() {
+        let mut r = setup();
+        let entity = spawn_entity(&mut r, 1);
+        only_in_a_column(&mut r, entity, 77);
+
+        let seen: Vec<u32> = Query::<&Health>::new(&r).iter().map(|h| h.0).collect();
+
+        assert_eq!(seen, vec![77]);
+    }
+
+    #[test]
+    fn a_mutable_query_reaches_the_column() {
+        let mut r = setup();
+        let entity = spawn_entity(&mut r, 1);
+        only_in_a_column(&mut r, entity, 77);
+
+        Query::<&mut Health>::new(&r).for_each(|h| h.0 += 1);
+        let seen: Vec<u32> = Query::<&Health>::new(&r).iter().map(|h| h.0).collect();
+
+        assert_eq!(seen, vec![78], "the write landed in the column");
+    }
+
+    /// The map is still the answer for everything that has not moved, which
+    /// during the migration is everything.
+    #[test]
+    fn the_map_still_answers_when_there_is_no_column() {
+        let mut r = setup();
+        let entity = spawn_entity(&mut r, 1);
+        add_cpu_component(&mut r, entity, Health(5));
+
+        let seen: Vec<u32> = Query::<&Health>::new(&r).iter().map(|h| h.0).collect();
+
+        assert_eq!(seen, vec![5]);
+    }
+}

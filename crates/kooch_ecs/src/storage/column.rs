@@ -147,6 +147,27 @@ impl Column {
         Some(unsafe { &mut *self.row_ptr(row).cast::<T>() })
     }
 
+    /// The value at `row` as a raw pointer, **without forming a reference
+    /// to the column**.
+    ///
+    /// 🔴 This exists because casting a `&Column` to `*mut Column` and
+    /// writing through it is undefined behaviour — Miri rejects the retag,
+    /// and it is right to. The pointer returned here derives its provenance
+    /// from the column's own allocation, not from the shared borrow, so
+    /// writing through it is sound.
+    ///
+    /// # Safety
+    ///
+    /// `T` must be the type this column was built for, and the caller must
+    /// guarantee no other reference to this row is live — the query's
+    /// borrow tracker is what does that upstream.
+    pub unsafe fn value_ptr<T>(&self, row: usize) -> Option<*mut T> {
+        if row >= self.len {
+            return None;
+        }
+        Some(self.row_ptr(row).cast::<T>())
+    }
+
     /// Drops the item at `row` and moves the last item into its place.
     ///
     /// 🔴 **The row that was last is now `row`.** Whoever tracks which

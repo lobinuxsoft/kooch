@@ -3,9 +3,11 @@ use std::marker::PhantomData;
 use kooch_core::resource::Resources;
 
 use crate::archetype::Archetype;
+use crate::archetype::ArchetypeId;
 use crate::archetype_registry::ArchetypeRegistry;
 use crate::component::ComponentRegistry;
 use crate::entity::Entity;
+use crate::storage::Table;
 
 use crate::query::access::AccessTracker;
 use crate::query::fetch::WorldQuery;
@@ -30,6 +32,12 @@ use super::iter::QueryIter;
 pub struct Query<'w, Q: WorldQuery, F: QueryFilter = ()> {
     fetch: Q::Fetch<'w>,
     matched_archetypes: Vec<&'w Archetype>,
+    /// The table serving each matched archetype, parallel to it.
+    ///
+    /// Resolved **once per archetype** here rather than once per entity in
+    /// the walk. `None` while that archetype's values still live in the
+    /// per-type map, which during the migration of #891 is most of them.
+    matched_tables: Vec<Option<&'w Table>>,
     archetypes: &'w ArchetypeRegistry,
     tracker: &'w AccessTracker,
     _released: bool,
@@ -78,6 +86,17 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
             })
             .collect();
 
+        // The table behind each of them, once and not per entity. `find`
+        // rather than `get_or_insert`: looking must not mint a table.
+        let matched_tables: Vec<Option<&Table>> = matched_archetypes
+            .iter()
+            .map(|arch| {
+                archetypes
+                    .table_for(arch.id(), registry)
+                    .and_then(|id| archetypes.tables().get(id))
+            })
+            .collect();
+
         // SAFETY: We've verified the component types exist and the access
         // tracker will panic on conflicting borrows.
         let fetch = unsafe { Q::init_fetch(registry, tracker) };
@@ -85,6 +104,7 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
         Self {
             fetch,
             matched_archetypes,
+            matched_tables,
             archetypes,
             tracker,
             _released: false,
@@ -97,6 +117,8 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
         QueryIter {
             fetch: &self.fetch,
             archetypes: &self.matched_archetypes,
+            tables: &self.matched_tables,
+            registry: self.archetypes,
             archetype_idx: 0,
             entity_idx: 0,
             _marker: PhantomData,
@@ -116,7 +138,7 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
         }
 
         // SAFETY: Borrows are tracked; the entity is validated per-storage.
-        unsafe { Q::fetch(&self.fetch, entity) }
+        unsafe { Q::fetch(&self.fetch, entity, self.row_at(arch_id, entity)) }
     }
 
     /// Returns `true` if the query matches no entities.
@@ -126,14 +148,37 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
 
     /// Applies a function to each matching entity's data.
     pub fn for_each(&self, mut func: impl FnMut(Q::Item<'w>)) {
-        for archetype in &self.matched_archetypes {
+        for (archetype, table) in self.matched_archetypes.iter().zip(&self.matched_tables) {
             for &entity in archetype.entities() {
+                let at = self.at(*table, entity);
                 // SAFETY: Archetype guarantees required components exist.
-                if let Some(item) = unsafe { Q::fetch(&self.fetch, entity) } {
+                if let Some(item) = unsafe { Q::fetch(&self.fetch, entity, at) } {
                     func(item);
                 }
             }
         }
+    }
+
+    /// Where `entity`'s values live in `table`, if they live in one.
+    ///
+    /// ⚠️ One map lookup per entity, and it is temporary: the archetype
+    /// will carry the row itself once the migration finishes, which is
+    /// what `ArchetypeEntity` is for in #891. Today it costs nothing
+    /// because `table` is `None` for every archetype.
+    #[inline]
+    fn at(&self, table: Option<&'w Table>, entity: Entity) -> crate::query::fetch::Row<'w> {
+        let table = table?;
+        Some((table, self.archetypes.row_of(entity)?))
+    }
+
+    #[inline]
+    fn row_at(&self, archetype: ArchetypeId, entity: Entity) -> crate::query::fetch::Row<'w> {
+        let table = self
+            .matched_archetypes
+            .iter()
+            .position(|a| a.id() == archetype)
+            .and_then(|i| self.matched_tables[i])?;
+        Some((table, self.archetypes.row_of(entity)?))
     }
 
     /// Same as [`Self::for_each`] but the closure also receives the
@@ -142,10 +187,11 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
     /// (e.g. an optional override component checked via
     /// [`Self::get`]).
     pub fn for_each_entity(&self, mut func: impl FnMut(Entity, Q::Item<'w>)) {
-        for archetype in &self.matched_archetypes {
+        for (archetype, table) in self.matched_archetypes.iter().zip(&self.matched_tables) {
             for &entity in archetype.entities() {
+                let at = self.at(*table, entity);
                 // SAFETY: Archetype guarantees required components exist.
-                if let Some(item) = unsafe { Q::fetch(&self.fetch, entity) } {
+                if let Some(item) = unsafe { Q::fetch(&self.fetch, entity, at) } {
                     func(entity, item);
                 }
             }
