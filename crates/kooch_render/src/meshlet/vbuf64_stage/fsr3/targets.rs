@@ -128,19 +128,22 @@ pub(super) struct Targets {
     /// Output resolution. Written by a render-resolution pass, so it
     /// has to be cleared rather than overwritten.
     pub(super) new_locks: Target,
-    /// Output resolution. The resolved image, and next frame's history.
+    /// Output resolution, PRIVATE. `rgb` is the accumulated colour and
+    /// `a` is the feature lock, which is FSR's own layout.
     ///
-    /// 🔴 Its alpha is COVERAGE, and that is not a free channel. FSR
-    /// carries the feature lock in the history's alpha because its
-    /// history is private; this one doubles as the image the blit
-    /// composites, where alpha 0 means "the stage did not draw here".
-    /// Writing the lock there made the whole frame transparent except
-    /// the thin features a lock lands on — which reads as a black screen
-    /// with the geometry's edges dotted in.
+    /// 🎯 Private is the point. Fusing this with the presented image
+    /// looked like a saving — one target instead of two at the most
+    /// expensive resolution — and cost far more than it saved. The
+    /// presented image's alpha is COVERAGE for the blit, so the lock
+    /// had to move to a texture of its own, and that doubled the
+    /// history read from 16 taps to 32: the accumulation is 81 % of the
+    /// technique and its history sampling is most of that.
+    ///
+    /// So FSR's split is restored. One extra write at output
+    /// resolution buys back sixteen reads per pixel.
     pub(super) history: Pair,
-    /// Output resolution. The feature lock, in the channel FSR would
-    /// have put in `history.a`.
-    pub(super) lock: Pair,
+    /// Output resolution. What the tonemap reads, alpha always 1.
+    pub(super) output: Target,
 }
 
 impl Targets {
@@ -178,7 +181,7 @@ impl Targets {
                 wgpu::TextureFormat::R32Float,
             ),
             history: Pair::new(device, "fsr3_history", output, HDR_COLOR_FORMAT),
-            lock: Pair::new(device, "fsr3_lock", output, wgpu::TextureFormat::R32Float),
+            output: Target::new(device, "fsr3_output", output, HDR_COLOR_FORMAT),
         }
     }
 }

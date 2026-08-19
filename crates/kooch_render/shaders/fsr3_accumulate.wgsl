@@ -54,16 +54,15 @@
 @group(0) @binding(4) var luma_instability: texture_2d<f32>;
 @group(0) @binding(5) var farthest_depth_mip1: texture_2d<f32>;
 @group(0) @binding(6) var history_prev: texture_2d<f32>;
-@group(0) @binding(10) var lock_prev: texture_2d<f32>;
-@group(0) @binding(11) var lock_next: texture_storage_2d<r32float, write>;
+/// What the tonemap reads. Separate from the history because this
+/// one's alpha is COVERAGE for the blit and the history's is the lock —
+/// see `targets.rs`.
+@group(0) @binding(10) var resolved: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(7) var linear_sampler: sampler;
 @group(0) @binding(8) var new_locks: texture_storage_2d<r32float, read_write>;
-/// The resolved image AND next frame's history.
-///
-/// 🔴 Its alpha is COVERAGE for the blit, not a spare channel: a pixel
-/// written with alpha 0 is composited as "the stage did not draw here".
-/// FSR keeps the feature lock in this alpha because its history is
-/// private; here the lock gets `lock_next` and this alpha is always 1.
+/// Next frame's history: `rgb` the accumulated colour, `a` the feature
+/// lock. Private, and never presented — which is what lets the lock
+/// ride along in the alpha for free, sixteen taps at a time.
 @group(0) @binding(9) var history_next: texture_storage_2d<rgba16float, write>;
 
 /// A lock below this contributes nothing; above `LOCK_MAX` it saturates.
@@ -124,13 +123,9 @@ fn sample_history(uv: vec2<f32>, size: vec2<f32>) -> vec4<f32> {
     for (var row = 0; row < 4; row++) {
         for (var col = 0; col < 4; col++) {
             let offset = vec2<i32>(col - 1, row - 1);
-            let at = clamp_load(base, offset, isize);
-            // The lock is filtered by the same kernel as the colour,
-            // which is what FSR gets for free by keeping it in alpha.
-            taps[row * 4 + col] = vec4<f32>(
-                textureLoad(history_prev, at, 0).rgb,
-                textureLoad(lock_prev, at, 0).x,
-            );
+            // One fetch, and the lock is filtered by the same kernel as
+            // the colour — which is the whole reason FSR keeps it here.
+            taps[row * 4 + col] = textureLoad(history_prev, clamp_load(base, offset, isize), 0);
         }
     }
 
@@ -548,9 +543,9 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
         out = debug_stage(c, d, reprojected);
     }
 
-    // Alpha 1: this pixel WAS drawn. See the binding's header.
-    textureStore(history_next, hr_pos, vec4<f32>(out, 1.0));
-    textureStore(lock_next, hr_pos, vec4<f32>(d.lock, 0.0, 0.0, 0.0));
+    textureStore(history_next, hr_pos, vec4<f32>(out, d.lock));
+    // Alpha 1: the blit composites on it, and this pixel WAS drawn.
+    textureStore(resolved, hr_pos, vec4<f32>(out, 1.0));
     textureStore(new_locks, hr_pos, vec4<f32>(0.0));
 }
 

@@ -354,12 +354,7 @@ impl Fsr3 {
                     wgpu::StorageTextureAccess::ReadWrite,
                 ),
                 write_hdr(9),
-                unfilterable(10),
-                storage(
-                    11,
-                    wgpu::TextureFormat::R32Float,
-                    wgpu::StorageTextureAccess::WriteOnly,
-                ),
+                write_hdr(10),
             ],
         );
 
@@ -469,8 +464,7 @@ impl Fsr3 {
     /// run this frame; before the first one it is the cleared half of
     /// the pair, which is black rather than undefined.
     pub(super) fn resolved_texture(&self) -> &wgpu::Texture {
-        let state = self.state.lock().expect("fsr3 history lock");
-        self.targets.history.texture(state.index)
+        &self.targets.output.texture
     }
 
     /// Marks the next frame as having no usable history — a camera cut,
@@ -752,11 +746,7 @@ impl Fsr3 {
                 },
                 wgpu::BindGroupEntry {
                     binding: 10,
-                    resource: texture(t.lock.view(previous)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: texture(t.lock.view(target)),
+                    resource: texture(&t.output.view),
                 },
             ],
         });
@@ -851,6 +841,6 @@ impl Fsr3 {
         state.prev_jitter = inputs.jitter;
         state.prev_exposure = exposure;
 
-        t.history.view(target)
+        &t.output.view
     }
 }
