@@ -242,13 +242,14 @@ pub enum MeshletDebugMode {
     /// total weight — the three terms that decide how hard the history
     /// is rectified against the neighbourhood.
     Fsr3Locks = 24,
-    /// Why a pixel is black: red the first-frame branch, green the RAW
-    /// Lanczos sum before the epsilon gate throws it away, blue the
-    /// history weight.
+    /// The two inputs to the upsample weight: red and green the offset
+    /// from this output pixel to the render grid, in render pixels, and
+    /// blue the kernel width (FSR's 1.99 ceiling reads as full).
     ///
-    /// 🎯 The step that separates the two ways the accumulation can
-    /// produce nothing — a kernel that summed to zero, and a history
-    /// that was never written — which every other step conflates.
+    /// 🎯 Measured after the sum itself came back zero everywhere with
+    /// both of these apparently in range. Either red or green above
+    /// 1.0 means no tap of the 3x3 can land in the kernel's positive
+    /// lobe, and the accumulation can never take a new sample.
     Fsr3Weights = 25,
 }
 
@@ -422,7 +423,7 @@ impl MeshletDebugMode {
             Self::Fsr3Upsample => "FSR 3.1 — 4 upsample, no history",
             Self::Fsr3History => "FSR 3.1 — 5 reprojected history",
             Self::Fsr3Locks => "FSR 3.1 — 6 lock / instability / weight",
-            Self::Fsr3Weights => "FSR 3.1 — 7 why is it black",
+            Self::Fsr3Weights => "FSR 3.1 — 7 kernel offset / width",
         }
     }
 

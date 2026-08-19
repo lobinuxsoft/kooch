@@ -219,6 +219,12 @@ struct Data {
     /// the last debug step can tell "the kernel summed to nothing" apart
     /// from "the gate threw it away".
     raw_weight: f32,
+    /// The two numbers that decide every tap's weight: where the render
+    /// grid sits relative to this output pixel, and how wide the kernel
+    /// is. Measured rather than reasoned about, because the sum came
+    /// back zero with both of them apparently in range.
+    base_offset: vec2<f32>,
+    kernel_bias: f32,
 }
 
 fn load_prepared_colour(pos: vec2<i32>) -> vec3<f32> {
@@ -382,6 +388,8 @@ fn upsample(c: Common, d_in: Data) -> Data {
         min(1.0 - c.shading_change, saturate(d.history_weight * 5.0)),
     );
     let kernel_bias = mix(kernel_min, kernel_max, kernel_weight);
+    d.base_offset = base_offset;
+    d.kernel_bias = kernel_bias;
 
     index = 0;
     for (var row = 0; row < 3; row++) {
@@ -505,6 +513,8 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
     d.lock = 0.0;
     d.lock_contribution = 0.0;
     d.raw_weight = 0.0;
+    d.base_offset = vec2<f32>(0.0);
+    d.kernel_bias = 0.0;
 
     if (c.existing_sample && !c.new_sample) {
         d = reproject_history(c, d);
@@ -594,7 +604,13 @@ fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
         // kernel summed to nothing and the accumulation kept a history
         // that was never written.
         case 7u: {
-            return vec3<f32>(f32(c.accumulation == 0.0), d.raw_weight, d.history_weight);
+            // 🔴 The two INPUTS to the weight, now that the output is
+            // known to be zero. Red and green are how far the render
+            // grid sits from this output pixel, in render pixels — both
+            // must stay under 1 or no tap of the 3x3 can land in the
+            // kernel's positive lobe. Blue is the kernel width, halved
+            // so that FSR's 1.99 ceiling reads as full.
+            return vec3<f32>(abs(d.base_offset), d.kernel_bias * 0.5);
         }
         default: {
             return d.history_colour;
