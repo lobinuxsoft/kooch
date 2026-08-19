@@ -26,11 +26,7 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     }))
     .ok()?;
 
-    let needed = wgpu::Features::TEXTURE_ATOMIC
-        | wgpu::Features::TEXTURE_INT64_ATOMIC
-        | wgpu::Features::SHADER_INT64
-        | wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX
-        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+    let needed = kooch_core::gpu::all_required_features();
     if !adapter.features().contains(needed) {
         return None;
     }

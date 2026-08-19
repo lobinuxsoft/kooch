@@ -79,14 +79,22 @@ pub enum UpscaleTechnique {
     /// render resolution; it antialiases and does not upscale.
     Taa,
     /// Snapdragon Game Super Resolution 2, transliterated (BSD-3).
-    /// Resolves **and** upscales.
-    ///
-    /// ⚠️ Not offered in the inspector yet — the upscale pass is not
-    /// built, so selecting it would be a menu entry that does nothing.
-    /// The variant exists because the seam is what makes the second
-    /// technique cheap, and building the seam with one implementation
-    /// behind it is the whole point of doing it now.
+    /// Resolves **and** upscales. Two passes, and the cheap one.
     Sgsr2,
+    /// AMD FidelityFX Super Resolution 3.1, transliterated (MIT).
+    /// Resolves **and** upscales. Six dispatches against SGSR 2's two,
+    /// and what they buy is feature locking, reactivity and an exact
+    /// disocclusion test — the things that stop an upscaler reading as
+    /// soft.
+    ///
+    /// 🔴 **Measured, and it does not fit a handheld.** 11.682 ms on the
+    /// settled OneXFly against a 13.9 ms whole-frame budget — 6.3x
+    /// SGSR 2's 1.868 on the same device, with FSR's own optimisations
+    /// applied (`FFX_HALF`, its two-target history split, and the
+    /// single-channel intermediates at four bytes instead of eight).
+    /// 81 % of it is the accumulation pass, and nothing left in FSR's
+    /// toolbox closes a factor of six.
+    Fsr3,
 }
 
 impl UpscaleTechnique {
@@ -104,7 +112,7 @@ impl UpscaleTechnique {
     /// presents. Distinct from [`Self::is_temporal`]: a resolve that
     /// only antialiases is temporal and not upscaling.
     pub fn upscales(self) -> bool {
-        matches!(self, Self::Sgsr2)
+        matches!(self, Self::Sgsr2 | Self::Fsr3)
     }
 
     /// The value as it is written in a `.rendersettings` file.
@@ -116,6 +124,7 @@ impl UpscaleTechnique {
         match value {
             1 => Self::Taa,
             2 => Self::Sgsr2,
+            3 => Self::Fsr3,
             _ => Self::None,
         }
     }

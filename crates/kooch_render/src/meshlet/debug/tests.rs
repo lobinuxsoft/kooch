@@ -206,3 +206,141 @@ fn the_scale_comes_from_the_uniform() {
         "the lights-per-pixel view should read its top of scale from the frame uniform",
     );
 }
+
+/// 🔴 The invariant this whole staircase rests on.
+///
+/// Every debug mode above the Inti floor replaces the shading, which is
+/// why nothing temporal runs under one — except these six, which exist
+/// precisely to inspect the temporal pass and are useless if it is
+/// skipped. A later tidy-up of `replaces_shading` back into a `>= 11`
+/// would turn the tool off exactly when it is reached for, and nothing
+/// would report it: the dropdown would still list them and the frame
+/// would still look plausible.
+#[test]
+fn the_fsr_views_leave_the_upscaler_running() {
+    for mode in [
+        MeshletDebugMode::Fsr3Input,
+        MeshletDebugMode::Fsr3Motion,
+        MeshletDebugMode::Fsr3Masks,
+        MeshletDebugMode::Fsr3Upsample,
+        MeshletDebugMode::Fsr3History,
+        MeshletDebugMode::Fsr3Locks,
+        MeshletDebugMode::Fsr3Weights,
+    ] {
+        assert!(
+            !mode.replaces_shading(),
+            "{mode:?} replaces the shading, so the upscaler it is meant to inspect never runs",
+        );
+        assert!(mode.as_u32() > MeshletDebugMode::Normals.as_u32());
+    }
+}
+
+/// And the converse, or the exemption above would be free to grow until
+/// a genuine Inti view stopped being one.
+#[test]
+fn every_inti_view_still_replaces_the_shading() {
+    for mode in [
+        MeshletDebugMode::Normals,
+        MeshletDebugMode::ShadowCascades,
+        MeshletDebugMode::ContactShadows,
+        MeshletDebugMode::SingleLight,
+        MeshletDebugMode::LightsPerPixel,
+        MeshletDebugMode::PointShadowFactor,
+        MeshletDebugMode::PointCubeFaces,
+        MeshletDebugMode::TextureMipLevel,
+    ] {
+        assert!(
+            mode.replaces_shading(),
+            "{mode:?} stopped replacing the shading"
+        );
+        assert_eq!(mode.fsr3_stage(), 0);
+    }
+}
+
+/// The stage numbers are what the shader switches on, so a duplicate or
+/// a gap silently shows the wrong intermediate.
+#[test]
+fn the_fsr_stages_are_one_to_six() {
+    let stages: Vec<u32> = MeshletDebugMode::all_implemented()
+        .iter()
+        .map(|m| m.fsr3_stage())
+        .filter(|s| *s != 0)
+        .collect();
+    assert_eq!(stages, [1, 2, 3, 4, 5, 6, 7]);
+}
+
+/// Off is not a stage, and it is the value every other technique passes.
+#[test]
+fn off_asks_for_no_stage() {
+    assert_eq!(MeshletDebugMode::Off.fsr3_stage(), 0);
+    assert!(!MeshletDebugMode::Off.replaces_shading());
+}
+
+/// 🔴 The three steps that show radiance must NOT bypass the tonemap.
+///
+/// Bypassing it was the first attempt, and it painted a perfectly good
+/// frame black: radiance without the filmic curve is nearly nothing in
+/// any dimly-lit scene, so the instrument reported a defect that was not
+/// there. The numeric steps are the opposite case and must bypass it, or
+/// a 0..1 ramp comes back crushed.
+#[test]
+fn the_radiance_steps_keep_the_tonemap() {
+    for mode in [
+        MeshletDebugMode::Fsr3Input,
+        MeshletDebugMode::Fsr3Upsample,
+        MeshletDebugMode::Fsr3History,
+    ] {
+        assert!(
+            !mode.is_display_referred(),
+            "{mode:?} shows radiance, so bypassing the tonemap reads as black",
+        );
+    }
+    for mode in [
+        MeshletDebugMode::Fsr3Motion,
+        MeshletDebugMode::Fsr3Masks,
+        MeshletDebugMode::Fsr3Locks,
+        MeshletDebugMode::Fsr3Weights,
+        MeshletDebugMode::Normals,
+        MeshletDebugMode::TextureMipLevel,
+    ] {
+        assert!(
+            mode.is_display_referred(),
+            "{mode:?} is a 0..1 legend, so the filmic curve would crush it",
+        );
+    }
+}
+
+/// Off is production shading and must keep the curve like any frame.
+#[test]
+fn off_is_not_display_referred() {
+    assert!(!MeshletDebugMode::Off.is_display_referred());
+}
+
+/// 🔴 Inti's dispatch is a RANGE, and it has to stay one.
+///
+/// It was an open-ended `mode >= INTI_DEBUG_FIRST`, and the fallthrough
+/// for a mode it does not implement is black. So every discriminant
+/// added above the range silently became "an Inti view Inti does not
+/// know", and its surface was painted black before the pass that was
+/// meant to answer for it ever ran — which is exactly what happened to
+/// FSR's six steps, and what the texture-mip view escapes only because
+/// the material shader tests for it first.
+///
+/// This asserts the shader's two bounds against the enum, the way
+/// `discriminants_match_the_shader` already does for the names.
+#[test]
+fn the_inti_range_stops_where_inti_stops() {
+    let shader = include_str!("../../../../kooch_lighting/shaders/inti_debug.wgsl");
+    assert!(
+        shader.contains("mode >= INTI_DEBUG_FIRST && mode <= INTI_DEBUG_LAST"),
+        "the Inti dispatch is open-ended again, so every mode above it renders black",
+    );
+    assert!(
+        shader.contains("const INTI_DEBUG_LAST: u32 = INTI_DEBUG_POINT_CUBE;"),
+        "the top of the range moved without this test being told",
+    );
+    // And the enum agrees about where that top is: everything above it
+    // is resolved somewhere other than Inti.
+    assert_eq!(MeshletDebugMode::PointCubeFaces.as_u32(), 17);
+    assert_eq!(MeshletDebugMode::TextureMipLevel.as_u32(), 18);
+}

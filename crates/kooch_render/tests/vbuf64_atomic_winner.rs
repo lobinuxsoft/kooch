@@ -67,10 +67,7 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     // additionally requires TEXTURE_INT64_ATOMIC; the int64 max/min
     // shader op needs SHADER_INT64_ATOMIC_MIN_MAX; the u64 type itself
     // needs SHADER_INT64.
-    let needed = wgpu::Features::TEXTURE_ATOMIC
-        | wgpu::Features::TEXTURE_INT64_ATOMIC
-        | wgpu::Features::SHADER_INT64
-        | wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX
+    let needed = kooch_core::gpu::vbuf64_features()
         | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
     if !adapter.features().contains(needed) {
         return None;

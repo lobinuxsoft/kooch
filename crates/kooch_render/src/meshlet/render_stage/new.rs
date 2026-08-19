@@ -378,11 +378,11 @@ impl MeshletRenderStage {
     }
 
     /// The lens both the cull and SGSR 2's edge mask are derived from.
-    pub fn set_camera_lens(&mut self, fov_y_rad: f32, aspect: f32) -> usize {
+    pub fn set_camera_lens(&mut self, fov_y_rad: f32, aspect: f32, near: f32) -> usize {
         let mut applied = 0;
         for (_, view) in self.views.iter_mut() {
             if let Some(stage) = view.vbuf64_stage.as_mut() {
-                stage.set_camera_lens(fov_y_rad, aspect);
+                stage.set_camera_lens(fov_y_rad, aspect, near);
                 applied += 1;
             }
         }

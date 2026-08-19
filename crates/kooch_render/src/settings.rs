@@ -337,12 +337,23 @@ fn default_anisotropy() -> u32 {
 
 /// The techniques the inspector offers.
 ///
-/// 🎯 SGSR 2 is here now that its two passes are built. At a ratio of
-/// 1:1 it resolves without upscaling, which is exactly the
-/// configuration the transliteration is judged in: run it against the
-/// engine's own resolve on the same frames and a port that is wrong
-/// shows as a difference from a known-good image, not as a vague
-/// softness. The resolution split is step 4 and is not built.
+/// 🎯 Both transliterations are judged the same way, and the menu is
+/// how: set the render scale to Native and either of them becomes a
+/// pure resolve, running against the engine's own on the same frames.
+/// A port that is wrong shows as a difference from a known-good image
+/// rather than as a vague softness.
+///
+/// SGSR 2 is two passes and cheap; FSR 3.1 is six and is not, and that
+/// is now measured rather than expected. On the settled OneXFly at 10 W,
+/// through the Steam launch path: **SGSR 2 1.868 ms, FSR 3.1 11.682**,
+/// against a whole-frame budget of 13.9. The upscaler alone takes 84 %
+/// of it, and 81 % of the upscaler is its accumulation pass.
+///
+/// 🔴 So the label says "desktop", because a menu that offers a
+/// handheld user a technique which cannot fit in their frame is a trap
+/// dressed as a choice. It stays offered because on a part with headroom
+/// it is the better image — feature locking, reactivity, and a
+/// disocclusion test that is exact rather than approximate.
 const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "None — no history, no jitter",
@@ -355,6 +366,10 @@ const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "SGSR 2 — Qualcomm's, transliterated",
         value: 2,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "FSR 3.1 — AMD's, transliterated (desktop: 6x SGSR 2)",
+        value: 3,
     },
 ];
 
@@ -377,8 +392,8 @@ fn default_upscale() -> u32 {
 /// reason the choices are: they live in user projects.
 static UPSCALES_WHEN: kooch_ecs::reflect::FieldCondition = kooch_ecs::reflect::FieldCondition {
     field: "upscale",
-    // Sgsr2.
-    values: &[2],
+    // Sgsr2, Fsr3.
+    values: &[2, 3],
 };
 
 /// AMD's preset ladder, by the name each ratio is known under, because

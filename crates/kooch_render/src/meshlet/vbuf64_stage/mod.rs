@@ -23,6 +23,7 @@ mod clear;
 mod compute_shade;
 mod debug_resolve;
 mod density_clear;
+mod fsr3;
 mod jitter;
 mod motion;
 mod raster;
@@ -135,6 +136,7 @@ pub struct Vbuf64Stage {
     /// switching technique must not be the frame that stalls, and the
     /// A/B between them in one session is how an upscaler is judged.
     sgsr2: sgsr2::Sgsr2,
+    fsr3: fsr3::Fsr3,
     /// Which one runs. See [`UpscaleTechnique`](crate::quality::UpscaleTechnique)
     /// for why this is an enum rather than a trait object.
     technique: crate::quality::UpscaleTechnique,
@@ -151,6 +153,8 @@ pub struct Vbuf64Stage {
     /// `tan(fov_vertical / 2) * aspect`, which SGSR 2's depth-clip
     /// threshold scales by. Set from the camera each frame.
     fov_k: f32,
+    /// The camera's near plane; see [`Self::set_camera_lens`].
+    near: f32,
     /// Which sub-pixel offset the next frame takes. Advances once per
     /// frame per view, which is why it lives here rather than beside the
     /// camera — two views of the same scene must not share a phase.
@@ -228,6 +232,7 @@ impl Vbuf64Stage {
             // that is not a default an engine should adopt on behalf of
             // a project that never mentioned it.
             sgsr2: sgsr2::Sgsr2::new(device, size, output_size),
+            fsr3: fsr3::Fsr3::new(device, size, output_size),
             technique: crate::quality::UpscaleTechnique::None,
             sharpen: sharpen::Sharpen::new(device, output_size),
             // Off until asked for, like the technique above it: this
@@ -238,6 +243,7 @@ impl Vbuf64Stage {
             // A 60-degree vertical lens at 16:9, replaced on the first
             // frame that has a camera.
             fov_k: (std::f32::consts::FRAC_PI_3 * 0.5).tan() * (16.0 / 9.0),
+            near: 0.1,
             jitter_index: 0,
             shading_rate,
             output_size,
@@ -270,6 +276,7 @@ impl Vbuf64Stage {
         self.motion.resize(device, size);
         self.taa.resize(device, size);
         self.sgsr2.resize(device, size, output_size);
+        self.fsr3.resize(device, size, output_size);
         self.sharpen.resize(device, output_size);
         self.size = size;
         self.output_size = output_size;
@@ -359,6 +366,7 @@ impl Vbuf64Stage {
     pub fn resolved_texture(&self) -> &wgpu::Texture {
         match self.technique {
             crate::quality::UpscaleTechnique::Sgsr2 => self.sgsr2.resolved_texture(),
+            crate::quality::UpscaleTechnique::Fsr3 => self.fsr3.resolved_texture(),
             _ => self.taa.resolved_texture(),
         }
     }
@@ -401,9 +409,15 @@ impl Vbuf64Stage {
         self.sharpening
     }
 
-    /// The lens, for the one technique whose thresholds depend on it.
-    pub fn set_camera_lens(&mut self, fov_y_rad: f32, aspect: f32) {
+    /// The lens, for the techniques whose thresholds depend on it.
+    ///
+    /// SGSR 2 wants the horizontal half-angle for its depth-separation
+    /// mask; FSR 3.1 wants the near plane, which under this engine's
+    /// infinite reversed-Z projection is the whole transform from
+    /// device depth to metres.
+    pub fn set_camera_lens(&mut self, fov_y_rad: f32, aspect: f32, near: f32) {
         self.fov_k = sgsr2::fov_k(fov_y_rad, aspect);
+        self.near = near.max(1.0e-4);
     }
 
     pub fn temporal_aa(&self) -> bool {
@@ -456,6 +470,34 @@ impl Vbuf64Stage {
     /// the matrix were already written against a ratio.
     fn jitter_phases(&self) -> u32 {
         jitter::phase_count(self.size.0, self.output_size.0)
+    }
+
+    /// Everything a temporal upscaler consumes, gathered in one place.
+    ///
+    /// 🎯 Built here rather than at each call site so the two
+    /// techniques cannot be handed different frames — an A/B that
+    /// differs in its inputs is not an A/B.
+    fn upscale_inputs<'a>(
+        &'a self,
+        depth: &'a wgpu::TextureView,
+        exposure: f32,
+        debug_stage: u32,
+        scopes: Option<&'a kooch_core::gpu::GpuScopes>,
+        parent: Option<&'a kooch_core::gpu::GpuQuery>,
+    ) -> sgsr2::UpscaleInputs<'a> {
+        sgsr2::UpscaleInputs {
+            color: self.tonemap.hdr_view(),
+            depth,
+            motion: self.motion.view(),
+            jitter: self.last_jitter,
+            exposure,
+            fov_k: self.fov_k,
+            near: self.near,
+            jitter_phases: self.jitter_phases() as f32,
+            debug_stage,
+            scopes,
+            parent,
+        }
     }
 
     pub fn shading_rate(&self) -> ShadingRate {
@@ -732,13 +774,14 @@ impl Vbuf64Stage {
                 // half-rate interpolation — is cheaper somewhere else in
                 // this frame, and the two numbers have to be subtractable.
                 let mut source = self.tonemap.hdr_view();
-                if self.technique.is_temporal() && !is_debug_view(debug_mode) {
+                if self.technique.is_temporal() && !replaces_shading(debug_mode) {
                     // 🔴 The scope carries the technique's name rather
                     // than a shared "temporal". A capture has to say
                     // WHICH one cost what, or the A/B that decides
                     // between them is two numbers under one label.
                     let label = match self.technique {
                         crate::quality::UpscaleTechnique::Sgsr2 => "sgsr2",
+                        crate::quality::UpscaleTechnique::Fsr3 => "fsr3",
                         _ => "taa",
                     };
                     let query = match (scopes, parent) {
@@ -754,14 +797,19 @@ impl Vbuf64Stage {
                             device,
                             queue,
                             encoder,
-                            sgsr2::UpscaleInputs {
-                                color: self.tonemap.hdr_view(),
-                                depth: depth_sample_view,
-                                motion: self.motion.view(),
-                                jitter: self.last_jitter,
+                            self.upscale_inputs(depth_sample_view, exposure, 0, None, None),
+                        ),
+                        crate::quality::UpscaleTechnique::Fsr3 => self.fsr3.draw(
+                            device,
+                            queue,
+                            encoder,
+                            self.upscale_inputs(
+                                depth_sample_view,
                                 exposure,
-                                fov_k: self.fov_k,
-                            },
+                                fsr3_debug_stage(debug_mode),
+                                scopes,
+                                query.as_ref(),
+                            ),
                         ),
                         _ => self.taa.draw(
                             device,
@@ -809,8 +857,10 @@ impl Vbuf64Stage {
                     // The Inti debug views hand back display-ready
                     // colour. Putting a false-colour legend through a
                     // filmic curve turns a readable ramp into a washed
-                    // out one.
-                    !is_debug_view(debug_mode),
+                    // out one — and putting radiance through NO curve
+                    // turns a dim scene into a black frame, which is why
+                    // FSR's colour steps answer this differently.
+                    !is_display_referred(debug_mode),
                 );
                 if let (Some(scopes), Some(query)) = (scopes, query) {
                     scopes.end(encoder, query);
@@ -854,14 +904,50 @@ fn warn_once_about_transitional_frame(render: (u32, u32), output: (u32, u32)) {
     });
 }
 
-/// True for the debug modes Inti resolves inside the shading shader,
-/// which produce colour that is already display-referred.
+/// True for every debug mode, which is the question the TONEMAP asks:
+/// all of them produce colour that is already display-referred, and a
+/// false-colour legend through a filmic curve is a legend nobody can
+/// read off.
 ///
 /// Pinned to `INTI_DEBUG_FIRST` in `inti_debug.wgsl`; the discriminants
 /// themselves are already pinned to `MeshletDebugMode` by a test in
 /// `debug.rs`.
 fn is_debug_view(debug_mode: u32) -> bool {
     debug_mode >= 11
+}
+
+/// True only for the modes Inti resolves INSIDE the shading shader, so
+/// there is no radiance for a temporal technique to resolve.
+///
+/// 🔴 Distinct from [`is_debug_view`], and the distinction is the whole
+/// point of FSR 3.1's staircase: those six modes leave the upscaler
+/// running and ask it to write one of its own intermediates. Gating them
+/// out here would turn the tool off exactly when it is wanted.
+fn replaces_shading(debug_mode: u32) -> bool {
+    crate::meshlet::debug::MeshletDebugMode::all_implemented()
+        .iter()
+        .find(|m| m.as_u32() == debug_mode)
+        .is_some_and(|m| m.replaces_shading())
+}
+
+/// True when the tonemap must pass the colour through untouched.
+///
+/// Not the same question as [`is_debug_view`]: FSR's three colour steps
+/// hand back radiance and need the curve, or a dim scene reads as a
+/// black frame and the instrument lies.
+fn is_display_referred(debug_mode: u32) -> bool {
+    crate::meshlet::debug::MeshletDebugMode::all_implemented()
+        .iter()
+        .find(|m| m.as_u32() == debug_mode)
+        .is_some_and(|m| m.is_display_referred())
+}
+
+/// Which FSR 3.1 intermediate the debug dropdown is asking for, or 0.
+fn fsr3_debug_stage(debug_mode: u32) -> u32 {
+    crate::meshlet::debug::MeshletDebugMode::all_implemented()
+        .iter()
+        .find(|m| m.as_u32() == debug_mode)
+        .map_or(0, |m| m.fsr3_stage())
 }
 
 fn create_vbuf64_texture(

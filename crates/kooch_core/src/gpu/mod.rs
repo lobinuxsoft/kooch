@@ -25,5 +25,5 @@ mod tests;
 
 pub use context::GpuContext;
 pub use error::GpuError;
-pub use features::vbuf64_features;
+pub use features::{all_required_features, engine_features, vbuf64_features};
 pub use profiler::{GpuQuery, GpuScopes};

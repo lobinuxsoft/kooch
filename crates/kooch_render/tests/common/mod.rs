@@ -94,10 +94,7 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// cleanly. Its own device rather than the shared one: the features
 /// differ, and a test that needs them must not be handed one without.
 pub fn try_acquire_device_r64() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let required = wgpu::Features::TEXTURE_ATOMIC
-        | wgpu::Features::TEXTURE_INT64_ATOMIC
-        | wgpu::Features::SHADER_INT64
-        | wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX;
+    let required = kooch_core::gpu::all_required_features();
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,

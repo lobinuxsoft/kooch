@@ -199,6 +199,58 @@ pub enum MeshletDebugMode {
     /// Magenta means the material has no albedo map, so there is no
     /// chain to select from and nothing to say.
     TextureMipLevel = 18,
+    /// The HDR frame FSR 3.1 was handed, at the render pixel this output
+    /// pixel sits in.
+    ///
+    /// 🎯 The first step of a staircase, and the six of them are unlike
+    /// every mode above: they do NOT replace the shading. They leave the
+    /// upscaler running and make it write one of its own intermediates
+    /// instead of the image, in the order the data flows through it. The
+    /// first step that looks wrong is the first pass that IS wrong, and
+    /// everything after is downstream of the same fault.
+    ///
+    /// Built because six dispatches write five intermediates no eye ever
+    /// sees, so a wrong frame says nothing about which one produced it.
+    ///
+    /// ⚠️ They corrupt the history while they are on — the point is to
+    /// see one stage, not to keep a valid frame — and with any other
+    /// technique selected they show the ordinary image, because there is
+    /// no FSR running to ask.
+    Fsr3Input = 19,
+    /// Dilated motion vectors, biased so that zero is grey.
+    ///
+    /// ⚠️ Uniform grey with a still camera is CORRECT. A still camera
+    /// cannot test the motion path at all, which is exactly how a
+    /// reversed reprojection survived two tests.
+    Fsr3Motion = 20,
+    /// Red reactive, green disocclusion, blue how many frames of history
+    /// the pixel has earned.
+    ///
+    /// Blue should climb to full over three still frames. Staying black
+    /// is the accumulation counter never advancing, which starves every
+    /// term downstream.
+    Fsr3Masks = 21,
+    /// This frame's upsample alone, with no history blended in.
+    ///
+    /// 🎯 The step that cuts the technique in half: if the scene appears
+    /// here, the inputs and the Lanczos kernel are fine and the fault is
+    /// in the history path.
+    Fsr3Upsample = 22,
+    /// The reprojected history alone, before rectification.
+    Fsr3History = 23,
+    /// Red the lock, green the luma instability, blue the upsample's
+    /// total weight — the three terms that decide how hard the history
+    /// is rectified against the neighbourhood.
+    Fsr3Locks = 24,
+    /// The two inputs to the upsample weight: red and green the offset
+    /// from this output pixel to the render grid, in render pixels, and
+    /// blue the kernel width (FSR's 1.99 ceiling reads as full).
+    ///
+    /// 🎯 Measured after the sum itself came back zero everywhere with
+    /// both of these apparently in range. Either red or green above
+    /// 1.0 means no tap of the 3x3 can land in the kernel's positive
+    /// lobe, and the accumulation can never take a new sample.
+    Fsr3Weights = 25,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -263,6 +315,13 @@ impl MeshletDebugMode {
             Self::PointShadowFactor,
             Self::PointCubeFaces,
             Self::TextureMipLevel,
+            Self::Fsr3Input,
+            Self::Fsr3Motion,
+            Self::Fsr3Masks,
+            Self::Fsr3Upsample,
+            Self::Fsr3History,
+            Self::Fsr3Locks,
+            Self::Fsr3Weights,
         ]
     }
 
@@ -358,7 +417,61 @@ impl MeshletDebugMode {
             Self::PointShadowFactor => "Point shadow factor",
             Self::PointCubeFaces => "Point cube faces",
             Self::TextureMipLevel => "Texture mip level",
+            Self::Fsr3Input => "FSR 3.1 — 1 input colour",
+            Self::Fsr3Motion => "FSR 3.1 — 2 dilated motion",
+            Self::Fsr3Masks => "FSR 3.1 — 3 reactive / disocclusion / accumulation",
+            Self::Fsr3Upsample => "FSR 3.1 — 4 upsample, no history",
+            Self::Fsr3History => "FSR 3.1 — 5 reprojected history",
+            Self::Fsr3Locks => "FSR 3.1 — 6 lock / instability / weight",
+            Self::Fsr3Weights => "FSR 3.1 — 7 kernel offset / width",
         }
+    }
+
+    /// Which of FSR 3.1's stages this mode asks for, 1-based, or 0 when
+    /// it is not one of them.
+    ///
+    /// 🔴 These are the only debug modes that do not replace the
+    /// shading, so [`Self::replaces_shading`] must exclude them or the
+    /// upscaler they are meant to inspect never runs.
+    pub const fn fsr3_stage(self) -> u32 {
+        match self {
+            Self::Fsr3Input => 1,
+            Self::Fsr3Motion => 2,
+            Self::Fsr3Masks => 3,
+            Self::Fsr3Upsample => 4,
+            Self::Fsr3History => 5,
+            Self::Fsr3Locks => 6,
+            Self::Fsr3Weights => 7,
+            _ => 0,
+        }
+    }
+
+    /// True when Inti resolves this mode inside the shading shader, so
+    /// nothing temporal downstream should run.
+    pub const fn replaces_shading(self) -> bool {
+        self.as_u32() >= Self::Normals.as_u32() && self.fsr3_stage() == 0
+    }
+
+    /// True when the mode hands back colour that is already ready for
+    /// the screen, so the tonemap must pass it through untouched.
+    ///
+    /// 🔴 Three of FSR's steps are the exception, and the reason is a
+    /// mistake this made the first time: they show RADIANCE — the input
+    /// frame, the upsample, the history — and radiance without the
+    /// filmic curve is nearly black in any dimly-lit scene. A debug view
+    /// that reads black when the data is fine is worse than no view at
+    /// all, because it sends the search after a defect that is not
+    /// there. So those three go through the ordinary tonemap and are
+    /// directly comparable with the real image; the steps that show a
+    /// 0..1 quantity bypass it and read as a grey ramp.
+    pub const fn is_display_referred(self) -> bool {
+        if matches!(
+            self,
+            Self::Fsr3Input | Self::Fsr3Upsample | Self::Fsr3History
+        ) {
+            return false;
+        }
+        self.as_u32() >= Self::Normals.as_u32()
     }
 }
 

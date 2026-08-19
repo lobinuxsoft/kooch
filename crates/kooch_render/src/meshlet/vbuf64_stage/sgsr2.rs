@@ -140,6 +140,27 @@ pub(super) struct UpscaleInputs<'a> {
     pub exposure: f32,
     /// `tan(fov_vertical / 2) * aspect`; see [`fov_k`].
     pub fov_k: f32,
+    /// The near plane. Under this engine's infinite reversed-Z
+    /// projection it is the WHOLE depth transform — `view_z = near / d`
+    /// — which is what FSR 3.1 needs to express its thresholds in
+    /// metres. SGSR 2 does not read it.
+    pub near: f32,
+    /// How many sub-pixel offsets the jitter sequence cycles through.
+    /// FSR decays a feature lock over exactly one pass of it.
+    pub jitter_phases: f32,
+    /// Which intermediate to write instead of the image, or 0. Comes
+    /// from the editor's debug dropdown; SGSR 2 has no intermediates
+    /// worth a legend and ignores it.
+    pub debug_stage: u32,
+    /// The profiler, and the scope the technique's own opens inside.
+    ///
+    /// 🔴 Added when FSR 3.1 measured 15.164 ms under a SINGLE scope on
+    /// the handheld — a number that says the technique is 8x over
+    /// budget and nothing at all about WHICH of its six dispatches to
+    /// look at. Optimising from that is guessing. SGSR 2 has two passes
+    /// and a name on each is worth little, so it ignores this.
+    pub scopes: Option<&'a kooch_core::gpu::GpuScopes>,
+    pub parent: Option<&'a kooch_core::gpu::GpuQuery>,
 }
 
 pub(super) struct Sgsr2 {
