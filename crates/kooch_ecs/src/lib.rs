@@ -42,6 +42,7 @@ pub mod scene_manager;
 pub mod scene_member;
 pub mod sky_renderer;
 pub mod spot_light;
+pub mod storage;
 pub mod transform;
 pub mod world_snapshot;
 
