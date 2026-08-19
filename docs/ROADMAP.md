@@ -1400,6 +1400,25 @@ other half of this.
 
 ---
 
+## What gets attacked next, in order — decided 2026-08-19
+
+1. **The 11 ms floor experiment** (#885). No engine change: merge
+   `roll-a-ball`'s three materials into one and capture again. It decides
+   37 % of the shading pass, and it is the only item on this list that
+   costs no device cycles until the very end.
+2. **#477 Virtual Shadow Maps.** `difficulty:hard`, and what it attacks —
+   `shadows` — currently measures **0.82 ms of a ~30 ms pass**. It goes
+   second for that reason, not because it is unimportant: planet-scale
+   sun shadows are a product requirement no measurement retires.
+3. **#886 Arm ASR.** An evaluation, with SGSR 2 already the handheld
+   default at 1.868 ms.
+
+⚠️ Prepare the TAA's `textureGather` **before** asking for the run, and
+measure both in the same capture: a device measurement costs ~7 minutes
+of thermal settling, so the set is measured once rather than per patch.
+
+---
+
 ## The 11 ms nobody had looked at, 2026-08-19
 
 Area 2 of #885 audited all 58 shaders (12 014 lines). The inventory is in
