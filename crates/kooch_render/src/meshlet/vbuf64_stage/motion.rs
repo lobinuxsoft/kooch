@@ -305,7 +305,9 @@ impl MotionVectors {
                 // reconstruction through `frag_coord_to_ndc`, which this
                 // pass calls with real pixel centres.
                 shading_rate: 1,
-                _pad: [0; 3],
+                // No bias: this pass does not sample material textures.
+                mip_bias_scale: 1.0,
+                _pad: [0; 2],
             }),
         );
 

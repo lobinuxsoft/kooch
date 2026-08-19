@@ -335,6 +335,8 @@ impl ComputeShading {
         contact: &ContactShadowUbo,
         screen_size: (u32, u32),
         rate: ShadingRate,
+        // `exp2(mip_bias)`; see `ScreenUbo::mip_bias_scale` (#881).
+        mip_bias_scale: f32,
         debug_mode: u32,
     ) {
         let pipeline = self.pipeline_for(device, debug_mode);
@@ -361,7 +363,8 @@ impl ComputeShading {
                     material_id: slot,
                     debug_mode,
                     shading_rate: rate.factor(),
-                    _pad: [0; 3],
+                    mip_bias_scale,
+                    _pad: [0; 2],
                 }),
             );
         }

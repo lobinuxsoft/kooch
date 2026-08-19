@@ -380,7 +380,9 @@ impl MaterialTwoPass {
                     // invocation per covered pixel, and no thread to
                     // remove (#825).
                     shading_rate: 1,
-                    _pad: [0; 3],
+                    // No bias: this pass does not sample material textures.
+                    mip_bias_scale: 1.0,
+                    _pad: [0; 2],
                 }),
             );
         }

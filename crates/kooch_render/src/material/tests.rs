@@ -130,11 +130,18 @@ fn the_default_transform_is_the_identity() {
 /// four steps too sharp — the aliasing the mip chain exists to remove,
 /// on exactly the surfaces that asked for tiling.
 ///
+/// Both shaders build one `derivative_scale` and multiply both
+/// derivatives by it, so the test follows that: the factor has to carry
+/// the material's tiling AND the mip bias (#881), and both derivatives
+/// have to use it. A derivative left on the raw `surf.` value is the
+/// bug.
+///
 /// ⚠️ This reads the shader as TEXT, which is a weak test and is here
-/// anyway: nothing else in the suite fails when the multiply is
-/// dropped, and the way it gets dropped is a copy-paste that keeps the
-/// coordinate and forgets the two lines under it. A GPU test that
-/// measured the chosen mip would be better and is not written.
+/// anyway: nothing else in the suite fails when a multiply is dropped,
+/// and the way it gets dropped is a copy-paste that keeps the
+/// coordinate and forgets the lines under it. A GPU test that measured
+/// the chosen mip would be better — `texture_mip_selection` is now that
+/// test for the bias half.
 #[test]
 fn tiling_scales_the_derivatives_too() {
     for (name, source) in [
@@ -147,16 +154,34 @@ fn tiling_scales_the_derivatives_too() {
             include_str!("../../shaders/material_pbr_default.wgsl"),
         ),
     ] {
-        for derivative in ["ddx_uv", "ddy_uv"] {
-            let line = source
+        let line = |prefix: &str| -> String {
+            source
                 .lines()
                 .map(str::trim)
-                .find(|line| line.starts_with(&format!("let {derivative} =")))
-                .unwrap_or_else(|| panic!("{name} does not derive {derivative} at all"));
+                .find(|line| line.starts_with(prefix))
+                .unwrap_or_else(|| panic!("{name} has no line starting `{prefix}`"))
+                .to_owned()
+        };
+
+        let factor = line("let derivative_scale =");
+        assert!(
+            factor.contains("uv_scale_offset.xy"),
+            "{name} computes `{factor}` — the coordinate is tiled and the derivatives \
+             are not, so the mip is selected for a texture that is not the one being \
+             sampled",
+        );
+        assert!(
+            factor.contains("mip_bias_scale"),
+            "{name} computes `{factor}` — without the bias the derivatives choose the \
+             level the resolution suggests, not the one the upscaler can resolve",
+        );
+
+        for derivative in ["ddx_uv", "ddy_uv"] {
+            let assignment = line(&format!("let {derivative} ="));
             assert!(
-                line.contains("uv_scale_offset.xy"),
-                "{name} computes `{line}` — the coordinate is tiled and this is not, so \
-                 the mip is selected for a texture that is not the one being sampled",
+                assignment.contains("derivative_scale"),
+                "{name} computes `{assignment}` — that derivative is unscaled while the \
+                 other one is, so the two disagree about what a pixel covers",
             );
         }
     }
