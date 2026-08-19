@@ -5,6 +5,8 @@
 
 pub mod column;
 pub mod table;
+pub mod tables;
 
 pub use column::Column;
 pub use table::{Table, TableRow};
+pub use tables::{TableId, Tables};

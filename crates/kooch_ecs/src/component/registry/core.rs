@@ -29,6 +29,7 @@ use crate::reflect::{
 use crate::component::cpu_storage::ComponentStorage;
 use crate::component::storage_id::StorageId;
 use crate::component::traits::{AnyStorage, Component};
+use crate::storage::Column;
 
 /// Everything the registry knows about one registered component type.
 ///
@@ -41,6 +42,12 @@ pub(super) struct Slot {
     name: &'static str,
     /// `None` for a component registered without reflection.
     reflector: Option<Box<dyn ReflectAccessor>>,
+    /// Builds an empty column for this component's type.
+    ///
+    /// A monomorphised function pointer, captured at registration: it is
+    /// the only place the concrete type is still in scope, and a table
+    /// built later has nothing but the id.
+    new_column: fn() -> Column,
 }
 
 /// Central registry for all component storages.
@@ -91,6 +98,15 @@ impl ComponentRegistry {
         self.slots.len()
     }
 
+    /// A fresh, empty column for the component `id` names.
+    ///
+    /// The registry is the only thing that still knows the concrete type
+    /// by the time a table needs a column, so it is the only thing that
+    /// can build one.
+    pub fn new_column(&self, id: StorageId) -> Option<Column> {
+        Some((self.slots.get(id.index())?.new_column)())
+    }
+
     #[inline]
     fn slot(&self, type_id: &TypeId) -> Option<&Slot> {
         self.slots.get(self.ids.get(type_id)?.index())
@@ -112,6 +128,7 @@ impl ComponentRegistry {
             type_id,
             name: std::any::type_name::<T>(),
             reflector: None,
+            new_column: Column::of::<T>,
         });
         self.ids.insert(type_id, id);
         id

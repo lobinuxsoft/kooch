@@ -6,7 +6,6 @@
 use std::any::Any;
 use std::collections::HashMap;
 
-
 use crate::entity::Entity;
 
 use super::traits::{AnyStorage, Component};
