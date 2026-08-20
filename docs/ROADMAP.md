@@ -1550,10 +1550,27 @@ capture, so the order can be decided on numbers rather than on age:
 | candidate | what it costs today | what it would buy |
 |---|---|---|
 | **Compact the shading dispatch** | 0.71 ms at 3 materials | 0.71 ms now, **3.7 ms at 20 materials** — the only item that scales with the game rather than the frame |
-| **#886 Arm ASR** | `sgsr2` is **2.062 ms**, the second largest GPU item | unknown until measured; the upscaler is now the biggest single thing after shading |
+| ~~**#886 Arm ASR**~~ | — | ❌ **Closed 2026-08-20 with a verdict, read from the source.** It is FSR **2.2.2** when 3.1 is already transliterated, it removes none of FSR 2's eight passes, and its one structural change — compute to fragment — is an optimisation for **tile-based** GPUs that does not transfer to RDNA. Arm's own +53 % claim lands it near 7-8 ms against SGSR 2's 2.062. What survives is its optimisation list, which applies to **our** FSR 3.1 |
 | **#477 Virtual Shadow Maps** | `shadows` is **0.549 ms of 9.7** | not a frame-time argument — planet-scale sun shadows are a product requirement no measurement retires |
 | **Fuse `motion vectors`** | **0.553 ms**, was 2.6 when it was written up | ≤0.5 ms, against +4 B/px on a bandwidth-bound part |
 | **TAA `textureGather`** | `taa` **does not run** under the preset that meets the budget | nothing, until somebody configures TAA and measures it |
+
+### What Arm ASR left behind, which is the part worth keeping
+
+Its shader quality presets are a list of named cuts, and two of them
+point at passes measured on 2026-08-20:
+
+| Arm's optimisation | against what of ours |
+|---|---|
+| `DISABLE_LUMA_INSTABILITY` | the `luma instability` pass, **0.571 ms** |
+| `TONEMAPPED_RGB_PREPARED_INPUT_COLOR` — `R8G8B8A8_Unorm`, no YCoCg | the largest intermediate, and `accumulate` is **9.122 of 11.355** |
+| `UPSCALING_LANCZOS_5TAP`, `REPROJECT_CATMULL_5TAP` | tap counts inside `accumulate` |
+| depth-clip packed into the reactive mask | one target and one read fewer |
+
+Standard ideas rather than Arm's inventions, so applying them carries no
+attribution obligation. **It opens no work on its own**: FSR 3.1 is a
+desktop technique and 11 ms on a desktop is not a problem. Written down
+for whoever wants to bring it down.
 
 ⚠️ The previous order put #477 second and #886 third on the strength of
 numbers taken when the pass was 30 ms. Both moved. **The user decides the
