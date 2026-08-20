@@ -21,6 +21,12 @@
 //! 44.88 ms / 252 sweeps  =  178 us per idle full-screen sweep
 //! ```
 //!
+//! ⚠️ **At 1920x1080**, which with `render_scale: 50` and
+//! `shading_rate: 2` shades 480x270. A sweep is a fixed dispatch cost
+//! plus per-pixel work — the desktop decomposition below splits them —
+//! so the figure is smaller at a lower output resolution and does not
+//! travel without one.
+//!
 //! No control pass (`sgsr2`, `tonemap`, `shadows`, `blit`, `cluster
 //! grid`) moved more than 0.16 ms against that 44.88 — 280:1 — and both
 //! captures came back green on `read_capture --over-time`.

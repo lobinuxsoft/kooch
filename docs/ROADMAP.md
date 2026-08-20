@@ -74,90 +74,77 @@ two are averaged into a machine that does not exist.
 
 ### 🔴 A frame cap is a PERFORMANCE setting on this part, 2026-08-20
 
-Three operating points, same build, same scene, same preset, same
-session. The only differences are the TDP and whether the frame rate is
-capped in hardware:
+⚠️ **Read the resolution column before comparing anything below.** The
+first captures of the day were taken at 1920x1080 and the last two at a
+forced 1280x720. At `render_scale: 50` and `shading_rate: 2` that is
+480x270 against 320x180 — **44 % of the samples** — so a row from one
+group cannot be subtracted from a row of the other. One table published
+here on 2026-08-20 did exactly that and is retracted below.
 
-| | 10 W, vsync on | 4 W, uncapped | **8 W, capped at 72** |
-|---|---|---|---|
-| frame median | 13.92 | 13.96 | **13.88** |
-| p99 | 25.64 | 21.60 | **14.46** |
-| max | 29.07 | **47.09** | **15.25** |
-| **GPU** | 9.7 | **13.2** | **3.9** |
-| `frame/GPU` | 1.45 | 1.06 | **3.5** |
-| `shade: compute (half rate)` | 3.272 | 3.858 | **1.117** |
-| `sgsr2` | 2.062 | 2.606 | **0.722** |
-| `shadows` | 0.549 | 1.251 | **0.374** |
+**The comparison that holds, because both sides are 1280x720:**
 
-**The same work costs 3.4× less GPU time when the frame rate is capped**,
-and every pass moves by the same factor — which is not something an
-engine does. It is the clock:
+| | 4 W, uncapped | **8 W, capped at 72** |
+|---|---|---|
+| frame median | 13.96 | **13.88** |
+| p99 / max | 21.60 / **47.09** | **14.46 / 15.25** |
+| **GPU** | **13.2** | **3.9** |
+| `frame/GPU` | 1.06 | **3.5** |
+| `shade: compute (half rate)` | 3.858 | **1.117** |
+| `sgsr2` | 2.606 | **0.722** |
+| `shadows` | 1.251 | **0.374** |
+
+**The same work at the same resolution costs 3.4× less GPU time**, and
+every pass moves by the same factor — which an engine does not do. The
+clock does:
 
 ```
-sclk, capped at 72 fps   ~1210 MHz   (12 samples over SSH, 2026-08-20)
-sclk, uncapped and settled ~850 MHz   (the measurement three sections up)
+sclk, capped at 72 fps   ~1210 MHz   (12 samples over SSH, during the capture)
 ```
 
-Capped, the GPU is idle **68 %** of the time. An idle GPU neither heats
-nor reaches its power cap, so it holds its boost clock indefinitely.
-Uncapped, it throttles itself down and every pass takes three times
-longer. Rendering 144 frames to display 72 pays for the same work three
-times.
+Capped, the GPU is idle **68 %** of the time, so it neither heats nor
+reaches its power cap and holds its boost clock. Uncapped it throttles
+and every pass takes three times longer. Rendering 144 frames to display
+72 pays for the same work three times.
 
-🟢 **Confirmed by two independent instruments.** `gpu_busy_percent` reads
+🟢 **Two independent instruments agree.** `gpu_busy_percent` reads
 **32 %** off the kernel; the GPU scopes say 3.9 ms of a 13.88 ms frame,
-which is 28 %. The four points of difference are the compositor, which
-our scopes cannot see and never claimed to.
+which is 28 %. The four points between them are the compositor, which our
+scopes cannot see and never claimed to.
 
-⚠️ **This splits a rule this file states as universal.** *"Warm the
-handheld for two minutes — it gets 46 % slower"* describes an
-**uncapped** machine. Capped, there is no drift at all: 13.89 → 13.88 ms
-across 60 s, with the GPU moving 3.89 → 3.99 (+2.6 %). They are two
-machines and the procedure section above only describes one of them.
-**Record which one a capture was taken on.**
+🔴 **What this pair does NOT separate: the TDP doubled too.** 4 W
+uncapped against 8 W capped changes two things at once, so "3.4×" is the
+two together. The `gpu_busy` and `sclk` readings argue the cap is doing
+most of it — a part idle 68 % of the time is not power-limited — but the
+run that would settle it has not been taken: **8 W uncapped at 1280x720**.
 
-The cap also fixes the pacing: max frame **15.25 ms** against the 47.09 of
-the uncapped run.
+⚠️ **It splits a rule this file states as universal.** *"Warm the
+handheld two minutes, it gets 46 % slower"* describes an **uncapped**
+machine. Capped there is no drift at all: 13.89 -> 13.88 ms across 60 s,
+with the GPU moving 3.89 -> 3.99 (+2.6 %). Two machines, and a capture
+has to record which one — and now at which resolution.
 
-🎯 **Against the budget: 3.9 ms of GPU in a 13.9 ms frame is 28 % used.**
-There are ~10 ms of headroom at 8 W, not the ~4 the 10 W vsync-on capture
-suggested.
+The cap also fixes the pacing: max frame **15.25 ms** against 47.09.
 
-### 🟡 At low TDP the frame stops being the shading pass
+🎯 **Against the budget, at 1280x720: 3.9 ms of GPU in a 13.9 ms frame is
+28 % used.**
 
-The 4 W column above, per pass against the 10 W one:
+### ❌ Retracted the same day: "at low TDP the frame stops being the shading pass"
 
-| | 10 W | 4 W | |
-|---|---|---|---|
-| `shade: compute` | 3.272 | 3.858 | +18 % |
-| `sgsr2` | 2.062 | 2.606 | +26 % |
-| `tonemap` | 0.566 | 1.030 | **+82 %** |
-| `blit` | 0.424 | 0.805 | **+90 %** |
-| `cluster grid` | 0.136 | 0.289 | **+113 %** |
-| `shadows` | 0.549 | 1.251 | **+128 %** |
+A table published here compared the 4 W capture against the 10 W one per
+pass and concluded the short passes nearly double while the shading pass
+grows 18 %. **The 4 W capture is 1280x720 and the 10 W one is 1920x1080**,
+so the two differ by 2.25× in samples before TDP is considered.
 
-**The small passes nearly double; the big one grows 18 %.** The shading
-pass is bandwidth-bound and memory clock barely moves with TDP; the short
-passes are latency- and clock-bound and it does. So at 4 W:
-
-```
-shade  3.86 of 13.2 ms GPU  =  29 %
-everything else             =  71 %
-```
-
-🔴 **More than two thirds of the GPU frame is not shading**, at the
-operating point a battery-conscious player would pick. Every graphics
-item on this roadmap has been aimed at the pass that is 29 % of it there.
-That does not retire any of them, and it does say the ordering was
-derived from one operating point.
-
-⚠️ Uncapped at 4 W there is **no headroom**: 13.2 ms of GPU in a 13.96 ms
-frame, `frame/GPU` 1.06. Anything added drops it under 72.
+It does not renormalise, either: `shadows` is sized by
+`shadow_cascade_texels` and does not scale with the screen at all, and
+`sky` is a raymarch whose cost depends on how much sky the camera sees.
+The conclusion may still be true — it is simply not measured. **The pair
+that would measure it is one TDP at one resolution.**
 
 ### 🟢 The configuration that meets it, measured 2026-08-20
 
-**13.92 ms median, 4653 frames, zero drift across the capture.** The
-budget, on the device, settled. This is the baseline a handheld game
+**13.92 ms median, 4653 frames, zero drift, at 1920x1080 and 10 W
+settled.** The budget, on the device. This is the baseline a handheld game
 ships with unless it has a measurement saying otherwise.
 
 | `.rendersettings` | value | why |
@@ -1626,6 +1613,11 @@ No control moves more than 0.16 ms against a signal of 44.88 — **280:1**.
 ```
 44.88 ms / 252 sweeps  =  178 µs per idle full-screen sweep
 ```
+
+⚠️ **At 1920x1080.** A sweep is a fixed dispatch cost plus per-pixel
+work — the desktop decomposition below splits them — so the number is
+smaller at a lower resolution and the per-material bill has to be quoted
+with one.
 
 The same measurement on a 9070 XT reads **1.98 µs**, a ratio of 90×, and
 the desktop run predicted the device to within that. It also decomposes:
