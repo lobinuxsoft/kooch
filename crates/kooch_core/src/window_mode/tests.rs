@@ -60,3 +60,86 @@ fn borderless_is_not_fullscreen() {
     assert!(WindowMode::Windowed.decorated());
     assert!(!WindowMode::Windowed.fullscreen());
 }
+
+mod resolutions {
+    use crate::window_mode::{Resolution, WindowMode, best_mode, effective};
+
+    fn res(width: u32, height: u32, refresh_mhz: u32) -> Resolution {
+        Resolution {
+            width,
+            height,
+            refresh_mhz,
+        }
+    }
+
+    fn monitor() -> Vec<Resolution> {
+        vec![
+            res(1920, 1080, 144_000),
+            res(1920, 1080, 60_000),
+            res(1280, 720, 60_000),
+        ]
+    }
+
+    /// 🔴 Winit warns and changes nothing when Wayland is handed an
+    /// exclusive request, which leaves the window as it was and reads as
+    /// the setting being broken. Degrading here means the player gets
+    /// the closest thing that works.
+    #[test]
+    fn wayland_gets_borderless_instead() {
+        assert_eq!(
+            effective(WindowMode::Exclusive, false),
+            WindowMode::Fullscreen
+        );
+        assert_eq!(
+            effective(WindowMode::Exclusive, true),
+            WindowMode::Exclusive
+        );
+    }
+
+    /// Only the exclusive request is affected — a downgrade that touched
+    /// the others would take a windowed game full screen.
+    #[test]
+    fn the_other_modes_pass_through() {
+        for mode in [
+            WindowMode::Windowed,
+            WindowMode::Borderless,
+            WindowMode::Fullscreen,
+        ] {
+            assert_eq!(effective(mode, false), mode);
+            assert_eq!(effective(mode, true), mode);
+        }
+    }
+
+    /// No refresh asked for means "the best this size can do".
+    #[test]
+    fn no_refresh_takes_the_highest() {
+        assert_eq!(
+            best_mode(&monitor(), res(1920, 1080, 0)),
+            Some(res(1920, 1080, 144_000)),
+        );
+    }
+
+    /// A refresh that was asked for wins over the highest one.
+    #[test]
+    fn an_asked_refresh_is_honoured() {
+        assert_eq!(
+            best_mode(&monitor(), res(1920, 1080, 60_000)),
+            Some(res(1920, 1080, 60_000)),
+        );
+        // Nearest, not exact: a monitor reporting 59.94 Hz must not be
+        // refused because the list said 60.
+        assert_eq!(
+            best_mode(&monitor(), res(1920, 1080, 59_940)),
+            Some(res(1920, 1080, 60_000)),
+        );
+    }
+
+    /// 🔴 The SIZE has to match exactly. Picking a nearby resolution
+    /// would change what the player sees without saying so; the honest
+    /// answer is none, and the caller stays at borderless.
+    #[test]
+    fn a_missing_size_is_none() {
+        assert!(best_mode(&monitor(), res(1600, 900, 0)).is_none());
+        assert!(best_mode(&[], res(1920, 1080, 0)).is_none());
+    }
+}

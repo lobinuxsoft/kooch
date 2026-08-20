@@ -152,6 +152,14 @@ impl Plugin for WindowPlugin {
         // per-frame to decide, and a system that is never right to run
         // should not be in the schedule.
         if self.applies_window_mode {
+            // The list is published whether or not anything asks for a
+            // mode: a game's options menu needs it to draw the dropdown
+            // at all, and it costs one enumeration on the first frame
+            // the window exists.
+            app.add_system(
+                kooch_core::stage::Stage::Last,
+                mode::publish_display_modes_system,
+            );
             app.add_system(
                 kooch_core::stage::Stage::Last,
                 mode::apply_window_mode_system,

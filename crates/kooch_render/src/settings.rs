@@ -324,7 +324,8 @@ pub struct RenderSettings {
     pub vsync: bool,
 
     /// Where the window sits between a rectangle on a desktop and the
-    /// whole screen: 0 windowed, 1 borderless, 2 fullscreen.
+    /// whole screen: 0 windowed, 1 borderless, 2 fullscreen,
+    /// 3 exclusive.
     ///
     /// The entry directly above vsync in every graphics options menu
     /// ever shipped, and the engine could not express it — a window had
@@ -332,11 +333,11 @@ pub struct RenderSettings {
     ///
     /// 🔴 `Borderless` is a WINDOW without a border, still at the
     /// project's `width x height`. `Fullscreen` covers the monitor at
-    /// the monitor's **current** mode. There is no exclusive fullscreen
-    /// and [`WindowMode`](kooch_core::window_mode::WindowMode) argues
-    /// why: it is the only way to change the output resolution from
-    /// inside a process, and it is also the one Wayland does not give a
-    /// client.
+    /// the monitor's **current** mode. `Exclusive` asks the display to
+    /// **change mode** — the only one that alters the output resolution,
+    /// implemented on Windows and X11 and **ignored by winit on
+    /// Wayland**, where it is degraded to `Fullscreen` rather than left
+    /// to change nothing.
     ///
     /// 🔴 The numbers are serialised into user projects and are
     /// therefore append-only, the same rule [`Self::upscale`] carries.
@@ -361,6 +362,10 @@ const WINDOW_MODE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "Fullscreen — the monitor, at its current mode",
         value: 2,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Exclusive — changes the display's mode (not on Wayland)",
+        value: 3,
     },
 ];
 
