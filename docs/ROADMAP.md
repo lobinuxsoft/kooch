@@ -706,6 +706,22 @@ produces "which lights need detail where", and #847 proved invalidation-by-reach
 **2.781 → 1.153 ms** at cube granularity. **Demoted below #481** because its payoff is scale
 and memory, and the frame's problem today is cost per pixel.
 
+🔴 **Measured 2026-08-20, and it moves Phase 2's first move (PR #927).** The census —
+`cargo run --example measure_shadow_pages` — says the three knobs #866 declined to guess
+are **not** where the budget lives: across 64/128/256-texel pages the bill lands between
+1 223 and 1 765 MiB, and across 4k/8k/16k virtual maps residency is *identical*, because
+the level chosen for a cell is the one whose texels match the screen. What decides is the
+**marking input**. The sun's clipmap residents **19 630 pages against a floor of 57**, and
+two sweeps run as predictions both refuted the mechanism that would make that an artefact
+— 32x thinner slices moved it 20 %, and over a 20x range of cell counts it is flat, so the
+union converges. A froxel is a **volume**, and marking from volumes claims pages for ground
+no surface occupies; UE5 marks from the depth buffer and the Chalmers papers from the
+cluster's **view samples**. So #866's own *"read it off the froxel grid that already runs"*
+is the sentence this refutes. ⚠️ And for the game rather than the structure: a hundred
+casting local lights cost **524 MiB**, about 5.2 MiB each against the 6 MiB a cube slot
+costs today — **the pool does not make a casting light cheaper**, it replaces a cap of four
+slots with a cap of memory, which on a handheld is still a cap.
+
 **Phase 3 — the consumers, on top of #866 and not before.**
 
 | | | Why it waits for the pool |
