@@ -91,6 +91,25 @@ pub struct WindowPlugin {
     pub width: u32,
     /// Window height in logical pixels.
     pub height: u32,
+    /// Whether this window follows the project's `window_mode` setting.
+    ///
+    /// 🔴 `false` in the editor, and that is the whole reason the field
+    /// exists. The editor adds this plugin **and** the asset plugin that
+    /// publishes a project's `.rendersettings`, so without it opening a
+    /// project whose `window_mode` is fullscreen would put the EDITOR
+    /// full screen. The setting describes the game's window, and the
+    /// editor's window is not the game's.
+    ///
+    /// The same argument the editor already makes for `FrameMetrics`:
+    /// the engine's own reporting is for a game, and a tool that shows
+    /// it is showing the wrong thing.
+    ///
+    /// ⚠️ `vsync` needs no equivalent only because
+    /// `apply_presentation_system` lives in `RenderPlugin`, which the
+    /// editor must not add — see `bootstrap.rs`. That is an accident of
+    /// where it was registered, not a rule, and moving it would
+    /// reintroduce the same bug.
+    pub applies_window_mode: bool,
 }
 
 impl Default for WindowPlugin {
@@ -100,6 +119,7 @@ impl Default for WindowPlugin {
             title: config.title,
             width: config.width,
             height: config.height,
+            applies_window_mode: true,
         }
     }
 }
@@ -126,10 +146,17 @@ impl Plugin for WindowPlugin {
         // After `apply_render_settings_system`, which publishes the
         // resource in `Update`, so a change lands on the frame it is
         // made. The system does nothing until something asks for a mode.
-        app.add_system(
-            kooch_core::stage::Stage::Last,
-            mode::apply_window_mode_system,
-        );
+        //
+        // Not registered at all in a host that does not own a game's
+        // window, rather than registered and skipped: there is nothing
+        // per-frame to decide, and a system that is never right to run
+        // should not be in the schedule.
+        if self.applies_window_mode {
+            app.add_system(
+                kooch_core::stage::Stage::Last,
+                mode::apply_window_mode_system,
+            );
+        }
 
         app.set_runner(winit_runner);
     }

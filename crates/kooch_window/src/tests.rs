@@ -29,6 +29,7 @@ fn window_plugin_custom_config() {
         title: "Test Game".to_string(),
         width: 1920,
         height: 1080,
+        applies_window_mode: true,
     });
 
     let config = app.resources().get::<WindowConfig>().unwrap();

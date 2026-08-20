@@ -54,6 +54,11 @@ pub fn run_editor_with<P: Plugin + 'static>(project: P) {
         title: window_title(None),
         width: 1280,
         height: 720,
+        // 🔴 The editor adds the asset plugin that publishes a project's
+        // `.rendersettings`, so a project whose `window_mode` says
+        // fullscreen would take the EDITOR full screen. That setting
+        // describes the game's window; this one is the tool's.
+        applies_window_mode: false,
     });
     app.add_plugin(EcsPlugin);
     // Asset root resolved to an ABSOLUTE path — the cwd shifts when a
