@@ -305,6 +305,50 @@ ms** and `upscale: 2` (SGSR 2) costs **2.062** — a 23.36 ms frame against
 a 13.92 ms one. FSR 3.1 is not broken; it is a desktop technique, and its
 own dropdown entry says so.
 
+### DLSS (#536)
+
+`upscale: 4` is NVIDIA's, and it is the only technique here a build can
+**lack**. The other three are shaders this engine owns; DLSS is a neural
+network shipped as a binary blob, reached by linking NVIDIA's SDK.
+
+Three things follow, and all three are visible from a project:
+
+1. 🔴 **It is a compile-time feature.** `dlss_wgpu`'s build script links
+   `libnvsdk_ngx` statically and runs bindgen over NVIDIA's headers, so
+   a binary either linked it or did not. Turn it on by adding `dlss` to
+   a build preset's **Extra cargo features**; the editor supplies
+   `DLSS_SDK` and `VULKAN_SDK` and refuses to start cargo when the SDK
+   is not installed.
+2. 🔴 **It moves the whole build to Vulkan.** `dlss_wgpu` is Vulkan-only,
+   and on Windows wgpu picks D3D12 by default. Enabling DLSS therefore
+   moves *every* Windows player onto Vulkan, not only the ones with an
+   NVIDIA card. That is a decision about the whole build, which is why it
+   is a feature rather than a setting.
+3. 🟢 **Asking for it is always safe.** A build without the feature, or a
+   machine without an NVIDIA card, resolves with the engine's own TAA at
+   full resolution and says so once in the log. The `.rendersettings`
+   file is left alone: `upscale: 4` is what the project wants, and the
+   machine that can honour it should still see it.
+
+**Getting the SDK.** Settings → the DLSS button clones
+[NVIDIA/DLSS](https://github.com/NVIDIA/DLSS) at the pinned tag after you
+accept NVIDIA's terms, into `~/.local/share/kooch/sdk/dlss/<version>/`.
+The engine never mirrors it — hosting a copy is the "stand-alone
+product" the licence forbids.
+
+**Shipping it.** A build with the feature gains two files beside the
+executable, copied by the packager rather than by you:
+
+| file | why |
+|---|---|
+| `libnvidia-ngx-dlss.so.<ver>` / `nvngx_dlss.dll` | NGX `dlopen`s it from the application's own directory. Nothing links it, so there is no `rpath` to get right |
+| `DLSS_NOTICES.pdf` | Section 9.5 of NVIDIA's Programming Guide, which anyone distributing the blob must include. Copied because a licence file nobody remembered is a licence breach |
+
+⚠️ **Unmeasured.** DLSS has a number on no device in this repository yet.
+It is a desktop option with an NVIDIA card; the handheld's default stays
+SGSR 2 at **2.062 ms**, and a vendor backend that does not beat ours by a
+number does not get to be a default.
+
 **Dropping the output resolution buys more than any of these**, because
 `render_scale` is a percentage *of the output*: a smaller window shrinks
 the render target with it and everything `render_scale` does not touch —
