@@ -834,6 +834,73 @@ carried.
 replaced. It exists to be the A/B: same camera, same scene, one capture
 each, is the only honest way to say what the grid bought.
 
+## What a page pool would hold — the census (#866)
+
+Before there is a page pool there is a number, and #866 says so:
+*"the first task in this issue is a measurement, not an allocation"*.
+`cargo run --example measure_shadow_pages -- <scene>` is that
+measurement. It walks the froxel grid, marks every page each cell would
+need from each light that reaches it, and prints what the distinct pages
+would cost.
+
+```bash
+cargo run --example measure_shadow_pages --features lighting -- \
+    ../roll-a-ball/assets/scenes/many_lights.scene
+```
+
+The walk lives in `kooch_render::shadow::pages` and runs on the CPU on
+purpose. The marking pass it previews belongs on the GPU — that is
+#477 — but here it only counts, so it needs no device and can be a test.
+It also becomes the **oracle** that pass is checked against, the position
+`ClusterGrid::z_slice` already holds against `cluster_z_slice` in WGSL.
+
+### What it measured, 2026-08-20
+
+`many_lights.scene` at 1280x720, Epic's configuration (128-texel pages,
+a 16384 virtual map per local light, a sixteen-level clipmap for the
+sun), asking one shadow texel per screen pixel:
+
+| | pages | MiB |
+|---|---|---|
+| the screen's floor — one texel per pixel, perfectly packed | 57 | 3.6 |
+| the sun's clipmap | 19 630 | 1 226.9 |
+| a hundred local lights | 8 386 | 524.1 |
+| **today's fixed allocations, for five casting lights** | — | **152** |
+
+🔴 **The page size barely matters and the virtual size does not matter at
+all.** Across 64/128/256-texel pages the bill lands between 1 223 and
+1 765 MiB, because a smaller page is more pages; across 4k/8k/16k virtual
+maps residency is *identical*, because the virtual size is the chain's
+ceiling and the level chosen for a cell is the one whose texels match the
+screen. Those were the three knobs #866 declined to guess, and the answer
+is that none of them is the decision.
+
+**The decision is what drives the marking.** The sun's 19 630 pages is
+344x the floor, and two sweeps say that number is real rather than an
+artefact of the grid — both run as predictions, both refuting the
+mechanism they tested:
+
+| prediction | result |
+|---|---|
+| a froxel's *depth* becomes lateral spread in the sun's plane, so thinner slices collapse the count | 32x thinner slices moved it **20 %**. Not the mechanism |
+| pages are barely shared between neighbours, so residency tracks the cell count | over a 20x range it is **flat** — the union converges, which is what a conservative marking pass should do |
+
+What is left is the input itself: a froxel is a volume, and marking from
+volumes claims pages for ground no surface occupies. UE5 marks from the
+**depth buffer**, and the Chalmers papers mark from the cluster's *view
+samples* — visible fragments, not grid cells. So #866's own starting
+sentence, *read it off the froxel grid that already runs*, is the thing
+this measurement refutes, and the page-marking pass has to be driven by
+visible surfaces.
+
+⚠️ **And a second reading, for the game rather than the structure.** A
+hundred casting local lights cost 524 MiB at this density — about
+5.2 MiB each, against the 6 MiB a cube slot costs today. The pool does
+not make a casting light cheaper; it makes the budget follow what the
+screen needs instead of a fixed number of slots. The cap on how many
+lights cast stops being four and starts being a memory budget, which on
+a handheld is still a cap.
+
 ## What Inti does not do yet
 
 - **Nothing but lights is clustered.** The grid reserves a range per cell
