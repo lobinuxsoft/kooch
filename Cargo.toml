@@ -61,6 +61,12 @@ sha2 = "0.11"
 zeroize = { version = "1.9", features = ["derive"] }
 # GPU
 wgpu = "29"
+# NVIDIA DLSS through wgpu's Vulkan HAL (#536). Optional everywhere and
+# off by default: its build script links `libnvsdk_ngx` statically and
+# runs bindgen over NVIDIA's headers, so a build with this feature on
+# needs `DLSS_SDK` and `VULKAN_SDK` set. The version chart is exact —
+# dlss_wgpu 4.0.0 is the one pinned to wgpu 29 and DLSS SDK 310.5.3.
+dlss_wgpu = "=4.0.0"
 # Windowing
 winit = { version = "0.30", features = ["serde"] }
 # Math

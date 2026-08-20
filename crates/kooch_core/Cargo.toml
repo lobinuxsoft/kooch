@@ -12,6 +12,7 @@ authors.workspace = true
 kooch_pack.workspace = true
 inventory = "0.3"
 wgpu.workspace = true
+dlss_wgpu = { workspace = true, optional = true }
 bytemuck.workspace = true
 encase.workspace = true
 glam.workspace = true
@@ -57,3 +58,7 @@ dynamic = ["dep:libloading", "dep:kooch_plugin_api"]
 # release build: it allocates query sets and buffers per frame and the
 # timestamps themselves are not free.
 gpu-profiler = ["dep:wgpu-profiler", "dep:puffin"]
+# NVIDIA DLSS (#536). Compile-time by construction — see `gpu::dlss`.
+# With it on the instance is Vulkan-only, which on Windows moves every
+# player off D3D12, so it is a decision a build makes, not a default.
+dlss = ["dep:dlss_wgpu"]

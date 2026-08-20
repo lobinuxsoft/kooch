@@ -5,6 +5,7 @@ use wgpu::{
 
 use crate::pipeline_cache;
 
+use super::dlss::{DlssRuntime, DlssSupport, Sdk};
 use super::error::GpuError;
 use super::features::{optional_features, required_engine_features};
 use super::limits::elevated_compute_limits;
@@ -22,6 +23,12 @@ pub struct GpuContext {
     surface: Surface<'static>,
     surface_config: SurfaceConfiguration,
     pipeline_cache: Option<PipelineCache>,
+    /// What DLSS this process can run (#536). Always false in a build
+    /// without the `dlss` feature.
+    dlss: DlssSupport,
+    /// The application-wide DLSS object, created once here because NGX
+    /// wants exactly one per process.
+    dlss_sdk: Option<Sdk>,
 }
 
 impl GpuContext {
@@ -36,7 +43,10 @@ impl GpuContext {
         width: u32,
         height: u32,
     ) -> Result<Self, GpuError> {
-        let instance = Instance::new(InstanceDescriptor {
+        // 🔴 Not `Instance::new` directly: with the `dlss` feature on,
+        // NGX registers its Vulkan instance extensions from inside this
+        // call and cannot be told about them afterwards (#536).
+        let (instance, mut dlss) = super::dlss::instance(InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
@@ -64,14 +74,22 @@ impl GpuContext {
         let required_limits = elevated_compute_limits(&adapter);
         let required_features = required_engine_features(&adapter) | optional_features(&adapter);
 
-        let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
-            label: Some("kooch_device"),
-            required_features,
-            required_limits,
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-            experimental_features: wgpu::ExperimentalFeatures::default(),
-        }))?;
+        // Same reason as the instance: the DLSS device extensions are
+        // registered while the device is being opened, or never.
+        let (device, queue) = super::dlss::device(
+            &adapter,
+            &DeviceDescriptor {
+                label: Some("kooch_device"),
+                required_features,
+                required_limits: required_limits.clone(),
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::Off,
+                experimental_features: wgpu::ExperimentalFeatures::default(),
+            },
+            &required_limits,
+            &mut dlss,
+        )?;
+        let dlss_sdk = super::dlss::sdk(&device, &mut dlss);
 
         let pipeline_cache = pipeline_cache::load(&device, &adapter);
 
@@ -120,6 +138,8 @@ impl GpuContext {
             surface,
             surface_config,
             pipeline_cache,
+            dlss,
+            dlss_sdk,
         })
     }
 
@@ -162,6 +182,30 @@ impl GpuContext {
         self.surface.configure(&self.device, &self.surface_config);
         tracing::info!(?wanted, "present mode changed");
         true
+    }
+
+    /// Which DLSS features this process can run (#536).
+    #[inline]
+    pub fn dlss(&self) -> DlssSupport {
+        self.dlss
+    }
+
+    /// The application-wide DLSS object, or `None` when this build has
+    /// no DLSS or this adapter cannot run it.
+    #[inline]
+    pub fn dlss_sdk(&self) -> Option<&Sdk> {
+        self.dlss_sdk.as_ref()
+    }
+
+    /// The DLSS handles a render pass needs, in a form it can keep for
+    /// the frame this context is removed from `Resources`.
+    #[inline]
+    pub fn dlss_runtime(&self) -> DlssRuntime {
+        DlssRuntime {
+            adapter: self.adapter.clone(),
+            sdk: self.dlss_sdk.clone(),
+            support: self.dlss,
+        }
     }
 
     /// Returns a reference to the wgpu [`Instance`].
