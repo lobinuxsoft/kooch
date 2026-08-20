@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-20 — **the budget is met on the device with the preset below: 13.92 ms, GPU 9.7.** The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
+Last updated 2026-08-20 — 🔴 **a frame cap is a PERFORMANCE setting on this part: the same work costs 3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped, because capped the GPU idles 68 % of the time and holds ~1210 MHz instead of throttling to ~850.** `gpu_busy_percent` reads 32 % and the scopes agree. **The budget is met with the preset below** — 13.88 ms frame, and at 8 W capped only **28 % of it is used**. The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
 
 ---
 
@@ -65,6 +65,94 @@ engine in two thermal states, not two engines.
 ⚠️ **Procedure, from now on:** let the game run two minutes before
 capturing, or capture long enough to contain the transition and read it
 with `read_capture --over-time`, which prints the drift and says so.
+
+🔴 **…and this whole subsection describes an UNCAPPED machine.** With the
+frame rate capped in hardware there is no settling and no drift, because
+the GPU never runs long enough to reach its power cap — see the next
+section. A capture has to record which of the two it was taken on, or the
+two are averaged into a machine that does not exist.
+
+### 🔴 A frame cap is a PERFORMANCE setting on this part, 2026-08-20
+
+Three operating points, same build, same scene, same preset, same
+session. The only differences are the TDP and whether the frame rate is
+capped in hardware:
+
+| | 10 W, vsync on | 4 W, uncapped | **8 W, capped at 72** |
+|---|---|---|---|
+| frame median | 13.92 | 13.96 | **13.88** |
+| p99 | 25.64 | 21.60 | **14.46** |
+| max | 29.07 | **47.09** | **15.25** |
+| **GPU** | 9.7 | **13.2** | **3.9** |
+| `frame/GPU` | 1.45 | 1.06 | **3.5** |
+| `shade: compute (half rate)` | 3.272 | 3.858 | **1.117** |
+| `sgsr2` | 2.062 | 2.606 | **0.722** |
+| `shadows` | 0.549 | 1.251 | **0.374** |
+
+**The same work costs 3.4× less GPU time when the frame rate is capped**,
+and every pass moves by the same factor — which is not something an
+engine does. It is the clock:
+
+```
+sclk, capped at 72 fps   ~1210 MHz   (12 samples over SSH, 2026-08-20)
+sclk, uncapped and settled ~850 MHz   (the measurement three sections up)
+```
+
+Capped, the GPU is idle **68 %** of the time. An idle GPU neither heats
+nor reaches its power cap, so it holds its boost clock indefinitely.
+Uncapped, it throttles itself down and every pass takes three times
+longer. Rendering 144 frames to display 72 pays for the same work three
+times.
+
+🟢 **Confirmed by two independent instruments.** `gpu_busy_percent` reads
+**32 %** off the kernel; the GPU scopes say 3.9 ms of a 13.88 ms frame,
+which is 28 %. The four points of difference are the compositor, which
+our scopes cannot see and never claimed to.
+
+⚠️ **This splits a rule this file states as universal.** *"Warm the
+handheld for two minutes — it gets 46 % slower"* describes an
+**uncapped** machine. Capped, there is no drift at all: 13.89 → 13.88 ms
+across 60 s, with the GPU moving 3.89 → 3.99 (+2.6 %). They are two
+machines and the procedure section above only describes one of them.
+**Record which one a capture was taken on.**
+
+The cap also fixes the pacing: max frame **15.25 ms** against the 47.09 of
+the uncapped run.
+
+🎯 **Against the budget: 3.9 ms of GPU in a 13.9 ms frame is 28 % used.**
+There are ~10 ms of headroom at 8 W, not the ~4 the 10 W vsync-on capture
+suggested.
+
+### 🟡 At low TDP the frame stops being the shading pass
+
+The 4 W column above, per pass against the 10 W one:
+
+| | 10 W | 4 W | |
+|---|---|---|---|
+| `shade: compute` | 3.272 | 3.858 | +18 % |
+| `sgsr2` | 2.062 | 2.606 | +26 % |
+| `tonemap` | 0.566 | 1.030 | **+82 %** |
+| `blit` | 0.424 | 0.805 | **+90 %** |
+| `cluster grid` | 0.136 | 0.289 | **+113 %** |
+| `shadows` | 0.549 | 1.251 | **+128 %** |
+
+**The small passes nearly double; the big one grows 18 %.** The shading
+pass is bandwidth-bound and memory clock barely moves with TDP; the short
+passes are latency- and clock-bound and it does. So at 4 W:
+
+```
+shade  3.86 of 13.2 ms GPU  =  29 %
+everything else             =  71 %
+```
+
+🔴 **More than two thirds of the GPU frame is not shading**, at the
+operating point a battery-conscious player would pick. Every graphics
+item on this roadmap has been aimed at the pass that is 29 % of it there.
+That does not retire any of them, and it does say the ordering was
+derived from one operating point.
+
+⚠️ Uncapped at 4 W there is **no headroom**: 13.2 ms of GPU in a 13.96 ms
+frame, `frame/GPU` 1.06. Anything added drops it under 72.
 
 ### 🟢 The configuration that meets it, measured 2026-08-20
 

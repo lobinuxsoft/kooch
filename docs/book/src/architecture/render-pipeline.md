@@ -215,6 +215,14 @@ upscale: 2,              // SGSR 2
 render_scale: 50,        // Performance — 50 % (2x)
 ```
 
+🔴 **Cap the frame rate, and not only for the battery.** The same frame
+costs **3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped** on this
+part. Capped, the GPU is idle 68 % of the time, never reaches its power
+cap and holds ~1210 MHz; uncapped it throttles to ~850 and every pass
+takes three times longer. Rendering 144 frames to display 72 pays for the
+same work three times — and the cap fixes the pacing as well: max frame
+15.25 ms against 47.09.
+
 🔴 **The upscaler is the largest single choice on that list.** Same
 scene, same build, same session: `upscale: 3` (FSR 3.1) costs **11.355
 ms** and `upscale: 2` (SGSR 2) costs **2.062** — a 23.36 ms frame against
