@@ -260,7 +260,9 @@ pub fn cargo_command(preset: &BuildPreset, project_root: &Path, crate_name: &str
     if floor.is_some() {
         allow_shlib_undefined(&mut command);
     }
-    let features = preset.feature_list();
+    // #536 — a bare `dlss` becomes `kooch/dlss`, so a project need not
+    // declare a passthrough for an engine feature.
+    let features = super::dlss::normalise(preset.feature_list(), project_root);
     if !features.is_empty() {
         command.arg("--features").arg(features.join(","));
     }

@@ -319,6 +319,13 @@ Three things follow, and all three are visible from a project:
    a build preset's **Extra cargo features**; the editor supplies
    `DLSS_SDK` and `VULKAN_SDK` and refuses to start cargo when the SDK
    is not installed.
+
+   ⚠️ What cargo actually receives is **`kooch/dlss`** — `dlss` on its
+   own names a feature of *your* crate, which you never declared, and
+   cargo answers that with *"the package does not contain this
+   feature"*. The editor rewrites the bare spelling for you, unless your
+   own `Cargo.toml` declares a `dlss` feature, in which case it means
+   yours and is left alone.
 2. 🔴 **It moves the whole build to Vulkan.** `dlss_wgpu` is Vulkan-only,
    and on Windows wgpu picks D3D12 by default. Enabling DLSS therefore
    moves *every* Windows player onto Vulkan, not only the ones with an

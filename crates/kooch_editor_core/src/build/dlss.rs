@@ -21,7 +21,19 @@ use std::process::Command;
 use super::BuildPreset;
 
 /// The cargo feature a project turns on to get DLSS.
-pub const FEATURE: &str = "dlss";
+///
+/// 🔴 Namespaced, like `PROFILING_FEATURE`. `dlss` on its own is a
+/// feature of the GAME's crate, which no project declares, and cargo
+/// answers that with *"the package does not contain this feature"*.
+/// `kooch/dlss` reaches the engine's without the project declaring
+/// anything.
+pub const FEATURE: &str = "kooch/dlss";
+
+/// The spelling a project uses if it declared a passthrough of its own.
+///
+/// Accepted because a project is entitled to wrap the engine's feature
+/// in one of its own — and because it is what anyone types first.
+pub const BARE_FEATURE: &str = "dlss";
 
 /// What the notices land as, beside the executable.
 ///
@@ -37,7 +49,67 @@ pub fn wanted(preset: &BuildPreset) -> bool {
     preset
         .feature_list()
         .iter()
-        .any(|feature| feature == FEATURE)
+        .any(|feature| feature == FEATURE || feature == BARE_FEATURE)
+}
+
+/// Rewrites a bare `dlss` into the spelling cargo accepts.
+///
+/// 🔴 The papercut this removes: `--features dlss` names a feature of
+/// the GAME's crate, and cargo refuses a build that asks for one the
+/// project never declared. Every project would have to write the same
+/// three-line passthrough, and the failure until it did was
+/// *"the package does not contain this feature"* — which says nothing
+/// about the engine.
+///
+/// ⚠️ Guarded on the project's own manifest rather than applied
+/// blindly. A project is entitled to declare `dlss` as a feature that
+/// means more than the engine's, and rewriting that would silently
+/// build something else.
+pub fn normalise(features: Vec<String>, project_root: &Path) -> Vec<String> {
+    if !features.iter().any(|f| f == BARE_FEATURE) {
+        return features;
+    }
+    let manifest = std::fs::read_to_string(project_root.join("Cargo.toml")).unwrap_or_default();
+    if declares_feature(&manifest, BARE_FEATURE) {
+        return features;
+    }
+    features
+        .into_iter()
+        .map(|f| {
+            if f == BARE_FEATURE {
+                FEATURE.to_owned()
+            } else {
+                f
+            }
+        })
+        .collect()
+}
+
+/// Whether `manifest`'s `[features]` table has an entry called `name`.
+///
+/// Scanned rather than parsed: the question is one key in one table, and
+/// a manifest parser is a dependency this crate does not otherwise need.
+fn declares_feature(manifest: &str, name: &str) -> bool {
+    let mut in_features = false;
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            in_features = line == "[features]";
+            continue;
+        }
+        if !in_features {
+            continue;
+        }
+        if let Some((key, _)) = line.split_once('=')
+            && key.trim().trim_matches('"') == name
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// What is missing before cargo can be started, if anything.
