@@ -448,6 +448,74 @@ fn draw_launch_env(
     );
 }
 
+/// What this machine is missing before a project can build.
+///
+/// 🔴 Shown on every launch while something is missing, and never
+/// otherwise. The check runs once at startup because installing any of
+/// it ends in a reboot, so the answer cannot change underneath.
+///
+/// It does **not** install. On an image-based distribution — which both
+/// of this project's Linux targets are — a package writes a new image and
+/// needs a reboot, which is not something an editor may do behind a
+/// dialog. What it removes is the web search: the requirement, why it is
+/// needed, and the exact command for *this* machine.
+pub(crate) fn draw_preflight_window(ctx: &egui::Context, report: &crate::preflight::Report) {
+    if report.is_ready() {
+        return;
+    }
+    let id = egui::Id::new("kooch_preflight_window_open");
+    let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
+    if !open {
+        return;
+    }
+
+    egui::Window::new("This machine cannot build a project yet")
+        .open(&mut open)
+        .resizable(true)
+        .default_width(520.0)
+        .collapsible(false)
+        .show(ctx, |ui| {
+            ui.label(
+                "A project made with this editor compiles the engine, so it needs a \
+                 Rust toolchain and the system libraries the engine links against. \
+                 These are missing:",
+            );
+            ui.add_space(6.0);
+            for requirement in &report.missing {
+                ui.label(egui::RichText::new(requirement.name).strong());
+                ui.weak(requirement.why);
+                if !requirement.hint.is_empty() {
+                    ui.weak(format!("    {}", requirement.hint));
+                }
+                ui.add_space(4.0);
+            }
+
+            match report.command() {
+                Some(command) => {
+                    ui.separator();
+                    ui.add_space(4.0);
+                    ui.label("Run this, then reopen the editor:");
+                    ui.code(&command);
+                    if ui.button(format!("{} Copy", icons::COPY)).clicked() {
+                        ctx.copy_text(command);
+                    }
+                }
+                // Named without a command rather than given a wrong one:
+                // an unrecognised package manager, or a requirement no
+                // package manager provides.
+                None => {
+                    ui.add_space(4.0);
+                    ui.weak(
+                        "No package-manager command for this machine — install the above \
+                         the way this system installs things.",
+                    );
+                }
+            }
+        });
+
+    ctx.data_mut(|d| d.insert_temp(id, open));
+}
+
 /// Where the Settings window's open flag lives.
 fn settings_open_id(ctx: &egui::Context) -> egui::Id {
     let _ = ctx;

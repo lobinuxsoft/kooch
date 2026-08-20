@@ -71,6 +71,7 @@ pub(super) struct ViewportUi<'a> {
 pub(super) fn run_editor_ui(
     overlay: &mut EditorOverlay,
     project_state: &mut Option<ProjectState>,
+    preflight: Option<&crate::preflight::Report>,
     raw_input: egui::RawInput,
     project_loaded: bool,
     data: &FrameDisplayData,
@@ -180,6 +181,9 @@ pub(super) fn run_editor_ui(
             // Drawn on the context rather than inside a panel: a window is
             // free-floating, and nesting it in the menu bar's `Ui` would
             // clip it to that strip.
+            if let Some(report) = preflight {
+                crate::menu_bar::draw_preflight_window(ui.ctx(), report);
+            }
             crate::menu_bar::draw_settings_window(
                 ui.ctx(),
                 &mut actions,
