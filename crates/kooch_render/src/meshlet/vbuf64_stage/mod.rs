@@ -598,7 +598,7 @@ impl Vbuf64Stage {
         // get at. `None` in every build and on every adapter that has
         // no DLSS, which is most of them.
         dlss_runtime: Option<&kooch_core::gpu::DlssRuntime>,
-    ) -> Option<wgpu::CommandBuffer> {
+    ) -> Option<Deferred> {
         // 🔴 DLSS hands back a command buffer of its own that has to be
         // submitted immediately after this frame's encoder, so it
         // travels all the way out of here rather than being recorded.
@@ -890,6 +890,26 @@ impl Vbuf64Stage {
                         scopes.end(encoder, query);
                     }
                 }
+                // 🔴 Everything below reads the image the resolve just
+                // produced — and when that resolve was DLSS, it has not
+                // happened yet. DLSS's work is in a command buffer of
+                // its own, submitted AFTER this encoder, so a tonemap
+                // recorded here would sample a texture nothing had
+                // written. That is a blank frame with no error anywhere:
+                // measured on an RTX 3070, where the window came up the
+                // colour of the sky and nothing else.
+                //
+                // So the rest of the frame moves to an encoder the
+                // caller submits after DLSS's. Every other technique
+                // records into the frame's own encoder exactly as
+                // before.
+                let mut post = dlss_commands.as_ref().map(|_| {
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("kooch_post_upscale"),
+                    })
+                });
+                let encoder: &mut wgpu::CommandEncoder = post.as_mut().unwrap_or(&mut *encoder);
+
                 // 🔴 Sharpening reads a FINISHED image (#481 step 5),
                 // so when it runs the tonemap resolves into its texture
                 // instead of into the window and it is RCAS that writes
@@ -946,10 +966,32 @@ impl Vbuf64Stage {
                         scopes.end(encoder, query);
                     }
                 }
+                return dlss_commands
+                    .zip(post)
+                    .map(|(dlss, post)| Deferred { dlss, post });
             }
         }
-        dlss_commands
+        None
     }
+}
+
+/// Work the caller must submit AFTER this frame's own encoder, in this
+/// order (#536).
+///
+/// Exists because DLSS does not record into the encoder it is handed —
+/// it takes that one only to insert its barriers and hands back a
+/// command buffer of its own. Anything that reads the upscaled image
+/// therefore cannot live in the encoder that came before it.
+///
+/// `post` arrives still open, so the caller keeps recording the rest of
+/// its frame — the debug overlay, the GPU timer resolve — into it and
+/// submits it last. Handing back a finished buffer instead would put
+/// the timer resolve before the timestamps it resolves.
+pub struct Deferred {
+    /// NVIDIA's own commands.
+    pub dlss: wgpu::CommandBuffer,
+    /// The tonemap and the sharpen, and whatever the caller adds.
+    pub post: wgpu::CommandEncoder,
 }
 
 /// Reports the mismatched frame once, and never again.
