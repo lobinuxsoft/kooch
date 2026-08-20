@@ -452,6 +452,10 @@ const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
         label: "FSR 3.1 — AMD's, transliterated (desktop: 6x SGSR 2)",
         value: 3,
     },
+    kooch_ecs::reflect::FieldChoice {
+        label: "DLSS — NVIDIA's, linked (NVIDIA + Vulkan only)",
+        value: 4,
+    },
 ];
 
 /// No resolve — what every capture before #481 was taken against. A
@@ -473,8 +477,8 @@ fn default_upscale() -> u32 {
 /// reason the choices are: they live in user projects.
 static UPSCALES_WHEN: kooch_ecs::reflect::FieldCondition = kooch_ecs::reflect::FieldCondition {
     field: "upscale",
-    // Sgsr2, Fsr3.
-    values: &[2, 3],
+    // Sgsr2, Fsr3, Dlss.
+    values: &[2, 3, 4],
 };
 
 /// AMD's preset ladder, by the name each ratio is known under, because
@@ -824,7 +828,7 @@ pub fn apply_render_settings_system(resources: &mut Resources) {
     let shadows = settings.shadows();
     let contact = settings.contact_shadows();
     let shading = settings.shading();
-    let temporal = settings.temporal();
+    let temporal = without_missing_dlss(settings.temporal(), resources);
     let presentation = settings.presentation();
     let window_mode = settings.window_mode();
     let stale = resources.get::<crate::quality::Presentation>() != Some(&presentation)
@@ -837,12 +841,62 @@ pub fn apply_render_settings_system(resources: &mut Resources) {
         || resources.get::<crate::quality::TemporalSettings>() != Some(&temporal);
     if stale {
         settings.apply(resources);
+        // 🔴 After `apply`, which inserts the technique the FILE asked
+        // for. A project authored on a machine with DLSS is opened on
+        // one without, and the value it wrote is still the right thing
+        // to keep in the asset — what must not survive is the engine
+        // then trying to run it.
+        resources.insert(temporal);
         tracing::debug!(
             target: "kooch_render::settings",
             ev100 = exposure.ev100,
             "render settings applied",
         );
     }
+}
+
+/// Downgrades DLSS to the engine's own resolve when this build, or this
+/// adapter, cannot run it (#536).
+///
+/// 🔴 The asset is left alone. `upscale = 4` is a statement about what
+/// the project wants, and a settings file that quietly rewrote itself on
+/// the developer's laptop would ship the wrong value to the machine that
+/// could have honoured it.
+///
+/// The scale goes back to 100 with the technique: TAA resolves, it does
+/// not reconstruct, and leaving a half-sized render behind would trade
+/// the missing upscaler for a blurry frame nobody asked for.
+fn without_missing_dlss(
+    mut temporal: crate::quality::TemporalSettings,
+    resources: &Resources,
+) -> crate::quality::TemporalSettings {
+    if temporal.technique != crate::quality::UpscaleTechnique::Dlss {
+        return temporal;
+    }
+    let available = resources
+        .get::<kooch_core::gpu::DlssRuntime>()
+        .is_some_and(|runtime| runtime.support.super_resolution);
+    if available {
+        return temporal;
+    }
+    warn_once_about_missing_dlss();
+    temporal.technique = crate::quality::UpscaleTechnique::Taa;
+    temporal.render_scale = 100;
+    temporal
+}
+
+/// Says it once. The condition cannot change within a session — neither
+/// the adapter nor the linked SDK does — so a line per frame would be a
+/// log nobody reads.
+fn warn_once_about_missing_dlss() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing::warn!(
+            target: "kooch_render::settings",
+            "the project asks for DLSS and this build or adapter has none; \
+             resolving with the engine's own TAA at full resolution instead",
+        );
+    });
 }
 
 /// The guid of the project's settings asset, if it has one.

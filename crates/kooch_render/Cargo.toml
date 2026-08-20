@@ -14,6 +14,7 @@ kooch_ecs.workspace = true
 # without one paints normals.
 kooch_lighting.workspace = true
 wgpu.workspace = true
+dlss_wgpu = { workspace = true, optional = true }
 glam.workspace = true
 bytemuck.workspace = true
 tracing.workspace = true
@@ -45,6 +46,12 @@ serde.workspace = true
 # methods compile to nothing when the feature is off, so the render
 # code has one shape.
 gpu-profiler = ["kooch_core/gpu-profiler"]
+# NVIDIA DLSS (#536). Off by default and compile-time by construction:
+# `dlss_wgpu`'s build script links NVIDIA's static library, so a build
+# with this on needs `DLSS_SDK` and `VULKAN_SDK` set. With it off the
+# `Dlss` technique still exists, still serialises, and falls back to the
+# engine's own resolve with a warning.
+dlss = ["dep:dlss_wgpu", "kooch_core/dlss"]
 
 [dev-dependencies]
 naga = { version = "29", features = ["wgsl-in"] }

@@ -56,6 +56,11 @@ impl MeshletRenderStage {
         // with everything else this function reads out of `resources`.
         let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
 
+        // #536 — the DLSS handles. Their own resource rather than a
+        // field of `GpuContext`, because the frame's systems have taken
+        // the context out of `Resources` for the duration of this call.
+        let dlss_runtime = resources.get::<kooch_core::gpu::DlssRuntime>();
+
         // Stage 0 (Cull). render() already called `write_start`
         // which lands on stage 0; just close it after the dispatch.
         {
@@ -114,13 +119,16 @@ impl MeshletRenderStage {
         // reported the overlay dispatch, the readbacks and `Queue::
         // submit` as part of the raster. The CPU cost of submitting is
         // not the cost of shading.
-        {
+        // 🔴 The block's value, not a mutable binding written from
+        // inside it: DLSS hands back a command buffer that has to reach
+        // the single submit at the bottom of this function (#536).
+        let frame_dlss_commands = {
             profiling::scope!("raster + shade (fused)");
             // The prime suspect for the 96 % (#769): one fragment shader
             // doing both the raster and the whole lighting evaluation, over
             // every pixel the scene covers.
             let shade_query = scopes.map(|s| s.begin("raster + shade", &mut encoder));
-            vbuf64.render(
+            let dlss_commands = vbuf64.render(
                 device,
                 queue,
                 &mut encoder,
@@ -149,11 +157,18 @@ impl MeshletRenderStage {
                 /* clear_depth */ true,
                 scopes.as_deref(),
                 shade_query.as_ref(),
+                dlss_runtime.as_deref(),
             );
             if let (Some(scopes), Some(query)) = (scopes, shade_query) {
                 scopes.end(&mut encoder, query);
             }
-        }
+            // 🔴 Kept until the submit below, where it goes in the SAME
+            // submission and immediately after this encoder. DLSS
+            // records into wgpu's Vulkan command pool behind its back;
+            // submitting it apart from, or before, the frame that fed
+            // it is undefined behaviour by the crate's own contract.
+            dlss_commands
+        };
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_end(&mut encoder, 1);
             self.gpu_timers.write_stage_start(&mut encoder, 2);
@@ -223,7 +238,7 @@ impl MeshletRenderStage {
             self.gpu_timers.write_stage_end(&mut encoder, 2);
             self.gpu_timers.resolve_and_copy(&mut encoder, slot_idx);
         }
-        queue.submit(std::iter::once(encoder.finish()));
+        queue.submit(std::iter::once(encoder.finish()).chain(frame_dlss_commands));
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.submit_readback(slot_idx);
         }
