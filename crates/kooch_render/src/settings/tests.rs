@@ -254,3 +254,31 @@ fn a_file_without_vsync_keeps_it_on() {
     let parsed: RenderSettings = ron::from_str("(sharpening: 0)").expect("partial file");
     assert!(parsed.vsync);
 }
+
+/// 🔴 What a file written before this field existed silently becomes.
+/// Every `.rendersettings` on every disk predates `window_mode`, and
+/// taking the display is not something a project opts into by upgrading
+/// the engine.
+#[test]
+fn a_file_without_the_mode_stays_windowed() {
+    let parsed: RenderSettings = ron::from_str("(sharpening: 0)").expect("partial file");
+    assert_eq!(
+        parsed.window_mode(),
+        kooch_core::window_mode::WindowMode::Windowed,
+    );
+}
+
+/// `apply` publishes it and `apply_render_settings_system` compares it —
+/// a resource missing from either place makes the setting do nothing at
+/// all, silently.
+#[test]
+fn apply_publishes_the_window_mode() {
+    let mut resources = kooch_core::resource::Resources::new();
+    let mut settings = RenderSettings::default();
+    settings.window_mode = 2;
+    settings.apply(&mut resources);
+    assert_eq!(
+        resources.get::<kooch_core::window_mode::WindowMode>(),
+        Some(&kooch_core::window_mode::WindowMode::Fullscreen),
+    );
+}

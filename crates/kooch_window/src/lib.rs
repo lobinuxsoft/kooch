@@ -23,6 +23,7 @@
 pub mod event;
 pub mod handle;
 pub mod icon;
+mod mode;
 pub mod runner;
 pub mod title_metrics;
 mod winit_app;
@@ -121,6 +122,13 @@ impl Plugin for WindowPlugin {
         app.add_system(
             kooch_core::stage::Stage::Last,
             title_metrics::title_metrics_system,
+        );
+        // After `apply_render_settings_system`, which publishes the
+        // resource in `Update`, so a change lands on the frame it is
+        // made. The system does nothing until something asks for a mode.
+        app.add_system(
+            kooch_core::stage::Stage::Last,
+            mode::apply_window_mode_system,
         );
 
         app.set_runner(winit_runner);

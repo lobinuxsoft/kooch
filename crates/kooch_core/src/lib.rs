@@ -79,6 +79,7 @@ pub mod schedule;
 pub mod stage;
 pub mod system;
 pub mod time;
+pub mod window_mode;
 
 /// Re-exported so `register_asset!` resolves from any crate.
 #[doc(hidden)]

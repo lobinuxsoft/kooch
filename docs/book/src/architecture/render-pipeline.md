@@ -204,6 +204,43 @@ centroid of every triangle the moment a point light needed a distance.
 > anybody can bisect, and the first report was "you broke the whole
 > render".
 
+### The window, and everything being live
+
+`window_mode` sits beside `vsync` in the Presentation group: **0
+windowed, 1 borderless, 2 fullscreen**. Borderless is a *window* without
+a title bar, still at the project's `width x height`; fullscreen covers
+the monitor at the monitor's **current** mode.
+
+🔴 **There is no exclusive fullscreen.** It is the only way to change the
+output resolution from inside a process, and it is also the one Wayland
+does not give a client — the compositor owns modes, and under gamescope
+it owns the scaling as well. A mode that silently degrades to borderless
+on this engine's primary platform is worse than an absent one. What
+controls the expensive resolution is `render_scale`, which is a
+percentage of the output and already a setting.
+
+⚠️ The **environment override** `KOOCH_WINDOW_MODE=windowed|borderless|
+fullscreen` is applied when the window is created; the **asset's** value
+lands a few frames later, because the settings asset needs the asset
+server, which needs the GPU, which needs the window.
+
+**Every setting in the file is live**, which is what makes a game's own
+options menu possible:
+
+| setting | how it lands |
+|---|---|
+| exposure, ambient, shadows, contact shadows | resources read per frame |
+| `compute_shading`, `shading_rate`, `upscale`, `sharpening` | applied per frame on the stage |
+| `render_scale` | next frame — `render_frame_system` calls `resize` once a frame and it early-returns unless the size or the scale moved |
+| `anisotropy` | rebuilds one sampler when the number changes |
+| `vsync` | reconfigures the surface when the mode differs |
+| `window_mode` | `set_fullscreen` / `set_decorations` when the window is not already like that |
+
+Each of those is guarded on "is it already what was asked for", because
+every one of them is a reallocation of something — a swapchain, a
+sampler, a set of render targets — and applying it unconditionally would
+rebuild it once a frame.
+
 ### 🟢 What a handheld ships with
 
 Measured on the OneXFly at 10 W, settled, 1920x1080, 2026-08-20:

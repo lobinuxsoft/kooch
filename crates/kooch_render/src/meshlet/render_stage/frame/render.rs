@@ -155,11 +155,16 @@ impl MeshletRenderStage {
         // textures. It is the editor dragging a divider that calls it,
         // and a divider knows nothing about upscaling.
         //
-        // ⚠️ So a change of scale lands on the next `resize_view`. The
-        // editor calls it every frame, so it is immediate there; a
-        // shipped game calls it when the surface is configured, which is
-        // startup and every window resize. Reallocating from inside the
-        // render would drop bind groups the GPU still has in flight.
+        // ⚠️ So a change of scale lands on the next `resize_view`, which
+        // is the FOLLOWING frame in both hosts: the editor calls it per
+        // viewport and `render_frame_system` calls `resize` once a frame
+        // before it renders (`plugin/mod.rs`). `resize_view` recomputes
+        // the render size and returns immediately when neither it nor
+        // the output moved, so the per-frame call costs a comparison and
+        // a scale set from a game's options menu is live.
+        //
+        // Reallocating from inside the render instead would drop bind
+        // groups the GPU still has in flight.
         if let Some(temporal) = temporal {
             self.upscale_technique = temporal.technique;
             self.render_scale = temporal.render_scale;
