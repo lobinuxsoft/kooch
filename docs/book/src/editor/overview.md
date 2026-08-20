@@ -148,6 +148,40 @@ recompiling.
 > [#633](https://github.com/lobinuxsoft/kooch/issues/633). It does now run the *game*
 > binary, which is what a player would get (#558).
 
+### Launch environment
+
+**Settings → Launch environment** is a line of whitespace-separated
+`KEY=VALUE` that the Play button hands the game, stored against the open
+project's path in the editor's own config.
+
+It exists because every knob this engine can be measured with is a
+`KOOCH_*` variable — the frame they exist for is a game launched outside
+the editor — and Play's child process inherits the editor's environment
+and nothing else. Without the field, handing a game one variable meant
+relaunching the editor with it set.
+
+```
+KOOCH_SHADING_PAD=4 KOOCH_FRAME_METRICS=log
+```
+
+🔴 **Stored in `editor_config.ron`, not in `project.kooch`.** A launch
+option is a measurement, and a measurement committed to a repository is a
+wrong configuration every collaborator inherits. Per project rather than
+one global line, because "it silently applied to the other project too"
+is how a capture ends up measuring something nobody asked for.
+
+⚠️ Three variables are the editor's and override anything typed here:
+`KOOCH_ENGINE_ROOT` and `KOOCH_PROJECT_ROOT`, which the editor knows and
+a text field does not, and **`KOOCH_LOG_FORMAT=json`**, without which the
+Console cannot parse the game's output at all — every line would arrive
+as one opaque string that has lost the level and target it filters on.
+`RUST_LOG` is the opposite: a default, so a line naming it wins.
+
+No quoting. A value with a space in it would need a shell's rules, and
+these variables are single words; a token that is not a `KEY=VALUE` pair
+is dropped with a warning rather than in silence, and the rest of the
+line still applies.
+
 ## What the editor does not do yet
 
 Honest list, so nothing below is mistaken for a bug in your setup:

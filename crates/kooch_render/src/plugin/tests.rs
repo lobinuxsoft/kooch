@@ -51,3 +51,17 @@ fn the_frame_loop_still_does_both() {
         "one scene render per frame",
     );
 }
+
+/// 🔴 Absent means "no opinion", and the system must not invent one.
+///
+/// A game that never loaded a settings asset, and a test that
+/// configured its own surface, both have to keep the surface they
+/// already have — the rule the whole `quality` module is built on. A
+/// default inserted here would reconfigure every such surface to vsync
+/// on the first frame.
+#[test]
+fn no_presentation_means_no_change() {
+    let mut resources = kooch_core::resource::Resources::new();
+    super::apply_presentation_system(&mut resources);
+    assert!(resources.get::<crate::quality::Presentation>().is_none());
+}

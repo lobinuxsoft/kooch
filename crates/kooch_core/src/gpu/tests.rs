@@ -64,3 +64,34 @@ mod frame_latency {
         assert_eq!(latency_from(Some("")), 2);
     }
 }
+
+mod present_mode {
+    use crate::gpu::context::vsync_from;
+
+    /// Unset is "no opinion", so the project's own setting stands. It
+    /// cannot be "vsync": that is also what every ordinary launch looks
+    /// like, and it would override the author on every run.
+    #[test]
+    fn unset_has_no_opinion() {
+        assert_eq!(vsync_from(None), None);
+    }
+
+    /// Both directions, because a project can now ship vsync off and a
+    /// run that needs it back on has to be able to say so.
+    #[test]
+    fn both_directions_are_read() {
+        assert_eq!(vsync_from(Some("novsync")), Some(false));
+        assert_eq!(vsync_from(Some("vsync")), Some(true));
+        assert_eq!(vsync_from(Some(" novsync ")), Some(false));
+    }
+
+    /// 🔴 A typo does not decide how frames are presented. It used to
+    /// mean vsync, which was harmless while vsync was the only default
+    /// and is not once the asset has a say.
+    #[test]
+    fn a_typo_has_no_opinion() {
+        assert_eq!(vsync_from(Some("no-vsync")), None);
+        assert_eq!(vsync_from(Some("off")), None);
+        assert_eq!(vsync_from(Some("")), None);
+    }
+}

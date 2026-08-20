@@ -92,3 +92,33 @@ fn the_fragment_path_is_refused_the_scale() {
         50,
     );
 }
+
+mod presentation {
+    use crate::quality::Presentation;
+
+    /// With nothing set, the project's file decides — including when it
+    /// says vsync off, which is the case a "no opinion" default that
+    /// meant `true` would have quietly overridden.
+    #[test]
+    fn the_asset_decides_when_unset() {
+        assert!(Presentation::resolve(true, None).vsync);
+        assert!(!Presentation::resolve(false, None).vsync);
+    }
+
+    /// 🔴 The variable wins, both ways. A measurement run that asked for
+    /// no vsync must get it out of a project that ships vsync on, and a
+    /// run that asked for vsync back must get it out of one that ships
+    /// it off — otherwise the A/B depends on which project is open.
+    #[test]
+    fn the_variable_outranks_the_asset() {
+        assert!(!Presentation::resolve(true, Some(false)).vsync);
+        assert!(Presentation::resolve(false, Some(true)).vsync);
+    }
+
+    /// Vsync on, because an uncapped editor and an uncapped handheld
+    /// both burn a GPU drawing frames nobody sees.
+    #[test]
+    fn the_default_is_vsync() {
+        assert!(Presentation::default().vsync);
+    }
+}

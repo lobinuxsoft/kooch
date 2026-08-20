@@ -112,6 +112,32 @@ look different: `systems/present.rs` tessellates the UI, uploads its
 textures and updates its buffers before acquiring, and the viewport
 passes run earlier still. Only the game runtime had the acquire on top.
 
+### Vsync is a setting, not only a variable
+
+`vsync` lives in `.rendersettings`, beside the shading path and the
+render scale, and `Presentation` carries it to the surface through the
+same **environment first, asset second** rule the rest of `quality` uses:
+`KOOCH_PRESENT_MODE=novsync` overrides the file for one run, `vsync`
+overrides it back, and unset leaves the project's choice alone.
+
+🔴 It was an environment variable and nothing else until then, which
+meant **a game built with Kóoch could not offer a vsync toggle** — the
+one graphics option every game ships. Its own options menu would have
+had to ask the player to set an environment variable.
+
+⚠️ `vsync: false` in a project file is a measurement configuration, not
+a performance setting. It costs a GPU drawing frames nobody sees, and on
+a handheld it costs battery for the same. It is off in exactly one case:
+somebody is reading a frame time and needs it to show work rather than
+the wait for the vblank.
+
+`GpuContext::set_vsync` compares against the mode the surface already
+has before it reconfigures, because `configure` rebuilds the swapchain —
+applying the resource unconditionally would rebuild it once a frame.
+There is no headless surface, so no test in the suite watches that
+happen; what the tests pin is the precedence rule and the serde default,
+which is what every `.rendersettings` already on disk silently becomes.
+
 ### What this does not fix
 
 The frame-time distribution is bimodal on the OneXFly — the same GPU

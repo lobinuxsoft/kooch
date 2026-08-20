@@ -6,14 +6,22 @@ use crate::play_state::PlayState;
 use crate::project_state::ProjectState;
 
 pub(super) fn handle_play(resources: &mut Resources) {
-    let (manifest_path, engine_root) = match resources.get::<ProjectState>() {
-        Some(ps) => (
-            ps.active_project
-                .as_ref()
-                .map(|p| p.root_path.join("Cargo.toml")),
-            ps.engine_root.clone(),
-        ),
-        None => (None, None),
+    let (manifest_path, engine_root, launch_env) = match resources.get::<ProjectState>() {
+        Some(ps) => {
+            let root = ps.active_project.as_ref().map(|p| p.root_path.clone());
+            let env = root
+                .as_deref()
+                .map(|root| {
+                    crate::play_state::parse_launch_env(ps.editor_config.launch_env_for(root))
+                })
+                .unwrap_or_default();
+            (
+                root.map(|root| root.join("Cargo.toml")),
+                ps.engine_root.clone(),
+                env,
+            )
+        }
+        None => (None, None, Vec::new()),
     };
     let Some(manifest_path) = manifest_path else {
         tracing::error!("Play: no active project — open a project first");
@@ -31,7 +39,12 @@ pub(super) fn handle_play(resources: &mut Resources) {
     if let Err(e) = doc.save(&scene_path) {
         tracing::error!("failed to save play scene: {e}");
     } else if let Some(play_state) = resources.get_mut::<PlayState>()
-        && let Err(e) = play_state.launch(&manifest_path, &scene_path, engine_root.as_deref())
+        && let Err(e) = play_state.launch(
+            &manifest_path,
+            &scene_path,
+            engine_root.as_deref(),
+            &launch_env,
+        )
     {
         tracing::error!("failed to launch game: {e}");
     }

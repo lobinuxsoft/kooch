@@ -384,22 +384,92 @@ fn draw_installed_engines(
     }
 }
 
+/// The open project's launch environment, for the Play button.
+///
+/// Play spawns `cargo run` and the child inherits this process's
+/// environment, so until this field existed the only way to hand a game
+/// a `KOOCH_*` variable was to relaunch the editor with it set. Every
+/// measurement this engine can make is one of those variables.
+///
+/// Applied on Apply rather than on every keystroke: a half-typed
+/// `KOOCH_SHADING_PA` saved to disk is a line somebody later reads as
+/// the setting they made.
+fn draw_launch_env(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    id: egui::Id,
+    current: &str,
+    actions: &mut Vec<EditorAction>,
+) {
+    let buffer_id = id.with("launch_env_buffer");
+    let mut buf: String = ctx
+        .data(|d| d.get_temp::<String>(buffer_id))
+        .unwrap_or_else(|| current.to_owned());
+
+    ui.label("Launch environment — variables the Play button gives this project's game:");
+    if ui.text_edit_singleline(&mut buf).changed() {
+        ctx.data_mut(|d| d.insert_temp(buffer_id, buf.clone()));
+    }
+    ui.weak(
+        "Whitespace-separated KEY=VALUE, e.g. 'KOOCH_SHADING_PAD=4 \
+         KOOCH_FRAME_METRICS=log'. No quotes: a value with a space in it \
+         needs a shell's rules, and these variables are single words. \
+         Stored against this project alone, in the editor's config rather \
+         than in the project, because a measurement does not belong in a \
+         repository.",
+    );
+
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if ui.button("Apply").clicked() {
+            actions.push(EditorAction::SetLaunchEnv {
+                value: buf.trim().to_owned(),
+            });
+            ctx.data_mut(|d| d.remove::<String>(buffer_id));
+        }
+        if ui.button("Clear").clicked() {
+            actions.push(EditorAction::SetLaunchEnv {
+                value: String::new(),
+            });
+            buf.clear();
+            ctx.data_mut(|d| d.remove::<String>(buffer_id));
+        }
+    });
+
+    ui.add_space(4.0);
+    match current.trim().is_empty() {
+        true => ui.weak("In use: nothing — the game inherits the editor's environment."),
+        false => ui.weak(format!("In use: {current}")),
+    };
+    ui.weak(
+        "KOOCH_ENGINE_ROOT, KOOCH_PROJECT_ROOT and KOOCH_LOG_FORMAT are the \
+         editor's and override anything typed here — the Console cannot read \
+         the game's output without the last one.",
+    );
+}
+
 /// Where the Settings window's open flag lives.
 fn settings_open_id(ctx: &egui::Context) -> egui::Id {
     let _ = ctx;
     egui::Id::new("kooch_settings_window_open")
 }
 
-/// The Settings window: editor preferences that are not per-project.
+/// The Settings window: editor preferences, and the two things about
+/// the open project that belong beside them.
 ///
 /// A window rather than a menu, because a menu closes on any click it
 /// does not consume and a text field inside one cannot be typed into.
 /// It is also movable and resizable, which a path worth pasting needs.
+///
+/// ⚠️ It used to say "not per-project", and that stopped being true
+/// before the launch environment arrived: the engine list below already
+/// takes the open project's version and offers to move it.
 pub(crate) fn draw_settings_window(
     ctx: &egui::Context,
     actions: &mut Vec<EditorAction>,
     ide_command: Option<&str>,
     project_engine: Option<&str>,
+    launch_env: Option<&str>,
 ) {
     let id = settings_open_id(ctx);
     let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
@@ -456,6 +526,13 @@ pub(crate) fn draw_settings_window(
                 Some(current) => ui.weak(format!("In use: {current}")),
                 None => ui.weak("In use: whatever the desktop says opens a source file."),
             };
+
+            if let Some(current) = launch_env {
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(6.0);
+                draw_launch_env(ui, ctx, id, current, actions);
+            }
 
             ui.add_space(12.0);
             ui.separator();

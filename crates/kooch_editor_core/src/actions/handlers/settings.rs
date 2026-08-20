@@ -48,6 +48,23 @@ pub(super) fn handle_set_ide_command(resources: &mut Resources, command: Option<
     }
 }
 
+/// Records the launch environment against the OPEN project's path.
+///
+/// Nothing happens with no project open, which is also when the field
+/// that raises this is not drawn: a line stored against no path could
+/// only ever apply to everything or to nothing.
+pub(super) fn handle_set_launch_env(resources: &mut Resources, value: String) {
+    if let Some(ps) = resources.get_mut::<ProjectState>() {
+        let Some(root) = ps.active_project.as_ref().map(|p| p.root_path.clone()) else {
+            return;
+        };
+        ps.editor_config.set_launch_env(&root, value);
+        if let Err(e) = ps.editor_config.save() {
+            tracing::warn!(error = %e, "failed to save editor config");
+        }
+    }
+}
+
 pub(super) fn handle_set_power_profile(resources: &mut Resources, profile: PowerProfile) {
     if let Some(slot) = resources.get_mut::<PowerProfile>() {
         if *slot != profile {
