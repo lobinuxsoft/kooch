@@ -15,6 +15,9 @@
 //!   trees the editor keeps apart.
 
 pub mod compile;
+/// - [`dlss`] — the two obligations a build with NVIDIA's upscaler
+///   carries: the SDK before cargo, the runtime and the notices after.
+pub mod dlss;
 pub mod key;
 pub mod package;
 pub mod preset;

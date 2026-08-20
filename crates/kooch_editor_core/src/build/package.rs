@@ -53,6 +53,13 @@ pub struct Package {
     pub assets: usize,
     /// How many scene files travelled.
     pub scenes: usize,
+    /// What DLSS put beside the executable, when the preset asked for
+    /// it (#536): the runtime blob and NVIDIA's notices.
+    ///
+    /// Reported rather than silent — a file that appears in a build
+    /// folder without being mentioned is a file its author deletes, and
+    /// the notices are the one that must not be deleted.
+    pub dlss: Vec<PathBuf>,
     /// Project assets that shadowed an engine asset of the same name.
     ///
     /// Not an error — the project is the author and wins — but worth
@@ -175,12 +182,17 @@ pub fn assemble(
         }
     };
 
+    // #536 — NVIDIA's runtime blob and its notices, for a build that
+    // asked for DLSS. Nothing for every other build.
+    let dlss = super::dlss::ship(preset, &dir)?;
+
     Ok(Package {
         dir,
         binary: dest_binary,
         pack,
         assets: files.len() - scene_count,
         scenes: scene_count,
+        dlss,
         shadowed,
     })
 }

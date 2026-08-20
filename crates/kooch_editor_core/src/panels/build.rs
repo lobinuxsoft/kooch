@@ -183,6 +183,25 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
                 package.scenes,
             );
             let response = ui.strong(summary);
+            if !package.dlss.is_empty() {
+                // 🔴 Said out loud, because one of these files is a
+                // legal obligation and the other is what makes DLSS
+                // work at all. A build folder gains two files nobody
+                // recognises, and an unexplained file gets deleted.
+                ui.weak(format!(
+                    "{} NVIDIA files travelled with this build — the DLSS runtime and \
+                     its notices. Both must stay beside the executable.",
+                    package.dlss.len(),
+                ))
+                .on_hover_text(
+                    package
+                        .dlss
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+            }
             if !package.shadowed.is_empty() {
                 // Worth surfacing: the engine's version of those files is
                 // simply not in the build, and nothing else says so.

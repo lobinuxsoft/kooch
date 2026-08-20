@@ -73,6 +73,23 @@ pub fn runtime_path(dir: &Path) -> PathBuf {
     ))
 }
 
+/// The runtime a build for `triple` ships, inside `dir`.
+///
+/// Empty means this machine, which is the only case where the host's own
+/// name is the right answer.
+pub fn runtime_for(dir: &Path, triple: &str) -> PathBuf {
+    if triple.contains("windows") || (triple.trim().is_empty() && cfg!(windows)) {
+        dir.join("lib/Windows_x86_64/rel/nvngx_dlss.dll")
+    } else {
+        runtime_path(dir)
+    }
+}
+
+/// The document whose section 9.5 a shipped game has to carry.
+pub fn notices_path(dir: &Path) -> PathBuf {
+    dir.join("doc/DLSS_Programming_Guide_Release.pdf")
+}
+
 /// The clone, as arguments.
 ///
 /// `--depth 1` because the history is not wanted and the checkout is
