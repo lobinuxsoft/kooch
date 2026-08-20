@@ -114,6 +114,14 @@ impl MeshletRenderStage {
             self.gpu_timers.write_stage_start(&mut encoder, 1);
         }
         let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
+        // Hoisted out of the call below: the page-marking debug view
+        // needs it too, to divide out what the tonemap multiplies back
+        // in (#866).
+        let exposure = resources
+            .get::<kooch_lighting::Exposure>()
+            .copied()
+            .unwrap_or_default()
+            .multiplier();
         // 🔴 Braced, like `upload instances`: a `profiling::scope!`
         // lives to the end of its block, and mid-function this one
         // reported the overlay dispatch, the readbacks and `Queue::
@@ -149,11 +157,7 @@ impl MeshletRenderStage {
                 // #732 — the tonemap is its own pass now, so the scalar
                 // it used to read out of the Inti uniform is passed to
                 // the stage instead.
-                resources
-                    .get::<kooch_lighting::Exposure>()
-                    .copied()
-                    .unwrap_or_default()
-                    .multiplier(),
+                exposure,
                 /* clear_depth */ true,
                 scopes.as_deref(),
                 shade_query.as_ref(),
@@ -180,9 +184,10 @@ impl MeshletRenderStage {
             encoder = deferred.post;
         }
         // Shadow-page marking (#866). After the raster, because it reads
-        // the depth the raster just wrote, and after the froxel grid,
-        // which `render` recorded before the path split: the depth says
-        // WHERE a surface is and the grid says WHICH lights reach it.
+        // the depth the raster just wrote; after the froxel grid, which
+        // `render` recorded before the path split; and after the DLSS
+        // cut, because the debug view paints the view's FINAL colour and
+        // everything downstream of that cut reads the upscaled image.
         self.record_page_marking(
             device,
             queue,
@@ -265,7 +270,7 @@ impl MeshletRenderStage {
         queue.submit(std::iter::once(encoder.finish()));
         // The counters' ring maps after the submit, the way every other
         // readback here does.
-        self.report_page_marking();
+        self.report_page_marking(resources);
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.submit_readback(slot_idx);
         }

@@ -692,19 +692,35 @@ fn shadow_page_controls(
         return;
     }
 
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("one thread per").small());
-        ui.add(
-            egui::DragValue::new(&mut page_marking.rate)
-                .speed(0.2)
-                .range(RATE_RANGE.0..=RATE_RANGE.1)
-                .suffix(" px"),
-        )
+    ui.checkbox(&mut page_marking.paint, "Paint pages over the scene")
         .on_hover_text(
-            "Not free accuracy in either direction. Coarser is fewer threads AND a wider \
-             pixel footprint, so the level chosen comes out coarser and the count lower. \
-             1 is the honest reading and the expensive one.",
+            "Colours every pixel by the shadow page it reads. HUE is the level — where the \
+             frame spends detail, and a band of it is a level boundary. BRIGHTNESS is the \
+             page identity, so neighbouring pages differ and the tiling is visible: a page \
+             covering a quarter of the screen is too coarse for it, and a mosaic too fine \
+             to resolve is detail nobody sees. The sun's page wins where there is a sun, \
+             because a pixel is lit by many lights and painting the last one walked would \
+             make the view depend on the light list's order.",
         );
+
+    ui.add_enabled_ui(!page_marking.paint, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("one thread per").small());
+            ui.add(
+                egui::DragValue::new(&mut page_marking.rate)
+                    .speed(0.2)
+                    .range(RATE_RANGE.0..=RATE_RANGE.1)
+                    .suffix(" px"),
+            )
+            .on_hover_text(
+                "Not free accuracy in either direction. Coarser is fewer threads AND a \
+                 wider pixel footprint, so the level chosen comes out coarser and the \
+                 count lower. 1 is the honest reading and the expensive one. Painting \
+                 forces it to 1: at any coarser rate the view is a grid of dots over an \
+                 unpainted frame, which reads as a broken pass rather than as a coarse \
+                 sample.",
+            );
+        });
     });
 
     let Some(counts) = page_counts else {
@@ -732,16 +748,37 @@ fn shadow_page_controls(
     let mib = counts.resident as f64 * config.page_bytes() as f64 / (1024.0 * 1024.0);
     ui.label(
         egui::RichText::new(format!(
-            "{} pages · {mib:.1} MiB · {} samples · {} sample/light pairs",
-            counts.resident, counts.samples, counts.pairs
+            "{} pages · {mib:.1} MiB · at {}x{}",
+            counts.resident, counts.size.0, counts.size.1
         ))
         .small(),
     )
     .on_hover_text(
         "Distinct pages the frame would make resident, at 128-texel pages and Depth32Float. \
+         The resolution is part of the reading, not context: a page count without it is not \
+         a number, and the View and Game tabs are two cameras at two sizes. \
          Read it against Unreal's own pool, which is 4096 pages for the WHOLE scene by \
          default (6144 for open worlds, 8192 thrashes) — and against this engine's 152 MiB \
          of fixed shadow allocations, which stand whether or not a light casts.",
+    );
+    // 🔴 The count is for EVERY light the grid holds, not the handful
+    // that have a shadow slot today — and that is the measurement, not
+    // an oversight. A virtual shadow map exists for many lights; counting
+    // only the four that fit today's slots would be measuring the cap
+    // the feature is meant to remove.
+    ui.label(
+        egui::RichText::new(format!(
+            "{} samples · {} sample/light pairs · every light casting",
+            counts.samples, counts.pairs
+        ))
+        .small()
+        .weak(),
+    )
+    .on_hover_text(
+        "The pass walks the froxel grid, which holds every light that reaches a pixel — so \
+         this is what the scene would cost with ALL of its lights casting, not with the \
+         four that have a cube slot today. Pairs divided by samples is the grid's own \
+         lights-per-pixel, which is the cross-check that the light side agrees with it.",
     );
     // 🔴 The comparison that makes the number mean something, and it is
     // one budget for every light in the scene rather than per light.

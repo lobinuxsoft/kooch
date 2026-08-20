@@ -62,6 +62,41 @@ pub fn rate_from_environment() -> u32 {
 /// What the panel's slider allows, and what `record` clamps to.
 pub const RATE_RANGE: (u32, u32) = (1, 16);
 
+/// What the debug view paints into.
+///
+/// 🔴 The view's **final** colour target, not the HDR radiance one, and
+/// that is the fix for two bugs in one. The radiance target lives inside
+/// the R64 stage and this pass cannot reach it; `MeshletView::color_view`
+/// is `Rgba8Unorm`, allocated at the view's OUTPUT size, and holds the
+/// tonemapped image. Painting there means the debug view needs no
+/// exposure divided out and survives the upscaler, because it is written
+/// after both.
+///
+/// ⚠️ It also has to match exactly: wgpu compares the storage class
+/// declared in the shader against this layout, and the mismatch surfaces
+/// as a stream of *"Storage texture binding 8 expects format ..."*
+/// rather than as a wrong image.
+pub const PAINT_FORMAT: wgpu::TextureFormat = crate::meshlet::deferred::DEFERRED_COLOR_FORMAT;
+
+/// Where the debug view writes, and what it has to survive.
+#[derive(Clone, Copy)]
+pub struct Paint<'a> {
+    /// The frame's HDR radiance. Bound whether or not the view is on:
+    /// a binding declared in the shader has to be provided, and a
+    /// second pipeline for the sake of one branch is a second pipeline
+    /// to keep in step.
+    pub target: &'a wgpu::TextureView,
+    pub on: bool,
+    /// The target's size, which is the view's OUTPUT size and not the
+    /// depth buffer's.
+    ///
+    /// 🔴 They differ whenever `render_scale` is below 100, and one
+    /// thread per depth pixel then covers a block of output pixels. The
+    /// shader fills the whole block; writing one would leave a grid of
+    /// dots over an unpainted frame.
+    pub size: (u32, u32),
+}
+
 /// What one dispatch found.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MarkCounts {
@@ -74,6 +109,14 @@ pub struct MarkCounts {
     /// Page indices past the end of the mark buffer. 🔴 Non-zero means
     /// every number above is a floor, not a count.
     pub overflow: u32,
+    /// The render size the count was taken at.
+    ///
+    /// 🔴 Carried with the number rather than left to the reader,
+    /// because a page count without its resolution is not a reading —
+    /// this project has already had to retract a table that mixed 1080p
+    /// with 720p. It also explains the two figures the editor logs: the
+    /// View and the Game tab are two cameras at two sizes.
+    pub size: (u32, u32),
 }
 
 /// Mirrors `PageView` in `page_mark.wgsl`, field for field.
@@ -86,6 +129,7 @@ struct PageMarkView {
     chain: [u32; 4],
     strides: [u32; 4],
     sampling: [u32; 4],
+    paint: [f32; 4],
 }
 
 /// The pass, its buffers, and the ring that brings the count home.
@@ -107,6 +151,8 @@ pub struct PageMarker {
     clipmap: ClipmapConfig,
     /// Lights the mark buffer is sized for.
     capacity: u32,
+    /// The render size of the dispatch now in flight.
+    size: (u32, u32),
     last: Option<MarkCounts>,
 }
 
@@ -154,6 +200,7 @@ impl PageMarker {
             config,
             clipmap,
             capacity: 1,
+            size: (0, 0),
             last: None,
         }
     }
@@ -161,6 +208,16 @@ impl PageMarker {
     /// The last count that came back, a frame or two old.
     pub fn last(&self) -> Option<MarkCounts> {
         self.last
+    }
+
+    /// Drops the cached count.
+    ///
+    /// 🔴 Sticky by design — the ring is a frame or two behind, so a
+    /// frame with nothing new keeps reporting the last real answer. That
+    /// is right while the pass runs and wrong the moment it stops: a
+    /// count nobody measured this frame is not a reading.
+    pub fn forget(&mut self) {
+        self.last = None;
     }
 
     /// Pages one light can address, which is the mark buffer's stride.
@@ -185,6 +242,7 @@ impl PageMarker {
         sun: Option<Vec3>,
         viewport: (u32, u32),
         rate: u32,
+        paint: Paint<'_>,
     ) {
         let count = lights.light_count().max(1);
         // One slot past the lights, for the sun: it is not in the grid
@@ -196,7 +254,16 @@ impl PageMarker {
             self.capacity = slots;
         }
 
-        let rate = rate.clamp(RATE_RANGE.0, RATE_RANGE.1);
+        // 🔴 Painting forces one thread per pixel. At any coarser rate
+        // the view would be a grid of dots over an unpainted frame,
+        // which reads as "the pass is broken" rather than as "you asked
+        // for one sample in sixteen".
+        self.size = viewport;
+        let rate = if paint.on {
+            1
+        } else {
+            rate.clamp(RATE_RANGE.0, RATE_RANGE.1)
+        };
         queue.write_buffer(
             &self.view,
             0,
@@ -221,7 +288,15 @@ impl PageMarker {
                     self.stride(),
                     count,
                 ],
-                sampling: [rate, count, 0, 0],
+                sampling: [rate, count, u32::from(paint.on), 0],
+                // How many output pixels one depth pixel covers, per
+                // axis. 1 when nothing is upscaling.
+                paint: [
+                    paint.size.0 as f32 / viewport.0.max(1) as f32,
+                    paint.size.1 as f32 / viewport.1.max(1) as f32,
+                    paint.size.0 as f32,
+                    paint.size.1 as f32,
+                ],
             }),
         );
 
@@ -240,6 +315,10 @@ impl PageMarker {
                 buffer_entry(5, &self.view),
                 buffer_entry(6, &self.marks),
                 buffer_entry(7, &self.counters),
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::TextureView(paint.target),
+                },
             ],
         });
 
@@ -266,7 +345,7 @@ impl PageMarker {
         if let Some(slot) = self.pending.take() {
             self.readback.submit(slot);
         }
-        if let Some(counts) = self.readback.take() {
+        if let Some(counts) = self.readback.take(self.size) {
             self.last = Some(counts);
         }
     }
@@ -346,6 +425,16 @@ fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             uniform(5),
             storage(6, false),
             storage(7, false),
+            wgpu::BindGroupLayoutEntry {
+                binding: 8,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: PAINT_FORMAT,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                },
+                count: None,
+            },
         ],
     })
 }
@@ -429,7 +518,7 @@ impl Readback {
         None
     }
 
-    fn take(&mut self) -> Option<MarkCounts> {
+    fn take(&mut self, size: (u32, u32)) -> Option<MarkCounts> {
         for (buffer, state) in &self.slots {
             if *state.lock().unwrap() != SlotState::Ready {
                 continue;
@@ -442,6 +531,7 @@ impl Readback {
                     samples: words[1],
                     pairs: words[2],
                     overflow: words[3],
+                    size,
                 }
             };
             buffer.unmap();

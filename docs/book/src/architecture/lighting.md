@@ -981,6 +981,25 @@ setting — one written into the project and therefore promised to every
 project — before the pool's shape is decided. This is a diagnostic the
 editor drives, so it lives where the editor's other diagnostics do.
 
+🔴 **The count is for EVERY light the grid holds**, not the handful with
+a shadow slot today — and that is the measurement rather than an
+oversight. A virtual shadow map exists *for many lights*; the Chalmers
+paper is titled *"Efficient Virtual Shadow Maps for Many Lights"*.
+Counting only the four that fit today's cube slots would be measuring
+the cap the feature is meant to remove.
+
+⚠️ **The resolution is part of the reading, not context around it.** The
+editor renders two views at two sizes, so the panel shows two different
+numbers a frame apart, and a page count without its resolution is not a
+number — this project has already had to retract a table that mixed
+1080p with 720p.
+
+🎯 **The cross-check that the light side is right**: pairs divided by
+samples is the grid's own lights-per-pixel. Measured in the editor on
+`many_lights.scene`, 993 608 pairs over 51 180 samples is **19.4 lights
+per sample**, against the ~20 per cell the froxel grid reports for
+itself.
+
 It also logs `shadow pages marked` with the same numbers whenever the
 count changes — on change and not per frame, for the same reason the
 point-shadow warning is a flag rather than a count.
@@ -996,6 +1015,39 @@ the Chalmers papers the second.
 coarser rate is fewer threads **and** a wider pixel footprint, so the
 level chosen comes out coarser and the count lower. 1 is the honest
 reading and the expensive one.
+
+### Seeing it — *Paint pages over the scene*
+
+The count says how many; the view says **where**. It colours every pixel
+by the shadow page it reads:
+
+- **Hue is the level** — where the frame spends detail. A band of colour
+  is a level boundary.
+- **Brightness is the page identity**, hashed, so neighbouring pages
+  differ and the tiling is visible. A page covering a quarter of the
+  screen is a page too coarse for it; a mosaic too fine to resolve is
+  detail nobody sees.
+
+The **sun's** page wins where there is a sun. A pixel is lit by many
+lights, and painting the last one walked would make the view depend on
+the light list's order.
+
+🔴 Painting forces the sampling rate to 1. At any coarser rate the view
+is a grid of dots over an unpainted frame, which reads as a broken pass
+rather than as a coarse sample.
+
+🔴 **It paints the view's FINAL colour target, not the radiance one**,
+and that is two problems solved at once. The radiance target lives
+inside the R64 stage where this pass cannot reach it; the final one is
+`Rgba8Unorm` at the view's **output** size and already tonemapped, so
+the palette needs no exposure divided out of it and nothing downstream
+can overwrite it.
+
+⚠️ **The depth buffer is at the RENDER size and the target at the OUTPUT
+size**, and they differ whenever `render_scale` is below 100. One thread
+then owns a block of output pixels rather than one, and it fills the
+whole block — writing a single pixel would leave a grid of dots over an
+unpainted frame.
 
 🔴 **It is an instrument, not a feature.** Nothing reads what it writes,
 and it is off unless asked for — a measurement that runs whether or not
