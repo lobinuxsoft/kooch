@@ -300,6 +300,28 @@ pub struct RenderSettings {
     #[serde(default = "default_anisotropy")]
     #[reflect(group = "Shading", choices = ANISOTROPY_CHOICES)]
     pub anisotropy: u32,
+
+    /// Whether the surface waits for the vblank before presenting.
+    ///
+    /// The one graphics option every game ships and this engine only had
+    /// as `KOOCH_PRESENT_MODE` — so a game built with Kóoch could not
+    /// offer a vsync toggle without asking the player to set an
+    /// environment variable.
+    ///
+    /// 🔴 A `bool` and not a mode. wgpu has six presentation modes and
+    /// this engine picks between two of them; a field that serialised
+    /// the other four would be offering settings the surface code does
+    /// not implement. Growing to mailbox is a new field with its own
+    /// default, not a renumbering of this one — the same rule
+    /// [`Self::upscale`] carries.
+    ///
+    /// ⚠️ Off makes the frame-time readout mean something and makes the
+    /// machine draw frames nobody sees. It is a measurement setting, and
+    /// `KOOCH_PRESENT_MODE=novsync` turns it off for one run without
+    /// touching the file.
+    #[serde(default = "default_vsync")]
+    #[reflect(group = "Presentation")]
+    pub vsync: bool,
 }
 
 /// The powers of two hardware implements. Anything between them is
@@ -327,6 +349,13 @@ const ANISOTROPY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
         value: 16,
     },
 ];
+
+/// Vsync on. What a player wants, and what an editor wants: uncapped
+/// costs a GPU to draw frames nobody sees. Measuring is the exception
+/// and `KOOCH_PRESENT_MODE=novsync` is how it asks.
+fn default_vsync() -> bool {
+    true
+}
 
 /// Off, like every other quality setting in this file: it costs
 /// bandwidth on the surfaces that already cover the most pixels, and a
@@ -552,6 +581,7 @@ impl Default for RenderSettings {
             render_scale: default_render_scale(),
             sharpening: default_sharpening(),
             anisotropy: default_anisotropy(),
+            vsync: default_vsync(),
         }
     }
 }
@@ -632,6 +662,13 @@ impl RenderSettings {
         )
     }
 
+    /// How frames reach the display, with `KOOCH_PRESENT_MODE` applied
+    /// on top — see [`crate::quality`] for why the variable outranks the
+    /// asset.
+    pub fn presentation(&self) -> crate::quality::Presentation {
+        crate::quality::Presentation::from_asset(self.vsync)
+    }
+
     /// The technique this file asks for.
     pub fn technique(&self) -> crate::quality::UpscaleTechnique {
         crate::quality::UpscaleTechnique::from_asset(self.upscale)
@@ -643,6 +680,7 @@ impl RenderSettings {
     /// never learn what an asset is, so a game that sets `Exposure`
     /// directly keeps working and a headless test needs no file.
     pub fn apply(&self, resources: &mut Resources) {
+        resources.insert(self.presentation());
         resources.insert(Exposure::from_physical(self.camera()));
         resources.insert(self.ambient());
         resources.insert(self.shadows());
@@ -724,7 +762,9 @@ pub fn apply_render_settings_system(resources: &mut Resources) {
     let contact = settings.contact_shadows();
     let shading = settings.shading();
     let temporal = settings.temporal();
-    let stale = resources.get::<Exposure>() != Some(&exposure)
+    let presentation = settings.presentation();
+    let stale = resources.get::<crate::quality::Presentation>() != Some(&presentation)
+        || resources.get::<Exposure>() != Some(&exposure)
         || resources.get::<AmbientLight>() != Some(&ambient)
         || resources.get::<ShadowSettings>() != Some(&shadows)
         || resources.get::<ContactShadowSettings>() != Some(&contact)

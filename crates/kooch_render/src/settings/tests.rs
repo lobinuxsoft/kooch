@@ -225,3 +225,32 @@ fn an_impossible_anisotropy_is_clamped() {
         );
     }
 }
+
+/// 🔴 `apply` publishes the presentation, and the staleness check in
+/// `apply_render_settings_system` compares it. A settings file whose
+/// only edit was vsync has nothing else to change, so a resource left
+/// out of either place makes that edit do nothing at all — silently,
+/// which is the failure mode this whole asset exists to avoid.
+#[test]
+fn apply_publishes_the_presentation() {
+    let mut resources = kooch_core::resource::Resources::new();
+    let mut settings = RenderSettings::default();
+    settings.vsync = false;
+    settings.apply(&mut resources);
+    assert_eq!(
+        resources.get::<crate::quality::Presentation>(),
+        Some(&crate::quality::Presentation { vsync: false }),
+    );
+}
+
+/// 🔴 What a file written before this field existed silently becomes,
+/// which `settings.rs` argues about at length for `compute_shading`: a
+/// serde default is not a recommendation. Every `.rendersettings` on
+/// every disk predates `vsync`, so this default is what all of them
+/// mean — and an uncapped frame is not something a project opts into by
+/// upgrading the engine.
+#[test]
+fn a_file_without_vsync_keeps_it_on() {
+    let parsed: RenderSettings = ron::from_str("(sharpening: 0)").expect("partial file");
+    assert!(parsed.vsync);
+}

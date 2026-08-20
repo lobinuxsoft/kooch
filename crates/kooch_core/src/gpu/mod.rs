@@ -23,7 +23,7 @@ mod profiler;
 #[cfg(test)]
 mod tests;
 
-pub use context::GpuContext;
+pub use context::{GpuContext, vsync_override};
 pub use error::GpuError;
 pub use features::{all_required_features, engine_features, vbuf64_features};
 pub use profiler::{GpuQuery, GpuScopes};

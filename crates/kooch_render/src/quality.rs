@@ -233,6 +233,58 @@ impl ShadingSettings {
     }
 }
 
+/// How finished frames reach the display, as the project asked for it.
+///
+/// Vsync is the one graphics option every game offers and this engine
+/// only had as an environment variable — so a shipped Kóoch game could
+/// not put a vsync toggle in its own options menu without asking the
+/// player to set `KOOCH_PRESENT_MODE`. It belongs here for exactly the
+/// reason the module header gives: *"a shipped game had no way to set
+/// them at all"*.
+///
+/// ⚠️ Not a quality setting in the sense the others are — it changes no
+/// pixel. It is here because this is the bundle a project's graphics
+/// travel in, and because the environment-first rule it needs is the one
+/// this module already implements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Presentation {
+    /// Whether the surface waits for the vblank.
+    ///
+    /// 🔴 On by default and it stays that way. An uncapped editor burns
+    /// a GPU drawing frames nobody sees, and an uncapped game on a
+    /// handheld spends battery on the same. Off is for measuring: with
+    /// vsync on, a frame takes the refresh interval whatever the engine
+    /// does, so removing 7.5 ms of real work moves the readout by
+    /// nothing (#691).
+    pub vsync: bool,
+}
+
+impl Presentation {
+    /// The asset's choice, with `KOOCH_PRESENT_MODE` on top.
+    pub fn from_asset(vsync: bool) -> Self {
+        Self::resolve(vsync, kooch_core::gpu::vsync_override())
+    }
+
+    /// The precedence rule, apart from the read, so a test can exercise
+    /// it without touching the process environment.
+    ///
+    /// 🔴 The variable wins. Inverting these two would make a
+    /// measurement run depend on which project happened to be open,
+    /// which the module header calls out as how a capture ends up
+    /// measuring the wrong thing.
+    fn resolve(asset: bool, over: Option<bool>) -> Self {
+        Self {
+            vsync: over.unwrap_or(asset),
+        }
+    }
+}
+
+impl Default for Presentation {
+    fn default() -> Self {
+        Self::from_asset(true)
+    }
+}
+
 impl TemporalSettings {
     /// `compute` is whether the compute shading path is on, and it is a
     /// gate on the scale for the same reason the technique is.

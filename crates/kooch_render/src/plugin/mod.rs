@@ -49,12 +49,38 @@ pub struct RenderPlugin;
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(Stage::Startup, init_renderers);
+        // Before the frame, and in `Render` rather than `Update`: the
+        // resource it reads is written by `apply_render_settings_system`
+        // in `Update`, and a stage boundary is the only ordering between
+        // two plugins that does not depend on which one registered first.
+        app.add_system(Stage::Render, apply_presentation_system);
         app.add_system(Stage::Render, render_frame_system);
     }
 
     fn name(&self) -> &str {
         "RenderPlugin"
     }
+}
+
+/// Puts [`Presentation`](crate::quality::Presentation) on the surface.
+///
+/// 🔴 Absent means "no opinion", the same as everywhere else in
+/// [`crate::quality`]: a game that never loaded a settings asset, and a
+/// test that configured its surface itself, keep exactly the surface
+/// they had. This system creates no default.
+///
+/// [`GpuContext::set_vsync`] is what decides whether anything happens —
+/// it compares against the mode the surface is already presenting with,
+/// so the common case of "the resource says what it said last frame"
+/// costs one comparison rather than a swapchain rebuild.
+fn apply_presentation_system(resources: &mut Resources) {
+    let Some(wanted) = resources.get::<crate::quality::Presentation>().copied() else {
+        return;
+    };
+    let Some(gpu) = resources.get_mut::<GpuContext>() else {
+        return;
+    };
+    gpu.set_vsync(wanted.vsync);
 }
 
 /// Surface-sized depth texture owned by the render plugin. Recreated when

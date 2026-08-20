@@ -135,6 +135,35 @@ impl GpuContext {
         self.surface.configure(&self.device, &self.surface_config);
     }
 
+    /// Whether the surface is presenting with vsync.
+    #[inline]
+    pub fn vsync(&self) -> bool {
+        self.surface_config.present_mode == mode_for(true)
+    }
+
+    /// Switches vsync on or off, reconfiguring the surface when the mode
+    /// actually changes. Returns whether it reconfigured.
+    ///
+    /// 🔴 Guarded on the current mode rather than called unconditionally.
+    /// `configure` rebuilds the swapchain — it drops every image the
+    /// surface holds — so doing it once a frame because a resource says
+    /// the same thing it said last frame would rebuild it sixty times a
+    /// second.
+    ///
+    /// Safe to call between frames, which is where its only caller runs.
+    /// The same is true of [`Self::resize`], which does the same thing
+    /// for a different field.
+    pub fn set_vsync(&mut self, vsync: bool) -> bool {
+        let wanted = mode_for(vsync);
+        if self.surface_config.present_mode == wanted {
+            return false;
+        }
+        self.surface_config.present_mode = wanted;
+        self.surface.configure(&self.device, &self.surface_config);
+        tracing::info!(?wanted, "present mode changed");
+        true
+    }
+
     /// Returns a reference to the wgpu [`Instance`].
     #[inline]
     pub fn instance(&self) -> &Instance {
@@ -285,14 +314,52 @@ pub(super) fn latency_from(raw: Option<&str>) -> u32 {
 }
 
 fn present_mode() -> wgpu::PresentMode {
-    match std::env::var("KOOCH_PRESENT_MODE").as_deref() {
-        Ok("novsync") => {
+    mode_for(vsync_override().unwrap_or(true))
+}
+
+/// The present mode a surface gets for `vsync`.
+///
+/// `AutoNoVsync` rather than `Immediate`, and `AutoVsync` rather than
+/// `Fifo`: the `Auto` pair falls back to whatever the surface actually
+/// supports instead of failing on a driver that lacks the exact mode.
+fn mode_for(vsync: bool) -> wgpu::PresentMode {
+    match vsync {
+        true => wgpu::PresentMode::AutoVsync,
+        false => wgpu::PresentMode::AutoNoVsync,
+    }
+}
+
+/// `KOOCH_PRESENT_MODE`, read once. `None` means the variable said
+/// nothing, which is what lets the project's own setting stand.
+///
+/// 🔴 **`vsync` is a recognised value and not a no-op**, which it would
+/// have been while this returned a mode rather than an opinion. Once
+/// `.rendersettings` can turn vsync off, a run that needs it back on has
+/// to be able to say so — and "unset" cannot mean that, because unset is
+/// also what every ordinary launch looks like.
+pub fn vsync_override() -> Option<bool> {
+    static VSYNC: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *VSYNC.get_or_init(|| {
+        let vsync = vsync_from(std::env::var("KOOCH_PRESENT_MODE").ok().as_deref());
+        if vsync == Some(false) {
             tracing::info!(
                 "KOOCH_PRESENT_MODE=novsync: frame times will show work rather than \
                  the wait for the vblank"
             );
-            wgpu::PresentMode::AutoNoVsync
         }
-        _ => wgpu::PresentMode::AutoVsync,
+        vsync
+    })
+}
+
+/// Reads the variable, so the rule is testable without an environment.
+///
+/// Anything unrecognised is `None` rather than a guess: a typo during a
+/// measurement run must not silently decide how frames are presented,
+/// and must not silently override the author's choice either.
+pub(super) fn vsync_from(raw: Option<&str>) -> Option<bool> {
+    match raw.map(str::trim) {
+        Some("novsync") => Some(false),
+        Some("vsync") => Some(true),
+        _ => None,
     }
 }
