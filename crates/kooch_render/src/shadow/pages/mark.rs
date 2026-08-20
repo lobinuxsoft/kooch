@@ -130,6 +130,7 @@ struct PageMarkView {
     strides: [u32; 4],
     sampling: [u32; 4],
     paint: [f32; 4],
+    density: [f32; 4],
 }
 
 /// The pass, its buffers, and the ring that brings the count home.
@@ -242,6 +243,8 @@ impl PageMarker {
         sun: Option<Vec3>,
         viewport: (u32, u32),
         rate: u32,
+        // Shadow texels per screen pixel, as a percentage.
+        density: u32,
         paint: Paint<'_>,
     ) {
         let count = lights.light_count().max(1);
@@ -297,6 +300,9 @@ impl PageMarker {
                     paint.size.0 as f32,
                     paint.size.1 as f32,
                 ],
+                // The reciprocal, because the shader scales the world
+                // size a pixel may ask a texel to match.
+                density: [100.0 / density.clamp(1, 400) as f32, 0.0, 0.0, 0.0],
             }),
         );
 

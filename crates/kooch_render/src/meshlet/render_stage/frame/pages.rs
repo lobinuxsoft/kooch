@@ -69,6 +69,9 @@ impl MeshletRenderStage {
             sun,
             view.render_size,
             settings.rate,
+            resources
+                .get::<crate::settings::RenderSettings>()
+                .map_or(100, |r| r.shadow_density),
             Paint {
                 target: &view.color_view,
                 on: settings.paint,

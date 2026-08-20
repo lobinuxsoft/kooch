@@ -201,6 +201,7 @@ fn run(
         sun,
         (SIZE, SIZE),
         /* rate */ 1,
+        /* density */ 100,
         Paint {
             target: &paint_target(device),
             on: false,
@@ -320,6 +321,7 @@ fn a_stopped_pass_reports_nothing() {
         None,
         (SIZE, SIZE),
         1,
+        /* density */ 100,
         Paint {
             target: &paint_target(&device),
             on: false,
@@ -451,6 +453,7 @@ fn paint(
         None,
         (SIZE, SIZE),
         1,
+        /* density */ 100,
         Paint {
             target: &target_view,
             on: true,
@@ -533,4 +536,71 @@ fn a_count_carries_its_resolution() {
     // has already had to retract a table that mixed 1080p with 720p.
     let counts = run(&device, &queue, &resources, 0.01, None);
     assert_eq!(counts.size, (SIZE, SIZE));
+}
+
+#[test]
+fn half_density_is_a_quarter_of_the_pages() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+
+    let at = |density| {
+        let eye = Vec3::ZERO;
+        let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+        let proj = projection();
+        let mut lights = GpuLights::new(&device);
+        let mut frame = kooch_lighting::LightFrame::extract(&resources);
+        lights.update(
+            &device,
+            &queue,
+            &resources,
+            ClusterCamera::new(eye, view, proj, VIEWPORT),
+            None,
+            &mut frame,
+        );
+        let depth_view = depth_texture(&device, &queue, 0.01);
+        let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            None,
+            (SIZE, SIZE),
+            1,
+            density,
+            Paint {
+                target: &paint_target(&device),
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(&device);
+        marker.poll();
+        marker.last().expect("counters came back").resident
+    };
+
+    // 🔴 The lever, and the reason it is the ONE that moves: a coarser
+    // texel is a level coarser in BOTH axes, so halving the density
+    // quarters the pages. Not exact — a level is a power of two and the
+    // cells round into it — so this asserts the direction and the
+    // magnitude, not an identity.
+    let full = at(100);
+    let half = at(50);
+    assert!(full > 0 && half > 0);
+    let ratio = full as f32 / half as f32;
+    assert!(
+        (2.0..=6.0).contains(&ratio),
+        "half density gave {half} against {full}, a ratio of {ratio}"
+    );
 }

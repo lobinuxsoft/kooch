@@ -53,6 +53,13 @@ struct PageView {
     // size. They differ whenever `render_scale` is below 100, and one
     // thread then owns a block rather than a pixel.
     paint: vec4<f32>,
+    // x the RECIPROCAL of `shadow_density`, as a fraction of 1.
+    //
+    // 🔴 The one lever the census found. It multiplies the world size a
+    // screen pixel is allowed to ask a shadow texel to match, so a
+    // density of 50 % doubles `wanted`, which is one level coarser in
+    // BOTH axes — a quarter of the pages.
+    density: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> view: ClusterView;
@@ -312,7 +319,7 @@ fn mark_main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // A sample is `rate` pixels wide when the pass runs coarse, and the
     // page it needs has to cover all of them.
-    wanted = wanted * f32(rate);
+    wanted = wanted * f32(rate) * pages.density.x;
 
     // 🔴 One page per pixel is painted, and the sun wins when there is
     // one: a pixel is lit by many lights and painting the last one
