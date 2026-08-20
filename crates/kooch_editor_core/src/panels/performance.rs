@@ -782,15 +782,69 @@ fn shadow_page_controls(
     );
     // 🔴 The comparison that makes the number mean something, and it is
     // one budget for every light in the scene rather than per light.
-    let pool = kooch_render::shadow::pages::POOL_PAGES;
-    let share = counts.resident as f32 / pool as f32 * 100.0;
+    // It is now this engine's OWN pool rather than a figure quoted from
+    // Epic: the allocator that hands the slots out is what reports the
+    // capacity.
     ui.label(
         egui::RichText::new(format!(
-            "{share:.0}% of Unreal's default pool ({pool} pages)"
+            "{} of {} pool pages allocated · {:.0}% full",
+            counts.pool.allocated(),
+            counts.pool.capacity,
+            counts.pool.load()
         ))
         .small()
         .weak(),
+    )
+    .on_hover_text(
+        "The physical pool the pages are allocated out of, in the same dispatch that marks \
+         them: the thread that flips a page's mark bit is the one that claims its slot. \
+         Epic's default pool is 4096 pages for the WHOLE scene — 6144 for open worlds, 8192 \
+         thrashes — and `KOOCH_SHADOW_POOL_PAGES` moves this one.",
     );
+    if counts.pool.claims != counts.resident {
+        // Two mechanisms counting the same 0→1 transitions. They agree
+        // or one of them is broken, and a panel is a better place to
+        // find that out than a frame that renders wrong.
+        ui.label(
+            egui::RichText::new(format!(
+                "{} claims against {} pages marked — the allocator disagrees with the bitmap",
+                counts.pool.claims, counts.resident
+            ))
+            .small()
+            .color(egui::Color32::from_rgb(220, 120, 90)),
+        );
+    }
+    if counts.pool.overflow > 0 {
+        ui.label(
+            egui::RichText::new(format!(
+                "{} pages went unallocated — the pool is full",
+                counts.pool.overflow
+            ))
+            .small()
+            .color(egui::Color32::from_rgb(220, 120, 90)),
+        )
+        .on_hover_text(
+            "Pages the frame needed and the pool could not give a slot to. They render \
+             unshadowed. Epic's own pool overflow shows up as checkerboard corruption or \
+             missing shadows, which is exactly the kind of failure nobody recognises by \
+             sight — so it is named here instead.",
+        );
+    }
+    if counts.pool.probes > 0 {
+        ui.label(
+            egui::RichText::new(format!(
+                "{} inserts ran out of probes — the table, not the pool",
+                counts.pool.probes
+            ))
+            .small()
+            .color(egui::Color32::from_rgb(220, 120, 90)),
+        )
+        .on_hover_text(
+            "The page table is open-addressed at a load factor of 0.5, where the expected \
+             probe count is under two. Anything here is a statement about the hash rather \
+             than about the scene.",
+        );
+    }
 }
 
 /// Default-open collapsing header — section toggles with the chevron
