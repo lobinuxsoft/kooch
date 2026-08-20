@@ -33,26 +33,34 @@ const SOURCE: &str = include_str!("../../../shaders/page_mark.wgsl");
 const GROUP: u32 = 8;
 const COUNTERS: u64 = 4;
 
-/// Whether the pass runs at all.
+/// `KOOCH_PAGE_MARKING=1`, read once.
 ///
-/// Off by default: it is an instrument, and the frame it measures is one
-/// that already meets its budget.
-pub fn enabled() -> bool {
-    std::env::var("KOOCH_PAGE_MARKING").is_ok_and(|v| v != "0" && !v.eq_ignore_ascii_case("off"))
+/// Only the **default** of [`PageMarkingSettings`](super::PageMarkingSettings):
+/// the panel owns it after that, the way the froxel grid's checkbox
+/// owns `ClusterSettings::enabled`.
+pub fn enabled_by_environment() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("KOOCH_PAGE_MARKING")
+            .is_ok_and(|v| v != "0" && !v.eq_ignore_ascii_case("off"))
+    })
 }
 
-/// How many pixels one thread stands for, per axis.
-///
-/// ⚠️ Not free accuracy either way. Coarser is fewer threads **and** a
-/// wider `wanted`, so the level chosen is coarser and the count comes
-/// out lower; 1 is the honest reading and the expensive one.
-pub fn rate() -> u32 {
-    std::env::var("KOOCH_PAGE_MARKING_RATE")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1)
-        .clamp(1, 16)
+/// `KOOCH_PAGE_MARKING_RATE`, read once. The default of
+/// [`PageMarkingSettings::rate`](super::PageMarkingSettings::rate).
+pub fn rate_from_environment() -> u32 {
+    static RATE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *RATE.get_or_init(|| {
+        std::env::var("KOOCH_PAGE_MARKING_RATE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1)
+            .clamp(RATE_RANGE.0, RATE_RANGE.1)
+    })
 }
+
+/// What the panel's slider allows, and what `record` clamps to.
+pub const RATE_RANGE: (u32, u32) = (1, 16);
 
 /// What one dispatch found.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -176,6 +184,7 @@ impl PageMarker {
         eye: Vec3,
         sun: Option<Vec3>,
         viewport: (u32, u32),
+        rate: u32,
     ) {
         let count = lights.light_count().max(1);
         // One slot past the lights, for the sun: it is not in the grid
@@ -187,7 +196,7 @@ impl PageMarker {
             self.capacity = slots;
         }
 
-        let rate = rate();
+        let rate = rate.clamp(RATE_RANGE.0, RATE_RANGE.1);
         queue.write_buffer(
             &self.view,
             0,

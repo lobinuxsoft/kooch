@@ -179,6 +179,7 @@ fn run(
         eye,
         sun,
         (SIZE, SIZE),
+        /* rate */ 1,
     );
     queue.submit([encoder.finish()]);
     // The ring is asynchronous on purpose, so a test has to drive both

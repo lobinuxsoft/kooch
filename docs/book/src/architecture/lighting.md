@@ -963,14 +963,27 @@ The census is a model. `KOOCH_PAGE_MARKING=1` runs the thing it models:
 one compute dispatch over the depth buffer, in
 `kooch_render::shadow::pages::mark` and `page_mark.wgsl`.
 
+**Where the controls are.** *Performance → Debug → Mark shadow pages*,
+beside the froxel grid's own A/B: a checkbox, the sampling rate, and the
+readout — pages, MiB, samples, sample/light pairs, and what share of
+Unreal's 4096-page pool that is. The environment variables are only the
+**defaults**, for the comparison that gets made on a handheld over SSH
+against a build nobody wants to make twice:
+
 ```bash
 KOOCH_PAGE_MARKING=1 kooch_editor        # every pixel
 KOOCH_PAGE_MARKING=1 KOOCH_PAGE_MARKING_RATE=4 kooch_editor
 ```
 
-It logs `shadow pages marked` with `resident`, `samples` and `pairs`
-whenever the count changes — on change and not per frame, for the same
-reason the point-shadow warning is a flag rather than a count.
+🔴 **In the Performance panel and not in `.rendersettings`, deliberately.**
+#477 is explicit that nothing on the shadow side should grow a *public*
+setting — one written into the project and therefore promised to every
+project — before the pool's shape is decided. This is a diagnostic the
+editor drives, so it lives where the editor's other diagnostics do.
+
+It also logs `shadow pages marked` with the same numbers whenever the
+count changes — on change and not per frame, for the same reason the
+point-shadow warning is a flag rather than a count.
 
 🔴 **The depth says WHERE a surface is; the froxel grid says WHICH lights
 reach it, and neither is sufficient.** Marking from the grid's cells

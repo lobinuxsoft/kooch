@@ -39,6 +39,7 @@ pub(crate) fn draw_performance_content(
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut LightsHot,
     cluster_settings: &mut ClusterSettings,
+    page_marking: &mut kooch_render::shadow::pages::PageMarkingSettings,
     specular_floor: &mut SpecularFloor,
     viewport: egui::Vec2,
     hud_visibility: &mut crate::perf::HudVisibility,
@@ -62,6 +63,8 @@ pub(crate) fn draw_performance_content(
                     meshlet_lod_settings,
                     lights_hot,
                     cluster_settings,
+                    page_marking,
+                    meshlet_stats.page_marking,
                     specular_floor,
                     meshlet_stats.cluster_occupancy,
                     viewport,
@@ -412,6 +415,8 @@ fn debug_controls(
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut LightsHot,
     cluster_settings: &mut ClusterSettings,
+    page_marking: &mut kooch_render::shadow::pages::PageMarkingSettings,
+    page_counts: Option<kooch_render::shadow::pages::mark::MarkCounts>,
     specular_floor: &mut SpecularFloor,
     cluster_occupancy: Option<(u32, f32)>,
     viewport: egui::Vec2,
@@ -655,6 +660,100 @@ fn debug_controls(
              confirm the chain is being descended.",
         );
     });
+
+    shadow_page_controls(ui, page_marking, page_counts);
+}
+
+/// The shadow-page marking pass and what it found (#866).
+///
+/// 🔴 Here and not in the project's render settings, and that is a
+/// decision rather than convenience: #477 is explicit that nothing on
+/// the shadow side should grow a **public** setting — one written into
+/// `.rendersettings` and therefore promised to every project — before
+/// the page pool's shape is decided. This is a diagnostic the editor
+/// drives, so it sits beside the froxel grid's own A/B.
+fn shadow_page_controls(
+    ui: &mut egui::Ui,
+    page_marking: &mut kooch_render::shadow::pages::PageMarkingSettings,
+    page_counts: Option<kooch_render::shadow::pages::mark::MarkCounts>,
+) {
+    use kooch_render::shadow::pages::{PageConfig, mark::RATE_RANGE};
+
+    ui.separator();
+    ui.checkbox(&mut page_marking.enabled, "Mark shadow pages")
+        .on_hover_text(
+            "Counts the shadow pages this frame would make resident, the way a virtual \
+             shadow map allocates them: the depth buffer says WHERE a surface is, the \
+             froxel grid says WHICH lights reach it. Nothing reads the result yet — it \
+             is here to be checked against the CPU census, which is a model. \
+             KOOCH_PAGE_MARKING=1 sets it from outside a build.",
+        );
+    if !page_marking.enabled {
+        return;
+    }
+
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("one thread per").small());
+        ui.add(
+            egui::DragValue::new(&mut page_marking.rate)
+                .speed(0.2)
+                .range(RATE_RANGE.0..=RATE_RANGE.1)
+                .suffix(" px"),
+        )
+        .on_hover_text(
+            "Not free accuracy in either direction. Coarser is fewer threads AND a wider \
+             pixel footprint, so the level chosen comes out coarser and the count lower. \
+             1 is the honest reading and the expensive one.",
+        );
+    });
+
+    let Some(counts) = page_counts else {
+        ui.label(
+            egui::RichText::new("pages: waiting for the first readback")
+                .small()
+                .weak(),
+        );
+        return;
+    };
+
+    if counts.overflow > 0 {
+        ui.label(
+            egui::RichText::new(format!(
+                "{} pages past the buffer — every number below is a floor",
+                counts.overflow
+            ))
+            .small()
+            .color(egui::Color32::from_rgb(220, 120, 90)),
+        );
+    }
+
+    // MiB, because pages are the unit and megabytes are the budget.
+    let config = PageConfig::default();
+    let mib = counts.resident as f64 * config.page_bytes() as f64 / (1024.0 * 1024.0);
+    ui.label(
+        egui::RichText::new(format!(
+            "{} pages · {mib:.1} MiB · {} samples · {} sample/light pairs",
+            counts.resident, counts.samples, counts.pairs
+        ))
+        .small(),
+    )
+    .on_hover_text(
+        "Distinct pages the frame would make resident, at 128-texel pages and Depth32Float. \
+         Read it against Unreal's own pool, which is 4096 pages for the WHOLE scene by \
+         default (6144 for open worlds, 8192 thrashes) — and against this engine's 152 MiB \
+         of fixed shadow allocations, which stand whether or not a light casts.",
+    );
+    // 🔴 The comparison that makes the number mean something, and it is
+    // one budget for every light in the scene rather than per light.
+    let pool = kooch_render::shadow::pages::POOL_PAGES;
+    let share = counts.resident as f32 / pool as f32 * 100.0;
+    ui.label(
+        egui::RichText::new(format!(
+            "{share:.0}% of Unreal's default pool ({pool} pages)"
+        ))
+        .small()
+        .weak(),
+    );
 }
 
 /// Default-open collapsing header — section toggles with the chevron
@@ -748,6 +847,7 @@ pub(crate) fn draw_perf_sidebar(
     meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
     lights_hot: &mut LightsHot,
     cluster_settings: &mut ClusterSettings,
+    page_marking: &mut kooch_render::shadow::pages::PageMarkingSettings,
     specular_floor: &mut SpecularFloor,
     viewport: egui::Vec2,
     hud_visibility: &mut crate::perf::HudVisibility,
@@ -832,6 +932,7 @@ pub(crate) fn draw_perf_sidebar(
                     meshlet_lod_settings,
                     lights_hot,
                     cluster_settings,
+                    page_marking,
                     specular_floor,
                     viewport,
                     hud_visibility,

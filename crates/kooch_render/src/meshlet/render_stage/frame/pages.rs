@@ -9,7 +9,10 @@
 
 use glam::{Mat4, Vec3};
 
-use crate::shadow::pages::mark::{self, MarkCounts, PageMarker};
+use kooch_core::resource::Resources;
+
+use crate::shadow::pages::PageMarkingSettings;
+use crate::shadow::pages::mark::{MarkCounts, PageMarker};
 use crate::shadow::{ClipmapConfig, PageConfig};
 
 use super::super::stage::MeshletRenderStage;
@@ -25,11 +28,24 @@ impl MeshletRenderStage {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
+        resources: &Resources,
         view_id: crate::meshlet::render_stage::ViewId,
         clip_from_world: Mat4,
         eye: Vec3,
     ) {
-        if !mark::enabled() {
+        // The panel owns this; the environment variable is only its
+        // default. Absent means nobody inserted the resource, which is
+        // every headless test — and off is the right answer there.
+        let settings =
+            resources
+                .get::<PageMarkingSettings>()
+                .copied()
+                .unwrap_or(PageMarkingSettings {
+                    enabled: false,
+                    rate: 1,
+                });
+        if !settings.enabled {
+            self.page_marking_last = None;
             return;
         }
         let marker = self.page_marker.get_or_insert_with(|| {
@@ -47,6 +63,7 @@ impl MeshletRenderStage {
             eye,
             sun,
             view.render_size,
+            settings.rate,
         );
     }
 
