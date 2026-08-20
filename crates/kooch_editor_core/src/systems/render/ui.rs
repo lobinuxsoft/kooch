@@ -190,6 +190,13 @@ pub(super) fn run_editor_ui(
                     .as_ref()
                     .and_then(|ps| ps.active_project.as_ref())
                     .map(|p| p.manifest.engine_version.as_str()),
+                // `None` with no project open: a launch line is stored
+                // against a project's path, so there is nowhere to put
+                // one and the field is not drawn.
+                project_state.as_ref().and_then(|ps| {
+                    let root = &ps.active_project.as_ref()?.root_path;
+                    Some(ps.editor_config.launch_env_for(root))
+                }),
             );
 
             // A build is running and the dock has nothing to show yet.

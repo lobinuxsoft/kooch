@@ -128,6 +128,9 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::SetIdeCommand { command } => {
             handle_set_ide_command(resources, command.clone());
         }
+        EditorAction::SetLaunchEnv { value } => {
+            handle_set_launch_env(resources, value.clone());
+        }
         EditorAction::EditMaterial {
             guid,
             material,
@@ -203,5 +206,6 @@ use scene::{
 };
 use settings::{
     handle_cancel_launch, handle_keep_engine, handle_move_project_to_engine, handle_remove_engine,
-    handle_reparent, handle_set_ide_command, handle_set_power_profile, handle_update_engine,
+    handle_reparent, handle_set_ide_command, handle_set_launch_env, handle_set_power_profile,
+    handle_update_engine,
 };

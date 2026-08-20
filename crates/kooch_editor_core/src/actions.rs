@@ -373,6 +373,12 @@ pub(crate) enum EditorAction {
     SetIdeCommand {
         command: Option<String>,
     },
+    /// Set the environment the Play button launches the open project's
+    /// game with, persisted in the editor config against that project's
+    /// path. An empty line clears it.
+    SetLaunchEnv {
+        value: String,
+    },
     /// Rescan the project's `src/` for components + systems and rewrite
     /// the editor-managed `src/registrations.rs` (regenerating `main.rs`
     /// if it is missing).
@@ -542,6 +548,7 @@ impl EditorAction {
             // the project is not holding it.
             Self::SetPowerProfile(_)
             | Self::SetIdeCommand { .. }
+            | Self::SetLaunchEnv { .. }
             | Self::EditMaterial { .. }
             | Self::SetImageImport { .. }
             | Self::EditAssetField { .. }

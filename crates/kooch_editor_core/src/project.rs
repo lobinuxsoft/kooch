@@ -138,6 +138,40 @@ pub struct EditorConfig {
     /// like the profiler being broken.
     #[serde(default)]
     pub profiler_addr: Option<String>,
+    /// Extra environment the Play button launches a project's game with,
+    /// per project.
+    ///
+    /// Every knob this engine can be measured with is a `KOOCH_*`
+    /// variable, because the frame they exist for is a game launched
+    /// outside the editor. Play launches a game **from** the editor, and
+    /// until this existed the only way to hand one a variable was to
+    /// relaunch the editor with it set — the child inherits the parent's
+    /// environment and nothing else.
+    ///
+    /// 🔴 Here rather than in `project.kooch` on purpose. A launch
+    /// option is a measurement, and a measurement committed to a
+    /// repository is a wrong configuration every collaborator then
+    /// inherits — the same argument that keeps `KOOCH_SHADING_PAD` out
+    /// of `.rendersettings`. The config directory cannot be committed by
+    /// accident.
+    ///
+    /// Per project rather than one global string, because "it silently
+    /// applied to the other project too" is exactly how a capture ends
+    /// up measuring something nobody asked for.
+    #[serde(default)]
+    pub launch_env: Vec<ProjectLaunchEnv>,
+}
+
+/// One project's [`EditorConfig::launch_env`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectLaunchEnv {
+    pub path: PathBuf,
+    /// Whitespace-separated `KEY=VALUE`, as typed.
+    ///
+    /// Stored as the raw line rather than parsed pairs so the field
+    /// shows back exactly what was written — including the part that did
+    /// not parse, which is the part somebody needs to see to fix it.
+    pub value: String,
 }
 
 /// A recently opened project entry.
@@ -177,6 +211,28 @@ impl EditorConfig {
             .map_err(|e| ProjectError::Serialize(e.to_string()))?;
         fs::write(&path, contents).map_err(ProjectError::Io)?;
         Ok(())
+    }
+
+    /// The launch environment recorded for `project`, as typed.
+    pub fn launch_env_for(&self, project: &Path) -> &str {
+        self.launch_env
+            .iter()
+            .find(|e| e.path == project)
+            .map(|e| e.value.as_str())
+            .unwrap_or_default()
+    }
+
+    /// Records `value` for `project`. An empty line removes the entry
+    /// rather than storing one, so clearing the field leaves no trace to
+    /// wonder about later.
+    pub fn set_launch_env(&mut self, project: &Path, value: String) {
+        self.launch_env.retain(|e| e.path != project);
+        if !value.trim().is_empty() {
+            self.launch_env.push(ProjectLaunchEnv {
+                path: project.to_path_buf(),
+                value,
+            });
+        }
     }
 
     /// Adds a project to the recent list (or moves it to the top).
@@ -771,3 +827,6 @@ mod gitignore_tests;
 
 #[cfg(test)]
 mod vendoring_tests;
+
+#[cfg(test)]
+mod tests;
