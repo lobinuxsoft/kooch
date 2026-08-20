@@ -1,0 +1,96 @@
+//! Driving the shadow-page marking pass from a frame (#866).
+//!
+//! 🔴 **An instrument, and off unless asked for.** Nothing reads what
+//! the pass writes. It exists to falsify the CPU census in
+//! [`crate::shadow::pages`]: that census is a model of how many pages a
+//! frame would need, and this is the first thing that can disagree with
+//! it. `KOOCH_PAGE_MARKING=1` turns it on, the way `KOOCH_CLUSTERING=off`
+//! is the grid's own A/B.
+
+use glam::{Mat4, Vec3};
+
+use crate::shadow::pages::mark::{self, MarkCounts, PageMarker};
+use crate::shadow::{ClipmapConfig, PageConfig};
+
+use super::super::stage::MeshletRenderStage;
+
+impl MeshletRenderStage {
+    /// Records the marking dispatch, building the pass on first use.
+    ///
+    /// Call **after** the raster wrote depth and after the froxel grid:
+    /// the depth says where a surface is, the grid says which lights
+    /// reach it, and this reads both.
+    pub(super) fn record_page_marking(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        view_id: crate::meshlet::render_stage::ViewId,
+        clip_from_world: Mat4,
+        eye: Vec3,
+    ) {
+        if !mark::enabled() {
+            return;
+        }
+        let marker = self.page_marker.get_or_insert_with(|| {
+            PageMarker::new(device, PageConfig::default(), ClipmapConfig::default())
+        });
+        let sun = self.light_frame.as_ref().and_then(|(_, frame)| frame.sun());
+        let view = &self.views[view_id];
+        marker.record(
+            device,
+            queue,
+            encoder,
+            &self.lights,
+            &view.depth_sample_view,
+            clip_from_world.inverse(),
+            eye,
+            sun,
+            view.render_size,
+        );
+    }
+
+    /// Maps this frame's counters and logs whatever earlier frames
+    /// returned.
+    ///
+    /// Call **after** the encoder has been submitted: `map_async` before
+    /// the submit is a validation error, which is why the readback ring
+    /// is split in two halves here and in `ClusterReadback` alike.
+    pub(super) fn report_page_marking(&mut self) {
+        let Some(marker) = self.page_marker.as_mut() else {
+            return;
+        };
+        marker.poll();
+        let Some(counts) = marker.last() else {
+            return;
+        };
+        // 🔴 On change, not every frame. The count moves with the camera
+        // and a per-frame log at sixty hertz is a log nobody reads —
+        // the same reason the point-shadow warning is a flag rather than
+        // a count.
+        if self.page_marking_last == Some(counts) {
+            return;
+        }
+        self.page_marking_last = Some(counts);
+        if counts.overflow > 0 {
+            tracing::warn!(
+                resident = counts.resident,
+                overflow = counts.overflow,
+                "shadow pages: the mark buffer is too small, so `resident` is a floor rather than a count"
+            );
+            return;
+        }
+        tracing::info!(
+            resident = counts.resident,
+            samples = counts.samples,
+            pairs = counts.pairs,
+            "shadow pages marked"
+        );
+    }
+
+    /// What the last dispatch found, for a caller that wants the number
+    /// rather than the log.
+    pub fn page_marking(&self) -> Option<MarkCounts> {
+        self.page_marking_last
+    }
+}

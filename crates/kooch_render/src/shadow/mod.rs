@@ -21,7 +21,7 @@
 mod atlas;
 mod cascades;
 mod cube;
-mod pages;
+pub mod pages;
 mod pass;
 mod point;
 mod raster;

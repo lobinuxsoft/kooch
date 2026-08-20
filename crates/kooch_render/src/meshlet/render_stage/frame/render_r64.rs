@@ -179,6 +179,19 @@ impl MeshletRenderStage {
             queue.submit([encoder.finish(), deferred.dlss]);
             encoder = deferred.post;
         }
+        // Shadow-page marking (#866). After the raster, because it reads
+        // the depth the raster just wrote, and after the froxel grid,
+        // which `render` recorded before the path split: the depth says
+        // WHERE a surface is and the grid says WHICH lights reach it.
+        self.record_page_marking(
+            device,
+            queue,
+            &mut encoder,
+            view_id,
+            unjittered_view_proj,
+            cam_pos,
+        );
+
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_end(&mut encoder, 1);
             self.gpu_timers.write_stage_start(&mut encoder, 2);
@@ -249,6 +262,9 @@ impl MeshletRenderStage {
             self.gpu_timers.resolve_and_copy(&mut encoder, slot_idx);
         }
         queue.submit(std::iter::once(encoder.finish()));
+        // The counters' ring maps after the submit, the way every other
+        // readback here does.
+        self.report_page_marking();
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.submit_readback(slot_idx);
         }

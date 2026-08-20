@@ -42,7 +42,7 @@ fn a_chain_ends_at_one_page() {
 fn levels_cover_every_page() {
     let config = PageConfig::default();
     let counted: u32 = (0..config.levels()).map(|l| config.side(l).pow(2)).sum();
-    assert_eq!(counted, config.per_face());
+    assert_eq!(counted, config.face_pages());
     assert_eq!(config.level_base(0), 0);
     assert_eq!(config.level_base(1), config.side(0).pow(2));
 }
@@ -109,7 +109,7 @@ fn residency_follows_the_screen() {
     assert!(out.resident() > 0, "and those cells need pages");
     // The whole point of the structure: what is resident is a fraction
     // of what the light could address.
-    let addressable = PageConfig::default().per_face() * CUBE_FACES as u32;
+    let addressable = PageConfig::default().face_pages() * CUBE_FACES as u32;
     assert!(
         out.resident() < addressable,
         "resident {} of {addressable} addressable",

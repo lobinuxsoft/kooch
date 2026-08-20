@@ -113,7 +113,7 @@ impl PageConfig {
 
     /// Pages in one face's whole chain — the stride between faces in the
     /// census bitmap.
-    fn per_face(&self) -> u32 {
+    pub fn face_pages(&self) -> u32 {
         (0..self.levels()).map(|l| self.side(l).pow(2)).sum()
     }
 
@@ -305,7 +305,7 @@ impl PageCensus {
         // longest. A per-kind stride would save bits and cost a prefix
         // sum to find a light's base — and this buffer is under two MiB
         // at Epic's configuration with a hundred lights.
-        let local = config.per_face() * CUBE_FACES as u32;
+        let local = config.face_pages() * CUBE_FACES as u32;
         let sun = clipmap.levels * config.side(0).pow(2);
         let per_light = local.max(sun);
         let bits = per_light as usize * lights.max(1);
@@ -341,7 +341,7 @@ impl PageCensus {
     /// Marks one page of a local light's mip chain.
     fn mark(&mut self, light: u32, face: u32, level: u32, x: u32, y: u32) -> bool {
         let side = self.config.side(level);
-        let offset = face * self.config.per_face()
+        let offset = face * self.config.face_pages()
             + self.config.level_base(level)
             + y.min(side - 1) * side
             + x.min(side - 1);
@@ -724,6 +724,8 @@ fn level_for(config: PageConfig, distance: f32, wanted: f32) -> u32 {
     let level = (config.virtual_size as f32 / texels).log2().floor();
     (level.max(0.0) as u32).min(config.levels() - 1)
 }
+
+pub mod mark;
 
 #[cfg(test)]
 mod tests;

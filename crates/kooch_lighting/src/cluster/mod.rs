@@ -140,6 +140,19 @@ impl GpuClusters {
     }
 
     /// The shared index list, for Inti's bind group.
+    /// The per-frame view uniform, so a pass outside this module can
+    /// use `cluster_common.wgsl`'s helpers against the **same** record
+    /// the grid was built from.
+    ///
+    /// 🔴 Handing out the buffer rather than the numbers is the point:
+    /// `cluster_z_slice` already exists in three copies and the file
+    /// says why. A fourth reader that rebuilt the record from its own
+    /// matrices would be a fourth chance to disagree with the grid about
+    /// which cell a fragment is in.
+    pub fn view_uniform(&self) -> &wgpu::Buffer {
+        &self.buffers.view
+    }
+
     pub fn indices(&self) -> &wgpu::Buffer {
         &self.buffers.indices
     }

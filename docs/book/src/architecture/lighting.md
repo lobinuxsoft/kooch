@@ -957,6 +957,45 @@ density target, not the marking.**
   invalidates the pages its bounds overlap from the light's view — and
   none of that is a residency question, so none of it is here.
 
+### The marking pass, on the GPU
+
+The census is a model. `KOOCH_PAGE_MARKING=1` runs the thing it models:
+one compute dispatch over the depth buffer, in
+`kooch_render::shadow::pages::mark` and `page_mark.wgsl`.
+
+```bash
+KOOCH_PAGE_MARKING=1 kooch_editor        # every pixel
+KOOCH_PAGE_MARKING=1 KOOCH_PAGE_MARKING_RATE=4 kooch_editor
+```
+
+It logs `shadow pages marked` with `resident`, `samples` and `pairs`
+whenever the count changes — on change and not per frame, for the same
+reason the point-shadow warning is a flag rather than a count.
+
+🔴 **The depth says WHERE a surface is; the froxel grid says WHICH lights
+reach it, and neither is sufficient.** Marking from the grid's cells
+alone claims pages for ground no surface occupies — 133x, measured
+above. Marking from depth alone would walk every light per pixel, which
+is the loop the grid exists to remove. Epic states the first half and
+the Chalmers papers the second.
+
+⚠️ `KOOCH_PAGE_MARKING_RATE` is not free accuracy in either direction. A
+coarser rate is fewer threads **and** a wider pixel footprint, so the
+level chosen comes out coarser and the count lower. 1 is the honest
+reading and the expensive one.
+
+🔴 **It is an instrument, not a feature.** Nothing reads what it writes,
+and it is off unless asked for — a measurement that runs whether or not
+anyone wanted it is a cost nobody attributed. Its job is to disagree
+with the census: every arithmetic decision in the shader has a twin in
+`pages.rs`, and if the two counts diverge, one of them is wrong.
+
+⚠️ They are not expected to match exactly. The census marks per **froxel
+cell** and the pass marks per **pixel**, so the pass is the finer
+instrument and the census the cheaper one. What would be a finding is a
+divergence too large to explain by that — an order of magnitude, or a
+count that moves the wrong way when the scene changes.
+
 ## What Inti does not do yet
 
 - **Nothing but lights is clustered.** The grid reserves a range per cell

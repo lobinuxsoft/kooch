@@ -82,6 +82,15 @@ const INTI_DEBUG_SOURCE: &str = include_str!("../shaders/inti_debug.wgsl");
 /// buffer and the shadow atlas into a pass that samples neither.
 pub const INTI_TONEMAP: &str = include_str!("../shaders/inti_tonemap.wgsl");
 
+/// The froxel grid's shared declarations, for a pass built elsewhere.
+///
+/// Concatenated ahead of a shader body, the way the grid's own passes
+/// do it: `ClusterView`, `ClusterCell`, `ClusterLight` and the two
+/// lookups a reader of the grid needs. A pass that redeclared them would
+/// be free to drift, and the drift would show as fragments reading a
+/// cell the grid never wrote.
+pub const CLUSTER_COMMON: &str = include_str!("../shaders/cluster_common.wgsl");
+
 /// The shading model as WGSL, bound at `group`.
 ///
 /// WGSL has no `#include` and no way to parameterise `@group`, so the
