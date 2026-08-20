@@ -95,6 +95,18 @@ pub enum UpscaleTechnique {
     /// 81 % of it is the accumulation pass, and nothing left in FSR's
     /// toolbox closes a factor of six.
     Fsr3,
+    /// NVIDIA DLSS Super Resolution, through `dlss_wgpu` (#536).
+    ///
+    /// 🔴 **Not transliterated, and it cannot be.** DLSS is a neural
+    /// network shipped as a binary blob; the engine links NVIDIA's SDK
+    /// and hands it the same six inputs the other two get. That is why
+    /// it is the only technique here that a build can lack: without the
+    /// `dlss` cargo feature nothing linked it, and asking for it falls
+    /// back to [`Self::Taa`] with a warning rather than a black frame.
+    ///
+    /// ⚠️ NVIDIA adapters only, Vulkan only, desktop only. The
+    /// handheld's default stays SGSR 2.
+    Dlss,
 }
 
 impl UpscaleTechnique {
@@ -112,7 +124,7 @@ impl UpscaleTechnique {
     /// presents. Distinct from [`Self::is_temporal`]: a resolve that
     /// only antialiases is temporal and not upscaling.
     pub fn upscales(self) -> bool {
-        matches!(self, Self::Sgsr2 | Self::Fsr3)
+        matches!(self, Self::Sgsr2 | Self::Fsr3 | Self::Dlss)
     }
 
     /// The value as it is written in a `.rendersettings` file.
@@ -125,6 +137,7 @@ impl UpscaleTechnique {
             1 => Self::Taa,
             2 => Self::Sgsr2,
             3 => Self::Fsr3,
+            4 => Self::Dlss,
             _ => Self::None,
         }
     }

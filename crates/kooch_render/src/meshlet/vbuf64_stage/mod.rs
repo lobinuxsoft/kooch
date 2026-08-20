@@ -23,6 +23,7 @@ mod clear;
 mod compute_shade;
 mod debug_resolve;
 mod density_clear;
+mod dlss;
 mod fsr3;
 mod jitter;
 mod motion;
@@ -138,6 +139,11 @@ pub struct Vbuf64Stage {
     /// A/B between them in one session is how an upscaler is judged.
     sgsr2: sgsr2::Sgsr2,
     fsr3: fsr3::Fsr3,
+    /// 🔴 Built alongside the other two even in a build that cannot run
+    /// it. Without the `dlss` feature this is an empty shell that
+    /// reports itself unready, which is what keeps `cfg` out of the
+    /// frame and out of the settings.
+    dlss: dlss::Dlss,
     /// Which one runs. See [`UpscaleTechnique`](crate::quality::UpscaleTechnique)
     /// for why this is an enum rather than a trait object.
     technique: crate::quality::UpscaleTechnique,
@@ -234,6 +240,7 @@ impl Vbuf64Stage {
             // a project that never mentioned it.
             sgsr2: sgsr2::Sgsr2::new(device, size, output_size),
             fsr3: fsr3::Fsr3::new(device, size, output_size),
+            dlss: dlss::Dlss::new(device, size, output_size),
             technique: crate::quality::UpscaleTechnique::None,
             sharpen: sharpen::Sharpen::new(device, output_size),
             // Off until asked for, like the technique above it: this
@@ -278,6 +285,7 @@ impl Vbuf64Stage {
         self.taa.resize(device, size);
         self.sgsr2.resize(device, size, output_size);
         self.fsr3.resize(device, size, output_size);
+        self.dlss.resize(device, size, output_size);
         self.sharpen.resize(device, output_size);
         self.size = size;
         self.output_size = output_size;
@@ -368,6 +376,13 @@ impl Vbuf64Stage {
         match self.technique {
             crate::quality::UpscaleTechnique::Sgsr2 => self.sgsr2.resolved_texture(),
             crate::quality::UpscaleTechnique::Fsr3 => self.fsr3.resolved_texture(),
+            // `None` in a build without the feature, which is the same
+            // answer the fallback gives: the TAA target is what was
+            // actually written.
+            crate::quality::UpscaleTechnique::Dlss => self
+                .dlss
+                .resolved_texture()
+                .unwrap_or_else(|| self.taa.resolved_texture()),
             _ => self.taa.resolved_texture(),
         }
     }
@@ -566,7 +581,16 @@ impl Vbuf64Stage {
         // shading reads as a tenth off the pair.
         scopes: Option<&kooch_core::gpu::GpuScopes>,
         parent: Option<&kooch_core::gpu::GpuQuery>,
-    ) {
+        // #536 — the adapter and the DLSS handles, which the frame's
+        // systems have already removed `GpuContext` from `Resources` to
+        // get at. `None` in every build and on every adapter that has
+        // no DLSS, which is most of them.
+        dlss_runtime: Option<&kooch_core::gpu::DlssRuntime>,
+    ) -> Option<wgpu::CommandBuffer> {
+        // 🔴 DLSS hands back a command buffer of its own that has to be
+        // submitted immediately after this frame's encoder, so it
+        // travels all the way out of here rather than being recorded.
+        let mut dlss_commands: Option<wgpu::CommandBuffer> = None;
         self.clear.dispatch(
             device,
             queue,
@@ -783,6 +807,7 @@ impl Vbuf64Stage {
                     let label = match self.technique {
                         crate::quality::UpscaleTechnique::Sgsr2 => "sgsr2",
                         crate::quality::UpscaleTechnique::Fsr3 => "fsr3",
+                        crate::quality::UpscaleTechnique::Dlss => "dlss",
                         _ => "taa",
                     };
                     let query = match (scopes, parent) {
@@ -812,6 +837,33 @@ impl Vbuf64Stage {
                                 query.as_ref(),
                             ),
                         ),
+                        // 🔴 The one technique that can decline. A build
+                        // without the feature, an AMD card, or an SDK
+                        // call that failed all land in the same place:
+                        // the engine's own resolve, so the frame is
+                        // still antialiased and still arrives.
+                        crate::quality::UpscaleTechnique::Dlss => {
+                            let inputs =
+                                self.upscale_inputs(depth_sample_view, exposure, 0, None, None);
+                            match self
+                                .dlss
+                                .draw(device, queue, encoder, dlss_runtime, &inputs)
+                            {
+                                Some((view, commands)) => {
+                                    dlss_commands = Some(commands);
+                                    view
+                                }
+                                None => self.taa.draw(
+                                    device,
+                                    queue,
+                                    encoder,
+                                    self.tonemap.hdr_view(),
+                                    self.motion.view(),
+                                    depth_sample_view,
+                                    exposure,
+                                ),
+                            }
+                        }
                         _ => self.taa.draw(
                             device,
                             queue,
@@ -884,6 +936,7 @@ impl Vbuf64Stage {
                 }
             }
         }
+        dlss_commands
     }
 }
 

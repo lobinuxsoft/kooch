@@ -231,6 +231,11 @@ impl ApplicationHandler<WakeUp> for WinitApp {
         let size = window.inner_size();
         match GpuContext::new(Arc::clone(&window), size.width, size.height) {
             Ok(gpu) => {
+                // #536 — the DLSS handles as their own resource. The
+                // render systems remove `GpuContext` for the length of a
+                // frame, so a pass that reached for the adapter through
+                // it mid-frame would find nothing.
+                self.app.resources.insert(gpu.dlss_runtime());
                 self.app.resources.insert(gpu);
             }
             Err(e) => {

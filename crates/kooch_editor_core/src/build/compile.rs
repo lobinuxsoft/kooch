@@ -80,6 +80,12 @@ impl BuildJob {
         if let Some(problem) = missing_toolchain(preset) {
             return Err(problem);
         }
+        // #536 — checked here for the reason the triple is: without it
+        // the failure is `dlss_wgpu`'s build script panicking about an
+        // environment variable, minutes into a compile.
+        if let Some(problem) = super::dlss::missing_sdk(preset) {
+            return Err(problem);
+        }
 
         let mut command = cargo_command(preset, project_root, crate_name);
         if preset.pack_assets {
@@ -265,6 +271,7 @@ pub fn cargo_command(preset: &BuildPreset, project_root: &Path, crate_name: &str
     if preset.target_triple.contains("windows-gnu") {
         command.env("CFLAGS_x86_64_pc_windows_gnu", "-std=gnu17");
     }
+    super::dlss::build_env(&mut command, preset);
     command
 }
 

@@ -15,6 +15,7 @@
 //! ```
 
 mod context;
+pub mod dlss;
 mod error;
 mod features;
 mod limits;
@@ -24,6 +25,7 @@ mod profiler;
 mod tests;
 
 pub use context::{GpuContext, vsync_override};
+pub use dlss::{DlssRuntime, DlssSdk, DlssSupport};
 pub use error::GpuError;
 pub use features::{all_required_features, engine_features, vbuf64_features};
 pub use profiler::{GpuQuery, GpuScopes};
