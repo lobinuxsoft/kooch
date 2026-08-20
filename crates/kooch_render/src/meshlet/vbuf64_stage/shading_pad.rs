@@ -8,12 +8,41 @@
 //! chases `visible_meshlets` and `instances` off that read, and waits on
 //! three unconditional barriers.
 //!
-//! The device fit that motivates this is `shade = 11.11 ms + 1.06 ms per
-//! light`. #821, #824, #820 and #826 all attacked the per-light term;
-//! the 11.11 ms intercept is 37 % of the pass and nobody had broken it
-//! down. These sweeps are the first candidate, because they are
-//! per-pixel by construction and scale with something the game author
-//! changes without knowing.
+//! # What it measured, 2026-08-20
+//!
+//! It was built to decompose the `11.11 ms` intercept of an older
+//! device fit. **That floor no longer exists** — the whole shading pass
+//! is 3.272 ms today — so the instrument answered a different question
+//! than the one it was aimed at. Same session, same scene, same
+//! upscaler, 60 s each:
+//!
+//! ```text
+//! shade: compute (half rate)   baseline 3.272 ms   pad=252 48.152 ms
+//! 44.88 ms / 252 sweeps  =  178 us per idle full-screen sweep
+//! ```
+//!
+//! ⚠️ **At 1920x1080**, which with `render_scale: 50` and
+//! `shading_rate: 2` shades 480x270. A sweep is a fixed dispatch cost
+//! plus per-pixel work — the desktop decomposition below splits them —
+//! so the figure is smaller at a lower output resolution and does not
+//! travel without one.
+//!
+//! No control pass (`sgsr2`, `tonemap`, `shadows`, `blit`, `cluster
+//! grid`) moved more than 0.16 ms against that 44.88 — 280:1 — and both
+//! captures came back green on `read_capture --over-time`.
+//!
+//! The same measurement on a desktop 9070 XT reads **1.98 us**, a ratio
+//! of 90x. It also decomposes there: at `KOOCH_SHADING_RATE=full` a
+//! sweep costs 3.33 us rather than 4x1.98, so it is **1.53 us of fixed
+//! dispatch cost plus 0.45 us of per-pixel work** at 320x180 — mostly
+//! the command processor rather than the threads.
+//!
+//! 🎯 **What that makes it: 178 us per material in the PROJECT.**
+//! `roll-a-ball` has three, so it pays 0.71 ms — 22 % of its own shading
+//! pass, 7 % of its GPU frame. A game with twenty materials pays 3.7 ms,
+//! which is 39 % of the GPU frame that currently meets the budget. An
+//! unreferenced `.ron` in the materials folder costs 178 us a frame and
+//! nothing says so.
 //!
 //! # Why a knob rather than editing the project's materials
 //!
@@ -38,15 +67,25 @@
 //! worse than `KOOCH_LIGHT_LIMIT` in exactly that respect — the cap
 //! darkens the picture, so a test can see it work, while a pad that
 //! never reached the dispatch loop would look **identical to the
-//! hypothesis being false**, which is the conclusion it would then
-//! license. The unit tests below pin the arithmetic and nothing can pin
-//! the wiring from inside the process.
+//! hypothesis being false**. The unit tests below pin the arithmetic and
+//! nothing can pin the wiring from inside the process.
 //!
-//! What pins it is the measurement itself: **`KOOCH_SHADING_PAD=200`
-//! first**. Two hundred full-screen sweeps cannot be free on any
-//! hardware, so a run that does not collapse is a broken instrument and
-//! not a refuted candidate. Only after that does a small pad mean
-//! anything.
+//! What pinned it was a desktop run before the device one: `gpu = 0.44
+//! ms + 1.98 us per sweep` across pad 0 / 63 / 126 / 252, predicting
+//! 0.565 / 0.690 / 0.939 against 0.57 / 0.70 / 0.94 measured. A straight
+//! line through four points is a working instrument; one point is not.
+//!
+//! 🔴 **Use a pad in the hundreds, never single digits.** `pad=4` was
+//! written into #885's protocol first and it is unmeasurable: four extra
+//! sweeps are ~0.7 ms on the device, under the run-to-run drift this
+//! roadmap documents at 16–37 %. 252 is the largest the 256-slot table
+//! allows, and it is what produced 280:1. The cost of that choice is
+//! that the frame stops fitting in a vblank and the pacing falls apart —
+//! p99/median goes 1.84 to 2.67 — which is the load, not the knob.
+//!
+//! Image identity is not assumed either: the rendered pixels of both
+//! shading paths were dumped at pad 0, 7 and 250 and compared by hash.
+//! Identical, all six.
 //!
 //! The knob lives in the environment because the editor is not where
 //! this can be measured — a frame on the OneXFly is, launched through

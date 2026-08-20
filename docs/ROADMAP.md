@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-16 — **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
+Last updated 2026-08-20 — 🔴 **a frame cap is a PERFORMANCE setting on this part: the same work costs 3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped, because capped the GPU idles 68 % of the time and holds ~1210 MHz instead of throttling to ~850.** `gpu_busy_percent` reads 32 % and the scopes agree. **The budget is met with the preset below** — 13.88 ms frame, and at 8 W capped only **28 % of it is used**. The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
 
 ---
 
@@ -65,6 +65,136 @@ engine in two thermal states, not two engines.
 ⚠️ **Procedure, from now on:** let the game run two minutes before
 capturing, or capture long enough to contain the transition and read it
 with `read_capture --over-time`, which prints the drift and says so.
+
+🔴 **…and this whole subsection describes an UNCAPPED machine.** With the
+frame rate capped in hardware there is no settling and no drift, because
+the GPU never runs long enough to reach its power cap — see the next
+section. A capture has to record which of the two it was taken on, or the
+two are averaged into a machine that does not exist.
+
+### 🔴 A frame cap is a PERFORMANCE setting on this part, 2026-08-20
+
+⚠️ **Read the resolution column before comparing anything below.** The
+first captures of the day were taken at 1920x1080 and the last two at a
+forced 1280x720. At `render_scale: 50` and `shading_rate: 2` that is
+480x270 against 320x180 — **44 % of the samples** — so a row from one
+group cannot be subtracted from a row of the other. One table published
+here on 2026-08-20 did exactly that and is retracted below.
+
+**The comparison that holds, because both sides are 1280x720:**
+
+| | 4 W, uncapped | **8 W, capped at 72** |
+|---|---|---|
+| frame median | 13.96 | **13.88** |
+| p99 / max | 21.60 / **47.09** | **14.46 / 15.25** |
+| **GPU** | **13.2** | **3.9** |
+| `frame/GPU` | 1.06 | **3.5** |
+| `shade: compute (half rate)` | 3.858 | **1.117** |
+| `sgsr2` | 2.606 | **0.722** |
+| `shadows` | 1.251 | **0.374** |
+
+**The same work at the same resolution costs 3.4× less GPU time**, and
+every pass moves by the same factor — which an engine does not do. The
+clock does:
+
+```
+sclk, capped at 72 fps   ~1210 MHz   (12 samples over SSH, during the capture)
+```
+
+Capped, the GPU is idle **68 %** of the time, so it neither heats nor
+reaches its power cap and holds its boost clock. Uncapped it throttles
+and every pass takes three times longer. Rendering 144 frames to display
+72 pays for the same work three times.
+
+🟢 **Two independent instruments agree.** `gpu_busy_percent` reads
+**32 %** off the kernel; the GPU scopes say 3.9 ms of a 13.88 ms frame,
+which is 28 %. The four points between them are the compositor, which our
+scopes cannot see and never claimed to.
+
+🔴 **What this pair does NOT separate: the TDP doubled too.** 4 W
+uncapped against 8 W capped changes two things at once, so "3.4×" is the
+two together. The `gpu_busy` and `sclk` readings argue the cap is doing
+most of it — a part idle 68 % of the time is not power-limited — but the
+run that would settle it has not been taken: **8 W uncapped at 1280x720**.
+
+⚠️ **It splits a rule this file states as universal.** *"Warm the
+handheld two minutes, it gets 46 % slower"* describes an **uncapped**
+machine. Capped there is no drift at all: 13.89 -> 13.88 ms across 60 s,
+with the GPU moving 3.89 -> 3.99 (+2.6 %). Two machines, and a capture
+has to record which one — and now at which resolution.
+
+The cap also fixes the pacing: max frame **15.25 ms** against 47.09.
+
+🎯 **Against the budget, at 1280x720: 3.9 ms of GPU in a 13.9 ms frame is
+28 % used.**
+
+### ❌ Retracted the same day: "at low TDP the frame stops being the shading pass"
+
+A table published here compared the 4 W capture against the 10 W one per
+pass and concluded the short passes nearly double while the shading pass
+grows 18 %. **The 4 W capture is 1280x720 and the 10 W one is 1920x1080**,
+so the two differ by 2.25× in samples before TDP is considered.
+
+It does not renormalise, either: `shadows` is sized by
+`shadow_cascade_texels` and does not scale with the screen at all, and
+`sky` is a raymarch whose cost depends on how much sky the camera sees.
+The conclusion may still be true — it is simply not measured. **The pair
+that would measure it is one TDP at one resolution.**
+
+### 🟢 The configuration that meets it, measured 2026-08-20
+
+**13.92 ms median, 4653 frames, zero drift, at 1920x1080 and 10 W
+settled.** The budget, on the device. This is the baseline a handheld game
+ships with unless it has a measurement saying otherwise.
+
+| `.rendersettings` | value | why |
+|---|---|---|
+| `compute_shading` | `true` | the tiled path — half rate and the reduced-rate upsample both require it |
+| `shading_rate` | `2` — *Half, one sample per 2x2 quad* | a quarter of the shading threads (#825) |
+| `upscale` | `2` — *SGSR 2* | **2.062 ms against FSR 3.1's 11.355**, same scene, same session |
+| `render_scale` | `50` — *Performance, 50 % (2x)* | the shading pass costs what it costs per PIXEL |
+
+```
+frame 13.92 ms (median)  ·  GPU 9.7  ·  budget 13.9
+raster + shade                 7.862  [self 0.954]
+├─ shade: compute (half rate)  3.272
+├─ sgsr2                       2.062
+├─ tonemap                     0.566
+├─ motion vectors              0.553
+└─ shade: upsample             0.455
+shadows 0.549 · blit 0.424 · sky 0.415 · cluster grid 0.136 · cull 0.035
+```
+
+🔴 **The largest single item is the upscaler, and choosing the wrong one
+costs more than every shading optimisation put together.** Same scene,
+same build, same session, with `upscale: 3`:
+
+| | FSR 3.1 | SGSR 2 |
+|---|---|---|
+| the upscaler | **11.355 ms** | **2.062** |
+| whole frame | **23.36 ms** | **13.92** |
+
+FSR 3.1 is neither broken nor a regression — it is a desktop technique,
+and its transliteration measured 11.682 ms here when it landed (#884).
+What was missing was a project whose asset picked the other one.
+
+⚠️ **13.92 ms is a vsync step, not a cost.** p99 is 25.64 and max 29.07,
+almost exactly double — a missed vblank rather than work. The panel is
+144 Hz and the frame is sitting on half of it. What the frame costs is
+the **GPU's 9.7 ms**, with `frame/GPU` at 1.45. There is room under the
+number, not on top of it.
+
+**Dropping the output resolution buys more than any of these**, because
+`render_scale` is a percentage *of the output*: a smaller window shrinks
+the render target with it **and** everything `render_scale` does not
+touch — the resolve's output, the tonemap, the blit. Observed on the
+device on 2026-08-20; not yet measured here, and it should be.
+
+🔴 **A recommendation, not a default.** `RenderSettings::default()` stays
+what the engine did before any of this existed, for the reason
+`settings.rs:510` argues at length: a serde default is not a
+recommendation, it is what an old file silently becomes. A project that
+wants these values sets them.
 
 ---
 
@@ -1400,87 +1530,168 @@ other half of this.
 
 ---
 
-## What gets attacked next, in order — decided 2026-08-19
+## What gets attacked next — the order needs redeciding, 2026-08-20
 
-1. **The 11 ms floor experiment** (#885). No engine change: merge
-   `roll-a-ball`'s three materials into one and capture again. It decides
-   37 % of the shading pass, and it is the only item on this list that
-   costs no device cycles until the very end.
-2. **#477 Virtual Shadow Maps.** `difficulty:hard`, and what it attacks —
-   `shadows` — currently measures **0.82 ms of a ~30 ms pass**. It goes
-   second for that reason, not because it is unimportant: planet-scale
-   sun shadows are a product requirement no measurement retires.
-3. **#886 Arm ASR.** An evaluation, with SGSR 2 already the handheld
-   default at 1.868 ms.
+✅ **Item 1 is done and it retired its own premise.** The 11 ms floor
+experiment ran (#912, `KOOCH_SHADING_PAD`), and the floor it was built to
+decompose does not exist any more — the whole shading pass is 3.272 ms.
+What it did measure is above: **178 µs per full-screen sweep, one sweep
+per material in the project.**
 
-⚠️ Prepare the TAA's `textureGather` **before** asking for the run, and
-measure both in the same capture: a device measurement costs ~7 minutes
-of thermal settling, so the set is measured once rather than per patch.
+🔴 **And the budget is met**, which changes what this list is for. The
+gate was *"a feature that cannot fit in what is left of 13.9 ms is not a
+feature this engine has"*. There are now **4.2 ms** left of the 13.9, and
+the GPU is at 9.7. Everything below is measured against that instead of
+against a 2.9× overrun.
+
+The measured sizes of the remaining candidates, all from the 2026-08-20
+capture, so the order can be decided on numbers rather than on age:
+
+| candidate | what it costs today | what it would buy |
+|---|---|---|
+| **Compact the shading dispatch** | 0.71 ms at 3 materials | 0.71 ms now, **3.7 ms at 20 materials** — the only item that scales with the game rather than the frame |
+| **#886 Arm ASR** | `sgsr2` is **2.062 ms**, the second largest GPU item | unknown until measured; the upscaler is now the biggest single thing after shading |
+| **#477 Virtual Shadow Maps** | `shadows` is **0.549 ms of 9.7** | not a frame-time argument — planet-scale sun shadows are a product requirement no measurement retires |
+| **Fuse `motion vectors`** | **0.553 ms**, was 2.6 when it was written up | ≤0.5 ms, against +4 B/px on a bandwidth-bound part |
+| **TAA `textureGather`** | `taa` **does not run** under the preset that meets the budget | nothing, until somebody configures TAA and measures it |
+
+⚠️ The previous order put #477 second and #886 third on the strength of
+numbers taken when the pass was 30 ms. Both moved. **The user decides the
+order; this table exists so the decision is made on today's numbers.**
 
 ---
 
-## The 11 ms nobody had looked at, 2026-08-19
+## ❌ The 11 ms floor does not exist any more — measured 2026-08-20
 
-Area 2 of #885 audited all 58 shaders (12 014 lines). The inventory is in
-that issue; what belongs here is the framing it produced, because it
-reads the fit above in a way nothing else had.
+Area 2 of #885 audited all 58 shaders (12 014 lines) and produced a
+framing built on this fit:
 
 ```
-shade = 11.11 ms + 1.06 ms per light
+shade = 11.11 ms + 1.06 ms per light        ← a build this engine no longer is
 ```
 
-#821 (the arithmetic), #824 (the storage fetch), #820 (the over-listing)
-and #826 (sampling) all attacked **the slope**. The other term is named
-three sections up — *"there is an ~11 ms per-pixel floor that is not the
-lights"* — and then dropped. **That floor is 37 % of the pass and had
-never been broken down.** #825 halves it because it halves the pixels,
-not because anyone knows what it is made of.
+#821, #824, #820 and #826 all attacked the slope; the 11.11 ms intercept
+was 37 % of the pass and had never been broken down. So an instrument was
+built to decompose it (#912) and taken to the device.
 
-At `render_scale: 50` and `shading_rate: 2` the pass shades 320x180, so
-the floor is **193 ns a pixel** to decode a vbuf, reconstruct a triangle
-and take three `textureSampleGrad`. Two candidates account for shape of
-that, and both are per-pixel by construction:
+🔴 **The device answered a different question, because the premise was
+stale. Today's whole shading pass is 3.272 ms.** The 11 ms floor cannot
+be decomposed because it no longer fits inside the thing it was a floor
+of — between `render_scale: 50`, #824, #825, #820, #845 and #881 the pass
+fell by more than 6×, and nobody re-measured the intercept before
+designing an experiment around it.
+
+⚠️ **The lesson is procedural and it is the expensive kind.** A number
+copied from an earlier section of this file was treated as current
+because it was the most recent one written down. **Re-measure the
+baseline before designing an experiment around it**, especially when the
+number is weeks old and the intervening work was aimed at it.
+
+### What the instrument measured instead, and it is worth keeping
+
+`KOOCH_SHADING_PAD=n` appends *n* full-screen shading sweeps whose
+`material_id` matches no instance. Every store in
+`material_pbr_compute.wgsl` is inside a branch that never fires for them,
+so the frame is **bit-identical** — verified by MD5 over the rendered
+pixels of both shading paths at pad 0, 7 and 250 — and the only variable
+between two runs is how many times the screen is swept.
+
+**Same session, same scene, same upscaler, 60 s each, both captures green
+on `--over-time`:**
+
+| | baseline | `pad=252` | Δ |
+|---|---|---|---|
+| **`shade: compute (half rate)`** | **3.272** | **48.152** | **+44.88** |
+| sgsr2 | 2.062 | 1.699 | −0.36 |
+| tonemap | 0.566 | 0.584 | +0.02 |
+| shadows | 0.549 | 0.603 | +0.05 |
+| blit | 0.424 | 0.453 | +0.03 |
+| cluster grid | 0.136 | 0.112 | −0.02 |
+
+No control moves more than 0.16 ms against a signal of 44.88 — **280:1**.
+
+```
+44.88 ms / 252 sweeps  =  178 µs per idle full-screen sweep
+```
+
+⚠️ **At 1920x1080.** A sweep is a fixed dispatch cost plus per-pixel
+work — the desktop decomposition below splits them — so the number is
+smaller at a lower resolution and the per-material bill has to be quoted
+with one.
+
+The same measurement on a 9070 XT reads **1.98 µs**, a ratio of 90×, and
+the desktop run predicted the device to within that. It also decomposes:
+at `KOOCH_SHADING_RATE=full` the desktop cost is 3.33 µs rather than
+4×1.98, so a sweep is **1.53 µs of fixed dispatch cost plus 0.45 µs of
+per-pixel work** at 320×180 — mostly the command processor, not the
+threads.
+
+### 🎯 What that costs, and what it scales with
+
+`shading_slots()` is `0..next_slot` and `sync_from_resources` registers
+every `Material` the `AssetDatabase` holds — **not the scene's, not the
+frame's visible ones**. So the bill is per material *in the project*:
+
+| materials in the project | sweeps | cost | of today's 9.7 ms GPU |
+|---|---|---|---|
+| `roll-a-ball`, 3 | 4 | **0.71 ms** | 7 % |
+| 10 | 11 | 1.96 ms | 20 % |
+| 20 | 21 | **3.74 ms** | **39 %** |
+| 50 | 51 | 9.08 ms | a whole frame |
+
+Of the 3.272 ms shading pass, **up to 0.71 ms is swept without writing a
+pixel** — 22 % of it — leaving ~2.56 ms of actual shading. (Up to,
+because a real material's sweep does useful work on the pixels it owns;
+a padded one never does.)
+
+🔴 **The finding is what it scales with.** A `.ron` dropped into the
+project's materials folder and never referenced adds 178 µs to every
+frame, silently. At three materials that is tolerable; at twenty it eats
+the budget that was just met. Compacting the dispatch is a change to
+`ComputeShading::shade` and `MaterialTwoPass::shade` alone.
+
+### The mechanism, which was right even though the number was not
 
 **The shading sweeps the whole screen once per material in the PROJECT.**
-`shading_slots()` is `0..next_slot` and `sync_from_resources` registers
-every material the `AssetDatabase` knows about — not the scene's, not the
-frame's visible ones. `roll-a-ball` has three, so the pass makes **four**
-full-screen sweeps counting the fallback, and each pixel is visited four
-times to be written once. A thread in a tile that owns none of this
-material's pixels still pays a `textureLoad` of the R64 vbuf, then
-`visible_meshlets[slot]`, then `instances[inst_id].material_id` — two
-dependent storage reads, which is the access pattern the device left
-standing after ALU was ruled out — plus three unconditional barriers.
-
-🔴 **It scales with something the game author changes without knowing.**
-Dropping an unused `.ron` into the project's materials folder adds a
-full-screen sweep to every frame.
+A thread in a tile that owns none of this material's pixels still pays a
+`textureLoad` of the R64 vbuf, then `visible_meshlets[slot]`, then
+`instances[inst_id].material_id` — two dependent storage reads — plus
+three unconditional barriers. That description was correct; what was
+wrong was believing it added up to 11 ms. It adds up to **178 µs a
+sweep**, measured above, and the desktop decomposition says most of that
+is the dispatch rather than the threads.
 
 **`motion_vectors` reconstructs the triangle the shading already
 reconstructed.** Same pixel, same `textureLoad(vbuf64)`, same payload
 decode, same three `global_vertex_id`, same `compute_partial_derivatives`
-— 2.6 ms whose only own work is `previous_transforms[inst_id]` and one
-matrix multiply. The written justification is correct **at half rate**: a
+— and its only own work is `previous_transforms[inst_id]` and one matrix
+multiply. The written justification is correct **at half rate**: a
 temporal resolve needs a vector per pixel and the shading runs per quad.
 At `shading_rate: 1` the two passes do identical work. Fusing them costs
 `Rg16Float` -> `Rgba16Float`, 8 B/px against 4, because `Rg16Float` is
 not a storage format — the same wgpu format tax FSR 3.1 paid.
 
-🎯 **The experiment does not touch the engine**: merge roll-a-ball's three
-materials into one and capture again. If the floor does not move, the
-first candidate is out. ⚠️ Check that `sky` and `blit` agree between the
-two runs before believing the difference — the mistake the baseline run
-of the `KOOCH_LIGHT_LIMIT` fit made.
+❌ **The 2.6 ms this was worth when it was written is now 0.553 ms**, and
+the format tax to fuse it is 4 B/px on a bandwidth-bound part. It is no
+longer obviously worth doing, and it is not worth doing before somebody
+re-measures it.
 
 ### The rest of the inventory
 
-**TAA reads the same depth ten times a pixel.** `taa.wgsl:305-312` is a
-3x3 loop of `textureSample(depth, nearest_sampler, ...)` and the `(0,0)`
-tap re-reads `center_depth` from `:284` — ten reads where the algorithm
-asks for nine, with a **nearest** sampler, which is the textbook case for
-`textureGather`. The pass is **3.7 ms**. The repo already uses the
-instruction in `hi_z_spd.wgsl:335` and `sgsr2_convert.wgsl:104`, so this
-is asymmetric knowledge rather than a technique nobody here has.
+**TAA takes nine depth taps a pixel where `textureGather` takes three.**
+`taa.wgsl:305-312` is a 3x3 loop of `textureSample(depth,
+nearest_sampler, ...)` with a **nearest** sampler, the textbook case for
+the instruction — which the repo already uses in `hi_z_spd.wgsl:335` and
+`sgsr2_convert.wgsl:104`, so this is asymmetric knowledge rather than a
+technique nobody here has.
+
+⚠️ **Two corrections to how this was first written.** The "ten reads"
+counted the `(0,0)` tap re-reading `center_depth` from `:284`, and those
+two are the same texture, sampler and coordinate — a compiler may fold
+them, which was asserted rather than checked. And the **3.7 ms** is the
+`taa` scope of a build configured with `upscale: 1`; the preset that
+meets the budget uses SGSR 2, where `taa` does not run at all. Whoever
+picks this up measures the pass first.
 
 **Resource lifetime, found in passing.** `material_depth_texture`
 (`Depth16Unorm`, full screen) is created unconditionally in `new()` and
