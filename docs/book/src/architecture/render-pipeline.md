@@ -173,6 +173,24 @@ centroid of every triangle the moment a point light needed a distance.
   compute shader has no implicit derivatives, and `textureSampleGrad` is
   a fragment-stage call. Scalars only.
 
+> 🔴 **"Per material" means per material in the PROJECT, not in the
+> frame.** `MaterialPipeline::shading_slots` is `0..next_slot` and
+> `sync_from_resources` registers every `Material` the `AssetDatabase`
+> knows about, so dropping an unused `.ron` into the project's folder
+> adds a full-screen sweep to every frame. A tile that owns none of a
+> slot's pixels does no reconstruction and writes nothing, but it does
+> not leave for free: every thread still reads the R64 vbuf, chases
+> `visible_meshlets` and then `instances` off that read, and waits on
+> three unconditional barriers.
+>
+> `KOOCH_SHADING_PAD=<n>` appends `n` sweeps whose `material_id` matches
+> no instance. The frame is bit-identical — every store in
+> `material_pbr_compute.wgsl` is inside the branch that never fires — so
+> the only thing an A/B across it measures is what an idle sweep costs.
+> It is the instrument for the `11.11 ms` intercept of the device's
+> `shade = 11.11 ms + 1.06 ms per light` (#885), which four experiments
+> left untouched because all four attacked the slope.
+
 > 🔴 **A `serde` default is not a recommendation — it is what an old file
 > silently becomes.** `compute_shading`, `shading_rate` and `temporal_aa`
 > all default to what the engine already did — fragment path, full rate,

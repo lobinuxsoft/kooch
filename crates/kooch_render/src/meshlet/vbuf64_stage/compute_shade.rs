@@ -330,8 +330,9 @@ impl ComputeShading {
     /// material the `AssetDatabase` knows about — so dropping an unused
     /// `.ron` into the project's folder adds a full-screen sweep to
     /// every frame. Compacting the dispatch is a change to this function
-    /// alone; whether it is worth making is the experiment written into
-    /// #885.
+    /// alone, and `KOOCH_SHADING_PAD` is what says whether it is worth
+    /// making: it appends sweeps that own no pixel, so an A/B across it
+    /// prices exactly this paragraph (#885).
     ///
     /// [`shading_slots`]: crate::material::MaterialPipeline::shading_slots
     ///
@@ -378,6 +379,10 @@ impl ComputeShading {
             slots.end <= MAX_SHADING_SLOTS,
             "shading slot count exceeds MAX_SHADING_SLOTS",
         );
+        // `KOOCH_SHADING_PAD`, applied here so the loop below writes a
+        // `ScreenUbo` for the padded slots too. Zero unless a
+        // measurement run asked for it (#885).
+        let slots = super::shading_pad::padded_slots(slots, MAX_SHADING_SLOTS);
         for slot in slots.clone() {
             queue.write_buffer(
                 &self.screen_buffer,
