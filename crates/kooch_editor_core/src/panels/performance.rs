@@ -692,19 +692,35 @@ fn shadow_page_controls(
         return;
     }
 
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("one thread per").small());
-        ui.add(
-            egui::DragValue::new(&mut page_marking.rate)
-                .speed(0.2)
-                .range(RATE_RANGE.0..=RATE_RANGE.1)
-                .suffix(" px"),
-        )
+    ui.checkbox(&mut page_marking.paint, "Paint pages over the scene")
         .on_hover_text(
-            "Not free accuracy in either direction. Coarser is fewer threads AND a wider \
-             pixel footprint, so the level chosen comes out coarser and the count lower. \
-             1 is the honest reading and the expensive one.",
+            "Colours every pixel by the shadow page it reads. HUE is the level — where the \
+             frame spends detail, and a band of it is a level boundary. BRIGHTNESS is the \
+             page identity, so neighbouring pages differ and the tiling is visible: a page \
+             covering a quarter of the screen is too coarse for it, and a mosaic too fine \
+             to resolve is detail nobody sees. The sun's page wins where there is a sun, \
+             because a pixel is lit by many lights and painting the last one walked would \
+             make the view depend on the light list's order.",
         );
+
+    ui.add_enabled_ui(!page_marking.paint, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("one thread per").small());
+            ui.add(
+                egui::DragValue::new(&mut page_marking.rate)
+                    .speed(0.2)
+                    .range(RATE_RANGE.0..=RATE_RANGE.1)
+                    .suffix(" px"),
+            )
+            .on_hover_text(
+                "Not free accuracy in either direction. Coarser is fewer threads AND a \
+                 wider pixel footprint, so the level chosen comes out coarser and the \
+                 count lower. 1 is the honest reading and the expensive one. Painting \
+                 forces it to 1: at any coarser rate the view is a grid of dots over an \
+                 unpainted frame, which reads as a broken pass rather than as a coarse \
+                 sample.",
+            );
+        });
     });
 
     let Some(counts) = page_counts else {

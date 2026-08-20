@@ -35,7 +35,7 @@ mod builder;
 mod caps;
 mod cull;
 mod debug;
-mod deferred;
+pub(crate) mod deferred;
 mod dispatcher;
 mod drawer;
 mod gpu_meshlet;

@@ -754,6 +754,13 @@ pub struct PageMarkingSettings {
     /// comes out coarser and the count lower. 1 is the honest reading
     /// and the expensive one.
     pub rate: u32,
+    /// Paint the page each pixel reads over the scene.
+    ///
+    /// 🔴 Forces `rate` to 1 while it is on: at any coarser rate the
+    /// view is a grid of dots over an unpainted frame, which reads as
+    /// "the pass is broken" rather than as "you asked for one sample in
+    /// sixteen".
+    pub paint: bool,
 }
 
 impl Default for PageMarkingSettings {
@@ -761,6 +768,7 @@ impl Default for PageMarkingSettings {
         Self {
             enabled: mark::enabled_by_environment(),
             rate: mark::rate_from_environment(),
+            paint: false,
         }
     }
 }

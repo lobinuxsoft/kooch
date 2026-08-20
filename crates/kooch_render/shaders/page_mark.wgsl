@@ -42,8 +42,17 @@ struct PageView {
     // x pages per side at level 0, y pages in one face's whole chain,
     // z the per-light stride in pages, w the light count.
     strides: vec4<u32>,
-    // x the sampling rate in pixels, y the sun's slot, zw unused.
+    // x the sampling rate in pixels, y the sun's slot, z 1 when the
+    // debug view is painting, w unused.
     sampling: vec4<u32>,
+    // x the RECIPROCAL of the tonemap's exposure, yzw unused.
+    //
+    // 🔴 The colour target holds linear radiance and the tonemap does
+    // `aces(radiance * exposure)`, so a debug colour written as authored
+    // comes out near black — this engine's radiance is in the hundreds.
+    // Dividing here is what makes the painted page arrive on screen the
+    // colour it was chosen to be.
+    paint: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> view: ClusterView;
@@ -74,6 +83,15 @@ struct PageCell {
 // x the distinct pages marked, y the samples that found a surface,
 // z pairs visited, w overflow — a page index past the buffer.
 @group(0) @binding(7) var<storage, read_write> counters: array<atomic<u32>>;
+// The frame's HDR radiance, overwritten where the debug view paints.
+//
+// 🔴 `rgba16float` has to match `HDR_COLOR_FORMAT` exactly: wgpu compares
+// the storage class declared here against the bind group layout and
+// rejects the pipeline, which surfaces as "Texture class Storage doesn't
+// match the shader" rather than as a wrong image.
+@group(0) @binding(8) var color_out: texture_storage_2d<rgba16float, write>;
+
+const NO_PAGE: u32 = 0xffffffffu;
 
 const MARK_GROUP: u32 = 8u;
 
@@ -160,7 +178,7 @@ fn cube_face(dir: vec3<f32>) -> vec4<f32> {
 }
 
 // One page of a local light's mip chain.
-fn mark_local(light: u32, world: vec3<f32>, wanted: f32) {
+fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let record = lights[light];
     let offset = world - record.position;
     let distance = max(length(offset), 0.05);
@@ -180,6 +198,7 @@ fn mark_local(light: u32, world: vec3<f32>, wanted: f32) {
         + cell.y * side
         + cell.x;
     mark_bit(index);
+    return vec2<u32>(index, level);
 }
 
 // One page of the sun's clipmap.
@@ -187,7 +206,7 @@ fn mark_local(light: u32, world: vec3<f32>, wanted: f32) {
 // Every level is a full grid rather than half of the last — that is what
 // a clipmap is and what a mip chain is not — so the offset is a multiply
 // where `mark_local`'s is a running sum.
-fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) {
+fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let direction = normalize(pages.sun.xyz);
     var up = vec3<f32>(0.0, 1.0, 0.0);
     if abs(direction.y) > 0.99 {
@@ -217,6 +236,36 @@ fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) {
 
     let index = slot * pages.strides.z + level * side * side + cell.y * side + cell.x;
     mark_bit(index);
+    return vec2<u32>(index, level);
+}
+
+// The colour a page is painted.
+//
+// 🔴 Two signals in one pixel, because either alone answers half the
+// question. **Hue is the level** — where the frame is spending detail,
+// and a sudden band of it is a level boundary. **Brightness is the page
+// identity**, hashed, so neighbouring pages differ and the tiling is
+// visible; a page that covers a quarter of the screen is a page too
+// coarse for it, and a mosaic too fine to resolve is detail nobody sees.
+fn page_color(index: u32, level: u32) -> vec3<f32> {
+    var base = vec3<f32>(0.6);
+    switch level % 6u {
+        case 0u: { base = vec3<f32>(1.0, 0.25, 0.25); }
+        case 1u: { base = vec3<f32>(1.0, 0.65, 0.2); }
+        case 2u: { base = vec3<f32>(0.9, 0.95, 0.25); }
+        case 3u: { base = vec3<f32>(0.3, 0.9, 0.4); }
+        case 4u: { base = vec3<f32>(0.3, 0.6, 1.0); }
+        default: { base = vec3<f32>(0.75, 0.4, 1.0); }
+    }
+    // A cheap integer hash, so adjacent page indices land on visibly
+    // different values rather than on a gradient.
+    var h = index;
+    h = (h ^ 61u) ^ (h >> 16u);
+    h = h + (h << 3u);
+    h = h ^ (h >> 4u);
+    h = h * 0x27d4eb2du;
+    h = h ^ (h >> 15u);
+    return base * (0.45 + 0.55 * f32(h & 0xffu) / 255.0);
 }
 
 @compute @workgroup_size(MARK_GROUP, MARK_GROUP, 1)
@@ -261,11 +310,17 @@ fn mark_main(@builtin(global_invocation_id) id: vec3<u32>) {
     // page it needs has to cover all of them.
     wanted = wanted * f32(rate);
 
+    // 🔴 One page per pixel is painted, and the sun wins when there is
+    // one: a pixel is lit by many lights and painting the last one
+    // walked would make the view depend on the light list's order.
+    var painted = vec2<u32>(NO_PAGE, 0u);
+
     if pages.sun.w > 0.5 {
-        mark_sun(pages.sampling.y, world, wanted);
+        painted = mark_sun(pages.sampling.y, world, wanted);
     }
 
     if view.dimensions.w == 0u {
+        paint_page(pixel, painted);
         return;
     }
     let cell = cluster_of_ndc(view, ndc, view_pos.z);
@@ -284,6 +339,20 @@ fn mark_main(@builtin(global_invocation_id) id: vec3<u32>) {
             continue;
         }
         atomicAdd(&counters[2], 1u);
-        mark_local(light, world, wanted);
+        let marked = mark_local(light, world, wanted);
+        if painted.x == NO_PAGE {
+            painted = marked;
+        }
     }
+
+    paint_page(pixel, painted);
+}
+
+// Writes the debug colour, when the view is on and a page was chosen.
+fn paint_page(pixel: vec2<u32>, painted: vec2<u32>) {
+    if pages.sampling.z == 0u || painted.x == NO_PAGE {
+        return;
+    }
+    let color = page_color(painted.x, painted.y) * pages.paint.x;
+    textureStore(color_out, vec2<i32>(pixel), vec4<f32>(color, 1.0));
 }

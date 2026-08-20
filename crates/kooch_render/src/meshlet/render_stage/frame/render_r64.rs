@@ -114,6 +114,14 @@ impl MeshletRenderStage {
             self.gpu_timers.write_stage_start(&mut encoder, 1);
         }
         let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
+        // Hoisted out of the call below: the page-marking debug view
+        // needs it too, to divide out what the tonemap multiplies back
+        // in (#866).
+        let exposure = resources
+            .get::<kooch_lighting::Exposure>()
+            .copied()
+            .unwrap_or_default()
+            .multiplier();
         // 🔴 Braced, like `upload instances`: a `profiling::scope!`
         // lives to the end of its block, and mid-function this one
         // reported the overlay dispatch, the readbacks and `Queue::
@@ -149,11 +157,7 @@ impl MeshletRenderStage {
                 // #732 — the tonemap is its own pass now, so the scalar
                 // it used to read out of the Inti uniform is passed to
                 // the stage instead.
-                resources
-                    .get::<kooch_lighting::Exposure>()
-                    .copied()
-                    .unwrap_or_default()
-                    .multiplier(),
+                exposure,
                 /* clear_depth */ true,
                 scopes.as_deref(),
                 shade_query.as_ref(),
@@ -170,6 +174,26 @@ impl MeshletRenderStage {
             dlss_commands
         };
 
+        // Shadow-page marking (#866). After the raster, because it reads
+        // the depth the raster just wrote, and after the froxel grid,
+        // which `render` recorded before the path split: the depth says
+        // WHERE a surface is and the grid says WHICH lights reach it.
+        //
+        // 🔴 And BEFORE the DLSS cut, because the debug view overwrites
+        // the radiance target. After the cut, everything downstream
+        // reads the upscaled image and the paint would go to a texture
+        // nothing samples again — a debug view that renders nothing.
+        self.record_page_marking(
+            device,
+            queue,
+            &mut encoder,
+            resources,
+            view_id,
+            unjittered_view_proj,
+            cam_pos,
+            exposure,
+        );
+
         // 🔴 The frame is CUT here when DLSS ran, and the rest of it —
         // the debug overlay below, the GPU timer resolve, the final
         // submit — continues in the encoder the stage handed back.
@@ -179,20 +203,6 @@ impl MeshletRenderStage {
             queue.submit([encoder.finish(), deferred.dlss]);
             encoder = deferred.post;
         }
-        // Shadow-page marking (#866). After the raster, because it reads
-        // the depth the raster just wrote, and after the froxel grid,
-        // which `render` recorded before the path split: the depth says
-        // WHERE a surface is and the grid says WHICH lights reach it.
-        self.record_page_marking(
-            device,
-            queue,
-            &mut encoder,
-            resources,
-            view_id,
-            unjittered_view_proj,
-            cam_pos,
-        );
-
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_end(&mut encoder, 1);
             self.gpu_timers.write_stage_start(&mut encoder, 2);

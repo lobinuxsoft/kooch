@@ -62,6 +62,27 @@ pub fn rate_from_environment() -> u32 {
 /// What the panel's slider allows, and what `record` clamps to.
 pub const RATE_RANGE: (u32, u32) = (1, 16);
 
+/// What the debug view paints into.
+///
+/// 🔴 Has to equal `HDR_COLOR_FORMAT`. wgpu compares the storage class
+/// declared in the shader against this layout and rejects the pipeline,
+/// which surfaces as *"Texture class Storage doesn't match the shader"*
+/// rather than as a wrong image.
+pub const PAINT_FORMAT: wgpu::TextureFormat = crate::meshlet::deferred::HDR_COLOR_FORMAT;
+
+/// Where the debug view writes, and what it has to survive.
+#[derive(Clone, Copy)]
+pub struct Paint<'a> {
+    /// The frame's HDR radiance. Bound whether or not the view is on:
+    /// a binding declared in the shader has to be provided, and a
+    /// second pipeline for the sake of one branch is a second pipeline
+    /// to keep in step.
+    pub target: &'a wgpu::TextureView,
+    pub on: bool,
+    /// The tonemap's multiplier, which the shader divides out.
+    pub exposure: f32,
+}
+
 /// What one dispatch found.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MarkCounts {
@@ -86,6 +107,7 @@ struct PageMarkView {
     chain: [u32; 4],
     strides: [u32; 4],
     sampling: [u32; 4],
+    paint: [f32; 4],
 }
 
 /// The pass, its buffers, and the ring that brings the count home.
@@ -195,6 +217,7 @@ impl PageMarker {
         sun: Option<Vec3>,
         viewport: (u32, u32),
         rate: u32,
+        paint: Paint<'_>,
     ) {
         let count = lights.light_count().max(1);
         // One slot past the lights, for the sun: it is not in the grid
@@ -206,7 +229,15 @@ impl PageMarker {
             self.capacity = slots;
         }
 
-        let rate = rate.clamp(RATE_RANGE.0, RATE_RANGE.1);
+        // 🔴 Painting forces one thread per pixel. At any coarser rate
+        // the view would be a grid of dots over an unpainted frame,
+        // which reads as "the pass is broken" rather than as "you asked
+        // for one sample in sixteen".
+        let rate = if paint.on {
+            1
+        } else {
+            rate.clamp(RATE_RANGE.0, RATE_RANGE.1)
+        };
         queue.write_buffer(
             &self.view,
             0,
@@ -231,7 +262,10 @@ impl PageMarker {
                     self.stride(),
                     count,
                 ],
-                sampling: [rate, count, 0, 0],
+                sampling: [rate, count, u32::from(paint.on), 0],
+                // The reciprocal, so the shader divides out what the
+                // tonemap will multiply back in.
+                paint: [1.0 / paint.exposure.max(1e-6), 0.0, 0.0, 0.0],
             }),
         );
 
@@ -250,6 +284,10 @@ impl PageMarker {
                 buffer_entry(5, &self.view),
                 buffer_entry(6, &self.marks),
                 buffer_entry(7, &self.counters),
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::TextureView(paint.target),
+                },
             ],
         });
 
@@ -356,6 +394,16 @@ fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             uniform(5),
             storage(6, false),
             storage(7, false),
+            wgpu::BindGroupLayoutEntry {
+                binding: 8,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: PAINT_FORMAT,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                },
+                count: None,
+            },
         ],
     })
 }

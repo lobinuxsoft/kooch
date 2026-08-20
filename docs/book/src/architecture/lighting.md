@@ -997,6 +997,37 @@ coarser rate is fewer threads **and** a wider pixel footprint, so the
 level chosen comes out coarser and the count lower. 1 is the honest
 reading and the expensive one.
 
+### Seeing it — *Paint pages over the scene*
+
+The count says how many; the view says **where**. It colours every pixel
+by the shadow page it reads:
+
+- **Hue is the level** — where the frame spends detail. A band of colour
+  is a level boundary.
+- **Brightness is the page identity**, hashed, so neighbouring pages
+  differ and the tiling is visible. A page covering a quarter of the
+  screen is a page too coarse for it; a mosaic too fine to resolve is
+  detail nobody sees.
+
+The **sun's** page wins where there is a sun. A pixel is lit by many
+lights, and painting the last one walked would make the view depend on
+the light list's order.
+
+🔴 Painting forces the sampling rate to 1. At any coarser rate the view
+is a grid of dots over an unpainted frame, which reads as a broken pass
+rather than as a coarse sample.
+
+🔴 **It divides the exposure out**, and that is not a detail. The target
+holds linear radiance, the tonemap does `aces(radiance * exposure)`, and
+this engine's radiance is in the hundreds — a debug colour written as
+authored arrives on screen as near black. A debug view nobody can see is
+the same as no debug view.
+
+⚠️ It overwrites the radiance target, so it is recorded **before** the
+frame is cut for an upscaler. After the cut everything downstream reads
+the upscaled image and the paint would land in a texture nothing samples
+again.
+
 🔴 **It is an instrument, not a feature.** Nothing reads what it writes,
 and it is off unless asked for — a measurement that runs whether or not
 anyone wanted it is a cost nobody attributed. Its job is to disagree

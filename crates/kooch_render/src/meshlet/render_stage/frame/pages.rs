@@ -12,7 +12,7 @@ use glam::{Mat4, Vec3};
 use kooch_core::resource::Resources;
 
 use crate::shadow::pages::PageMarkingSettings;
-use crate::shadow::pages::mark::{MarkCounts, PageMarker};
+use crate::shadow::pages::mark::{MarkCounts, PageMarker, Paint};
 use crate::shadow::{ClipmapConfig, PageConfig};
 
 use super::super::stage::MeshletRenderStage;
@@ -28,6 +28,7 @@ fn page_marking_settings(resources: &Resources) -> PageMarkingSettings {
         .unwrap_or(PageMarkingSettings {
             enabled: false,
             rate: 1,
+            paint: false,
         })
 }
 
@@ -46,6 +47,7 @@ impl MeshletRenderStage {
         view_id: crate::meshlet::render_stage::ViewId,
         clip_from_world: Mat4,
         eye: Vec3,
+        exposure: f32,
     ) {
         let settings = page_marking_settings(resources);
         if !settings.enabled {
@@ -68,6 +70,11 @@ impl MeshletRenderStage {
             sun,
             view.render_size,
             settings.rate,
+            Paint {
+                target: &view.color_view,
+                on: settings.paint,
+                exposure,
+            },
         );
     }
 
