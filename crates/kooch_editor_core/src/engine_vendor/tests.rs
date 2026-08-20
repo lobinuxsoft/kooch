@@ -440,3 +440,42 @@ fn install_moves_the_project_to_the_editors_version() {
 
     unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
 }
+
+/// 🔴 Honouring a project's pin must not mean the editor's own engine
+/// is never installed. Opening a project pinned to an older version
+/// that the machine already has used to return early before
+/// materialising anything, so the version the editor actually ships
+/// existed nowhere on disk until somebody pressed **Use** in the
+/// launcher — which read as "the editor does not install the new
+/// engine".
+///
+/// Installing it and MOVING a project onto it are different questions.
+/// Only the second is the user's call.
+#[test]
+fn the_editors_engine_installs_anyway() {
+    let _env = super::ENGINE_HOME_LOCK.lock().expect("env lock");
+    let dir = tmp("own_version");
+    let (engine, home) = (dir.join("editor_src"), dir.join("home"));
+    fake_engine(&engine);
+    let pinned = home.join("0.0.1-older").join(VENDOR_DIR);
+    fake_engine(&pinned);
+    // SAFETY: single-threaded suite; see the module's other env tests.
+    unsafe { std::env::set_var("KOOCH_ENGINE_HOME", &home) };
+
+    let (_state, path) = ensure_current("0.0.1-older", Some(&engine)).unwrap();
+
+    assert_eq!(
+        path.as_deref(),
+        Some(pinned.as_path()),
+        "the project's own pin stopped being honoured",
+    );
+    assert!(
+        home.join(editor_engine_version())
+            .join(VENDOR_DIR)
+            .join("Cargo.toml")
+            .exists(),
+        "this editor's engine was not installed alongside the pinned one",
+    );
+
+    unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
+}
