@@ -35,8 +35,8 @@ pub use cascades::{
 };
 pub use cube::{DEFAULT_CUBE_SIZE, PointShadowCubes};
 pub use pages::{
-    CensusCamera, CensusFrame, CensusKind, CensusLight, ClipmapConfig, PageCensus, PageConfig,
-    WorldBox, census,
+    CensusCamera, CensusFrame, CensusKind, CensusLight, ClipmapConfig, POOL_PAGES, POOL_PAGES_WIDE,
+    PageCensus, PageConfig, WorldBox, census,
 };
 pub use pass::{PreparedShadows, ShadowPass};
 pub use point::{

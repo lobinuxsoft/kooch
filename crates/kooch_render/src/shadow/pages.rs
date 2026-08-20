@@ -61,8 +61,10 @@ pub struct PageConfig {
 }
 
 impl Default for PageConfig {
-    /// Epic's, so the first row of the sweep is the one with published
-    /// numbers behind it.
+    /// Epic's, verified against the UE 5.8 documentation rather than
+    /// quoted second-hand: *"they have a virtual resolution of 16k x 16k
+    /// pixels"* and *"VSMs split the shadow map into tiles (or Pages)
+    /// that are 128x128 each"*.
     fn default() -> Self {
         Self {
             page: 128,
@@ -70,6 +72,24 @@ impl Default for PageConfig {
         }
     }
 }
+
+/// Pages in Unreal's physical pool by default —
+/// `r.Shadow.Virtual.MaxPhysicalPages`.
+///
+/// 🔴 **The budget line, and it is one number for the whole scene**:
+/// every light, the sun included, allocates out of this. Epic's own
+/// tuning advice puts 4096 at *"too tight for a real open world"*, 6144
+/// as the open-world recommendation and 8192 as the point where it
+/// thrashes — so a census landing in that band is landing where a
+/// shipped engine's pool sits, and one landing far above it is
+/// describing an allocation nobody ships.
+///
+/// Overflow is not graceful: Epic's page-pool overflow shows up as
+/// checkerboard corruption or missing shadows.
+pub const POOL_PAGES: u32 = 4096;
+
+/// The open-world pool Epic recommends over the default.
+pub const POOL_PAGES_WIDE: u32 = 6144;
 
 impl PageConfig {
     /// Levels in the chain, level 0 being the finest.
@@ -185,13 +205,19 @@ pub struct ClipmapConfig {
 }
 
 impl Default for ClipmapConfig {
-    /// Sixteen levels doubling from two metres reach 128 km, which
-    /// brackets UE5's 40 km without pretending to match a unit system
-    /// this engine does not share.
+    /// Unreal's, read off the UE 5.8 documentation: *"by default,
+    /// clipmap levels 6 through 22 are allocated"*, the finest
+    /// *"covering 64 cm (2^6 cm) from the camera position"* and the
+    /// broadest *"about 40 kilometers (2^22 cm)"*.
+    ///
+    /// Those are **radii**, so level 6's extent is 1.28 m and the
+    /// seventeenth level's is 83.9 km. 🔴 And every level keeps the full
+    /// 16k resolution — a clipmap level is not half of the last one, the
+    /// way a mip is.
     fn default() -> Self {
         Self {
-            base: 2.0,
-            levels: 16,
+            base: 1.28,
+            levels: 22 - 6 + 1,
         }
     }
 }

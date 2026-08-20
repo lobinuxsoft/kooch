@@ -30,7 +30,8 @@ use kooch::kooch_ecs::scene::SceneDocument;
 use kooch::kooch_lighting::{ClusterGrid, ClusterSettings};
 use kooch::kooch_render::mesh::parse_mesh_bytes_full;
 use kooch::kooch_render::shadow::{
-    CensusCamera, CensusFrame, CensusKind, CensusLight, ClipmapConfig, PageConfig, WorldBox, census,
+    CensusCamera, CensusFrame, CensusKind, CensusLight, ClipmapConfig, POOL_PAGES, POOL_PAGES_WIDE,
+    PageConfig, WorldBox, census,
 };
 
 /// What today's separate allocations cost, from `atlas.rs` and
@@ -391,7 +392,8 @@ fn main() {
         .collect();
 
     println!(
-        "\n  page 128, virtual 16k, one shadow texel per screen pixel\n\n\
+        "\n  page 128, virtual 16k, Unreal's clipmap levels 6..22, \
+         one shadow texel per screen pixel\n\n\
          {:<20} {:>9} {:>9} {:>9} {:>9} {:>7}",
         "", "cells", "volume", "surfaces", "MiB", "saved"
     );
@@ -429,6 +431,21 @@ fn main() {
         "  {:<18} {:>9} {:>9} {:>9} {:>9.1}",
         "today, 5 casting", "-", "-", "-", TODAY_MIB
     );
+    // 🔴 Unreal's own pool, which is one budget for the whole scene:
+    // 4096 pages by default, 6144 recommended for open worlds, 8192
+    // where it thrashes. A census landing in that band is landing where
+    // a shipped engine's pool sits.
+    for (label, pages) in [
+        ("Unreal default", POOL_PAGES),
+        ("Unreal open world", POOL_PAGES_WIDE),
+    ] {
+        println!(
+            "  {label:<18} {:>9} {:>9} {pages:>9} {:>9.1}",
+            "-",
+            "-",
+            pages as f64 * config.page_bytes() as f64 / (1024.0 * 1024.0)
+        );
+    }
 
     println!(
         "\n{:>6} {:>9} {:>10} {:>11} {:>9} {:>11}",

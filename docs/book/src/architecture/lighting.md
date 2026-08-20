@@ -854,70 +854,108 @@ purpose. The marking pass it previews belongs on the GPU — that is
 It also becomes the **oracle** that pass is checked against, the position
 `ClusterGrid::z_slice` already holds against `cluster_z_slice` in WGSL.
 
+### The configuration it measures, and where it comes from
+
+Read off [the UE 5.8 Virtual Shadow Maps
+documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/virtual-shadow-maps-in-unreal-engine)
+directly, not quoted from this project's own issues:
+
+| | Unreal | in `pages.rs` |
+|---|---|---|
+| virtual resolution | *"16k x 16k pixels"* | `PageConfig::virtual_size` |
+| page | *"tiles (or Pages) that are 128x128 each"* | `PageConfig::page` |
+| level selection | *"appropriate mip levels are picked by projecting the size of the screen pixels into shadow map space"* | `level_for` |
+| spot | *"a single 16k VSM with a mip chain rather than clipmaps"* | `CensusKind::Spot` |
+| point | *"a cube map of 16k VSMs, one for each face"* | `CensusKind::Point` |
+| directional | *"clipmap levels 6 through 22"*, finest 64 cm from the camera, broadest ~40 km, every level at full 16k | `ClipmapConfig::default` |
+| **marking** | ***"depth buffer analysis is used as the primary method of marking pages that are needed to render"*** | `CensusFrame::surfaces` |
+| **the budget** | `r.Shadow.Virtual.MaxPhysicalPages`, **4096** by default; 6144 for open worlds; 8192 thrashes | `POOL_PAGES` |
+
+🔴 **The pool is one budget for the whole scene** — every light, the sun
+included, allocates out of it — and overflow is not graceful: Epic's
+page-pool overflow shows as checkerboard corruption or missing shadows.
+At `Depth32Float` those 4096 pages are **256 MiB**, which is *more* than
+this engine's 152 MiB of fixed allocations. The pool is not inherently
+smaller. It is **adaptive**, and that is a different property.
+
 ### What it measured, 2026-08-20
 
 `many_lights.scene` at 1280x720 — a hundred point lights, a sun, a floor
-and sixteen Suzannes — with Epic's configuration: 128-texel pages, a
-16384 virtual map per local light, a sixteen-level clipmap for the sun,
-asking one shadow texel per screen pixel.
-
-The run reports two walks of the same grid. **Volume** marks every cell
-of the frustum; **surfaces** marks only the cells a mesh passes through.
+and sixteen Suzannes — in exactly that configuration. The run reports two
+walks of the same grid: **volume** marks every cell of the frustum,
+**surfaces** marks only the cells a mesh passes through.
 
 | | cells | volume | surfaces | MiB | saved |
 |---|---|---|---|---|---|
-| the sun | 131 | 19 630 | **160** | 10.0 | **122.7x** |
+| the sun | 131 | 15 770 | **118** | 7.4 | **133.6x** |
 | a hundred local lights | 131 | 8 386 | 6 798 | 424.9 | 1.2x |
-| everything | 131 | 28 016 | 6 958 | 434.9 | 4.0x |
+| everything | 131 | 24 156 | 6 916 | 432.2 | 3.5x |
 | the screen's floor — one texel per pixel, perfectly packed | — | — | 57 | 3.6 | |
-| **today's fixed allocations, for five casting lights** | — | — | — | **152** | |
+| today's fixed allocations, for five casting lights | — | — | — | 152.0 | |
+| Unreal's default pool | — | — | 4 096 | 256.0 | |
+| Unreal's open-world pool | — | — | 6 144 | 384.0 | |
 
-🔴 **The marking input was the decision, and the sun is where it shows.**
-Marked from froxel volumes the sun's clipmap residents 19 630 pages —
-344x the theoretical floor. Marked from the cells that actually contain
-geometry it residents **160**, within 2.8x of that floor. A froxel is a
+🔴 **The marking input is the decision, and the sun is where it shows.**
+Marked from froxel volumes the sun's clipmap residents 15 770 pages —
+277x the theoretical floor. Marked from the cells that actually contain
+geometry it residents **118**, about *twice* that floor. A froxel is a
 box of mostly empty air, and a page allocated for air is a page no
-shadow ever reads. This is why UE5 marks from the **depth buffer** and
-the Chalmers papers from the cluster's **view samples** — visible
-fragments, not grid cells.
+shadow ever reads. Epic says the same thing in one sentence: *"depth
+buffer analysis is used as the primary method of marking pages"*.
 
-So #866's own opening move, *read it off the froxel grid that already
-runs*, is what the measurement refutes: the froxel grid answers *which
+So #866's own opening move — *read it off the froxel grid that already
+runs* — is what the measurement refutes. The froxel grid answers *which
 lights reach which region of space*, which is the right input for
 **shading** and the wrong one for **page allocation**.
 
-🔴 **None of the three knobs the issue declined to guess is the
-decision either.** Across 64/128/256-texel pages the bill is flat within
-2 % — 426 to 435 MiB — because a smaller page is simply more pages.
-Across 4k/8k/16k virtual maps residency is *identical* (6 958 pages each
-time), because the virtual size is only the chain's ceiling and the
-level chosen for a cell is the one whose texels match the screen.
+Two further sweeps are kept in the run because both were predictions
+about the volume walk and both **refuted** the mechanism they tested,
+which is what leaves that walk's count standing as an area rather than
+an artefact of how the grid is diced: 32x thinner slices moved it 31 %,
+and over a 20x range of cell counts it moved 25 % — while the surface
+filter moves it 133x.
 
-Two more sweeps are kept in the run because both were predictions about
-the volume walk and both refuted the mechanism they tested, which is
-what leaves that walk's count standing as an area rather than an
-artefact of how the grid is diced: 32x thinner slices moved it **20 %**,
-and over a 20x range of cell counts it is **flat**.
+🔴 **Neither page size nor virtual size is the decision.** Across
+64/128/256-texel pages the bill is flat within 2 % — 424 to 432 MiB —
+because a smaller page is simply more pages. Across 4k/8k/16k virtual
+maps residency is *identical* (6 916 pages each time), because the
+virtual size is only the chain's ceiling and the level chosen for a cell
+is the one whose texels match the screen.
 
 ### What it says about the engine as it stands
 
-**For the content that ships today — five casting lights — the pool is
-16.8 MiB against 152.** Nine times less, same image. That is the whole
-promise of *memory that follows the screen instead of the sum of every
-light type's worst case*, and it holds.
+🎯 **For the content that ships today — five casting lights — the pool
+is 14.1 MiB against 152.** Eleven times less, same image. That is the
+whole promise of *memory that follows the screen instead of the sum of
+every light type's worst case*, and it holds.
 
-⚠️ **But the local lights barely benefit from better marking: 1.2x.** A
-point light's `range` already bounds it to the cells near geometry, so
-there is little air left to stop paying for. A hundred casting local
-lights cost **424.9 MiB** at this density — about 4.2 MiB each, against
-the 6 MiB a cube slot costs today. So the pool replaces a cap of *four
-slots* with a cap of *memory*, and on a handheld that is still a cap.
-The next lever is the density target, not the marking.
+⚠️ **But local lights barely benefit from better marking: 1.2x.** A point
+light's `range` already bounds it to the cells near geometry, so there
+is little air left to stop paying for. A hundred casting local lights
+cost **424.9 MiB** — 6 916 pages, which is **past Epic's open-world
+recommendation of 6 144 and into the band they say thrashes**. That the
+census lands there is the best evidence its magnitude is right; it is
+also the answer. The pool replaces a cap of *four slots* with a cap of
+*memory*, and on a handheld that is still a cap. **The next lever is the
+density target, not the marking.**
 
-⚠️ **And the census walks the camera's frustum**, so it counts pages for
-what the viewer can see. Geometry off-screen still has to *rasterise*
-into those pages — marking and casting are separate questions, and only
-the first one is measured here.
+### What the census does not model
+
+- **Coarse pages.** Epic marks some low-resolution pages unconditionally
+  *"to ensure that at least low-resolution shadow data is available"* for
+  systems that sample at arbitrary locations — volumetric fog above all,
+  which is #731 here. That is an additive constant this walk omits.
+- **Occlusion.** A cell with geometry is an upper bound on a cell with
+  *visible* geometry: a cell behind a wall still marks. The real
+  depth-driven pass sits between the surfaces column and the floor.
+- **Off-screen casters.** The walk covers the camera's frustum, so it
+  counts what has to be *marked*. Geometry off-screen still has to
+  *rasterise* into those pages; marking and casting are separate
+  questions and only the first is measured.
+- **Invalidation.** Epic's rules are harsh — *"any light movement or
+  rotation will invalidate all cached pages"*, and moving geometry
+  invalidates the pages its bounds overlap from the light's view — and
+  none of that is a residency question, so none of it is here.
 
 ## What Inti does not do yet
 

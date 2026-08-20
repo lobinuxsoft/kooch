@@ -707,27 +707,34 @@ produces "which lights need detail where", and #847 proved invalidation-by-reach
 and memory, and the frame's problem today is cost per pixel.
 
 🔴 **Measured 2026-08-20, and it settles Phase 2's first move (PR #927).** The census —
-`cargo run --example measure_shadow_pages` — walks the froxel grid twice on
-`many_lights.scene`: once marking every cell of the frustum, once marking only the cells a
-mesh passes through. **The marking input is the decision, and the sun is where it shows:**
-19 630 pages from volumes — 344x the theoretical floor — against **160** from surfaces,
-within 2.8x of it. A froxel is a box of mostly empty air, and a page allocated for air is a
-page no shadow ever reads; UE5 marks from the depth buffer and the Chalmers papers from the
-cluster's **view samples**, so #866's own *"read it off the froxel grid that already runs"*
-is the sentence this refutes. **None of the three knobs the issue declined to guess matters
-either**: the bill is flat within 2 % across 64/128/256-texel pages and *identical* across
-4k/8k/16k virtual maps, because the level chosen for a cell is the one whose texels match
-the screen.
+`cargo run --example measure_shadow_pages` — is built to *Unreal's* configuration read off
+[the UE 5.8 VSM
+documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/virtual-shadow-maps-in-unreal-engine)
+rather than quoted from this board: 16k virtual, 128-texel pages, clipmap levels 6..22 for
+the sun and a mip chain for locals, levels picked *"by projecting the size of the screen
+pixels into shadow map space"*.
+
+**The marking input is the decision, and the sun is where it shows:** on
+`many_lights.scene` the sun's clipmap residents **15 770** pages when every cell of the
+frustum is marked — 277x the theoretical floor — and **118** when only the cells containing
+geometry are, about twice that floor. A froxel is a box of mostly empty air, and Epic says
+it in one sentence: *"depth buffer analysis is used as the primary method of marking pages
+that are needed to render"*. So #866's own *"read it off the froxel grid that already runs"*
+is the sentence this refutes. Two sweeps run as predictions moved that count 31 % and 25 %
+where the surface filter moves it **133x**, so it was an area rather than a dicing artefact.
+**Neither page size nor virtual size matters**: flat within 2 % across 64/128/256-texel
+pages, *identical* across 4k/8k/16k virtual maps.
 
 🎯 **What it says about the engine as it stands.** For the content shipping today — five
-casting lights — the pool is **16.8 MiB against 152**: nine times less, same image, and
-that is the promise of *memory that follows the screen* holding. ⚠️ But local lights barely
-benefit from better marking (**1.2x**), because `range` already bounds them to the cells
-near geometry: a hundred casting local lights cost **424.9 MiB**, about 4.2 MiB each
-against the 6 MiB a cube slot costs today. **The pool replaces a cap of four slots with a
-cap of memory**, which on a handheld is still a cap — so the next lever is the density
-target, not the marking, and any summary promising that a hundred lights become free is
-wrong.
+casting lights — the pool is **14.1 MiB against 152**: eleven times less, same image. ⚠️ But
+local lights barely benefit from better marking (**1.2x**), because `range` already bounds
+them to the cells near geometry: a hundred casting local lights cost **424.9 MiB**, or
+**6 916 pages** — past Epic's open-world recommendation of 6 144 and into the band they say
+thrashes. 🔴 And `r.Shadow.Virtual.MaxPhysicalPages` defaults to **4096 pages = 256 MiB**,
+which is *more* than this engine's 152 MiB of fixed allocations: **the pool is not
+inherently smaller, it is adaptive.** It replaces a cap of four slots with a cap of memory,
+which on a handheld is still a cap — so the next lever is the **density target**, not the
+marking, and any summary promising that a hundred casting lights become free is wrong.
 
 **Phase 3 — the consumers, on top of #866 and not before.**
 
