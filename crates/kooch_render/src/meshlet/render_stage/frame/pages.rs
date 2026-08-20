@@ -17,6 +17,20 @@ use crate::shadow::{ClipmapConfig, PageConfig};
 
 use super::super::stage::MeshletRenderStage;
 
+/// The panel owns this; the environment variable is only its default.
+///
+/// Absent means nobody inserted the resource, which is every headless
+/// test — and off is the right answer there.
+fn page_marking_settings(resources: &Resources) -> PageMarkingSettings {
+    resources
+        .get::<PageMarkingSettings>()
+        .copied()
+        .unwrap_or(PageMarkingSettings {
+            enabled: false,
+            rate: 1,
+        })
+}
+
 impl MeshletRenderStage {
     /// Records the marking dispatch, building the pass on first use.
     ///
@@ -33,19 +47,9 @@ impl MeshletRenderStage {
         clip_from_world: Mat4,
         eye: Vec3,
     ) {
-        // The panel owns this; the environment variable is only its
-        // default. Absent means nobody inserted the resource, which is
-        // every headless test — and off is the right answer there.
-        let settings =
-            resources
-                .get::<PageMarkingSettings>()
-                .copied()
-                .unwrap_or(PageMarkingSettings {
-                    enabled: false,
-                    rate: 1,
-                });
+        let settings = page_marking_settings(resources);
         if !settings.enabled {
-            self.page_marking_last = None;
+            self.forget_page_marking();
             return;
         }
         let marker = self.page_marker.get_or_insert_with(|| {
@@ -73,7 +77,17 @@ impl MeshletRenderStage {
     /// Call **after** the encoder has been submitted: `map_async` before
     /// the submit is a validation error, which is why the readback ring
     /// is split in two halves here and in `ClusterReadback` alike.
-    pub(super) fn report_page_marking(&mut self) {
+    pub(super) fn report_page_marking(&mut self, resources: &Resources) {
+        // 🔴 The enablement is checked HERE too, and forgetting it was a
+        // bug that made turning the pass OFF log *more*: `record` reset
+        // the last-logged count, this kept reading the marker's own
+        // cached one, and "did it change?" then answered yes every
+        // single frame. A guard on the recording half is not a guard on
+        // the reporting half.
+        if !page_marking_settings(resources).enabled {
+            self.forget_page_marking();
+            return;
+        }
         let Some(marker) = self.page_marker.as_mut() else {
             return;
         };
@@ -103,6 +117,15 @@ impl MeshletRenderStage {
             pairs = counts.pairs,
             "shadow pages marked"
         );
+    }
+
+    /// Drops every count the pass produced, so a run that starts again
+    /// reports what it finds rather than what it found before.
+    fn forget_page_marking(&mut self) {
+        self.page_marking_last = None;
+        if let Some(marker) = self.page_marker.as_mut() {
+            marker.forget();
+        }
     }
 
     /// What the last dispatch found, for a caller that wants the number

@@ -163,6 +163,16 @@ impl PageMarker {
         self.last
     }
 
+    /// Drops the cached count.
+    ///
+    /// 🔴 Sticky by design — the ring is a frame or two behind, so a
+    /// frame with nothing new keeps reporting the last real answer. That
+    /// is right while the pass runs and wrong the moment it stops: a
+    /// count nobody measured this frame is not a reading.
+    pub fn forget(&mut self) {
+        self.last = None;
+    }
+
     /// Pages one light can address, which is the mark buffer's stride.
     fn stride(&self) -> u32 {
         stride(self.config, self.clipmap)

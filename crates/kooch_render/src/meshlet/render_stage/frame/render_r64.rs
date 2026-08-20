@@ -265,7 +265,7 @@ impl MeshletRenderStage {
         queue.submit(std::iter::once(encoder.finish()));
         // The counters' ring maps after the submit, the way every other
         // readback here does.
-        self.report_page_marking();
+        self.report_page_marking(resources);
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.submit_readback(slot_idx);
         }

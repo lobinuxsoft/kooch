@@ -261,3 +261,51 @@ fn a_sun_marks_without_a_grid() {
     assert!(counts.resident > 0, "the sun still needs pages");
     assert_eq!(counts.overflow, 0);
 }
+
+#[test]
+fn a_stopped_pass_reports_nothing() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+    let depth_view = depth_texture(&device, &queue, 0.01);
+    let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+
+    let mut encoder = device.create_command_encoder(&Default::default());
+    lights.record_clusters(&mut encoder);
+    marker.record(
+        &device,
+        &queue,
+        &mut encoder,
+        &lights,
+        &depth_view,
+        (proj * view).inverse(),
+        eye,
+        None,
+        (SIZE, SIZE),
+        1,
+    );
+    queue.submit([encoder.finish()]);
+    marker.poll();
+    wait(&device);
+    marker.poll();
+    assert!(marker.last().is_some_and(|c| c.resident > 0));
+
+    // 🔴 The count is sticky on purpose — the ring runs a frame or two
+    // behind, so a frame with nothing new keeps the last real answer.
+    // That is right while the pass runs and wrong the moment it stops,
+    // and forgetting it was what made turning the pass OFF log every
+    // frame instead of none.
+    marker.forget();
+    assert_eq!(marker.last(), None);
+}
