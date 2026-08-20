@@ -67,7 +67,6 @@ pub mod guid;
 pub mod log_console;
 pub mod pipeline_cache;
 pub mod plugin;
-pub mod power;
 pub mod prelude;
 pub mod profiler;
 pub mod raw_event;

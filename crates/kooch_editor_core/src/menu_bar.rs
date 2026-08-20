@@ -1,7 +1,6 @@
 //! Editor menu bar drawing.
 
 use egui_dock::DockState;
-use kooch_core::power::PowerProfile;
 
 use crate::actions::EditorAction;
 use crate::icons;
@@ -88,7 +87,6 @@ pub(crate) fn draw_menu_bar(
     can_redo: bool,
     undo_desc: Option<&str>,
     redo_desc: Option<&str>,
-    power_profile: PowerProfile,
     _ide_command: Option<&str>,
     edit: EditMenu<'_>,
 ) {
@@ -151,24 +149,6 @@ pub(crate) fn draw_menu_bar(
             });
             ui.menu_button("Edit", |ui| {
                 draw_edit_menu(ui, actions, &edit, can_undo, can_redo, undo_desc, redo_desc);
-            });
-            ui.menu_button("Engine", |ui| {
-                ui.menu_button(format!("Power Profile: {}", power_profile.as_str()), |ui| {
-                    for option in [
-                        PowerProfile::Plugged,
-                        PowerProfile::Balanced,
-                        PowerProfile::Battery,
-                        PowerProfile::Debug,
-                    ] {
-                        if ui
-                            .selectable_label(power_profile == option, option.as_str())
-                            .clicked()
-                        {
-                            actions.push(EditorAction::SetPowerProfile(option));
-                            ui.close();
-                        }
-                    }
-                });
             });
             ui.menu_button("Window", |ui| {
                 for &tab in ALL_TABS {
@@ -384,6 +364,69 @@ fn draw_installed_engines(
     }
 }
 
+/// The DLSS SDK: whether this machine has it, and the one button that
+/// fetches it.
+///
+/// 🔴 The tick box is not a formality. NVIDIA's licence is accepted **by
+/// use**, so the moment the editor puts the SDK on disk somebody has
+/// accepted it — and it has to be the person here, having been shown
+/// where the terms are. A download button that worked on the first click
+/// would be accepting a licence on their behalf.
+///
+/// ⚠️ It installs the SDK; it does not enable DLSS. Nothing in this
+/// engine calls it yet.
+fn draw_dlss_sdk(ui: &mut egui::Ui, install: &mut crate::dlss_sdk::SdkInstall) {
+    use crate::dlss_sdk::{LICENSE, SdkState, VERSION};
+
+    install.poll();
+    ui.label(egui::RichText::new(format!("DLSS SDK {VERSION}")).strong());
+
+    match install.state().clone() {
+        SdkState::Installed(dir) => {
+            ui.weak(format!("Installed: {}", dir.display()));
+            ui.weak(
+                "Set DLSS_SDK to that path in Launch environment and the game finds the \
+                 runtime without copying it.",
+            );
+            return;
+        }
+        SdkState::Fetching(what) => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak(what);
+            });
+            return;
+        }
+        SdkState::Nowhere => {
+            ui.weak("No data directory on this platform to put it in.");
+            return;
+        }
+        SdkState::Failed(problem) => {
+            ui.colored_label(egui::Color32::from_rgb(220, 120, 120), problem);
+        }
+        SdkState::Missing(dir) => {
+            ui.weak(format!("Not installed. It would go in {}", dir.display()));
+        }
+    }
+
+    ui.weak(
+        "Downloaded from NVIDIA, never from us — their licence forbids redistributing \
+         the SDK. It is ~700 MB and it does not enable DLSS on its own; nothing in the \
+         engine calls it yet.",
+    );
+    ui.hyperlink_to("Read the licence", LICENSE);
+    ui.checkbox(&mut install.accepted, "I accept NVIDIA's SDK licence");
+
+    let can = install.can_fetch();
+    if ui
+        .add_enabled(can, egui::Button::new("Download the SDK"))
+        .on_disabled_hover_text("Accept the licence first.")
+        .clicked()
+    {
+        install.fetch();
+    }
+}
+
 /// The open project's launch environment, for the Play button.
 ///
 /// Play spawns `cargo run` and the child inherits this process's
@@ -541,6 +584,7 @@ pub(crate) fn draw_settings_window(
     ide_command: Option<&str>,
     project_engine: Option<&str>,
     launch_env: Option<&str>,
+    dlss: &mut crate::dlss_sdk::SdkInstall,
 ) {
     let id = settings_open_id(ctx);
     let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
@@ -604,6 +648,11 @@ pub(crate) fn draw_settings_window(
                 ui.add_space(6.0);
                 draw_launch_env(ui, ctx, id, current, actions);
             }
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(6.0);
+            draw_dlss_sdk(ui, dlss);
 
             ui.add_space(12.0);
             ui.separator();

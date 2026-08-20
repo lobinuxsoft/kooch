@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use kooch_core::gpu::GpuContext;
-use kooch_core::power::{self, PowerProfile};
 use kooch_core::raw_event::RawEventHandler;
 use kooch_core::resource::Resources;
 use kooch_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
@@ -122,7 +121,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     };
 
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });
-    let power_profile: PowerProfile = power::detect();
     resources.insert(overlay);
     // Today the only handler: the editor builds its own plugin set in
     // `bootstrap.rs` and `InputPlugin` is not in it. It still registers
@@ -169,7 +167,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     // artists can crank it higher to force coarser LOD selection
     // at editor distances and visually sanity-check the chain.
     resources.insert(MeshletLodSettings::default());
-    resources.insert(power_profile);
 
     tracing::info!("Editor overlay initialized");
 }

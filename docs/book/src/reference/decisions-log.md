@@ -315,6 +315,25 @@ Format:
 > off in Battery) per-feature in future PRs.
 > **Consequence:** `kooch_core` carries the policy enum but renderers do
 > not yet read it. Integration is per-feature PR work, intentional.
+>
+> ❌ **Reverted 2026-08-20.** Nothing ever read it. Four months on, the
+> only consumer was the editor's own menu drawing its current value —
+> a panel with no backend, which is this project's own named
+> antipattern with the arrow reversed. Removed with the menu it lived
+> in, `KOOCH_POWER_PROFILE` included.
+>
+> What replaced it is better than what it promised: quality is decided
+> per PROJECT in `.rendersettings` — `compute_shading`, `shading_rate`,
+> `upscale`, `render_scale` — with every value measured on the target
+> rather than inferred from whether a cable is plugged in. A handheld
+> preset that meets the 13.9 ms budget is written down in the roadmap,
+> and it came from captures, not from a heuristic reading sysfs.
+>
+> ⚠️ The lesson worth keeping: **the consequence line above described
+> the failure and shipped anyway.** "The renderers do not yet read it"
+> was true on the day and stayed true, and an enum nobody consumes
+> costs a menu, an env var, a detection heuristic and four months of
+> looking like a feature.
 
 ---
 

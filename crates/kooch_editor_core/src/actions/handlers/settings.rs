@@ -1,7 +1,6 @@
-//! Reparenting, the IDE command, the power profile, and cancelling a
+//! Reparenting, the IDE command, the launch environment, and cancelling a
 //! launch — the handlers that do not belong to a larger subsystem.
 
-use kooch_core::power::PowerProfile;
 use kooch_core::resource::Resources;
 use kooch_ecs::entity::Entity;
 use std::path::Path;
@@ -62,21 +61,6 @@ pub(super) fn handle_set_launch_env(resources: &mut Resources, value: String) {
         if let Err(e) = ps.editor_config.save() {
             tracing::warn!(error = %e, "failed to save editor config");
         }
-    }
-}
-
-pub(super) fn handle_set_power_profile(resources: &mut Resources, profile: PowerProfile) {
-    if let Some(slot) = resources.get_mut::<PowerProfile>() {
-        if *slot != profile {
-            tracing::info!(
-                from = slot.as_str(),
-                to = profile.as_str(),
-                "power profile changed"
-            );
-            *slot = profile;
-        }
-    } else {
-        resources.insert(profile);
     }
 }
 

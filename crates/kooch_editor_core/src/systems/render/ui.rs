@@ -71,13 +71,13 @@ pub(super) struct ViewportUi<'a> {
 pub(super) fn run_editor_ui(
     overlay: &mut EditorOverlay,
     project_state: &mut Option<ProjectState>,
+    dlss: &mut crate::dlss_sdk::SdkInstall,
     preflight: Option<&crate::preflight::Report>,
     raw_input: egui::RawInput,
     project_loaded: bool,
     data: &FrameDisplayData,
     toolbar: &ToolbarInfo,
     viewport: ViewportUi<'_>,
-    power_profile: kooch_core::power::PowerProfile,
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
     asset_detail: Option<&crate::panels::inspector::AssetDetail>,
     open_input_map: Option<&crate::state::OpenInputMap>,
@@ -167,7 +167,6 @@ pub(super) fn run_editor_ui(
                 toolbar.can_redo,
                 toolbar.undo_desc.as_deref(),
                 toolbar.redo_desc.as_deref(),
-                power_profile,
                 project_state
                     .as_ref()
                     .and_then(|ps| ps.editor_config.ide_command.as_deref()),
@@ -201,6 +200,7 @@ pub(super) fn run_editor_ui(
                     let root = &ps.active_project.as_ref()?.root_path;
                     Some(ps.editor_config.launch_env_for(root))
                 }),
+                dlss,
             );
 
             // A build is running and the dock has nothing to show yet.
