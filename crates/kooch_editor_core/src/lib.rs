@@ -41,6 +41,7 @@ pub use panels::profiler::keep_all_frames;
 pub mod perf;
 mod picking;
 pub mod play_state;
+pub mod preflight;
 pub mod project;
 pub mod project_log;
 pub mod project_plugin;
@@ -134,6 +135,10 @@ impl Plugin for EditorPlugin {
         // readback, render-side counters). Inserted at zero so the
         // toolbar can read it on the very first frame without any
         // metric system having run yet.
+        // Once per launch: installing anything it reports ends in a
+        // reboot on an image-based system, so the answer cannot change
+        // while the editor runs.
+        app.insert_resource(preflight::Report::detect());
         app.insert_resource(perf::EditorPerfStats::default());
         app.insert_resource(perf::PerfTimingState::default());
         app.insert_resource(perf::SysMetricsState::default());

@@ -441,10 +441,15 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .flatten()
         .and_then(|entity| kooch_lighting::shadow_note(resources, entity));
 
+    // Read before the UI borrows nothing else from `resources`: the
+    // report is inserted once at startup and never changes.
+    let preflight = resources.get::<crate::preflight::Report>().cloned();
+
     let ui_start = std::time::Instant::now();
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
+        preflight.as_ref(),
         raw_input,
         project_loaded,
         &display_data,
