@@ -38,6 +38,7 @@ pub(crate) mod panels;
 /// against a long capture discarding its own scope names.
 #[cfg(feature = "profiling")]
 pub use panels::profiler::keep_all_frames;
+pub mod dlss_sdk;
 pub mod perf;
 mod picking;
 pub mod play_state;
@@ -139,6 +140,9 @@ impl Plugin for EditorPlugin {
         // reboot on an image-based system, so the answer cannot change
         // while the editor runs.
         app.insert_resource(preflight::Report::detect());
+        // Looked at lazily, the first time the Settings window draws:
+        // three `is_file`s, and nothing at all until somebody opens it.
+        app.insert_resource(dlss_sdk::SdkInstall::default());
         app.insert_resource(perf::EditorPerfStats::default());
         app.insert_resource(perf::PerfTimingState::default());
         app.insert_resource(perf::SysMetricsState::default());

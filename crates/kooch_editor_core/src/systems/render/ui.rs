@@ -71,6 +71,7 @@ pub(super) struct ViewportUi<'a> {
 pub(super) fn run_editor_ui(
     overlay: &mut EditorOverlay,
     project_state: &mut Option<ProjectState>,
+    dlss: &mut crate::dlss_sdk::SdkInstall,
     preflight: Option<&crate::preflight::Report>,
     raw_input: egui::RawInput,
     project_loaded: bool,
@@ -201,6 +202,7 @@ pub(super) fn run_editor_ui(
                     let root = &ps.active_project.as_ref()?.root_path;
                     Some(ps.editor_config.launch_env_for(root))
                 }),
+                dlss,
             );
 
             // A build is running and the dock has nothing to show yet.
