@@ -834,6 +834,181 @@ carried.
 replaced. It exists to be the A/B: same camera, same scene, one capture
 each, is the only honest way to say what the grid bought.
 
+## What a page pool would hold — the census (#866)
+
+Before there is a page pool there is a number, and #866 says so:
+*"the first task in this issue is a measurement, not an allocation"*.
+`cargo run --example measure_shadow_pages -- <scene>` is that
+measurement. It walks the froxel grid, marks every page each cell would
+need from each light that reaches it, and prints what the distinct pages
+would cost.
+
+```bash
+cargo run --example measure_shadow_pages --features lighting -- \
+    ../roll-a-ball/assets/scenes/many_lights.scene
+```
+
+The walk lives in `kooch_render::shadow::pages` and runs on the CPU on
+purpose. The marking pass it previews belongs on the GPU — that is
+#477 — but here it only counts, so it needs no device and can be a test.
+It also becomes the **oracle** that pass is checked against, the position
+`ClusterGrid::z_slice` already holds against `cluster_z_slice` in WGSL.
+
+### The configuration it measures, and where it comes from
+
+Read off [the UE 5.8 Virtual Shadow Maps
+documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/virtual-shadow-maps-in-unreal-engine)
+directly, not quoted from this project's own issues:
+
+| | Unreal | in `pages.rs` |
+|---|---|---|
+| virtual resolution | *"16k x 16k pixels"* | `PageConfig::virtual_size` |
+| page | *"tiles (or Pages) that are 128x128 each"* | `PageConfig::page` |
+| level selection | *"appropriate mip levels are picked by projecting the size of the screen pixels into shadow map space"* | `level_for` |
+| spot | *"a single 16k VSM with a mip chain rather than clipmaps"* | `CensusKind::Spot` |
+| point | *"a cube map of 16k VSMs, one for each face"* | `CensusKind::Point` |
+| directional | *"clipmap levels 6 through 22"*, finest 64 cm from the camera, broadest ~40 km, every level at full 16k | `ClipmapConfig::default` |
+| **marking** | ***"depth buffer analysis is used as the primary method of marking pages that are needed to render"*** | `CensusFrame::surfaces` |
+| **the budget** | `r.Shadow.Virtual.MaxPhysicalPages`, **4096** by default; 6144 for open worlds; 8192 thrashes | `POOL_PAGES` |
+
+🔴 **The pool is one budget for the whole scene** — every light, the sun
+included, allocates out of it — and overflow is not graceful: Epic's
+page-pool overflow shows as checkerboard corruption or missing shadows.
+At `Depth32Float` those 4096 pages are **256 MiB**, which is *more* than
+this engine's 152 MiB of fixed allocations. The pool is not inherently
+smaller. It is **adaptive**, and that is a different property.
+
+### What it measured, 2026-08-20
+
+`many_lights.scene` at 1280x720 — a hundred point lights, a sun, a floor
+and sixteen Suzannes — in exactly that configuration. The run reports two
+walks of the same grid: **volume** marks every cell of the frustum,
+**surfaces** marks only the cells a mesh passes through.
+
+| | cells | volume | surfaces | MiB | saved |
+|---|---|---|---|---|---|
+| the sun | 131 | 15 770 | **118** | 7.4 | **133.6x** |
+| a hundred local lights | 131 | 8 386 | 6 798 | 424.9 | 1.2x |
+| everything | 131 | 24 156 | 6 916 | 432.2 | 3.5x |
+| the screen's floor — one texel per pixel, perfectly packed | — | — | 57 | 3.6 | |
+| today's fixed allocations, for five casting lights | — | — | — | 152.0 | |
+| Unreal's default pool | — | — | 4 096 | 256.0 | |
+| Unreal's open-world pool | — | — | 6 144 | 384.0 | |
+
+🔴 **The marking input is the decision, and the sun is where it shows.**
+Marked from froxel volumes the sun's clipmap residents 15 770 pages —
+277x the theoretical floor. Marked from the cells that actually contain
+geometry it residents **118**, about *twice* that floor. A froxel is a
+box of mostly empty air, and a page allocated for air is a page no
+shadow ever reads. Epic says the same thing in one sentence: *"depth
+buffer analysis is used as the primary method of marking pages"*.
+
+So #866's own opening move — *read it off the froxel grid that already
+runs* — is what the measurement refutes. The froxel grid answers *which
+lights reach which region of space*, which is the right input for
+**shading** and the wrong one for **page allocation**.
+
+Two further sweeps are kept in the run because both were predictions
+about the volume walk and both **refuted** the mechanism they tested,
+which is what leaves that walk's count standing as an area rather than
+an artefact of how the grid is diced: 32x thinner slices moved it 31 %,
+and over a 20x range of cell counts it moved 25 % — while the surface
+filter moves it 133x.
+
+🔴 **Neither page size nor virtual size is the decision.** Across
+64/128/256-texel pages the bill is flat within 2 % — 424 to 432 MiB —
+because a smaller page is simply more pages. Across 4k/8k/16k virtual
+maps residency is *identical* (6 916 pages each time), because the
+virtual size is only the chain's ceiling and the level chosen for a cell
+is the one whose texels match the screen.
+
+### What it says about the engine as it stands
+
+🎯 **For the content that ships today — five casting lights — the pool
+is 14.1 MiB against 152.** Eleven times less, same image. That is the
+whole promise of *memory that follows the screen instead of the sum of
+every light type's worst case*, and it holds.
+
+⚠️ **But local lights barely benefit from better marking: 1.2x.** A point
+light's `range` already bounds it to the cells near geometry, so there
+is little air left to stop paying for. A hundred casting local lights
+cost **424.9 MiB** — 6 916 pages, which is **past Epic's open-world
+recommendation of 6 144 and into the band they say thrashes**. That the
+census lands there is the best evidence its magnitude is right; it is
+also the answer. The pool replaces a cap of *four slots* with a cap of
+*memory*, and on a handheld that is still a cap. **The next lever is the
+density target, not the marking.**
+
+### What the census does not model
+
+- **Coarse pages.** Epic marks some low-resolution pages unconditionally
+  *"to ensure that at least low-resolution shadow data is available"* for
+  systems that sample at arbitrary locations — volumetric fog above all,
+  which is #731 here. That is an additive constant this walk omits.
+- **Occlusion.** A cell with geometry is an upper bound on a cell with
+  *visible* geometry: a cell behind a wall still marks. The real
+  depth-driven pass sits between the surfaces column and the floor.
+- **Off-screen casters.** The walk covers the camera's frustum, so it
+  counts what has to be *marked*. Geometry off-screen still has to
+  *rasterise* into those pages; marking and casting are separate
+  questions and only the first is measured.
+- **Invalidation.** Epic's rules are harsh — *"any light movement or
+  rotation will invalidate all cached pages"*, and moving geometry
+  invalidates the pages its bounds overlap from the light's view — and
+  none of that is a residency question, so none of it is here.
+
+### The marking pass, on the GPU
+
+The census is a model. `KOOCH_PAGE_MARKING=1` runs the thing it models:
+one compute dispatch over the depth buffer, in
+`kooch_render::shadow::pages::mark` and `page_mark.wgsl`.
+
+**Where the controls are.** *Performance → Debug → Mark shadow pages*,
+beside the froxel grid's own A/B: a checkbox, the sampling rate, and the
+readout — pages, MiB, samples, sample/light pairs, and what share of
+Unreal's 4096-page pool that is. The environment variables are only the
+**defaults**, for the comparison that gets made on a handheld over SSH
+against a build nobody wants to make twice:
+
+```bash
+KOOCH_PAGE_MARKING=1 kooch_editor        # every pixel
+KOOCH_PAGE_MARKING=1 KOOCH_PAGE_MARKING_RATE=4 kooch_editor
+```
+
+🔴 **In the Performance panel and not in `.rendersettings`, deliberately.**
+#477 is explicit that nothing on the shadow side should grow a *public*
+setting — one written into the project and therefore promised to every
+project — before the pool's shape is decided. This is a diagnostic the
+editor drives, so it lives where the editor's other diagnostics do.
+
+It also logs `shadow pages marked` with the same numbers whenever the
+count changes — on change and not per frame, for the same reason the
+point-shadow warning is a flag rather than a count.
+
+🔴 **The depth says WHERE a surface is; the froxel grid says WHICH lights
+reach it, and neither is sufficient.** Marking from the grid's cells
+alone claims pages for ground no surface occupies — 133x, measured
+above. Marking from depth alone would walk every light per pixel, which
+is the loop the grid exists to remove. Epic states the first half and
+the Chalmers papers the second.
+
+⚠️ `KOOCH_PAGE_MARKING_RATE` is not free accuracy in either direction. A
+coarser rate is fewer threads **and** a wider pixel footprint, so the
+level chosen comes out coarser and the count lower. 1 is the honest
+reading and the expensive one.
+
+🔴 **It is an instrument, not a feature.** Nothing reads what it writes,
+and it is off unless asked for — a measurement that runs whether or not
+anyone wanted it is a cost nobody attributed. Its job is to disagree
+with the census: every arithmetic decision in the shader has a twin in
+`pages.rs`, and if the two counts diverge, one of them is wrong.
+
+⚠️ They are not expected to match exactly. The census marks per **froxel
+cell** and the pass marks per **pixel**, so the pass is the finer
+instrument and the census the cheaper one. What would be a finding is a
+divergence too large to explain by that — an order of magnitude, or a
+count that moves the wrong way when the scene changes.
+
 ## What Inti does not do yet
 
 - **Nothing but lights is clustered.** The grid reserves a range per cell

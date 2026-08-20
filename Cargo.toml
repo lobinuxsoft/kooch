@@ -24,7 +24,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.14.4"
+version = "0.15.0"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
@@ -302,6 +302,11 @@ required-features = ["editor", "physics"]
 [[example]]
 name = "measure_mesh_pool"
 path = "examples/measure_mesh_pool.rs"
+
+[[example]]
+name = "measure_shadow_pages"
+path = "examples/measure_shadow_pages.rs"
+required-features = ["lighting"]
 
 [[example]]
 name = "physics_smoke"

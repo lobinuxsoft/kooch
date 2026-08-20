@@ -316,6 +316,12 @@ impl GpuLights {
         self.clusters.record(encoder);
     }
 
+    /// The uploaded lights, for a pass that walks them itself rather
+    /// than through Inti's bind group.
+    pub fn light_buffer(&self) -> &wgpu::Buffer {
+        &self.light_buffer
+    }
+
     /// The grid, for the editor's stats overlay.
     pub fn clusters(&self) -> &GpuClusters {
         &self.clusters

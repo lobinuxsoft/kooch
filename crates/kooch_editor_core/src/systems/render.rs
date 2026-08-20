@@ -192,6 +192,11 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut specular_floor = resources
         .remove::<kooch_lighting::SpecularFloor>()
         .unwrap_or_default();
+    // Same round trip, for the same reason: the panel edits the settings
+    // the marking pass reads this frame (#866).
+    let mut page_marking = resources
+        .remove::<kooch_render::shadow::pages::PageMarkingSettings>()
+        .unwrap_or_default();
     // Stats are produced by last frame's viewport render and re-published
     // as a Resource. Read-only here — copied so we don't keep the borrow
     // through the egui pass.
@@ -482,6 +487,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut meshlet_lod_settings,
         &mut lights_hot,
         &mut cluster_settings,
+        &mut page_marking,
         &mut specular_floor,
         meshlet_stats,
         resources
@@ -532,6 +538,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     resources.insert(lights_hot);
     resources.insert(cluster_settings);
     resources.insert(specular_floor);
+    resources.insert(page_marking);
 
     // Which light the single-light view isolates (#743): the selection,
     // because "one light at a time" is what selecting a light already

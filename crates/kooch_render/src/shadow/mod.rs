@@ -21,6 +21,7 @@
 mod atlas;
 mod cascades;
 mod cube;
+pub mod pages;
 mod pass;
 mod point;
 mod raster;
@@ -33,6 +34,10 @@ pub use cascades::{
     orthographic_rh_reverse_z, split_distances,
 };
 pub use cube::{DEFAULT_CUBE_SIZE, PointShadowCubes};
+pub use pages::{
+    CensusCamera, CensusFrame, CensusKind, CensusLight, ClipmapConfig, POOL_PAGES, POOL_PAGES_WIDE,
+    PageCensus, PageConfig, WorldBox, census,
+};
 pub use pass::{PreparedShadows, ShadowPass};
 pub use point::{
     CUBE_FACES, CUBE_STICKINESS, CubeKey, FACE_DIRECTIONS, InstanceBounds, POINT_SHADOW_NEAR_Z,

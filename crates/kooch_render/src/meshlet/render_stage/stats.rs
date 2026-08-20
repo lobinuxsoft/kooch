@@ -54,6 +54,9 @@ pub struct MeshletRenderStats {
     /// frames in. Stale by the same design as the cull counts: the
     /// alternative is a `device.poll` in the hot loop.
     pub cluster_occupancy: Option<(u32, f32)>,
+    /// What the shadow-page marking pass found, when it is running
+    /// (#866). `None` when it is off, which is the default.
+    pub page_marking: Option<crate::shadow::pages::mark::MarkCounts>,
     /// Per-stage cull survivor counts (#454.6).
     /// `[after_frustum, after_backface, after_hi_z, total_visible]`.
     /// `None` when no debug-active mode has been selected yet (the

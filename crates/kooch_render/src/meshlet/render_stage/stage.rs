@@ -151,6 +151,19 @@ pub struct MeshletRenderStage {
     /// Shared rather than per view: it is a pipeline, and the texture
     /// it writes through comes from whichever view is being rendered.
     pub(super) reject_overlay: Option<MeshletRejectOverlay>,
+    /// The shadow-page marking pass (#866), when it was asked for.
+    ///
+    /// 🔴 An **instrument**, not a feature: nothing reads what it
+    /// writes. It exists to falsify the CPU census in
+    /// `shadow::pages` — that census is a model, and this is the first
+    /// thing that can disagree with it. Built on the first frame that
+    /// finds `KOOCH_PAGE_MARKING` set, and never otherwise: a
+    /// measurement that runs whether or not anyone asked is a cost
+    /// nobody attributed.
+    pub(super) page_marker: Option<crate::shadow::pages::mark::PageMarker>,
+    /// The last count reported, so the log fires on a change rather than
+    /// sixty times a second.
+    pub(super) page_marking_last: Option<crate::shadow::pages::mark::MarkCounts>,
 
     pub(super) instance_capacity: u32,
 
