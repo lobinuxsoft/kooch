@@ -37,5 +37,19 @@ fn play_and_stop_wait_for_the_project() {
 /// safe during a build.
 #[test]
 fn preferences_and_file_work_stay_available() {
-    assert!(!EditorAction::SetPowerProfile(PowerProfile::Battery).needs_a_live_world());
+    // The power profile used to be this test's example and the setting
+    // is gone; the rule it demonstrates is not, so it keeps two that
+    // remain.
+    assert!(
+        !EditorAction::SetIdeCommand {
+            command: Some("code".to_owned())
+        }
+        .needs_a_live_world()
+    );
+    assert!(
+        !EditorAction::SetLaunchEnv {
+            value: "KOOCH_SHADING_PAD=4".to_owned()
+        }
+        .needs_a_live_world()
+    );
 }

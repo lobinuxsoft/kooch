@@ -93,6 +93,25 @@ pub fn shared_engine_dir(version: &str) -> Option<PathBuf> {
     base.map(|b| b.join(version).join(VENDOR_DIR))
 }
 
+/// Where this machine keeps a vendor SDK, under the same base the
+/// engine uses.
+///
+/// One directory per version, the same shape and for the same reason:
+/// two projects may want different versions, and blowing one away when
+/// the other opens would make switching a re-download.
+///
+/// Shares `KOOCH_ENGINE_HOME` deliberately — it is "where this editor
+/// keeps things it fetched", and a second variable for the same idea is
+/// a second thing to set wrong.
+pub fn shared_sdk_dir(name: &str, version: &str) -> Option<PathBuf> {
+    let base = match std::env::var_os("KOOCH_ENGINE_HOME") {
+        Some(dir) => Some(PathBuf::from(dir)),
+        None if cfg!(test) => None,
+        None => dirs::data_dir().map(|d| d.join("kooch")),
+    };
+    base.map(|b| b.join("sdk").join(name).join(version))
+}
+
 /// What the engine's own root has to contain for a copy of it to be
 /// buildable. Checked before writing anything, so a bad engine root
 /// fails project creation rather than producing a project that cannot

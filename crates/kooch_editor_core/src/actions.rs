@@ -25,7 +25,6 @@ pub(crate) mod scene_io;
 use std::any::TypeId;
 use std::path::PathBuf;
 
-use kooch_core::power::PowerProfile;
 use kooch_core::resource::Resources;
 use kooch_ecs::component::ComponentId;
 use kooch_ecs::entity::Entity;
@@ -250,7 +249,6 @@ pub(crate) enum EditorAction {
     RemoveRecent(PathBuf),
     LaunchProject(PathBuf),
     CancelLaunch,
-    SetPowerProfile(PowerProfile),
     /// Replace a `Material` asset's contents (PBR scalars + texture
     /// references). Emitted by the Asset Browser's material editor.
     /// Applied to `Assets<Material>` so the render sync picks it up live.
@@ -546,7 +544,6 @@ impl EditorAction {
             // Editor preferences and things that act on files rather than
             // on the world. An asset edit is about a `.ron` on disk, and
             // the project is not holding it.
-            Self::SetPowerProfile(_)
             | Self::SetIdeCommand { .. }
             | Self::SetLaunchEnv { .. }
             | Self::EditMaterial { .. }

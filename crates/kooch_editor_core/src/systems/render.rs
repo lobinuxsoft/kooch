@@ -160,6 +160,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .expect("MeshGizmoRenderer not found");
     let mesh_gizmo_batch = resources.remove::<MeshBatch>().unwrap_or_default();
     let mut project_state = resources.remove::<ProjectState>();
+    let mut dlss = resources
+        .remove::<crate::dlss_sdk::SdkInstall>()
+        .unwrap_or_default();
     let mut undo_stack = resources
         .remove::<UndoStack>()
         .unwrap_or_else(UndoStack::new);
@@ -303,10 +306,6 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<EditorCameraController>()
         .cloned()
         .unwrap_or_default();
-    let power_profile = resources
-        .get::<kooch_core::power::PowerProfile>()
-        .copied()
-        .unwrap_or_default();
 
     // Snapshot the AssetDatabase once per frame for the inspector's
     // typed asset picker. Empty when the database is missing — the
@@ -449,6 +448,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
+        &mut dlss,
         preflight.as_ref(),
         raw_input,
         project_loaded,
@@ -471,7 +471,6 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .map(|h| h.mode())
                 .unwrap_or_default(),
         },
-        power_profile,
         &asset_catalog,
         asset_detail.as_ref(),
         open_input_map.as_ref(),
@@ -695,6 +694,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // Read before the overlay goes back, applied after this frame's edits
     // — see `seal_histories`.
     let ended = overlay.ctx.input(|i| i.pointer.any_released());
+    resources.insert(dlss);
     resources.insert(overlay);
     resources.insert(viewport);
     if let Some(game) = game_view {
