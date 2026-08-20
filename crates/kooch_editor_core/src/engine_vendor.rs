@@ -311,15 +311,30 @@ pub fn ensure_current(
     // left exactly as it is: the source in hand is not what that
     // directory is supposed to hold, so "it differs" is not a reason to
     // overwrite it — it is the reason it exists (#761).
+    // 🔴 This editor's own engine is put on the machine FIRST, whether
+    // or not the open project uses it — and it is the half that was
+    // missing. Honouring a project's pin was reading as "the editor
+    // never installs the new version": open a project pinned to 0.10.0
+    // with a 0.10.1 editor and `~/.local/share/kooch/0.10.1/` was never
+    // created at all, so the version the editor actually ships existed
+    // nowhere until somebody pressed **Use** in the launcher.
+    //
+    // Materialising it and MOVING a project onto it are different
+    // questions, and only the second is the user's call. The first is
+    // just "this machine has the engine this editor ships", which
+    // `installed_engines` lists and the launcher's button then costs
+    // nothing to press.
+    let own =
+        shared_engine_dir(editor_engine_version()).map(|dest| ensure_current_in(&dest, source));
+
     if wanted != editor_engine_version()
         && let Some(existing) = shared_engine_dir(wanted).filter(|d| is_engine_source(d))
     {
         return Ok((VendorState::UpToDate, Some(existing)));
     }
-    let Some(dest) = shared_engine_dir(editor_engine_version()) else {
-        return Ok((VendorState::NoSourceAvailable, None));
-    };
-    ensure_current_in(&dest, source)
+    // The return still describes the engine the PROJECT got, which is
+    // this editor's whenever the branch above did not fire.
+    own.unwrap_or(Ok((VendorState::NoSourceAvailable, None)))
 }
 
 /// [`ensure_current`] against an explicit directory.
