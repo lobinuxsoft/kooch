@@ -187,9 +187,12 @@ centroid of every triangle the moment a point light needed a distance.
 > no instance. The frame is bit-identical — every store in
 > `material_pbr_compute.wgsl` is inside the branch that never fires — so
 > the only thing an A/B across it measures is what an idle sweep costs.
-> It is the instrument for the `11.11 ms` intercept of the device's
-> `shade = 11.11 ms + 1.06 ms per light` (#885), which four experiments
-> left untouched because all four attacked the slope.
+>
+> **Measured on the OneXFly, 2026-08-20: 178 µs a sweep** (1.98 µs on a
+> desktop 9070 XT). `roll-a-ball` has three materials and pays 0.71 ms a
+> frame — 22 % of its own shading pass. A game with twenty pays 3.7 ms.
+> Use a pad in the hundreds when measuring: four extra sweeps sit under
+> the device's own run-to-run drift.
 
 > 🔴 **A `serde` default is not a recommendation — it is what an old file
 > silently becomes.** `compute_shading`, `shading_rate` and `temporal_aa`
@@ -199,6 +202,34 @@ centroid of every triangle the moment a point light needed a distance.
 > resolve in the same build. Two variables at once is not a change
 > anybody can bisect, and the first report was "you broke the whole
 > render".
+
+### 🟢 What a handheld ships with
+
+Measured on the OneXFly at 10 W, settled, 2026-08-20: **13.92 ms median,
+GPU 9.7 ms**, against a 13.9 ms budget.
+
+```ron
+compute_shading: true,   // the tiled path; half rate needs it
+shading_rate: 2,         // Half — one sample per 2x2 quad
+upscale: 2,              // SGSR 2
+render_scale: 50,        // Performance — 50 % (2x)
+```
+
+🔴 **The upscaler is the largest single choice on that list.** Same
+scene, same build, same session: `upscale: 3` (FSR 3.1) costs **11.355
+ms** and `upscale: 2` (SGSR 2) costs **2.062** — a 23.36 ms frame against
+a 13.92 ms one. FSR 3.1 is not broken; it is a desktop technique, and its
+own dropdown entry says so.
+
+**Dropping the output resolution buys more than any of these**, because
+`render_scale` is a percentage *of the output*: a smaller window shrinks
+the render target with it and everything `render_scale` does not touch —
+the resolve's output, the tonemap, the blit.
+
+⚠️ These are a recommendation, not defaults. `RenderSettings::default()`
+stays what the engine did before any of them existed, for the reason the
+callout above gives: a serde default is what an old file silently
+becomes.
 
 Then [Inti](./lighting.md) — Cook-Torrance driven by the scene's lights.
 
