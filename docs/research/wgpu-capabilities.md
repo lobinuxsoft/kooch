@@ -605,7 +605,7 @@ Concrete signals that would justify dropping wgpu for `ash` or hybrid. **None ac
 1. **Enable `PipelineCache`** (H.2) — 30 lines, saves 100–500 ms cold-start per pipeline. The current `cache: None` is free performance on the table.
 2. **Establish a timestamp-ringbuffer profiler** via `TIMESTAMP_QUERY_INSIDE_PASSES` (G.1) — precondition for optimizing anything; pays the "best perf / lowest power" goal directly.
 3. **Ship the v1 PP stack** (I) — tone map + bloom + SMAA + CAS + vignette. ~0.5 ms RDNA 4, ~2.5 ms Deck. No optional features needed.
-4. **`PowerProfile::{Plugged, Battery}` enum driving quality defaults** (I.4) — non-negotiable for a Steam Deck target.
+4. ~~**`PowerProfile::{Plugged, Battery}` enum driving quality defaults** (I.4) — non-negotiable for a Steam Deck target.~~ ❌ **Built and removed** — see the decisions log, 2026-08-20. Nothing read it. Quality is decided per project in `.rendersettings`, measured on the device rather than inferred from a power cable.
 5. **Request elevated compute limits at adapter init** (C.1) — `max_compute_invocations_per_workgroup = 1024` + `max_compute_workgroup_storage_size = 32768` when available, so SSAO / bloom tile sizes aren't capped at the conservative default.
 6. **Build G-Buffer with 4 MRTs ≤ 32 B/sample** (B) — follow the packed layout recommendation so we don't exceed the default `max_color_attachment_bytes_per_sample`.
 

@@ -1,7 +1,6 @@
 //! Editor menu bar drawing.
 
 use egui_dock::DockState;
-use kooch_core::power::PowerProfile;
 
 use crate::actions::EditorAction;
 use crate::icons;
@@ -88,7 +87,6 @@ pub(crate) fn draw_menu_bar(
     can_redo: bool,
     undo_desc: Option<&str>,
     redo_desc: Option<&str>,
-    power_profile: PowerProfile,
     _ide_command: Option<&str>,
     edit: EditMenu<'_>,
 ) {
@@ -151,24 +149,6 @@ pub(crate) fn draw_menu_bar(
             });
             ui.menu_button("Edit", |ui| {
                 draw_edit_menu(ui, actions, &edit, can_undo, can_redo, undo_desc, redo_desc);
-            });
-            ui.menu_button("Engine", |ui| {
-                ui.menu_button(format!("Power Profile: {}", power_profile.as_str()), |ui| {
-                    for option in [
-                        PowerProfile::Plugged,
-                        PowerProfile::Balanced,
-                        PowerProfile::Battery,
-                        PowerProfile::Debug,
-                    ] {
-                        if ui
-                            .selectable_label(power_profile == option, option.as_str())
-                            .clicked()
-                        {
-                            actions.push(EditorAction::SetPowerProfile(option));
-                            ui.close();
-                        }
-                    }
-                });
             });
             ui.menu_button("Window", |ui| {
                 for &tab in ALL_TABS {

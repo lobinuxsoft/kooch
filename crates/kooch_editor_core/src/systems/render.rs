@@ -306,10 +306,6 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<EditorCameraController>()
         .cloned()
         .unwrap_or_default();
-    let power_profile = resources
-        .get::<kooch_core::power::PowerProfile>()
-        .copied()
-        .unwrap_or_default();
 
     // Snapshot the AssetDatabase once per frame for the inspector's
     // typed asset picker. Empty when the database is missing — the
@@ -475,7 +471,6 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .map(|h| h.mode())
                 .unwrap_or_default(),
         },
-        power_profile,
         &asset_catalog,
         asset_detail.as_ref(),
         open_input_map.as_ref(),

@@ -78,7 +78,6 @@ pub(super) fn run_editor_ui(
     data: &FrameDisplayData,
     toolbar: &ToolbarInfo,
     viewport: ViewportUi<'_>,
-    power_profile: kooch_core::power::PowerProfile,
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
     asset_detail: Option<&crate::panels::inspector::AssetDetail>,
     open_input_map: Option<&crate::state::OpenInputMap>,
@@ -168,7 +167,6 @@ pub(super) fn run_editor_ui(
                 toolbar.can_redo,
                 toolbar.undo_desc.as_deref(),
                 toolbar.redo_desc.as_deref(),
-                power_profile,
                 project_state
                     .as_ref()
                     .and_then(|ps| ps.editor_config.ide_command.as_deref()),
