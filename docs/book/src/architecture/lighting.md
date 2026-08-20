@@ -981,6 +981,25 @@ setting — one written into the project and therefore promised to every
 project — before the pool's shape is decided. This is a diagnostic the
 editor drives, so it lives where the editor's other diagnostics do.
 
+🔴 **The count is for EVERY light the grid holds**, not the handful with
+a shadow slot today — and that is the measurement rather than an
+oversight. A virtual shadow map exists *for many lights*; the Chalmers
+paper is titled *"Efficient Virtual Shadow Maps for Many Lights"*.
+Counting only the four that fit today's cube slots would be measuring
+the cap the feature is meant to remove.
+
+⚠️ **The resolution is part of the reading, not context around it.** The
+editor renders two views at two sizes, so the panel shows two different
+numbers a frame apart, and a page count without its resolution is not a
+number — this project has already had to retract a table that mixed
+1080p with 720p.
+
+🎯 **The cross-check that the light side is right**: pairs divided by
+samples is the grid's own lights-per-pixel. Measured in the editor on
+`many_lights.scene`, 993 608 pairs over 51 180 samples is **19.4 lights
+per sample**, against the ~20 per cell the froxel grid reports for
+itself.
+
 It also logs `shadow pages marked` with the same numbers whenever the
 count changes — on change and not per frame, for the same reason the
 point-shadow warning is a flag rather than a count.

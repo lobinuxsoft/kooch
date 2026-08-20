@@ -121,6 +121,8 @@ impl MeshletRenderStage {
             resident = counts.resident,
             samples = counts.samples,
             pairs = counts.pairs,
+            width = counts.size.0,
+            height = counts.size.1,
             "shadow pages marked"
         );
     }

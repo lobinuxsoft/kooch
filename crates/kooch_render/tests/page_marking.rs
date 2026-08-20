@@ -518,3 +518,19 @@ fn the_paint_format_is_the_views_own() {
     // constant instead of from the engine's.
     assert_eq!(PAINT_FORMAT, DEFERRED_COLOR_FORMAT);
 }
+
+#[test]
+fn a_count_carries_its_resolution() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    // 🔴 A page count without the resolution it was taken at is not a
+    // reading. The editor renders TWO views at two sizes, so the same
+    // panel shows two different numbers a frame apart — and this project
+    // has already had to retract a table that mixed 1080p with 720p.
+    let counts = run(&device, &queue, &resources, 0.01, None);
+    assert_eq!(counts.size, (SIZE, SIZE));
+}

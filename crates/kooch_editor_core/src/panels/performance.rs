@@ -748,16 +748,37 @@ fn shadow_page_controls(
     let mib = counts.resident as f64 * config.page_bytes() as f64 / (1024.0 * 1024.0);
     ui.label(
         egui::RichText::new(format!(
-            "{} pages · {mib:.1} MiB · {} samples · {} sample/light pairs",
-            counts.resident, counts.samples, counts.pairs
+            "{} pages · {mib:.1} MiB · at {}x{}",
+            counts.resident, counts.size.0, counts.size.1
         ))
         .small(),
     )
     .on_hover_text(
         "Distinct pages the frame would make resident, at 128-texel pages and Depth32Float. \
+         The resolution is part of the reading, not context: a page count without it is not \
+         a number, and the View and Game tabs are two cameras at two sizes. \
          Read it against Unreal's own pool, which is 4096 pages for the WHOLE scene by \
          default (6144 for open worlds, 8192 thrashes) — and against this engine's 152 MiB \
          of fixed shadow allocations, which stand whether or not a light casts.",
+    );
+    // 🔴 The count is for EVERY light the grid holds, not the handful
+    // that have a shadow slot today — and that is the measurement, not
+    // an oversight. A virtual shadow map exists for many lights; counting
+    // only the four that fit today's slots would be measuring the cap
+    // the feature is meant to remove.
+    ui.label(
+        egui::RichText::new(format!(
+            "{} samples · {} sample/light pairs · every light casting",
+            counts.samples, counts.pairs
+        ))
+        .small()
+        .weak(),
+    )
+    .on_hover_text(
+        "The pass walks the froxel grid, which holds every light that reaches a pixel — so \
+         this is what the scene would cost with ALL of its lights casting, not with the \
+         four that have a cube slot today. Pairs divided by samples is the grid's own \
+         lights-per-pixel, which is the cross-check that the light side agrees with it.",
     );
     // 🔴 The comparison that makes the number mean something, and it is
     // one budget for every light in the scene rather than per light.

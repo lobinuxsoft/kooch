@@ -109,6 +109,14 @@ pub struct MarkCounts {
     /// Page indices past the end of the mark buffer. 🔴 Non-zero means
     /// every number above is a floor, not a count.
     pub overflow: u32,
+    /// The render size the count was taken at.
+    ///
+    /// 🔴 Carried with the number rather than left to the reader,
+    /// because a page count without its resolution is not a reading —
+    /// this project has already had to retract a table that mixed 1080p
+    /// with 720p. It also explains the two figures the editor logs: the
+    /// View and the Game tab are two cameras at two sizes.
+    pub size: (u32, u32),
 }
 
 /// Mirrors `PageView` in `page_mark.wgsl`, field for field.
@@ -143,6 +151,8 @@ pub struct PageMarker {
     clipmap: ClipmapConfig,
     /// Lights the mark buffer is sized for.
     capacity: u32,
+    /// The render size of the dispatch now in flight.
+    size: (u32, u32),
     last: Option<MarkCounts>,
 }
 
@@ -190,6 +200,7 @@ impl PageMarker {
             config,
             clipmap,
             capacity: 1,
+            size: (0, 0),
             last: None,
         }
     }
@@ -247,6 +258,7 @@ impl PageMarker {
         // the view would be a grid of dots over an unpainted frame,
         // which reads as "the pass is broken" rather than as "you asked
         // for one sample in sixteen".
+        self.size = viewport;
         let rate = if paint.on {
             1
         } else {
@@ -333,7 +345,7 @@ impl PageMarker {
         if let Some(slot) = self.pending.take() {
             self.readback.submit(slot);
         }
-        if let Some(counts) = self.readback.take() {
+        if let Some(counts) = self.readback.take(self.size) {
             self.last = Some(counts);
         }
     }
@@ -506,7 +518,7 @@ impl Readback {
         None
     }
 
-    fn take(&mut self) -> Option<MarkCounts> {
+    fn take(&mut self, size: (u32, u32)) -> Option<MarkCounts> {
         for (buffer, state) in &self.slots {
             if *state.lock().unwrap() != SlotState::Ready {
                 continue;
@@ -519,6 +531,7 @@ impl Readback {
                     samples: words[1],
                     pairs: words[2],
                     overflow: words[3],
+                    size,
                 }
             };
             buffer.unmap();
