@@ -155,6 +155,21 @@ impl Inner {
                 Ok(context) => {
                     let optimal = context.render_resolution();
                     tracing::info!(?mode, ?optimal, asked = ?render, "DLSS context created");
+                    // Every resource NGX is about to be handed, as NGX
+                    // will see it: `texture_to_ngx` reads the real
+                    // width, height and usage off each texture, so an
+                    // input that is not the size this context was told
+                    // to expect is invisible from up here.
+                    tracing::info!(
+                        color = ?described(inputs.color),
+                        depth = ?described(inputs.depth),
+                        motion = ?described(inputs.motion),
+                        dlss_output = ?described(&self.output_view),
+                        subrect = ?render,
+                        range = ?(*context.render_resolution_range().start(),
+                                  *context.render_resolution_range().end()),
+                        "DLSS inputs"
+                    );
                     // What the stage's targets have to become. Read here
                     // because this is the only moment NGX tells us.
                     state.wanted = Some((output, (optimal[0], optimal[1])));
@@ -234,6 +249,20 @@ impl Inner {
             }
         }
     }
+}
+
+/// What NGX reads off a view: the size, the format and whether it
+/// counts as writable.
+fn described(view: &wgpu::TextureView) -> (u32, u32, wgpu::TextureFormat, bool) {
+    let texture = view.texture();
+    (
+        texture.width(),
+        texture.height(),
+        texture.format(),
+        texture
+            .usage()
+            .contains(wgpu::TextureUsages::STORAGE_BINDING),
+    )
 }
 
 fn create_output(device: &wgpu::Device, size: (u32, u32)) -> (wgpu::Texture, wgpu::TextureView) {
