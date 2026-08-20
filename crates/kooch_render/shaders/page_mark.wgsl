@@ -45,13 +45,13 @@ struct PageView {
     // x the sampling rate in pixels, y the sun's slot, z 1 when the
     // debug view is painting, w unused.
     sampling: vec4<u32>,
-    // x the RECIPROCAL of the tonemap's exposure, yzw unused.
+    // xy how many output pixels one depth pixel covers, zw the output
+    // size.
     //
-    // 🔴 The colour target holds linear radiance and the tonemap does
-    // `aces(radiance * exposure)`, so a debug colour written as authored
-    // comes out near black — this engine's radiance is in the hundreds.
-    // Dividing here is what makes the painted page arrive on screen the
-    // colour it was chosen to be.
+    // 🔴 The paint target is the view's FINAL colour buffer, which is
+    // allocated at the output size while the depth is at the render
+    // size. They differ whenever `render_scale` is below 100, and one
+    // thread then owns a block rather than a pixel.
     paint: vec4<f32>,
 }
 
@@ -83,13 +83,17 @@ struct PageCell {
 // x the distinct pages marked, y the samples that found a surface,
 // z pairs visited, w overflow — a page index past the buffer.
 @group(0) @binding(7) var<storage, read_write> counters: array<atomic<u32>>;
-// The frame's HDR radiance, overwritten where the debug view paints.
+// The frame's FINAL colour, overwritten where the debug view paints.
 //
-// 🔴 `rgba16float` has to match `HDR_COLOR_FORMAT` exactly: wgpu compares
-// the storage class declared here against the bind group layout and
-// rejects the pipeline, which surfaces as "Texture class Storage doesn't
-// match the shader" rather than as a wrong image.
-@group(0) @binding(8) var color_out: texture_storage_2d<rgba16float, write>;
+// 🔴 Not the HDR radiance target: that one lives inside the R64 stage
+// and this pass cannot reach it. Painting the tonemapped image instead
+// means no exposure to divide out and nothing downstream to survive.
+//
+// ⚠️ `rgba8unorm` has to match `DEFERRED_COLOR_FORMAT` exactly. wgpu
+// compares the storage class declared here against the bind group
+// layout, and a mismatch surfaces as "Storage texture binding 8 expects
+// format ..." rather than as a wrong image.
+@group(0) @binding(8) var color_out: texture_storage_2d<rgba8unorm, write>;
 
 const NO_PAGE: u32 = 0xffffffffu;
 
@@ -353,6 +357,15 @@ fn paint_page(pixel: vec2<u32>, painted: vec2<u32>) {
     if pages.sampling.z == 0u || painted.x == NO_PAGE {
         return;
     }
-    let color = page_color(painted.x, painted.y) * pages.paint.x;
-    textureStore(color_out, vec2<i32>(pixel), vec4<f32>(color, 1.0));
+    let color = vec4<f32>(page_color(painted.x, painted.y), 1.0);
+    // The block of output pixels this depth pixel covers, filled whole.
+    let scale = pages.paint.xy;
+    let size = vec2<u32>(pages.paint.zw);
+    let lo = vec2<u32>(floor(vec2<f32>(pixel) * scale));
+    let hi = min(vec2<u32>(ceil(vec2<f32>(pixel + vec2<u32>(1u)) * scale)), size);
+    for (var y = lo.y; y < hi.y; y = y + 1u) {
+        for (var x = lo.x; x < hi.x; x = x + 1u) {
+            textureStore(color_out, vec2<i32>(vec2<u32>(x, y)), color);
+        }
+    }
 }

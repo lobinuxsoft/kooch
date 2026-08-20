@@ -1017,16 +1017,18 @@ the light list's order.
 is a grid of dots over an unpainted frame, which reads as a broken pass
 rather than as a coarse sample.
 
-🔴 **It divides the exposure out**, and that is not a detail. The target
-holds linear radiance, the tonemap does `aces(radiance * exposure)`, and
-this engine's radiance is in the hundreds — a debug colour written as
-authored arrives on screen as near black. A debug view nobody can see is
-the same as no debug view.
+🔴 **It paints the view's FINAL colour target, not the radiance one**,
+and that is two problems solved at once. The radiance target lives
+inside the R64 stage where this pass cannot reach it; the final one is
+`Rgba8Unorm` at the view's **output** size and already tonemapped, so
+the palette needs no exposure divided out of it and nothing downstream
+can overwrite it.
 
-⚠️ It overwrites the radiance target, so it is recorded **before** the
-frame is cut for an upscaler. After the cut everything downstream reads
-the upscaled image and the paint would land in a texture nothing samples
-again.
+⚠️ **The depth buffer is at the RENDER size and the target at the OUTPUT
+size**, and they differ whenever `render_scale` is below 100. One thread
+then owns a block of output pixels rather than one, and it fills the
+whole block — writing a single pixel would leave a grid of dots over an
+unpainted frame.
 
 🔴 **It is an instrument, not a feature.** Nothing reads what it writes,
 and it is off unless asked for — a measurement that runs whether or not

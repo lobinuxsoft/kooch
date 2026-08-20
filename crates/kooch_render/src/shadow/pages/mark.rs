@@ -64,11 +64,19 @@ pub const RATE_RANGE: (u32, u32) = (1, 16);
 
 /// What the debug view paints into.
 ///
-/// 🔴 Has to equal `HDR_COLOR_FORMAT`. wgpu compares the storage class
-/// declared in the shader against this layout and rejects the pipeline,
-/// which surfaces as *"Texture class Storage doesn't match the shader"*
+/// 🔴 The view's **final** colour target, not the HDR radiance one, and
+/// that is the fix for two bugs in one. The radiance target lives inside
+/// the R64 stage and this pass cannot reach it; `MeshletView::color_view`
+/// is `Rgba8Unorm`, allocated at the view's OUTPUT size, and holds the
+/// tonemapped image. Painting there means the debug view needs no
+/// exposure divided out and survives the upscaler, because it is written
+/// after both.
+///
+/// ⚠️ It also has to match exactly: wgpu compares the storage class
+/// declared in the shader against this layout, and the mismatch surfaces
+/// as a stream of *"Storage texture binding 8 expects format ..."*
 /// rather than as a wrong image.
-pub const PAINT_FORMAT: wgpu::TextureFormat = crate::meshlet::deferred::HDR_COLOR_FORMAT;
+pub const PAINT_FORMAT: wgpu::TextureFormat = crate::meshlet::deferred::DEFERRED_COLOR_FORMAT;
 
 /// Where the debug view writes, and what it has to survive.
 #[derive(Clone, Copy)]
@@ -79,8 +87,14 @@ pub struct Paint<'a> {
     /// to keep in step.
     pub target: &'a wgpu::TextureView,
     pub on: bool,
-    /// The tonemap's multiplier, which the shader divides out.
-    pub exposure: f32,
+    /// The target's size, which is the view's OUTPUT size and not the
+    /// depth buffer's.
+    ///
+    /// 🔴 They differ whenever `render_scale` is below 100, and one
+    /// thread per depth pixel then covers a block of output pixels. The
+    /// shader fills the whole block; writing one would leave a grid of
+    /// dots over an unpainted frame.
+    pub size: (u32, u32),
 }
 
 /// What one dispatch found.
@@ -263,9 +277,14 @@ impl PageMarker {
                     count,
                 ],
                 sampling: [rate, count, u32::from(paint.on), 0],
-                // The reciprocal, so the shader divides out what the
-                // tonemap will multiply back in.
-                paint: [1.0 / paint.exposure.max(1e-6), 0.0, 0.0, 0.0],
+                // How many output pixels one depth pixel covers, per
+                // axis. 1 when nothing is upscaling.
+                paint: [
+                    paint.size.0 as f32 / viewport.0.max(1) as f32,
+                    paint.size.1 as f32 / viewport.1.max(1) as f32,
+                    paint.size.0 as f32,
+                    paint.size.1 as f32,
+                ],
             }),
         );
 

@@ -47,7 +47,6 @@ impl MeshletRenderStage {
         view_id: crate::meshlet::render_stage::ViewId,
         clip_from_world: Mat4,
         eye: Vec3,
-        exposure: f32,
     ) {
         let settings = page_marking_settings(resources);
         if !settings.enabled {
@@ -73,7 +72,7 @@ impl MeshletRenderStage {
             Paint {
                 target: &view.color_view,
                 on: settings.paint,
-                exposure,
+                size: view.size,
             },
         );
     }

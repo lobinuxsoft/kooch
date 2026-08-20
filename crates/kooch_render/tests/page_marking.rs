@@ -26,6 +26,7 @@ use kooch_ecs::point_light::PointLight;
 use kooch_ecs::query::AccessTracker;
 use kooch_ecs::spot_light::SpotLight;
 use kooch_lighting::{ClusterCamera, GpuLights};
+use kooch_render::meshlet::DEFERRED_COLOR_FORMAT;
 use kooch_render::projection::perspective_infinite_rh_reverse_z;
 use kooch_render::shadow::pages::mark::{MarkCounts, PAINT_FORMAT, PageMarker, Paint};
 use kooch_render::shadow::{ClipmapConfig, PageConfig, SHADOW_DEPTH_FORMAT};
@@ -153,7 +154,7 @@ fn paint_target(device: &wgpu::Device) -> wgpu::TextureView {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: PAINT_FORMAT,
+            format: DEFERRED_COLOR_FORMAT,
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         })
@@ -203,7 +204,7 @@ fn run(
         Paint {
             target: &paint_target(device),
             on: false,
-            exposure: 1.0,
+            size: (SIZE, SIZE),
         },
     );
     queue.submit([encoder.finish()]);
@@ -322,7 +323,7 @@ fn a_stopped_pass_reports_nothing() {
         Paint {
             target: &paint_target(&device),
             on: false,
-            exposure: 1.0,
+            size: (SIZE, SIZE),
         },
     );
     queue.submit([encoder.finish()]);
@@ -340,29 +341,12 @@ fn a_stopped_pass_reports_nothing() {
     assert_eq!(marker.last(), None);
 }
 
-/// Half-precision to single, for reading the radiance target.
+/// Reads the paint target back as `[r, g, b, a]` per pixel, 0..1.
 ///
-/// ⚠️ Subnormals come back as zero. They are below 1e-4 and this reads a
-/// palette whose channels are between 0.2 and 1 — a test that needed
-/// them would be testing something else.
-fn f16_to_f32(bits: u16) -> f32 {
-    let sign = ((bits >> 15) & 1) as u32;
-    let exponent = ((bits >> 10) & 0x1f) as u32;
-    let mantissa = (bits & 0x3ff) as u32;
-    let out = match exponent {
-        0 => sign << 31,
-        0x1f => (sign << 31) | (0xff << 23) | (mantissa << 13),
-        _ => (sign << 31) | ((exponent + 127 - 15) << 23) | (mantissa << 13),
-    };
-    f32::from_bits(out)
-}
-
-/// Reads the paint target back as `[r, g, b, a]` per pixel.
-///
-/// `Rgba16Float`, so eight bytes a texel and the row pitch has to be
+/// `Rgba8Unorm`, so four bytes a texel and the row pitch has to be
 /// padded to wgpu's 256-byte alignment like any other copy.
 fn read_paint(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::Texture) -> Vec<[f32; 4]> {
-    let row = SIZE as u64 * 8;
+    let row = SIZE as u64 * 4;
     let padded = row.div_ceil(256) * 256;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("page_marking_paint_readback"),
@@ -405,14 +389,14 @@ fn read_paint(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::Texture) 
     let mut out = Vec::with_capacity((SIZE * SIZE) as usize);
     for y in 0..SIZE as usize {
         let start = y * padded as usize;
-        let row = &mapped[start..start + (SIZE as usize * 8)];
+        let row = &mapped[start..start + (SIZE as usize * 4)];
         for x in 0..SIZE as usize {
-            let halves: &[u16] = bytemuck::cast_slice(&row[x * 8..x * 8 + 8]);
+            let texel = &row[x * 4..x * 4 + 4];
             out.push([
-                f16_to_f32(halves[0]),
-                f16_to_f32(halves[1]),
-                f16_to_f32(halves[2]),
-                f16_to_f32(halves[3]),
+                texel[0] as f32 / 255.0,
+                texel[1] as f32 / 255.0,
+                texel[2] as f32 / 255.0,
+                texel[3] as f32 / 255.0,
             ]);
         }
     }
@@ -470,7 +454,7 @@ fn paint(
         Paint {
             target: &target_view,
             on: true,
-            exposure: 1.0,
+            size: (SIZE, SIZE),
         },
     );
     queue.submit([encoder.finish()]);
@@ -495,10 +479,8 @@ fn the_view_paints_where_there_is_a_surface() {
         painted.len()
     );
     // 🔴 The failure this pins is not "the pass ran" but "anything
-    // reached the screen": the target is HDR and the tonemap multiplies
-    // by an exposure this engine keeps in the hundreds, so a colour
-    // written as authored comes back near black. The shader divides the
-    // exposure out, and at 1.0 that leaves the palette as chosen.
+    // reached the screen": the palette has to survive whatever the
+    // target does to it.
     let brightest = painted
         .iter()
         .fold(0.0f32, |acc, p| acc.max(p[0].max(p[1]).max(p[2])));
@@ -521,4 +503,18 @@ fn the_view_leaves_the_sky_alone() {
         painted.iter().all(|p| p[0] + p[1] + p[2] == 0.0),
         "the sky was painted over"
     );
+}
+
+#[test]
+fn the_paint_format_is_the_views_own() {
+    // 🔴 The bug this pins cost a frame's worth of validation errors per
+    // second: the pass declared `Rgba16Float` because the radiance
+    // target is HDR, and was handed `MeshletView::color_view`, which is
+    // the TONEMAPPED target and `Rgba8Unorm`. wgpu compares the storage
+    // class in the shader against the bind group layout, so the mismatch
+    // surfaces as "Storage texture binding 8 expects format ..." on
+    // every frame rather than as a wrong image — and no test caught it,
+    // because the tests built their own target from the pass's own
+    // constant instead of from the engine's.
+    assert_eq!(PAINT_FORMAT, DEFERRED_COLOR_FORMAT);
 }
