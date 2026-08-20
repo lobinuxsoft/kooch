@@ -97,6 +97,30 @@ pub struct RenderSettings {
     #[serde(default = "default_shadows_enabled")]
     #[reflect(group = "Sun shadows")]
     pub shadows_enabled: bool,
+    /// Shadow texels per screen pixel, as a PERCENTAGE.
+    ///
+    /// 🔴 **The lever the page census found, and the only one that
+    /// moved.** A virtual shadow map allocates pages to match the
+    /// screen's detail, so this — not the page size, not the virtual
+    /// size — is what decides the bill: page count falls roughly with
+    /// its square, because a coarser texel is a level coarser in both
+    /// axes.
+    ///
+    /// 100 is Epic's ask, one shadow texel per screen pixel, and it is
+    /// what every figure measured for #866 was taken at. Measured on
+    /// `many_lights.scene` with **all 101 lights casting**, a 400x400
+    /// view already wanted 2581 pages — 161 MiB, past this engine's
+    /// 152 MiB of fixed allocations and 63 % of Unreal's whole default
+    /// pool, at a resolution smaller than a thumbnail. At 1280x720 it
+    /// does not fit, and lowering this is the answer that does not cap
+    /// how many lights may cast.
+    ///
+    /// ⚠️ Below 100 a shadow's edge is softer than the surface it falls
+    /// on, which reads as blur rather than as a lower setting. 50 is a
+    /// quarter of the pages and the point where it starts to show.
+    #[serde(default = "default_shadow_density")]
+    #[reflect(group = "Sun shadows", choices = SHADOW_DENSITY_CHOICES)]
+    pub shadow_density: u32,
     /// How far from the camera shadows are drawn, in METRES.
     ///
     /// Raising this does not add shadows in the distance so much as move
@@ -506,6 +530,30 @@ fn default_render_scale() -> u32 {
     100
 }
 
+/// One shadow texel per screen pixel — Epic's ask, and what every
+/// figure measured for #866 was taken at.
+fn default_shadow_density() -> u32 {
+    100
+}
+
+/// 🔴 Powers of two below 100, because the level chosen for a page is a
+/// power of two: anything between two of these rounds to one of them and
+/// the slider would lie about what it did.
+const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
+    kooch_ecs::reflect::FieldChoice {
+        label: "Quarter — 25 %, a sixteenth of the pages",
+        value: 25,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Half — 50 %, a quarter of the pages",
+        value: 50,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Full — 100 %, one texel per screen pixel",
+        value: 100,
+    },
+];
+
 /// No sharpening, for the reason no resolve is the default: this
 /// rewrites every pixel of a finished image, and a project that never
 /// mentioned it did not ask for that.
@@ -635,6 +683,7 @@ impl Default for RenderSettings {
             shading_rate: default_shading_rate(),
             upscale: 0,
             render_scale: default_render_scale(),
+            shadow_density: default_shadow_density(),
             sharpening: default_sharpening(),
             anisotropy: default_anisotropy(),
             vsync: default_vsync(),
