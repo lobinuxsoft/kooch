@@ -1,4 +1,4 @@
-use super::{ALSA, Installer, Probes, RUST, missing_from};
+use super::{ALSA, Installer, Probes, RUST, VULKAN_HEADERS, missing_from};
 
 /// 🔴 The case this project's own distribution hits: YaguareteOS reports
 /// `ID=yaguarete` and only names Fedora in `ID_LIKE`. An `ID`-only match
@@ -188,4 +188,30 @@ fn an_unknown_distro_still_installs_rust() {
 #[test]
 fn a_ready_machine_has_no_command() {
     assert_eq!(report(vec![], Installer::RpmOstree).command(), None);
+}
+
+/// 🔴 The header package is not the loader package, and each family
+/// spells it differently. A command naming the wrong one is worse than
+/// no command: it installs something and the build fails identically.
+#[test]
+fn every_family_names_the_vulkan_headers() {
+    for (installer, expected) in [
+        (Installer::RpmOstree, "vulkan-headers"),
+        (Installer::Dnf, "vulkan-headers"),
+        (Installer::Pacman, "vulkan-headers"),
+        (Installer::Apt, "libvulkan-dev"),
+    ] {
+        let command = installer
+            .command(&[VULKAN_HEADERS])
+            .expect("every family above installs packages");
+        assert!(command.contains(expected), "{installer:?}: {command}");
+    }
+}
+
+/// Windows has no package for them — the LunarG SDK is an installer —
+/// so the hint has to carry the answer instead of a command.
+#[test]
+fn windows_falls_back_to_the_hint() {
+    assert_eq!(Installer::Winget.command(&[VULKAN_HEADERS]), None);
+    assert!(!VULKAN_HEADERS.hint.is_empty());
 }

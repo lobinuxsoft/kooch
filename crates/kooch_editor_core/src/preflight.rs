@@ -80,6 +80,20 @@ pub const ALSA: Requirement = Requirement {
     hint: "",
 };
 
+/// The Vulkan headers, which bindgen reads while building `dlss_wgpu`.
+///
+/// 🔴 Not the loader and not a driver — the HEADERS. A machine that runs
+/// Vulkan games perfectly well has no `vulkan/vulkan.h`, because nothing
+/// but a compiler ever wants one. That is why this is a separate
+/// requirement from anything the engine needs at runtime, and why it is
+/// checked before cargo: without it the build dies minutes in, inside
+/// bindgen, with a message about a missing include.
+pub const VULKAN_HEADERS: Requirement = Requirement {
+    name: "Vulkan headers",
+    why: "a build with the DLSS feature runs bindgen over NVIDIA's SDK, which includes vulkan/vulkan.h",
+    hint: "https://vulkan.lunarg.com/sdk/home — set VULKAN_SDK to where it lands",
+};
+
 /// How this machine installs things.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Installer {
@@ -126,6 +140,10 @@ impl Installer {
             (Self::RpmOstree | Self::Dnf, "ALSA development files") => Some("alsa-lib-devel"),
             (Self::Apt, "ALSA development files") => Some("libasound2-dev"),
             (Self::Pacman, "ALSA development files") => Some("alsa-lib"),
+            (Self::RpmOstree | Self::Dnf | Self::Pacman, "Vulkan headers") => {
+                Some("vulkan-headers")
+            }
+            (Self::Apt, "Vulkan headers") => Some("libvulkan-dev"),
             _ => None,
         }
     }
