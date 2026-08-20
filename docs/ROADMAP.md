@@ -736,6 +736,18 @@ inherently smaller, it is adaptive.** It replaces a cap of four slots with a cap
 which on a handheld is still a cap — so the next lever is the **density target**, not the
 marking, and any summary promising that a hundred casting lights become free is wrong.
 
+🔴 **The table cannot be flat, and that decided Phase 2's second move (PR #930).** With
+128-texel pages, a mip chain per cube face and a 17-level clipmap, 101 lights and a sun
+address **28 409 856 virtual pages**. One bit each is the 3.4 MiB mark bitmap and that is
+why marking was affordable; one `u32` each is **108 MiB — 42 % of the 256 MiB pool it would
+index**, to describe pages 99.99 % empty. It also kills the obvious allocator: a sweep over
+the virtual space is a 28-million-thread dispatch to find ~2000 set bits. So the table is
+sized to what is **resident**: open addressing over `2 x pool_pages` entries, **64 KiB** at
+Epic's 4096-page pool, which is what UE5 does too. The allocation itself is free —
+`mark_bit` already reports the one thread that flipped a page's bit, so claiming a slot
+there is an `atomicAdd` on a rare branch. ⚠️ The atlas texture is **not** allocated yet: 256
+MiB that nothing writes until the raster lands.
+
 **Phase 3 — the consumers, on top of #866 and not before.**
 
 | | | Why it waits for the pool |
