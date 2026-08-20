@@ -9,10 +9,20 @@ fn preset_with(features: &str) -> BuildPreset {
 
 #[test]
 fn only_the_exact_feature_counts() {
-    assert!(wanted(&preset_with("dlss")));
-    assert!(wanted(&preset_with("audio, dlss")));
+    assert!(wanted(&preset_with("kooch/dlss")));
+    assert!(wanted(&preset_with("audio, kooch/dlss")));
     assert!(!wanted(&preset_with("")));
     assert!(!wanted(&preset_with("audio")));
+}
+
+/// 🔴 `dlss` on its own is a feature of the GAME's crate, and cargo
+/// refuses a build that names one the project never declared. The
+/// namespaced spelling is what a preset should carry — and the bare one
+/// is what everybody types, so both are honoured here.
+#[test]
+fn the_bare_spelling_is_honoured_too() {
+    assert!(wanted(&preset_with("dlss")));
+    assert!(wanted(&preset_with("audio, dlss")));
 }
 
 /// 🔴 The failure this guards against is a preset whose features happen
@@ -35,4 +45,48 @@ fn a_preset_without_the_feature_needs_no_sdk() {
 fn a_preset_without_the_feature_ships_nothing() {
     let dir = std::env::temp_dir();
     assert_eq!(ship(&preset_with(""), &dir).unwrap(), Vec::<PathBuf>::new());
+}
+
+const MANIFEST: &str = "[package]
+name = \"a_game\"
+
+[features]
+default = [\"game\"]
+game = [\"kooch/physics\"]
+
+[dependencies]
+kooch = { path = \"../kooch\" }
+";
+
+#[test]
+fn a_project_without_its_own_gets_the_prefix() {
+    assert!(!declares_feature(MANIFEST, BARE_FEATURE));
+}
+
+/// 🔴 The guard. A project that declares `dlss` means its own, and
+/// rewriting it would build something the author did not ask for.
+#[test]
+fn a_project_with_its_own_keeps_it() {
+    let manifest = MANIFEST.replace("game = ", "dlss = [\"kooch/dlss\"]\ngame = ");
+    assert!(declares_feature(&manifest, BARE_FEATURE));
+}
+
+#[test]
+fn a_feature_outside_the_table_does_not_count() {
+    assert!(!declares_feature(
+        "[dependencies]\ndlss = \"1\"\n",
+        BARE_FEATURE
+    ));
+}
+
+#[test]
+fn a_commented_out_feature_does_not_count() {
+    assert!(!declares_feature("[features]\n# dlss = []\n", BARE_FEATURE));
+}
+
+#[test]
+fn the_untouched_features_travel_unchanged() {
+    let dir = std::env::temp_dir();
+    let features = vec!["audio".to_owned(), "kooch/dlss".to_owned()];
+    assert_eq!(normalise(features.clone(), &dir), features);
 }
