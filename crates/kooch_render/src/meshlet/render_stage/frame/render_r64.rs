@@ -169,6 +169,16 @@ impl MeshletRenderStage {
             // it is undefined behaviour by the crate's own contract.
             dlss_commands
         };
+
+        // 🔴 The frame is CUT here when DLSS ran, and the rest of it —
+        // the debug overlay below, the GPU timer resolve, the final
+        // submit — continues in the encoder the stage handed back.
+        // Everything downstream reads the upscaled image, and DLSS has
+        // not written it until its own buffer reaches the queue.
+        if let Some(deferred) = frame_dlss_commands {
+            queue.submit([encoder.finish(), deferred.dlss]);
+            encoder = deferred.post;
+        }
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_end(&mut encoder, 1);
             self.gpu_timers.write_stage_start(&mut encoder, 2);
@@ -238,7 +248,7 @@ impl MeshletRenderStage {
             self.gpu_timers.write_stage_end(&mut encoder, 2);
             self.gpu_timers.resolve_and_copy(&mut encoder, slot_idx);
         }
-        queue.submit(std::iter::once(encoder.finish()).chain(frame_dlss_commands));
+        queue.submit(std::iter::once(encoder.finish()));
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.submit_readback(slot_idx);
         }
