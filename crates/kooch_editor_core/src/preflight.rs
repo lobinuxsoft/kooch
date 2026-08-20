@@ -206,6 +206,7 @@ impl Installer {
 pub struct Probes {
     pub cargo: bool,
     pub alsa: bool,
+    pub vulkan_headers: bool,
 }
 
 impl Probes {
@@ -218,8 +219,23 @@ impl Probes {
         Self {
             cargo: ran("cargo", &["--version"]),
             alsa: ran("pkg-config", &["--exists", "alsa"]),
+            vulkan_headers: vulkan_header().is_file(),
         }
     }
+}
+
+/// The header, where `dlss_wgpu`'s build script looks for it.
+///
+/// 🔴 A file test rather than `pkg-config --exists vulkan`: that answers
+/// for the LOADER, which is on every machine that runs a game and says
+/// nothing about whether a compiler could find `vulkan/vulkan.h`. Asking
+/// the wrong question is how this requirement was missed the first time.
+pub fn vulkan_header() -> std::path::PathBuf {
+    let root = std::env::var_os("VULKAN_SDK")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/usr"));
+    let include = if cfg!(windows) { "Include" } else { "include" };
+    root.join(include).join("vulkan").join("vulkan.h")
 }
 
 /// What is missing, most blocking first.
@@ -233,6 +249,13 @@ pub fn missing_from(probes: Probes) -> Vec<Requirement> {
     }
     if !probes.alsa {
         missing.push(ALSA);
+    }
+    // Last, because it is the only one that is not needed to open a
+    // project — and it is here anyway. The whole point of this check is
+    // ONE command, pasted once: on an image-based system, finding out
+    // about a package later costs another reboot.
+    if !probes.vulkan_headers {
+        missing.push(VULKAN_HEADERS);
     }
     missing
 }

@@ -98,21 +98,34 @@ fn a_ready_machine_reports_nothing() {
     assert!(
         missing_from(Probes {
             cargo: true,
-            alsa: true
+            alsa: true,
+            vulkan_headers: true,
         })
         .is_empty()
     );
 }
 
 /// Rust leads: a machine with no cargo cannot act on a message about
-/// ALSA.
+/// ALSA. The Vulkan headers come last — they are the only entry not
+/// needed to open a project.
 #[test]
 fn rust_is_reported_first() {
     let missing = missing_from(Probes {
         cargo: false,
         alsa: false,
+        vulkan_headers: false,
     });
-    assert_eq!(missing, vec![RUST, ALSA]);
+    assert_eq!(missing, vec![RUST, ALSA, VULKAN_HEADERS]);
+}
+
+/// 🔴 The header, not the loader. `pkg-config --exists vulkan` answers
+/// for a library every machine that runs a game already has, and a probe
+/// that asks it would report this requirement satisfied on the machine
+/// where the build fails.
+#[test]
+fn the_probe_looks_for_the_header_itself() {
+    let path = super::vulkan_header();
+    assert!(path.ends_with("vulkan/vulkan.h"), "{}", path.display());
 }
 
 use super::Report;
