@@ -484,7 +484,10 @@ pub(crate) fn draw_preflight_window(ctx: &egui::Context, report: &crate::preflig
             for requirement in &report.missing {
                 ui.label(egui::RichText::new(requirement.name).strong());
                 ui.weak(requirement.why);
-                if !requirement.hint.is_empty() {
+                // The hint is where it comes from; the block below is
+                // how. Shown only when there is no block — otherwise it
+                // is a second answer to a question already answered.
+                if !requirement.hint.is_empty() && report.command().is_none() {
                     ui.weak(format!("    {}", requirement.hint));
                 }
                 ui.add_space(4.0);
@@ -494,7 +497,7 @@ pub(crate) fn draw_preflight_window(ctx: &egui::Context, report: &crate::preflig
                 Some(command) => {
                     ui.separator();
                     ui.add_space(4.0);
-                    ui.label("Run this, then reopen the editor:");
+                    ui.label("Paste this whole block, then reopen the editor:");
                     ui.code(&command);
                     if ui.button(format!("{} Copy", icons::COPY)).clicked() {
                         ctx.copy_text(command);

@@ -114,3 +114,78 @@ fn rust_is_reported_first() {
     });
     assert_eq!(missing, vec![RUST, ALSA]);
 }
+
+use super::Report;
+
+fn report(missing: Vec<super::Requirement>, installer: Installer) -> Report {
+    Report { missing, installer }
+}
+
+/// The whole point of the dialog: one block, not a list of things to go
+/// and find. A machine missing everything gets rustup and the packages
+/// together.
+#[test]
+fn one_block_fixes_everything() {
+    let command = report(vec![RUST, ALSA], Installer::RpmOstree)
+        .command()
+        .expect("a command");
+    assert!(command.contains("sh.rustup.rs"), "no rustup in: {command}");
+    assert!(
+        command.contains("alsa-lib-devel"),
+        "no package in: {command}"
+    );
+}
+
+/// 🔴 On an image-based system the package step ENDS IN A REBOOT, so
+/// anything after it never runs. A correct list in the wrong order is a
+/// machine that comes back up still missing half of it.
+#[test]
+fn the_reboot_is_the_last_line() {
+    let command = report(vec![RUST, ALSA], Installer::RpmOstree)
+        .command()
+        .expect("a command");
+    let lines: Vec<&str> = command.lines().collect();
+    assert!(
+        lines.last().is_some_and(|last| last.contains("reboot")),
+        "the reboot is not last: {command}",
+    );
+    let rustup = lines
+        .iter()
+        .position(|l| l.contains("rustup"))
+        .expect("rustup");
+    let install = lines
+        .iter()
+        .position(|l| l.contains("rpm-ostree"))
+        .expect("packages");
+    assert!(rustup < install, "rustup runs after the reboot: {command}");
+}
+
+/// Windows installs rustup through winget, and it is still rustup — not
+/// a toolchain a package manager owns.
+#[test]
+fn windows_gets_rustup_too() {
+    let command = report(vec![RUST], Installer::Winget)
+        .command()
+        .expect("a command");
+    assert!(command.contains("Rustlang.Rustup"), "got: {command}");
+}
+
+/// A machine whose package manager is unknown still gets the half that
+/// does not depend on one.
+#[test]
+fn an_unknown_distro_still_installs_rust() {
+    let command = report(vec![RUST, ALSA], Installer::Unknown)
+        .command()
+        .expect("a command");
+    assert!(command.contains("sh.rustup.rs"));
+    assert!(
+        !command.contains("alsa"),
+        "invented a package command: {command}"
+    );
+}
+
+/// Nothing missing, nothing to paste.
+#[test]
+fn a_ready_machine_has_no_command() {
+    assert_eq!(report(vec![], Installer::RpmOstree).command(), None);
+}

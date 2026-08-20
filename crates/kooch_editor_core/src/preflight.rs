@@ -53,6 +53,20 @@ pub const RUST: Requirement = Requirement {
     hint: "https://rustup.rs",
 };
 
+/// The official rustup line, for everything that is not Windows.
+///
+/// 🔴 Not the distribution's `rust` package, even where one exists. A
+/// toolchain installed through a package manager cannot be updated by
+/// `rustup update`, cannot add a target with `rustup target add` — which
+/// `build::compile` tells people to run — and on an image-based system
+/// it needs a reboot to change. The line below is what rust-lang.org
+/// gives, and it installs into the user's home.
+const RUSTUP_UNIX: &str = "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh";
+
+/// Windows has a real package for it, and it is still rustup rather than
+/// a toolchain — so it keeps every property the line above has.
+const RUSTUP_WINDOWS: &str = "winget install Rustlang.Rustup";
+
 /// ALSA's development files.
 ///
 /// Reached through `alsa-sys` <- `alsa` <- `cpal` <- `kira` <-
@@ -229,9 +243,25 @@ impl Report {
         self.missing.is_empty()
     }
 
-    /// The command that fixes what a package manager can fix here.
+    /// One block that fixes everything missing, ready to paste.
+    ///
+    /// 🔴 The order is the point. rustup comes first and the packages
+    /// last, because on an image-based system the package step **ends in
+    /// a reboot** — anything after it would never run. A correct list of
+    /// commands in the wrong order is a machine that comes back up still
+    /// missing half of them.
     pub fn command(&self) -> Option<String> {
-        self.installer.command(&self.missing)
+        let mut steps = Vec::new();
+        if self.missing.contains(&RUST) {
+            steps.push(match self.installer {
+                Installer::Winget => RUSTUP_WINDOWS.to_owned(),
+                _ => RUSTUP_UNIX.to_owned(),
+            });
+        }
+        if let Some(packages) = self.installer.command(&self.missing) {
+            steps.push(packages);
+        }
+        (!steps.is_empty()).then(|| steps.join("\n"))
     }
 }
 
