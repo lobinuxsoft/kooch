@@ -317,8 +317,11 @@ Three things follow, and all three are visible from a project:
    `libnvsdk_ngx` statically and runs bindgen over NVIDIA's headers, so
    a binary either linked it or did not. Turn it on by adding `dlss` to
    a build preset's **Extra cargo features**; the editor supplies
-   `DLSS_SDK` and `VULKAN_SDK` and refuses to start cargo when the SDK
-   is not installed.
+   `DLSS_SDK` and `VULKAN_SDK` and refuses to start cargo when either
+   the SDK or the **Vulkan headers** are missing. The headers are a
+   separate package from the loader — a machine that runs Vulkan games
+   has no reason to carry them — so the editor's startup check lists
+   them alongside Rust and ALSA, in the same one-paste command.
 
    ⚠️ What cargo actually receives is **`kooch/dlss`** — `dlss` on its
    own names a feature of *your* crate, which you never declared, and

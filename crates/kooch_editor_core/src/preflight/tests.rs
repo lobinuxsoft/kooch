@@ -1,4 +1,4 @@
-use super::{ALSA, Installer, Probes, RUST, missing_from};
+use super::{ALSA, Installer, Probes, RUST, VULKAN_HEADERS, missing_from};
 
 /// 🔴 The case this project's own distribution hits: YaguareteOS reports
 /// `ID=yaguarete` and only names Fedora in `ID_LIKE`. An `ID`-only match
@@ -98,21 +98,34 @@ fn a_ready_machine_reports_nothing() {
     assert!(
         missing_from(Probes {
             cargo: true,
-            alsa: true
+            alsa: true,
+            vulkan_headers: true,
         })
         .is_empty()
     );
 }
 
 /// Rust leads: a machine with no cargo cannot act on a message about
-/// ALSA.
+/// ALSA. The Vulkan headers come last — they are the only entry not
+/// needed to open a project.
 #[test]
 fn rust_is_reported_first() {
     let missing = missing_from(Probes {
         cargo: false,
         alsa: false,
+        vulkan_headers: false,
     });
-    assert_eq!(missing, vec![RUST, ALSA]);
+    assert_eq!(missing, vec![RUST, ALSA, VULKAN_HEADERS]);
+}
+
+/// 🔴 The header, not the loader. `pkg-config --exists vulkan` answers
+/// for a library every machine that runs a game already has, and a probe
+/// that asks it would report this requirement satisfied on the machine
+/// where the build fails.
+#[test]
+fn the_probe_looks_for_the_header_itself() {
+    let path = super::vulkan_header();
+    assert!(path.ends_with("vulkan/vulkan.h"), "{}", path.display());
 }
 
 use super::Report;
@@ -188,4 +201,30 @@ fn an_unknown_distro_still_installs_rust() {
 #[test]
 fn a_ready_machine_has_no_command() {
     assert_eq!(report(vec![], Installer::RpmOstree).command(), None);
+}
+
+/// 🔴 The header package is not the loader package, and each family
+/// spells it differently. A command naming the wrong one is worse than
+/// no command: it installs something and the build fails identically.
+#[test]
+fn every_family_names_the_vulkan_headers() {
+    for (installer, expected) in [
+        (Installer::RpmOstree, "vulkan-headers"),
+        (Installer::Dnf, "vulkan-headers"),
+        (Installer::Pacman, "vulkan-headers"),
+        (Installer::Apt, "libvulkan-dev"),
+    ] {
+        let command = installer
+            .command(&[VULKAN_HEADERS])
+            .expect("every family above installs packages");
+        assert!(command.contains(expected), "{installer:?}: {command}");
+    }
+}
+
+/// Windows has no package for them — the LunarG SDK is an installer —
+/// so the hint has to carry the answer instead of a command.
+#[test]
+fn windows_falls_back_to_the_hint() {
+    assert_eq!(Installer::Winget.command(&[VULKAN_HEADERS]), None);
+    assert!(!VULKAN_HEADERS.hint.is_empty());
 }

@@ -122,14 +122,49 @@ pub fn missing_sdk(preset: &BuildPreset) -> Option<String> {
         return None;
     }
     match crate::dlss_sdk::sdk_dir() {
-        Some(dir) if crate::dlss_sdk::is_installed(&dir) => None,
-        _ => Some(format!(
-            "this preset asks for the `{FEATURE}` feature and NVIDIA's DLSS SDK is not \
-             installed — install it from Settings, which downloads {} after you accept \
-             NVIDIA's terms",
-            crate::dlss_sdk::VERSION
-        )),
+        Some(dir) if crate::dlss_sdk::is_installed(&dir) => {}
+        _ => {
+            return Some(format!(
+                "this preset asks for the `{FEATURE}` feature and NVIDIA's DLSS SDK is not \
+                 installed — install it from Settings, which downloads {} after you accept \
+                 NVIDIA's terms",
+                crate::dlss_sdk::VERSION
+            ));
+        }
     }
+    missing_vulkan_headers()
+}
+
+/// The Vulkan headers, checked the way the build will look for them.
+///
+/// 🔴 Added after a DLSS build died in bindgen with
+/// `'vulkan/vulkan.h' file not found` on a machine whose games run
+/// Vulkan perfectly well. The loader and the headers are different
+/// packages, and only a compiler ever wants the second.
+fn missing_vulkan_headers() -> Option<String> {
+    let root = std::env::var_os("VULKAN_SDK")
+        .map(PathBuf::from)
+        .unwrap_or_else(vulkan_sdk);
+    if header_in(&root).is_file() {
+        return None;
+    }
+    let mut message = format!(
+        "this preset asks for the `{FEATURE}` feature, which compiles NVIDIA's headers, \
+         and there is no {} on this machine",
+        header_in(&root).display()
+    );
+    match crate::preflight::Installer::detect().command(&[crate::preflight::VULKAN_HEADERS]) {
+        Some(command) => message.push_str(&format!("\n\n{command}")),
+        None => message.push_str(&format!("\n\n{}", crate::preflight::VULKAN_HEADERS.hint)),
+    }
+    Some(message)
+}
+
+/// Where the header sits under a Vulkan root, on every platform the
+/// build script knows: `include` on unix, `Include` on Windows.
+fn header_in(root: &Path) -> PathBuf {
+    let include = if cfg!(windows) { "Include" } else { "include" };
+    root.join(include).join("vulkan").join("vulkan.h")
 }
 
 /// Puts the SDK where `dlss_wgpu`'s build script looks.
@@ -152,6 +187,52 @@ pub fn build_env(command: &mut Command, preset: &BuildPreset) {
         // every distro that ships `vulkan-headers` that is where it is.
         command.env("VULKAN_SDK", vulkan_sdk());
     }
+    if std::env::var_os(BINDGEN_ARGS).is_none()
+        && let Some(include) = clang_include()
+    {
+        command.env(BINDGEN_ARGS, format!("-I{}", include.display()));
+    }
+}
+
+/// Where bindgen is told to find clang's own headers.
+const BINDGEN_ARGS: &str = "BINDGEN_EXTRA_CLANG_ARGS";
+
+/// Clang's resource headers, when they are somewhere bindgen will not
+/// look on its own.
+///
+/// 🔴 Fedora Atomic ships several LLVMs side by side and often no
+/// `clang` binary at all, so the `libclang` bindgen loads has a resource
+/// directory that resolves to nothing and the build fails with
+/// `'stdbool.h' file not found`. Found rather than hardcoded: the
+/// version moves with every image update.
+///
+/// Highest version wins, which is the system's own on the layout that
+/// has this problem. `None` when nothing matches, and then bindgen is
+/// left exactly as it was.
+fn clang_include() -> Option<PathBuf> {
+    let mut best: Option<(u32, PathBuf)> = None;
+    for root in ["/usr/lib/clang", "/usr/lib64/clang"] {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let include = entry.path().join("include");
+            if !include.join("stdbool.h").is_file() {
+                continue;
+            }
+            let version = entry
+                .file_name()
+                .to_string_lossy()
+                .split('.')
+                .next()
+                .and_then(|major| major.parse::<u32>().ok())
+                .unwrap_or(0);
+            if best.as_ref().is_none_or(|(seen, _)| version > *seen) {
+                best = Some((version, include));
+            }
+        }
+    }
+    best.map(|(_, include)| include)
 }
 
 /// Where the Vulkan headers are, on a machine that installed them the

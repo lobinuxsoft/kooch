@@ -80,6 +80,20 @@ pub const ALSA: Requirement = Requirement {
     hint: "",
 };
 
+/// The Vulkan headers, which bindgen reads while building `dlss_wgpu`.
+///
+/// 🔴 Not the loader and not a driver — the HEADERS. A machine that runs
+/// Vulkan games perfectly well has no `vulkan/vulkan.h`, because nothing
+/// but a compiler ever wants one. That is why this is a separate
+/// requirement from anything the engine needs at runtime, and why it is
+/// checked before cargo: without it the build dies minutes in, inside
+/// bindgen, with a message about a missing include.
+pub const VULKAN_HEADERS: Requirement = Requirement {
+    name: "Vulkan headers",
+    why: "a build with the DLSS feature runs bindgen over NVIDIA's SDK, which includes vulkan/vulkan.h",
+    hint: "https://vulkan.lunarg.com/sdk/home — set VULKAN_SDK to where it lands",
+};
+
 /// How this machine installs things.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Installer {
@@ -126,6 +140,10 @@ impl Installer {
             (Self::RpmOstree | Self::Dnf, "ALSA development files") => Some("alsa-lib-devel"),
             (Self::Apt, "ALSA development files") => Some("libasound2-dev"),
             (Self::Pacman, "ALSA development files") => Some("alsa-lib"),
+            (Self::RpmOstree | Self::Dnf | Self::Pacman, "Vulkan headers") => {
+                Some("vulkan-headers")
+            }
+            (Self::Apt, "Vulkan headers") => Some("libvulkan-dev"),
             _ => None,
         }
     }
@@ -188,6 +206,7 @@ impl Installer {
 pub struct Probes {
     pub cargo: bool,
     pub alsa: bool,
+    pub vulkan_headers: bool,
 }
 
 impl Probes {
@@ -200,8 +219,23 @@ impl Probes {
         Self {
             cargo: ran("cargo", &["--version"]),
             alsa: ran("pkg-config", &["--exists", "alsa"]),
+            vulkan_headers: vulkan_header().is_file(),
         }
     }
+}
+
+/// The header, where `dlss_wgpu`'s build script looks for it.
+///
+/// 🔴 A file test rather than `pkg-config --exists vulkan`: that answers
+/// for the LOADER, which is on every machine that runs a game and says
+/// nothing about whether a compiler could find `vulkan/vulkan.h`. Asking
+/// the wrong question is how this requirement was missed the first time.
+pub fn vulkan_header() -> std::path::PathBuf {
+    let root = std::env::var_os("VULKAN_SDK")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/usr"));
+    let include = if cfg!(windows) { "Include" } else { "include" };
+    root.join(include).join("vulkan").join("vulkan.h")
 }
 
 /// What is missing, most blocking first.
@@ -215,6 +249,13 @@ pub fn missing_from(probes: Probes) -> Vec<Requirement> {
     }
     if !probes.alsa {
         missing.push(ALSA);
+    }
+    // Last, because it is the only one that is not needed to open a
+    // project — and it is here anyway. The whole point of this check is
+    // ONE command, pasted once: on an image-based system, finding out
+    // about a package later costs another reboot.
+    if !probes.vulkan_headers {
+        missing.push(VULKAN_HEADERS);
     }
     missing
 }

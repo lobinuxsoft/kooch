@@ -90,3 +90,22 @@ fn the_untouched_features_travel_unchanged() {
     let features = vec!["audio".to_owned(), "kooch/dlss".to_owned()];
     assert_eq!(normalise(features.clone(), &dir), features);
 }
+
+/// 🔴 The header lives under `include/vulkan/`, not at the root of the
+/// SDK. Getting that wrong is how the check passes and the build still
+/// dies in bindgen.
+#[test]
+fn the_header_sits_under_include() {
+    let path = header_in(Path::new("/usr"));
+    assert!(path.ends_with("vulkan/vulkan.h"), "{}", path.display());
+    assert!(path.starts_with("/usr"));
+}
+
+/// Whatever this machine has, the answer must be a directory that
+/// actually holds the header bindgen could not find — never a guess.
+#[test]
+fn the_clang_include_holds_what_it_promises() {
+    if let Some(include) = clang_include() {
+        assert!(include.join("stdbool.h").is_file(), "{}", include.display());
+    }
+}
