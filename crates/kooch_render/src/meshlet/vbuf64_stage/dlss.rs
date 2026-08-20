@@ -45,6 +45,29 @@ impl Dlss {
         self.output_size = output;
     }
 
+    /// What NGX insists this frame be rendered at, once it has said so.
+    ///
+    /// 🔴 The engine's `render_scale` arithmetic is NOT the authority
+    /// for this technique. NGX's minimum render resolution **is** its
+    /// optimal, so a size that rounds one pixel below is refused
+    /// outright — which is what a 943-row window halved does.
+    pub(super) fn wanted_render_size(&self, output: (u32, u32)) -> Option<(u32, u32)> {
+        let _ = output;
+        #[cfg(feature = "dlss")]
+        return self.inner.wanted_render_size(output);
+        #[cfg(not(feature = "dlss"))]
+        None
+    }
+
+    /// Whether DLSS has given up for this session, so the frame must go
+    /// back to being rendered at the output's own size.
+    pub(super) fn unusable(&self) -> bool {
+        #[cfg(feature = "dlss")]
+        return self.inner.unusable();
+        #[cfg(not(feature = "dlss"))]
+        true
+    }
+
     /// The most recent resolve, for a test to read back.
     pub(super) fn resolved_texture(&self) -> Option<&wgpu::Texture> {
         #[cfg(feature = "dlss")]

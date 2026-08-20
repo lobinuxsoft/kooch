@@ -374,8 +374,53 @@ impl MeshletRenderStage {
         if !self.compute_shading_active() {
             return output;
         }
+        // 🔴 DLSS picks its own, and the engine's arithmetic does not get
+        // a vote (#536). NGX's MINIMUM render resolution is its optimal
+        // — it will not reconstruct from fewer pixels than the mode asks
+        // for — so a percentage that rounds a pixel low is refused
+        // outright. A 943-row window halved is 471 by flooring and 472
+        // by NGX's rounding, and that one pixel used to disable the
+        // upscaler for the session and leave the frame in the corner of
+        // the window.
+        //
+        // `None` until the first context exists, and the fallback below
+        // is what creates it: the scale still decides which of NVIDIA's
+        // presets is asked for.
+        if self.upscale_technique == crate::quality::UpscaleTechnique::Dlss {
+            if let Some(size) = self.dlss_render_size(output) {
+                return size;
+            }
+            // Unusable: no vendor upscaler, so nothing will enlarge the
+            // frame and it has to be rendered at the output's own size.
+            // The resolve that runs instead is the engine's TAA, which
+            // antialiases and does not reconstruct.
+            if self.dlss_unusable() {
+                return output;
+            }
+        }
         self.upscale_technique
             .render_size(output, self.render_scale)
+    }
+
+    /// What DLSS wants a view of `output` rendered at, asked of the
+    /// views because that is where its per-camera context lives.
+    fn dlss_render_size(&self, output: (u32, u32)) -> Option<(u32, u32)> {
+        self.views
+            .iter()
+            .find_map(|(_, view)| view.vbuf64_stage.as_ref()?.dlss_render_size(output))
+    }
+
+    /// Whether every view that could run DLSS has given up on it.
+    ///
+    /// ⚠️ `any`, not `all`: one view that cannot reconstruct is one
+    /// window drawing into its own corner, and the answer that keeps a
+    /// picture on the screen is the conservative one.
+    fn dlss_unusable(&self) -> bool {
+        self.views.iter().any(|(_, view)| {
+            view.vbuf64_stage
+                .as_ref()
+                .is_some_and(|s| s.dlss_unusable())
+        })
     }
 
     /// The lens both the cull and SGSR 2's edge mask are derived from.

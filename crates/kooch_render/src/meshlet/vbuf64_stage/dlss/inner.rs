@@ -53,6 +53,19 @@ struct State {
     /// What `context` was built for. A change to either rebuilds it,
     /// which is expensive and therefore not done per frame.
     built_for: Option<((u32, u32), PerfMode)>,
+    /// What NGX said it wants the frame rendered at, and for which
+    /// output.
+    ///
+    /// 🔴 The whole reason this is stored rather than checked. NGX's
+    /// minimum render resolution **is** its optimal — it will not
+    /// reconstruct from fewer pixels than the mode asks for — so the
+    /// engine's own `render_scale` arithmetic cannot be the authority.
+    /// A window of 943 rows halved is 471 by flooring and 472 by NGX's
+    /// rounding, and one pixel short is refused outright.
+    wanted: Option<((u32, u32), (u32, u32))>,
+    /// The size the mismatch was last reported for, so a frame waiting
+    /// for the resize does not log once per frame.
+    reported: Option<(u32, u32)>,
     /// Whether the next frame must throw the history away.
     reset: bool,
     /// 🔴 Sticky. A DLSS call that fails fails for a reason that does
@@ -74,6 +87,8 @@ impl Inner {
             state: Mutex::new(State {
                 context: None,
                 built_for: None,
+                wanted: None,
+                reported: None,
                 reset: true,
                 failed: false,
             }),
@@ -89,7 +104,21 @@ impl Inner {
         let mut state = self.state.lock().expect("dlss state lock");
         state.context = None;
         state.built_for = None;
+        state.wanted = None;
+        state.reported = None;
         state.reset = true;
+    }
+
+    /// What NGX wants `output` rendered at, once it has said so.
+    pub(super) fn wanted_render_size(&self, output: (u32, u32)) -> Option<(u32, u32)> {
+        let state = self.state.lock().expect("dlss state lock");
+        state
+            .wanted
+            .and_then(|(seen, render)| (seen == output).then_some(render))
+    }
+
+    pub(super) fn unusable(&self) -> bool {
+        self.state.lock().expect("dlss state lock").failed
     }
 
     pub(super) fn output_texture(&self) -> &wgpu::Texture {
@@ -124,12 +153,11 @@ impl Inner {
                 queue,
             ) {
                 Ok(context) => {
-                    tracing::info!(
-                        ?mode,
-                        optimal = ?context.render_resolution(),
-                        asked = ?render,
-                        "DLSS context created"
-                    );
+                    let optimal = context.render_resolution();
+                    tracing::info!(?mode, ?optimal, asked = ?render, "DLSS context created");
+                    // What the stage's targets have to become. Read here
+                    // because this is the only moment NGX tells us.
+                    state.wanted = Some((output, (optimal[0], optimal[1])));
                     state.context = Some(context);
                     state.built_for = Some((output, mode));
                     state.reset = true;
@@ -142,30 +170,36 @@ impl Inner {
             }
         }
 
+        // 🔴 The range is read through a SHARED borrow and the whole
+        // check runs before anything takes a mutable one. The engine
+        // picks the render size from `render_scale`, and NGX rounds its
+        // own ladder differently — but its MINIMUM is its optimal, so a
+        // size a pixel below is refused rather than reconstructed from.
+        let range = state.context.as_ref()?.render_resolution_range();
+        let (min, max) = (*range.start(), *range.end());
+        if render.0 < min[0] || render.1 < min[1] || render.0 > max[0] || render.1 > max[1] {
+            // NOT sticky, and not an error. The stage reads
+            // `wanted_render_size` and reallocates, so this is the one
+            // frame in between — going sticky here is what turned a
+            // one-pixel rounding difference into a permanently disabled
+            // upscaler and a frame drawn into the corner of the window.
+            if state.reported != Some(render) {
+                state.reported = Some(render);
+                tracing::warn!(
+                    ?render,
+                    ?min,
+                    ?max,
+                    "render size is not one DLSS accepts; resizing to its own and \
+                     resolving with TAA for this frame"
+                );
+            }
+            return None;
+        }
+        state.reported = None;
+
         // Read before the context borrows `state` mutably.
         let reset = state.reset;
         let context = state.context.as_mut()?;
-        // 🔴 The engine picks the render size from `render_scale`, and
-        // NGX rounds its own ladder differently. Rather than let the
-        // stage's targets be dictated from here — which would mean
-        // reallocating every one of them behind the settings' back —
-        // the size we already rendered at is declared as the subrect,
-        // which is what NGX's dynamic-resolution path is for.
-        //
-        // Outside the range it will not reconstruct, and a silently
-        // cropped image is worse than the fallback.
-        let range = context.render_resolution_range();
-        let (min, max) = (range.start(), range.end());
-        if render.0 < min[0] || render.1 < min[1] || render.0 > max[0] || render.1 > max[1] {
-            tracing::error!(
-                ?render,
-                ?min,
-                ?max,
-                "render size outside what DLSS accepts, falling back"
-            );
-            state.failed = true;
-            return None;
-        }
 
         let parameters = DlssSuperResolutionRenderParameters {
             color: inputs.color,

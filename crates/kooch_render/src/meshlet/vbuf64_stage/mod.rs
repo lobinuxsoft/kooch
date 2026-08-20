@@ -402,6 +402,18 @@ impl Vbuf64Stage {
         };
     }
 
+    /// What DLSS insists `output` be rendered at, or `None` when it has
+    /// not said — see [`dlss::Dlss::wanted_render_size`].
+    pub fn dlss_render_size(&self, output: (u32, u32)) -> Option<(u32, u32)> {
+        self.dlss.wanted_render_size(output)
+    }
+
+    /// Whether DLSS cannot run, so a frame asking for it has to be
+    /// rendered at the output's own size instead of an upscaler's.
+    pub fn dlss_unusable(&self) -> bool {
+        self.dlss.unusable()
+    }
+
     /// Selects the technique (#536).
     pub fn set_upscale(&mut self, technique: crate::quality::UpscaleTechnique) {
         self.technique = technique;
