@@ -268,6 +268,9 @@ pub struct PageCensus {
     /// Cell/light pairs the walk visited, so a page count can be read
     /// against the work that produced it.
     pairs: u32,
+    /// Cells the walk marked from, which is every cell of the grid
+    /// unless [`CensusFrame::surfaces`] narrowed it.
+    cells: u32,
 }
 
 impl PageCensus {
@@ -287,6 +290,7 @@ impl PageCensus {
             per_light,
             resident: 0,
             pairs: 0,
+            cells: 0,
         }
     }
 
@@ -302,6 +306,10 @@ impl PageCensus {
 
     pub fn pairs(&self) -> u32 {
         self.pairs
+    }
+
+    pub fn cells(&self) -> u32 {
+        self.cells
     }
 
     /// Marks one page of a local light's mip chain.
@@ -342,6 +350,32 @@ impl PageCensus {
     }
 }
 
+/// One frame's inputs to the census.
+///
+/// A struct rather than three arguments because `surfaces` only makes
+/// sense alongside the camera that decides which cells exist, and
+/// because a walk with it and a walk without it are the two halves of
+/// the same comparison.
+#[derive(Copy, Clone, Debug)]
+pub struct CensusFrame<'a> {
+    pub camera: CensusCamera,
+    pub lights: &'a [CensusLight],
+    /// Where the scene's geometry is.
+    ///
+    /// 🔴 **Empty means every cell is marked**, which is the walk over
+    /// the frustum's whole *volume* — and measuring that against this
+    /// one is the point. A froxel is a box of mostly empty air; a page
+    /// allocated for air is a page no shadow ever reads. UE5 marks from
+    /// the depth buffer and the Chalmers papers from the cluster's view
+    /// samples, and both are this filter taken to its limit: not "a cell
+    /// with geometry in it" but "a cell with *visible* geometry in it".
+    ///
+    /// So this is an upper bound on a depth-driven pass and a lower
+    /// bound on the volume walk, which is exactly what brackets the
+    /// question.
+    pub surfaces: &'a [WorldBox],
+}
+
 /// Walks the froxel grid and marks every page the frame would need.
 ///
 /// The walk is the one #866 describes — *read off the froxel grid that
@@ -351,10 +385,10 @@ pub fn census(
     config: PageConfig,
     clipmap: ClipmapConfig,
     grid: &ClusterGrid,
-    camera: &CensusCamera,
-    lights: &[CensusLight],
+    frame: &CensusFrame<'_>,
 ) -> PageCensus {
-    let mut out = PageCensus::new(config, clipmap, lights.len());
+    let camera = &frame.camera;
+    let mut out = PageCensus::new(config, clipmap, frame.lights.len());
     let world_from_clip = camera.world_from_clip();
     let dims = grid.dimensions;
 
@@ -373,7 +407,12 @@ pub fn census(
                     near,
                     far,
                 );
-                for (index, light) in lights.iter().enumerate() {
+                // An empty list is the volume walk: every cell counts.
+                if !frame.surfaces.is_empty() && !frame.surfaces.iter().any(|s| cell.overlaps(s)) {
+                    continue;
+                }
+                out.cells += 1;
+                for (index, light) in frame.lights.iter().enumerate() {
                     // A sun reaches every cell, which is why it is not
                     // in the froxel grid at all.
                     if !matches!(light.kind, CensusKind::Sun(_))
@@ -390,15 +429,30 @@ pub fn census(
     out
 }
 
-/// A cell, in world space.
-#[derive(Copy, Clone, Debug)]
-struct CellBox {
-    min: Vec3,
-    max: Vec3,
+/// A box in world space — a froxel, or a piece of the scene's geometry.
+///
+/// One type for both because the census asks the same two questions of
+/// each: does a light reach it, and does it overlap that other one.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct WorldBox {
+    pub min: Vec3,
+    pub max: Vec3,
 }
 
-impl CellBox {
-    /// Whether a sphere reaches this cell.
+impl WorldBox {
+    pub fn new(min: Vec3, max: Vec3) -> Self {
+        Self {
+            min: min.min(max),
+            max: min.max(max),
+        }
+    }
+
+    /// Whether two boxes share any volume, touching included.
+    pub fn overlaps(&self, other: &Self) -> bool {
+        self.min.cmple(other.max).all() && other.min.cmple(self.max).all()
+    }
+
+    /// Whether a sphere reaches this box.
     fn reaches(&self, position: Vec3, radius: f32) -> bool {
         let nearest = position.clamp(self.min, self.max);
         nearest.distance_squared(position) <= radius * radius
@@ -448,7 +502,7 @@ fn cell_aabb(
     cell: UVec3,
     near: f32,
     far: f32,
-) -> CellBox {
+) -> WorldBox {
     // The NDC rectangle this cell covers. `y` is flipped because the
     // grid indexes rows from the top, the way `cluster_of_ndc` does.
     let xs = [
@@ -476,7 +530,7 @@ fn cell_aabb(
             }
         }
     }
-    CellBox { min, max }
+    WorldBox { min, max }
 }
 
 /// Marks every page one cell needs from one light.
@@ -484,7 +538,7 @@ fn mark_cell(
     out: &mut PageCensus,
     light: u32,
     source: &CensusLight,
-    cell: &CellBox,
+    cell: &WorldBox,
     wanted: f32,
     eye: Vec3,
 ) {
@@ -554,7 +608,7 @@ fn mark_sun_cell(
     out: &mut PageCensus,
     light: u32,
     direction: Vec3,
-    cell: &CellBox,
+    cell: &WorldBox,
     wanted: f32,
     eye: Vec3,
 ) {

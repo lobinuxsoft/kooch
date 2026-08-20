@@ -21,6 +21,16 @@ fn grid(viewport: Vec2) -> ClusterGrid {
     ClusterGrid::new(&ClusterSettings::default(), viewport)
 }
 
+/// The frame a test censuses: this camera, these lights, no surface
+/// filter — the walk over the frustum's whole volume.
+fn frame<'a>(viewport: Vec2, lights: &'a [CensusLight]) -> CensusFrame<'a> {
+    CensusFrame {
+        camera: camera(viewport),
+        lights,
+        surfaces: &[],
+    }
+}
+
 #[test]
 fn a_chain_ends_at_one_page() {
     let config = PageConfig::default();
@@ -64,8 +74,7 @@ fn an_unlit_frame_residents_nothing() {
         PageConfig::default(),
         ClipmapConfig::default(),
         &grid(viewport),
-        &camera(viewport),
-        &[],
+        &frame(viewport, &[]),
     );
     assert_eq!(out.resident(), 0);
     assert_eq!(out.bytes(), 0);
@@ -80,8 +89,7 @@ fn a_light_out_of_reach_is_skipped() {
         PageConfig::default(),
         ClipmapConfig::default(),
         &grid(viewport),
-        &camera(viewport),
-        &[light],
+        &frame(viewport, &[light]),
     );
     assert_eq!(out.pairs(), 0);
     assert_eq!(out.resident(), 0);
@@ -95,8 +103,7 @@ fn residency_follows_the_screen() {
         PageConfig::default(),
         ClipmapConfig::default(),
         &grid(viewport),
-        &camera(viewport),
-        &[light],
+        &frame(viewport, &[light]),
     );
     assert!(out.pairs() > 0, "the light reaches cells in front of it");
     assert!(out.resident() > 0, "and those cells need pages");
@@ -121,8 +128,7 @@ fn a_smaller_page_residents_more() {
         },
         ClipmapConfig::default(),
         &grid(viewport),
-        &camera(viewport),
-        &[light],
+        &frame(viewport, &[light]),
     );
     let fine = census(
         PageConfig {
@@ -131,8 +137,7 @@ fn a_smaller_page_residents_more() {
         },
         ClipmapConfig::default(),
         &grid(viewport),
-        &camera(viewport),
-        &[light],
+        &frame(viewport, &[light]),
     );
     assert!(
         fine.resident() > coarse.resident(),
@@ -150,15 +155,13 @@ fn a_spot_pays_one_face() {
         PageConfig::default(),
         ClipmapConfig::default(),
         &grid(viewport),
-        &camera(viewport),
-        &[CensusLight::point(at, 12.0)],
+        &frame(viewport, &[CensusLight::point(at, 12.0)]),
     );
     let spot = census(
         PageConfig::default(),
         ClipmapConfig::default(),
         &grid(viewport),
-        &camera(viewport),
-        &[CensusLight::spot(at, 12.0)],
+        &frame(viewport, &[CensusLight::spot(at, 12.0)]),
     );
     assert!(
         spot.resident() < point.resident(),
@@ -177,8 +180,7 @@ fn a_sun_residents_a_fraction() {
         config,
         clipmap,
         &grid(viewport),
-        &camera(viewport),
-        &[CensusLight::sun(Vec3::new(-0.3, -1.0, -0.2))],
+        &frame(viewport, &[CensusLight::sun(Vec3::new(-0.3, -1.0, -0.2))]),
     );
     assert!(out.resident() > 0, "the sun reaches every cell");
     let addressable = clipmap.levels * config.side(0).pow(2);
@@ -200,4 +202,73 @@ fn a_coarse_level_holds_the_far_cells() {
     assert_eq!(level_above(5.0), 3);
     assert_eq!(clipmap.extent(0), clipmap.base);
     assert_eq!(clipmap.extent(3), clipmap.base * 8.0);
+}
+
+#[test]
+fn boxes_that_touch_overlap() {
+    let a = WorldBox::new(Vec3::ZERO, Vec3::ONE);
+    assert!(a.overlaps(&WorldBox::new(Vec3::splat(0.5), Vec3::splat(2.0))));
+    assert!(
+        a.overlaps(&WorldBox::new(Vec3::ONE, Vec3::splat(2.0))),
+        "touching"
+    );
+    assert!(!a.overlaps(&WorldBox::new(Vec3::splat(1.01), Vec3::splat(2.0))));
+    // Built from either corner, and it is the same box.
+    assert_eq!(WorldBox::new(Vec3::ONE, Vec3::ZERO), a);
+}
+
+#[test]
+fn a_surface_narrows_the_walk() {
+    let viewport = Vec2::new(1280.0, 720.0);
+    let lights = [CensusLight::point(Vec3::new(0.0, 0.0, -10.0), 12.0)];
+    let whole = census(
+        PageConfig::default(),
+        ClipmapConfig::default(),
+        &grid(viewport),
+        &frame(viewport, &lights),
+    );
+    // One small box in front of the camera, where the light is.
+    let surfaces = [WorldBox::new(Vec3::splat(-1.0), Vec3::new(1.0, 1.0, -9.0))];
+    let narrowed = census(
+        PageConfig::default(),
+        ClipmapConfig::default(),
+        &grid(viewport),
+        &CensusFrame {
+            camera: camera(viewport),
+            lights: &lights,
+            surfaces: &surfaces,
+        },
+    );
+    assert!(
+        narrowed.cells() < whole.cells(),
+        "cells {} vs {}",
+        narrowed.cells(),
+        whole.cells()
+    );
+    assert!(
+        narrowed.resident() < whole.resident(),
+        "resident {} vs {}",
+        narrowed.resident(),
+        whole.resident()
+    );
+}
+
+#[test]
+fn a_surface_nothing_reaches_residents_nothing() {
+    let viewport = Vec2::new(1280.0, 720.0);
+    let lights = [CensusLight::point(Vec3::new(0.0, 0.0, -10.0), 12.0)];
+    // Behind the camera, so no cell of the grid overlaps it.
+    let surfaces = [WorldBox::new(Vec3::splat(400.0), Vec3::splat(401.0))];
+    let out = census(
+        PageConfig::default(),
+        ClipmapConfig::default(),
+        &grid(viewport),
+        &CensusFrame {
+            camera: camera(viewport),
+            lights: &lights,
+            surfaces: &surfaces,
+        },
+    );
+    assert_eq!(out.cells(), 0);
+    assert_eq!(out.resident(), 0);
 }

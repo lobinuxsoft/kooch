@@ -856,50 +856,68 @@ It also becomes the **oracle** that pass is checked against, the position
 
 ### What it measured, 2026-08-20
 
-`many_lights.scene` at 1280x720, Epic's configuration (128-texel pages,
-a 16384 virtual map per local light, a sixteen-level clipmap for the
-sun), asking one shadow texel per screen pixel:
+`many_lights.scene` at 1280x720 — a hundred point lights, a sun, a floor
+and sixteen Suzannes — with Epic's configuration: 128-texel pages, a
+16384 virtual map per local light, a sixteen-level clipmap for the sun,
+asking one shadow texel per screen pixel.
 
-| | pages | MiB |
-|---|---|---|
-| the screen's floor — one texel per pixel, perfectly packed | 57 | 3.6 |
-| the sun's clipmap | 19 630 | 1 226.9 |
-| a hundred local lights | 8 386 | 524.1 |
-| **today's fixed allocations, for five casting lights** | — | **152** |
+The run reports two walks of the same grid. **Volume** marks every cell
+of the frustum; **surfaces** marks only the cells a mesh passes through.
 
-🔴 **The page size barely matters and the virtual size does not matter at
-all.** Across 64/128/256-texel pages the bill lands between 1 223 and
-1 765 MiB, because a smaller page is more pages; across 4k/8k/16k virtual
-maps residency is *identical*, because the virtual size is the chain's
-ceiling and the level chosen for a cell is the one whose texels match the
-screen. Those were the three knobs #866 declined to guess, and the answer
-is that none of them is the decision.
+| | cells | volume | surfaces | MiB | saved |
+|---|---|---|---|---|---|
+| the sun | 131 | 19 630 | **160** | 10.0 | **122.7x** |
+| a hundred local lights | 131 | 8 386 | 6 798 | 424.9 | 1.2x |
+| everything | 131 | 28 016 | 6 958 | 434.9 | 4.0x |
+| the screen's floor — one texel per pixel, perfectly packed | — | — | 57 | 3.6 | |
+| **today's fixed allocations, for five casting lights** | — | — | — | **152** | |
 
-**The decision is what drives the marking.** The sun's 19 630 pages is
-344x the floor, and two sweeps say that number is real rather than an
-artefact of the grid — both run as predictions, both refuting the
-mechanism they tested:
+🔴 **The marking input was the decision, and the sun is where it shows.**
+Marked from froxel volumes the sun's clipmap residents 19 630 pages —
+344x the theoretical floor. Marked from the cells that actually contain
+geometry it residents **160**, within 2.8x of that floor. A froxel is a
+box of mostly empty air, and a page allocated for air is a page no
+shadow ever reads. This is why UE5 marks from the **depth buffer** and
+the Chalmers papers from the cluster's **view samples** — visible
+fragments, not grid cells.
 
-| prediction | result |
-|---|---|
-| a froxel's *depth* becomes lateral spread in the sun's plane, so thinner slices collapse the count | 32x thinner slices moved it **20 %**. Not the mechanism |
-| pages are barely shared between neighbours, so residency tracks the cell count | over a 20x range it is **flat** — the union converges, which is what a conservative marking pass should do |
+So #866's own opening move, *read it off the froxel grid that already
+runs*, is what the measurement refutes: the froxel grid answers *which
+lights reach which region of space*, which is the right input for
+**shading** and the wrong one for **page allocation**.
 
-What is left is the input itself: a froxel is a volume, and marking from
-volumes claims pages for ground no surface occupies. UE5 marks from the
-**depth buffer**, and the Chalmers papers mark from the cluster's *view
-samples* — visible fragments, not grid cells. So #866's own starting
-sentence, *read it off the froxel grid that already runs*, is the thing
-this measurement refutes, and the page-marking pass has to be driven by
-visible surfaces.
+🔴 **None of the three knobs the issue declined to guess is the
+decision either.** Across 64/128/256-texel pages the bill is flat within
+2 % — 426 to 435 MiB — because a smaller page is simply more pages.
+Across 4k/8k/16k virtual maps residency is *identical* (6 958 pages each
+time), because the virtual size is only the chain's ceiling and the
+level chosen for a cell is the one whose texels match the screen.
 
-⚠️ **And a second reading, for the game rather than the structure.** A
-hundred casting local lights cost 524 MiB at this density — about
-5.2 MiB each, against the 6 MiB a cube slot costs today. The pool does
-not make a casting light cheaper; it makes the budget follow what the
-screen needs instead of a fixed number of slots. The cap on how many
-lights cast stops being four and starts being a memory budget, which on
-a handheld is still a cap.
+Two more sweeps are kept in the run because both were predictions about
+the volume walk and both refuted the mechanism they tested, which is
+what leaves that walk's count standing as an area rather than an
+artefact of how the grid is diced: 32x thinner slices moved it **20 %**,
+and over a 20x range of cell counts it is **flat**.
+
+### What it says about the engine as it stands
+
+**For the content that ships today — five casting lights — the pool is
+16.8 MiB against 152.** Nine times less, same image. That is the whole
+promise of *memory that follows the screen instead of the sum of every
+light type's worst case*, and it holds.
+
+⚠️ **But the local lights barely benefit from better marking: 1.2x.** A
+point light's `range` already bounds it to the cells near geometry, so
+there is little air left to stop paying for. A hundred casting local
+lights cost **424.9 MiB** at this density — about 4.2 MiB each, against
+the 6 MiB a cube slot costs today. So the pool replaces a cap of *four
+slots* with a cap of *memory*, and on a handheld that is still a cap.
+The next lever is the density target, not the marking.
+
+⚠️ **And the census walks the camera's frustum**, so it counts pages for
+what the viewer can see. Geometry off-screen still has to *rasterise*
+into those pages — marking and casting are separate questions, and only
+the first one is measured here.
 
 ## What Inti does not do yet
 
