@@ -204,6 +204,76 @@ centroid of every triangle the moment a point light needed a distance.
 > anybody can bisect, and the first report was "you broke the whole
 > render".
 
+### The window, and everything being live
+
+`window_mode` sits beside `vsync` in the Presentation group: **0
+windowed, 1 borderless, 2 fullscreen, 3 exclusive**.
+
+| mode | what it is | changes the output resolution? |
+|---|---|---|
+| Windowed | a decorated window at the project's size | no |
+| Borderless | the same size, no title bar — still a **window** | no |
+| Fullscreen | the monitor, at the monitor's **current** mode | no |
+| Exclusive | asks the display to **change mode** | **yes** |
+
+🔴 **Exclusive does not work everywhere, and the engine says so rather
+than letting it fail quietly.** Windows and X11 implement it; winit
+ignores it on Wayland and its own source says so twice —
+`warn!("`Fullscreen::Exclusive` is ignored on Wayland")`, which leaves
+the window exactly as it was and reads as the setting being broken. So
+`window_mode::effective` degrades the request to fullscreen before it
+reaches winit, with a warning naming both modes.
+
+### The resolution, and what the monitor reports
+
+Two resources carry it, both live:
+
+- **`Resolution { width, height, refresh_mhz }`** — what the game asks
+  for. In windowed and borderless it is the window's inner size, applied
+  through `request_inner_size`; in exclusive it is the display mode to
+  switch to. `refresh_mhz: 0` means *"the best this size can do"*.
+- **`DisplayModes { modes, exclusive }`** — what the platform will
+  actually do, published once the window exists. The list comes from the
+  **player's** monitor rather than from a constant, and `exclusive` is
+  false under Wayland. A game's options menu is built from this: a
+  resolution dropdown that changes nothing is worse than none.
+
+🔴 **In exclusive, the size has to match a mode exactly.** Substituting a
+nearby resolution would change what the player sees without saying so,
+so the fallback is borderless fullscreen at the monitor's own size, with
+a warning. Among modes of the right size the engine takes the one closest
+to the refresh asked for, or the highest when none was.
+
+⚠️ `request_inner_size` is a **request**. Wayland answers with a
+configure event rather than a return value, which the engine already
+handles: `WindowResized` → `GpuContext::resize` → the render targets.
+
+⚠️ The **environment override** `KOOCH_WINDOW_MODE=windowed|borderless|
+fullscreen|exclusive` is applied when the window is created; the
+**asset's** value lands a few frames later, because the settings asset
+needs the asset server, which needs the GPU, which needs the window.
+
+⚠️ None of this reaches a handheld under gamescope. The compositor hands
+the game a surface at the resolution **it** was configured for and scales
+the result; the knob that decides there is outside the process.
+
+**Every setting in the file is live**, which is what makes a game's own
+options menu possible:
+
+| setting | how it lands |
+|---|---|
+| exposure, ambient, shadows, contact shadows | resources read per frame |
+| `compute_shading`, `shading_rate`, `upscale`, `sharpening` | applied per frame on the stage |
+| `render_scale` | next frame — `render_frame_system` calls `resize` once a frame and it early-returns unless the size or the scale moved |
+| `anisotropy` | rebuilds one sampler when the number changes |
+| `vsync` | reconfigures the surface when the mode differs |
+| `window_mode` | `set_fullscreen` / `set_decorations` when the window is not already like that |
+
+Each of those is guarded on "is it already what was asked for", because
+every one of them is a reallocation of something — a swapchain, a
+sampler, a set of render targets — and applying it unconditionally would
+rebuild it once a frame.
+
 ### 🟢 What a handheld ships with
 
 Measured on the OneXFly at 10 W, settled, 1920x1080, 2026-08-20:

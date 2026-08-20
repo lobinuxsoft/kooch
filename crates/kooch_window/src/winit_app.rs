@@ -193,10 +193,23 @@ impl ApplicationHandler<WakeUp> for WinitApp {
             .get::<WindowConfig>()
             .expect("WindowConfig resource not found");
 
+        // 🔴 Only the ENVIRONMENT override is applied here, not the
+        // project's setting. The settings asset needs the asset server,
+        // which needs the GPU, which needs this window — so the asset's
+        // mode cannot exist yet and lands a few frames later through
+        // `mode::apply_window_mode_system`. The variable can be read
+        // before anything, and a measurement run asking for fullscreen
+        // should not spend its first frames in a window.
+        let mode = kooch_core::window_mode::mode_override();
         let attrs = WindowAttributes::default()
             .with_title(&config.title)
             .with_window_icon(crate::icon::window_icon())
-            .with_inner_size(winit::dpi::LogicalSize::new(config.width, config.height));
+            .with_inner_size(winit::dpi::LogicalSize::new(config.width, config.height))
+            .with_decorations(mode.is_none_or(|mode| mode.decorated()))
+            .with_fullscreen(
+                mode.filter(|mode| mode.fullscreen())
+                    .map(|_| winit::window::Fullscreen::Borderless(None)),
+            );
 
         let window = event_loop
             .create_window(attrs)

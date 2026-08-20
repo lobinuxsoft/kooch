@@ -322,7 +322,52 @@ pub struct RenderSettings {
     #[serde(default = "default_vsync")]
     #[reflect(group = "Presentation")]
     pub vsync: bool,
+
+    /// Where the window sits between a rectangle on a desktop and the
+    /// whole screen: 0 windowed, 1 borderless, 2 fullscreen,
+    /// 3 exclusive.
+    ///
+    /// The entry directly above vsync in every graphics options menu
+    /// ever shipped, and the engine could not express it — a window had
+    /// a title and a size and nothing else.
+    ///
+    /// 🔴 `Borderless` is a WINDOW without a border, still at the
+    /// project's `width x height`. `Fullscreen` covers the monitor at
+    /// the monitor's **current** mode. `Exclusive` asks the display to
+    /// **change mode** — the only one that alters the output resolution,
+    /// implemented on Windows and X11 and **ignored by winit on
+    /// Wayland**, where it is degraded to `Fullscreen` rather than left
+    /// to change nothing.
+    ///
+    /// 🔴 The numbers are serialised into user projects and are
+    /// therefore append-only, the same rule [`Self::upscale`] carries.
+    /// An unrecognised one is windowed — a file from a newer engine has
+    /// to open in the mode that always works rather than take the
+    /// display.
+    #[serde(default = "default_window_mode")]
+    #[reflect(group = "Presentation", choices = WINDOW_MODE_CHOICES)]
+    pub window_mode: u32,
 }
+
+/// 🔴 Serialised into user projects, so append-only.
+const WINDOW_MODE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
+    kooch_ecs::reflect::FieldChoice {
+        label: "Windowed — a normal window at the project's size",
+        value: 0,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Borderless — the same size, no title bar",
+        value: 1,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Fullscreen — the monitor, at its current mode",
+        value: 2,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Exclusive — changes the display's mode (not on Wayland)",
+        value: 3,
+    },
+];
 
 /// The powers of two hardware implements. Anything between them is
 /// rounded down by the driver, so offering 3 would be offering 2 under
@@ -355,6 +400,13 @@ const ANISOTROPY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 /// and `KOOCH_PRESENT_MODE=novsync` is how it asks.
 fn default_vsync() -> bool {
     true
+}
+
+/// Windowed. The mode that works on every platform and every
+/// compositor, and the one an author has to opt out of rather than into
+/// — a file that predates this field must not take the display.
+fn default_window_mode() -> u32 {
+    0
 }
 
 /// Off, like every other quality setting in this file: it costs
@@ -582,6 +634,7 @@ impl Default for RenderSettings {
             sharpening: default_sharpening(),
             anisotropy: default_anisotropy(),
             vsync: default_vsync(),
+            window_mode: default_window_mode(),
         }
     }
 }
@@ -669,6 +722,15 @@ impl RenderSettings {
         crate::quality::Presentation::from_asset(self.vsync)
     }
 
+    /// Where the window sits, with `KOOCH_WINDOW_MODE` applied on top.
+    ///
+    /// A `kooch_core` type rather than one of ours: it is authored here
+    /// and applied by `kooch_window`, and those two crates know only
+    /// `kooch_core` and each other's absence.
+    pub fn window_mode(&self) -> kooch_core::window_mode::WindowMode {
+        kooch_core::window_mode::WindowMode::from_asset(self.window_mode)
+    }
+
     /// The technique this file asks for.
     pub fn technique(&self) -> crate::quality::UpscaleTechnique {
         crate::quality::UpscaleTechnique::from_asset(self.upscale)
@@ -681,6 +743,7 @@ impl RenderSettings {
     /// directly keeps working and a headless test needs no file.
     pub fn apply(&self, resources: &mut Resources) {
         resources.insert(self.presentation());
+        resources.insert(self.window_mode());
         resources.insert(Exposure::from_physical(self.camera()));
         resources.insert(self.ambient());
         resources.insert(self.shadows());
@@ -763,7 +826,9 @@ pub fn apply_render_settings_system(resources: &mut Resources) {
     let shading = settings.shading();
     let temporal = settings.temporal();
     let presentation = settings.presentation();
+    let window_mode = settings.window_mode();
     let stale = resources.get::<crate::quality::Presentation>() != Some(&presentation)
+        || resources.get::<kooch_core::window_mode::WindowMode>() != Some(&window_mode)
         || resources.get::<Exposure>() != Some(&exposure)
         || resources.get::<AmbientLight>() != Some(&ambient)
         || resources.get::<ShadowSettings>() != Some(&shadows)
