@@ -726,6 +726,7 @@ fn level_for(config: PageConfig, distance: f32, wanted: f32) -> u32 {
 }
 
 pub mod mark;
+pub mod pool;
 
 /// Whether the marking pass runs, and how coarsely.
 ///
