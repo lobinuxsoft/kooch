@@ -27,11 +27,17 @@ use glam::{Mat4, Vec3};
 
 use kooch_lighting::{CLUSTER_COMMON, GpuLights};
 
+use super::pool::{PagePool, PoolConfig, PoolCounts};
 use super::{ClipmapConfig, PageConfig};
 
 const SOURCE: &str = include_str!("../../../shaders/page_mark.wgsl");
+/// The page table's arithmetic, shared with whatever reads the table.
+const TABLE: &str = include_str!("../../../shaders/page_table.wgsl");
 const GROUP: u32 = 8;
-const COUNTERS: u64 = 4;
+/// 0 resident, 1 samples, 2 pairs, 3 mark overflow, 4 claims, 5 pool
+/// overflow, 6 probe overflow. 7 spare, because a storage buffer is
+/// rounded up anyway.
+const COUNTERS: u64 = 8;
 
 /// `KOOCH_PAGE_MARKING=1`, read once.
 ///
@@ -109,6 +115,8 @@ pub struct MarkCounts {
     /// Page indices past the end of the mark buffer. 🔴 Non-zero means
     /// every number above is a floor, not a count.
     pub overflow: u32,
+    /// What the allocator did with them.
+    pub pool: PoolCounts,
     /// The render size the count was taken at.
     ///
     /// 🔴 Carried with the number rather than left to the reader,
@@ -129,6 +137,7 @@ struct PageMarkView {
     chain: [u32; 4],
     strides: [u32; 4],
     sampling: [u32; 4],
+    pool: [u32; 4],
     paint: [f32; 4],
     density: [f32; 4],
 }
@@ -140,6 +149,10 @@ pub struct PageMarker {
     view: wgpu::Buffer,
     marks: wgpu::Buffer,
     counters: wgpu::Buffer,
+    /// The physical pool and its table, written by the same dispatch
+    /// that marks. See [`pool`](super::pool) for why the allocation
+    /// happens here and not in a pass of its own.
+    pool: PagePool,
     readback: Readback,
     /// A slot holding a copy that has been recorded but not yet mapped.
     ///
@@ -162,7 +175,7 @@ impl PageMarker {
         let layout = layout(device);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("page_mark"),
-            source: wgpu::ShaderSource::Wgsl(format!("{CLUSTER_COMMON}\n{SOURCE}").into()),
+            source: wgpu::ShaderSource::Wgsl(format!("{CLUSTER_COMMON}\n{TABLE}\n{SOURCE}").into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("page_mark_pipeline_layout"),
@@ -188,6 +201,7 @@ impl PageMarker {
                 mapped_at_creation: false,
             }),
             marks: marks_buffer(device, config, clipmap, 1),
+            pool: PagePool::new(device, PoolConfig::default()),
             counters: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_counters"),
                 size: COUNTERS * 4,
@@ -209,6 +223,19 @@ impl PageMarker {
     /// The last count that came back, a frame or two old.
     pub fn last(&self) -> Option<MarkCounts> {
         self.last
+    }
+
+    /// The physical pool and its table.
+    pub fn pool(&self) -> &PagePool {
+        &self.pool
+    }
+
+    /// Resizes the pool, and reports whether anything changed.
+    ///
+    /// The table is rebuilt, not migrated: it is emptied every frame
+    /// anyway, so there is nothing in it worth carrying across.
+    pub fn set_pool(&mut self, device: &wgpu::Device, config: PoolConfig) -> bool {
+        self.pool.resize(device, config)
     }
 
     /// Drops the cached count.
@@ -292,6 +319,12 @@ impl PageMarker {
                     count,
                 ],
                 sampling: [rate, count, u32::from(paint.on), 0],
+                pool: [
+                    self.pool.config().entries(),
+                    self.pool.config().pages,
+                    self.pool.config().per_row(),
+                    0,
+                ],
                 // How many output pixels one depth pixel covers, per
                 // axis. 1 when nothing is upscaling.
                 paint: [
@@ -325,11 +358,14 @@ impl PageMarker {
                     binding: 8,
                     resource: wgpu::BindingResource::TextureView(paint.target),
                 },
+                buffer_entry(9, self.pool.keys()),
+                buffer_entry(10, self.pool.slots()),
             ],
         });
 
         encoder.clear_buffer(&self.marks, 0, None);
         encoder.clear_buffer(&self.counters, 0, None);
+        self.pool.clear(encoder);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("shadow pages: mark"),
@@ -351,7 +387,7 @@ impl PageMarker {
         if let Some(slot) = self.pending.take() {
             self.readback.submit(slot);
         }
-        if let Some(counts) = self.readback.take(self.size) {
+        if let Some(counts) = self.readback.take(self.size, self.pool.config().pages) {
             self.last = Some(counts);
         }
     }
@@ -441,6 +477,8 @@ fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 },
                 count: None,
             },
+            storage(9, false),
+            storage(10, false),
         ],
     })
 }
@@ -524,7 +562,7 @@ impl Readback {
         None
     }
 
-    fn take(&mut self, size: (u32, u32)) -> Option<MarkCounts> {
+    fn take(&mut self, size: (u32, u32), capacity: u32) -> Option<MarkCounts> {
         for (buffer, state) in &self.slots {
             if *state.lock().unwrap() != SlotState::Ready {
                 continue;
@@ -537,6 +575,12 @@ impl Readback {
                     samples: words[1],
                     pairs: words[2],
                     overflow: words[3],
+                    pool: PoolCounts {
+                        claims: words[4],
+                        overflow: words[5],
+                        probes: words[6],
+                        capacity,
+                    },
                     size,
                 }
             };

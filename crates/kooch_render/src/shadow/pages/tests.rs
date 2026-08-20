@@ -1,5 +1,7 @@
 use super::*;
 
+use super::pool::PoolConfig;
+
 use kooch_lighting::ClusterSettings;
 
 /// A camera looking down -Z from the origin, with the engine's own
@@ -271,4 +273,51 @@ fn a_surface_nothing_reaches_residents_nothing() {
     );
     assert_eq!(out.cells(), 0);
     assert_eq!(out.resident(), 0);
+}
+
+#[test]
+fn the_table_stays_half_empty() {
+    // The load factor is the whole reason a probe is cheap: at 0.5 the
+    // expected count is under two. A table sized to the pool rather than
+    // to twice it would spend most inserts walking.
+    for pages in [64u32, 1000, 4096, 6144] {
+        let config = PoolConfig { pages };
+        let entries = config.entries();
+        assert!(entries.is_power_of_two(), "the mask has to be an `and`");
+        assert!(
+            entries >= pages * 2,
+            "{entries} entries for {pages} pages is past half full"
+        );
+    }
+}
+
+#[test]
+fn the_table_is_kilobytes_not_megabytes() {
+    // The number that killed the flat answer. 101 lights and a sun
+    // address 28 409 856 pages; a `u32` each is 108 MiB, 42 % of the
+    // pool it would index. Sized to residency instead, Epic's own
+    // 4096-page pool costs this.
+    let config = PoolConfig { pages: POOL_PAGES };
+    assert!(
+        config.table_bytes() < 128 * 1024,
+        "the table is {} bytes",
+        config.table_bytes()
+    );
+}
+
+#[test]
+fn the_atlas_is_square_enough() {
+    // A strip would pass `max_texture_dimension_2d` the moment a page is
+    // wider than a handful of texels.
+    let page = PageConfig::default();
+    for pages in [64u32, 1000, 4096, 8192] {
+        let config = PoolConfig { pages };
+        let side = config.per_row() * page.page;
+        assert!(side <= 16384, "{pages} pages want a {side}-texel atlas");
+        assert!(
+            config.per_row().pow(2) >= pages,
+            "{} across does not hold {pages}",
+            config.per_row()
+        );
+    }
 }

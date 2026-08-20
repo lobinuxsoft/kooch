@@ -45,6 +45,9 @@ struct PageView {
     // x the sampling rate in pixels, y the sun's slot, z 1 when the
     // debug view is painting, w unused.
     sampling: vec4<u32>,
+    // x entries in the page table, y physical pages the pool holds,
+    // z pages across the atlas, w unused.
+    pool: vec4<u32>,
     // xy how many output pixels one depth pixel covers, zw the output
     // size.
     //
@@ -102,6 +105,15 @@ struct PageCell {
 // format ..." rather than as a wrong image.
 @group(0) @binding(8) var color_out: texture_storage_2d<rgba8unorm, write>;
 
+// The page table, open-addressed. `page_table.wgsl` holds the hash, the
+// probe sequence and the atlas layout — everything the READER of this
+// table has to agree with, kept in one file so the two cannot drift.
+//
+// Keys are `virtual_page + 1` so that a cleared buffer is an empty
+// table: the reset is `clear_buffer`, not a pass.
+@group(0) @binding(9) var<storage, read_write> table_keys: array<atomic<u32>>;
+@group(0) @binding(10) var<storage, read_write> table_slots: array<u32>;
+
 const NO_PAGE: u32 = 0xffffffffu;
 
 const MARK_GROUP: u32 = 8u;
@@ -110,9 +122,44 @@ const MARK_GROUP: u32 = 8u;
 // reads the same constants from that file.
 const LIGHT_KIND_SPOT: u32 = 2u;
 
+// Hands `page` a physical slot and files it in the table.
+//
+// 🔴 Called from ONE thread per page — the one `mark_bit` reports as
+// having flipped the bit — which is what makes the plain store to
+// `table_slots` safe. The compare-exchange below is for two DIFFERENT
+// keys landing on the same entry, never for two threads fighting over
+// one page.
+fn page_claim(page: u32) -> u32 {
+    let slot = atomicAdd(&counters[4], 1u);
+    if slot >= pages.pool.y {
+        atomicAdd(&counters[5], 1u);
+        return PAGE_MISS;
+    }
+    let entries = pages.pool.x;
+    var probe = page_probe(page, entries);
+    for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
+        let outcome = atomicCompareExchangeWeak(&table_keys[probe], PAGE_EMPTY, page + 1u);
+        if outcome.exchanged {
+            table_slots[probe] = slot;
+            return slot;
+        }
+        // A failure with EMPTY still there is the "weak" in the name —
+        // spurious, retry the same entry. Anything else is another key
+        // holding it, and the sequence moves on.
+        if outcome.old_value != PAGE_EMPTY {
+            probe = page_step(probe, entries);
+        }
+    }
+    // The pool had room and the table did not, which is a statement
+    // about the hash rather than about the scene.
+    atomicAdd(&counters[6], 1u);
+    return PAGE_MISS;
+}
+
 // One bit, set once. The return says whether this thread is the one that
 // set it, which is what makes the counter a count of DISTINCT pages
-// rather than of marking attempts.
+// rather than of marking attempts — and what makes it the right place
+// to allocate from.
 fn mark_bit(index: u32) -> bool {
     let word = index / 32u;
     if word >= arrayLength(&marks) {
@@ -125,6 +172,9 @@ fn mark_bit(index: u32) -> bool {
         return false;
     }
     atomicAdd(&counters[0], 1u);
+    // WGSL has no call statement for a function that returns; the slot
+    // is the sampling pass's business, not this one's.
+    _ = page_claim(index);
     return true;
 }
 

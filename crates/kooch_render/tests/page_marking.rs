@@ -29,6 +29,7 @@ use kooch_lighting::{ClusterCamera, GpuLights};
 use kooch_render::meshlet::DEFERRED_COLOR_FORMAT;
 use kooch_render::projection::perspective_infinite_rh_reverse_z;
 use kooch_render::shadow::pages::mark::{MarkCounts, PAINT_FORMAT, PageMarker, Paint};
+use kooch_render::shadow::pages::pool::PoolConfig;
 use kooch_render::shadow::{ClipmapConfig, PageConfig, SHADOW_DEPTH_FORMAT};
 
 const SIZE: u32 = 128;
@@ -176,6 +177,18 @@ fn run(
     depth: f32,
     sun: Option<Vec3>,
 ) -> MarkCounts {
+    run_pool(device, queue, resources, depth, sun, PoolConfig::default()).1
+}
+
+/// The same run, keeping the marker so the page table can be read back.
+fn run_pool(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    resources: &Resources,
+    depth: f32,
+    sun: Option<Vec3>,
+    pool: PoolConfig,
+) -> (PageMarker, MarkCounts) {
     let eye = Vec3::ZERO;
     let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = projection();
@@ -187,6 +200,7 @@ fn run(
 
     let depth_view = depth_texture(device, queue, depth);
     let mut marker = PageMarker::new(device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_pool(device, pool);
 
     let mut encoder = device.create_command_encoder(&Default::default());
     lights.record_clusters(&mut encoder);
@@ -216,7 +230,26 @@ fn run(
     marker.poll();
     wait(device);
     marker.poll();
-    marker.last().expect("the counters came back")
+    let counts = marker.last().expect("the counters came back");
+    (marker, counts)
+}
+
+/// Copies a storage buffer back, as words.
+fn read_words(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<u32> {
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("table_readback"),
+        size: buffer.size(),
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, buffer.size());
+    queue.submit([encoder.finish()]);
+    staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    wait(device);
+    let words = bytemuck::cast_slice::<u8, u32>(&staging.slice(..).get_mapped_range()).to_vec();
+    staging.unmap();
+    words
 }
 
 #[test]
@@ -602,5 +635,88 @@ fn half_density_is_a_quarter_of_the_pages() {
     assert!(
         (2.0..=6.0).contains(&ratio),
         "half density gave {half} against {full}, a ratio of {ratio}"
+    );
+}
+
+#[test]
+fn every_page_claims_a_slot() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    let counts = run(&device, &queue, &resources, 0.01, None);
+    assert!(counts.resident > 0, "the frame needs pages");
+    // Two mechanisms counting the same 0->1 transitions: the mark bit's
+    // atomicOr and the allocator's atomicAdd. They agree or one of them
+    // is broken.
+    assert_eq!(
+        counts.pool.claims, counts.resident,
+        "one claim per distinct page"
+    );
+    assert_eq!(counts.pool.overflow, 0, "the pool held them");
+    assert_eq!(counts.pool.probes, 0, "no insert ran out of probes");
+}
+
+#[test]
+fn a_full_pool_reports_overflow() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    let small = PoolConfig { pages: 4 };
+    let (_marker, counts) = run_pool(&device, &queue, &resources, 0.01, None, small);
+    assert!(
+        counts.resident > small.pages,
+        "the frame asks for more than the pool holds: {} of {}",
+        counts.resident,
+        small.pages
+    );
+    assert_eq!(counts.pool.allocated(), small.pages, "the pool filled");
+    assert_eq!(
+        counts.pool.claims - counts.pool.overflow,
+        small.pages,
+        "every claim either got a slot or was counted as overflow"
+    );
+}
+
+#[test]
+fn the_table_holds_every_claim() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    let (marker, counts) = run_pool(
+        &device,
+        &queue,
+        &resources,
+        0.01,
+        None,
+        PoolConfig::default(),
+    );
+    let keys = read_words(&device, &queue, marker.pool().keys());
+    let slots = read_words(&device, &queue, marker.pool().slots());
+    let capacity = marker.pool().config().pages;
+
+    let mut seen_keys = std::collections::HashSet::new();
+    let mut seen_slots = std::collections::HashSet::new();
+    for (entry, &key) in keys.iter().enumerate() {
+        if key == 0 {
+            continue;
+        }
+        assert!(seen_keys.insert(key), "key {key} filed twice");
+        let slot = slots[entry];
+        assert!(slot < capacity, "slot {slot} past the pool");
+        assert!(seen_slots.insert(slot), "slot {slot} handed out twice");
+    }
+    assert_eq!(
+        seen_keys.len() as u32,
+        counts.pool.allocated(),
+        "the table holds exactly what was allocated"
     );
 }

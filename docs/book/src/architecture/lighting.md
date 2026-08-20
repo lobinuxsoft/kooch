@@ -1061,6 +1061,115 @@ instrument and the census the cheaper one. What would be a finding is a
 divergence too large to explain by that — an order of magnitude, or a
 count that moves the wrong way when the scene changes.
 
+### How fine a page has to be — `shadow_density` (#929)
+
+The census found exactly one knob that moves the bill, and it is not page
+size or virtual size. It is **how many shadow texels a screen pixel is
+allowed to ask for**.
+
+The level chosen for a page is a `log2`, so the setting is a power of two
+or it lies about what it did: a coarser texel is a level coarser in
+**both** axes, and half the density is a **quarter** of the pages.
+
+| `shadow_density` | Texel per pixel | Pages |
+|---|---|---|
+| 100 | one | the measurement |
+| 50 | half | a quarter |
+| 25 | a quarter | a sixteenth |
+
+⚠️ Below 100 a shadow's edge is softer than the surface it falls on,
+which reads as blur rather than as a lower setting. 50 is where it starts
+to show.
+
+## The page pool and its table (#866)
+
+Marking answers *which pages this frame needs*. The pool answers *where
+each of them lives* — and the two run in the **same dispatch**.
+
+### The allocation is free because marking already did the hard part
+
+`mark_bit` returns whether the calling thread is the one that flipped a
+page's bit from 0 to 1. That is a **unique** thread per page, established
+by an `atomicOr` that had to happen anyway. Claiming a physical slot
+there is one `atomicAdd` on a rare branch: no second pass, and nothing
+walks the virtual space.
+
+The alternative — sweep the mark bitmap afterwards and allocate what is
+set — is a dispatch over the *virtual* space. See the next section for
+how large that is.
+
+### 🔴 The flat page table is dead, and the number is why
+
+With 128-texel pages over a 16384 virtual map, a mip chain per cube face
+and a 17-level clipmap, one light addresses **278 528** pages. A hundred
+lights and a sun address **28 409 856**.
+
+| Structure | One page costs | Total |
+|---|---|---|
+| The mark bitmap | 1 bit | **3.4 MiB** ✅ |
+| A flat `u32` table | 32 bits | **108 MiB** 🔴 |
+| The pool it would index | — | 256 MiB |
+
+A flat table spends **42 % of the pool on describing pages that are
+99.99 % empty**. It also kills the sweep: 28 million threads to find
+about two thousand set bits.
+
+The bitmap survives the same arithmetic only because a bit is a bit. That
+is why marking was built first and why it was affordable.
+
+### So the table is sized to what is resident, not to what is addressable
+
+Open addressing over `2 × pool_pages` entries — 8192 slots for Epic's
+4096-page pool, **64 KiB**, keys and physical indices together. UE5
+hashes its table for the same reason.
+
+- **Keys are `page + 1`,** so `PAGE_EMPTY` is 0 and the per-frame reset
+  is `clear_buffer` rather than a pass.
+- **The load factor never passes 0.5,** where the expected probe count is
+  under two. `PoolCounts::probes` reports any insert that walked 32 slots
+  without finding room; a non-zero number there is a statement about the
+  hash, not about the scene.
+- **The compare-exchange is for collisions between different keys,**
+  never for two threads fighting over one page — marking already
+  guaranteed there is only one. That is what makes the physical index
+  safe to write with a plain store immediately after.
+- **A hierarchical table** would also be small, but it pays an
+  indirection per lookup, and the lookup is per pixel per light in the
+  shading pass. That is the hot path the froxel grid exists to keep
+  short.
+
+`page_table.wgsl` holds the hash, the probe sequence and the atlas
+layout, and is concatenated into every pass that touches the table, so
+the writer and the reader cannot drift apart.
+
+### Overflow has a name here because it has none on screen
+
+`PoolCounts::overflow` counts pages the frame needed and the pool could
+not seat. They render unshadowed. Epic's own pool overflow shows up as
+checkerboard corruption or missing shadows — a failure nobody recognises
+by sight — so the panel names it instead.
+
+The panel also cross-checks `claims` against `resident`. Both count the
+same 0→1 transitions by two different mechanisms, and a disagreement
+means one of them is broken.
+
+### What is deliberately not built yet
+
+- 🔴 **The atlas texture.** 4096 pages at `Depth32Float` is 256 MiB, and
+  nothing writes or reads it until the depth raster lands. Allocating it
+  now would be a quarter of a gigabyte spent to make a diagram look
+  finished. Its layout is fixed and tested regardless — `page_origin` in
+  the shader, `PoolConfig::per_row` in Rust.
+- ⚠️ **Caching across frames**, which is the optimisation virtual shadow
+  maps exist for: the table is emptied every frame, so a static shadow is
+  re-rasterised every frame. That needs an eviction policy and an
+  invalidation rule, and neither can be designed before anything renders.
+- **The pool size is `KOOCH_SHADOW_POOL_PAGES`, not a setting.** #477
+  asks that nothing on the shadow side grow a public setting before the
+  pool's shape is decided, and a knob that sizes an atlas nobody
+  allocates yet promises memory nothing spends. It becomes a setting when
+  the raster does.
+
 ## What Inti does not do yet
 
 - **Nothing but lights is clustered.** The grid reserves a range per cell
