@@ -52,6 +52,17 @@ gpu-profiler = ["kooch_core/gpu-profiler"]
 # `Dlss` technique still exists, still serialises, and falls back to the
 # engine's own resolve with a warning.
 dlss = ["dep:dlss_wgpu", "kooch_core/dlss"]
+# NVIDIA's own debug overlay (Programming Guide 8.2), which draws what
+# DLSS actually RECEIVES: the colour it was given, the motion vectors,
+# the depth, and a scatter plot of the jitter it has been told about.
+#
+# 🔴 Links the SDK's DEVELOPMENT library instead of the production one —
+# NVIDIA's production blob does not contain the overlay — so a build
+# with this on is a debugging build and never a shipped one.
+#
+# ⚠️ The hotkeys are Ctrl+Alt+F11/F12, which on Linux switch virtual
+# terminals. Remap them in `~/ngx/settings.ngxconfig`; see section 8.5.
+dlss-debug-overlay = ["dlss", "dlss_wgpu/debug_overlay"]
 
 [dev-dependencies]
 naga = { version = "29", features = ["wgsl-in"] }
