@@ -132,7 +132,6 @@ pub(crate) struct EditorTabViewer<'a> {
     /// The froxel grid's reach, tuned beside the view that shows what it
     /// costs (#820).
     pub(crate) cluster_settings: &'a mut kooch_lighting::ClusterSettings,
-    pub(crate) page_marking: &'a mut kooch_render::shadow::pages::PageMarkingSettings,
     /// Where the shading model stops paying for specular (#821).
     pub(crate) specular_floor: &'a mut kooch_lighting::SpecularFloor,
     /// Per-frame meshlet pipeline counters republished as a Resource by
@@ -262,7 +261,6 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.meshlet_lod_settings,
                 self.lights_hot,
                 self.cluster_settings,
-                self.page_marking,
                 self.specular_floor,
                 self.hud_visibility,
             ),

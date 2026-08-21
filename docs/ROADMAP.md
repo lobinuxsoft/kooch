@@ -760,6 +760,18 @@ default dropped to **2048 pages = 128 MiB**, against the **152 MiB of fixed allo
 standing today for four lights**. ⚠️ No cross-frame caching yet, and nothing samples the
 atlas — that is #477.
 
+🎉 **#477 cerrado: las páginas se samplean y la sombra del sol sale del pool (PR #932).** El
+lector camina niveles en vez de recalcular cuál se marcó — reproducir esa aritmética sería una
+TERCERA copia, y un nivel de más es un lookup que **falla**, o sea una sombra que desaparece en
+lugar de una a escala equivocada. Cualquier página residente que contenga el punto sirve.
+⚠️ **El ráster y el shading son UN fragment shader fusionado**, así que no hay depth para marcar
+hasta que el sombreado terminó: lo que se samplea es lo del frame anterior. El modo de falla es el
+correcto — una página nueva sale **iluminada** un frame, no mal. Los taps son `textureLoad`
+clampeados dentro de la página: un filtro de hardware no sabe dónde termina, y los téxeles de al
+lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings`**, grupo
+`Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
+decidía cuántos hilos, ahora decide qué páginas EXISTEN.
+
 **Phase 3 — the consumers, on top of #866 and not before.**
 
 | | | Why it waits for the pool |

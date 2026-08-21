@@ -218,3 +218,50 @@ fn a_lamp_on_the_camera_is_finite() {
     let on_top = point_shadow_importance(eye, 5.0, 100.0, eye);
     assert!(on_top.is_finite(), "got {on_top}");
 }
+
+#[test]
+fn the_page_bindings_substitute() {
+    let src = inti_pbr_shader(5);
+    // The virtual shadow map's four (#866). Worth pinning for the same
+    // reason the shadow bindings above are: they were added to a group
+    // already believed full, and a group index that failed to
+    // substitute is a runtime panic rather than a test failure.
+    assert!(src.contains("@group(5) @binding(8)"));
+    assert!(src.contains("@group(5) @binding(9)"));
+    assert!(src.contains("@group(5) @binding(10)"));
+    assert!(src.contains("@group(5) @binding(11)"));
+}
+
+#[test]
+fn the_reader_uses_the_shared_probe() {
+    let src = inti_pbr_shader(0);
+    // 🔴 The structural guarantee against the drift that matters. Four
+    // passes in another crate WRITE this table; this one reads it. A
+    // reader that reimplemented the hash would be free to disagree with
+    // the writer by one bucket, and the symptom is a shadow that
+    // disappears rather than one that looks wrong.
+    assert!(src.contains("fn page_probe("), "the shared probe is here");
+    assert!(src.contains("fn page_decode("));
+    assert!(src.contains("fn sun_page_rect("));
+    for helper in ["page_probe(", "page_step(", "PAGE_EMPTY", "PAGE_MISS"] {
+        let uses = src.matches(helper).count();
+        assert!(
+            uses >= 2,
+            "`{helper}` is declared but never used by the reader",
+        );
+    }
+}
+
+#[test]
+fn the_atlas_is_never_hardware_filtered() {
+    let src = inti_pbr_shader(0);
+    // A filter cannot cross a page border: the neighbouring texels
+    // belong to another clipmap level, so a sampler would blend a
+    // shadow with one from somewhere else. Taps are loads, clamped
+    // inside the page.
+    assert!(src.contains("textureLoad(inti_page_atlas"));
+    assert!(
+        !src.contains("textureSample(inti_page_atlas"),
+        "a sampler on the page atlas reads across page borders",
+    );
+}

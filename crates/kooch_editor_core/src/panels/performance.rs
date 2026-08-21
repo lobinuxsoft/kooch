@@ -39,7 +39,6 @@ pub(crate) fn draw_performance_content(
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut LightsHot,
     cluster_settings: &mut ClusterSettings,
-    page_marking: &mut kooch_render::shadow::pages::PageMarkingSettings,
     specular_floor: &mut SpecularFloor,
     viewport: egui::Vec2,
     hud_visibility: &mut crate::perf::HudVisibility,
@@ -63,7 +62,6 @@ pub(crate) fn draw_performance_content(
                     meshlet_lod_settings,
                     lights_hot,
                     cluster_settings,
-                    page_marking,
                     meshlet_stats.page_marking,
                     meshlet_stats.page_raster,
                     specular_floor,
@@ -416,7 +414,6 @@ fn debug_controls(
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut LightsHot,
     cluster_settings: &mut ClusterSettings,
-    page_marking: &mut kooch_render::shadow::pages::PageMarkingSettings,
     page_counts: Option<kooch_render::shadow::pages::mark::MarkCounts>,
     raster_counts: Option<kooch_render::shadow::pages::raster::RasterCounts>,
     specular_floor: &mut SpecularFloor,
@@ -663,69 +660,26 @@ fn debug_controls(
         );
     });
 
-    shadow_page_controls(ui, page_marking, page_counts, raster_counts);
+    shadow_page_readout(ui, page_counts, raster_counts);
 }
 
 /// The shadow-page marking pass and what it found (#866).
 ///
-/// 🔴 Here and not in the project's render settings, and that is a
-/// decision rather than convenience: #477 is explicit that nothing on
-/// the shadow side should grow a **public** setting — one written into
-/// `.rendersettings` and therefore promised to every project — before
-/// the page pool's shape is decided. This is a diagnostic the editor
-/// drives, so it sits beside the froxel grid's own A/B.
-fn shadow_page_controls(
+/// 🔴 A READOUT, not a control. #866 kept these as panel-only
+/// diagnostics while nothing read what marking wrote — a knob promising
+/// memory nobody spent. The pass decides which shadows exist now, so
+/// every knob moved into the project's render settings, in a
+/// `Shadows: virtual pages` group beside the cascades it replaces. What
+/// stays here is what a settings file cannot hold: what the last frame
+/// actually did.
+fn shadow_page_readout(
     ui: &mut egui::Ui,
-    page_marking: &mut kooch_render::shadow::pages::PageMarkingSettings,
     page_counts: Option<kooch_render::shadow::pages::mark::MarkCounts>,
     raster_counts: Option<kooch_render::shadow::pages::raster::RasterCounts>,
 ) {
-    use kooch_render::shadow::pages::{PageConfig, mark::RATE_RANGE};
+    use kooch_render::shadow::pages::PageConfig;
 
     ui.separator();
-    ui.checkbox(&mut page_marking.enabled, "Mark shadow pages")
-        .on_hover_text(
-            "Counts the shadow pages this frame would make resident, the way a virtual \
-             shadow map allocates them: the depth buffer says WHERE a surface is, the \
-             froxel grid says WHICH lights reach it. Nothing reads the result yet — it \
-             is here to be checked against the CPU census, which is a model. \
-             KOOCH_PAGE_MARKING=1 sets it from outside a build.",
-        );
-    if !page_marking.enabled {
-        return;
-    }
-
-    ui.checkbox(&mut page_marking.paint, "Paint pages over the scene")
-        .on_hover_text(
-            "Colours every pixel by the shadow page it reads. HUE is the level — where the \
-             frame spends detail, and a band of it is a level boundary. BRIGHTNESS is the \
-             page identity, so neighbouring pages differ and the tiling is visible: a page \
-             covering a quarter of the screen is too coarse for it, and a mosaic too fine \
-             to resolve is detail nobody sees. The sun's page wins where there is a sun, \
-             because a pixel is lit by many lights and painting the last one walked would \
-             make the view depend on the light list's order.",
-        );
-
-    ui.add_enabled_ui(!page_marking.paint, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("one thread per").small());
-            ui.add(
-                egui::DragValue::new(&mut page_marking.rate)
-                    .speed(0.2)
-                    .range(RATE_RANGE.0..=RATE_RANGE.1)
-                    .suffix(" px"),
-            )
-            .on_hover_text(
-                "Not free accuracy in either direction. Coarser is fewer threads AND a \
-                 wider pixel footprint, so the level chosen comes out coarser and the \
-                 count lower. 1 is the honest reading and the expensive one. Painting \
-                 forces it to 1: at any coarser rate the view is a grid of dots over an \
-                 unpainted frame, which reads as a broken pass rather than as a coarse \
-                 sample.",
-            );
-        });
-    });
-
     let Some(counts) = page_counts else {
         ui.label(
             egui::RichText::new("pages: waiting for the first readback")
@@ -988,7 +942,6 @@ pub(crate) fn draw_perf_sidebar(
     meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
     lights_hot: &mut LightsHot,
     cluster_settings: &mut ClusterSettings,
-    page_marking: &mut kooch_render::shadow::pages::PageMarkingSettings,
     specular_floor: &mut SpecularFloor,
     viewport: egui::Vec2,
     hud_visibility: &mut crate::perf::HudVisibility,
@@ -1073,7 +1026,6 @@ pub(crate) fn draw_perf_sidebar(
                     meshlet_lod_settings,
                     lights_hot,
                     cluster_settings,
-                    page_marking,
                     specular_floor,
                     viewport,
                     hud_visibility,

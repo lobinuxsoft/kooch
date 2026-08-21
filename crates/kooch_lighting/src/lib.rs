@@ -35,7 +35,7 @@ mod extract;
 mod frame;
 mod gpu_light;
 
-pub use buffer::GpuLights;
+pub use buffer::{GpuLights, PageBinding};
 pub use cluster::{
     ClusterCamera, ClusterDraw, ClusterGrid, ClusterSettings, ClusterViewUniform, GpuClusters,
 };
@@ -91,6 +91,18 @@ pub const INTI_TONEMAP: &str = include_str!("../shaders/inti_tonemap.wgsl");
 /// cell the grid never wrote.
 pub const CLUSTER_COMMON: &str = include_str!("../shaders/cluster_common.wgsl");
 
+/// The shadow page table's shared declarations (#866).
+///
+/// 🔴 Here rather than beside the passes that fill it, because the
+/// **reader** lives here: the shading model is what looks a page up and
+/// samples it. Four passes in `kooch_render` write this table and one in
+/// this crate reads it, and a page id encoded one way and decoded
+/// another samples somebody else's shadow — silently, and at the wrong
+/// scale.
+///
+/// Same arrangement, and same reason, as [`CLUSTER_COMMON`].
+pub const PAGE_TABLE: &str = include_str!("../shaders/page_table.wgsl");
+
 /// The shading model as WGSL, bound at `group`.
 ///
 /// WGSL has no `#include` and no way to parameterise `@group`, so the
@@ -105,6 +117,10 @@ pub fn inti_pbr_shader(group: u32) -> String {
     // The tonemap first: `inti_tonemap` calls into it, and WGSL wants a
     // function declared before it is used.
     let mut out = String::from(INTI_TONEMAP);
+    // The page table's declarations, which `inti_page_shadow` reads. The
+    // same file the four passes that FILL the table are built from.
+    out.push_str(PAGE_TABLE);
+    out.push('\n');
     out.push_str(
         &INTI_PBR_TEMPLATE
             .replace(GROUP_PLACEHOLDER, &group.to_string())

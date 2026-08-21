@@ -36,7 +36,7 @@ use crate::meshlet::{
 use super::pool::{PagePool, PoolConfig};
 use super::{ClipmapConfig, PageConfig};
 
-const TABLE: &str = include_str!("../../../shaders/page_table.wgsl");
+use kooch_lighting::PAGE_TABLE as TABLE;
 const COMPACT: &str = include_str!("../../../shaders/page_compact.wgsl");
 const EXPAND: &str = include_str!("../../../shaders/page_expand.wgsl");
 const DEPTH: &str = include_str!("../../../shaders/page_depth.wgsl");
@@ -331,6 +331,12 @@ impl PageRasterizer {
     /// What the atlas costs, which is the whole point of a pool.
     pub fn atlas_bytes(&self) -> u64 {
         self.pool.atlas_bytes(self.config)
+    }
+
+    /// The uniform every page pass reads, including the shading model
+    /// that samples what this draws.
+    pub fn uniform_buffer(&self) -> &wgpu::Buffer {
+        &self.uniform
     }
 
     /// The counters, for whoever reads them back.

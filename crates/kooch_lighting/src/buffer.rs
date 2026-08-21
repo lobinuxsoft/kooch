@@ -58,6 +58,23 @@ pub struct GpuLights {
     /// 1×1×6 cube array bound when no point light casts, for the same
     /// reason `dummy_shadow` exists: a binding cannot be left empty.
     dummy_cubes: wgpu::TextureView,
+    /// The virtual shadow map's page table and atlas (#866), or the
+    /// dummies while no sun is paging.
+    ///
+    /// 🔴 Held rather than derived, exactly like `shadow_atlas`: the
+    /// bind group is rebuilt from scratch whenever the light buffer
+    /// grows, and rebuilding against the dummies would drop the atlas
+    /// the moment a scene crossed a capacity boundary.
+    page_uniform: Option<wgpu::Buffer>,
+    page_keys: Option<wgpu::Buffer>,
+    page_slots: Option<wgpu::Buffer>,
+    page_atlas: Option<wgpu::TextureView>,
+    /// Bound when nothing is paging. The uniform is zeroed, and its
+    /// `sun.w` is the flag the shader reads — so "no pages" reads as
+    /// "no sun casting through pages" rather than as a lookup into an
+    /// empty table.
+    dummy_page_buffer: wgpu::Buffer,
+    dummy_page_atlas: wgpu::TextureView,
     /// The cube array currently bound, or `None` while the dummy is.
     shadow_cubes: Option<wgpu::TextureView>,
     /// The froxel grid (#780). Owned here rather than beside here: its
@@ -199,6 +216,57 @@ impl GpuLights {
                     },
                     count: None,
                 },
+                // Virtual shadow maps (#866): the page table's uniform,
+                // its two arrays, and the physical atlas. Four more
+                // bindings in this group on the same reasoning as the
+                // cascades and the grid — groups are what ran out.
+                //
+                // 🔴 The atlas is `texture_depth_2d` and it is sampled
+                // with `textureLoad`, not with the comparison sampler
+                // above. A filter cannot cross a page border: the
+                // neighbouring texels belong to another clipmap level or
+                // another light, and hardware filtering has no way to be
+                // told where the page ends.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         })
     }
@@ -238,6 +306,15 @@ impl GpuLights {
         });
         let dummy_shadow = create_dummy_shadow(device);
         let dummy_cubes = create_dummy_cubes(device);
+        let dummy_page_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("inti_dummy_pages"),
+            // Large enough for the page uniform when it stands in for
+            // it, and harmless as an empty table.
+            size: 256,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let dummy_page_atlas = create_dummy_page_atlas(device);
         let clusters = GpuClusters::new(device);
         let bind_group = create_bind_group(
             device,
@@ -249,6 +326,12 @@ impl GpuLights {
             &shadow_point_sampler,
             &dummy_cubes,
             &clusters,
+            PageBinding {
+                uniform: &dummy_page_buffer,
+                keys: &dummy_page_buffer,
+                slots: &dummy_page_buffer,
+                atlas: &dummy_page_atlas,
+            },
         );
         Self {
             frame_buffer,
@@ -259,6 +342,12 @@ impl GpuLights {
             shadow_point_sampler,
             dummy_shadow,
             dummy_cubes,
+            page_uniform: None,
+            page_keys: None,
+            page_slots: None,
+            page_atlas: None,
+            dummy_page_buffer,
+            dummy_page_atlas,
             shadow_atlas: None,
             shadow_cubes: None,
             clusters,
@@ -289,6 +378,42 @@ impl GpuLights {
         self.rebuild_bind_group(device);
     }
 
+    /// Binds the virtual shadow map's table and atlas (#866).
+    ///
+    /// Idempotent, and a no-op while nothing changed: the bind group is
+    /// expensive to rebuild and this runs every frame.
+    pub fn bind_shadow_pages(&mut self, device: &wgpu::Device, pages: PageBinding<'_>) {
+        let unchanged = self.page_atlas.as_ref().is_some_and(|v| v == pages.atlas)
+            && self
+                .page_uniform
+                .as_ref()
+                .is_some_and(|b| b == pages.uniform);
+        if unchanged {
+            return;
+        }
+        self.page_uniform = Some(pages.uniform.clone());
+        self.page_keys = Some(pages.keys.clone());
+        self.page_slots = Some(pages.slots.clone());
+        self.page_atlas = Some(pages.atlas.clone());
+        self.rebuild_bind_group(device);
+    }
+
+    /// Unbinds it, so a frame that stops paging stops sampling.
+    ///
+    /// 🔴 Not cosmetic: the atlas holds LAST frame's depths, and a
+    /// shading pass that kept sampling it would show a shadow frozen in
+    /// place — which is silent and gets blamed on everything else first.
+    pub fn unbind_shadow_pages(&mut self, device: &wgpu::Device) {
+        if self.page_atlas.is_none() {
+            return;
+        }
+        self.page_uniform = None;
+        self.page_keys = None;
+        self.page_slots = None;
+        self.page_atlas = None;
+        self.rebuild_bind_group(device);
+    }
+
     /// Rebuilds the bind group against whatever shadow view is current.
     ///
     /// One place, so growth and atlas binding cannot disagree about
@@ -304,6 +429,15 @@ impl GpuLights {
             &self.shadow_point_sampler,
             self.shadow_cubes.as_ref().unwrap_or(&self.dummy_cubes),
             &self.clusters,
+            PageBinding {
+                uniform: self
+                    .page_uniform
+                    .as_ref()
+                    .unwrap_or(&self.dummy_page_buffer),
+                keys: self.page_keys.as_ref().unwrap_or(&self.dummy_page_buffer),
+                slots: self.page_slots.as_ref().unwrap_or(&self.dummy_page_buffer),
+                atlas: self.page_atlas.as_ref().unwrap_or(&self.dummy_page_atlas),
+            },
         );
     }
 
@@ -558,6 +692,20 @@ fn create_dummy_shadow(device: &wgpu::Device) -> wgpu::TextureView {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// What the shading model needs to read a virtual shadow page.
+///
+/// A struct rather than four more parameters, because they are only ever
+/// present or absent together: a table without an atlas indexes nothing
+/// and an atlas without a table cannot be addressed.
+#[derive(Clone, Copy)]
+pub struct PageBinding<'a> {
+    pub uniform: &'a wgpu::Buffer,
+    pub keys: &'a wgpu::Buffer,
+    pub slots: &'a wgpu::Buffer,
+    pub atlas: &'a wgpu::TextureView,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn create_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -568,6 +716,7 @@ fn create_bind_group(
     shadow_point_sampler: &wgpu::Sampler,
     shadow_cubes: &wgpu::TextureView,
     clusters: &GpuClusters,
+    pages: PageBinding<'_>,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("inti_lights_bg"),
@@ -605,6 +754,42 @@ fn create_bind_group(
                 binding: 7,
                 resource: clusters.indices().as_entire_binding(),
             },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: pages.uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 9,
+                resource: pages.keys.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 10,
+                resource: pages.slots.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 11,
+                resource: wgpu::BindingResource::TextureView(pages.atlas),
+            },
         ],
     })
+}
+
+/// A 1x1 depth texture bound when no page is being sampled, for the same
+/// reason `create_dummy_shadow` exists.
+fn create_dummy_page_atlas(device: &wgpu::Device) -> wgpu::TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("inti_dummy_page_atlas"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    texture.create_view(&Default::default())
 }

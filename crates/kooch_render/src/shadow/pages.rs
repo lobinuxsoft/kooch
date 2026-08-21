@@ -729,51 +729,5 @@ pub mod mark;
 pub mod pool;
 pub mod raster;
 
-/// Whether the marking pass runs, and how coarsely.
-///
-/// A `Resources` value with a panel, **not** a field of
-/// `.rendersettings`: #477 is explicit that nothing on the shadow side
-/// should grow a public setting that becomes a compatibility promise
-/// before the pool's shape is decided. This is a diagnostic the editor
-/// drives, the way [`ClusterSettings`](kooch_lighting::ClusterSettings)
-/// is.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct PageMarkingSettings {
-    /// 🔴 Off by default. Nothing reads what the pass writes yet, and a
-    /// measurement that runs whether or not anyone asked is a cost
-    /// nobody attributed.
-    ///
-    /// `KOOCH_PAGE_MARKING=1` turns it on from outside a build — an
-    /// environment variable *as well as* a setting for the same reason
-    /// `KOOCH_CLUSTERING` is one: the comparison it exists for is made
-    /// on a handheld, over SSH, against a build nobody wants to make
-    /// twice.
-    pub enabled: bool,
-    /// Pixels one thread stands for, per axis.
-    ///
-    /// ⚠️ Not free accuracy in either direction. Coarser is fewer
-    /// threads **and** a wider pixel footprint, so the level chosen
-    /// comes out coarser and the count lower. 1 is the honest reading
-    /// and the expensive one.
-    pub rate: u32,
-    /// Paint the page each pixel reads over the scene.
-    ///
-    /// 🔴 Forces `rate` to 1 while it is on: at any coarser rate the
-    /// view is a grid of dots over an unpainted frame, which reads as
-    /// "the pass is broken" rather than as "you asked for one sample in
-    /// sixteen".
-    pub paint: bool,
-}
-
-impl Default for PageMarkingSettings {
-    fn default() -> Self {
-        Self {
-            enabled: mark::enabled_by_environment(),
-            rate: mark::rate_from_environment(),
-            paint: false,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests;

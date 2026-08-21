@@ -169,6 +169,8 @@ pub struct MeshletRenderStage {
     /// nothing to hold until pages are being marked.
     pub(super) page_raster: Option<crate::shadow::pages::raster::PageRasterizer>,
     pub(super) page_raster_last: Option<crate::shadow::pages::raster::RasterCounts>,
+    /// The pool the atlas was built for. A change rebuilds it.
+    pub(super) page_pool_config: Option<crate::shadow::pages::pool::PoolConfig>,
 
     pub(super) instance_capacity: u32,
 
