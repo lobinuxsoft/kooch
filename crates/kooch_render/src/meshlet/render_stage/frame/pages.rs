@@ -39,24 +39,31 @@ struct PageSettings {
 }
 
 fn page_settings(resources: &Resources) -> PageSettings {
-    let Some(render) = resources.get::<crate::settings::RenderSettings>() else {
-        return PageSettings {
-            enabled: false,
-            paint: false,
-            density: 100,
-            pool: PoolConfig::default(),
-        };
-    };
+    // 🔴 `ShadowSettings`, not `RenderSettings`, and `unwrap_or_default`
+    // rather than an early return. Both halves of that were the bug.
+    //
+    // `RenderSettings` is NEVER inserted as a `Resources` value —
+    // `apply` publishes derived structs like this one instead — so the
+    // lookup returned `None` in every build and the early return took a
+    // hardcoded `enabled: false` with it. The environment force sat
+    // behind that return and never ran either. The feature shipped
+    // inert, and the profile that found it showed a capture with the
+    // pages on and one with them off that were identical scope for
+    // scope.
+    //
+    // Absence means defaults, the way `shadows: prepare` has always
+    // read this same resource. A missing settings asset is the normal
+    // case, not a reason to turn a feature off.
+    let shadows = resources
+        .get::<crate::shadow::ShadowSettings>()
+        .copied()
+        .unwrap_or_default();
     PageSettings {
-        // 🔴 `KOOCH_PAGE_MARKING=1` still forces it on, and it survives
-        // as a FORCE rather than as a default: the comparison it exists
-        // for is made on a handheld, over SSH, against a build nobody
-        // wants to make twice.
-        enabled: render.virtual_shadows || crate::shadow::pages::mark::enabled_by_environment(),
-        paint: render.virtual_shadow_debug,
-        density: render.shadow_density,
+        enabled: shadows.virtual_pages,
+        paint: shadows.page_debug,
+        density: shadows.page_density,
         pool: PoolConfig {
-            pages: render.shadow_pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
+            pages: shadows.pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
         },
     }
 }
