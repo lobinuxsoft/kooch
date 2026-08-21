@@ -583,3 +583,33 @@ impl Readback {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The same guard the raster has, on the mirror that has existed
+    /// longest.
+    ///
+    /// 🔴 `PageView` is described as mirroring `PageMarkView` "field for
+    /// field", and a comment saying so is not a check. The identical
+    /// claim in the raster was false: a `vec3<u32>` of padding made the
+    /// shader's struct twice the Rust one, and it surfaced as a
+    /// per-frame bind error rather than as a failing test.
+    #[test]
+    fn the_view_mirror_matches_the_shader() {
+        let source = format!("{CLUSTER_COMMON}\n{PAGE_TABLE}\n{SOURCE}");
+        let module = naga::front::wgsl::parse_str(&source).expect("the shader parses");
+        let mut layouter = naga::proc::Layouter::default();
+        layouter
+            .update(module.to_ctx())
+            .expect("the shader has a layout");
+        let size = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some("PageView"))
+            .map(|(handle, _)| layouter[handle].size)
+            .expect("`PageView` is declared");
+        assert_eq!(size as usize, std::mem::size_of::<PageMarkView>());
+    }
+}
