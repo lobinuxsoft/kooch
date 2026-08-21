@@ -39,24 +39,39 @@ struct PageSettings {
 }
 
 fn page_settings(resources: &Resources) -> PageSettings {
-    let Some(render) = resources.get::<crate::settings::RenderSettings>() else {
-        return PageSettings {
-            enabled: false,
-            paint: false,
-            density: 100,
-            pool: PoolConfig::default(),
-        };
-    };
+    // 🔴 `ShadowSettings`, not `RenderSettings`, and `unwrap_or_default`
+    // rather than an early return. Both halves of that were the bug.
+    //
+    // `RenderSettings` is NEVER inserted as a `Resources` value —
+    // `apply` publishes derived structs like this one instead — so the
+    // lookup returned `None` in every build and the early return took a
+    // hardcoded `enabled: false` with it. The environment force sat
+    // behind that return and never ran either. The feature shipped
+    // inert, and the profile that found it showed a capture with the
+    // pages on and one with them off that were identical scope for
+    // scope.
+    //
+    // Absence means defaults, the way `shadows: prepare` has always
+    // read this same resource. A missing settings asset is the normal
+    // case, not a reason to turn a feature off.
+    let shadows = resources
+        .get::<crate::shadow::ShadowSettings>()
+        .copied()
+        .unwrap_or_default();
     PageSettings {
-        // 🔴 `KOOCH_PAGE_MARKING=1` still forces it on, and it survives
-        // as a FORCE rather than as a default: the comparison it exists
-        // for is made on a handheld, over SSH, against a build nobody
-        // wants to make twice.
-        enabled: render.virtual_shadows || crate::shadow::pages::mark::enabled_by_environment(),
-        paint: render.virtual_shadow_debug,
-        density: render.shadow_density,
+        // 🔴 The environment force is ORed HERE **as well as** in
+        // `RenderSettings::shadows()`, and the duplication is the point.
+        // `shadows()` only runs when the project HAS a settings asset —
+        // `apply_render_settings_system` returns early when it does not
+        // — so a force that lived only there would be silently absent
+        // from exactly the project it exists for: a scene with no
+        // settings file, on a handheld, over SSH. A force is a force
+        // wherever the settings came from.
+        enabled: shadows.virtual_pages || crate::shadow::pages::mark::enabled_by_environment(),
+        paint: shadows.page_debug,
+        density: shadows.page_density,
         pool: PoolConfig {
-            pages: render.shadow_pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
+            pages: shadows.pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
         },
     }
 }
@@ -321,5 +336,25 @@ impl MeshletRenderStage {
     /// rather than the log.
     pub fn page_marking(&self) -> Option<MarkCounts> {
         self.page_marking_last
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_settings_asset_means_defaults_not_disabled() {
+        // 🔴 The half of the bug that is testable without touching the
+        // environment. The original read took an early return with a
+        // hardcoded `enabled: false` whenever the resource was absent —
+        // which was every build. A project with no settings asset is
+        // the normal case, so absence has to mean DEFAULTS.
+        let resources = Resources::default();
+        let settings = page_settings(&resources);
+        let defaults = crate::shadow::ShadowSettings::default();
+        assert_eq!(settings.density, defaults.page_density);
+        assert_eq!(settings.pool.pages, defaults.pool_pages);
+        assert_eq!(settings.paint, defaults.page_debug);
     }
 }

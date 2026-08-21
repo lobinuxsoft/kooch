@@ -826,6 +826,18 @@ impl RenderSettings {
             first_cascade_distance: self.shadow_first_cascade_distance,
             point_shadows: crate::shadow::point_shadows_from_environment()
                 .unwrap_or(self.point_shadows),
+            // 🔴 `KOOCH_PAGE_MARKING=1` is a FORCE on top of the asset,
+            // the way `point_shadows_from_environment` is — and it is
+            // applied HERE rather than at the call site. The call site
+            // version could not run at all: it sat behind a lookup of
+            // `RenderSettings`, which is never a `Resources` value, so
+            // the early return fired first and the variable was never
+            // consulted.
+            virtual_pages: self.virtual_shadows
+                || crate::shadow::pages::mark::enabled_by_environment(),
+            page_density: self.shadow_density,
+            pool_pages: self.shadow_pool_pages,
+            page_debug: self.virtual_shadow_debug,
         }
     }
 

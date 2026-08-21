@@ -1294,6 +1294,31 @@ else**. The 2×2 taps are clamped to the page's own rect.
 That is also why the atlas is `Depth32Float` read as a plain texture
 rather than through the comparison sampler the cascades use.
 
+### 🔴 A setting only exists if the frame can reach it
+
+`virtual_shadows` shipped **inert**, and the way it was found is worth
+more than the fix.
+
+The frame read the author's asset — `resources.get::<RenderSettings>()`
+— and took a fallback when it was absent. `RenderSettings` is **never**
+inserted as a `Resources` value: `apply` publishes derived structs like
+`ShadowSettings` instead. So the lookup returned `None` in every build,
+the fallback turned the pages off, and the environment override sat
+behind an early return that fired first.
+
+It compiled, it ran, it logged nothing, and it never rendered a page.
+
+What caught it was a profile: two handheld captures, one with the pages
+forced on and one without, came back **identical scope for scope** —
+`Device::create_bind_group` at 55.0 calls a frame in both. Seventeen
+clipmap culls cannot cost nothing.
+
+Two tests stand where it was. One checks that the field arrives; the
+other, `the_frame_never_asks_for_render_settings`, walks the crate's
+source and fails on any `get::<RenderSettings>` outside the settings
+module — the bug's **class**, because the behavioural test only covers
+the field somebody remembered.
+
 ### Where the settings live
 
 Everything that was a panel diagnostic in #866 is now a project setting,

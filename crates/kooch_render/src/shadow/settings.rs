@@ -70,6 +70,24 @@ pub struct ShadowSettings {
     /// [`MAX_POINT_SHADOWS`](kooch_lighting::MAX_POINT_SHADOWS), which
     /// sizes the uniform array and costs nothing unspent.
     pub point_shadows: u32,
+    /// Whether the sun's shadow comes from the virtual page pool
+    /// instead of the four cascades (#866/#477).
+    ///
+    /// 🔴 Here, in the **published** settings, and not read off
+    /// `RenderSettings` at the call site. That is not a style
+    /// preference: `RenderSettings` is never inserted as a `Resources`
+    /// value — `apply` publishes these derived structs instead — so a
+    /// frame that asked for the whole struct got `None` in every build
+    /// and silently took its fallback. That is precisely how this
+    /// feature shipped inert, and the profile that caught it showed two
+    /// captures, on and off, byte for byte the same.
+    pub virtual_pages: bool,
+    /// Shadow texels per screen pixel, as a percentage.
+    pub page_density: u32,
+    /// Physical pages the pool holds, which is the memory budget.
+    pub pool_pages: u32,
+    /// Paints the page each pixel reads over the scene.
+    pub page_debug: bool,
 }
 
 impl ShadowSettings {
@@ -88,6 +106,14 @@ impl Default for ShadowSettings {
             sun_softness: kooch_lighting::DEFAULT_SUN_SOFTNESS,
             first_cascade_distance: DEFAULT_FIRST_CASCADE_DISTANCE,
             point_shadows: DEFAULT_POINT_SHADOWS,
+            // 🔴 Off, and the environment variable is applied where the
+            // asset is read rather than here: a `Default` that consulted
+            // the environment would make every test depend on the shell
+            // it ran in.
+            virtual_pages: false,
+            page_density: 100,
+            pool_pages: crate::shadow::pages::pool::DEFAULT_PAGES,
+            page_debug: false,
         }
     }
 }

@@ -282,3 +282,73 @@ fn apply_publishes_the_window_mode() {
         Some(&kooch_core::window_mode::WindowMode::Fullscreen),
     );
 }
+
+#[test]
+fn virtual_shadows_reaches_the_published_settings() {
+    // 🔴 The regression this exists for shipped a whole feature inert.
+    // `virtual_shadows` was read at the call site off `RenderSettings`,
+    // which `apply` never inserts as a `Resources` value, so the lookup
+    // returned `None` in every build and the fallback turned the pages
+    // off. Two handheld captures — one with the pages on, one without —
+    // came back identical scope for scope, which is what a setting that
+    // reaches nothing looks like from the outside.
+    let settings = RenderSettings {
+        virtual_shadows: true,
+        shadow_density: 50,
+        shadow_pool_pages: 4096,
+        virtual_shadow_debug: true,
+        ..Default::default()
+    };
+    let published = settings.shadows();
+    assert!(published.virtual_pages);
+    assert_eq!(published.page_density, 50);
+    assert_eq!(published.pool_pages, 4096);
+    assert!(published.page_debug);
+}
+
+#[test]
+fn the_frame_never_asks_for_render_settings() {
+    // The bug's CLASS, not its instance. `RenderSettings` is the
+    // author's asset; what a frame may read is the derived struct
+    // `apply` publishes. Asking for the asset compiles, runs, returns
+    // `None` forever, and takes whatever fallback the caller wrote —
+    // silently.
+    //
+    // Structural rather than behavioural on purpose: the behavioural
+    // test above only covers the one field somebody remembered.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut offenders = Vec::new();
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            // This module is where the asset is turned into what the
+            // frame reads, so it is the one place allowed to hold it.
+            if path.ends_with("settings.rs") || path.ends_with("settings/tests.rs") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if text.contains("get::<crate::settings::RenderSettings>")
+                || text.contains("get::<RenderSettings>")
+            {
+                offenders.push(path);
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these read the author's asset out of Resources, where it never is: {offenders:#?}",
+    );
+}
