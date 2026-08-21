@@ -803,8 +803,26 @@ vistas alternando a 409x403, `many_lights`:
 y más pares no cierra; hay que mirar el mapeo página↔meshlet de la expansión antes de tocar
 nada más.
 
-⏭️ **NEXT**: (a) que el marcado **no asigne** páginas que el ráster no va a dibujar, (b) pool y
-tabla **por vista**, (c) sacar los bind groups del loop, (d) recién ahí re-medir.
+⏭️ **NEXT — y va PRIMERO: leer cómo lo hace quien lo hizo bien.** Los cuatro defectos de
+arriba son de **arquitectura**, no de aritmética, y ya se demostró que este track adivina mal
+cuando diseña sin fuente. Antes de tocar código:
+
+| Fuente | Qué contesta |
+|---|---|
+| **Olsson, Sintorn, Kämpe et al. (Chalmers), _Efficient Virtual Shadow Maps for Many Lights_** | 🎯 **El caso exacto**: muchas luces + shading clusterizado + VSM. De ahí ya salió el marcado desde las view samples. Contesta el defecto 2 (cómo se reparte un pool entre muchas luces) y probablemente el 1 |
+| **UE5: `VirtualShadowMapArray`, `VirtualShadowMapCacheManager`, `VirtualShadowMapPageManagement.usf`** | 🎯 Un pool para **N vistas** con tabla por vista → defecto 3. Y su política cuando el pool se llena → defecto 1 |
+| **Nanite: la ruta VSM del rasterizador** | Cómo arman la lista de instancias `(meshlet, página)` → el misterio de los pares |
+
+**Preguntas concretas a contestar con SOURCE, no con blog:**
+1. Cuando el pool se llena, ¿qué páginas se tiran y con qué criterio? ¿Hay prioridad por luz,
+   por nivel, por distancia?
+2. ¿Se marcan páginas para luces que el ráster no va a dibujar, o el marcado ya sabe qué
+   consumidores existen?
+3. ¿La tabla es **por vista** o hay una sola con la vista adentro de la clave?
+4. ¿Cómo se construye la lista de pares sin un bind group por nivel por vista por frame?
+
+Recién después: (a) que el marcado **no asigne** páginas que el ráster no va a dibujar, (b)
+pool y tabla **por vista**, (c) sacar los bind groups del loop, (d) re-medir.
 
 **Phase 3 — the consumers, on top of #866 and not before.**
 
